@@ -1,0 +1,2 @@
+# Requirements to run the extras (c++ simulators)
+cython

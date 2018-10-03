@@ -36,9 +36,9 @@ https://quantum-pecos.readthedocs.io
 ## Installation
 
 To install using pip type:
-``
+```
 pip install quantum-pecos
-``
+```
 
 To install from GitHub go to:
 

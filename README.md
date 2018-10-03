@@ -35,7 +35,7 @@ https://quantum-pecos.readthedocs.io
 
 ## Installation
 
-To install using pip type:
+To install using pip run the command:
 ```
 pip install quantum-pecos
 ```
@@ -50,7 +50,8 @@ Then, download/unzip or clone the version of PECOS you would like to use. Next, 
 pip install .
 ```
 
-To install and continue to develop the version of PECOS located in the install folder, run:
+To install and continue to develop the version of PECOS located in the install folder, run the
+ following instead:
 ```
 pip install -e .
 ```

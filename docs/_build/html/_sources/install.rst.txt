@@ -21,11 +21,26 @@ Optional packages include:
 Installing and Uninstalling
 ---------------------------
 
-PECOS has been developed to run on both Windows and Linux-based sytems. To install PECOS form source, you can cd into PECOS's root where ``setup.py`` is located and run:
 
->>> pip install .  # doctest: +SKIP
 
-To develop PECOS on your machine, instead run:
+PECOS has been developed to run on both Windows and Linux-based sytems. 
+
+To install using pip type:
+
+>>> pip install quantum-pecos   # doctest: +SKIP
+
+
+To install from GitHub go to:
+
+https://github.com/PECOS-packages/PECOS
+
+Then, download/unzip or clone the version of PECOS you would like to use. Next, navigate to the root of the package 
+(where setup.py is located) and run:
+
+>>> pip install .   # doctest: +SKIP
+
+
+To install and continue to develop the version of PECOS located in the install folder, run:
 
 >>> pip install -e .  # doctest: +SKIP
 

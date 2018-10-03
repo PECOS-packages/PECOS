@@ -13,9 +13,9 @@ The following features are intended to be included:
 Releases
 --------
 
-PECOS 0.1
-.........
+PECOS 0.1.0
+...........
 
-Release date: ???
+Release date: October 3, 2018
 
 Initial release.

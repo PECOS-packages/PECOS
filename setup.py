@@ -30,16 +30,21 @@ pip install -e .
 
 from setuptools import setup, find_packages
 
+with open("README.md", "r") as fh:
+    long_description = fh.read()
+
 exec(open('pecos/version.py').read())  # Get __version__
 
 setup(
     name='quantum-pecos',
     version=__version__,
-    url='',
+    url='https://github.com/PECOS-packages/PECOS',
     author='Ciarán Ryan-Anderson',
     author_email='ciaran@pecos.io',
     description='PECOS (Performance Estimator of Codes On Surfaces) is a package designed to facilitate the evaluation '
                 'and study of quantum error correcting codes.',
+    long_description=long_description,
+    long_description_content_type="text/markdown",
     packages=find_packages(),
     python_requires='>=3.5.2',
     install_requires=[
@@ -54,4 +59,11 @@ setup(
         'cpp_simulators': ['cython']
     },
     license='Apache 2',
+    classifiers=[
+        "Programming Language :: Python :: 3.5",
+        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "License :: OSI Approved :: Apache Software License",
+        "Operating System :: OS Independent",
+    ],
     )

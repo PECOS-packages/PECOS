@@ -1,0 +1,10 @@
+__pycache__
+*.pyc
+*.pyd
+build
+*.egg-info
+*.cache
+.pylintc
+.pytest_cache
+/.idea
+~*

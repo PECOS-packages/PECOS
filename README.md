@@ -1,6 +1,7 @@
 ![PECOS](docs/images/pecos_large_logo.png)
 =======================================
 
+[![PyPI version](https://badge.fury.io/py/quantum-pecos.svg)](https://badge.fury.io/py/quantum-pecos)
 [![Documentation Status](https://readthedocs.org/projects/quantum-pecos/badge/?version=latest)](https://quantum-pecos.readthedocs.io/en/latest/?badge=latest)
 
 PECOS (Performance Estimator of Codes On Surfaces) is a Python framework for studying, developing, and evaluating 
@@ -34,16 +35,24 @@ https://quantum-pecos.readthedocs.io
 
 ## Installation
 
-Download or clone this package and navigate to the root. Then:
+To install using pip type:
+``
+pip install quantum-pecos
+``
 
-To install to develop PECOS run:
+To install from GitHub go to:
+
+https://github.com/PECOS-packages/PECOS
+
+Then, download/unzip or clone the version of PECOS you would like to use. Next, navigate to the root of the package 
+(where setup.py is located) and run:
+```
+pip install .
+```
+
+To install and continue to develop the version of PECOS located in the install folder, run:
 ```
 pip install -e .
-```
-
-Otherwise run:
-```
-pip install setup.py
 ```
 
 ## Uninstall

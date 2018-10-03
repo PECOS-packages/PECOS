@@ -1,0 +1,302 @@
+
+
+<!DOCTYPE html>
+<!--[if IE 8]><html class="no-js lt-ie9" lang="en" > <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js" lang="en" > <!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <title>Monte Carlo Script &mdash; PECOS 0.1.0 documentation</title>
+  
+
+  
+  
+  
+  
+
+  
+
+  
+  
+    
+
+  
+
+  <link rel="stylesheet" href="../_static/css/theme.css" type="text/css" />
+  <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Developer Guide" href="../dev_guide.html" />
+    <link rel="prev" title="Gate-wise Error Models" href="gatewise_error_models.html" /> 
+
+  
+  <script src="../_static/js/modernizr.min.js"></script>
+
+</head>
+
+<body class="wy-body-for-nav">
+
+   
+  <div class="wy-grid-for-nav">
+
+    
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search">
+          
+
+          
+            <a href="../index.html">
+          
+
+          
+            
+            <img src="../_static/pecos_large_logo_white.png" class="logo" alt="Logo"/>
+          
+          </a>
+
+          
+            
+            
+              <div class="version">
+                0.1
+              </div>
+            
+          
+
+          
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+
+          
+        </div>
+
+        <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="main navigation">
+          
+            
+            
+              
+            
+            
+              <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../install.html">Getting Started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api_guide/index.html">API Guide</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">Examples</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="stab_code_verification.html">Verifying a Stabilizer Code</a></li>
+<li class="toctree-l2"><a class="reference internal" href="creating_qecc_class.html">Creating a QECC Class</a></li>
+<li class="toctree-l2"><a class="reference internal" href="gatewise_error_models.html">Gate-wise Error Models</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Monte Carlo Script</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../dev_guide.html">Developer Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../code_ref.html">Source Code Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../change_log.html">Change Log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../bibliography.html">Bibliography</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../todo_list.html">Todo List</a></li>
+</ul>
+
+            
+          
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+
+      
+      <nav class="wy-nav-top" aria-label="top navigation">
+        
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">PECOS</a>
+        
+      </nav>
+
+
+      <div class="wy-nav-content">
+        
+        <div class="rst-content">
+        
+          
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div role="navigation" aria-label="breadcrumbs navigation">
+
+  <ul class="wy-breadcrumbs">
+    
+      <li><a href="../index.html">Docs</a> &raquo;</li>
+        
+          <li><a href="index.html">Examples</a> &raquo;</li>
+        
+      <li>Monte Carlo Script</li>
+    
+    
+      <li class="wy-breadcrumbs-aside">
+        
+            
+            <a href="../_sources/examples/monte_carlo_script.rst.txt" rel="nofollow"> View page source</a>
+          
+        
+      </li>
+    
+  </ul>
+
+  
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+            
+  <div class="section" id="monte-carlo-script">
+<h1>Monte Carlo Script<a class="headerlink" href="#monte-carlo-script" title="Permalink to this headline">¶</a></h1>
+<p>In this appendix, I present how PECOS can be used to create a script to runs a Monte Carlo simulation to determine logical error-rates versus physical error-rates for a fixed distance of a medial surface-code patch. The break-even point where the physical error-rate equals the logical error-rate is known as the <cite>pseudo-threshold</cite>. The <cite>threshold</cite> is the value the pseudo-threshold converges to as the distance of the code approaches infinity.</p>
+<p>We begin by creating a Python script <code class="docutils literal notranslate"><span class="pre">error_rates.py</span></code> and importing NumPy and PECOS:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">numpy</span> <span class="kn">as</span> <span class="nn">np</span>
+<span class="kn">import</span> <span class="nn">pecos</span> <span class="kn">as</span> <span class="nn">pc</span>
+</pre></div>
+</div>
+<p>For this example, we will evaluate the identity gate of <code class="docutils literal notranslate"><span class="pre">SurfaceMedial4444</span></code> and start in the ideal logical zero-state:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">surface</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">qeccs</span><span class="o">.</span><span class="n">SurfaceMedial4444</span><span class="p">(</span><span class="n">distance</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="n">logic</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">circuits</span><span class="o">.</span><span class="n">LogicalCircuit</span><span class="p">(</span><span class="n">layout</span><span class="o">=</span><span class="n">surface</span><span class="o">.</span><span class="n">layout</span><span class="p">)</span>
+<span class="n">logic</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">surface</span><span class="o">.</span><span class="n">gate</span><span class="p">(</span><span class="s1">&#39;ideal init |0&gt;&#39;</span><span class="p">))</span>
+<span class="n">logic</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">surface</span><span class="o">.</span><span class="n">gate</span><span class="p">(</span><span class="s1">&#39;I&#39;</span><span class="p">,</span> <span class="n">num_syn_extract</span><span class="o">=</span><span class="mi">1</span><span class="p">))</span>
+<span class="n">circ_runner</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">circuit_runners</span><span class="o">.</span><span class="n">Standard</span><span class="p">(</span><span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">logical_ops</span> <span class="o">=</span> <span class="n">surface</span><span class="o">.</span><span class="n">instruction</span><span class="p">(</span><span class="s1">&#39;instr_syn_extract&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">final_logical_ops</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+</pre></div>
+</div>
+<p>Here we also initialize the <code class="docutils literal notranslate"><span class="pre">circuit_runner</span></code> we will use and create the variable <code class="docutils literal notranslate"><span class="pre">logical_ops</span></code>, which stores the logical operations of the QECC. This can be used to determine the logical error-rate since we can track whether errors flip the signs of the logical operators.</p>
+<p>Now we choose the depolarizing channel as our noise model (see Section <a class="reference internal" href="../api_guide/error_generators.html#error-gens"><span class="std std-ref">Error Generators</span></a>) and the MWPM decoder (see <a class="reference internal" href="../api_guide/decoders.html#decoders"><span class="std std-ref">Decoders</span></a>) to interpret syndromes and determine recovery operations:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">depolar</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">error_gens</span><span class="o">.</span><span class="n">DepolarGen</span><span class="p">(</span><span class="n">model_level</span><span class="o">=</span><span class="s1">&#39;code_capacity&#39;</span><span class="p">)</span>
+<span class="n">decode</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">decoders</span><span class="o">.</span><span class="n">MWPM2D</span><span class="p">(</span><span class="n">surface</span><span class="p">)</span><span class="o">.</span><span class="n">decode</span>
+</pre></div>
+</div>
+<p>We next create the function  <code class="docutils literal notranslate"><span class="pre">determine_fails</span></code> to decide if logical error occurs by examining whether, after applying a recovery operation to the state, errors have flipped logical <span class="math notranslate nohighlight">\(Z\)</span>. Note, since we are just protecting a logical zero-state we are only concerned with errors that flip the sign of the logical <span class="math notranslate nohighlight">\(Z\)</span> operator. <span class="math notranslate nohighlight">\(Z\)</span> errors do not affect the state.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">determine_fails</span></code> function is:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span> <span class="nf">determine_fails</span><span class="p">(</span><span class="n">meas</span><span class="p">,</span> <span class="n">decoder</span><span class="p">,</span> <span class="n">circ_runner</span><span class="p">,</span> <span class="n">state</span><span class="p">,</span> <span class="n">logical_ops</span><span class="p">,</span> <span class="n">fails</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">meas</span><span class="p">:</span>
+        <span class="n">recovery</span> <span class="o">=</span> <span class="n">decoder</span><span class="p">(</span><span class="n">meas</span><span class="p">)</span>
+        <span class="n">circ_runner</span><span class="o">.</span><span class="n">run_circuit</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">recovery</span><span class="p">)</span>
+    <span class="n">sign</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">logical_sign</span><span class="p">(</span><span class="n">logical_ops</span><span class="p">[</span><span class="s1">&#39;Z&#39;</span><span class="p">],</span> <span class="n">logical_ops</span><span class="p">[</span><span class="s1">&#39;X&#39;</span><span class="p">])</span>
+    <span class="n">fails</span> <span class="o">+=</span> <span class="n">sign</span>
+    <span class="k">return</span> <span class="n">fails</span>
+</pre></div>
+</div>
+<p>We are now almost ready to define the Monte Carlo loop. First, however, we set <code class="docutils literal notranslate"><span class="pre">runs</span></code> to represent the number of evaluations we will make per physical error-rate. Next, we add the variable <code class="docutils literal notranslate"><span class="pre">ps</span></code>, which is set to an array of  10 linearly space points between 0.1 and 0.3 to serve as the physical error-rates that we will evaluate. This array is created by NumPy’s <code class="docutils literal notranslate"><span class="pre">linspace</span></code> function. Finally, we include the variable <code class="docutils literal notranslate"><span class="pre">plog</span></code>, which stores the logical error-rates we find corresponding to the physical error-rates in <code class="docutils literal notranslate"><span class="pre">ps</span></code>. All of this is done in the following lines:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">runs</span> <span class="o">=</span> <span class="mi">10000</span>
+<span class="n">ps</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.4</span><span class="p">,</span> <span class="mi">10</span><span class="p">)</span>
+<span class="n">plog</span> <span class="o">=</span> <span class="p">[]</span>
+</pre></div>
+</div>
+<p>We now create the Monte Carlo loop, which prepares a fresh initial state, applies depolarizing noise with a probability chosen by looping over <code class="docutils literal notranslate"><span class="pre">ps</span></code>, and counts the number of failures (logical flips) to determine the logical error-rate, which is stored in <code class="docutils literal notranslate"><span class="pre">plog</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">ps</span><span class="p">:</span>
+    <span class="n">fails</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">runs</span><span class="p">):</span>
+        <span class="n">state</span> <span class="o">=</span> <span class="n">circ_runner</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">surface</span><span class="o">.</span><span class="n">num_qudits</span><span class="p">)</span>
+        <span class="n">meas</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">circ_runner</span><span class="o">.</span><span class="n">run_logic</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">logic</span><span class="p">,</span> <span class="n">error_gen</span><span class="o">=</span><span class="n">depolar</span><span class="p">,</span> <span class="n">error_params</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;p&#39;</span><span class="p">:</span> <span class="n">p</span><span class="p">})</span>
+        <span class="n">fails</span> <span class="o">=</span> <span class="n">determine_fails</span><span class="p">(</span><span class="n">meas</span><span class="p">,</span> <span class="n">decoder</span><span class="p">,</span> <span class="n">circ_runner</span><span class="p">,</span> <span class="n">state</span><span class="p">,</span> <span class="n">logical_ops</span><span class="p">,</span> <span class="n">fails</span><span class="p">)</span>
+    <span class="n">plog</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">fails</span> <span class="o">/</span> <span class="n">runs</span><span class="p">)</span>
+<span class="k">print</span><span class="p">(</span><span class="s1">&#39;ps=&#39;</span><span class="p">,</span> <span class="nb">list</span><span class="p">(</span><span class="n">ps</span><span class="p">))</span>
+<span class="k">print</span><span class="p">(</span><span class="s1">&#39;plog=&#39;</span><span class="p">,</span> <span class="n">plog</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>When this script is ran, an example output is:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ps</span><span class="o">=</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.13333333333333336</span><span class="p">,</span> <span class="mf">0.16666666666666669</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.23333333333333336</span><span class="p">,</span> <span class="mf">0.2666666666666667</span><span class="p">,</span> <span class="mf">0.30000000000000004</span><span class="p">,</span> <span class="mf">0.33333333333333337</span><span class="p">,</span> <span class="mf">0.3666666666666667</span><span class="p">,</span> <span class="mf">0.4</span><span class="p">]</span>
+<span class="n">plog</span><span class="o">=</span> <span class="p">[</span><span class="mf">0.0588</span><span class="p">,</span> <span class="mf">0.102</span><span class="p">,</span> <span class="mf">0.1497</span><span class="p">,</span> <span class="mf">0.1835</span><span class="p">,</span> <span class="mf">0.2241</span><span class="p">,</span> <span class="mf">0.2702</span><span class="p">,</span> <span class="mf">0.3052</span><span class="p">,</span> <span class="mf">0.3485</span><span class="p">,</span> <span class="mf">0.3783</span><span class="p">,</span> <span class="mf">0.4017</span><span class="p">]</span>
+</pre></div>
+</div>
+<p>One can then use plotting packages such as Matplotlib to produce plots as appropriate for the data. PECOS provides a tool for quickly plotting and evaluating logical vs physical error-rates:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">pecos.tools</span> <span class="kn">import</span> <span class="n">plot_pseudo</span>
+<span class="n">plot_pseudo</span><span class="p">(</span><span class="n">deg</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span><span class="n">plist</span><span class="o">=</span><span class="n">ps</span><span class="p">,</span><span class="n">plog</span><span class="o">=</span><span class="n">plog</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Running this tool results in the plot:</p>
+<a class="reference internal image-reference" href="../_images/nonmedial_pseudo_threshold.png"><img alt="../_images/nonmedial_pseudo_threshold.png" class="align-center" src="../_images/nonmedial_pseudo_threshold.png" style="width: 400px;" /></a>
+<p>The script described in this appendix can be used as a basis for developing other Monte Carlo simulation scripts for evaluating pseudo-thresholds or thresholds.</p>
+</div>
+
+
+           </div>
+           
+          </div>
+          <footer>
+  
+    <div class="rst-footer-buttons" role="navigation" aria-label="footer navigation">
+      
+        <a href="../dev_guide.html" class="btn btn-neutral float-right" title="Developer Guide" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right"></span></a>
+      
+      
+        <a href="gatewise_error_models.html" class="btn btn-neutral" title="Gate-wise Error Models" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left"></span> Previous</a>
+      
+    </div>
+  
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>
+        &copy; Copyright 2018 National Technology &amp; Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software.
+
+    </p>
+  </div>
+  Built with <a href="http://sphinx-doc.org/">Sphinx</a> using a <a href="https://github.com/rtfd/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>. 
+
+</footer>
+
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+  
+
+
+  
+
+    <script type="text/javascript">
+        var DOCUMENTATION_OPTIONS = {
+            URL_ROOT:'../',
+            VERSION:'0.1.0',
+            LANGUAGE:'None',
+            COLLAPSE_INDEX:false,
+            FILE_SUFFIX:'.html',
+            HAS_SOURCE:  true,
+            SOURCELINK_SUFFIX: '.txt'
+        };
+    </script>
+      <script type="text/javascript" src="../_static/jquery.js"></script>
+      <script type="text/javascript" src="../_static/underscore.js"></script>
+      <script type="text/javascript" src="../_static/doctools.js"></script>
+      <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+
+  
+
+  <script type="text/javascript" src="../_static/js/theme.js"></script>
+
+  <script type="text/javascript">
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

@@ -1,0 +1,393 @@
+
+
+<!DOCTYPE html>
+<!--[if IE 8]><html class="no-js lt-ie9" lang="en" > <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js" lang="en" > <!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <title>QECCs &mdash; PECOS 0.1.0 documentation</title>
+  
+
+  
+  
+  
+  
+
+  
+
+  
+  
+    
+
+  
+
+  <link rel="stylesheet" href="../_static/css/theme.css" type="text/css" />
+  <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Logical Circuits" href="logical_circuits.html" />
+    <link rel="prev" title="Quantum Circuits" href="quantum_circuits.html" /> 
+
+  
+  <script src="../_static/js/modernizr.min.js"></script>
+
+</head>
+
+<body class="wy-body-for-nav">
+
+   
+  <div class="wy-grid-for-nav">
+
+    
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search">
+          
+
+          
+            <a href="../index.html">
+          
+
+          
+            
+            <img src="../_static/pecos_large_logo_white.png" class="logo" alt="Logo"/>
+          
+          </a>
+
+          
+            
+            
+              <div class="version">
+                0.1
+              </div>
+            
+          
+
+          
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+
+          
+        </div>
+
+        <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="main navigation">
+          
+            
+            
+              
+            
+            
+              <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../install.html">Getting Started</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">API Guide</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="quantum_circuits.html">Quantum Circuits</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">QECCs</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#methods">Methods</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#attributes">Attributes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#an-instance">An Instance</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#logical-gate">Logical Gate</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#logical-instruction">Logical Instruction</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#plotting">Plotting</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="logical_circuits.html">Logical Circuits</a></li>
+<li class="toctree-l2"><a class="reference internal" href="simulators.html">Simulators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="standard_gates.html">Standard Gates</a></li>
+<li class="toctree-l2"><a class="reference internal" href="circuit_runners.html">Circuit Runners</a></li>
+<li class="toctree-l2"><a class="reference internal" href="error_generators.html">Error Generators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="decoders.html">Decoders</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tools.html">Tools</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../examples/index.html">Examples</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../dev_guide.html">Developer Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../code_ref.html">Source Code Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../change_log.html">Change Log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../bibliography.html">Bibliography</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../todo_list.html">Todo List</a></li>
+</ul>
+
+            
+          
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+
+      
+      <nav class="wy-nav-top" aria-label="top navigation">
+        
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">PECOS</a>
+        
+      </nav>
+
+
+      <div class="wy-nav-content">
+        
+        <div class="rst-content">
+        
+          
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div role="navigation" aria-label="breadcrumbs navigation">
+
+  <ul class="wy-breadcrumbs">
+    
+      <li><a href="../index.html">Docs</a> &raquo;</li>
+        
+          <li><a href="index.html">API Guide</a> &raquo;</li>
+        
+      <li>QECCs</li>
+    
+    
+      <li class="wy-breadcrumbs-aside">
+        
+            
+            <a href="../_sources/api_guide/qeccs.rst.txt" rel="nofollow"> View page source</a>
+          
+        
+      </li>
+    
+  </ul>
+
+  
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+            
+  <div class="section" id="qeccs">
+<h1>QECCs<a class="headerlink" href="#qeccs" title="Permalink to this headline">¶</a></h1>
+<p>Each QECC or family of QECCs can be represented by a class. The classes available in PECOS are in the namespace <code class="docutils literal notranslate"><span class="pre">qeccs</span></code>. In this section we will discuss the methods, attributes, and structure of a <code class="docutils literal notranslate"><span class="pre">qecc</span></code>. In <a class="reference internal" href="../examples/creating_qecc_class.html#examp-qecc"><span class="std std-ref">Creating a QECC Class</span></a>, an example is given of how to construct a new QECC class, which can be used by PECOS.</p>
+<p>The primary role of a <code class="docutils literal notranslate"><span class="pre">qecc</span></code> is to provide the quantum circuits of QEC protocols associated with the <code class="docutils literal notranslate"><span class="pre">qecc</span></code> such as the logical-state initialization, logical gates, and logical measurements. In the following, we will look at some examples of <code class="docutils literal notranslate"><span class="pre">qecc</span></code> classes and how they encapsulate QEC procedures.</p>
+<div class="section" id="methods">
+<h2>Methods<a class="headerlink" href="#methods" title="Permalink to this headline">¶</a></h2>
+<p>The minimal methods expects for a <code class="docutils literal notranslate"><span class="pre">qecc</span></code>:</p>
+<table border="1" class="docutils">
+<colgroup>
+<col width="21%" />
+<col width="79%" />
+</colgroup>
+<tbody valign="top">
+<tr class="row-odd"><td><code class="docutils literal notranslate"><span class="pre">gate</span></code></td>
+<td>Returns an instance of a requested logical gate.</td>
+</tr>
+<tr class="row-even"><td><code class="docutils literal notranslate"><span class="pre">instruction</span></code></td>
+<td>Returns an instance of a requested logical instruction.</td>
+</tr>
+<tr class="row-odd"><td><code class="docutils literal notranslate"><span class="pre">plot</span></code></td>
+<td>Plots the physical layout of qudits.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section" id="attributes">
+<h2>Attributes<a class="headerlink" href="#attributes" title="Permalink to this headline">¶</a></h2>
+<table border="1" class="docutils">
+<colgroup>
+<col width="23%" />
+<col width="77%" />
+</colgroup>
+<tbody valign="top">
+<tr class="row-odd"><td><code class="docutils literal notranslate"><span class="pre">name</span></code></td>
+<td>Name of the QECC.</td>
+</tr>
+<tr class="row-even"><td><code class="docutils literal notranslate"><span class="pre">qecc_params</span></code></td>
+<td>Dictionary of parameters.</td>
+</tr>
+<tr class="row-odd"><td><code class="docutils literal notranslate"><span class="pre">distance</span></code></td>
+<td>Minimum number of single qudit operations that results in a logical error.</td>
+</tr>
+<tr class="row-even"><td><code class="docutils literal notranslate"><span class="pre">num_logical_qudits</span></code></td>
+<td>Number of logical qudits.</td>
+</tr>
+<tr class="row-odd"><td><code class="docutils literal notranslate"><span class="pre">num_data_qudtis</span></code></td>
+<td>Number of data qudits.</td>
+</tr>
+<tr class="row-even"><td><code class="docutils literal notranslate"><span class="pre">num_ancilla_qudits</span></code></td>
+<td>Number of ancillas.</td>
+</tr>
+<tr class="row-odd"><td><code class="docutils literal notranslate"><span class="pre">num_qudits</span></code></td>
+<td>Number of qudits.</td>
+</tr>
+<tr class="row-even"><td><code class="docutils literal notranslate"><span class="pre">qudit_set</span></code></td>
+<td>Set of qudit labels used internally in the <code class="docutils literal notranslate"><span class="pre">qecc</span></code>.</td>
+</tr>
+<tr class="row-odd"><td><code class="docutils literal notranslate"><span class="pre">data_qudit_set</span></code></td>
+<td>Set of data qudit labels used internally.</td>
+</tr>
+<tr class="row-even"><td><code class="docutils literal notranslate"><span class="pre">ancilla_qudit_set</span></code></td>
+<td>Set of ancilla qudit labels used internally.</td>
+</tr>
+<tr class="row-odd"><td><code class="docutils literal notranslate"><span class="pre">layout</span></code></td>
+<td>A <code class="docutils literal notranslate"><span class="pre">dict</span></code> of qudit label to position <code class="docutils literal notranslate"><span class="pre">tuple</span></code>.</td>
+</tr>
+<tr class="row-even"><td><code class="docutils literal notranslate"><span class="pre">sides</span></code></td>
+<td>A <code class="docutils literal notranslate"><span class="pre">dict</span></code> describing the geometry of the <code class="docutils literal notranslate"><span class="pre">qecc</span></code>.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="section" id="an-instance">
+<h2>An Instance<a class="headerlink" href="#an-instance" title="Permalink to this headline">¶</a></h2>
+<p>Currently, the namespace <code class="docutils literal notranslate"><span class="pre">qeccs</span></code> contains classes representing the surface code on the 4.4.4.4 lattice (<code class="docutils literal notranslate"><span class="pre">Surface4444</span></code>) [Kit97b], the medial surface-code on the 4.4.4.4 lattice (<code class="docutils literal notranslate"><span class="pre">SurfaceMedial4444</span></code>) [BMD07], and the color-code on the 4.8.8 lattice (<code class="docutils literal notranslate"><span class="pre">Color488</span></code>) [BMD06].</p>
+<p>An example instance of a <code class="docutils literal notranslate"><span class="pre">Surface4444</span></code> that represents a distance 4 surface code is given here:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">import</span> <span class="nn">pecos</span> <span class="k">as</span> <span class="nn">pc</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">surface</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">qeccs</span><span class="o">.</span><span class="n">Surface4444</span><span class="p">(</span><span class="n">distance</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>As seen in Listing 6.20, parameters are used to identify a member of the code family.
+For <code class="docutils literal notranslate"><span class="pre">Surface4444</span></code>, either the keyword <code class="docutils literal notranslate"><span class="pre">distance</span></code> or the keywords <code class="docutils literal notranslate"><span class="pre">height</span></code> and <code class="docutils literal notranslate"><span class="pre">width</span></code> are used to specify a member. If <code class="docutils literal notranslate"><span class="pre">distance</span></code> is used, then a representation of a square surface-code patch will be created. The <code class="docutils literal notranslate"><span class="pre">SurfaceMedial4444</span></code> class will take the same keywords as code family parameters as the <code class="docutils literal notranslate"><span class="pre">Surface4444</span></code> class. The <code class="docutils literal notranslate"><span class="pre">Color488</span></code> class only accepts <code class="docutils literal notranslate"><span class="pre">distance</span></code> as a keyword.</p>
+</div>
+<div class="section" id="logical-gate">
+<h2>Logical Gate<a class="headerlink" href="#logical-gate" title="Permalink to this headline">¶</a></h2>
+<p>The class <code class="docutils literal notranslate"><span class="pre">LogicalGate</span></code> represent a collection of quantum circuits that act on logical qubits. Each <code class="docutils literal notranslate"><span class="pre">LogicalGates</span></code> is identified by a symbol (string). Using this symbol, the <code class="docutils literal notranslate"><span class="pre">gate</span></code> method of a <code class="docutils literal notranslate"><span class="pre">qecc</span></code> can be used to obtain an instance of a corresponding <code class="docutils literal notranslate"><span class="pre">LogicalGate</span></code> instance:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">surface</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">qeccs</span><span class="o">.</span><span class="n">Surface4444</span><span class="p">(</span><span class="n">distance</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">identity</span> <span class="o">=</span> <span class="n">surface</span><span class="o">.</span><span class="n">gate</span><span class="p">(</span><span class="s1">&#39;I&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>In the above code, the symbol <code class="docutils literal notranslate"><span class="pre">'I'</span></code> is used to retrieve a logical gate corresponding to identity (syndrome extraction).</p>
+<p>Keyword arguments may be used to modify <code class="docutils literal notranslate"><span class="pre">LogicalGates</span></code>:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">surface</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">qeccs</span><span class="o">.</span><span class="n">Surface4444</span><span class="p">(</span><span class="n">distance</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># Get an identity gate with only one round of syndrome extraction.</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">identity</span> <span class="o">=</span> <span class="n">surface</span><span class="o">.</span><span class="n">gate</span><span class="p">(</span><span class="s1">&#39;I&#39;</span><span class="p">,</span> <span class="n">num_syn_extract</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Here the keyword argument <code class="docutils literal notranslate"><span class="pre">num_syn_extract</span></code> is used to explicitly request an identity with only one round of syndrome extraction. Typically, the number of rounds of syndrome extraction for an identity gate is equal to the QECC’s distance.</p>
+<p>The main use for <code class="docutils literal notranslate"><span class="pre">LogicalGate</span></code> instances is as logical operations in the logical analogs of quantum circuits, which are described in <a class="reference internal" href="logical_circuits.html#api-logical-circuits"><span class="std std-ref">Logical Circuits</span></a></p>
+</div>
+<div class="section" id="logical-instruction">
+<h2>Logical Instruction<a class="headerlink" href="#logical-instruction" title="Permalink to this headline">¶</a></h2>
+<p>A <code class="docutils literal notranslate"><span class="pre">LogicalGate</span></code> is composed of a sequence of <code class="docutils literal notranslate"><span class="pre">LogicalInstructions</span></code>. A <code class="docutils literal notranslate"><span class="pre">LogicalInstruction</span></code> represents a collection of quantum circuits. Often these collections are repeated or used in multiple <code class="docutils literal notranslate"><span class="pre">LogicalGates</span></code>. An example of a <code class="docutils literal notranslate"><span class="pre">LogicalInstruction</span></code> is one round of error correction.</p>
+<p>Like <code class="docutils literal notranslate"><span class="pre">LogicalGates</span></code>, <code class="docutils literal notranslate"><span class="pre">LogicalInstuctions</span></code> are represented by symbols (strings). The <code class="docutils literal notranslate"><span class="pre">instr_symbols</span></code> attribute of a <code class="docutils literal notranslate"><span class="pre">LogicalGate</span></code> can be use to retrieve a list of symbols corresponding to the <code class="docutils literal notranslate"><span class="pre">LogicalInstuctions</span></code> that form the <code class="docutils literal notranslate"><span class="pre">LogicalGate</span></code>:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">surface</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">qeccs</span><span class="o">.</span><span class="n">Surface4444</span><span class="p">(</span><span class="n">distance</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">identity</span> <span class="o">=</span> <span class="n">surface</span><span class="o">.</span><span class="n">gate</span><span class="p">(</span><span class="s1">&#39;I&#39;</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">identity</span><span class="o">.</span><span class="n">instr_symbols</span>
+<span class="go">[&#39;instr_syn_extract&#39;, &#39;instr_syn_extract&#39;, &#39;instr_syn_extract&#39;]</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># Request an identity with a single round of syndrome extraction.</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">identity</span> <span class="o">=</span> <span class="n">surface</span><span class="o">.</span><span class="n">gate</span><span class="p">(</span><span class="s1">&#39;I&#39;</span><span class="p">,</span> <span class="n">num_syn_extract</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">identity</span><span class="o">.</span><span class="n">instr_symbols</span>
+<span class="go">[&#39;instr_syn_extract&#39;]</span>
+</pre></div>
+</div>
+<p>In the following, we see how to retrieve an instance of the <code class="docutils literal notranslate"><span class="pre">'instr_syn_extract'</span></code> instruction and then see what <code class="docutils literal notranslate"><span class="pre">QuantumCircuit</span></code> it represents:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">surface</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">qeccs</span><span class="o">.</span><span class="n">SurfaceMedial4444</span><span class="p">(</span><span class="n">distance</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># Get the LogicalInstruction instance representing the syndrome-extraction instruction.</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">instr</span> <span class="o">=</span> <span class="n">surface</span><span class="o">.</span><span class="n">instruction</span><span class="p">(</span><span class="s1">&#39;instr_syn_extract&#39;</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">instr</span><span class="o">.</span><span class="n">circuit</span>
+<span class="go">QuantumCircuit([{&#39;init |0&gt;&#39;: {0, 16, 4, 5, 6, 10, 11, 12}}, {&#39;H&#39;: {0, 16, 11, 5}}, {&#39;CNOT&#39;: {(15, 12), (11, 14), (8, 6), (5, 7), (13, 10), (0, 2)}}, {&#39;CNOT&#39;: {(9, 12), (2, 6), (7, 10), (11, 15), (0, 3), (5, 8)}}, {&#39;CNOT&#39;: {(7, 4), (16, 13), (14, 10), (11, 8), (5, 1), (9, 6)}}, {&#39;CNOT&#39;: {(3, 6), (16, 14), (11, 9), (5, 2), (8, 10), (1, 4)}}, {&#39;H&#39;: {0, 16, 11, 5}}, {&#39;measure Z&#39;: {0, 16, 4, 5, 6, 10, 11, 12}}])</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="plotting">
+<h2>Plotting<a class="headerlink" href="#plotting" title="Permalink to this headline">¶</a></h2>
+<p>Both <code class="docutils literal notranslate"><span class="pre">qeccs</span></code> and <code class="docutils literal notranslate"><span class="pre">LogicalInstuctions</span></code> have a method called <code class="docutils literal notranslate"><span class="pre">plot</span></code> that will generate a plot that represents the object. These plots can be useful in understanding the structure of a QECC and its logical instructions.</p>
+<p>The following is an example of using the <code class="docutils literal notranslate"><span class="pre">plot</span></code> method for a <code class="docutils literal notranslate"><span class="pre">qecc</span></code>:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">surface</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">qeccs</span><span class="o">.</span><span class="n">SurfaceMedial4444</span><span class="p">(</span><span class="n">distance</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">surface</span><span class="o">.</span><span class="n">plot</span><span class="p">()</span>   
+</pre></div>
+</div>
+<p>This results in the plot seen in:</p>
+<a class="reference internal image-reference" href="../_images/surfacemedialplot_layout.png"><img alt="../_images/surfacemedialplot_layout.png" class="align-center" src="../_images/surfacemedialplot_layout.png" style="width: 400px;" /></a>
+<p>The plot of <code class="docutils literal notranslate"><span class="pre">LogicalInstructions</span></code> often indicates the sequence of gate operations. An example of a plot of the syndrome extraction instruction of <code class="docutils literal notranslate"><span class="pre">surface</span></code> be obtained by the following lines:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">surface</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">qeccs</span><span class="o">.</span><span class="n">SurfaceMedial4444</span><span class="p">(</span><span class="n">distance</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">syn_extract</span> <span class="o">=</span> <span class="n">surface</span><span class="o">.</span><span class="n">instruction</span><span class="p">(</span><span class="s1">&#39;instr_syn_extract&#39;</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">syn_extract</span><span class="o">.</span><span class="n">plot</span><span class="p">()</span>   
+</pre></div>
+</div>
+<p>The resulting plot is seen in:</p>
+<a class="reference internal image-reference" href="../_images/surfacemedialplot_syn.png"><img alt="../_images/surfacemedialplot_syn.png" class="align-center" src="../_images/surfacemedialplot_syn.png" style="width: 400px;" /></a>
+<p>The previous figure depicts the syndrome-extraction logical-instruction of a distance-three, medial surface-code. Red squares represent the ancillas involved in X checks, the blue squares represent the ancillas involved in Z checks, and the cream circles represent the data qubits. The numbers inside the squares and circles are labels of the qubits as used in <code class="docutils literal notranslate"><span class="pre">QuantumCircuits</span></code>. The edges indicate the CNOTs used in the checks. The thicker end of each edge denotes the qubit that is the target of the CNOT. The numbers labeling the edges are ticks when the corresponding CNOT is applied.</p>
+</div>
+</div>
+
+
+           </div>
+           
+          </div>
+          <footer>
+  
+    <div class="rst-footer-buttons" role="navigation" aria-label="footer navigation">
+      
+        <a href="logical_circuits.html" class="btn btn-neutral float-right" title="Logical Circuits" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right"></span></a>
+      
+      
+        <a href="quantum_circuits.html" class="btn btn-neutral" title="Quantum Circuits" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left"></span> Previous</a>
+      
+    </div>
+  
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>
+        &copy; Copyright 2018 National Technology &amp; Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software.
+
+    </p>
+  </div>
+  Built with <a href="http://sphinx-doc.org/">Sphinx</a> using a <a href="https://github.com/rtfd/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>. 
+
+</footer>
+
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+  
+
+
+  
+
+    <script type="text/javascript">
+        var DOCUMENTATION_OPTIONS = {
+            URL_ROOT:'../',
+            VERSION:'0.1.0',
+            LANGUAGE:'None',
+            COLLAPSE_INDEX:false,
+            FILE_SUFFIX:'.html',
+            HAS_SOURCE:  true,
+            SOURCELINK_SUFFIX: '.txt'
+        };
+    </script>
+      <script type="text/javascript" src="../_static/jquery.js"></script>
+      <script type="text/javascript" src="../_static/underscore.js"></script>
+      <script type="text/javascript" src="../_static/doctools.js"></script>
+      <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+
+  
+
+  <script type="text/javascript" src="../_static/js/theme.js"></script>
+
+  <script type="text/javascript">
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

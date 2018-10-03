@@ -1,0 +1,392 @@
+
+
+<!DOCTYPE html>
+<!--[if IE 8]><html class="no-js lt-ie9" lang="en" > <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js" lang="en" > <!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <title>Verifying a Stabilizer Code &mdash; PECOS 0.1.0 documentation</title>
+  
+
+  
+  
+  
+  
+
+  
+
+  
+  
+    
+
+  
+
+  <link rel="stylesheet" href="../_static/css/theme.css" type="text/css" />
+  <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Creating a QECC Class" href="creating_qecc_class.html" />
+    <link rel="prev" title="Examples" href="index.html" /> 
+
+  
+  <script src="../_static/js/modernizr.min.js"></script>
+
+</head>
+
+<body class="wy-body-for-nav">
+
+   
+  <div class="wy-grid-for-nav">
+
+    
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search">
+          
+
+          
+            <a href="../index.html">
+          
+
+          
+            
+            <img src="../_static/pecos_large_logo_white.png" class="logo" alt="Logo"/>
+          
+          </a>
+
+          
+            
+            
+              <div class="version">
+                0.1
+              </div>
+            
+          
+
+          
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+
+          
+        </div>
+
+        <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="main navigation">
+          
+            
+            
+              
+            
+            
+              <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../install.html">Getting Started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api_guide/index.html">API Guide</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">Examples</a><ul class="current">
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Verifying a Stabilizer Code</a></li>
+<li class="toctree-l2"><a class="reference internal" href="creating_qecc_class.html">Creating a QECC Class</a></li>
+<li class="toctree-l2"><a class="reference internal" href="gatewise_error_models.html">Gate-wise Error Models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="monte_carlo_script.html">Monte Carlo Script</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../dev_guide.html">Developer Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../code_ref.html">Source Code Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../change_log.html">Change Log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../bibliography.html">Bibliography</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../todo_list.html">Todo List</a></li>
+</ul>
+
+            
+          
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+
+      
+      <nav class="wy-nav-top" aria-label="top navigation">
+        
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">PECOS</a>
+        
+      </nav>
+
+
+      <div class="wy-nav-content">
+        
+        <div class="rst-content">
+        
+          
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div role="navigation" aria-label="breadcrumbs navigation">
+
+  <ul class="wy-breadcrumbs">
+    
+      <li><a href="../index.html">Docs</a> &raquo;</li>
+        
+          <li><a href="index.html">Examples</a> &raquo;</li>
+        
+      <li>Verifying a Stabilizer Code</li>
+    
+    
+      <li class="wy-breadcrumbs-aside">
+        
+            
+            <a href="../_sources/examples/stab_code_verification.rst.txt" rel="nofollow"> View page source</a>
+          
+        
+      </li>
+    
+  </ul>
+
+  
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+            
+  <div class="section" id="verifying-a-stabilizer-code">
+<h1>Verifying a Stabilizer Code<a class="headerlink" href="#verifying-a-stabilizer-code" title="Permalink to this headline">¶</a></h1>
+<p>In this example we will see how <code class="docutils literal notranslate"><span class="pre">VerifyStabilizers</span></code> can be used to develop a simple, distance-three code. We begin by considering the generators in:</p>
+<a class="reference internal image-reference" href="../_images/stabcode1.png"><img alt="../_images/stabcode1.png" class="align-center" src="../_images/stabcode1.png" style="width: 200px;" /></a>
+<p>In this figure we see an example stabilizer code. Data qubits are indicated as white circles and are labelled by numbers. Polygons represent checks. The coloring of the polygons indicate how the associated check acts on qubits it touches. When the check is white on a qubit, the check acts as <span class="math notranslate nohighlight">\(Z.\)</span>  When black, <span class="math notranslate nohighlight">\(X.\)</span>   When brown, <span class="math notranslate nohighlight">\(Y.\)</span></p>
+<p>We now use <code class="docutils literal notranslate"><span class="pre">VerifyStabilizers</span></code> to represent the checks given in the previous figure:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">import</span> <span class="nn">pecos</span> <span class="k">as</span> <span class="nn">pc</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">tools</span><span class="o">.</span><span class="n">VerifyStabilizers</span><span class="p">()</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">8</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">9</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">7</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="p">(</span><span class="mi">7</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">9</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">((</span><span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="s1">&#39;Y&#39;</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">((</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="s1">&#39;Y&#39;</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">((</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="s1">&#39;Y&#39;</span><span class="p">),</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="mi">5</span><span class="p">))</span>
+</pre></div>
+</div>
+<p>Here we see that the <code class="docutils literal notranslate"><span class="pre">check</span></code> method can be used to specify a generator. If the first argument is a string, then this indicates the Pauli-type of the check. The second argument then indicates which qubits the check acts on. If the first argument is a tuple, then the tuple is a sequence of strings which indicate how the generator acts on the corresponding qubits indicated in the tuple of the second argument.</p>
+<p>Once one has finished specifying the generators of the code, the <code class="docutils literal notranslate"><span class="pre">compile</span></code> method should be used:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Continuing the last listing.</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">compile</span><span class="p">()</span>   
+<span class="go">Check:</span>
+<span class="go">check((&#39;Z&#39;, &#39;Z&#39;, &#39;Y&#39;), (0, 1, 2))</span>
+<span class="go">anticommutes with:</span>
+<span class="go">check(Z, (2, 4, 5, 7))</span>
+</pre></div>
+</div>
+<p>Once <code class="docutils literal notranslate"><span class="pre">compile</span></code> is called, <code class="docutils literal notranslate"><span class="pre">VerifyStabilizers</span></code> checks to see if all the generators anticommute. If any do <code class="docutils literal notranslate"><span class="pre">VerifyStabilizers</span></code> prints out a message indicating which checks anticommute.</p>
+<p>Finding that our original stabilizer code design does have anticommuting generators, we can modify the QECC slightly to address the issue as seen in:</p>
+<a class="reference internal image-reference" href="../_images/stabcode2.png"><img alt="../_images/stabcode2.png" class="align-center" src="../_images/stabcode2.png" style="width: 200px;" /></a>
+<p>Re-specifying the generators according to the figure above, we run <code class="docutils literal notranslate"><span class="pre">compile</span></code> again and see that we have solved the commutation problem:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">tools</span><span class="o">.</span><span class="n">VerifyStabilizers</span><span class="p">()</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">8</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">9</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">7</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="p">(</span><span class="mi">7</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">9</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">((</span><span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="s1">&#39;Z&#39;</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">((</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="s1">&#39;Y&#39;</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">((</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="s1">&#39;Y&#39;</span><span class="p">),</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="mi">5</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">compile</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>It is possible that we have specified a set of generators with redundant elements. That is, some of the generators can be written as products of the others. To check if this is the case, we use the method <code class="docutils literal notranslate"><span class="pre">generators</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Following the last listing.</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">generators</span><span class="p">()</span>
+<span class="go">Number of data qubits: 10</span>
+<span class="go">Number of checks: 7</span>
+<span class="go">Number of logical qubits: 3</span>
+
+<span class="go">Stabilizer generators:</span>
+<span class="go">XIXZYIIIII</span>
+<span class="go">IXXIIYZIII</span>
+<span class="go">IIZIZZIZII</span>
+<span class="go">ZZZIIIIIII</span>
+<span class="go">IIIIIIIZZZ</span>
+<span class="go">IIIXXIIXXI</span>
+<span class="go">IIIIIXXXIX</span>
+
+<span class="go">Destabilizer generators:</span>
+<span class="go">ZIIIIIIIII</span>
+<span class="go">IZIIIIIIII</span>
+<span class="go">ZIIIXIIIII</span>
+<span class="go">ZIXIXIIIII</span>
+<span class="go">ZIIIXIIXII</span>
+<span class="go">IIIIIIIIZI</span>
+<span class="go">IIIIIIIIIZ</span>
+
+<span class="go">Logical operators:</span>
+<span class="go">. Logical Z #1:</span>
+<span class="go">  IIIZIIIIZI</span>
+<span class="go">. Logical X #1:</span>
+<span class="go">  ZIIXIIIIII</span>
+<span class="go">. Logical Z #2:</span>
+<span class="go">  IZIIIZIIIZ</span>
+<span class="go">. Logical X #2:</span>
+<span class="go">  ZZIIXXIIII</span>
+<span class="go">. Logical Z #3:</span>
+<span class="go">  IIIIIIZIIZ</span>
+<span class="go">. Logical X #3:</span>
+<span class="go">  IZIIIIXIII</span>
+</pre></div>
+</div>
+<p>If we had redundant generators then <code class="docutils literal notranslate"><span class="pre">generators</span></code> would alert us. Luckily, we do not and <code class="docutils literal notranslate"><span class="pre">generators</span></code> has printed out some useful information including number of logical qubits, destabilizers, and a possible set of logical operators.</p>
+<p>We can then use the <code class="docutils literal notranslate"><span class="pre">distance</span></code> method to determine the distance of the code. Note, to find the distance of a code, this method will try all combinations of possible Pauli errors. It starts with the smallest weight and evaluating larger and larger weights until a logical error is detected. Since this is a combinatorial search, the algorithm is not efficient and the runtime quickly grows with the size of the code. In practice, for smaller code of less than 20 or so qubits, the runtime is manageable.</p>
+<p>We now run the <code class="docutils literal notranslate"><span class="pre">distance</span></code> method:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Following the last listing.</span>
+<span class="go">qecc.distance()</span>
+<span class="go">----</span>
+<span class="go">Checking errors of length 1...</span>
+<span class="go">Checking errors of length 2...</span>
+<span class="go">Logical error found: Xs - {0, 1} Zs - set()</span>
+<span class="go">This is a [[10, 3, 2]] code.</span>
+</pre></div>
+</div>
+<p>The last line of the code block indicates what type of QECC we have. The notation <span class="math notranslate nohighlight">\([[n, k, d]]\)</span> indicates that the code encodes <span class="math notranslate nohighlight">\(k\)</span> qubits into <span class="math notranslate nohighlight">\(n\)</span> physical qubits and has a distance of <span class="math notranslate nohighlight">\(d\)</span>. Since the number of errors a QECC can correct is <span class="math notranslate nohighlight">\(t=\left \lfloor{(d-1)/2}\right\rfloor\)</span> and the distance of our code is two, this means our QECC can only detect but not correct errors. Because the <code class="docutils literal notranslate"><span class="pre">distance</span></code> method indicates the smallest logical error it found, we can use this information to mitigate the error by either introducing another check to detect the error or by including the logical error as a check. We do the later. Doing this, we find that we have not increased the distance of the code. If we repeat the process two more times we will end up with a code that has no logical qubits and, therefore, encodes a stabilizer state:</p>
+<a class="reference internal image-reference" href="../_images/stabcode3.png"><img alt="../_images/stabcode3.png" class="align-center" src="../_images/stabcode3.png" style="width: 200px;" /></a>
+<p>We seemly failed to create a higher distance code; however, we can persevere by removing a higher-weight stabilizer generator. If we remove the check that acts like Pauli <span class="math notranslate nohighlight">\(Z\)</span> on qubits 7, 8, and 9, we will get the stabilizer code in:</p>
+<a class="reference internal image-reference" href="../_images/stabcode4.png"><img alt="../_images/stabcode4.png" class="align-center" src="../_images/stabcode4.png" style="width: 200px;" /></a>
+<p>Evaluating the distance of this new version of the code:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">tools</span><span class="o">.</span><span class="n">VerifyStabilizers</span><span class="p">()</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">7</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># qecc.check(&#39;Z&#39;, (7, 8, 9))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">8</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">9</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">((</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="s1">&#39;Y&#39;</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">((</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="s1">&#39;Y&#39;</span><span class="p">),</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="mi">5</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">8</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="s1">&#39;Z&#39;</span><span class="p">,</span> <span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="mi">9</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">compile</span><span class="p">()</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">generators</span><span class="p">()</span>
+<span class="go">Number of data qubits: 10</span>
+<span class="go">Number of checks: 9</span>
+<span class="go">Number of logical qubits: 1</span>
+<span class="go">----</span>
+
+<span class="go">Stabilizer generators:</span>
+<span class="go">  XIXZYIIIII</span>
+<span class="go">  IXXIIYZIII</span>
+<span class="go">  IIZIZZIZII</span>
+<span class="go">  IIIZIIIIZI</span>
+<span class="go">  XXIIIIIIII</span>
+<span class="go">  ZZZIIIIIII</span>
+<span class="go">  IIIIIIZIIZ</span>
+<span class="go">  IIIXXIIXXI</span>
+<span class="go">  IIIIIXXXIX</span>
+
+<span class="go">Destabilizer generators:</span>
+<span class="go">  IIIIZIIIZI</span>
+<span class="go">  ZZIIZIIIZI</span>
+<span class="go">  ZZIIZXIIZI</span>
+<span class="go">  IIIXZIIIZI</span>
+<span class="go">  ZIIIZIIIZI</span>
+<span class="go">  ZZXIZXIIZI</span>
+<span class="go">  ZZIIZIXIZI</span>
+<span class="go">  IIIIIIIIZI</span>
+<span class="go">  IIIIIIIIIZ</span>
+
+<span class="go">Logical operators:</span>
+<span class="go">. Logical Z #1:</span>
+<span class="go">  IIIIIIIZZZ</span>
+<span class="go">. Logical X #1:</span>
+<span class="go">  ZZIIZXIXZI</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">distance</span><span class="p">()</span>
+
+<span class="go">----</span>
+<span class="go">Checking errors of length 1...</span>
+<span class="go">Checking errors of length 2...</span>
+<span class="go">Checking errors of length 3...</span>
+<span class="go">Logical error found: Xs - {0, 2, 7} Zs - set()</span>
+<span class="go">This is a [[10, 1, 3]] code.</span>
+</pre></div>
+</div>
+<p>Thus, we have developed a simple distance three code.</p>
+</div>
+
+
+           </div>
+           
+          </div>
+          <footer>
+  
+    <div class="rst-footer-buttons" role="navigation" aria-label="footer navigation">
+      
+        <a href="creating_qecc_class.html" class="btn btn-neutral float-right" title="Creating a QECC Class" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right"></span></a>
+      
+      
+        <a href="index.html" class="btn btn-neutral" title="Examples" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left"></span> Previous</a>
+      
+    </div>
+  
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>
+        &copy; Copyright 2018 National Technology &amp; Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software.
+
+    </p>
+  </div>
+  Built with <a href="http://sphinx-doc.org/">Sphinx</a> using a <a href="https://github.com/rtfd/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>. 
+
+</footer>
+
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+  
+
+
+  
+
+    <script type="text/javascript">
+        var DOCUMENTATION_OPTIONS = {
+            URL_ROOT:'../',
+            VERSION:'0.1.0',
+            LANGUAGE:'None',
+            COLLAPSE_INDEX:false,
+            FILE_SUFFIX:'.html',
+            HAS_SOURCE:  true,
+            SOURCELINK_SUFFIX: '.txt'
+        };
+    </script>
+      <script type="text/javascript" src="../_static/jquery.js"></script>
+      <script type="text/javascript" src="../_static/underscore.js"></script>
+      <script type="text/javascript" src="../_static/doctools.js"></script>
+      <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+
+  
+
+  <script type="text/javascript" src="../_static/js/theme.js"></script>
+
+  <script type="text/javascript">
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

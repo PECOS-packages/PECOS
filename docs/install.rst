@@ -8,8 +8,8 @@ Requirements
 
 Package requirements include:
 
-* NumPy
-* SciPy
+* NumPy 1.15+
+* SciPy 1.1+
 * Matplotlib 2.2+
 * NetworkX 2.1+
 

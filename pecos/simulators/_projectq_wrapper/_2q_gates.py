@@ -16,19 +16,24 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-from .sparsesim import State as pySparseSim
+from projectq.ops import H, C, Z
 
-# C++ version of SparseStabSim wrapper
-try:
-    from .cysparsesim import State as SparseSim
-    from .cysparsesim import State as cySparseSim
-except ImportError:
-    from .sparsesim import State as SparseSim
 
-StabSim = SparseSim  # Default stabilizer simulator
-
-try:
-    import projectq
-    from ._projectq_wrapper.state import State as ProjectQSim
-except ImportError:
+def II(state, qubits, **kwargs):
     pass
+
+
+def G2(state, qubits):
+    """
+    Applies a CZ.H(1).H(2).CZ
+
+    Returns:
+
+    """
+    q1 = state.qids[qubits[0]]
+    q2 = state.qids[qubits[0]]
+
+    C(Z) | (q1, q2)
+    H | q1
+    H | q2
+    C(Z) | (q1, q2)

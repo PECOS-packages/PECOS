@@ -8,8 +8,8 @@ Requirements
 
 Package requirements include:
 
-* NumPy
-* SciPy
+* NumPy 1.15+
+* SciPy 1.1+
 * Matplotlib 2.2+
 * NetworkX 2.1+
 
@@ -17,11 +17,10 @@ Optional packages include:
 
 * Cython (for compiling C and C++ extensions)
 * PyTest (for running tests)
+* ProjectQ (to take advantage of ProjectQ's simulators via PECOS)
 
 Installing and Uninstalling
 ---------------------------
-
-
 
 PECOS has been developed to run on both Windows and Linux-based sytems. 
 
@@ -35,7 +34,7 @@ To install from GitHub go to:
 https://github.com/PECOS-packages/PECOS
 
 Then, download/unzip or clone the version of PECOS you would like to use. Next, navigate to the root of the package 
-(where setup.py is located) and run:
+(where setup.py is located) and run the command:
 
 >>> pip install .   # doctest: +SKIP
 

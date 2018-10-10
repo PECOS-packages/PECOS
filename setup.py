@@ -55,9 +55,8 @@ setup(
     ],
     tests_require=['pytest>=3.0.0'],
     extras_require={
-        'all': ['cython'],
-        'cpp_simulators': ['cython'],
-        'simulators': ['cirq', 'projectq'],
+        'all': ['cirq', 'cython', 'projectq'],
+        'simulators': ['cirq', 'cython', 'projectq'],
     },
     license='Apache 2',
     classifiers=[

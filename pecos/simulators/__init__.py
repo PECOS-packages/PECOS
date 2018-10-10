@@ -16,14 +16,14 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-from .sparsesim import State as pySparseSim
+from ._sparsesim import State as pySparseSim
 
 # C++ version of SparseStabSim wrapper
 try:
     from .cysparsesim import State as SparseSim
     from .cysparsesim import State as cySparseSim
 except ImportError:
-    from .sparsesim import State as SparseSim
+    from ._sparsesim import State as SparseSim
 
 StabSim = SparseSim  # Default stabilizer simulator
 

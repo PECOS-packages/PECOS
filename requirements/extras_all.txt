@@ -1,2 +1,4 @@
-# Requirements to run the extras (c++ simulators)
+# Requirements to run the extras (simulators)
+cirq
 cython
+projectq

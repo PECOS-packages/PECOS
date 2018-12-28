@@ -65,13 +65,12 @@ class State(object):
             else:
                 self.gate_dict[symbol] = gate_obj
 
-    def run_gate(self, symbol, locations, output=True, flush=True, **gate_kwargs):
+    def run_gate(self, symbol, locations, flush=True, **gate_kwargs):
         """
 
         Args:
             symbol:
             locations:
-            output:
             flush(bool): Whether to flush. Note: Measurements and initializations will flush anyway.
             **gate_kwargs: A dictionary specifying extra parameters for the gate.
 
@@ -81,29 +80,19 @@ class State(object):
 
         # TODO: Think about using All or Tensor... to apply gates to multiple gates of the same type...
 
-        if output:
-            output = {}
-            for location in locations:
-                results = self.gate_dict[symbol](self, location, **gate_kwargs)
+        output = {}
+        for location in locations:
+            results = self.gate_dict[symbol](self, location, **gate_kwargs)
 
-                if results:
-                    output[location] = results
+            if results:
+                output[location] = results
 
-            if flush:
-                self.eng.flush()
+        if flush:
+            self.eng.flush()
 
-            return output
+        return output
 
-        else:
-            for location in locations:
-                self.gate_dict[symbol](self, location, **gate_kwargs)
-
-            if flush:
-                self.eng.flush()
-
-            return {}
-
-    def run_circuit(self, circuit, output=True):
+    def run_circuit(self, circuit):
         """
 
         Args:
@@ -118,9 +107,8 @@ class State(object):
         results = []
 
         for symbol, locations, gate_kwargs in circuit.items(params=True):
-            gate_output = self.run_gate(symbol, locations, output, flush=False, **gate_kwargs)
-            if output:
-                results.append(gate_output)
+            gate_output = self.run_gate(symbol, locations, flush=False, **gate_kwargs)
+            results.append(gate_output)
 
         self.eng.flush()
         return results

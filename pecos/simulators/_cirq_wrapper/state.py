@@ -60,14 +60,13 @@ class State(object):
             else:
                 self.gate_dict[symbol] = gate_obj
 
-    def run_gate(self, symbol, locations, output=True, flush=True, **gate_kwargs):
+    def run_gate(self, symbol, locations, flush=True, **gate_kwargs):
         """
         Applies the gate indicated by `symbol` to the gate locations in the set `locations`.
 
         Args:
             symbol (str): String representing gate.
             locations (set of int, set of tuple of int):
-            output (bool): Whether to return a measurement output.
             flush (bool): Whether to flush. Note: Measurements and initializations will flush anyway.
             **gate_kwargs: A dictionary specifying extra parameters for the gate.
 

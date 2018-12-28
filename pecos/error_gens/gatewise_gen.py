@@ -68,12 +68,12 @@ class GatewiseGen(ParentErrorGen):
         self.ErrorSet = self.gen.ErrorSet
         self.ErrorSetTwoQuditTensorProduct = self.gen.ErrorSetTwoQuditTensorProduct
 
-    def start(self, logical_circuit, error_params):
+    def start(self, circuit, error_params):
         """
         Start up at the beginning of a circuit simulation.
 
         Args:
-            logical_circuit:
+            circuit:
             error_params:
 
         Returns:
@@ -81,7 +81,7 @@ class GatewiseGen(ParentErrorGen):
         """
 
         self.error_circuits = ErrorCircuits()
-        self.logical_circuit = logical_circuit
+        self.circuit = circuit
         self.error_params = error_params
 
         return self.error_circuits
@@ -133,6 +133,16 @@ class GatewiseGen(ParentErrorGen):
         # return {'before': before, 'after': after}
 
     def get_gate_error(self, symbol, gate_locations, error_params):
+        """
+
+        Args:
+            symbol:
+            gate_locations:
+            error_params:
+
+        Returns:
+
+        """
 
         self.error_params = error_params
 

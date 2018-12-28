@@ -20,7 +20,7 @@
 Contains the parent classes for QECCs, logical gates, and logical instructions.
 """
 from .plot import plot_qecc
-from ..circuit_converters.checks2circuit import Check2Circuits
+from ..check_circuits.checks2circuit import Check2Circuits
 
 
 class QECC(object):

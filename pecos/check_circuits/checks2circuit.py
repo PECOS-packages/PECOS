@@ -87,7 +87,7 @@ class Check2Circuits:
 
             largest_tick = 0
             # find maximum tick
-            for gate_symbol, locations, params in abstract_circuit.items(params=True):
+            for gate_symbol, locations, params in abstract_circuit.items():
 
                 if gate_symbol == 'X check' or gate_symbol == 'Z check':
 
@@ -114,7 +114,7 @@ class Check2Circuits:
 
         # Add circuits
         # ============
-        for gate_symbol, locations, params in abstract_circuit.items(params=True):
+        for gate_symbol, locations, params in abstract_circuit.items():
             if gate_symbol == 'X check' or gate_symbol == 'Z check':
 
                 datas = params['datas']
@@ -206,7 +206,7 @@ class Check2Circuits:
         max_xdatas = 0
         max_zdatas = 0
 
-        for gate_symbol, _, params in abstract_circuit.items(params=True):
+        for gate_symbol, _, params in abstract_circuit.items():
 
             if gate_symbol == 'X check' or gate_symbol == 'Z check':
 

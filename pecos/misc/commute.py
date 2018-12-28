@@ -30,7 +30,7 @@ def qubit_pauli(first_circuit, second_circuit):
 
     first_xs = set([])
     first_zs = set([])
-    for symbol, gate_locations in first_circuit.items(params=False):
+    for symbol, gate_locations, _ in first_circuit.items():
 
         if symbol == 'X':
             first_xs.update(gate_locations)
@@ -44,7 +44,7 @@ def qubit_pauli(first_circuit, second_circuit):
 
     second_xs = set([])
     second_zs = set([])
-    for symbol, gate_locations in second_circuit.items(params=False):
+    for symbol, gate_locations, _ in second_circuit.items():
 
         if symbol == 'X':
             second_xs.update(gate_locations)

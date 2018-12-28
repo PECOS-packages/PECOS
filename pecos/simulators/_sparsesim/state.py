@@ -53,12 +53,15 @@ class State(object):
     """
     gate_dict = bindings.gate_dict
 
-    def __init__(self, num_qubits):
+    def __init__(self, num_qubits, **kwargs):
         """
         Initializes the stabilizer state.
 
         :param num_qubits: Number of qubits to represent.
         """
+
+        if kwargs:
+            raise Exception('No extra keyword arguments recognized!')
 
         if not isinstance(num_qubits, int):
             raise Exception('``num_qubits`` should be of type ``int.``')
@@ -94,41 +97,32 @@ class State(object):
     def find_stab(self, xs, zs):
         return find_stabilizer(self, xs, zs)
 
-    def run_gate(self, symbol, locations, output=True, **gate_kwargs):
+    def run_gate(self, symbol, locations, **gate_kwargs):
         """
 
         Args:
             symbol:
             locations:
-            output:
             **gate_kwargs:
 
         Returns:
 
         """
 
-        if output:
-            output = {}
-            for location in locations:
-                results = self.gate_dict[symbol](self, location, **gate_kwargs)
+        output = {}
+        for location in locations:
+            results = self.gate_dict[symbol](self, location, **gate_kwargs)
 
-                if results:
-                    output[location] = results
+            if results:
+                output[location] = results
 
-            return output
+        return output
 
-        else:
-            for location in locations:
-                self.gate_dict[symbol](self, location, **gate_kwargs)
-
-            return {}
-
-    def run_circuit(self, circuit, output=True):
+    def run_circuit(self, circuit):
         """
 
         Args:
             circuit (QuantumCircuit): A circuit instance or object with an appropriate items() generator.
-            output (bool): Whether to return an output.
 
         Returns (list): If output is True then the circuit output is returned. Note that this output format may differ
         from what a ``circuit_runner`` will return for the same method named ``run_circuit``.
@@ -138,9 +132,8 @@ class State(object):
         results = []
 
         for symbol, locations, gate_kwargs in circuit.items(params=True):
-            gate_output = self.run_gate(symbol, locations, output, **gate_kwargs)
-            if output:
-                results.append(gate_output)
+            gate_output = self.run_gate(symbol, locations, **gate_kwargs)
+            results.append(gate_output)
 
         return results
 

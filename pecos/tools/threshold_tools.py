@@ -266,7 +266,7 @@ def codecapacity_logical_rate(runs, qecc, distance, error_gen, error_params, dec
 
     for _ in range(runs):
         # State
-        state = circuit_runner.init(qecc.num_qudits, simulator=state_sim)
+        state = circuit_runner.init(qecc.num_qudits)
 
         # Create ideal logical |0>
         circuit_runner.run_logic(state, initzero)

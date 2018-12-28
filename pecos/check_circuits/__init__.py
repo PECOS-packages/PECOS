@@ -1,7 +1,5 @@
 #  =========================================================================  #
-#   Copyright 2018 National Technology & Engineering Solutions of Sandia,
-#   LLC (NTESS). Under the terms of Contract DE-NA0003525 with NTESS,
-#   the U.S. Government retains certain rights in this software.
+#   Copyright 2018 Ciarán Ryan-Anderson
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -17,8 +15,14 @@
 #  =========================================================================  #
 
 """
-This name space contains classes and functions for converting circuit data-structures into other circuit
-data-structures.
+Check Circuits
+==============
+
+This namespace is for callables that take checks and convert them to physical quantum-circuits.
+
+Callables that can be used for general QECCs should be stored here. If a circuit implementation is specific to the QECC
+it may be stored in the QECC's folder.
+
 """
 
-from .std2chs import std2chs
+from .checks2circuit import Check2Circuits

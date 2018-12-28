@@ -37,15 +37,15 @@ class ParentErrorGen(object):
         self.error_circuits = None
 
         self.error_params = None
-        self.logical_circuit = None
+        self.circuit = None
         self.generator_class = Generator
 
-    def start(self, logical_circuit, error_params):
+    def start(self, circuit, error_params):
         """
         Start up at the beginning of a circuit simulation.
 
         Args:
-            logical_circuit:
+            circuit:
             error_params:
 
         Returns:
@@ -53,7 +53,7 @@ class ParentErrorGen(object):
         """
 
         self.error_circuits = ErrorCircuits()
-        self.logical_circuit = logical_circuit
+        self.circuit = circuit
         self.error_params = error_params
 
         return self.error_circuits

@@ -163,7 +163,7 @@ def surface4444_identity(instr):
 
     # Assume the QECC uses checks
     # add edges based on checks
-    for gate_symbol, _, params in abs_circ.items(params=True):
+    for gate_symbol, _, params in abs_circ.items():
 
         ancilla = params['ancillas']
         data_qubits = params['datas']
@@ -405,7 +405,7 @@ def surface4444medial_identity(instr):
 
     # Assume the QECC uses checks
     # add edges based on checks
-    for gate_symbol, _, params in abs_circ.items(params=True):
+    for gate_symbol, _, params in abs_circ.items():
 
         data_qudits = params['datas']
         ancilla = params['ancillas']

@@ -130,14 +130,13 @@ class QuantumCircuit(MutableSequence):
             gates = self._gates_class(self, {}, **params)
             self._ticks.append(gates)
 
-    def items(self, tick=None, params=True):
+    def items(self, tick=None):
         """An iterator through all gates/qudits in the quantum circuit.
 
         If ``tick`` is not None then it will iterate over only the qudits/qudits in the corresponding tick.
 
         Args:
             tick:
-            params:
 
         Returns:
 
@@ -146,13 +145,16 @@ class QuantumCircuit(MutableSequence):
         if tick is None:
 
             for gates in self._ticks:
-                for args in gates.items(params):
+                for args in gates.items():
                     yield args
 
         else:
 
-            for args in self._ticks[tick].items(params):
+            for args in self._ticks[tick].items():
                 yield args
+
+    def iter_circuits(self):
+        yield self
 
     def insert(self, tick, item):
         """Inserts ``gate_dict`` into ``ticks`` at index ``tick``.
@@ -240,7 +242,7 @@ class QuantumCircuit(MutableSequence):
         for gates in self._ticks:
             # str_list.append(dict(tick.symbols))
             tick_list = []
-            for symbol, locations, params in gates.items(params=True):
+            for symbol, locations, params in gates.items():
                 if len(params) == 0:
                     tick_list.append("'%s': %s" % (symbol, locations))
                 else:
@@ -402,12 +404,14 @@ class ParamGateCollection:
                     else:
                         self.active_qudits.add(qi)
 
-    def items(self, params=True, tick=None):
+    def items(self, tick=None):
         """
         Generator to return a dictionary-like iter.
         Returns:
 
         """
+
+        params = True
 
         if params:
             for gate_symbol, gate_list in self.symbols.items():
@@ -422,7 +426,7 @@ class ParamGateCollection:
     def __str__(self):
 
         tick_list = []
-        for symbol, locations, params in self.items(params=True):
+        for symbol, locations, params in self.items():
             if len(params) == 0:
                 tick_list.append("'%s': %s" % (symbol, locations))
             else:

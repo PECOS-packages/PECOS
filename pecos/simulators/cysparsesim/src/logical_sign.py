@@ -54,7 +54,7 @@ def find_logical_signs(state, logical_circuit, delogical_circuit=None):
     delogical_xs = set([])
     delogical_zs = set([])
 
-    for symbol, gate_locations in logical_circuit.items(params=False):
+    for symbol, gate_locations, _ in logical_circuit.items():
 
         if symbol == 'X':
             logical_xs.update(gate_locations)
@@ -67,7 +67,7 @@ def find_logical_signs(state, logical_circuit, delogical_circuit=None):
             raise Exception('Can not currently handle logical operator with operator "%s"!' % symbol)
 
     if delogical_circuit:  # Check the relationship between logical operator and delogical operator.
-        for symbol, gate_locations in delogical_circuit.items(params=False):
+        for symbol, gate_locations, _ in delogical_circuit.items():
 
             if symbol == 'X':
                 delogical_xs.update(gate_locations)

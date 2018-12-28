@@ -89,26 +89,30 @@ class LogicalCircuit(QuantumCircuit):
                 if self.qudit_set is None:
                     raise Exception('Qudit set should be set!')
 
-    def iter_physical_gates(self, logical_params=False):
+    def iter_physical_gates(self):
         """
         Generator to iterate over all the physical gates in the logical circuit.
-
-        Args:
-            logical_params:
 
         Returns:
 
         """
-        for element in self._ticks:
-            for logical_gate, _ in element.items(params=logical_params):
+        for logical_tick in self._ticks:
+            for logical_gate, _, _ in logical_tick.items():
                 for circuit in logical_gate.circuits:
-                    for symbol, locations, gate_kwargs in circuit.items(params=True):
+                    for symbol, locations, gate_kwargs in circuit.items():
                         yield symbol, locations, gate_kwargs
+
+    def iter_circuits(self):
+
+        for logical_tick in self._ticks:
+            for logical_gate, _, _ in logical_tick.items():
+                for circuit in logical_gate.circuits:
+                        yield circuit  # TODO: give circuit, params {logical_circuit: ..., gate: ..., qecc: ...}
 
     def __iter__(self):
 
         for element in self._ticks:
-            for gate, _ in element.items(params=False):
+            for gate, _, _ in element.items():
                 yield gate
 
     def __str__(self):

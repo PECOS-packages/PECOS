@@ -115,7 +115,7 @@ def form_errors(xs, zs):
 
 
 def _apply_err_spacetime(state, circ_runner, init_circ, syn_circ, err_dict, decoder, logical_op, QECC):
-    circ_runner.run_logic(state, init_circ)
+    circ_runner.run(state, init_circ)
 
     syn_circ = QECC.instruction('instr_syn_extract', num_syn_extract=1)
     num_ticks = len(syn_circ.circuit)
@@ -159,9 +159,9 @@ def _apply_err_spacetime(state, circ_runner, init_circ, syn_circ, err_dict, deco
 
 def _apply_err(state, circ_runner, init_circ, syn_circ, error, decoder, logical_op):
 
-    circ_runner.run_logic(state, init_circ)
+    circ_runner.run(state, init_circ)
     circ_runner.run_circuit(state, error)
-    output, _ = circ_runner.run_logic(state, syn_circ)
+    output, _ = circ_runner.run(state, syn_circ)
     syn = output.simplified(True)
 
     if syn:

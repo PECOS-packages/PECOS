@@ -58,7 +58,7 @@ class ParentErrorGen(object):
 
         return self.error_circuits
 
-    def generate(self, logical_gate, logical_coord, tick_index):
+    def generate_tick_errors(self, tick_circuit, time, **params):
         """
         Returns before errors, after errors, and replaced locations for the given key (args).
 

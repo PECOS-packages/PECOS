@@ -31,12 +31,12 @@ class ErrorCircuits(dict):
 
         super().__init__()
 
-    def add_circuits(self, key, before_errors=None, after_errors=None, replaced_locations=None):
+    def add_circuits(self, time, before_errors=None, after_errors=None, replaced_locations=None):
         """
         Add error circuits and gate locations to ignore (replaced_locations).
 
         Args:
-            key:
+            time:
             before_errors:
             after_errors:
             replaced_locations:
@@ -57,35 +57,4 @@ class ErrorCircuits(dict):
             error_dict['replaced'] = replaced_locations
 
         if error_dict:
-            # self[key] = error_dict
-            gate_instr_tuple, tick_id = key
-            tick_dict = self.setdefault(gate_instr_tuple, {})
-            tick_dict[tick_id] = error_dict
-
-    def _old_simple_add(self, logical_tick_index, instr_index, tick_index, logical_gate_location=None, before_errors=None,
-                   after_errors=None, replaced_locations=None):
-        """
-        Simplifies the creation of error circuits by directly stating the time and location of error circuits.
-
-        Args:
-            logical_tick_index:
-            instr_index:
-            tick_index:
-            logical_gate_location:
-            before_errors:
-            after_errors:
-            replaced_locations:
-
-        Returns:
-
-        """
-
-        if logical_gate_location is None:
-            logical_gate_location = frozenset([None])
-
-        logical_time = LogicalTime(logical_tick_index, instr_index)
-        logical_space = LogicalSpace(logical_gate_location)
-
-        key = ((logical_space, logical_time), tick_index)
-
-        self.add_circuits(key, before_errors, after_errors, replaced_locations)
+            self[time] = error_dict

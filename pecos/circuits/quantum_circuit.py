@@ -47,6 +47,8 @@ class QuantumCircuit(MutableSequence):
         self._ticks_class = list
         self._ticks = self._ticks_class()
         self.params = params
+        self.qudits = set()
+        # TODO: If all the gates on a qudit are discarded... then the qudit will not be removed from this set... fix
 
         if 'tracked_qudits' in params:
             raise Exception('error')
@@ -154,7 +156,18 @@ class QuantumCircuit(MutableSequence):
                 yield args
 
     def iter_circuits(self):
-        yield self
+        """An iterator that allows loops over circuits to just give this circuit."""
+        time = None
+        yield self, time, {'circuit': self.params}
+
+    def iter_ticks(self):
+
+        for tick in range(len(self)):
+            tick_gates = self[tick]
+            time = tick
+            yield tick_gates, time, {'params': self.params}
+            # TODO: note this is the circuit params
+            # TODO: need something like: params {logical_circuit: ..., gate: ..., qecc: ...}
 
     def insert(self, tick, item):
         """Inserts ``gate_dict`` into ``ticks`` at index ``tick``.
@@ -398,6 +411,8 @@ class ParamGateCollection:
                     q_iter = location
 
                 for qi in q_iter:
+
+                    self.circuit.qudits.add(qi)
 
                     if qi in self.active_qudits:
                         raise Exception('Qudit %s has already been acted on by a gate!' % str(qi))

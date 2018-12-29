@@ -30,7 +30,7 @@ class LogicalInstruction(object):
     Logical instructions are circuits that
     """
 
-    def __init__(self, qecc, symbol, **gate_params):
+    def __init__(self, qecc, symbol, **params):
         """
 
         Args:
@@ -41,7 +41,9 @@ class LogicalInstruction(object):
 
         self.symbol = symbol
         self.qecc = qecc  # The QECC object this instruction belongs to.
-        self.gate_params = gate_params  # Parameters used in defining the logical instruction.
+        self.params = params
+        self.gate_params = self.params  # Parameters used in defining the logical instruction.
+        # TODO: should this be the same as the gate parameters?
         self.abstract_circuit = None  # Abstract representation of the circuit.
         self.circuit = None  # Compiled circuit.
 
@@ -50,12 +52,15 @@ class LogicalInstruction(object):
         self.ancilla_qudit_set = self.qecc.ancilla_qudit_set  # set of qudit ids corresponding to ancilla qudits.
         # The ancilla set may differ from qecc. (might be a subset)
 
+        self.params['data_qudit_set'] = self.data_qudit_set
+        self.params['ancilla_qudit_set'] = self.ancilla_qudit_set
+
         # Logical operations
         # These are the expected initial and final logical operations
         self.initial_logical_ops = {}
         self.final_logical_ops = {}
 
-        self.gate_params_tuple = make_hashable_params(gate_params)  # Used for hashing.
+        self.params_tuple = make_hashable_params(params)  # Used for hashing.
 
     def plot(self, **kwargs):
         """Creates a plot of the logical instruction.
@@ -74,38 +79,33 @@ class LogicalInstruction(object):
         """
 
         compiler = self.qecc.circuit_compiler
-        compiler = self.gate_params.get('circuit_compiler', compiler)
+        compiler = self.params.get('circuit_compiler', compiler)
 
         # self.circuit = compiler.compile(self.abstract_circuit, mapping=self.qecc.mapping, *args, **kwargs)
         self.circuit = compiler.compile(self, abstract_circuit, *args, **kwargs)
 
-    def items(self, params=True):
+    def items(self):
         """
-
-        Args:
-            params (bool): Whether to return circuit parameters.
-
         Yields: Yields the
 
         """
 
         if self.circuit:
-            return self.circuit.items(params=params)
+            return self.circuit.items()
         else:
             raise Exception('')
 
     def __str__(self):
 
         return "[%s %s] - Logical instruction: '%s' %s" % (self.qecc.name, self.qecc.qecc_params, self.symbol,
-                                                           self.gate_params)
+                                                           self.params)
 
     def __hash__(self):
         # The instruction is unique. A hash can be used to identify it.
-        return hash(('instr', self.symbol, self.gate_params_tuple))
+        return hash(('instr', self.symbol, self.params_tuple))
 
     def __eq__(self, other):
-        return (self.symbol, self.gate_params_tuple, True) == (other.symbol, other.gate_params_tuple,
-                                                               hasattr(other, 'circuit'))
+        return (self.symbol, self.params_tuple, True) == (other.symbol, other.params_tuple, hasattr(other, 'circuit'))
 
     def __ne__(self, other):
         return not(self == other)

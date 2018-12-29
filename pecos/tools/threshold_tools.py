@@ -269,13 +269,13 @@ def codecapacity_logical_rate(runs, qecc, distance, error_gen, error_params, dec
         state = circuit_runner.init(qecc.num_qudits)
 
         # Create ideal logical |0>
-        circuit_runner.run_logic(state, initzero)
+        circuit_runner.run(state, initzero)
         try:
             total_time += circuit_runner.total_time
         except AttributeError:
             pass
 
-        output, _ = circuit_runner.run_logic(state, syn_extract, error_gen=error_gen, error_params=error_params)
+        output, _ = circuit_runner.run(state, syn_extract, error_gen=error_gen, error_params=error_params)
         try:
             total_time += circuit_runner.total_time
         except AttributeError:
@@ -364,20 +364,20 @@ def codecapacity_logical_rate2(runs, qecc, distance, error_gen, error_params, de
         state1 = circuit_runner.init(qecc.num_qudits, simulator=state_sim)
 
         # Create ideal logical |0>
-        circuit_runner.run_logic(state0, initzero)
+        circuit_runner.run(state0, initzero)
         try:
             total_time += circuit_runner.total_time
         except AttributeError:
             pass
 
         # Create ideal logical |+>
-        circuit_runner.run_logic(state1, initplus)
+        circuit_runner.run(state1, initplus)
         try:
             total_time += circuit_runner.total_time
         except AttributeError:
             pass
 
-        output, error_circuits = circuit_runner.run_logic(state0, syn_extract, error_gen=error_gen,
+        output, error_circuits = circuit_runner.run(state0, syn_extract, error_gen=error_gen,
                                                           error_params=error_params)
         try:
             total_time += circuit_runner.total_time
@@ -386,7 +386,7 @@ def codecapacity_logical_rate2(runs, qecc, distance, error_gen, error_params, de
 
         # syn = output.simplified(True)
 
-        circuit_runner.run_logic(state1, syn_extract, error_circuits=error_circuits)
+        circuit_runner.run(state1, syn_extract, error_circuits=error_circuits)
         try:
             total_time += circuit_runner.total_time
         except AttributeError:
@@ -526,7 +526,7 @@ def codecapacity_logical_rate3(runs, qecc, distance, error_gen, error_params, de
         state = circuit_runner.init(qecc.num_qudits, simulator=state_sim)
 
         # Create ideal logical |0>
-        circuit_runner.run_logic(state, init_circuit)
+        circuit_runner.run(state, init_circuit)
         try:
             total_time += circuit_runner.total_time
         except AttributeError:
@@ -535,7 +535,7 @@ def codecapacity_logical_rate3(runs, qecc, distance, error_gen, error_params, de
         for duration in range(max_syn_extract):
 
             # Run syndrome extraction
-            output, _ = circuit_runner.run_logic(state, syn_extract, error_gen=error_gen, error_params=error_params)
+            output, _ = circuit_runner.run(state, syn_extract, error_gen=error_gen, error_params=error_params)
             try:
                 total_time += circuit_runner.total_time
             except AttributeError:

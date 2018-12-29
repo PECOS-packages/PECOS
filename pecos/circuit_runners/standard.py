@@ -19,15 +19,10 @@
 import struct
 import os
 import random
-from collections import namedtuple
 import numpy as np
 from ..outputs import StdOutput
-from ..circuits import QuantumCircuit, LogicalCircuit
+from ..circuits import QuantumCircuit
 from .. import simulators as sims
-
-# TODO: This seem a bit overly complicated:
-LogicalTime = namedtuple('LogicalTime', 'logical_tick_index, instr_index')
-LogicalSpace = namedtuple('LogicalSpace', 'logical_gate_location')
 
 empty_circuit = QuantumCircuit()
 
@@ -83,33 +78,13 @@ class Standard(object):
         """
         return self.simulator(num_qudits, **kwargs)
 
-    def run(self, state, circuit, error_gen=None, error_params=None, error_circuits=None, output=None,
-            removed_locations=None):
-        """
-        Runs a generic circuit whether logical, physical, or otherwise.
-        Args:
-            state:
-            circuit:
-            error_gen:
-            error_params:
-            error_circuits:
-            output:
-            removed_locations:
-
-        Returns:
-
-        """
-        # TODO: Figure out this output buisness...
-
-        pass
-
-    def run_logic(self, state, logical_circuit, error_gen=None, error_params=None, error_circuits=None, output=None):
+    def run(self, state, circuit, error_gen=None, error_params=None, error_circuits=None, output=None):
         """
         Run logical circuit and these circuits to update a state.
 
         Args:
             state:
-            logical_circuit:
+            circuit:
             output:
             error_gen:
             error_params:
@@ -126,75 +101,81 @@ class Standard(object):
         # Determine if there are no, previous, or new errors.
         #
 
-        generate_errors = False
         # No errors
         if error_gen is None:
+            generate_errors = False
             if error_circuits is None:
                 error_circuits = {}
 
         # new errors
         else:
             generate_errors = True
-            error_circuits = error_gen.start(logical_circuit, error_params)
+            error_circuits = error_gen.start(circuit, error_params)
         # --------------------------------------------------
 
-        # Logical gates
-        for logical_index in range(len(logical_circuit)):
+        for tick_circuit, time, params in circuit.iter_ticks():
 
-            for logical_gate, _, _ in logical_circuit.items(tick=logical_index):
+            # Get errors
+            if params.get('circuit', {}).get('error_free', False):
+                errors = {}
 
-                # logical locations
-                # for logical_location in logical_gate_locations:
+            else:
 
-                # TODO: need an iter for both QC and logical circuits that loops through ticks and places all the time
-                # in one variable... so error generators can work on both seamlessly...
-                # TODO: combine run_logic and run_circuit... make a new... run_tick
-                # TODO: run through ticks or circuits?
-                # Ticks
-                for instr_index, tick_index, tick_circuit in logical_gate.iter_physical_ticks():
+                if generate_errors:
+                    error_circuits = error_gen.generate_tick_errors(tick_circuit, time, **params)
 
-                    logical_time = (logical_index, instr_index)
+                errors = error_circuits.get(time, {})
 
-                    # Get errors
-                    if logical_gate.error_free:
-                        errors = {}
+            # --------------------
+            # RUN QUANTUM CIRCUITS
+            # --------------------
 
-                    else:
+            # Before errors
+            # -------------
+            self.run_circuit(state, errors.get('before', empty_circuit))
 
-                        if generate_errors:
-                            error_gen.generate(logical_gate, logical_time, tick_index)
-                            # TODO: how does this affect the code? what is the output??? error_circuits???
+            # Ideal tick
+            # ----------
+            result = self.run_gates(state, tick_circuit, removed_locations=errors.get('replaced'))
+            output.record(result, time)
 
-                        errors = error_circuits.get((logical_index, instr_index), {}).get(tick_index, {})
-
-                    # --------------------
-                    # RUN QUANTUM CIRCUITS
-                    # --------------------
-
-                    # Before errors
-                    # -------------
-                    result = self.run_circuit(state, errors.get('before', empty_circuit))
-                    output.record(result, logical_time, tick_index)
-
-                    # Ideal tick
-                    # ----------
-                    result = self.run_circuit(state, tick_circuit, removed_locations=errors.get('replaced'))
-                    output.record(result, logical_time, tick_index)
-
-                    # After errors
-                    # ------------
-                    result = self.run_circuit(state, errors.get('after', empty_circuit))
-                    output.record(result, logical_time, tick_index)
+            # After errors
+            # ------------
+            self.run_circuit(state, errors.get('after', empty_circuit))
 
         return output, error_circuits
 
-    def run_circuit(self, state, circuit, removed_locations=None):
+    def run_circuit(self, state, circuit, removed_locations=None, output=None):
         """
-        Apply a ``QuantumCircuit`` directly to a state without output.
+        Apply a ``QuantumCircuit`` directly to a state.
 
         Args:
             state:
             circuit:
+            removed_locations:
+            output:
+
+        Returns:
+
+        """
+
+        if output is None:
+            output = StdOutput()
+
+        for tick_circuit, tick_index, params in circuit.iter_ticks():
+            results = self.run_gates(state, tick_circuit, removed_locations)
+
+            output.record(results, tick_index)
+
+        return output
+
+    def run_gates(self, state, gates, removed_locations=None):
+        """
+        Directly apply a collection of quantum gates to a state.
+
+        Args:
+            state:
+            gates:
             removed_locations:
 
         Returns:
@@ -204,43 +185,18 @@ class Standard(object):
         if removed_locations is None:
             removed_locations = set([])
 
-        results = {}
+        gate_results = {}
+        for symbol, physical_gate_locations, params in gates.items():
 
-        try:
-            num_ticks = len(circuit)
-        except TypeError:
-            num_ticks = 1
-
-        for t in range(num_ticks):
-
-            gate_results = {}
-            for symbol, physical_gate_locations, params in circuit.items(tick=t):
-                gate_kwargs = params.get('gate_kwargs', {})
-
+            if self.gate_dict:
                 gate_results = {}
+                for location in physical_gate_locations - removed_locations:
+                    this_result = self.gate_dict[symbol](state, location, **params.get('gate_kwargs', {}))
 
-                if self.gate_dict:
-                    for location in physical_gate_locations - removed_locations:
-                        this_result = self.gate_dict[symbol](state, location, **gate_kwargs)
+                    if this_result:
+                        gate_results[location] = this_result
+            else:
+                gate_results = self.simulator.run_gate(symbol, physical_gate_locations - removed_locations,
+                                                       **params.get('gate_kwargs', {}))
 
-                        if this_result:
-                            gate_results[location] = this_result
-                else:
-                    gate_results = self.simulator.run_gate(symbol, physical_gate_locations - removed_locations,
-                                                           **gate_kwargs)
-
-            if gate_results:
-                results[t] = gate_results
-
-        return results
-
-    def run_tick(self, state, tick, removed_locations=None):
-
-        if removed_locations is None:
-            removed_locations = set([])
-
-        results = {}
-
-        # for each gate in tick: symbol, locations, params
-
-        return results
+        return gate_results

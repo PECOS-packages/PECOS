@@ -63,25 +63,25 @@ def recovery_tester(qecc):
     # Run circuits
     # ------------
     state_zero = sim.init(qecc.num_qudits)
-    output_zero, _ = sim.run_logic(state_zero, initzero)
+    output_zero, _ = sim.run(state_zero, initzero)
 
     assert not output_zero
 
     state_plus = sim.init(qecc.num_qudits)
-    output_plus, _ = sim.run_logic(state_plus, initplus)
+    output_plus, _ = sim.run(state_plus, initplus)
 
     assert not output_plus
 
-    output1, error_circuits1 = sim.run_logic(state_zero, syn_ext)
-    output2, error_circuits2 = sim.run_logic(state_plus, syn_ext)
+    output1, error_circuits1 = sim.run(state_zero, syn_ext)
+    output2, error_circuits2 = sim.run(state_plus, syn_ext)
 
     assert error_circuits1 == error_circuits2
     assert not error_circuits1
     assert output1 == output2
     assert not output1
 
-    output1, error_circuits1 = sim.run_logic(state_zero, syn_ext, error_gen=depolar, error_params={'p': 0.3})
-    output2, error_circuits2 = sim.run_logic(state_plus, syn_ext, error_circuits=error_circuits1)
+    output1, error_circuits1 = sim.run(state_zero, syn_ext, error_gen=depolar, error_params={'p': 0.3})
+    output2, error_circuits2 = sim.run(state_plus, syn_ext, error_circuits=error_circuits1)
 
     assert error_circuits1 == error_circuits2
     assert output1 == output2

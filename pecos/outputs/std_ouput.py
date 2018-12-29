@@ -27,29 +27,22 @@ class StdOutput(dict):
     def __init__(self, *args, **kwargs):
 
         super().__init__(*args, **kwargs)
-        # self.results = {}
 
-    def record(self, result_dict, logical_time, tick_index):
+    def record(self, result_dict, time):
         """
 
         Args:
             result_dict:
-            logical_coord:
-            tick_index:
+            time:
 
         Returns:
 
         """
 
-        # logical_time = (gate_tick_time, instr_index)
-
         if result_dict:
-            # logical_dict = self.setdefault(logical_coord, SortedDict())
-            logical_dict = self.setdefault(logical_time, {})
 
-            for value in result_dict.values():
-                logical_dict.setdefault(tick_index, {}).update(value)
-            # temp_results = self.results.setdefault(time, dict)
+            logical_dict = self.setdefault(time, {})
+            logical_dict.update(result_dict)
 
     def simplified(self, last=False):
         """
@@ -63,15 +56,11 @@ class StdOutput(dict):
         """
 
         simple = {}
-        for logical_time, results in self.items():
+        for time, results in self.items():
 
-            # results=  {tick: {qid: int}} want just qids
+            fired = set(results.keys())
 
-            fired = set()
-            for _, fired_dict in results.items():
-                fired.update(fired_dict.keys())
-
-            simple[logical_time] = fired
+            simple[time] = fired
 
         if last and simple:
             # Get the last coordinate

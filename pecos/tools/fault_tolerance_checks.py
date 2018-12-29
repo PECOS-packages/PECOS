@@ -143,11 +143,11 @@ def t_errors_check(qecc, logical_gate=None, syn_extract=None, decoder=None, t_we
             state_zero = circ_sim.init(qecc.num_qudits)
             state_plus = circ_sim.init(qecc.num_qudits)
 
-            circ_sim.run_logic(state_zero, initzero)
-            circ_sim.run_logic(state_plus, initplus)
+            circ_sim.run(state_zero, initzero)
+            circ_sim.run(state_plus, initplus)
 
-            output, _ = circ_sim.run_logic(state_zero, logic, error_circuits=errors)
-            circ_sim.run_logic(state_plus, logic, error_circuits=errors)
+            output, _ = circ_sim.run(state_zero, logic, error_circuits=errors)
+            circ_sim.run(state_plus, logic, error_circuits=errors)
 
             syn = output.simplified(True)
 
@@ -170,8 +170,8 @@ def t_errors_check(qecc, logical_gate=None, syn_extract=None, decoder=None, t_we
             if logical_gate is None:  # The following is only required for EC.
 
                 # Any remaining syndromes?
-                output, _ = circ_sim.run_logic(state_zero, syn_extract)
-                # circ_sim.run_logic(state_plus, syn_extract, error_circuits=errors)
+                output, _ = circ_sim.run(state_zero, syn_extract)
+                # circ_sim.run(state_plus, syn_extract, error_circuits=errors)
                 syn = output.simplified(True)
 
                 if syn:
@@ -283,11 +283,11 @@ def fault_check(qecc, logical_gate=None, decoder=None, t_weight=None, error_set=
             state_zero = circ_sim.init(qecc.num_qudits)
             state_plus = circ_sim.init(qecc.num_qudits)
 
-            circ_sim.run_logic(state_zero, initzero)
-            circ_sim.run_logic(state_plus, initplus)
+            circ_sim.run(state_zero, initzero)
+            circ_sim.run(state_plus, initplus)
 
-            output, _ = circ_sim.run_logic(state_zero, logic, error_circuits=errors)
-            circ_sim.run_logic(state_plus, logic, error_circuits=errors)
+            output, _ = circ_sim.run(state_zero, logic, error_circuits=errors)
+            circ_sim.run(state_plus, logic, error_circuits=errors)
 
             syn = output.simplified(True)
 
@@ -333,7 +333,7 @@ def distance_check(qecc, mode=None, dist_mode=None):
     ideal_initlogic = LogicalCircuit(supress_warning=True)
     ideal_initlogic.append(qecc.gate('ideal init |0>'))
 
-    circ_sim.run_logic(state, ideal_initlogic)
+    circ_sim.run(state, ideal_initlogic)
 
     logical_op, delogical_op = qecc.instruction('instr_init_zero').logical_stabs[0]
 

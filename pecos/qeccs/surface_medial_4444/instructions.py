@@ -28,21 +28,21 @@ class InstrSynExtraction(LogicalInstruction):
     Parent class sets self.qecc.
     """
 
-    def __init__(self, qecc, symbol, **gate_params):
+    def __init__(self, qecc, symbol, **params):
 
-        super().__init__(qecc, symbol, **gate_params)
+        super().__init__(qecc, symbol, **params)
 
         qecc_init_ticks = qecc.qecc_params.get('init_ticks', 0)
         qecc_meas_ticks = qecc.qecc_params.get('meas_ticks', 7)
         qecc_x_ticks = qecc.qecc_params.get('x_ticks', [2, 4, 3, 5])
         qecc_z_ticks = qecc.qecc_params.get('z_ticks', [2, 4, 3, 5])
 
-        self.init_ticks = gate_params.get('init_ticks', qecc_init_ticks)
-        self.meas_ticks = gate_params.get('meas_ticks', qecc_meas_ticks)
-        self.x_ticks = gate_params.get('x_ticks', qecc_x_ticks)
-        self.z_ticks = gate_params.get('z_ticks', qecc_z_ticks)
+        self.init_ticks = params.get('init_ticks', qecc_init_ticks)
+        self.meas_ticks = params.get('meas_ticks', qecc_meas_ticks)
+        self.x_ticks = params.get('x_ticks', qecc_x_ticks)
+        self.z_ticks = params.get('z_ticks', qecc_z_ticks)
 
-        self.abstract_circuit = QuantumCircuit(**gate_params)
+        self.abstract_circuit = QuantumCircuit(**params)
 
         self.data_qudit_set = self.qecc.data_qudit_set
         self.ancilla_qudit_set = self.qecc.ancilla_qudit_set
@@ -465,9 +465,9 @@ class InstrInitZero(LogicalInstruction):
     Parent class sets self.qecc.
     """
 
-    def __init__(self, qecc, symbol, **gate_params):
+    def __init__(self, qecc, symbol, **params):
 
-        super().__init__(qecc, symbol, **gate_params)
+        super().__init__(qecc, symbol, **params)
 
         self.symbol = 'instr_init_zero'
 
@@ -475,11 +475,11 @@ class InstrInitZero(LogicalInstruction):
         self.ancilla_qudit_set = self.qecc.ancilla_qudit_set
 
         # This is basically syndrome extraction round where all the data qubits are initialized to zero.
-        syn_ext = qecc.instruction('instr_syn_extract', **gate_params)
+        syn_ext = qecc.instruction('instr_syn_extract', **params)
 
         # Make a shallow copy of the abstract circuits.
         self.abstract_circuit = syn_ext.abstract_circuit.copy()
-        self.abstract_circuit.params.update(gate_params)
+        self.abstract_circuit.params.update(params)
 
         self.ancilla_x_check = syn_ext.ancilla_x_check
         self.ancilla_z_check = syn_ext.ancilla_z_check
@@ -515,8 +515,8 @@ class InstrInitZero(LogicalInstruction):
         if self._stabs_destabs:
             return self._stabs_destabs
 
-        gate_params = self.gate_params
-        syn_ext = self.qecc.instruction('instr_syn_extract', **gate_params)
+        params = self.params
+        syn_ext = self.qecc.instruction('instr_syn_extract', **params)
 
         for name, rows in syn_ext.stabs_destabs.items():
             self._stabs_destabs[name] = []
@@ -543,9 +543,9 @@ class InstrInitPlus(LogicalInstruction):
     Parent class sets self.qecc.
     """
 
-    def __init__(self, qecc, symbol, **gate_params):
+    def __init__(self, qecc, symbol, **params):
 
-        super().__init__(qecc, symbol, **gate_params)
+        super().__init__(qecc, symbol, **params)
 
         self.symbol = 'instr_init_plus'
 
@@ -553,11 +553,11 @@ class InstrInitPlus(LogicalInstruction):
         self.ancilla_qudit_set = self.qecc.ancilla_qudit_set
 
         # This is basically syndrome extraction round where all the data qubits are initialized to plus.
-        syn_ext = qecc.instruction('instr_syn_extract', **gate_params)
+        syn_ext = qecc.instruction('instr_syn_extract', **params)
 
         # Make a shallow copy of the abstract circuits.
         self.abstract_circuit = syn_ext.abstract_circuit.copy()
-        self.abstract_circuit.params.update(gate_params)
+        self.abstract_circuit.params.update(params)
 
         self.ancilla_x_check = syn_ext.ancilla_x_check
         self.ancilla_z_check = syn_ext.ancilla_z_check
@@ -595,8 +595,8 @@ class InstrInitPlus(LogicalInstruction):
         if self._stabs_destabs:
             return self._stabs_destabs
 
-        gate_params = self.gate_params
-        syn_ext = self.qecc.instruction('instr_syn_extract', **gate_params)
+        params = self.params
+        syn_ext = self.qecc.instruction('instr_syn_extract', **params)
 
         for name, rows in syn_ext.stabs_destabs.items():
             self._stabs_destabs[name] = []

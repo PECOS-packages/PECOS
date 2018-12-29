@@ -150,7 +150,7 @@ class QECC(object):
 
         return gotten_gate
 
-    def instruction(self, symbol, **gate_params):
+    def instruction(self, symbol, **instr_params):
         """
         Gets logical instruction given a string and parameters.
 
@@ -162,20 +162,20 @@ class QECC(object):
 
         """
 
-        gotten_instr = self._retrieve_element(symbol, gate_params, self.instr_set)
+        gotten_instr = self._retrieve_element(symbol, instr_params, self.instr_set)
 
         # If no instruction has been found corresponding to the symbol:
         if gotten_instr is None:
 
             instr_class = self.sym2instruction_class[symbol]
 
-            gotten_instr = instr_class(self, symbol, **gate_params)
+            gotten_instr = instr_class(self, symbol, **instr_params)
             self.instr_set.add(gotten_instr)
 
         return gotten_instr
 
     @staticmethod
-    def _retrieve_element(symbol, gate_params, element_set):
+    def _retrieve_element(symbol, params, element_set):
         """
         Retrieve an element from a set.
 
@@ -189,7 +189,7 @@ class QECC(object):
         """
         gotten_element = None
         for element in element_set:
-            if gate_params == element.gate_params and symbol == element.symbol:
+            if params == element.params and symbol == element.symbol:
                 gotten_element = element
                 break
 

@@ -48,7 +48,6 @@ class Check2Circuits:
         Args:
             abstract_circuit: Abstract circuit that contains checks.
             mapping (None):
-            gate_params:
 
         Returns:
             ``QuantumCircuit``
@@ -110,7 +109,7 @@ class Check2Circuits:
                         largest_tick = tick
 
         # A quantum circuit with number of ticks == ``largest_tick``
-        circuit = QuantumCircuit(largest_tick+1)
+        circuit = QuantumCircuit(largest_tick+1, **gate_params)
 
         # Add circuits
         # ============
@@ -128,7 +127,8 @@ class Check2Circuits:
                 if make_ticks:
 
                     # Come up with ticks if none have been specified.
-                    ancilla_ticks, data_ticks, meas_ticks = self.generate_ticks(make_ticks, gate_symbol, locations, params)
+                    ancilla_ticks, data_ticks, meas_ticks = self.generate_ticks(make_ticks, gate_symbol, locations,
+                                                                                params)
 
                 else:
                     ancilla_ticks = params['ancilla_ticks']
@@ -167,7 +167,8 @@ class Check2Circuits:
                     if random_outcome:
                         circuit.update({'measure Z': {mapping[ancillas]}}, tick=meas_ticks)
                     else:
-                        circuit.update({'measure Z': {mapping[ancillas]}}, tick=meas_ticks, gate_kwargs={'random_outcome': 0})
+                        circuit.update({'measure Z': {mapping[ancillas]}}, tick=meas_ticks,
+                                       gate_kwargs={'random_outcome': 0})
                         # circuit.update({'measure Z': {ancillas}}, random_outcome=0)
                 else:
                     raise Exception('Can not currently handle multiple ancilla checks!')

@@ -89,25 +89,24 @@ class LogicalCircuit(QuantumCircuit):
                 if self.qudit_set is None:
                     raise Exception('Qudit set should be set!')
 
-    def iter_physical_gates(self):
-        """
-        Generator to iterate over all the physical gates in the logical circuit.
-
-        Returns:
-
-        """
-        for logical_tick in self._ticks:
-            for logical_gate, _, _ in logical_tick.items():
-                for circuit in logical_gate.circuits:
-                    for symbol, locations, gate_kwargs in circuit.items():
-                        yield symbol, locations, gate_kwargs
-
     def iter_circuits(self):
+        """An iterator for looping over the various quantum circuits comprising this data structure."""
 
-        for logical_tick in self._ticks:
-            for logical_gate, _, _ in logical_tick.items():
-                for circuit in logical_gate.circuits:
-                        yield circuit  # TODO: give circuit, params {logical_circuit: ..., gate: ..., qecc: ...}
+        for logical_tick in range(len(self)):
+            for logical_gate, _, _ in self.items(tick=logical_tick):
+                for instr_index, circuit in enumerate(logical_gate.circuits):
+                    time = (logical_tick, instr_index)
+                    yield circuit, time, {'logical_circuit_params': self.params, 'gate': logical_gate,
+                                          'circuit': circuit.params}
+                    # TODO: give circuit, params {logical_circuit: ..., gate: ..., qecc: ...}
+
+    def iter_ticks(self):
+
+        for circuit, (logical_tick, instr_index), params in self.iter_circuits():
+            for tick in range(len(circuit)):
+                tick_gates = circuit[tick]
+                time = (logical_tick, instr_index, tick)
+                yield tick_gates, time, params  # TODO: Fix...
 
     def __iter__(self):
 

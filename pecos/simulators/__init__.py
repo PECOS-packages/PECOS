@@ -27,14 +27,6 @@ except ImportError:
 
 StabSim = SparseSim  # Default stabilizer simulator
 
-# Attempt to import optional Cirq interface
-try:
-    import cirq
-    # TODO: Uncomment when the wrapper no long throws errors on import of PECOS
-    # from ._cirq_wrapper.state import State as CirqSim
-except ImportError:
-    pass
-
 # Attempt to import optional ProjectQ interface
 try:
     import projectq

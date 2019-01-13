@@ -18,6 +18,7 @@
 try:
     import qcgpu
     # from . import bindings
+    has_sim = True
 
 except ModuleNotFoundError:
     has_sim = False
@@ -71,12 +72,14 @@ class State(object):
 
         # TODO: use the apply all method instead...
 
+        # TODO: JUST WRITE GATE FUNCS AND GATE DICT LIKE NORMAL...
+
         output = {}
         for location in locations:
             if isinstance(location, int):
-                results = self.gate_dict[symbol](self, location, *angles)
+                results = self.gate_dict[symbol](location, *angles)
             else:
-                results = self.gate_dict[symbol](self, *location, *angles)
+                results = self.gate_dict[symbol](*location, *angles)
 
             if results:
                 output[location] = results

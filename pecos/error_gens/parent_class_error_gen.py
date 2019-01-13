@@ -308,12 +308,15 @@ class Generator:
 
             if isinstance(error_symbols, (tuple, np.ndarray)) and len(error_symbols) > 1:
                 for sym, loc in zip(error_symbols, location):
-                    after.update(sym, {loc}, emptyappend=True)
+                    if sym != 'I':
+                        after.update(sym, {loc}, emptyappend=True)
             elif isinstance(error_symbols, str):
-                after.update(error_symbols, {location}, emptyappend=True)
+                if error_symbols != 'I':
+                    after.update(error_symbols, {location}, emptyappend=True)
             elif isinstance(error_symbols, tuple) and len(error_symbols) == 1:
                 error_symbols = error_symbols[0]
-                after.update(error_symbols, {location}, emptyappend=True)
+                if error_symbols != 'I':
+                    after.update(error_symbols, {location}, emptyappend=True)
             else:
                 raise Exception("Only tuples and strings are currently accepted")
 
@@ -325,12 +328,15 @@ class Generator:
 
             if isinstance(error_symbols, np.ndarray) and len(error_symbols) > 1:
                 for sym, loc in zip(error_symbols, location):
-                    before.update(sym, {loc}, emptyappend=True)
+                    if sym != 'I':
+                        before.update(sym, {loc}, emptyappend=True)
             elif isinstance(error_symbols, str):
-                before.update(error_symbols, {location}, emptyappend=True)
+                if error_symbols != 'I':
+                    before.update(error_symbols, {location}, emptyappend=True)
             elif isinstance(error_symbols, tuple) and len(error_symbols) == 1:
                 error_symbols = error_symbols[0]
-                before.update(error_symbols, {location}, emptyappend=True)
+                if error_symbols != 'I':
+                    before.update(error_symbols, {location}, emptyappend=True)
             else:
                 raise Exception("Only tuples and strings are currently accepted")
 

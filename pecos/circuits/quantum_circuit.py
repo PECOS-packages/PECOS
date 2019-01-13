@@ -158,14 +158,14 @@ class QuantumCircuit(MutableSequence):
     def iter_circuits(self):
         """An iterator that allows loops over circuits to just give this circuit."""
         time = None
-        yield self, time, {'circuit': self.params}
+        yield self, time, self.params
 
     def iter_ticks(self):
 
         for tick in range(len(self)):
             tick_gates = self[tick]
             time = tick
-            yield tick_gates, time, {'params': self.params}
+            yield tick_gates, time, self.params
             # TODO: note this is the circuit params
             # TODO: need something like: params {logical_circuit: ..., gate: ..., qecc: ...}
 
@@ -426,17 +426,9 @@ class ParamGateCollection:
 
         """
 
-        params = True
-
-        if params:
-            for gate_symbol, gate_list in self.symbols.items():
-                for gate in gate_list:
-                    yield gate_symbol, gate.locations, gate.params
-
-        else:
-            for gate_symbol, gate_list in self.symbols.items():
-                for gate in gate_list:
-                    yield gate_symbol, gate.locations
+        for gate_symbol, gate_list in self.symbols.items():
+            for gate in gate_list:
+                yield gate_symbol, gate.locations, gate.params
 
     def __str__(self):
 

@@ -16,7 +16,7 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-from .cmd_one_qubit import S, Sd
+from .cmd_one_qubit import Q, S, Sd, R, Rd
 
 
 def cnot(state, qubits):
@@ -370,3 +370,158 @@ def G2(state, qubits):
 
 def II(state, qubits, **kwargs):
     pass
+
+
+def SqrtXX(state, qubits):
+    """
+    Applies a square root of XX rotation to generators
+
+    Sqrt XX: XI->XI, IX->IX, ZI->-iWX (-YX), IZ->-iXW (-XY)
+    sign rule: if odd # of Zs -> -i
+    Pauli rule: if odd # of Zs -> XX
+
+    II -> II
+    XI -> XI
+    ZI -> -iWX
+    WI -> -iZX
+    IX -> IX
+    IZ -> -iXW
+    IW -> -iXZ
+    XX -> XX
+    XZ -> -iIW
+    XW -> -iIZ
+    ZX -> -iWI
+    ZZ -> ZZ
+    ZW -> ZW
+    WX -> -iZI
+    WZ -> WZ
+    WW -> WW
+
+    II -> II
+    XI -> XI
+    ZI -> -YX
+    YI -> ZX
+    IX -> IX
+    IZ -> -XY
+    IY -> XZ
+    XX -> XX
+    XZ -> -IY
+    XY -> IZ
+    ZX -> -YI
+    ZZ -> ZZ
+    ZY -> ZY
+    YX -> ZI
+    YZ -> YZ
+    YY -> YY
+    """
+
+    qubit1, qubit2 = qubits
+
+    stabs = state.stabs
+
+    # Change the sign appropriately
+    oddzs = stabs.col_z[qubit1] ^ stabs.col_z[qubit2]
+    stabs.signs_minus ^= oddzs
+
+    # imaginary:
+    # places that have no is but will need them added
+    add_is = oddzs - stabs.signs_i
+
+    # places where is already exist
+    gens_common = stabs.signs_i & oddzs
+    # i * i = -1
+    stabs.signs_minus ^= gens_common
+    # Remove them from i's
+    stabs.signs_i -= gens_common
+
+    # 1*i = i
+    stabs.signs_i |= add_is
+
+    # Update Paulis
+    # -------------------------------------------------------------------
+    for gens in state.gen_list:
+
+        old_x1_col = set(gens.col_x[qubit1])
+        old_x2_col = set(gens.col_x[qubit2])
+
+        # Add XX if odd number of Zs
+        oddzs = gens.col_z[qubit1] ^ gens.col_z[qubit2]
+
+        # Update columns
+        gens.col_x[qubit1] ^= oddzs
+        gens.col_x[qubit2] ^= oddzs
+
+        # Update rows
+
+        # Z gens added
+        x1_added = oddzs - old_x1_col
+        x2_added = oddzs - old_x2_col
+
+        for i in x1_added:
+            gens.row_x[i].add(qubit1)
+
+        for i in x2_added:
+            gens.row_x[i].add(qubit2)
+
+        del x1_added
+        del x2_added
+
+        # Z gens removed
+        x1_removed = old_x1_col - gens.col_x[qubit1]
+        x2_removed = old_x2_col - gens.col_x[qubit2]
+
+        for i in x1_removed:
+            gens.row_x[i].discard(qubit1)
+
+        for i in x2_removed:
+            gens.row_x[i].discard(qubit2)
+
+
+def SqrtXX2(state, qubits):
+    """
+    Applies a square root of XX rotation to generators
+
+    Sqrt XX: XI->XI, IX->IX, ZI->-iWX (-YX), IZ->-iXW (-XY)
+    sign rule: if odd # of Zs -> -i
+    Pauli rule: if odd # of Zs -> XX
+
+    II -> II
+    XI -> XI
+    ZI -> -iWX
+    WI -> -iZX
+    IX -> IX
+    IZ -> -iXW
+    IW -> -iXZ
+    XX -> XX
+    XZ -> -iIW
+    XW -> -iIZ
+    ZX -> -iWI
+    ZZ -> ZZ
+    ZW -> ZW
+    WX -> -iZI
+    WZ -> WZ
+    WW -> WW
+
+    II -> II
+    XI -> XI
+    ZI -> -YX
+    YI -> ZX
+    IX -> IX
+    IZ -> -XY
+    IY -> XZ
+    XX -> XX
+    XZ -> -IY
+    XY -> IZ
+    ZX -> -YI
+    ZZ -> ZZ
+    ZY -> ZY
+    YX -> ZI
+    YZ -> YZ
+    YY -> YY
+    """
+    qubit1, qubit2 = qubits
+    Q(state, qubit1)  # Sqrt X
+    Q(state, qubit2)  # Sqrt X
+    Rd(state, qubit1)  # (Sqrt Y)^\dagger
+    cnot(state, qubits)  # CNOT (why didn't I capitalized this?)
+    R(state, qubit1)  # Sqrt Y

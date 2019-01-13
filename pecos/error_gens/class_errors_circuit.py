@@ -16,13 +16,10 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-from collections import namedtuple
-
-LogicalTime = namedtuple('LogicalTime', 'logical_tick_index, instr_index')
-LogicalSpace = namedtuple('LogicalSpace', 'logical_gate_location')
+from collections import OrderedDict
 
 
-class ErrorCircuits(dict):
+class ErrorCircuits(OrderedDict):
     """
     Used to store error circuits.
     """

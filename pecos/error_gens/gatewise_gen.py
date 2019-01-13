@@ -110,7 +110,7 @@ class GatewiseGen(ParentErrorGen):
         # Data errors
         # -----------
         if tick_index == 0 and 'data' in self.gen.error_func_dict:
-            data_qudit_set = params['circuit']['data_qudit_set']
+            data_qudit_set = params['data_qudit_set']
             self.gen.create_errors(self, 'data', data_qudit_set, after, before, replace)
 
         # unitary and measurement errors
@@ -126,7 +126,7 @@ class GatewiseGen(ParentErrorGen):
             inactive_qudits = circuit.qudits - circuit.active_qudits[tick_index]
 
             if tick_index == 0 and 'data' in self.gen.error_func_dict:
-                data_qudit_set = params['circuit']['data_qudit_set']
+                data_qudit_set = params['data_qudit_set']
                 inactive_qudits -= data_qudit_set
 
             self.gen.create_errors(self, 'idle', inactive_qudits, after, before, replace)

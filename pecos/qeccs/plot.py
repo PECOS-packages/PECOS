@@ -194,7 +194,7 @@ def get_ancilla_types(instr):
     z_ancillas = set([])
     abs_circuit = instr.abstract_circuit
 
-    for gate_symbol, _, params in abs_circuit.items(params=True):
+    for gate_symbol, _, params in abs_circuit.items():
         if gate_symbol == 'X check':
             ancilla = params['ancillas']
             x_ancillas.add(ancilla)
@@ -214,7 +214,7 @@ def graph_add_directed_cnots(instr, G):
 
     # print(circuit)
     for i in range(len(circuit)):
-        for sym, qudits in circuit.items(params=False, tick=i):
+        for sym, qudits, _ in circuit.items(tick=i):
             if sym == 'CNOT' or sym == 'CZ' or sym == 'CY':
                 G.add_edges_from(qudits)
                 for e in qudits:

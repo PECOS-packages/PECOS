@@ -106,7 +106,7 @@ class State(object):
 
         results = []
 
-        for symbol, locations, gate_kwargs in circuit.items(params=True):
+        for symbol, locations, gate_kwargs in circuit.items():
             gate_output = self.run_gate(symbol, locations, flush=False, **gate_kwargs)
             results.append(gate_output)
 

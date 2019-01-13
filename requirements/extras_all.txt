@@ -1,4 +1,5 @@
 # Requirements to run the extras (simulators)
 cirq
 cython
-projectq
+projectq==0.3.6
+qcgpu==0.1.1 

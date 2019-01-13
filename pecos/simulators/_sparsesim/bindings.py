@@ -37,18 +37,18 @@ gate_dict = {
     # ====================
 
     # Paulis    # x->, z->
-    'I': q1.I,  # +x+z
-    'X': q1.X,  # +x-z
-    'Y': q1.Y,  # -x-z
-    'Z': q1.Z,  # -x+z
+    'I': q1.I,  # +x+z == R(U, 0)
+    'X': q1.X,  # +x-z == R(X, pi)
+    'Y': q1.Y,  # -x-z == R(Y, pi)
+    'Z': q1.Z,  # -x+z == R(Z, pi)
 
     # Square root of Paulis
-    'Q': q1.Q,    # +x-y
-    'Qd': q1.Qd,  # +x+y
-    'R': q1.R,    # -z+x
-    'Rd': q1.Rd,  # +z-x
-    'S': q1.S,    # +y+z
-    'Sd': q1.Sd,  # -y+z
+    'Q': q1.Q,    # +x-y == R(Y, pi/2)
+    'Qd': q1.Qd,  # +x+y == R(Y, -pi/2)
+    'R': q1.R,    # -z+x == R(Y, pi/2)
+    'Rd': q1.Rd,  # +z-x == R(Y, -pi/2)
+    'S': q1.S,    # +y+z == R(Z, pi/2)
+    'Sd': q1.Sd,  # -y+z == R(Z, -pi/2)
 
     # Hadamard-like
     'H': q1.H,
@@ -84,7 +84,13 @@ gate_dict = {
     'CY': q2.CY,
     'SWAP': q2.SWAP,
     'G': q2.G2,
+    'G2': q2.G2,
     'II': q2.II,
+
+    'Sqrt XX': q2.SqrtXX,  # \equiv e^{+i (\pi /4)} * e^{-i (\pi /4) XX } == R(XX, pi/2)
+    'Sqrt XX2': q2.SqrtXX2,
+    'MS': q2.SqrtXX,  # MS == Mølmer–Sørensen gate (XX rotation only with angle pi/2 [square root])
+    'MSXX': q2.SqrtXX,
 
     # Measurements
     # ============

@@ -131,7 +131,7 @@ class State(object):
 
         results = []
 
-        for symbol, locations, gate_kwargs in circuit.items(params=True):
+        for symbol, locations, gate_kwargs in circuit.items():
             gate_output = self.run_gate(symbol, locations, **gate_kwargs)
             results.append(gate_output)
 
@@ -139,6 +139,36 @@ class State(object):
 
     def run_direct(self, symbol, location, **gate_kwargs):
         self.gate_dict[symbol](self, location, **gate_kwargs)
+
+    def copy(self):
+        new = State(self.num_qubits)
+
+        old_stabs = self.stabs
+        old_destabs = self.destabs
+
+        new_gens = (new.stabs, new.destabs)
+
+        for i, gen in enumerate([old_stabs, old_destabs]):
+
+            new_gen = new_gens[i]
+
+            new_gen.signs_minus = set()
+            new_gen.signs_i = set()
+
+            new_gen.signs_minus.update(gen.signs_minus)
+            new_gen.signs_i.update(gen.signs_i)
+
+            for j in range(self.num_qubits):
+
+                new_gen.row_x[j] = set()
+                new_gen.row_z[j] = set()
+                new_gen.col_x[j] = set()
+                new_gen.col_z[j] = set()
+
+                new_gen.row_x[j].update(gen.row_x[j])
+                new_gen.row_z[j].update(gen.row_z[j])
+                new_gen.col_x[j].update(gen.col_x[j])
+                new_gen.col_z[j].update(gen.col_z[j])
 
     @staticmethod
     def _pauli_sign(gen, i_gen):
@@ -249,15 +279,19 @@ class State(object):
 
         return result
 
-    def print_stabs(self, verbose=True, print_y=False):
+    def print_stabs(self, verbose=True, print_y=True, print_destabs=False):
         str_s = self.print_tableau(self.stabs, verbose=verbose, print_y=print_y)
-        if verbose:
-            print('-------------------------------')
-        str_d = self.print_tableau(self.destabs, verbose=verbose, print_signs=False, print_y=print_y)
 
-        return str_s, str_d
+        if print_destabs:
+            if verbose:
+                print('-------------------------------')
+            str_d = self.print_tableau(self.destabs, verbose=verbose, print_signs=False, print_y=print_y)
 
-    def print_tableau(self, gen, verbose=True, print_signs=True, print_y=False):
+            return str_s, str_d
+
+        return str_s
+
+    def print_tableau(self, gen, verbose=True, print_signs=True, print_y=True):
         """
         Prints out the stabilizers.
         :return:

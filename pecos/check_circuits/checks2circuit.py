@@ -167,8 +167,7 @@ class Check2Circuits:
                     if random_outcome:
                         circuit.update({'measure Z': {mapping[ancillas]}}, tick=meas_ticks)
                     else:
-                        circuit.update({'measure Z': {mapping[ancillas]}}, tick=meas_ticks,
-                                       gate_kwargs={'random_outcome': 0})
+                        circuit.update({'measure Z': {mapping[ancillas]}}, tick=meas_ticks, random_outcome=0)
                         # circuit.update({'measure Z': {ancillas}}, random_outcome=0)
                 else:
                     raise Exception('Can not currently handle multiple ancilla checks!')

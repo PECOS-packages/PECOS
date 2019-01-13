@@ -169,7 +169,7 @@ class XZGen(ParentErrorGen):
         # Data errors
         # -----------
         if self.has_data_errors and tick_index == 0:
-            data_qudit_set = params['circuit']['data_qudit_set']
+            data_qudit_set = params['data_qudit_set']
 
             self.gen.create_errors(self, 'data', data_qudit_set, after, before, replace)
 

@@ -16,8 +16,10 @@
 #   limitations under the License.
 #  =========================================================================  #
 
+from collections import OrderedDict
 
-class StdOutput(dict):
+
+class StdOutput(OrderedDict):
     """
     Class used to record results of gates (typically, measurements).
 

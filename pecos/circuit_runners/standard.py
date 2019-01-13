@@ -58,10 +58,7 @@ class Standard(object):
             else:
                 raise Exception('Simulator not recognized!')
 
-        if gate_dict is None:
-            self.gate_dict = self.simulator.gate_dict
-        else:
-            self.gate_dict = gate_dict
+        self.gate_dict = gate_dict
 
         # Set random seed
         np.random.seed(self.seed)
@@ -116,7 +113,7 @@ class Standard(object):
         for tick_circuit, time, params in circuit.iter_ticks():
 
             # Get errors
-            if params.get('circuit', {}).get('error_free', False):
+            if params.get('error_free', False):
                 errors = {}
 
             else:
@@ -186,17 +183,16 @@ class Standard(object):
             removed_locations = set([])
 
         gate_results = {}
-        for symbol, physical_gate_locations, params in gates.items():
+        for symbol, physical_gate_locations, gate_kwargs in gates.items():
 
             if self.gate_dict:
                 gate_results = {}
                 for location in physical_gate_locations - removed_locations:
-                    this_result = self.gate_dict[symbol](state, location, **params.get('gate_kwargs', {}))
+                    this_result = self.gate_dict[symbol](state, location, **gate_kwargs)
 
                     if this_result:
                         gate_results[location] = this_result
             else:
-                gate_results = self.simulator.run_gate(symbol, physical_gate_locations - removed_locations,
-                                                       **params.get('gate_kwargs', {}))
+                gate_results = state.run_gate(symbol, physical_gate_locations - removed_locations, **gate_kwargs)
 
         return gate_results

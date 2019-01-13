@@ -52,60 +52,43 @@ class TimingRunner(Standard):
         self.total_time = 0.0
         self.num_gates = 0
 
-    def run_circuit(self, state, circuit, removed_locations=None):
+    def run_gates(self, state, gates, removed_locations=None):
         """
-        Apply a ``QuantumCircuit`` directly to a state without output.
+        Directly apply a collection of quantum gates to a state.
 
         Args:
             state:
-            circuit:
+            gates:
             removed_locations:
 
         Returns:
 
         """
 
-        # TIMER: It is assumed that this method is the only part of the code that calls gates.
-
         timer = self.timer
 
         if removed_locations is None:
             removed_locations = set([])
 
-        results = {}
+        gate_results = {}
+        for symbol, physical_gate_locations, gate_kwargs in gates.items():
 
-        try:
-            num_ticks = len(circuit)
-        except TypeError:
-            num_ticks = 1
-
-        for t in range(num_ticks):
-
-            gate_results = {}
-            for symbol, physical_gate_locations, params in circuit.items(tick=t):
-                gate_kwargs = params.get('gate_kwargs', {})
-
+            if self.gate_dict:
                 gate_results = {}
-
-                if self.gate_dict:
-                    for location in physical_gate_locations - removed_locations:
-                        ti = timer()
-                        this_result = self.gate_dict[symbol](state, location, **gate_kwargs)
-                        tf = timer()
-                        self.total_time += tf - ti
-                        self.num_gates += 1
-
-                        if this_result:
-                            gate_results[location] = this_result
-                else:
+                for location in physical_gate_locations - removed_locations:
                     ti = timer()
-                    gate_results = self.simulator.run_gate(symbol, physical_gate_locations - removed_locations,
-                                                           **gate_kwargs)
+                    this_result = self.gate_dict[symbol](state, location, **gate_kwargs)
                     tf = timer()
                     self.total_time += tf - ti
-                    self.num_gates += len(physical_gate_locations - removed_locations)
+                    self.num_gates += 1
 
-            if gate_results:
-                results[t] = gate_results
+                    if this_result:
+                        gate_results[location] = this_result
+            else:
+                ti = timer()
+                gate_results = state.run_gate(symbol, physical_gate_locations - removed_locations, **gate_kwargs)
+                tf = timer()
+                self.total_time += tf - ti
+                self.num_gates += len(physical_gate_locations - removed_locations)
 
-        return results
+        return gate_results

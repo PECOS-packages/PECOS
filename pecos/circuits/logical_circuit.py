@@ -96,8 +96,9 @@ class LogicalCircuit(QuantumCircuit):
             for logical_gate, _, _ in self.items(tick=logical_tick):
                 for instr_index, circuit in enumerate(logical_gate.circuits):
                     time = (logical_tick, instr_index)
-                    yield circuit, time, {'logical_circuit_params': self.params, 'gate': logical_gate,
-                                          'circuit': circuit.params}
+                    params = {'logical_circuit_params': self.params, 'gate': logical_gate,}
+                    params.update(circuit.params)
+                    yield circuit, time, params
                     # TODO: give circuit, params {logical_circuit: ..., gate: ..., qecc: ...}
 
     def iter_ticks(self):

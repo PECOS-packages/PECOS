@@ -57,7 +57,7 @@ class DepolarGen(ParentErrorGen):
         super().__init__()
 
         self.has_idle_errors = has_idle_errors
-        self.perp_error = perp_errors
+        self.perp_errors = perp_errors
 
         self.gen = self.generator_class()
         self.gen.set_gate_group('measurements', self.measurements)
@@ -115,15 +115,16 @@ class DepolarGen(ParentErrorGen):
             raise Exception('Can not handle model_level == %s' % model_level)
 
         # If errors need to be perpendicular to inits and measurements.
-        if self.perp_error and model_level != 'code_capacity':
+        if self.perp_errors and model_level != 'code_capacity':
             self.gen.set_gate_error('measure X', zerror_before.error_func)
             self.gen.set_gate_error('measure Y', zerror_before.error_func)
             self.gen.set_gate_error('measure Z', xerror_before.error_func)
 
             if model_level == 'circuit':
-                self.gen.set_group_error(self.inits_x, zerror.error_func)
-                self.gen.set_group_error(self.inits_y, zerror.error_func)
-                self.gen.set_group_error(self.inits_z, xerror.error_func)
+                self.gen.set_gate_group('Z on inits', {'init |+>', 'init |->', 'init |+i>', 'init |-i>', })
+                self.gen.set_gate_group('X on inits', {'init |0>', 'init |1>', })
+                self.gen.set_group_error('Z on inits', zerror.error_func)
+                self.gen.set_group_error('X on inits', xerror.error_func)
 
         if has_idle_errors:
             self.gen.set_gate_error('idle', pauli_errors.error_func)
@@ -170,7 +171,7 @@ class DepolarGen(ParentErrorGen):
         # Data errors
         # -----------
         if self.has_data_errors and tick_index == 0:
-            data_qudits = params['circuit']['data_qudit_set']
+            data_qudits = params['data_qudit_set']
             self.gen.create_errors(self, 'data', data_qudits, after, before, replace)
 
         # unitary and measurement errors

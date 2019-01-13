@@ -575,7 +575,7 @@ class VerifyStabilizers:
                 raise Exception('Could not find check:', (ps, qs))
 
             # print('Found Xs - %s, Zs - %s, id = %s' % (xs, zs, stab_id))
-            # state.print_stabs(verbose=True, print_y=True)
+            # state.print_stabs(verbose=True, print_y=True,  print_destabs=True)
 
         for q in self.ancilla_qubits:
             found, stab_id = state.refactor({q}, set(), choose=-1, protected=found_stab_ids)
@@ -585,7 +585,7 @@ class VerifyStabilizers:
                 raise Exception('Could not find ancilla %s' % q)
 
             # print('Found Xs - %s, Zs - %s, id = %s' % ({q}, set(), stab_id))
-            # state.print_stabs(verbose=True, print_y=True)
+            # state.print_stabs(verbose=True, print_y=True,  print_destabs=True)
 
     def get_check_ancilla(self):
         check_tuples = []
@@ -618,7 +618,7 @@ class VerifyStabilizers:
             return Exception('Must run `compile()` first!')
 
         self.refactor(state)
-        stab_strs, destab_strs = state.print_stabs(verbose=False, print_y=print_y)
+        stab_strs, destab_strs = state.print_stabs(verbose=False, print_y=print_y,  print_destabs=True)
 
         num_ancillas = len(self.ancilla_qubits)
 
@@ -670,7 +670,7 @@ class VerifyStabilizers:
             else:
                 for xs, zs in missing_checks:
                     state.refactor(xs, zs, choose=0, prefer=notmatched_gens)
-                state.print_stabs(verbose=False, print_y=print_y)
+                state.print_stabs(verbose=False, print_y=print_y,  print_destabs=True)
 
             if search_count == stop_search:
                 raise Exception('Can not refactor properly!')

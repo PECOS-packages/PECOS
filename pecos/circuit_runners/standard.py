@@ -48,7 +48,7 @@ class Standard(object):
         if simulator is None:
             self.simulator = sims.SparseSim
 
-        else:
+        elif isinstance(simulator, str):
             if simulator == 'sparsesim':
                 self.simulator = sims.SparseSim
             elif simulator == 'cysparsesim':
@@ -57,6 +57,8 @@ class Standard(object):
                 self.simulator = sims.ProjectQSim
             else:
                 raise Exception('Simulator not recognized!')
+        else:
+            self.simulator = simulator  # Need this in case wanting to use some other simulator class
 
         self.gate_dict = gate_dict
 
@@ -189,6 +191,7 @@ class Standard(object):
                 gate_results = {}
                 for location in physical_gate_locations - removed_locations:
                     this_result = self.gate_dict[symbol](state, location, **gate_kwargs)
+                    # TODO: stop using gate_dict directly. Switch to adding new gates via simulator...
 
                     if this_result:
                         gate_results[location] = this_result

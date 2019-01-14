@@ -45,6 +45,10 @@ class Standard(object):
         else:
             self.seed = seed
 
+        # Set random seed
+        np.random.seed(self.seed)
+        random.seed(self.seed)
+
         if simulator is None:
             self.simulator = sims.SparseSim
 
@@ -61,10 +65,6 @@ class Standard(object):
             self.simulator = simulator  # Need this in case wanting to use some other simulator class
 
         self.gate_dict = gate_dict
-
-        # Set random seed
-        np.random.seed(self.seed)
-        random.seed(self.seed)
 
     def init(self, num_qudits, **kwargs):
         """

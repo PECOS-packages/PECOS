@@ -82,7 +82,7 @@ class H3Gate(BasicGate):
     """Hadmard-like gate #3"""
     @property
     def matrix(self):
-        return 0.5 * np.matrix([[0, 1], [1j, 0]])
+        return np.matrix([[0, 1], [1j, 0]])
 
     def __str__(self):
         return "H3"
@@ -95,7 +95,7 @@ class H4Gate(BasicGate):
     """Hadmard-like gate #4"""
     @property
     def matrix(self):
-        return 0.5 * np.matrix([[0, 1j], [1, 0]])
+        return np.matrix([[0, 1j], [1, 0]])
 
     def __str__(self):
         return "H4"
@@ -148,7 +148,7 @@ class F2Gate(BasicGate):
     """Face rotations of an octahedron #2"""
     @property
     def matrix(self):
-        return 0.5 * np.matrix([[1-1j, -1+1j], [1+1j, -1+1j]])
+        return 0.5 * np.matrix([[1-1j, -1+1j], [1+1j, 1+1j]])
 
     def __str__(self):
         return "F2"

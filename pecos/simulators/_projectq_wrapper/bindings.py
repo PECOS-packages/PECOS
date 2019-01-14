@@ -75,12 +75,12 @@ gate_dict = {
 
     # Initialization
     # ==============
-    'init |0>': init_zero,
-    'init |1>': init_one,
-    'init |+>': init_plus,
-    'init |->': init_minus,
-    'init |+i>': init_plusi,
-    'init |-i>': init_minusi,
+    'init |0>': init_zero,  # Init by measuring (if entangle => random outcome
+    'init |1>': init_one,  # Init by measuring (if entangle => random outcome
+    'init |+>': init_plus,  # Init by measuring (if entangle => random outcome
+    'init |->': init_minus,  # Init by measuring (if entangle => random outcome
+    'init |+i>': init_plusi,  # Init by measuring (if entangle => random outcome
+    'init |-i>': init_minusi,  # Init by measuring (if entangle => random outcome
 
     # one-qubit operations
     # ====================
@@ -132,12 +132,13 @@ gate_dict = {
     'CY': MakeFunc(ops.C(ops.Y)).func,
     'SWAP': MakeFunc(ops.Swap).func,
     'G': G2,
+    'G2': G2,
     'II': II,
 
     # Measurements
     # ============
-    'measure X': meas_x,
-    'measure Y': meas_y,
-    'measure Z': meas_z,
+    'measure X': meas_x,  # no random_output (force outcome) !
+    'measure Y': meas_y,  # no random_output (force outcome) !
+    'measure Z': meas_z,  # no random_output (force outcome) !
     'force output': force_output,
 }

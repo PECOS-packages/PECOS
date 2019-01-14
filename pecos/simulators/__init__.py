@@ -33,3 +33,10 @@ try:
     from ._projectq_wrapper.state import State as ProjectQSim
 except ImportError:
     pass
+
+# Attempt to import optional qcgpu interface
+try:
+    import qcgpu
+    from ._qcgpu_wrapper.state import State as QCGPU
+except ImportError:
+    pass

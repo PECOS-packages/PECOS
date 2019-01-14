@@ -24,7 +24,7 @@ def init_zero(state, qubit):
 
     Args:
         state:
-        location:
+        qubit:
 
     Returns:
 
@@ -40,7 +40,7 @@ def init_one(state, qubit):
     """
     Initialize qubit in state |1>.
 
-    :param gens:
+    :param state:
     :param qubit:
     :return:
     """

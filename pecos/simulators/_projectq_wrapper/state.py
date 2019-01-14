@@ -38,7 +38,7 @@ class State(object):
 
     def __init__(self, num_qubits):
         """
-        Initializes the stabilizer state.
+        Initializes a quantum state/register.
 
         :param num_qubits: Number of qubits to represent.
         """

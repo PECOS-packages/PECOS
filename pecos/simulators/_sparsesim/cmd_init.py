@@ -16,8 +16,7 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-from . import cmd_meas as qmeas
-from . import cmd_one_qubit as q1
+from .cmd_meas import meas_z
 from .cmd_one_qubit import H, H2, H5, H6, X
 
 
@@ -27,15 +26,14 @@ def init_zero(state, location):
     Args:
         state:
         location:
-        **kwargs:
 
     Returns:
 
     """
-    result = qmeas.meas_z(state, location, random_outcome=0)
+    result = meas_z(state, location, random_outcome=0)
 
     if result:
-        q1.X(state, location)
+        X(state, location)
 
 
 def init_one(gens, qubit):

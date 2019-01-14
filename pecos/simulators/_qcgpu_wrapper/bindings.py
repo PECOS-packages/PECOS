@@ -15,7 +15,7 @@
 #  =========================================================================  #
 
 from ._1q_gates import I, X, Y, Z, Q, Qd, R, Rd, S, Sd, T, H, H2, H3, H4, H5, H6, F1, F1d, F2, F2d,  F3, F3d, F4, F4d
-from ._2q_gates import II, CNOT, CY, CZ, CS, CT, CH, SWAP, G2
+from ._2q_gates import II, CNOT, CY, CZ, CS, CT, CH, SWAP, G2, SqrtXX
 from ._3q_gates import TOFFOLI, CCY, CCZ
 from ._meas_gates import force_output, meas_x, meas_y, meas_z
 from ._init_gates import init_zero, init_one, init_plus, init_minus, init_plusi, init_minusi
@@ -92,9 +92,10 @@ gate_dict = {
     'G': G2,
     'G2': G2,
     'II': II,
-    # 'Sqrt XX': None,
-    # 'MS': None,
-    # 'MS XX': None,
+
+    'Sqrt XX': SqrtXX,
+    'MS': SqrtXX,
+    'MS XX': SqrtXX,
 
     # Measurements
     # ============

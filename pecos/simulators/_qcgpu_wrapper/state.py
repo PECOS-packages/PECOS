@@ -17,14 +17,16 @@
 
 try:
     import qcgpu
-    # from . import bindings
+    from . import bindings
     has_sim = True
 
 except ModuleNotFoundError:
     has_sim = False
 
 
-class State(object):
+class State:
+
+    gate_dict = bindings.gate_dict
 
     def __init__(self, num_qubits):
         """
@@ -41,21 +43,6 @@ class State(object):
 
         self.state = qcgpu.State(num_qubits)
 
-        self.gate_dict = {
-            'H': self.state.h,
-            'X': self.state.x,
-            'Y': self.state.y,
-            'Z': self.state.z,
-            'S': self.state.s,
-            'T': self.state.t,
-            'Q': self.state.sqrt_x,
-            'CNOT': self.state.cnot,
-            'TOFFOLI': self.state.toffoli,
-            # 'U': None,  # TODO: Add this gate...
-            # 'CU: None, # TODO: Add this gate...,
-
-        }
-
     def run_gate(self, symbol, locations, **gate_kwargs):
         """
 
@@ -68,18 +55,9 @@ class State(object):
 
         """
 
-        angles = gate_kwargs.get('angles', ())
-
-        # TODO: use the apply all method instead...
-
-        # TODO: JUST WRITE GATE FUNCS AND GATE DICT LIKE NORMAL...
-
         output = {}
         for location in locations:
-            if isinstance(location, int):
-                results = self.gate_dict[symbol](location, *angles)
-            else:
-                results = self.gate_dict[symbol](*location, *angles)
+            results = self.gate_dict[symbol](self.state, location, **gate_kwargs)
 
             if results:
                 output[location] = results

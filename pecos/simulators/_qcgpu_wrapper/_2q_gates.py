@@ -1,7 +1,7 @@
 import numpy as np
 import qcgpu
 from qcgpu.gate import x, y, z, s, t, h
-from ._1q_gates import H
+from ._1q_gates import H, Q, R, Rd
 
 
 class ControlQubit:
@@ -49,3 +49,14 @@ def G2(state, qubits):
     H(state, q1)
     H(state, q2)
     CZ(state, qubits)
+
+
+def SqrtXX(state, qubits):
+
+    qubit1, qubit2 = qubits
+    Q(state, qubit1)  # Sqrt X
+    Q(state, qubit2)  # Sqrt X
+    Rd(state, qubit1)  # (Sqrt Y)^\dagger
+    CNOT(state, qubits)  # CNOT (why didn't I capitalized this?)
+    R(state, qubit1)  # Sqrt Y
+

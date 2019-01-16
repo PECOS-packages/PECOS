@@ -99,8 +99,6 @@
 <li class="toctree-l2"><a class="reference internal" href="monte_carlo_script.html">Monte Carlo Script</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../dev_guide.html">Developer Guide</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../code_ref.html">Source Code Reference</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../change_log.html">Change Log</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../bibliography.html">Bibliography</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../todo_list.html">Todo List</a></li>
@@ -185,7 +183,7 @@
 <p>Here, the probability of a <span class="math notranslate nohighlight">\(X\)</span> error occurring will, by default, equal to the value of the key <code class="docutils literal notranslate"><span class="pre">'p'</span></code> in an <code class="docutils literal notranslate"><span class="pre">error_params</span></code> dictionary that is passed to the <code class="docutils literal notranslate"><span class="pre">run_logic</span></code> method of a <code class="docutils literal notranslate"><span class="pre">circuit_runner</span></code>.</p>
 <p>To test the error model we are creating, we can use the <code class="docutils literal notranslate"><span class="pre">get_gate_error</span></code> method to generate errors. The first argument of the method is the ideal gate-symbol. The second, is a set of qudit locations the errors may occur on. The third, is a <code class="docutils literal notranslate"><span class="pre">error_params</span></code> dictionary used to specify the probability of errors. An example of using this method is seen here:</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Continuing from last example.</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">myerrors</span><span class="o">.</span><span class="n">get_gate_error</span><span class="p">(</span><span class="s1">&#39;H&#39;</span><span class="p">,</span> <span class="p">{</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">},</span> <span class="n">error_params</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;p&#39;</span><span class="p">:</span><span class="mf">0.5</span><span class="p">})</span>   
+<span class="gp">&gt;&gt;&gt; </span><span class="n">myerrors</span><span class="o">.</span><span class="n">get_gate_error</span><span class="p">(</span><span class="s1">&#39;H&#39;</span><span class="p">,</span> <span class="p">{</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">},</span> <span class="n">error_params</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;p&#39;</span><span class="p">:</span><span class="mf">0.5</span><span class="p">})</span>   <span class="c1"># doctest: +SKIP</span>
 <span class="go">(QuantumCircuit([{&#39;X&#39;: {0, 1, 3}}]), QuantumCircuit([]), set())</span>
 </pre></div>
 </div>
@@ -194,7 +192,7 @@
 <p>The probability-parameter used (default being <code class="docutils literal notranslate"><span class="pre">'p'</span></code>) can be changed by using the keyword <code class="docutils literal notranslate"><span class="pre">error_param</span></code>:</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Continuing from last example.</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">myerrors</span><span class="o">.</span><span class="n">set_gate_error</span><span class="p">(</span><span class="s1">&#39;H&#39;</span><span class="p">,</span> <span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="n">error_param</span><span class="o">=</span><span class="s1">&#39;q&#39;</span><span class="p">,</span> <span class="n">after</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">myerrors</span><span class="o">.</span><span class="n">get_gate_error</span><span class="p">(</span><span class="s1">&#39;H&#39;</span><span class="p">,</span> <span class="p">{</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">},</span> <span class="n">error_params</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;q&#39;</span><span class="p">:</span><span class="mf">0.5</span><span class="p">})</span>   
+<span class="gp">&gt;&gt;&gt; </span><span class="n">myerrors</span><span class="o">.</span><span class="n">get_gate_error</span><span class="p">(</span><span class="s1">&#39;H&#39;</span><span class="p">,</span> <span class="p">{</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">},</span> <span class="n">error_params</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;q&#39;</span><span class="p">:</span><span class="mf">0.5</span><span class="p">})</span>   <span class="c1"># doctest: +SKIP</span>
 <span class="go">(QuantumCircuit([]), QuantumCircuit([{&#39;X&#39;: {0, 3}}]), set())</span>
 </pre></div>
 </div>
@@ -202,14 +200,14 @@
 <p>Besides specifying errors of a single gate-type, we can declare a set of errors to be uniformly drawn from:</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Continuing from last example.</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">myerrors</span><span class="o">.</span><span class="n">set_gate_error</span><span class="p">(</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="p">{</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="s1">&#39;Y&#39;</span><span class="p">,</span> <span class="s1">&#39;S&#39;</span><span class="p">},</span> <span class="n">error_param</span><span class="o">=</span><span class="s1">&#39;r&#39;</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">myerrors</span><span class="o">.</span><span class="n">get_gate_error</span><span class="p">(</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="p">{</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">},</span> <span class="n">error_params</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;r&#39;</span><span class="p">:</span><span class="mf">0.5</span><span class="p">})</span>   
+<span class="gp">&gt;&gt;&gt; </span><span class="n">myerrors</span><span class="o">.</span><span class="n">get_gate_error</span><span class="p">(</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="p">{</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">},</span> <span class="n">error_params</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;r&#39;</span><span class="p">:</span><span class="mf">0.5</span><span class="p">})</span>   <span class="c1"># doctest: +SKIP</span>
 <span class="go">(QuantumCircuit([{&#39;S&#39;: {3, 4}}]), QuantumCircuit([]), set())</span>
 </pre></div>
 </div>
 <p>Such uniform error-distributions can be made for two-qubit gates as well:</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Continuing from last example.</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">myerrors</span><span class="o">.</span><span class="n">set_gate_error</span><span class="p">(</span><span class="s1">&#39;CNOT&#39;</span><span class="p">,</span> <span class="p">{(</span><span class="s1">&#39;I&#39;</span><span class="p">,</span> <span class="s1">&#39;X&#39;</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;X&#39;</span><span class="p">,</span> <span class="s1">&#39;X&#39;</span><span class="p">),</span> <span class="s1">&#39;CNOT&#39;</span><span class="p">},</span> <span class="n">error_param</span><span class="o">=</span><span class="s1">&#39;r&#39;</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">myerrors</span><span class="o">.</span><span class="n">get_gate_error</span><span class="p">(</span><span class="s1">&#39;CNOT&#39;</span><span class="p">,</span> <span class="p">{(</span><span class="mi">0</span><span class="p">,</span><span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span><span class="p">),</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span><span class="mi">5</span><span class="p">),</span> <span class="p">(</span><span class="mi">6</span><span class="p">,</span><span class="mi">7</span><span class="p">),</span> <span class="p">(</span><span class="mi">8</span><span class="p">,</span><span class="mi">9</span><span class="p">)},</span> <span class="n">error_params</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;r&#39;</span><span class="p">:</span><span class="mf">0.8</span><span class="p">})</span>   
+<span class="gp">&gt;&gt;&gt; </span><span class="n">myerrors</span><span class="o">.</span><span class="n">get_gate_error</span><span class="p">(</span><span class="s1">&#39;CNOT&#39;</span><span class="p">,</span> <span class="p">{(</span><span class="mi">0</span><span class="p">,</span><span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span><span class="p">),</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span><span class="mi">5</span><span class="p">),</span> <span class="p">(</span><span class="mi">6</span><span class="p">,</span><span class="mi">7</span><span class="p">),</span> <span class="p">(</span><span class="mi">8</span><span class="p">,</span><span class="mi">9</span><span class="p">)},</span> <span class="n">error_params</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;r&#39;</span><span class="p">:</span><span class="mf">0.8</span><span class="p">})</span>   <span class="c1"># doctest: +SKIP</span>
 <span class="go">(QuantumCircuit([{&#39;CNOT&#39;: {(0, 1), (4, 5), (8, 9)}, &#39;X&#39;: {3, 6, 7}, &#39;I&#39;: {2}}]), QuantumCircuit([]), set())</span>
 </pre></div>
 </div>
@@ -233,7 +231,7 @@
 <p>To use callables to generate errors, we can call the <code class="docutils literal notranslate"><span class="pre">set_gate_error</span></code> method in the following manner:</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Continuing from last example.</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">myerrors</span><span class="o">.</span><span class="n">set_gate_error</span><span class="p">(</span><span class="s1">&#39;Y&#39;</span><span class="p">,</span> <span class="n">error_func</span><span class="p">,</span> <span class="n">error_param</span><span class="o">=</span><span class="s1">&#39;s&#39;</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">myerrors</span><span class="o">.</span><span class="n">get_gate_error</span><span class="p">(</span><span class="s1">&#39;Y&#39;</span><span class="p">,</span> <span class="p">{</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">},</span> <span class="n">error_params</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;s&#39;</span><span class="p">:</span><span class="mf">0.5</span><span class="p">})</span>   
+<span class="gp">&gt;&gt;&gt; </span><span class="n">myerrors</span><span class="o">.</span><span class="n">get_gate_error</span><span class="p">(</span><span class="s1">&#39;Y&#39;</span><span class="p">,</span> <span class="p">{</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">},</span> <span class="n">error_params</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;s&#39;</span><span class="p">:</span><span class="mf">0.5</span><span class="p">})</span>   <span class="c1"># doctest: +SKIP</span>
 <span class="go">(QuantumCircuit([]), QuantumCircuit([{&#39;R&#39;: {0, 4}, &#39;Q&#39;: {1, 2}}]), set())</span>
 </pre></div>
 </div>
@@ -254,7 +252,7 @@
 <p>Note, <code class="docutils literal notranslate"><span class="pre">set_group_error</span></code> will override the error distribution of any gate belonging to the gate group.</p>
 <p>The gate groups that are defined by default can be found by running:</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">newerrors</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">error_gens</span><span class="o">.</span><span class="n">GatewiseGen</span><span class="p">()</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">newerrors</span><span class="o">.</span><span class="n">gate_groups</span>   
+<span class="gp">&gt;&gt;&gt; </span><span class="n">newerrors</span><span class="o">.</span><span class="n">gate_groups</span>   <span class="c1"># doctest: +SKIP</span>
 <span class="go">{&#39;measurements&#39;: {&#39;measure X&#39;, &#39;measure Y&#39;, &#39;measure Z&#39;},</span>
 <span class="go"> &#39;inits&#39;: {&#39;init |+&gt;&#39;, &#39;init |+i&gt;&#39;, &#39;init |-&gt;&#39;, &#39;init |-i&gt;&#39;, &#39;init |0&gt;&#39;, &#39;init |1&gt;&#39;},</span>
 <span class="go"> &#39;two_qubits&#39;: {&#39;CNOT&#39;, &#39;CZ&#39;, &#39;G&#39;, &#39;SWAP&#39;},</span>
@@ -313,7 +311,7 @@
 
   <div role="contentinfo">
     <p>
-        &copy; Copyright 2018 National Technology &amp; Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software.
+        &copy; Copyright 2018 National Technology &amp; Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software
 
     </p>
   </div>
@@ -332,21 +330,14 @@
 
   
 
-    <script type="text/javascript">
-        var DOCUMENTATION_OPTIONS = {
-            URL_ROOT:'../',
-            VERSION:'0.1.0',
-            LANGUAGE:'None',
-            COLLAPSE_INDEX:false,
-            FILE_SUFFIX:'.html',
-            HAS_SOURCE:  true,
-            SOURCELINK_SUFFIX: '.txt'
-        };
-    </script>
-      <script type="text/javascript" src="../_static/jquery.js"></script>
-      <script type="text/javascript" src="../_static/underscore.js"></script>
-      <script type="text/javascript" src="../_static/doctools.js"></script>
-      <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    
+    
+      <script type="text/javascript" id="documentation_options" data-url_root="../" src="../_static/documentation_options.js"></script>
+        <script type="text/javascript" src="../_static/jquery.js"></script>
+        <script type="text/javascript" src="../_static/underscore.js"></script>
+        <script type="text/javascript" src="../_static/doctools.js"></script>
+        <script async="async" type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    
 
   
 

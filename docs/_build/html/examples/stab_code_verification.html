@@ -95,8 +95,6 @@
 <li class="toctree-l2"><a class="reference internal" href="monte_carlo_script.html">Monte Carlo Script</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../dev_guide.html">Developer Guide</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../code_ref.html">Source Code Reference</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../change_log.html">Change Log</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../bibliography.html">Bibliography</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../todo_list.html">Todo List</a></li>
@@ -186,7 +184,7 @@
 <p>Here we see that the <code class="docutils literal notranslate"><span class="pre">check</span></code> method can be used to specify a generator. If the first argument is a string, then this indicates the Pauli-type of the check. The second argument then indicates which qubits the check acts on. If the first argument is a tuple, then the tuple is a sequence of strings which indicate how the generator acts on the corresponding qubits indicated in the tuple of the second argument.</p>
 <p>Once one has finished specifying the generators of the code, the <code class="docutils literal notranslate"><span class="pre">compile</span></code> method should be used:</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Continuing the last listing.</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">compile</span><span class="p">()</span>   
+<span class="gp">&gt;&gt;&gt; </span><span class="n">qecc</span><span class="o">.</span><span class="n">compile</span><span class="p">()</span>   <span class="c1"># doctest: +SKIP</span>
 <span class="go">Check:</span>
 <span class="go">check((&#39;Z&#39;, &#39;Z&#39;, &#39;Y&#39;), (0, 1, 2))</span>
 <span class="go">anticommutes with:</span>
@@ -343,7 +341,7 @@
 
   <div role="contentinfo">
     <p>
-        &copy; Copyright 2018 National Technology &amp; Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software.
+        &copy; Copyright 2018 National Technology &amp; Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software
 
     </p>
   </div>
@@ -362,21 +360,14 @@
 
   
 
-    <script type="text/javascript">
-        var DOCUMENTATION_OPTIONS = {
-            URL_ROOT:'../',
-            VERSION:'0.1.0',
-            LANGUAGE:'None',
-            COLLAPSE_INDEX:false,
-            FILE_SUFFIX:'.html',
-            HAS_SOURCE:  true,
-            SOURCELINK_SUFFIX: '.txt'
-        };
-    </script>
-      <script type="text/javascript" src="../_static/jquery.js"></script>
-      <script type="text/javascript" src="../_static/underscore.js"></script>
-      <script type="text/javascript" src="../_static/doctools.js"></script>
-      <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    
+    
+      <script type="text/javascript" id="documentation_options" data-url_root="../" src="../_static/documentation_options.js"></script>
+        <script type="text/javascript" src="../_static/jquery.js"></script>
+        <script type="text/javascript" src="../_static/underscore.js"></script>
+        <script type="text/javascript" src="../_static/doctools.js"></script>
+        <script async="async" type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    
 
   
 

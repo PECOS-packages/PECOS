@@ -95,8 +95,6 @@
 </li>
 <li class="toctree-l1"><a class="reference internal" href="api_guide/index.html">API Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="examples/index.html">Examples</a></li>
-<li class="toctree-l1"><a class="reference internal" href="dev_guide.html">Developer Guide</a></li>
-<li class="toctree-l1"><a class="reference internal" href="code_ref.html">Source Code Reference</a></li>
 <li class="toctree-l1"><a class="reference internal" href="change_log.html">Change Log</a></li>
 <li class="toctree-l1"><a class="reference internal" href="bibliography.html">Bibliography</a></li>
 <li class="toctree-l1"><a class="reference internal" href="todo_list.html">Todo List</a></li>
@@ -171,8 +169,8 @@
 <h2>Requirements<a class="headerlink" href="#requirements" title="Permalink to this headline">¶</a></h2>
 <p>Package requirements include:</p>
 <ul class="simple">
-<li>NumPy</li>
-<li>SciPy</li>
+<li>NumPy 1.15+</li>
+<li>SciPy 1.1+</li>
 <li>Matplotlib 2.2+</li>
 <li>NetworkX 2.1+</li>
 </ul>
@@ -186,22 +184,22 @@
 <h2>Installing and Uninstalling<a class="headerlink" href="#installing-and-uninstalling" title="Permalink to this headline">¶</a></h2>
 <p>PECOS has been developed to run on both Windows and Linux-based sytems.</p>
 <p>To install using pip type:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">pip</span> <span class="n">install</span> <span class="n">quantum</span><span class="o">-</span><span class="n">pecos</span>   
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">pip</span> <span class="n">install</span> <span class="n">quantum</span><span class="o">-</span><span class="n">pecos</span>   <span class="c1"># doctest: +SKIP</span>
 </pre></div>
 </div>
 <p>To install from GitHub go to:</p>
 <p><a class="reference external" href="https://github.com/PECOS-packages/PECOS">https://github.com/PECOS-packages/PECOS</a></p>
 <p>Then, download/unzip or clone the version of PECOS you would like to use. Next, navigate to the root of the package
 (where setup.py is located) and run:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">pip</span> <span class="n">install</span> <span class="o">.</span>   
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">pip</span> <span class="n">install</span> <span class="o">.</span>   <span class="c1"># doctest: +SKIP</span>
 </pre></div>
 </div>
 <p>To install and continue to develop the version of PECOS located in the install folder, run:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">e</span> <span class="o">.</span>  
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">e</span> <span class="o">.</span>  <span class="c1"># doctest: +SKIP</span>
 </pre></div>
 </div>
 <p>To uninstall run:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">pip</span> <span class="n">uninstall</span> <span class="n">quantum</span><span class="o">-</span><span class="n">pecos</span>  
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">pip</span> <span class="n">uninstall</span> <span class="n">quantum</span><span class="o">-</span><span class="n">pecos</span>  <span class="c1"># doctest: +SKIP</span>
 </pre></div>
 </div>
 </div>
@@ -209,7 +207,7 @@
 <h2>Tests<a class="headerlink" href="#tests" title="Permalink to this headline">¶</a></h2>
 <p>PECOS comes with tests to verify that the package is running as expected. These tests can be used in the development process to determine if any expected functionality has been broken.</p>
 <p>To run tests, the package PyTest is require. Once installed, simply navigate to your PECOS installation directory and run:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">py</span><span class="o">.</span><span class="n">test</span>    
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">py</span><span class="o">.</span><span class="n">test</span>    <span class="c1"># doctest: +SKIP</span>
 </pre></div>
 </div>
 <p>PyTest will automatically run all tests and inform you of any failures.</p>
@@ -244,7 +242,7 @@
 
   <div role="contentinfo">
     <p>
-        &copy; Copyright 2018 National Technology &amp; Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software.
+        &copy; Copyright 2018 National Technology &amp; Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software
 
     </p>
   </div>
@@ -263,21 +261,14 @@
 
   
 
-    <script type="text/javascript">
-        var DOCUMENTATION_OPTIONS = {
-            URL_ROOT:'./',
-            VERSION:'0.1.0',
-            LANGUAGE:'None',
-            COLLAPSE_INDEX:false,
-            FILE_SUFFIX:'.html',
-            HAS_SOURCE:  true,
-            SOURCELINK_SUFFIX: '.txt'
-        };
-    </script>
-      <script type="text/javascript" src="_static/jquery.js"></script>
-      <script type="text/javascript" src="_static/underscore.js"></script>
-      <script type="text/javascript" src="_static/doctools.js"></script>
-      <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    
+    
+      <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+        <script type="text/javascript" src="_static/jquery.js"></script>
+        <script type="text/javascript" src="_static/underscore.js"></script>
+        <script type="text/javascript" src="_static/doctools.js"></script>
+        <script async="async" type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    
 
   
 

@@ -22,14 +22,14 @@ Optional packages include:
 * PyTest (for running tests)
 
 
-Note on Python Distributation/Environment
+Note on Python Distribution/Environment
 -----------------------------------------
 
 PECOS was developed using the `Anaconda Distribution of Python <https://www.anaconda.com/download/>`_. If you decide to
 use this distribution you may want to create an `environment <https://conda.io/docs/user-guide/tasks/manage-environments.html>`_
 so that PECOS's package requirements do not restrict you when working on other projects.
 
-To create an environment for PECOS using Anaconda run
+To create an environment for PECOS using Anaconda run:
 
 >>> conda create -n pecos python=X # doctest: +SKIP
 
@@ -52,7 +52,7 @@ Installing and Uninstalling
 
 PECOS has been developed to run on both Windows and Linux-based systems.
 
-To install using pip type:
+To install using pip run:
 
 >>> pip install quantum-pecos   # doctest: +SKIP
 
@@ -82,8 +82,7 @@ To uninstall run:
 Development Branch
 ------------------
 
-For the latest features, you may wish to clone/download the development version of PECOS found in the development
-branch:
+For the latest features, you may wish to clone/download the version of PECOS found in the development branch:
 
 https://github.com/PECOS-packages/PECOS/tree/development
 

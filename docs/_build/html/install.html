@@ -87,8 +87,11 @@
             
               <ul class="current">
 <li class="toctree-l1 current"><a class="current reference internal" href="#">Getting Started</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="#requirements">Requirements</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#language-requirement">Language Requirement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#package-requirements">Package Requirements</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#note-on-python-distributation-environment">Note on Python Distributation/Environment</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#installing-and-uninstalling">Installing and Uninstalling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#development-branch">Development Branch</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#tests">Tests</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#importing">Importing</a></li>
 </ul>
@@ -164,9 +167,12 @@
             
   <div class="section" id="getting-started">
 <h1>Getting Started<a class="headerlink" href="#getting-started" title="Permalink to this headline">¶</a></h1>
-<p>First of all, you should have Python 3.5+ installed to run PECOS. PECOS was developed using the <a class="reference external" href="https://www.anaconda.com/download/">Anaconda Distribution of Python</a>.</p>
-<div class="section" id="requirements">
-<h2>Requirements<a class="headerlink" href="#requirements" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="language-requirement">
+<h2>Language Requirement<a class="headerlink" href="#language-requirement" title="Permalink to this headline">¶</a></h2>
+<p>Python 3.5.2+ is need to run.</p>
+</div>
+<div class="section" id="package-requirements">
+<h2>Package Requirements<a class="headerlink" href="#package-requirements" title="Permalink to this headline">¶</a></h2>
 <p>Package requirements include:</p>
 <ul class="simple">
 <li>NumPy 1.15+</li>
@@ -180,15 +186,42 @@
 <li>PyTest (for running tests)</li>
 </ul>
 </div>
+<div class="section" id="note-on-python-distributation-environment">
+<h2>Note on Python Distributation/Environment<a class="headerlink" href="#note-on-python-distributation-environment" title="Permalink to this headline">¶</a></h2>
+<p>PECOS was developed using the <a class="reference external" href="https://www.anaconda.com/download/">Anaconda Distribution of Python</a>. If you decide to
+use this distribution you may want to create an <a class="reference external" href="https://conda.io/docs/user-guide/tasks/manage-environments.html">environment</a>
+so that PECOS’s package requirements do not restrict you when working on other projects.</p>
+<p>To create an environment for PECOS using Anaconda run</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">conda</span> <span class="n">create</span> <span class="o">-</span><span class="n">n</span> <span class="n">pecos</span> <span class="n">python</span><span class="o">=</span><span class="n">X</span> <span class="c1"># doctest: +SKIP</span>
+</pre></div>
+</div>
+<p>where <cite>X</cite> is whatever version of Python you wish to use with PECOS (e.g., <code class="docutils literal notranslate"><span class="pre">X=3.5.2</span></code> or <code class="docutils literal notranslate"><span class="pre">X=3.6</span></code>).</p>
+<p>To activate/use the environment in Windows run the command:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">activate</span> <span class="n">pecos</span> <span class="c1"># doctest: +SKIP</span>
+</pre></div>
+</div>
+<p>In other operating systems you may need to run the following instead:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">source</span> <span class="n">activate</span> <span class="n">pecos</span> <span class="c1"># doctest: +SKIP</span>
+</pre></div>
+</div>
+<p>To deactivate/leave the PECOS environment run:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">deactivate</span> <span class="c1"># doctest: +SKIP</span>
+</pre></div>
+</div>
+</div>
 <div class="section" id="installing-and-uninstalling">
 <h2>Installing and Uninstalling<a class="headerlink" href="#installing-and-uninstalling" title="Permalink to this headline">¶</a></h2>
-<p>PECOS has been developed to run on both Windows and Linux-based sytems.</p>
+<p>PECOS has been developed to run on both Windows and Linux-based systems.</p>
 <p>To install using pip type:</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">pip</span> <span class="n">install</span> <span class="n">quantum</span><span class="o">-</span><span class="n">pecos</span>   <span class="c1"># doctest: +SKIP</span>
 </pre></div>
 </div>
-<p>To install from GitHub go to:</p>
+<p>Alternatively, the plackage can be cloned or downloaded from GitHub:</p>
 <p><a class="reference external" href="https://github.com/PECOS-packages/PECOS">https://github.com/PECOS-packages/PECOS</a></p>
+<p>To clone PECOS using git run:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">git</span> <span class="n">clone</span> <span class="n">https</span><span class="p">:</span><span class="o">//</span><span class="n">github</span><span class="o">.</span><span class="n">com</span><span class="o">/</span><span class="n">PECOS</span><span class="o">-</span><span class="n">packages</span><span class="o">/</span><span class="n">PECOS</span><span class="o">.</span><span class="n">git</span> <span class="c1"># doctest: +SKIP</span>
+</pre></div>
+</div>
 <p>Then, download/unzip or clone the version of PECOS you would like to use. Next, navigate to the root of the package
 (where setup.py is located) and run:</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">pip</span> <span class="n">install</span> <span class="o">.</span>   <span class="c1"># doctest: +SKIP</span>
@@ -203,6 +236,17 @@
 </pre></div>
 </div>
 </div>
+<div class="section" id="development-branch">
+<h2>Development Branch<a class="headerlink" href="#development-branch" title="Permalink to this headline">¶</a></h2>
+<p>For the latest features, you may wish to clone/download the development version of PECOS found in the development
+branch:</p>
+<p><a class="reference external" href="https://github.com/PECOS-packages/PECOS/tree/development">https://github.com/PECOS-packages/PECOS/tree/development</a></p>
+<p>To clone using git run:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">git</span> <span class="n">clone</span> <span class="o">-</span><span class="n">b</span> <span class="n">development</span> <span class="n">https</span><span class="p">:</span><span class="o">//</span><span class="n">github</span><span class="o">.</span><span class="n">com</span><span class="o">/</span><span class="n">PECOS</span><span class="o">-</span><span class="n">packages</span><span class="o">/</span><span class="n">PECOS</span><span class="o">.</span><span class="n">git</span> <span class="c1"># doctest: +SKIP</span>
+</pre></div>
+</div>
+<p>Be aware that as PECOS is in development in this branch, you may experience some bugs.</p>
+</div>
 <div class="section" id="tests">
 <h2>Tests<a class="headerlink" href="#tests" title="Permalink to this headline">¶</a></h2>
 <p>PECOS comes with tests to verify that the package is running as expected. These tests can be used in the development process to determine if any expected functionality has been broken.</p>
@@ -210,7 +254,7 @@
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">py</span><span class="o">.</span><span class="n">test</span>    <span class="c1"># doctest: +SKIP</span>
 </pre></div>
 </div>
-<p>PyTest will automatically run all tests and inform you of any failures.</p>
+<p>PyTest will automatically run all the PECOS’s tests and inform you of any failures.</p>
 </div>
 <div class="section" id="importing">
 <h2>Importing<a class="headerlink" href="#importing" title="Permalink to this headline">¶</a></h2>
@@ -218,7 +262,7 @@
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">pecos</span> <span class="kn">as</span> <span class="nn">pc</span>
 </pre></div>
 </div>
-<p>It will be assumed throughout the documentation that PECOS has already been imported in this manner.</p>
+<p>It will be assumed throughout the documentation that PECOS has been imported in this manner.</p>
 </div>
 </div>
 

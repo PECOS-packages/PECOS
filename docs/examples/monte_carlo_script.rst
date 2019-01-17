@@ -40,7 +40,7 @@ The ``determine_fails`` function is:
    def determine_fails(meas, decoder, circ_runner, state, logical_ops, fails):
        if meas:
            recovery = decoder(meas)
-           circ_runner.run_circuit(state, recovery)
+           circ_runner.run(state, recovery)
        sign = state.logical_sign(logical_ops['Z'], logical_ops['X'])
        fails += sign    
        return fails
@@ -62,7 +62,7 @@ We now create the Monte Carlo loop, which prepares a fresh initial state, applie
        fails = 0
        for i in range(runs):
            state = circ_runner.init(surface.num_qudits)
-           meas, _ = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={'p': p})
+           meas, _ = circ_runner.run(state, logic, error_gen=depolar, error_params={'p': p})
            fails = determine_fails(meas, decoder, circ_runner, state, logical_ops, fails)
        plog.append(fails / runs)
    print('ps=', list(ps))

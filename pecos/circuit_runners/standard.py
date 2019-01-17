@@ -16,6 +16,7 @@
 #   limitations under the License.
 #  =========================================================================  #
 
+import warnings
 import struct
 import os
 import random
@@ -131,7 +132,7 @@ class Standard(object):
 
             # Before errors
             # -------------
-            self.run_circuit(state, errors.get('before', empty_circuit))
+            self._run_circuit(state, errors.get('before', empty_circuit))
 
             # Ideal tick
             # ----------
@@ -140,11 +141,23 @@ class Standard(object):
 
             # After errors
             # ------------
-            self.run_circuit(state, errors.get('after', empty_circuit))
+            self._run_circuit(state, errors.get('after', empty_circuit))
 
         return output, error_circuits
 
-    def run_circuit(self, state, circuit, removed_locations=None, output=None):
+    def run_logic(self, state, circuit, error_gen=None, error_params=None, error_circuits=None, output=None):
+
+        warnings.warn("Deprecation Warning: `run_logic` is being deprecated. Use `run` instead.", DeprecationWarning)
+
+        return self.run(state, circuit, error_gen, error_params, error_circuits, output)
+
+    def run_circuit(self, state, circuit, error_gen=None, error_params=None, error_circuits=None, output=None):
+
+        warnings.warn("Deprecation Warning: `run_circuit` is being deprecated. Use `run` instead.", DeprecationWarning)
+
+        return self.run(state, circuit, error_gen, error_params, error_circuits, output)
+
+    def _run_circuit(self, state, circuit, removed_locations=None, output=None):
         """
         Apply a ``QuantumCircuit`` directly to a state.
 

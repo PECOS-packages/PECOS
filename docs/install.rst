@@ -31,9 +31,18 @@ so that PECOS's package requirements do not restrict you when working on other p
 
 To create an environment for PECOS using Anaconda run:
 
->>> conda create -n pecos python=X # doctest: +SKIP
+>>> conda create -n pecos python=X numpy scipy matplotlib networkx # doctest: +SKIP
 
-where `X` is whatever version of Python you wish to use with PECOS (e.g., ``X=3.5.2`` or ``X=3.6``).
+where `X` is whatever version of Python you wish to use with PECOS (e.g., ``python=3.5.2``, ``python=3.6``,
+``python=3.7``, etc.).
+
+Alternatively, if you clone/download the package (see next section) and navigate to the root, you can create an
+environment by running:
+
+>>> conda env create -f conda_environment.yml # doctest: +SKIP
+
+This will create the environment ``pecos`` with the specific versions of Python and required packages that were used to
+develop PECOS.
 
 To activate/use the environment in Windows run the command:
 

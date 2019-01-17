@@ -42,7 +42,7 @@ environment by running:
 >>> conda env create -f conda_environment.yml # doctest: +SKIP
 
 This will create the environment ``pecos`` with the specific versions of Python and required packages that were used to
-develop PECOS.
+develop PECOS. Note, you will still need to install PECOS using one of the methods described in the following sections.
 
 To activate/use the environment in Windows run the command:
 

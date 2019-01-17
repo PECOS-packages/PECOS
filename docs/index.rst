@@ -37,8 +37,6 @@ To get started, check out the following:
    install
    api_guide/index
    examples/index
-   dev_guide
-   code_ref
    change_log
    bibliography
    todo_list

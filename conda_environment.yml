@@ -1,0 +1,7 @@
+name: pecos
+dependencies:
+  - python=3.6
+  - numpy=1.15
+  - scipy=1.1
+  - matplotlib=3.0
+  - networkx=2.2

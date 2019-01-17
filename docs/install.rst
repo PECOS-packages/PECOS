@@ -1,10 +1,13 @@
 ﻿Getting Started
 ===============
 
-First of all, you should have Python 3.5+ installed to run PECOS. PECOS was developed using the `Anaconda Distribution of Python <https://www.anaconda.com/download/>`_.
+Language Requirement
+--------------------
 
-Requirements
-------------
+Python 3.5.2+ is need to run.
+
+Package Requirements
+--------------------
 
 Package requirements include:
 
@@ -19,19 +22,58 @@ Optional packages include:
 * PyTest (for running tests)
 * ProjectQ (to take advantage of ProjectQ's simulators via PECOS)
 
+
+Note on Python Distribution/Environment
+-----------------------------------------
+
+PECOS was developed using the `Anaconda Distribution of Python <https://www.anaconda.com/download/>`_. If you decide to
+use this distribution you may want to create an `environment <https://conda.io/docs/user-guide/tasks/manage-environments.html>`_
+so that PECOS's package requirements do not restrict you when working on other projects.
+
+To create an environment for PECOS using Anaconda run:
+
+>>> conda create -n pecos python=X numpy scipy matplotlib networkx # doctest: +SKIP
+
+where `X` is whatever version of Python you wish to use with PECOS (e.g., ``python=3.5.2``, ``python=3.6``,
+``python=3.7``, etc.).
+
+Alternatively, if you clone/download the package (see next section) and navigate to the root, you can create an
+environment by running:
+
+>>> conda env create -f conda_environment.yml # doctest: +SKIP
+
+This will create the environment ``pecos`` with the specific versions of Python and required packages that were used to
+develop PECOS. Note, you will still need to install PECOS using one of the methods described in the following sections.
+
+To activate/use the environment in Windows run the command:
+
+>>> activate pecos # doctest: +SKIP
+
+In other operating systems you may need to run the following instead:
+
+>>> source activate pecos # doctest: +SKIP
+
+To deactivate/leave the PECOS environment run:
+
+>>> deactivate # doctest: +SKIP
+
 Installing and Uninstalling
 ---------------------------
 
-PECOS has been developed to run on both Windows and Linux-based sytems. 
+PECOS has been developed to run on both Windows and Linux-based systems.
 
-To install using pip type:
+To install using pip run:
 
 >>> pip install quantum-pecos   # doctest: +SKIP
 
 
-To install from GitHub go to:
+Alternatively, the plackage can be cloned or downloaded from GitHub:
 
 https://github.com/PECOS-packages/PECOS
+
+To clone PECOS using git run:
+
+>>> git clone https://github.com/PECOS-packages/PECOS.git # doctest: +SKIP
 
 Then, download/unzip or clone the version of PECOS you would like to use. Next, navigate to the root of the package 
 (where setup.py is located) and run the command:
@@ -47,6 +89,19 @@ To uninstall run:
 
 >>> pip uninstall quantum-pecos  # doctest: +SKIP
 
+Development Branch
+------------------
+
+For the latest features, you may wish to clone/download the version of PECOS found in the development branch:
+
+https://github.com/PECOS-packages/PECOS/tree/development
+
+To clone using git run:
+
+>>> git clone -b development https://github.com/PECOS-packages/PECOS.git # doctest: +SKIP
+
+Be aware that as PECOS is in development in this branch, you may experience some bugs.
+
 Tests
 -----
 
@@ -56,7 +111,7 @@ To run tests, the package PyTest is require. Once installed, simply navigate to 
 
 >>> py.test    # doctest: +SKIP
 
-PyTest will automatically run all tests and inform you of any failures.
+PyTest will automatically run all the PECOS's tests and inform you of any failures.
 
 
 Importing
@@ -68,4 +123,4 @@ The standard method for importing PECOS is:
 
    import pecos as pc
 
-It will be assumed throughout the documentation that PECOS has already been imported in this manner.
+It will be assumed throughout the documentation that PECOS has been imported in this manner.

@@ -34,7 +34,7 @@ def gate_test(gate_symbol, stab_dict):
 
     for State in states:
         # XI, IX
-        state = State().init_registry(2)
+        state = State(2)
         # control -> target
         state.run_gate('init |+>', {0, })
         state.run_gate('init |+>', {1, })

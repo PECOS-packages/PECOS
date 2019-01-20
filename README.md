@@ -32,8 +32,11 @@ https://quantum-pecos.readthedocs.io
 - Cython (to compile optional C/C++ extensions)
 - pytest 3.0+ (to run tests)
 - Sphinx 2.7.6+ (to compile the documentation)
-- ProjectQ (to take advantage of the full quantum-state simulators made available via ProjectQ)
-- Cirq (to take advantage of the full quantum-state simulators made available via Cirq) [WARNING: In early development.] 
+- ProjectQ (for state vector simulations)
+- Cirq (to take advantage of the full quantum-state simulators made available via Cirq)
+- qcgpu (to run state vector simulations on gpus) 
+
+[WARNING: In development.] 
 ## Installation
 
 To install using pip run the command:

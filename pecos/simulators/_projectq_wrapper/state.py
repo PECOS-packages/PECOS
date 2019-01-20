@@ -30,18 +30,19 @@ except ModuleNotFoundError:
     hasprojq = False
 
 
-class State(object):
+class State:
     """
-    Represents the stabilizer state.
+    Initializes the stabilizer state.
+
+    Args:
+        num_qubits (int): Number of qubits being represented.
+
+    Returns:
+
     """
     gate_dict = bindings.gate_dict
 
     def __init__(self, num_qubits):
-        """
-        Initializes a quantum state/register.
-
-        :param num_qubits: Number of qubits to represent.
-        """
 
         if not hasprojq:
             raise Exception("ProjectQ must be installed to use this class.")

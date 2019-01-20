@@ -30,7 +30,13 @@ class State:
 
     def __init__(self, num_qubits):
         """
-        Initializes a quantum state/register.
+        Initializes the stabilizer state.
+
+        Args:
+            num_qubits (int): Number of qubits being represented.
+
+        Returns:
+
         """
 
         if not has_sim:

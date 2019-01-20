@@ -63,7 +63,7 @@ The ``run_circuit`` method is used to apply a ``QuantumCircuit`` to a state in t
 >>> qc.append('X', {0, 1})
 >>> qc.append('measure Z', {0, 1, 3})
 >>> circ_runner.run(state, qc)
-{1: {0: 1, 1: 1}}
+(StdOutput([(1, {0: 1, 1: 1})]), {})
 
 In the last line of this code block, we see the measurement record produced by the ``circuit_runner``. The keys of the
 outer dictionary are tick indices, while for the inner dictionary the keys are the indices of qubits with non-zero
@@ -79,7 +79,7 @@ The ``run_logic`` method is used to apply ``LogicalCircuits``:
 >>> logic.append(surface.gate('I'))
 >>> state = circ_runner.init(surface.num_qudits)
 >>> circ_runner.run(state, logic)
-({}, {})
+(StdOutput(), {})
 
 
 
@@ -99,7 +99,7 @@ The attribute ``total_time`` stores this value and is used in the following:
 >>> qc = pc.circuits.QuantumCircuit()
 >>> qc.append('X', {0, 1, 2, 3})
 >>> circ_runner.run(state, qc)
-{}
+(StdOutput(), {})
 >>> circ_runner.total_time   # doctest: +SKIP
 7.22257152574457e-06
 

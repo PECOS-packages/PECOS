@@ -49,7 +49,7 @@ The ``print_stabs`` method prints a stabilizer table corresponding to the state 
 {}
 >>> state.run_gate('X', {0})
 {}
->>> state.print_stabs()
+>>> state.print_stabs(print_destabs=True)
  -ZII
  -ZZI
   IIZ
@@ -59,7 +59,9 @@ The ``print_stabs`` method prints a stabilizer table corresponding to the state 
   IIX
 ([' -ZII', ' -ZZI', '  IIZ'], ['  XXI', '  IXI', '  IIX'])
 
-Here in the print output stabilizer generators are indicated by the strings above the dashed lines, while destabilizer generators are indicated by the strings below. 
+Here in the print output stabilizer generators are indicated by the strings above the dashed lines, while destabilizer
+generators are indicated by the strings below. Note that the destabilizers are only given when ``print_destabs`` is set
+to ``True`` (default value is ``False``).
 
 The ``logical_sign`` method can be used to determine the sign of stabilizer generators. As the stabilizer simulators represent stabilizer states, logical basis-states are stabilized by logical operators. Therefore, this method is useful in Monte Carlo simulations to determine if logical errors have flipped the sign of logical operators.
 
@@ -75,10 +77,3 @@ The ``logical_sign`` method can be used to determine the sign of stabilizer gene
 0
 
 A :math:`1` is returned if the phase of the stabilizer is :math:`-1`, and a :math:`0` is returned if the phase is :math:`+1`. If the stabilizer supplied to ``logical_sign`` is not a stabilizer of the state, then an exception will be raised.
-
-Extensions
-----------
-
-.. todo::
-
-   Discuss the simulator extensions when finished...

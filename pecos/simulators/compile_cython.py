@@ -33,7 +33,7 @@ def main():
     print('!!!', current_location)
 
     cython_dirs = [
-        'cysparsesim',
+        '_cysparsesim',
     ]
     failed = {}
 

@@ -20,8 +20,8 @@ from ._sparsesim import State as pySparseSim
 
 # C++ version of SparseStabSim wrapper
 try:
-    from .cysparsesim import State as SparseSim
-    from .cysparsesim import State as cySparseSim
+    from ._cysparsesim import State as SparseSim
+    from ._cysparsesim import State as cySparseSim
 except ImportError:
     from ._sparsesim import State as SparseSim
 

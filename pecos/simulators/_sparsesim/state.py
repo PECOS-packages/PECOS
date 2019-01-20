@@ -47,26 +47,25 @@ from .refactor import refactor as refactor_generators
 from .refactor import find_stab as find_stabilizer
 
 
-class State(object):
+class State:
     """
     Represents the stabilizer state.
     """
     gate_dict = bindings.gate_dict
 
-    def __init__(self, num_qubits, **kwargs):
+    def __init__(self, num_qubits):
         """
         Initializes the stabilizer state.
 
-        :param num_qubits: Number of qubits to represent.
-        """
+        Args:
+            num_qubits (int): Number of qubits being represented.
 
-        if kwargs:
-            raise Exception('No extra keyword arguments recognized!')
+        Returns:
+
+        """
 
         if not isinstance(num_qubits, int):
             raise Exception('``num_qubits`` should be of type ``int.``')
-
-        # print(np.random.randint(200))
 
         self.num_qubits = num_qubits
 
@@ -141,6 +140,7 @@ class State(object):
         self.gate_dict[symbol](self, location, **gate_kwargs)
 
     def copy(self):
+
         new = State(self.num_qubits)
 
         old_stabs = self.stabs

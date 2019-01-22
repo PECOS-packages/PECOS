@@ -11,12 +11,14 @@ quantum error-correction protocols.
 - Language: Python 3.5.2+ (with optional C and C++ extensions)
 
 ## Contact
+
+ For questions or suggestions, please feel free to contact the author:
+ 
    - Ciarán Ryan-Anderson, ciaran@pecos.io
 
 ## Getting Started
 
-To get started, check out the documentation in the "docs" folder. You can also see the documentation on Read the Docs 
-here:
+To get started, check out the documentation in the "docs" folder or find it online at:
 
 https://quantum-pecos.readthedocs.io
 

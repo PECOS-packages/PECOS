@@ -33,7 +33,7 @@ class Standard(object):
     This class represents a standard model for running quantum circuits and adding in errors.
     """
 
-    def __init__(self, simulator=None, seed=None, gate_dict=None):
+    def __init__(self, simulator=None, seed=None):
         """
 
         Args:
@@ -52,20 +52,8 @@ class Standard(object):
 
         if simulator is None:
             self.simulator = sims.SparseSim
-
-        elif isinstance(simulator, str):
-            if simulator == 'sparsesim':
-                self.simulator = sims.SparseSim
-            elif simulator == 'cysparsesim':
-                self.simulator = sims.cySparseSim
-            elif simulator == 'projectq':
-                self.simulator = sims.ProjectQSim
-            else:
-                raise Exception('Simulator not recognized!')
         else:
-            self.simulator = simulator  # Need this in case wanting to use some other simulator class
-
-        self.gate_dict = gate_dict
+            self.simulator = simulator
 
     def init(self, num_qudits, *args, **kwargs):
         """
@@ -200,16 +188,6 @@ class Standard(object):
         gate_results = {}
         for symbol, physical_gate_locations, gate_kwargs in gates.items():
 
-            if self.gate_dict:
-                gate_results = {}
-                for location in physical_gate_locations - removed_locations:
-                    this_result = self.gate_dict[symbol](state, location, **gate_kwargs)
-                    # TODO: stop using gate_dict directly.
-                    # TODO: Switch to adding new gates via simulator...
-
-                    if this_result:
-                        gate_results[location] = this_result
-            else:
-                gate_results = state.run_gate(symbol, physical_gate_locations - removed_locations, **gate_kwargs)
+            gate_results = state.run_gate(symbol, physical_gate_locations - removed_locations, **gate_kwargs)
 
         return gate_results

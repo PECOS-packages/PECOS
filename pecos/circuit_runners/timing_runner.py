@@ -73,22 +73,10 @@ class TimingRunner(Standard):
         gate_results = {}
         for symbol, physical_gate_locations, gate_kwargs in gates.items():
 
-            if self.gate_dict:
-                gate_results = {}
-                for location in physical_gate_locations - removed_locations:
-                    ti = timer()
-                    this_result = self.gate_dict[symbol](state, location, **gate_kwargs)
-                    tf = timer()
-                    self.total_time += tf - ti
-                    self.num_gates += 1
-
-                    if this_result:
-                        gate_results[location] = this_result
-            else:
-                ti = timer()
-                gate_results = state.run_gate(symbol, physical_gate_locations - removed_locations, **gate_kwargs)
-                tf = timer()
-                self.total_time += tf - ti
-                self.num_gates += len(physical_gate_locations - removed_locations)
+            ti = timer()
+            gate_results = state.run_gate(symbol, physical_gate_locations - removed_locations, **gate_kwargs)
+            tf = timer()
+            self.total_time += tf - ti
+            self.num_gates += len(physical_gate_locations - removed_locations)
 
         return gate_results

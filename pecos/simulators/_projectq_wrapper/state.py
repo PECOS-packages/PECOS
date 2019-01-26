@@ -98,7 +98,6 @@ class State:
 
         Args:
             circuit (QuantumCircuit): A circuit instance or object with an appropriate items() generator.
-            output (bool): Whether to return an output.
 
         Returns (list): If output is True then the circuit output is returned. Note that this output format may differ
         from what a ``circuit_runner`` will return for the same method named ``run_circuit``.

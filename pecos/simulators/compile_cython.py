@@ -70,3 +70,7 @@ def compile():
             print('--------------')
 
         print('\nRecommend compiling separately those that failed.')
+
+
+if __name__ == '__main__':
+    compile()

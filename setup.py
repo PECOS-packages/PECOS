@@ -71,12 +71,14 @@ setup(
     ],
 )
 
+'''
 try:
     import cython
     # Have to have Cython already installed before running this setup file
-    # Otherwise, just run:
+    # Otherwise, just run compile_cython as a script: python compile_cython.py
     from pecos.simulators import compile_cython
     compile_cython.compile()
     # TODO: compile Cython directly using this setup script ... or could trigger compile at init if Cython is available
 except ImportError:
     pass
+'''

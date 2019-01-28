@@ -19,11 +19,11 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-from libcpp cimport bool
 cimport cysparsesim_header as s
 from cysparsesim_header cimport int_num
 
 from .src.logical_sign import find_logical_signs
+from ..
 
 
 cdef dict gate_dict = {

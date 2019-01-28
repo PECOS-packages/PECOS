@@ -45,7 +45,10 @@ setup(
                 'and study of quantum error correcting codes.',
     long_description=long_description,
     long_description_content_type="text/markdown",
+
     packages=find_packages(),
+    include_package_data=True,
+
     python_requires='>=3.5.2',
     install_requires=[
         'numpy>=1.15.0',
@@ -66,4 +69,14 @@ setup(
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
     ],
-    )
+)
+
+try:
+    import cython
+    # Have to have Cython already installed before running this setup file
+    # Otherwise, just run:
+    from pecos.simulators import compile_cython
+    compile_cython.compile()
+    # TODO: compile Cython directly using this setup script ... or could trigger compile at init if Cython is available
+except ImportError:
+    pass

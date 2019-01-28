@@ -20,8 +20,7 @@ import os
 import subprocess
 
 
-def main():
-
+def compile():
     # See if Cython has been installed...
     try:
         import cython
@@ -30,7 +29,7 @@ def main():
 
     current_location = os.path.dirname(os.path.abspath(__file__))
 
-    print('!!!', current_location)
+    # print('!!!', current_location)
 
     cython_dirs = [
         'cysparsesim',
@@ -47,13 +46,6 @@ def main():
 
         if p.returncode:
             failed[d] = error
-
-    return failed, cython_dirs
-
-
-if __name__ == '__main__':
-
-    failed, cython_dirs = main()
 
     successful = set(cython_dirs) - set(failed.keys())
 

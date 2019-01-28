@@ -1,0 +1,2 @@
+recursive-include pecos *.c *.cpp *.h *.pyx *.pxd
+prune pecos/?/build

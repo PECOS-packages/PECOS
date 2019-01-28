@@ -26,10 +26,3 @@ except ImportError:
     from .sparsesim import State as SparseSim
 
 StabSim = SparseSim  # Default stabilizer simulator
-
-try:
-    import cython
-    from . import compile_cython
-
-except ImportError:
-    pass

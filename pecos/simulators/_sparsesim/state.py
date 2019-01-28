@@ -41,17 +41,17 @@ Date        Author  Comment
 05/24/2017  CRA     Simplified string outputs. Added the method ``gate`` to ``State`` to give an 
 
 """
+from .. import BaseSim
 from . import bindings
 from .logical_sign import find_logical_signs
 from .refactor import refactor as refactor_generators
 from .refactor import find_stab as find_stabilizer
 
 
-class State:
+class State(BaseSim):
     """
     Represents the stabilizer state.
     """
-    gate_dict = bindings.gate_dict
 
     def __init__(self, num_qubits):
         """
@@ -63,6 +63,11 @@ class State:
         Returns:
 
         """
+
+        super().__init__()
+
+        self.gate_dict = bindings.gate_dict  # TODO: check to see if it makes a difference in performance if this is
+        # moved to a class variable.
 
         if not isinstance(num_qubits, int):
             raise Exception('``num_qubits`` should be of type ``int.``')
@@ -95,46 +100,6 @@ class State:
 
     def find_stab(self, xs, zs):
         return find_stabilizer(self, xs, zs)
-
-    def run_gate(self, symbol, locations, **gate_kwargs):
-        """
-
-        Args:
-            symbol:
-            locations:
-            **gate_kwargs:
-
-        Returns:
-
-        """
-
-        output = {}
-        for location in locations:
-            results = self.gate_dict[symbol](self, location, **gate_kwargs)
-
-            if results:
-                output[location] = results
-
-        return output
-
-    def run_circuit(self, circuit):
-        """
-
-        Args:
-            circuit (QuantumCircuit): A circuit instance or object with an appropriate items() generator.
-
-        Returns (list): If output is True then the circuit output is returned. Note that this output format may differ
-        from what a ``circuit_runner`` will return for the same method named ``run_circuit``.
-
-        """
-
-        results = []
-
-        for symbol, locations, gate_kwargs in circuit.items():
-            gate_output = self.run_gate(symbol, locations, **gate_kwargs)
-            results.append(gate_output)
-
-        return results
 
     def run_direct(self, symbol, location, **gate_kwargs):
         self.gate_dict[symbol](self, location, **gate_kwargs)

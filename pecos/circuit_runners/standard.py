@@ -185,9 +185,10 @@ class Standard(object):
         if removed_locations is None:
             removed_locations = set([])
 
-        gate_results = {}
+        results = {}
         for symbol, physical_gate_locations, gate_kwargs in gates.items():
 
             gate_results = state.run_gate(symbol, physical_gate_locations - removed_locations, **gate_kwargs)
+            results.update(gate_results)
 
-        return gate_results
+        return results

@@ -2,6 +2,7 @@ __pycache__
 *.pyc
 *.pyd
 build
+dist
 *.egg-info
 *.cache
 .pylintc

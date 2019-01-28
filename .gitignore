@@ -7,4 +7,5 @@ build
 .pylintc
 .pytest_cache
 /.idea
+/.eggs
 ~*

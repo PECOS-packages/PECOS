@@ -16,6 +16,8 @@
 #   limitations under the License.
 #  =========================================================================  #
 
+from ._parent_sim_classes import BaseSim
+
 from ._sparsesim import State as pySparseSim
 
 # C++ version of SparseStabSim wrapper

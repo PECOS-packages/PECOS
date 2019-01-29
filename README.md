@@ -18,7 +18,7 @@ quantum error-correction protocols.
 To get started, check out the documentation in the "docs" folder. You can also see the documentation on Read the Docs 
 here:
 
-https://quantum-pecos.readthedocs.io
+https://quantum-pecos.readthedocs.io/en/development/
 
 ## Requirements
 - Python 3.5.2+

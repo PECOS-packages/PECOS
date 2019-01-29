@@ -12,13 +12,12 @@ studying, developing, and evaluating quantum error-correcting codes (QECCs).
 
 PECOS attempts to balance simplicity, usability, functionality, and extendability while also attempting to be
 future-proofed. The framework treats the main classes used to study/develop/evaluate QECCs like
-interchangeable black boxes. Although, there are some necessary restrictions/specifications on inputs and outputs of the
-classes. (This is essentially a pipeline approach.) These "black box" classes can easily be switched out for classed
-created by the user. This flexible design approach has lead PECOS to be agnostic to quantum simulators, quantum
-operations, QECCs, and evaluation methods. Therefore, PECOS can be used to encapsulate and study a wide variety of QECC
-protocols; however, one of the main influences on design choice has been the study of lattice surgery for topological
-stabilizer codes.
-
+interchangeable black boxes. Although, there are some necessary restrictions/specifications on the inputs and outputs of
+these classes. (This is essentially a pipeline approach.) These "black box" classes can easily be switched out for
+classes created by the user. Thus, allowing for a lot of freedom for customization, if needed. This flexible design
+approach has lead PECOS to be agnostic to things such as quantum simulators, quantum gates, QECCs, and evaluation
+methods. Therefore, PECOS can be used to encapsulate and study a wide variety of QECC protocols; however, one of the
+main influences on design choice has been the study of lattice surgery for topological stabilizer codes.
 
 History
 -------

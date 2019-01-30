@@ -16,10 +16,10 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-from collections import OrderedDict
+# from collections import OrderedDict
 
 
-class ErrorCircuits(OrderedDict):
+class ErrorCircuits(dict):
     """
     Used to store error circuits.
     """

@@ -18,7 +18,7 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-__version__ = '0.1.1'
+__version__ = '0.1.2'
 __author__ = 'Ciarán Ryan-Anderson'
 __copyright__ = '2018 National Technology & Engineering Solutions of Sandia, LLC (NTESS). Under the terms ' \
                 'of Contract DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software'

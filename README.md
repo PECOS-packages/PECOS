@@ -15,12 +15,20 @@ quantum error-correction protocols.
  For questions or suggestions, please feel free to contact the author:
  
    - Ciarán Ryan-Anderson, ciaran@pecos.io
-
+   
 ## Getting Started
 
 To get started, check out the documentation in the "docs" folder or find it online at:
 
 https://quantum-pecos.readthedocs.io
+   
+## Latest Development
+
+See the following branch for the the last version of PECOS that is under active development:
+
+https://github.com/PECOS-packages/PECOS/tree/development
+
+(Note, this is a pre-release branch.)
 
 ## Requirements
 - Python 3.5.2+

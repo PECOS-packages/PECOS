@@ -3,6 +3,7 @@
 
 [![PyPI version](https://badge.fury.io/py/quantum-pecos.svg)](https://badge.fury.io/py/quantum-pecos)
 [![Documentation Status](https://readthedocs.org/projects/quantum-pecos/badge/?version=latest)](https://quantum-pecos.readthedocs.io/en/latest/?badge=latest)
+.. image:: https://img.shields.io/badge/python-3.5.2%2C%203.6%2C%203.7-brightgreen.svg
 
 PECOS (Performance Estimator of Codes On Surfaces) is a Python framework for studying, developing, and evaluating 
 quantum error-correction protocols.
@@ -42,6 +43,10 @@ https://github.com/PECOS-packages/PECOS/tree/development
 - Cython (to compile optional C/C++ extensions)
 - pytest 3.0+ (to run tests)
 - Sphinx 2.7.6+ (to compile the documentation)
+
+## License
+
+PECOS is licensed under the Apache 2.0 license
 
 ## Installation
 

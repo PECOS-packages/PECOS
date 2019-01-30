@@ -1,7 +1,7 @@
 __pycache__
 *.pyc
 *.pyd
-build
+**/build
 dist
 *.eggs
 *.egg-info

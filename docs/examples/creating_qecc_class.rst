@@ -3,7 +3,8 @@
 Creating a QECC Class
 =====================
 
-To facilitate the evaluation of QECC protocols not included in PECOS, this appendix shows how to represent a QECC with a Python so can be used with PECOS. In particular, we look at representing the repetition code.
+To facilitate the evaluation of QECC protocols not included in PECOS, this appendix shows how to represent a QECC with a
+Python so can be used with PECOS. In particular, we look at representing the repetition code.
 
 To begin, we create an empty Python file called ``zrepetition.py`` and import some useful classes:
 
@@ -15,7 +16,9 @@ To begin, we create an empty Python file called ``zrepetition.py`` and import so
    from pecos.circuits import QuantumCircuit
    from pecos.qeccs import QECC, LogicalGate, LogicalInstruction
 
-Subclasses of ``QECC``, ``LogicalGate``, and ``LogicalInstruction`` inherit numerous methods and attributes that simplify the creation of new ``qeccs``. If some of the inherited methods and attributes are not appropriate for a QECC, one can typically override them. 
+Subclasses of ``QECC``, ``LogicalGate``, and ``LogicalInstruction`` inherit numerous methods and attributes that
+simplify the creation of new ``qeccs``. If some of the inherited methods and attributes are not appropriate for a QECC,
+one can typically override them.
 
 The QECC class
 --------------
@@ -38,7 +41,8 @@ We now create a class ``ZReptition`` to represent our ``qecc``:
             # Identify symbols with gate/instruction classes:
             self._set_symbols()
 
-Here, the ``dict`` called ``qecc_params`` will be used to specify parameters that identify a member of the QECC's family. We will discuss later the method calls see in the ``__init__`` method. 
+Here, the ``dict`` called ``qecc_params`` will be used to specify parameters that identify a member of the QECC's
+family. We will discuss later the method calls see in the ``__init__`` method.
 
 Next, we write the ``_set_qecc_description``, which sets class attributes that describe the QECC: 
 
@@ -55,9 +59,16 @@ Next, we write the ``_set_qecc_description``, which sets class attributes that d
         self.num_logical_qudits = 1
         self.num_ancillas = self.num_data_qudits - 1
 
-The ``name`` attribute identifies the code. The ``length`` attribute we will use to define how long the QECC is. We use ``distance`` to determine the size of the QECC. We will be describing a repetition that only has :math:`Z` checks; therefore, the code will not detect any :math:`Z` errors. For this reason, the distance is one no matter the length of the QECC. ``num_data_qudits`` is the number of data qubits. The attribute ``num_logical_qudits`` is the number of logical qubits we will encode with this QECC. The total number of ancillas used in all the ``qecc``'s procedures is equal to ``num_ancillas``. The total number of qubits is equal to the ``num_qudits`` attribute. This attribute is determined by the parent class ``QECC``.
+The ``name`` attribute identifies the code. The ``length`` attribute we will use to define how long the QECC is. We use
+``distance`` to determine the size of the QECC. We will be describing a repetition that only has :math:`Z` checks;
+therefore, the code will not detect any :math:`Z` errors. For this reason, the distance is one no matter the length of
+the QECC. ``num_data_qudits`` is the number of data qubits. The attribute ``num_logical_qudits`` is the number of
+logical qubits we will encode with this QECC. The total number of ancillas used in all the ``qecc``'s procedures is
+equal to ``num_ancillas``. The total number of qubits is equal to the ``num_qudits`` attribute. This attribute is
+determined by the parent class ``QECC``.
 
-Next, we construct ``_set_symbols``, which contain dictionaries that associate symbols to ``LogicalInstructions`` and ``LogicalGates``. We will describe these classes later. 
+Next, we construct ``_set_symbols``, which contain dictionaries that associate symbols to ``LogicalInstructions`` and
+``LogicalGates``. We will describe these classes later.
 
 .. doctest:: python
     :options: +SKIP
@@ -72,7 +83,8 @@ Next, we construct ``_set_symbols``, which contain dictionaries that associate s
             'I': GateIdentity,
             'init |0>': GateInitZero, }
 
-Now we write the method ``_generate_layout``, which generates the physical layout of qubits. As we will see later, a physical layout is useful for defining the quantum circuits of the QECC protocol. 
+Now we write the method ``_generate_layout``, which generates the physical layout of qubits. As we will see later, a
+physical layout is useful for defining the quantum circuits of the QECC protocol.
 
 .. doctest:: python
     :options: +SKIP
@@ -90,7 +102,8 @@ Now we write the method ``_generate_layout``, which generates the physical layou
         # `add_nodes` updates an attribute called `layout.`
         return self.layout
 
-Finally for the ``qecc``, we will add the method ``_determine_sides`` to create a dictionary that defines the physical boundary of the QECC. This information can be used by decoders to understand the geometry of the code.
+Finally for the ``qecc``, we will add the method ``_determine_sides`` to create a dictionary that defines the physical
+boundary of the QECC. This information can be used by decoders to understand the geometry of the code.
 
 .. doctest:: python
     :options: +SKIP
@@ -100,14 +113,16 @@ Finally for the ``qecc``, we will add the method ``_determine_sides`` to create 
             'length': set(self.data_qudit_set)
             }
 
-
-
-
-
 Logical Instruction Classes
 ---------------------------
 
-Now that we have created a class to represent the QECC, we will now create classes to represent logical instructions. First create an logical instruction class, called ``InstrSynExtraction``, that represents one round of syndrome extraction. Similar to the ``ZRepitition`` class, we will subclass our class off of the ``LogicalInstruction``, which is provided by PECOS. After we do this, we will write an initialization method that receives as arguments the ``qecc`` instance the instruction belongs to, the associated symbol, and a dictionary of logical gate parameters called ``gate_params``. This dictionary will come from the ``LogicalGate`` that contains the ``LogicalInstruction`` and may alter the ``LogicalGate`` and the ``QuantumCircuit`` contained in the ``LogicalInstruction``.
+Now that we have created a class to represent the QECC, we will now create classes to represent logical instructions.
+First create an logical instruction class, called ``InstrSynExtraction``, that represents one round of syndrome
+extraction. Similar to the ``ZRepitition`` class, we will subclass our class off of the ``LogicalInstruction``, which is
+provided by PECOS. After we do this, we will write an initialization method that receives as arguments the ``qecc``
+instance the instruction belongs to, the associated symbol, and a dictionary of logical gate parameters called
+``gate_params``. This dictionary will come from the ``LogicalGate`` that contains the ``LogicalInstruction`` and may
+alter the ``LogicalGate`` and the ``QuantumCircuit`` contained in the ``LogicalInstruction``.
 
 .. doctest:: python
     :options: +SKIP
@@ -139,7 +154,11 @@ We now include the ``_create_checks`` method, which we will use to define the ch
             d2 = qecc.position2qudit[(x+1, y)]
             self.abstract_circuit.append('Z check', {qid, d1, d2}, datas=[d1, d2], ancillas=[qid])
 
- Here we use the physical layout of the QECC to construct checks. A ``QuantumCircuit`` called ``abstract_circuit`` is used to register each :math:`Z`-type check, the qubits it acts on, and whether the qubits are used as data or ancilla qubits. Note, check circuits such as the ones seen in Fig~\ref{fig:surf-checks} are used to implement the checks. The order of the data qubits in the ``datas`` keyword indicates the order which the data qubits are acted on by the check circuits. The checks registered by ``abstract_circuit`` are later compiled into quantum circuits.  
+Here we use the physical layout of the QECC to construct checks. A ``QuantumCircuit`` called ``abstract_circuit`` is
+used to register each :math:`Z`-type check, the qubits it acts on, and whether the qubits are used as data or ancilla
+qubits. Note, check circuits such as the ones seen in Fig~\ref{fig:surf-checks} are used to implement the checks. The
+order of the data qubits in the ``datas`` keyword indicates the order which the data qubits are acted on by the check
+circuits. The checks registered by ``abstract_circuit`` are later compiled into quantum circuits.
 
 Now we will write the method ``set_logical_ops``, which define the logical operators of the QECCs.        
 
@@ -159,9 +178,18 @@ Now we will write the method ``set_logical_ops``, which define the logical opera
        self.logical_stabilizers = None
        self.logical_signs = None
 
- Here, the variables ``initial_logical_ops`` and ``final_logical_ops`` that represent the initial and final logical operators, respectively, are set. Each of these variables are a list where each element represents a collection of logical operators of an encoded qudit. In particular, each element is a dictionary where the keys are symbols identified with the logical operator and the values are ``QuantumCircuits`` representing the unitaries of logical operators. 
+Here, the variables ``initial_logical_ops`` and ``final_logical_ops`` that represent the initial and final logical
+operators, respectively, are set. Each of these variables are a list where each element represents a collection of
+logical operators of an encoded qudit. In particular, each element is a dictionary where the keys are symbols
+identified with the logical operator and the values are ``QuantumCircuits`` representing the unitaries of logical
+operators.
 
-If a logical operator encodes a stabilizer state then ``logical_stabilizers`` is a list of the strings representing the logical operators that stabilizer the state. If the logical operator does not specifically encode a stabilizer state, then ``logical_stabilizers`` is set to ``None``. The variable ``logical_signs`` is a list of signs the corresponding logical operators in ``logical_stabilizers``. If the phase of the operators is :math:`+1`, then the element of ``logical_signs`` is 0. If the phase of the operators is :math:`-`, then the element of ``logical_signs`` is 1.  If ``logical_stabilizers`` is ``None``, then ``logical_signs`` is ``None``. 
+If a logical operator encodes a stabilizer state then ``logical_stabilizers`` is a list of the strings representing the
+logical operators that stabilizer the state. If the logical operator does not specifically encode a stabilizer state,
+then ``logical_stabilizers`` is set to ``None``. The variable ``logical_signs`` is a list of signs the corresponding
+logical operators in ``logical_stabilizers``. If the phase of the operators is :math:`+1`, then the element of
+``logical_signs`` is 0. If the phase of the operators is :math:`-`, then the element of ``logical_signs`` is 1.  If
+``logical_stabilizers`` is ``None``, then ``logical_signs`` is ``None``.
 
 We now define the initialization of the logical zero-stat:
 
@@ -179,7 +207,9 @@ We now define the initialization of the logical zero-stat:
            # Must be called at the end of initiation.
            self._compile_circuit(self.abstract_circuit)
 
- Here, the method ``_create_checks`` is used to create check by first making a shallow copy of the ``abstract_circuit`` of the ``InstrSynExtraction`` class. After doing this we add :math:`|0\rangle` initialization of the data qubits on the 0th tick.
+Here, the method ``_create_checks`` is used to create check by first making a shallow copy of the ``abstract_circuit``
+of the ``InstrSynExtraction`` class. After doing this we add :math:`|0\rangle` initialization of the data qubits on the
+0th tick.
 
 The ``_create_checks`` method is as follows: 
 
@@ -195,9 +225,10 @@ The ``_create_checks`` method is as follows:
        # Add it the initialization of the data qubits
        data_qudits = set(qecc.data_qudit_set)
        self.abstract_circuit.append('init |0>', locations=data_qudits, tick=0)
-   }
 
-The ``set_logical_ops`` method is similar to the of method of the same name in ``InstrSynExtraction``. The difference for this class is that a logical zero-state is encoded by the logical operator. Because of this, ``logical_stabilizers`` is set to ``['Z']`` and ``logical_signs`` is set to ``[0]``. 
+The ``set_logical_ops`` method is similar to the of method of the same name in ``InstrSynExtraction``. The difference
+for this class is that a logical zero-state is encoded by the logical operator. Because of this, ``logical_stabilizers``
+is set to ``['Z']`` and ``logical_signs`` is set to ``[0]``.
 
 .. doctest:: python
    :options: +SKIP
@@ -218,7 +249,8 @@ The ``set_logical_ops`` method is similar to the of method of the same name in `
 Logical Gate Classes
 --------------------
 
-We now construct the ``LogicalClass`` classes. The construction of these classes is relatively simple compared to the create of ``LogicalInstruction`` classes.
+We now construct the ``LogicalClass`` classes. The construction of these classes is relatively simple compared to the
+create of ``LogicalInstruction`` classes.
 
 To begin, we write the class representing the logical identity called ``GateIdentity``:
 
@@ -233,9 +265,16 @@ To begin, we write the class representing the logical identity called ``GateIden
            self.instr_symbols = ['instr_syn_extract'] * self.num_syn_extract
 
 
- Here, the initialization method includes the argument ``qecc`` and the argument ``symbol``. These are the ``qecc`` instance of the ``LogicalGate`` class and the string used to represent the ``LogicalGate``, respectively. The initialization method also accepts a keyword arguments, which are stored in the dictionary ``gate_params`` and may be used to alter the ``LogicalGate`` and associated ``LogicalInstructions``. 
+Here, the initialization method includes the argument ``qecc`` and the argument ``symbol``. These are the ``qecc``
+instance of the ``LogicalGate`` class and the string used to represent the ``LogicalGate``, respectively. The
+initialization method also accepts a keyword arguments, which are stored in the dictionary ``gate_params`` and may be
+used to alter the ``LogicalGate`` and associated ``LogicalInstructions``.
 
-The method ``expected_params`` determines the keyword arguments that are accepted from ``gate_params``. The number of syndrome extraction rounds equal to ``'num_syn_extract'``. in the ``gate_params`` dictionary. Finally, a list of ``LogicalInstruction`` symbols is stored in the variable ``instr_symbols``. The ``instr_symbols`` indicates the order of ``LogicalInstructions`` that the gate represents. The correspondence between the ``LogicalInstruction`` classes and symbols was established by the ``sym2instruction_class`` method of the ``ZRepetition`` class. 
+The method ``expected_params`` determines the keyword arguments that are accepted from ``gate_params``. The number of
+syndrome extraction rounds equal to ``'num_syn_extract'``. in the ``gate_params`` dictionary. Finally, a list of
+``LogicalInstruction`` symbols is stored in the variable ``instr_symbols``. The ``instr_symbols`` indicates the order of
+``LogicalInstructions`` that the gate represents. The correspondence between the ``LogicalInstruction`` classes and
+symbols was established by the ``sym2instruction_class`` method of the ``ZRepetition`` class.
 
 
 
@@ -253,13 +292,14 @@ We will also create a ``LogicalGate`` class the represents the initialization of
            syn_extract = ['instr_syn_extract'] * self.num_syn_extract
            self.instr_symbols.extend(syn_extract)
 
- Here, all the methods function the same way as those in the ``GateIdentity`` class.
+Here, all the methods function the same way as those in the ``GateIdentity`` class.
 
 
 Example Usage
 -------------
 
-Now we will look at a small example of using the ``ZRepetition`` class that we created. We begin by importing the class from the ``zrepetition.py`` script and creating an instance of length three:
+Now we will look at a small example of using the ``ZRepetition`` class that we created. We begin by importing the class
+from the ``zrepetition.py`` script and creating an instance of length three:
 
 .. doctest::
    :options: +SKIP
@@ -267,7 +307,8 @@ Now we will look at a small example of using the ``ZRepetition`` class that we c
    from zrepetition import ZRepetition
    qecc = ZRepetition(length=3)
 
-Now that we have created an instance, we will use the ``plot`` method that is inherited by the syndrome-extraction instruction:
+Now that we have created an instance, we will use the ``plot`` method that is inherited by the syndrome-extraction
+instruction:
 
 .. doctest:: python
    :options: +SKIP
@@ -280,7 +321,8 @@ This code results in the plot of the length three repetition code:
    :align: center
    :width: 400px
 
-The ``ZRepetition`` class can be used just like any other ``qecc`` that comes with PECOS. For example, we can run the following simulation:
+The ``ZRepetition`` class can be used just like any other ``qecc`` that comes with PECOS. For example, we can run the
+following simulation:
 
 .. doctest:: python
    :options: +SKIP

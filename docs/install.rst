@@ -27,7 +27,8 @@ Note on Python Distribution/Environment
 -----------------------------------------
 
 PECOS was developed using the `Anaconda Distribution of Python <https://www.anaconda.com/download/>`_. If you decide to
-use this distribution you may want to create an `environment <https://conda.io/docs/user-guide/tasks/manage-environments.html>`_
+use this distribution you may want to create an
+`environment <https://conda.io/docs/user-guide/tasks/manage-environments.html>`_
 so that PECOS's package requirements do not restrict you when working on other projects.
 
 To create an environment for PECOS using Anaconda run:
@@ -105,9 +106,11 @@ Be aware that as PECOS is in development in this branch, you may experience some
 Tests
 -----
 
-PECOS comes with tests to verify that the package is running as expected. These tests can be used in the development process to determine if any expected functionality has been broken.
+PECOS comes with tests to verify that the package is running as expected. These tests can be used in the development
+process to determine if any expected functionality has been broken.
 
-To run tests, the package PyTest is require. Once installed, simply navigate to your PECOS installation directory and run:
+To run tests, the package PyTest is require. Once installed, simply navigate to your PECOS installation directory and
+run:
 
 >>> py.test    # doctest: +SKIP
 

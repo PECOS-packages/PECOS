@@ -50,7 +50,8 @@ By default, a ``Standard`` uses the ``StabSim`` as a simulator. This can be chan
 >>> from somepackage import MyCustomSim  # doctest: +SKIP
 >>> circ_runner = pc.circuit_runners.Standard(simulator=MyCustomSim)  # doctest: +SKIP
 
-The ``init`` method is used to (re)initialize a ``simulator`` instance. An example of using this method to create a four-qubit registry is seen here:
+The ``init`` method is used to (re)initialize a ``simulator`` instance. An example of using this method to create a
+four-qubit registry is seen here:
 
 >>> # Following from the previous code block.
 >>> circ_runner = pc.circuit_runners.Standard()
@@ -106,7 +107,7 @@ The attribute ``total_time`` stores this value and is used in the following:
 ``TimingRunner`` times the execution of gates by using Python's ``perf_counter`` method. The time recorded by
 ``total_time`` continues to accumulate until it is reset by the ``reset_time`` method:
 
->>> # Continuing from previous Listing.
+>>> # Continuing from previous code block.
 >>> circ_runner.reset_time()
 >>> circ_runner.total_time
 0.0

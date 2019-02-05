@@ -3,7 +3,9 @@
 Decoders
 ========
 
-A decoder in PECOS is simply a function or other callable that takes the measurement outcomes from error extractions (syndromes) as input and returns a ``QuantumCircuit``, which is used as a recovery operation to mitigate errors. Decoder classes and functions are in the ``decoders`` namespace.
+A decoder in PECOS is simply a function or other callable that takes the measurement outcomes from error extractions
+(syndromes) as input and returns a ``QuantumCircuit``, which is used as a recovery operation to mitigate errors. Decoder
+classes and functions are in the ``decoders`` namespace.
 
 The ``MWPM2D`` class is an available decoder class, which I will discuss next.
 
@@ -11,7 +13,9 @@ The ``MWPM2D`` class is an available decoder class, which I will discuss next.
 MWPM2D
 ------
 
-One of the standard decoders used for surface codes is the minimum-weight-perfect-matching (MWPM) decoder [Den+02]_. The ``MWPM2D`` class implements the 2D version of this decoder for ``Surface4444`` and ``SurfaceMedial4444``, that is, it decodes syndromes for a single round of error extraction:
+One of the standard decoders used for surface codes is the minimum-weight-perfect-matching (MWPM) decoder [Den+02]_. The
+``MWPM2D`` class implements the 2D version of this decoder for ``Surface4444`` and ``SurfaceMedial4444``, that is, it
+decodes syndromes for a single round of error extraction:
 
 >>> import pecos as pc
 >>> depolar = pc.error_gens.DepolarGen(model_level='code_capacity')

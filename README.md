@@ -25,7 +25,7 @@ https://quantum-pecos.readthedocs.io
    
 ## Latest Development
 
-See the following branch for the the last version of PECOS that is under active development:
+See the following branch for the latest version of PECOS under development:
 
 https://github.com/PECOS-packages/PECOS/tree/development
 
@@ -42,11 +42,11 @@ https://github.com/PECOS-packages/PECOS/tree/development
 
 - Cython (to compile optional C/C++ extensions)
 - pytest 3.0+ (to run tests)
-- Sphinx 2.7.6+ (to compile the documentation)
+- Sphinx 2.7.6+ (to compile documentation)
 
 ## License
 
-PECOS is licensed under the Apache 2.0 license
+PECOS is licensed under the [Apache 2.0 license](https://github.com/PECOS-packages/PECOS/blob/master/LICENSE)
 
 ## Installation
 

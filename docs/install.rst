@@ -21,12 +21,12 @@ Optional packages include:
 * Cython (for compiling C and C++ extensions)
 * PyTest (for running tests)
 
-
 Note on Python Distribution/Environment
 -----------------------------------------
 
 PECOS was developed using the `Anaconda Distribution of Python <https://www.anaconda.com/download/>`_. If you decide to
-use this distribution you may want to create an `environment <https://conda.io/docs/user-guide/tasks/manage-environments.html>`_
+use this distribution you may want to create an
+`environment <https://conda.io/docs/user-guide/tasks/manage-environments.html>`_
 so that PECOS's package requirements do not restrict you when working on other projects.
 
 To create an environment for PECOS using Anaconda run:
@@ -46,7 +46,7 @@ develop PECOS. Note, you will still need to install PECOS using one of the metho
 
 To activate/use the environment in Windows run the command:
 
->>> activate pecos # doctest: +SKIP
+>>> conda activate pecos # doctest: +SKIP
 
 In other operating systems you may need to run the following instead:
 
@@ -54,7 +54,7 @@ In other operating systems you may need to run the following instead:
 
 To deactivate/leave the PECOS environment run:
 
->>> deactivate # doctest: +SKIP
+>>> conda deactivate # doctest: +SKIP
 
 Installing and Uninstalling
 ---------------------------
@@ -64,7 +64,6 @@ PECOS has been developed to run on both Windows and Linux-based systems.
 To install using pip run:
 
 >>> pip install quantum-pecos   # doctest: +SKIP
-
 
 Alternatively, the plackage can be cloned or downloaded from GitHub:
 
@@ -78,7 +77,6 @@ Then, download/unzip or clone the version of PECOS you would like to use. Next, 
 (where setup.py is located) and run:
 
 >>> pip install .   # doctest: +SKIP
-
 
 To install and continue to develop the version of PECOS located in the install folder, run:
 
@@ -104,9 +102,11 @@ Be aware that as PECOS is in development in this branch, you may experience some
 Tests
 -----
 
-PECOS comes with tests to verify that the package is running as expected. These tests can be used in the development process to determine if any expected functionality has been broken.
+PECOS comes with tests to verify that the package is running as expected. These tests can be used in the development
+process to determine if any expected functionality has been broken.
 
-To run tests, the package PyTest is require. Once installed, simply navigate to your PECOS installation directory and run:
+To run tests, the package PyTest is require. Once installed, simply navigate to your PECOS installation directory and
+run:
 
 >>> py.test    # doctest: +SKIP
 

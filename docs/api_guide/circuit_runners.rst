@@ -21,7 +21,6 @@ Methods
 ~~~~~~~
 
 =============== =========================================
-``init``        Adds a collection of gates to the end of ``ticks``.
 ``run``         Combines a ``circuit``, ``error_gen``, ``simulator`` to run a simulation.
 =============== =========================================
 
@@ -44,22 +43,10 @@ To create an instance of ``Standard`` one can simply write:
 >>> import pecos as pc
 >>> circ_runner = pc.circuit_runners.Standard()
 
-By default, a ``Standard`` uses the ``StabSim`` as a simulator. This can be changed as follows:
+The ``run`` method is used to apply a ``QuantumCircuit`` or some other circuit instance to a state, where a state is an
+instance of a simulator (see :ref:`simulators`). This is seen in the following:
 
-
->>> from somepackage import MyCustomSim  # doctest: +SKIP
->>> circ_runner = pc.circuit_runners.Standard(simulator=MyCustomSim)  # doctest: +SKIP
-
-The ``init`` method is used to (re)initialize a ``simulator`` instance. An example of using this method to create a
-four-qubit registry is seen here:
-
->>> # Following from the previous code block.
->>> circ_runner = pc.circuit_runners.Standard()
->>> state = circ_runner.init(4)
-
-The ``run_circuit`` method is used to apply a ``QuantumCircuit`` to a state in the following:
-
->>> # Continuing with the previous code block.
+>>> state = pc.simulators.SparseSim(num_qubits=4)
 >>> qc = pc.circuits.QuantumCircuit()
 >>> qc.append('X', {0, 1})
 >>> qc.append('measure Z', {0, 1, 3})
@@ -96,7 +83,7 @@ As mention, ``TimingRunner`` is essentially the same as ``Standard`` except the 
 The attribute ``total_time`` stores this value and is used in the following:
 
 >>> circ_runner = pc.circuit_runners.TimingRunner()
->>> state = circ_runner.init(4)
+>>> state = pc.simulators.SparseSim(4)
 >>> qc = pc.circuits.QuantumCircuit()
 >>> qc.append('X', {0, 1, 2, 3})
 >>> circ_runner.run(state, qc)

@@ -24,7 +24,7 @@ decodes syndromes for a single round of error extraction:
 >>> logic.append(surface.gate('ideal init |0>'))
 >>> logic.append(surface.gate('I', num_syn_extract=1))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
->>> state = circ_runner.init(surface.num_qudits)
+>>> state = pc.simulators.SparseSim(surface.num_qudits)
 >>> decode = pc.decoders.MWPM2D(surface).decode
 >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={'p': 0.1})
 >>> meas   # doctest: +SKIP

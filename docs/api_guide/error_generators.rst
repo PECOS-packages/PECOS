@@ -62,7 +62,7 @@ An example of applying an error model using ``DepolarGen`` to a ``LogicalCircuit
 >>> logic.append(surface.gate('ideal init |0>'))
 >>> logic.append(surface.gate('I'))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
->>> state = circ_runner.init(surface.num_qudits)
+>>> state = pc.simulators.SparseSim(surface.num_qudits)
 >>> meas, err = circ_runner.run(state, logic, error_gen=depolar, error_params={'p': 0.1})
 
 Note that the keyword argument ``error_params`` is used to pass a dictionary that indicates the probability :math:`p` of
@@ -103,7 +103,7 @@ The data structure used to describe the errors that are applied to a ``LogicalCi
 >>> logic2 = pc.circuits.LogicalCircuit()
 >>> logic2.append(surface.gate('ideal init |+>'))
 >>> logic2.append(surface.gate('I'))
->>> state2 = circ_runner.init(surface.num_qudits)
+>>> state2 = pc.simulators.SparseSim(surface.num_qudits)
 >>> meas2, err2 = circ_runner.run(state2, logic2, error_circuits=err)
 
 One use for this is to apply the same error to a different logical basis-state. Doing so allows one to determine if a

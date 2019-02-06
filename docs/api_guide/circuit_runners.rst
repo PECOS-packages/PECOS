@@ -65,7 +65,7 @@ The ``run_logic`` method is used to apply ``LogicalCircuits``:
 >>> logic = pc.circuits.LogicalCircuit()
 >>> logic.append(surface.gate('ideal init |0>'))
 >>> logic.append(surface.gate('I'))
->>> state = circ_runner.init(surface.num_qudits)
+>>> state = pc.simulators.SparseSim(surface.num_qudits)
 >>> circ_runner.run(state, logic)
 ({}, {})
 

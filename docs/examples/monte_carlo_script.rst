@@ -73,7 +73,7 @@ We now create the Monte Carlo loop, which prepares a fresh initial state, applie
    for p in ps:
        fails = 0
        for i in range(runs):
-           state = circ_runner.init(surface.num_qudits)
+           state = pc.simulators.SparseSim(surface.num_qudits)
            meas, _ = circ_runner.run(state, logic, error_gen=depolar, error_params={'p': p})
            fails = determine_fails(meas, decoder, circ_runner, state, logical_ops, fails)
        plog.append(fails / runs)

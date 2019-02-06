@@ -36,7 +36,6 @@ https://quantum-pecos.readthedocs.io/en/development/
 - Cirq (to take advantage of the full quantum-state simulators made available via Cirq)
 - qcgpu (to run state vector simulations on gpus) 
 
-[WARNING: In development.] 
 ## Installation
 
 To install using pip run the command:

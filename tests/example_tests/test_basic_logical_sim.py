@@ -41,7 +41,7 @@ def test_surface():
 
     sim = pc.circuit_runners.Standard()
 
-    state = sim.init(surface.num_qudits)
+    state = pc.simulators.pySparseSim(surface.num_qudits)
 
     output1, error_circuits1 = sim.run(state, logic)
 
@@ -51,4 +51,4 @@ def test_surface():
 
     recovery = mwpm2d.decode(output2)
 
-    sim.run_circuit(state, recovery)
+    sim.run(state, recovery)

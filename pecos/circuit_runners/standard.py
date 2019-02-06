@@ -50,22 +50,6 @@ class Standard(object):
         np.random.seed(self.seed)
         random.seed(self.seed)
 
-        if simulator is None:
-            self.simulator = sims.SparseSim
-        else:
-            self.simulator = simulator
-
-    def init(self, num_qudits, *args, **kwargs):
-        """
-
-        Args:
-            num_qudits:
-
-        Returns:
-
-        """
-        return self.simulator(num_qudits, *args, **kwargs)
-
     def run(self, state, circuit, error_gen=None, error_params=None, error_circuits=None, output=None):
         """
         Run logical circuit and these circuits to update a state.

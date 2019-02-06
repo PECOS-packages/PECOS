@@ -66,11 +66,11 @@ class State(BaseSim):
 
         super().__init__()
 
-        self.gate_dict = bindings.gate_dict  # TODO: check to see if it makes a difference in performance if this is
-        # moved to a class variable.
-
         if not isinstance(num_qubits, int):
             raise Exception('``num_qubits`` should be of type ``int.``')
+
+        self.gate_dict = bindings.gate_dict  # TODO: check to see if it makes a difference in performance if this is
+        # moved to a class variable.
 
         self.num_qubits = num_qubits
 

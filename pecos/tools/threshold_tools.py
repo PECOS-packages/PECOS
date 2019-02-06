@@ -17,6 +17,7 @@
 #  =========================================================================  #
 
 import numpy as np
+from ..simulators import pySparseSim
 from .. import circuit_runners, circuits
 from ..qeccs import Surface4444
 from ..decoders import MWPM2D
@@ -266,7 +267,7 @@ def codecapacity_logical_rate(runs, qecc, distance, error_gen, error_params, dec
 
     for _ in range(runs):
         # State
-        state = circuit_runner.init(qecc.num_qudits)
+        state = pySparseSim(qecc.num_qudits)
 
         # Create ideal logical |0>
         circuit_runner.run(state, initzero)
@@ -289,7 +290,7 @@ def codecapacity_logical_rate(runs, qecc, distance, error_gen, error_params, dec
             recovery = decoder.decode(output)
 
             # Apply recovery operation
-            circuit_runner.run_circuit(state, recovery)
+            circuit_runner.run(state, recovery)
 
         sign = state.logical_sign(logical_circ)
 
@@ -360,8 +361,11 @@ def codecapacity_logical_rate2(runs, qecc, distance, error_gen, error_params, de
 
     for _ in range(runs):
         # States
-        state0 = circuit_runner.init(qecc.num_qudits, simulator=state_sim)
-        state1 = circuit_runner.init(qecc.num_qudits, simulator=state_sim)
+        state0 = state_sim(qecc.num_qudits)
+        state1 = state_sim(qecc.num_qudits)
+
+        # state0 = circuit_runner.init(qecc.num_qudits, simulator=state_sim)
+        # state1 = circuit_runner.init(qecc.num_qudits, simulator=state_sim)
 
         # Create ideal logical |0>
         circuit_runner.run(state0, initzero)
@@ -378,7 +382,7 @@ def codecapacity_logical_rate2(runs, qecc, distance, error_gen, error_params, de
             pass
 
         output, error_circuits = circuit_runner.run(state0, syn_extract, error_gen=error_gen,
-                                                          error_params=error_params)
+                                                    error_params=error_params)
         try:
             total_time += circuit_runner.total_time
         except AttributeError:
@@ -399,12 +403,12 @@ def codecapacity_logical_rate2(runs, qecc, distance, error_gen, error_params, de
 
             # Apply recovery operation
 
-            circuit_runner.run_circuit(state0, recovery)
+            circuit_runner.run(state0, recovery)
             try:
                 total_time += circuit_runner.total_time
             except AttributeError:
                 pass
-            circuit_runner.run_circuit(state1, recovery)
+            circuit_runner.run(state1, recovery)
             try:
                 total_time += circuit_runner.total_time
             except AttributeError:
@@ -523,7 +527,9 @@ def codecapacity_logical_rate3(runs, qecc, distance, error_gen, error_params, de
     for _ in range(runs):
 
         # State
-        state = circuit_runner.init(qecc.num_qudits, simulator=state_sim)
+        state = state_sim(qecc.num_qudits)
+
+        # state = circuit_runner.init(qecc.num_qudits, simulator=state_sim)
 
         # Create ideal logical |0>
         circuit_runner.run(state, init_circuit)
@@ -548,7 +554,7 @@ def codecapacity_logical_rate3(runs, qecc, distance, error_gen, error_params, de
                 recovery = decoder.decode(output)
 
                 # Apply recovery operation
-                circuit_runner.run_circuit(state, recovery)
+                circuit_runner.run(state, recovery)
                 try:
                     total_time += circuit_runner.total_time
                 except AttributeError:

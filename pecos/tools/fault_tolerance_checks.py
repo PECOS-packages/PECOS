@@ -19,7 +19,7 @@
 from itertools import product, combinations
 import itertools as it
 import numpy as np
-from ..simulators import SparseSim as state_sparse
+from ..simulators import pySparseSim
 from ..circuit_runners import Standard
 from ..circuits import QuantumCircuit, LogicalCircuit
 from ..misc.stabilizer_funcs import op_commutes, remove_stab, circ2set, find_stab
@@ -140,8 +140,10 @@ def t_errors_check(qecc, logical_gate=None, syn_extract=None, decoder=None, t_we
                 # print(e, q)
                 error_circ.update(e, {q})
 
-            state_zero = circ_sim.init(qecc.num_qudits)
-            state_plus = circ_sim.init(qecc.num_qudits)
+            state_zero = pySparseSim(qecc.num_qudits)
+            state_plus = pySparseSim(qecc.num_qudits)
+            # state_zero = circ_sim.init(qecc.num_qudits)
+            # state_plus = circ_sim.init(qecc.num_qudits)
 
             circ_sim.run(state_zero, initzero)
             circ_sim.run(state_plus, initplus)
@@ -154,8 +156,8 @@ def t_errors_check(qecc, logical_gate=None, syn_extract=None, decoder=None, t_we
             if syn:
                 # Recovery operation
                 recovery = decoder.decode(syn)
-                circ_sim.run_circuit(state_zero, recovery)
-                circ_sim.run_circuit(state_plus, recovery)
+                circ_sim.run(state_zero, recovery)
+                circ_sim.run(state_plus, recovery)
 
             sign_zero = state_zero.logical_sign(*logical_ops_zero)
             sign_plus = state_plus.logical_sign(*logical_ops_plus)
@@ -280,8 +282,10 @@ def fault_check(qecc, logical_gate=None, decoder=None, t_weight=None, error_set=
                 # print(e, q)
                 error_circ.update(e, {q})
 
-            state_zero = circ_sim.init(qecc.num_qudits)
-            state_plus = circ_sim.init(qecc.num_qudits)
+            state_zero = pySparseSim(qecc.num_qudits)
+            state_plus = pySparseSim(qecc.num_qudits)
+            # state_zero = circ_sim.init(qecc.num_qudits)
+            # state_plus = circ_sim.init(qecc.num_qudits)
 
             circ_sim.run(state_zero, initzero)
             circ_sim.run(state_plus, initplus)
@@ -294,8 +298,8 @@ def fault_check(qecc, logical_gate=None, decoder=None, t_weight=None, error_set=
             if syn:
                 # Recovery operation
                 recovery = decoder.decode(syn)
-                circ_sim.run_circuit(state_zero, recovery)
-                circ_sim.run_circuit(state_plus, recovery)
+                circ_sim.run(state_zero, recovery)
+                circ_sim.run(state_plus, recovery)
 
             sign_zero = state_zero.logical_sign(*logical_ops_zero)
             sign_plus = state_plus.logical_sign(*logical_ops_plus)
@@ -328,7 +332,8 @@ def distance_check(qecc, mode=None, dist_mode=None):
     qudit_set = qecc.data_qudit_set
 
     circ_sim = Standard()
-    state = circ_sim.init(qecc.num_qudits, simulator=state_sparse)
+    state = pySparseSim(qecc.num_qudits)
+    # state = circ_sim.init(qecc.num_qudits, simulator=state_sparse)
 
     ideal_initlogic = LogicalCircuit(supress_warning=True)
     ideal_initlogic.append(qecc.gate('ideal init |0>'))

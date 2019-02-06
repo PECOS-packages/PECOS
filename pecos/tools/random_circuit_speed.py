@@ -19,6 +19,7 @@
 import numpy as np
 from ..circuits import QuantumCircuit
 from ..circuit_runners import TimingRunner
+from ..simulators import pySparseSim
 
 
 def random_circuit_speed(state_sim, num_qubits, circuit_depth, trials=10000, gates=None, seed_start=0, converter=None):
@@ -34,8 +35,10 @@ def random_circuit_speed(state_sim, num_qubits, circuit_depth, trials=10000, gat
         if converter is not None:
             qc = converter(qc)
 
-        state = circ_sim.init(num_qubits, state_sim)
-        meas = circ_sim.run_circuit(state, qc, give_output=True, reset_time=True)
+        # state = circ_sim.init(num_qubits, state_sim)
+        state = pySparseSim(num_qubits)
+        circ_sim.reset_time()
+        meas = circ_sim.run(state, qc)
         times.append(circ_sim.total_time)
         measurements.append(meas)
 

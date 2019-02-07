@@ -25,21 +25,27 @@ class BaseSim:
 
         return output
 
-    def run_circuit(self, circuit):
+    def run_circuit(self, circuit, removed_locations=None):
         """
 
         Args:
             circuit (QuantumCircuit): A circuit instance or object with an appropriate items() generator.
+            removed_locations:
 
         Returns (list): If output is True then the circuit output is returned. Note that this output format may differ
         from what a ``circuit_runner`` will return for the same method named ``run_circuit``.
 
         """
 
-        results = []
+        # TODO: removed_locations doesn't make sense except if circuit is tick_circuit
+        # because can't say not to do gates for particular ticks....
 
+        if removed_locations is None:
+            removed_locations = set([])
+
+        results = {}
         for symbol, locations, gate_kwargs in circuit.items():
-            gate_output = self.run_gate(symbol, locations, **gate_kwargs)
-            results.append(gate_output)
+            gate_results = self.run_gate(symbol, locations - removed_locations, **gate_kwargs)
+            results.update(gate_results)
 
         return results

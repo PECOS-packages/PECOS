@@ -25,14 +25,14 @@ class TimingRunner(Standard):
     This class represents a standard model for running quantum circuits and adding in errors.
     """
 
-    def __init__(self, simulator=None, seed=None, timer=None):
+    def __init__(self, seed=None, timer=None):
         """
 
         Args:
             seed:
         """
 
-        super().__init__(simulator, seed)
+        super().__init__(seed)
 
         self.total_time = 0.0
         self.num_gates = 0

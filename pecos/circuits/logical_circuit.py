@@ -89,25 +89,25 @@ class LogicalCircuit(QuantumCircuit):
                 if self.qudit_set is None:
                     raise Exception('Qudit set should be set!')
 
-    def iter_circuits(self):
+    def update(self, symbol, locations=None, tick=-1, emptyappend=False, **params):
+        raise NotImplementedError('!!!')
+
+    def discard(self, locations, tick=-1):
+        raise NotImplementedError('!!!')
+
+    def iter_ticks(self):
         """An iterator for looping over the various quantum circuits comprising this data structure."""
 
         for logical_tick in range(len(self)):
             for logical_gate, _, _ in self.items(tick=logical_tick):
-                for instr_index, circuit in enumerate(logical_gate.circuits):
-                    time = (logical_tick, instr_index)
-                    params = {'logical_circuit_params': self.params, 'gate': logical_gate,}
-                    params.update(circuit.params)
-                    yield circuit, time, params
-                    # TODO: give circuit, params {logical_circuit: ..., gate: ..., qecc: ...}
+                for instr_index, instr_circuit in enumerate(logical_gate.circuits):
+                    params = {'logical_circuit_params': self.params, 'gate': logical_gate, }
+                    params.update(instr_circuit.params)
 
-    def iter_ticks(self):
-
-        for circuit, (logical_tick, instr_index), params in self.iter_circuits():
-            for tick in range(len(circuit)):
-                tick_gates = circuit[tick]
-                time = (logical_tick, instr_index, tick)
-                yield tick_gates, time, params  # TODO: Fix...
+                    for tick in range(len(instr_circuit)):
+                        tick_gates = instr_circuit[tick]
+                        time = (logical_tick, instr_index, tick)
+                        yield tick_gates, time, params
 
     def __iter__(self):
 
@@ -117,21 +117,26 @@ class LogicalCircuit(QuantumCircuit):
 
     def __str__(self):
 
-        # Use the following comment block if you want to use the str version of the logic gate...
-        '''
-        ticks_str = []
-
-        for tick in self._ticks:
-            dictstr = ["%s: %s" % (key, value) for key, value in tick.items()]
-            ticks_str.append('{'+''.join(dictstr)+'}')
-
-        ticks_str = ', '.join(ticks_str)
-
-        return "LogicalCircuit([%s])" % ticks_str
-        '''
-
         return "LogicalCircuit(%s)" % self._ticks
 
     def __repr__(self):
 
         return self.__str__()
+
+    def __getitem__(self, tick):
+        """Returns tick when instance[index] is used.
+
+        Args:
+            tick(int): Tick index of ``self._ticks``.
+
+        Returns:
+
+        """
+
+        if isinstance(tick, int):
+
+            return self._ticks[tick]
+        else:
+            logical_tick, instr_index, tick = tick
+            tick_circuit = self[logical_tick]
+            # (logical_tick, instr_index, tick)

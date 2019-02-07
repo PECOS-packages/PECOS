@@ -27,7 +27,6 @@ from . import (
     version,
     circuits,
     qeccs,
-    outputs,
     simulators,
     error_gens,
     circuit_runners,

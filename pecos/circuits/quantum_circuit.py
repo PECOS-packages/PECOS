@@ -21,6 +21,8 @@ Contains the class ``QuantumCircuit``, which is used to represent quantum circui
 from collections.abc import MutableSequence
 from collections import defaultdict, namedtuple
 
+# TODO: LET QUANTUM CIRCUITS WORK FOR LOGICAL GATES
+
 
 class QuantumCircuit(MutableSequence):
     """A representation of a quantum circuit.
@@ -147,25 +149,19 @@ class QuantumCircuit(MutableSequence):
         if tick is None:
 
             for gates in self._ticks:
-                for args in gates.items():
-                    yield args
+                for symbol, locations, params in gates.items():
+                    yield symbol, locations, params
 
         else:
 
-            for args in self._ticks[tick].items():
-                yield args
-
-    def iter_circuits(self):
-        """An iterator that allows loops over circuits to just give this circuit."""
-        time = None
-        yield self, time, self.params
+            for symbol, locations, params in self._ticks[tick].items():
+                yield symbol, locations, params
 
     def iter_ticks(self):
 
         for tick in range(len(self)):
-            tick_gates = self[tick]
-            time = tick
-            yield tick_gates, time, self.params
+            gates = self[tick]
+            yield gates, tick, self.params
             # TODO: note this is the circuit params
             # TODO: need something like: params {logical_circuit: ..., gate: ..., qecc: ...}
 

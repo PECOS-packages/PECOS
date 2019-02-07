@@ -21,11 +21,7 @@ import struct
 import os
 import random
 import numpy as np
-from ..outputs import StdOutput
-from ..circuits import QuantumCircuit
-from .. import simulators as sims
-
-empty_circuit = QuantumCircuit()
+from ..misc.std_ouput import StdOutput
 
 
 class Standard(object):
@@ -33,7 +29,7 @@ class Standard(object):
     This class represents a standard model for running quantum circuits and adding in errors.
     """
 
-    def __init__(self, simulator=None, seed=None):
+    def __init__(self, seed=None):
         """
 
         Args:
@@ -69,51 +65,56 @@ class Standard(object):
         if output is None:
             output = StdOutput()
 
-        # ---------------------------------------------------
-        # Determine if there are no, previous, or new errors.
-        #
+        # TODO: Generate errors before running the ticks
+        # TODO: Have the option of not applying the circuit if no error...
 
-        # No errors
-        if error_gen is None:
+        # Initialize errors...
+        # --------------------
+
+        if error_gen is None:  # No errors
+
             generate_errors = False
             if error_circuits is None:
                 error_circuits = {}
 
-        # new errors
-        else:
+        else:  # new errors
+
             generate_errors = True
             error_circuits = error_gen.start(circuit, error_params)
-        # --------------------------------------------------
+
+        # run through the circuits...
+        # ---------------------------
 
         for tick_circuit, time, params in circuit.iter_ticks():
 
-            # Get errors
+            # ---------------
+            # GENERATE ERRORS
+            # ---------------
             if params.get('error_free', False):
                 errors = {}
-
             else:
-
                 if generate_errors:
                     error_circuits = error_gen.generate_tick_errors(tick_circuit, time, **params)
-
                 errors = error_circuits.get(time, {})
+
+            before_errors = errors.get('before')
+            after_errors = errors.get('after')
+            removed = errors.get('replaced')
 
             # --------------------
             # RUN QUANTUM CIRCUITS
             # --------------------
 
-            # Before errors
-            # -------------
-            self._run_circuit(state, errors.get('before', empty_circuit))
+            if before_errors:
+                state.run_circuit(before_errors)
 
-            # Ideal tick
-            # ----------
-            result = self.run_gates(state, tick_circuit, removed_locations=errors.get('replaced'))
+            # ideal tick circuit
+            # ------------------
+            result = state.run_circuit(tick_circuit, removed_locations=removed)
             output.record(result, time)
 
-            # After errors
-            # ------------
-            self._run_circuit(state, errors.get('after', empty_circuit))
+            if after_errors:
+                state.run_circuit(after_errors)
 
         return output, error_circuits
 
@@ -128,51 +129,3 @@ class Standard(object):
         warnings.warn("Deprecation Warning: `run_circuit` is being deprecated. Use `run` instead.", DeprecationWarning)
 
         return self.run(state, circuit, error_gen, error_params, error_circuits, output)
-
-    def _run_circuit(self, state, circuit, removed_locations=None, output=None):
-        """
-        Apply a ``QuantumCircuit`` directly to a state.
-
-        Args:
-            state:
-            circuit:
-            removed_locations:
-            output:
-
-        Returns:
-
-        """
-
-        if output is None:
-            output = StdOutput()
-
-        for tick_circuit, tick_index, params in circuit.iter_ticks():
-            results = self.run_gates(state, tick_circuit, removed_locations)
-
-            output.record(results, tick_index)
-
-        return output
-
-    def run_gates(self, state, gates, removed_locations=None):
-        """
-        Directly apply a collection of quantum gates to a state.
-
-        Args:
-            state:
-            gates:
-            removed_locations:
-
-        Returns:
-
-        """
-
-        if removed_locations is None:
-            removed_locations = set([])
-
-        results = {}
-        for symbol, physical_gate_locations, gate_kwargs in gates.items():
-
-            gate_results = state.run_gate(symbol, physical_gate_locations - removed_locations, **gate_kwargs)
-            results.update(gate_results)
-
-        return results

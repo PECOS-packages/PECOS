@@ -37,16 +37,15 @@ class Standard(object):
         """
 
         if seed is None:
-            # Create a good random number seed
             self.seed = struct.unpack("<L", os.urandom(4))[0]
         else:
             self.seed = seed
 
-        # Set random seed
         np.random.seed(self.seed)
         random.seed(self.seed)
 
-    def run(self, state, circuit, error_gen=None, error_params=None, error_circuits=None, output=None):
+    @staticmethod
+    def run(state, circuit, error_gen=None, error_params=None, error_circuits=None, output=None):
         """
         Run logical circuit and these circuits to update a state.
 
@@ -84,7 +83,6 @@ class Standard(object):
 
         # run through the circuits...
         # ---------------------------
-
         for tick_circuit, time, params in circuit.iter_ticks():
 
             # ---------------
@@ -117,15 +115,3 @@ class Standard(object):
                 state.run_circuit(after_errors)
 
         return output, error_circuits
-
-    def run_logic(self, state, circuit, error_gen=None, error_params=None, error_circuits=None, output=None):
-
-        warnings.warn("Deprecation Warning: `run_logic` is being deprecated. Use `run` instead.", DeprecationWarning)
-
-        return self.run(state, circuit, error_gen, error_params, error_circuits, output)
-
-    def run_circuit(self, state, circuit, error_gen=None, error_params=None, error_circuits=None, output=None):
-
-        warnings.warn("Deprecation Warning: `run_circuit` is being deprecated. Use `run` instead.", DeprecationWarning)
-
-        return self.run(state, circuit, error_gen, error_params, error_circuits, output)

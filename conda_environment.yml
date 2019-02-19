@@ -1,7 +1,13 @@
 name: pecos
 dependencies:
-  - python=3.6
+  - python=3.7.2
   - numpy=1.15
-  - scipy=1.1
+  - scipy=1.2
   - matplotlib=3.0
   - networkx=2.2
+  - pytest=4.2
+  - cython=0.29
+  - sphinx=1.8
+  - sphinx_rtd_theme=0.4
+  - jupyter=1.0
+  - nb_conda

@@ -52,6 +52,7 @@ setup(
         'scipy>=1.1.0',
         'matplotlib>=2.2.0',
         'networkx>=2.1.0',
+        'sortedcontainers>=2.0.0',
     ],
     tests_require=['pytest>=3.0.0'],
     extras_require={

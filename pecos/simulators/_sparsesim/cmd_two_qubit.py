@@ -16,14 +16,14 @@
 #   limitations under the License.
 #  =========================================================================  #
 
+from typing import Tuple
+from .state import SparseSim
 from .cmd_one_qubit import Q, S, Sd, R, Rd
 
 
-def cnot(state, qubits):
+def CNOT(state: SparseSim,
+         qubits: Tuple[int, int]) -> None:
     """
-    :param gens:
-    :param qubits:
-    :return:
 
     II -> II
     XI -> XX
@@ -58,6 +58,12 @@ def cnot(state, qubits):
     YX -> YI
     YZ -> XY
     YY -> -XZ
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     qubit1, qubit2 = qubits
@@ -67,7 +73,7 @@ def cnot(state, qubits):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for g in state.gen_list:
+    for g in state.gens:
         # X2 += X1 for rows
         for i in g.col_x[qubit1]:
             g.row_x[i].symmetric_difference_update(set_q2)
@@ -85,9 +91,10 @@ def cnot(state, qubits):
         g.col_z[qubit1] ^= g.col_z[qubit2]
 
 
-def CZ(state, qubits):
+def CZ(state: SparseSim,
+       qubits: Tuple[int, int]) -> None:
     """
-    Applies a Controlled-X gate (CNOT) rotation to generators
+    Applies a Controlled-Z gate (CZ) rotation.
 
     This version is best for a large number of qubits (aboa ut >= 150)
 
@@ -124,6 +131,12 @@ def CZ(state, qubits):
     YX -> -XY
     YZ -> YI
     YY -> XX
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     qubit1, qubit2 = qubits
@@ -135,60 +148,68 @@ def CZ(state, qubits):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
-        old_z1_col = set(gens.col_z[qubit1])
-        old_z2_col = set(gens.col_z[qubit2])
+        old_z1_col = set(g.col_z[qubit1])
+        old_z2_col = set(g.col_z[qubit2])
 
         # Update columns
 
         # Z1 += X2
-        gens.col_z[qubit1] ^= gens.col_x[qubit2]
+        g.col_z[qubit1] ^= g.col_x[qubit2]
 
         # Z2 += X1
-        gens.col_z[qubit2] ^= gens.col_x[qubit1]
+        g.col_z[qubit2] ^= g.col_x[qubit1]
 
         # Update rows
 
         # Z gens added
-        z1_added = gens.col_z[qubit1] - old_z1_col
-        z2_added = gens.col_z[qubit2] - old_z2_col
+        z1_added = g.col_z[qubit1] - old_z1_col
+        z2_added = g.col_z[qubit2] - old_z2_col
 
         for i in z1_added:
-            gens.row_z[i].add(qubit1)
+            g.row_z[i].add(qubit1)
 
         for i in z2_added:
-            gens.row_z[i].add(qubit2)
+            g.row_z[i].add(qubit2)
 
         del z1_added
         del z2_added
 
         # Z gens removed
-        z1_removed = old_z1_col - gens.col_z[qubit1]
-        z2_removed = old_z2_col - gens.col_z[qubit2]
+        z1_removed = old_z1_col - g.col_z[qubit1]
+        z2_removed = old_z2_col - g.col_z[qubit2]
 
         for i in z1_removed:
-            gens.row_z[i].discard(qubit1)
+            g.row_z[i].discard(qubit1)
 
         for i in z2_removed:
-            gens.row_z[i].discard(qubit2)
+            g.row_z[i].discard(qubit2)
 
 
-def CY(state, qubits):
+def CY(state: SparseSim,
+       qubits: Tuple[int, int]) -> None:
     """
-    Applies a Controlled-Y gate (
+    Applies a Controlled-Y gate
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     _, qubit2 = qubits
 
     S(state, qubit2)
-    cnot(state, qubits)
+    CNOT(state, qubits)
     Sd(state, qubit2)
 
 
-def SWAP(state, qubits):  # qubit1 => control, qubit2 => target
+def SWAP(state: SparseSim,
+         qubits: Tuple[int, int]) -> None:
     """
-    Applies a SWAP gate (CNOT) to the generators
+    Applies a SWAP gate to the generators
 
     II -> II
     XI -> IX
@@ -206,31 +227,37 @@ def SWAP(state, qubits):  # qubit1 => control, qubit2 => target
     WX -> WX
     WZ -> ZW
     WW -> WW
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     qubit1, qubit2 = qubits
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Update rows
 
         # Swap the Xs of qubit1 and qubit2 for rows
 
         # set of gens with Xs on qubit1 but not qubit2
-        xin1 = gens.col_x[qubit1] - gens.col_x[qubit2]
+        xin1 = g.col_x[qubit1] - g.col_x[qubit2]
 
         # set of gens with Xs on qubit2 but not qubit1
-        xin2 = gens.col_x[qubit2] - gens.col_x[qubit1]
+        xin2 = g.col_x[qubit2] - g.col_x[qubit1]
 
         for i in xin1:
-            gens.row_x[i].discard(qubit1)
-            gens.row_x[i].add(qubit2)
+            g.row_x[i].discard(qubit1)
+            g.row_x[i].add(qubit2)
 
         for i in xin2:
-            gens.row_x[i].discard(qubit2)
-            gens.row_x[i].add(qubit1)
+            g.row_x[i].discard(qubit2)
+            g.row_x[i].add(qubit1)
 
         del xin1
         del xin2
@@ -238,18 +265,18 @@ def SWAP(state, qubits):  # qubit1 => control, qubit2 => target
         # Swap the Zs of qubit1 and qubit2 for cols
 
         # set of gens with Zs on qubit1 but not qubit2
-        zin1 = gens.col_z[qubit1] - gens.col_z[qubit2]
+        zin1 = g.col_z[qubit1] - g.col_z[qubit2]
 
         # set of gens with Zs on qubit2 but not qubit1
-        zin2 = gens.col_z[qubit2] - gens.col_z[qubit1]
+        zin2 = g.col_z[qubit2] - g.col_z[qubit1]
 
         for i in zin1:
-            gens.row_z[i].discard(qubit1)
-            gens.row_z[i].add(qubit2)
+            g.row_z[i].discard(qubit1)
+            g.row_z[i].add(qubit2)
 
         for i in zin2:
-            gens.row_z[i].discard(qubit2)
-            gens.row_z[i].add(qubit1)
+            g.row_z[i].discard(qubit2)
+            g.row_z[i].add(qubit1)
 
         del zin1
         del zin2
@@ -257,13 +284,14 @@ def SWAP(state, qubits):  # qubit1 => control, qubit2 => target
         # Update columns
 
         # Swap the Xs of qubit1 and qubit2 for cols
-        gens.col_x[qubit1], gens.col_x[qubit2] = gens.col_x[qubit2], gens.col_x[qubit1]
+        g.col_x[qubit1], g.col_x[qubit2] = g.col_x[qubit2], g.col_x[qubit1]
 
         # Swap the Zs of qubit1 and qubit2 for cols
-        gens.col_z[qubit1], gens.col_z[qubit2] = gens.col_z[qubit2], gens.col_z[qubit1]
+        g.col_z[qubit1], g.col_z[qubit2] = g.col_z[qubit2], g.col_z[qubit1]
 
 
-def G2(state, qubits):
+def G2(state: SparseSim,
+       qubits: Tuple[int, int]) -> None:
     """
     Applies a CZ.H(1).H(2).CZ to the generators
 
@@ -285,6 +313,12 @@ def G2(state, qubits):
     WX -> IW
     WZ -> -WZ
     WW -> ZZ
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     qubit1, qubit2 = qubits
@@ -297,33 +331,33 @@ def G2(state, qubits):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # set of gens with Zs on qubit1 but not qubit2
-        zin1 = gens.col_z[qubit1] - gens.col_z[qubit2]
+        zin1 = g.col_z[qubit1] - g.col_z[qubit2]
 
         # set of gens with Zs on qubit2 but not qubit1
-        zin2 = gens.col_z[qubit2] - gens.col_z[qubit1]
+        zin2 = g.col_z[qubit2] - g.col_z[qubit1]
 
-        old_x1_col = set(gens.col_x[qubit1])
-        old_x2_col = set(gens.col_x[qubit2])
+        old_x1_col = set(g.col_x[qubit1])
+        old_x2_col = set(g.col_x[qubit2])
 
         # Update columns
         # ---------------------
 
         # Swap X1 and X2 columns
         # Swap the Xs of qubit1 and qubit2 for cols
-        gens.col_x[qubit1], gens.col_x[qubit2] = gens.col_x[qubit2], gens.col_x[qubit1]
+        g.col_x[qubit1], g.col_x[qubit2] = g.col_x[qubit2], g.col_x[qubit1]
 
         # X1 += Z1
-        gens.col_x[qubit1] ^= gens.col_z[qubit1]
+        g.col_x[qubit1] ^= g.col_z[qubit1]
 
         # X2 += Z2
-        gens.col_x[qubit2] ^= gens.col_z[qubit2]
+        g.col_x[qubit2] ^= g.col_z[qubit2]
 
         # Swap Z1 and Z2
         # Swap the Zs of qubit1 and qubit2 for cols
-        gens.col_z[qubit1], gens.col_z[qubit2] = gens.col_z[qubit2], gens.col_z[qubit1]
+        g.col_z[qubit1], g.col_z[qubit2] = g.col_z[qubit2], g.col_z[qubit1]
 
         # Update the rows
         # ---------------------
@@ -331,48 +365,59 @@ def G2(state, qubits):
         # Swap the Zs of qubit1 and qubit2 for cols
 
         for i in zin1:
-            gens.row_z[i].discard(qubit1)
-            gens.row_z[i].add(qubit2)
+            g.row_z[i].discard(qubit1)
+            g.row_z[i].add(qubit2)
 
         for i in zin2:
-            gens.row_z[i].discard(qubit2)
-            gens.row_z[i].add(qubit1)
+            g.row_z[i].discard(qubit2)
+            g.row_z[i].add(qubit1)
 
         del zin1
         del zin2
 
         # Z gens added
-        x1_added = gens.col_x[qubit1] - old_x1_col
-        x2_added = gens.col_x[qubit2] - old_x2_col
+        x1_added = g.col_x[qubit1] - old_x1_col
+        x2_added = g.col_x[qubit2] - old_x2_col
 
         for i in x1_added:
-            gens.row_x[i].add(qubit1)
+            g.row_x[i].add(qubit1)
 
         for i in x2_added:
-            gens.row_x[i].add(qubit2)
+            g.row_x[i].add(qubit2)
 
         del x1_added
         del x2_added
 
         # Z gens removed
-        x1_removed = old_x1_col - gens.col_x[qubit1]
-        x2_removed = old_x2_col - gens.col_x[qubit2]
+        x1_removed = old_x1_col - g.col_x[qubit1]
+        x2_removed = old_x2_col - g.col_x[qubit2]
 
         for i in x1_removed:
-            gens.row_x[i].discard(qubit1)
+            g.row_x[i].discard(qubit1)
 
         for i in x2_removed:
-            gens.row_x[i].discard(qubit2)
+            g.row_x[i].discard(qubit2)
 
         del x1_removed
         del x2_removed
 
 
-def II(state, qubits, **kwargs):
+def II(state: SparseSim,
+       qubits: Tuple[int, int]) -> None:
+    """
+    Two qubit identity.
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
+    """
     pass
 
 
-def SqrtXX(state, qubits):
+def SqrtXX(state: SparseSim,
+           qubits: Tuple[int, int]) -> None:
     """
     Applies a square root of XX rotation to generators
 
@@ -413,6 +458,12 @@ def SqrtXX(state, qubits):
     YX -> ZI
     YZ -> YZ
     YY -> YY
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     qubit1, qubit2 = qubits
@@ -439,17 +490,17 @@ def SqrtXX(state, qubits):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
-        old_x1_col = set(gens.col_x[qubit1])
-        old_x2_col = set(gens.col_x[qubit2])
+        old_x1_col = set(g.col_x[qubit1])
+        old_x2_col = set(g.col_x[qubit2])
 
         # Add XX if odd number of Zs
-        oddzs = gens.col_z[qubit1] ^ gens.col_z[qubit2]
+        oddzs = g.col_z[qubit1] ^ g.col_z[qubit2]
 
         # Update columns
-        gens.col_x[qubit1] ^= oddzs
-        gens.col_x[qubit2] ^= oddzs
+        g.col_x[qubit1] ^= oddzs
+        g.col_x[qubit2] ^= oddzs
 
         # Update rows
 
@@ -458,26 +509,27 @@ def SqrtXX(state, qubits):
         x2_added = oddzs - old_x2_col
 
         for i in x1_added:
-            gens.row_x[i].add(qubit1)
+            g.row_x[i].add(qubit1)
 
         for i in x2_added:
-            gens.row_x[i].add(qubit2)
+            g.row_x[i].add(qubit2)
 
         del x1_added
         del x2_added
 
         # Z gens removed
-        x1_removed = old_x1_col - gens.col_x[qubit1]
-        x2_removed = old_x2_col - gens.col_x[qubit2]
+        x1_removed = old_x1_col - g.col_x[qubit1]
+        x2_removed = old_x2_col - g.col_x[qubit2]
 
         for i in x1_removed:
-            gens.row_x[i].discard(qubit1)
+            g.row_x[i].discard(qubit1)
 
         for i in x2_removed:
-            gens.row_x[i].discard(qubit2)
+            g.row_x[i].discard(qubit2)
 
 
-def SqrtXX2(state, qubits):
+def SqrtXX2(state: SparseSim,
+            qubits: Tuple[int, int]) -> None:
     """
     Applies a square root of XX rotation to generators
 
@@ -518,10 +570,16 @@ def SqrtXX2(state, qubits):
     YX -> ZI
     YZ -> YZ
     YY -> YY
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
     qubit1, qubit2 = qubits
     Q(state, qubit1)  # Sqrt X
     Q(state, qubit2)  # Sqrt X
     Rd(state, qubit1)  # (Sqrt Y)^\dagger
-    cnot(state, qubits)  # CNOT (why didn't I capitalized this?)
+    CNOT(state, qubits)  # CNOT (why didn't I capitalized this?)
     R(state, qubit1)  # Sqrt Y

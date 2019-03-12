@@ -198,7 +198,7 @@ class InstrInitZero(LogicalInstruction):
 
         # Make a shallow copy of the abstract circuits.
         self.abstract_circuit = syn_ext.abstract_circuit.copy()
-        self.abstract_circuit.params.update(params)
+        self.abstract_circuit.metadata.update(params)
 
         self.ancilla_x_check = syn_ext.ancilla_x_check
         self.ancilla_z_check = syn_ext.ancilla_z_check
@@ -252,7 +252,7 @@ class InstrInitPlus(LogicalInstruction):
 
         # Make a shallow copy of the abstract circuits.
         self.abstract_circuit = syn_ext.abstract_circuit.copy()
-        self.abstract_circuit.params.update(params)
+        self.abstract_circuit.metadata.update(params)
 
         self.ancilla_x_check = syn_ext.ancilla_x_check
         self.ancilla_z_check = syn_ext.ancilla_z_check

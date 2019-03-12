@@ -45,7 +45,7 @@ def random_circuit_speed(state_sim, num_qubits, circuit_depth, trials=10000, gat
     return times, measurements, circuits
 
 
-def generate_circuits(num_qubits, circuit_depth, trials=100000, gates=None, seed_start=0, iter=False):
+def generate_circuits(num_qubits, circuit_depth, trials=100000, gates=None, seed_start=0, iterate=False):
 
     if gates is None:
 
@@ -82,12 +82,12 @@ def generate_circuits(num_qubits, circuit_depth, trials=100000, gates=None, seed
 
             qc.append(element, {q}, **params)
 
-        if iter:
+        if iterate:
             yield qc
         else:
             circuits.append(qc)
 
-    if not iter:
+    if not iterate:
         return circuits
 
 

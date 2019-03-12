@@ -168,6 +168,9 @@ class DepolarGen(ParentErrorGen):
         after = QuantumCircuit()
         replace = set([])
 
+        # if circuit.qudits != circuit.active_qudits:
+        #     raise Exception(circuit.active_qudits, circuit.qudits)
+
         # Data errors
         # -----------
         if self.has_data_errors and tick_index == 0:
@@ -187,6 +190,6 @@ class DepolarGen(ParentErrorGen):
             inactive_qudits = circuit.qudits - circuit.active_qudits[tick_index]
             self.gen.create_errors(self, 'idle', inactive_qudits, after, before, replace)
 
-        self.error_circuits.add_circuits(time, before_errors=before, after_errors=after)
+        self.error_circuits.add_circuits(time, before, after)
 
         return self.error_circuits

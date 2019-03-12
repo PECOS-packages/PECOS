@@ -28,14 +28,14 @@ class ErrorCircuits(dict):
 
         super().__init__()
 
-    def add_circuits(self, time, before_errors=None, after_errors=None, replaced_locations=None):
+    def add_circuits(self, time, before_faults=None, after_faults=None, replaced_locations=None):
         """
         Add error circuits and gate locations to ignore (replaced_locations).
 
         Args:
             time:
-            before_errors:
-            after_errors:
+            before_faults:
+            after_faults:
             replaced_locations:
 
         Returns:
@@ -44,11 +44,13 @@ class ErrorCircuits(dict):
 
         error_dict = {}
 
-        if before_errors and len(before_errors) > 0:
-            error_dict['before'] = before_errors
+        if before_faults and len(before_faults) > 0:
+            before_faults.metadata['circuit_type'] = 'faults'
+            error_dict['before'] = before_faults
 
-        if after_errors and len(after_errors) > 0:
-            error_dict['after'] = after_errors
+        if after_faults and len(after_faults) > 0:
+            after_faults.metadata['circuit_type'] = 'faults'
+            error_dict['after'] = after_faults
 
         if replaced_locations and len(replaced_locations) > 0:
             error_dict['replaced'] = replaced_locations

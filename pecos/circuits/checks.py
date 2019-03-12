@@ -17,7 +17,7 @@
 from collections import OrderedDict
 
 
-class Checks:
+class Checks(object):
     """
     Data structure used to record checks for Pauli qubit stabilizer-codes.
 

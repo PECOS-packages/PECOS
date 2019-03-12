@@ -1,7 +1,7 @@
+# -*- coding: utf-8 -*-
+
 #  =========================================================================  #
-#   Copyright 2018 National Technology & Engineering Solutions of Sandia,
-#   LLC (NTESS). Under the terms of Contract DE-NA0003525 with NTESS,
-#   the U.S. Government retains certain rights in this software.
+#   Copyright 2018 Ciarán Ryan-Anderson
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -16,24 +16,19 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-from projectq.ops import H, C, Z
 
-
-def II(state, qubits, **kwargs):
-    pass
-
-
-def G2(state, qubits):
+def init(state,
+         qubit: int) -> None:
     """
-    Applies a CZ.H(1).H(2).CZ
+
+    Args:
+        state:
+        qubit:
 
     Returns:
 
     """
-    q1 = state.qids[qubits[0]]
-    q2 = state.qids[qubits[0]]
 
-    C(Z) | (q1, q2)
-    H | q1
-    H | q2
-    C(Z) | (q1, q2)
+    state.faults['X'].discard(qubit)
+    state.faults['Y'].discard(qubit)
+    state.faults['Z'].discard(qubit)

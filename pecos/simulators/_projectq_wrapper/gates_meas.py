@@ -16,8 +16,8 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-from projectq.ops import Measure, H
-from ._1q_gates import H5
+from projectq.ops import Measure
+from .gates_one_qubit import H, H5
 
 
 def force_output(state, qubit, forced_output=-1):
@@ -70,13 +70,9 @@ def meas_y(state, qubit):
 
     """
 
-    q = state.qids[qubit]
-
-    H5 | q
-
+    H5(state, qubit)
     meas_outcome = meas_z(state, qubit)
-
-    H5 | q
+    H5(state, qubit)
 
     return meas_outcome
 
@@ -93,12 +89,8 @@ def meas_x(state, qubit):
 
     """
 
-    q = state.qids[qubit]
-
-    H | q
-
+    H(state, qubit)
     meas_outcome = meas_z(state, qubit)
-
-    H | q
+    H(state, qubit)
 
     return meas_outcome

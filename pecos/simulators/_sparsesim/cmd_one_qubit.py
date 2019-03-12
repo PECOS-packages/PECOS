@@ -16,15 +16,25 @@
 #   limitations under the License.
 #  =========================================================================  #
 
+from .state import SparseSim
 
-def I(state, qubit, **kwargs):
+
+def I(state: SparseSim,
+      qubit: int) -> None:
     """
     Identity, which does nothing.
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
     pass
 
 
-def X(state, qubit):
+def X(state: SparseSim,
+      qubit: int) -> None:
     """
     X
     Returns:
@@ -34,6 +44,12 @@ def X(state, qubit):
     W -> -W
     Y -> -Y
     => If you have a Z component, add a -1.
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
     stabs = state.stabs
 
@@ -44,7 +60,8 @@ def X(state, qubit):
     stabs.signs_minus ^= stabs.col_z[qubit]
 
 
-def Y(state, qubit):
+def Y(state: SparseSim,
+      qubit: int) -> None:
     """
     Pauli Y.
 
@@ -53,6 +70,12 @@ def Y(state, qubit):
     W -> W
     Y -> Y
     => If you have an X or Z component but not both, add a -1.
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -64,7 +87,8 @@ def Y(state, qubit):
     stabs.signs_minus ^= stabs.col_x[qubit] ^ stabs.col_z[qubit]
 
 
-def Z(state, qubit):
+def Z(state: SparseSim,
+      qubit: int) -> None:
     """
     Z
     Returns:
@@ -74,6 +98,12 @@ def Z(state, qubit):
     W -> -W
     Y -> -Y
     => If you have a X component, add a -1.
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
    """
 
     stabs = state.stabs
@@ -85,7 +115,8 @@ def Z(state, qubit):
     stabs.signs_minus ^= stabs.col_x[qubit]
 
 
-def Q(state, qubit):
+def Q(state: SparseSim,
+      qubit: int) -> None:
     r"""
     Applies a Q rotation to stabilizers and destabilizers
 
@@ -100,6 +131,12 @@ def Q(state, qubit):
     Z -> -iW = -Y
     W -> -iZ
     Y -> Z
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -133,16 +170,17 @@ def Q(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
         # Update column
         # X += Z
-        gens.col_x[qubit] ^= gens.col_z[qubit]
+        g.col_x[qubit] ^= g.col_z[qubit]
 
-        for i in gens.col_z[qubit]:
-            gens.row_x[i] ^= {qubit}
+        for i in g.col_z[qubit]:
+            g.row_x[i] ^= {qubit}
 
 
-def Qd(state, qubit):
+def Qd(state: SparseSim,
+       qubit: int) -> None:
     r"""
     Applies a Q^{\dagger} rotation to stabilizers and destabilizers
 
@@ -157,6 +195,12 @@ def Qd(state, qubit):
     Z -> iW = Y
     W -> iZ
     Y -> -Z
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -188,17 +232,18 @@ def Qd(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Update column
         # X += Z
-        gens.col_x[qubit] ^= gens.col_z[qubit]
+        g.col_x[qubit] ^= g.col_z[qubit]
 
-        for i in gens.col_z[qubit]:
-            gens.row_x[i] ^= {qubit}
+        for i in g.col_z[qubit]:
+            g.row_x[i] ^= {qubit}
 
 
-def R(state, qubit):
+def R(state: SparseSim,
+      qubit: int) -> None:
     r"""
     Applies a R rotation to stabilizers and destabilizers
 
@@ -213,6 +258,12 @@ def R(state, qubit):
     Z -> X
     W -> W
     Y -> Y
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -223,26 +274,27 @@ def R(state, qubit):
     # ---------------------
     stabs.signs_minus ^= stabs.col_x[qubit] - stabs.col_z[qubit]
 
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Swap X and Z for rows
-        xonly = gens.col_x[qubit] - gens.col_z[qubit]
+        xonly = g.col_x[qubit] - g.col_z[qubit]
 
-        zonly = gens.col_z[qubit] - gens.col_x[qubit]
+        zonly = g.col_z[qubit] - g.col_x[qubit]
 
         for i in xonly:
-            gens.row_x[i].discard(qubit)
-            gens.row_z[i].add(qubit)
+            g.row_x[i].discard(qubit)
+            g.row_z[i].add(qubit)
 
         for i in zonly:
-            gens.row_z[i].discard(qubit)
-            gens.row_x[i].add(qubit)
+            g.row_z[i].discard(qubit)
+            g.row_x[i].add(qubit)
 
         # Swap X and Z for cols
-        gens.col_x[qubit], gens.col_z[qubit] = gens.col_z[qubit], gens.col_x[qubit]
+        g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
 
-def Rd(state, qubit):
+def Rd(state: SparseSim,
+       qubit: int) -> None:
     r"""
     Applies a R rotation to stabilizers and destabilizers
 
@@ -257,6 +309,12 @@ def Rd(state, qubit):
     Z -> -X
     W -> W
     Y -> Y
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -269,26 +327,27 @@ def Rd(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Swap X and Z for rows
-        xonly = gens.col_x[qubit] - gens.col_z[qubit]
+        xonly = g.col_x[qubit] - g.col_z[qubit]
 
-        zonly = gens.col_z[qubit] - gens.col_x[qubit]
+        zonly = g.col_z[qubit] - g.col_x[qubit]
 
         for i in xonly:
-            gens.row_x[i].discard(qubit)
-            gens.row_z[i].add(qubit)
+            g.row_x[i].discard(qubit)
+            g.row_z[i].add(qubit)
 
         for i in zonly:
-            gens.row_z[i].discard(qubit)
-            gens.row_x[i].add(qubit)
+            g.row_z[i].discard(qubit)
+            g.row_x[i].add(qubit)
 
         # Swap X and Z for cols
-        gens.col_x[qubit], gens.col_z[qubit] = gens.col_z[qubit], gens.col_x[qubit]
+        g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
 
-def S(state, qubit):
+def S(state: SparseSim,
+      qubit: int) -> None:
     r"""
     Applies a phase gate (S) rotation to stabilizers and destabilizers
 
@@ -305,6 +364,12 @@ def S(state, qubit):
     Z -> Z
     W -> iX
     Y -> -X
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
     stabs = state.stabs
 
@@ -319,18 +384,19 @@ def S(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Update column
         # Z += X
-        gens.col_z[qubit] ^= gens.col_x[qubit]
+        g.col_z[qubit] ^= g.col_x[qubit]
 
         # Update row
-        for i in gens.col_x[qubit]:
-            gens.row_z[i] ^= {qubit}
+        for i in g.col_x[qubit]:
+            g.row_z[i] ^= {qubit}
 
 
-def Sd(state, qubit):
+def Sd(state: SparseSim,
+       qubit: int) -> None:
     r"""
     Applies a Hermitian adjoint phase gate (S^{\dagger}) rotation to stabilizers and destabilizers
 
@@ -343,6 +409,12 @@ def Sd(state, qubit):
     Z -> Z
     W -> -iX
     Y -> X
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -375,17 +447,18 @@ def Sd(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Update column
         # Z += X
-        gens.col_z[qubit] ^= gens.col_x[qubit]
+        g.col_z[qubit] ^= g.col_x[qubit]
 
-        for i in gens.col_x[qubit]:
-            gens.row_z[i] ^= {qubit}
+        for i in g.col_x[qubit]:
+            g.row_z[i] ^= {qubit}
 
 
-def H(state, qubit):
+def H(state: SparseSim,
+      qubit: int) -> None:
     r"""
     Applies a Hadamard gate (H) rotation to stabilizers and destabilizers
 
@@ -397,6 +470,12 @@ def H(state, qubit):
     Z -> X
     W -> -W
     Y -> -Y
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -409,7 +488,7 @@ def H(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for g in state.gen_list:
+    for g in state.gens:
 
         # Swap X and Z for rows
         xonly = g.col_x[qubit] - g.col_z[qubit]
@@ -428,7 +507,8 @@ def H(state, qubit):
         g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
 
-def H2(state, qubit):
+def H2(state: SparseSim,
+       qubit: int) -> None:
     r"""
     Applies a Hadamard gate (H4) rotation to stabilizers and destabilizers
 
@@ -438,6 +518,12 @@ def H2(state, qubit):
     Z -> -X
     W -> -W
     Y -> -Y
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -450,26 +536,27 @@ def H2(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Swap X and Z for rows
-        xonly = gens.col_x[qubit] - gens.col_z[qubit]
+        xonly = g.col_x[qubit] - g.col_z[qubit]
 
-        zonly = gens.col_z[qubit] - gens.col_x[qubit]
+        zonly = g.col_z[qubit] - g.col_x[qubit]
 
         for i in xonly:
-            gens.row_x[i].discard(qubit)
-            gens.row_z[i].add(qubit)
+            g.row_x[i].discard(qubit)
+            g.row_z[i].add(qubit)
 
         for i in zonly:
-            gens.row_z[i].discard(qubit)
-            gens.row_x[i].add(qubit)
+            g.row_z[i].discard(qubit)
+            g.row_x[i].add(qubit)
 
         # Swap X and Z for cols
-        gens.col_x[qubit], gens.col_z[qubit] = gens.col_z[qubit], gens.col_x[qubit]
+        g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
 
-def H3(state, qubit):
+def H3(state: SparseSim,
+       qubit: int) -> None:
     r"""
     Applies a Hadamard gate (H3) rotation to stabilizers and destabilizers
 
@@ -479,6 +566,12 @@ def H3(state, qubit):
     Z -> -Z
     W -> -iX
     Y -> X
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -513,17 +606,18 @@ def H3(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Update column
         # X += Z
-        gens.col_z[qubit] ^= gens.col_x[qubit]
+        g.col_z[qubit] ^= g.col_x[qubit]
 
-        for i in gens.col_x[qubit]:
-            gens.row_z[i] ^= {qubit}
+        for i in g.col_x[qubit]:
+            g.row_z[i] ^= {qubit}
 
 
-def H4(state, qubit):
+def H4(state: SparseSim,
+       qubit: int) -> None:
     r"""
     Applies a Hadamard gate (H6) rotation to stabilizers and destabilizers
 
@@ -533,6 +627,12 @@ def H4(state, qubit):
     Z -> -Z
     W -> iX
     Y -> -X
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -567,17 +667,18 @@ def H4(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Update column
         # X += Z
-        gens.col_z[qubit] ^= gens.col_x[qubit]
+        g.col_z[qubit] ^= g.col_x[qubit]
 
-        for i in gens.col_x[qubit]:
-            gens.row_z[i] ^= {qubit}
+        for i in g.col_x[qubit]:
+            g.row_z[i] ^= {qubit}
 
 
-def H5(state, qubit):
+def H5(state: SparseSim,
+       qubit: int) -> None:
     r"""
     Applies a Hadamard gate (H2) rotation to stabilizers and destabilizers
 
@@ -623,16 +724,17 @@ def H5(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
         # Update column
         # X += Z
-        gens.col_x[qubit] ^= gens.col_z[qubit]
+        g.col_x[qubit] ^= g.col_z[qubit]
 
-        for i in gens.col_z[qubit]:
-            gens.row_x[i] ^= {qubit}
+        for i in g.col_z[qubit]:
+            g.row_x[i] ^= {qubit}
 
 
-def H6(state, qubit):
+def H6(state: SparseSim,
+       qubit: int) -> None:
     r"""
     Applies a Hadamard gate (H5) rotation to stabilizers and destabilizers
 
@@ -642,6 +744,12 @@ def H6(state, qubit):
     Z -> -iW = -Y
     W -> iZ
     Y -> -Z
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -676,16 +784,17 @@ def H6(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
         # Update column
         # X += Z
-        gens.col_x[qubit] ^= gens.col_z[qubit]
+        g.col_x[qubit] ^= g.col_z[qubit]
 
-        for i in gens.col_z[qubit]:
-            gens.row_x[i] ^= {qubit}
+        for i in g.col_z[qubit]:
+            g.row_x[i] ^= {qubit}
 
 
-def F1(state, qubit):
+def F1(state: SparseSim,
+       qubit: int) -> None:
     r"""
     Applies a rotation (F1) about a stabilizer octahedron face to stabilizers  and destabilizers
 
@@ -693,6 +802,12 @@ def F1(state, qubit):
     Z -> X
     W -> -iZ
     Y -> Z
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -727,35 +842,36 @@ def F1(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Swap X and Z for rows
-        xonly = gens.col_x[qubit] - gens.col_z[qubit]
+        xonly = g.col_x[qubit] - g.col_z[qubit]
 
-        zonly = gens.col_z[qubit] - gens.col_x[qubit]
+        zonly = g.col_z[qubit] - g.col_x[qubit]
 
-        xzshared = gens.col_x[qubit] & gens.col_z[qubit]
+        xzshared = g.col_x[qubit] & g.col_z[qubit]
 
         for i in xzshared:
-            gens.row_x[i].discard(qubit)
+            g.row_x[i].discard(qubit)
 
         for i in xonly:
-            gens.row_z[i].add(qubit)
+            g.row_z[i].add(qubit)
 
         # Remove only Z
         # Z -> X
         for i in zonly:
-            gens.row_z[i].discard(qubit)
-            gens.row_x[i].add(qubit)
+            g.row_z[i].discard(qubit)
+            g.row_x[i].add(qubit)
 
         # Swap X and Z for cols
-        gens.col_x[qubit], gens.col_z[qubit] = gens.col_z[qubit], gens.col_x[qubit]
+        g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
         # X += Z
-        gens.col_x[qubit] ^= gens.col_z[qubit]
+        g.col_x[qubit] ^= g.col_z[qubit]
 
 
-def F2(state, qubit):
+def F2(state: SparseSim,
+       qubit: int) -> None:
     r"""
     Applies a rotation (F2) about a stabilizer octahedron face to stabilizers and destabilizers
 
@@ -763,6 +879,12 @@ def F2(state, qubit):
     Z -> iW = Y
     W -> iX
     Y -> -X
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -797,35 +919,36 @@ def F2(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Swap X and Z for rows
-        xonly = gens.col_x[qubit] - gens.col_z[qubit]
+        xonly = g.col_x[qubit] - g.col_z[qubit]
 
-        zonly = gens.col_z[qubit] - gens.col_x[qubit]
+        zonly = g.col_z[qubit] - g.col_x[qubit]
 
-        xzshared = gens.col_x[qubit] & gens.col_z[qubit]
+        xzshared = g.col_x[qubit] & g.col_z[qubit]
 
         for i in xzshared:
-            gens.row_z[i].discard(qubit)
+            g.row_z[i].discard(qubit)
 
         for i in zonly:
-            gens.row_x[i].add(qubit)
+            g.row_x[i].add(qubit)
 
         # Remove only Z
         # X -> Z
         for i in xonly:
-            gens.row_x[i].discard(qubit)
-            gens.row_z[i].add(qubit)
+            g.row_x[i].discard(qubit)
+            g.row_z[i].add(qubit)
 
         # Swap X and Z for cols
-        gens.col_x[qubit], gens.col_z[qubit] = gens.col_z[qubit], gens.col_x[qubit]
+        g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
         # Z += X
-        gens.col_z[qubit] ^= gens.col_x[qubit]
+        g.col_z[qubit] ^= g.col_x[qubit]
 
 
-def F3(state, qubit):
+def F3(state: SparseSim,
+       qubit: int) -> None:
     r"""
     Applies a rotation (F3) about a stabilizer octahedron face to stabilizers and destabilizers
 
@@ -833,6 +956,12 @@ def F3(state, qubit):
     Z -> -X
     W -> iZ
     Y -> -Z
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -867,35 +996,36 @@ def F3(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Swap X and Z for rows
-        xonly = gens.col_x[qubit] - gens.col_z[qubit]
+        xonly = g.col_x[qubit] - g.col_z[qubit]
 
-        zonly = gens.col_z[qubit] - gens.col_x[qubit]
+        zonly = g.col_z[qubit] - g.col_x[qubit]
 
-        xzshared = gens.col_x[qubit] & gens.col_z[qubit]
+        xzshared = g.col_x[qubit] & g.col_z[qubit]
 
         for i in xzshared:
-            gens.row_x[i].discard(qubit)
+            g.row_x[i].discard(qubit)
 
         for i in xonly:
-            gens.row_z[i].add(qubit)
+            g.row_z[i].add(qubit)
 
         # Remove only Z
         # Z -> X
         for i in zonly:
-            gens.row_z[i].discard(qubit)
-            gens.row_x[i].add(qubit)
+            g.row_z[i].discard(qubit)
+            g.row_x[i].add(qubit)
 
         # Swap X and Z for cols
-        gens.col_x[qubit], gens.col_z[qubit] = gens.col_z[qubit], gens.col_x[qubit]
+        g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
         # X += Z
-        gens.col_x[qubit] ^= gens.col_z[qubit]
+        g.col_x[qubit] ^= g.col_z[qubit]
 
 
-def F4(state, qubit):
+def F4(state: SparseSim,
+       qubit: int) -> None:
     r"""
     Applies a rotation (F4) about a stabilizer octahedron face to stabilizers and destabilizers
 
@@ -903,6 +1033,12 @@ def F4(state, qubit):
     Z -> -iW = -Y
     W -> iX
     Y -> -X
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -937,35 +1073,36 @@ def F4(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Swap X and Z for rows
-        xonly = gens.col_x[qubit] - gens.col_z[qubit]
+        xonly = g.col_x[qubit] - g.col_z[qubit]
 
-        zonly = gens.col_z[qubit] - gens.col_x[qubit]
+        zonly = g.col_z[qubit] - g.col_x[qubit]
 
-        xzshared = gens.col_x[qubit] & gens.col_z[qubit]
+        xzshared = g.col_x[qubit] & g.col_z[qubit]
 
         for i in xzshared:
-            gens.row_z[i].discard(qubit)
+            g.row_z[i].discard(qubit)
 
         for i in zonly:
-            gens.row_x[i].add(qubit)
+            g.row_x[i].add(qubit)
 
         # Remove only Z
         # X -> Z
         for i in xonly:
-            gens.row_x[i].discard(qubit)
-            gens.row_z[i].add(qubit)
+            g.row_x[i].discard(qubit)
+            g.row_z[i].add(qubit)
 
         # Swap X and Z for cols
-        gens.col_x[qubit], gens.col_z[qubit] = gens.col_z[qubit], gens.col_x[qubit]
+        g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
         # Z += X
-        gens.col_z[qubit] ^= gens.col_x[qubit]
+        g.col_z[qubit] ^= g.col_x[qubit]
 
 
-def F1d(state, qubit):
+def F1d(state: SparseSim,
+        qubit: int) -> None:
     r"""
     Applies a rotation (F1^{\dagger}) about a stabilizer octahedron face to stabilizers and destabilizers
 
@@ -973,6 +1110,12 @@ def F1d(state, qubit):
     Z -> iW = Y
     W -> -iX
     Y -> X
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -1007,35 +1150,36 @@ def F1d(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Swap X and Z for rows
-        xonly = gens.col_x[qubit] - gens.col_z[qubit]
+        xonly = g.col_x[qubit] - g.col_z[qubit]
 
-        zonly = gens.col_z[qubit] - gens.col_x[qubit]
+        zonly = g.col_z[qubit] - g.col_x[qubit]
 
-        xzshared = gens.col_x[qubit] & gens.col_z[qubit]
+        xzshared = g.col_x[qubit] & g.col_z[qubit]
 
         for i in xzshared:
-            gens.row_z[i].discard(qubit)
+            g.row_z[i].discard(qubit)
 
         for i in zonly:
-            gens.row_x[i].add(qubit)
+            g.row_x[i].add(qubit)
 
         # Remove only Z
         # X -> Z
         for i in xonly:
-            gens.row_x[i].discard(qubit)
-            gens.row_z[i].add(qubit)
+            g.row_x[i].discard(qubit)
+            g.row_z[i].add(qubit)
 
         # Swap X and Z for cols
-        gens.col_x[qubit], gens.col_z[qubit] = gens.col_z[qubit], gens.col_x[qubit]
+        g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
         # Z += X
-        gens.col_z[qubit] ^= gens.col_x[qubit]
+        g.col_z[qubit] ^= g.col_x[qubit]
 
 
-def F2d(state, qubit):
+def F2d(state: SparseSim,
+        qubit: int) -> None:
     r"""
     Applies a rotation (F2^{\dagger}) about a stabilizer octahedron face to stabilizers and destabilizers
 
@@ -1043,6 +1187,12 @@ def F2d(state, qubit):
     Z -> -X
     W -> -iZ
     Y -> Z
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -1077,35 +1227,36 @@ def F2d(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Swap X and Z for rows
-        xonly = gens.col_x[qubit] - gens.col_z[qubit]
+        xonly = g.col_x[qubit] - g.col_z[qubit]
 
-        zonly = gens.col_z[qubit] - gens.col_x[qubit]
+        zonly = g.col_z[qubit] - g.col_x[qubit]
 
-        xzshared = gens.col_x[qubit] & gens.col_z[qubit]
+        xzshared = g.col_x[qubit] & g.col_z[qubit]
 
         for i in xzshared:
-            gens.row_x[i].discard(qubit)
+            g.row_x[i].discard(qubit)
 
         for i in xonly:
-            gens.row_z[i].add(qubit)
+            g.row_z[i].add(qubit)
 
         # Remove only Z
         # Z -> X
         for i in zonly:
-            gens.row_z[i].discard(qubit)
-            gens.row_x[i].add(qubit)
+            g.row_z[i].discard(qubit)
+            g.row_x[i].add(qubit)
 
         # Swap X and Z for cols
-        gens.col_x[qubit], gens.col_z[qubit] = gens.col_z[qubit], gens.col_x[qubit]
+        g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
         # X += Z
-        gens.col_x[qubit] ^= gens.col_z[qubit]
+        g.col_x[qubit] ^= g.col_z[qubit]
 
 
-def F3d(state, qubit):
+def F3d(state: SparseSim,
+        qubit: int) -> None:
     r"""
     Applies a rotation (F3^{\dagger}) about a stabilizer octahedron face to stabilizers and destabilizers
 
@@ -1113,6 +1264,12 @@ def F3d(state, qubit):
     Z -> -iW = -Y
     W -> -iX
     Y -> X
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -1147,35 +1304,36 @@ def F3d(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Swap X and Z for rows
-        xonly = gens.col_x[qubit] - gens.col_z[qubit]
+        xonly = g.col_x[qubit] - g.col_z[qubit]
 
-        zonly = gens.col_z[qubit] - gens.col_x[qubit]
+        zonly = g.col_z[qubit] - g.col_x[qubit]
 
-        xzshared = gens.col_x[qubit] & gens.col_z[qubit]
+        xzshared = g.col_x[qubit] & g.col_z[qubit]
 
         for i in xzshared:
-            gens.row_z[i].discard(qubit)
+            g.row_z[i].discard(qubit)
 
         for i in zonly:
-            gens.row_x[i].add(qubit)
+            g.row_x[i].add(qubit)
 
         # Remove only Z
         # X -> Z
         for i in xonly:
-            gens.row_x[i].discard(qubit)
-            gens.row_z[i].add(qubit)
+            g.row_x[i].discard(qubit)
+            g.row_z[i].add(qubit)
 
         # Swap X and Z for cols
-        gens.col_x[qubit], gens.col_z[qubit] = gens.col_z[qubit], gens.col_x[qubit]
+        g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
         # Z += X
-        gens.col_z[qubit] ^= gens.col_x[qubit]
+        g.col_z[qubit] ^= g.col_x[qubit]
 
 
-def F4d(state, qubit):
+def F4d(state: SparseSim,
+        qubit: int) -> None:
     r"""
     Applies a rotation (F4^{\dagger}) about a stabilizer octahedron face to stabilizers and destabilizers
 
@@ -1183,6 +1341,12 @@ def F4d(state, qubit):
     Z -> X
     W -> iZ
     Y -> -Z
+
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
     stabs = state.stabs
@@ -1217,29 +1381,29 @@ def F4d(state, qubit):
 
     # Update Paulis
     # -------------------------------------------------------------------
-    for gens in state.gen_list:
+    for g in state.gens:
 
         # Swap X and Z for rows
-        xonly = gens.col_x[qubit] - gens.col_z[qubit]
+        xonly = g.col_x[qubit] - g.col_z[qubit]
 
-        zonly = gens.col_z[qubit] - gens.col_x[qubit]
+        zonly = g.col_z[qubit] - g.col_x[qubit]
 
-        xzshared = gens.col_x[qubit] & gens.col_z[qubit]
+        xzshared = g.col_x[qubit] & g.col_z[qubit]
 
         for i in xzshared:
-            gens.row_x[i].discard(qubit)
+            g.row_x[i].discard(qubit)
 
         for i in xonly:
-            gens.row_z[i].add(qubit)
+            g.row_z[i].add(qubit)
 
         # Remove only Z
         # Z -> X
         for i in zonly:
-            gens.row_z[i].discard(qubit)
-            gens.row_x[i].add(qubit)
+            g.row_z[i].discard(qubit)
+            g.row_x[i].add(qubit)
 
         # Swap X and Z for cols
-        gens.col_x[qubit], gens.col_z[qubit] = gens.col_z[qubit], gens.col_x[qubit]
+        g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
         # X += Z
-        gens.col_x[qubit] ^= gens.col_z[qubit]
+        g.col_x[qubit] ^= g.col_z[qubit]

@@ -79,7 +79,7 @@ gate_dict = {
 
     # two-qubit operations
     # ====================
-    'CNOT': q2.cnot,
+    'CNOT': q2.CNOT,
     'CZ': q2.CZ,
     'CY': q2.CY,
     'SWAP': q2.SWAP,
@@ -87,9 +87,9 @@ gate_dict = {
     'G2': q2.G2,
     'II': q2.II,
 
-    'Sqrt XX': q2.SqrtXX,  # \equiv e^{+i (\pi /4)} * e^{-i (\pi /4) XX } == R(XX, pi/2)
-    'Sqrt XX2': q2.SqrtXX2,
-    'MS': q2.SqrtXX,  # MS == Mølmer–Sørensen gate (XX rotation only with angle pi/2 [square root])
+    # Mølmer–Sørensen gates
+    'SqrtXX': q2.SqrtXX,  # \equiv e^{+i (\pi /4)} * e^{-i (\pi /4) XX } == R(XX, pi/2)
+    'MS': q2.SqrtXX,
     'MSXX': q2.SqrtXX,
 
     # Measurements

@@ -21,7 +21,7 @@ from ...circuits import QuantumCircuit
 from . import precomputing
 
 
-class MWPM2D:
+class MWPM2D(object):
     """
     2D minimum weight perfect matching for surface capacity assuming code capacity. (Only data error.)
 

@@ -310,9 +310,11 @@ class Generator:
                 for sym, loc in zip(error_symbols, location):
                     if sym != 'I':
                         after.update(sym, {loc}, emptyappend=True)
+
             elif isinstance(error_symbols, str):
                 if error_symbols != 'I':
                     after.update(error_symbols, {location}, emptyappend=True)
+
             elif isinstance(error_symbols, tuple) and len(error_symbols) == 1:
                 error_symbols = error_symbols[0]
                 if error_symbols != 'I':
@@ -333,6 +335,7 @@ class Generator:
             elif isinstance(error_symbols, str):
                 if error_symbols != 'I':
                     before.update(error_symbols, {location}, emptyappend=True)
+
             elif isinstance(error_symbols, tuple) and len(error_symbols) == 1:
                 error_symbols = error_symbols[0]
                 if error_symbols != 'I':

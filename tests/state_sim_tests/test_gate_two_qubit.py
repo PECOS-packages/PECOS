@@ -349,47 +349,4 @@ def test_SqrtXX():
         '-WW': ' -WW'
     }
 
-    gate_test('Sqrt XX', stab_transform)
-
-
-def test_SqrtXX2():
-    """
-    Test 'Sqrt XX test'.
-
-    II -> II
-    XI -> XI
-    ZI -> -iWX
-    WI -> -iZX
-    IX -> IX
-    IZ -> -iXW
-    IW -> -iXZ
-    XX -> XX
-    XZ -> -iIW
-    XW -> -iIZ
-    ZX -> -iWI
-    ZZ -> ZZ
-    ZW -> ZW
-    WX -> -iZI
-    WZ -> WZ
-    WW -> WW
-    """
-
-    stab_transform = {
-        'XI': '  XI',
-        'ZI': '-iWX',
-        'iWI': '  ZX',
-        'IX': '  IX',
-        'IZ': '-iXW',
-        'iIW': '  XZ',
-        'XX': '  XX',
-        'XZ': '-iIW',
-        'iXW': '  IZ',
-        'ZX': '-iWI',
-        'ZZ': '  ZZ',
-        'iZW': ' iZW',
-        'iWX': '  ZI',
-        'iWZ': ' iWZ',
-        '-WW': ' -WW'
-    }
-
-    gate_test('Sqrt XX2', stab_transform)
+    gate_test('SqrtXX', stab_transform)

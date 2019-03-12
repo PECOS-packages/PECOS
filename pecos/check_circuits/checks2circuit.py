@@ -19,7 +19,7 @@
 from ..circuits import QuantumCircuit
 
 
-class Check2Circuits:
+class Check2Circuits(object):
     """
     Converts checks to circuits.
     """
@@ -63,7 +63,7 @@ class Check2Circuits:
         random_outcome = gate_params.get('random_outcome', None)
 
         if random_outcome is None:
-            random_outcome = abstract_circuit.params.get('random_outcome', True)
+            random_outcome = abstract_circuit.metadata.get('random_outcome', True)
 
         if make_ticks:
 
@@ -256,7 +256,7 @@ class Check2Circuits:
         return ancilla_ticks, data_ticks, meas_ticks
 
 
-class NoMap:
+class NoMap(object):
     """
     Default Mapping: item -> item.
     """

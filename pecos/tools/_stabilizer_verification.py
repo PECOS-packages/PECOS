@@ -21,7 +21,7 @@ from ..circuits import QuantumCircuit
 from .. import simulators
 
 
-class VerifyStabilizers:
+class VerifyStabilizers(object):
     """
     Used to define a stabilizer QECC.
     """

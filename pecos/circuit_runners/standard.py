@@ -16,7 +16,6 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-import warnings
 import struct
 import os
 import random
@@ -47,15 +46,14 @@ class Standard(object):
     @staticmethod
     def run(state, circuit, error_gen=None, error_params=None, error_circuits=None, output=None):
         """
-        Run logical circuit and these circuits to update a state.
 
         Args:
             state:
             circuit:
-            output:
             error_gen:
             error_params:
             error_circuits:
+            output:
 
         Returns:
 

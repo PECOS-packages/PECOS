@@ -41,6 +41,8 @@ Date        Author  Comment
 05/24/2017  CRA     Simplified string outputs. Added the method ``gate`` to ``State`` to give an 
 
 """
+from typing import Any, Union, Set, Tuple, List, Optional
+from ...circuits import QuantumCircuit
 from .. import BaseSim
 from . import bindings
 from .logical_sign import find_logical_signs
@@ -48,12 +50,19 @@ from .refactor import refactor as refactor_generators
 from .refactor import find_stab as find_stabilizer
 
 
-class State(BaseSim):
+class SparseSim(BaseSim):
     """
     Represents the stabilizer state.
+
+    Attributes:
+        num_qubits (int):
+        gate_dict (dict):
+        stabs (Gens):
+        destabs (Gens):
+        gens (Tuple[Gens, Gens]):
     """
 
-    def __init__(self, num_qubits):
+    def __init__(self, num_qubits: int) -> None:
         """
         Initializes the stabilizer state.
 
@@ -69,21 +78,23 @@ class State(BaseSim):
         if not isinstance(num_qubits, int):
             raise Exception('``num_qubits`` should be of type ``int.``')
 
+        self.num_qubits = num_qubits
+
         self.gate_dict = bindings.gate_dict  # TODO: check to see if it makes a difference in performance if this is
         # moved to a class variable.
-
-        self.num_qubits = num_qubits
 
         # Represent a stabilizer state with ``num_qubits`` qubits.
         self.stabs = Gens(num_qubits)
         self.destabs = Gens(num_qubits)
-        self.gen_list = (self.stabs, self.destabs)
+        self.gens = (self.stabs, self.destabs)
 
         # Initialize all qubits in the zero state
         self.stabs.init_all_z()
         self.destabs.init_all_x()
 
-    def logical_sign(self, logical_op, delogical_op=None):
+    def logical_sign(self,
+                     logical_op: QuantumCircuit,
+                     delogical_op: Optional[QuantumCircuit] = None) -> int:
         """
 
         Args:
@@ -95,18 +106,30 @@ class State(BaseSim):
         """
         return find_logical_signs(self, logical_op, delogical_op)
 
-    def refactor(self, xs, zs, choose=None, prefer=None, protected=None):
+    def refactor(self,
+                 xs: Set[int],
+                 zs: Set[int],
+                 choose=None,
+                 prefer=None,
+                 protected=None):
+
         return refactor_generators(self, xs, zs, choose, prefer, protected)
 
-    def find_stab(self, xs, zs):
+    def find_stab(self,
+                  xs: Set[int],
+                  zs: Set[int]):
+
         return find_stabilizer(self, xs, zs)
 
-    def run_direct(self, symbol, location, **gate_kwargs):
+    def run_direct(self,
+                   symbol: str,
+                   location: Set[Union[int, Tuple[int, ...]]],
+                   **gate_kwargs: Any):
         self.gate_dict[symbol](self, location, **gate_kwargs)
 
     def copy(self):
 
-        new = State(self.num_qubits)
+        new = SparseSim(self.num_qubits)
 
         old_stabs = self.stabs
         old_destabs = self.destabs
@@ -136,7 +159,8 @@ class State(BaseSim):
                 new_gen.col_z[j].update(gen.col_z[j])
 
     @staticmethod
-    def _pauli_sign(gen, i_gen):
+    def _pauli_sign(gen,
+                    i_gen: int) -> str:
 
         if i_gen in gen.signs_minus:
             if i_gen in gen.signs_i:
@@ -152,14 +176,19 @@ class State(BaseSim):
 
         return sign
 
-    def col_string(self, gen, num_qubits=None, print_signs=True, print_y=False):
+    def col_string(self,
+                   gen,
+                   num_qubits: Optional[int] = None,
+                   print_signs: bool = True,
+                   print_y: bool = False):
         """
         Prints out the stabilizers for the column-wise sparse representation.
 
         Args:
             gen (Gens): A generator instance.
-            num_qubits (int): number of qubits.
+            num_qubits (Optional[int]): number of qubits.
             print_signs (bool): Whether to print the signs of the generators.
+            print_y (bool):
 
         Returns:
 
@@ -244,7 +273,11 @@ class State(BaseSim):
 
         return result
 
-    def print_stabs(self, verbose=True, print_y=True, print_destabs=False):
+    def print_stabs(self,
+                    verbose: bool = True,
+                    print_y: bool = True,
+                    print_destabs: bool = False):
+
         str_s = self.print_tableau(self.stabs, verbose=verbose, print_y=print_y)
 
         if print_destabs:
@@ -256,7 +289,11 @@ class State(BaseSim):
 
         return str_s
 
-    def print_tableau(self, gen, verbose=True, print_signs=True, print_y=True):
+    def print_tableau(self,
+                      gen,
+                      verbose: bool = True,
+                      print_signs: bool = True,
+                      print_y: bool = True):
         """
         Prints out the stabilizers.
         :return:
@@ -283,7 +320,11 @@ class State(BaseSim):
 
         return col_str
 
-    def row_string(self, gen, num_qubits=None, print_signs=True, print_y=False):
+    def row_string(self,
+                   gen,
+                   num_qubits: Optional[int] = None,
+                   print_signs: bool = True,
+                   print_y: bool = False) -> List[str]:
         """
         Prints out the stabilizers for the row-wise sparse representation.
 
@@ -378,26 +419,26 @@ class State(BaseSim):
 
 class Gens(object):
     """
-    This class is the data structure used for tracking stabilizer/destabilizer generators. 
+    This class is the data structure used for tracking stabilizer/destabilizer generators.
     """
 
-    def __init__(self, num_qubits):
+    def __init__(self, num_qubits: int) -> None:
         """
-        :param num_qubits: Number of qubits to simulate. 
+        :param num_qubits: Number of qubits to simulate.
         """
 
         self.num_qubits = num_qubits
 
-        self.col_x = [set() for i in range(num_qubits)]
-        self.col_z = [set() for i in range(num_qubits)]
+        self.col_x = [set() for _ in range(num_qubits)]
+        self.col_z = [set() for _ in range(num_qubits)]
 
-        self.row_x = [set() for i in range(num_qubits)]
-        self.row_z = [set() for i in range(num_qubits)]
+        self.row_x = [set() for _ in range(num_qubits)]
+        self.row_z = [set() for _ in range(num_qubits)]
 
         self.signs_minus = set()
         self.signs_i = set()
 
-    def init_all_z(self):
+    def init_all_z(self) -> None:
         """
         Used to initiate stabilizers to all Zs.
 
@@ -408,14 +449,13 @@ class Gens(object):
         self.signs_minus = set()
         self.signs_i = set()
 
-        # ww
-        self.col_x = [set() for i in range(self.num_qubits)]
+        self.col_x = [set() for _ in range(self.num_qubits)]
         self.col_z = [{i} for i in range(self.num_qubits)]
 
-        self.row_x = [set() for i in range(self.num_qubits)]
+        self.row_x = [set() for _ in range(self.num_qubits)]
         self.row_z = [{i} for i in range(self.num_qubits)]
 
-    def init_all_x(self):
+    def init_all_x(self) -> None:
         """
         Used to initiate destabilizers to all Xs.
 
@@ -427,12 +467,12 @@ class Gens(object):
         self.signs_i = set()
 
         self.col_x = [{i} for i in range(self.num_qubits)]
-        self.col_z = [set() for i in range(self.num_qubits)]
+        self.col_z = [set() for _ in range(self.num_qubits)]
 
         self.row_x = [{i} for i in range(self.num_qubits)]
-        self.row_z = [set() for i in range(self.num_qubits)]
+        self.row_z = [set() for _ in range(self.num_qubits)]
 
-    def _pauli_sign(self, i_gen):
+    def _pauli_sign(self, i_gen: int) -> str:
 
         if i_gen in self.signs_minus:
             if i_gen in self.signs_i:
@@ -448,12 +488,12 @@ class Gens(object):
 
         return sign
 
-    def col_string(self, num_qubits=None):
+    def col_string(self, num_qubits: Optional[int] = None) -> List[str]:
         """
         Prints out the stabilizers for the column-wise sparse representation.
-        
-        :param num_qubits: 
-        :return: 
+
+        :param num_qubits:
+        :return:
         """
 
         result = []
@@ -493,10 +533,10 @@ class Gens(object):
 
         return result
 
-    def print_tableau(self, verbose=True):
+    def print_tableau(self, verbose: bool = True) -> List[str]:
         """
         Prints out the stabilizers.
-        :return: 
+        :return:
         """
 
         col_str = self.col_string()
@@ -512,12 +552,12 @@ class Gens(object):
 
         return col_str
 
-    def row_string(self, num_qubits=None):
+    def row_string(self, num_qubits: Optional[int] = None) -> List[str]:
         """
         Prints out the stabilizers for the row-wise sparse representation.
-        
-        :param num_qubits: 
-        :return: 
+
+        :param num_qubits:
+        :return:
         """
 
         result = []
@@ -552,7 +592,6 @@ class Gens(object):
 
                 stab_letters.append(letter)
 
-            # print(''.join(stab_letters))
             result.append(''.join(stab_letters))
 
         return result

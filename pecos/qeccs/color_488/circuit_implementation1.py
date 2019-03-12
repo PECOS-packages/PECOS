@@ -17,7 +17,7 @@
 from ...circuits import QuantumCircuit
 
 
-class OneAncillaPerCheck:
+class OneAncillaPerCheck(object):
     """
     Class that describes an implementation of the 4.8.8 color code with one ancilla per face.
     """

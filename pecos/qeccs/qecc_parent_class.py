@@ -249,7 +249,7 @@ class QECC(object):
         return not(self == other)
 
 
-class NoMap:
+class NoMap(object):
     """
     Default Mapping: item -> item.
     """

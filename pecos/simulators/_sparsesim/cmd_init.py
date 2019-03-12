@@ -16,86 +16,109 @@
 #   limitations under the License.
 #  =========================================================================  #
 
+from .state import SparseSim
 from .cmd_meas import meas_z
 from .cmd_one_qubit import H, H2, H5, H6, X
 
 
-def init_zero(state, location):
+def init_zero(state: SparseSim,
+              qubit: int) -> None:
     """
 
     Args:
-        state:
-        location:
+        state (SparseSim): Instance representing the stabilizer state.
+        qubit (int): Integer that indexes the qubit being acted on.
 
-    Returns:
+    Returns: None
 
     """
-    result = meas_z(state, location, random_outcome=0)
 
-    if result:
-        X(state, location)
+    # Measure in the Z basis. (If random outcome, force a 0 outcome).
+    # If outcome is 1 apply an X.
+    if meas_z(state, qubit, 0):
+        X(state, qubit)
 
 
-def init_one(gens, qubit):
+def init_one(state: SparseSim,
+             qubit: int) -> None:
     """
     Initialize qubit in state |1>.
 
-    :param gens:
-    :param qubit:
-    :return:
+    Args:
+        state (SparseSim): Instance representing the stabilizer state.
+        qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
-    init_zero(gens, qubit)
-    X(gens, qubit)
+    init_zero(state, qubit)
+    X(state, qubit)
 
 
-def init_plus(gens, qubit):
+def init_plus(state: SparseSim,
+              qubit: int) -> None:
     """
     Initialize qubit in state |+>.
 
-    :param gens:
-    :param qubit:
-    :return:
+    Args:
+        state (SparseSim): Instance representing the stabilizer state.
+        qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
-    init_zero(gens, qubit)
-    H(gens, qubit)
+    init_zero(state, qubit)
+    H(state, qubit)
 
 
-def init_minus(gens, qubit):
+def init_minus(state: SparseSim,
+               qubit: int) -> None:
     """
     Initialize qubit in state |->
 
-    :param gens:
-    :param qubit:
-    :return:
+    Args:
+        state (SparseSim): Instance representing the stabilizer state.
+        qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
-    init_zero(gens, qubit)
-    H2(gens, qubit)
+    init_zero(state, qubit)
+    H2(state, qubit)
 
 
-def init_plusi(gens, qubit):
+def init_plusi(state: SparseSim,
+               qubit: int) -> None:
     """
     Initialize qubit in state |+i>
 
-    :param gens:
-    :param qubit:
-    :return:
+    Args:
+        state (SparseSim): Instance representing the stabilizer state.
+        qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
-    init_zero(gens, qubit)
-    H5(gens, qubit)
+    init_zero(state, qubit)
+    H5(state, qubit)
 
 
-def init_minusi(gens, qubit):
+def init_minusi(state: SparseSim,
+                qubit: int) -> None:
     """
     Initialize qubit in state |-i>
 
-    :param gens:
-    :param qubit:
-    :return:
+    Args:
+        state (SparseSim): Instance representing the stabilizer state.
+        qubit (int): Integer that indexes the qubit being acted on.
+
+    Returns: None
+
     """
 
-    init_zero(gens, qubit)
-    H6(gens, qubit)
+    init_zero(state, qubit)
+    H6(state, qubit)

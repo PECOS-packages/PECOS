@@ -23,8 +23,13 @@ find_logical_signs
 logical_flip
 """
 
+from typing import Optional
+from ...circuits import QuantumCircuit
 
-def find_logical_signs(state, logical_circuit, delogical_circuit=None):
+
+def find_logical_signs(state,
+                       logical_circuit: QuantumCircuit,
+                       delogical_circuit: Optional[QuantumCircuit] = None) -> int:
     """
     Find the sign of the logical operator.
 

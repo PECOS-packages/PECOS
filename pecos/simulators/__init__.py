@@ -18,27 +18,26 @@
 
 from ._parent_sim_classes import BaseSim
 
-from ._sparsesim import State as pySparseSim
+from ._sparsesim import SparseSim as pySparseSim  # Python sparse stabilizer sim
+from ._paulifaultprop import PauliFaultProp  # Pauli fault propagation sim
 
 # C++ version of SparseStabSim wrapper
 try:
-    from ._cysparsesim import State as SparseSim
-    from ._cysparsesim import State as cySparseSim
+    from ._cysparsesim import SparseSim as cySparseSim  # Cython wrapped C++ sparse stabilizer sim
+    from ._cysparsesim import SparseSim
 except ImportError:
-    from ._sparsesim import State as SparseSim
+    from ._sparsesim import SparseSim
 
-StabSim = SparseSim  # Default stabilizer simulator
-
-# Attempt to import optional ProjectQ interface
+# Attempt to import optional ProjectQ package
 try:
     import projectq
-    from ._projectq_wrapper.state import State as ProjectQSim
+    from ._projectq_wrapper.state import ProjectQSim  # wrapper for ProjectQ sim
 except ImportError:
     pass
 
-# Attempt to import optional qcgpu interface
+# Attempt to import optional qcgpu package
 try:
     import qcgpu
-    from ._qcgpu_wrapper.state import State as QCGPU
+    from ._qcgpu_wrapper.state import QCQPUSim  # wrapper for qcgpu
 except ImportError:
     pass

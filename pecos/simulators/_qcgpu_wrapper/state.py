@@ -25,7 +25,10 @@ except ModuleNotFoundError:
     has_sim = False
 
 
-class State(BaseSim):
+class QCQPUSim(BaseSim):
+    """
+    A wrapper for the qcqpu package: https://qcgpu.github.io/
+    """
 
     a = 0
 

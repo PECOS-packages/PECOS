@@ -169,7 +169,7 @@ class XGen(ParentErrorGen):
             inactive_qudits = circuit.qudits - circuit.active_qudits[tick_index]
             self.gen.create_errors(self, 'idle', inactive_qudits, after, before, replace)
 
-        self.error_circuits.add_circuits(time, before_errors=before, after_errors=after)
+        self.error_circuits.add_circuits(time, before, after)
 
         # return {'before': before, 'after': after}
 

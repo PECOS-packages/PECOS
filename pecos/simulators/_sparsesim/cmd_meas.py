@@ -16,34 +16,26 @@
 #   limitations under the License.
 #  =========================================================================  #
 
+from typing import Set
 import numpy as np
+from .state import SparseSim
 from .cmd_one_qubit import H, H5
 
 
-def force_output(state, qubit, forced_output=-1):
-    """
-    Outputs value.
-
-    Used for error generators to generate outputs when replacing measurements.
-
-    Args:
-        state:
-        qubit:
-        output:
-
-    Returns:
-
-    """
-    return forced_output
-
-
-def meas_x(state, qubit, random_outcome=-1):
+def meas_x(state: SparseSim,
+           qubit: int,
+           random_outcome: int = -1) -> int:
     """
     Measurement in the X basis.
 
-    :param state:
-    :param qubit:
-    :return:
+    Args:
+        state (SparseSim): Instance representing the stabilizer state.
+        qubit (int): Integer that indexes the qubit being acted on.
+        random_outcome (int):  Integer that will be outputted by the measurement if the measurement is
+            non-deterministic. If equal to -1, however, the outcome will be uniformly chosen from {0, 1}.
+
+    Returns: int
+
     """
 
     H(state, qubit)
@@ -55,13 +47,20 @@ def meas_x(state, qubit, random_outcome=-1):
     return meas_outcome
 
 
-def meas_y(state, qubit, random_outcome=-1):
+def meas_y(state: SparseSim,
+           qubit: int,
+           random_outcome: int = -1) -> int:
     """
     Measurement in the Y basis.
 
-    :param gens:
-    :param qubit:
-    :return:
+    Args:
+        state (SparseSim): Instance representing the stabilizer state.
+        qubit (int): Integer that indexes the qubit being acted on.
+        random_outcome (int):  Integer that will be outputted by the measurement if the measurement is
+            non-deterministic. If equal to -1, however, the outcome will be uniformly chosen from {0, 1}.
+
+    Returns: int
+
     """
 
     H5(state, qubit)
@@ -73,16 +72,18 @@ def meas_y(state, qubit, random_outcome=-1):
     return meas_outcome
 
 
-def meas_z(state, qubit, random_outcome=-1):
+def meas_z(state: SparseSim,
+           qubit: int,
+           random_outcome: int = -1) -> int:
     """
 
     Args:
-        state:
-        qubit:
-        force:
-        **kwargs:
+        state (SparseSim): Instance representing the stabilizer state.
+        qubit (int): Integer that indexes the qubit being acted on.
+        random_outcome (int):  Integer that will be outputted by the measurement if the measurement is
+            non-deterministic. If equal to -1, however, the outcome will be uniformly chosen from {0, 1}.
 
-    Returns:
+    Returns: int
 
     """
 
@@ -91,7 +92,8 @@ def meas_z(state, qubit, random_outcome=-1):
 
     # Choose an anti-commuting stabilizer to replace.
 
-    stabs, destabs = state.gen_list
+    stabs = state.stabs
+    destabs = state.destabs
 
     # stabs_test = deepcopy(gens)
 
@@ -120,12 +122,29 @@ def meas_z(state, qubit, random_outcome=-1):
         meas_outcome = num_minuses % 2
 
     else:  # There is at least one anti-commuting stabilizer. => indetermined sign
-        meas_outcome = nondeterministic_meas(state, qubit, anticom_stabs_col, anticom_destabs_col, random_outcome)
+        return nondeterministic_meas(state, qubit, anticom_stabs_col, anticom_destabs_col, random_outcome)
 
     return meas_outcome
 
 
-def nondeterministic_meas(state, qubit, anticom_stabs_col, anticom_destabs_col, random_outcome):
+def nondeterministic_meas(state: SparseSim,
+                          qubit: int,
+                          anticom_stabs_col: Set[int],
+                          anticom_destabs_col: Set[int],
+                          random_outcome: int) -> int:
+    """
+
+    Args:
+        state (SparseSim): Instance representing the stabilizer state.
+        qubit (int): Integer that indexes the qubit being acted on.
+        anticom_stabs_col (Set[int]):
+        anticom_destabs_col (Set[int]):
+        random_outcome (int):  Integer that will be outputted by the measurement if the measurement is
+            non-deterministic. If equal to -1, however, the outcome will be uniformly chosen from {0, 1}.
+
+    Returns:
+
+    """
 
     # Removing dots
     stabs_row_x = state.stabs.row_x
@@ -277,3 +296,22 @@ def nondeterministic_meas(state, qubit, anticom_stabs_col, anticom_destabs_col, 
         state.stabs.signs_minus.discard(removed_id)
 
     return meas_outcome
+
+
+def force_output(state: SparseSim,
+                 qubit: int,
+                 forced_output: int = -1) -> int:
+    """
+    Outputs value.
+
+    Used for error generators to generate outputs when replacing measurements.
+
+    Args:
+        state (SparseSim): Instance representing the stabilizer state.
+        qubit (int): Integer that indexes the qubit being acted on.
+        forced_output (int): Integer that will be outputted.
+
+    Returns: int
+
+    """
+    return forced_output

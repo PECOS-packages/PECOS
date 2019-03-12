@@ -23,15 +23,19 @@ find_logical_signs
 logical_flip
 """
 
+from typing import Set
 
-def find_stab(state, xs, zs):
+
+def find_stab(state,
+              xs: Set[int],
+              zs: Set[int]):
     """
     Find a stabilizer in the stabilizer group.
 
     Args:
         state:
-        logical_circuit:
-        delogical_circuit:
+        xs:
+        zs:
 
     Returns:
 
@@ -69,7 +73,12 @@ def find_stab(state, xs, zs):
     return found, antidestabs
 
 
-def refactor(state, xs, zs, choose=None, prefer=None, protected=None):
+def refactor(state,
+             xs,
+             zs,
+             choose=None,
+             prefer=None,
+             protected=None):
     """
     Find the sign of the logical operator.
 

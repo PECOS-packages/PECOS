@@ -17,18 +17,114 @@
 #  =========================================================================  #
 
 import numpy as np
+import projectq.ops as ops
 from projectq.ops import BasicGate, get_inverse
+from .helper import MakeFunc
 
 
-def I(state, qubit, **kwargs):
+def I(state,
+      qubit: int) -> None:
     """
-    Identity, which does nothing.
+    Identity does nothing.
 
-    :param gens:
-    :param qubit:
-    :return:
+    X -> X
+
+    Z -> Z
+
+    Y -> Y
+
+    Args:
+        state (PauliFaultProp):  The class representing the Pauli fault state.
+        qubit (int): An integer indexing the qubit being operated on.
+
+    Returns: None
+
     """
     pass
+
+
+def X(state,
+      qubit: int) -> None:
+    """
+    Pauli X
+
+    X -> X
+
+    Z -> -Z
+
+    Y -> -Y
+
+    Args:
+        state (PauliFaultProp):  The class representing the Pauli fault state.
+        qubit (int): An integer indexing the qubit being operated on.
+
+    Returns: None
+
+    """
+
+    ops.X | state.qids[qubit]
+
+
+def Y(state,
+      qubit: int) -> None:
+    """
+    X -> -X
+
+    Z -> -Z
+
+    Y -> Y
+
+    Args:
+        state (PauliFaultProp):  The class representing the Pauli fault state.
+        qubit (int): An integer indexing the qubit being operated on.
+
+    Returns: None
+
+    """
+
+    ops.Y | state.qids[qubit]
+
+
+def Z(state,
+      qubit: int) -> None:
+    """
+    X -> -X
+
+    Z -> Z
+
+    Y -> -Y
+
+    Args:
+        state (PauliFaultProp):  The class representing the Pauli fault state.
+        qubit (int): An integer indexing the qubit being operated on.
+
+    Returns: None
+
+    """
+
+    ops.Z | state.qids[qubit]
+
+
+def H(state,
+      qubit: int) -> None:
+    """
+    Square root of Z.
+
+    X -> Z
+
+    Z -> X
+
+    Y -> -Y
+
+    Args:
+        state (PauliFaultProp):  The class representing the Pauli fault state.
+        qubit (int): An integer indexing the qubit being operated on.
+
+    Returns: None
+
+    """
+
+    ops.H | state.qids[qubit]
 
 
 class QGate(BasicGate):
@@ -44,8 +140,8 @@ class QGate(BasicGate):
         return "Q"
 
 
-Q = QGate()
-Qd = get_inverse(Q)
+Q = MakeFunc(QGate()).func
+Qd = MakeFunc(get_inverse(QGate())).func
 
 
 class RGate(BasicGate):
@@ -61,8 +157,12 @@ class RGate(BasicGate):
         return "R"
 
 
-R = RGate()
-Rd = get_inverse(R)
+R = MakeFunc(RGate()).func
+Rd = MakeFunc(get_inverse(RGate())).func
+
+
+S = MakeFunc(ops.S).func
+Sd = MakeFunc(ops.Sdag).func
 
 
 class H2Gate(BasicGate):
@@ -75,7 +175,7 @@ class H2Gate(BasicGate):
         return "H2"
 
 
-H2 = H2Gate()
+H2 = MakeFunc(H2Gate()).func
 
 
 class H3Gate(BasicGate):
@@ -88,7 +188,7 @@ class H3Gate(BasicGate):
         return "H3"
 
 
-H3 = H3Gate()
+H3 = MakeFunc(H3Gate()).func
 
 
 class H4Gate(BasicGate):
@@ -101,7 +201,7 @@ class H4Gate(BasicGate):
         return "H4"
 
 
-H4 = H4Gate()
+H4 = MakeFunc(H4Gate()).func
 
 
 class H5Gate(BasicGate):
@@ -114,7 +214,7 @@ class H5Gate(BasicGate):
         return "H5"
 
 
-H5 = H5Gate()
+H5 = MakeFunc(H5Gate()).func
 
 
 class H6Gate(BasicGate):
@@ -127,7 +227,7 @@ class H6Gate(BasicGate):
         return "H6"
 
 
-H6 = H6Gate()
+H6 = MakeFunc(H6Gate()).func
 
 
 class F1Gate(BasicGate):
@@ -140,8 +240,8 @@ class F1Gate(BasicGate):
         return "F1"
 
 
-F1 = F1Gate()
-F1d = get_inverse(F1)
+F1 = MakeFunc(F1Gate()).func
+F1d = MakeFunc(get_inverse(F1Gate())).func
 
 
 class F2Gate(BasicGate):
@@ -154,8 +254,8 @@ class F2Gate(BasicGate):
         return "F2"
 
 
-F2 = F2Gate()
-F2d = get_inverse(F2)
+F2 = MakeFunc(F2Gate()).func
+F2d = MakeFunc(get_inverse(F2Gate())).func
 
 
 class F3Gate(BasicGate):
@@ -168,8 +268,8 @@ class F3Gate(BasicGate):
         return "F3"
 
 
-F3 = F3Gate()
-F3d = get_inverse(F3)
+F3 = MakeFunc(F3Gate()).func
+F3d = MakeFunc(get_inverse(F3Gate())).func
 
 
 class F4Gate(BasicGate):
@@ -182,5 +282,5 @@ class F4Gate(BasicGate):
         return "F4"
 
 
-F4 = F3Gate()
-F4d = get_inverse(F4)
+F4 = MakeFunc(F4Gate()).func
+F4d = MakeFunc(get_inverse(F4Gate())).func

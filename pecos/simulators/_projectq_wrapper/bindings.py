@@ -17,45 +17,12 @@
 #  =========================================================================  #
 
 import projectq.ops as ops
-from ._1q_gates import Q, Qd, R, Rd, H2, H3, H4, H5, H6, F1, F1d, F2, F2d, F3, F3d, F4, F4d, I
-from ._2q_gates import II, G2
-from ._meas_gates import force_output, meas_z, meas_y, meas_x
-from ._init_gates import init_zero, init_one, init_plus, init_minus, init_plusi, init_minusi
+from .helper import MakeFunc
+from . import gates_init, gates_one_qubit, gates_two_qubit, gates_meas
 
 # Note: More ProjectQ gates can be added by updating the wrapper's `gate_dict` attribute.
 
 # Note: Multiqubit gates are usually in all caps.
-
-# TODO: Make a "MakeFunc" for measurements...
-
-
-class MakeFunc:
-    """
-    Converts ProjectQ gate to a function.
-    """
-    def __init__(self, gate, angle=False):
-        """
-
-        Args:
-            gate:
-        """
-
-        self.gate = gate
-        self.angle = angle
-
-    def func(self, state, qubits, **params):
-
-        if isinstance(qubits, int):
-            qs = state.qids[qubits]
-        else:
-            qs = []
-            for q in qubits:
-                qs.append(state.qids[q])
-
-        if self.angle:
-            self.gate(params['angle']) | qs
-        else:
-            self.gate | qs
 
 
 gate_dict = {
@@ -64,81 +31,90 @@ gate_dict = {
     'Td': MakeFunc(ops.Tdag).func,  # fourth root of Z dagger
     'sqrtSWAP': MakeFunc(ops.SqrtSwap).func,
     'Entangle': MakeFunc(ops.Entangle).func,  # H on first qubit and CNOT to all others...
-    'Rx': MakeFunc(ops.Rx, angle=True).func,  # Rotation about X (takes angle arg)
-    'Ry': MakeFunc(ops.Ry, angle=True).func,  # Rotation about Y (takes angle arg)
-    'Rz': MakeFunc(ops.Rz, angle=True).func,  # Rotation about Z (takes angle arg)
+    'RX': MakeFunc(ops.Rx, angle=True).func,  # Rotation about X (takes angle arg)
+    'RY': MakeFunc(ops.Ry, angle=True).func,  # Rotation about Y (takes angle arg)
+    'RZ': MakeFunc(ops.Rz, angle=True).func,  # Rotation about Z (takes angle arg)
     'PhaseRot': MakeFunc(ops.R, angle=True).func,  # Phase-shift: Same as Rz but with a 1 in upper left of matrix.
     'TOFFOLI': MakeFunc(ops.Toffoli).func,
     'CRZ': MakeFunc(ops.CRz, angle=True).func,  # Controlled-Rz gate
     'CRX': MakeFunc(ops.C(ops.Rx, n=1), angle=True).func,  # Controlled-Rx
     'CRY': MakeFunc(ops.C(ops.Ry, n=1), angle=True).func,  # Controlled-Ry
 
+    'RXX': gates_two_qubit.RXX,
+    'RYY': gates_two_qubit.RYY,
+    'RZZ': gates_two_qubit.RZZ,
+
     # Initialization
     # ==============
-    'init |0>': init_zero,  # Init by measuring (if entangle => random outcome
-    'init |1>': init_one,  # Init by measuring (if entangle => random outcome
-    'init |+>': init_plus,  # Init by measuring (if entangle => random outcome
-    'init |->': init_minus,  # Init by measuring (if entangle => random outcome
-    'init |+i>': init_plusi,  # Init by measuring (if entangle => random outcome
-    'init |-i>': init_minusi,  # Init by measuring (if entangle => random outcome
+    'init |0>': gates_init.init_zero,  # Init by measuring (if entangle => random outcome
+    'init |1>': gates_init.init_one,  # Init by measuring (if entangle => random outcome
+    'init |+>': gates_init.init_plus,  # Init by measuring (if entangle => random outcome
+    'init |->': gates_init.init_minus,  # Init by measuring (if entangle => random outcome
+    'init |+i>': gates_init.init_plusi,  # Init by measuring (if entangle => random outcome
+    'init |-i>': gates_init.init_minusi,  # Init by measuring (if entangle => random outcome
 
     # one-qubit operations
     # ====================
 
     # Paulis    # x->, z->
-    'I': I,  # +x+z
-    'X': MakeFunc(ops.X).func,  # +x-z
-    'Y': MakeFunc(ops.Y).func,  # -x-z
-    'Z': MakeFunc(ops.Z).func,  # -x+z
+    'I': gates_one_qubit.I,  # +x+z
+    'X': gates_one_qubit.X,  # +x-z
+    'Y': gates_one_qubit.Y,  # -x-z
+    'Z': gates_one_qubit.Z,  # -x+z
 
     # Square root of Paulis
-    'Q': MakeFunc(Q).func,    # +x-y  sqrt of X
-    'Qd': MakeFunc(Qd).func,  # +x+y sqrt of X dagger
-    'R': MakeFunc(R).func,    # -z+x sqrt of Y
-    'Rd': MakeFunc(Rd).func,  # +z-x sqrt of Y dagger
-    'S': MakeFunc(ops.S).func,    # +y+z sqrt of Z
-    'Sd': MakeFunc(ops.Sdag).func,  # -y+z sqrt of Z dagger
+    'Q': gates_one_qubit.Q,    # +x-y  sqrt of X
+    'Qd': gates_one_qubit.Qd,  # +x+y sqrt of X dagger
+    'R': gates_one_qubit.R,    # -z+x sqrt of Y
+    'Rd': gates_one_qubit.Rd,  # +z-x sqrt of Y dagger
+    'S': gates_one_qubit.S,    # +y+z sqrt of Z
+    'Sd': gates_one_qubit.Sd,  # -y+z sqrt of Z dagger
 
     # Hadamard-like
-    'H': MakeFunc(ops.H).func,
-    'H1': MakeFunc(ops.H).func,
-    'H2': MakeFunc(H2).func,
-    'H3': MakeFunc(H3).func,
-    'H4': MakeFunc(H4).func,
-    'H5': MakeFunc(H5).func,
-    'H6': MakeFunc(H6).func,
+    'H': gates_one_qubit.H,
+    'H1': gates_one_qubit.H,
+    'H2': gates_one_qubit.H2,
+    'H3': gates_one_qubit.H3,
+    'H4': gates_one_qubit.H4,
+    'H5': gates_one_qubit.H5,
+    'H6': gates_one_qubit.H6,
 
-    'H+z+x': MakeFunc(ops.H).func,
-    'H-z-x': MakeFunc(H2).func,
-    'H+y-z': MakeFunc(H3).func,
-    'H-y-z': MakeFunc(H4).func,
-    'H-x+y': MakeFunc(H5).func,
-    'H-x-y': MakeFunc(H6).func,
+    'H+z+x': gates_one_qubit.H,
+    'H-z-x': gates_one_qubit.H2,
+    'H+y-z': gates_one_qubit.H3,
+    'H-y-z': gates_one_qubit.H4,
+    'H-x+y': gates_one_qubit.H5,
+    'H-x-y': gates_one_qubit.H6,
 
     # Face rotations
-    'F1': MakeFunc(F1).func,    # +y+x
-    'F1d': MakeFunc(F1d).func,  # +z+y
-    'F2': MakeFunc(F2).func,    # -z+y
-    'F2d': MakeFunc(F2d).func,  # -y-x
-    'F3': MakeFunc(F3).func,    # +y-x
-    'F3d': MakeFunc(F3d).func,  # -z-y
-    'F4': MakeFunc(F4).func,    # +z-y
-    'F4d': MakeFunc(F4d).func,  # -y-z
+    'F1': gates_one_qubit.F1,    # +y+x
+    'F1d': gates_one_qubit.F1d,  # +z+y
+    'F2': gates_one_qubit.F2,    # -z+y
+    'F2d': gates_one_qubit.F2d,  # -y-x
+    'F3': gates_one_qubit.F3,    # +y-x
+    'F3d': gates_one_qubit.F3d,  # -z-y
+    'F4': gates_one_qubit.F4,    # +z-y
+    'F4d': gates_one_qubit.F4d,  # -y-z
 
     # two-qubit operations
     # ====================
-    'CNOT': MakeFunc(ops.CNOT).func,
-    'CZ': MakeFunc(ops.C(ops.Z)).func,
-    'CY': MakeFunc(ops.C(ops.Y)).func,
-    'SWAP': MakeFunc(ops.Swap).func,
-    'G': G2,
-    'G2': G2,
-    'II': II,
+    'CNOT': gates_two_qubit.CNOT,
+    'CZ': gates_two_qubit.CZ,
+    'CY': gates_two_qubit.CY,
+    'SWAP': gates_two_qubit.SWAP,
+    'G': gates_two_qubit.G2,
+    'G2': gates_two_qubit.G2,
+    'II': gates_two_qubit.II,
+
+    # Mølmer–Sørensen gates
+    'SqrtXX': gates_two_qubit.SqrtXX,  # \equiv e^{+i (\pi /4)} * e^{-i (\pi /4) XX } == R(XX, pi/2)
+    'MS': gates_two_qubit.SqrtXX,
+    'MSXX': gates_two_qubit.SqrtXX,
 
     # Measurements
     # ============
-    'measure X': meas_x,  # no random_output (force outcome) !
-    'measure Y': meas_y,  # no random_output (force outcome) !
-    'measure Z': meas_z,  # no random_output (force outcome) !
-    'force output': force_output,
+    'measure X': gates_meas.meas_x,  # no random_output (force outcome) !
+    'measure Y': gates_meas.meas_y,  # no random_output (force outcome) !
+    'measure Z': gates_meas.meas_z,  # no random_output (force outcome) !
+    'force output': gates_meas.force_output,
 }

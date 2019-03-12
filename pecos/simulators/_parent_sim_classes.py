@@ -1,16 +1,19 @@
 
-class BaseSim:
+class BaseSim(object):
+    """
+    A parent class to provide standard methods for simulators.
+    """
 
     def __init__(self):
         self.gate_dict = {}
 
-    def run_gate(self, symbol, locations, **gate_kwargs):
+    def run_gate(self, symbol, locations, **params):
         """
 
         Args:
             symbol:
             locations:
-            **gate_kwargs:
+            **params:
 
         Returns:
 
@@ -18,7 +21,7 @@ class BaseSim:
 
         output = {}
         for location in locations:
-            results = self.gate_dict[symbol](self, location, **gate_kwargs)
+            results = self.gate_dict[symbol](self, location, **params)
 
             if results:
                 output[location] = results
@@ -44,8 +47,8 @@ class BaseSim:
             removed_locations = set([])
 
         results = {}
-        for symbol, locations, gate_kwargs in circuit.items():
-            gate_results = self.run_gate(symbol, locations - removed_locations, **gate_kwargs)
+        for symbol, locations, params in circuit.items():
+            gate_results = self.run_gate(symbol, locations - removed_locations, **params)
             results.update(gate_results)
 
         return results

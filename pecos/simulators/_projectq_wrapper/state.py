@@ -24,16 +24,13 @@ Compatibility checked for: ProjectQ version 0.3.6
 
 from .. import BaseSim
 
-try:
-    from projectq import MainEngine
-    from . import bindings
-    from .bindings import MakeFunc
-    hasprojq = True
-except ModuleNotFoundError:
-    hasprojq = False
+
+from projectq import MainEngine
+from . import bindings
+from .bindings import MakeFunc
 
 
-class State(BaseSim):
+class ProjectQSim(BaseSim):
     """
     Initializes the stabilizer state.
 
@@ -45,9 +42,6 @@ class State(BaseSim):
     """
 
     def __init__(self, num_qubits):
-
-        if not hasprojq:
-            raise Exception("ProjectQ must be installed to use this class.")
 
         if not isinstance(num_qubits, int):
             raise Exception('``num_qubits`` should be of type ``int.``')
@@ -61,7 +55,20 @@ class State(BaseSim):
         self.qs = list(self.eng.allocate_qureg(num_qubits))
         self.qids = {i: q for i, q in enumerate(self.qs)}
 
-    def add_gate(self, symbol, gate_obj, make_func=True):
+    def add_gate(self,
+                 symbol: str, gate_obj,
+                 make_func: bool = True):
+        """
+        Adds a new gate on the fly to the this Simulator.
+
+        Args:
+            symbol:
+            gate_obj:
+            make_func:
+
+        Returns:
+
+        """
 
         if symbol in self.gate_dict:
             print('WARNING: Can not add gate as the symbol has already been taken.')

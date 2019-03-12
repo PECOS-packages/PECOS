@@ -14,9 +14,8 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
-from ._1q_gates import H2, H5, H6
-from projectq.ops import H, X
-from ._meas_gates import meas_z
+from .gates_one_qubit import H2, H5, H6, X, H
+from .gates_meas import meas_z
 
 
 def init_zero(state, qubit):
@@ -32,8 +31,7 @@ def init_zero(state, qubit):
     result = meas_z(state, qubit)
 
     if result:
-        q = state.qids[qubit]
-        X | q
+        X(state, qubit)
 
 
 def init_one(state, qubit):
@@ -46,8 +44,7 @@ def init_one(state, qubit):
     """
 
     init_zero(state, qubit)
-    q = state.qids[qubit]
-    X | q
+    X(state, qubit)
 
 
 def init_plus(state, qubit):
@@ -60,8 +57,7 @@ def init_plus(state, qubit):
     """
 
     init_zero(state, qubit)
-    q = state.qids[qubit]
-    H | q
+    H(state, qubit)
 
 
 def init_minus(state, qubit):
@@ -74,8 +70,7 @@ def init_minus(state, qubit):
     """
 
     init_zero(state, qubit)
-    q = state.qids[qubit]
-    H2 | q
+    H2(state, qubit)
 
 
 def init_plusi(state, qubit):
@@ -88,8 +83,7 @@ def init_plusi(state, qubit):
     """
 
     init_zero(state, qubit)
-    q = state.qids[qubit]
-    H5 | q
+    H5(state, qubit)
 
 
 def init_minusi(state, qubit):
@@ -105,5 +99,4 @@ def init_minusi(state, qubit):
     """
 
     init_zero(state, qubit)
-    q = state.qids[qubit]
-    H6 | q
+    H6(state, qubit)

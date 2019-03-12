@@ -6,7 +6,7 @@ dist
 *.eggs
 *.egg-info
 *.cache
-.pylintc
+.pylintrc
 .pytest_cache
 /.idea
 ~*

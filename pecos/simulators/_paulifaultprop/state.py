@@ -81,7 +81,11 @@ class PauliFaultProp(BaseSim):
                 tick_circuit.circuit.metadata.get('circuit_type') == 'recovery'):
             self.add_faults(tick_circuit)
         else:
-            return super().run_circuit(tick_circuit, removed_locations)
+            if self.faults['X'] or self.faults['Y'] or self.faults['Z']:
+                # Only apply gates if there are faults to act on
+                return super().run_circuit(tick_circuit, removed_locations)
+
+            # need to return output?
 
     def add_faults(self, circuit: Union[QuantumCircuit, ParamGateCollection]) -> None:
         """

@@ -237,7 +237,7 @@ def S(state,
 def Sd(state,
        qubit: int) -> None:
     """
-    Square root of Z.
+    Hermitian conjugate of the square root of Z.
 
     X -> -Y
 
@@ -262,7 +262,7 @@ def Sd(state,
 def H(state,
       qubit: int) -> None:
     """
-    Square root of Z.
+    Hadamard gate.
 
     X -> Z
 
@@ -287,7 +287,7 @@ def H(state,
 def H2(state,
        qubit: int) -> None:
     """
-    Square root of Z.
+    Hadamard-like rotation
 
     X -> -Z
 
@@ -312,10 +312,12 @@ def H2(state,
 def H3(state,
        qubit: int) -> None:
     """
-    Square root of Z.
+    Hadamard-like rotation
 
     X -> Y
+
     Z -> -Z
+
     Y -> X
 
     Args:
@@ -335,10 +337,12 @@ def H3(state,
 def H4(state,
        qubit: int) -> None:
     """
-    Square root of Z.
+    Hadamard-like rotation
 
     X -> -Y
+
     Z -> -Z
+
     Y -> -X
 
     Args:
@@ -358,10 +362,12 @@ def H4(state,
 def H5(state,
        qubit: int) -> None:
     """
-    Square root of Z.
+    Hadamard-like rotation
 
     X -> -X
+
     Z -> Y
+
     Y -> Z
 
     Args:
@@ -381,10 +387,12 @@ def H5(state,
 def H6(state,
        qubit: int) -> None:
     """
-    Square root of Z.
+    Hadamard-like rotation
 
     X -> -X
+
     Z -> -Y
+
     Y -> -Z
 
     Args:
@@ -404,10 +412,12 @@ def H6(state,
 def F1(state,
        qubit: int) -> None:
     """
-    Square root of Z.
+    Face rotation
 
     X -> Y
+
     Z -> X
+
     Y -> Z
 
     Args:
@@ -428,10 +438,12 @@ def F1(state,
 def F2(state,
        qubit: int) -> None:
     """
-    Square root of Z.
+    Face rotation
 
     X -> -Z
+
     Z -> Y
+
     Y -> -X
 
     Args:
@@ -452,11 +464,13 @@ def F2(state,
 def F3(state,
        qubit: int) -> None:
     """
-    Square root of Z.
+    Face rotation
 
-    X -> Y    gain Z
-    Z -> -X   loose Z gain X
-    Y -> -Z   loose X
+    X -> Y
+
+    Z -> -X
+
+    Y -> -Z
 
     Args:
         state (PauliFaultProp):  The class representing the Pauli fault state.
@@ -476,10 +490,12 @@ def F3(state,
 def F4(state,
        qubit: int) -> None:
     """
-    Square root of Z.
+    Face rotation
 
     X -> Z
+
     Z -> -Y
+
     Y -> -X
 
     Args:
@@ -500,10 +516,12 @@ def F4(state,
 def F1d(state,
         qubit: int) -> None:
     """
-    Square root of Z.
+    Face rotation
 
     X -> Z
+
     Z -> Y
+
     Y -> X
 
     Args:
@@ -524,11 +542,13 @@ def F1d(state,
 def F2d(state,
         qubit: int) -> None:
     """
-    Square root of Z.
+    Face rotation
 
-    X -> Z
-    Z -> Y
-    Y -> X
+    X -> -Y
+
+    Z -> -X
+
+    Y -> Z
 
     Args:
         state (PauliFaultProp):  The class representing the Pauli fault state.
@@ -539,19 +559,19 @@ def F2d(state,
     """
 
     switch(state, [
-        ('X', 'Z'),
-        ('Z', 'Y'),
-        ('Y', 'X')
+        ('X', 'Y'),
+        ('Z', 'X'),
+        ('Y', 'Z')
     ], qubit)
 
 
 def F3d(state,
         qubit: int) -> None:
     """
-    Square root of Z.
+    Face rotation
 
-    X -> Z
-    Z -> Y
+    X -> -Z
+    Z -> -Y
     Y -> X
 
     Args:
@@ -572,11 +592,13 @@ def F3d(state,
 def F4d(state,
         qubit: int) -> None:
     """
-    Square root of Z.
+    Face rotation
 
-    X -> Z
-    Z -> Y
-    Y -> X
+    X -> -Y
+
+    Z -> X
+
+    Y -> -Z
 
     Args:
         state (PauliFaultProp):  The class representing the Pauli fault state.
@@ -587,7 +609,7 @@ def F4d(state,
     """
 
     switch(state, [
-        ('X', 'Z'),
-        ('Z', 'Y'),
-        ('Y', 'X')
+        ('X', 'Y'),
+        ('Z', 'X'),
+        ('Y', 'Z')
     ], qubit)

@@ -23,12 +23,11 @@ Compatibility checked for: ProjectQ version 0.3.6
 """
 
 from .. import BaseSim
-
-
+from ...circuits import QuantumCircuit
 from projectq import MainEngine
 from . import bindings
 from .logical_sign import find_logical_signs
-from .bindings import MakeFunc
+from .helper import MakeFunc
 
 
 class ProjectQSim(BaseSim):
@@ -57,23 +56,20 @@ class ProjectQSim(BaseSim):
         self.qs = list(self.qureg)
         self.qids = {i: q for i, q in enumerate(self.qs)}
 
-    def logical_sign(self,
-                     logical_op: QuantumCircuit,
-                     delogical_op: Optional[QuantumCircuit] = None) -> int:
+    def logical_sign(self, logical_op: QuantumCircuit) -> int:
         """
 
         Args:
             logical_op:
-            delogical_op:
 
         Returns:
 
         """
-        return find_logical_signs(self, logical_op, delogical_op)
-
+        return find_logical_signs(self, logical_op,)
 
     def add_gate(self,
-                 symbol: str, gate_obj,
+                 symbol: str,
+                 gate_obj,
                  make_func: bool = True):
         """
         Adds a new gate on the fly to the this Simulator.

@@ -23,20 +23,19 @@ find_logical_signs
 logical_flip
 """
 
-from typing import Optional
 from ...circuits import QuantumCircuit
 
 
 def find_logical_signs(state,
                        logical_circuit: QuantumCircuit,
-                       delogical_circuit: Optional[QuantumCircuit] = None) -> int:
+                       # delogical_circuit: Optional[QuantumCircuit] = None
+                       ) -> int:
     """
     Find the sign of the logical operator.
 
     Args:
         state:
         logical_circuit:
-        delogical_circuit:
 
     Returns:
 
@@ -45,17 +44,14 @@ def find_logical_signs(state,
     if len(logical_circuit) != 1:
         raise Exception('Logical operators are expected to only have one tick.')
 
-    if delogical_circuit and len(delogical_circuit) != 1:
-        raise Exception('Delogical operators are expected to only have one tick.')
+    # if delogical_circuit and len(delogical_circuit) != 1:
+    #     raise Exception('Delogical operators are expected to only have one tick.')
 
     stabs = state.stabs
     destabs = state.destabs
 
     logical_xs = set([])
     logical_zs = set([])
-
-    delogical_xs = set([])
-    delogical_zs = set([])
 
     for symbol, gate_locations, _ in logical_circuit.items():
 
@@ -69,7 +65,12 @@ def find_logical_signs(state,
         else:
             raise Exception('Can not currently handle logical operator with operator "%s"!' % symbol)
 
+    '''
     if delogical_circuit:  # Check the relationship between logical operator and delogical operator.
+
+        delogical_xs = set([])
+        delogical_zs = set([])
+        
         for symbol, gate_locations, _ in delogical_circuit.items():
 
             if symbol == 'X':
@@ -91,6 +92,7 @@ def find_logical_signs(state,
             print('logical Xs: %s logical Zs: %s' % (logical_xs, logical_zs))
             print('delogical Xs: %s delogical Zs: %s' % (delogical_xs, delogical_zs))
             raise Exception("Logical and delogical operators supplied do not anti-commute!")
+    '''
 
     # We want the supplied logical operator to be in the stabilizer group and
     #  the supplied delogical to not be in the stabilizers (we want it to end up being the logical op's destabilizer)

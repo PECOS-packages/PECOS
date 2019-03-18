@@ -27,6 +27,7 @@ from .. import BaseSim
 
 from projectq import MainEngine
 from . import bindings
+from .logical_sign import find_logical_signs
 from .bindings import MakeFunc
 
 
@@ -52,8 +53,24 @@ class ProjectQSim(BaseSim):
         self.num_qubits = num_qubits
         self.eng = MainEngine()
 
-        self.qs = list(self.eng.allocate_qureg(num_qubits))
+        self.qureg = self.eng.allocate_qureg(num_qubits)
+        self.qs = list(self.qureg)
         self.qids = {i: q for i, q in enumerate(self.qs)}
+
+    def logical_sign(self,
+                     logical_op: QuantumCircuit,
+                     delogical_op: Optional[QuantumCircuit] = None) -> int:
+        """
+
+        Args:
+            logical_op:
+            delogical_op:
+
+        Returns:
+
+        """
+        return find_logical_signs(self, logical_op, delogical_op)
+
 
     def add_gate(self,
                  symbol: str, gate_obj,

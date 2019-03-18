@@ -94,17 +94,19 @@ class SparseSim(BaseSim):
 
     def logical_sign(self,
                      logical_op: QuantumCircuit,
-                     delogical_op: Optional[QuantumCircuit] = None) -> int:
+                     # delogical_op: Optional[QuantumCircuit] = None
+                     ) -> int:
         """
 
         Args:
             logical_op:
-            delogical_op:
 
         Returns:
 
         """
-        return find_logical_signs(self, logical_op, delogical_op)
+        return find_logical_signs(self, logical_op,
+                                  # delogical_op
+                                  )
 
     def refactor(self,
                  xs: Set[int],

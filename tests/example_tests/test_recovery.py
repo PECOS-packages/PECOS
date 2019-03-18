@@ -96,8 +96,12 @@ def recovery_tester(qecc):
 
     # Logical signs
     # -------------
-    sign1 = state_zero.logical_sign(logical_ops['Z'], logical_ops['X'])
-    sign2 = state_plus.logical_sign(logical_ops['X'], logical_ops['Z'])
+    sign1 = state_zero.logical_sign(logical_ops['Z'],
+                                    # logical_ops['X']
+                                    )
+    sign2 = state_plus.logical_sign(logical_ops['X'],
+                                    # logical_ops['Z']
+                                    )
 
     # Decoder
     # -------
@@ -115,8 +119,12 @@ def recovery_tester(qecc):
     sim.run(state_zero, recovery)
     sim.run(state_plus, recovery)
 
-    sign1_new = state_zero.logical_sign(logical_ops['Z'], logical_ops['X'])
-    sign2_new = state_plus.logical_sign(logical_ops['X'], logical_ops['Z'])
+    sign1_new = state_zero.logical_sign(logical_ops['Z'],
+                                        # logical_ops['X']
+                                        )
+    sign2_new = state_plus.logical_sign(logical_ops['X'],
+                                        # logical_ops['Z']
+                                        )
 
     # Not commuting then should flip; otherwise, doesn't flip.
     if commute1:  # Commuting

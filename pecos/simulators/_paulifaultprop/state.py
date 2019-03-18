@@ -60,23 +60,18 @@ class PauliFaultProp(BaseSim):
 
         self.gate_dict = bindings.gate_dict
 
-    def logical_sign(self,
-                     logical_op: QuantumCircuit,
-                     delogical_op: Optional[QuantumCircuit] = None) -> int:
+    def logical_sign(self, logical_op: QuantumCircuit) -> int:
         """
         Find the sign of a logical operator, which is equivalent to determining if the faults communute (sign == 0) or
         anticommute (sign == 1) with the logical operator.
 
         Args:
             logical_op (QuantumCircuit): Quantum circuit representing a logical operator.
-            delogical_op (Optional[QuantumCircuit]):  Quantum circuit representing a logical operator that anticomutes
-                with `logical_op`.
 
         Returns: int - sign.
 
         """
-        return find_logical_signs(self, logical_op, delogical_op)
-
+        return find_logical_signs(self, logical_op)
 
     def run_circuit(self,
                     tick_circuit: ParamGateCollection,

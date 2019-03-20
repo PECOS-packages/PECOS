@@ -23,6 +23,8 @@ Performance Estimator of Codes On Surfaces (PECOS)
 A framework for developing and evaluating quantum error-correcting codes.
 """
 
+# from __future__ import annotations
+
 from . import (
     version,
     circuits,
@@ -40,4 +42,3 @@ __version__ = version.__version__
 __date__ = ''
 __author__ = version.__author__
 __copyright__ = version.__copyright__
-

@@ -22,9 +22,17 @@ Contains the class ``QuantumCircuit``, which is used to represent quantum circui
 # locations (set of ints, set of tuples of ints): A set of ints or a set of tuples of ints that are the qudit
 #                 ids that the gates act on.
 from warnings import warn
+from typing import Union, Optional, Any, Dict, Set, Tuple, Generator, List
 import copy
 from sortedcontainers import SortedDict
 from ..misc.errors import PECOSTypeError, GateError, GateOverlapError
+
+# Defining types for typing:
+GateLocations = Union[Set[int], Set[Tuple[int, ...]]]
+Time = Union[int, float]
+GateSymbol = str
+GateDict = Dict[GateSymbol, GateLocations]
+Params = Dict[str, Any]
 
 
 # class QuantumCircuit(MutableSequence):
@@ -32,22 +40,34 @@ class QuantumCircuit(object):
     """A representation of a quantum circuit.
 
     Attributes:
-        metadata: A dictionary containing extra information about the quantum circuit.
-
+        metadata (dict): A dictionary containing extra information about the quantum circuit.
+        verify: Whether to  check for gate overlap.
         active_qudits: The set of qudit ids that have been acted on by a gate in this quantum circuit.
 
     """
 
-    def __init__(self, circuit_setup=None, **metadata):
+    def __init__(self,
+                 circuit_setup: Optional[int] = None,
+                 verify: bool = True,
+                 **metadata: Any) -> None:
         """
 
         Args:
             circuit_setup (None, int, list of dict):
-
+            verify (bool):
             **metadata (dict): A dictionary containing extra information about the quantum circuit.
+
+        Notes:
+            If verify is set to True, `active_qudits` will be empty as it will not be updated.
         """
 
+        # TODO: work out what circuit_setup data type is
+
+        self.verify = verify
         self.metadata = metadata
+
+        if not verify:
+            self.metadata['verify'] = verify
 
         self._ticks = SortedDict()
         self._tick_class = self.metadata.get('tick_class', Tick)
@@ -58,7 +78,7 @@ class QuantumCircuit(object):
             self._circuit_setup(circuit_setup)
 
     @property
-    def active_qudits(self):
+    def active_qudits(self) -> Set[int]:
         """The set of qudit ids that are acted upon by the gates in this `QuantumCircuit`."""
 
         qudits = set()
@@ -68,21 +88,22 @@ class QuantumCircuit(object):
 
         return qudits
 
-    def gate(self, symbol, locations, tick_time, interval=1, **params):
+    def gate(self,
+             symbol: GateSymbol,
+             locations: GateLocations,
+             tick_time: Time,
+             interval: Time = 1,
+             **params: Any) -> None:
         """
         Adds gates of a single gate type (indicated by `symbol`) at time `tick_time`.
 
         Args:
             symbol (str): The string indicating the type of gate, e.g., 'H' for a Hadamard gate.
-
             locations (set of ints, set of tuples of ints): A set of ints or a set of tuples of ints that are the qudit
-            ids that the gates act on.
-
+                ids that the gates act on.
             tick_time (int, float): The time at which the gates occur. If `tick_time` == -1, then the gates will be
-            added to the last tick. If `tick_time` == -2, then the gates will be appended to the end of the circuit.
-
+                added to the last tick. If `tick_time` == -2, then the gates will be appended to the end of the circuit.
             interval (int, float): If appending, the time interval between this tick and the previous one.
-
             **params:
 
         Returns:
@@ -90,17 +111,22 @@ class QuantumCircuit(object):
         """
 
         if tick_time == -2:  # Append to the end
-            self.append({symbol: locations}, interval, **params)
+            self.append({symbol: locations}, interval=interval, **params)
         else:  # Add gates whether a corresponding tick exists or not
             # Note: if tick_time == -1 then the last Tick will be updated
-            self.add({symbol: locations}, tick_time, override=False, **params)
+            self.add({symbol: locations}, tick_time=tick_time, override=False, **params)
 
-    def append(self, gate_dict, locations=None, interval=1, **params):
+    def append(self,
+               gate_dict: Union[GateSymbol, GateDict],
+               locations: Optional[GateLocations] = None,
+               interval: Time = 1,
+               **params: Any) -> None:
         """
         Appends a new tick to the end of the circuit.
 
         Args:
-            gate_dict (dict): A gate dictionary of gate symbol => set of qudit ids or tuples of qudit ids
+            gate_dict (Union[str, Dict[str, Union[Set[int], Set[Tuple[int, ...]]]]): A gate dictionary of gate
+                symbol => set of qudit ids or tuples of qudit ids
             locations:
             interval (int, float): The time interval between this tick and the previous one.
 
@@ -126,7 +152,11 @@ class QuantumCircuit(object):
         tick_instance.add_gates(gate_dict, locations, **params)
         self._ticks[tick_time] = tick_instance
 
-    def update(self, gate_dict, locations=None, tick_time=None, **params):
+    def update(self,
+               gate_dict: Union[GateSymbol, GateDict],
+               locations: Optional[GateLocations] = None,
+               tick_time: Time = None,
+               **params: Any) -> None:
         """
         Updates an existing tick with more gates. If the requested tick does not exist, then an error is raised.
 
@@ -146,7 +176,12 @@ class QuantumCircuit(object):
         # Add the gates to the Tick
         self._ticks[tick_time].add_gates(gate_dict, locations, **params)
 
-    def add(self, gate_dict, locations=None, tick_time=None, override=False, **params):
+    def add(self,
+            gate_dict: Union[GateSymbol, GateDict],
+            locations: Optional[GateLocations] = None,
+            tick_time: Optional[Time] = None,
+            override: bool = False,
+            **params: Any) -> None:
         """
         Adds gates to the quantum circuit at a given tick time (whether the tick already exist or not).
 
@@ -180,7 +215,9 @@ class QuantumCircuit(object):
 
             self._ticks[tick_time] = tick_instance
 
-    def discard(self, locations, tick_time=-1):
+    def discard(self,
+                locations: GateLocations,
+                tick_time: Time = -1) -> None:
         """Discards ``locations`` from the `Tick` of index `tick`.
 
         Args:
@@ -195,7 +232,7 @@ class QuantumCircuit(object):
 
         self._ticks[tick_time].discard(locations)  # TODO: FINISH!!!
 
-    def add_empty_ticks(self, num_ticks):
+    def add_empty_ticks(self, num_ticks: int) -> None:
         """
         Makes sure that QuantumCircuit has at least `num_tick` number of ticks. If the number of ticks in the data
         structure is less than `num_tick` then empty ticks are appended until the total number of ticks == `num_ticks`.
@@ -210,15 +247,19 @@ class QuantumCircuit(object):
         for _ in range(num_ticks):
             self.append({})
 
-    def add_ticks(self, num_ticks):
+    def add_ticks(self, num_ticks: int) -> None:
         self.add_empty_ticks(num_ticks)
         warn('`add_ticks` is being deprecated and being replaced by `add_empty_ticks`.')
 
-    def extend(self, quantum_circuit):
+    def extend(self, quantum_circuit: 'QuantumCircuit'):
         pass
         # TODO: Finish!!!
 
-    def iter_times(self, minimum=None, maximum=None, inclusive=(True, True), reverse=False):
+    def iter_times(self,
+                   minimum: Optional[Time] = None,
+                   maximum: Optional[Time] = None,
+                   inclusive: Tuple[bool, bool] = (True, True),
+                   reverse: bool = False) -> Generator['Tick', None, None]:
         """
         A generator allowing one to loop through the tick times.
 
@@ -226,12 +267,9 @@ class QuantumCircuit(object):
 
         Args:
             minimum (int, float, None): Minimum tick time to start iterating.
-
             maximum (int, float, None): Maximum tick time to stop iterating.
-
             inclusive (tuple of two bools): A tuple of two booleans that indicate whether the minimum tick time and/or
-            the maximum tick time should be included.
-
+                the maximum tick time should be included.
             reverse (bool): Whether to reverse the order of iterated values (go from largest tick time to smallest).
 
         Returns: iterator
@@ -240,7 +278,11 @@ class QuantumCircuit(object):
         for t in self._ticks.irange(minimum, maximum, inclusive, reverse):
             yield t
 
-    def iter_ticks(self, minimum=None, maximum=None, inclusive=(True, True), reverse=False):
+    def iter_ticks(self,
+                   minimum: Optional[Time] = None,
+                   maximum: Optional[Time] = None,
+                   inclusive: Tuple[bool, bool] = (True, True),
+                   reverse: bool = False) -> Generator['Tick', None, None]:
         """
         A generator allowing one to loop through the tick times.
 
@@ -262,7 +304,11 @@ class QuantumCircuit(object):
         for t in self._ticks.irange(minimum, maximum, inclusive, reverse):
             yield self._ticks[t]
 
-    def iter_gates(self, minimum=None, maximum=None, inclusive=(True, True), reverse=False):
+    def iter_gates(self,
+                   minimum: Optional[Time] = None,
+                   maximum: Optional[Time] = None,
+                   inclusive: Tuple[bool, bool] = (True, True),
+                   reverse: bool = False) -> Generator['Gate', None, None]:
         """
         A generator allowing one to loop through the tick times.
 
@@ -285,32 +331,45 @@ class QuantumCircuit(object):
             for gate in self._ticks[t].iter_gates():
                 yield gate
 
-    def copy(self):
+    def copy(self) -> 'QuantumCircuit':
         """Provides a shallow copy of the data structure."""
         return self.__copy__()
 
-    def deepcopy(self):
+    def deepcopy(self) -> 'QuantumCircuit':
         """Provides a deep copy of the data structure."""
         return self.__deepcopy__()
 
-    def get(self, tick_time, default=None):
+    def get(self,
+            tick_time: Time,
+            default: Optional[Any] = None) -> Union['Tick', Any]:
+        """Returns the `Tick` that occurs at time `tick_time`. If `tick_time` not found, returns `default`."""
+
         return self._ticks.get(tick_time, default)[1]
 
-    def iget(self, index, default=None):
+    def iget(self,
+             index: int,
+             default: Optional[Any] = None) -> Union['Tick', Any]:
+        """Returns the `Tick` indexed by `index`. If `index` not found, returns `default`."""
 
         try:
             return self._ticks.peekitem(index)[1]
         except IndexError:
             return default
 
-    def itime(self, index, default=None):
+    def itime(self,
+              index: int,
+              default: Optional[Any] = None) -> Union[Time, Any]:
+        """Returns the tick time of the `Tick` indexed by `index`. If `index` not found, returns `default`."""
 
         try:
             return self._ticks.peekitem(index)[0]
         except IndexError:
             return default
 
-    def _qc2py(self, make_deepcopy=False):
+    def _qc2py(self, make_deepcopy: bool = False) -> Dict[Time, List[Tuple[GateSymbol, GateLocations, Params]]]:
+
+        # TODO: document...
+
         circ_dict = {}
         for tick in self.iter_ticks():
             tick_time = tick.time
@@ -330,9 +389,13 @@ class QuantumCircuit(object):
 
         return circ_dict
 
-    def _py2qc(self, pydata, qc=None):
+    def _py2qc(self,
+               pydata,
+               qc: Optional['QuantumCircuit'] = None) -> 'QuantumCircuit':
 
-        if qc is None:
+        # TODO: document...
+
+        if qc is None:  # TODO: Explain why this is being done.
             qc = QuantumCircuit()
 
         if isinstance(pydata, dict):
@@ -360,7 +423,7 @@ class QuantumCircuit(object):
             # Build circuit from other description (a shallow copy).
             self._py2qc(circuit_setup, self)
 
-    def __getitem__(self, tick_time):
+    def __getitem__(self, tick_time: Time):
         """Returns tick when using the bracket notation.
 
         Examples:
@@ -381,14 +444,16 @@ class QuantumCircuit(object):
 
         return self._ticks.peekitem(tick_time)[1]
 
-    def __setitem__(self, tick_time, item):
+    def __setitem__(self,
+                    tick_time: Time,
+                    item: Set[Tuple[GateSymbol, GateLocations, Params]]):
         """
         Either sets or replaces the `Tick` at time `tick_time` using the bracket notation and =.
 
         Examples:
 
         >>> qc = QuantumCircuit()
-        >>> qc[1] = {({'X', {1, 2, 3}, {}), ('Z', {4, 5, 6}}, {'duration': 1.0})}
+        >>> qc[1] = {('X', {1, 2, 3}, {}), ('Z', {4, 5, 6}, {'duration': 1.0})}
 
         Args:
             tick_time:
@@ -408,7 +473,7 @@ class QuantumCircuit(object):
 
         return len(self._ticks)
 
-    def __delitem__(self, tick_time):
+    def __delitem__(self, tick_time: Time) -> None:
         """Used to delete a tick. For example: del instance[key]
 
         Args:
@@ -430,7 +495,7 @@ class QuantumCircuit(object):
         pydata = self._qc2py(make_deepcopy=True)
         return self._py2qc(pydata)
 
-    def __str__(self):
+    def __str__(self) -> str:
         """String returned when a string representation is requested. This occurs during printing.
 
         Returns:
@@ -450,7 +515,7 @@ class QuantumCircuit(object):
             str_list = ['%s: %s' % (t, circ_dict[t])for t in ticks]
             return 'QuantumCircuit({%s, })' % ', '.join(str_list)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """
 
         Returns:
@@ -459,7 +524,12 @@ class QuantumCircuit(object):
 
         return self.__str__()
 
-    def __iter__(self, minimum=None, maximum=None, inclusive=(True, True), reverse=False):
+    def __iter__(self,
+                 minimum: Optional[Time] = None,
+                 maximum: Optional[Time] = None,
+                 inclusive: Tuple[bool, bool] = (True, True),
+                 reverse: bool = False) -> Generator['Gate', None, None]:
+
         yield self.iter_gates(minimum, maximum, inclusive, reverse)
 
 
@@ -474,7 +544,9 @@ class Tick(object):
 
     """
 
-    def __init__(self, time, circuit):
+    def __init__(self,
+                 time: Time,
+                 circuit: QuantumCircuit) -> None:
 
         self.time = time
         self.circuit = circuit  # parent class
@@ -482,7 +554,10 @@ class Tick(object):
 
         self._gates = {}
 
-    def add_gates(self, gate_dict, locations=None, **params):
+    def add_gates(self,
+                  gate_dict: Union[GateSymbol, GateDict],
+                  locations: GateLocations = None,
+                  **params: Any) -> None:
         """Adds a one or more gate types."""
 
         # symbol -> either a string or a dictionary, e.g., {'X': {1, 2}, 'Y': {3, 4}}
@@ -495,7 +570,7 @@ class Tick(object):
             gate = self.get_gate(symbol, params, True)
             gate.update(loc)
 
-    def discard(self, locations):
+    def discard(self, locations: GateLocations) -> None:
 
         # find gates that have locations... if the locations match... delete them and modify active qudits.
 
@@ -512,12 +587,15 @@ class Tick(object):
         if locations:
             raise Exception('The following qudits were not found: %s' % locations)
 
-    def iter_gates(self):
+    def iter_gates(self) -> Generator['Gate', None, None]:
         for gate_list in self._gates.values():
             for gate in gate_list:
                 yield gate
 
-    def get_gate(self, symbol, params, return_new=False):
+    def get_gate(self,
+                 symbol: GateSymbol,
+                 params: Params,
+                 return_new: bool = False) -> Optional['Gate']:
         """
         Finds a gate with matching `sym` and `params`; otherwise, it creates a new `Gate` instance.
 
@@ -538,7 +616,7 @@ class Tick(object):
 
         else:  # No match found
             if return_new:
-                gate = Gate(symbol, params, self)
+                gate = Gate(symbol, self, params)
                 gate_list.append(gate)
             else:
                 return None
@@ -562,25 +640,30 @@ class Gate(object):
         duration (int, float, None): How many time units it took to apply the gate type.
         locations (set of ints, set of tuples of ints): A set of ints or a set of tuples of ints that are the qudit ids
             that the gates act on.
+        gate_size: The number of qudits this gate acts on.
         active_qudits (set of ints): The set of qudit ids that are acted upon by the gates in this data structure.
 
     """
 
     # TODO: What about gates that work on qudits of different dimensions as inputs... of datatypes...?
 
-    def __init__(self, symbol, params, tick):
+    def __init__(self,
+                 symbol: GateSymbol,
+                 tick: Tick,
+                 params: Params) -> None:
         self.symbol = symbol
         self.params = params
         self.tick = tick  # parent instance
         self.duration = params.get('duration')
         self.locations = set()
-        self.gate_size = None
+        self.gate_size = None  # TODO: Make sure this is properly accounted for!
+        # TODO: Think about how to deal with a gate that acts on mixed q/cbit types/dimensions...
         self.active_qudits = set()
 
         if self.duration is None:
             self.duration = self.tick.circuit.metadata.get('default_duration', None)
 
-    def update(self, locations):
+    def update(self, locations: GateLocations) -> None:
         """
         Verifies and adds gate locations (qudit ids) to the gate. Also, adds these qudit ids to `active_qudits`.
 
@@ -591,20 +674,22 @@ class Gate(object):
 
         """
 
-        qudits = self._verify_locations(locations)
+        if self.tick.circuit.verify:
+            qudits = self._verify_locations(locations)
+            self.active_qudits.update(qudits)
+            self.tick.active_qudits.update(qudits)
 
         self.locations.update(locations)
-        self.active_qudits.update(qudits)
-        self.tick.active_qudits.update(qudits)
 
-    def discard(self, locations):
+    def discard(self, locations: GateLocations) -> None:
         # TODO: FINISH!!!
         # TODO: flatten overlap
         flat_loc = set()
         self.active_qudits -= flat_loc
         self.tick.active_qudits -= flat_loc
+        # TODO: FINISH!!!
 
-    def _verify_locations(self, locations):
+    def _verify_locations(self, locations: GateLocations) -> Set[int]:
 
         qudits = set()
 
@@ -659,7 +744,7 @@ class Gate(object):
 
         return qudits
 
-    def _verify_duration(self, qudits):
+    def _verify_duration(self, qudits: Set[int]) -> None:
         # Get all ticks within time (not including very last... exclusive)... if match..
         time_begin = self.tick.time
         time_end = time_begin + self.duration
@@ -694,5 +779,5 @@ class Gate(object):
             ends = active_qudits_end.setdefault(q, SortedDict())
             ends[time_end] = time_begin
 
-    def __str__(self):
+    def __str__(self) -> str:
         return "<Gate %s params=%s qudits: %s>" % (self.symbol, self.params, self.locations)

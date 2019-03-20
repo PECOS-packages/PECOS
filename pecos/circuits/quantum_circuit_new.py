@@ -72,7 +72,8 @@ class QuantumCircuit(object):
         self._ticks = SortedDict()
         self._tick_class = self.metadata.get('tick_class', Tick)
 
-        self._active_qudits_end = {}  # qid -> SortedSet{time+duration, ...} To track when do gates stop acting on the qudits with duration
+        self._active_qudits_end = {}
+        # qid -> SortedSet{time+duration, ...} To track when do gates stop acting on the qudits with duration
 
         if circuit_setup is not None:
             self._circuit_setup(circuit_setup)
@@ -232,26 +233,20 @@ class QuantumCircuit(object):
 
         self._ticks[tick_time].discard(locations)  # TODO: FINISH!!!
 
-    def add_empty_ticks(self, num_ticks: int) -> None:
-        """
-        Makes sure that QuantumCircuit has at least `num_tick` number of ticks. If the number of ticks in the data
-        structure is less than `num_tick` then empty ticks are appended until the total number of ticks == `num_ticks`.
-
-        Args:
-            num_ticks:
-
-        Returns:
-
-        """
+    def append_empty_ticks(self, num_ticks: int) -> None:
+        """Appends empty ticks."""
 
         for _ in range(num_ticks):
             self.append({})
 
     def add_ticks(self, num_ticks: int) -> None:
-        self.add_empty_ticks(num_ticks)
-        warn('`add_ticks` is being deprecated and being replaced by `add_empty_ticks`.')
+        """Appends empty ticks."""
+
+        self.append_empty_ticks(num_ticks)
+        warn('`add_ticks` is being deprecated and being replaced by `append_empty_ticks`.')
 
     def extend(self, quantum_circuit: 'QuantumCircuit'):
+        """Appends ticks from another `QuantumCircuit` to this one."""
         pass
         # TODO: Finish!!!
 
@@ -290,12 +285,9 @@ class QuantumCircuit(object):
 
         Args:
             minimum (int, float, None): Minimum tick time to start iterating.
-
             maximum (int, float, None): Maximum tick time to stop iterating.
-
             inclusive (tuple of two bools): A tuple of two booleans that indicate whether the minimum tick time and/or
-            the maximum tick time should be included.
-
+                the maximum tick time should be included.
             reverse (bool): Whether to reverse the order of iterated values (go from largest tick time to smallest).
 
         Returns: iterator
@@ -316,12 +308,9 @@ class QuantumCircuit(object):
 
         Args:
             minimum (int, float, None): Minimum tick time to start iterating.
-
             maximum (int, float, None): Maximum tick time to stop iterating.
-
             inclusive (tuple of two bools): A tuple of two booleans that indicate whether the minimum tick time and/or
-            the maximum tick time should be included.
-
+                the maximum tick time should be included.
             reverse (bool): Whether to reverse the order of iterated values (go from largest tick time to smallest).
 
         Returns: iterator
@@ -389,9 +378,18 @@ class QuantumCircuit(object):
 
         return circ_dict
 
-    def _py2qc(self,
-               pydata,
+    @staticmethod
+    def _py2qc(pydata,
                qc: Optional['QuantumCircuit'] = None) -> 'QuantumCircuit':
+        """
+
+        Args:
+            pydata:
+            qc:
+
+        Returns:
+
+        """
 
         # TODO: document...
 
@@ -417,7 +415,7 @@ class QuantumCircuit(object):
 
         if isinstance(circuit_setup, int):
             # Reserve ticks
-            self.add_empty_ticks(circuit_setup)
+            self.append_empty_ticks(circuit_setup)
 
         else:
             # Build circuit from other description (a shallow copy).
@@ -571,6 +569,16 @@ class Tick(object):
             gate.update(loc)
 
     def discard(self, locations: GateLocations) -> None:
+        """
+        Removes gates indicated by `locations`.
+
+        Args:
+            locations (set of ints, set of tuples of ints): A set of ints or a set of tuples of ints that are the qudit
+                ids that the gates act on.
+
+        Returns:
+
+        """
 
         # find gates that have locations... if the locations match... delete them and modify active qudits.
 
@@ -588,6 +596,7 @@ class Tick(object):
             raise Exception('The following qudits were not found: %s' % locations)
 
     def iter_gates(self) -> Generator['Gate', None, None]:
+        """A generator that yields the gates held in this `Tick`."""
         for gate_list in self._gates.values():
             for gate in gate_list:
                 yield gate

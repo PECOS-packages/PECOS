@@ -110,7 +110,7 @@ class RXXGate(BasicRotationGate):
         e2 = -1j*cmath.exp(-1j * self.angle)
         n = 1. / cmath.sqrt(2.)
 
-        return n * np.array([[1,   0,   0, e1],
+        return n * np.matrix([[1,   0,   0, e1],
                              [0,   1, -1j, 0],
                              [0, -1j,   1, 0],
                              [e2,   0,   0, 1]])
@@ -134,7 +134,7 @@ class RYYGate(BasicRotationGate):
     @property
     def matrix(self):
 
-        return np.array([[np.cos(self.angle),   0,   0, 1j*np.sin(self.angle)],
+        return np.matrix([[np.cos(self.angle),   0,   0, 1j*np.sin(self.angle)],
                          [0,   np.cos(self.angle), -1j*np.sin(self.angle), 0],
                          [0, -1j*np.sin(self.angle),   np.cos(self.angle), 0],
                          [1j*np.sin(self.angle),   0,   0, np.cos(self.angle)]])
@@ -162,7 +162,7 @@ class RZZGate(BasicRotationGate):
         p = cmath.exp(0.5j * self.angle)
         n = cmath.exp(-0.5j * self.angle)
 
-        return np.array([[p, 0, 0, 0],
+        return np.matrix([[p, 0, 0, 0],
                          [0, n, 0, 0],
                          [0, 0, n, 0],
                          [0, 0, 0, p]])

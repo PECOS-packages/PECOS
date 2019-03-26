@@ -51,7 +51,7 @@ class QCQPUSim(BaseSim):
 
         super().__init__()
 
-        self.gate_dict = bindings.gate_dict
+        self.bindings = bindings.gate_dict
         self.num_qubits = num_qubits
 
         self.state = qcgpu.State(num_qubits)

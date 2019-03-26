@@ -17,7 +17,7 @@
 #  =========================================================================  #
 
 from projectq.ops import Measure
-from .gates_one_qubit import H, H5
+from .gates_one_qubit import H, H5, X
 
 
 def force_output(state, qubit, forced_output=-1):
@@ -37,13 +37,14 @@ def force_output(state, qubit, forced_output=-1):
     return forced_output
 
 
-def meas_z(state, qubit):
+def meas_z(state, qubit, random_outcome=-1):
     """
     Measurement in the Z-basis.
 
     Args:
         state:
         qubit:
+        random_outcome:
 
     Returns:
 
@@ -51,46 +52,59 @@ def meas_z(state, qubit):
 
     q = state.qids[qubit]
 
-    Measure | q
-
     state.eng.flush()
 
-    return int(q)
+    if random_outcome == 0 or random_outcome == 1:
+
+        # project the qubit to the desired state ("randomly" chooses the value `random_outcome`)
+        state.eng.backend.collapse_wavefunction([q], [random_outcome])
+        # Note: this will raise an error if the probability of collapsing to this state is close to 0.0
+
+        return random_outcome
+
+    else:
+
+        Measure | q
+        state.eng.flush()
+
+        return int(q)
 
 
-def meas_y(state, qubit):
+def meas_y(state, qubit, random_outcome=-1):
     """
     Measurement in the Y-basis.
 
     Args:
         state:
         qubit:
+        random_outcome:
 
     Returns:
 
     """
 
     H5(state, qubit)
-    meas_outcome = meas_z(state, qubit)
+    meas_outcome = meas_z(state, qubit, random_outcome)
     H5(state, qubit)
 
     return meas_outcome
 
 
-def meas_x(state, qubit):
+def meas_x(state, qubit, random_outcome=-1):
     """
     Measurement in the X-basis.
 
     Args:
         state:
         qubit:
+        random_outcome:
 
     Returns:
 
     """
 
     H(state, qubit)
-    meas_outcome = meas_z(state, qubit)
+    meas_outcome = meas_z(state, qubit, random_outcome)
     H(state, qubit)
 
     return meas_outcome

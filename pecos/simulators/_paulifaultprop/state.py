@@ -18,7 +18,7 @@
 
 from typing import Set, Tuple, Union
 from .._parent_sim_classes import BaseSim
-from . import bindings
+from .bindings import gate_dict
 from .logical_sign import find_logical_signs
 from ...circuits import QuantumCircuit
 from ...circuits.quantum_circuit import ParamGateCollection
@@ -34,7 +34,7 @@ class PauliFaultProp(BaseSim):
     Attributes:
         num_qubits(int): Number of qubits.
         faults (Dict[str, Set[int]]):
-        gate_dict (Dict[str, Callable]):
+        bindings (Dict[str, Callable]):
 
     """
 
@@ -58,7 +58,7 @@ class PauliFaultProp(BaseSim):
         }
         # Here we will encode Y as the qubit id in faults_x and faults_z
 
-        self.gate_dict = bindings.gate_dict
+        self.bindings = gate_dict
 
     def logical_sign(self, logical_op: QuantumCircuit) -> int:
         """
@@ -91,8 +91,9 @@ class PauliFaultProp(BaseSim):
 
         """
 
-        if (tick_circuit.circuit.metadata.get('circuit_type') == 'faults' or
-                tick_circuit.circuit.metadata.get('circuit_type') == 'recovery'):
+        circuit_type = tick_circuit.metadata.get('circuit_type')
+
+        if circuit_type == 'faults' or circuit_type == 'recovery':
             self.add_faults(tick_circuit)
         else:
             if self.faults['X'] or self.faults['Y'] or self.faults['Z']:
@@ -114,7 +115,23 @@ class PauliFaultProp(BaseSim):
 
         for symbol, locations, params in circuit.items():
             if symbol in ['X', 'Y', 'Z'] and not params:
-                self.faults[symbol].update(locations)
+                # self.faults[symbol].update(locations)
+                if symbol == 'X':
+                    overlap = self.faults['Y'] & locations
+
+                    self.faults['Y'] -= overlap
+                    self.faults['Z'] ^= overlap
+                    self.faults['X'] ^= locations - overlap
+
+                elif symbol == 'Z':
+                    overlap = self.faults['Y'] & locations
+
+                    self.faults['Y'] -= overlap
+                    self.faults['X'] ^= overlap
+                    self.faults['Z'] ^= locations - overlap
+
+                else:
+                    self.faults[symbol] ^= locations
             else:
                 raise Exception('Can only handle Pauli errors.')
 

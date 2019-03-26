@@ -45,8 +45,7 @@ Date        Author  Comment
                     purpose.
 """
 
-# need to import this for typing to work
-from .bindings import gate_dict
+from . import bindings
 
 # Class that represents the stabilizer state
 from .state import SparseSim

@@ -17,8 +17,6 @@
 #  =========================================================================  #
 
 from typing import List, Tuple
-from .state import PauliFaultProp
-
 
 def switch(state,
            switch_list: List[Tuple[str, str]],
@@ -31,7 +29,7 @@ def switch(state,
             break
 
 
-def I(state: PauliFaultProp,
+def I(state: 'PauliFaultProp',
       qubit: int) -> None:
     """
     Identity does nothing.

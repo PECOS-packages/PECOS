@@ -299,6 +299,7 @@ class ParamGateCollection:
 
     def __init__(self, circuit, symbol=None, locations=None, **params):
         self.circuit = circuit
+        self.metadata = circuit.metadata
         self.active_qudits = set([])
         self.symbols = defaultdict(list)
 

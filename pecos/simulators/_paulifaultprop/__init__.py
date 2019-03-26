@@ -16,5 +16,6 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-from .bindings import gate_dict
+from . import bindings
+
 from .state import PauliFaultProp

@@ -25,6 +25,7 @@ Compatibility checked for: ProjectQ version 0.3.6
 from .. import BaseSim
 from ...circuits import QuantumCircuit
 from projectq import MainEngine
+from projectq.ops import All, Measure
 from . import bindings
 from .logical_sign import find_logical_signs
 from .helper import MakeFunc
@@ -48,7 +49,7 @@ class ProjectQSim(BaseSim):
 
         super().__init__()
 
-        self.gate_dict = bindings.gate_dict
+        self.bindings = bindings.gate_dict
         self.num_qubits = num_qubits
         self.eng = MainEngine()
 
@@ -90,3 +91,9 @@ class ProjectQSim(BaseSim):
                 self.gate_dict[symbol] = MakeFunc(gate_obj).func
             else:
                 self.gate_dict[symbol] = gate_obj
+
+    def __del__(self):
+        self.eng.flush()
+        All(Measure) | self.qureg  # Requirement by ProjectQ...
+        self.eng.flush(deallocate_qubits=True)
+        # super().__del__()

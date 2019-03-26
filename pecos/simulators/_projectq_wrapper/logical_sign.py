@@ -1,8 +1,10 @@
+from projectq.ops import QubitOperator
 from ...circuits import QuantumCircuit
 
 
 def find_logical_signs(state,
-                       logical_circuit: QuantumCircuit) -> int:
+                       logical_circuit: QuantumCircuit,
+                       allow_float=False) -> int:
     """
     Find the sign of the logical operator.
 
@@ -40,6 +42,16 @@ def find_logical_signs(state,
             raise Exception('Can not currently handle logical operator with operator "%s"!' % symbol)
 
     op_string = ' '.join(op_string)
-    result = state.eng.backend.get_expectation_value(op_string, state.self.qureg)
+    state.eng.flush()
+    result = state.eng.backend.get_expectation_value(QubitOperator(op_string), state.qureg)
+
+    if not allow_float:
+        result = round(result, 4)
+        if result == -1:
+            return 1
+        elif result == 1:
+            return 0
+        else:
+            raise Exception('Unexpected result found!')
 
     return result

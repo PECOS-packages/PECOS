@@ -16,6 +16,7 @@
 #   limitations under the License.
 #  =========================================================================  #
 
+import cmath
 import numpy as np
 import projectq.ops as ops
 from projectq.ops import BasicGate, get_inverse
@@ -131,10 +132,7 @@ class QGate(BasicGate):
     """Square-root of X gate class"""
     @property
     def matrix(self):
-        return 0.5 * np.array([[1+1j, 1-1j], [1-1j, 1+1j]])
-
-    def text_str(self):
-        return r'$\sqrt{X}'
+        return 0.5 * np.matrix([[1+1j, 1-1j], [1-1j, 1+1j]])
 
     def __str__(self):
         return "Q"
@@ -143,19 +141,14 @@ class QGate(BasicGate):
 Q = MakeFunc(QGate()).func
 Qd = MakeFunc(get_inverse(QGate())).func
 
-
 class RGate(BasicGate):
     """Square-root of Y gate class"""
     @property
     def matrix(self):
-        return 0.5 * np.array([[1+1j, -1-1j], [1+1j, 1+1j]])
-
-    def text_str(self):
-        return r'$\sqrt{Y}'
+        return 0.5 * np.matrix([[1+1j, -1-1j], [1+1j, 1+1j]])
 
     def __str__(self):
         return "R"
-
 
 R = MakeFunc(RGate()).func
 Rd = MakeFunc(get_inverse(RGate())).func
@@ -169,7 +162,7 @@ class H2Gate(BasicGate):
     """Hadmard-like gate #2"""
     @property
     def matrix(self):
-        return 0.5 * np.array([[1+1j, -1-1j], [-1-1j, -1-1j]])
+        return 0.5 * np.matrix([[1+1j, -1-1j], [-1-1j, -1-1j]])
 
     def __str__(self):
         return "H2"
@@ -182,7 +175,7 @@ class H3Gate(BasicGate):
     """Hadmard-like gate #3"""
     @property
     def matrix(self):
-        return np.array([[0, 1], [1j, 0]])
+        return np.matrix([[0, 1], [1j, 0]])
 
     def __str__(self):
         return "H3"
@@ -195,7 +188,7 @@ class H4Gate(BasicGate):
     """Hadmard-like gate #4"""
     @property
     def matrix(self):
-        return np.array([[0, 1j], [1, 0]])
+        return np.matrix([[0, 1j], [1, 0]])
 
     def __str__(self):
         return "H4"
@@ -208,7 +201,7 @@ class H5Gate(BasicGate):
     """Hadmard-like gate #5"""
     @property
     def matrix(self):
-        return 0.5 * np.array([[1+1j, 1-1j], [-1+1j, -1-1j]])
+        return 0.5 * np.matrix([[1+1j, 1-1j], [-1+1j, -1-1j]])
 
     def __str__(self):
         return "H5"
@@ -221,7 +214,7 @@ class H6Gate(BasicGate):
     """Hadmard-like gate #6"""
     @property
     def matrix(self):
-        return 0.5 * np.array([[-1-1j, 1-1j], [-1+1j, 1+1j]])
+        return 0.5 * np.matrix([[-1-1j, 1-1j], [-1+1j, 1+1j]])
 
     def __str__(self):
         return "H6"
@@ -234,7 +227,7 @@ class F1Gate(BasicGate):
     """Face rotations of an octahedron #1"""
     @property
     def matrix(self):
-        return 0.5 * np.array([[1+1j, 1-1j], [1+1j, -1+1j]])
+        return 0.5 * np.matrix([[1+1j, 1-1j], [1+1j, -1+1j]])
 
     def __str__(self):
         return "F1"
@@ -248,7 +241,7 @@ class F2Gate(BasicGate):
     """Face rotations of an octahedron #2"""
     @property
     def matrix(self):
-        return 0.5 * np.array([[1-1j, -1+1j], [1+1j, 1+1j]])
+        return 0.5 * np.matrix([[1-1j, -1+1j], [1+1j, 1+1j]])
 
     def __str__(self):
         return "F2"
@@ -262,7 +255,7 @@ class F3Gate(BasicGate):
     """Face rotations of an octahedron #3"""
     @property
     def matrix(self):
-        return 0.5 * np.array([[1-1j, 1+1j], [-1+1j, 1+1j]])
+        return 0.5 * np.matrix([[1-1j, 1+1j], [-1+1j, 1+1j]])
 
     def __str__(self):
         return "F3"
@@ -276,7 +269,7 @@ class F4Gate(BasicGate):
     """Face rotations of an octahedron #3"""
     @property
     def matrix(self):
-        return 0.5 * np.array([[1+1j, 1+1j], [1-1j, -1+1j]])
+        return 0.5 * np.matrix([[1+1j, 1+1j], [1-1j, -1+1j]])
 
     def __str__(self):
         return "F4"

@@ -5,7 +5,7 @@ class BaseSim(object):
     """
 
     def __init__(self):
-        self.gate_dict = {}
+        self.bindings = {}
 
     def run_gate(self, symbol, locations, **params):
         """
@@ -21,7 +21,7 @@ class BaseSim(object):
 
         output = {}
         for location in locations:
-            results = self.gate_dict[symbol](self, location, **params)
+            results = self.bindings[symbol](self, location, **params)
 
             if results:
                 output[location] = results

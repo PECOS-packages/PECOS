@@ -80,7 +80,7 @@ class SparseSim(BaseSim):
 
         self.num_qubits = num_qubits
 
-        self.gate_dict = bindings.gate_dict  # TODO: check to see if it makes a difference in performance if this is
+        self.bindings = bindings.gate_dict  # TODO: check to see if it makes a difference in performance if this is
         # moved to a class variable.
 
         # Represent a stabilizer state with ``num_qubits`` qubits.

@@ -52,6 +52,8 @@ def find_logical_signs(state,
         elif result == 1:
             return 0
         else:
+            print('Operator being measured:', op_string)
+            print('RESULT FOUND:', result)
             raise Exception('Unexpected result found!')
 
     return result

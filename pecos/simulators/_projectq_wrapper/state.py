@@ -95,5 +95,10 @@ class ProjectQSim(BaseSim):
     def __del__(self):
         self.eng.flush()
         All(Measure) | self.qureg  # Requirement by ProjectQ...
-        self.eng.flush(deallocate_qubits=True)
+
+        try:
+            self.eng.flush(deallocate_qubits=True)
+        except KeyError:
+            pass
+
         # super().__del__()

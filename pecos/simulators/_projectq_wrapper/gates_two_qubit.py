@@ -106,14 +106,13 @@ class RXXGate(BasicRotationGate):
     @property
     def matrix(self):
 
-        e1 = -1j*cmath.exp(1j * self.angle)
-        e2 = -1j*cmath.exp(-1j * self.angle)
-        n = 1. / cmath.sqrt(2.)
+        ep = 0.5 * (1 + cmath.exp(1j * self.angle))
+        em = 0.5 * (1 - cmath.exp(1j * self.angle))
 
-        return n * np.matrix([[1,   0,   0, e1],
-                             [0,   1, -1j, 0],
-                             [0, -1j,   1, 0],
-                             [e2,   0,   0, 1]])
+        return np.matrix([[ep, 0, 0, em],
+                          [0, ep, em, 0],
+                          [0, em, ep, 0],
+                          [em, 0, 0, ep]])
 
     def __str__(self):
         return "RXX"
@@ -133,11 +132,13 @@ class RYYGate(BasicRotationGate):
 
     @property
     def matrix(self):
+        ep = 0.5 * (1 + cmath.exp(1j * self.angle))
+        em = 0.5 * (1 - cmath.exp(1j * self.angle))
 
-        return np.matrix([[np.cos(self.angle),   0,   0, 1j*np.sin(self.angle)],
-                         [0,   np.cos(self.angle), -1j*np.sin(self.angle), 0],
-                         [0, -1j*np.sin(self.angle),   np.cos(self.angle), 0],
-                         [1j*np.sin(self.angle),   0,   0, np.cos(self.angle)]])
+        return np.matrix([[ep, 0, 0, -em],
+                          [0, ep, em, 0],
+                          [0, em, ep, 0],
+                          [-em, 0, 0, ep]])
 
     def __str__(self):
         return "RYY"
@@ -159,13 +160,12 @@ class RZZGate(BasicRotationGate):
     @property
     def matrix(self):
 
-        p = cmath.exp(0.5j * self.angle)
-        n = cmath.exp(-0.5j * self.angle)
+        e = cmath.exp(1j * self.angle)
 
-        return np.matrix([[p, 0, 0, 0],
-                         [0, n, 0, 0],
-                         [0, 0, n, 0],
-                         [0, 0, 0, p]])
+        return np.matrix([[1, 0, 0, 0],
+                          [0, e, 0, 0],
+                          [0, 0, e, 0],
+                          [0, 0, 0, 1]])
 
     def __str__(self):
         return "RZZ"

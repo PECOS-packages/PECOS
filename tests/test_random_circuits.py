@@ -109,7 +109,7 @@ def generate_circuit(gates, num_qubits, circuit_depth):
 def run_a_circuit(num_qubits, state_rep, circuit, verbose=False):
     state = state_rep(num_qubits)
     measurements = []
-    gate_dict = state.gate_dict
+    gate_dict = state.bindings
 
     for element, q in circuit:
 

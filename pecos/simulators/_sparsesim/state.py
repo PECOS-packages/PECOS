@@ -127,7 +127,7 @@ class SparseSim(BaseSim):
                    symbol: str,
                    location: Set[Union[int, Tuple[int, ...]]],
                    **gate_kwargs: Any):
-        self.gate_dict[symbol](self, location, **gate_kwargs)
+        self.bindings[symbol](self, location, **gate_kwargs)
 
     def copy(self):
 

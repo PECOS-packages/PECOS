@@ -18,7 +18,7 @@
 
 from typing import Set, Tuple, Union
 from .._parent_sim_classes import BaseSim
-from .bindings import gate_dict
+from . import bindings
 from .logical_sign import find_logical_signs
 from ...circuits import QuantumCircuit
 from ...circuits.quantum_circuit import ParamGateCollection
@@ -58,7 +58,7 @@ class PauliFaultProp(BaseSim):
         }
         # Here we will encode Y as the qubit id in faults_x and faults_z
 
-        self.bindings = gate_dict
+        self.bindings = bindings.gate_dict
 
     def logical_sign(self, logical_op: QuantumCircuit) -> int:
         """

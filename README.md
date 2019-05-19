@@ -29,7 +29,7 @@ See the following branch for the latest version of PECOS under development:
 
 https://github.com/PECOS-packages/PECOS/tree/development
 
-(Note, this is a pre-release branch.)
+BEAWARE: There are some changes planned in 0.2.dev that may break some backward compatibility with 0.1. We try to minimize breaks to backwards compatibility.
 
 ## Requirements
 - Python 3.5.2+

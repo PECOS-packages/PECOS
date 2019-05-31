@@ -15,7 +15,7 @@ quantum error-correction protocols.
 
  For questions or suggestions, please feel free to contact the author:
  
-   - Ciarán Ryan-Anderson, ciaran@pecos.io
+   - Ciarán Ryan-Anderson, ciaran.ryan-anderson@swansea.ac.uk
    
 ## Getting Started
 

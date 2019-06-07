@@ -63,7 +63,8 @@ class Standard(object):
             output = StdOutput()
 
         # TODO: Generate errors before running the ticks
-        # TODO: Have the option of not applying the circuit if no error...
+
+        # TODO: Add maps...
 
         # Initialize errors...
         # --------------------

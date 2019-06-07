@@ -36,23 +36,14 @@ def find_logical_signs(state, logical_circuit, delogical_circuit=None):
     Returns:
 
     """
-
     if len(logical_circuit) != 1:
         raise Exception('Logical operators are expected to only have one tick.')
 
-    if delogical_circuit and len(delogical_circuit) != 1:
-            raise Exception('Delogical operators are expected to only have one tick.')
-
     stabs = state.stabs
     destabs = state.destabs
-    signs_minus = state.signs_minus
-    signs_i = state.signs_i
 
     logical_xs = set([])
     logical_zs = set([])
-
-    delogical_xs = set([])
-    delogical_zs = set([])
 
     for symbol, gate_locations, _ in logical_circuit.items():
 
@@ -67,6 +58,13 @@ def find_logical_signs(state, logical_circuit, delogical_circuit=None):
             raise Exception('Can not currently handle logical operator with operator "%s"!' % symbol)
 
     if delogical_circuit:  # Check the relationship between logical operator and delogical operator.
+
+        if len(delogical_circuit) != 1:
+            raise Exception('Delogical operators are expected to only have one tick.')
+
+        delogical_xs = set([])
+        delogical_zs = set([])
+
         for symbol, gate_locations, _ in delogical_circuit.items():
 
             if symbol == 'X':
@@ -135,10 +133,10 @@ def find_logical_signs(state, logical_circuit, delogical_circuit=None):
     # --------------------------
 
     # First, the minus sign
-    logical_minus = len(build_stabs & signs_minus)
+    logical_minus = len(build_stabs & stabs.signs_minus)
 
     # Second, the number of imaginary numbers
-    logical_i = len(build_stabs & signs_i)
+    logical_i = len(build_stabs & stabs.signs_i)
 
     # Translate the Ws to Ys... W = -i(iW) = -iY => For each Y add another -1 and +i.
     logical_ws = logical_xs & logical_zs

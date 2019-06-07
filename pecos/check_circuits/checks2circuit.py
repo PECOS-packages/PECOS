@@ -60,10 +60,10 @@ class Check2Circuits(object):
         if mapping is None:
             mapping = gate_params.get('mapping', NoMap())
 
-        random_outcome = gate_params.get('random_outcome', None)
+        forced_outcome = gate_params.get('forced_outcome', None)
 
-        if random_outcome is None:
-            random_outcome = abstract_circuit.metadata.get('random_outcome', True)
+        if forced_outcome is None:
+            forced_outcome = abstract_circuit.metadata.get('forced_outcome', True)
 
         if make_ticks:
 
@@ -164,11 +164,11 @@ class Check2Circuits(object):
                 # ------------------------
                 if isinstance(meas_ticks, int):
 
-                    if random_outcome:
+                    if forced_outcome:
                         circuit.update({'measure Z': {mapping[ancillas]}}, tick=meas_ticks)
                     else:
-                        circuit.update({'measure Z': {mapping[ancillas]}}, tick=meas_ticks, random_outcome=0)
-                        # circuit.update({'measure Z': {ancillas}}, random_outcome=0)
+                        circuit.update({'measure Z': {mapping[ancillas]}}, tick=meas_ticks, forced_outcome=0)
+                        # circuit.update({'measure Z': {ancillas}}, forced_outcome=0)
                 else:
                     raise Exception('Can not currently handle multiple ancilla checks!')
 

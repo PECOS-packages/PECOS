@@ -19,89 +19,96 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-cimport cysparsesim_header as s
-from cysparsesim_header cimport int_num
+cimport src.cysparsesim_header as s
+from src.cysparsesim_header cimport int_num, bool
 
+# from .logical_sign import find_logical_signs
 from .src.logical_sign import find_logical_signs
 
+cdef dict bindings = {
 
-cdef dict gate_dict = {
-                'I': State.I,
-                'X': State.X,
-                'Y': State.Y,
-                'Z': State.Z,
-                
-                'II': State.II,
-                'CNOT': State.cnot,
-                'CZ': State.cz,
-                'CY': State.cy,
-                'SWAP': State.swap,
-                'G': State.g2,
-                
-                'H': State.hadamard,
-                'H1': State.hadamard,
-                'H2': State.H2,
-                'H3': State.H3,
-                'H4': State.H4,
-                'H5': State.H5,
-                'H6': State.H6,
-                
-                'H+z+x': State.hadamard, 
-                'H-z-x': State.H2, 
-                'H+y-z': State.H3,
-                'H-y-z': State.H4,
-                'H-x+y': State.H5, 
-                'H-x-y': State.H6,
-                
-                'F1': State.F1,
-                'F2': State.F2,
-                'F3': State.F3,
-                'F4': State.F4,
-                
-                'F1d': State.F1d,
-                'F2d': State.F2d,
-                'F3d': State.F3d,
-                'F4d': State.F4d,
-                
-                'R': State.R,
-                'Rd': State.Rd,
-                'Q': State.Q,
-                'Qd': State.Qd,
-                'S': State.S,
-                'Sd': State.Sd,
+    'init |0>': SparseSim.initzero,
+    'init |1>': SparseSim.initone,
+    'init |+>': SparseSim.initplus,
+    'init |->': SparseSim.initminus,
+    'init |+i>': SparseSim.initplusi,
+    'init |-i>': SparseSim.initminusi,
 
-                'measure X': State.measureX,
-                'measure Y': State.measureY,                
-                'measure Z': State.measure,
-                'force output': State.force_output,
+    'I': SparseSim.I,
+    'X': SparseSim.X,
+    'Y': SparseSim.Y,
+    'Z': SparseSim.Z,
+
+    'Q': SparseSim.Q,
+    'Qd': SparseSim.Qd,
+    'R': SparseSim.R,
+    'Rd': SparseSim.Rd,
+    'S': SparseSim.S,
+    'Sd': SparseSim.Sd,
+
+    'H': SparseSim.hadamard,
+    'H1': SparseSim.hadamard,
+    'H2': SparseSim.H2,
+    'H3': SparseSim.H3,
+    'H4': SparseSim.H4,
+    'H5': SparseSim.H5,
+    'H6': SparseSim.H6,
+
+    'H+z+x': SparseSim.hadamard,
+    'H-z-x': SparseSim.H2,
+    'H+y-z': SparseSim.H3,
+    'H-y-z': SparseSim.H4,
+    'H-x+y': SparseSim.H5,
+    'H-x-y': SparseSim.H6,
+
+    'F1': SparseSim.F1,
+    'F2': SparseSim.F2,
+    'F3': SparseSim.F3,
+    'F4': SparseSim.F4,
+
+    'F1d': SparseSim.F1d,
+    'F2d': SparseSim.F2d,
+    'F3d': SparseSim.F3d,
+    'F4d': SparseSim.F4d,
                 
-                'init |0>': State.initzero,
-                'init |1>': State.initone,
-                'init |+>': State.initplus,
-                'init |->': State.initminus,
-                'init |+i>': State.initplusi,
-                'init |-i>': State.initminusi,
+    'II': SparseSim.II,
+    'CNOT': SparseSim.cnot,
+    'CZ': SparseSim.cz,
+    'CY': SparseSim.cy,
+    'SWAP': SparseSim.swap,
+    'G': SparseSim.g2,
+
+    'SqrtXX': SparseSim.SqrtXX,  # \equiv e^{+i (\pi /4)} * e^{-i (\pi /4) XX } == R(XX, pi/2)
+    'MS': SparseSim.SqrtXX,
+    'MSXX': SparseSim.SqrtXX,
+
+    'measure X': SparseSim.measureX,
+    'measure Y': SparseSim.measureY,
+    'measure Z': SparseSim.measure,
+    'force output': SparseSim.force_output,
                 
             }
 
-cdef class State:
+cdef class SparseSim:
     
     cdef s.State* _c_state
     
     cdef public:
         int_num num_qubits
         int reserve_buckets
-        dict gate_dict
+        dict bindings
     
     def __cinit__(self, int_num num_qubits, int reserve_buckets=0):
         self._c_state = new s.State(num_qubits, reserve_buckets)
         
         self.num_qubits = self._c_state.num_qubits
         self.reserve_buckets = self._c_state.reserve_buckets
-        self.gate_dict = gate_dict
-    
+        self.bindings = bindings
+
     cdef void hadamard(self, int_num qubit):
         self._c_state.hadamard(qubit)
+
+    
         
     cdef void H2(self, int_num qubit):
         self._c_state.H2(qubit)
@@ -211,41 +218,55 @@ cdef class State:
         
     cdef void II(self, tuple qubits):
         pass
+
+    cdef void SqrtXX(self, tuple qubits):
+        cdef int_num qubit1 = qubits[0]
+        cdef int_num qubit2 = qubits[1]
+
+        self._c_state.Q(qubit1)  # Sqrt X
+        self._c_state.Q(qubit2)  # Sqrt X
+        self._c_state.Rd(qubit1)  # (Sqrt Y)^\dagger
+        self._c_state.cnot(qubit1, qubit2)  # CNOT
+        self._c_state.R(qubit1)  # Sqrt Y
         
     # cpdef unsigned int measure(self, const s.int_num qubit, 
-    def measure(self, const int_num qubit, int random_outcome=-1):
-        return self._c_state.measure(qubit, random_outcome)
+    def measure(self, const int_num qubit, int forced_outcome=-1, bool collapse=True):
+
+        return self._c_state.measure(qubit, forced_outcome, collapse)
+
     
-    def measureX(self, const int_num qubit, int random_outcome=-1):
+    def measureX(self, const int_num qubit, int forced_outcome=-1, bool collapse=True):
         
         cdef unsigned int result
-        
+
         self._c_state.hadamard(qubit)
-        result = self._c_state.measure(qubit, random_outcome)
+        result = self._c_state.measure(qubit, forced_outcome, collapse)
         self._c_state.hadamard(qubit)
         return result
     
-    def measureY(self, const int_num qubit, int random_outcome=-1):
+    def measureY(self, const int_num qubit, int forced_outcome=-1, bool collapse=True):
         
         cdef unsigned int result
-        
+
         self._c_state.H5(qubit)
-        result = self._c_state.measure(qubit, random_outcome)
+        result = self._c_state.measure(qubit, forced_outcome, collapse)
         self._c_state.H5(qubit)
         return result
     
     cdef void initzero(self, const int_num qubit):
         cdef unsigned int result
-        result = self._c_state.measure(qubit, force=0)
+
+        result = self._c_state.measure(qubit, 0, True)
         
-        if result:
+        if result == 1:
             self._c_state.bitflip(qubit)
             
     cdef void initone(self, const int_num qubit):
         cdef unsigned int result
-        result = self._c_state.measure(qubit, force=0)
+
+        result = self._c_state.measure(qubit, 1, True)
         
-        if not result:
+        if result == 0:
             self._c_state.bitflip(qubit)
             
     cdef void initplus(self, const int_num qubit):
@@ -262,27 +283,26 @@ cdef class State:
         
     cdef void initminusi(self, const int_num qubit):
         self.initone(qubit)
-        self._c_state.H5(qubit)
+        self._c_state.H6(qubit)
         
-    def logical_sign(self, logical_op, delogical_op=None):
+    def logical_sign(self, logical_op):
         """
 
         Args:
             logical_op:
-            delogical_op:
 
         Returns:
 
         """
-        return find_logical_signs(self, logical_op, delogical_op)
+        return find_logical_signs(self, logical_op)
             
-    def run_gate(self, symbol, locations, **gate_kwargs):
+    def run_gate(self, symbol, locations, **params):
         """
 
         Args:
             symbol:
             locations:
-            **gate_kwargs:
+            **params:
 
         Returns:
 
@@ -290,29 +310,36 @@ cdef class State:
 
         output = {}
         for location in locations:
-            results = self.gate_dict[symbol](self, location, **gate_kwargs)
+            results = self.bindings[symbol](self, location, **params)
+
             if results:
                 output[location] = results
 
         return output
 
-    def run_circuit(self, circuit):
+    def run_circuit(self, circuit, removed_locations=None):
         """
 
         Args:
             circuit (QuantumCircuit): A circuit instance or object with an appropriate items() generator.
+            removed_locations:
 
         Returns (list): If output is True then the circuit output is returned. Note that this output format may differ
         from what a ``circuit_runner`` will return for the same method named ``run_circuit``.
 
         """
 
-        results = []
+        # TODO: removed_locations doesn't make sense except if circuit is tick_circuit
+        # because can't say not to do gates for particular ticks....
 
-        for symbol, locations, gate_kwargs in circuit.items(params=True):
-            gate_output = self.run_gate(symbol, locations, **gate_kwargs)
-            results.append(gate_output)
-                
+        if removed_locations is None:
+            removed_locations = set([])
+
+        results = {}
+        for symbol, locations, params in circuit.items():
+            gate_results = self.run_gate(symbol, locations - removed_locations, **params)
+            results.update(gate_results)
+
         return results
     
     @property
@@ -554,8 +581,6 @@ cdef class State:
         """
         Prints out the stabilizers for the row-wise sparse representation.
 
-        :param num_qubits:
-        :return:
         """
 
         row_x = gen['row_x']
@@ -599,7 +624,6 @@ cdef class State:
             result.append(''.join(stab_letters))
 
         return result
-    
+
     def __dealloc__(self):
         del self._c_state
-    

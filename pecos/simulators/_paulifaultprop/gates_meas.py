@@ -1,6 +1,4 @@
-from typing import Any, Union, Tuple, NewType
-from .._parent_sim_classes import BaseSim
-SparseSim = NewType('SparseSime', BaseSim)
+from typing import Any, Union, Tuple
 
 
 def meas_x(state,

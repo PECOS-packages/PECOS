@@ -26,13 +26,12 @@ from typing import Union, Optional, Any, Dict, Set, Tuple, Generator, List
 import copy
 from sortedcontainers import SortedDict
 from ..misc.errors import PECOSTypeError, GateError, GateOverlapError
+from .types import Locations, Time, Symbol, Params
 
 # Defining types for typing:
-GateLocations = Union[Set[int], Set[Tuple[int, ...]]]
-Time = Union[int, float]
-GateSymbol = str
-GateDict = Dict[GateSymbol, GateLocations]
-Params = Dict[str, Any]
+GateDict = Dict[Symbol, Locations]
+
+# TODO: In the tick, store gates based on duration, then symbol. (See CircuitSequence)
 
 
 # class QuantumCircuit(MutableSequence):
@@ -40,7 +39,7 @@ class QuantumCircuit(object):
     """A representation of a quantum circuit.
 
     Attributes:
-        metadata (dict): A dictionary containing extra information about the quantum circuit.
+        params (dict): A dictionary containing extra information about the quantum circuit.
         verify: Whether to  check for gate overlap.
         active_qudits: The set of qudit ids that have been acted on by a gate in this quantum circuit.
 
@@ -49,13 +48,13 @@ class QuantumCircuit(object):
     def __init__(self,
                  circuit_setup: Optional[int] = None,
                  verify: bool = True,
-                 **metadata: Any) -> None:
+                 **params: Any) -> None:
         """
 
         Args:
             circuit_setup (None, int, list of dict):
             verify (bool):
-            **metadata (dict): A dictionary containing extra information about the quantum circuit.
+            **params (dict): A dictionary containing extra information about the quantum circuit.
 
         Notes:
             If verify is set to True, `active_qudits` will be empty as it will not be updated.
@@ -64,13 +63,13 @@ class QuantumCircuit(object):
         # TODO: work out what circuit_setup data type is
 
         self.verify = verify
-        self.metadata = metadata
+        self.params = params
 
         if not verify:
-            self.metadata['verify'] = verify
+            self.params['verify'] = verify
 
         self._ticks = SortedDict()
-        self._tick_class = self.metadata.get('tick_class', Tick)
+        self._tick_class = self.params.get('tick_class', Tick)
 
         self._active_qudits_end = {}
         # qid -> SortedSet{time+duration, ...} To track when do gates stop acting on the qudits with duration
@@ -89,9 +88,13 @@ class QuantumCircuit(object):
 
         return qudits
 
+    def duration(self):
+        # TODO: !!!
+        pass
+
     def gate(self,
-             symbol: GateSymbol,
-             locations: GateLocations,
+             symbol: Symbol,
+             locations: Locations,
              tick_time: Time,
              interval: Time = 1,
              **params: Any) -> None:
@@ -118,8 +121,8 @@ class QuantumCircuit(object):
             self.add({symbol: locations}, tick_time=tick_time, override=False, **params)
 
     def append(self,
-               gate_dict: Union[GateSymbol, GateDict],
-               locations: Optional[GateLocations] = None,
+               gate_dict: Union[Symbol, GateDict],
+               locations: Optional[Locations] = None,
                interval: Time = 1,
                **params: Any) -> None:
         """
@@ -154,8 +157,8 @@ class QuantumCircuit(object):
         self._ticks[tick_time] = tick_instance
 
     def update(self,
-               gate_dict: Union[GateSymbol, GateDict],
-               locations: Optional[GateLocations] = None,
+               gate_dict: Union[Symbol, GateDict],
+               locations: Optional[Locations] = None,
                tick_time: Time = None,
                **params: Any) -> None:
         """
@@ -178,8 +181,8 @@ class QuantumCircuit(object):
         self._ticks[tick_time].add_gates(gate_dict, locations, **params)
 
     def add(self,
-            gate_dict: Union[GateSymbol, GateDict],
-            locations: Optional[GateLocations] = None,
+            gate_dict: Union[Symbol, GateDict],
+            locations: Optional[Locations] = None,
             tick_time: Optional[Time] = None,
             override: bool = False,
             **params: Any) -> None:
@@ -217,7 +220,7 @@ class QuantumCircuit(object):
             self._ticks[tick_time] = tick_instance
 
     def discard(self,
-                locations: GateLocations,
+                locations: Locations,
                 tick_time: Time = -1) -> None:
         """Discards ``locations`` from the `Tick` of index `tick`.
 
@@ -355,7 +358,7 @@ class QuantumCircuit(object):
         except IndexError:
             return default
 
-    def _qc2py(self, make_deepcopy: bool = False) -> Dict[Time, List[Tuple[GateSymbol, GateLocations, Params]]]:
+    def _qc2py(self, make_deepcopy: bool = False) -> Dict[Time, List[Tuple[Symbol, Locations, Params]]]:
 
         # TODO: document...
 
@@ -444,7 +447,7 @@ class QuantumCircuit(object):
 
     def __setitem__(self,
                     tick_time: Time,
-                    item: Set[Tuple[GateSymbol, GateLocations, Params]]):
+                    item: Set[Tuple[Symbol, Locations, Params]]):
         """
         Either sets or replaces the `Tick` at time `tick_time` using the bracket notation and =.
 
@@ -553,8 +556,8 @@ class Tick(object):
         self._gates = {}
 
     def add_gates(self,
-                  gate_dict: Union[GateSymbol, GateDict],
-                  locations: GateLocations = None,
+                  gate_dict: Union[Symbol, GateDict],
+                  locations: Locations = None,
                   **params: Any) -> None:
         """Adds a one or more gate types."""
 
@@ -565,10 +568,10 @@ class Tick(object):
             gate_dict = {gate_dict: locations}
 
         for symbol, loc in gate_dict.items():
-            gate = self.get_gate(symbol, params, True)
+            gate = self.request_gate(symbol, params)
             gate.update(loc)
 
-    def discard(self, locations: GateLocations) -> None:
+    def discard(self, locations: Locations) -> None:
         """
         Removes gates indicated by `locations`.
 
@@ -601,17 +604,15 @@ class Tick(object):
             for gate in gate_list:
                 yield gate
 
-    def get_gate(self,
-                 symbol: GateSymbol,
-                 params: Params,
-                 return_new: bool = False) -> Optional['Gate']:
+    def request_gate(self,
+                     symbol: Symbol,
+                     params: Params) -> Optional['Gate']:
         """
         Finds a gate with matching `sym` and `params`; otherwise, it creates a new `Gate` instance.
 
         Args:
             symbol:
             params:
-            return_new:
 
         Returns: A `Gate` that was found to match `sym` and `params` or a new `Gate` that has been appended to
         self._gates[sym].
@@ -624,11 +625,8 @@ class Tick(object):
                 break
 
         else:  # No match found
-            if return_new:
-                gate = Gate(symbol, self, params)
-                gate_list.append(gate)
-            else:
-                return None
+            gate = Gate(symbol, self, params)
+            gate_list.append(gate)
 
         return gate
 
@@ -657,7 +655,7 @@ class Gate(object):
     # TODO: What about gates that work on qudits of different dimensions as inputs... of datatypes...?
 
     def __init__(self,
-                 symbol: GateSymbol,
+                 symbol: Symbol,
                  tick: Tick,
                  params: Params) -> None:
         self.symbol = symbol
@@ -670,9 +668,9 @@ class Gate(object):
         self.active_qudits = set()
 
         if self.duration is None:
-            self.duration = self.tick.circuit.metadata.get('default_duration', None)
+            self.duration = self.tick.circuit.params.get('default_duration', None)
 
-    def update(self, locations: GateLocations) -> None:
+    def update(self, locations: Locations) -> None:
         """
         Verifies and adds gate locations (qudit ids) to the gate. Also, adds these qudit ids to `active_qudits`.
 
@@ -690,7 +688,7 @@ class Gate(object):
 
         self.locations.update(locations)
 
-    def discard(self, locations: GateLocations) -> None:
+    def discard(self, locations: Locations) -> None:
         # TODO: FINISH!!!
         # TODO: flatten overlap
         flat_loc = set()
@@ -698,7 +696,7 @@ class Gate(object):
         self.tick.active_qudits -= flat_loc
         # TODO: FINISH!!!
 
-    def _verify_locations(self, locations: GateLocations) -> Set[int]:
+    def _verify_locations(self, locations: Locations) -> Set[int]:
 
         qudits = set()
 

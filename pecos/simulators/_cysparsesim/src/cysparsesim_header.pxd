@@ -72,4 +72,4 @@ cdef extern from "sparsesim.h":
         void F4d(const int_num &qubit) # F4d
         void cnot(const int_num& tqubit, const int_num& cqubit)
         void swap(const int_num& qubit1, const int_num& qubit2)
-        unsigned int measure(const int_num& qubit, int force)
+        unsigned int measure(const int_num& qubit, int forced_outcome, bool collapse)

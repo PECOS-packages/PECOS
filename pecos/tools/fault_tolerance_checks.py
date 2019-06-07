@@ -108,7 +108,7 @@ def t_errors_check(qecc, logical_gate=None, syn_extract=None, decoder=None, t_we
     if syn_extract is None:
         # Syndrome extraction
         syn_extract = LogicalCircuit(supress_warning=True)
-        syn_extract.append(qecc.gate('I', num_syn_extract=1, random_outcome=1))
+        syn_extract.append(qecc.gate('I', num_syn_extract=1, forced_outcome=1))
 
     if logical_gate is None:
         logic = syn_extract
@@ -252,7 +252,7 @@ def fault_check(qecc, logical_gate=None, decoder=None, t_weight=None, error_set=
     if logical_gate is None:
         # Syndrome extraction
         syn_extract = LogicalCircuit(supress_warning=True)
-        syn_extract.append(qecc.gate('I', num_syn_extract=1, random_outcome=1))
+        syn_extract.append(qecc.gate('I', num_syn_extract=1, forced_outcome=1))
         logic = syn_extract
     else:
         logic = logical_gate

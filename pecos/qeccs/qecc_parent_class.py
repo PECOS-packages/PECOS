@@ -129,7 +129,7 @@ class QECC(object):
         if symbol.startswith('ideal '):
             # An ideal logical gate is one that has no errors and all random outcomes are forced to be zero.
             gate_params['error_free'] = True
-            gate_params['random_outcome'] = False
+            gate_params['forced_outcome'] = False
             symbol = symbol.replace('ideal ', '')
 
         gotten_gate = self._retrieve_element(symbol, gate_params, self.gate_set)

@@ -43,20 +43,20 @@ Date        Author  Comment
 """
 from typing import Any, Union, Set, Tuple, List, Optional
 from ...circuits import QuantumCircuit
-from .. import BaseSim
+from ..sim_class_types import Stabilizer
 from . import bindings
 from .logical_sign import find_logical_signs
 from .refactor import refactor as refactor_generators
 from .refactor import find_stab as find_stabilizer
 
 
-class SparseSim(BaseSim):
+class SparseSim(Stabilizer):
     """
     Represents the stabilizer state.
 
     Attributes:
         num_qubits (int):
-        gate_dict (dict):
+        bindings (dict):
         stabs (Gens):
         destabs (Gens):
         gens (Tuple[Gens, Gens]):

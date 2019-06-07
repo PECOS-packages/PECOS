@@ -22,7 +22,7 @@ A simple wrapper for the ProjectQ simulator.
 Compatibility checked for: ProjectQ version 0.3.6
 """
 
-from .. import BaseSim
+from ..sim_class_types import StateVector
 from ...circuits import QuantumCircuit
 from projectq import MainEngine
 from projectq.ops import All, Measure
@@ -31,7 +31,7 @@ from .logical_sign import find_logical_signs
 from .helper import MakeFunc
 
 
-class ProjectQSim(BaseSim):
+class ProjectQSim(StateVector):
     """
     Initializes the stabilizer state.
 

@@ -44,7 +44,7 @@ class LogicalGate(object):
         self.circuits = []  # The circuits of the logical instructions. (Either instr instances or a QuantumCircuit or
         # something with the same methods as a QuantumCircuit.)
         self.error_free = gate_params.get('error_free', False)  # Whether errors should occur for this gate.
-        self.random_outcome = gate_params.get('random_outcome', True)  # Whether the measurements are random
+        self.forced_outcome = gate_params.get('forced_outcome', True)  # Whether the measurements are random
         # (if True-> force -1)
         # Can choose 0 or 1.
 

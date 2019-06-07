@@ -17,14 +17,14 @@
 #  =========================================================================  #
 
 from typing import Set, Tuple, Union
-from .._parent_sim_classes import BaseSim
+from ..sim_class_types import PauliPropagation
 from . import bindings
 from .logical_sign import find_logical_signs
 from ...circuits import QuantumCircuit
 from ...circuits.quantum_circuit import ParamGateCollection
 
 
-class PauliFaultProp(BaseSim):
+class PauliFaultProp(PauliPropagation):
     r"""
     A simulator that evolves Pauli faults through Clifford circuits.
 
@@ -74,14 +74,14 @@ class PauliFaultProp(BaseSim):
         return find_logical_signs(self, logical_op)
 
     def run_circuit(self,
-                    tick_circuit: ParamGateCollection,
+                    circuit: ParamGateCollection,
                     removed_locations: Union[Set[int], Set[Tuple[int, ...]], None] = None,
                     apply_faults: bool = False) -> None:
         """
         Used to apply a quantum circuit to a state, whether the circuit represents an fault or ideal circuit.
 
         Args:
-            tick_circuit (ParamGateCollection): A class representing a tick.
+            circuit (ParamGateCollection): A class representing a circuit.
             removed_locations (Union[Set[int], Set[Tuple[int, ...]], None]): A set of qudit locations that correspond to
                 ideal gates that should be removed.
             apply_faults (bool): Whether to apply the `circuit` as a Pauli fault (True) or as a Clifford to update the
@@ -91,14 +91,14 @@ class PauliFaultProp(BaseSim):
 
         """
 
-        circuit_type = tick_circuit.metadata.get('circuit_type')
+        circuit_type = circuit.metadata.get('circuit_type')
 
         if circuit_type == 'faults' or circuit_type == 'recovery':
-            self.add_faults(tick_circuit)
+            self.add_faults(circuit)
         else:
             if self.faults['X'] or self.faults['Y'] or self.faults['Z']:
                 # Only apply gates if there are faults to act on
-                return super().run_circuit(tick_circuit, removed_locations)
+                return super().run_circuit(circuit, removed_locations)
 
             # need to return output?
 

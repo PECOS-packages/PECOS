@@ -46,7 +46,7 @@ def find_logical_signs(state,
     result = state.eng.backend.get_expectation_value(QubitOperator(op_string), state.qureg)
 
     if not allow_float:
-        result = round(result, 4)
+        result = round(result, 5)
         if result == -1:
             return 1
         elif result == 1:

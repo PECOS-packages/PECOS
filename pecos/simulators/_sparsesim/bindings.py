@@ -43,8 +43,8 @@ gate_dict = {
     'Z': q1.Z,  # -x+z == R(Z, pi)
 
     # Square root of Paulis
-    'Q': q1.Q,    # +x-y == R(Y, pi/2)
-    'Qd': q1.Qd,  # +x+y == R(Y, -pi/2)
+    'Q': q1.Q,    # +x-y == R(X, pi/2)
+    'Qd': q1.Qd,  # +x+y == R(X, -pi/2)
     'R': q1.R,    # -z+x == R(Y, pi/2)
     'Rd': q1.Rd,  # +z-x == R(Y, -pi/2)
     'S': q1.S,    # +y+z == R(Z, pi/2)

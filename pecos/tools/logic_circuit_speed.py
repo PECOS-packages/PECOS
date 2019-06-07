@@ -72,7 +72,7 @@ def generate_circuits(num_qubits, circuit_depth, trials=100000, gates=None, seed
                 q = int(get_qubits(num_qubits, 1))
 
                 if element in {'measure Z', 'measure X', 'measure Y'}:
-                    params = {'gate_kwargs': {'random_outcome': 0}}
+                    params = {'gate_kwargs': {'forced_outcome': 0}}
 
             qc.append(element, {q}, **params)
 

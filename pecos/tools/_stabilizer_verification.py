@@ -314,7 +314,7 @@ class VerifyStabilizers(object):
 
                 qc.append(symbol, {(ancilla_id, q)})
 
-            qc.append('measure X', {ancilla_id}, random_outcome=0)
+            qc.append('measure X', {ancilla_id}, forced_outcome=0)
 
         self.ancilla_qubits = ancilla_qubits
 

@@ -115,7 +115,7 @@ def run_a_circuit(num_qubits, state_rep, circuit, verbose=False):
 
         m = -1
         if element == 'measure Z':
-            m = gate_dict[element](state, q, random_outcome=0)
+            m = gate_dict[element](state, q, forced_outcome=0)
             measurements.append(m)
 
         else:

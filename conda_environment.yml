@@ -1,6 +1,7 @@
 name: pecos
 channels:
   - conda-forge
+  - defaults
 dependencies:
   - python>=3.6,<3.8
   - numpy>=1.15,<2

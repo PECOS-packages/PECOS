@@ -1,67 +1,100 @@
-![PECOS](docs/images/pecos_large_logo.png)
+![PECOS](branding/logo/pecos_logo_v2.png)
 =======================================
 
 [![PyPI version](https://badge.fury.io/py/quantum-pecos.svg)](https://badge.fury.io/py/quantum-pecos)
 [![Documentation Status](https://readthedocs.org/projects/quantum-pecos/badge/?version=latest)](https://quantum-pecos.readthedocs.io/en/latest/?badge=latest)
+[![Python versions](https://img.shields.io/badge/python-3.9%2C%203.10%2C%203.11-blue.svg)](https://img.shields.io/badge/python-3.9%2C%203.10%2C%203.11-blue.svg)
+[![Supported by Quantinuum](https://img.shields.io/badge/supported_by-Quantinuum-blue)](https://www.quantinuum.com/)
 
-PECOS (Performance Estimator of Codes On Surfaces) is a Python framework for studying, developing, and evaluating 
-quantum error-correction protocols.
+**Performance Estimator of Codes On Surfaces (PECOS)** is a library/framework dedicated to the study, development, and 
+evaluation of quantum error-correction protocols. It offers tools for the study and evaluation of hybrid 
+quantum/classical compute execution models for NISQ algorithms and beyond.
 
-- Author: Ciarán Ryan-Anderson
-- Language: Python 3.5.2+ (with optional C and C++ extensions)
+Initially conceived and developed in 2014 to verify lattice-surgery procedures presented in 
+[arXiv:1407.5103](https://arxiv.org/abs/1407.5103) and released publicly in 2018, PECOS filled a significant gap in 
+the QEC/QC tools available at that time. Over the years, it has grown into a framework for studying general QECCs and 
+hybrid computation.
 
-## Contact
-   - Ciarán Ryan-Anderson, ciaran@pecos.io
+With an emphasis on clarity, flexibility, and performance and catering to both QEC students and developers, PECOS is 
+refined continually with these attributes in mind.
+
+## Dependencies
+- Python 3.9+ 
+- NumPy >= 1.15.0, < 2.0 
+- SciPy >= 1.1.0, < 2.0
+- NetworkX >= 2.1.0, < 3.0
+- Matplotlib >= 2.2.0, < 3.0
+
+## Features
+- Quantum Error-Correction Tools: Advanced tools for studying quantum error-correction protocols and error models.
+- Hybrid Quantum/Classical Execution: Evaluate advanced hybrid compute models, including support for classical compute,
+calls to Wasm VMs, conditional branching, and more.
+- Fast Simulation: Leverage the fast stabilizer-simulation algorithm.
+- Extensible: Add-ons and extensions support in C and C++ via Cython.
 
 ## Getting Started
 
-To get started, check out the documentation in the "docs" folder. You can also see the documentation on Read the Docs 
-here:
+Explore the capabilities of PECOS by delving into the [official documentation](https://quantum-pecos.readthedocs.io).
 
-https://quantum-pecos.readthedocs.io/en/development/
+## Versioning
 
-## Requirements
-- Python 3.5.2+
-- NumPy 1.15+
-- SciPy 1.1+
-- Matplotlib 2.2+
-- NetworkX 2.1+
+We follow semantic versioning principles. However, before version 1.0.0, the MAJOR.MINOR.BUG format sees the roles 
+of MAJOR and MINOR shifted down a step. This means potential breaking changes might occur between MINOR increments, such 
+as moving from versions 0.1.0 to 0.2.0.
 
-## Optional Dependencies
+## Latest Development
 
-- Cython (to compile optional C/C++ extensions)
-- pytest 3.0+ (to run tests)
-- Sphinx 2.7.6+ (to compile the documentation)
-- ProjectQ (for state vector simulations)
-- Cirq (to take advantage of the full quantum-state simulators made available via Cirq)
-- qcgpu (to run state vector simulations on gpus) 
+Stay updated with the latest developments on the 
+[PECOS Development branch](https://quantum-pecos.readthedocs.io/en/development/).
 
 ## Installation
 
-To install using pip run the command:
-```
-pip install quantum-pecos
-```
-
-To install from GitHub go to:
-
-https://github.com/PECOS-packages/PECOS
-
-Then, download/unzip or clone the version of PECOS you would like to use. Next, navigate to the root of the package 
-(where setup.py is located) and run:
+1. Clone or download the desired version of PECOS. 
+2. Navigate to the root directory, where `setup.py` is located.
+3. Install using pip:
 ```
 pip install .
 ```
 
-To install and continue to develop the version of PECOS located in the install folder, run the
- following instead:
+For development, use:
 ```
-pip install -e .
+pip install -e . 
 ```
 
 ## Uninstall
 
-To uninstall run:
+To uninstall:
 ```
 pip uninstall quantum-pecos
 ```
+
+## Citing
+
+For publications utilizing PECOS, kindly cite PECOS such as:
+
+```
+@misc{pecos,
+ author={Ciaran Ryan-Anderson},
+ title={PECOS: Performance Estimator of Codes On Surfaces},
+ journal={GitHub},
+ howpublished={\url{https://github.com/PECOS-packages/PECOS}},
+ URL = {https://github.com/PECOS-packages/PECOS},
+ year={2018}
+}
+
+@phdthesis{crathesis,
+ author={Ciaran Ryan-Anderson},
+ school = {University of New Mexico},
+ title={Quantum Algorithms, Architecture, and Error Correction},
+ journal={arXiv:1812.04735},
+ year={2018}
+}
+```
+
+## License
+This project is licensed under the Apache-2.0 License - see the [LICENSE](./LICENSE) and [NOTICE](NOTICE) files for 
+details.
+
+## Supported by
+
+[<img src="https://assets-global.website-files.com/62b9d45fb3f64842a96c9686/6328d9f47889343caabf2639_Quantinuum%20Logo__horizontal%20blue.png" height="100">](https://www.quantinuum.com/)

@@ -1,2 +1,5 @@
--r requirements/common.txt
--r requirements/tests.txt
+setuptools>=61.0.0
+
+numpy>=1.15.0,<2.0
+scipy>=1.1.0,<2.0
+networkx>=2.1.0,<3.0

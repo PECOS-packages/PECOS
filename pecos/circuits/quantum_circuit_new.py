@@ -26,10 +26,10 @@ from typing import Union, Optional, Any, Dict, Set, Tuple, Generator, List
 import copy
 from sortedcontainers import SortedDict
 from ..misc.errors import PECOSTypeError, GateError, GateOverlapError
-from .types import Locations, Time, Symbol, Params
+from ..types import GateLocations, Time, Symbol, Params
 
 # Defining types for typing:
-GateDict = Dict[Symbol, Locations]
+GateDict = Dict[Symbol, GateLocations]
 
 # TODO: In the tick, store gates based on duration, then symbol. (See CircuitSequence)
 

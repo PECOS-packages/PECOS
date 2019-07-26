@@ -46,7 +46,7 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     packages=find_packages(),
-    python_requires='>=3.5.2',
+    python_requires='>=3.6',
     install_requires=[
         'numpy>=1.15.0',
         'scipy>=1.1.0',
@@ -61,7 +61,6 @@ setup(
     },
     license='Apache 2',
     classifiers=[
-        "Programming Language :: Python :: 3.5",
         "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: 3.7",
         "License :: OSI Approved :: Apache Software License",

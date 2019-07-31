@@ -7,7 +7,7 @@
 Welcome to the PECOS Docs!
 ==========================
 
-PECOS, which stands for "Performance Estimator of Codes On Surfaces," is a Python package that provides a framework for studying, developing, and evaluating quantum error-correcting codes (QECCs). PECOS attempts to balance simplicity, functionality.and extendibility.
+PECOS, which stands for "Performance Estimator of Codes On Surfaces," is a Python package that provides a framework for studying, developing, and evaluating quantum error-correcting codes (QECCs). PECOS attempts to balance simplicity, functionality, and extendibility.
 
 History
 -------

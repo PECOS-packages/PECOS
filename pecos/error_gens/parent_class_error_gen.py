@@ -37,15 +37,15 @@ class ParentErrorGen(object):
         self.error_circuits = None
 
         self.error_params = None
-        self.logical_circuit = None
+        self.circuit = None
         self.generator_class = Generator
 
-    def start(self, logical_circuit, error_params):
+    def start(self, circuit, error_params):
         """
         Start up at the beginning of a circuit simulation.
 
         Args:
-            logical_circuit:
+            circuit:
             error_params:
 
         Returns:
@@ -53,12 +53,12 @@ class ParentErrorGen(object):
         """
 
         self.error_circuits = ErrorCircuits()
-        self.logical_circuit = logical_circuit
+        self.circuit = circuit
         self.error_params = error_params
 
         return self.error_circuits
 
-    def generate(self, logical_gate, logical_coord, tick_index):
+    def generate_tick_errors(self, tick_circuit, time, **params):
         """
         Returns before errors, after errors, and replaced locations for the given key (args).
 
@@ -308,12 +308,17 @@ class Generator:
 
             if isinstance(error_symbols, (tuple, np.ndarray)) and len(error_symbols) > 1:
                 for sym, loc in zip(error_symbols, location):
-                    after.update(sym, {loc}, emptyappend=True)
+                    if sym != 'I':
+                        after.update(sym, {loc}, emptyappend=True)
+
             elif isinstance(error_symbols, str):
-                after.update(error_symbols, {location}, emptyappend=True)
+                if error_symbols != 'I':
+                    after.update(error_symbols, {location}, emptyappend=True)
+
             elif isinstance(error_symbols, tuple) and len(error_symbols) == 1:
                 error_symbols = error_symbols[0]
-                after.update(error_symbols, {location}, emptyappend=True)
+                if error_symbols != 'I':
+                    after.update(error_symbols, {location}, emptyappend=True)
             else:
                 raise Exception("Only tuples and strings are currently accepted")
 
@@ -325,12 +330,16 @@ class Generator:
 
             if isinstance(error_symbols, np.ndarray) and len(error_symbols) > 1:
                 for sym, loc in zip(error_symbols, location):
-                    before.update(sym, {loc}, emptyappend=True)
+                    if sym != 'I':
+                        before.update(sym, {loc}, emptyappend=True)
             elif isinstance(error_symbols, str):
-                before.update(error_symbols, {location}, emptyappend=True)
+                if error_symbols != 'I':
+                    before.update(error_symbols, {location}, emptyappend=True)
+
             elif isinstance(error_symbols, tuple) and len(error_symbols) == 1:
                 error_symbols = error_symbols[0]
-                before.update(error_symbols, {location}, emptyappend=True)
+                if error_symbols != 'I':
+                    before.update(error_symbols, {location}, emptyappend=True)
             else:
                 raise Exception("Only tuples and strings are currently accepted")
 

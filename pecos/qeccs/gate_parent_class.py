@@ -38,12 +38,13 @@ class LogicalGate(object):
         self.symbol = symbol
         self.qecc = qecc  # The qecc the gate is a member of.
         self.gate_params = gate_params  # Gate parameters
+        self.params = self.gate_params
         self.instr_symbols = None
         self.instr_instances = []
         self.circuits = []  # The circuits of the logical instructions. (Either instr instances or a QuantumCircuit or
         # something with the same methods as a QuantumCircuit.)
         self.error_free = gate_params.get('error_free', False)  # Whether errors should occur for this gate.
-        self.random_outcome = gate_params.get('random_outcome', True)  # Whether the measurements are random
+        self.forced_outcome = gate_params.get('forced_outcome', True)  # Whether the measurements are random
         # (if True-> force -1)
         # Can choose 0 or 1.
 
@@ -65,20 +66,6 @@ class LogicalGate(object):
         Gives the final_logical_ops dict.
         """
         return self.instr_instances[-1].final_logical_ops
-
-    def iter_physical_ticks(self):
-        """
-        Used to loop through all the ideal physical ticks.
-
-        Returns:
-
-        """
-
-        for instr_index, instr_circuit in enumerate(self.circuits):
-            for tick_index in range(len(instr_circuit)):
-                gates = instr_circuit[tick_index]
-
-                yield instr_index, tick_index, gates
 
     def expected_params(self, params, expected_set):
         expected_params(params, expected_set)

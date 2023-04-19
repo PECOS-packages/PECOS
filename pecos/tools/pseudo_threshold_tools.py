@@ -141,11 +141,6 @@ def find_uniscalefit(ps, plog, distance, p0=None, maxfev=1000000, verbose=True, 
         if np.isnan(v):
             raise Exception('Was not able to find a good fit. Suggestion: Use `p0` to specify parameter guess.')
 
-    # print('popt', pcov)
-    # print('pcov', pcov)
-    # print('var', var)
-    # print('std', stdev)
-
     pseudo_thr = popt[0]
     v0 = popt[1]
     pseudo_thr_std = stdev[0]
@@ -238,7 +233,7 @@ def plot(plist, plog, deg=2, figsize=(10, 10), p_start=None, p_end=None):
 
     psuedo_thr = find_pseudo(plist, plog, deg)
 
-    popt, pcov = np.polyfit(plist, plog, deg, cov=True)  # C_z is estimated covariance matrix
+    popt, _ = np.polyfit(plist, plog, deg, cov=True)  # C_z is estimated covariance matrix
 
     axis_start = p_start
     axis_end = p_end

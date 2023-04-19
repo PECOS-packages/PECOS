@@ -25,7 +25,7 @@
     Generates circuits for the repetition code in the Z-Basis.
 """
 from ..qecc_parent_class import QECC
-from ...circuit_converters.checks2circuit import Check2Circuits
+from ...check_circuits.checks2circuit import Check2Circuits
 from .instructions import InstrSynExtraction, InstrInitZero, InstrInitPlus
 from .gates import GateIdentity, GateInitZero, GateInitPlus
 

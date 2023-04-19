@@ -21,6 +21,7 @@ import numpy as np
 from .. import circuits
 from ..circuits import QuantumCircuit
 from ..circuit_runners import Standard
+from ..simulators import pySparseSim
 
 
 def fault_tolerance_check(QECC, decoder):
@@ -62,7 +63,8 @@ def fault_tolerance_check(QECC, decoder):
     # Check input errors
     for xs, zs in gen_pauli_errors(data_qudits, max_errors=t):
         err = QuantumCircuit([{'X': xs, 'Z': zs}])
-        state = circ_runner.init(num_qudits)
+        state = pySparseSim(num_qudits)
+        # state = circ_runner.init(num_qudits)
 
         sign = _apply_err(state, circ_runner, init_zero, syn_extract, err, decoder, logical_z)
 
@@ -82,7 +84,8 @@ def fault_tolerance_check(QECC, decoder):
 
     spacetime = set(product(list(range(num_ticks)), qudits))
     for xs, zs in gen_pauli_errors(spacetime, max_errors=t):
-        state = circ_runner.init(num_qudits)
+        state = pySparseSim(num_qudits)
+        # state = circ_runner.init(num_qudits)
         xs = list(xs)
         zs = list(zs)
 
@@ -115,7 +118,7 @@ def form_errors(xs, zs):
 
 
 def _apply_err_spacetime(state, circ_runner, init_circ, syn_circ, err_dict, decoder, logical_op, QECC):
-    circ_runner.run_logic(state, init_circ)
+    circ_runner.run(state, init_circ)
 
     syn_circ = QECC.instruction('instr_syn_extract', num_syn_extract=1)
     num_ticks = len(syn_circ.circuit)
@@ -150,7 +153,7 @@ def _apply_err_spacetime(state, circ_runner, init_circ, syn_circ, err_dict, deco
 
     if syn:
         recovery = decoder.decode(syn)
-        circ_runner.run_circuit(state, recovery)
+        circ_runner.run(state, recovery)
 
     sign = state.logical_sign(logical_op)
 
@@ -159,14 +162,14 @@ def _apply_err_spacetime(state, circ_runner, init_circ, syn_circ, err_dict, deco
 
 def _apply_err(state, circ_runner, init_circ, syn_circ, error, decoder, logical_op):
 
-    circ_runner.run_logic(state, init_circ)
-    circ_runner.run_circuit(state, error)
-    output, _ = circ_runner.run_logic(state, syn_circ)
+    circ_runner.run(state, init_circ)
+    circ_runner.run(state, error)
+    output, _ = circ_runner.run(state, syn_circ)
     syn = output.simplified(True)
 
     if syn:
         recovery = decoder.decode(syn)
-        circ_runner.run_circuit(state, recovery)
+        circ_runner.run(state, recovery)
 
     sign = state.logical_sign(logical_op)
 

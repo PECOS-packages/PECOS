@@ -17,7 +17,7 @@
 from ...circuits import QuantumCircuit
 
 
-class OneAncillaPerCheck:
+class OneAncillaPerCheck(object):
     """
     Class that describes an implementation of the 4.8.8 color code with one ancilla per face.
     """
@@ -107,7 +107,7 @@ class OneAncillaPerCheck:
         largest_tick.extend(octagon_z_ticks)
         largest_tick = max(largest_tick)
 
-        circuit = QuantumCircuit(largest_tick + 1)
+        circuit = QuantumCircuit(largest_tick + 1, **gate_params)
 
         if len(square_x_ticks) != 8:  # data + 4
             raise Exception('`square_x_ticks` should be of length : init tick, H tick, 4 data ticks, H tick, meas tick')
@@ -121,7 +121,7 @@ class OneAncillaPerCheck:
         if len(octagon_z_ticks) != 10:  # data + 2
             raise Exception('`octagon_z_ticks` should be of length : init tick, 8 data ticks, meas tick')
 
-        for check_type, locations, params in abstract_circuit.items(params=True):
+        for check_type, locations, params in abstract_circuit.items():
             polygon = params.get('polygon')
 
             if polygon is None:  # This is an actual circuit element

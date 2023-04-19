@@ -47,23 +47,21 @@ setup(
     long_description_content_type="text/markdown",
 
     packages=find_packages(),
-    include_package_data=True,
-
-    python_requires='>=3.5.2',
+    python_requires='>=3.6',
     install_requires=[
         'numpy>=1.15.0',
         'scipy>=1.1.0',
         'matplotlib>=2.2.0',
         'networkx>=2.1.0',
+        'sortedcontainers>=2.0.0',
     ],
     tests_require=['pytest>=3.0.0'],
     extras_require={
-        'all': ['cython'],
-        'cpp_simulators': ['cython']
+        'all': ['cirq', 'cython', 'projectq'],
+        'simulators': ['cirq', 'cython', 'projectq'],
     },
     license='Apache 2',
     classifiers=[
-        "Programming Language :: Python :: 3.5",
         "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: 3.7",
         "License :: OSI Approved :: Apache Software License",

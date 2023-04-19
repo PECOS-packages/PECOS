@@ -16,6 +16,9 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-from .checks2circuit import Check2Circuits
-# from .std2chs import Std2CHS
+"""
+This name space contains classes and functions for converting circuit data-structures into other circuit
+data-structures.
+"""
+
 from .std2chs import std2chs

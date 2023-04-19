@@ -21,7 +21,7 @@ from ..circuits import QuantumCircuit
 from .. import simulators
 
 
-class VerifyStabilizers:
+class VerifyStabilizers(object):
     """
     Used to define a stabilizer QECC.
     """
@@ -33,6 +33,10 @@ class VerifyStabilizers:
         self.checks = []
         self.logical_zs = []
         self.logical_xs = []
+        self.logical_zs_defined = []  # User chosen logical Zs TODO: ...
+        self.logical_xs_defined = []  # User chosen logical Xs TODO: ...
+        self.logical_zs_reference = {}
+        self.logical_xs_reference = {}
 
         self.data_qubits = set([])
         self.ancilla_qubits = set([])
@@ -58,7 +62,7 @@ class VerifyStabilizers:
 
         Args:
             paulis(sequence of str):
-            data_qubits(sequence of int):
+            qubits(sequence of int):
 
         Returns: None
 
@@ -310,7 +314,7 @@ class VerifyStabilizers:
 
                 qc.append(symbol, {(ancilla_id, q)})
 
-            qc.append('measure X', {ancilla_id}, random_outcome=0)
+            qc.append('measure X', {ancilla_id}, forced_outcome=0)
 
         self.ancilla_qubits = ancilla_qubits
 
@@ -510,6 +514,15 @@ class VerifyStabilizers:
             'logical_zs': z,
         }
 
+        self.logical_xs_reference = {}
+        self.logical_zs_reference = {}
+
+        for i, xi in enumerate(x):
+            self.logical_xs_reference['X'+str(i)] = xi
+
+        for i, zi in enumerate(z):
+            self.logical_zs_reference['Z'+str(i)] = zi
+
         return output_dict
 
     @property
@@ -562,7 +575,7 @@ class VerifyStabilizers:
                 raise Exception('Could not find check:', (ps, qs))
 
             # print('Found Xs - %s, Zs - %s, id = %s' % (xs, zs, stab_id))
-            # state.print_stabs(verbose=True, print_y=True)
+            # state.print_stabs(verbose=True, print_y=True,  print_destabs=True)
 
         for q in self.ancilla_qubits:
             found, stab_id = state.refactor({q}, set(), choose=-1, protected=found_stab_ids)
@@ -572,7 +585,7 @@ class VerifyStabilizers:
                 raise Exception('Could not find ancilla %s' % q)
 
             # print('Found Xs - %s, Zs - %s, id = %s' % ({q}, set(), stab_id))
-            # state.print_stabs(verbose=True, print_y=True)
+            # state.print_stabs(verbose=True, print_y=True,  print_destabs=True)
 
     def get_check_ancilla(self):
         check_tuples = []
@@ -605,7 +618,7 @@ class VerifyStabilizers:
             return Exception('Must run `compile()` first!')
 
         self.refactor(state)
-        stab_strs, destab_strs = state.print_stabs(verbose=False, print_y=print_y)
+        stab_strs, destab_strs = state.print_stabs(verbose=False, print_y=print_y,  print_destabs=True)
 
         num_ancillas = len(self.ancilla_qubits)
 
@@ -657,7 +670,7 @@ class VerifyStabilizers:
             else:
                 for xs, zs in missing_checks:
                     state.refactor(xs, zs, choose=0, prefer=notmatched_gens)
-                state.print_stabs(verbose=False, print_y=print_y)
+                state.print_stabs(verbose=False, print_y=print_y,  print_destabs=True)
 
             if search_count == stop_search:
                 raise Exception('Can not refactor properly!')
@@ -765,7 +778,8 @@ class VerifyStabilizers:
             self.dist = len(xs | zs)
             return found
 
-    def _dist_mode_smallest(self, state, qudit_set, css=False, verbose=True):
+    def _dist_mode_smallest(self, state, qudit_set, css=False, verbose=True, start_len=None, end_len=None,
+                            list_ops=False):
         """
         Determine if a logical error can be found by starting with the smallest weight errors
 
@@ -777,19 +791,30 @@ class VerifyStabilizers:
 
         """
 
-        for lenq in range(1, len(qudit_set)+1):
+        ops = []
+
+        if start_len is None:
+            start_len = 1
+
+        if end_len is None:
+            end_len = len(qudit_set)
+
+        for lenq in range(start_len, end_len+1):
 
             if verbose:
-                print('Checking errors of length %s...' % lenq)
+                print('Checking Paulis of weight %s...' % lenq)
 
             for xs, zs in self.gen_errors(qudit_set, lenq, lenq, css=css):
                 if self._is_logical_error(state, xs, zs):
                     if verbose:
-                        print("Logical error found: Xs - %s Zs - %s" % (xs, zs))
-                    return xs, zs
+                        print("Logical operator found: Xs - %s Zs - %s" % (xs, zs))
 
-        # We should not be able to get to this point...
-        return False
+                    if list_ops:
+                        ops.append({'X': xs, 'Z': zs})
+                    else:
+                        return xs, zs
+
+        return ops
 
     def gen_errors(self, qubits, min_errors=1, max_errors=False, css=False):
         """
@@ -896,3 +921,84 @@ class VerifyStabilizers:
 
                 # The error is a product of logical Zs
                 return bool(anticom_logical_xs)
+
+    def shortest_logicals(self, start_weight=None, delta=0, verbose=True, css=False):
+        """
+        Find the shortest logical op
+        Args:
+            start_weight (int): Weight of operators to begin searching.
+            delta (int): Method will look for all logical ops with weight =< minimum weight + `delta`.
+
+        Returns:
+            Dictionary of logical ops...
+
+        """
+
+        # if not self.logical_xs_reference and not self.logical_zs_reference:
+        #    self.eval(verbose=False)
+
+        if start_weight is None:
+            if self.dist is not None:
+                start_weight = self.dist
+            else:
+                start_weight = 1
+
+        end_weight = start_weight + delta
+
+        if self.circuit is None:
+            raise Exception('Must compile circuits first!')
+
+        qudit_set = self.data_qubits
+
+        if end_weight > len(qudit_set):
+            end_weight = len(qudit_set)
+
+        state = self.state
+        found = self._dist_mode_smallest(state, qudit_set, css=css, verbose=False, start_len=start_weight,
+                                         end_len=end_weight, list_ops=True)
+
+        xs_labels = sorted(self.logical_xs_reference.keys())
+        zs_labels = sorted(self.logical_zs_reference.keys())
+
+        oplist = []
+
+        if found:
+            for paulis in found:
+                # weight = len(paulis['X'] | paulis['Z'])
+
+                op_product = []
+                for xi, op_label in enumerate(xs_labels):
+                    if self.op_anticommute(paulis, self.logical_xs_reference[op_label]):
+                        op_product.append(zs_labels[xi])
+
+                for zi, op_label in enumerate(zs_labels):
+                    if self.op_anticommute(paulis, self.logical_zs_reference[op_label]):
+                        op_product.append(xs_labels[zi])
+
+                op_product = sorted(op_product)
+
+                oplist.append({'X': paulis['X'], 'Z': paulis['Z'], 'equiv_ops': tuple(op_product)})
+
+        if verbose:
+
+            print('Reference Logical Operators:')
+            print('\nLogical Xs:')
+            for op_label in xs_labels:
+                op = self.logical_xs_reference[op_label]
+                print(op_label, op)
+            print('\nLogical Zs:')
+            for op_label in zs_labels:
+                op = self.logical_zs_reference[op_label]
+                print(op_label, op)
+
+            print('\nLogical Ops Found:\n')
+            for foundop in oplist:
+                print('X - %s Z - %s Equiv Ops - %s' % (foundop['X'], foundop['Z'], foundop['equiv_ops']))
+
+        return oplist, self.logical_xs_reference, self.logical_zs_reference
+
+    @staticmethod
+    def op_anticommute(op1, op2):
+
+        return bool((len(op1.get('X', set()) & op2.get('Z', set())) +
+                     len(op2.get('X', set()) & op1.get('Z', set()))) % 2)

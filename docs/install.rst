@@ -20,6 +20,7 @@ Optional packages include:
 
 * Cython (for compiling C and C++ extensions)
 * PyTest (for running tests)
+* ProjectQ (to take advantage of ProjectQ's simulators via PECOS)
 
 Note on Python Distribution/Environment
 -----------------------------------------
@@ -74,7 +75,7 @@ To clone PECOS using git run:
 >>> git clone https://github.com/PECOS-packages/PECOS.git # doctest: +SKIP
 
 Then, download/unzip or clone the version of PECOS you would like to use. Next, navigate to the root of the package 
-(where setup.py is located) and run:
+(where setup.py is located) and run the command:
 
 >>> pip install .   # doctest: +SKIP
 

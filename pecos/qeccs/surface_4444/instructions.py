@@ -10,17 +10,17 @@ class InstrSynExtraction(LogicalInstruction):
     Parent class sets self.qecc.
     """
 
-    def __init__(self, qecc, symbol, **gate_params):
+    def __init__(self, qecc, symbol, **params):
 
-        super().__init__(qecc, symbol, **gate_params)
+        super().__init__(qecc, symbol, **params)
 
         self.symbol = 'instr_syn_extract'
 
-        self.init_ticks = gate_params.get('init_ticks', 0)
-        self.meas_ticks = gate_params.get('meas_ticks', 7)
-        self.data_ticks = gate_params.get('data_ticks', [2, 4, 3, 5])
+        self.init_ticks = params.get('init_ticks', 0)
+        self.meas_ticks = params.get('meas_ticks', 7)
+        self.data_ticks = params.get('data_ticks', [2, 4, 3, 5])
 
-        self.abstract_circuit = QuantumCircuit(track_qudits=False, **gate_params)
+        self.abstract_circuit = QuantumCircuit(track_qudits=False, **params)
 
         self.data_qudit_set = self.qecc.data_qudit_set
         self.ancilla_qudit_set = self.qecc.ancilla_qudit_set
@@ -184,9 +184,9 @@ class InstrInitZero(LogicalInstruction):
     Parent class sets self.qecc.
     """
 
-    def __init__(self, qecc, symbol, **gate_params):
+    def __init__(self, qecc, symbol, **params):
 
-        super().__init__(qecc, symbol, **gate_params)
+        super().__init__(qecc, symbol, **params)
 
         self.symbol = 'instr_init_zero'
 
@@ -194,11 +194,11 @@ class InstrInitZero(LogicalInstruction):
         self.ancilla_qudit_set = self.qecc.ancilla_qudit_set
 
         # This is basically syndrome extraction round where all the data qubits are initialized to zero.
-        syn_ext = qecc.instruction('instr_syn_extract', **gate_params)
+        syn_ext = qecc.instruction('instr_syn_extract', **params)
 
         # Make a shallow copy of the abstract circuits.
         self.abstract_circuit = syn_ext.abstract_circuit.copy()
-        self.abstract_circuit.params.update(gate_params)
+        self.abstract_circuit.metadata.update(params)
 
         self.ancilla_x_check = syn_ext.ancilla_x_check
         self.ancilla_z_check = syn_ext.ancilla_z_check
@@ -238,9 +238,9 @@ class InstrInitPlus(LogicalInstruction):
     Parent class sets self.qecc.
     """
 
-    def __init__(self, qecc, symbol, **gate_params):
+    def __init__(self, qecc, symbol, **params):
 
-        super().__init__(qecc, symbol, **gate_params)
+        super().__init__(qecc, symbol, **params)
 
         self.symbol = 'instr_init_plus'
 
@@ -248,11 +248,11 @@ class InstrInitPlus(LogicalInstruction):
         self.ancilla_qudit_set = self.qecc.ancilla_qudit_set
 
         # This is basically syndrome extraction round where all the data qubits are initialized to zero.
-        syn_ext = qecc.instruction('instr_syn_extract', **gate_params)
+        syn_ext = qecc.instruction('instr_syn_extract', **params)
 
         # Make a shallow copy of the abstract circuits.
         self.abstract_circuit = syn_ext.abstract_circuit.copy()
-        self.abstract_circuit.params.update(gate_params)
+        self.abstract_circuit.metadata.update(params)
 
         self.ancilla_x_check = syn_ext.ancilla_x_check
         self.ancilla_z_check = syn_ext.ancilla_z_check

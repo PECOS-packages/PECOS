@@ -16,6 +16,7 @@
 #   limitations under the License.
 #  =========================================================================  #
 
+from .class_errors_circuit import ErrorCircuits
 from .depolar_gen import DepolarGen
 from .xerror_gen import XGen
 from .zerror_gen import ZGen

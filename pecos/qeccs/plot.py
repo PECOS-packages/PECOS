@@ -21,7 +21,8 @@ import networkx as nx
 
 
 # plot intsructions
-def plot_qecc(qecc, figsize=(9, 9), dpi=80, filename=None, **kwargs):
+def plot_qecc(qecc, figsize=(9, 9), dpi=80, filename=None, title_font_size=16, axis_font_size=14, legend_font_size=14,
+              **kwargs):
     """Produces a plot of a qecc.
 
     Args:
@@ -61,7 +62,7 @@ def plot_qecc(qecc, figsize=(9, 9), dpi=80, filename=None, **kwargs):
 
     G.add_nodes_from(qudit_nodes_qudit)
     plt.figure(num=None, figsize=figsize, dpi=dpi, edgecolor='k')
-    plt.title("QECC layout: %s" % qecc.name)
+    plt.title("QECC layout: %s" % qecc.name, size=title_font_size)
 
     # Draw data qudits
     nodes = nx.draw_networkx_nodes(G, pos=pos, nodelist=qudit_nodes_data, node_color='white',
@@ -84,12 +85,12 @@ def plot_qecc(qecc, figsize=(9, 9), dpi=80, filename=None, **kwargs):
 
     ax = plt.gca()
     ax.set_facecolor('lightgray')
-    ax.set_xlabel('x (arbitrary length units)')
-    ax.set_ylabel('y (arbitrary length units)')
-    # ax.invert_yaxis()
+    ax.set_xlabel('x (arbitrary length units)', size=axis_font_size)
+    ax.set_ylabel('y (arbitrary length units)', size=axis_font_size)
+    ax.invert_yaxis()
     # ax.invert_xaxis()
 
-    plt.legend(labelspacing=2.5, borderpad=1.5, loc='upper left', bbox_to_anchor=(1, 1.01))
+    plt.legend(labelspacing=2.5, borderpad=1.5, loc='upper left', bbox_to_anchor=(1, 1.01), fontsize=legend_font_size)
 
     if filename:
         plt.savefig(filename)
@@ -97,7 +98,8 @@ def plot_qecc(qecc, figsize=(9, 9), dpi=80, filename=None, **kwargs):
     plt.show()
 
 
-def plot_instr(instr, figsize=(9, 9), dpi=80, filename=None, **kwargs):
+def plot_instr(instr, figsize=(9, 9), dpi=80, filename=None, title_font_size=16, axis_font_size=14, legend_font_size=14,
+               **kwargs):
     """
 
     Args:
@@ -146,7 +148,7 @@ def plot_instr(instr, figsize=(9, 9), dpi=80, filename=None, **kwargs):
         labels[i] = '$' + str(i) + '$'
 
     plt.figure(num=None, figsize=figsize, dpi=dpi, edgecolor='k')
-    plt.title("Logical Instruction: '%s'  QECC: %s" % (instr.symbol, instr.qecc.name))
+    plt.title("Logical Instruction: '%s'  QECC: %s" % (instr.symbol, instr.qecc.name), size=title_font_size)
 
     nx.draw_networkx_edges(G, pos=pos, edge_labels=edge_labels, arrowsize=30)
 
@@ -171,16 +173,15 @@ def plot_instr(instr, figsize=(9, 9), dpi=80, filename=None, **kwargs):
 
     nx.draw_networkx_labels(G, pos=pos, labels=labels, font_size=16)
 
-
     ax = plt.gca()
-    ax.set_xlabel('x (arbitrary length units)')
-    ax.set_ylabel('y (arbitrary length units)')
-    # ax.invert_yaxis()
+    ax.set_xlabel('x (arbitrary length units)', size=axis_font_size)
+    ax.set_ylabel('y (arbitrary length units)', size=axis_font_size)
+    ax.invert_yaxis()
     # ax.invert_xaxis()
 
     nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels)
 
-    plt.legend(labelspacing=2.5, borderpad=1.5, loc='upper left', bbox_to_anchor=(1, 1.01))
+    plt.legend(labelspacing=2.5, borderpad=1.5, loc='upper left', bbox_to_anchor=(1, 1.01), fontsize=legend_font_size)
 
     if filename:
         plt.savefig(filename)
@@ -194,7 +195,7 @@ def get_ancilla_types(instr):
     z_ancillas = set([])
     abs_circuit = instr.abstract_circuit
 
-    for gate_symbol, _, params in abs_circuit.items(params=True):
+    for gate_symbol, _, params in abs_circuit.items():
         if gate_symbol == 'X check':
             ancilla = params['ancillas']
             x_ancillas.add(ancilla)
@@ -214,7 +215,7 @@ def graph_add_directed_cnots(instr, G):
 
     # print(circuit)
     for i in range(len(circuit)):
-        for sym, qudits in circuit.items(params=False, tick=i):
+        for sym, qudits, _ in circuit.items(tick=i):
             if sym == 'CNOT' or sym == 'CZ' or sym == 'CY':
                 G.add_edges_from(qudits)
                 for e in qudits:

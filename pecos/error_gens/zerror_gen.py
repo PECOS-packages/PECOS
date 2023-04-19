@@ -110,12 +110,12 @@ class ZGen(ParentErrorGen):
         if has_idle_errors:
             self.gen.set_gate_error('idle', zerror.error_func)
 
-    def start(self, logical_circuit, error_params):
+    def start(self, circuit, error_params):
         """
         Start up at the beginning of a circuit simulation.
 
         Args:
-            logical_circuit:
+            circuit:
             error_params:
 
         Returns:
@@ -123,12 +123,12 @@ class ZGen(ParentErrorGen):
         """
 
         self.error_circuits = ErrorCircuits()
-        self.logical_circuit = logical_circuit
+        self.circuit = circuit
         self.error_params = error_params
 
         return self.error_circuits
 
-    def generate(self, logical_gate, logical_coord, tick_index):
+    def generate_tick_errors(self, tick_circuit, time, **params):
         """
         Returns before errors, after errors, and replaced locations for the given key (args).
 
@@ -136,38 +136,41 @@ class ZGen(ParentErrorGen):
 
         """
 
+        if isinstance(time, tuple):
+            tick_index = time[-1]
+        else:
+            tick_index = time
+
+        circuit = tick_circuit.circuit
+
         # Simple model where for each gate there is a probability "p" for an X, Y, or Z error to occur.
 
         before = QuantumCircuit()
         after = QuantumCircuit()
         replace = set([])
 
-        # instr_index = logical_coord[1].instr_index
-        instr_index = logical_coord[1]
-
-        # Need to iterate over the tick.
-        instr_circuit = logical_gate.circuits[instr_index]
-
         # Data errors
         # -----------
         if self.has_data_errors and tick_index == 0:
-            data_qudits = logical_gate.qecc.data_qudit_set
+            data_qudit_set = params['data_qudit_set']
 
-            self.gen.create_errors(self, 'data', data_qudits, after, before, replace)
+            self.gen.create_errors(self, 'data', data_qudit_set, after, before, replace)
 
         # unitary and measurement errors
         # ------------------------------
         if self.has_meas_errors or self.has_unitary_errors:
-            for symbol, gate_locations in instr_circuit.items(tick_index, params=False):
+            for symbol, gate_locations, _ in circuit.items(tick_index):
 
                 self.gen.create_errors(self, symbol, gate_locations, after, before, replace)
 
         # idle errors
         # -----------
         if self.has_idle_errors:
-            inactive_qudits = logical_gate.qecc.qudit_set - instr_circuit.active_qudits[tick_index]
+            inactive_qudits = circuit.qudits - circuit.active_qudits[tick_index]
             self.gen.create_errors(self, 'idle', inactive_qudits, after, before, replace)
 
-        self.error_circuits.add_circuits(key=(logical_coord, tick_index), before_errors=before, after_errors=after)
+        self.error_circuits.add_circuits(time, before, after)
 
         # return {'before': before, 'after': after}
+
+        return self.error_circuits

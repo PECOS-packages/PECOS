@@ -3,10 +3,12 @@ __pycache__
 *.pyd
 **/build
 dist
+*.eggs
 *.egg-info
 *.cache
-.pylintc
+.pylintrc
 .pytest_cache
 /.idea
 /.eggs
 ~*
+jupyter/

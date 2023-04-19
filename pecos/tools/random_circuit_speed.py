@@ -19,6 +19,7 @@
 import numpy as np
 from ..circuits import QuantumCircuit
 from ..circuit_runners import TimingRunner
+from ..simulators import pySparseSim
 
 
 def random_circuit_speed(state_sim, num_qubits, circuit_depth, trials=10000, gates=None, seed_start=0, converter=None):
@@ -34,15 +35,17 @@ def random_circuit_speed(state_sim, num_qubits, circuit_depth, trials=10000, gat
         if converter is not None:
             qc = converter(qc)
 
-        state = circ_sim.init(num_qubits, state_sim)
-        meas = circ_sim.run_circuit(state, qc, give_output=True, reset_time=True)
+        # state = circ_sim.init(num_qubits, state_sim)
+        state = pySparseSim(num_qubits)
+        circ_sim.reset_time()
+        meas = circ_sim.run(state, qc)
         times.append(circ_sim.total_time)
         measurements.append(meas)
 
     return times, measurements, circuits
 
 
-def generate_circuits(num_qubits, circuit_depth, trials=100000, gates=None, seed_start=0, iter=False):
+def generate_circuits(num_qubits, circuit_depth, trials=100000, gates=None, seed_start=0, iterate=False):
 
     if gates is None:
 
@@ -75,16 +78,16 @@ def generate_circuits(num_qubits, circuit_depth, trials=100000, gates=None, seed
                 q = int(get_qubits(num_qubits, 1))
 
                 if element in {'measure Z', 'measure X', 'measure Y'}:
-                    params = {'gate_kwargs': {'random_outcome': 0}}
+                    params = {'gate_kwargs': {'forced_outcome': 0}}
 
             qc.append(element, {q}, **params)
 
-        if iter:
+        if iterate:
             yield qc
         else:
             circuits.append(qc)
 
-    if not iter:
+    if not iterate:
         return circuits
 
 

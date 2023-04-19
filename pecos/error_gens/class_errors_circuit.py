@@ -16,10 +16,7 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-from collections import namedtuple
-
-LogicalTime = namedtuple('LogicalTime', 'logical_tick_index, instr_index')
-LogicalSpace = namedtuple('LogicalSpace', 'logical_gate_location')
+# from collections import OrderedDict
 
 
 class ErrorCircuits(dict):
@@ -31,14 +28,14 @@ class ErrorCircuits(dict):
 
         super().__init__()
 
-    def add_circuits(self, key, before_errors=None, after_errors=None, replaced_locations=None):
+    def add_circuits(self, time, before_faults=None, after_faults=None, replaced_locations=None):
         """
         Add error circuits and gate locations to ignore (replaced_locations).
 
         Args:
-            key:
-            before_errors:
-            after_errors:
+            time:
+            before_faults:
+            after_faults:
             replaced_locations:
 
         Returns:
@@ -47,45 +44,16 @@ class ErrorCircuits(dict):
 
         error_dict = {}
 
-        if before_errors and len(before_errors) > 0:
-            error_dict['before'] = before_errors
+        if before_faults and len(before_faults) > 0:
+            before_faults.metadata['circuit_type'] = 'faults'
+            error_dict['before'] = before_faults
 
-        if after_errors and len(after_errors) > 0:
-            error_dict['after'] = after_errors
+        if after_faults and len(after_faults) > 0:
+            after_faults.metadata['circuit_type'] = 'faults'
+            error_dict['after'] = after_faults
 
         if replaced_locations and len(replaced_locations) > 0:
             error_dict['replaced'] = replaced_locations
 
         if error_dict:
-            # self[key] = error_dict
-            gate_instr_tuple, tick_id = key
-            tick_dict = self.setdefault(gate_instr_tuple, {})
-            tick_dict[tick_id] = error_dict
-
-    def _old_simple_add(self, logical_tick_index, instr_index, tick_index, logical_gate_location=None, before_errors=None,
-                   after_errors=None, replaced_locations=None):
-        """
-        Simplifies the creation of error circuits by directly stating the time and location of error circuits.
-
-        Args:
-            logical_tick_index:
-            instr_index:
-            tick_index:
-            logical_gate_location:
-            before_errors:
-            after_errors:
-            replaced_locations:
-
-        Returns:
-
-        """
-
-        if logical_gate_location is None:
-            logical_gate_location = frozenset([None])
-
-        logical_time = LogicalTime(logical_tick_index, instr_index)
-        logical_space = LogicalSpace(logical_gate_location)
-
-        key = ((logical_space, logical_time), tick_index)
-
-        self.add_circuits(key, before_errors, after_errors, replaced_locations)
+            self[time] = error_dict

@@ -25,14 +25,14 @@ class TimingRunner(Standard):
     This class represents a standard model for running quantum circuits and adding in errors.
     """
 
-    def __init__(self, simulator=None, seed=None, timer=None):
+    def __init__(self, seed=None, timer=None):
         """
 
         Args:
             seed:
         """
 
-        super().__init__(simulator, seed)
+        super().__init__(seed)
 
         self.total_time = 0.0
         self.num_gates = 0
@@ -52,85 +52,31 @@ class TimingRunner(Standard):
         self.total_time = 0.0
         self.num_gates = 0
 
-
-    def run_circuit(self, state, circuit, give_output=False, removed_locations=None, gate_dict=None):
+    def run_gates(self, state, gates, removed_locations=None):
         """
-        Apply a ``QuantumCircuit`` directly to a state without output.
+        Directly apply a collection of quantum gates to a state.
 
         Args:
             state:
-            circuit:
-            give_output:
+            gates:
             removed_locations:
-            gate_dict:
 
         Returns:
 
         """
-
-        # TIMER: It is assumed that this method is the only part of the code that calls gates.
 
         timer = self.timer
 
         if removed_locations is None:
             removed_locations = set([])
 
-        result = {}
+        gate_results = {}
+        for symbol, physical_gate_locations, gate_kwargs in gates.items():
 
-        try:
-            num_ticks = len(circuit)
-        except TypeError:
-            num_ticks = 1
+            ti = timer()
+            gate_results = state.run_gate(symbol, physical_gate_locations - removed_locations, **gate_kwargs)
+            tf = timer()
+            self.total_time += tf - ti
+            self.num_gates += len(physical_gate_locations - removed_locations)
 
-        if gate_dict:
-
-            for t in range(num_ticks):
-                gate_result = {}
-                for symbol, physical_gate_locations, params in circuit.items(params=True, tick=t):
-                    gate_kwargs = params.get('gate_kwargs', {})
-                    locations = physical_gate_locations - removed_locations
-
-                    if give_output:
-                        gate_result = {}
-                        for location in locations:
-                            # TIME GATES
-                            # ----------
-                            ti = timer()
-                            results = gate_dict[symbol](location, **gate_kwargs)
-                            tf = timer()
-                            self.total_time += tf - ti
-                            self.num_gates += 1
-                            # ---------
-
-                            if results:
-                                gate_result[location] = results
-
-                    else:
-                        for location in locations:
-                            gate_dict[symbol](location, **gate_kwargs)
-
-                # Record the measurement results of the tick
-                if gate_result:
-                    result[t] = gate_result
-
-        else:
-            for t in range(num_ticks):
-                for symbol, physical_gate_locations, params in circuit.items(params=True, tick=t):
-
-                    gate_kwargs = params.get('gate_kwargs', {})
-
-                    locations = physical_gate_locations - removed_locations
-
-                    # TIME GATES
-                    # ----------
-                    ti = timer()
-                    gate_result = state.run_gate(symbol, locations, give_output, **gate_kwargs)
-                    tf = timer()
-                    self.total_time += tf - ti
-                    self.num_gates += len(locations)
-                    # ---------
-
-                    if gate_result:
-                        result[t] = gate_result
-
-        return result
+        return gate_results

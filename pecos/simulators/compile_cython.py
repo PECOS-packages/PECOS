@@ -22,17 +22,17 @@ import subprocess
 
 def compile():
     # See if Cython has been installed...
-    try:
-        import cython
-    except ImportError:
-        raise Exception('Cython must be installed to run this script!')
+    # try:
+    #     import cython
+    # except ImportError:
+    #     raise Exception('Cython must be installed to run this script!')
 
     current_location = os.path.dirname(os.path.abspath(__file__))
 
     # print('!!!', current_location)
 
     cython_dirs = [
-        'cysparsesim',
+        '_cysparsesim',
     ]
     failed = {}
 

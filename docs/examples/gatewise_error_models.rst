@@ -8,6 +8,34 @@ to classical probability distributions that are specified for individual ideal g
 we write the following:
 
 >>> import pecos as pc
+>>> myerrors = pc.error_gens.GatewiseModel()
+
+To randomly add an
+to classical probability distributions that are specified for individual ideal gates or groups of ideal gates. To being
+we write the following:
+
+>>> import pecos as pc
+>>> myerrors = pc.error_gens.GatewiseModel()
+
+To randomly add an
+to classical probability distributions that are specified for individual ideal gates or groups of ideal gates. To being
+we write the following:
+
+>>> import pecos as pc
+>>> myerrors = pc.error_gens.GatewiseModel()
+
+To randomly add an
+to classical probability distributions that are specified for individual ideal gates or groups of ideal gates. To being
+we write the following:
+
+>>> import pecos as pc
+>>> myerrors = pc.error_gens.GatewiseModel()
+
+To randomly add an
+to classical probability distributions that are specified for individual ideal gates or groups of ideal gates. To being
+we write the following:
+
+>>> import pecos as pc
 >>> myerrors = pc.error_gens.GatewiseGen()
 
 To randomly add an :math:`X` error after every Hadamard we write:
@@ -122,6 +150,58 @@ define a gate group and set the error distribution for this group:
 >>> myerrors.set_group_error('measurements', {'X', 'Y', 'Z'}, error_param='m')
 
 Note, ``set_group_error`` will override the error distribution of any gate belonging to the gate group.
+
+The gate groups that are defined by default can be found by running:
+
+>>> newerrors = pc.error_gens.GatewiseModel()
+>>> newerrors.gate_groups   # doctest: +SKIP
+{'measurements': {'measure X', 'measure Y', 'measure Z'},
+ 'inits': {'init |+>', 'init |+i>', 'init |->', 'init |-i>', 'init |0>', 'init |1>'},
+ 'two_qubits': {'CNOT', 'CZ', 'G', 'SWAP'},
+ 'one_qubits': {'F1', 'F1d', 'F2', 'F2d', 'F3', 'F3d', 'F4', 'F4d', 'H', 'H+y-z', 'H+z+x', 'H-x+y', 'H-x-y', 'H-y-z',
+ 'H-z-x', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'I', 'Q', 'Qd', 'R', 'Rd', 'S', 'Sd', 'X', 'Y', 'Z'}}
+
+Here the keys are symbols representing the gate groups and the values are the set of gate symbols belong to the
+corresponding gate group. These gate groups (
+
+The gate groups that are defined by default can be found by running:
+
+>>> newerrors = pc.error_gens.GatewiseModel()
+>>> newerrors.gate_groups   # doctest: +SKIP
+{'measurements': {'measure X', 'measure Y', 'measure Z'},
+ 'inits': {'init |+>', 'init |+i>', 'init |->', 'init |-i>', 'init |0>', 'init |1>'},
+ 'two_qubits': {'CNOT', 'CZ', 'G', 'SWAP'},
+ 'one_qubits': {'F1', 'F1d', 'F2', 'F2d', 'F3', 'F3d', 'F4', 'F4d', 'H', 'H+y-z', 'H+z+x', 'H-x+y', 'H-x-y', 'H-y-z',
+ 'H-z-x', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'I', 'Q', 'Qd', 'R', 'Rd', 'S', 'Sd', 'X', 'Y', 'Z'}}
+
+Here the keys are symbols representing the gate groups and the values are the set of gate symbols belong to the
+corresponding gate group. These gate groups (
+
+The gate groups that are defined by default can be found by running:
+
+>>> newerrors = pc.error_gens.GatewiseModel()
+>>> newerrors.gate_groups   # doctest: +SKIP
+{'measurements': {'measure X', 'measure Y', 'measure Z'},
+ 'inits': {'init |+>', 'init |+i>', 'init |->', 'init |-i>', 'init |0>', 'init |1>'},
+ 'two_qubits': {'CNOT', 'CZ', 'G', 'SWAP'},
+ 'one_qubits': {'F1', 'F1d', 'F2', 'F2d', 'F3', 'F3d', 'F4', 'F4d', 'H', 'H+y-z', 'H+z+x', 'H-x+y', 'H-x-y', 'H-y-z',
+ 'H-z-x', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'I', 'Q', 'Qd', 'R', 'Rd', 'S', 'Sd', 'X', 'Y', 'Z'}}
+
+Here the keys are symbols representing the gate groups and the values are the set of gate symbols belong to the
+corresponding gate group. These gate groups (
+
+The gate groups that are defined by default can be found by running:
+
+>>> newerrors = pc.error_gens.GatewiseModel()
+>>> newerrors.gate_groups   # doctest: +SKIP
+{'measurements': {'measure X', 'measure Y', 'measure Z'},
+ 'inits': {'init |+>', 'init |+i>', 'init |->', 'init |-i>', 'init |0>', 'init |1>'},
+ 'two_qubits': {'CNOT', 'CZ', 'G', 'SWAP'},
+ 'one_qubits': {'F1', 'F1d', 'F2', 'F2d', 'F3', 'F3d', 'F4', 'F4d', 'H', 'H+y-z', 'H+z+x', 'H-x+y', 'H-x-y', 'H-y-z',
+ 'H-z-x', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'I', 'Q', 'Qd', 'R', 'Rd', 'S', 'Sd', 'X', 'Y', 'Z'}}
+
+Here the keys are symbols representing the gate groups and the values are the set of gate symbols belong to the
+corresponding gate group. These gate groups (
  
 The gate groups that are defined by default can be found by running:
 

@@ -22,6 +22,7 @@ Optional packages include:
 * PyTest (for running tests)
 * ProjectQ (to take advantage of ProjectQ's simulators via PECOS)
 
+
 Note on Python Distribution/Environment
 -----------------------------------------
 
@@ -47,7 +48,7 @@ develop PECOS. Note, you will still need to install PECOS using one of the metho
 
 To activate/use the environment in Windows run the command:
 
->>> conda activate pecos # doctest: +SKIP
+>>> activate pecos # doctest: +SKIP
 
 In other operating systems you may need to run the following instead:
 
@@ -55,7 +56,7 @@ In other operating systems you may need to run the following instead:
 
 To deactivate/leave the PECOS environment run:
 
->>> conda deactivate # doctest: +SKIP
+>>> deactivate # doctest: +SKIP
 
 Installing and Uninstalling
 ---------------------------
@@ -65,6 +66,7 @@ PECOS has been developed to run on both Windows and Linux-based systems.
 To install using pip run:
 
 >>> pip install quantum-pecos   # doctest: +SKIP
+
 
 Alternatively, the plackage can be cloned or downloaded from GitHub:
 
@@ -78,6 +80,7 @@ Then, download/unzip or clone the version of PECOS you would like to use. Next, 
 (where setup.py is located) and run the command:
 
 >>> pip install .   # doctest: +SKIP
+
 
 To install and continue to develop the version of PECOS located in the install folder, run:
 

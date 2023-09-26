@@ -1,4 +1,4 @@
-.. -*- coding: utf-8 -*-
+﻿.. -*- coding: utf-8 -*-
 
 .. figure:: images/pecos_large_logo.png
    :width: 400px

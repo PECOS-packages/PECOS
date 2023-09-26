@@ -1,5 +1,7 @@
 include README.md
 include LICENSE
+include NOTICE
 include requirements.txt
-recursive-include pecos *.c *.cpp *.h *.pyx *.pxd
-prune **/build
+recursive-include pecos *.c *.cpp *.h *.pyx *.pxd *.so.*
+
+

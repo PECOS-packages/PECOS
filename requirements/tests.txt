@@ -1,2 +1,0 @@
-# Requirements to run tests
-pytest>=3.0.0

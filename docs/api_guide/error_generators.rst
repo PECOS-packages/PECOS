@@ -33,6 +33,30 @@ measurements. In which case, the errors are applied before.
 An example of creating an instance of ``DepolarGen`` is seen here:
 
 >>> import pecos as pc
+>>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity',
+... has_idle_errors=False, perp_errors=True)
+
+The
+
+>>> import pecos as pc
+>>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity',
+... has_idle_errors=False, perp_errors=True)
+
+The
+
+>>> import pecos as pc
+>>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity',
+... has_idle_errors=False, perp_errors=True)
+
+The
+
+>>> import pecos as pc
+>>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity',
+... has_idle_errors=False, perp_errors=True)
+
+The
+
+>>> import pecos as pc
 >>> depolar = pc.error_gens.DepolarGen(model_level='code_capacity',
 ... has_idle_errors=False, perp_errors=True)
 
@@ -54,6 +78,54 @@ measurements are errors that do not include the Pauli-basis of the initializatio
 ``False``, then there is no restriction to the errors. The default value of ``perp_errors`` is ``True``.
 
 An example of applying an error model using ``DepolarGen`` to a ``LogicalCircuit`` is seen in the following:
+
+
+>>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity')
+>>> surface = pc.qeccs.Surface4444(distance=3)
+>>> logic = pc.circuits.LogicalCircuit()
+>>> logic.append(surface.gate('ideal init |0>'))
+>>> logic.append(surface.gate('I'))
+>>> circ_runner = pc.circuit_runners.Standard(seed=1)
+>>> state = pc.simulators.SparseSim(surface.num_qudits)
+>>> meas, err = circ_runner.run(state, logic, error_gen=depolar, error_params={'p': 0.1})
+
+Note that the keyword argument
+
+
+>>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity')
+>>> surface = pc.qeccs.Surface4444(distance=3)
+>>> logic = pc.circuits.LogicalCircuit()
+>>> logic.append(surface.gate('ideal init |0>'))
+>>> logic.append(surface.gate('I'))
+>>> circ_runner = pc.circuit_runners.Standard(seed=1)
+>>> state = pc.simulators.SparseSim(surface.num_qudits)
+>>> meas, err = circ_runner.run(state, logic, error_gen=depolar, error_params={'p': 0.1})
+
+Note that the keyword argument
+
+
+>>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity')
+>>> surface = pc.qeccs.Surface4444(distance=3)
+>>> logic = pc.circuits.LogicalCircuit()
+>>> logic.append(surface.gate('ideal init |0>'))
+>>> logic.append(surface.gate('I'))
+>>> circ_runner = pc.circuit_runners.Standard(seed=1)
+>>> state = pc.simulators.SparseSim(surface.num_qudits)
+>>> meas, err = circ_runner.run(state, logic, error_gen=depolar, error_params={'p': 0.1})
+
+Note that the keyword argument
+
+
+>>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity')
+>>> surface = pc.qeccs.Surface4444(distance=3)
+>>> logic = pc.circuits.LogicalCircuit()
+>>> logic.append(surface.gate('ideal init |0>'))
+>>> logic.append(surface.gate('I'))
+>>> circ_runner = pc.circuit_runners.Standard(seed=1)
+>>> state = pc.simulators.SparseSim(surface.num_qudits)
+>>> meas, err = circ_runner.run(state, logic, error_gen=depolar, error_params={'p': 0.1})
+
+Note that the keyword argument
 
 
 >>> depolar = pc.error_gens.DepolarGen(model_level='code_capacity')

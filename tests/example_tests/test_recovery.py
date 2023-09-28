@@ -1,18 +1,14 @@
-#   Copyright 2018 National Technology & Engineering Solutions of Sandia,
-#   LLC (NTESS). Under the terms of Contract DE-NA0003525 with NTESS,
-#   the U.S. Government retains certain rights in this software.
+# Copyright 2018 National Technology & Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract
+# DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software.
 #
-#   Licensed under the Apache License, Version 2.0 (the "License");
-#   you may not use this file except in compliance with the License.
-#   You may obtain a copy of the License at
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+# the License.You may obtain a copy of the License at
 #
-#       http://www.apache.org/licenses/LICENSE-2.0
+#     https://www.apache.org/licenses/LICENSE-2.0
 #
-#   Unless required by applicable law or agreed to in writing, software
-#   distributed under the License is distributed on an "AS IS" BASIS,
-#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#   See the License for the specific language governing permissions and
-#   limitations under the License.
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
 
 import pecos as pc
 
@@ -54,7 +50,7 @@ def recovery_tester(qecc):
 
     # Error Generator
     # ---------------
-    depolar = pc.error_gens.DepolarGen(model_level='code_capacity')
+    depolar = pc.error_models.DepolarModel(model_level='code_capacity')
 
     # Circuit simulator
     # -----------------
@@ -63,13 +59,11 @@ def recovery_tester(qecc):
     # Run circuits
     # ------------
     state_zero = pc.simulators.pySparseSim(qecc.num_qudits)
-    # state_zero = sim.init(qecc.num_qudits)
     output_zero, _ = sim.run(state_zero, initzero)
 
     assert not output_zero
 
     state_plus = pc.simulators.pySparseSim(qecc.num_qudits)
-    # state_plus = sim.init(qecc.num_qudits)
     output_plus, _ = sim.run(state_plus, initplus)
 
     assert not output_plus

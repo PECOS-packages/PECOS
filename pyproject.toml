@@ -1,0 +1,68 @@
+# Copyright 2023 The PECOS Developers
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+# the License.You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
+
+[build-system]
+requires = ["setuptools>=62.6", "setuptools-scm[toml]"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quantum-pecos"
+version = "0.5.dev1"
+authors = [
+    {name = "The PECOS Developers"},
+]
+maintainers =[
+    {name = "Ciaran Ryan-Anderson", email = "ciaran@pecos.io"},
+]
+description="Performance Estimator of Codes On Surfaces (PECOS) is a package designed to facilitate the evaluation, study, and design of quantum error correction protocols as well as provde advanced hybrid compute execution models."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE"}
+dependencies = [
+    "numpy>=1.15.0",
+    "scipy>=1.1.0",
+    "networkx>=2.1.0,<3",
+    "matplotlib>=2.2.0",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[project.optional-dependencies]
+simulators = [
+    "cython",
+    "pybind11>=2.2.3,<3.0",
+    "projectq>=0.5.0,<0.9.0",
+]
+wasmer = [
+    "wasmer~=1.1.0",
+    "wasmer_compiler_cranelift~=1.1.0",
+]
+visualization = [
+    "plotly~=5.9.0",
+]
+tests=[
+    "pytest>=5.0.0"
+]
+all = [
+    "quantum-pecos[simulators]",
+    "quantum-pecos[wasmer]",
+    "quantum-pecos[visualization]",
+    "quantum-pecos[tests]",
+]

@@ -9,14 +9,12 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from ...reps.pypmir.op_types import QOp
 import numpy as np
 
+from pecos.reps.pypmir.op_types import QOp
 
-def noise_sq_depolarizing(op: QOp,
-                          p: float,
-                          noise_dict: dict):
 
+def noise_sq_depolarizing(op: QOp, p: float, noise_dict: dict):
     rand_nums = np.random.random(len(op.args)) <= p
 
     noise = {}
@@ -36,10 +34,8 @@ def noise_sq_depolarizing(op: QOp,
         buffered_ops = []
 
         if noise:
-
             for sym, args in noise.items():
-                buffered_ops.append(op)
-                buffered_ops.append(QOp(name=sym, args=args, metadata={}))
+                buffered_ops.extend((op, QOp(name=sym, args=args, metadata={})))
 
         else:
             buffered_ops.append(op)

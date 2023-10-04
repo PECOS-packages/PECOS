@@ -9,6 +9,6 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from . import block_types as block
-from . import data_types as data
-from . import op_types as opt
+from pecos.reps.pypmir import block_types as block
+from pecos.reps.pypmir import data_types as data
+from pecos.reps.pypmir import op_types as opt

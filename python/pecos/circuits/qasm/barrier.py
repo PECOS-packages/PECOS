@@ -9,12 +9,13 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-class Barrier:
-    """Represents a barrier for operations"""
 
-    def __init__(self, *qargs):
+class Barrier:
+    """Represents a barrier for operations."""
+
+    def __init__(self, *qargs) -> None:
         self.qargs = qargs
 
-    def __str__(self):
-        qregs = ', '.join([str(a) for a in self.qargs])
-        return f'barrier {qregs}'
+    def __str__(self) -> str:
+        qregs = ", ".join([str(a) for a in self.qargs])
+        return f"barrier {qregs}"

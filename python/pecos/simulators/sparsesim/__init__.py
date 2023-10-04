@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright 2018 The PECOS Developers
 # Copyright 2018 National Technology & Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract
 # DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software.
@@ -13,11 +11,10 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""
-SparseStabSim
-=============
+"""SparseStabSim
+=============.
 
-This is a stabilizer simulation that takes advantage of the structure of LDPC codes; more precisely, it utilizes the 
+This is a stabilizer simulation that takes advantage of the structure of LDPC codes; more precisely, it utilizes the
 row and column-wise sparseness of stabilizer tableau.
 
 .. module:: __init__
@@ -35,12 +32,12 @@ Date        Author  Comment
 ----------  ------  ----------------------------------------------------------------------------------------------------
 12/28/2014  CRA     File created.
 
-05/23/2017  CRA     The stabilizer simulation was separated from the entire QECC tool chain to allow others to more 
+05/23/2017  CRA     The stabilizer simulation was separated from the entire QECC tool chain to allow others to more
                     easily utilize the simulator on its own. The __init__ file has been reduced and modified for this
                     purpose.
 """
 
-from . import bindings
+from pecos.simulators.sparsesim import bindings
 
 # Class that represents the stabilizer state
-from .state import SparseSim
+from pecos.simulators.sparsesim.state import SparseSim

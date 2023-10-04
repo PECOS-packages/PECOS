@@ -9,24 +9,27 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import Sequence
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
-from pecos import QuantumCircuit
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pecos import QuantumCircuit
 
 
-def noise_init_bitflip(locations: Sequence[int],
-                       after: QuantumCircuit,
-                       flip: str,
-                       p: float) -> None:
+def noise_init_bitflip(locations: Sequence[int], after: QuantumCircuit, flip: str, p: float) -> None:
     """The noise model for qubit (re)initialization.
 
-
     Args:
+    ----
         locations: Set of qubits the ideal gates act on.
         after: QuantumCircuit collecting the noise that occurs after the ideal gates.
         flip: The symbol for what Pauli operator should be applied if an initialization fault occurs.
     """
-
     rand_nums = np.random.random(len(locations)) <= p
 
     for r, loc in zip(rand_nums, locations):

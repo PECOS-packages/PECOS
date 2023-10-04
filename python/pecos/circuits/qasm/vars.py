@@ -10,11 +10,10 @@
 # specific language governing permissions and limitations under the License.
 
 
-from . import expr
+from pecos.circuits.qasm import expr
 
 
 class Var:
-
     def __eq__(self, other):
         return expr.Equiv(self, other)
 
@@ -38,49 +37,46 @@ class Var:
 
 
 class Reg(Var):
-
-    def __init__(self, qasm, sym: str, size: int, var_type: str):
+    def __init__(self, qasm, sym: str, size: int, var_type: str) -> None:
         self.qasm = qasm
         self.sym = sym
         self.size = size
         self.var_type = var_type
 
-    def __str__(self):
-        return f'{self.sym}'
+    def __str__(self) -> str:
+        return f"{self.sym}"
 
     def reg_str(self):
-        return f'{self.var_type} {self.sym}[{self.size}];'
+        return f"{self.var_type} {self.sym}[{self.size}];"
 
     def __getitem__(self, idx):
         if idx > self.size - 1:
-            raise IndexError('list index out of range')
+            msg = "list index out of range"
+            raise IndexError(msg)
 
         return SubBit(self, idx)
 
 
 class SubBit(Var):
-
-    def __init__(self, var, idx: int):
+    def __init__(self, var, idx: int) -> None:
         self.var = var
         self.idx = idx
 
-    def __str__(self):
-        return f'{self.var.sym}[{self.idx}]'
+    def __str__(self) -> str:
+        return f"{self.var.sym}[{self.idx}]"
 
 
 class CReg(Reg):
-
-    def __init__(self, qasm, sym: str, size: int, declare=True):
-        super().__init__(qasm, sym, size, var_type='creg')
+    def __init__(self, qasm, sym: str, size: int, declare=True) -> None:
+        super().__init__(qasm, sym, size, var_type="creg")
 
         if declare:
             self.qasm.cregs.append(self)
 
 
 class QReg(Reg):
-
-    def __init__(self, qasm, sym: str, size: int, declare=True):
-        super().__init__(qasm, sym, size, var_type='qreg')
+    def __init__(self, qasm, sym: str, size: int, declare=True) -> None:
+        super().__init__(qasm, sym, size, var_type="qreg")
 
         if declare:
             self.qasm.qregs.append(self)

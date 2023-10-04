@@ -13,9 +13,8 @@ from pecos.error_models.parent_class_error_gen import ParentErrorModel
 
 
 class FakeErrorModel(ParentErrorModel):
-
-    def __init__(self, error_circuits):
-        super(FakeErrorModel, self).__init__()
+    def __init__(self, error_circuits) -> None:
+        super().__init__()
         self.error_circuits = error_circuits
         self.leaked_qubits = set()
 

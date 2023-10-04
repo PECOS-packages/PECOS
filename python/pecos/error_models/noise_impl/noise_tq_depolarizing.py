@@ -9,13 +9,12 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from ...reps.pypmir.op_types import QOp
 import numpy as np
 
+from pecos.reps.pypmir.op_types import QOp
 
-def noise_tq_depolarizing(op: QOp,
-                          p: float,
-                          noise_dict: dict):
+
+def noise_tq_depolarizing(op: QOp, p: float, noise_dict: dict):
     rand_nums = np.random.random(len(op.args)) <= p
 
     if np.any(rand_nums):
@@ -37,7 +36,8 @@ def noise_tq_depolarizing(op: QOp,
 
         if noise:
             if "L" in noise:
-                raise NotImplementedError("Not implemented yet!")
+                msg = "Not implemented yet!"
+                raise NotImplementedError(msg)
 
             buffered_ops = []
             for sym, args in noise.items():

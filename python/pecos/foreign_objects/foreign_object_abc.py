@@ -9,28 +9,28 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from __future__ import annotations
+
 import abc
-from typing import Any, List, Sequence
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 class ForeignObject(metaclass=abc.ABCMeta):
-
     @abc.abstractmethod
     def init(self) -> None:
         """Initialize object before a set of simulations."""
-        pass
 
     @abc.abstractmethod
     def new_instance(self) -> None:
         """Create new instance/internal state."""
-        pass
 
     @abc.abstractmethod
-    def get_funcs(self) -> List[str]:
+    def get_funcs(self) -> list[str]:
         """Get a list of function names available from the object."""
-        pass
 
     @abc.abstractmethod
-    def exec(self, func_name: str, args: Sequence) -> Any:
+    def exec(self, func_name: str, args: Sequence) -> tuple:
         """Execute a function given a list of arguments."""
-        pass

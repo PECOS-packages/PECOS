@@ -9,15 +9,20 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import Any, List, Optional, Sequence
+from __future__ import annotations
 
-from .foreign_object_abc import ForeignObject
+from typing import TYPE_CHECKING
+
+from pecos.foreign_objects.foreign_object_abc import ForeignObject
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 class NamedObjectPool(ForeignObject):
     """A collection of objections that can be access via this class."""
 
-    def __init__(self, **objects: ForeignObject):
+    def __init__(self, **objects: ForeignObject) -> None:
         self.objs = objects
         self.default = objects["default"] if "default" in objects else None
 
@@ -33,28 +38,28 @@ class NamedObjectPool(ForeignObject):
 
     def shot_reinit(self) -> None:
         """Call before each shot to, e.g., reset variables."""
-
         for obj in self.objs.values():
             if "shot_reinit" in obj.get_funcs():
                 obj.exec("shot_reinit", [])
 
-    def add(self, namespace: str, obj: ForeignObject):
+    def add(self, namespace: str, obj: ForeignObject) -> None:
         if namespace in self.objs:
-            raise Exception(f"Object named '{namespace}' already exists!")
+            msg = f"Object named '{namespace}' already exists!"
+            raise Exception(msg)
         else:
             self.objs[namespace] = obj
 
-    def get_funcs(self) -> List[str]:
+    def get_funcs(self) -> list[str]:
         """Get a list of function names available from the object."""
         return []
 
-    def exec(self, func_name: str, args: Sequence, namespace: Optional[str] = None) -> Any:
+    def exec(self, func_name: str, args: Sequence, namespace: str | None = None) -> tuple:
         """Execute a function given a list of arguments."""
-
         if namespace is None:
             obj = self.default
         elif namespace not in self.objs:
-            raise Exception(f"Object named '{namespace}' not recognized!")
+            msg = f"Object named '{namespace}' not recognized!"
+            raise Exception(msg)
         else:
             obj = self.objs[namespace]
 

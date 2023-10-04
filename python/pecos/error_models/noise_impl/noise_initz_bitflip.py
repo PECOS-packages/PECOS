@@ -9,20 +9,17 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from ...reps.pypmir.op_types import QOp
-import numpy as np
 
-from .noise_sq_bitflip import noise_sq_bitflip
+from pecos.error_models.noise_impl.noise_sq_bitflip import noise_sq_bitflip
+from pecos.reps.pypmir.op_types import QOp
 
 
-def noise_initz_bitflip(op: QOp,
-                        p: float):
+def noise_initz_bitflip(op: QOp, p: float):
     """The noise model for qubit (re)initialization.
 
-
     Args:
+    ----
         op: Ideal quantum operation.
         p: Probability of bitflip.
     """
-
     return noise_sq_bitflip(op, p)

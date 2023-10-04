@@ -22,27 +22,34 @@ authors = [
 maintainers =[
     {name = "Ciaran Ryan-Anderson", email = "ciaran@pecos.io"},
 ]
-description="Performance Estimator of Codes On Surfaces (PECOS) is a package designed to facilitate the evaluation, study, and design of quantum error correction protocols as well as provde advanced hybrid compute execution models."
+description = """PECOS is a library/framework for the evaluation, study, and design of QEC protocols. It also provides the ability to study and evaluate the performance advanced hybrid quantum/classical compute execution models for NISQ algorithms and beyond."""
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = { file = "LICENSE"}
+keywords = ["quantum", "error correction", "QEC", "quantum computing", "NISQ", "simulation", "PECOS"]
 dependencies = [
-    "numpy>=1.15.0",
-    "scipy>=1.1.0",
-    "networkx>=2.1.0,<3",
-    "matplotlib>=2.2.0",
+    "numpy>=1.15.0,<2.0",
+    "scipy>=1.1.0,<2.0",
+    "networkx>=2.1.0,<3.0",
+    "matplotlib>=2.2.0,<4.0",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Physics",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
+
+[project.urls]
+documentation = "https://quantum-pecos.readthedocs.io"
+repository = "https://github.com/PECOS-packages/PECOS"
 
 [project.optional-dependencies]
 simulators = [
@@ -61,8 +68,164 @@ tests=[
     "pytest>=5.0.0"
 ]
 all = [
-    "quantum-pecos[simulators]",
-    "quantum-pecos[wasmer]",
-    "quantum-pecos[visualization]",
-    "quantum-pecos[tests]",
+    "cython",
+    "pybind11>=2.2.3,<3.0",
+    "projectq>=0.5.0,<0.9.0",
+    "wasmer~=1.1.0",
+    "wasmer_compiler_cranelift~=1.1.0",
+    "plotly~=5.9.0",
+    "pytest>=5.0.0"
 ]
+
+[tool.black]
+line-length = 120
+extend-exclude = "python/pecos/simulators/cuquantum/*"
+
+[tool.ruff]
+# Define rules, plugins, and configurations for the ruff linter.
+# For more details on rules see: https://docs.astral.sh/ruff/rules
+
+line-length = 120
+fix = true
+extend-exclude = ["python/pecos/simulators/cuquantum/*"]
+select = [
+    "F", # Pyflakes
+    "E", # pycodestyle
+    "W", # pycodestyle
+    # "C90", # mccabe (complains about complexity too much)
+    "I", # isort (imports)
+    "N", # pep8-naming
+    # TODO: uncomment to improve documentation
+    # "D", # flake8-docstrings
+    # "D4",
+    "UP", # pyupgrade (upgrade syntax from old to new)
+    "YTT", # flake8-2020
+    # TODO: uncomment to improve type annotations
+    "ANN", # flake8-annotations
+    "ASYNC", # flake8-async
+    # "S", # flake8-bandit
+    "BLE", # flake8-blind-except
+    # "FBT", # flake8-boolean-trap
+    "FBT001", # flake8-boolean-trap
+    "B", # flake8-bugbear
+    # TODO: uncomment to deal with shadowing builtins
+    # "A", # flake8-builtins
+    "COM", # flake8-commas
+    "C4", # flake8-comprehensions
+    "DTZ",  # flake8-datetimez
+    "T10", # flake8-debugger
+    "EM",  # flake8-errmsg
+    "EXE", # flake8-executable
+    "FA", # flake8-future-annotations
+    "ISC", # flake9-implicit-str-concat
+    "ICN", # flake8-import-conventions
+    "G", # flake8-logging-format
+    "INP", # flake8-no-pep420 (namespace/no __init__.py)
+    "PIE", # flake8-pie
+    # TODO: uncomment to highlight print statements
+    # "T20", # flake8-print (any print statement)
+    "PYI", # flake8-pyi
+    "PT", # flake8-pytest-style
+    "Q", # flake8-quotes (perfer double quotes over single)
+    "RSE", # flake8-raise
+    # TODO: uncomment to clean up returns
+    # "RET", # flake8-return
+    # "SLF", # flake8-self
+    "SLOT", # flake8-slots
+    "SIM", # flake8-simplify
+    "TID", # flake8-tidy-imports
+    "TCH", # flake8-type-checking
+    "INT", # flake8-gettext
+    # TODO: uncomment to deal with unused arguments
+    # "ARG", # flake8-unusued-arguments
+    "PTH", # flake8-use-pathlib
+    "TD", # flake8-todos
+    # TODO: uncomment to alert about TODOs to fix
+    # "FIX", # flak8-fixme
+    # TODO: uncomment to erase commented code
+    # "ERA", # eradicate
+    "PL",  # Pylint
+    "TRY", # tryceratops
+    "FLY", # flynt
+    # TODO: uncomment to improve performance
+    # "PERF", # Perflint
+    "RUF", # Ruff-specific rules
+
+    # TODO: try out with --preview
+    # "CPY", # flake8-copyright
+    # "FURB", # refurb (A tool for refurbishing and modernizing Python codebases.)
+    # "LOG", # flake8-logging
+]
+
+ignore = [
+    "ANN101", # missing-type-self
+    "ANN102", # missing-type-cls (Missing type annotation for {name} in classmethod)
+    # pydocstyle: http://www.pydocstyle.org/en/stable/error_codes.html
+    # TODO: Remove errors below to further improve docstring linting
+    "D107", # Missing docstring in __init__
+    # "D212", # Multi-line docstring summary should start at the first line
+    # "D401", # First line of docstring should be in imperative mood: "{first_line}"
+    "D105", # Missing docstring in magic method
+    "D100", # Missing docstring in public module
+    "D104", # Missing docstring in public package
+    # flake8-simplify
+    "SIM102", # Use a single `if` statement instead of nested `if` statements
+    "SIM108", # Use ternary operator
+    # ruff
+    "RUF010", # f-string type-conversion
+    # flake8-todos
+    "TD002", # Missing author in TODO
+    "TD003", # Missing issue link on the line following this TODO
+    # tryceratops
+    "TRY003", # Avoid specifying long messages outside the exception class
+    # TODO: Remove to improve error handling...
+    "TRY002", # Custom exceptions
+    # flak8-pyi
+    "PYI009", # Empty body should contain ..., not pass
+    "PYI010", # purely ... function stub
+    "PYI013", # Non-empty class body must not contain ...
+    # pylint
+    "PLW2901", # Loop variable overwritten
+    "PLR0911", # Too many returns
+    "PLR0912", # Too many branches
+    "PLR0913", # Too many arguements
+    "PLR0915", # Too many statements
+    "PLR2004", # Magic value used in comparison, consider replacing with a constant variable
+    "PLR5501", # Combining else and if
+    # pep8-names
+    "N802",  # Function name should be lowercase
+]
+
+[tool.ruff.pycodestyle]
+# Define rules specifically for the pycodestyle plugin.
+max-doc-length = 120
+
+[tool.ruff.pydocstyle]
+convention = "google"
+
+[tool.ruff.isort]
+split-on-trailing-comma = true
+
+[tool.ruff.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.flake8-type-checking]
+strict = true
+
+[tool.ruff.per-file-ignores]
+"python/**/__init__.py" = ["F401"]
+"python/pecos/circuits/qasm/std_gates.py" = ["F401"]
+"python/pecos/reps/pypmir/types.py" = ["F401"]
+"python/pecos/engines/hybrid_engine_multiprocessing.py" = ["BLE001"]
+"tests/**/*.py" = ["INP001", "ANN", "FBT001"] # ["D100", "D103", "B018", "FBT001"]
+"docs/**/*.py" = ["INP001", "E402"]
+# TODO: comment to work on better typing
+"python/pecos/tools/*.py" = ["ANN"]
+"python/pecos/misc/**/*.py" = ["ANN"]
+"python/pecos/simulators/**/*.py" = ["ANN"]
+"python/pecos/qeccs/**/*.py" = ["ANN"]
+"python/pecos/decoders/**/*.py" = ["ANN"]
+"python/pecos/circuit_converters/**/*.py" = ["ANN"]
+"python/pecos/circuits/**/*.py" = ["ANN"]
+"python/pecos/error_models/**/*.py" = ["ANN"]
+"python/pecos/engines/**/*.py" = ["ANN"]

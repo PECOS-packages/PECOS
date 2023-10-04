@@ -15,53 +15,52 @@ Test all one-qubit gates.
 
 from pecos.simulators import pySparseSim
 
-states = [pySparseSim, ]
+states = [pySparseSim]
 
 
 def gate_test(gate_symbol, stab_dict):
     """
     Function that is called to test one-qubit gates.
-        
-    :param gate_symbol: 
-    :param stab_dict: 
-    :return: 
+
+    :param gate_symbol:
+    :param stab_dict:
+    :return:
     """
 
-    for State in states:
-        state = State(1)
+    for state in states:
+        state = state(1)
 
         # X stabilizer
-        state.run_gate('init |+>', {0, })
+        state.run_gate("init |+>", {0})
         init_destab = state.destabs.print_tableau(verbose=False)[0]
-        state.run_gate(gate_symbol, {0, })
+        state.run_gate(gate_symbol, {0})
         stab_rep = state.stabs.print_tableau(verbose=False)
-        assert stab_rep == [stab_dict['X']]
+        assert stab_rep == [stab_dict["X"]]
         # destab_test(state, init_destab, stab_dict)
 
         # Z stabilizer
-        state.run_gate('init |0>', {0, })
+        state.run_gate("init |0>", {0})
         init_destab = state.destabs.print_tableau(verbose=False)[0]
-        state.run_gate(gate_symbol, {0, })
+        state.run_gate(gate_symbol, {0})
         stab_rep = state.stabs.print_tableau(verbose=False)
-        assert stab_rep == [stab_dict['Z']]
+        assert stab_rep == [stab_dict["Z"]]
         destab_test(state, init_destab, stab_dict)
 
         # Y (iW) stabilizer
-        state.run_gate('init |+i>', {0, })
+        state.run_gate("init |+i>", {0})
         init_destab = state.destabs.print_tableau(verbose=False)[0]
-        state.run_gate(gate_symbol, {0, })
+        state.run_gate(gate_symbol, {0})
         stab_rep = state.stabs.print_tableau(verbose=False)
-        assert stab_rep == [stab_dict['iW']]
+        assert stab_rep == [stab_dict["iW"]]
         # destab_test(state, init_destab, stab_dict)
 
 
 def destab_test(state, init_destab, stab_dict):
-
     destab = state.destabs.print_tableau(verbose=False)[0]
 
     init_destab = init_destab.strip()
-    if init_destab == 'W':
-        init_destab = 'iW'
+    if init_destab == "W":
+        init_destab = "iW"
 
     assert destab[2:] == stab_dict[init_destab][2:]
 
@@ -72,12 +71,12 @@ def test_I():
     """
 
     stab_transform = {
-        'X': '  X',
-        'Z': '  Z',
-        'iW': ' iW'
+        "X": "  X",
+        "Z": "  Z",
+        "iW": " iW",
     }
 
-    gate_test('I', stab_transform)
+    gate_test("I", stab_transform)
 
 
 def test_X():
@@ -86,12 +85,12 @@ def test_X():
     """
 
     stab_transform = {
-        'X': '  X',
-        'Z': ' -Z',
-        'iW': '-iW'
+        "X": "  X",
+        "Z": " -Z",
+        "iW": "-iW",
     }
 
-    gate_test('X', stab_transform)
+    gate_test("X", stab_transform)
 
 
 def test_Y():
@@ -100,12 +99,12 @@ def test_Y():
     """
 
     stab_transform = {
-        'X': ' -X',
-        'Z': ' -Z',
-        'iW': ' iW'
+        "X": " -X",
+        "Z": " -Z",
+        "iW": " iW",
     }
 
-    gate_test('Y', stab_transform)
+    gate_test("Y", stab_transform)
 
 
 def test_Z():
@@ -114,12 +113,12 @@ def test_Z():
     """
 
     stab_transform = {
-        'X': ' -X',
-        'Z': '  Z',
-        'iW': '-iW'
+        "X": " -X",
+        "Z": "  Z",
+        "iW": "-iW",
     }
 
-    gate_test('Z', stab_transform)
+    gate_test("Z", stab_transform)
 
 
 def test_Q():
@@ -128,12 +127,12 @@ def test_Q():
     """
 
     stab_transform = {
-        'X': '  X',
-        'Z': '-iW',
-        'iW': '  Z'
+        "X": "  X",
+        "Z": "-iW",
+        "iW": "  Z",
     }
 
-    gate_test('Q', stab_transform)
+    gate_test("Q", stab_transform)
 
 
 def test_Qd():
@@ -142,12 +141,12 @@ def test_Qd():
     """
 
     stab_transform = {
-        'X': '  X',
-        'Z': ' iW',
-        'iW': ' -Z'
+        "X": "  X",
+        "Z": " iW",
+        "iW": " -Z",
     }
 
-    gate_test('Qd', stab_transform)
+    gate_test("Qd", stab_transform)
 
 
 def test_R():
@@ -156,12 +155,12 @@ def test_R():
     """
 
     stab_transform = {
-        'X': ' -Z',
-        'Z': '  X',
-        'iW': ' iW'
+        "X": " -Z",
+        "Z": "  X",
+        "iW": " iW",
     }
 
-    gate_test('R', stab_transform)
+    gate_test("R", stab_transform)
 
 
 def test_Rd():
@@ -170,12 +169,12 @@ def test_Rd():
     """
 
     stab_transform = {
-        'X': '  Z',
-        'Z': ' -X',
-        'iW': ' iW'
+        "X": "  Z",
+        "Z": " -X",
+        "iW": " iW",
     }
 
-    gate_test('Rd', stab_transform)
+    gate_test("Rd", stab_transform)
 
 
 def test_S():
@@ -184,12 +183,12 @@ def test_S():
     """
 
     stab_transform = {
-        'X': ' iW',
-        'Z': '  Z',
-        'iW': ' -X'
+        "X": " iW",
+        "Z": "  Z",
+        "iW": " -X",
     }
 
-    gate_test('S', stab_transform)
+    gate_test("S", stab_transform)
 
 
 def test_Sd():
@@ -198,12 +197,12 @@ def test_Sd():
     """
 
     stab_transform = {
-        'X': '-iW',
-        'Z': '  Z',
-        'iW': '  X'
+        "X": "-iW",
+        "Z": "  Z",
+        "iW": "  X",
     }
 
-    gate_test('Sd', stab_transform)
+    gate_test("Sd", stab_transform)
 
 
 def test_H():
@@ -212,12 +211,12 @@ def test_H():
     """
 
     stab_transform = {
-        'X': '  Z',
-        'Z': '  X',
-        'iW': '-iW'
+        "X": "  Z",
+        "Z": "  X",
+        "iW": "-iW",
     }
 
-    gate_test('H', stab_transform)
+    gate_test("H", stab_transform)
 
 
 def test_H2():
@@ -228,12 +227,12 @@ def test_H2():
     """
 
     stab_transform = {
-        'X': ' -Z',
-        'Z': ' -X',
-        'iW': '-iW'
+        "X": " -Z",
+        "Z": " -X",
+        "iW": "-iW",
     }
 
-    gate_test('H2', stab_transform)
+    gate_test("H2", stab_transform)
 
 
 def test_H3():
@@ -244,12 +243,12 @@ def test_H3():
     """
 
     stab_transform = {
-        'X': ' iW',
-        'Z': ' -Z',
-        'iW': '  X'
+        "X": " iW",
+        "Z": " -Z",
+        "iW": "  X",
     }
 
-    gate_test('H3', stab_transform)
+    gate_test("H3", stab_transform)
 
 
 def test_H4():
@@ -260,60 +259,60 @@ def test_H4():
     """
 
     stab_transform = {
-        'X': '-iW',
-        'Z': ' -Z',
-        'iW': ' -X'
+        "X": "-iW",
+        "Z": " -Z",
+        "iW": " -X",
     }
 
-    gate_test('H4', stab_transform)
+    gate_test("H4", stab_transform)
 
 
 def test_H5():
     """
     Test H5.
-    
-    :return: 
+
+    :return:
     """
 
     stab_transform = {
-        'X': ' -X',
-        'Z': ' iW',
-        'iW': '  Z'
+        "X": " -X",
+        "Z": " iW",
+        "iW": "  Z",
     }
 
-    gate_test('H5', stab_transform)
+    gate_test("H5", stab_transform)
 
 
 def test_H6():
     """
     Test H6.
 
-    :return: 
+    :return:
     """
 
     stab_transform = {
-        'X': ' -X',
-        'Z': '-iW',
-        'iW': ' -Z'
+        "X": " -X",
+        "Z": "-iW",
+        "iW": " -Z",
     }
 
-    gate_test('H6', stab_transform)
+    gate_test("H6", stab_transform)
 
 
 def test_F1():
     """
     Test F1.
 
-    :return: 
+    :return:
     """
 
     stab_transform = {
-        'X': ' iW',
-        'Z': '  X',
-        'iW': '  Z'
+        "X": " iW",
+        "Z": "  X",
+        "iW": "  Z",
     }
 
-    gate_test('F1', stab_transform)
+    gate_test("F1", stab_transform)
 
 
 def test_F1d():
@@ -324,28 +323,28 @@ def test_F1d():
     """
 
     stab_transform = {
-        'X': '  Z',
-        'Z': ' iW',
-        'iW': '  X'
+        "X": "  Z",
+        "Z": " iW",
+        "iW": "  X",
     }
 
-    gate_test('F1d', stab_transform)
+    gate_test("F1d", stab_transform)
 
 
 def test_F2():
     """
     Test F2.
 
-    :return: 
+    :return:
     """
 
     stab_transform = {
-        'X': ' -Z',
-        'Z': ' iW',
-        'iW': ' -X'
+        "X": " -Z",
+        "Z": " iW",
+        "iW": " -X",
     }
 
-    gate_test('F2', stab_transform)
+    gate_test("F2", stab_transform)
 
 
 def test_F2d():
@@ -356,28 +355,28 @@ def test_F2d():
     """
 
     stab_transform = {
-        'X': '-iW',
-        'Z': ' -X',
-        'iW': '  Z'
+        "X": "-iW",
+        "Z": " -X",
+        "iW": "  Z",
     }
 
-    gate_test('F2d', stab_transform)
+    gate_test("F2d", stab_transform)
 
 
 def test_F3():
     """
     Test F3.
 
-    :return: 
+    :return:
     """
 
     stab_transform = {
-        'X': ' iW',
-        'Z': ' -X',
-        'iW': ' -Z'
+        "X": " iW",
+        "Z": " -X",
+        "iW": " -Z",
     }
 
-    gate_test('F3', stab_transform)
+    gate_test("F3", stab_transform)
 
 
 def test_F3d():
@@ -388,41 +387,41 @@ def test_F3d():
     """
 
     stab_transform = {
-        'X': ' -Z',
-        'Z': '-iW',
-        'iW': '  X'
+        "X": " -Z",
+        "Z": "-iW",
+        "iW": "  X",
     }
 
-    gate_test('F3d', stab_transform)
+    gate_test("F3d", stab_transform)
 
 
 def test_F4():
     """
     Test F4.
 
-    :return: 
+    :return:
     """
 
     stab_transform = {
-        'X': '  Z',
-        'Z': '-iW',
-        'iW': ' -X'
+        "X": "  Z",
+        "Z": "-iW",
+        "iW": " -X",
     }
 
-    gate_test('F4', stab_transform)
+    gate_test("F4", stab_transform)
 
 
 def test_F4d():
     """
     Test F4d.
 
-    :return: 
+    :return:
     """
 
     stab_transform = {
-        'X': '-iW',
-        'Z': '  X',
-        'iW': ' -Z'
+        "X": "-iW",
+        "Z": "  X",
+        "iW": " -Z",
     }
 
-    gate_test('F4d', stab_transform)
+    gate_test("F4d", stab_transform)

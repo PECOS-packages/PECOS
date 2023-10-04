@@ -11,48 +11,53 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""
-Functions:
+"""Functions:
 
 find_logical_signs
 logical_flip
 """
-from typing import Optional
-from ...circuits import QuantumCircuit
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pecos.circuits import QuantumCircuit
 
 
-def find_logical_signs(state,
-                       logical_circuit: QuantumCircuit,
-                       delogical_circuit: Optional[QuantumCircuit] = None
-                       ) -> int:
-    """
-    Find the sign of the logical operator.
+def find_logical_signs(
+    state,
+    logical_circuit: QuantumCircuit,
+    delogical_circuit: QuantumCircuit | None = None,
+) -> int:
+    """Find the sign of the logical operator.
 
     Args:
+    ----
         state:
         logical_circuit:
 
     Returns:
+    -------
 
     """
-
     if len(logical_circuit) != 1:
-        raise Exception('Logical operators are expected to only have one tick.')
+        msg = "Logical operators are expected to only have one tick."
+        raise Exception(msg)
 
     stabs = state.stabs
     destabs = state.destabs
 
-    logical_xs = set([])
-    logical_zs = set([])
-    logical_ys = set([])
+    logical_xs = set()
+    logical_zs = set()
+    logical_ys = set()
 
     for symbol, gate_locations, _ in logical_circuit.items():
-
-        if symbol == 'X':
+        if symbol == "X":
             logical_xs.update(gate_locations)
-        elif symbol == 'Z':
+        elif symbol == "Z":
             logical_zs.update(gate_locations)
-        elif symbol == 'Y':
+        elif symbol == "Y":
             logical_xs.update(gate_locations)
             logical_zs.update(gate_locations)
             logical_ys.update(gate_locations)
@@ -60,20 +65,19 @@ def find_logical_signs(state,
             raise Exception('Can not currently handle logical operator with operator "%s"!' % symbol)
 
     if delogical_circuit:  # Check the relationship between logical operator and delogical operator.
-
         if len(delogical_circuit) != 1:
-            raise Exception('Delogical operators are expected to only have one tick.')
+            msg = "Delogical operators are expected to only have one tick."
+            raise Exception(msg)
 
-        delogical_xs = set([])
-        delogical_zs = set([])
-        
+        delogical_xs = set()
+        delogical_zs = set()
+
         for symbol, gate_locations, _ in delogical_circuit.items():
-
-            if symbol == 'X':
+            if symbol == "X":
                 delogical_xs.update(gate_locations)
-            elif symbol == 'Z':
+            elif symbol == "Z":
                 delogical_zs.update(gate_locations)
-            elif symbol == 'Y':
+            elif symbol == "Y":
                 delogical_xs.update(gate_locations)
                 delogical_zs.update(gate_locations)
             else:
@@ -85,9 +89,10 @@ def find_logical_signs(state,
         anticom_z = len(logical_zs & delogical_xs) % 2  # Number of common elements modulo 2
 
         if not ((anticom_x + anticom_z) % 2):
-            print('logical Xs: %s logical Zs: %s' % (logical_xs, logical_zs))
-            print('delogical Xs: %s delogical Zs: %s' % (delogical_xs, delogical_zs))
-            raise Exception("Logical and delogical operators supplied do not anti-commute!")
+            print(f"logical Xs: {logical_xs} logical Zs: {logical_zs}")
+            print(f"delogical Xs: {delogical_xs} delogical Zs: {delogical_zs}")
+            msg = "Logical and delogical operators supplied do not anti-commute!"
+            raise Exception(msg)
 
     # We want the supplied logical operator to be in the stabilizer group and
     #  the supplied delogical to not be in the stabilizers (we want it to end up being the logical op's destabilizer)
@@ -125,11 +130,10 @@ def find_logical_signs(state,
 
     if len(test_x) != 0 or len(test_z) != 0:
         # for stab in build_stabs:
-        #    print('stab ... ', stab)
 
-        print(('Logical op: xs - %s and zs - %s' % (logical_xs, logical_zs)))
-        raise Exception('Failure due to not finding logical op! x... %s z... %s' %
-                        (str(test_x ^ logical_xs), str(test_z ^ logical_zs)))
+        print(f"Logical op: xs - {logical_xs} and zs - {logical_zs}")
+        msg = f"Failure due to not finding logical op! x... {str(test_x ^ logical_xs)} z... {str(test_z ^ logical_zs)}"
+        raise Exception(msg)
 
     # Get the sign of the logical operator
     # --------------------------
@@ -148,7 +152,7 @@ def find_logical_signs(state,
 
     if num_is % 4:  # Can only be 0 or 2
         num_minuses += 1
-        
+
     meas_outcome = num_minuses % 2
     """
 
@@ -158,7 +162,7 @@ def find_logical_signs(state,
     num_is = len(build_stabs & stabs.signs_i) - num_logical_is
 
     # Sign correction due ZX -> -XZ
-    cumulative_x = set([])
+    cumulative_x = set()
     for row in build_stabs:
         num_minuses += len(stabs.row_z[row] & cumulative_x)
         cumulative_x ^= stabs.row_x[row]
@@ -167,10 +171,10 @@ def find_logical_signs(state,
         num_minuses += 1
 
     if num_is % 2:
-        raise Exception('Final sign should not have an imaginary sign!')
+        msg = "Final sign should not have an imaginary sign!"
+        raise Exception(msg)
 
     logical_sign = num_minuses % 2
-
 
     """
     # First, get the minus signs in front of the stabilizers

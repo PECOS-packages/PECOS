@@ -9,37 +9,39 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import List, Optional
+from __future__ import annotations
 
-from .op_types import COp
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pecos.reps.pypmir.op_types import COp
 
 
 class Block:
-    """General block type"""
+    """General block type."""
 
-    def __init__(self, metadata: Optional[dict] = None):
+    def __init__(self, metadata: dict | None = None) -> None:
         self.metadata = metadata
 
 
 class SeqBlock(Block):
-    """A generic sequence block"""
+    """A generic sequence block."""
 
-    def __init__(self,
-                 ops: list,
-                 metadata: Optional[dict] = None) -> None:
-
+    def __init__(self, ops: list, metadata: dict | None = None) -> None:
         super().__init__(metadata=metadata)
         self.ops = ops
 
 
 class IfBlock(Block):
-    """If/else block"""
+    """If/else block."""
 
-    def __init__(self,
-                 condition: "COp",
-                 true_branch: List["COp"],
-                 false_branch: Optional[list] = None,
-                 metadata: Optional[dict] = None):
+    def __init__(
+        self,
+        condition: COp,
+        true_branch: list[COp],
+        false_branch: list | None = None,
+        metadata: dict | None = None,
+    ) -> None:
         super().__init__(metadata=metadata)
         self.condition = condition
         self.true_branch = true_branch

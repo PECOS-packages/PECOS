@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright 2018 The PECOS Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
@@ -13,19 +11,17 @@
 
 from typing import Any
 
-def init(state,
-         qubit: int,
-         **params: Any) -> None:
-    """
 
-    Args:
+def init(state, qubit: int, **params: Any) -> None:
+    """Args:
+    ----
         state:
         qubit:
 
     Returns:
+    -------
 
     """
-
-    state.faults['X'].discard(qubit)
-    state.faults['Y'].discard(qubit)
-    state.faults['Z'].discard(qubit)
+    state.faults["X"].discard(qubit)
+    state.faults["Y"].discard(qubit)
+    state.faults["Z"].discard(qubit)

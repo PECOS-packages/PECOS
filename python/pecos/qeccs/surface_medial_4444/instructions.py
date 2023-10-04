@@ -11,39 +11,37 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from ..instruction_parent_class import LogicalInstruction
-from ...circuits.quantum_circuit import QuantumCircuit
-from ..helper_functions import pos2qudit
+from pecos.circuits.quantum_circuit import QuantumCircuit
+from pecos.qeccs.helper_functions import pos2qudit
+from pecos.qeccs.instruction_parent_class import LogicalInstruction
 
 
 class InstrSynExtraction(LogicalInstruction):
-    """
-    Instruction for a round of syndrome extraction.
+    """Instruction for a round of syndrome extraction.
 
     Parent class sets self.qecc.
     """
 
-    def __init__(self, qecc, symbol, **params):
-
+    def __init__(self, qecc, symbol, **params) -> None:
         super().__init__(qecc, symbol, **params)
 
-        qecc_init_ticks = qecc.qecc_params.get('init_ticks', 0)
-        qecc_meas_ticks = qecc.qecc_params.get('meas_ticks', 7)
-        qecc_x_ticks = qecc.qecc_params.get('x_ticks', [2, 4, 3, 5])
-        qecc_z_ticks = qecc.qecc_params.get('z_ticks', [2, 4, 3, 5])
+        qecc_init_ticks = qecc.qecc_params.get("init_ticks", 0)
+        qecc_meas_ticks = qecc.qecc_params.get("meas_ticks", 7)
+        qecc_x_ticks = qecc.qecc_params.get("x_ticks", [2, 4, 3, 5])
+        qecc_z_ticks = qecc.qecc_params.get("z_ticks", [2, 4, 3, 5])
 
-        self.init_ticks = params.get('init_ticks', qecc_init_ticks)
-        self.meas_ticks = params.get('meas_ticks', qecc_meas_ticks)
-        self.x_ticks = params.get('x_ticks', qecc_x_ticks)
-        self.z_ticks = params.get('z_ticks', qecc_z_ticks)
+        self.init_ticks = params.get("init_ticks", qecc_init_ticks)
+        self.meas_ticks = params.get("meas_ticks", qecc_meas_ticks)
+        self.x_ticks = params.get("x_ticks", qecc_x_ticks)
+        self.z_ticks = params.get("z_ticks", qecc_z_ticks)
 
         self.abstract_circuit = QuantumCircuit(**params)
 
         self.data_qudit_set = self.qecc.data_qudit_set
         self.ancilla_qudit_set = self.qecc.ancilla_qudit_set
 
-        self.ancilla_x_check = set([])
-        self.ancilla_z_check = set([])
+        self.ancilla_x_check = set()
+        self.ancilla_z_check = set()
 
         # Go through the ancillas and grab the data qubits that are on either side of it.
         layout = qecc.layout  # qudit_id => (x, y)
@@ -52,7 +50,6 @@ class InstrSynExtraction(LogicalInstruction):
 
         for q, (x, y) in layout.items():
             if x % 2 == 0 and y % 2 == 0:
-
                 # Ancilla
                 if x % 4 == y % 4:
                     # X check
@@ -64,19 +61,19 @@ class InstrSynExtraction(LogicalInstruction):
 
         # Determine the logical operations
         # --------------------------------
-        z_qudits = set(qecc.sides['top'])
-        x_qudits = set(qecc.sides['left'])
+        z_qudits = set(qecc.sides["top"])
+        x_qudits = set(qecc.sides["left"])
 
         logical_ops = [  # Each element in the list corresponds to a logical qubit
             # The keys label the type of logical operator
-            {'X': QuantumCircuit([{'X': x_qudits}]), 'Z': QuantumCircuit([{'Z': z_qudits}])},
+            {"X": QuantumCircuit([{"X": x_qudits}]), "Z": QuantumCircuit([{"Z": z_qudits}])},
         ]
 
         self.initial_logical_ops = logical_ops
 
         logical_ops = [  # Each element in the list corresponds to a logical qubit
             # The keys label the type of logical operator
-            {'X': QuantumCircuit([{'X': x_qudits}]), 'Z': QuantumCircuit([{'Z': z_qudits}])},
+            {"X": QuantumCircuit([{"X": x_qudits}]), "Z": QuantumCircuit([{"Z": z_qudits}])},
         ]
 
         self.final_logical_ops = logical_ops
@@ -90,10 +87,7 @@ class InstrSynExtraction(LogicalInstruction):
         self._stabs_destabs = {}
 
     def _create_x_check(self, ancilla, x, y):
-        """
-        Creates X-checks for circuit_extended.
-        """
-
+        """Creates X-checks for circuit_extended."""
         # register the x syndrome ancillas
         self.ancilla_x_check.add(ancilla)
 
@@ -101,36 +95,43 @@ class InstrSynExtraction(LogicalInstruction):
         data_pos = self._data_pos_x_check(x, y)
 
         # Get the actual, available data-qubits and their ticks that correspond to the possible data qubit positions
-        datas, my_data_ticks = self._find_data(position_to_qudit=self.pos2qudit, positions=data_pos,
-                                               ticks=self.x_ticks)
+        datas, my_data_ticks = self._find_data(position_to_qudit=self.pos2qudit, positions=data_pos, ticks=self.x_ticks)
 
         # Now add the check to the extended circuit
         locations = set(datas)
         locations.add(ancilla)
-        self.abstract_circuit.append('X check', locations=locations, datas=datas, ancillas=ancilla,
-                                     ancilla_ticks=self.init_ticks, data_ticks=my_data_ticks,
-                                     meas_ticks=self.meas_ticks)
+        self.abstract_circuit.append(
+            "X check",
+            locations=locations,
+            datas=datas,
+            ancillas=ancilla,
+            ancilla_ticks=self.init_ticks,
+            data_ticks=my_data_ticks,
+            meas_ticks=self.meas_ticks,
+        )
 
     def _create_z_check(self, ancilla, x, y):
-        """
-        Creates Z-checks for circuit_extended.
-        """
-
+        """Creates Z-checks for circuit_extended."""
         # register the z syndrome ancillas
         self.ancilla_z_check.add(ancilla)
 
         # get where the position of where the data qubits should be relative to the ancilla
         data_pos = self._data_pos_z_check(x, y)
         # Get the actual, available data-qubits and their ticks that correspond to the possible data qubit positions
-        datas, my_data_ticks = self._find_data(position_to_qudit=self.pos2qudit, positions=data_pos,
-                                               ticks=self.z_ticks)
+        datas, my_data_ticks = self._find_data(position_to_qudit=self.pos2qudit, positions=data_pos, ticks=self.z_ticks)
 
         # Now add the check to the extended circuit
         locations = set(datas)
         locations.add(ancilla)
-        self.abstract_circuit.append('Z check', locations=locations, datas=datas, ancillas=ancilla,
-                                     ancilla_ticks=self.init_ticks, data_ticks=my_data_ticks,
-                                     meas_ticks=self.meas_ticks)
+        self.abstract_circuit.append(
+            "Z check",
+            locations=locations,
+            datas=datas,
+            ancillas=ancilla,
+            ancilla_ticks=self.init_ticks,
+            data_ticks=my_data_ticks,
+            meas_ticks=self.meas_ticks,
+        )
 
     @staticmethod
     def _find_data(position_to_qudit, positions, ticks):
@@ -138,12 +139,14 @@ class InstrSynExtraction(LogicalInstruction):
         From the positions given for possible data qudits, add the qudits and their corresponding ticks for each qudit
         that does exist.
 
-        :param position_to_qudit:
-        :param positions:
-        :param ticks:
-        :return:
-        """
+        Args:
+            position_to_qudit:
+            positions:
+            ticks:
 
+        Returns:
+
+        """
         data_list = []
         tick_list = []
 
@@ -157,8 +160,7 @@ class InstrSynExtraction(LogicalInstruction):
 
     @staticmethod
     def _data_pos_z_check(x, y):
-        """
-        Determines the position of data qudits in a Z check in order of ticks.
+        """Determines the position of data qudits in a Z check in order of ticks.
 
         Check direction:   1  |  2
                               |
@@ -168,20 +170,16 @@ class InstrSynExtraction(LogicalInstruction):
 
 
         """
-
-        data_pos = [
+        return [
             (x - 1, y + 1),
             (x + 1, y + 1),
             (x - 1, y - 1),
-            (x + 1, y - 1)
+            (x + 1, y - 1),
         ]
-
-        return data_pos
 
     @staticmethod
     def _data_pos_x_check(x, y):
-        """
-        Determines the position of data qudits in a Z check in order of ticks.
+        """Determines the position of data qudits in a Z check in order of ticks.
 
         Check direction:   1  |  3
                               |
@@ -189,26 +187,22 @@ class InstrSynExtraction(LogicalInstruction):
                               |
                            2  |  4
         """
-
-        data_pos = [
+        return [
             (x - 1, y + 1),
             (x - 1, y - 1),
             (x + 1, y + 1),
-            (x + 1, y - 1)
+            (x + 1, y - 1),
         ]
-
-        return data_pos
 
     @property
     def stabs_destabs(self):
-
         if self._stabs_destabs:
             return self._stabs_destabs
 
         if self.qecc.height != self.qecc.width:
-            raise Exception('This currently only works for square code blocks.')
+            msg = "This currently only works for square code blocks."
+            raise Exception(msg)
 
-        # instr = self.instruction('instr_syn_extract')
         instr = self
 
         stabs_row_x = []
@@ -218,37 +212,36 @@ class InstrSynExtraction(LogicalInstruction):
 
         for a in self.ancilla_qudit_set:
             stabs_row_z.append({a})
-            stabs_row_x.append(set([]))
+            stabs_row_x.append(set())
             destabs_row_x.append({a})
-            destabs_row_z.append(set([]))
+            destabs_row_z.append(set())
 
         xdestabs = self.generate_xdestabs()
         zdestabs = self.generate_zdestabs()
 
         # Creating stabilizers
         for check_type, _, params in instr.abstract_circuit.items():
-
-            if check_type == 'X check':
+            if check_type == "X check":
                 # Ancillas initialized in |0>
                 # Pauli X-type stabilizers
-                stabs_row_x.append(set(params['datas']))
-                stabs_row_z.append(set([]))
-                destabs_row_x.append(set([]))
-                destabs_row_z.append(zdestabs[params['ancillas']])
+                stabs_row_x.append(set(params["datas"]))
+                stabs_row_z.append(set())
+                destabs_row_x.append(set())
+                destabs_row_z.append(zdestabs[params["ancillas"]])
 
             else:
                 # Ancillas initialized in |0>
                 # Pauli Z-type stabilizers
-                stabs_row_z.append(set(params['datas']))
-                stabs_row_x.append(set([]))
-                destabs_row_z.append(set([]))
-                destabs_row_x.append(xdestabs[params['ancillas']])
+                stabs_row_z.append(set(params["datas"]))
+                stabs_row_x.append(set())
+                destabs_row_z.append(set())
+                destabs_row_x.append(xdestabs[params["ancillas"]])
 
         output_dict = {
-            'stabs_x': stabs_row_x,
-            'stabs_z': stabs_row_z,
-            'destabs_x': destabs_row_x,
-            'destabs_z': destabs_row_z,
+            "stabs_x": stabs_row_x,
+            "stabs_z": stabs_row_z,
+            "destabs_x": destabs_row_x,
+            "destabs_z": destabs_row_z,
         }
 
         self._stabs_destabs = output_dict
@@ -256,24 +249,18 @@ class InstrSynExtraction(LogicalInstruction):
         return output_dict
 
     def generate_xdestabs(self):
-
         distance = self.qecc.distance
 
         # x-type destabilizers
 
         xdestabs_temp = []
         # going alone the bottom
-        if distance % 2 == 0:
-            b = 1
-        else:
-            b = 2
+        b = 1 if distance % 2 == 0 else 2
 
         for x in range(b, distance, 2):
-
             temp = []
             y = distance - 1
-            for j in range(0, distance):
-
+            for j in range(distance):
                 new_point = (x + j, y - j)
 
                 if new_point[1] <= 0:
@@ -292,7 +279,6 @@ class InstrSynExtraction(LogicalInstruction):
             for i in range(len(ds)):
                 temp = []
                 for j in range(i + 1):
-                    # print('-', i, j)
                     temp.append(ds[j])
                 xdestabs.append(temp)
         # -----------------
@@ -304,7 +290,7 @@ class InstrSynExtraction(LogicalInstruction):
             ladder.append((x, y))
 
         for i in range(len(ladder)):
-            xdestabs.append(ladder[:i + 1])
+            xdestabs.append(ladder[: i + 1])
 
         ladder_points = []
         for i in range((distance + 1) % 2, distance - 1, 2):
@@ -312,11 +298,10 @@ class InstrSynExtraction(LogicalInstruction):
 
         ladder_temp = []
         for i in ladder_points:
-            temp = list(ladder[:i + 1])
+            temp = list(ladder[: i + 1])
             x, y = ladder[i]
 
             for j in range(1, distance):
-
                 if j != 1:
                     temp = list(ladder_temp[-1])
                 new_point = (x + j, y - j)
@@ -336,7 +321,7 @@ class InstrSynExtraction(LogicalInstruction):
         relayout = {v: k for k, v in self.qecc.layout.items()}
 
         for d in xdestabs:
-            row = set([])
+            row = set()
 
             # Find the associated ancilla location
             x, y = d[-1]
@@ -352,24 +337,18 @@ class InstrSynExtraction(LogicalInstruction):
         return set_destabs
 
     def generate_zdestabs(self):
-
         distance = self.qecc.distance
 
         # x-type destabilizers
 
         zdestabs_temp = []
         # going alone the bottom
-        if distance % 2 == 0:
-            b = 2
-        else:
-            b = 1
+        b = 2 if distance % 2 == 0 else 1
 
         for y in range(b, distance, 2):
-
             temp = []
             x = distance - 1
-            for j in range(0, distance):
-
+            for j in range(distance):
                 new_point = (x - j, y + j)
 
                 if new_point[0] <= 0:
@@ -380,7 +359,6 @@ class InstrSynExtraction(LogicalInstruction):
 
                 temp.append(new_point)
 
-                # print(x, y)
             zdestabs_temp.append(temp)
 
         # ----------------
@@ -389,7 +367,6 @@ class InstrSynExtraction(LogicalInstruction):
             for i in range(len(ds)):
                 temp = []
                 for j in range(i + 1):
-                    # print('-', i, j)
                     temp.append(ds[j])
                 zdestabs.append(temp)
         # -----------------
@@ -401,7 +378,7 @@ class InstrSynExtraction(LogicalInstruction):
             ladder.append((x, y))
 
         for i in range(len(ladder)):
-            zdestabs.append(ladder[:i + 1])
+            zdestabs.append(ladder[: i + 1])
 
         ladder_points = []
         for i in range(distance % 2, distance - 1, 2):
@@ -409,11 +386,10 @@ class InstrSynExtraction(LogicalInstruction):
 
         ladder_temp = []
         for i in ladder_points:
-            temp = list(ladder[:i + 1])
+            temp = list(ladder[: i + 1])
             x, y = ladder[i]
 
             for j in range(1, distance):
-
                 if j != 1:
                     temp = list(ladder_temp[-1])
                 new_point = (x - j, y + j)
@@ -433,7 +409,7 @@ class InstrSynExtraction(LogicalInstruction):
         relayout = {v: k for k, v in self.qecc.layout.items()}
 
         for d in zdestabs:
-            row = set([])
+            row = set()
 
             # Find the associated ancilla location
             x, y = d[-1]
@@ -450,8 +426,7 @@ class InstrSynExtraction(LogicalInstruction):
 
 
 class InstrInitZero(LogicalInstruction):
-    """
-    Instruction for initializing a logical zero.
+    """Instruction for initializing a logical zero.
 
     It is just like syndrome extraction except the data qubits are initialized in the zero state at tick = 0.
 
@@ -460,17 +435,16 @@ class InstrInitZero(LogicalInstruction):
     Parent class sets self.qecc.
     """
 
-    def __init__(self, qecc, symbol, **params):
-
+    def __init__(self, qecc, symbol, **params) -> None:
         super().__init__(qecc, symbol, **params)
 
-        self.symbol = 'instr_init_zero'
+        self.symbol = "instr_init_zero"
 
         self.data_qudit_set = self.qecc.data_qudit_set
         self.ancilla_qudit_set = self.qecc.ancilla_qudit_set
 
         # This is basically syndrome extraction round where all the data qubits are initialized to zero.
-        syn_ext = qecc.instruction('instr_syn_extract', **params)
+        syn_ext = qecc.instruction("instr_syn_extract", **params)
 
         # Make a shallow copy of the abstract circuits.
         self.abstract_circuit = syn_ext.abstract_circuit.copy()
@@ -480,23 +454,26 @@ class InstrInitZero(LogicalInstruction):
         self.ancilla_z_check = syn_ext.ancilla_z_check
 
         data_qudits = syn_ext.data_qudit_set
-        self.abstract_circuit.append('init |0>', locations=data_qudits, tick=0)
+        self.abstract_circuit.append("init |0>", locations=data_qudits, tick=0)
 
         self.initial_logical_ops = [  # Each element in the list corresponds to a logical qubit
             # The keys label the type of logical operator
-            {'X': None, 'Z': None},  # None => can be anything
+            {"X": None, "Z": None},  # None => can be anything
         ]
 
         # Special for state initialization:
         # ---------------------------------
         # list of tuples of logical check and delogical stabilizer for each logical qudit.
         self.final_logical_ops = [
-            {'Z': QuantumCircuit([{'Z': set(qecc.sides['top'])}]), 'X': QuantumCircuit([{'X': set(qecc.sides['left'])}])}
+            {
+                "Z": QuantumCircuit([{"Z": set(qecc.sides["top"])}]),
+                "X": QuantumCircuit([{"X": set(qecc.sides["left"])}]),
+            },
         ]
 
         # List of corresponding logical sign. (The logical sign if the instruction is preformed ideally.)
         self.logical_signs = [0]
-        self.logical_stabilizers = ['Z']
+        self.logical_stabilizers = ["Z"]
         # ---------------------------------
 
         # Must be called at the end of initiation.
@@ -506,12 +483,11 @@ class InstrInitZero(LogicalInstruction):
 
     @property
     def stabs_destabs(self):
-
         if self._stabs_destabs:
             return self._stabs_destabs
 
         params = self.params
-        syn_ext = self.qecc.instruction('instr_syn_extract', **params)
+        syn_ext = self.qecc.instruction("instr_syn_extract", **params)
 
         for name, rows in syn_ext.stabs_destabs.items():
             self._stabs_destabs[name] = []
@@ -519,17 +495,16 @@ class InstrInitZero(LogicalInstruction):
                 self._stabs_destabs[name].append(set(row))
 
         # |0> -> logical Z is a stabilizer
-        self._stabs_destabs['stabs_z'].append(set(self.qecc.sides['top']))
-        self._stabs_destabs['stabs_x'].append(set([]))
-        self._stabs_destabs['destabs_x'].append(set(self.qecc.sides['left']))
-        self._stabs_destabs['destabs_z'].append(set([]))
+        self._stabs_destabs["stabs_z"].append(set(self.qecc.sides["top"]))
+        self._stabs_destabs["stabs_x"].append(set())
+        self._stabs_destabs["destabs_x"].append(set(self.qecc.sides["left"]))
+        self._stabs_destabs["destabs_z"].append(set())
 
         return self._stabs_destabs
 
 
 class InstrInitPlus(LogicalInstruction):
-    """
-    Instruction for initializing a logical plus.
+    """Instruction for initializing a logical plus.
 
     It is just like syndrome extraction except the data qubits are initialized in the plus state at tick = 0.
 
@@ -538,17 +513,16 @@ class InstrInitPlus(LogicalInstruction):
     Parent class sets self.qecc.
     """
 
-    def __init__(self, qecc, symbol, **params):
-
+    def __init__(self, qecc, symbol, **params) -> None:
         super().__init__(qecc, symbol, **params)
 
-        self.symbol = 'instr_init_plus'
+        self.symbol = "instr_init_plus"
 
         self.data_qudit_set = self.qecc.data_qudit_set
         self.ancilla_qudit_set = self.qecc.ancilla_qudit_set
 
         # This is basically syndrome extraction round where all the data qubits are initialized to plus.
-        syn_ext = qecc.instruction('instr_syn_extract', **params)
+        syn_ext = qecc.instruction("instr_syn_extract", **params)
 
         # Make a shallow copy of the abstract circuits.
         self.abstract_circuit = syn_ext.abstract_circuit.copy()
@@ -558,25 +532,27 @@ class InstrInitPlus(LogicalInstruction):
         self.ancilla_z_check = syn_ext.ancilla_z_check
 
         data_qudits = syn_ext.data_qudit_set
-        # self.abstract_circuit.append('init |+>', qudits=data_qudits, tick=0)
-        self.abstract_circuit.append('init |0>', locations=data_qudits, tick=0)
-        self.abstract_circuit.append('H', locations=data_qudits, tick=1)
+        self.abstract_circuit.append("init |0>", locations=data_qudits, tick=0)
+        self.abstract_circuit.append("H", locations=data_qudits, tick=1)
 
         self.initial_logical_ops = [  # Each element in the list corresponds to a logical qubit
             # The keys label the type of logical operator
-            {'X': None, 'Z': None},  # None => can be anything
+            {"X": None, "Z": None},  # None => can be anything
         ]
 
         # Special for state initialization:
         # ---------------------------------
         # list of tuples of logical check and delogical stabilizer for each logical qudit.
         self.final_logical_ops = [
-            {'X': QuantumCircuit([{'X': set(qecc.sides['left'])}]), 'Z': QuantumCircuit([{'Z': set(qecc.sides['top'])}])}
+            {
+                "X": QuantumCircuit([{"X": set(qecc.sides["left"])}]),
+                "Z": QuantumCircuit([{"Z": set(qecc.sides["top"])}]),
+            },
         ]
 
         # List of corresponding logical sign. (The logical sign if the instruction is preformed ideally.)
         self.logical_signs = [0]
-        self.logical_stabilizers = ['X']
+        self.logical_stabilizers = ["X"]
         # ---------------------------------
 
         # Must be called at the end of initiation.
@@ -586,12 +562,11 @@ class InstrInitPlus(LogicalInstruction):
 
     @property
     def stabs_destabs(self):
-
         if self._stabs_destabs:
             return self._stabs_destabs
 
         params = self.params
-        syn_ext = self.qecc.instruction('instr_syn_extract', **params)
+        syn_ext = self.qecc.instruction("instr_syn_extract", **params)
 
         for name, rows in syn_ext.stabs_destabs.items():
             self._stabs_destabs[name] = []
@@ -599,9 +574,9 @@ class InstrInitPlus(LogicalInstruction):
                 self._stabs_destabs[name].append(set(row))
 
         # |0> -> logical Z is a stabilizer
-        self._stabs_destabs['stabs_x'].append(set(self.qecc.sides['left']))
-        self._stabs_destabs['stabs_z'].append(set([]))
-        self._stabs_destabs['destabs_z'].append(set(self.qecc.sides['top']))
-        self._stabs_destabs['stabs_x'].append(set([]))
+        self._stabs_destabs["stabs_x"].append(set(self.qecc.sides["left"]))
+        self._stabs_destabs["stabs_z"].append(set())
+        self._stabs_destabs["destabs_z"].append(set(self.qecc.sides["top"]))
+        self._stabs_destabs["stabs_x"].append(set())
 
         return self._stabs_destabs

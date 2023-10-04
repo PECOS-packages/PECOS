@@ -9,19 +9,19 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from ...reps.pypmir.op_types import QOp
 import numpy as np
 
+from pecos.reps.pypmir.op_types import QOp
 
-def noise_meas_bitflip(op: QOp,
-                       p: float):
+
+def noise_meas_bitflip(op: QOp, p: float):
     """Bit-flip noise model for measurements.
 
     Args:
+    ----
         op: Ideal quantum operation.
         p: measurement error rate.
     """
-
     # Bit flip noise
     # --------------
     rand_nums = np.random.random(len(op.args)) <= p
@@ -29,10 +29,8 @@ def noise_meas_bitflip(op: QOp,
     noise = []
 
     if np.any(rand_nums):
-
         bitflips = []
         for r, loc in zip(rand_nums, op.args):
-
             if r:
                 bitflips.append(loc)
 
@@ -40,7 +38,7 @@ def noise_meas_bitflip(op: QOp,
             name="Measure",
             args=list(op.args),
             returns=list(op.returns),
-            metadata=dict(op.metadata)
+            metadata=dict(op.metadata),
         )
         noisy_op.metadata["bitflips"] = bitflips
         noise.append(noisy_op)

@@ -9,15 +9,12 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from ...reps.pypmir.op_types import QOp
 import numpy as np
 
+from pecos.reps.pypmir.op_types import QOp
 
-def noise_sq_depolarizing_leakage(op: QOp,
-                                  p: float,
-                                  noise_dict: dict,
-                                  machine):
 
+def noise_sq_depolarizing_leakage(op: QOp, p: float, noise_dict: dict, machine):
     args = set(op.args)
     leaked = machine.leaked_qubits & args
 
@@ -46,14 +43,12 @@ def noise_sq_depolarizing_leakage(op: QOp,
         buffered_ops = []
 
         if noise:
-
             for sym, args in noise.items():
                 if sym == "L":
                     leak_ops = machine.leak(set(noise["L"]))
                     buffered_ops.extend(leak_ops)
                 else:
-                    buffered_ops.append(noisy_op)
-                    buffered_ops.append(QOp(name=sym, args=args, metadata={}))
+                    buffered_ops.extend((noisy_op, QOp(name=sym, args=args, metadata={})))
 
         else:
             buffered_ops.append(noisy_op)

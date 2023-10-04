@@ -9,44 +9,39 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from .vars import QVar
+from __future__ import annotations
+
+from pecos.circuits.hyqc.vars import QVar
 
 
 class Qubits(QVar):
-
-    def __init__(self,
-                 size: int, symbol: str = None):
-
-        super(Qubits, self).__init__(symbol)
+    def __init__(self, size: int, symbol: str | None = None) -> None:
+        super().__init__(symbol)
         self.size = size
 
     def __getitem__(self, item):
         return Qubit(self, item)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.symbol
 
 
 class Qubit(Qubits):
-
-    def __init__(self,
-                 qubits: Qubits,
-                 idx: int,
-                 symbol: str = None):
-
+    def __init__(self, qubits: Qubits, idx: int, symbol: str | None = None) -> None:
         if symbol is None:
-            symbol = f'{qubits.symbol}[{idx}]'
+            symbol = f"{qubits.symbol}[{idx}]"
 
-        super(Qubit, self).__init__(size=1, symbol=symbol)
+        super().__init__(size=1, symbol=symbol)
 
         self.qubits = qubits
         self.index = idx
 
     def __getitem__(self, item):
-        raise TypeError(f"'{self.__class__.__name__}' object is not subscriptable")
+        msg = f"'{self.__class__.__name__}' object is not subscriptable"
+        raise TypeError(msg)
 
-    def __repr__(self):
-        return f'<{self.__class__.__name__} {self.index} of {self.qubits.symbol}>'
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} {self.index} of {self.qubits.symbol}>"
 
 
 """

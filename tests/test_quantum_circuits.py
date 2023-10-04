@@ -10,11 +10,12 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from __future__ import annotations
+
 from pecos.circuits import QuantumCircuit
 
 
 def test_quantum_circuits():
-
     # Check the method append with check_overlap == True
     # ---------------------------------------------------
     qc = QuantumCircuit()
@@ -22,22 +23,22 @@ def test_quantum_circuits():
     assert len(qc) == 0
     assert qc.active_qudits == []
 
-    qc.append({'int |0>': {0, 1}})
+    qc.append({"int |0>": {0, 1}})
 
     assert len(qc) == 1
     assert qc.active_qudits == [{0, 1}]
 
-    qc.append({'H': {0}})
+    qc.append({"H": {0}})
 
     assert len(qc) == 2
     assert qc.active_qudits == [{0, 1}, {0}]
 
-    qc.append({'CNOT': {(0, 1)}})
+    qc.append({"CNOT": {(0, 1)}})
 
     assert len(qc) == 3
     assert qc.active_qudits == [{0, 1}, {0}, {0, 1}]
 
-    qc.append({'measure Z': {0}})
+    qc.append({"measure Z": {0}})
 
     assert len(qc) == 4
     assert qc.active_qudits == [{0, 1}, {0}, {0, 1}, {0}]
@@ -45,12 +46,12 @@ def test_quantum_circuits():
     # Check update, add, and discard with check_overlap == True
     # ---------------------------------------------------------
 
-    qc.update({'X': {1}}, tick=1)
+    qc.update({"X": {1}}, tick=1)
 
     assert len(qc) == 4
     assert qc.active_qudits == [{0, 1}, {0, 1}, {0, 1}, {0}]
 
-    qc.update({'measure Z': {1}})
+    qc.update({"measure Z": {1}})
 
     assert len(qc) == 4
     assert qc.active_qudits == [{0, 1}, {0, 1}, {0, 1}, {0, 1}]
@@ -60,7 +61,7 @@ def test_quantum_circuits():
     assert len(qc) == 4
     assert qc.active_qudits == [{0, 1}, {0, 1}, {0, 1}, {0}]
 
-    qc.update('X', {1})
+    qc.update("X", {1})
 
     assert len(qc) == 4
     assert qc.active_qudits == [{0, 1}, {0, 1}, {0, 1}, {0, 1}]
@@ -72,12 +73,12 @@ def test_quantum_circuits():
     assert len(qc) == 0
     assert qc.active_qudits == []
 
-    qc.append({'int |0>': {0, 1}})
+    qc.append({"int |0>": {0, 1}})
 
     assert len(qc) == 1
     assert qc.active_qudits == [{0, 1}]
 
-    qc.append({'H': {0}})
+    qc.append({"H": {0}})
 
     assert len(qc) == 2
     assert qc.active_qudits == [{0, 1}, {0}]
@@ -85,7 +86,7 @@ def test_quantum_circuits():
     # Check update with check_overlap == False
     # -----------------------------------------
 
-    qc.update({'X': {1}}, tick=1)
+    qc.update({"X": {1}}, tick=1)
 
     assert len(qc) == 2
     assert qc.active_qudits == [{0, 1}, {0, 1}]

@@ -11,25 +11,23 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-import struct
 import os
 import random
+import struct
+
 import numpy as np
+
 from pecos.misc.std_ouput import StdOutput
 
 
-class Standard(object):
-    """
-    This class represents a standard model for running quantum circuits and adding in errors.
-    """
+class Standard:
+    """This class represents a standard model for running quantum circuits and adding in errors."""
 
-    def __init__(self, seed=None):
-        """
-
-        Args:
+    def __init__(self, seed=None) -> None:
+        """Args:
+        ----
             seed:
         """
-
         if isinstance(seed, bool) and seed is True:
             self.seed = struct.unpack("<L", os.urandom(4))[0]
 
@@ -45,9 +43,8 @@ class Standard(object):
 
     @staticmethod
     def run(state, circuit, error_gen=None, error_params=None, error_circuits=None, output=None):
-        """
-
-        Args:
+        """Args:
+        ----
             state:
             circuit:
             error_gen:
@@ -56,9 +53,9 @@ class Standard(object):
             output:
 
         Returns:
+        -------
 
         """
-
         if output is None:
             output = StdOutput()
 
@@ -70,33 +67,30 @@ class Standard(object):
         # --------------------
 
         if error_gen is None:  # No errors
-
             generate_errors = False
             if error_circuits is None:
                 error_circuits = {}
 
         else:  # new errors
-
             generate_errors = True
             error_circuits = error_gen.start(circuit, error_params)
 
         # run through the circuits...
         # ---------------------------
         for tick_circuit, time, params in circuit.iter_ticks():
-
             # ---------------
             # GENERATE ERRORS
             # ---------------
-            if params.get('error_free', False):
+            if params.get("error_free", False):
                 errors = {}
             else:
                 if generate_errors:
                     error_circuits = error_gen.generate_tick_errors(tick_circuit, time, **params)
                 errors = error_circuits.get(time, {})
 
-            before_errors = errors.get('before')
-            after_errors = errors.get('after')
-            removed = errors.get('replaced')
+            before_errors = errors.get("before")
+            after_errors = errors.get("after")
+            removed = errors.get("replaced")
 
             # --------------------
             # RUN QUANTUM CIRCUITS

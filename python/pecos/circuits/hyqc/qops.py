@@ -10,22 +10,22 @@
 # specific language governing permissions and limitations under the License.
 
 import copy
+
 import numpy as np
-from .fund import Expression
+
+from pecos.circuits.hyqc.fund import Expression
 
 
 class QOp(Expression):
-
-    def __init__(self):
-        super(QOp, self).__init__()
+    def __init__(self) -> None:
+        super().__init__()
 
 
 class QGate(QOp):
-
     # qargs: Qubits, Qubits, ...; (Qubit, Qubit)
 
-    def __init__(self):
-        super(QGate, self).__init__()
+    def __init__(self) -> None:
+        super().__init__()
         self.symbol = self.__class__.__name__
 
         self.qsize = None
@@ -47,19 +47,20 @@ class QGate(QOp):
         g.qargs = qargs
         return g
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         repr_str = self.symbol
 
         if self.params:
-            str_cargs = ', '.join([str(p) for p in self.params])
-            repr_str = f'{repr_str}({str_cargs})'
+            str_cargs = ", ".join([str(p) for p in self.params])
+            repr_str = f"{repr_str}({str_cargs})"
 
-        str_qargs = ', '.join([str(q) for q in self.qargs])
-        return f'{repr_str}[{str_qargs}]'
+        str_qargs = ", ".join([str(q) for q in self.qargs])
+        return f"{repr_str}[{str_qargs}]"
 
 
 class BarrierGate(QGate):
     """A gate that prevents compilers from moving quantum gates past the barrier."""
+
     ...
 
 
@@ -68,6 +69,7 @@ Barrier = BarrierGate()
 
 class ResetGate(QGate):
     """Resetting a qubit to the zero state."""
+
     ...
 
 
@@ -77,8 +79,8 @@ Reset = ResetGate()
 class MeasureGate(QGate):
     """A measurement of a qubit in the Z basis."""
 
-    def __init__(self):
-        super(MeasureGate, self).__init__()
+    def __init__(self) -> None:
+        super().__init__()
         self.cout = None
 
     def __gt__(self, *cout):
@@ -87,59 +89,63 @@ class MeasureGate(QGate):
 
         return g
 
-    def __repr__(self):
-        repr_str = super(MeasureGate, self).__repr__()
-        couts_str = ', '.join([str(c) for c in self.cout])
-        return f'{repr_str} > {couts_str}'
+    def __repr__(self) -> str:
+        repr_str = super().__repr__()
+        couts_str = ", ".join([str(c) for c in self.cout])
+        return f"{repr_str} > {couts_str}"
 
 
 Measure = MeasureGate()
 
 
 class UnitaryGate(QGate):
-    """A Unitary gate"""
+    """A Unitary gate."""
 
-    def __init__(self):
-        super(UnitaryGate, self).__init__()
+    def __init__(self) -> None:
+        super().__init__()
         self.matrix = None
 
 
 class CliffordGate(UnitaryGate):
-    """A Clifford gate"""
+    """A Clifford gate."""
 
-    def __init__(self):
-        super(CliffordGate, self).__init__()
+    def __init__(self) -> None:
+        super().__init__()
         self.csize = 0
         self.pauli_rules = None
 
 
 class PauliGate(CliffordGate):
-    """A Pauli gate"""
+    """A Pauli gate."""
+
     ...
 
 
 class NonCliffordGate(UnitaryGate):
-    """A non-Clifford gate"""
+    """A non-Clifford gate."""
+
     ...
 
 
 class XGate(PauliGate):
     """The Pauli X unitary."""
 
-    def __init__(self):
-
-        super(XGate, self).__init__()
+    def __init__(self) -> None:
+        super().__init__()
         self.qsize = 1
 
-        self.matrix = np.array([
-            [0, 1],
-            [1, 0],
-        ], dtype=complex)
+        self.matrix = np.array(
+            [
+                [0, 1],
+                [1, 0],
+            ],
+            dtype=complex,
+        )
 
         self.pauli_rules = {
-            'X': '+X',
-            'Y': '-Y',
-            'Z': '-Z',
+            "X": "+X",
+            "Y": "-Y",
+            "Z": "-Z",
         }
 
 
@@ -149,19 +155,22 @@ X = XGate()
 class YGate(PauliGate):
     """The Pauli Y unitary."""
 
-    def __init__(self):
-        super(YGate, self).__init__()
+    def __init__(self) -> None:
+        super().__init__()
         self.qsize = 1
 
-        self.matrix = np.array([
-            [0, -1j],
-            [1j, 0],
-        ], dtype=complex)
+        self.matrix = np.array(
+            [
+                [0, -1j],
+                [1j, 0],
+            ],
+            dtype=complex,
+        )
 
         self.pauli_rules = {
-            'X': '-X',
-            'Y': '+Y',
-            'Z': '-Z',
+            "X": "-X",
+            "Y": "+Y",
+            "Z": "-Z",
         }
 
 
@@ -171,19 +180,22 @@ Y = YGate()
 class ZGate(PauliGate):
     """The Pauli Z unitary."""
 
-    def __init__(self):
-        super(ZGate, self).__init__()
+    def __init__(self) -> None:
+        super().__init__()
         self.qsize = 1
 
-        self.matrix = np.array([
-            [0, -1j],
-            [1j, 0],
-        ], dtype=complex)
+        self.matrix = np.array(
+            [
+                [0, -1j],
+                [1j, 0],
+            ],
+            dtype=complex,
+        )
 
         self.pauli_rules = {
-            'X': '-X',
-            'Y': '-Y',
-            'Z': '+Z',
+            "X": "-X",
+            "Y": "-Y",
+            "Z": "+Z",
         }
 
 

@@ -8,16 +8,14 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+
 class PECOSError(Exception):
     """Base exception raised by PECOS."""
-    pass
 
 
 class NotSupportedGateError(PECOSError):
     """Indicates a gate not supported by a simulator."""
-    pass
 
 
 class MissingCCOPError(PECOSError):
     """Indicates missing a classical function library."""
-    pass

@@ -8,23 +8,20 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
+import contextlib
 
-try:
+with contextlib.suppress(ImportError):
     import wasm3
-except ImportError:
-    pass
 
 
 def read_pywasm3(wasm, stack_size=1000000):
-
     env = wasm3.Environment()
     rt = env.new_runtime(stack_size)
     mod = env.parse_module(wasm)
     rt.load(mod)
 
     class Reader:
-
-        def __init__(self, rt):
+        def __init__(self, rt) -> None:
             self.rt = rt
 
         def exec(self, func, args, debug=False):

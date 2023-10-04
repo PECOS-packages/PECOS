@@ -14,15 +14,15 @@ import numpy as np
 from scipy.optimize import curve_fit
 
 
-def func(X, pth, v0, a, b, c):
-    """
-    Function that represents the curve to fit error rates to in order to determine the threshold. (see:
-    arXiv:quant-ph/0207088)
+def func(x, pth, v0, a, b, c):
+    """Function that represents the curve to fit error rates to in order to determine the threshold. (see:
+    arXiv:quant-ph/0207088).
 
     Probabilities are fine as long as p > 1/(4*distance). See paper by Watson and Barrett (arXiv:1312.5213).
 
     Args:
-        X:
+    ----
+        x:
         a:
         b:
         c:
@@ -30,24 +30,25 @@ def func(X, pth, v0, a, b, c):
         v0:
 
     Returns:
+    -------
 
     """
-    p, dist = X
+    p, dist = x
 
     x = (p - pth) * np.power(dist, 1.0 / v0)
 
     return a + b * x + c * np.power(x, 2)
 
 
-def func2(X, pth, v0, a, b, c, d, u):
-    """
-    Function that represents the curve to fit error rates to in order to determine the threshold. (see:
-    arXiv:quant-ph/0207088)
+def func2(x, pth, v0, a, b, c, d, u):
+    """Function that represents the curve to fit error rates to in order to determine the threshold. (see:
+    arXiv:quant-ph/0207088).
 
     Probabilities are fine as long as p > 1/(4*distance). See paper by Watson and Barrett (arXiv:1312.5213).
 
     Args:
-        X:
+    ----
+        x:
         a:
         b:
         c:
@@ -55,9 +56,10 @@ def func2(X, pth, v0, a, b, c, d, u):
         v0:
 
     Returns:
+    -------
 
     """
-    p, dist = X
+    p, dist = x
 
     x = (p - pth) * np.power(dist, 1.0 / v0)
 
@@ -68,15 +70,15 @@ def func2(X, pth, v0, a, b, c, d, u):
     return z
 
 
-def func3(X,  pth, v0, a, b, c, d, uodd, ueven):
-    """
-    Function that represents the curve to fit error rates to in order to determine the threshold. (see:
-    arXiv:quant-ph/0207088)
+def func3(x, pth, v0, a, b, c, d, uodd, ueven):
+    """Function that represents the curve to fit error rates to in order to determine the threshold. (see:
+    arXiv:quant-ph/0207088).
 
     Probabilities are fine as long as p > 1/(4*distance). See paper by Watson and Barrett (arXiv:1312.5213).
 
     Args:
-        X:
+    ----
+        x:
         a:
         b:
         c:
@@ -84,28 +86,29 @@ def func3(X,  pth, v0, a, b, c, d, uodd, ueven):
         v0:
 
     Returns:
+    -------
 
     """
-    p, dist = X
+    p, dist = x
 
     x = (p - pth) * np.power(dist, 1.0 / v0)
 
-    z = np.where(bool(dist % 2), d*np.power(dist, -1.0/uodd), d*np.power(dist, -1.0/ueven))
+    z = np.where(bool(dist % 2), d * np.power(dist, -1.0 / uodd), d * np.power(dist, -1.0 / ueven))
 
     z += a + b * x + c * np.power(x, 2)
 
     return z
 
 
-def func4(X, pth, v0, a, b):
-    """
-    Function that represents the curve to fit error rates to in order to determine the threshold. (see:
-    arXiv:quant-ph/0207088)
+def func4(x, pth, v0, a, b):
+    """Function that represents the curve to fit error rates to in order to determine the threshold. (see:
+    arXiv:quant-ph/0207088).
 
     Probabilities are fine as long as p > 1/(4*distance). See paper by Watson and Barrett (arXiv:1312.5213).
 
     Args:
-        X:
+    ----
+        x:
         a:
         b:
         c:
@@ -113,26 +116,25 @@ def func4(X, pth, v0, a, b):
         v0:
 
     Returns:
+    -------
 
     """
-    p, dist = X
+    p, dist = x
 
     x = (p - pth) * np.power(dist, 1.0 / v0)
 
-    z = a * np.exp(-b*np.power(x, v0))
-
-    return z
+    return a * np.exp(-b * np.power(x, v0))
 
 
-def func5(X, pth, v0, a, b, c, d):
-    """
-    Function that represents the curve to fit error rates to in order to determine the threshold. (see:
-    arXiv:quant-ph/0207088)
+def func5(x, pth, v0, a, b, c, d):
+    """Function that represents the curve to fit error rates to in order to determine the threshold. (see:
+    arXiv:quant-ph/0207088).
 
     Probabilities are fine as long as p > 1/(4*distance). See paper by Watson and Barrett (arXiv:1312.5213).
 
     Args:
-        X:
+    ----
+        x:
         a:
         b:
         c:
@@ -140,24 +142,25 @@ def func5(X, pth, v0, a, b, c, d):
         v0:
 
     Returns:
+    -------
 
     """
-    p, dist = X
+    p, dist = x
 
     x = (p - pth) * np.power(dist, 1.0 / v0)
 
     return a + b * x + c * np.power(x, 2) + d * np.power(x, 3)
 
 
-def func6(X, a, pth):
-    """
-    Function that represents the curve to fit error rates to in order to determine the threshold. (see:
-    arXiv:quant-ph/0207088)
+def func6(x, a, pth):
+    """Function that represents the curve to fit error rates to in order to determine the threshold. (see:
+    arXiv:quant-ph/0207088).
 
     Probabilities are fine as long as p > 1/(4*distance). See paper by Watson and Barrett (arXiv:1312.5213).
 
     Args:
-        X:
+    ----
+        x:
         a:
         b:
         c:
@@ -165,17 +168,17 @@ def func6(X, a, pth):
         v0:
 
     Returns:
+    -------
 
     """
-    p, dist = X
+    p, dist = x
 
-    return a * np.power(p/pth, dist/2)
+    return a * np.power(p / pth, dist / 2)
 
 
 def threshold_fit(plist, dlist, plog, func, p0, maxfev=100000, **kwargs):
-    """
-
-    Args:
+    """Args:
+    ----
         plist: List of ps.
         dlist: List of distances.
         plog: List of logical error rates.
@@ -183,9 +186,9 @@ def threshold_fit(plist, dlist, plog, func, p0, maxfev=100000, **kwargs):
         maxfev:
 
     Returns:
+    -------
 
     """
-
     popt, pcov = curve_fit(func, (plist, dlist), plog, p0, maxfev=maxfev, **kwargs)
 
     var = np.diag(pcov)
@@ -195,7 +198,6 @@ def threshold_fit(plist, dlist, plog, func, p0, maxfev=100000, **kwargs):
 
 
 def jackknife_pd(plist, dlist, plog, func, p0, maxfev=100000, verbose=True):
-
     opt_list = []
     cov_list = []
     for i in range(len(plog)):
@@ -208,25 +210,24 @@ def jackknife_pd(plist, dlist, plog, func, p0, maxfev=100000, verbose=True):
         cov_list.append(result[1])
 
         if verbose:
-            print('removed index: %s' % i)
-            print('p = %s, d = %s' % (plist[i], dlist[i]))
-            print('parameter values:', result[0])
-            print('parameter stds: %s\n' % result[1])
+            print("removed index: %s" % i)
+            print(f"p = {plist[i]}, d = {dlist[i]}")
+            print("parameter values:", result[0])
+            print("parameter stds: %s\n" % result[1])
 
     est = np.mean(opt_list, axis=0)
     std = np.std(opt_list, axis=0)
 
-    print('Mean: %s' % est)
-    print('Std: %s' % std)
+    print("Mean: %s" % est)
+    print("Std: %s" % std)
 
     return est, std
 
 
-def jackknife_p(plist, dlist, plog,p0, maxfev=100000, verbose=True):
-
+def jackknife_p(plist, dlist, plog, p0, maxfev=100000, verbose=True):
     opt_list = []
     cov_list = []
-    uplist = sorted(list(set(plist)))
+    uplist = sorted(set(plist))
     for p in uplist:
         mask = plist != p
         p_copy = plist[mask]
@@ -238,25 +239,24 @@ def jackknife_p(plist, dlist, plog,p0, maxfev=100000, verbose=True):
         cov_list.append(result[1])
 
         if verbose:
-            print('removed p: %s' % p)
-            print('parameter values:', result[0])
-            print('parameter stds: %s\n' % result[1])
+            print("removed p: %s" % p)
+            print("parameter values:", result[0])
+            print("parameter stds: %s\n" % result[1])
 
     est = np.mean(opt_list, axis=0)
     std = np.std(opt_list, axis=0)
 
-    print('Mean: %s' % est)
-    print('Std: %s' % std)
+    print("Mean: %s" % est)
+    print("Std: %s" % std)
 
     return est, std
 
 
 def jackknife_d(plist, dlist, plog, p0, maxfev=100000, verbose=True):
-
     opt_list = []
     cov_list = []
 
-    udlist = sorted(list(set(dlist)))
+    udlist = sorted(set(dlist))
     for d in udlist:
         mask = dlist != d
         p_copy = plist[mask]
@@ -268,15 +268,15 @@ def jackknife_d(plist, dlist, plog, p0, maxfev=100000, verbose=True):
         cov_list.append(result[1])
 
         if verbose:
-            print('removed d: %s' % d)
-            print('parameter values:', result[0])
-            print('parameter stds: %s\n' % result[1])
+            print("removed d: %s" % d)
+            print("parameter values:", result[0])
+            print("parameter stds: %s\n" % result[1])
 
     est = np.mean(opt_list, axis=0)
     std = np.std(opt_list, axis=0)
 
-    print('Mean: %s' % est)
-    print('Std: %s' % std)
+    print("Mean: %s" % est)
+    print("Std: %s" % std)
 
     return est, std
 
@@ -286,7 +286,7 @@ def get_est(value_is, label, verbose=True):
     v_est_std = np.std(value_is)
 
     if verbose:
-        print('%s_est: %s (mean) +- %s (std)' % (label, v_est, v_est_std))
+        print(f"{label}_est: {v_est} (mean) +- {v_est_std} (std)")
 
     return v_est, v_est_std
 
@@ -296,4 +296,4 @@ def get_i(result, symbol, value_list, verbose=True):
     value_list.append(value_i)
 
     if verbose:
-        print('%s_i = %s' % (symbol, value_i))
+        print(f"{symbol}_i = {value_i}")

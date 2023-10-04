@@ -11,62 +11,61 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""
-Setup
-=====
+"""Setup
+=====.
 
 The setup file for the Cython wrapped C++ version of SparseSim.
 
 Notes:
+-----
     Use the following to compile from command line:
     python setup.py build_ext --inplace
+
 """
-# import numpy as np
-import os
+import contextlib
 import shutil
 from distutils.core import setup
 from distutils.extension import Extension
+from pathlib import Path
+
 from Cython.Build import cythonize
 
 # Delete previous build folder
-current_location = os.path.dirname(os.path.abspath(__file__))
-try:
-    shutil.rmtree(os.path.join(current_location, 'build'))
-except FileNotFoundError:
-    pass
+current_location = Path.parent(Path.resolve(__file__))
+with contextlib.suppress(FileNotFoundError):
+    shutil.rmtree(Path(current_location / "build"))
 
 # compiler_flags = ["-std=c++11", "-Wall", "-fPIC", "-O2", "-O3", "-c", ]
-compiler_flags = ["-std=c++11", "-W3", "-fPIC", "-O2", "-O3", "-c", ]
+compiler_flags = ["-std=c++11", "-W3", "-fPIC", "-O2", "-O3", "-c"]
 
 ext_modules = [
-    Extension('cysparsesim',
-              sources=[
-                  "src/cysparsesim.pyx",
-                  "src/sparsesim.cpp",
-                  "src/logical_sign.py",
-              ],
-              language='c++',
-              extra_compile_args=compiler_flags,
-              include_dirs=['./src'],
-              # include_dirs=[np.get_include()],
-              ),
+    Extension(
+        "cysparsesim",
+        sources=[
+            "src/cysparsesim.pyx",
+            "src/sparsesim.cpp",
+            "src/logical_sign.py",
+        ],
+        language="c++",
+        extra_compile_args=compiler_flags,
+        include_dirs=["./src"],
+        # include_dirs=[np.get_include()],
+    ),
 ]
 
 
 for e in ext_modules:
     e.cython_directives = {
-        'boundscheck': False,
-        'wraparound': False,
+        "boundscheck": False,
+        "wraparound": False,
     }
 
 
 setup(
     name="state",
     ext_modules=cythonize(ext_modules, build_dir="build", language_level=3),
-    script_args=['build_ext'],
+    script_args=["build_ext"],
     options={
-        'build_ext': {'inplace': True},
-    }
-
+        "build_ext": {"inplace": True},
+    },
 )
-

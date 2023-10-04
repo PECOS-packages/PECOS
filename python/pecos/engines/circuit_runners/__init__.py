@@ -10,5 +10,5 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from .standard import Standard
-from .timing_runner import TimingRunner
+from pecos.engines.circuit_runners.standard import Standard
+from pecos.engines.circuit_runners.timing_runner import TimingRunner

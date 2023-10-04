@@ -11,32 +11,24 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-import os
 import subprocess
+from pathlib import Path
 
 
 def main():
-
     # See if Cython has been installed...
-    # try:
-    #     import cython
-    # except ImportError:
-    #     raise Exception('Cython must be installed to run this script!')
 
-    current_location = os.path.dirname(os.path.abspath(__file__))
-
-    # print('!!!', current_location)
+    current_location = Path.parent(Path.resolve(__file__))
 
     cython_dirs = [
-        'cysparsesim',
+        "cysparsesim",
     ]
     failed = {}
 
     for d in cython_dirs:
+        path = Path(current_location / d)
 
-        path = os.path.join(current_location, d)
-
-        p = subprocess.Popen('python setup.py build_ext --inplace', shell=True, cwd=path, stderr=subprocess.PIPE)
+        p = subprocess.Popen("python setup.py build_ext --inplace", shell=True, cwd=path, stderr=subprocess.PIPE)
         p.wait()
         _, error = p.communicate()
 
@@ -46,30 +38,26 @@ def main():
     return failed, cython_dirs
 
 
-if __name__ == '__main__':
-
+if __name__ == "__main__":
     failed, cython_dirs = main()
 
     successful = set(cython_dirs) - set(failed.keys())
 
     if successful:
-
-        print('\nSUCCESSFUL COMPILATION (%s/%s):' % (len(successful), len(cython_dirs)))
+        print(f"\nSUCCESSFUL COMPILATION ({len(successful)}/{len(cython_dirs)}):")
         for c in cython_dirs:
-
             if c in successful:
                 print(c)
 
     if failed:
-
-        print('\nFAILED (%s/%s):' % (len(failed), len(cython_dirs)))
+        print(f"\nFAILED ({len(failed)}/{len(cython_dirs)}):")
 
         for f, error in failed.items():
-            print('--------------')
+            print("--------------")
             print('Cython package "%s" failed to compile!' % f)
 
-            print('\nError:\n')
+            print("\nError:\n")
             print(error.decode())
-            print('--------------')
+            print("--------------")
 
-        print('\nRecommend compiling separately those that failed.')
+        print("\nRecommend compiling separately those that failed.")

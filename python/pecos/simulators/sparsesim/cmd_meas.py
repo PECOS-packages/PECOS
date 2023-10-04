@@ -11,21 +11,19 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import Set, Any
+from typing import Any
+
 import numpy as np
-from .state import SparseSim
-from .cmd_one_qubit import H, H5
+
+from pecos.simulators.sparsesim.cmd_one_qubit import H5, H
+from pecos.simulators.sparsesim.state import SparseSim
 
 
-def meas_x(state: SparseSim,
-           qubit: int,
-           forced_outcome: int = -1,
-           collapse: bool = True,
-           **params: Any) -> int:
-    """
-    Measurement in the X basis.
+def meas_x(state: SparseSim, qubit: int, *, forced_outcome: int = -1, collapse: bool = True) -> int:
+    """Measurement in the X basis.
 
     Args:
+    ----
         state (SparseSim): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         forced_outcome (int):  Integer that will be outputted by the measurement if the measurement is
@@ -35,25 +33,20 @@ def meas_x(state: SparseSim,
     Returns: int
 
     """
-
     H(state, qubit)
 
-    meas_outcome = meas_z(state, qubit, forced_outcome, collapse)
+    meas_outcome = meas_z(state, qubit, forced_outcome=forced_outcome, collapse=collapse)
 
     H(state, qubit)
 
     return meas_outcome
 
 
-def meas_y(state: SparseSim,
-           qubit: int,
-           forced_outcome: int = -1,
-           collapse: bool = True,
-           **params: Any) -> int:
-    """
-    Measurement in the Y basis.
+def meas_y(state: SparseSim, qubit: int, *, forced_outcome: int = -1, collapse: bool = True) -> int:
+    """Measurement in the Y basis.
 
     Args:
+    ----
         state (SparseSim): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         forced_outcome (int):  Integer that will be outputted by the measurement if the measurement is
@@ -63,24 +56,18 @@ def meas_y(state: SparseSim,
     Returns: int
 
     """
-
     H5(state, qubit)
 
-    meas_outcome = meas_z(state, qubit, forced_outcome, collapse)
+    meas_outcome = meas_z(state, qubit, forced_outcome=forced_outcome, collapse=collapse)
 
     H5(state, qubit)
 
     return meas_outcome
 
 
-def meas_z(state: SparseSim,
-           qubit: int,
-           forced_outcome: int = -1,
-           collapse: bool = True,
-           **params: Any) -> int:
-    """
-
-    Args:
+def meas_z(state: SparseSim, qubit: int, *, forced_outcome: int = -1, collapse: bool = True) -> int:
+    """Args:
+    ----
         state (SparseSim): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         forced_outcome (int):  Integer that will be outputted by the measurement if the measurement is
@@ -90,7 +77,6 @@ def meas_z(state: SparseSim,
     Returns: int
 
     """
-
     # Determine if any stabilizer gens anti-commute with the Z measurement on the qubit
     # => Get the stabilizer generators that have Xs on the qubit we are measuring.
 
@@ -99,13 +85,10 @@ def meas_z(state: SparseSim,
     stabs = state.stabs
     destabs = state.destabs
 
-    # stabs_test = deepcopy(gens)
-
     anticom_stabs_col = stabs.col_x[qubit]
     anticom_destabs_col = destabs.col_x[qubit]
 
     if len(anticom_stabs_col) == 0:  # No anti-commuting stabilizer => determined sign
-
         stabs_row_x = stabs.row_x
         stabs_row_z = stabs.row_z
 
@@ -113,7 +96,7 @@ def meas_z(state: SparseSim,
         num_is = len(anticom_destabs_col & stabs.signs_i)
 
         # Sign correction due ZX -> -XZ
-        cumulative_x = set([])
+        cumulative_x = set()
         for row in anticom_destabs_col:
             num_minuses += len(stabs_row_z[row] & cumulative_x)
 
@@ -126,31 +109,30 @@ def meas_z(state: SparseSim,
         meas_outcome = num_minuses % 2
 
     else:  # There is at least one anti-commuting stabilizer. => indetermined sign
-
         if collapse:
             return nondeterministic_meas(state, qubit, anticom_stabs_col, anticom_destabs_col, forced_outcome)
 
         else:
             if forced_outcome is not None:
-
-                if forced_outcome == 0 or forced_outcome == 1:
+                if forced_outcome in {0, 1}:
                     meas_outcome = forced_outcome
                 else:
-                    raise Exception('forced_outcome can only be 0 or 1 and not %s' % forced_outcome)
+                    raise Exception("forced_outcome can only be 0 or 1 and not %s" % forced_outcome)
             else:
                 meas_outcome = np.random.randint(2)
 
     return meas_outcome
 
 
-def nondeterministic_meas(state: SparseSim,
-                          qubit: int,
-                          anticom_stabs_col: Set[int],
-                          anticom_destabs_col: Set[int],
-                          forced_outcome: int) -> int:
-    """
-
-    Args:
+def nondeterministic_meas(
+    state: SparseSim,
+    qubit: int,
+    anticom_stabs_col: set[int],
+    anticom_destabs_col: set[int],
+    forced_outcome: int,
+) -> int:
+    """Args:
+    ----
         state (SparseSim): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         anticom_stabs_col (Set[int]):
@@ -159,9 +141,9 @@ def nondeterministic_meas(state: SparseSim,
             non-deterministic. If equal to -1, however, the outcome will be uniformly chosen from {0, 1}.
 
     Returns:
+    -------
 
     """
-
     # Removing dots
     stabs_row_x = state.stabs.row_x
     stabs_row_z = state.stabs.row_z
@@ -174,9 +156,6 @@ def nondeterministic_meas(state: SparseSim,
 
     anticom_stabs_col = set(anticom_stabs_col)  # Stabilizers that anti-commute with the measurement
     anticom_destabs_col = set(anticom_destabs_col)  # Destabilizers that anti-commute
-
-    # removed_id = anticom_stabs_col.pop()
-    # anticom_destabs_col.discard(removed_id)
 
     smallest_wt = 2 * state.num_qubits + 2
     removed_id = None
@@ -220,7 +199,6 @@ def nondeterministic_meas(state: SparseSim,
     # Multiply anti-commuting stabs with removed stab.
     # ----------------------------------------------------------------
     for gen in anticom_stabs_col:
-
         # ZX -> -XZ sign correction
         num_minuses = len(removed_row_z & stabs_row_x[gen])
         if num_minuses % 2:  # An overall minus occurred when multiply by removed row.
@@ -309,10 +287,7 @@ def nondeterministic_meas(state: SparseSim,
         meas_outcome = np.random.randint(2)
     """
 
-    if forced_outcome > -1:
-            meas_outcome = forced_outcome
-    else:
-        meas_outcome = np.random.randint(2)
+    meas_outcome = forced_outcome if forced_outcome > -1 else np.random.randint(2)
 
     # Use the random outcome as the sign of the replaced stabilizer
     if meas_outcome:
@@ -323,16 +298,13 @@ def nondeterministic_meas(state: SparseSim,
     return meas_outcome
 
 
-def force_output(state: SparseSim,
-                 qubit: int,
-                 forced_output: int = -1,
-                 **params: Any) -> int:
-    """
-    Outputs value.
+def force_output(state: SparseSim, qubit: int, forced_output: int = -1, **params: Any) -> int:
+    """Outputs value.
 
     Used for error generators to generate outputs when replacing measurements.
 
     Args:
+    ----
         state (SparseSim): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         forced_output (int): Integer that will be outputted.

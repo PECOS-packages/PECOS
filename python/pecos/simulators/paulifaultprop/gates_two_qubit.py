@@ -9,14 +9,13 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import Tuple, Any
-from .gates_one_qubit import H, SZ, SZdg, SX, SY, SYdg, X
+from typing import Any
+
+from pecos.simulators.paulifaultprop.gates_one_qubit import SX, SY, SZ, H, SYdg, SZdg, X
 
 
-def CX(state,
-       qubits: Tuple[int, int]) -> None:
-    """
-    Applies the controlled-X gate.
+def CX(state, qubits: tuple[int, int]) -> None:
+    """Applies the controlled-X gate.
 
     state (SparseSim): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
@@ -46,85 +45,73 @@ def CX(state,
     """
     q1, q2 = qubits
 
-    if state.track_sign and (q1 in state.faults['Y'] and q2 in state.faults['Y']):
+    if state.track_sign and (q1 in state.faults["Y"] and q2 in state.faults["Y"]):
         state.flip_sign()
 
-    if q1 in state.faults['X']:
-
-        if q2 in state.faults['X']:  # XX
-            state.faults['X'].remove(q2)
+    if q1 in state.faults["X"]:
+        if q2 in state.faults["X"]:  # XX
+            state.faults["X"].remove(q2)
             # XX -> XI
 
-        elif q2 in state.faults['Z']:  # XZ
-            state.faults['X'].remove(q1)
-            state.faults['Z'].remove(q2)
-            state.faults['Y'].add(q1)
-            state.faults['Y'].add(q2)
+        elif q2 in state.faults["Z"]:  # XZ
+            state.faults["X"].remove(q1)
+            state.faults["Z"].remove(q2)
+            state.faults["Y"].add(q1)
+            state.faults["Y"].add(q2)
             # XZ -> -YY
 
-        elif q2 in state.faults['Y']:  # XY
-            state.faults['X'].remove(q1)
-            state.faults['Y'].remove(q2)
-            state.faults['Y'].add(q1)
-            state.faults['Z'].add(q2)
+        elif q2 in state.faults["Y"]:  # XY
+            state.faults["X"].remove(q1)
+            state.faults["Y"].remove(q2)
+            state.faults["Y"].add(q1)
+            state.faults["Z"].add(q2)
             # XY -> YZ
 
         else:  # XI
-            state.faults['X'].add(q2)
+            state.faults["X"].add(q2)
             # XI -> XX
 
-    elif q1 in state.faults['Z']:
+    elif q1 in state.faults["Z"]:
+        # ZZ -> IZ
+        # ZY -> IY
+        if q2 in state.faults["Z"] or q2 in state.faults["Y"]:
+            state.faults["Z"].remove(q1)
 
-        if q2 in state.faults['Z']:  # ZZ
-            state.faults['Z'].remove(q1)
-            # ZZ -> IZ
-
-        elif q2 in state.faults['Y']:  # ZY
-            state.faults['Z'].remove(q1)
-            # ZY -> IY
-
-    elif q1 in state.faults['Y']:
-
-        if q2 in state.faults['X']:  # YX
-            state.faults['X'].remove(q2)
+    elif q1 in state.faults["Y"]:
+        if q2 in state.faults["X"]:  # YX
+            state.faults["X"].remove(q2)
             # YX -> YI
 
-        elif q2 in state.faults['Z']:  # YZ
-            state.faults['Y'].remove(q1)
-            state.faults['Z'].remove(q2)
-            state.faults['X'].add(q1)
-            state.faults['Y'].add(q2)
+        elif q2 in state.faults["Z"]:  # YZ
+            state.faults["Y"].remove(q1)
+            state.faults["Z"].remove(q2)
+            state.faults["X"].add(q1)
+            state.faults["Y"].add(q2)
             # YZ -> XY
 
-        elif q2 in state.faults['Y']:  # YY
-            state.faults['Y'].remove(q1)
-            state.faults['Y'].remove(q2)
-            state.faults['X'].add(q1)
-            state.faults['Z'].add(q2)
+        elif q2 in state.faults["Y"]:  # YY
+            state.faults["Y"].remove(q1)
+            state.faults["Y"].remove(q2)
+            state.faults["X"].add(q1)
+            state.faults["Z"].add(q2)
             # YY -> -XZ
 
         else:  # YI
-            state.faults['X'].add(q2)
+            state.faults["X"].add(q2)
             # YI -> YX
 
     else:
+        # IZ -> ZZ
+        # IY -> ZY
+        if q2 in state.faults["Z"] or q2 in state.faults["Y"]:  # IY
+            state.faults["Z"].add(q1)
 
-        if q2 in state.faults['Z']:  # IZ
-            state.faults['Z'].add(q1)
-            # IZ -> ZZ
-
-        elif q2 in state.faults['Y']:  # IY
-            state.faults['Z'].add(q1)
-            # IY -> ZY
-
-    if state.track_sign and (q1 in state.faults['Y'] and q2 in state.faults['Y']):
+    if state.track_sign and (q1 in state.faults["Y"] and q2 in state.faults["Y"]):
         state.flip_sign()
 
 
-def CZ(state,
-       qubits: Tuple[int, int]) -> None:
-    """
-    Applies the controlled-Z gate.
+def CZ(state, qubits: tuple[int, int]) -> None:
+    """Applies the controlled-Z gate.
 
     II -> II
     XI -> XZ
@@ -149,16 +136,13 @@ def CZ(state,
     Returns: None
 
     """
-
     H(state, qubits[1])
     CX(state, qubits)
     H(state, qubits[1])
 
 
-def CY(state,
-       qubits: Tuple[int, int]) -> None:
-    """
-    Applies the controlled-Y gate.
+def CY(state, qubits: tuple[int, int]) -> None:
+    """Applies the controlled-Y gate.
 
     II -> II
     XI -> XZ
@@ -183,16 +167,13 @@ def CY(state,
     Returns: None
 
     """
-
     SZ(state, qubits[1])
     CX(state, qubits)
     SZ(state, qubits[1])
 
 
-def SWAP(state,
-         qubits: Tuple[int, int]) -> None:
-    """
-    Applies a SWAP gate.
+def SWAP(state, qubits: tuple[int, int]) -> None:
+    """Applies a SWAP gate.
 
     state (SparseSim): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
@@ -200,7 +181,6 @@ def SWAP(state,
     Returns: None
 
     """
-
     q1, q2 = qubits
 
     CX(state, (q1, q2))
@@ -208,10 +188,8 @@ def SWAP(state,
     CX(state, (q1, q2))
 
 
-def G2(state,
-       qubits: Tuple[int, int]) -> None:
-    """
-    Applies a CZ.H(1).H(2).CZ
+def G2(state, qubits: tuple[int, int]) -> None:
+    """Applies a CZ.H(1).H(2).CZ.
 
     state (SparseSim): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
@@ -219,18 +197,14 @@ def G2(state,
     Returns: None
 
     """
-
     CZ(state, qubits)
     H(state, qubits[0])
     H(state, qubits[1])
     CZ(state, qubits)
 
 
-def II(state,
-       qubits: Tuple[int, int],
-       **params) -> None:
-    """
-    Two qubit identity.
+def II(state, qubits: tuple[int, int], **params) -> None:
+    """Two qubit identity.
 
     state (SparseSim): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
@@ -238,14 +212,10 @@ def II(state,
     Returns: None
 
     """
-    pass
 
 
-def SXX(state,
-        qubits: Tuple[int, int],
-        **params) -> None:
-    """
-    Applies a square root of XX rotation to generators
+def SXX(state, qubits: tuple[int, int], **params) -> None:
+    """Applies a square root of XX rotation to generators.
 
     state (SparseSim): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
@@ -261,11 +231,8 @@ def SXX(state,
     SY(state, qubit1)  # Sqrt Y
 
 
-def SXXdg(state,
-          qubits: Tuple[int, int],
-          **params) -> None:
-    """
-    Applies a square root of XX rotation to generators
+def SXXdg(state, qubits: tuple[int, int], **params) -> None:
+    """Applies a square root of XX rotation to generators.
 
     state (SparseSim): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
@@ -278,11 +245,9 @@ def SXXdg(state,
     X(state, qubit2)
     SXX(state, qubits)
 
-def SYY(state,
-        qubits: Tuple[int, int],
-        **params: Any) -> None:
-    r"""
-    Sqrt of YY == (rZ,rZ).SqrtXX.(rZd,rZd)
+
+def SYY(state, qubits: tuple[int, int], **params: Any) -> None:
+    r"""Sqrt of YY == (rZ,rZ).SqrtXX.(rZd,rZd).
 
     XI -> -ZY
     IX -> -YZ
@@ -292,10 +257,12 @@ def SYY(state,
     TODO: verify implementation!
 
     Args:
+    ----
         state:
         qubits:
 
     Returns:
+    -------
 
     """
     qubit1, qubit2 = qubits
@@ -306,21 +273,19 @@ def SYY(state,
     SZ(state, qubit2)  # rZ
 
 
-def SYYdg(state,
-        qubits: Tuple[int, int],
-        **params: Any) -> None:
-    """
-    Adjoint of SYY
+def SYYdg(state, qubits: tuple[int, int], **params: Any) -> None:
+    """Adjoint of SYY.
 
     Args:
+    ----
         state:
         qubits:
         **params:
 
     Returns:
+    -------
 
     """
-
     qubit1, qubit2 = qubits
     SZdg(state, qubit1)
     SZdg(state, qubit2)
@@ -329,14 +294,11 @@ def SYYdg(state,
     SZ(state, qubit2)
 
 
-def SZZ(state,
-        qubits: Tuple[int, int],
-        **params) -> None:
-    """
-        Applies a square root of ZZ rotation to generators
+def SZZ(state, qubits: tuple[int, int], **params) -> None:
+    """Applies a square root of ZZ rotation to generators.
 
-        state (SparseSim): Instance representing the stabilizer state.
-        qubit (int): Integer that indexes the qubit being acted on.
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
     """
     qubit1, qubit2 = qubits
     SYdg(state, qubit1)  # rYd
@@ -346,14 +308,11 @@ def SZZ(state,
     SY(state, qubit2)  # rY
 
 
-def SZZdg(state,
-        qubits: Tuple[int, int],
-        **params) -> None:
-    """
-        Applies an adjoint of square root of ZZ rotation to generators
+def SZZdg(state, qubits: tuple[int, int], **params) -> None:
+    """Applies an adjoint of square root of ZZ rotation to generators.
 
-        state (SparseSim): Instance representing the stabilizer state.
-        qubit (int): Integer that indexes the qubit being acted on.
+    state (SparseSim): Instance representing the stabilizer state.
+    qubit (int): Integer that indexes the qubit being acted on.
     """
     qubit1, qubit2 = qubits
     SYdg(state, qubit1)  # rYd

@@ -11,5 +11,5 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from .quantum_circuit import QuantumCircuit
-from .logical_circuit import LogicalCircuit
+from pecos.circuits.logical_circuit import LogicalCircuit
+from pecos.circuits.quantum_circuit import QuantumCircuit

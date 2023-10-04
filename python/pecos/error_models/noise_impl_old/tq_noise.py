@@ -9,30 +9,32 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import Set, Tuple, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
-from pecos import QuantumCircuit
-from .gate_groups import error_one_paulis_collection, error_two_paulis_collection
+
+from pecos.error_models.noise_impl_old.gate_groups import error_one_paulis_collection, error_two_paulis_collection
+
+if TYPE_CHECKING:
+    from pecos import QuantumCircuit
 
 
-def noise_depolarizing_two_qubit_gates(locations: Set[Tuple[int, int]],
-                                       after: QuantumCircuit,
-                                       p: float) -> None:
+def noise_depolarizing_two_qubit_gates(locations: set[tuple[int, int]], after: QuantumCircuit, p: float) -> None:
     """Symmetric depolarizing noise for two-qubit gates.
 
     # TODO: Describe noise model
 
     Args:
+    ----
         locations: Set of tuples of qubit pairs the ideal gates act on.
         after: QuantumCircuit collecting the noise that occurs after the ideal gates.
     """
-
     rand_nums = np.random.random(len(locations)) <= p
 
     for r, (loc1, loc2) in zip(rand_nums, locations):
-
         if r:
-
             index = np.random.choice(len(error_two_paulis_collection))
             err1, err2 = error_two_paulis_collection[index]
 
@@ -43,23 +45,23 @@ def noise_depolarizing_two_qubit_gates(locations: Set[Tuple[int, int]],
                 after.append(err2, {loc2})
 
 
-def noise_two_qubit_gates_depolarizing_with_noiseless(locations: Set[Tuple[int, int]],
-                                                      after: QuantumCircuit,
-                                                      p: float,
-                                                      noiseless_qubits: Optional[Set[int]] = None) -> None:
+def noise_two_qubit_gates_depolarizing_with_noiseless(
+    locations: set[tuple[int, int]],
+    after: QuantumCircuit,
+    p: float,
+    noiseless_qubits: set[int] | None = None,
+) -> None:
     """Noise for two-qubit gates.
 
     Args:
+    ----
         locations: Set of tuples of qubit pairs the ideal gates act on.
         after: QuantumCircuit collecting the noise that occurs after the ideal gates.
     """
-
     rand_nums = np.random.random(len(locations)) <= p
 
     for r, (loc1, loc2) in zip(rand_nums, locations):
-
         if r:
-
             if loc1 in noiseless_qubits and loc1 in noiseless_qubits:
                 continue
 
@@ -72,7 +74,6 @@ def noise_two_qubit_gates_depolarizing_with_noiseless(locations: Set[Tuple[int, 
                 after.append(err, {loc1})
 
             else:
-
                 index = np.random.choice(len(error_two_paulis_collection))
                 err1, err2 = error_two_paulis_collection[index]
 

@@ -11,47 +11,40 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from ..instruction_parent_class import LogicalInstruction
-from ...circuits.quantum_circuit import QuantumCircuit
-from ..helper_functions import pos2qudit
+from pecos.circuits.quantum_circuit import QuantumCircuit
+from pecos.qeccs.helper_functions import pos2qudit
+from pecos.qeccs.instruction_parent_class import LogicalInstruction
 
 
 class InstrSynExtraction(LogicalInstruction):
-    """
-    Instruction for a round of syndrome extraction.
+    """Instruction for a round of syndrome extraction.
 
     Parent class sets self.qecc.
     """
 
-    def __init__(self, qecc, symbol, **params):
-
+    def __init__(self, qecc, symbol, **params) -> None:
         super().__init__(qecc, symbol, **params)
 
         self.abstract_circuit = QuantumCircuit(**params)
 
-        # self.data_qudit_set = self.qecc.data_qudit_set
-        # self.ancilla_qudit_set = self.qecc.ancilla_qudit_set
-
-        self.ancilla_x_check = set([])
-        self.ancilla_z_check = set([])
+        self.ancilla_x_check = set()
+        self.ancilla_z_check = set()
 
         # Go through the ancillas and grab the data qubits that are on either side of it.
-        # layout = qecc.layout  # qudit_id => (x, y)
 
         self.pos2qudit = pos2qudit(qecc.layout)
 
         for q in sorted(self.ancilla_qudit_set):
-
             self._create_checks(q)
 
         # Determine the logical operations
         # --------------------------------
-        z_qudits = set(qecc.sides['bottom'])
-        x_qudits = set(qecc.sides['bottom'])
+        z_qudits = set(qecc.sides["bottom"])
+        x_qudits = set(qecc.sides["bottom"])
 
         logical_ops = [  # Each element in the list corresponds to a logical qubit
             # The keys label the type of logical operator
-            {'X': QuantumCircuit([{'X': x_qudits}]), 'Z': QuantumCircuit([{'Z': z_qudits}])},
+            {"X": QuantumCircuit([{"X": x_qudits}]), "Z": QuantumCircuit([{"Z": z_qudits}])},
         ]
 
         self.initial_logical_ops = logical_ops
@@ -64,7 +57,6 @@ class InstrSynExtraction(LogicalInstruction):
         self._compile_circuit(self.abstract_circuit)
 
     def _create_checks(self, ancilla):
-
         self.ancilla_x_check.add(ancilla)
         self.ancilla_z_check.add(ancilla)
 
@@ -74,10 +66,14 @@ class InstrSynExtraction(LogicalInstruction):
         square = []
         octagon = []
 
-        square.append(self.pos2qudit.get((x - 1, y + 1)))
-        square.append(self.pos2qudit.get((x + 1, y + 1)))
-        square.append(self.pos2qudit.get((x - 1, y - 1)))
-        square.append(self.pos2qudit.get((x + 1, y - 1)))
+        square.extend(
+            (
+                self.pos2qudit.get((x - 1, y + 1)),
+                self.pos2qudit.get((x + 1, y + 1)),
+                self.pos2qudit.get((x - 1, y - 1)),
+                self.pos2qudit.get((x + 1, y - 1)),
+            ),
+        )
 
         found_square = False
 
@@ -87,37 +83,40 @@ class InstrSynExtraction(LogicalInstruction):
                 break
 
         if found_square:
-
-            self.abstract_circuit.append('X check', polygon='square', locations={ancilla}, datas=square)
-            self.abstract_circuit.append('Z check', polygon='square', locations={ancilla}, datas=square)
+            self.abstract_circuit.append("X check", polygon="square", locations={ancilla}, datas=square)
+            self.abstract_circuit.append("Z check", polygon="square", locations={ancilla}, datas=square)
 
         else:
-
             if y != 0:
-
-                octagon.append(self.pos2qudit.get((x - 1, y + 3)))
-                octagon.append(self.pos2qudit.get((x + 1, y + 3)))
-                octagon.append(self.pos2qudit.get((x - 3, y + 1)))
-                octagon.append(self.pos2qudit.get((x + 3, y + 1)))
-                octagon.append(self.pos2qudit.get((x - 3, y - 1)))
-                octagon.append(self.pos2qudit.get((x + 3, y - 1)))
-                octagon.append(self.pos2qudit.get((x - 1, y - 3)))
-                octagon.append(self.pos2qudit.get((x + 1, y - 3)))
+                octagon.extend(
+                    (
+                        self.pos2qudit.get((x - 1, y + 3)),
+                        self.pos2qudit.get((x + 1, y + 3)),
+                        self.pos2qudit.get((x - 3, y + 1)),
+                        self.pos2qudit.get((x + 3, y + 1)),
+                        self.pos2qudit.get((x - 3, y - 1)),
+                        self.pos2qudit.get((x + 3, y - 1)),
+                        self.pos2qudit.get((x - 1, y - 3)),
+                        self.pos2qudit.get((x + 1, y - 3)),
+                    ),
+                )
             else:
-
-                octagon.append(self.pos2qudit.get((x - 1, y + 2)))
-                octagon.append(self.pos2qudit.get((x + 1, y + 2)))
-                octagon.append(self.pos2qudit.get((x - 3, y)))
-                octagon.append(self.pos2qudit.get((x + 3, y)))
+                octagon.extend(
+                    (
+                        self.pos2qudit.get((x - 1, y + 2)),
+                        self.pos2qudit.get((x + 1, y + 2)),
+                        self.pos2qudit.get((x - 3, y)),
+                        self.pos2qudit.get((x + 3, y)),
+                    ),
+                )
                 octagon.extend([None, None, None, None])
 
-            self.abstract_circuit.append('X check', polygon='octagon', locations={ancilla}, datas=octagon)
-            self.abstract_circuit.append('Z check', polygon='octagon', locations={ancilla}, datas=octagon)
+            self.abstract_circuit.append("X check", polygon="octagon", locations={ancilla}, datas=octagon)
+            self.abstract_circuit.append("Z check", polygon="octagon", locations={ancilla}, datas=octagon)
 
 
 class InstrInitZero(LogicalInstruction):
-    """
-    Instruction for initializing a logical zero.
+    """Instruction for initializing a logical zero.
 
     It is just like syndrome extraction except the data qubits are initialized in the zero state at tick = 0.
 
@@ -126,17 +125,16 @@ class InstrInitZero(LogicalInstruction):
     Parent class sets self.qecc.
     """
 
-    def __init__(self, qecc, symbol, **params):
-
+    def __init__(self, qecc, symbol, **params) -> None:
         super().__init__(qecc, symbol, **params)
 
-        self.symbol = 'instr_init_zero'
+        self.symbol = "instr_init_zero"
 
         self.data_qudit_set = self.qecc.data_qudit_set
         self.ancilla_qudit_set = self.qecc.ancilla_qudit_set
 
         # This is basically syndrome extraction round where all the data qubits are initialized to zero.
-        syn_ext = qecc.instruction('instr_syn_extract', **params)
+        syn_ext = qecc.instruction("instr_syn_extract", **params)
 
         # Make a shallow copy of the abstract circuits.
         self.abstract_circuit = syn_ext.abstract_circuit.copy()
@@ -146,23 +144,26 @@ class InstrInitZero(LogicalInstruction):
         self.ancilla_z_check = syn_ext.ancilla_z_check
 
         data_qudits = syn_ext.data_qudit_set
-        self.abstract_circuit.append('init |0>', locations=data_qudits, tick=0)
+        self.abstract_circuit.append("init |0>", locations=data_qudits, tick=0)
 
         self.initial_logical_ops = [  # Each element in the list corresponds to a logical qubit
             # The keys label the type of logical operator
-            {'X': None, 'Z': None},  # None => can be anything
+            {"X": None, "Z": None},  # None => can be anything
         ]
 
         # Special for state initialization:
         # ---------------------------------
         # list of tuples of logical check and delogical stabilizer for each logical qudit.
         self.final_logical_ops = [
-            {'X': QuantumCircuit([{'Z': set(qecc.sides['bottom'])}]), 'Z': QuantumCircuit([{'X': set(qecc.sides['bottom'])}])}
+            {
+                "X": QuantumCircuit([{"Z": set(qecc.sides["bottom"])}]),
+                "Z": QuantumCircuit([{"X": set(qecc.sides["bottom"])}]),
+            },
         ]
 
         # List of corresponding logical sign. (The logical sign if the instruction is preformed ideally.)
         self.logical_signs = [0]
-        self.logical_stabilizers = ['Z']
+        self.logical_stabilizers = ["Z"]
         # ---------------------------------
 
         # Must be called at the end of initiation.
@@ -170,8 +171,7 @@ class InstrInitZero(LogicalInstruction):
 
 
 class InstrInitPlus(LogicalInstruction):
-    """
-    Instruction for initializing a logical plus.
+    """Instruction for initializing a logical plus.
 
     It is just like syndrome extraction except the data qubits are initialized in the plus state at tick = 0.
 
@@ -180,17 +180,16 @@ class InstrInitPlus(LogicalInstruction):
     Parent class sets self.qecc.
     """
 
-    def __init__(self, qecc, symbol, **params):
-
+    def __init__(self, qecc, symbol, **params) -> None:
         super().__init__(qecc, symbol, **params)
 
-        self.symbol = 'instr_init_plus'
+        self.symbol = "instr_init_plus"
 
         self.data_qudit_set = self.qecc.data_qudit_set
         self.ancilla_qudit_set = self.qecc.ancilla_qudit_set
 
         # This is basically syndrome extraction round where all the data qubits are initialized to plus.
-        syn_ext = qecc.instruction('instr_syn_extract', **params)
+        syn_ext = qecc.instruction("instr_syn_extract", **params)
 
         # Make a shallow copy of the abstract circuits.
         self.abstract_circuit = syn_ext.abstract_circuit.copy()
@@ -200,25 +199,27 @@ class InstrInitPlus(LogicalInstruction):
         self.ancilla_z_check = syn_ext.ancilla_z_check
 
         data_qudits = syn_ext.data_qudit_set
-        # self.abstract_circuit.append('init |+>', qudits=data_qudits, tick=0)
-        self.abstract_circuit.append('init |0>', locations=data_qudits, tick=0)
-        self.abstract_circuit.append('H', locations=data_qudits, tick=1)
+        self.abstract_circuit.append("init |0>", locations=data_qudits, tick=0)
+        self.abstract_circuit.append("H", locations=data_qudits, tick=1)
 
         self.initial_logical_ops = [  # Each element in the list corresponds to a logical qubit
             # The keys label the type of logical operator
-            {'X': None, 'Z': None},  # None => can be anything
+            {"X": None, "Z": None},  # None => can be anything
         ]
 
         # Special for state initialization:
         # ---------------------------------
         # list of tuples of logical check and delogical stabilizer for each logical qudit.
         self.final_logical_ops = [
-            {'X': QuantumCircuit([{'X': set(qecc.sides['bottom'])}]), 'Z': QuantumCircuit([{'Z': set(qecc.sides['bottom'])}])}
+            {
+                "X": QuantumCircuit([{"X": set(qecc.sides["bottom"])}]),
+                "Z": QuantumCircuit([{"Z": set(qecc.sides["bottom"])}]),
+            },
         ]
 
         # List of corresponding logical sign. (The logical sign if the instruction is preformed ideally.)
         self.logical_signs = [0]
-        self.logical_stabilizers = ['X']
+        self.logical_stabilizers = ["X"]
         # ---------------------------------
 
         # Must be called at the end of initiation.

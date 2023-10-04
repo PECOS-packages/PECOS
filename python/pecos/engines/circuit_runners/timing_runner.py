@@ -12,21 +12,18 @@
 # specific language governing permissions and limitations under the License.
 
 from time import perf_counter as default_timer
-from .standard import Standard
+
+from pecos.engines.circuit_runners.standard import Standard
 
 
 class TimingRunner(Standard):
-    """
-    This class represents a standard model for running quantum circuits and adding in errors.
-    """
+    """This class represents a standard model for running quantum circuits and adding in errors."""
 
-    def __init__(self, seed=None, timer=None):
-        """
-
-        Args:
+    def __init__(self, seed=None, timer=None) -> None:
+        """Args:
+        ----
             seed:
         """
-
         super().__init__(seed)
 
         self.total_time = 0.0
@@ -38,36 +35,35 @@ class TimingRunner(Standard):
             self.timer = timer
 
     def reset_time(self):
-        """
-        Used to clear the time data in `total_time`.
+        """Used to clear the time data in `total_time`.
 
         Returns:
+        -------
 
         """
         self.total_time = 0.0
         self.num_gates = 0
 
     def run_gates(self, state, gates, removed_locations=None):
-        """
-        Directly apply a collection of quantum gates to a state.
+        """Directly apply a collection of quantum gates to a state.
 
         Args:
+        ----
             state:
             gates:
             removed_locations:
 
         Returns:
+        -------
 
         """
-
         timer = self.timer
 
         if removed_locations is None:
-            removed_locations = set([])
+            removed_locations = set()
 
         gate_results = {}
         for symbol, physical_gate_locations, gate_kwargs in gates.items():
-
             ti = timer()
             gate_results = state.run_gate(symbol, physical_gate_locations - removed_locations, **gate_kwargs)
             tf = timer()

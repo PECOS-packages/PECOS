@@ -11,20 +11,17 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import Tuple, Any
-from .state import SparseSim
-from .cmd_one_qubit import SX, SZ, SZdg, SY, SYdg, X
+from typing import Any
+
+from pecos.simulators.sparsesim.cmd_one_qubit import SX, SY, SZ, SYdg, SZdg, X
+from pecos.simulators.sparsesim.state import SparseSim
 
 
-def CX(state: SparseSim,
-         qubits: Tuple[int, int],
-         **params: Any) -> None:
-    """
-
-    XI -> XX
+def CX(state: SparseSim, qubits: tuple[int, int], **params: Any) -> None:
+    """XI -> XX
     IX -> IX
     ZI -> ZI
-    IZ -> ZZ
+    IZ -> ZZ.
 
 
     II -> II
@@ -67,7 +64,6 @@ def CX(state: SparseSim,
     Returns: None
 
     """
-
     qubit1, qubit2 = qubits
 
     set_q1 = {qubit1}
@@ -93,11 +89,8 @@ def CX(state: SparseSim,
         g.col_z[qubit1] ^= g.col_z[qubit2]
 
 
-def CZ(state: SparseSim,
-       qubits: Tuple[int, int],
-       **params: Any) -> None:
-    """
-    Applies a Controlled-Z gate (CZ) rotation.
+def CZ(state: SparseSim, qubits: tuple[int, int], **params: Any) -> None:
+    """Applies a Controlled-Z gate (CZ) rotation.
 
     This version is best for a large number of qubits (aboa ut >= 150)
 
@@ -146,7 +139,6 @@ def CZ(state: SparseSim,
     Returns: None
 
     """
-
     qubit1, qubit2 = qubits
 
     stabs = state.stabs
@@ -157,7 +149,6 @@ def CZ(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         old_z1_col = set(g.col_z[qubit1])
         old_z2_col = set(g.col_z[qubit2])
 
@@ -195,11 +186,8 @@ def CZ(state: SparseSim,
             g.row_z[i].discard(qubit2)
 
 
-def CY(state: SparseSim,
-       qubits: Tuple[int, int],
-       **params: Any) -> None:
-    """
-    Applies a Controlled-Y gate
+def CY(state: SparseSim, qubits: tuple[int, int], **params: Any) -> None:
+    """Applies a Controlled-Y gate.
 
     XI -> XY
     IX -> ZX
@@ -212,7 +200,6 @@ def CY(state: SparseSim,
     Returns: None
 
     """
-
     _, qubit2 = qubits
 
     SZ(state, qubit2)
@@ -220,11 +207,8 @@ def CY(state: SparseSim,
     SZdg(state, qubit2)
 
 
-def SWAP(state: SparseSim,
-         qubits: Tuple[int, int],
-         **params: Any) -> None:
-    """
-    Applies a SWAP gate to the generators
+def SWAP(state: SparseSim, qubits: tuple[int, int], **params: Any) -> None:
+    """Applies a SWAP gate to the generators.
 
     XI -> IX
     IX -> XI
@@ -254,13 +238,11 @@ def SWAP(state: SparseSim,
     Returns: None
 
     """
-
     qubit1, qubit2 = qubits
 
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Update rows
 
         # Swap the Xs of qubit1 and qubit2 for rows
@@ -310,11 +292,8 @@ def SWAP(state: SparseSim,
         g.col_z[qubit1], g.col_z[qubit2] = g.col_z[qubit2], g.col_z[qubit1]
 
 
-def G2(state: SparseSim,
-       qubits: Tuple[int, int],
-       **params: Any) -> None:
-    """
-    Applies a CZ.H(1).H(2).CZ to the generators
+def G2(state: SparseSim, qubits: tuple[int, int], **params: Any) -> None:
+    """Applies a CZ.H(1).H(2).CZ to the generators.
 
     XI -> IX
     IX -> XI
@@ -346,7 +325,6 @@ def G2(state: SparseSim,
     Returns: None
 
     """
-
     qubit1, qubit2 = qubits
 
     stabs = state.stabs
@@ -358,7 +336,6 @@ def G2(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # set of gens with Zs on qubit1 but not qubit2
         zin1 = g.col_z[qubit1] - g.col_z[qubit2]
 
@@ -428,11 +405,8 @@ def G2(state: SparseSim,
         del x2_removed
 
 
-def II(state: SparseSim,
-       qubits: Tuple[int, int],
-       **params: Any) -> None:
-    """
-    Two qubit identity.
+def II(state: SparseSim, qubits: tuple[int, int], **params: Any) -> None:
+    """Two qubit identity.
 
     XI -> XI
     IX -> IX
@@ -445,14 +419,10 @@ def II(state: SparseSim,
     Returns: None
 
     """
-    pass
 
 
-def SXX(state: SparseSim,
-        qubits: Tuple[int, int],
-        **params: Any) -> None:
-    """
-    Applies a square root of XX rotation to generators
+def SXX(state: SparseSim, qubits: tuple[int, int], **params: Any) -> None:
+    """Applies a square root of XX rotation to generators.
 
     XI -> XI
     IX -> IX
@@ -502,7 +472,6 @@ def SXX(state: SparseSim,
     Returns: None
 
     """
-
     qubit1, qubit2 = qubits
 
     stabs = state.stabs
@@ -528,7 +497,6 @@ def SXX(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         old_x1_col = set(g.col_x[qubit1])
         old_x2_col = set(g.col_x[qubit2])
 
@@ -565,20 +533,15 @@ def SXX(state: SparseSim,
             g.row_x[i].discard(qubit2)
 
 
-def SXXdg(state: SparseSim,
-          qubits: Tuple[int, int],
-          **params: Any) -> None:
+def SXXdg(state: SparseSim, qubits: tuple[int, int], **params: Any) -> None:
     qubit1, qubit2 = qubits
     X(state, qubit1)
     X(state, qubit2)
     SXX(state, qubits)
 
 
-def SqrtXX2(state: SparseSim,
-            qubits: Tuple[int, int],
-            **params: Any) -> None:
-    """
-    Applies a square root of XX rotation to generators
+def SqrtXX2(state: SparseSim, qubits: tuple[int, int], **params: Any) -> None:
+    """Applies a square root of XX rotation to generators.
 
     XI -> XI
     IX -> IX
@@ -636,11 +599,8 @@ def SqrtXX2(state: SparseSim,
     SY(state, qubit1)  # Sqrt Y
 
 
-def SYY(state: SparseSim,
-        qubits: Tuple[int, int],
-        **params: Any) -> None:
-    r"""
-    Sqrt of YY == (rZ,rZ).SqrtXX.(rZd,rZd)
+def SYY(state: SparseSim, qubits: tuple[int, int], **params: Any) -> None:
+    r"""Sqrt of YY == (rZ,rZ).SqrtXX.(rZd,rZd).
 
     XI -> -ZY
     IX -> -YZ
@@ -650,10 +610,12 @@ def SYY(state: SparseSim,
     TODO: verify implementation!
 
     Args:
+    ----
         state:
         qubits:
 
     Returns:
+    -------
 
     """
     qubit1, qubit2 = qubits
@@ -664,21 +626,19 @@ def SYY(state: SparseSim,
     SZ(state, qubit2)  # rZ
 
 
-def SYYdg(state: SparseSim,
-        qubits: Tuple[int, int],
-        **params: Any) -> None:
-    """
-    Adjoint of SYY
+def SYYdg(state: SparseSim, qubits: tuple[int, int], **params: Any) -> None:
+    """Adjoint of SYY.
 
     Args:
+    ----
         state:
         qubits:
         **params:
 
     Returns:
+    -------
 
     """
-
     qubit1, qubit2 = qubits
     SZdg(state, qubit1)
     SZdg(state, qubit2)
@@ -687,11 +647,8 @@ def SYYdg(state: SparseSim,
     SZ(state, qubit2)
 
 
-def SZZ(state: SparseSim,
-           qubits: Tuple[int, int],
-           **params: Any) -> None:
-    r"""
-    Sqrt of ZZ == (rY,rY).SqrtXX.(rYd,rYd)
+def SZZ(state: SparseSim, qubits: tuple[int, int], **params: Any) -> None:
+    r"""Sqrt of ZZ == (rY,rY).SqrtXX.(rYd,rYd).
 
     XI -> YZ
     IX -> ZY
@@ -699,10 +656,12 @@ def SZZ(state: SparseSim,
     IZ -> IZ
 
     Args:
+    ----
         state:
         qubits:
 
     Returns:
+    -------
 
     """
     qubit1, qubit2 = qubits
@@ -713,17 +672,16 @@ def SZZ(state: SparseSim,
     SY(state, qubit2)  # rY
 
 
-def SZZdg(state: SparseSim,
-          qubits: Tuple[int, int],
-          **params: Any) -> None:
-    r"""
-    Adjoint of SZZ
+def SZZdg(state: SparseSim, qubits: tuple[int, int], **params: Any) -> None:
+    r"""Adjoint of SZZ.
 
     Args:
+    ----
         state:
         qubits:
 
     Returns:
+    -------
 
     """
     qubit1, qubit2 = qubits
@@ -734,13 +692,10 @@ def SZZdg(state: SparseSim,
     SY(state, qubit2)  # rY
 
 
-def iSWAP(state: SparseSim,
-          qubits: Tuple[int, int],
-          **params: Any) -> None:
-    r"""
-    iSWAP = [[1,0,0,0],[0,0,i,0],[0,i,0,0],[0,0,0,i]]
+def iSWAP(state: SparseSim, qubits: tuple[int, int], **params: Any) -> None:
+    r"""ISWAP = [[1,0,0,0],[0,0,i,0],[0,i,0,0],[0,0,0,i]]
     = e^{i(XX+YY) \pi / 4}
-    = (II + i XX + i YY + ZZ)/2
+    = (II + i XX + i YY + ZZ)/2.
 
     XI -> YZ
     IX -> ZY
@@ -750,13 +705,14 @@ def iSWAP(state: SparseSim,
     TODO: verify implementation!
 
     Args:
+    ----
         state:
         qubits:
 
     Returns:
+    -------
 
     """
-
     qubit1, qubit2 = qubits
     SWAP(state, qubits)
     SZ(state, qubit1)

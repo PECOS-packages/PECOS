@@ -11,38 +11,33 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""
-Functions:
+"""Functions:
 
 find_logical_signs
 logical_flip
 """
 
-from typing import Set
 
-
-def find_stab(state,
-              xs: Set[int],
-              zs: Set[int]):
-    """
-    Find a stabilizer in the stabilizer group.
+def find_stab(state, xs: set[int], zs: set[int]):
+    """Find a stabilizer in the stabilizer group.
 
     Args:
+    ----
         state:
         xs:
         zs:
 
     Returns:
+    -------
 
     """
-
     stabs = state.stabs
     destabs = state.destabs
 
     # Find the destabilizer generators that anticommute with the stabilizer indicated by xs and zs.
 
     # First the destabilizer generators that could *possibly* anticommute:
-    possible_antidestabs = set([])
+    possible_antidestabs = set()
     for q in xs:
         possible_antidestabs.update(destabs.col_z[q])
 
@@ -50,15 +45,15 @@ def find_stab(state,
         possible_antidestabs.update(destabs.col_x[q])
 
     # Now we will confirm if they anticommute or not.
-    antidestabs = set([])
+    antidestabs = set()
     for d in possible_antidestabs:
         if (len(xs & destabs.row_z[d]) + len(zs & destabs.row_x[d])) % 2 == 1:
             # They anticommute an odd number of times.
             antidestabs.add(d)
 
     # Now we will confirm that the supplied stabilizer is actually in the stabilizer group.
-    confirm_xs = set([])
-    confirm_zs = set([])
+    confirm_xs = set()
+    confirm_zs = set()
     for d in antidestabs:
         confirm_xs ^= stabs.row_x[d]
         confirm_zs ^= stabs.row_z[d]
@@ -68,16 +63,11 @@ def find_stab(state,
     return found, antidestabs
 
 
-def refactor(state,
-             xs,
-             zs,
-             choose=None,
-             prefer=None,
-             protected=None):
-    """
-    Find the sign of the logical operator.
+def refactor(state, xs, zs, choose=None, prefer=None, protected=None):
+    """Find the sign of the logical operator.
 
     Args:
+    ----
         state:
         xs:
         zs:
@@ -86,9 +76,9 @@ def refactor(state,
         protected (None, set): Stabilizer ids not to choose from.
 
     Returns:
+    -------
 
     """
-
     stabs = state.stabs
     destabs = state.destabs
 
@@ -100,24 +90,18 @@ def refactor(state,
     if found:
         # Now update the generators so the supplied stabilizer is a stabilizer generator.
 
-        if protected:
-            available = gens - protected
-        else:
-            available = gens
+        available = gens - protected if protected else gens
 
         # Pick a stabilizer generator to become the requested stabilizer generator.
         if choose is None and prefer is None:
-
             new_stab = available.pop()
             gens.remove(new_stab)
 
         elif prefer is None:  # Choose indicates what order to be stab ids from.
-
             new_stab = sorted(available)[choose]
             gens.remove(new_stab)
 
         else:  # choose is not None and prefer is not None. =>
-
             for i in prefer:
                 if i in available:
                     new_stab = i
@@ -133,17 +117,12 @@ def refactor(state,
 
             # What if everything is protected........
 
-        # state.print_stabs()
-
-        # print(new_stab)
-
         # Now for each stabilizer/destabilizer generator pair we need to do:
         # stab_new -> stab_new * stab
         # destab -> destab * destab_new
 
         # Stab update
         for g in gens:
-
             for q in stabs.row_x[g]:
                 stabs.col_x[q] ^= {new_stab}
 
@@ -161,7 +140,6 @@ def refactor(state,
             destabs.col_z[q] ^= gens
 
         for g in gens:
-
             destabs.row_x[g] ^= destabs.row_x[new_stab]
             destabs.row_z[g] ^= destabs.row_z[new_stab]
 
@@ -181,9 +159,5 @@ def refactor(state,
 
         if num_minus % 2:
             stabs.signs_minus ^= {new_stab}
-
-        # print('...........')
-        # state.print_stabs()
-        # print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n')
 
     return found, new_stab

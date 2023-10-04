@@ -27,13 +27,13 @@ def test_surface():
 
     # Initialize ideal logical |0>
     logic = pc.circuits.LogicalCircuit(suppress_warning=True)
-    logic.append(surface.gate('ideal init |0>'))
+    logic.append(surface.gate("ideal init |0>"))
 
     # Syndrome extraction
     logic2 = pc.circuits.LogicalCircuit(suppress_warning=True)
-    logic2.append(surface.gate('I', num_syn_extract=1))
+    logic2.append(surface.gate("I", num_syn_extract=1))
 
-    depolar = pc.error_models.DepolarModel(model_level='code_capacity')
+    depolar = pc.error_models.DepolarModel(model_level="code_capacity")
 
     sim = pc.circuit_runners.Standard()
 
@@ -41,7 +41,7 @@ def test_surface():
 
     output1, error_circuits1 = sim.run(state, logic)
 
-    output2, error_circuits2 = sim.run(state, logic2, error_gen=depolar, error_params={'p': 0.2})
+    output2, error_circuits2 = sim.run(state, logic2, error_gen=depolar, error_params={"p": 0.2})
 
     # syn = output2.simplified(True)
 

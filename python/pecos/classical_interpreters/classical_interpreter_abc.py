@@ -9,12 +9,16 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from __future__ import annotations
+
 import abc
-from typing import Any, Generator, Optional, Sequence
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Generator, Sequence
 
 
 class ClassicalInterpreter(metaclass=abc.ABCMeta):
-
     def __init__(self) -> None:
         self.program = None
         self.foreign_obj = None
@@ -22,10 +26,9 @@ class ClassicalInterpreter(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def reset(self) -> None:
         """Reset state to initialization state."""
-        pass
 
     @abc.abstractmethod
-    def init(self, program: Any, foreign_classical_obj: Optional[object] = None) -> int:
+    def init(self, program: Any, foreign_classical_obj: object | None = None) -> int:
         pass
 
     @abc.abstractmethod
@@ -37,7 +40,7 @@ class ClassicalInterpreter(metaclass=abc.ABCMeta):
         pass
 
     @abc.abstractmethod
-    def execute(self, sequence: Optional[Sequence]) -> Generator:
+    def execute(self, sequence: Sequence | None) -> Generator:
         pass
 
     @abc.abstractmethod
@@ -46,5 +49,4 @@ class ClassicalInterpreter(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     def results(self) -> dict:
-        """Dumps program final results"""
-        pass
+        """Dumps program final results."""

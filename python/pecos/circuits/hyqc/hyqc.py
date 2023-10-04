@@ -9,18 +9,16 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""
-A Pythonic representation of hybrid quantum-classical program.
-"""
-from .fund import Block
-from . import qops
+"""A Pythonic representation of hybrid quantum-classical program."""
+from pecos.circuits.hyqc import qops
+from pecos.circuits.hyqc.fund import Block
 
 
 class HyQC(Block):
     """Represents a full program for HyQC. A high-level ''language'' for hybrid quantum-classical computing."""
 
-    def __init__(self, *stmts):
-        super(HyQC, self).__init__(*stmts)
+    def __init__(self, *stmts) -> None:
+        super().__init__(*stmts)
 
         self.qops = qops
         self.ast = None

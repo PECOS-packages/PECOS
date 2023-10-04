@@ -11,20 +11,15 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""
-Provides class to represent a logical circuit.
-"""
+"""Provides class to represent a logical circuit."""
 
-from .quantum_circuit import QuantumCircuit
+from pecos.circuits.quantum_circuit import QuantumCircuit
 
 
 class LogicalCircuit(QuantumCircuit):
-    """
-    Data structure used to represent a logical circuit.
-    """
+    """Data structure used to represent a logical circuit."""
 
-    def __init__(self, layout=None, suppress_warning=True, **params):
-
+    def __init__(self, layout=None, suppress_warning=True, **params) -> None:
         self.layout = layout
         if self.layout is not None:
             self.qudit_set = set(self.layout.keys())
@@ -38,24 +33,22 @@ class LogicalCircuit(QuantumCircuit):
         super().__init__(**params)
 
     def append(self, logical_gate, gate_locations=None, **params):
-        """
-
-        Args:
+        """Args:
+        ----
             logical_gate:
             gate_locations:
             **params:
 
         Returns:
+        -------
 
         """
-
         if gate_locations is None and not isinstance(logical_gate, dict):
             super().append(logical_gate, frozenset([None]), **params)
         else:
             super().append(logical_gate, gate_locations, **params)
 
         if self.layout is None:
-
             qecc = logical_gate.qecc
 
             self.layout = qecc.layout
@@ -63,41 +56,50 @@ class LogicalCircuit(QuantumCircuit):
             self.qudit_set = qecc.qudit_set
 
             if not self.suppress_warning:
-                print('No layout given. The layout of the first QECC is assumed.')
+                print("No layout given. The layout of the first QECC is assumed.")
 
-        else:
-            if isinstance(logical_gate, dict):
-                for gate, _ in logical_gate.items():
-                    # TODO: Probably not the best... need total number of qudits
-                    qecc = gate.qecc
-                    if self.num_qudits < qecc.num_qudits:
-                        raise Exception('Number of QECC qudits greater than those in assumed layout (%s < %s)' %
-                                        (self.num_qudits, qecc.num_qudits))
-
-                    if self.qudit_set is None:
-                        raise Exception('Qudit set should be set!')
-            else:
-                qecc = logical_gate.qecc
+        elif isinstance(logical_gate, dict):
+            for gate in logical_gate:
+                # TODO: Probably not the best... need total number of qudits
+                qecc = gate.qecc
                 if self.num_qudits < qecc.num_qudits:
-                    raise Exception('Number of QECC qudits greater than those in assumed layout (%s < %s)' %
-                                    (self.num_qudits, qecc.num_qudits))
+                    msg = (
+                        f"Number of QECC qudits greater than those in assumed layout "
+                        f"({self.num_qudits} < {qecc.num_qudits})"
+                    )
+                    raise Exception(msg)
 
                 if self.qudit_set is None:
-                    raise Exception('Qudit set should be set!')
+                    msg = "Qudit set should be set!"
+                    raise Exception(msg)
+        else:
+            qecc = logical_gate.qecc
+            if self.num_qudits < qecc.num_qudits:
+                msg = (
+                    f"Number of QECC qudits greater than those in assumed layout "
+                    f"({self.num_qudits} < {qecc.num_qudits})"
+                )
+                raise Exception(msg)
 
-    def update(self, symbol, locations=None, tick=-1, emptyappend=False, **params):
-        raise NotImplementedError('!!!')
+            if self.qudit_set is None:
+                msg = "Qudit set should be set!"
+                raise Exception(msg)
+
+    @staticmethod
+    def update(symbol, locations=None, tick=-1, emptyappend=False, **params):
+        msg = "!!!"
+        raise NotImplementedError(msg)
 
     def discard(self, locations, tick=-1):
-        raise NotImplementedError('!!!')
+        msg = "!!!"
+        raise NotImplementedError(msg)
 
     def iter_ticks(self):
         """An iterator for looping over the various quantum circuits comprising this data structure."""
-
         for logical_tick in range(len(self)):
             for logical_gate, _, _ in self.items(tick=logical_tick):
                 for instr_index, instr_circuit in enumerate(logical_gate.circuits):
-                    params = {'logical_circuit_params': self.metadata, 'gate': logical_gate, }
+                    params = {"logical_circuit_params": self.metadata, "gate": logical_gate}
                     params.update(instr_circuit.metadata)
 
                     for tick in range(len(instr_circuit)):
@@ -106,35 +108,29 @@ class LogicalCircuit(QuantumCircuit):
                         yield tick_gates, time, params
 
     def __iter__(self):
-
         for element in self._ticks:
             for gate, _, _ in element.items():
                 yield gate
 
-    def __str__(self):
-
+    def __str__(self) -> str:
         return "LogicalCircuit(%s)" % self._ticks
 
-    def __repr__(self):
-
+    def __repr__(self) -> str:
         return self.__str__()
 
     def __getitem__(self, tick):
         """Returns tick when instance[index] is used.
 
         Args:
+        ----
             tick(int): Tick index of ``self._ticks``.
 
         Returns:
+        -------
 
         """
-
         if isinstance(tick, int):
-
             return self._ticks[tick]
         else:
-            # logical_tick, instr_index, tick = tick
             logical_tick, _, _ = tick
-            tick_circuit = self[logical_tick]
-            # (logical_tick, instr_index, tick)
-            return tick_circuit
+            return self[logical_tick]

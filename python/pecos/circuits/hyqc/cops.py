@@ -9,92 +9,103 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from .fund import Expression
+from pecos.circuits.hyqc.fund import Expression
 
 
 class COp(Expression):
-    """Classical operation"""
+    """Classical operation."""
+
     ...
 
 
 class BinOp(COp):
-    """Binary Operation"""
+    """Binary Operation."""
 
-    def __init__(self, left, right):
+    def __init__(self, left, right) -> None:
         self.left = left
         self.right = right
 
 
 class CompOp(COp):
-    """Comparison Operation"""
+    """Comparison Operation."""
 
-    def __init__(self, left, right):
+    def __init__(self, left, right) -> None:
         self.left = left
         self.right = right
 
 
 class UnaryOp(COp):
-    """Unary Operation"""
+    """Unary Operation."""
 
-    def __init__(self, value):
+    def __init__(self, value) -> None:
         self.value = value
 
 
 class NOT(UnaryOp):
-    """bitwise ~a"""
+    """bitwise ~a."""
+
     ...
 
 
 class XOR(BinOp):
-    """bitwise a ^ b"""
+    """bitwise a ^ b."""
+
     ...
 
 
 class AND(BinOp):
-    """bitwise a & b"""
+    """bitwise a & b."""
+
     ...
 
 
 class OR(BinOp):
-    """bitwise a | b"""
+    """bitwise a | b."""
+
     ...
 
 
 class PLUS(BinOp):
-    """int a + b"""
+    """int a + b."""
+
     ...
 
 
 class MINUS(BinOp):
-    """int a - b"""
+    """int a - b."""
+
     ...
 
 
 class EQUIV(CompOp):
-    """bool a == b"""
+    """bool a == b."""
+
     ...
 
 
 class NEQUIV(CompOp):
-    """bool a != b"""
+    """bool a != b."""
 
 
 class LT(CompOp):
-    """bool a < b"""
+    """bool a < b."""
+
     ...
 
 
 class GT(CompOp):
-    """bool a > b"""
+    """bool a > b."""
+
     ...
 
 
 class LE(CompOp):
-    """bool a <= b"""
+    """bool a <= b."""
+
     ...
 
 
 class GE(CompOp):
-    """bool a > b"""
-    ...
+    """bool a > b."""
 
+    ...

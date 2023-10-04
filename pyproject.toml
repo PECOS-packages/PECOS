@@ -20,7 +20,7 @@ authors = [
     {name = "The PECOS Developers"},
 ]
 maintainers =[
-    {name = "Ciaran Ryan-Anderson", email = "ciaran@pecos.io"},
+    {name = "Ciaran Ryan-Anderson", email = "ciaran.ryan-anderson@quantinuum.com"},
 ]
 description = """PECOS is a library/framework for the evaluation, study, and design of QEC protocols. It also provides the ability to study and evaluate the performance advanced hybrid quantum/classical compute execution models for NISQ algorithms and beyond."""
 readme = "README.md"
@@ -74,11 +74,15 @@ all = [
     "cython",
     "pybind11>=2.2.3,<3.0",
     "projectq>=0.5.0,<0.9.0",
+    "wasmtime~=13.0",
     "wasmer~=1.1.0",
     "wasmer_compiler_cranelift~=1.1.0",
     "plotly~=5.9.0",
     "pytest>=5.0.0"
 ]
+
+# Linting and autorefactoring tools
+# ------------------------------------------------------
 
 [tool.black]
 line-length = 120

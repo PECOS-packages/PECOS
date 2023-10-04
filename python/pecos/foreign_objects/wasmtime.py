@@ -9,11 +9,16 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import Any, Optional, Sequence, Union
+from __future__ import annotations
 
-from wasmtime import Store, Module, Instance, Func, FuncType
+from typing import TYPE_CHECKING
 
-from .foreign_object_abc import ForeignObject
+from wasmtime import FuncType, Instance, Module, Store
+
+from pecos.foreign_objects.foreign_object_abc import ForeignObject
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 class WasmtimeObj(ForeignObject):
@@ -22,11 +27,9 @@ class WasmtimeObj(ForeignObject):
     For more info on using Wasmer, see: https://wasmerio.github.io/wasmer-python/api/wasmer/wasmer.html
     """
 
-    def __init__(self,
-                 file: Union[str, bytes]) -> None:
-
+    def __init__(self, file: str | bytes) -> None:
         if isinstance(file, str):
-            with open(file, 'rb') as f:
+            with open(file, "rb") as f:
                 wasm_bytes = f.read()
         else:
             wasm_bytes = file
@@ -46,7 +49,8 @@ class WasmtimeObj(ForeignObject):
         self.get_funcs()
 
         if "init" not in self.get_funcs():
-            raise Exception("Missing `init()` from Wasm module.")
+            msg = "Missing `init()` from Wasm module."
+            raise Exception(msg)
 
         self.exec("init", [])
 
@@ -59,14 +63,12 @@ class WasmtimeObj(ForeignObject):
         """Reset object internal state."""
         self.instance = Instance(self.store, self.module, [])
 
-    def spin_up_wasm(self):
-
+    def spin_up_wasm(self) -> None:
         self.store = Store()
         self.module = Module(self.store.engine, self.wasm_bytes)
         self.new_instance()
 
-    def get_funcs(self):
-
+    def get_funcs(self) -> list[str]:
         if self.func_names is None:
             fs = []
             for f in self.module.exports:
@@ -77,16 +79,13 @@ class WasmtimeObj(ForeignObject):
 
         return self.func_names
 
-    def exec(self,
-             func_name: str,
-             args: Sequence) -> Any:
-
+    def exec(self, func_name: str, args: Sequence) -> tuple:
         func = self.instance.exports(self.store)[func_name]
         return func(self.store, *args)
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
         return {"fobj_class": WasmtimeObj, "wasm_bytes": self.wasm_bytes}
 
     @staticmethod
-    def from_dict(wasmer_dict: dict):
-        return wasmer_dict["fobj_class"](wasmer_dict["wasm_bytes"])
+    def from_dict(wasmtime_dict: dict) -> WasmtimeObj:
+        return wasmtime_dict["fobj_class"](wasmtime_dict["wasm_bytes"])

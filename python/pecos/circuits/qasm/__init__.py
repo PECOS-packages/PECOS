@@ -9,12 +9,10 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from .qasm import QASM
-
-from .gates import Gate, ArgGate, MeasGate, ResetGate
-from .conditionals import CIf, CIfExpect
-from .barrier import Barrier
-from .expr import Assign
-from .misc import Comment, br
-
-from .std_gates import Measure, Reset, X, Y, Z, H, S, Sdg, T, Tdg, CNOT, CX, CY, CZ, RX, RY, RZ
+from pecos.circuits.qasm.barrier import Barrier
+from pecos.circuits.qasm.conditionals import CIf, CIfExpect
+from pecos.circuits.qasm.expr import Assign
+from pecos.circuits.qasm.gates import ArgGate, Gate, MeasGate, ResetGate
+from pecos.circuits.qasm.misc import Comment, br
+from pecos.circuits.qasm.qasm import QASM
+from pecos.circuits.qasm.std_gates import CNOT, CX, CY, CZ, RX, RY, RZ, H, Measure, Reset, S, Sdg, T, Tdg, X, Y, Z

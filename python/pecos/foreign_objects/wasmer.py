@@ -9,12 +9,18 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import Any, Optional, Sequence, Union
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from wasmer import FunctionType, Instance, Module, Store, engine
 from wasmer_compiler_cranelift import Compiler as Cranelift
 
-from .foreign_object_abc import ForeignObject
+from pecos.foreign_objects.foreign_object_abc import ForeignObject
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 class WasmerObj(ForeignObject):
@@ -23,14 +29,11 @@ class WasmerObj(ForeignObject):
     For more info on using Wasmer, see: https://wasmerio.github.io/wasmer-python/api/wasmer/wasmer.html
     """
 
-    def __init__(self,
-                 file: Union[str, bytes],
-                 compiler: Optional[object] = None) -> None:
-
+    def __init__(self, file: str | bytes, compiler: object | None = None) -> None:
         self.compiler = compiler
 
         if isinstance(file, str):
-            with open(file, 'rb') as f:
+            with Path.open(file, "rb") as f:
                 wasm_bytes = f.read()
         else:
             wasm_bytes = file
@@ -49,7 +52,8 @@ class WasmerObj(ForeignObject):
         self.get_funcs()
 
         if "init" not in self.get_funcs():
-            raise Exception("Missing `init()` from Wasm module.")
+            msg = "Missing `init()` from Wasm module."
+            raise Exception(msg)
 
         self.exec("init", [])
 
@@ -62,8 +66,7 @@ class WasmerObj(ForeignObject):
         """Reset object internal state."""
         self.instance = Instance(self.module)
 
-    def spin_up_wasm(self):
-
+    def spin_up_wasm(self) -> None:
         compiler = self.compiler
         if compiler is None:
             compiler = Cranelift
@@ -73,8 +76,7 @@ class WasmerObj(ForeignObject):
         self.module = Module(store, self.wasm_bytes)
         self.new_instance()
 
-    def get_funcs(self):
-
+    def get_funcs(self) -> list[str]:
         if self.func_names is None:
             fs = []
             for f in self.module.exports:
@@ -85,19 +87,17 @@ class WasmerObj(ForeignObject):
 
         return self.func_names
 
-    def exec(self,
-             func_name: str,
-             args: Sequence) -> Any:
-
+    def exec(self, func_name: str, args: Sequence) -> tuple:
         func = getattr(self.instance.exports, func_name)
         params = func.type.params
         if len(args) != len(params):
-            raise TypeError(f"Wasmer function `{func_name}` takes {len(params)} args and {len(args)} were given!")
+            msg = f"Wasmer function `{func_name}` takes {len(params)} args and {len(args)} were given!"
+            raise TypeError(msg)
         return func(*args)
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
         return {"fobj_class": WasmerObj, "wasm_bytes": self.wasm_bytes}
 
     @staticmethod
-    def from_dict(wasmer_dict: dict):
+    def from_dict(wasmer_dict: dict) -> WasmerObj:
         return wasmer_dict["fobj_class"](wasmer_dict["wasm_bytes"])

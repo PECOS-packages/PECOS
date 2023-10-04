@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright 2018 National Technology & Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract
 # DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software.
 #
@@ -12,26 +10,21 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""
-    repetition_z
-    ~~~~~~~~~~~~
+"""repetition_z
+~~~~~~~~~~~~.
 
-    Generates circuits for the repetition code in the Z-Basis.
+Generates circuits for the repetition code in the Z-Basis.
 """
-from ..qecc_parent_class import QECC
-# from ...circuit_converters.checks2circuit import Check2Circuits
-from .circuit_implementation1 import OneAncillaPerCheck
-from .instructions import InstrSynExtraction, InstrInitZero, InstrInitPlus
-from .gates import GateIdentity, GateInitZero, GateInitPlus
+from pecos.qeccs.color_488.circuit_implementation1 import OneAncillaPerCheck
+from pecos.qeccs.color_488.gates import GateIdentity, GateInitPlus, GateInitZero
+from pecos.qeccs.color_488.instructions import InstrInitPlus, InstrInitZero, InstrSynExtraction
+from pecos.qeccs.qecc_parent_class import QECC
 
 
 class Color488(QECC):
-    """
-    Canonical triangular color-code on a 4.8.8 lattice.
-    """
+    """Canonical triangular color-code on a 4.8.8 lattice."""
 
-    def __init__(self, distance=None, **qecc_params):
-
+    def __init__(self, distance=None, **qecc_params) -> None:
         # TODO: Need to switch to codes each having a class defining how classes are implemented. From that we get the
         # layout and ancillas. We don't need a general circuit conversion script... The default implementation may
         # still be overridden.
@@ -39,13 +32,13 @@ class Color488(QECC):
         # layout. -> tanner_graph, layout
 
         if distance is not None:
-            qecc_params['distance'] = distance
+            qecc_params["distance"] = distance
 
         super().__init__(**qecc_params)
 
         # Give name for others classes to identify this code
         # --------------------------------------------------
-        self.name = '4.8.8 Color Code'
+        self.name = "4.8.8 Color Code"
 
         # QECC parameters:
         # ----------------
@@ -55,13 +48,14 @@ class Color488(QECC):
         self.sym2gate_class, self.sym2instruction_class = self._set_symbols()
 
         # d - distance
-        self.distance = qecc_params['distance']
+        self.distance = qecc_params["distance"]
 
         if self.distance % 2 == 0:
-            raise Exception('This code requires an odd distance!')
+            msg = "This code requires an odd distance!"
+            raise Exception(msg)
 
         # n - number of data qubits
-        self.num_data_qudits = int((self.distance**2 - 1)*0.5 + self.distance)
+        self.num_data_qudits = int((self.distance**2 - 1) * 0.5 + self.distance)
 
         # k - number of logical qubits
         self.num_logical_qudits = 1
@@ -73,12 +67,10 @@ class Color488(QECC):
         # Determine number of ancillas to reserve given the check circuit implementation and, perhaps, the logical
         # gate circuits implemented by this class.
         # --------------------------------------------------------------------------------------------------------------
-        self.circuit_compiler = qecc_params.get('circuit_compiler', OneAncillaPerCheck())
+        self.circuit_compiler = qecc_params.get("circuit_compiler", OneAncillaPerCheck())
         self.num_ancilla_qudits = self.circuit_compiler.get_num_ancillas(self.num_syndromes)
 
         # Total number of qudits.
-        # self.num_qudits = self.num_data_qudits + self.num_ancilla_qudits
-        # print(self.num_qudits, self.num_data_qudits, self.num_ancilla_qudits)
         # self.qudit_set, self.data_qudit_set, self.ancilla_qudit_set will be determined when creating the layout.
 
         # Determine QECC geometry
@@ -95,71 +87,59 @@ class Color488(QECC):
 
     @staticmethod
     def _set_symbols():
-
         # gate and instruction symbol bindings
         # ------------------------------------
         # gate symbol => gate class
         sym2gate_class = {
-            'I': GateIdentity,
-            'init |0>': GateInitZero,
-            'init |+>': GateInitPlus,
+            "I": GateIdentity,
+            "init |0>": GateInitZero,
+            "init |+>": GateInitPlus,
         }
 
         # instruction symbol => instr. class
         sym2instruction_class = {
-            'instr_syn_extract': InstrSynExtraction,
-            'instr_init_zero': InstrInitZero,
-            'instr_init_plus': InstrInitPlus,
+            "instr_syn_extract": InstrSynExtraction,
+            "instr_init_zero": InstrInitZero,
+            "instr_init_plus": InstrInitPlus,
         }
 
         return sym2gate_class, sym2instruction_class
 
     @staticmethod
     def _get_distance(params):
-        """
-        Check and set the distance
+        """Check and set the distance
         :return:
         """
-
-        distance = params.get('distance')
+        distance = params.get("distance")
 
         if distance is not None:
             distance_width = distance_height = distance
 
         else:
-            distance_width = params.get('distance_width')  # The width of the code. == Z? distance
-            distance_height = params.get('distance_height')  # The height of the code. == X? distance
+            distance_width = params.get("distance_width")  # The width of the code. == Z? distance
+            distance_height = params.get("distance_height")  # The height of the code. == X? distance
             distance = min(distance_width, distance_height)
 
         return distance, distance_height, distance_width
 
     def _generate_layout(self):
-        """
-        Creates the layout dictionary which describes the location of the qubits in the code.
-
-        """
-
+        """Creates the layout dictionary which describes the location of the qubits in the code."""
         self.lattice_height = 4 * self.distance - 4
         self.lattice_width = 2 * self.distance - 2
         data_ids = self._data_id_iter()
         ancilla_ids = self._ancilla_id_iter()
 
         self.lattice_dimensions = {
-            'width': self.lattice_width,
-            'height': self.lattice_height
+            "width": self.lattice_width,
+            "height": self.lattice_height,
         }
 
         # Determine the position of things
         for y in range(self.lattice_width + 1):
             for x in range(self.lattice_height + 1):
-
-                if (x, y) == (x, x + 2) and x % 2 == 1 and y % 8 == 3:
-
-                    # self._add_node(x, y, ancilla_ids)
-                    pass
-
-                elif (x, y) == (4 * self.distance - y, y) and x % 2 == 1 and y % 8 == 7:
-                    # self._add_node(x, y, ancilla_ids)
+                if ((x, y) == (x, x + 2) and x % 2 == 1 and y % 8 == 3) or (
+                    (x, y) == (4 * self.distance - y, y) and x % 2 == 1 and y % 8 == 7
+                ):
                     pass
 
                 elif (x, y) > (x, x) or (x, y) > (4 * self.distance - y - 2, y):
@@ -167,7 +147,6 @@ class Color488(QECC):
 
                 if x % 2 == 0 and y % 2 == 0:  # Data
                     if (y / 2) % 4 == 1 or (y / 2) % 4 == 2:
-                        # self._add_node(x, y, data_ids)
                         if (x / 2) % 4 == 2 or (x / 2) % 4 == 3:
                             self._add_node(x, y, data_ids)
 
@@ -178,18 +157,13 @@ class Color488(QECC):
                 if x % 4 == 1 and y % 4 == 3:
                     self._add_node(x, y, ancilla_ids)
 
-                if y == 0:
-                    if x % 8 == 5:
-                        self._add_node(x, y, ancilla_ids)
-
-                    # elif y % 4 == 3 and x % 4 == 1:
-                    #    self._add_node(x, y, ancilla_ids)
+                if y == 0 and x % 8 == 5:
+                    self._add_node(x, y, ancilla_ids)
 
         return self.layout
 
     def _determine_sides(self):
-        """
-        Outputs a dictionary that describes the sides of the code.
+        """Outputs a dictionary that describes the sides of the code.
 
         The repetition code is essentially a line.
 
@@ -202,40 +176,27 @@ class Color488(QECC):
         :return:
         """
 
-        # width = self.lattice_width
-        # height = self.lattice_height
-
-        # right_nodes = []
         bottom_nodes = []
         left_nodes = []
-
-        # layout = self.layout
 
         # self.qubits_data is not set when this is called
 
         for d, (x, y) in self.layout.items():
-
             if (x, y) == (x, x):
                 left_nodes.append(d)
 
             # if x == 555:
-            #    right_nodes.append(d)
 
             if y == 0 and x % 2 == 0:
                 bottom_nodes.append(d)
 
-        # right_nodes.sort(reverse=True)
         bottom_nodes.sort()
         left_nodes.sort()
 
-        # right_nodes = [self.mapping[i] for i in right_nodes]
         bottom_nodes = [self.mapping[i] for i in bottom_nodes]
         left_nodes = [self.mapping[i] for i in left_nodes]
 
-        boundaries = {
-            # 'right': right_nodes,
-            'bottom': bottom_nodes,
-            'left': left_nodes
+        return {
+            "bottom": bottom_nodes,
+            "left": left_nodes,
         }
-
-        return boundaries

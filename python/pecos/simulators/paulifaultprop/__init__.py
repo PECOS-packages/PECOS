@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright 2018 The PECOS Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
@@ -11,6 +9,5 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from . import bindings
-
-from .state import PauliFaultProp
+from pecos.simulators.paulifaultprop import bindings
+from pecos.simulators.paulifaultprop.state import PauliFaultProp

@@ -9,26 +9,25 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""
-Fundamental definitions for HYQC.
-"""
+"""Fundamental definitions for HYQC."""
 
 
 class Statement:
     """Statements are something that do something."""
+
     ...
 
 
 class Expression:
     """Expressions are something that evaluate to a values."""
+
     ...
 
 
 class Block:
     """A sequence of statements."""
 
-    def __init__(self, *stmts):
-
+    def __init__(self, *stmts) -> None:
         self.statements = []
         self.extend(*stmts)
 

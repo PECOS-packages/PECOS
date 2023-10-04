@@ -11,50 +11,41 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-# from collections import OrderedDict
-
 
 class StdOutput(dict):
-    """
-    Class used to record results of gates (typically, measurements).
+    """Class used to record results of gates (typically, measurements).
 
     (logical space, logical time) -> time(tick) -> {location: result}
     """
 
-    def __init__(self, *args, **kwargs):
-
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
     def record(self, result_dict, time):
-        """
-
-        Args:
+        """Args:
+        ----
             result_dict:
             time:
 
         Returns:
+        -------
 
         """
-
         if result_dict:
-
             logical_dict = self.setdefault(time, {})
             logical_dict.update(result_dict)
 
     def simplified(self, last=False):
-        """
-        Gives output in a simplified version. {logical coord=>{set of locations}, ...}
-
+        """Gives output in a simplified version. {logical coord=>{set of locations}, ...}.
 
         Outputs the syndromes of the final logical instruction.
 
         Returns:
+        -------
 
         """
-
         simple = {}
         for time, results in self.items():
-
             fired = set(results.keys())
 
             simple[time] = fired

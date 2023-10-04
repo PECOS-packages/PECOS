@@ -9,29 +9,31 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import Set, Tuple
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
-from pecos import QuantumCircuit
+
+if TYPE_CHECKING:
+    from pecos import QuantumCircuit
 
 
-def noise_tq_mem(locations: Set[Tuple[int, int]],
-                 after: QuantumCircuit,
-                 p: float) -> None:
+def noise_tq_mem(locations: set[tuple[int, int]], after: QuantumCircuit, p: float) -> None:
     """The memory noise model for idling qubits.
 
     Args:
+    ----
         locations: Set of qubits the ideal gates act on.
         after: QuantumCircuit collecting the noise that occurs after the ideal gates.
     """
-
     err_qubits = set()
     for locs in locations:
         rand_nums = np.random.random(len(locs)) <= p
 
         for r, loc in zip(rand_nums, locs):
-
             if r:
                 err_qubits.add(loc)
 
     if err_qubits:
-        after.append('Z', err_qubits)
+        after.append("Z", err_qubits)

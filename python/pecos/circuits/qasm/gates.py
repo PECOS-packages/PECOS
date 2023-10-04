@@ -9,154 +9,155 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-class Gate:
 
-    def __init__(self, sym, size=None, qasm_def=None):
+class Gate:
+    def __init__(self, sym, size=None, qasm_def=None) -> None:
         self.sym = sym
         self.size = size
         self.qasm_def = qasm_def
         self.results = []
 
     def __call__(self, *qargs):
-
         if len(qargs) == 1 and isinstance(qargs[0], (list, set)):
             self.results = self._multi_call(*qargs)
 
         else:
-
             if self.size is not None and len(qargs) != self.size:
-                raise Exception(f'Supplying the incorrect number of qubits for gate to operate on. '
-                                f'#args {len(qargs)} != {self.size}')
+                msg = (
+                    f"Supplying the incorrect number of qubits for gate to operate on. "
+                    f"#args {len(qargs)} != {self.size}"
+                )
+                raise Exception(msg)
 
-            qs = ', '.join(str(a) for a in qargs)
-            self.results = [f'{self.sym} {qs}', ]
+            qs = ", ".join(str(a) for a in qargs)
+            self.results = [f"{self.sym} {qs}"]
 
         return str(self)
 
-    def __str__(self):
-
-        return '\n'.join(self.results)
+    def __str__(self) -> str:
+        return "\n".join(self.results)
 
     def _multi_call(self, *qargs):
-
         qargs = qargs[0]
 
         if len(qargs) == 0:
-            raise Exception('List of qubits is empty')
+            msg = "List of qubits is empty"
+            raise Exception(msg)
 
         results = []
         for loc in qargs:
-
             if not isinstance(loc, tuple):
-                loc = (loc, )
+                loc = (loc,)
 
             if self.size is not None and len(loc) != self.size:
-                raise Exception('Supplying the incorrect number of qubits for gate to operate on.'
-                                f'#args {len(qargs)} != {self.size}')
+                msg = (
+                    f"Supplying the incorrect number of qubits for gate to operate on. "
+                    f"#args {len(qargs)} != {self.size}"
+                )
+                raise Exception(msg)
 
-            qs = ', '.join(str(a) for a in loc)
-            results.append(f'{self.sym} {qs}')
+            qs = ", ".join(str(a) for a in loc)
+            results.append(f"{self.sym} {qs}")
 
         return results
 
-class Gate_old:
 
-    def __init__(self, sym, size=None, qasm_def=None):
+class GateOld:
+    def __init__(self, sym, size=None, qasm_def=None) -> None:
         self.sym = sym
         self.size = size
         self.qasm_def = qasm_def
         self.locs = []
 
     def __call__(self, *qargs):
-
         if len(qargs) == 1 and isinstance(qargs[0], (list, set)):
             return self._multi_call(*qargs)
 
         if self.size is not None and len(qargs) != self.size:
-            raise Exception(f'Supplying the incorrect number of qubits for gate to operate on. '
-                            f'#args {len(qargs)} != {self.size}')
+            msg = f"Supplying the incorrect number of qubits for gate to operate on. #args {len(qargs)} != {self.size}"
+            raise Exception(msg)
 
-        qs = ', '.join(str(a) for a in qargs)
-        return f'{self.sym} {qs}'
+        qs = ", ".join(str(a) for a in qargs)
+        return f"{self.sym} {qs}"
 
     def _multi_call(self, *qargs):
-
         qargs = qargs[0]
 
         if len(qargs) == 0:
-            raise Exception('List of qubits is empty')
+            msg = "List of qubits is empty"
+            raise Exception(msg)
 
         results = []
         for loc in qargs:
-
             if not isinstance(loc, tuple):
-                loc = (loc, )
+                loc = (loc,)
 
             if self.size is not None and len(loc) != self.size:
-                raise Exception('Supplying the incorrect number of qubits for gate to operate on.'
-                                f'#args {len(qargs)} != {self.size}')
+                msg = (
+                    f"Supplying the incorrect number of qubits for gate to operate on. "
+                    f"#args {len(qargs)} != {self.size}"
+                )
+                raise Exception(msg)
 
-            qs = ', '.join(str(a) for a in loc)
-            results.append(f'{self.sym} {qs}')
-        return '\n'.join(results)
+            qs = ", ".join(str(a) for a in loc)
+            results.append(f"{self.sym} {qs}")
+        return "\n".join(results)
 
 
 class ArgGate(Gate):
-
-    def __init__(self, sym, size=None, num_args=None, qasm_def=None):
+    def __init__(self, sym, size=None, num_args=None, qasm_def=None) -> None:
         super().__init__(sym, size, qasm_def)
         self.num_args = num_args
 
     def __call__(self, params, *qargs):
-
-        if isinstance(params, str) or isinstance(params, float) or isinstance(params, int):
+        if isinstance(params, (str, float, int)):
             params = (params,)
 
         if len(qargs) == 1 and isinstance(qargs[0], (list, set)):
             return self._multi_call(params, *qargs)
 
         if self.size is not None and len(qargs) != self.size:
-            raise Exception('Supplying the incorrect number of qubits for gate to operate on.')
+            msg = "Supplying the incorrect number of qubits for gate to operate on."
+            raise Exception(msg)
 
         if self.num_args is not None and len(params) != self.num_args:
-            raise Exception('Supplying supplying the wrong number of gate parameters.')
+            msg = "Supplying supplying the wrong number of gate parameters."
+            raise Exception(msg)
 
-        args = ', '.join(str(a) for a in params)
-        qs = ', '.join(str(a) for a in qargs)
-        return f'{self.sym}({args}) {qs}'
+        args = ", ".join(str(a) for a in params)
+        qs = ", ".join(str(a) for a in qargs)
+        return f"{self.sym}({args}) {qs}"
 
     def _multi_call(self, params, *qargs):
-
-        args = ', '.join(str(a) for a in params)
+        args = ", ".join(str(a) for a in params)
         qargs = qargs[0]
 
         if len(qargs) == 0:
-            raise Exception('List of qubits is empty')
+            msg = "List of qubits is empty"
+            raise Exception(msg)
 
         results = []
         for loc in qargs:
-
             if not isinstance(loc, tuple):
-                loc = (loc, )
+                loc = (loc,)
 
             if self.size is not None and len(loc) != self.size:
-                raise Exception('Supplying the incorrect number of qubits for gate to operate on.')
+                msg = "Supplying the incorrect number of qubits for gate to operate on."
+                raise Exception(msg)
 
-            qs = ', '.join(str(a) for a in loc)
-            results.append(f'{self.sym}({args}) {qs}')
-        return '\n'.join(results)
+            qs = ", ".join(str(a) for a in loc)
+            results.append(f"{self.sym}({args}) {qs}")
+        return "\n".join(results)
 
 
 class MeasGate(Gate):
-
-    def __init__(self):
-        super().__init__(sym='measure', size=1)
+    def __init__(self) -> None:
+        super().__init__(sym="measure", size=1)
         self.qreg = None
         self.creg = None
 
     def __call__(self, qreg):
         self.qreg = qreg
-        # return f'measure {qreg} -> {creg}'
         return self
 
     def __gt__(self, creg):
@@ -165,52 +166,48 @@ class MeasGate(Gate):
         if isinstance(self.qreg, list):
             return self._multi_call(self.qreg, self.creg)
 
-        return f'measure {self.qreg} -> {creg}'
+        return f"measure {self.qreg} -> {creg}"
 
     def _multi_call(self, qargs, cargs):
         if not isinstance(qargs, list):
-            raise Exception('Both quantum and classical arguments should be a list.')
+            msg = "Both quantum and classical arguments should be a list."
+            raise TypeError(msg)
 
         results = []
 
         if isinstance(cargs, list):
-
             if len(qargs) != len(cargs):
-                raise Exception('The number of quantum and classical arguments must be the same.')
+                msg = "The number of quantum and classical arguments must be the same."
+                raise Exception(msg)
 
             for qloc, cloc in zip(qargs, cargs):
-                results.append(f'measure {qloc} -> {cloc}')
+                results.append(f"measure {qloc} -> {cloc}")
         else:
             for i, qloc in enumerate(qargs):
-                results.append(f'measure {qloc} -> {cargs}[{i}]')
+                results.append(f"measure {qloc} -> {cargs}[{i}]")
 
-        return '\n'.join(results)
+        return "\n".join(results)
 
 
 class ResetGate(Gate):
-
-    def __init__(self):
-        super().__init__(sym='reset', size=1)
+    def __init__(self) -> None:
+        super().__init__(sym="reset", size=1)
 
     def __call__(self, *qargs):
-
         if len(qargs) == 1 and isinstance(qargs[0], (list, set)):
             return self._multi_call(*qargs)
 
-        qregs = '\n'.join([f'reset {a};' for a in qargs])
-        return qregs
+        return "\n".join([f"reset {a};" for a in qargs])
 
     def _multi_call(self, *qargs):
-
         qargs = qargs[0]
 
         results = []
         for loc in qargs:
-
             if not isinstance(loc, tuple):
-                loc = (loc, )
+                loc = (loc,)
 
-            qregs = ', '.join([str(a) for a in loc])
-            results.append(f'reset {qregs}')
+            qregs = ", ".join([str(a) for a in loc])
+            results.append(f"reset {qregs}")
 
-        return '\n'.join(results)
+        return "\n".join(results)

@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright 2019 The PECOS Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
@@ -14,14 +12,11 @@
 
 class PECOSTypeError(TypeError):
     """General gate error."""
-    pass
 
 
 class GateError(Exception):
     """General gate errors."""
-    pass
 
 
 class GateOverlapError(GateError):
     """Raised when gates act on qudits that are already being acted on."""
-    pass

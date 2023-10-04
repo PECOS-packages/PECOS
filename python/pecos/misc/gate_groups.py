@@ -11,20 +11,71 @@
 
 import numpy as np
 
-two_qubits = {'CNOT', 'CX', 'CZ', 'SWAP', 'G', 'MS', 'SqrtXX', 'SqrtZZ', 'RXX', 'RYY', 'RZZ', 'RXXYYZZ', }
+two_qubits = {"CNOT", "CX", "CZ", "SWAP", "G", "MS", "SqrtXX", "SqrtZZ", "RXX", "RYY", "RZZ", "RXXYYZZ"}
 
 one_qubits = {
-    'I', 'X', 'Y', 'Z', 'Q', 'Qd', 'R', 'Rd', 'S', 'Sd', 'H', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
-    'H+z+x', 'H-z-x', 'H+y-z', 'H-y-z', 'H-x+y', 'H-x-y',
-    'F1', 'F1d', 'F2', 'F2d', 'F3', 'F3d', 'F4', 'F4d',
-    'SqrtX', 'SqrtXd', 'SqrtY', 'SqrtYd', 'SqrtZ', 'SqrtZd', 'RX', 'RY', 'RZ',
-    'U1q', 'RXY1Q',
+    "I",
+    "X",
+    "Y",
+    "Z",
+    "Q",
+    "Qd",
+    "R",
+    "Rd",
+    "S",
+    "Sd",
+    "H",
+    "H1",
+    "H2",
+    "H3",
+    "H4",
+    "H5",
+    "H6",
+    "H+z+x",
+    "H-z-x",
+    "H+y-z",
+    "H-y-z",
+    "H-x+y",
+    "H-x-y",
+    "F1",
+    "F1d",
+    "F2",
+    "F2d",
+    "F3",
+    "F3d",
+    "F4",
+    "F4d",
+    "SqrtX",
+    "SqrtXd",
+    "SqrtY",
+    "SqrtYd",
+    "SqrtZ",
+    "SqrtZd",
+    "RX",
+    "RY",
+    "RZ",
+    "U1q",
+    "RXY1Q",
 }
 
-error_two_paulis_collection = np.array([
-    (None, 'X'), (None, 'Y'), (None, 'Z'),
-    ('X', None), ('X', 'X'), ('X', 'Y'), ('X', 'Z'),
-    ('Y', None), ('Y', 'X'), ('Y', 'Y'), ('Y', 'Z'),
-    ('Z', None), ('Z', 'X'), ('Z', 'Y'), ('Z', 'Z')])
+error_two_paulis_collection = np.array(
+    [
+        (None, "X"),
+        (None, "Y"),
+        (None, "Z"),
+        ("X", None),
+        ("X", "X"),
+        ("X", "Y"),
+        ("X", "Z"),
+        ("Y", None),
+        ("Y", "X"),
+        ("Y", "Y"),
+        ("Y", "Z"),
+        ("Z", None),
+        ("Z", "X"),
+        ("Z", "Y"),
+        ("Z", "Z"),
+    ],
+)
 
-error_one_paulis_collection = np.array(['X', 'Y', 'Z'])
+error_one_paulis_collection = np.array(["X", "Y", "Z"])

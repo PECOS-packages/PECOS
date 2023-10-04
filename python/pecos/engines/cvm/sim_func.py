@@ -9,17 +9,18 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+
 def sim_print(runner, *args):
     syms = [s for s, _ in args]
-    syms = ', '.join(syms)
-    print(f'sim_print({syms}):')
-    for i, (sym, b) in enumerate(args):
-        print(f'    {sym}: {str(b)} ({int(b)})')
+    syms = ", ".join(syms)
+    print(f"sim_print({syms}):")
+    for sym, b in args:
+        print(f"    {sym}: {str(b)} ({int(b)})")
     print()
 
 
 def sim_test(runner, *args):
-    print(f'SIM TEST!')
+    print("SIM TEST!")
 
 
 def sim_get_amp(runner, key_state):
@@ -46,14 +47,13 @@ def sim_noise_on(runner, *args):
 
 
 sim_funcs = {
-    'sim_test': sim_test,
-    'sim_print': sim_print,
-    'sim_get_amp': sim_get_amp,
-    'sim_get_amps': sim_get_amps,
-
-    'sim_noise': sim_noise,
-    'sim_noise_off': sim_noise_off,
-    'sim_noise_on': sim_noise_on,
+    "sim_test": sim_test,
+    "sim_print": sim_print,
+    "sim_get_amp": sim_get_amp,
+    "sim_get_amps": sim_get_amps,
+    "sim_noise": sim_noise,
+    "sim_noise_off": sim_noise_off,
+    "sim_noise_on": sim_noise_on,
 }
 
 

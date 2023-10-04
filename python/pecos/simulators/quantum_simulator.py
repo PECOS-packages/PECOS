@@ -9,17 +9,19 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import List, Optional, Union
+from __future__ import annotations
 
-from .projectq.state import ProjectQSim
-from .sparsesim.state import SparseSim
-from ..reps.pypmir.op_types import QOp
+from typing import TYPE_CHECKING
+
+from pecos.simulators.projectq.state import ProjectQSim
+from pecos.simulators.sparsesim.state import SparseSim
+
+if TYPE_CHECKING:
+    from pecos.reps.pypmir.op_types import QOp
 
 
 class QuantumSimulator:
-
-    def __init__(self,
-                 backend: Optional[Union[str, object]] = None) -> None:
+    def __init__(self, backend: str | object | None = None) -> None:
         self.num_qubits = None
         self.state = None
         self.backend = backend
@@ -31,9 +33,8 @@ class QuantumSimulator:
     def init(self, num_qubits: int):
         self.num_qubits = num_qubits
 
-        if isinstance(self.backend, str):
-            if self.backend == "stabilizer":
-                self.state = SparseSim
+        if isinstance(self.backend, str) and self.backend == "stabilizer":
+            self.state = SparseSim
 
         if self.backend is None:
             self.state = ProjectQSim
@@ -44,10 +45,10 @@ class QuantumSimulator:
         """Run all code needed at the beginning of each shot, e.g., resetting state."""
         self.state.reset()
 
-    def run(self, qops: List[QOp]) -> list:
+    def run(self, qops: list[QOp]) -> list:
         """Given a list of quantum operations, run them, update the state, and return any measurement results that
-        are generated in the form {qid: result, ...}"""
-
+        are generated in the form {qid: result, ...}.
+        """
         meas = []
         for op in qops:
             output = self.state.run_gate(op.name, op.args, **op.metadata)

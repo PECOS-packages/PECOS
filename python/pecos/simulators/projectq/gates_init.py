@@ -13,20 +13,18 @@
 
 from typing import Any
 
-from .gates_one_qubit import H2, H5, H6, X, H
-from .gates_meas import meas_z
+from pecos.simulators.projectq.gates_meas import meas_z
+from pecos.simulators.projectq.gates_one_qubit import H2, H5, H6, H, X
 
 
-def init_zero(state,
-              qubit,
-              **params: Any):
-    """
-
-    Args:
+def init_zero(state, qubit, **params: Any):
+    """Args:
+    ----
         state:
         qubit:
 
     Returns:
+    -------
 
     """
     result = meas_z(state, qubit)
@@ -35,79 +33,61 @@ def init_zero(state,
         X(state, qubit)
 
 
-def init_one(state,
-             qubit,
-             **params: Any):
-    """
-    Initialize qubit in state |1>.
+def init_one(state, qubit, **params: Any):
+    """Initialize qubit in state |1>.
 
     :param state:
     :param qubit:
     :return:
     """
-
     init_zero(state, qubit)
     X(state, qubit)
 
 
-def init_plus(state,
-              qubit,
-              **params: Any):
-    """
-    Initialize qubit in state |+>.
+def init_plus(state, qubit, **params: Any):
+    """Initialize qubit in state |+>.
 
     :param gens:
     :param qubit:
     :return:
     """
-
     init_zero(state, qubit)
     H(state, qubit)
 
 
-def init_minus(state,
-               qubit,
-               **params: Any):
-    """
-    Initialize qubit in state |->
+def init_minus(state, qubit, **params: Any):
+    """Initialize qubit in state |->.
 
     :param gens:
     :param qubit:
     :return:
     """
-
     init_zero(state, qubit)
     H2(state, qubit)
 
 
-def init_plusi(state,
-               qubit,
-               **params: Any):
-    """
-    Initialize qubit in state |+i>
+def init_plusi(state, qubit, **params: Any):
+    """Initialize qubit in state |+i>.
 
     :param gens:
     :param qubit:
     :return:
     """
-
     init_zero(state, qubit)
     H5(state, qubit)
 
 
-def init_minusi(state,
-                qubit,
-                **params: Any):
-    """
-    Initialize qubit in state |-i>
+def init_minusi(state, qubit, **params: Any):
+    """Initialize qubit in state |-i>.
 
     Args:
+    ----
         state:
         qubit:
 
     Returns:
+    -------
 
     """
-
     init_zero(state, qubit)
     H6(state, qubit)

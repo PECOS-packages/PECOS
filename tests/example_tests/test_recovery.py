@@ -14,10 +14,9 @@ import pecos as pc
 
 
 def test_recovery():
-
     surface = pc.qeccs.Surface4444(distance=5)
 
-    for i in range(30):
+    for _i in range(30):
         recovery_tester(surface)
 
 
@@ -38,19 +37,19 @@ def recovery_tester(qecc):
 
     # logical |0>
     initzero = pc.circuits.LogicalCircuit(suppress_warning=True)
-    initzero.append(qecc.gate('ideal init |0>'))
+    initzero.append(qecc.gate("ideal init |0>"))
 
     # logical |+>
     initplus = pc.circuits.LogicalCircuit(suppress_warning=True)
-    initplus.append(qecc.gate('ideal init |+>'))
+    initplus.append(qecc.gate("ideal init |+>"))
 
     # syndrome extraction
     syn_ext = pc.circuits.LogicalCircuit(suppress_warning=True)
-    syn_ext.append(qecc.gate('I', num_syn_extract=1))
+    syn_ext.append(qecc.gate("I", num_syn_extract=1))
 
     # Error Generator
     # ---------------
-    depolar = pc.error_models.DepolarModel(model_level='code_capacity')
+    depolar = pc.error_models.DepolarModel(model_level="code_capacity")
 
     # Circuit simulator
     # -----------------
@@ -76,7 +75,7 @@ def recovery_tester(qecc):
     assert output1 == output2
     assert not output1
 
-    output1, error_circuits1 = sim.run(state_zero, syn_ext, error_gen=depolar, error_params={'p': 0.3})
+    output1, error_circuits1 = sim.run(state_zero, syn_ext, error_gen=depolar, error_params={"p": 0.3})
     output2, error_circuits2 = sim.run(state_plus, syn_ext, error_circuits=error_circuits1)
 
     assert error_circuits1 == error_circuits2
@@ -86,16 +85,18 @@ def recovery_tester(qecc):
 
     # Logical operations
     # ------------------
-    logical_ops = qecc.instruction('instr_syn_extract').final_logical_ops[0]
+    logical_ops = qecc.instruction("instr_syn_extract").final_logical_ops[0]
 
     # Logical signs
     # -------------
-    sign1 = state_zero.logical_sign(logical_ops['Z'],
-                                    # logical_ops['X']
-                                    )
-    sign2 = state_plus.logical_sign(logical_ops['X'],
-                                    # logical_ops['Z']
-                                    )
+    sign1 = state_zero.logical_sign(
+        logical_ops["Z"],
+        # logical_ops['X']
+    )
+    sign2 = state_plus.logical_sign(
+        logical_ops["X"],
+        # logical_ops['Z']
+    )
 
     # Decoder
     # -------
@@ -107,18 +108,20 @@ def recovery_tester(qecc):
 
     # Determine if the logical operators will flip due to the recovery
 
-    commute1 = pc.misc.commute.qubit_pauli(logical_ops['Z'], recovery)
-    commute2 = pc.misc.commute.qubit_pauli(logical_ops['X'], recovery)
+    commute1 = pc.misc.commute.qubit_pauli(logical_ops["Z"], recovery)
+    commute2 = pc.misc.commute.qubit_pauli(logical_ops["X"], recovery)
 
     sim.run(state_zero, recovery)
     sim.run(state_plus, recovery)
 
-    sign1_new = state_zero.logical_sign(logical_ops['Z'],
-                                        # logical_ops['X']
-                                        )
-    sign2_new = state_plus.logical_sign(logical_ops['X'],
-                                        # logical_ops['Z']
-                                        )
+    sign1_new = state_zero.logical_sign(
+        logical_ops["Z"],
+        # logical_ops['X']
+    )
+    sign2_new = state_plus.logical_sign(
+        logical_ops["X"],
+        # logical_ops['Z']
+    )
 
     # Not commuting then should flip; otherwise, doesn't flip.
     if commute1:  # Commuting

@@ -9,14 +9,13 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from .fund import Statement, Block
+from pecos.circuits.hyqc.fund import Block, Statement
 
 
 class CondStmt(Statement):
-
-    def __init__(self, symbol):
+    def __init__(self, symbol) -> None:
         self.symbol = symbol
-        super(CondStmt, self).__init__()
+        super().__init__()
         self.cond = None
         self.block = Block()
 
@@ -37,13 +36,12 @@ class CondStmt(Statement):
         return p
 
 
-While = CondStmt('While')
+While = CondStmt("While")
 
 
 class CIf(CondStmt):
-
-    def __init__(self):
-        super(CIf, self).__init__('If')
+    def __init__(self) -> None:
+        super().__init__("If")
         self.else_block = None
 
     def Else(self, *stmts):

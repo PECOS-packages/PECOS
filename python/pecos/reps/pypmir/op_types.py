@@ -9,16 +9,17 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import Optional
+from __future__ import annotations
 
 
 class Op:
-
-    def __init__(self,
-                 name: str,
-                 args: Optional[list] = None,
-                 returns: Optional[list] = None,
-                 metadata: Optional[dict] = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        args: list | None = None,
+        returns: list | None = None,
+        metadata: dict | None = None,
+    ) -> None:
         self.name = name
         self.args = args
         self.returns = returns
@@ -26,34 +27,26 @@ class Op:
 
 
 class QOp(Op):
-    """Quantum operation"""
+    """Quantum operation."""
 
-    def __init__(self,
-                 name: str,
-                 args: list,
-                 returns: Optional[list] = None,
-                 metadata: Optional[dict] = None):
+    def __init__(self, name: str, args: list, returns: list | None = None, metadata: dict | None = None) -> None:
         super().__init__(
             name=name,
             args=args,
             returns=returns,
-            metadata=metadata
+            metadata=metadata,
         )
 
 
 class COp(Op):
-    """Classical operation"""
+    """Classical operation."""
 
-    def __init__(self,
-                 name: str,
-                 args: list,
-                 returns: Optional[list] = None,
-                 metadata: Optional[dict] = None):
+    def __init__(self, name: str, args: list, returns: list | None = None, metadata: dict | None = None) -> None:
         super().__init__(
             name=name,
             args=args,
             returns=returns,
-            metadata=metadata
+            metadata=metadata,
         )
 
 
@@ -62,15 +55,12 @@ class FFCall(COp):
 
 
 class MOp(Op):
-    """Machine operation"""
-    pass
+    """Machine operation."""
 
 
 class EMOp(Op):
-    """Error model operation"""
-    pass
+    """Error model operation."""
 
 
 class SOp(Op):
-    """Simulation model"""
-    pass
+    """Simulation model."""

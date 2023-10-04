@@ -8,13 +8,12 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
-from typing import Union, Optional
+
+from __future__ import annotations
 
 
 class BinArray:
-
-    def __init__(self, size: Union[int, str], value: Optional[int] = None):
-
+    def __init__(self, size: int | str, value: int | None = None) -> None:
         if isinstance(size, int):
             self.size = size
             self.array = [0] * size
@@ -26,59 +25,57 @@ class BinArray:
 
             self.array = []
             for i in reversed(str_rep):
-                if i == '0':
+                if i == "0":
                     self.array.append(0)
-                elif i == '1':
+                elif i == "1":
                     self.array.append(1)
                 else:
-                    raise Exception(f'Can only accept a string made of 0s and 1s! Got {str_rep}.')
+                    msg = f"Can only accept a string made of 0s and 1s! Got {str_rep}."
+                    raise Exception(msg)
 
             self.size = len(self.array)
         else:
-            raise Exception(f'First argument must be int or str! Got {size} of type {type(size)}.')
+            msg = f"First argument must be int or str! Got {size} of type {type(size)}."
+            raise TypeError(msg)
 
-    def __str__(self):
-        bin_str = ['1' if self.array[i] else '0' for i in range(len(self.array) - 1, -1, -1)]
-        return ''.join(bin_str)
+    def __str__(self) -> str:
+        bin_str = ["1" if self.array[i] else "0" for i in range(len(self.array) - 1, -1, -1)]
+        return "".join(bin_str)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__str__()
 
-    def __int__(self):
+    def __int__(self) -> int:
         return int(str(self), 2)
 
     def set_clip(self, ba):
         """Take values up to the size of this BinArray. If this BinArray array is larger, fill with zeros."""
-
         if isinstance(ba, int):
             ba = BinArray(format(ba, "b"))
 
         if isinstance(ba, BinArray):
-
             for i in range(self.size):
-
                 if i >= ba.size:
                     self.array[i] = 0
                 else:
                     self.array[i] = ba.array[i]
         else:
-            raise Exception('Expected int or BinArray!')
+            msg = "Expected int or BinArray!"
+            raise TypeError(msg)
 
-    def set(self, value: Union['BinArray', int]):
-
+    def set(self, value: BinArray | int):
         value = int(value)
 
-        value = (2**self.size-1) & value
+        value = (2**self.size - 1) & value
 
-        for i, b in enumerate(reversed(format(value, f'0{self.size}b'))):
-
+        for i, b in enumerate(reversed(format(value, f"0{self.size}b"))):
             # Don't add more elements than size
             if i >= self.size:
                 break
 
             self.array[i] = int(b)
 
-        '''
+        """
         if isinstance(value, int):
             for i, b in enumerate(reversed(format(value, f'0{self.size}b'))):
 
@@ -97,26 +94,27 @@ class BinArray:
 
         else:
             raise Exception(f"Can't set value of type {type(value)}")
-        '''
+        """
 
     def __getitem__(self, item):
         return self.array[item]
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key, value) -> None:
         value_temp = int(value)
 
-        if value_temp != 0 and value_temp != 1:
-            raise Exception('Can only set an element to a binary value!')
+        if value_temp not in {0, 1}:
+            msg = "Can only set an element to a binary value!"
+            raise Exception(msg)
 
         self.array[key] = value_temp
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.size
 
     def __xor__(self, other):
-
         if isinstance(other, BinArray) and other.size != self.size:
-            raise Exception('Can only do bitwise operations between BinArrays of the same size.')
+            msg = "Can only do bitwise operations between BinArrays of the same size."
+            raise Exception(msg)
 
         val = int(self) ^ int(other)
         result = BinArray(self.size)
@@ -125,9 +123,9 @@ class BinArray:
         return result
 
     def __and__(self, other):
-
         if isinstance(other, BinArray) and other.size != self.size:
-            raise Exception('Can only do bitwise operations between BinArrays of the same size.')
+            msg = "Can only do bitwise operations between BinArrays of the same size."
+            raise Exception(msg)
 
         val = int(self) & int(other)
         result = BinArray(self.size)
@@ -136,9 +134,9 @@ class BinArray:
         return result
 
     def __or__(self, other):
-
         if isinstance(other, BinArray) and other.size != self.size:
-            raise Exception('Can only do bitwise operations between BinArrays of the same size.')
+            msg = "Can only do bitwise operations between BinArrays of the same size."
+            raise Exception(msg)
 
         val = int(self) | int(other)
         result = BinArray(self.size)
@@ -147,7 +145,6 @@ class BinArray:
         return result
 
     def __eq__(self, other):
-
         val = int(self) == int(other)
         result = BinArray(self.size)
         result.set(val)
@@ -155,7 +152,6 @@ class BinArray:
         return result
 
     def __ne__(self, other):
-
         val = int(self) != int(other)
         result = BinArray(self.size)
         result.set(val)
@@ -163,7 +159,6 @@ class BinArray:
         return result
 
     def __lt__(self, other):
-
         val = int(self) < int(other)
         result = BinArray(self.size)
         result.set(val)
@@ -171,7 +166,6 @@ class BinArray:
         return result
 
     def __gt__(self, other):
-
         val = int(self) > int(other)
         result = BinArray(self.size)
         result.set(val)
@@ -179,7 +173,6 @@ class BinArray:
         return result
 
     def __le__(self, other):
-
         val = int(self) <= int(other)
         result = BinArray(self.size)
         result.set(val)
@@ -187,7 +180,6 @@ class BinArray:
         return result
 
     def __ge__(self, other):
-
         val = int(self) >= int(other)
         result = BinArray(self.size)
         result.set(val)
@@ -195,9 +187,9 @@ class BinArray:
         return result
 
     def __add__(self, other):
-
         if isinstance(other, BinArray) and other.size != self.size:
-            raise Exception('Can only do bitwise operations between BinArrays of the same size.')
+            msg = "Can only do bitwise operations between BinArrays of the same size."
+            raise Exception(msg)
 
         val = int(self) + int(other)
         result = BinArray(self.size)
@@ -206,9 +198,9 @@ class BinArray:
         return result
 
     def __sub__(self, other):
-
         if isinstance(other, BinArray) and other.size != self.size:
-            raise Exception('Can only do bitwise operations between BinArrays of the same size.')
+            msg = "Can only do bitwise operations between BinArrays of the same size."
+            raise Exception(msg)
 
         val = int(self) - int(other)
         result = BinArray(self.size)
@@ -217,9 +209,9 @@ class BinArray:
         return result
 
     def __rshift__(self, other):
-
         if isinstance(other, BinArray) and other.size != self.size:
-            raise Exception('Can only do bitwise operations between BinArrays of the same size.')
+            msg = "Can only do bitwise operations between BinArrays of the same size."
+            raise Exception(msg)
 
         val = int(self) >> int(other)
         result = BinArray(self.size)
@@ -228,9 +220,9 @@ class BinArray:
         return result
 
     def __lshift__(self, other):
-
         if isinstance(other, BinArray) and other.size != self.size:
-            raise Exception('Can only do bitwise operations between BinArrays of the same size.')
+            msg = "Can only do bitwise operations between BinArrays of the same size."
+            raise Exception(msg)
 
         val = int(self) << int(other)
         result = BinArray(self.size)
@@ -252,9 +244,9 @@ class BinArray:
         return result
 
     def __mul__(self, other):
-
         if isinstance(other, BinArray) and other.size != self.size:
-            raise Exception('Can only do bitwise operations between BinArrays of the same size.')
+            msg = "Can only do bitwise operations between BinArrays of the same size."
+            raise Exception(msg)
 
         val = int(self) * int(other)
         result = BinArray(self.size)
@@ -263,9 +255,9 @@ class BinArray:
         return result
 
     def __floordiv__(self, other):
-
         if isinstance(other, BinArray) and other.size != self.size:
-            raise Exception('Can only do bitwise operations between BinArrays of the same size.')
+            msg = "Can only do bitwise operations between BinArrays of the same size."
+            raise Exception(msg)
 
         val = int(self) // int(other)
         result = BinArray(self.size)
@@ -274,9 +266,9 @@ class BinArray:
         return result
 
     def __mod__(self, other):
-
         if isinstance(other, BinArray) and other.size != self.size:
-            raise Exception('Can only do bitwise operations between BinArrays of the same size.')
+            msg = "Can only do bitwise operations between BinArrays of the same size."
+            raise Exception(msg)
 
         val = int(self) % int(other)
         result = BinArray(self.size)
@@ -284,5 +276,5 @@ class BinArray:
 
         return result
 
-    def __bool__(self):
+    def __bool__(self) -> bool:
         return bool(int(self))

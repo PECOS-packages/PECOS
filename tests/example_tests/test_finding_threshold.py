@@ -16,7 +16,7 @@ from pecos.misc.threshold_curve import func
 
 
 def test_finding_threshold():
-    depolar = pc.error_models.DepolarModel(model_level='code_capacity', perp_errors=True)
+    depolar = pc.error_models.DepolarModel(model_level="code_capacity", perp_errors=True)
     ps = [0.19, 0.17, 0.15, 0.13, 0.11]
     ds = [5, 7, 9]
     plist = np.array(ps * len(ds))
@@ -32,12 +32,21 @@ def test_finding_threshold():
         for p in ps:
             surface = pc.qeccs.Surface4444(distance=d)
             mwpm2d = pc.decoders.MWPM2D(surface)
-            plog.append(pc.tools.codecapacity_logical_rate(10, surface, d, depolar, error_params={'p': p},
-                                                           decoder=mwpm2d, verbose=False)[0])
+            plog.append(
+                pc.tools.codecapacity_logical_rate(
+                    10,
+                    surface,
+                    d,
+                    depolar,
+                    error_params={"p": p},
+                    decoder=mwpm2d,
+                    verbose=False,
+                )[0],
+            )
 
     plog = np.array(plog)
 
-    print('Finished!')
+    print("Finished!")
 
     try:
         p0 = (0.1, 1.5, 1, 1, 1)

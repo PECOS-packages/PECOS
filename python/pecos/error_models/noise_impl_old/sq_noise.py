@@ -9,18 +9,20 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import Set
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
-from pecos import QuantumCircuit
-from .gate_groups import error_one_paulis_collection
+
+from pecos.error_models.noise_impl_old.gate_groups import error_one_paulis_collection
+
+if TYPE_CHECKING:
+    from pecos import QuantumCircuit
 
 
-def noise_depolarizing_sq_gate(
-        locations: Set[int],
-        after: QuantumCircuit,
-        p: float) -> None:
+def noise_depolarizing_sq_gate(locations: set[int], after: QuantumCircuit, p: float) -> None:
     """Apply a symmetric depolarizing noise model."""
-
     rand_nums = np.random.random(len(locations)) <= p
 
     for r, loc in zip(rand_nums, locations):

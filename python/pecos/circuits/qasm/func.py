@@ -9,16 +9,17 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+
 class Func:
     """A class representing a function."""
 
-    def __init__(self, name):
+    def __init__(self, name) -> None:
         self.name = name
 
     def __call__(self, *args):
         str_args = [str(a) for a in args]
-        str_args = ', '.join(str_args)
-        return f'{self.name}({str_args})'
+        str_args = ", ".join(str_args)
+        return f"{self.name}({str_args})"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.name

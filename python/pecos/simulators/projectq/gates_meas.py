@@ -14,51 +14,45 @@
 from typing import Any
 
 from projectq.ops import Measure
-from .gates_one_qubit import H, H5, X
+
+from pecos.simulators.projectq.gates_one_qubit import H5, H
 
 
-def force_output(state,
-                 qubit,
-                 forced_output=-1,
-                 **params: Any):
-    """
-    Outputs value.
+def force_output(state, qubit, forced_output=-1, **params: Any):
+    """Outputs value.
 
     Used for error generators to generate outputs when replacing measurements.
 
     Args:
+    ----
         state:
         qubit:
         forced_output:
 
     Returns:
+    -------
 
     """
     return forced_output
 
 
-def meas_z(state,
-           qubit,
-           forced_outcome=-1,
-           **params: Any):
-    """
-    Measurement in the Z-basis.
+def meas_z(state, qubit, forced_outcome=-1, **params: Any):
+    """Measurement in the Z-basis.
 
     Args:
         state:
         qubit:
         forced_outcome:
+        **params:
 
     Returns:
 
     """
-
     q = state.qids[qubit]
 
     state.eng.flush()
 
-    if forced_outcome == 0 or forced_outcome == 1:
-
+    if forced_outcome in {0, 1}:
         # project the qubit to the desired state ("randomly" chooses the value `forced_outcome`)
         state.eng.backend.collapse_wavefunction([q], [forced_outcome])
         # Note: this will raise an error if the probability of collapsing to this state is close to 0.0
@@ -66,29 +60,25 @@ def meas_z(state,
         return forced_outcome
 
     else:
-
         Measure | q
         state.eng.flush()
 
         return int(q)
 
 
-def meas_y(state,
-           qubit,
-           forced_outcome=-1,
-           **params: Any):
-    """
-    Measurement in the Y-basis.
+def meas_y(state, qubit, forced_outcome=-1, **params: Any):
+    """Measurement in the Y-basis.
 
     Args:
+    ----
         state:
         qubit:
         forced_outcome:
 
     Returns:
+    -------
 
     """
-
     H5(state, qubit)
     meas_outcome = meas_z(state, qubit, forced_outcome)
     H5(state, qubit)
@@ -96,22 +86,19 @@ def meas_y(state,
     return meas_outcome
 
 
-def meas_x(state,
-           qubit,
-           forced_outcome=-1,
-           **params: Any):
-    """
-    Measurement in the X-basis.
+def meas_x(state, qubit, forced_outcome=-1, **params: Any):
+    """Measurement in the X-basis.
 
     Args:
+    ----
         state:
         qubit:
         forced_outcome:
 
     Returns:
+    -------
 
     """
-
     H(state, qubit)
     meas_outcome = meas_z(state, qubit, forced_outcome)
     H(state, qubit)

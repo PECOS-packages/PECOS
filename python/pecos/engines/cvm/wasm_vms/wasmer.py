@@ -9,49 +9,44 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import Union
+from __future__ import annotations
+
+import contextlib
 import sys
-from ..sim_func import sim_funcs
+from pathlib import Path
 
-try:
-    from wasmer import engine, Store, Module, Instance
-except ImportError:
-    pass
+from pecos.engines.cvm.sim_func import sim_funcs
 
-try:
+with contextlib.suppress(ImportError):
+    from wasmer import Instance, Module, Store, engine
+
+with contextlib.suppress(ImportError):
     from wasmer_compiler_cranelift import Compiler as CompilerCranelift
-except ImportError:
-    pass
 
-try:
+with contextlib.suppress(ImportError):
     from wasmer_compiler_llvm import Compiler as CompilerLLVM
-except ImportError:
-    pass
 
 
-def read_wasmer(path, compiler='wasm_cl'):
+def read_wasmer(path, compiler="wasm_cl"):
     """Helper method to create a wasmer instance."""
 
     class WasmerInstance:
         """Wrapper class to create a wasmer instance and access its functions."""
 
-        if 'wasmer' not in sys.modules:
-            raise ImportError('wasmer is being called but not installed! Install "wasmer"')
+        if "wasmer" not in sys.modules:
+            msg = 'wasmer is being called but not installed! Install "wasmer"'
+            raise ImportError(msg)
 
         # '"wasmer_compiler_cranelift"!')
 
-        def __init__(self, file: Union[str, bytes], compiler='wasm_cl'):
-
+        def __init__(self, file: str | bytes, compiler="wasm_cl") -> None:
             if isinstance(file, str):
-                with open(file, 'rb') as f:
+                with Path.open(file, "rb") as f:
                     wasm_b = f.read()
             else:
                 wasm_b = file
 
-            if compiler == 'wasm_llvm':
-                store = Store(engine.JIT(CompilerLLVM))
-            else:
-                store = Store(engine.JIT(CompilerCranelift))
+            store = Store(engine.JIT(CompilerLLVM)) if compiler == "wasm_llvm" else Store(engine.JIT(CompilerCranelift))
 
             module = Module(store, wasm_b)
             instance = Instance(module)
@@ -62,14 +57,13 @@ def read_wasmer(path, compiler='wasm_cl'):
         def get_funcs(self):
             fs = []
             for f in self.module.exports:
-                if str(f.type).startswith('FunctionType'):
+                if str(f.type).startswith("FunctionType"):
                     fs.append(str(f.name))
 
             return fs
 
         def exec(self, func_name, args, debug=False):
-
-            if debug and func_name.startswith('sim_'):
+            if debug and func_name.startswith("sim_"):
                 method = sim_funcs[func_name]
                 return method(*args)
 

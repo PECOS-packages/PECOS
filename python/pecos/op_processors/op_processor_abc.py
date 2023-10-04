@@ -9,26 +9,26 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from __future__ import annotations
+
 import abc
 
 
 class OpProcessor(metaclass=abc.ABCMeta):
-
     @abc.abstractmethod
     def reset(self) -> None:
         """Reset state to initialization state."""
+
+    @abc.abstractmethod
+    def init(self) -> None:
         pass
 
     @abc.abstractmethod
-    def init(self, *args, **kwargs) -> None:
+    def shot_reinit(self) -> None:
         pass
 
     @abc.abstractmethod
-    def shot_reinit(self, *args, **kwargs) -> None:
-        pass
-
-    @abc.abstractmethod
-    def process(self, buffered_ops) -> list:
+    def process(self, buffered_ops: list) -> list:
         pass
 
     @abc.abstractmethod

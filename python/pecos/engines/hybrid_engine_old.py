@@ -21,18 +21,14 @@ from pecos.error_models.fake_error_model import FakeErrorModel
 from pecos.errors import NotSupportedGateError
 
 
-class HybridEngine(object):
-    """
-    This class represents a standard model for running quantum circuits and adding in errors.
-    """
+class HybridEngine:
+    """This class represents a standard model for running quantum circuits and adding in errors."""
 
-    def __init__(self, seed=None, debug=False, regwidth: int = 32):
-        """
-
-        Args:
+    def __init__(self, seed=None, debug=False, regwidth: int = 32) -> None:
+        """Args:
+        ----
             seed:
         """
-
         self.debug = debug
         self.state = None
         self.circuit = None
@@ -55,9 +51,17 @@ class HybridEngine(object):
 
         self.generate_errors = None
 
-    def run(self, state, circuit, error_gen=None, error_params=None, error_circuits=None, output=None,
-            output_spec=None, circ_inspector=None):
-
+    def run(
+        self,
+        state,
+        circuit,
+        error_gen=None,
+        error_params=None,
+        error_circuits=None,
+        output=None,
+        output_spec=None,
+        circ_inspector=None,
+    ):
         output = set_output(state, circuit, output_spec, output)
         output_export = {}
 
@@ -67,7 +71,7 @@ class HybridEngine(object):
         if error_circuits:
             error_gen = FakeErrorModel(error_circuits)
         elif error_gen is None:
-            error_gen = FakeErrorModel(dict())  # No errors
+            error_gen = FakeErrorModel({})  # No errors
 
         # Initialize errors...
         # --------------------
@@ -77,11 +81,10 @@ class HybridEngine(object):
         # run through the circuits...
         # ---------------------------
         for tick_circuit, time, params in circuit.iter_ticks():
-
             # ---------------
             # GENERATE ERRORS
             # ---------------
-            if params.get('error_free', False):
+            if params.get("error_free", False):
                 errors = {}
             else:
                 error_circuits = error_gen.generate_tick_errors(tick_circuit, time, output, **params)
@@ -90,13 +93,13 @@ class HybridEngine(object):
             # TODO: Need run the error generator whether we want errors or not because of leakage
             # TODO: Handle applying leakage without generating new errors
             if self.generate_errors:
-                before_errors = errors.get('before')
-                after_errors = errors.get('after')
+                before_errors = errors.get("before")
+                after_errors = errors.get("after")
             else:
                 before_errors = {}
                 after_errors = {}
 
-            removed = errors.get('replaced')
+            removed = errors.get("replaced")
 
             # --------------------
             # RUN QUANTUM CIRCUITS
@@ -107,8 +110,7 @@ class HybridEngine(object):
 
             # ideal tick circuit
             # ------------------
-            self.run_circuit(state, output, output_export, tick_circuit, error_gen,
-                             removed_locations=removed)
+            self.run_circuit(state, output, output_export, tick_circuit, error_gen, removed_locations=removed)
 
             if circ_inspector:
                 circ_inspector.analyze(tick_circuit, time, output)
@@ -121,16 +123,9 @@ class HybridEngine(object):
 
         return output, error_circuits
 
-    def run_circuit(self,
-                    state,
-                    output,
-                    output_export,
-                    circuit,
-                    error_gen,
-                    removed_locations=None):
-        """
-
-        Args:
+    def run_circuit(self, state, output, output_export, circuit, error_gen, removed_locations=None):
+        """Args:
+        ----
             circuit (QuantumCircuit): A circuit instance or object with an appropriate items() generator.
             removed_locations:
 
@@ -138,36 +133,36 @@ class HybridEngine(object):
         from what a ``circuit_runner`` will return for the same method named ``run_circuit``.
 
         """
-
         self.state = state
 
         if removed_locations is None:
             removed_locations = set()
 
         for symbol, locations, params in circuit.items():
-
-            if params.get('skip'):
+            if params.get("skip"):
                 continue
 
-            eval_cond2 = eval_condition(params.get('cond2'), output) if params.get('cond2') else True
+            eval_cond2 = eval_condition(params.get("cond2"), output) if params.get("cond2") else True
 
-            if eval_condition(params.get('cond'), output) and eval_cond2:
-
+            if eval_condition(params.get("cond"), output) and eval_cond2:
                 # Run quantum simulator
-                if symbol == 'cop':
-
-                    if params.get('cop_type') == 'Idle' or params.get('is_transport') or params.get('syn_cvar') \
-                            or params.get('cop_type') == 'Sleep':
+                if symbol == "cop":
+                    if (
+                        params.get("cop_type") == "Idle"
+                        or params.get("is_transport")
+                        or params.get("syn_cvar")
+                        or params.get("cop_type") == "Sleep"
+                    ):
                         pass
 
-                    elif params.get('cop_type') == 'CFunc':
+                    elif params.get("cop_type") == "CFunc":
                         eval_cfunc(self, params, output)
 
-                    elif params.get('expr'):
-                        eval_cop(params.get('expr'), output, width=self.regwidth)
+                    elif params.get("expr"):
+                        eval_cop(params.get("expr"), output, width=self.regwidth)
 
-                    elif params.get('cop_type') == 'ExportCVar':
-                        sym = params['export']
+                    elif params.get("cop_type") == "ExportCVar":
+                        sym = params["export"]
                         val = output[sym]
 
                         if isinstance(val, str):
@@ -175,34 +170,30 @@ class HybridEngine(object):
                         elif isinstance(val, BinArray):
                             output_export[sym] = BinArray(str(val))
                         else:
-                            raise Exception(f'This output type `{type(val)}` not handled at export!')
+                            msg = f"This output type `{type(val)}` not handled at export!"
+                            raise Exception(msg)
 
-                    elif not params.get('comment') and not params.get('linebreak') and not params.get('barrier'):
-                        print('recieved:', symbol, locations, params)
-                        raise Exception('A cop must have an `expr`, `comment`, `linebreak`, or `barrier` entry!')
+                    elif not params.get("comment") and not params.get("linebreak") and not params.get("barrier"):
+                        print("recieved:", symbol, locations, params)
+                        msg = "A cop must have an `expr`, `comment`, `linebreak`, or `barrier` entry!"
+                        raise Exception(msg)
 
-                elif symbol == 'eop':  # special error triggering operation
+                elif symbol == "eop":  # special error triggering operation
                     pass
 
                 else:  # quantum operation
-
                     self.run_gate(state, output, symbol, locations - removed_locations, **params)
 
-                    if symbol == 'leak':
+                    if symbol == "leak":
                         error_gen.leaked_qubits |= locations
 
-                    elif symbol == 'unleak |0>' or symbol == 'unleak |1>':
+                    elif symbol == {"unleak |0>", "unleak |1>"}:
                         error_gen.leaked_qubits -= locations
 
-
     @staticmethod
-    def run_gate(state,
-                 output,
-                 symbol: str,
-                 locations,
-                 **params):
-        """
-        Args:
+    def run_gate(state, output, symbol: str, locations, **params):
+        """Args:
+        ----
             state:
             output:
             symbol:
@@ -210,28 +201,29 @@ class HybridEngine(object):
             **params:
 
         Returns:
+        -------
 
         """
-
-        if params.get('simulate_gate', True):
-
+        if params.get("simulate_gate", True):
             for location in locations:
-
                 try:
                     result = state.bindings[symbol](state, location, **params)
-                except KeyError as e:
+                except KeyError:
                     if symbol not in state.bindings:
-                        raise NotSupportedGateError(f'The gate "{symbol}" is not available for this simulator: '
-                                                    f'{type(state)}. Metadata: {params}')
+                        msg = (
+                            f'The gate "{symbol}" is not available for this simulator: {type(state)}. '
+                            f"Metadata: {params}"
+                        )
+                        raise NotSupportedGateError(msg) from KeyError
                     else:
-                        raise e
+                        raise
 
                 sym = None
                 indx = None
-                if params.get('var'):
-                    sym, indx = params.get('var')
-                elif params.get('var_output'):
-                    sym, indx = params.get('var_output')[location]
+                if params.get("var"):
+                    sym, indx = params.get("var")
+                elif params.get("var_output"):
+                    sym, indx = params.get("var_output")[location]
 
                 if sym:
                     if not result:

@@ -13,24 +13,17 @@ from typing import Any
 
 
 class MakeFunc:
-    """
-    Converts ProjectQ gate to a function.
-    """
-    def __init__(self, gate, angle=False):
-        """
+    """Converts ProjectQ gate to a function."""
 
-        Args:
+    def __init__(self, gate, angle=False) -> None:
+        """Args:
+        ----
             gate:
         """
-
         self.gate = gate
         self.angle = angle
 
-    def func(self,
-             state,
-             qubits,
-             **params: Any):
-
+    def func(self, state, qubits, **params: Any):
         if isinstance(qubits, int):
             qs = state.qids[qubits]
         else:
@@ -39,6 +32,6 @@ class MakeFunc:
                 qs.append(state.qids[q])
 
         if self.angle:
-            self.gate(params['angle']) | qs
+            self.gate(params["angle"]) | qs
         else:
             self.gate | qs

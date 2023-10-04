@@ -10,5 +10,5 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from .dummy_decoder.dummy_decoder import DummyDecoder
-from .mwpm2d.mwpm2d import MWPM2D
+from pecos.decoders.dummy_decoder.dummy_decoder import DummyDecoder
+from pecos.decoders.mwpm2d.mwpm2d import MWPM2D

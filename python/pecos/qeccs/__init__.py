@@ -10,12 +10,11 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from .surface_medial_4444.surface_medial_4444 import SurfaceMedial4444
-from .surface_4444.surface_4444 import Surface4444
-from .color_488.color_488 import Color488
-# from .surface_triangular_4444.surface_triangular_4444 import SurfaceTriangular4444
+from pecos.qeccs.color_488.color_488 import Color488
+from pecos.qeccs.gate_parent_class import LogicalGate
+from pecos.qeccs.instruction_parent_class import LogicalInstruction
 
 # Parent Classes:
-from .qecc_parent_class import QECC
-from .gate_parent_class import LogicalGate
-from .instruction_parent_class import LogicalInstruction
+from pecos.qeccs.qecc_parent_class import QECC
+from pecos.qeccs.surface_4444.surface_4444 import Surface4444
+from pecos.qeccs.surface_medial_4444.surface_medial_4444 import SurfaceMedial4444

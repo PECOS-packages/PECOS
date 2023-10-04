@@ -9,34 +9,32 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from .fund import Statement
+from pecos.circuits.hyqc.fund import Statement
 
 
 class Include(Statement):
     """Text files to be injected into the program."""
 
-    def __init__(self, txt: str):
+    def __init__(self, txt: str) -> None:
         self.txt = txt
 
 
 class Define(Statement):
     """Pythonic definition of a gate."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         # TODO: ....
         ...
 
 
 class Assign(Statement):
-
-    def __init__(self, left, right):
+    def __init__(self, left, right) -> None:
         self.left = left
         self.right = right
 
 
 class CFunc(Statement):
-
-    def __init__(self, symbol):
+    def __init__(self, symbol) -> None:
         self.symbol = symbol
         self.cargs = None
 
@@ -44,5 +42,3 @@ class CFunc(Statement):
         f = CFunc(self.symbol)
         f.cargs = cargs
         return f
-
-

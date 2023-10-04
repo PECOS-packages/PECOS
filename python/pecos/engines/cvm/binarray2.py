@@ -9,13 +9,13 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from __future__ import annotations
+
 import numpy as np
 
 
 class BinArray2:
-
-    def __init__(self, size, value=0, dtype=np.int32):
-
+    def __init__(self, size, value=0, dtype=np.int32) -> None:
         self.size = size
         self.value = None
         self.dtype = dtype
@@ -31,11 +31,9 @@ class BinArray2:
             self.set(value)
 
     def set(self, value):
-
         if isinstance(value, self.dtype):
             self.value = value
         else:
-
             if isinstance(value, str):
                 value = int(value, 2)
 
@@ -47,70 +45,67 @@ class BinArray2:
         return b
 
     def num_bits(self):
-        return len('{0:b}'.format(self.value))
+        return len(f"{self.value:b}")
 
     def check_size(self):
         if self.num_bits() > self.size:
             num = self.num_bits()
-            val = '{0:b}'.format(self.value)
-            raise Exception(f'Number of bits ({num}) exceeds size ({self.size}) for bits "{val}"!')
+            val = f"{self.value:b}"
+            msg = f'Number of bits ({num}) exceeds size ({self.size}) for bits "{val}"!'
+            raise Exception(msg)
 
     def clamp(self, size):
-
         if self.num_bits() > size:
-            bits = format(self.value, f'0{size}b')
+            bits = format(self.value, f"0{size}b")
             bits = int(bits[-size:], 2)
             self.value = self.dtype(bits)
 
     def set_clip(self, value):
-
         value = int(value)
 
-        if len('{0:b}'.format(value)) > self.size:
-            bits = format(value, f'0{self.size}b')
-            bits = int(bits[-self.size:], 2)
+        if len(f"{value:b}") > self.size:
+            bits = format(value, f"0{self.size}b")
+            bits = int(bits[-self.size :], 2)
             self.value = self.dtype(bits)
         else:
             self.value = self.dtype(value)
 
     def _set_clip(self, ba):
         """Take values up to the size of this BinArray. If this BinArray array is larger, fill with zeros."""
-
         if isinstance(ba, int):
             ba = self.new_val(ba)
 
         if isinstance(ba, BinArray2):
-
             self._set_clip(ba)
         else:
-            raise Exception('Expected int or BinArray!')
+            msg = "Expected int or BinArray!"
+            raise TypeError(msg)
 
     def __getitem__(self, item):
         return int(str(self)[self.size - item - 1])
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key, value) -> None:
         b = list(str(self))
         b[self.size - key - 1] = str(value)
-        b = ''.join(b)
+        b = "".join(b)
 
         self.set(b)
 
-    def __str__(self):
+    def __str__(self) -> str:
         self.check_size()
-        return format(self.value, f'0{self.size}b')
+        return format(self.value, f"0{self.size}b")
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__str__()
 
-    def __int__(self):
+    def __int__(self) -> int:
         return int(self.value)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.size
 
     def do_binop(self, op, other):
-
-        if hasattr(other, 'value') and isinstance(other.value, self.dtype):
+        if hasattr(other, "value") and isinstance(other.value, self.dtype):
             value = other.value
         elif isinstance(other, str):
             value = self.dtype(int(other, 2))
@@ -122,56 +117,56 @@ class BinArray2:
 
         return self.new_val(value)
 
-    def __bool__(self):
+    def __bool__(self) -> bool:
         return bool(self.value)
 
     def __xor__(self, other):
-        return self.do_binop('__xor__', other)
+        return self.do_binop("__xor__", other)
 
     def __and__(self, other):
-        return self.do_binop('__and__', other)
+        return self.do_binop("__and__", other)
 
     def __or__(self, other):
-        return self.do_binop('__or__', other)
+        return self.do_binop("__or__", other)
 
     def __eq__(self, other):
-        return self.do_binop('__eq__', other)
+        return self.do_binop("__eq__", other)
 
     def __ne__(self, other):
-        return self.do_binop('__ne__', other)
+        return self.do_binop("__ne__", other)
 
     def __lt__(self, other):
-        return self.do_binop('__lt__', other)
+        return self.do_binop("__lt__", other)
 
     def __gt__(self, other):
-        return self.do_binop('__gt__', other)
+        return self.do_binop("__gt__", other)
 
     def __le__(self, other):
-        return self.do_binop('__le__', other)
+        return self.do_binop("__le__", other)
 
     def __ge__(self, other):
-        return self.do_binop('__ge__', other)
+        return self.do_binop("__ge__", other)
 
     def __add__(self, other):
-        return self.do_binop('__add__', other)
+        return self.do_binop("__add__", other)
 
     def __sub__(self, other):
-        return self.do_binop('__sub__', other)
+        return self.do_binop("__sub__", other)
 
     def __rshift__(self, other):
-        return self.do_binop('__rshift__', other)
+        return self.do_binop("__rshift__", other)
 
     def __lshift__(self, other):
-        return self.do_binop('__lshift__', other)
+        return self.do_binop("__lshift__", other)
 
     def __invert__(self):
         return self.new_val(~self.value)
 
     def __mul__(self, other):
-        return self.do_binop('__mul__', other)
+        return self.do_binop("__mul__", other)
 
     def __floordiv__(self, other):
-        return self.do_binop('__floordiv__', other)
+        return self.do_binop("__floordiv__", other)
 
     def __mod__(self, other):
-        return self.do_binop('__floordiv__', other)
+        return self.do_binop("__floordiv__", other)

@@ -11,17 +11,18 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import Any, Tuple
+from __future__ import annotations
+
+from typing import Any
+
 import numpy as np
-import projectq.ops as ops
-from .helper import MakeFunc
+from projectq import ops
+
+from pecos.simulators.projectq.helper import MakeFunc
 
 
-def I(state,
-      qubit: int,
-      **params: Any) -> None:
-    """
-    Identity does nothing.
+def Identity(state, qubit: int, **params: Any) -> None:
+    """Identity does nothing.
 
     X -> X
 
@@ -30,20 +31,17 @@ def I(state,
     Y -> Y
 
     Args:
+    ----
         state (PauliFaultProp):  The class representing the Pauli fault state.
         qubit (int): An integer indexing the qubit being operated on.
 
     Returns: None
 
     """
-    pass
 
 
-def X(state,
-      qubit: int,
-      **params: Any) -> None:
-    """
-    Pauli X
+def X(state, qubit: int, **params: Any) -> None:
+    """Pauli X.
 
     X -> X
 
@@ -52,55 +50,49 @@ def X(state,
     Y -> -Y
 
     Args:
+    ----
         state (PauliFaultProp):  The class representing the Pauli fault state.
         qubit (int): An integer indexing the qubit being operated on.
 
     Returns: None
 
     """
-
     ops.X | state.qids[qubit]
 
 
-def Y(state,
-      qubit: int,
-      **params: Any) -> None:
-    """
-    X -> -X
+def Y(state, qubit: int, **params: Any) -> None:
+    """X -> -X.
 
     Z -> -Z
 
     Y -> Y
 
     Args:
+    ----
         state (PauliFaultProp):  The class representing the Pauli fault state.
         qubit (int): An integer indexing the qubit being operated on.
 
     Returns: None
 
     """
-
     ops.Y | state.qids[qubit]
 
 
-def Z(state,
-      qubit: int,
-      **params: Any) -> None:
-    """
-    X -> -X
+def Z(state, qubit: int, **params: Any) -> None:
+    """X -> -X.
 
     Z -> Z
 
     Y -> -Y
 
     Args:
+    ----
         state (PauliFaultProp):  The class representing the Pauli fault state.
         qubit (int): An integer indexing the qubit being operated on.
 
     Returns: None
 
     """
-
     ops.Z | state.qids[qubit]
 
 
@@ -109,23 +101,20 @@ RY = MakeFunc(ops.Ry, angle=True).func  # Rotation about Y (takes angle arg)
 RZ = MakeFunc(ops.Rz, angle=True).func  # Rotation about Z (takes angle arg)
 
 
-def R1XY(state,
-         qubit: int,
-         angles: Tuple[float, float],
-         **params: Any) -> None:
-    """
-    R1XY(theta, phi) = U1q(theta, phi) = RZ(phi-pi/2)*RY(theta)*RZ(-phi+pi/2)
+def R1XY(state, qubit: int, angles: tuple[float, float], **params: Any) -> None:
+    """R1XY(theta, phi) = U1q(theta, phi) = RZ(phi-pi/2)*RY(theta)*RZ(-phi+pi/2).
 
     Args:
+    ----
         state:
         qubit:
         angles:
         **params:
 
     Returns:
+    -------
 
     """
-
     theta = angles[0]
     phi = angles[1]
 
@@ -134,59 +123,38 @@ def R1XY(state,
     RZ(state, qubit, angle=phi - np.pi / 2)
 
 
-def SX(state,
-       qubit: int,
-       **params: Any) -> None:
-    """Square-root of X gate class"""
-
-    RX(state, qubit, angle=np.pi/2)
+def SX(state, qubit: int, **params: Any) -> None:
+    """Square-root of X gate class."""
+    RX(state, qubit, angle=np.pi / 2)
 
 
-def SXdg(state,
-         qubit: int,
-         **params: Any) -> None:
-    """Adjoint of the square-root of X gate class"""
-
-    RX(state, qubit, angle=-np.pi/2)
+def SXdg(state, qubit: int, **params: Any) -> None:
+    """Adjoint of the square-root of X gate class."""
+    RX(state, qubit, angle=-np.pi / 2)
 
 
-def SY(state,
-       qubit: int,
-       **params: Any) -> None:
-    """Square-root of Y gate class"""
-
-    RY(state, qubit, angle=np.pi/2)
+def SY(state, qubit: int, **params: Any) -> None:
+    """Square-root of Y gate class."""
+    RY(state, qubit, angle=np.pi / 2)
 
 
-def SYdg(state,
-         qubit: int,
-         **params: Any) -> None:
-    """Adjoint of the square-root of Y gate class"""
-
-    RY(state, qubit, angle=-np.pi/2)
+def SYdg(state, qubit: int, **params: Any) -> None:
+    """Adjoint of the square-root of Y gate class."""
+    RY(state, qubit, angle=-np.pi / 2)
 
 
-def SZ(state,
-       qubit: int,
-       **params: Any) -> None:
-    """Square-root of Z gate class"""
-
+def SZ(state, qubit: int, **params: Any) -> None:
+    """Square-root of Z gate class."""
     ops.S | state.qids[qubit]
 
 
-def SZdg(state,
-         qubit: int,
-         **params: Any) -> None:
-    """Adjoint of the square-root of Z gate class"""
-
-    ops.Sdag  | state.qids[qubit]
+def SZdg(state, qubit: int, **params: Any) -> None:
+    """Adjoint of the square-root of Z gate class."""
+    ops.Sdag | state.qids[qubit]
 
 
-def H(state,
-      qubit: int,
-      **params: Any) -> None:
-    """
-    Square root of Z.
+def H(state, qubit: int, **params: Any) -> None:
+    """Square root of Z.
 
     X -> Z
 
@@ -195,150 +163,111 @@ def H(state,
     Y -> -Y
 
     Args:
+    ----
         state (PauliFaultProp):  The class representing the Pauli fault state.
         qubit (int): An integer indexing the qubit being operated on.
 
     Returns: None
 
     """
-
     ops.H | state.qids[qubit]
 
 
-def H2(state,
-      qubit: int,
-      **params: Any) -> None:
+def H2(state, qubit: int, **params: Any) -> None:
     # @property
     # def matrix(self):
-    #     return 0.5 * np.matrix([[1 + 1j, -1 - 1j], [-1 - 1j, -1 - 1j]])
 
-    ops.Ry(np.pi/2) | state.qids[qubit]
+    ops.Ry(np.pi / 2) | state.qids[qubit]
     ops.Z | state.qids[qubit]
 
 
-def H3(state,
-      qubit: int,
-      **params: Any) -> None:
+def H3(state, qubit: int, **params: Any) -> None:
     # @property
     # def matrix(self):
-    #     return np.matrix([[0, 1], [1j, 0]])
 
     ops.S | state.qids[qubit]
     ops.Y | state.qids[qubit]
 
 
-def H4(state,
-      qubit: int,
-      **params: Any) -> None:
+def H4(state, qubit: int, **params: Any) -> None:
     # @property
     # def matrix(self):
-    #     return np.matrix([[0, 1j], [1, 0]])
 
     ops.S | state.qids[qubit]
     ops.X | state.qids[qubit]
 
 
-def H5(state,
-      qubit: int,
-      **params: Any) -> None:
+def H5(state, qubit: int, **params: Any) -> None:
     # @property
     # def matrix(self):
-    #     return 0.5 * np.matrix([[1+1j, 1-1j], [-1+1j, -1-1j]])
 
-    ops.Rx(np.pi/2) | state.qids[qubit]
+    ops.Rx(np.pi / 2) | state.qids[qubit]
     ops.Z | state.qids[qubit]
 
 
-def H6(state,
-      qubit: int,
-      **params: Any) -> None:
+def H6(state, qubit: int, **params: Any) -> None:
     # @property
     # def matrix(self):
-    #     return 0.5 * np.matrix([[-1-1j, 1-1j], [-1+1j, 1+1j]])
 
-    ops.Rx(np.pi/2) | state.qids[qubit]
+    ops.Rx(np.pi / 2) | state.qids[qubit]
     ops.Y | state.qids[qubit]
 
 
-def F(state,
-      qubit: int,
-      **params: Any) -> None:
-    """Face rotations of an octahedron #1"""
+def F(state, qubit: int, **params: Any) -> None:
+    """Face rotations of an octahedron #1."""
     # @property
     # def matrix(self):
-    #     return 0.5 * np.matrix([[1+1j, 1-1j], [1+1j, -1+1j]])
 
     ops.Rx(np.pi / 2) | state.qids[qubit]
     ops.Rz(np.pi / 2) | state.qids[qubit]
 
 
-def Fdg(state,
-        qubit: int,
-        **params: Any) -> None:
-    """Adjoint of face rotations of an octahedron #1"""
-
+def Fdg(state, qubit: int, **params: Any) -> None:
+    """Adjoint of face rotations of an octahedron #1."""
     ops.Rz(-np.pi / 2) | state.qids[qubit]
     ops.Rx(-np.pi / 2) | state.qids[qubit]
 
 
-def F2(state,
-      qubit: int,
-      **params: Any) -> None:
-    """Face rotations of an octahedron #2"""
+def F2(state, qubit: int, **params: Any) -> None:
+    """Face rotations of an octahedron #2."""
     # @property
     # def matrix(self):
-    #     return 0.5 * np.matrix([[1 - 1j, -1 + 1j], [1 + 1j, 1 + 1j]])
 
     ops.Rz(np.pi / 2) | state.qids[qubit]
     ops.Rx(-np.pi / 2) | state.qids[qubit]
 
 
-def F2dg(state,
-         qubit: int,
-         **params: Any) -> None:
-    """Adjoint of face rotations of an octahedron #2"""
-
-    ops.Rx(np.pi/2) | state.qids[qubit]
+def F2dg(state, qubit: int, **params: Any) -> None:
+    """Adjoint of face rotations of an octahedron #2."""
+    ops.Rx(np.pi / 2) | state.qids[qubit]
     ops.Rz(-np.pi / 2) | state.qids[qubit]
 
 
-def F3(state,
-      qubit: int,
-      **params: Any) -> None:
-    """Face rotations of an octahedron #3"""
+def F3(state, qubit: int, **params: Any) -> None:
+    """Face rotations of an octahedron #3."""
     # @property
     # def matrix(self):
-    #     return 0.5 * np.matrix([[1-1j, 1+1j], [-1+1j, 1+1j]])
 
-    ops.Rx(-np.pi/2) | state.qids[qubit]
+    ops.Rx(-np.pi / 2) | state.qids[qubit]
     ops.Rz(np.pi / 2) | state.qids[qubit]
 
 
-def F3dg(state,
-         qubit: int,
-         **params: Any) -> None:
-    """Adjoint of face rotations of an octahedron #3"""
-
+def F3dg(state, qubit: int, **params: Any) -> None:
+    """Adjoint of face rotations of an octahedron #3."""
     ops.Rz(-np.pi / 2) | state.qids[qubit]
     ops.Rx(np.pi / 2) | state.qids[qubit]
 
 
-def F4(state,
-      qubit: int,
-      **params: Any) -> None:
-    """Face rotations of an octahedron #4"""
+def F4(state, qubit: int, **params: Any) -> None:
+    """Face rotations of an octahedron #4."""
     # @property
     # def matrix(self):
-    #     return 0.5 * np.matrix([[1+1j, 1+1j], [1-1j, -1+1j]])
 
     ops.Rz(np.pi / 2) | state.qids[qubit]
     ops.Rx(np.pi / 2) | state.qids[qubit]
 
 
-def F4dg(state,
-         qubit: int,
-         **params: Any) -> None:
-    """Adjoint of face rotations of an octahedron #4"""
-
-    ops.Rx(-np.pi/2) | state.qids[qubit]
+def F4dg(state, qubit: int, **params: Any) -> None:
+    """Adjoint of face rotations of an octahedron #4."""
+    ops.Rx(-np.pi / 2) | state.qids[qubit]
     ops.Rz(-np.pi / 2) | state.qids[qubit]

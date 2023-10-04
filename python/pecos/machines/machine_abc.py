@@ -9,17 +9,19 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from __future__ import annotations
+
 import abc
-from typing import Any, Optional
 
 
 class Machine(metaclass=abc.ABCMeta):
-
-    def __init__(self,
-                 machine_params=None,
-                 num_qubits=None,
-                 metadata: Optional[dict] = None,
-                 pos: Optional[Any] = None):
+    def __init__(
+        self,
+        machine_params: dict | None = None,
+        num_qubits: int | None = None,
+        metadata: dict | None = None,
+        pos: dict | None = None,
+    ) -> None:
         self.machine_params = machine_params
         self.num_qubits = num_qubits
         self.metadata = metadata
@@ -28,22 +30,14 @@ class Machine(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def reset(self) -> None:
         """Reset state to initialization state."""
-        pass
 
     @abc.abstractmethod
-    def init(self,
-             machine_params: dict = None,
-             num_qubits: Optional[int] = None) -> None:
+    def init(self, machine_params: dict | None = None, num_qubits: int | None = None) -> None:
         pass
 
     @abc.abstractmethod
     def shot_reinit(self) -> None:
         """Run all code needed at the beginning of each shot, e.g., resetting state."""
-        pass
-
-    @abc.abstractmethod
-    def process(self, op_buffer: list) -> list:
-        pass
 
     @abc.abstractmethod
     def process(self, op_buffer: list) -> list:

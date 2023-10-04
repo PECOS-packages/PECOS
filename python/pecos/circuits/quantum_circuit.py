@@ -11,16 +11,17 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""
-Contains the class ``QuantumCircuit``, which is used to represent quantum circuits.
-"""
+"""Contains the class ``QuantumCircuit``, which is used to represent quantum circuits."""
+
+from __future__ import annotations
+
 import json
-from collections import defaultdict, namedtuple
+from collections import defaultdict
 from collections.abc import MutableSequence
+from typing import Any, NamedTuple
 
-from . import qc2phir
-
-from .. import __version__
+from pecos import __version__
+from pecos.circuits import qc2phir
 
 
 class QuantumCircuit(MutableSequence):
@@ -31,15 +32,16 @@ class QuantumCircuit(MutableSequence):
 
     """
 
-    def __init__(self, circuit_setup=None, **metadata):
-        """
-
-        Args:
+    def __init__(self, circuit_setup=None, **metadata) -> None:
+        """Args:
+        ----
             circuit_setup (None, int, list of dict):
             **params: Quantum circuit parameters.
 
         Attributes:
-            self._ticks(list of dict): A list of parallel gates. Each element is a dictionary of gate symbol => gate set.
+        ----------
+            self._ticks(list of dict): A list of parallel gates. Each element is a dictionary of gate symbol => gate
+            set.
             This gate dictionary is assumed to be a collection of gates that act in parallel on the qudits.
             self.active_qudits(list): If `check_overlap` == True then ``active_qudits`` will be tracked; otherwise,
             ``active_qudits`` will not be tracked.
@@ -51,40 +53,44 @@ class QuantumCircuit(MutableSequence):
         self.qudits = set()
         # TODO: If all the gates on a qudit are discarded... then the qudit will not be removed from this set... fix
 
-        if 'tracked_qudits' in metadata:
-            raise Exception('error')
+        if "tracked_qudits" in metadata:
+            msg = "error"
+            raise Exception(msg)
 
         if circuit_setup is not None:
             self._circuit_setup(circuit_setup)
 
     @property
-    def active_qudits(self, flat=False):
-        """
-        Returns the active_qudits of all the ticks.
+    def active_qudits(self):
+        """Returns the active_qudits of all the ticks.
 
         Returns:
 
         """
-
+        """
         if flat:
             active = {}
             for gates in self._ticks:
                 active.update(gates.active_qudits)
 
         else:
-            active = []
-            for gates in self._ticks:
-                active.append(gates.active_qudits)
+        """
+
+        active = []
+        for gates in self._ticks:
+            active.append(gates.active_qudits)
         return active
 
     def append(self, symbol, locations=None, **params):
         """Adds a new gate=>gate_locations (set) pair to the end of ``self.gates``.
 
         Args:
+        ----
             symbol(str or dict): A gate dictionary of gate symbol => set of qudit ids or tuples of qudit ids
             locations:
 
         Example:
+        -------
             >>> quantum_circuit = QuantumCircuit()
             >>> quantum_circuit.append({'X': {0, 1, 5, 6}, 'Z':{7, 8, 9}})
             >>> quantum_circuit.append('X', {0, 1, 3, 7})
@@ -92,7 +98,6 @@ class QuantumCircuit(MutableSequence):
         This then creates a new time step at the end of ``self._ticks`` and adds the gate to it.
 
         """
-
         gates = self._gates_class(self, symbol, locations, **params)
 
         self._ticks.append(gates)
@@ -101,6 +106,7 @@ class QuantumCircuit(MutableSequence):
         """Updates that last group of parallel gates to include the gate acting on the set of qudits.
 
         Args:
+        ----
             symbol(str or dict): A gate dictionary of gate symbol => set of qudit ids or tuples of qudit ids
             locations(set or None):
             tick(int): The time (tick) when the update should occur.
@@ -108,7 +114,6 @@ class QuantumCircuit(MutableSequence):
             **params:
 
         """
-
         if emptyappend and len(self) == 0:
             self.add_ticks(1)
 
@@ -118,27 +123,28 @@ class QuantumCircuit(MutableSequence):
         """Discards ``locations`` for tick ``tick``.
 
         Args:
+        ----
             locations:
             tick:
 
         Returns:
+        -------
 
         """
-
         self._ticks[tick].discard(locations)
 
     def add_ticks(self, num_ticks):
-        """
-        Makes sure that QuantumCircuit has at least `num_tick` number of ticks. If the number of ticks in the data
+        """Makes sure that QuantumCircuit has at least `num_tick` number of ticks. If the number of ticks in the data
         structure is less than `num_tick` then empty ticks are appended until the total number of ticks == `num_ticks`.
 
         Args:
+        ----
             num_ticks:
 
         Returns:
+        -------
 
         """
-
         for _ in range(num_ticks):
             self.append({})
 
@@ -148,25 +154,23 @@ class QuantumCircuit(MutableSequence):
         If ``tick`` is not None then it will iterate over only the qudits/qudits in the corresponding tick.
 
         Args:
+        ----
             tick:
 
         Returns:
+        -------
 
         """
-
         if tick is None:
-
             for gates in self._ticks:
                 for symbol, locations, params in gates.items():
                     yield symbol, locations, params
 
         else:
-
             for symbol, locations, params in self._ticks[tick].items():
                 yield symbol, locations, params
 
     def iter_ticks(self):
-
         for tick in range(len(self)):
             gates = self[tick]
             yield gates, tick, self.metadata
@@ -177,10 +181,12 @@ class QuantumCircuit(MutableSequence):
         """Inserts ``gate_dict`` into ``ticks`` at index ``tick``.
 
         Args:
+        ----
             tick:
             item:
 
         Returns:
+        -------
 
         """
         gate_dict, params = item
@@ -188,7 +194,6 @@ class QuantumCircuit(MutableSequence):
         self._ticks.insert(tick, gates)
 
     def _circuit_setup(self, circuit_setup):
-
         if isinstance(circuit_setup, int):
             # Reserve ticks
             self.add_ticks(circuit_setup)
@@ -200,24 +205,24 @@ class QuantumCircuit(MutableSequence):
 
     def to_json_str(self) -> str:
         """Creates a json str representation of the QuantumCircuit listing all the gates. It does not preserve ticks or
-        parallel gating of different gate types."""
-
+        parallel gating of different gate types.
+        """
         metadata = self.metadata
 
         gates = []
         for sym, qubits, meta in self.items():
             gate = {
-                'sym': sym,
-                'qubits': list(qubits),
-                'metadata': meta,
+                "sym": sym,
+                "qubits": list(qubits),
+                "metadata": meta,
             }
             gates.append(gate)
 
         prog = {
-            'prog_type': 'PECOS.QuantumCircuit',
-            'PECOS_version': str(__version__),
-            'prog_metadata': metadata,
-            'gates': gates,
+            "prog_type": "PECOS.QuantumCircuit",
+            "PECOS_version": str(__version__),
+            "prog_metadata": metadata,
+            "gates": gates,
         }
 
         return json.dumps(prog)
@@ -225,29 +230,25 @@ class QuantumCircuit(MutableSequence):
     @staticmethod
     def _fix_json_meta(meta):
         """Fix some of the type issues for converting json rep back to a QuantumCircuit."""
-        if 'var_output' in meta:
-            meta['var_output'] = {int(k): tuple(v) for k, v in meta['var_output'].items()}
+        if "var_output" in meta:
+            meta["var_output"] = {int(k): tuple(v) for k, v in meta["var_output"].items()}
         return meta
 
     @classmethod
-    def from_json_str(cls, qc_json) -> 'QuantumCircuit':
+    def from_json_str(cls, qc_json) -> QuantumCircuit:
         """Converts a json str that represents a QuantumCircuit back into a QuantumCircuit object."""
-
         qc_dict = json.loads(qc_json)
 
-        qc_meta = qc_dict['prog_metadata']
+        qc_meta = qc_dict["prog_metadata"]
         qc = QuantumCircuit(**qc_meta)
 
-        for gate_dict in qc_dict['gates']:
-            sym = gate_dict['sym']
+        for gate_dict in qc_dict["gates"]:
+            sym = gate_dict["sym"]
 
-            qubits = gate_dict['qubits']
-            if qubits and isinstance(qubits[0], int):
-                qubits = set(qubits)
-            else:
-                qubits = set(tuple(q) for q in qubits)
+            qubits = gate_dict["qubits"]
+            qubits = set(qubits) if qubits and isinstance(qubits[0], int) else {tuple(q) for q in qubits}
 
-            meta = gate_dict['metadata']
+            meta = gate_dict["metadata"]
             meta = cls._fix_json_meta(meta)
 
             qc.append(sym, qubits, **meta)
@@ -266,74 +267,70 @@ class QuantumCircuit(MutableSequence):
         """Returns tick when instance[index] is used.
 
         Args:
+        ----
             tick(int): Tick index of ``self._ticks``.
 
         Returns:
+        -------
 
         """
-
         return self._ticks[tick]
 
-    def __setitem__(self, tick, item):
-
+    def __setitem__(self, tick, item) -> None:
         gate_dict, params = item
         self._ticks[tick] = self._gates_class(self, gate_dict, **params)
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Used to return number of ticks when len() is used on an instance of this class.
 
         Returns:
+        -------
 
         """
-
         return len(self._ticks)
 
-    def __delitem__(self, tick):
-        """Used to delete a tick. For example: del instance[key]
+    def __delitem__(self, tick) -> None:
+        """Used to delete a tick. For example: del instance[key].
 
         Args:
+        ----
             tick:
 
         Returns:
+        -------
 
         """
         self._ticks[tick] = self._gates_class(self)
 
-    def __str__(self):
+    def __str__(self) -> str:
         """String returned when a string representation is requested. This occurs during printing.
 
         Returns:
+        -------
 
         """
         str_list = []
         for gates in self._ticks:
-            # str_list.append(dict(tick.symbols))
             tick_list = []
             for symbol, locations, params in gates.items():
                 if len(params) == 0:
-                    tick_list.append("'%s': %s" % (symbol, locations))
+                    tick_list.append(f"'{symbol}': {locations}")
                 else:
-                    tick_list.append("'%s': loc: %s - params=%s" % (symbol, locations, params))
-            tick_list = ', '.join(tick_list)
-            str_list.append('{%s}' % tick_list)
+                    tick_list.append(f"'{symbol}': loc: {locations} - params={params}")
+            tick_list = ", ".join(tick_list)
+            str_list.append("{%s}" % tick_list)
 
         if self.metadata:
-            return "QuantumCircuit(params=%s, ticks=[%s])" % (str(self.metadata), ', '.join(str_list))
+            return "QuantumCircuit(params={}, ticks=[{}])".format(str(self.metadata), ", ".join(str_list))
         else:
-            return "QuantumCircuit([%s])" % ', '.join(str_list)
+            return "QuantumCircuit([%s])" % ", ".join(str_list)
 
-    def __repr__(self):
-        """
-
-        Returns:
-
-        """
-
+    def __repr__(self) -> str:
+        """Returns:"""
         return self.__str__()
 
     def __copy__(self):
         """Create a shallow copy."""
-
         newone = QuantumCircuit()
         newone.metadata = dict(self.metadata)
         newone._ticks = self._ticks_class(self._ticks)
@@ -341,10 +338,10 @@ class QuantumCircuit(MutableSequence):
         return newone
 
     def copy(self):
-        """
-        Create a shallow copy of the circuit.
+        """Create a shallow copy of the circuit.
 
         Returns:
+        -------
 
         """
         return self.__copy__()
@@ -354,41 +351,37 @@ class QuantumCircuit(MutableSequence):
 
 
 class ParamGateCollection:
-    """
-    Data structure for a tick.
-    """
+    """Data structure for a tick."""
 
-    Gate = namedtuple('Gate', 'symbol, params, locations')
+    class Gate(NamedTuple):
+        symbol: str
+        params: Any
+        locations: set[int | tuple[int]]
 
-    def __init__(self, circuit, symbol=None, locations=None, **params):
+    def __init__(self, circuit, symbol=None, locations=None, **params) -> None:
         self.circuit = circuit
         self.metadata = circuit.metadata
-        self.active_qudits = set([])
+        self.active_qudits = set()
         self.symbols = defaultdict(list)
 
         self.add(symbol, locations, **params)
 
     def add(self, symbol, locations=None, **params):
-        """
-
-        Args:
+        """Args:
+        ----
             symbol:
             locations:
 
         Returns:
+        -------
 
         """
-
         # If locations is None then assume symbol is a gate_dict.
-        if locations is None:
-            gate_dict = symbol
-        else:
-            gate_dict = {symbol: locations}
+        gate_dict = symbol if locations is None else {symbol: locations}
 
         self._verify_qudits(gate_dict)
 
         for gate_symbol, gate_locations in gate_dict.items():
-
             # if gate_locations:  #TODO: Why was this here?
 
             for gate in self.symbols[gate_symbol]:
@@ -401,21 +394,19 @@ class ParamGateCollection:
         return self
 
     def discard(self, locations):
-        """
-        Remove gate locations.
+        """Remove gate locations.
 
         Args:
+        ----
             locations:
 
         Returns:
+        -------
 
         """
-        for _, gate_list in self.symbols.items():
-
+        for gate_list in self.symbols.values():
             for gate in gate_list:
-
                 for location in locations:
-
                     if location in gate.locations:
                         gate.locations.discard(location)
                         break
@@ -448,54 +439,47 @@ class ParamGateCollection:
         The qudit ids are added to ``self.active_qudits``.
 
         Args:
+        ----
             gate_dict:
         Raises:
             Exception: If qudit ids are not int or if non-parallel gates are found (i.e., a qudit ha already been acted
             on by a gate.
 
         """
-
-        for _, qudit_locations in gate_dict.items():
-
+        for qudit_locations in gate_dict.values():
             for location in qudit_locations:
-
                 # Make sure we can iterate over q.
-                if not isinstance(location, tuple):
-                    q_iter = (location,)
-                else:
-                    q_iter = location
+                q_iter = (location,) if not isinstance(location, tuple) else location
 
                 for qi in q_iter:
-
                     self.circuit.qudits.add(qi)
 
                     if qi in self.active_qudits:
-                        raise Exception('Qudit %s has already been acted on by a gate!' % str(qi))
+                        raise Exception("Qudit %s has already been acted on by a gate!" % str(qi))
                     else:
                         self.active_qudits.add(qi)
 
     def items(self, tick=None):
-        """
-        Generator to return a dictionary-like iter.
+        """Generator to return a dictionary-like iter.
+
         Returns:
+        -------
 
         """
-
         for gate_symbol, gate_list in self.symbols.items():
             for gate in gate_list:
                 yield gate_symbol, gate.locations, gate.params
 
-    def __str__(self):
-
+    def __str__(self) -> str:
         tick_list = []
         for symbol, locations, params in self.items():
             if len(params) == 0:
-                tick_list.append("'%s': %s" % (symbol, locations))
+                tick_list.append(f"'{symbol}': {locations}")
             else:
-                tick_list.append("'%s': loc: %s - params=%s" % (symbol, locations, params))
-        tick_list = ', '.join(tick_list)
+                tick_list.append(f"'{symbol}': loc: {locations} - params={params}")
+        tick_list = ", ".join(tick_list)
 
         return "Tick({%s})" % tick_list
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__str__()

@@ -103,7 +103,7 @@ class TestPythonBindings(unittest.TestCase):
         randnum = 0.5
         collapse = True
 
-        res = sv.batch_measure(ws, bit_order, randnum, collapse);
+        res = sv.batch_measure(ws, bit_order, randnum, collapse)
 
         sv.read_from_device()
         sv.free_on_device()

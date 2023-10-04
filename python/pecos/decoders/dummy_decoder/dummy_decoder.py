@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Copyright 2018 National Technology & Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract
 # DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software.
 #
@@ -12,31 +10,24 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""
-A dummy decoder that gives no recovery (outputs do nothing) given any input.
-"""
+"""A dummy decoder that gives no recovery (outputs do nothing) given any input."""
 
 
-class DummyDecoder(object):
-    """
-    This decoder is just a simple look up decoder.
-    """
+class DummyDecoder:
+    """This decoder is just a simple look up decoder."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
     @staticmethod
     def decode(*args, **kwargs):
-        """
-
-        Args:
+        """Args:
+        ----
             *args:
             **kwargs:
 
         Returns:
+        -------
 
         """
-
-        recovery = []
-
-        return recovery
+        return []

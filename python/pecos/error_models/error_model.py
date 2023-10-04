@@ -9,9 +9,11 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import Callable, Optional, Union
+from __future__ import annotations
 
-from .error_model_abc import ErrorModel
+from typing import Callable
+
+from pecos.error_models.error_model_abc import ErrorModel
 
 
 class NoErrorModel(ErrorModel):
@@ -19,15 +21,15 @@ class NoErrorModel(ErrorModel):
 
     def reset(self) -> None:
         """Reset state to initialization state."""
-        pass
 
     def init(self, error_params, num_qubits, machine=None):
         super().init(error_params, num_qubits, machine)
         if self.error_params:
-            raise Exception("No error model is being utilized but error parameters are being provided!")
+            msg = "No error model is being utilized but error parameters are being provided!"
+            raise Exception(msg)
 
     def shot_reinit(self):
         pass
 
-    def process(self, qops: list, call_back: Optional[Callable] = None) -> Union[list, None]:
+    def process(self, qops: list, call_back: Callable | None = None) -> list | None:
         return qops

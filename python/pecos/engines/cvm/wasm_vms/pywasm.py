@@ -9,12 +9,11 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+import contextlib
 from io import BytesIO
 
-try:
+with contextlib.suppress(ImportError):
     import pywasm
-except ImportError:
-    pass
 
 
 def read_pywasm(wasm):
@@ -27,15 +26,14 @@ def read_pywasm(wasm):
         p = pywasm.Runtime(module)
 
     class PywasmReader:
-
-        def __init__(self, p):
+        def __init__(self, p) -> None:
             self.p = p
             self.func_exports = self.get_funcs()
 
         def get_funcs(self):
             fs = []
             for f in self.p.machine.module.export_list:
-                if str(f.value).startswith('FunctionAddress'):
+                if str(f.value).startswith("FunctionAddress"):
                     fs.append(str(f.name))
 
             return fs

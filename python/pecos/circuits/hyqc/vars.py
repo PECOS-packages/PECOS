@@ -9,29 +9,33 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from .fund import Expression
+from __future__ import annotations
+
+from pecos.circuits.hyqc.fund import Expression
 
 
 class Var(Expression):
     """Type for variables."""
 
-    def __init__(self, symbol: str = None):
-        super(Var, self).__init__()
+    def __init__(self, symbol: str | None = None) -> None:
+        super().__init__()
 
         self.symbol = symbol
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         repr_str = self.__class__.__name__
         if self.symbol is not None:
-            repr_str = f'{repr_str}:{self.symbol}'
-        return f'<{repr_str} at {hex(id(self))}>'
+            repr_str = f"{repr_str}:{self.symbol}"
+        return f"<{repr_str} at {hex(id(self))}>"
 
 
 class CVar(Var):
     """Type for classical variables."""
+
     ...
 
 
 class QVar(Var):
     """Type for quantum variables."""
+
     ...

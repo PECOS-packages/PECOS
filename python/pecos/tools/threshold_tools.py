@@ -11,43 +11,62 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+import contextlib
+
 import numpy as np
-from ..simulators import pySparseSim
-from .. import circuits
-from ..engines import circuit_runners
-from ..qeccs import Surface4444
-from ..decoders import MWPM2D
-from ..error_models import XModel
-from ..misc.threshold_curve import threshold_fit as default_fit, func as default_func
+
+from pecos import circuits
+from pecos.decoders import MWPM2D
+from pecos.engines import circuit_runners
+from pecos.error_models import XModel
+from pecos.misc.threshold_curve import func as default_func
+from pecos.misc.threshold_curve import threshold_fit as default_fit
+from pecos.qeccs import Surface4444
+from pecos.simulators import pySparseSim
 
 
-def threshold_code_capacity(qecc_class, error_gen, decoder_class, ps, ds, runs, verbose=False, mode=1,
-                            threshold_fit=None, p0=None, func=None, circuit_runner=None, basis=None):
-    """
-    Function that generates p_logical values given a list of physical errors (ps) and distance (ds).
+def threshold_code_capacity(
+    qecc_class,
+    error_gen,
+    decoder_class,
+    ps,
+    ds,
+    runs,
+    verbose=False,
+    mode=1,
+    threshold_fit=None,
+    p0=None,
+    func=None,
+    circuit_runner=None,
+    basis=None,
+):
+    """Function that generates p_logical values given a list of physical errors (ps) and distance (ds).
+
     Args:
-        ps(list of float):
-        ds(list of int):
-        runs(int):
-        error_gen:
+    ----
         qecc_class:
+        error_gen:
         decoder_class:
+        ps:
+        ds:
+        runs:
         verbose:
         mode:
         threshold_fit:
         p0:
         func:
         circuit_runner:
+        basis:
 
     Returns:
+    -------
 
     """
-
     if circuit_runner is None:
         circuit_runner = circuit_runners.Standard()
 
     if error_gen is None:
-        error_gen = XModel(model_level='code_capacity')
+        error_gen = XModel(model_level="code_capacity")
 
     if qecc_class is None:
         qecc_class = Surface4444
@@ -64,12 +83,13 @@ def threshold_code_capacity(qecc_class, error_gen, decoder_class, ps, ds, runs, 
         if p0 is None:
             p0 = (0.1, 1.5, 1, 1, 1)
 
-    if basis not in [None, 'zero', 'plus', 'both']:
-        raise Exception('`basis` can only be "None", "zero", "plus", "both"!')
+    if basis not in [None, "zero", "plus", "both"]:
+        msg = '`basis` can only be "None", "zero", "plus", "both"!'
+        raise Exception(msg)
 
-    if mode == 1 and basis != 'both':
+    if mode == 1 and basis != "both":
         determine_rate = codecapacity_logical_rate
-    elif mode == 1 and basis == 'both':
+    elif mode == 1 and basis == "both":
         determine_rate = codecapacity_logical_rate2
     elif mode == 2:
         determine_rate = codecapacity_logical_rate3
@@ -78,44 +98,62 @@ def threshold_code_capacity(qecc_class, error_gen, decoder_class, ps, ds, runs, 
 
     plist = np.array(ps * len(ds))
 
+    """
     dlist = []
     for d in ds:
         for p in ps:
             dlist.append(d)
     dlist = np.array(dlist)
+    """
 
     plog = []
     for d in ds:
-
         qecc = qecc_class(distance=d)
         decoder = decoder_class(qecc)
 
         for p in ps:
-
-            logical_error_rate, time = determine_rate(runs, qecc, d, error_gen, error_params={'p': p}, decoder=decoder,
-                                                      verbose=verbose, circuit_runner=circuit_runner, basis=basis)
+            logical_error_rate, time = determine_rate(
+                runs,
+                qecc,
+                d,
+                error_gen,
+                error_params={"p": p},
+                decoder=decoder,
+                verbose=verbose,
+                circuit_runner=circuit_runner,
+                basis=basis,
+            )
             if verbose:
                 if time:
-                    print('Runtime: %s s' % time)
+                    print("Runtime: %s s" % time)
 
-                print('----')
+                print("----")
 
             plog.append(logical_error_rate)
 
     plog = np.array(plog)
 
-    # results = threshold_fit(plist, dlist, plog, func, p0)
-
-    # return plist, dlist, plog, results
-    # return {'distances': ds, 'ps': ps, 'plog': plog, 'opt': results[0], 'std': results[1]}
-    return {'distances': ds, 'ps_physical': plist, 'p_logical': plog}
+    return {"distances": ds, "ps_physical": plist, "p_logical": plog}
 
 
-def threshold_code_capacity_calc(ps, ds, runs, error_gen=None, qecc_class=None, decoder_class=None, verbose=True,
-                                 mode=1, threshold_fit=None, p0=None, func=None, circuit_runner=None):
-    """
-    Function that generates p_logical values given a list of physical errors (ps) and distance (ds).
+def threshold_code_capacity_calc(
+    ps,
+    ds,
+    runs,
+    error_gen=None,
+    qecc_class=None,
+    decoder_class=None,
+    verbose=True,
+    mode=1,
+    threshold_fit=None,
+    p0=None,
+    func=None,
+    circuit_runner=None,
+):
+    """Function that generates p_logical values given a list of physical errors (ps) and distance (ds).
+
     Args:
+    ----
         ps(list of float):
         ds(list of int):
         runs(int):
@@ -130,14 +168,14 @@ def threshold_code_capacity_calc(ps, ds, runs, error_gen=None, qecc_class=None, 
         circuit_runner:
 
     Returns:
+    -------
 
     """
-
     if circuit_runner is None:
         circuit_runner = circuit_runners.Standard()
 
     if error_gen is None:
-        error_gen = XModel(model_level='code_capacity')
+        error_gen = XModel(model_level="code_capacity")
 
     if qecc_class is None:
         qecc_class = Surface4444
@@ -167,25 +205,31 @@ def threshold_code_capacity_calc(ps, ds, runs, error_gen=None, qecc_class=None, 
 
     dlist = []
     for d in ds:
-        for p in ps:
+        for _p in ps:
             dlist.append(d)
     dlist = np.array(dlist)
 
     plog = []
     for d in ds:
-
         qecc = qecc_class(distance=d)
         decoder = decoder_class(qecc)
 
         for p in ps:
-
-            logical_error_rate, time = determine_rate(runs, qecc, d, error_gen, error_params={'p': p}, decoder=decoder,
-                                                      verbose=verbose, circuit_runner=circuit_runner)
+            logical_error_rate, time = determine_rate(
+                runs,
+                qecc,
+                d,
+                error_gen,
+                error_params={"p": p},
+                decoder=decoder,
+                verbose=verbose,
+                circuit_runner=circuit_runner,
+            )
             if verbose:
                 if time:
-                    print('Runtime: %s s' % time)
+                    print("Runtime: %s s" % time)
 
-                print('----')
+                print("----")
 
             plog.append(logical_error_rate)
 
@@ -193,20 +237,30 @@ def threshold_code_capacity_calc(ps, ds, runs, error_gen=None, qecc_class=None, 
 
     results = threshold_fit(plist, dlist, plog, func, p0)
 
-    # return plist, dlist, plog, results
-    return {'plist': plist, 'dlist': dlist, 'plog': plog, 'opt': results[0], 'std': results[1]}
+    return {"plist": plist, "dlist": dlist, "plog": plog, "opt": results[0], "std": results[1]}
 
 
-def codecapacity_logical_rate(runs, qecc, distance, error_gen, error_params, decoder, seed=None, state_sim=None,
-                              verbose=True, circuit_runner=None, basis=None):
-    """
-    A tool for determining the code-capacity logical-error rate for syndrome extraction.
+def codecapacity_logical_rate(
+    runs,
+    qecc,
+    distance,
+    error_gen,
+    error_params,
+    decoder,
+    seed=None,
+    state_sim=None,
+    verbose=True,
+    circuit_runner=None,
+    basis=None,
+):
+    """A tool for determining the code-capacity logical-error rate for syndrome extraction.
 
     In this analysis only logical |0> is prepared and each run consists of an ideal logical |0> preparation followed by
     a single round of syndrome extraction. The error rate is determined by number of runs with logical failures divided
     by the total number of runs.
 
     Args:
+    ----
         runs: Number of runs to evaluate the logical error rate.
         qecc:
         distance:
@@ -219,43 +273,41 @@ def codecapacity_logical_rate(runs, qecc, distance, error_gen, error_params, dec
         circuit_runner:
 
     Returns:
+    -------
 
     """
-
-    p = error_params['p']
+    p = error_params["p"]
     total_time = 0.0
 
     # Circuit simulator
     if circuit_runner is None:
         circuit_runner = circuit_runners.TimingRunner(seed=seed)
-    # circ_sim = circuit_runners.Standard(seed=seed)
 
     # Syndrome extraction
     syn_extract = circuits.LogicalCircuit(supress_warning=True)
-    syn_extract.append(qecc.gate('I', num_syn_extract=1))
+    syn_extract.append(qecc.gate("I", num_syn_extract=1))
 
     # Choosing basis
-    if basis is None or basis == 'zero':
-        basis = '|0>'
-    elif basis == 'plus':
-        basis = '|+>'
+    if basis is None or basis == "zero":
+        basis = "|0>"
+    elif basis == "plus":
+        basis = "|+>"
     else:
-        raise Exception('Basis must be "zero", "plus", "None"!')
+        msg = 'Basis must be "zero", "plus", "None"!'
+        raise Exception(msg)
 
     # init circuit
     initzero = circuits.LogicalCircuit(supress_warning=True)
-    instr_symbol = 'ideal init %s' % basis
+    instr_symbol = "ideal init %s" % basis
     gate = qecc.gate(instr_symbol)
     initzero.append(gate)
-
-    # print(gate)
-    # print(initzero)
 
     logical_circ_dict = gate.final_instr().final_logical_ops
     logical_ops_sym = gate.final_instr().logical_stabilizers
 
     if len(logical_circ_dict) != 1:
-        raise Exception('This tool expects a code that stores one logical qubit.')
+        msg = "This tool expects a code that stores one logical qubit."
+        raise Exception(msg)
 
     logical_circ = logical_circ_dict[0][logical_ops_sym[0]]
 
@@ -267,21 +319,14 @@ def codecapacity_logical_rate(runs, qecc, distance, error_gen, error_params, dec
 
         # Create ideal logical |0>
         circuit_runner.run(state, initzero)
-        try:
+        with contextlib.suppress(AttributeError):
             total_time += circuit_runner.total_time
-        except AttributeError:
-            pass
 
         output, _ = circuit_runner.run(state, syn_extract, error_gen=error_gen, error_params=error_params)
-        try:
+        with contextlib.suppress(AttributeError):
             total_time += circuit_runner.total_time
-        except AttributeError:
-            pass
-
-        # syn = output.simplified(True)
 
         if output:
-
             # Recovery operation
             recovery = decoder.decode(output)
 
@@ -295,27 +340,38 @@ def codecapacity_logical_rate(runs, qecc, distance, error_gen, error_params, dec
     logical_rate = float(num_failure) / float(runs)
 
     if verbose:
-        print('\ndistance = %s' % distance)
-        print('p = %s' % p)
-        print('runs = %s' % runs)
+        print("\ndistance = %s" % distance)
+        print("p = %s" % p)
+        print("runs = %s" % runs)
 
-        print('\nlogical error rate: %s' % logical_rate)
-        r = float(logical_rate)/float(p)
-        print('\nplog/p = %s' % r)
+        print("\nlogical error rate: %s" % logical_rate)
+        r = float(logical_rate) / float(p)
+        print("\nplog/p = %s" % r)
 
     return logical_rate, total_time
 
 
-def codecapacity_logical_rate2(runs, qecc, distance, error_gen, error_params, decoder, seed=None, state_sim=None,
-                               verbose=True, circuit_runner=None, basis=None):
-    """
-    A tool for determining the code-capacity logical-error rate for syndrome extraction.
+def codecapacity_logical_rate2(
+    runs,
+    qecc,
+    distance,
+    error_gen,
+    error_params,
+    decoder,
+    seed=None,
+    state_sim=None,
+    verbose=True,
+    circuit_runner=None,
+    basis=None,
+):
+    """A tool for determining the code-capacity logical-error rate for syndrome extraction.
 
     In this analysis only logical |0> is prepared and each run consists of an ideal logical |0> preparation followed by
     a single round of syndrome extraction. The error rate is determined by number of runs with logical failures divided
     by the total number of runs.
 
     Args:
+    ----
         runs: Number of runs to evaluate the logical error rate.
         qecc:
         distance:
@@ -328,10 +384,10 @@ def codecapacity_logical_rate2(runs, qecc, distance, error_gen, error_params, de
         circuit_runner:
 
     Returns:
+    -------
 
     """
-
-    p = error_params['p']
+    p = error_params["p"]
     total_time = 0.0
 
     # Circuit simulator
@@ -340,18 +396,18 @@ def codecapacity_logical_rate2(runs, qecc, distance, error_gen, error_params, de
 
     # Syndrome extraction
     syn_extract = circuits.LogicalCircuit(supress_warning=True)
-    syn_extract.append(qecc.gate('I', num_syn_extract=1))
+    syn_extract.append(qecc.gate("I", num_syn_extract=1))
 
     # init logical |0> circuit
     initzero = circuits.LogicalCircuit(supress_warning=True)
-    initzero.append(qecc.gate('ideal init |0>'))
+    initzero.append(qecc.gate("ideal init |0>"))
 
     # init logical |+> circuit
     initplus = circuits.LogicalCircuit(supress_warning=True)
-    initplus.append(qecc.gate('ideal init |+>'))
+    initplus.append(qecc.gate("ideal init |+>"))
 
-    logical_ops_zero = qecc.instruction('instr_init_zero').logical_stabs[0]['Z']
-    logical_ops_plus = qecc.instruction('instr_init_plus').logical_stabs[0]['X']
+    logical_ops_zero = qecc.instruction("instr_init_zero").logical_stabs[0]["Z"]
+    logical_ops_plus = qecc.instruction("instr_init_plus").logical_stabs[0]["X"]
 
     num_failure = 0
 
@@ -360,83 +416,74 @@ def codecapacity_logical_rate2(runs, qecc, distance, error_gen, error_params, de
         state0 = state_sim(qecc.num_qudits)
         state1 = state_sim(qecc.num_qudits)
 
-        # state0 = circuit_runner.init(qecc.num_qudits, simulator=state_sim)
-        # state1 = circuit_runner.init(qecc.num_qudits, simulator=state_sim)
-
         # Create ideal logical |0>
         circuit_runner.run(state0, initzero)
-        try:
+        with contextlib.suppress(AttributeError):
             total_time += circuit_runner.total_time
-        except AttributeError:
-            pass
 
         # Create ideal logical |+>
         circuit_runner.run(state1, initplus)
-        try:
+        with contextlib.suppress(AttributeError):
             total_time += circuit_runner.total_time
-        except AttributeError:
-            pass
 
-        output, error_circuits = circuit_runner.run(state0, syn_extract, error_gen=error_gen,
-                                                    error_params=error_params)
-        try:
+        output, error_circuits = circuit_runner.run(state0, syn_extract, error_gen=error_gen, error_params=error_params)
+        with contextlib.suppress(AttributeError):
             total_time += circuit_runner.total_time
-        except AttributeError:
-            pass
-
-        # syn = output.simplified(True)
 
         circuit_runner.run(state1, syn_extract, error_circuits=error_circuits)
-        try:
+        with contextlib.suppress(AttributeError):
             total_time += circuit_runner.total_time
-        except AttributeError:
-            pass
 
         if output:
-
             # Recovery operation
             recovery = decoder.decode(output)
 
             # Apply recovery operation
 
             circuit_runner.run(state0, recovery)
-            try:
+            with contextlib.suppress(AttributeError):
                 total_time += circuit_runner.total_time
-            except AttributeError:
-                pass
             circuit_runner.run(state1, recovery)
-            try:
+            with contextlib.suppress(AttributeError):
                 total_time += circuit_runner.total_time
-            except AttributeError:
-                pass
 
         sign0 = state0.logical_sign(logical_ops_zero)
         sign1 = state1.logical_sign(logical_ops_plus)
 
         if sign0 or sign1:
-
             num_failure += 1
 
     logical_rate = float(num_failure) / float(runs)
 
     if verbose:
-        print('\ndistance = %s' % distance)
-        print('p = %s' % p)
-        print('runs = %s' % runs)
+        print("\ndistance = %s" % distance)
+        print("p = %s" % p)
+        print("runs = %s" % runs)
 
-        print('\nlogical error rate: %s' % logical_rate)
-        r = float(logical_rate)/float(p)
-        print('\nplog/p = %s' % r)
-        # print('----')
+        print("\nlogical error rate: %s" % logical_rate)
+        r = float(logical_rate) / float(p)
+        print("\nplog/p = %s" % r)
 
     return logical_rate, total_time
 
 
-def codecapacity_logical_rate3(runs, qecc, distance, error_gen, error_params, decoder, seed=None, state_sim=None,
-                               max_syn_extract=1e7, circuit_runner=None, verbose=True, init_circuit=None,
-                               init_logical_ops=None, basis=None):
-    """
-    A tool for determining the code-capacity logical-error rate for syndrome extraction.
+def codecapacity_logical_rate3(
+    runs,
+    qecc,
+    distance,
+    error_gen,
+    error_params,
+    decoder,
+    seed=None,
+    state_sim=None,
+    max_syn_extract=1e7,
+    circuit_runner=None,
+    verbose=True,
+    init_circuit=None,
+    init_logical_ops=None,
+    basis=None,
+):
+    """A tool for determining the code-capacity logical-error rate for syndrome extraction.
 
     In this analysis only logical |0> is prepared and each run consists of an ideal logical |0> preparation followed by
     a single round of syndrome extraction. The error rate is determined by number of runs with logical failures divided
@@ -445,6 +492,7 @@ def codecapacity_logical_rate3(runs, qecc, distance, error_gen, error_params, de
     !!! This version determines logical threshold from 1/avg(duration)
 
     Args:
+    ----
         runs: Number of runs to evaluate the logical error rate.
         qecc:
         distance:
@@ -460,10 +508,10 @@ def codecapacity_logical_rate3(runs, qecc, distance, error_gen, error_params, de
         init_logical_ops:
 
     Returns:
+    -------
 
     """
-
-    p = error_params['p']
+    p = error_params["p"]
     total_time = 0.0
 
     # Circuit simulator
@@ -475,75 +523,57 @@ def codecapacity_logical_rate3(runs, qecc, distance, error_gen, error_params, de
         init_circuit = circuits.LogicalCircuit(supress_warning=True)
 
         # Choosing basis
-        if basis is None or basis == 'zero':
-            basis = '|0>'
-        elif basis == 'plus':
-            basis = '|+>'
+        if basis is None or basis == "zero":
+            basis = "|0>"
+        elif basis == "plus":
+            basis = "|+>"
         else:
-            raise Exception('Basis must be "zero", "plus", "None"!')
+            msg = 'Basis must be "zero", "plus", "None"!'
+            raise Exception(msg)
 
-        gate = qecc.gate('ideal init %s' % basis)
+        gate = qecc.gate("ideal init %s" % basis)
         init_circuit.append(gate)
 
     if init_logical_ops is None:
-        # logical_ops = qecc.instruction('instr_syn_extract').final_logical_ops[0]
-        ## logical_ops = qecc.instruction('instr_init_zero').logical_stabs[0]
-
         if init_circuit is None:
-
-            gate = qecc.gate('ideal init %s' % basis)
+            gate = qecc.gate("ideal init %s" % basis)
 
             # if len(gate.final_logical_stabs()) != 1:
-            #    raise Exception('This tool expects a code that stores one logical qubit.')
-
-            # logical_ops = qecc.instruction('instr_syn_extract').final_logical_ops[0]
-            # logical_ops = gate.final_logical_stabs()[0]
-            # logical_ops_plus = qecc.instruction('instr_init_plus').logical_stabs[0]
 
             logical_circ_dict = gate.final_instr().final_logical_ops
             logical_ops_sym = gate.final_instr().logical_stabilizers
 
             if len(logical_circ_dict) != 1:
-                raise Exception('This tool expects a code that stores one logical qubit.')
+                msg = "This tool expects a code that stores one logical qubit."
+                raise Exception(msg)
 
             logical_ops = logical_circ_dict[0][logical_ops_sym[0]]
         else:
-            raise Exception('This case is not handled!')
+            msg = "This case is not handled!"
+            raise Exception(msg)
     else:
         logical_ops = init_logical_ops
 
     # Syndrome extraction
     syn_extract = circuits.LogicalCircuit(supress_warning=True)
-    syn_extract.append(qecc.gate('I', num_syn_extract=1))
-
-    # logical_ops = qecc.instruction('instr_syn_extract').final_logical_ops[0]
+    syn_extract.append(qecc.gate("I", num_syn_extract=1))
 
     run_durations = []
 
     for _ in range(runs):
-
         # State
         state = state_sim(qecc.num_qudits)
 
-        # state = circuit_runner.init(qecc.num_qudits, simulator=state_sim)
-
         # Create ideal logical |0>
         circuit_runner.run(state, init_circuit)
-        try:
+        with contextlib.suppress(AttributeError):
             total_time += circuit_runner.total_time
-        except AttributeError:
-            pass
 
-        for duration in range(max_syn_extract):
-
+        for _duration in range(max_syn_extract):
             # Run syndrome extraction
             output, _ = circuit_runner.run(state, syn_extract, error_gen=error_gen, error_params=error_params)
-            try:
+            with contextlib.suppress(AttributeError):
                 total_time += circuit_runner.total_time
-            except AttributeError:
-                pass
-
-            # syn = output.simplified(True)
 
             if output:
                 # Recovery operation
@@ -551,10 +581,8 @@ def codecapacity_logical_rate3(runs, qecc, distance, error_gen, error_params, de
 
                 # Apply recovery operation
                 circuit_runner.run(state, recovery)
-                try:
+                with contextlib.suppress(AttributeError):
                     total_time += circuit_runner.total_time
-                except AttributeError:
-                    pass
 
             sign = state.logical_sign(logical_ops)
 
@@ -562,12 +590,12 @@ def codecapacity_logical_rate3(runs, qecc, distance, error_gen, error_params, de
                 break
 
         else:
-            raise Exception('Max syndrome extraction (%s) met.' % max_syn_extract)
+            raise Exception("Max syndrome extraction (%s) met." % max_syn_extract)
 
-        run_durations.append(duration+1)  # duration + 1 == number of syndrome extractions.
+        run_durations.append(max_syn_extract)  # duration + 1 == number of syndrome extractions.
 
     if verbose:
-        print('\nTotal number of runs: %s' % sum(run_durations))
+        print("\nTotal number of runs: %s" % sum(run_durations))
 
     run_durations = np.array(run_durations)
     duration_mean = np.mean(run_durations)
@@ -575,12 +603,12 @@ def codecapacity_logical_rate3(runs, qecc, distance, error_gen, error_params, de
     logical_rate = 1.0 / duration_mean
 
     if verbose:
-        print('\ndistance = %s' % distance)
-        print('p = %s' % p)
-        print('Number of failures = %s' % runs)
+        print("\ndistance = %s" % distance)
+        print("p = %s" % p)
+        print("Number of failures = %s" % runs)
 
-        print('\nlogical error rate: %s' % logical_rate)
-        r = float(logical_rate)/float(p)
-        print('\nplog/p = %s' % r)
+        print("\nlogical error rate: %s" % logical_rate)
+        r = float(logical_rate) / float(p)
+        print("\nplog/p = %s" % r)
 
     return logical_rate, total_time

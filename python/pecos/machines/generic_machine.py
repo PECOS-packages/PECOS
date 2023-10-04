@@ -9,14 +9,22 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from .machine_abc import Machine
-from ..reps.pypmir.op_types import QOp
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from pecos.machines.machine_abc import Machine
+from pecos.reps.pypmir.op_types import QOp
+
+if TYPE_CHECKING:
+    from pecos.error_models.error_model_abc import ErrorModel
+    from pecos.reps.pypmir.op_types import MOp
 
 
 class GenericMachine(Machine):
     """Represents generic, abstract machine."""
 
-    def __init__(self, error_model=None, num_qubits=None):
+    def __init__(self, error_model: ErrorModel | None = None, num_qubits: int | None = None) -> None:
         super().__init__(error_model, num_qubits)
         self.leaked_qubits = None
         self.lost_qubits = None
@@ -26,40 +34,33 @@ class GenericMachine(Machine):
         self.leaked_qubits = set()
         self.lost_qubits = set()
 
-    def init(self, machine_params=None, num_qubits=None):
+    def init(self, machine_params: dict | None = None, num_qubits: int | None = None) -> None:
         if machine_params:
             self.machine_params = machine_params
 
         self.num_qubits = num_qubits
 
-    def shot_reinit(self):
+    def shot_reinit(self) -> None:
         self.reset()
 
-    def process_op(self, op):
-        pass
-
-    def process(self, op_buffer: list) -> list:
-
+    def process(self, op_buffer: list[QOp | MOp]) -> list:
         for op in op_buffer:
             if "mop" in op:
                 print("MOP >", op)
 
         return op_buffer
 
-    def leak(self, qubits: set):
+    def leak(self, qubits: set) -> list[QOp]:
         """Starts tracking qubits as leaked qubits and calls the quantum simulation appropriately to trigger leakage."""
         self.leaked_qubits |= qubits
         return [QOp(name="Init", args=list(qubits), metadata={})]
 
-    def unleak(self, qubits: set):
+    def unleak(self, qubits: set) -> None:
         """Untrack qubits as leaked qubits and calls the quantum simulation appropriately to trigger leakage."""
         self.leaked_qubits -= qubits
 
-    def meas_leaked(self, qubits: set):
-        # measuring = self.leaked_qubits & set(op.args)
+    def meas_leaked(self, qubits: set) -> list[QOp]:
         self.leaked_qubits -= qubits
-        noisy_ops = [
+        return [
             QOp(name="Init -Z", args=list(qubits), metadata={}),
         ]
-        return noisy_ops
-

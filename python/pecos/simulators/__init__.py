@@ -10,29 +10,30 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from .parent_sim_classes import Simulator
-from . import sim_class_types
-
-from .sparsesim import SparseSim as pySparseSim  # Python sparse stabilizer sim
-from .paulifaultprop import PauliFaultProp  # Pauli fault propagation sim
+from pecos.simulators import sim_class_types
+from pecos.simulators.parent_sim_classes import Simulator
+from pecos.simulators.paulifaultprop import PauliFaultProp  # Pauli fault propagation sim
+from pecos.simulators.sparsesim import SparseSim as pySparseSim  # Python sparse stabilizer sim
 
 # C++ version of SparseStabSim wrapper
 try:
-    from .cysparsesim import SparseSim as cySparseSim  # Cython wrapped C++ sparse stabilizer sim
-    from .cysparsesim import SparseSim
+    from pecos.simulators.cysparsesim import SparseSim
+    from pecos.simulators.cysparsesim import SparseSim as cySparseSim  # Cython wrapped C++ sparse stabilizer sim
 except ImportError:
-    from .sparsesim import SparseSim
+    from pecos.simulators.sparsesim import SparseSim
 
 # Attempt to import optional ProjectQ package
 try:
     import projectq
-    from .projectq.state import ProjectQSim  # wrapper for ProjectQ sim
+
+    from pecos.simulators.projectq.state import ProjectQSim  # wrapper for ProjectQ sim
 except ImportError:
     pass
 
 # Attempt to import optional qcgpu package
 try:
     import qcgpu
-    from ._qcgpu_wrapper.state import QCQPUSim  # wrapper for qcgpu
+
+    from pecos.simulators._qcgpu_wrapper.state import QCQPUSim  # wrapper for qcgpu
 except ImportError:
     pass

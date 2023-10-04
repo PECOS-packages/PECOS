@@ -15,9 +15,9 @@ def circ2set(circuit):
     qudit_xs = set()
     qudit_zs = set()
     for gate, qubits in circuit:
-        if gate == 'X':
+        if gate == "X":
             qudit_xs = qubits
-        elif gate == 'Z':
+        elif gate == "Z":
             qudit_zs = qubits
         else:
             raise Exception('Operator "%s" not handled for logical ops!' % gate)
@@ -26,7 +26,6 @@ def circ2set(circuit):
 
 
 def op_commutes(stab_xs, stab_zs, commute_with):
-
     # Does the stabilizer anti-commute with any of the stabilizers in the stabilizer state?
 
     anticom_stabs = set()
@@ -34,29 +33,25 @@ def op_commutes(stab_xs, stab_zs, commute_with):
     for q in stab_xs:
         anticom_stabs ^= commute_with.col_z[q]  # stabilizers that anti-commute with q
 
-    # print(len(anticom_stabs))
-
     for q in stab_zs:
         anticom_stabs ^= commute_with.col_x[q]  # stabilizers that anti-commute with q
-
-    # print(len(anticom_stabs))
 
     return not len(anticom_stabs)
 
 
 def find_stab(state, stab_xs, stab_zs):
-    """
-    Find the sign of the logical operator.
+    """Find the sign of the logical operator.
 
     Args:
+    ----
         state:
         stab_xs:
         stab_zs:
 
     Returns:
+    -------
 
     """
-    # print(stab_xs, stab_zs)
 
     if len(stab_xs) == 0 and len(stab_zs) == 0:
         return True
@@ -84,20 +79,16 @@ def find_stab(state, stab_xs, stab_zs):
     built_up_xs ^= stab_xs
     built_up_zs ^= stab_zs
 
-    if len(built_up_xs) != 0 or len(built_up_zs) != 0:
-        # print('x...', built_up_xs)
-        # print('z...', built_up_zs)
-        return False  # Not found in stabilizer state
-    else:
-        return True  # Stabilizer has been found
+    # Whether a stabilizer has been found
+    return not (len(built_up_xs) != 0 or len(built_up_zs) != 0)
 
 
 def remove_stab(state, stab_xs, stab_zs, destab_xs, destab_zs):
-
     # make sure stabs and destabs anti-commute
     # ----------------------------------------
     if (len(stab_xs & destab_zs) + len(stab_zs & destab_xs)) % 2 == 0:
-        raise Exception('Stabilizer and destabilizers do not anti-commute.')
+        msg = "Stabilizer and destabilizers do not anti-commute."
+        raise Exception(msg)
 
     logical_xs = stab_xs
     logical_zs = stab_zs
@@ -111,7 +102,8 @@ def remove_stab(state, stab_xs, stab_zs, destab_xs, destab_zs):
     anticom_z = len(logical_zs & delogical_xs) % 2
 
     if not (anticom_x + anticom_z % 2):
-        raise Exception("Logical and delogical supplied do not anti-commute!")
+        msg = "Logical and delogical supplied do not anti-commute!"
+        raise Exception(msg)
 
     # We want the supplied logical operator to be in the stabilizer group and
     #  the supplied delogical to not be in the stabilizers (we want it to end up being the logical op's destabilizer)
@@ -122,11 +114,13 @@ def remove_stab(state, stab_xs, stab_zs, destab_xs, destab_zs):
 
     # Check logical is a stabilizer (we want to remove it from the stabilizers)
     if is_not_stabilizer(state, stab_xs, stab_zs):
-        raise Exception("Supplied stabilizer is NOT in the current stabilizer group!")
+        msg = "Supplied stabilizer is NOT in the current stabilizer group!"
+        raise Exception(msg)
 
     # Check delogical is not a stabilizer
     if not is_not_stabilizer(state, destab_xs, destab_zs):
-        raise Exception("Supplied delogical IS in the current stabilizer group!")
+        msg = "Supplied delogical IS in the current stabilizer group!"
+        raise Exception(msg)
 
     # Now that everything seems fine so far...
     # We need to remove the logical operator and insure the delogical partner is also a logical operator and not an
@@ -193,7 +187,6 @@ def remove_stab(state, stab_xs, stab_zs, destab_xs, destab_zs):
     # Row
     # ---
     for gen in build_stabs:
-
         destabs.row_x[gen] ^= destabs.row_x[removed_id]
         destabs.row_z[gen] ^= destabs.row_z[removed_id]
 
@@ -242,14 +235,12 @@ def remove_stab(state, stab_xs, stab_zs, destab_xs, destab_zs):
         overlap = delogical_xs & qubits
 
         if len(overlap) % 2:  # Odd overlap
-
             delog_anticom.add(s)
 
     for s, qubits in enumerate(stabs.row_x):
         overlap = delogical_zs & qubits
 
         if len(overlap) % 2:  # Odd overlap
-
             delog_anticom.add(s)
 
     # Now do rowsum on these with the logical operator
@@ -269,7 +260,6 @@ def remove_stab(state, stab_xs, stab_zs, destab_xs, destab_zs):
         stabs.signs_minus ^= delog_anticom
 
     if logical_i:
-
         # Find two is (carry operation)
         two_is = stabs.signs_i & delog_anticom
         stabs.signs_minus ^= two_is
@@ -278,7 +268,6 @@ def remove_stab(state, stab_xs, stab_zs, destab_xs, destab_zs):
 
 
 def is_not_stabilizer(state, qubits_x, qubits_z):
-
     stabs = state.stabs
     destabs = state.destabs
 
@@ -288,14 +277,12 @@ def is_not_stabilizer(state, qubits_x, qubits_z):
         overlap = qubits_x & qubits
 
         if len(overlap) % 2:  # Odd overlap
-
             return 1  # Zs do not commute
 
     for qubits in stabs.row_x:
         overlap = qubits_z & qubits
 
         if len(overlap) % 2:  # Odd overlap
-
             return 1  # Xs do not commute
 
     # ----- In the stabilizer group? ----- #

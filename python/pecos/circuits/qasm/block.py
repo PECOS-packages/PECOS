@@ -9,8 +9,9 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+
 class Block:
-    def __init__(self, *args):
+    def __init__(self, *args) -> None:
         self.elements = []
         self.elements.extend(args)
 
@@ -22,7 +23,6 @@ class Block:
 
     def __iter__(self):
         """Recursively iterate through sub-blocks."""
-
         for e in self.elements:
             if isinstance(e, Block):
                 yield from e

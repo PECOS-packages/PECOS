@@ -10,60 +10,59 @@
 # specific language governing permissions and limitations under the License.
 
 import pickle
+from pathlib import Path
 
-from .wasm_vms.pywasm import read_pywasm
-from .wasm_vms.pywasm3 import read_pywasm3
-from .wasm_vms.wasmer import read_wasmer
-
+from pecos.engines.cvm.binarray import BinArray
+from pecos.engines.cvm.sim_func import sim_exec
+from pecos.engines.cvm.wasm_vms.pywasm import read_pywasm
+from pecos.engines.cvm.wasm_vms.pywasm3 import read_pywasm3
+from pecos.engines.cvm.wasm_vms.wasmer import read_wasmer
 from pecos.errors import MissingCCOPError
-from .binarray import BinArray
-# from .binarray2 import BinArray2 as BinArray
-
-from .sim_func import sim_exec
 
 
 def read_pickle(picklefile):
     """Read in either a file path or byte object meant to be a pickled class used to define the ccop."""
     if isinstance(picklefile, str):  # filename
-        with open(picklefile, 'rb') as f:
+        with Path.open(picklefile, "rb") as f:
             return pickle.load(f)
     else:
         return pickle.loads(picklefile)  # byte object
 
 
 def get_ccop(circuit):
-    if circuit.metadata.get('ccop'):
-        ccop = circuit.metadata['ccop']
-        ccop_type = circuit.metadata['ccop_type']
+    if circuit.metadata.get("ccop"):
+        ccop = circuit.metadata["ccop"]
+        ccop_type = circuit.metadata["ccop_type"]
 
         if ccop_type is None:
-            ccop_type = 'wasmer'
+            ccop_type = "wasmer"
 
         # Set self.ccop
         # ------------------------------------------------
-        if ccop_type in ['py', 'python']:
+        if ccop_type in {"py", "python"}:
             ccop = read_pickle(ccop)
 
-        elif ccop_type == 'pywasm':
+        elif ccop_type == "pywasm":
             ccop = read_pywasm(ccop)
 
-        elif ccop_type == 'pywasm3':
+        elif ccop_type == "pywasm3":
             ccop = read_pywasm3(ccop)
 
-        elif ccop_type == 'wasmer' or ccop_type == 'wasmer_cl':
-            ccop = read_wasmer(ccop, compiler='wasmer_cl')
+        elif ccop_type in {"wasmer", "wasmer_cl"}:
+            ccop = read_wasmer(ccop, compiler="wasmer_cl")
 
-        elif ccop_type == 'wasmer_llvm':
+        elif ccop_type == "wasmer_llvm":
             ccop = read_wasmer(ccop, compiler=ccop_type)
 
-        elif ccop_type in ['obj', 'object']:
-            ccop = ccop
+        elif ccop_type in {"obj", "object"}:
+            pass
 
         else:
-            raise Exception(f'Got ccop object but ccop_type "{ccop_type}" is unknown or not supported!')
+            msg = f'Got ccop object but ccop_type "{ccop_type}" is unknown or not supported!'
+            raise Exception(msg)
 
         # Call the CCOP object initialization method.
-        ccop.exec('init', [])
+        ccop.exec("init", [])
 
     else:
         ccop = None
@@ -72,37 +71,36 @@ def get_ccop(circuit):
 
 
 def eval_cfunc(runner, params, output):
-
-    func = params['func']
-    assign_vars = params['assign_vars']
-    args = params['args']
+    func = params["func"]
+    assign_vars = params["assign_vars"]
+    args = params["args"]
 
     valargs = []
     for sym in args:
         valargs.append((sym, output[sym]))
 
     try:
-        if runner.debug and func.startswith('sim_'):
+        if runner.debug and func.startswith("sim_"):
             vals = sim_exec(func, runner, valargs)
 
         else:
             vals = runner.ccop.exec(func, valargs, debug=runner.debug)
 
     except AttributeError:
-
-        ccop = runner.circuit.metadata['ccop']
-        ccop_type = runner.circuit.metadata['ccop_type']
+        ccop = runner.circuit.metadata["ccop"]
+        ccop_type = runner.circuit.metadata["ccop_type"]
 
         if ccop is None:
-            raise MissingCCOPError('Wasm not supplied but requested!')
+            msg = "Wasm not supplied but requested!"
+            raise MissingCCOPError(msg) from AttributeError
 
-        raise MissingCCOPError(f'Classical coprocessor object not assigned or missing exec method. '
-                               f'Wasm-type = {ccop_type}')
+        msg = f"Classical coprocessor object not assigned or missing exec method. Wasm-type = {ccop_type}"
+        raise MissingCCOPError(msg) from AttributeError
 
     if assign_vars:
         if len(assign_vars) == 1:
             a_obj = output[assign_vars[0]]
-            if runner.debug and func.startswith('sim_'):
+            if runner.debug and func.startswith("sim_"):
                 output[assign_vars[0]] = vals
             else:
                 b = BinArray(a_obj.size, int(vals))
@@ -112,12 +110,12 @@ def eval_cfunc(runner, params, output):
             for asym, b in zip(assign_vars, vals):
                 a_obj = output[asym]
 
-                if runner.debug and func.startswith('sim_'):
+                if runner.debug and func.startswith("sim_"):
                     output[asym] = b
                 else:
-
                     if isinstance(b, int):
                         b = BinArray(a_obj.size, int(b))
                         a_obj.set(b)
                     else:
-                        raise NotImplementedError('Only int return values are supported currently')
+                        msg = "Only int return values are supported currently"
+                        raise NotImplementedError(msg)

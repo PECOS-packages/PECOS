@@ -9,30 +9,32 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from __future__ import annotations
+
 import multiprocessing
 import sys
 from os import getpid
-from typing import Tuple
 from warnings import warn
 
 import numpy as np
 
-
 # TODO: Add runtime data to multisim_proc_info
 
 
-def run_multisim(eng,
-                 program,
-                 foreign_object: object = None,
-                 shots: int = 1,
-                 error_params: dict = None,
-                 machine_params: dict = None,
-                 seed: int = None,
-                 optimize: bool = True,
-                 pool_size: int = 1,
-                 reset_engine: bool = True):
-    """Parallelize the running of the sim"""
-
+def run_multisim(
+    eng,
+    program,
+    foreign_object: object = None,
+    *,
+    shots: int = 1,
+    error_params: dict | None = None,
+    machine_params: dict | None = None,
+    seed: int | None = None,
+    optimize: bool = True,
+    pool_size: int = 1,
+    reset_engine: bool = True,
+):
+    """Parallelize the running of the sim."""
     if reset_engine:
         eng.reset_all()
 
@@ -60,7 +62,6 @@ def run_multisim(eng,
         "seed": seed,
         "initialize": True,
         "optimize": optimize,
-
     }
 
     np.random.seed(seed)
@@ -89,17 +90,17 @@ def run_multisim(eng,
         pid, msg_type, msg_data = queue.get()
         msg_dict.setdefault(pid, {})
         if isinstance(msg_data, str):
-            msg_dict[pid].setdefault(msg_type, '')
+            msg_dict[pid].setdefault(msg_type, "")
             msg_dict[pid][msg_type] += msg_data
         else:
-            raise Exception(f"msg_data type {type(msg_data)} not currently handled!")
+            msg = f"msg_data type {type(msg_data)} not currently handled!"
+            raise TypeError(msg)
 
     # Combine results
     results = {}
     errors = []
     process_info = []
     for r, pinfo in presults:
-
         pid = pinfo["pid"]
         i = pinfo["i"]
         msgs = msg_dict.get(pid, {})
@@ -112,14 +113,16 @@ def run_multisim(eng,
             if isinstance(value, list):
                 results.setdefault(key, []).extend(value)
             else:
-                raise Exception(f'Unexpected results! Got a result dict with a value of type: {type(value)}')
+                msg = f"Unexpected results! Got a result dict with a value of type: {type(value)}"
+                raise TypeError(msg)
 
     eng.multisim_process_info = process_info
 
     if errors:
         for i, pid, error_msg in errors:
-            warn(f"process {i} with pid = {pid} had this error message: {error_msg}")
-        raise MultisimError("Processes experienced errors!")
+            warn(f"process {i} with pid = {pid} had this error message: {error_msg}", stacklevel=2)
+        msg = "Processes experienced errors!"
+        raise MultisimError(msg)
 
     return results
 
@@ -128,20 +131,20 @@ class MultisimError(Exception):
     pass
 
 
-def worker_wrapper(args) -> Tuple[dict, dict]:
-    """A wrapper to pass kwargs onto run for multiprocess.pool.map"""
+def worker_wrapper(args) -> tuple[dict, dict]:
+    """A wrapper to pass kwargs onto run for multiprocess.pool.map."""
     queue, run, pkwargs, i = args
     pid = getpid()
 
     sys.stdout = WriteStream(queue, pid, "stdout")
     sys.stderr = WriteStream(queue, pid, "stderr")
 
-    run_info = {'i': i, 'pid': pid, 'seed': pkwargs["seed"], 'shots': pkwargs['shots']}
+    run_info = {"i": i, "pid": pid, "seed": pkwargs["seed"], "shots": pkwargs["shots"]}
 
     # TODO: Find a more elegant solution.
     foreign_object = pkwargs["foreign_object"]
     if isinstance(foreign_object, dict) and hasattr(foreign_object["fobj_class"], "from_dict"):
-            pkwargs["foreign_object"] = foreign_object["fobj_class"].from_dict(foreign_object)
+        pkwargs["foreign_object"] = foreign_object["fobj_class"].from_dict(foreign_object)
 
     results = {}
     try:
@@ -153,7 +156,7 @@ def worker_wrapper(args) -> Tuple[dict, dict]:
 
 
 class WriteStream:
-    def __init__(self, q, pid: int, stream_type: str):
+    def __init__(self, q, pid: int, stream_type: str) -> None:
         self.queue = q
         self.stream_type = stream_type
         self.pid = pid

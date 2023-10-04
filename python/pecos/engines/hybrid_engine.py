@@ -9,29 +9,37 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from __future__ import annotations
+
 import random
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from pecos.classical_interpreters.phir_classical_interpreter import ClassicalInterpreter, PHIRClassicalInterpreter
-from pecos.error_models.error_model import ErrorModel, NoErrorModel
-from pecos.foreign_objects.foreign_object_abc import ForeignObject
-from pecos.machines.generic_machine import GenericMachine, Machine
-from pecos.op_processors.generic_op_processor import GenericOpProc, OpProcessor
+from pecos.classical_interpreters.phir_classical_interpreter import PHIRClassicalInterpreter
+from pecos.engines import hybrid_engine_multiprocessing
+from pecos.error_models.error_model import NoErrorModel
+from pecos.machines.generic_machine import GenericMachine
+from pecos.op_processors.generic_op_processor import GenericOpProc
 from pecos.simulators.quantum_simulator import QuantumSimulator
-from . import hybrid_engine_multiprocessing
+
+if TYPE_CHECKING:
+    from pecos.classical_interpreters.phir_classical_interpreter import ClassicalInterpreter
+    from pecos.error_models.error_model import ErrorModel
+    from pecos.foreign_objects.foreign_object_abc import ForeignObject
+    from pecos.machines.generic_machine import Machine
+    from pecos.op_processors.generic_op_processor import OpProcessor
 
 
 class HybridEngine:
-
-    def __init__(self,
-                 cinterp: Optional[ClassicalInterpreter] = None,
-                 qsim: Optional[QuantumSimulator] = None,
-                 machine: Optional[Machine] = None,
-                 error_model: Optional[ErrorModel] = None,
-                 op_processor: Optional[OpProcessor] = None) -> None:
-
+    def __init__(
+        self,
+        cinterp: ClassicalInterpreter | None = None,
+        qsim: QuantumSimulator | None = None,
+        machine: Machine | None = None,
+        error_model: ErrorModel | None = None,
+        op_processor: OpProcessor | None = None,
+    ) -> None:
         self.seed = None
 
         self.cinterp = cinterp
@@ -71,7 +79,7 @@ class HybridEngine:
         self.multisim_process_info = {}
 
     def reset_all(self):
-        """Reset to the state of initialization"""
+        """Reset to the state of initialization."""
         self.cinterp.reset()
         self.qsim.reset()
         self.machine.reset()
@@ -79,13 +87,14 @@ class HybridEngine:
         self.op_processor.reset()
         self.init()
 
-    def initialize_sim_components(self,
-                                  program: Any,
-                                  foreign_object: Optional["ForeignObject"] = None,
-                                  machine_params: Optional[dict] = None,
-                                  error_params: Optional[dict] = None) -> None:
+    def initialize_sim_components(
+        self,
+        program: Any,
+        foreign_object: ForeignObject | None = None,
+        machine_params: dict | None = None,
+        error_params: dict | None = None,
+    ) -> None:
         """Get objects to initialize before potentially running many simulations."""
-
         self.init()
         if foreign_object is not None:
             foreign_object.init()
@@ -97,8 +106,8 @@ class HybridEngine:
 
     def shot_reinit_components(self) -> None:
         """Tells components that a new shot is starting and to run any tasks necessary, such as resetting their
-        states."""
-
+        states.
+        """
         self.cinterp.shot_reinit()
         self.machine.shot_reinit()
         self.error_model.shot_reinit()
@@ -114,27 +123,28 @@ class HybridEngine:
         random.seed(seed)
         return seed
 
-    def results_accumulator(self,
-                            shot_results: dict) -> None:
+    def results_accumulator(self, shot_results: dict) -> None:
         """Combines the results of individual runs together."""
-
         for k, v in shot_results.items():
             self.results.setdefault(k, []).append(v)
 
-    def run(self,
-            program,
-            foreign_object: "ForeignObject" = None,
-            shots: int = 1,
-            error_params: dict = None,
-            machine_params: dict = None,
-            seed: int = None,
-            initialize: bool = True,
-            optimize: bool = True,
-            return_int=False) -> dict:
-        """
-        Main method to run simulations.
+    def run(
+        self,
+        program,
+        foreign_object: ForeignObject = None,
+        *,
+        shots: int = 1,
+        error_params: dict | None = None,
+        machine_params: dict | None = None,
+        seed: int | None = None,
+        initialize: bool = True,
+        optimize: bool = True,
+        return_int=False,
+    ) -> dict:
+        """Main method to run simulations.
 
         Args:
+        ----
             program:
             foreign_object:
             shots:
@@ -146,9 +156,9 @@ class HybridEngine:
             return_int:
 
         Returns:
+        -------
 
         """
-
         # TODO: ErrorModel
         # TODO: Machine: EM -> Machine (leakage/qubit loss)
         # TODO: Leakage
@@ -163,12 +173,10 @@ class HybridEngine:
             self.cinterp.optimize(self.op_processor, self.qsim)
 
         for _ in range(shots):
-
             self.shot_reinit_components()
 
             # Execute classical program till quantum sim is needed
             for buffered_ops in self.cinterp.execute(self.cinterp.program.ops):
-
                 # Process ops, e.g., use `machine` and `error_model` to generate noisy qops
                 noisy_buffered_qops = self.op_processor.process(buffered_ops)
 
@@ -183,21 +191,24 @@ class HybridEngine:
 
         return self.results
 
-    def run_multisim(self,
-                     program,
-                     foreign_object: "ForeignObject" = None,
-                     shots: int = 1,
-                     error_params: dict = None,
-                     machine_params: dict = None,
-                     seed: int = None,
-                     pool_size: int = 1) -> dict:
-        """Parallelized running of the sim"""
-
-        return hybrid_engine_multiprocessing.run_multisim(self,
-                                                          program=program,
-                                                          foreign_object=foreign_object,
-                                                          shots=shots,
-                                                          error_params=error_params,
-                                                          machine_params=machine_params,
-                                                          seed=seed,
-                                                          pool_size=pool_size)
+    def run_multisim(
+        self,
+        program,
+        foreign_object: ForeignObject = None,
+        shots: int = 1,
+        error_params: dict | None = None,
+        machine_params: dict | None = None,
+        seed: int | None = None,
+        pool_size: int = 1,
+    ) -> dict:
+        """Parallelized running of the sim."""
+        return hybrid_engine_multiprocessing.run_multisim(
+            self,
+            program=program,
+            foreign_object=foreign_object,
+            shots=shots,
+            error_params=error_params,
+            machine_params=machine_params,
+            seed=seed,
+            pool_size=pool_size,
+        )

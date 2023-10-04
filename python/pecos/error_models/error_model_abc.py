@@ -9,14 +9,14 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from __future__ import annotations
+
 import abc
 from abc import ABCMeta
-from typing import Union
 
 
 class ErrorModel(metaclass=ABCMeta):
-
-    def __init__(self):
+    def __init__(self) -> None:
         self.error_params = None
         self.machine = None
         self.num_qubits = None
@@ -24,7 +24,6 @@ class ErrorModel(metaclass=ABCMeta):
     @abc.abstractmethod
     def reset(self) -> None:
         """Reset state to initialization state."""
-        pass
 
     def init(self, error_params, num_qubits, machine=None):
         self.machine = machine
@@ -34,8 +33,7 @@ class ErrorModel(metaclass=ABCMeta):
     @abc.abstractmethod
     def shot_reinit(self, *args, **kwargs) -> None:
         """Run all code needed at the beginning of each shot, e.g., resetting state."""
-        pass
 
     @abc.abstractmethod
-    def process(self, qops: list, **kwargs) -> Union[list, None]:
+    def process(self, qops: list, **kwargs) -> list | None:
         pass

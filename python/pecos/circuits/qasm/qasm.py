@@ -9,25 +9,24 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from pathlib import Path
 
-# TODO: GateLib
-from .block import Block
-from .vars import QReg, CReg
-from .gates import Gate, ArgGate
-from . import std_gates
-from .std_gates import Measure, Reset
-from .conditionals import CIf
-from .expr import Assign
-from .func import Func
-from .barrier import Barrier
+from pecos.circuits.qasm import std_gates
+from pecos.circuits.qasm.barrier import Barrier
+from pecos.circuits.qasm.block import Block
+from pecos.circuits.qasm.conditionals import CIf
+from pecos.circuits.qasm.expr import Assign
+from pecos.circuits.qasm.func import Func
+from pecos.circuits.qasm.gates import ArgGate, Gate
+from pecos.circuits.qasm.std_gates import Measure, Reset
+from pecos.circuits.qasm.vars import CReg, QReg
 
 
 class QASM:
     """Represents an OpenQASM 2.0 circuit."""
 
-    def __init__(self, language='OPENQASM 2.0', header=True):
-
-        self.language = f'{language};'
+    def __init__(self, language="OPENQASM 2.0", header=True) -> None:
+        self.language = f"{language};"
         self.includes = []
         self.definitions = []
         self.qregs = []
@@ -43,27 +42,26 @@ class QASM:
         return CReg(self, sym, size, declare=declare)
 
     def define(self, name, params, qargs, body):
-
         param_size = 0
         if isinstance(params, str):
             param_size = 1
         elif params:
             param_size = len(params)
-            params = ','.join(params)
+            params = ",".join(params)
         else:
-            params = ''
+            params = ""
 
         size = 0
         if isinstance(qargs, str):
             size = 1
         else:
             size = len(qargs)
-            qargs = ','.join(qargs)
+            qargs = ",".join(qargs)
 
-        df_str = [f'gate {name}({params}) {qargs}', '{']
-        df_str.extend([f'   {g};' for g in body])
-        df_str.append('}')
-        df_str = '\n'.join(df_str)
+        df_str = [f"gate {name}({params}) {qargs}", "{"]
+        df_str.extend([f"   {g};" for g in body])
+        df_str.append("}")
+        df_str = "\n".join(df_str)
 
         self.definitions.append(df_str)
 
@@ -77,24 +75,23 @@ class QASM:
 
     def br(self, n: int = 1):
         for _ in range(n):
-            self.body.append('')
+            self.body.append("")
 
     def comment(self, text: str, br=True):
         if br:
-            return f'\n// {text}'
+            return f"\n// {text}"
         else:
-            return f'// {text}'
+            return f"// {text}"
 
     def include(self, *args):
         for a in args:
             self.includes.append(f'include "{a}";')
 
     def block(self, *args):
-
         arg_list = []
         for a in args:
-            if '\n' in str(a):
-                arg_list.extend(str(a).split('\n'))
+            if "\n" in str(a):
+                arg_list.extend(str(a).split("\n"))
             else:
                 arg_list.append(str(a))
 
@@ -104,36 +101,31 @@ class QASM:
         self.cif_block(cond, *args)
 
     def cif_block(self, cond, *args):
-
         cond = str(cond)
 
         arg_list = []
         for a in args:
-            if '\n' in str(a):
-
-                for ai in str(a).split('\n'):
-
+            if "\n" in str(a):
+                for ai in str(a).split("\n"):
                     ai = str(ai)
 
-                    if not ai.strip().startswith('//') and ai.strip() != '':
-                        arg_list.append(f'if({cond}) {str(ai)}')
+                    if not ai.strip().startswith("//") and ai.strip() != "":
+                        arg_list.append(f"if({cond}) {str(ai)}")
                     else:
-                        arg_list.append(f'{str(ai)}')
+                        arg_list.append(f"{str(ai)}")
             else:
-
                 a = str(a)
 
-                if not a.strip().startswith('//') and a.strip() != '':
-                    arg_list.append(f'if({cond}) {str(a)}')
+                if not a.strip().startswith("//") and a.strip() != "":
+                    arg_list.append(f"if({cond}) {str(a)}")
                 else:
-                    arg_list.append(f'{str(a)}')
+                    arg_list.append(f"{str(a)}")
 
         self.body.extend(*arg_list)
 
     def gate(self, sym, *args, params=None):
-
         if params:
-            return ArgGate(sym)(params=params, *args)
+            return ArgGate(sym)(*args, params=params)
         else:
             return Gate(sym)(*args)
 
@@ -146,11 +138,7 @@ class QASM:
     def barrier(self, *qargs):
         return Barrier(*qargs)
 
-    # qregs = ', '.join([str(a) for a in qargs])
-    # return f'barrier {qregs}'
-
     def cif(self, cond, expr, else_expr=None):
-
         return CIf(cond, expr, else_expr)
 
     def assign(self, left, right):
@@ -159,8 +147,7 @@ class QASM:
     def func(self, name):
         return Func(name=name)
 
-    def __str__(self):
-
+    def __str__(self) -> str:
         if self.header:
             lines = [self.language]
 
@@ -169,7 +156,7 @@ class QASM:
             else:
                 lines.extend(self.includes)
 
-            lines.extend([f'\n{d}\n' for d in self.definitions])
+            lines.extend([f"\n{d}\n" for d in self.definitions])
 
             lines.extend([q.reg_str() for q in self.qregs])
             lines.extend([c.reg_str() for c in self.cregs])
@@ -178,20 +165,19 @@ class QASM:
 
         for line in self.body:
             line = str(line).strip()
-            if line and not line.startswith('//'):
-                if not line.endswith(';'):
-                    lines.append(f'{line};')
+            if line and not line.startswith("//"):
+                if not line.endswith(";"):
+                    lines.append(f"{line};")
                 else:
-                    lines.append(f'{line}')
+                    lines.append(f"{line}")
             else:
                 lines.append(line)
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
     def save(self, file: str) -> str:
         """Writes qasm text to file."""
-
-        with open(file, 'w') as f:
+        with Path.open(file, "w") as f:
             f.write(str(self))
 
         return file

@@ -13,14 +13,11 @@
 
 from typing import Any
 
-from .state import SparseSim
+from pecos.simulators.sparsesim.state import SparseSim
 
 
-def I(state: SparseSim,
-      qubit: int,
-      **params: Any) -> None:
-    """
-    Identity, which does nothing.
+def Identity(state: SparseSim, qubit: int, **params: Any) -> None:
+    """Identity, which does nothing.
 
     state (SparseSim): Instance representing the stabilizer state.
     qubit (int): Integer that indexes the qubit being acted on.
@@ -28,14 +25,10 @@ def I(state: SparseSim,
     Returns: None
 
     """
-    pass
 
 
-def X(state: SparseSim,
-      qubit: int,
-      **params: Any) -> None:
-    """
-    X
+def X(state: SparseSim, qubit: int, **params: Any) -> None:
+    """X
     Returns:
 
     X -> X
@@ -59,11 +52,8 @@ def X(state: SparseSim,
     stabs.signs_minus ^= stabs.col_z[qubit]
 
 
-def Y(state: SparseSim,
-      qubit: int,
-      **params: Any) -> None:
-    """
-    Pauli Y.
+def Y(state: SparseSim, qubit: int, **params: Any) -> None:
+    """Pauli Y.
 
     X -> -X
     Z -> -Z
@@ -77,7 +67,6 @@ def Y(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -87,11 +76,8 @@ def Y(state: SparseSim,
     stabs.signs_minus ^= stabs.col_x[qubit] ^ stabs.col_z[qubit]
 
 
-def Z(state: SparseSim,
-      qubit: int,
-      **params: Any) -> None:
-    """
-    Z
+def Z(state: SparseSim, qubit: int, **params: Any) -> None:
+    """Z
     Returns:
 
     X -> -X
@@ -105,8 +91,7 @@ def Z(state: SparseSim,
 
     Returns: None
 
-   """
-
+    """
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -116,11 +101,8 @@ def Z(state: SparseSim,
     stabs.signs_minus ^= stabs.col_x[qubit]
 
 
-def SX(state: SparseSim,
-      qubit: int,
-      **params: Any) -> None:
-    r"""
-    Applies a Q rotation to stabilizers and destabilizers
+def SX(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a Q rotation to stabilizers and destabilizers.
 
     Q = \sqrt{X} = HSH
 
@@ -140,7 +122,6 @@ def SX(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -181,11 +162,8 @@ def SX(state: SparseSim,
             g.row_x[i] ^= {qubit}
 
 
-def SXdg(state: SparseSim,
-         qubit: int,
-         **params: Any) -> None:
-    r"""
-    Applies a Q^{\dagger} rotation to stabilizers and destabilizers
+def SXdg(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a Q^{\dagger} rotation to stabilizers and destabilizers.
 
     Qd = \sqrt{X}^{\dagger} = H S^{\dagger}H
 
@@ -205,7 +183,6 @@ def SXdg(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -236,7 +213,6 @@ def SXdg(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Update column
         # X += Z
         g.col_x[qubit] ^= g.col_z[qubit]
@@ -245,11 +221,8 @@ def SXdg(state: SparseSim,
             g.row_x[i] ^= {qubit}
 
 
-def SY(state: SparseSim,
-       qubit: int,
-       **params: Any) -> None:
-    r"""
-    Applies a R rotation to stabilizers and destabilizers
+def SY(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a R rotation to stabilizers and destabilizers.
 
     R = \sqrt{XZ} = SQS^{\dagger}
 
@@ -269,7 +242,6 @@ def SY(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -279,7 +251,6 @@ def SY(state: SparseSim,
     stabs.signs_minus ^= stabs.col_x[qubit] - stabs.col_z[qubit]
 
     for g in state.gens:
-
         # Swap X and Z for rows
         xonly = g.col_x[qubit] - g.col_z[qubit]
 
@@ -297,11 +268,8 @@ def SY(state: SparseSim,
         g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
 
-def SYdg(state: SparseSim,
-         qubit: int,
-         **params: Any) -> None:
-    r"""
-    Applies a R rotation to stabilizers and destabilizers
+def SYdg(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a R rotation to stabilizers and destabilizers.
 
     R^{\dagger} = \sqrt{XZ} = SQ^{\dagger}S^{\dagger}
 
@@ -321,7 +289,6 @@ def SYdg(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -333,7 +300,6 @@ def SYdg(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Swap X and Z for rows
         xonly = g.col_x[qubit] - g.col_z[qubit]
 
@@ -351,11 +317,8 @@ def SYdg(state: SparseSim,
         g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
 
-def SZ(state: SparseSim,
-       qubit: int,
-       **params: Any) -> None:
-    r"""
-    Applies a phase gate (S) rotation to stabilizers and destabilizers
+def SZ(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a phase gate (S) rotation to stabilizers and destabilizers.
 
     S = \sqrt{Z}
 
@@ -391,7 +354,6 @@ def SZ(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Update column
         # Z += X
         g.col_z[qubit] ^= g.col_x[qubit]
@@ -401,11 +363,8 @@ def SZ(state: SparseSim,
             g.row_z[i] ^= {qubit}
 
 
-def SZdg(state: SparseSim,
-         qubit: int,
-         **params: Any) -> None:
-    r"""
-    Applies a Hermitian adjoint phase gate (S^{\dagger}) rotation to stabilizers and destabilizers
+def SZdg(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a Hermitian adjoint phase gate (S^{\dagger}) rotation to stabilizers and destabilizers.
 
     S = S
     Z = S^2
@@ -423,7 +382,6 @@ def SZdg(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -455,7 +413,6 @@ def SZdg(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Update column
         # Z += X
         g.col_z[qubit] ^= g.col_x[qubit]
@@ -464,11 +421,8 @@ def SZdg(state: SparseSim,
             g.row_z[i] ^= {qubit}
 
 
-def H(state: SparseSim,
-      qubit: int,
-      **params: Any) -> None:
-    r"""
-    Applies a Hadamard gate (H) rotation to stabilizers and destabilizers
+def H(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a Hadamard gate (H) rotation to stabilizers and destabilizers.
 
     Same as H1 in some places in PECOS.
 
@@ -485,7 +439,6 @@ def H(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -497,7 +450,6 @@ def H(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Swap X and Z for rows
         xonly = g.col_x[qubit] - g.col_z[qubit]
 
@@ -515,11 +467,8 @@ def H(state: SparseSim,
         g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
 
-def H2(state: SparseSim,
-       qubit: int,
-       **params: Any) -> None:
-    r"""
-    Applies a Hadamard gate (H4) rotation to stabilizers and destabilizers
+def H2(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a Hadamard gate (H4) rotation to stabilizers and destabilizers.
 
     X - Z
 
@@ -534,7 +483,6 @@ def H2(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -546,7 +494,6 @@ def H2(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Swap X and Z for rows
         xonly = g.col_x[qubit] - g.col_z[qubit]
 
@@ -564,11 +511,8 @@ def H2(state: SparseSim,
         g.col_x[qubit], g.col_z[qubit] = g.col_z[qubit], g.col_x[qubit]
 
 
-def H3(state: SparseSim,
-       qubit: int,
-       **params: Any) -> None:
-    r"""
-    Applies a Hadamard gate (H3) rotation to stabilizers and destabilizers
+def H3(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a Hadamard gate (H3) rotation to stabilizers and destabilizers.
 
     Y + X
 
@@ -583,7 +527,6 @@ def H3(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -617,7 +560,6 @@ def H3(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Update column
         # X += Z
         g.col_z[qubit] ^= g.col_x[qubit]
@@ -626,11 +568,8 @@ def H3(state: SparseSim,
             g.row_z[i] ^= {qubit}
 
 
-def H4(state: SparseSim,
-       qubit: int,
-       **params: Any) -> None:
-    r"""
-    Applies a Hadamard gate (H6) rotation to stabilizers and destabilizers
+def H4(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a Hadamard gate (H6) rotation to stabilizers and destabilizers.
 
     Y - X
 
@@ -645,7 +584,6 @@ def H4(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -679,7 +617,6 @@ def H4(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Update column
         # X += Z
         g.col_z[qubit] ^= g.col_x[qubit]
@@ -688,11 +625,8 @@ def H4(state: SparseSim,
             g.row_z[i] ^= {qubit}
 
 
-def H5(state: SparseSim,
-       qubit: int,
-       **params: Any) -> None:
-    r"""
-    Applies a Hadamard gate (H2) rotation to stabilizers and destabilizers
+def H5(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a Hadamard gate (H2) rotation to stabilizers and destabilizers.
 
     Z + Y
 
@@ -701,7 +635,6 @@ def H5(state: SparseSim,
     W -> -iZ
     Y -> Z
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -745,11 +678,8 @@ def H5(state: SparseSim,
             g.row_x[i] ^= {qubit}
 
 
-def H6(state: SparseSim,
-       qubit: int,
-       **params: Any) -> None:
-    r"""
-    Applies a Hadamard gate (H5) rotation to stabilizers and destabilizers
+def H6(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a Hadamard gate (H5) rotation to stabilizers and destabilizers.
 
     Z - Y
 
@@ -764,7 +694,6 @@ def H6(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -806,11 +735,8 @@ def H6(state: SparseSim,
             g.row_x[i] ^= {qubit}
 
 
-def F(state: SparseSim,
-      qubit: int,
-      **params: Any) -> None:
-    r"""
-    Applies a rotation (F1) about a stabilizer octahedron face to stabilizers  and destabilizers
+def F(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a rotation (F1) about a stabilizer octahedron face to stabilizers  and destabilizers.
 
     X -> iW = Y
     Z -> X
@@ -823,7 +749,6 @@ def F(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -857,7 +782,6 @@ def F(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Swap X and Z for rows
         xonly = g.col_x[qubit] - g.col_z[qubit]
 
@@ -884,11 +808,8 @@ def F(state: SparseSim,
         g.col_x[qubit] ^= g.col_z[qubit]
 
 
-def F2(state: SparseSim,
-       qubit: int,
-       **params: Any) -> None:
-    r"""
-    Applies a rotation (F2) about a stabilizer octahedron face to stabilizers and destabilizers
+def F2(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a rotation (F2) about a stabilizer octahedron face to stabilizers and destabilizers.
 
     X -> -Z
     Z -> iW = Y
@@ -901,7 +822,6 @@ def F2(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -935,7 +855,6 @@ def F2(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Swap X and Z for rows
         xonly = g.col_x[qubit] - g.col_z[qubit]
 
@@ -962,11 +881,8 @@ def F2(state: SparseSim,
         g.col_z[qubit] ^= g.col_x[qubit]
 
 
-def F3(state: SparseSim,
-       qubit: int,
-       **params: Any) -> None:
-    r"""
-    Applies a rotation (F3) about a stabilizer octahedron face to stabilizers and destabilizers
+def F3(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a rotation (F3) about a stabilizer octahedron face to stabilizers and destabilizers.
 
     X -> iW = Y
     Z -> -X
@@ -979,7 +895,6 @@ def F3(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -1013,7 +928,6 @@ def F3(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Swap X and Z for rows
         xonly = g.col_x[qubit] - g.col_z[qubit]
 
@@ -1040,11 +954,8 @@ def F3(state: SparseSim,
         g.col_x[qubit] ^= g.col_z[qubit]
 
 
-def F4(state: SparseSim,
-       qubit: int,
-       **params: Any) -> None:
-    r"""
-    Applies a rotation (F4) about a stabilizer octahedron face to stabilizers and destabilizers
+def F4(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a rotation (F4) about a stabilizer octahedron face to stabilizers and destabilizers.
 
     X -> Z
     Z -> -iW = -Y
@@ -1057,7 +968,6 @@ def F4(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -1091,7 +1001,6 @@ def F4(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Swap X and Z for rows
         xonly = g.col_x[qubit] - g.col_z[qubit]
 
@@ -1118,11 +1027,8 @@ def F4(state: SparseSim,
         g.col_z[qubit] ^= g.col_x[qubit]
 
 
-def Fdg(state: SparseSim,
-        qubit: int,
-        **params: Any) -> None:
-    r"""
-    Applies a rotation (F1^{\dagger}) about a stabilizer octahedron face to stabilizers and destabilizers
+def Fdg(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a rotation (F1^{\dagger}) about a stabilizer octahedron face to stabilizers and destabilizers.
 
     X -> Z
     Z -> iW = Y
@@ -1135,7 +1041,6 @@ def Fdg(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -1169,7 +1074,6 @@ def Fdg(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Swap X and Z for rows
         xonly = g.col_x[qubit] - g.col_z[qubit]
 
@@ -1196,11 +1100,8 @@ def Fdg(state: SparseSim,
         g.col_z[qubit] ^= g.col_x[qubit]
 
 
-def F2dg(state: SparseSim,
-         qubit: int,
-         **params: Any) -> None:
-    r"""
-    Applies a rotation (F2^{\dagger}) about a stabilizer octahedron face to stabilizers and destabilizers
+def F2dg(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a rotation (F2^{\dagger}) about a stabilizer octahedron face to stabilizers and destabilizers.
 
     X -> -iW = -Y
     Z -> -X
@@ -1213,7 +1114,6 @@ def F2dg(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -1247,7 +1147,6 @@ def F2dg(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Swap X and Z for rows
         xonly = g.col_x[qubit] - g.col_z[qubit]
 
@@ -1274,11 +1173,8 @@ def F2dg(state: SparseSim,
         g.col_x[qubit] ^= g.col_z[qubit]
 
 
-def F3dg(state: SparseSim,
-         qubit: int,
-         **params: Any) -> None:
-    r"""
-    Applies a rotation (F3^{\dagger}) about a stabilizer octahedron face to stabilizers and destabilizers
+def F3dg(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a rotation (F3^{\dagger}) about a stabilizer octahedron face to stabilizers and destabilizers.
 
     X -> -Z
     Z -> -iW = -Y
@@ -1291,7 +1187,6 @@ def F3dg(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -1325,7 +1220,6 @@ def F3dg(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Swap X and Z for rows
         xonly = g.col_x[qubit] - g.col_z[qubit]
 
@@ -1352,11 +1246,8 @@ def F3dg(state: SparseSim,
         g.col_z[qubit] ^= g.col_x[qubit]
 
 
-def F4dg(state: SparseSim,
-         qubit: int,
-         **params: Any) -> None:
-    r"""
-    Applies a rotation (F4^{\dagger}) about a stabilizer octahedron face to stabilizers and destabilizers
+def F4dg(state: SparseSim, qubit: int, **params: Any) -> None:
+    r"""Applies a rotation (F4^{\dagger}) about a stabilizer octahedron face to stabilizers and destabilizers.
 
     X -> -iW = -Y
     Z -> X
@@ -1369,7 +1260,6 @@ def F4dg(state: SparseSim,
     Returns: None
 
     """
-
     stabs = state.stabs
 
     # Change the sign appropriately
@@ -1403,7 +1293,6 @@ def F4dg(state: SparseSim,
     # Update Paulis
     # -------------------------------------------------------------------
     for g in state.gens:
-
         # Swap X and Z for rows
         xonly = g.col_x[qubit] - g.col_z[qubit]
 

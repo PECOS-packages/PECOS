@@ -10,48 +10,39 @@
 # specific language governing permissions and limitations under the License.
 
 
-from typing import Union
-
-
 class Comment:
-    """Represents a comment"""
+    """Represents a comment."""
 
-    def __init__(self,  *texts):
-
+    def __init__(self, *texts) -> None:
         if isinstance(texts, str):
-            self.texts = [texts, ]
+            self.texts = [texts]
         else:
             self.texts = list(texts)
 
-    def __str__(self):
-
+    def __str__(self) -> str:
         # TODO: Just insert a new blank line every time a <br> is seen. e.g., e
 
         lines = []
         for t in self.texts:
-
-            for ln in t.split('\n'):
-
+            for ln in t.split("\n"):
                 ln = ln.strip()
 
-                if ln == '':
-                    lines.append('//')
+                if ln == "":
+                    lines.append("//")
                 else:
-
-                    ln = ln.replace('<br>', '</><br></>').split('</>')
+                    ln = ln.replace("<br>", "</><br></>").split("</>")
 
                     for ln2 in ln:
-
                         ln2 = ln2.strip()
 
-                        if ln2 == '':
+                        if ln2 == "":
                             pass
-                        elif ln2 == '<br>':
-                            lines.append('')
+                        elif ln2 == "<br>":
+                            lines.append("")
                         else:
-                            lines.append(f'// {ln2}')
+                            lines.append(f"// {ln2}")
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
 
-br = ''
+br = ""

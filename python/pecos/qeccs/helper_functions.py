@@ -75,5 +75,5 @@ def expected_params(params, expected_set):
 
     unexpected = keys - expected_set
     if unexpected:
-        msg = f"Recieved unexpected keys ({unexpected}). Expected keys include: {expected_set}"
+        msg = f"Received unexpected keys ({unexpected}). Expected keys include: {expected_set}"
         raise Exception(msg)

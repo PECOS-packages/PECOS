@@ -32,7 +32,7 @@ Attributes
 ``num_ancilla_qudits`` Number of ancillas.
 ``num_qudits``         Number of qudits.
 ``qudit_set``          Set of qudit labels used internally in the ``qecc``.
-``data_qudit_set``     Set of data qudit labels used internally. 
+``data_qudit_set``     Set of data qudit labels used internally.
 ``ancilla_qudit_set``  Set of ancilla qudit labels used internally.
 ``layout``             A ``dict`` of qudit label to position ``tuple``.
 ``sides``              A ``dict`` describing the geometry of the ``qecc``.
@@ -90,8 +90,8 @@ A ``LogicalGate`` is composed of a sequence of ``LogicalInstructions``. A ``Logi
 of quantum circuits. Often these collections are repeated or used in multiple ``LogicalGates``. An example of a
 ``LogicalInstruction`` is one round of error correction.
 
-Like ``LogicalGates``, ``LogicalInstuctions`` are represented by symbols (strings). The ``instr_symbols`` attribute of a
-``LogicalGate`` can be use to retrieve a list of symbols corresponding to the ``LogicalInstuctions`` that form the
+Like ``LogicalGates``, ``LogicalInstructions`` are represented by symbols (strings). The ``instr_symbols`` attribute of a
+``LogicalGate`` can be use to retrieve a list of symbols corresponding to the ``LogicalInstructions`` that form the
 ``LogicalGate``:
 
 >>> surface = pc.qeccs.Surface4444(distance=3)
@@ -115,7 +115,7 @@ QuantumCircuit([{'init |0>': {0, 16, 4, 5, 6, 10, 11, 12}}, {'H': {0, 16, 11, 5}
 Plotting
 --------
 
-Both ``qeccs`` and ``LogicalInstuctions`` have a method called ``plot`` that will generate a plot that represents the
+Both ``qeccs`` and ``LogicalInstructions`` have a method called ``plot`` that will generate a plot that represents the
 object. These plots can be useful in understanding the structure of a QECC and its logical instructions.
 
 The following is an example of using the ``plot`` method for a ``qecc``:
@@ -126,7 +126,7 @@ The following is an example of using the ``plot`` method for a ``qecc``:
 This results in the plot seen in:
 
 .. image:: ../images/surfacemedialplot_layout.png
-   :width: 400px 
+   :width: 400px
    :align: center
 
 
@@ -140,7 +140,7 @@ syndrome extraction instruction of ``surface`` be obtained by the following line
 The resulting plot is seen in:
 
 .. image:: ../images/surfacemedialplot_syn.png
-   :width: 400px 
+   :width: 400px
    :align: center
 
 The previous figure depicts the syndrome-extraction logical-instruction of a distance-three, medial surface-code. Red

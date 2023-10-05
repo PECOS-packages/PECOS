@@ -11,6 +11,7 @@
 
 from . import bindings
 from ..cuconn import cq
+
 try:
     from typing import Self
 except:
@@ -18,11 +19,9 @@ except:
 
 
 class CuStateVec:
-
     def __init__(self, num_qubits: int) -> None:
-
         if not isinstance(num_qubits, int):
-            raise Exception('``num_qubits`` should be of type ``int.``')
+            raise Exception("``num_qubits`` should be of type ``int.``")
 
         self.num_qubits = num_qubits
         self.workspace = cq.CuStatevecWorkspace()
@@ -45,7 +44,6 @@ class CuStateVec:
         return self
 
     def __del__(self):
-
         wqs = list(self.workspace_gates)
         for g in wqs:
             g.free_on_device()

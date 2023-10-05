@@ -25,16 +25,16 @@ using Eigen::Matrix4cd;
  * Constructors
  *
  */
-Gate::Gate() : 
+Gate::Gate() :
     mat(Eigen::MatrixXcd())
     {}
 
-Gate::Gate(size_t rows, size_t cols) : 
+Gate::Gate(size_t rows, size_t cols) :
     mat(Eigen::MatrixXcd(rows,cols))
     {}
 
-Gate::Gate(const Eigen::MatrixXcd mat) : 
-    mat(mat) 
+Gate::Gate(const Eigen::MatrixXcd mat) :
+    mat(mat)
     {}
 
 /*
@@ -61,7 +61,7 @@ void Gate::copy_to_device()
 {
     // Allocate space on the device
     cudaError_t status = cudaMalloc((void **)&d_mat, mem_size());
-    if(status != cudaSuccess) 
+    if(status != cudaSuccess)
         throw std::runtime_error("cudaMalloc error");
 
     // Copy gate matrix to the device
@@ -103,20 +103,20 @@ void Gate::apply(StateVector &sv, CuStatevecWorkspace &workspace, bool adjoint)
  * control and target bits. Optionally, apply the adjoint of the gate
  *
  */
-void Gate::apply(StateVector &sv, CuStatevecWorkspace &workspace, 
-                 const Controls &controls, const Targets &targets, 
+void Gate::apply(StateVector &sv, CuStatevecWorkspace &workspace,
+                 const Controls &controls, const Targets &targets,
                  bool adjoint)
 {
-    // If the gate has been copied to the device, use the on device copy 
+    // If the gate has been copied to the device, use the on device copy
     void *ptr = mat.data();
-    if (d_mat != nullptr) 
+    if (d_mat != nullptr)
         ptr = d_mat;
 
-    // First, check to see if workspace can handle the gate 
+    // First, check to see if workspace can handle the gate
     custatevecApplyMatrixGetWorkspaceSize(
-                    workspace.handle, CUDA_C_64F, sv.num_bits, ptr, 
+                    workspace.handle, CUDA_C_64F, sv.num_bits, ptr,
                     CUDA_C_64F, CUSTATEVEC_MATRIX_LAYOUT_COL,
-                    adjoint, targets.size(), controls.size(), CUSTATEVEC_COMPUTE_64F, 
+                    adjoint, targets.size(), controls.size(), CUSTATEVEC_COMPUTE_64F,
                     &workspace.extra_sz);
 
     // Allocate external workspace if necessary
@@ -124,7 +124,7 @@ void Gate::apply(StateVector &sv, CuStatevecWorkspace &workspace,
         cudaMalloc(&workspace.extra, workspace.extra_sz);
 
     int32_t csize = controls.size();
-    
+
     // Apply the gate
     custatevecApplyMatrix(workspace.handle, sv.d_sv, CUDA_C_64F,
 			  sv.num_bits, ptr, CUDA_C_64F,
@@ -176,14 +176,14 @@ Gate U(double theta, double phi, double lambda)
 
 Gate create_random_U()
 {
-    std::random_device rd; 
-    std::mt19937 rng(rd()); 
-    std::uniform_real_distribution<> dist(0, 2*M_PI);  
+    std::random_device rd;
+    std::mt19937 rng(rd());
+    std::uniform_real_distribution<> dist(0, 2*M_PI);
 
     double theta = dist(rng);
     double phi = dist(rng);
     double lambda = dist(rng);
-    
+
     return U(theta, phi, lambda);
 }
 

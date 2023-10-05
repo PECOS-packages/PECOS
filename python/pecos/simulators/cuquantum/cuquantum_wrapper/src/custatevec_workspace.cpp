@@ -17,14 +17,14 @@
  * Constructor and desctuctor
  *
  */
-CuStatevecWorkspace::CuStatevecWorkspace() 
+CuStatevecWorkspace::CuStatevecWorkspace()
 {
     extra_sz = 0;
     extra = nullptr;
     custatevecCreate(&handle);
 }
 
-CuStatevecWorkspace::~CuStatevecWorkspace() 
+CuStatevecWorkspace::~CuStatevecWorkspace()
 {
     custatevecDestroy(handle);
     if (extra_sz)

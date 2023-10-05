@@ -13,7 +13,6 @@ from ..cuconn import cq
 
 
 def CX(state, location, **params):
-
     qc, qt = location
     g = cq.PauliX()
     g.copy_to_device()
@@ -22,7 +21,6 @@ def CX(state, location, **params):
 
 
 def SqrtZZ(state, location, **params):
-
     g = cq.SqrtZZ()
     g.copy_to_device()
     g.apply(state.statevec, state.workspace, [], location, False)
@@ -30,8 +28,7 @@ def SqrtZZ(state, location, **params):
 
 
 def RZZ(state, location, **params):
-
-    angle = params['angle']
+    angle = params["angle"]
     g = cq.RZZ(angle)
     g.copy_to_device()
     g.apply(state.statevec, state.workspace, [], location, False)

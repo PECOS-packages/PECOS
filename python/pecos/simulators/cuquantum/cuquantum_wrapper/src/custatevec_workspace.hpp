@@ -35,7 +35,7 @@ class CuStatevecWorkspace
 
 public:
 
-    // Constructor 
+    // Constructor
     CuStatevecWorkspace();
 
     // Destructor
@@ -43,8 +43,7 @@ public:
 
     // Return the current size of the external (extra) workspace
     size_t get_extra_sz();
-    
+
 };
 
 #endif // CUSTATEVEC_WORKSPACE_HPP
-

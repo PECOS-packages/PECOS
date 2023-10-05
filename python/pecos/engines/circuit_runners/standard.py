@@ -17,7 +17,7 @@ import struct
 
 import numpy as np
 
-from pecos.misc.std_ouput import StdOutput
+from pecos.misc.std_output import StdOutput
 
 
 class Standard:

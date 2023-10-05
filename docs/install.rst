@@ -76,8 +76,8 @@ To clone PECOS using git run:
 
 >>> git clone https://github.com/PECOS-packages/PECOS.git # doctest: +SKIP
 
-Then, download/unzip or clone the version of PECOS you would like to use. Next, navigate to the root of the package 
-(where setup.py is located) and run the command:
+Then, download/unzip or clone the version of PECOS you would like to use. Next, navigate to the root of the package
+(where pyproject.toml is located) and run the command:
 
 >>> pip install .   # doctest: +SKIP
 

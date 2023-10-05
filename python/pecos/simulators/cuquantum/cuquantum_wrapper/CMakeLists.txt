@@ -17,7 +17,7 @@ if(CMAKE_VERSION VERSION_GREATER 3.18)
   set(CUDA_ARCHITECTURES FALSE)
 endif()
 
-project(cuquantum_wrapper 
+project(cuquantum_wrapper
   VERSION 0.0.22
   DESCRIPTION "Abstraction layer (wrapper) for cuQuantum"
   LANGUAGES C CXX CUDA)
@@ -42,7 +42,7 @@ if (NOT CUSTATEVEC_ROOT)
 endif()
 
 #
-# Print build config 
+# Print build config
 #
 message(STATUS "  ")
 message(STATUS "         Project: " ${PROJECT_NAME})
@@ -84,13 +84,13 @@ set(CMAKE_CUDA_EXTENSIONS OFF)
 # set(WARNING_FLAGS -Wall -pedantic)
 # set(ERROR_FLAGS -Werror -pedantic-errors)
 # set(DEV_FLAGS -g
-#               -Wno-unused-variable 
-#               -Wno-unused-but-set-variable 
+#               -Wno-unused-variable
+#               -Wno-unused-but-set-variable
 #               -Wno-unused-function
 #               -Wno-attributes)
 
 # if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-#   set(CLANG_FLAGS -Wno-unused-private-field 
+#   set(CLANG_FLAGS -Wno-unused-private-field
 #                   -Wno-unknown-warning-option)
 # endif()
 

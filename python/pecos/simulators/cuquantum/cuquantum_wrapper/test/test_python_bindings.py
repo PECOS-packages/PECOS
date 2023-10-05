@@ -19,15 +19,14 @@ import unittest
 import numpy as np
 from numpy.testing import assert_array_equal, assert_allclose
 
-sys.path.append('./build/bin') 
-sys.path.append('../build/bin') 
+sys.path.append("./build/bin")
+sys.path.append("../build/bin")
 import cuquantum_wrapper as cq
 
 
 class TestPythonBindings(unittest.TestCase):
-
     def test_bell_state(self):
-        """ Test Bell state """ 
+        """Test Bell state"""
 
         # Create a workspace
         ws = cq.CuStatevecWorkspace()
@@ -39,7 +38,7 @@ class TestPythonBindings(unittest.TestCase):
         # Since we initialized on the device, we need to read back to check
         sv.read_from_device()
         v = sv.get()
-        v_expected = np.array( [1, 0, 0, 0], dtype=complex)
+        v_expected = np.array([1, 0, 0, 0], dtype=complex)
         assert_array_equal(v, v_expected)
 
         # Create gates, copy to device, apply to target qubits, and free
@@ -55,15 +54,15 @@ class TestPythonBindings(unittest.TestCase):
         # Read final state
         sv.read_from_device()
         v = sv.get()
-        S2 = 1/np.sqrt(2)
-        v_expected = np.array( [S2, 0, 0, S2], dtype=complex)
+        S2 = 1 / np.sqrt(2)
+        v_expected = np.array([S2, 0, 0, S2], dtype=complex)
         assert_allclose(v, v_expected)
 
         # Reset back to zero state
         sv.reset(ws)
         sv.read_from_device()
         v = sv.get()
-        v_expected = np.array( [1, 0, 0, 0], dtype=complex)
+        v_expected = np.array([1, 0, 0, 0], dtype=complex)
         assert_array_equal(v, v_expected)
 
     def test_tq_gates(self):
@@ -86,14 +85,14 @@ class TestPythonBindings(unittest.TestCase):
         sqrtzz.free_on_device()
 
     def test_measure_channels(self):
-        """ Test batch measure """ 
+        """Test batch measure"""
         # Create a workspace
         ws = cq.CuStatevecWorkspace()
-        
+
         # Create the input (to be measured) state vector
         v = np.array(
-            [0, 0+0.1j, 0.1+0.1j, 0.1+0.2j, 0.2+0.2j, 0.3+0.3j, 0.3+0.4j, 0.4+0.5j], 
-            dtype=complex)
+            [0, 0 + 0.1j, 0.1 + 0.1j, 0.1 + 0.2j, 0.2 + 0.2j, 0.3 + 0.3j, 0.3 + 0.4j, 0.4 + 0.5j], dtype=complex
+        )
         sv = cq.StateVector(v)
 
         sv.copy_to_device()
@@ -112,15 +111,15 @@ class TestPythonBindings(unittest.TestCase):
         v = sv.get()
 
         # Expected state vector and results
-        res_expected = [1,1,0]
-        v_expected = np.array( [0, 0, 0, 0, 0, 0, 0.6+0.8j, 0], dtype=complex)
+        res_expected = [1, 1, 0]
+        v_expected = np.array([0, 0, 0, 0, 0, 0, 0.6 + 0.8j, 0], dtype=complex)
 
         # Check
         assert_array_equal(v, v_expected)
         self.assertEqual(res, res_expected)
 
     def test_quantum_volume(self):
-        """ Test quantum volume... not a real test """
+        """Test quantum volume... not a real test"""
 
         num_qubits = 4
 
@@ -134,7 +133,7 @@ class TestPythonBindings(unittest.TestCase):
         # Create and run the QV sim
         qv = cq.QuantumVolume(num_qubits)
         qv.copy_to_device()
-        qv.apply(sv,ws)
+        qv.apply(sv, ws)
         qv.free_on_device()
 
         # Get probabilities out
@@ -145,5 +144,5 @@ class TestPythonBindings(unittest.TestCase):
         sv.free_on_device()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

@@ -28,4 +28,3 @@ Classes and functions available in these namespaces are described in the followi
    error_generators
    decoders
    tools
-

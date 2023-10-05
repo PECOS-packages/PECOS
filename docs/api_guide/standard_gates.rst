@@ -34,7 +34,7 @@ Pauli operations:
 Square-root of Pauli operations:
 
 ======== ============================================
-``'Q'``  :math:`X \rightarrow X`, :math:`Z \rightarrow -Y` 
+``'Q'``  :math:`X \rightarrow X`, :math:`Z \rightarrow -Y`
 ``'R'``  :math:`X \rightarrow -Z`, :math:`Z \rightarrow X`
 ``'S'``  :math:`X \rightarrow Y`, :math:`Z \rightarrow Z`
 ``'Qd'`` :math:`X \rightarrow X`, :math:`Z \rightarrow Y`
@@ -58,7 +58,7 @@ Rotations about the face of an octahedron:
 ========= ===================================================
 ``'F1'``  :math:`X \rightarrow Y\rightarrow Z \rightarrow X`
 ``'F2'``  :math:`X \rightarrow -Z`, :math:`Z \rightarrow Y`
-``'F3'``  :math:`X \rightarrow Y`, :math:`Z \rightarrow -X` 
+``'F3'``  :math:`X \rightarrow Y`, :math:`Z \rightarrow -X`
 ``'F4'``  :math:`X \rightarrow Z`, :math:`Z \rightarrow -Y`
 ``'F1d'`` :math:`X\rightarrow Z\rightarrow Y \rightarrow X`
 ``'F2d'`` :math:`X \rightarrow -Y`, :math:`Z \rightarrow -X`

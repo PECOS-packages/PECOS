@@ -24,8 +24,8 @@ typedef unsigned long long int_num;
 // The trivial hash (identity) for int_set.
 // This is a perfect hash function for integers.
 struct TrivialHash{
-    public: size_t operator()(int_num & val) const noexcept { 
-        return static_cast<size_t>(val); 
+    public: size_t operator()(int_num & val) const noexcept {
+        return static_cast<size_t>(val);
     }
 };
 
@@ -51,12 +51,12 @@ class State {
     // ~State () {};
     public:
         State(const int_num& num_qubits, const int& reserve_buckets=0);
-        
+
         // Figure out constructors...
-        // How to intialize the stabs and destabs...
-        
+        // How to initialize the stabs and destabs...
+
         const int_num num_qubits;  // Total number of qubits.
-        const int reserve_buckets; // Wether to reserve buckets.
+        const int reserve_buckets; // Whether to reserve buckets.
         Generators stabs, destabs;  // Stabilizers and destabilizer generator matrices.
         int_set signs_minus, signs_i;  // A column that stores minuses and is.
         // Methods
@@ -87,7 +87,7 @@ class State {
         void cx(const int_num& tqubit, const int_num& cqubit);
         void swap(const int_num& qubit1, const int_num& qubit2);
         unsigned int measure(const int_num& qubit, int forced_outcome, bool collapse);
-        
+
     private:
         unsigned int deterministic_measure(const int_num& qubit);
         unsigned int nondeterministic_measure(const int_num& qubit, int forced_outcome);

@@ -21,7 +21,7 @@ configure_file(
   )
 
 
-set(LIB_INCLUDE_DIRS 
+set(LIB_INCLUDE_DIRS
   ${PROJECT_SOURCE_DIR}/src
   ${PROJECT_SOURCE_DIR}/extern/eigen
   ${PROJECT_SOURCE_DIR}/extern/eigen/unsupported
@@ -47,7 +47,7 @@ set(LIB_SOURCES
   )
 
 # TODO FIXME Not all compiler options all work with nvcc
-# set(_COMPILE_FLAGS 
+# set(_COMPILE_FLAGS
 #   $<$<BOOL:${USE_DEV_FLAGS}>:${DEV_FLAGS}>
 #   $<$<BOOL:${USE_WARNING_FLAGS}>:${WARNING_FLAGS}>
 #   $<$<BOOL:${USE_ERROR_FLAGS}>:${ERROR_FLAGS}>

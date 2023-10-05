@@ -74,16 +74,16 @@ be written as products of the others. To check if this is the case, we use the m
    Number of data qubits: 10
    Number of checks: 7
    Number of logical qubits: 3
-   
+
    Stabilizer generators:
    XIXZYIIIII
    IXXIIYZIII
-   IIZIZZIZII  
+   IIZIZZIZII
    ZZZIIIIIII
    IIIIIIIZZZ
    IIIXXIIXXI
    IIIIIXXXIX
-     
+
    Destabilizer generators:
    ZIIIIIIIII
    IZIIIIIIII
@@ -92,7 +92,7 @@ be written as products of the others. To check if this is the case, we use the m
    ZIIIXIIXII
    IIIIIIIIZI
    IIIIIIIIIZ
-   
+
    Logical operators:
    . Logical Z #1:
      IIIZIIIIZI
@@ -171,7 +171,7 @@ Evaluating the distance of this new version of the code:
    Number of checks: 9
    Number of logical qubits: 1
    ----
-   
+
    Stabilizer generators:
      XIXZYIIIII
      IXXIIYZIII
@@ -182,7 +182,7 @@ Evaluating the distance of this new version of the code:
      IIIIIIZIIZ
      IIIXXIIXXI
      IIIIIXXXIX
-     
+
    Destabilizer generators:
      IIIIZIIIZI
      ZZIIZIIIZI
@@ -193,14 +193,14 @@ Evaluating the distance of this new version of the code:
      ZZIIZIXIZI
      IIIIIIIIZI
      IIIIIIIIIZ
-     
+
    Logical operators:
    . Logical Z #1:
      IIIIIIIZZZ
    . Logical X #1:
      ZZIIZXIXZI
    >>> qecc.distance()
-   
+
    ----
    Checking errors of length 1...
    Checking errors of length 2...

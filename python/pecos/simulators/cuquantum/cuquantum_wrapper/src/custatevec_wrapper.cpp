@@ -60,7 +60,7 @@ int run_quantum_volume_2(int num_qubits, double angles[][8][3], int targets[], d
     StateVector sv = create_zero_state_vector(num_qubits);
     sv.copy_to_device();
 
-    // Convert the C-array to a Targets vector.  
+    // Convert the C-array to a Targets vector.
     Targets _targets(targets, targets+num_qubits);
 
     // Create, apply, and free the QV circuit

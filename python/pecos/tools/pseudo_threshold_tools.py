@@ -249,7 +249,7 @@ def plot(plist, plog, deg=2, figsize=(10, 10), p_start=None, p_end=None):
     if p_end is None:
         p_end = max(plog) * 1.1
 
-    psuedo_thr = find_pseudo(plist, plog, deg)
+    pseudo_thr = find_pseudo(plist, plog, deg)
 
     popt, _ = np.polyfit(plist, plog, deg, cov=True)  # C_z is estimated covariance matrix
 
@@ -278,7 +278,7 @@ def plot(plist, plog, deg=2, figsize=(10, 10), p_start=None, p_end=None):
     plt.xlabel("Physical error rate", size=18)
     plt.ylabel("Logical error rate", size=18)
 
-    pth = psuedo_thr
+    pth = pseudo_thr
     plt.axvline(pth, color="green", linewidth=2, linestyle="dashed", label="Pseudo-threshold (%s)" % pth)
     plt.legend(fontsize=16)
 

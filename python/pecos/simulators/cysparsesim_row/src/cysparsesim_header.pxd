@@ -18,24 +18,24 @@ from libcpp.vector cimport vector
 from libcpp.unordered_set cimport unordered_set
 
 cdef extern from "sparsesim.h":
-    
+
     ctypedef unsigned long long int_num
     ctypedef unordered_set[int_num] int_set
     ctypedef vector[int_set] int_set_vec
-    
+
     struct Generators:
         int_set_vec col_x
         int_set_vec col_z
         int_set_vec row_x
         int_set_vec row_z
-        
+
     cdef cppclass State:
         # State() except +
         State(int_num) except +
         int_num num_qubits
         Generators stabs, destabs
         int_set signs_minus, signs_i
-        
+
         # Methods
         void hadamard(const int_num &qubit)
         void bitflip(const int_num &qubit)  # X

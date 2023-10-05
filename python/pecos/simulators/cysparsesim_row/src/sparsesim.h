@@ -40,10 +40,10 @@ class State {
     // ~State () {};
     public:
         State(const int_num& num_qubits);
-        
+
         // Figure out constructors...
-        // How to intialize the stabs and destabs...
-        
+        // How to initialize the stabs and destabs...
+
         const int_num num_qubits;  // Total number of qubits.
         Generators stabs, destabs;  // Stabilizers and destabilizer generator matrices.
         int_set signs_minus, signs_i;  // A column that stores minuses and is.
@@ -75,19 +75,19 @@ class State {
         void cnot(const int_num& tqubit, const int_num& cqubit);
         void swap(const int_num& qubit1, const int_num& qubit2);
         unsigned int measure(const int_num& qubit, int force);
-        
+
     private:
         unsigned int deterministic_measure(const int_num& qubit);
-        unsigned int nondeterministic_measure(const int_num& qubit,  
+        unsigned int nondeterministic_measure(const int_num& qubit,
                                               int force);
 };
 
 void hadamard_gen_mod(Generators& gen, const int_num& qubit);
 void phaserot_gen_mod(Generators& gen, const int_num& qubit);
 void Q_gen_mod(Generators& gen, const int_num& qubit);
-void cnot_gen_mod(Generators& gen, const int_num& tqubit, 
+void cnot_gen_mod(Generators& gen, const int_num& tqubit,
                   const int_num& cqubit);
-void swap_gen_mod(Generators& gen, const int_num& qubit1, 
+void swap_gen_mod(Generators& gen, const int_num& qubit1,
                   const int_num& qubit2);
 void F1_gen_mod(Generators& gen, const int_num& qubit);
 void F2_gen_mod(Generators& gen, const int_num& qubit);

@@ -11,9 +11,9 @@
 # Initial author: Tyson Lawrence
 
 #
-# Set include directories 
+# Set include directories
 #
-set(TEST_INCLUDE_DIRS 
+set(TEST_INCLUDE_DIRS
   ${PROJECT_SOURCE_DIR}/extern/catch
   ${PROJECT_SOURCE_DIR}/extern/eigen
   ${PROJECT_SOURCE_DIR}/extern/eigen/unsupported
@@ -40,12 +40,12 @@ if (NOT TARGET catch_main)
 endif()
 
 #
-# Function to simplify adding a Catch based unit test. The test name 
-# should correspond the main test source file. EX: test_foo target 
+# Function to simplify adding a Catch based unit test. The test name
+# should correspond the main test source file. EX: test_foo target
 # corresponds to test_foo.cpp
 #
 function(add_catch_test TEST_NAME TEST_SOURCES)
-  # Get the main test source file and append it to the list of test sources 
+  # Get the main test source file and append it to the list of test sources
   set(TEST_MAIN "${TEST_DIR}/${TEST_NAME}.cpp")
   set(TEST_SOURCES ${TEST_MAIN} ${TEST_SOURCES})
   # Create the test program

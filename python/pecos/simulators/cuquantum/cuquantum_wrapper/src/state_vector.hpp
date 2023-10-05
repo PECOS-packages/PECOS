@@ -39,7 +39,7 @@ using BasisBits = std::vector<int32_t>;
  * StateVector wrapper class
  *
  */
-class StateVector 
+class StateVector
 {
     friend class Gate;
 
@@ -87,30 +87,30 @@ public:
 
     // Initiailze the state vector on the device to the zero state
     void init_on_device();
-    
+
     // Copy, read, and free the state vector on the device
     void copy_to_device();
     void read_from_device();
     void free_on_device();
 
     // Measure on the Z-basis
-    int32_t measure(CuStatevecWorkspace &workspace, const BasisBits &basis_bits, 
+    int32_t measure(CuStatevecWorkspace &workspace, const BasisBits &basis_bits,
                          double randnum=0, bool collapse=true);
 
-    void measure(CuStatevecWorkspace &workspace, int32_t &parity, 
-                 const BasisBits &basis_bits, double randnum=0, 
+    void measure(CuStatevecWorkspace &workspace, int32_t &parity,
+                 const BasisBits &basis_bits, double randnum=0,
                  bool collapse=true);
 
     // Batch measure multiple qubits on the Z-basis
-    std::vector<int32_t> batch_measure(CuStatevecWorkspace &workspace, const BasisBits &bit_ordering, 
+    std::vector<int32_t> batch_measure(CuStatevecWorkspace &workspace, const BasisBits &bit_ordering,
                             double randnum=0, bool collapse=true);
 
-    void batch_measure(CuStatevecWorkspace &workspace, BasisBits &bit_string, 
-                       const BasisBits &bit_ordering, double randnum=0, 
+    void batch_measure(CuStatevecWorkspace &workspace, BasisBits &bit_string,
+                       const BasisBits &bit_ordering, double randnum=0,
                        bool collapse=true);
 
     // Batch measure all qubits on the Z-basis
-    void batch_measure_all(CuStatevecWorkspace &workspace, BasisBits &bit_string, 
+    void batch_measure_all(CuStatevecWorkspace &workspace, BasisBits &bit_string,
                            double randnum=0, bool collapse=true);
 
     // Get the state vector probabilities

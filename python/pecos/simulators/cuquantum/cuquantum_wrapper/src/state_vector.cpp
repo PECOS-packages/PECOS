@@ -16,7 +16,7 @@
 #include <numeric>
 
 #include "state_vector.hpp"
-#include "custom_kernels.hpp" 
+#include "custom_kernels.hpp"
 
 /*
  *
@@ -24,17 +24,17 @@
  *
  */
 StateVector::StateVector() :
-    sv(Eigen::VectorXcd()) 
+    sv(Eigen::VectorXcd())
     {}
 
-StateVector::StateVector(size_t num_bits) : 
-    sv(Eigen::VectorXcd(static_cast<size_t>(std::pow(2,num_bits)))), 
-    num_bits(num_bits) 
+StateVector::StateVector(size_t num_bits) :
+    sv(Eigen::VectorXcd(static_cast<size_t>(std::pow(2,num_bits)))),
+    num_bits(num_bits)
     {}
 
 StateVector::StateVector(const Eigen::VectorXcd sv) :
-    sv(sv), 
-    num_bits(get_power_of_two_exponent(sv.size())) 
+    sv(sv),
+    num_bits(get_power_of_two_exponent(sv.size()))
     {}
 
 StateVector::~StateVector()
@@ -71,9 +71,9 @@ void StateVector::init_on_device()
 {
     // Allocate space on the device
     cudaError_t status = cudaMalloc((void **)&d_sv, sizeof(cuDoubleComplex)*size());
-    if(status != cudaSuccess) 
+    if(status != cudaSuccess)
         throw std::runtime_error("cudaMalloc error");
-    
+
     // TODO does the following need to be const?
     constexpr int32_t threads_per_block = 256;   // number of threads per CUDA thread block, typically 128/256/512/1024.
     uint32_t n_blocks = (size() + threads_per_block - 1) / threads_per_block;   // ceiling divide
@@ -84,7 +84,7 @@ void StateVector::copy_to_device()
 {
     // Allocate space on the device
     cudaError_t status = cudaMalloc((void **)&d_sv, mem_size());
-    if(status != cudaSuccess) 
+    if(status != cudaSuccess)
         throw std::runtime_error("cudaMalloc error");
 
     // Copy state vector to device
@@ -117,24 +117,24 @@ custatevecCollapseOp_t StateVector::get_collapse_op(bool collapse)
  * Measure on the Z-basis
  *
  */
-int32_t StateVector::measure(CuStatevecWorkspace &workspace, const BasisBits &basis_bits, 
+int32_t StateVector::measure(CuStatevecWorkspace &workspace, const BasisBits &basis_bits,
                              double randnum, bool collapse)
 {
     int32_t parity;
     custatevecMeasureOnZBasis(
-                workspace.handle, d_sv, CUDA_C_64F, num_bits, &parity, 
-                basis_bits.data(), basis_bits.size(), 
+                workspace.handle, d_sv, CUDA_C_64F, num_bits, &parity,
+                basis_bits.data(), basis_bits.size(),
                 randnum, get_collapse_op(collapse));
     return parity;
 }
 
-void StateVector::measure(CuStatevecWorkspace &workspace, int32_t &parity, 
-                          const BasisBits &basis_bits, double randnum, 
+void StateVector::measure(CuStatevecWorkspace &workspace, int32_t &parity,
+                          const BasisBits &basis_bits, double randnum,
                           bool collapse)
 {
     custatevecMeasureOnZBasis(
-                workspace.handle, d_sv, CUDA_C_64F, num_bits, &parity, 
-                basis_bits.data(), basis_bits.size(), 
+                workspace.handle, d_sv, CUDA_C_64F, num_bits, &parity,
+                basis_bits.data(), basis_bits.size(),
                 randnum, get_collapse_op(collapse));
 
 }
@@ -144,30 +144,30 @@ void StateVector::measure(CuStatevecWorkspace &workspace, int32_t &parity,
  * Batch measure on the Z-basis
  *
  */
-std::vector<int32_t> StateVector::batch_measure(CuStatevecWorkspace &workspace, const BasisBits &bit_ordering, 
+std::vector<int32_t> StateVector::batch_measure(CuStatevecWorkspace &workspace, const BasisBits &bit_ordering,
                                      double randnum, bool collapse)
 {
     BasisBits bit_string(bit_ordering.size(), -1);
 
     custatevecBatchMeasure(
-        workspace.handle, d_sv, CUDA_C_64F, num_bits, 
-        bit_string.data(), bit_ordering.data(), bit_string.size(), 
+        workspace.handle, d_sv, CUDA_C_64F, num_bits,
+        bit_string.data(), bit_ordering.data(), bit_string.size(),
         randnum, get_collapse_op(collapse));
 
     return bit_string;
 
 }
 
-void StateVector::batch_measure(CuStatevecWorkspace &workspace, BasisBits &bit_string, 
-                                const BasisBits &bit_ordering, double randnum, 
+void StateVector::batch_measure(CuStatevecWorkspace &workspace, BasisBits &bit_string,
+                                const BasisBits &bit_ordering, double randnum,
                                 bool collapse)
 {
     if (bit_string.size() < bit_ordering.size())
         bit_string.resize(bit_ordering.size());
 
     custatevecBatchMeasure(
-        workspace.handle, d_sv, CUDA_C_64F, num_bits, 
-        bit_string.data(), bit_ordering.data(), bit_string.size(), 
+        workspace.handle, d_sv, CUDA_C_64F, num_bits,
+        bit_string.data(), bit_ordering.data(), bit_string.size(),
         randnum, get_collapse_op(collapse));
 
 }
@@ -177,7 +177,7 @@ void StateVector::batch_measure(CuStatevecWorkspace &workspace, BasisBits &bit_s
  * Batch measure all qubits on the Z-basis
  *
  */
-void StateVector::batch_measure_all(CuStatevecWorkspace &workspace, BasisBits &bit_string, 
+void StateVector::batch_measure_all(CuStatevecWorkspace &workspace, BasisBits &bit_string,
                                      double randnum, bool collapse)
 {
     BasisBits bit_ordering = arange<int32_t>(num_bits-1, -1, -1);
@@ -195,8 +195,8 @@ std::vector<double> StateVector::get_probabilities(CuStatevecWorkspace &workspac
     BasisBits bit_string_order = arange<int32_t>(num_bits-1, -1, -1);
     std::vector<double> probs(size(), 0);
     custatevecAbs2SumArray(
-        workspace.handle, d_sv, CUDA_C_64F, num_bits, 
-        probs.data(), bit_string_order.data(), num_bits, 
+        workspace.handle, d_sv, CUDA_C_64F, num_bits,
+        probs.data(), bit_string_order.data(), num_bits,
         NULL, NULL, 0);
 
     return probs;
@@ -213,18 +213,18 @@ void StateVector::reset(CuStatevecWorkspace &workspace)
     BasisBits bit_string_order = arange<int32_t>(num_bits-1, -1, -1);
     std::vector<double> abs2sum(size(), 0);
     custatevecAbs2SumArray(
-        workspace.handle, d_sv, CUDA_C_64F, num_bits, 
-        abs2sum.data(), bit_string_order.data(), num_bits, 
+        workspace.handle, d_sv, CUDA_C_64F, num_bits,
+        abs2sum.data(), bit_string_order.data(), num_bits,
         NULL, NULL, 0);
 
-    // Normalization factor here is the probability of the |00...0> 
+    // Normalization factor here is the probability of the |00...0>
     // state, which is 0th index
     double norm = abs2sum[0];
 
     // Collapse to |00...0>
     BasisBits bit_string(num_bits, 0);
     custatevecCollapseByBitString(
-        workspace.handle, d_sv, CUDA_C_64F, num_bits, 
+        workspace.handle, d_sv, CUDA_C_64F, num_bits,
         bit_string.data(), bit_string_order.data(), num_bits, norm);
 }
 

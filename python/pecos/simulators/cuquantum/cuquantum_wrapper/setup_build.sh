@@ -18,7 +18,7 @@
 #
 
 #
-# This script needs to be sourced from within the 
+# This script needs to be sourced from within the
 # base project directory
 #
 
@@ -33,7 +33,7 @@ USAGE_STR="Usage: source scripts/$SCRIPT_NAME"
 if [[ $RAN_NAME == $SCRIPT_NAME ]]; then
   echo "Error: Script needs to be sourced, not ran directly"
   echo $USAGE_STR
-  exit 
+  exit
 fi
 
 # Delete the build directory if it exists, so we start fresh

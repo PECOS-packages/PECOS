@@ -174,7 +174,7 @@ class HybridEngine:
                             raise Exception(msg)
 
                     elif not params.get("comment") and not params.get("linebreak") and not params.get("barrier"):
-                        print("recieved:", symbol, locations, params)
+                        print("received:", symbol, locations, params)
                         msg = "A cop must have an `expr`, `comment`, `linebreak`, or `barrier` entry!"
                         raise Exception(msg)
 

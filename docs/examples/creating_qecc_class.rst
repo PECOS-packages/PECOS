@@ -11,7 +11,7 @@ To begin, we create an empty Python file called ``zrepetition.py`` and import so
 .. code-block:: python
 
    """
-   A representation of the Z-check repetition code. 
+   A representation of the Z-check repetition code.
    """
    from pecos.circuits import QuantumCircuit
    from pecos.qeccs import QECC, LogicalGate, LogicalInstruction
@@ -23,7 +23,7 @@ one can typically override them.
 The QECC class
 --------------
 
-We now create a class ``ZReptition`` to represent our ``qecc``:  
+We now create a class ``ZRepetition`` to represent our ``qecc``:
 
 .. doctest::
    :options: +SKIP
@@ -44,9 +44,9 @@ We now create a class ``ZReptition`` to represent our ``qecc``:
 Here, the ``dict`` called ``qecc_params`` will be used to specify parameters that identify a member of the QECC's
 family. We will discuss later the method calls see in the ``__init__`` method.
 
-Next, we write the ``_set_qecc_description``, which sets class attributes that describe the QECC: 
+Next, we write the ``_set_qecc_description``, which sets class attributes that describe the QECC:
 
-    
+
 .. doctest:: python
    :options: +SKIP
 
@@ -118,7 +118,7 @@ Logical Instruction Classes
 
 Now that we have created a class to represent the QECC, we will now create classes to represent logical instructions.
 First create an logical instruction class, called ``InstrSynExtraction``, that represents one round of syndrome
-extraction. Similar to the ``ZRepitition`` class, we will subclass our class off of the ``LogicalInstruction``, which is
+extraction. Similar to the ``ZRepetition`` class, we will subclass our class off of the ``LogicalInstruction``, which is
 provided by PECOS. After we do this, we will write an initialization method that receives as arguments the ``qecc``
 instance the instruction belongs to, the associated symbol, and a dictionary of logical gate parameters called
 ``gate_params``. This dictionary will come from the ``LogicalGate`` that contains the ``LogicalInstruction`` and may
@@ -130,8 +130,8 @@ alter the ``LogicalGate`` and the ``QuantumCircuit`` contained in the ``LogicalI
     class InstrSynExtraction(LogicalInstruction):
         def __init__(self, qecc, symbol, **gate_params):
             super().__init__(qecc, symbol, **gate_params)
-        
-            # The following are convienent for plotting:
+
+            # The following are convenient for plotting:
             self.ancilla_x_check = set()
             self.ancilla_z_check = qecc.ancilla_qudit_set
             self._create_checks()
@@ -148,7 +148,7 @@ We now include the ``_create_checks`` method, which we will use to define the ch
         self.abstract_circuit = QuantumCircuit(**self.gate_params)
         for qid in self.qecc.ancilla_qudit_set:
             x, y = qecc.layout[qid]
-        
+
             # Get the data qubits to each side.
             d1 = qecc.position2qudit[(x-1, y)]
             d2 = qecc.position2qudit[(x+1, y)]
@@ -160,7 +160,7 @@ qubits. Note, check circuits such as the ones seen in Fig~\ref{fig:surf-checks} 
 order of the data qubits in the ``datas`` keyword indicates the order which the data qubits are acted on by the check
 circuits. The checks registered by ``abstract_circuit`` are later compiled into quantum circuits.
 
-Now we will write the method ``set_logical_ops``, which define the logical operators of the QECCs.        
+Now we will write the method ``set_logical_ops``, which define the logical operators of the QECCs.
 
 .. doctest:: python
    :options: +SKIP
@@ -169,11 +169,11 @@ Now we will write the method ``set_logical_ops``, which define the logical opera
        data_qubits = set(self.qecc.data_qudit_set)
        logical_ops = [
            {'X': QuantumCircuit([{'X': {0}}]),
-            'Z': QuantumCircuit([{'Z': data_qubits}])} 
+            'Z': QuantumCircuit([{'Z': data_qubits}])}
             ]
        self.initial_logical_ops = logical_ops
        self.final_logical_ops = logical_ops
-   
+
        # The final logical sign and stabilizer
        self.logical_stabilizers = None
        self.logical_signs = None
@@ -199,7 +199,7 @@ We now define the initialization of the logical zero-stat:
    class InstrInitZero(LogicalInstruction):
        def __init__(self, qecc, symbol, **gate_params):
            super().__init__(qecc, symbol, **gate_params)
-           # The following are convienent for plotting:
+           # The following are convenient for plotting:
            self.ancilla_x_check = set()
            self.ancilla_z_check = qecc.ancilla_qudit_set
            self._create_checks()
@@ -211,13 +211,13 @@ Here, the method ``_create_checks`` is used to create check by first making a sh
 of the ``InstrSynExtraction`` class. After doing this we add :math:`|0\rangle` initialization of the data qubits on the
 0th tick.
 
-The ``_create_checks`` method is as follows: 
+The ``_create_checks`` method is as follows:
 
 
 .. doctest:: python
    :options: +SKIP
 
-   def _create_checks(self):   
+   def _create_checks(self):
        # Get an instance of the syndrome extraction instruction
        syn_ext = qecc.instruction('instr_syn_extract', **self.gate_params)
        # Make a shallow copy of the abstract circuits.
@@ -236,10 +236,10 @@ is set to ``['Z']`` and ``logical_signs`` is set to ``[0]``.
    def set_logical_ops(self):
        data_qubits = set(self.qecc.data_qudit_set)
        self.initial_logical_ops = [
-           {'X': QuantumCircuit([{'X': {0}}]), 
+           {'X': QuantumCircuit([{'X': {0}}]),
             'Z': QuantumCircuit([{'Z': {0}}])}  ]
        self.final_logical_ops = [
-           {'X': QuantumCircuit([{'X': {0}}]), 
+           {'X': QuantumCircuit([{'X': {0}}]),
             'Z': QuantumCircuit([{'Z': data_qubits}])}  ]
        self.logical_stabilizers = ['Z']
        self.logical_signs = [0]

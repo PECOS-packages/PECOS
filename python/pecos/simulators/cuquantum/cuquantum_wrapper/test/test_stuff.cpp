@@ -27,12 +27,12 @@
 #include "cuda_helper.hpp"         // HANDLE_ERROR, HANDLE_CUDA_ERROR
 
 #include "custatevec_workspace.hpp"
-#include "gate_matrices.hpp"         
-#include "gate.hpp"         
-#include "state_vector.hpp"         
+#include "gate_matrices.hpp"
+#include "gate.hpp"
+#include "state_vector.hpp"
 #include "utils.hpp"
-#include "quantum_volume.hpp"         
-#include "version.h"         
+#include "quantum_volume.hpp"
+#include "version.h"
 
 using CD = std::complex<double>;
 

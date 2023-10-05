@@ -9,18 +9,18 @@
 #
 # Initial author: Tyson Lawrence
 #
-# Set include directories 
+# Set include directories
 #
-set(EX_INCLUDE_DIRS 
+set(EX_INCLUDE_DIRS
   ${PROJECT_SOURCE_DIR}/extern/argparse
   )
 #
-# Helper function to simplify adding an example. The example name 
-# should correspond the example file name. 
+# Helper function to simplify adding an example. The example name
+# should correspond the example file name.
 # e.g. example1 goes with example1.cpp
 #
 function(add_example EXAMPLE_NAME)
-  # Get the main test source file and append it to the list of extra sources 
+  # Get the main test source file and append it to the list of extra sources
   set(EXAMPLE_SOURCE ${EXAMPLE_NAME}.cpp)
   # Create the example program
   add_executable(${EXAMPLE_NAME} ${EXAMPLE_SOURCE})

@@ -13,11 +13,11 @@
 #include <iostream>
 
 #include "custatevec_workspace.hpp"
-#include "gate.hpp"         
-#include "state_vector.hpp"         
+#include "gate.hpp"
+#include "state_vector.hpp"
 #include "utils.hpp"
-#include "quantum_volume.hpp"         
-#include "version.h"         
+#include "quantum_volume.hpp"
+#include "version.h"
 
 #include "Eigen/KroneckerProduct"
 
@@ -41,7 +41,7 @@ void bell_state(double randnum=0)
 
     // Create and apply the gates
     Gate h = Hadamard();
-    Gate cnot = CNOT(); 
+    Gate cnot = CNOT();
 
     h.copy_to_device();
     cnot.copy_to_device();
@@ -63,7 +63,7 @@ void bell_state(double randnum=0)
     sv.read_from_device();
 
     PRINT("Measurement");
-    std::cout << "Randum Number: " << randnum << std::endl;
+    std::cout << "Random Number: " << randnum << std::endl;
     std::cout << "        Bit 0: " << parity0 << std::endl;
     std::cout << "        Bit 1: " << parity1 << std::endl;
     PRINT("Final State Vector");

@@ -12,7 +12,7 @@
 
 #include "custom_kernels.hpp"
 
-__global__ void _initialize_sv(cuDoubleComplex* sv, int64_t dim) 
+__global__ void _initialize_sv(cuDoubleComplex* sv, int64_t dim)
 {
     int64_t i = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if(i == 0) {
@@ -25,7 +25,7 @@ __global__ void _initialize_sv(cuDoubleComplex* sv, int64_t dim)
     }
 }
 
-void initialize_sv(cuDoubleComplex* sv, int64_t dim) 
+void initialize_sv(cuDoubleComplex* sv, int64_t dim)
 {
     constexpr int32_t threads_per_block = 256;   // number of threads per CUDA thread block, typically 128/256/512/1024.
     uint32_t n_blocks = (dim + threads_per_block - 1) / threads_per_block;   // ceiling divide

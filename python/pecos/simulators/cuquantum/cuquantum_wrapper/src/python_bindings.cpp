@@ -16,11 +16,11 @@
 #include <pybind11/stl.h>
 #include <pybind11/eigen.h>
 
-#include "custatevec_workspace.hpp" 
-#include "state_vector.hpp" 
-#include "gate.hpp" 
-#include "quantum_volume.hpp" 
-#include "version.h" 
+#include "custatevec_workspace.hpp"
+#include "state_vector.hpp"
+#include "gate.hpp"
+#include "quantum_volume.hpp"
+#include "version.h"
 
 #define STRINGIFY(x) #x
 #define MACRO_STRINGIFY(x) STRINGIFY(x)
@@ -42,7 +42,7 @@ PYBIND11_MODULE(cuquantum_wrapper, m) {
 
     /*
      *
-     * Bindings (limited) for some of the main classes 
+     * Bindings (limited) for some of the main classes
      *
      */
     py::class_<CuStatevecWorkspace>(m, "CuStatevecWorkspace")

@@ -21,7 +21,7 @@
  * KAK-like decomposition ???
  *
  */
-class SU4Gate 
+class SU4Gate
 {
     Gate szz;
     std::array<Gate,8> us;
@@ -48,7 +48,7 @@ class QuantumVolume
 {
     size_t num_qubits;
     std::vector<std::vector<SU4Gate>> circuit;
-    Targets targets; 
+    Targets targets;
 
     void create_circuit();
     void create_circuit(double angles[][8][3]);

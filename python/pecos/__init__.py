@@ -37,8 +37,8 @@ from pecos.engines.cvm.binarray import BinArray
 from pecos.engines.hybrid_engine_old import HybridEngine
 
 __copyright__ = (
-    "Copyright 2018 The PECOS Developers. Copyright 2018 National Technology & Engineering Solutions of Sandia, LLC "
-    "(NTESS)."
+    "Copyright 2018-2013 The PECOS Developers. Copyright 2018 National Technology & Engineering Solutions of Sandia, "
+    "LLC (NTESS)."
 )
 __license__ = "Apache-2.0"
 __author__ = "The PECOS Developers"

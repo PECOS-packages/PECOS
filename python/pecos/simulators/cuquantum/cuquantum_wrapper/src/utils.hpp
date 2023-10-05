@@ -35,27 +35,27 @@
  */
 template <typename T = std::chrono::duration<double>,
           typename CLOCK_T = std::chrono::high_resolution_clock>
-class Timer 
+class Timer
 {
   public:
     Timer() noexcept : t_start{CLOCK_T::now()}, t_stop{t_start} {}
 
     // Start the timer
-    Timer& tic() noexcept 
+    Timer& tic() noexcept
     {
         t_start = t_stop = CLOCK_T::now();
         return *this;
     }
 
     // Stop the timer
-    Timer& toc() noexcept 
+    Timer& toc() noexcept
     {
         t_stop = CLOCK_T::now();
         return *this;
     }
 
     // Return the elapsed tics/counts between tic and now
-    double elapsed(bool do_toc=true) noexcept 
+    double elapsed(bool do_toc=true) noexcept
     {
         if (do_toc)
             toc();
@@ -74,11 +74,11 @@ private:
 
 /*
  *
- * Create a range of integeral values as a vector (like Python's arange)
+ * Create a range of integral values as a vector (like Python's arange)
  *
  */
 template<typename T>
-std::vector<T> arange(T start, T stop, T step = 1) 
+std::vector<T> arange(T start, T stop, T step = 1)
 {
     static_assert(std::is_integral<T>::value, "Integral required.");
     std::vector<T> values;

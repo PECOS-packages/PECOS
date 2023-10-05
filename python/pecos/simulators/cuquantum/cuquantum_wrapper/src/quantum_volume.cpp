@@ -90,7 +90,7 @@ void SU4Gate::print()
 
 /*
  *
- * Apply the gate to the target bits (ts) in the given state vector within 
+ * Apply the gate to the target bits (ts) in the given state vector within
  * the given workspace
  *
  */
@@ -115,7 +115,7 @@ void SU4Gate::apply(StateVector &sv, CuStatevecWorkspace &ws, const Targets &ts)
  * Quantum Volume Circuit
  *
  */
-QuantumVolume::QuantumVolume(size_t num_qubits) : num_qubits(num_qubits) 
+QuantumVolume::QuantumVolume(size_t num_qubits) : num_qubits(num_qubits)
 {
     targets = arange<int32_t>(0, num_qubits);
     create_circuit();
@@ -127,16 +127,16 @@ QuantumVolume::QuantumVolume(size_t num_qubits, double angles[][8][3], Targets t
 }
 
 /*
- *  
+ *
  * Private method to create the actual circuit. Circuit is comprised of layers
  * of SU(4) gates. The number of layers equals the number of qubits.
- *  
- */ 
-void QuantumVolume::create_circuit() 
+ *
+ */
+void QuantumVolume::create_circuit()
 {
     for (size_t i = 0; i < num_qubits; i++) {
         std::vector<SU4Gate> layer;
-        for (size_t j = 0; j < num_qubits/2; j++) 
+        for (size_t j = 0; j < num_qubits/2; j++)
             layer.push_back(SU4Gate());
         circuit.push_back(layer);
     }
@@ -156,8 +156,8 @@ void QuantumVolume::create_circuit(double angles[][8][3])
 /*
  *
  * Copy and free the circuit on the device
- *  
- */ 
+ *
+ */
 void QuantumVolume::copy_to_device()
 {
     for (auto &layer : circuit)
@@ -187,14 +187,13 @@ void QuantumVolume::print()
 /*
  *
  * Apply the circuit to the target state vector within the target workspace
- *  
- */ 
+ *
+ */
 void QuantumVolume::apply(StateVector &sv, CuStatevecWorkspace &ws)
 {
     for (auto &layer : circuit) {
         std::random_shuffle(targets.begin(), targets.end());
-        for (int32_t i = 0; i < layer.size(); i++) 
+        for (int32_t i = 0; i < layer.size(); i++)
             layer[i].apply(sv, ws, {2*i, 2*i+1});
     }
 }
-

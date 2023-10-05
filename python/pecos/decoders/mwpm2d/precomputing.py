@@ -239,9 +239,9 @@ def surface4444_identity(instr):
             edge2d = edges_z
             virtual_edge_data = virtual_edge_data_z
 
-        pathes = nx.shortest_path(temp_graph)
+        paths = nx.shortest_path(temp_graph)
 
-        for n1, wdict in pathes.items():
+        for n1, wdict in paths.items():
             for n2, syn_path in wdict.items():
                 weight = len(syn_path) - 1
 
@@ -266,14 +266,14 @@ def surface4444_identity(instr):
             shortest_len = float("inf")
             closest_v = None
             for v in virt:
-                sv_len = len(pathes[s][v])
+                sv_len = len(paths[s][v])
                 if sv_len < shortest_len:
                     shortest_len = sv_len
                     closest_v = v
             closest[s] = closest_v
 
         for s, v in closest.items():
-            syn_path = pathes[s][v]
+            syn_path = paths[s][v]
             weight = len(syn_path) - 1
 
             data_path = []
@@ -480,9 +480,9 @@ def surface4444medial_identity(instr):
             edge2d = edges_z
             virtual_edge_data = virtual_edge_data_z
 
-        pathes = nx.shortest_path(temp_graph)
+        paths = nx.shortest_path(temp_graph)
 
-        for n1, wdict in pathes.items():
+        for n1, wdict in paths.items():
             for n2, syn_path in wdict.items():
                 weight = len(syn_path) - 1
 
@@ -507,14 +507,14 @@ def surface4444medial_identity(instr):
             shortest_len = float("inf")
             closest_v = None
             for v in virt:
-                sv_len = len(pathes[s][v])
+                sv_len = len(paths[s][v])
                 if sv_len < shortest_len:
                     shortest_len = sv_len
                     closest_v = v
             closest[s] = closest_v
 
         for s, v in closest.items():
-            syn_path = pathes[s][v]
+            syn_path = paths[s][v]
             weight = len(syn_path) - 1
 
             data_path = []

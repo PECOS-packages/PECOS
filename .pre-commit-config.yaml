@@ -1,0 +1,34 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-toml
+      - id: check-yaml
+      - id: check-added-large-files
+      # Python-specific
+      - id: check-ast
+      - id: check-docstring-first
+      - id: debug-statements
+
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.16.17
+    hooks:
+      - id: typos
+        args: []
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.0.292
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+
+  - repo: https://github.com/psf/black
+    rev: 23.9.1
+    hooks:
+      - id: black
+        exclude: |
+            (?x)^(
+                python/pecos/simulators/cuquantum/custatevec/bindings.py|
+            )$

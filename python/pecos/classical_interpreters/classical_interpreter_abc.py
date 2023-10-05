@@ -44,7 +44,7 @@ class ClassicalInterpreter(metaclass=abc.ABCMeta):
         pass
 
     @abc.abstractmethod
-    def recieve_results(self, qsim_results):
+    def receive_results(self, qsim_results):
         pass
 
     @abc.abstractmethod

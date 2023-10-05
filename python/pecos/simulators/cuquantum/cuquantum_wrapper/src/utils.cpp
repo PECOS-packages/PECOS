@@ -21,7 +21,7 @@
 std::string num_to_binary(int num, size_t len)
 {
     std::string bstr;
-    for (size_t i = (1 << (len - 1)); i > 0; i = i / 2) 
+    for (size_t i = (1 << (len - 1)); i > 0; i = i / 2)
         bstr += (num & i) ? "1" : "0";
     return bstr;
 }
@@ -46,9 +46,9 @@ size_t get_power_of_two_exponent(size_t value)
  */
 double rand_in_range(double rmin, double rmax)
 {
-    std::random_device rd; 
-    std::mt19937 rng(rd()); 
-    std::uniform_real_distribution<> dist(rmin, rmax);  
+    std::random_device rd;
+    std::mt19937 rng(rd());
+    std::uniform_real_distribution<> dist(rmin, rmax);
     return dist(rng);
 }
 
@@ -62,7 +62,7 @@ double rand_in_range(double rmin, double rmax)
 uint64_t compress_bit_string(std::vector<int32_t> const &bit_string)
 {
     if (bit_string.size() > 64) {
-        throw std::runtime_error("Can not compress bit string larget than 64 bits");
+        throw std::runtime_error("Can not compress bit string larger than 64 bits");
     }
 
     uint64_t result = 0;

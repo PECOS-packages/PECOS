@@ -10,12 +10,12 @@ however, we will discus this in :ref:`error-gens`.
 The main ``circuit_runner`` is simply called ``Standard``. There is another call ``TimingRunner``, which is essentially
 the same as ``Standard`` except that it is used to time how long it takes simulators to apply gates and can be used to
 compare the runtime of simulators. I will now discuss these two ``circuit_runners``.
- 
+
 
 Standard
 --------
 
-For convenience, the following tabels list the attributes and methods of ``Standard``:
+For convenience, the following tables list the attributes and methods of ``Standard``:
 
 Methods
 ~~~~~~~
@@ -56,7 +56,7 @@ instance of a simulator (see :ref:`simulators`). This is seen in the following:
 In the last line of this code block, we see the measurement record produced by the ``circuit_runner``. The keys of the
 outer dictionary are tick indices, while for the inner dictionary the keys are the indices of qubits with non-zero
 measurements and the values are the measurement results.
-   
+
 
 
 The ``run_logic`` method is used to apply ``LogicalCircuits``:
@@ -75,7 +75,7 @@ The final line is the output of ``run``. The first dictionary is a record measur
 of the errors generated. In this example, all the measurement results are zero and we have not applied any error models.
 In :ref:`error-gens`, there are examples of where this is not the case; therefore, refer to that section if you are
 curious about the output of ``run``.
-   
+
 TimingRunner
 ------------
 

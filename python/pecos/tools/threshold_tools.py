@@ -284,7 +284,7 @@ def codecapacity_logical_rate(
         circuit_runner = circuit_runners.TimingRunner(seed=seed)
 
     # Syndrome extraction
-    syn_extract = circuits.LogicalCircuit(supress_warning=True)
+    syn_extract = circuits.LogicalCircuit(suppress_warning=True)
     syn_extract.append(qecc.gate("I", num_syn_extract=1))
 
     # Choosing basis
@@ -297,7 +297,7 @@ def codecapacity_logical_rate(
         raise Exception(msg)
 
     # init circuit
-    initzero = circuits.LogicalCircuit(supress_warning=True)
+    initzero = circuits.LogicalCircuit(suppress_warning=True)
     instr_symbol = "ideal init %s" % basis
     gate = qecc.gate(instr_symbol)
     initzero.append(gate)
@@ -395,15 +395,15 @@ def codecapacity_logical_rate2(
         circuit_runner = circuit_runners.TimingRunner(seed=seed)
 
     # Syndrome extraction
-    syn_extract = circuits.LogicalCircuit(supress_warning=True)
+    syn_extract = circuits.LogicalCircuit(suppress_warning=True)
     syn_extract.append(qecc.gate("I", num_syn_extract=1))
 
     # init logical |0> circuit
-    initzero = circuits.LogicalCircuit(supress_warning=True)
+    initzero = circuits.LogicalCircuit(suppress_warning=True)
     initzero.append(qecc.gate("ideal init |0>"))
 
     # init logical |+> circuit
-    initplus = circuits.LogicalCircuit(supress_warning=True)
+    initplus = circuits.LogicalCircuit(suppress_warning=True)
     initplus.append(qecc.gate("ideal init |+>"))
 
     logical_ops_zero = qecc.instruction("instr_init_zero").logical_stabs[0]["Z"]
@@ -520,7 +520,7 @@ def codecapacity_logical_rate3(
 
     if init_circuit is None:
         # init circuit
-        init_circuit = circuits.LogicalCircuit(supress_warning=True)
+        init_circuit = circuits.LogicalCircuit(suppress_warning=True)
 
         # Choosing basis
         if basis is None or basis == "zero":
@@ -555,7 +555,7 @@ def codecapacity_logical_rate3(
         logical_ops = init_logical_ops
 
     # Syndrome extraction
-    syn_extract = circuits.LogicalCircuit(supress_warning=True)
+    syn_extract = circuits.LogicalCircuit(suppress_warning=True)
     syn_extract.append(qecc.gate("I", num_syn_extract=1))
 
     run_durations = []

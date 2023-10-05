@@ -25,13 +25,13 @@ cdef dict gate_dict = {
                 'X': State.X,
                 'Y': State.Y,
                 'Z': State.Z,
-                
+
                 'II': State.II,
                 'CNOT': State.cnot,
                 'CZ': State.cz,
                 'SWAP': State.swap,
                 'G': State.g2,
-                
+
                 'H': State.hadamard,
                 'H1': State.hadamard,
                 'H2': State.H2,
@@ -39,24 +39,24 @@ cdef dict gate_dict = {
                 'H4': State.H4,
                 'H5': State.H5,
                 'H6': State.H6,
-                
-                'H+z+x': State.hadamard, 
-                'H-z-x': State.H2, 
+
+                'H+z+x': State.hadamard,
+                'H-z-x': State.H2,
                 'H+y-z': State.H3,
                 'H-y-z': State.H4,
-                'H-x+y': State.H5, 
+                'H-x+y': State.H5,
                 'H-x-y': State.H6,
-                
+
                 'F1': State.F1,
                 'F2': State.F2,
                 'F3': State.F3,
                 'F4': State.F4,
-                
+
                 'F1d': State.F1d,
                 'F2d': State.F2d,
                 'F3d': State.F3d,
                 'F4d': State.F4d,
-                
+
                 'R': State.R,
                 'Rd': State.Rd,
                 'Q': State.Q,
@@ -65,189 +65,189 @@ cdef dict gate_dict = {
                 'Sd': State.Sd,
 
                 'measure X': State.measureX,
-                'measure Y': State.measureY,                
+                'measure Y': State.measureY,
                 'measure Z': State.measure,
                 'force output': State.force_output,
-                
+
                 'init |0>': State.initzero,
                 'init |1>': State.initone,
                 'init |+>': State.initplus,
                 'init |->': State.initminus,
                 'init |+i>': State.initplusi,
                 'init |-i>': State.initminusi,
-                
+
             }
 
 cdef class State:
-    
+
     cdef s.State* _c_state
-    
+
     cdef public:
         int_num num_qubits
         dict gate_dict
-    
+
     def __cinit__(self, int_num num_qubits):
         self._c_state = new s.State(num_qubits)
-        
+
         self.num_qubits = self._c_state.num_qubits
         self.gate_dict = gate_dict
-    
+
     cdef void hadamard(self, int_num qubit):
         self._c_state.hadamard(qubit)
-        
+
     cdef void H2(self, int_num qubit):
         self._c_state.H2(qubit)
-        
+
     cdef void H3(self, int_num qubit):
         self._c_state.H3(qubit)
-        
+
     cdef void H4(self, int_num qubit):
         self._c_state.H4(qubit)
-        
+
     cdef void H5(self, int_num qubit):
         self._c_state.H5(qubit)
-        
+
     cdef void H6(self, int_num qubit):
         self._c_state.H6(qubit)
-        
+
     cdef void F1(self, int_num qubit):
         self._c_state.F1(qubit)
-        
+
     cdef void F2(self, int_num qubit):
         self._c_state.F2(qubit)
-        
+
     cdef void F3(self, int_num qubit):
         self._c_state.F3(qubit)
-        
+
     cdef void F4(self, int_num qubit):
         self._c_state.F4(qubit)
-        
+
     cdef void F1d(self, int_num qubit):
         self._c_state.F1d(qubit)
 
     cdef void F2d(self, int_num qubit):
         self._c_state.F2d(qubit)
-        
+
     cdef void F3d(self, int_num qubit):
         self._c_state.F3d(qubit)
-        
+
     cdef void F4d(self, int_num qubit):
         self._c_state.F4d(qubit)
-        
+
     cdef void I(self, int_num qubit):
         pass
-        
+
     cdef void X(self, int_num qubit):
         self._c_state.bitflip(qubit)
-        
+
     cdef void Y(self, int_num qubit):
         self._c_state.Y(qubit)
-        
+
     cdef void Z(self, int_num qubit):
         self._c_state.phaseflip(qubit)
-        
+
     cdef void S(self, int_num qubit):
         self._c_state.phaserot(qubit)
-        
+
     cdef void Sd(self, int_num qubit):
         self._c_state.Sd(qubit)
-        
+
     cdef void R(self, int_num qubit):
         self._c_state.R(qubit)
 
     cdef void Rd(self, int_num qubit):
         self._c_state.Rd(qubit)
-        
+
     cdef void Q(self, int_num qubit):
         self._c_state.Q(qubit)
-        
+
     cdef void Qd(self, int_num qubit):
         self._c_state.Qd(qubit)
-        
+
     cdef void cnot(self, tuple qubits):
         cdef int_num cqubit = qubits[0]
         cdef int_num tqubit = qubits[1]
-        
+
         self._c_state.cnot(cqubit, tqubit)
-        
+
     cdef void cz(self, tuple qubits):
         cdef int_num cqubit = qubits[0]
         cdef int_num tqubit = qubits[1]
-        
+
         self._c_state.hadamard(tqubit)
         self._c_state.cnot(cqubit, tqubit)
         self._c_state.hadamard(tqubit)
-        
+
     cdef void g2(self, tuple qubits):
         cdef int_num cqubit = qubits[0]
         cdef int_num tqubit = qubits[1]
-        
+
         self._c_state.hadamard(cqubit)
         self._c_state.cnot(tqubit, cqubit)
         self._c_state.cnot(cqubit, tqubit)
         self._c_state.hadamard(tqubit)
-        
+
     cdef void swap(self, tuple qubits):
         cdef int_num qubit1 = qubits[0]
         cdef int_num qubit2 = qubits[1]
-        
+
         self._c_state.swap(qubit1, qubit2)
-        
+
     cdef void II(self, tuple qubits):
         pass
-        
-    # cpdef unsigned int measure(self, const s.int_num qubit, 
+
+    # cpdef unsigned int measure(self, const s.int_num qubit,
     def measure(self, const int_num qubit, int random_outcome=0):
         return self._c_state.measure(qubit, random_outcome)
-    
+
     def measureX(self, const int_num qubit, int random_outcome=0):
-        
+
         cdef unsigned int result
-        
+
         self._c_state.hadamard(qubit)
         result = self._c_state.measure(qubit, random_outcome)
         self._c_state.hadamard(qubit)
         return result
-    
+
     def measureY(self, const int_num qubit, int random_outcome=0):
-        
+
         cdef unsigned int result
-        
+
         self._c_state.H5(qubit)
         result = self._c_state.measure(qubit, random_outcome)
         self._c_state.H5(qubit)
         return result
-    
+
     cdef void initzero(self, const int_num qubit):
         cdef unsigned int result
         result = self._c_state.measure(qubit, force=0)
-        
+
         if result:
             self._c_state.bitflip(qubit)
-            
+
     cdef void initone(self, const int_num qubit):
         cdef unsigned int result
         result = self._c_state.measure(qubit, force=0)
-        
+
         if not result:
             self._c_state.bitflip(qubit)
-            
+
     cdef void initplus(self, const int_num qubit):
         self.initzero(qubit)
         self._c_state.hadamard(qubit)
-        
+
     cdef void initminus(self, const int_num qubit):
         self.initone(qubit)
         self._c_state.hadamard(qubit)
-        
+
     cdef void initplusi(self, const int_num qubit):
         self.initzero(qubit)
         self._c_state.H5(qubit)
-        
+
     cdef void initminusi(self, const int_num qubit):
         self.initone(qubit)
         self._c_state.H5(qubit)
-        
+
     def logical_sign(self, logical_op, delogical_op):
         """
 
@@ -259,7 +259,7 @@ cdef class State:
 
         """
         return find_logical_signs(self, logical_op, delogical_op)
-            
+
     def run_gate(self, symbol, locations, output=True, **gate_kwargs):
         """
 
@@ -279,31 +279,31 @@ cdef class State:
                 results = self.gate_dict[symbol](self, location, **gate_kwargs)
                 if results:
                     output[location] = results
-                    
+
             return output
 
         else:
             for location in locations:
                 self.gate_dict[symbol](self, location, **gate_kwargs)
-                
+
             return {}
-        
+
     @property
     def signs_minus(self):
         return self._c_state.signs_minus
-    
+
     @property
     def signs_i(self):
         return self._c_state.signs_i
-    
+
     @property
     def stabs(self):
         return self._c_state.stabs
-    
+
     @property
     def destabs(self):
         return self._c_state.destabs
-        
+
     def _pauli_sign(self, gen, i_gen):
 
         if i_gen in self.signs_minus:
@@ -319,20 +319,20 @@ cdef class State:
                 sign = '  '
 
         return sign
-    
+
     def force_output(self, int_num qubit, output=-1):
         """
         Outputs value.
-    
+
         Used for error generators to generate outputs when replacing measurements.
-    
+
         Args:
             state:
             qubit:
             output:
-    
+
         Returns:
-    
+
         """
         return output
 
@@ -456,7 +456,6 @@ cdef class State:
             result.append(''.join(stab_letters))
 
         return result
-    
+
     def __dealloc__(self):
         del self._c_state
-    

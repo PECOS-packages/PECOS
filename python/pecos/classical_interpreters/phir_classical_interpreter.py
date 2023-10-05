@@ -273,7 +273,7 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             msg = f"block not implemented! {op}"
             raise NotImplementedError(msg)
 
-    def recieve_results(self, qsim_results: list[dict]):
+    def receive_results(self, qsim_results: list[dict]):
         """Receive measurement results and assign as needed."""
         for meas in qsim_results:
             for cvar, val in meas.items():

@@ -27,7 +27,7 @@ const auto Z = PauliZ();
 
 using namespace std;
 
-TEST_CASE("Rotation matrices") 
+TEST_CASE("Rotation matrices")
 {
     // No rotation should be identity
     REQUIRE(Rx(0) == I);
@@ -37,7 +37,7 @@ TEST_CASE("Rotation matrices")
     REQUIRE(Rz(M_PI).isApprox(-i * Z));
 }
 
-TEST_CASE("Pauli matrices") 
+TEST_CASE("Pauli matrices")
 {
     REQUIRE(X*X == I);
     REQUIRE(Y*Y == I);
@@ -51,7 +51,7 @@ TEST_CASE("Pauli matrices")
     REQUIRE(Z == i*Y*X);
 }
 
-TEST_CASE("U1q") 
+TEST_CASE("U1q")
 {
     Matrix2cd m;
     Matrix2cd m_expected;

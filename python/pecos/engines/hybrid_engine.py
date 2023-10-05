@@ -185,7 +185,7 @@ class HybridEngine:
                 # Allows noise to be dependent on measurement outcomes and to alter measurements
                 measurements = self.op_processor.process_meas(measurements)
 
-                self.cinterp.recieve_results(measurements)
+                self.cinterp.receive_results(measurements)
 
             self.results_accumulator(self.cinterp.results(return_int))
 

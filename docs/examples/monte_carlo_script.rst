@@ -43,7 +43,7 @@ zero-state we are only concerned with errors that flip the sign of the logical :
 not affect the state.
 
 The ``determine_fails`` function is:
- 
+
 .. code-block:: python
 
    def determine_fails(meas, decoder, circ_runner, state, logical_ops, fails):
@@ -51,7 +51,7 @@ The ``determine_fails`` function is:
            recovery = decoder(meas)
            circ_runner.run(state, recovery)
        sign = state.logical_sign(logical_ops['Z'], logical_ops['X'])
-       fails += sign    
+       fails += sign
        return fails
 
 We are now almost ready to define the Monte Carlo loop. First, however, we set ``runs`` to represent the number of
@@ -61,7 +61,7 @@ created by NumPy's ``linspace`` function. Finally, we include the variable ``plo
 error-rates we find corresponding to the physical error-rates in ``ps``. All of this is done in the following lines:
 
 .. code-block:: python
-   
+
    runs = 10000
    ps = np.linspace(0.1, 0.4, 10)
    plog = []

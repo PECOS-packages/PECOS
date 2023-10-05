@@ -119,7 +119,7 @@ errors. Note that the callable is responsible for updating ``QuantumCircuits``  
 appropriate.
 
 
-To use callables to generate errors, we can call the ``set_gate_error`` method in the following manner:  
+To use callables to generate errors, we can call the ``set_gate_error`` method in the following manner:
 
 >>> # Continuing from last example.
 >>> myerrors.set_gate_error('Y', error_func, error_param='s')
@@ -202,7 +202,7 @@ The gate groups that are defined by default can be found by running:
 
 Here the keys are symbols representing the gate groups and the values are the set of gate symbols belong to the
 corresponding gate group. These gate groups (
- 
+
 The gate groups that are defined by default can be found by running:
 
 >>> newerrors = pc.error_gens.GatewiseGen()
@@ -221,7 +221,7 @@ Example: The Symmetric Depolarizing-channel
 -------------------------------------------
 
 As an example, the circuit-level symmetric depolarizing-channel is modeled by ``DepolarGen`` as discussed in
-:ref:`ths page <DepolarGen>`, can be represented by the ``GatewiseGen`` class as follows:
+:ref:`this page <DepolarGen>`, can be represented by the ``GatewiseGen`` class as follows:
 
 .. code-block:: python
 
@@ -243,7 +243,7 @@ As an example, the circuit-level symmetric depolarizing-channel is modeled by ``
 Example: The Amplitude-dampening Channel
 ----------------------------------------
 
-The stochastic circuit-level amplitude-dampening channel can be described as: 
+The stochastic circuit-level amplitude-dampening channel can be described as:
 
 .. code-block:: python
 

@@ -41,7 +41,7 @@ using Controls = Targets;
  * Gate wrapper class
  *
  */
-class Gate 
+class Gate
 {
     // Gate matrix on host
     Eigen::MatrixXcd mat;
@@ -59,7 +59,7 @@ public:
      * Constructors
      *
      */
-    Gate(); 
+    Gate();
     Gate(size_t rows, size_t cols);
     Gate(const Eigen::MatrixXcd m);
 
@@ -86,7 +86,7 @@ public:
     void apply(StateVector &sv, CuStatevecWorkspace &workspace,
                bool adjoint=false);
 
-    void apply(StateVector &sv, CuStatevecWorkspace &workspace, 
+    void apply(StateVector &sv, CuStatevecWorkspace &workspace,
                const Controls &cs, const Targets &ts, bool adjoint=false);
 
     // Print the gate to stdout

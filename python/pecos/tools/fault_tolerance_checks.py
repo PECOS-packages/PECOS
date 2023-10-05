@@ -99,11 +99,11 @@ def t_errors_check(
     circ_sim = Standard()
 
     # init |0> circuit
-    initzero = LogicalCircuit(supress_warning=True)
+    initzero = LogicalCircuit(suppress_warning=True)
     initzero.append(qecc.gate("ideal init |0>"))
 
     # init |+> circuit
-    initplus = LogicalCircuit(supress_warning=True)
+    initplus = LogicalCircuit(suppress_warning=True)
     initplus.append(qecc.gate("ideal init |+>"))
 
     if syn_extract is not None and logical_gate is not None:
@@ -112,7 +112,7 @@ def t_errors_check(
 
     if syn_extract is None:
         # Syndrome extraction
-        syn_extract = LogicalCircuit(supress_warning=True)
+        syn_extract = LogicalCircuit(suppress_warning=True)
         syn_extract.append(qecc.gate("I", num_syn_extract=1, forced_outcome=1))
 
     logic = syn_extract if logical_gate is None else logical_gate
@@ -242,16 +242,16 @@ def fault_check(
     circ_sim = Standard()
 
     # init |0> circuit
-    initzero = LogicalCircuit(supress_warning=True)
+    initzero = LogicalCircuit(suppress_warning=True)
     initzero.append(qecc.gate("ideal init |0>"))
 
     # init |+> circuit
-    initplus = LogicalCircuit(supress_warning=True)
+    initplus = LogicalCircuit(suppress_warning=True)
     initplus.append(qecc.gate("ideal init |+>"))
 
     if logical_gate is None:
         # Syndrome extraction
-        syn_extract = LogicalCircuit(supress_warning=True)
+        syn_extract = LogicalCircuit(suppress_warning=True)
         syn_extract.append(qecc.gate("I", num_syn_extract=1, forced_outcome=1))
         logic = syn_extract
     else:
@@ -326,7 +326,7 @@ def distance_check(qecc, mode=None, dist_mode=None):
     circ_sim = Standard()
     state = pySparseSim(qecc.num_qudits)
 
-    ideal_initlogic = LogicalCircuit(supress_warning=True)
+    ideal_initlogic = LogicalCircuit(suppress_warning=True)
     ideal_initlogic.append(qecc.gate("ideal init |0>"))
 
     circ_sim.run(state, ideal_initlogic)

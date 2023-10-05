@@ -42,13 +42,3 @@ class Qubit(Qubits):
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} {self.index} of {self.qubits.symbol}>"
-
-
-"""
-class QSet(QVar):
-
-    def __init__(self, size):
-        super(QSet, self).__init__()
-        self.size = size
-        self.set = None
-"""

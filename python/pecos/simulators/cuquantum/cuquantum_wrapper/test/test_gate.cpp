@@ -13,8 +13,8 @@
 #include "catch.hpp"
 
 #include "custatevec_workspace.hpp"
-#include "gate.hpp"         
-#include "state_vector.hpp"         
+#include "gate.hpp"
+#include "state_vector.hpp"
 
 #include "cuda_helper.hpp"         // HANDLE_ERROR, HANDLE_CUDA_ERROR
 
@@ -47,14 +47,14 @@ void run_gate_test(Gate &gate, StateVector &sv)
 }
 
 
-TEST_CASE("Hadamard") 
+TEST_CASE("Hadamard")
 {
     // Create the gate
     Gate gate = Hadamard();
     gate.targets = {0};
     gate.controls = {};
 
-    // Create the state vector 
+    // Create the state vector
     StateVector sv = create_zero_state_vector(1);
     StateVector sv_expected = create_zero_state_vector(1);
 
@@ -68,7 +68,7 @@ TEST_CASE("Hadamard")
 }
 
 
-TEST_CASE("Toffoli From Docs") 
+TEST_CASE("Toffoli From Docs")
 {
     // Create the gate
     Gate gate = Toffoli();
@@ -77,7 +77,7 @@ TEST_CASE("Toffoli From Docs")
 
     // Create the state vector
     Eigen::VectorXcd v(8);
-    v << (0.0, 0.0), (0.0, 0.1), (0.1, 0.1), (0.1, 0.2), 
+    v << (0.0, 0.0), (0.0, 0.1), (0.1, 0.1), (0.1, 0.2),
          (0.2, 0.2), (0.3, 0.3), (0.3, 0.4), (0.4, 0.5);
     StateVector sv(v);
     sv.copy_to_device();
@@ -87,7 +87,7 @@ TEST_CASE("Toffoli From Docs")
     // Check results
     StateVector ex(3);
     Eigen::VectorXcd vex(8);
-    vex << (0.0, 0.0), (0.0, 0.1), (0.1, 0.1), (0.4, 0.5), 
+    vex << (0.0, 0.0), (0.0, 0.1), (0.1, 0.1), (0.4, 0.5),
            (0.2, 0.2), (0.3, 0.3), (0.3, 0.4), (0.1, 0.2);
     StateVector svex(vex);
 
@@ -96,7 +96,7 @@ TEST_CASE("Toffoli From Docs")
 
 
 // TODO FIXME Broken after change to composition
-// TEST_CASE("Toffoli") 
+// TEST_CASE("Toffoli")
 // {
 //     // Create the gate
 //     Gate gate = Toffoli();
@@ -106,7 +106,7 @@ TEST_CASE("Toffoli From Docs")
 //     // Create the input and expected state vectors
 //     StateVector sv(3);
 //     StateVector ex(3);
-    
+
 //     // 000 -> 000
 //     sv << 1, 0, 0, 0, 0, 0, 0, 0;
 //     ex = sv;
@@ -118,7 +118,7 @@ TEST_CASE("Toffoli From Docs")
 //     ex = sv;
 //     run_gate_test(gate, sv);
 //     REQUIRE(sv == ex);
-    
+
 //     // skip to the ones that flip bits
 
 //     // 111 -> 110
@@ -136,7 +136,7 @@ TEST_CASE("Toffoli From Docs")
 
 
 // TODO FIXME Broken after change to composition
-// TEST_CASE("CNOT") 
+// TEST_CASE("CNOT")
 // {
 //     Gate gate = CNOT();
 //     gate.targets = {1};
@@ -185,13 +185,13 @@ TEST_CASE("Bell State")
     h.targets = {0};
     h.controls = {};
 
-    Gate cnot = CNOT(); 
+    Gate cnot = CNOT();
     cnot.targets = {1};
     cnot.controls = {0};
 
-    Eigen::VectorXcd v(4); 
+    Eigen::VectorXcd v(4);
     v << 1, 0, 0, 0;
-    StateVector sv(v); 
+    StateVector sv(v);
 
     sv.copy_to_device();
 
@@ -210,7 +210,7 @@ TEST_CASE("Bell State")
 
     // Bell state
     v << S2, 0, 0, S2;
-    StateVector sv_bell(v); 
+    StateVector sv_bell(v);
 
     REQUIRE(sv == sv_bell);
 }

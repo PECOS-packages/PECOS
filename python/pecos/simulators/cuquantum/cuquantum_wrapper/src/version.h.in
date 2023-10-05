@@ -11,7 +11,7 @@
 // Initial author: Tyson Lawrence
 
 #ifndef VERSION_H
-#define VERSION_H 
+#define VERSION_H
 
 #define VERSION_STR "${PROJECT_VERSION}"
 

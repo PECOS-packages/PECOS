@@ -17,8 +17,8 @@
 #include <algorithm>
 
 #include "custatevec_workspace.hpp"
-#include "state_vector.hpp"         
-#include "utils.hpp"         
+#include "state_vector.hpp"
+#include "utils.hpp"
 
 #include "cuda_helper.hpp"         // HANDLE_ERROR, HANDLE_CUDA_ERROR
 
@@ -32,15 +32,15 @@ using CD = std::complex<double>;
  *
  */
 
-TEST_CASE("StateVector") 
+TEST_CASE("StateVector")
 {
     // Create the state vectors
     Eigen::VectorXcd v(8);
-    v << CD(1.3, 3.7), CD(7.1, 2.1), CD(4.3, 0.5), CD(6.1, 9.2), 
+    v << CD(1.3, 3.7), CD(7.1, 2.1), CD(4.3, 0.5), CD(6.1, 9.2),
          CD(9.0, 8.8), CD(3.3, 3.3), CD(6.6, 6.6), CD(2.3, 8.5);
     StateVector sv(v);
     StateVector sv_expected = sv;
-    
+
     REQUIRE(sv.num_bits == 3);
     REQUIRE(sv.size() == 8);
 
@@ -55,17 +55,17 @@ TEST_CASE("StateVector")
 // **************************************
 // THIS TEST IS BROKEN DUE TO COMPOSITION CHANGE
 // **************************************
-// TEST_CASE("StateVector memory") 
+// TEST_CASE("StateVector memory")
 // {
 //     // C-array
 //     const int nIndexBits   = 3;
 //     const int nSvSize      = (1 << nIndexBits);
-//     cuDoubleComplex sv_orig[] = {{ 0.0, 0.0}, { 0.0, 0.1}, { 0.3, 0.4}, { 0.1, 0.2}, 
+//     cuDoubleComplex sv_orig[] = {{ 0.0, 0.0}, { 0.0, 0.1}, { 0.3, 0.4}, { 0.1, 0.2},
 //                                    { 0.2, 0.2}, { 0.3, 0.3}, { 0.1, 0.1}, { 0.4, 0.5}};
 
 //     // Create the state vector
 //     Eigen::VectorXcd v(8);
-//     v << CD(0.0, 0.0), CD(0.0, 0.1), CD(0.3, 0.4), CD(0.1, 0.2), 
+//     v << CD(0.0, 0.0), CD(0.0, 0.1), CD(0.3, 0.4), CD(0.1, 0.2),
 //          CD(0.2, 0.2), CD(0.3, 0.3), CD(0.1, 0.1), CD(0.4, 0.5);
 //     StateVector sv(v);
 
@@ -73,7 +73,7 @@ TEST_CASE("StateVector")
 //     bool same = true;
 //     for (int i = 0; i < nSvSize; i++) {
 //         cuDoubleComplex *v = reinterpret_cast<cuDoubleComplex*>(&sv(i));
-//         if (!almost_equal(*v, sv_orig[i])) 
+//         if (!almost_equal(*v, sv_orig[i]))
 //             same = false;
 //     }
 
@@ -90,18 +90,18 @@ TEST_CASE("StateVector")
 // }
 
 
-TEST_CASE("Measurement") 
+TEST_CASE("Measurement")
 {
     const BasisBits basis_bits = {0, 1, 2};
 
     int parity = -1;
 
-    // In real appliction, random number in range [0, 1) will be used.
+    // In real application, random number in range [0, 1) will be used.
     const double randnum = 0.2;
 
     // Create the state vector
     Eigen::VectorXcd v(8);
-    v << CD(0.0, 0.0), CD(0.0, 0.1), CD(0.3, 0.4), CD(0.1, 0.2), 
+    v << CD(0.0, 0.0), CD(0.0, 0.1), CD(0.3, 0.4), CD(0.1, 0.2),
          CD(0.2, 0.2), CD(0.3, 0.3), CD(0.1, 0.1), CD(0.4, 0.5);
     StateVector sv(v);
 
@@ -117,7 +117,7 @@ TEST_CASE("Measurement")
 
     // Check results
     Eigen::VectorXcd v_expected(8);
-    v_expected << CD(0.0, 0.0), CD(0.0, 0.0), CD(0.0, 0.0), CD(0.2, 0.4), 
+    v_expected << CD(0.0, 0.0), CD(0.0, 0.0), CD(0.0, 0.0), CD(0.2, 0.4),
                   CD(0.0, 0.0), CD(0.6, 0.6), CD(0.2, 0.2), CD(0.0, 0.0);
     StateVector sv_expected(v_expected);
     int parity_expected = 0;
@@ -164,14 +164,14 @@ void run_measure_test(double randnum)
 
 }
 
-TEST_CASE("Measurement on Z - Randnums") 
+TEST_CASE("Measurement on Z - Randnums")
 {
     double step = 0.05;
-    for (double randnum = 0; randnum <= 1; randnum = randnum + step) 
+    for (double randnum = 0; randnum <= 1; randnum = randnum + step)
         run_measure_test(randnum);
 }
 
-TEST_CASE("Batch Measurement") 
+TEST_CASE("Batch Measurement")
 {
     Eigen::VectorXcd v(8);
     v << CD(0.0, 0.0), CD(0.0, 0.1), CD(0.1, 0.1), CD(0.1, 0.2),
@@ -234,7 +234,7 @@ TEST_CASE("Reset state")
         }
 
         // Should be false, because the state is not in the zerio state
-        // NOTE: There is a small probability that this will fail b/c 
+        // NOTE: There is a small probability that this will fail b/c
         // create random vector might create the zero state
         REQUIRE_FALSE(check);
 
@@ -262,8 +262,8 @@ TEST_CASE("Reset state")
             check &= all_zeros;
         }
 
-        // Should be true, because the state was reset to the zero state 
-        // before measurements. Thus all measurements should yield the 
+        // Should be true, because the state was reset to the zero state
+        // before measurements. Thus all measurements should yield the
         // zero state
         REQUIRE(check);
 

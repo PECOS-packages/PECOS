@@ -108,14 +108,14 @@ def get_all_spacetime(qcirc: QuantumCircuit, initial_qubits: Sequence[int] | Non
                 }
 
 
-def get_wt_paulis(circ: QuantumCircuit, wt: int, intial_qubits: Sequence[int] | None = None, *, make_qc: bool = True):
+def get_wt_paulis(circ: QuantumCircuit, wt: int, initial_qubits: Sequence[int] | None = None, *, make_qc: bool = True):
     """A generator of all combinations of Pauli faults of a given weight.
 
     Args:
     ----
         circ:
         wt:
-        intial_qubits:
+        initial_qubits:
         make_qc:
 
     Returns:
@@ -123,7 +123,7 @@ def get_wt_paulis(circ: QuantumCircuit, wt: int, intial_qubits: Sequence[int] | 
 
     """
     # get the spacetime locations that will have errors
-    for gate_data in permutations(get_all_spacetime(circ, intial_qubits), wt):
+    for gate_data in permutations(get_all_spacetime(circ, initial_qubits), wt):
         iter_list = []
         tick_list = []
         loc_list = []

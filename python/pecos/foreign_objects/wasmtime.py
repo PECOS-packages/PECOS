@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from wasmtime import FuncType, Instance, Module, Store
@@ -29,7 +30,7 @@ class WasmtimeObj(ForeignObject):
 
     def __init__(self, file: str | bytes) -> None:
         if isinstance(file, str):
-            with open(file, "rb") as f:
+            with Path.open(file, "rb") as f:
                 wasm_bytes = f.read()
         else:
             wasm_bytes = file

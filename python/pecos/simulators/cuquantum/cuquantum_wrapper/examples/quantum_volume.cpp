@@ -22,11 +22,11 @@
 #include "argparse.hpp"
 
 #include "custatevec_workspace.hpp"
-#include "gate.hpp"         
-#include "state_vector.hpp"         
+#include "gate.hpp"
+#include "state_vector.hpp"
 #include "utils.hpp"
-#include "quantum_volume.hpp"         
-#include "version.h"         
+#include "quantum_volume.hpp"
+#include "version.h"
 
 /*
  *
@@ -98,7 +98,7 @@ void run_quantum_volume(size_t num_qubits=2, size_t num_shots=1, bool verbose=tr
  * Main
  *
  */
-int main(int argc, char *argv[]) 
+int main(int argc, char *argv[])
 {
     argparse::ArgumentParser args(argv[0], "0", argparse::default_arguments::help);
 

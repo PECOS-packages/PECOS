@@ -28,18 +28,17 @@
 import sys
 from pathlib import Path
 
-sys.path.insert(0, Path("../pecos/").resolve())
-sys.path.append(Path("..").resolve())
+sys.path.insert(0, str(Path("../python").resolve()))
 
-from pecos import __author__, __version__
+from pecos import __version__
 
 # -- Project information -----------------------------------------------------
 
 project = "PECOS"
 copyright = (
-    "2018-2023, The PECOS Developers. Copyright 2018 National Technology & Engineering Solutions of Sandia, LLC (NTESS)"
+    "2018-2023 The PECOS Developers. Copyright 2018 National Technology & Engineering Solutions of Sandia, LLC (NTESS)"
 )
-author = __author__
+author = "The PECOS Developers"
 
 # The short X.Y version
 version = __version__.split(".")[:2]
@@ -159,7 +158,7 @@ latex_elements = {
 # (source start file, target name, title,
 #  author, documentclass [howto, manual, or own class]).
 latex_documents = [
-    (master_doc, "PECOS.tex", "PECOS Documentation", __author__, "manual"),
+    (master_doc, "PECOS.tex", "PECOS Documentation", author, "manual"),
 ]
 
 

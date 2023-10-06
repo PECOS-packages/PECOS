@@ -68,7 +68,7 @@ wasmer = [
 visualization = [
     "plotly~=5.9.0",
 ]
-tests=[
+tests = [
     "pytest>=5.0.0"
 ]
 all = [
@@ -99,8 +99,11 @@ where = ["python"]
 include = ["pecos*"]
 namespaces = true
 
+[tool.pytest.ini_options]
+filterwarnings = ["ignore:::dateutil.tz.tz.*"]
+
 # Linting and autorefactoring tools
-# ------------------------------------------------------
+# ---------------------------------
 
 [tool.black]
 line-length = 120

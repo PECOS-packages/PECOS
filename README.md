@@ -79,6 +79,7 @@ pip install -e .
 ```
 
 On Windows:
+
 ```sh
 python -m venv .venv
 .\venv\Scripts\activate
@@ -87,6 +88,8 @@ pip install -r requirements.txt
 pre-commit install
 pip install -e .
 ```
+
+See `Makefile` for other useful commands.
 
 Tests can be run using:
 

@@ -33,7 +33,9 @@ so that PECOS's package requirements do not restrict you when working on other p
 
 To create an environment for PECOS using Anaconda run:
 
->>> conda create -n pecos python=X numpy scipy matplotlib networkx # doctest: +SKIP
+.. code-block:: console
+
+    $ conda create -n pecos python=X numpy scipy matplotlib networkx # doctest: +SKIP
 
 where `X` is whatever version of Python you wish to use with PECOS (e.g., ``python=3.5.2``, ``python=3.6``,
 ``python=3.7``, etc.).
@@ -41,22 +43,30 @@ where `X` is whatever version of Python you wish to use with PECOS (e.g., ``pyth
 Alternatively, if you clone/download the package (see next section) and navigate to the root, you can create an
 environment by running:
 
->>> conda env create -f conda_environment.yml # doctest: +SKIP
+.. code-block:: console
+
+    $ conda env create -f conda_environment.yml # doctest: +SKIP
 
 This will create the environment ``pecos`` with the specific versions of Python and required packages that were used to
 develop PECOS. Note, you will still need to install PECOS using one of the methods described in the following sections.
 
 To activate/use the environment in Windows run the command:
 
->>> activate pecos # doctest: +SKIP
+.. code-block:: console
+
+    $ activate pecos # doctest: +SKIP
 
 In other operating systems you may need to run the following instead:
 
->>> source activate pecos # doctest: +SKIP
+.. code-block:: console
+
+    $ source activate pecos # doctest: +SKIP
 
 To deactivate/leave the PECOS environment run:
 
->>> deactivate # doctest: +SKIP
+.. code-block:: console
+
+    $ deactivate # doctest: +SKIP
 
 Installing and Uninstalling
 ---------------------------
@@ -65,7 +75,9 @@ PECOS has been developed to run on both Windows and Linux-based systems.
 
 To install using pip run:
 
->>> pip install quantum-pecos   # doctest: +SKIP
+.. code-block:: console
+
+    $ pip install quantum-pecos   # doctest: +SKIP
 
 
 Alternatively, the plackage can be cloned or downloaded from GitHub:
@@ -74,21 +86,29 @@ https://github.com/PECOS-packages/PECOS
 
 To clone PECOS using git run:
 
->>> git clone https://github.com/PECOS-packages/PECOS.git # doctest: +SKIP
+.. code-block:: console
+
+    $ git clone https://github.com/PECOS-packages/PECOS.git # doctest: +SKIP
 
 Then, download/unzip or clone the version of PECOS you would like to use. Next, navigate to the root of the package
 (where pyproject.toml is located) and run the command:
 
->>> pip install .   # doctest: +SKIP
+.. code-block:: console
+
+    $ pip install .   # doctest: +SKIP
 
 
 To install and continue to develop the version of PECOS located in the install folder, run:
 
->>> pip install -e .  # doctest: +SKIP
+.. code-block:: console
+
+    $ pip install -e .  # doctest: +SKIP
 
 To uninstall run:
 
->>> pip uninstall quantum-pecos  # doctest: +SKIP
+.. code-block:: console
+
+    $ pip uninstall quantum-pecos  # doctest: +SKIP
 
 Development Branch
 ------------------
@@ -99,7 +119,9 @@ https://github.com/PECOS-packages/PECOS/tree/development
 
 To clone using git run:
 
->>> git clone -b development https://github.com/PECOS-packages/PECOS.git # doctest: +SKIP
+.. code-block:: console
+
+    $ git clone -b development https://github.com/PECOS-packages/PECOS.git # doctest: +SKIP
 
 Be aware that as PECOS is in development in this branch, you may experience some bugs.
 
@@ -112,7 +134,9 @@ process to determine if any expected functionality has been broken.
 To run tests, the package PyTest is require. Once installed, simply navigate to your PECOS installation directory and
 run:
 
->>> py.test    # doctest: +SKIP
+.. code-block:: console
+
+    $ py.test    # doctest: +SKIP
 
 PyTest will automatically run all the PECOS's tests and inform you of any failures.
 
@@ -124,6 +148,6 @@ The standard method for importing PECOS is:
 
 .. code-block:: python
 
-   import pecos as pc
+    import pecos as pc
 
 It will be assumed throughout the documentation that PECOS has been imported in this manner.

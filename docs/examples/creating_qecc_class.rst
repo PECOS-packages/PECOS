@@ -10,11 +10,11 @@ To begin, we create an empty Python file called ``zrepetition.py`` and import so
 
 .. code-block:: python
 
-   """
-   A representation of the Z-check repetition code.
-   """
-   from pecos.circuits import QuantumCircuit
-   from pecos.qeccs import QECC, LogicalGate, LogicalInstruction
+    """
+    A representation of the Z-check repetition code.
+    """
+    from pecos.circuits import QuantumCircuit
+    from pecos.qeccs import QECC, LogicalGate, LogicalInstruction
 
 Subclasses of ``QECC``, ``LogicalGate``, and ``LogicalInstruction`` inherit numerous methods and attributes that
 simplify the creation of new ``qeccs``. If some of the inherited methods and attributes are not appropriate for a QECC,
@@ -328,117 +328,117 @@ following simulation:
    :options: +SKIP
 
          >>> import pecos as pc
-         >>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity')
+         >>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity")
          >>> logic = pc.circuits.LogicalCircuit()
-         >>> logic.append(qecc.gate('ideal init |0>'))
-         >>> logic.append(qecc.gate('I'))
+         >>> logic.append(qecc.gate("ideal init |0>"))
+         >>> logic.append(qecc.gate("I"))
          >>> circ_runner = pc.circuit_runners.Standard(seed=3)
          >>> state = circ_runner.init(qecc.num_qudits)
-         >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={'p': 0.1})
+         >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
          >>> meas
          {(1, 2): {3: {3: 1}}}
          >>> err
          {(1, 2): {0: {'after': QuantumCircuit([{'X': {4}}])}}}
 
          >>> import pecos as pc
-         >>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity')
+         >>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity")
          >>> logic = pc.circuits.LogicalCircuit()
-         >>> logic.append(qecc.gate('ideal init |0>'))
-         >>> logic.append(qecc.gate('I'))
+         >>> logic.append(qecc.gate("ideal init |0>"))
+         >>> logic.append(qecc.gate("I"))
          >>> circ_runner = pc.circuit_runners.Standard(seed=3)
          >>> state = circ_runner.init(qecc.num_qudits)
-         >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={'p': 0.1})
+         >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
          >>> meas
          {(1, 2): {3: {3: 1}}}
          >>> err
          {(1, 2): {0: {'after': QuantumCircuit([{'X': {4}}])}}}
 
       >>> import pecos as pc
-      >>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity')
+      >>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity")
       >>> logic = pc.circuits.LogicalCircuit()
-      >>> logic.append(qecc.gate('ideal init |0>'))
-      >>> logic.append(qecc.gate('I'))
+      >>> logic.append(qecc.gate("ideal init |0>"))
+      >>> logic.append(qecc.gate("I"))
       >>> circ_runner = pc.circuit_runners.Standard(seed=3)
       >>> state = circ_runner.init(qecc.num_qudits)
-      >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={'p': 0.1})
+      >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
       >>> meas
       {(1, 2): {3: {3: 1}}}
       >>> err
       {(1, 2): {0: {'after': QuantumCircuit([{'X': {4}}])}}}
 
          >>> import pecos as pc
-         >>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity')
+         >>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity")
          >>> logic = pc.circuits.LogicalCircuit()
-         >>> logic.append(qecc.gate('ideal init |0>'))
-         >>> logic.append(qecc.gate('I'))
+         >>> logic.append(qecc.gate("ideal init |0>"))
+         >>> logic.append(qecc.gate("I"))
          >>> circ_runner = pc.circuit_runners.Standard(seed=3)
          >>> state = circ_runner.init(qecc.num_qudits)
-         >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={'p': 0.1})
+         >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
          >>> meas
          {(1, 2): {3: {3: 1}}}
          >>> err
          {(1, 2): {0: {'after': QuantumCircuit([{'X': {4}}])}}}
 
          >>> import pecos as pc
-         >>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity')
+         >>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity")
          >>> logic = pc.circuits.LogicalCircuit()
-         >>> logic.append(qecc.gate('ideal init |0>'))
-         >>> logic.append(qecc.gate('I'))
+         >>> logic.append(qecc.gate("ideal init |0>"))
+         >>> logic.append(qecc.gate("I"))
          >>> circ_runner = pc.circuit_runners.Standard(seed=3)
          >>> state = circ_runner.init(qecc.num_qudits)
-         >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={'p': 0.1})
+         >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
          >>> meas
          {(1, 2): {3: {3: 1}}}
          >>> err
          {(1, 2): {0: {'after': QuantumCircuit([{'X': {4}}])}}}
 
       >>> import pecos as pc
-      >>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity')
+      >>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity")
       >>> logic = pc.circuits.LogicalCircuit()
-      >>> logic.append(qecc.gate('ideal init |0>'))
-      >>> logic.append(qecc.gate('I'))
+      >>> logic.append(qecc.gate("ideal init |0>"))
+      >>> logic.append(qecc.gate("I"))
       >>> circ_runner = pc.circuit_runners.Standard(seed=3)
       >>> state = circ_runner.init(qecc.num_qudits)
-      >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={'p': 0.1})
+      >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
       >>> meas
       {(1, 2): {3: {3: 1}}}
       >>> err
       {(1, 2): {0: {'after': QuantumCircuit([{'X': {4}}])}}}
 
       >>> import pecos as pc
-      >>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity')
+      >>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity")
       >>> logic = pc.circuits.LogicalCircuit()
-      >>> logic.append(qecc.gate('ideal init |0>'))
-      >>> logic.append(qecc.gate('I'))
+      >>> logic.append(qecc.gate("ideal init |0>"))
+      >>> logic.append(qecc.gate("I"))
       >>> circ_runner = pc.circuit_runners.Standard(seed=3)
       >>> state = circ_runner.init(qecc.num_qudits)
-      >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={'p': 0.1})
+      >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
       >>> meas
       {(1, 2): {3: {3: 1}}}
       >>> err
       {(1, 2): {0: {'after': QuantumCircuit([{'X': {4}}])}}}
 
       >>> import pecos as pc
-      >>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity')
+      >>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity")
       >>> logic = pc.circuits.LogicalCircuit()
-      >>> logic.append(qecc.gate('ideal init |0>'))
-      >>> logic.append(qecc.gate('I'))
+      >>> logic.append(qecc.gate("ideal init |0>"))
+      >>> logic.append(qecc.gate("I"))
       >>> circ_runner = pc.circuit_runners.Standard(seed=3)
       >>> state = circ_runner.init(qecc.num_qudits)
-      >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={'p': 0.1})
+      >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
       >>> meas
       {(1, 2): {3: {3: 1}}}
       >>> err
       {(1, 2): {0: {'after': QuantumCircuit([{'X': {4}}])}}}
 
    >>> import pecos as pc
-   >>> depolar = pc.error_gens.DepolarGen(model_level='code_capacity')
+   >>> depolar = pc.error_gens.DepolarGen(model_level="code_capacity")
    >>> logic = pc.circuits.LogicalCircuit()
-   >>> logic.append(qecc.gate('ideal init |0>'))
-   >>> logic.append(qecc.gate('I'))
+   >>> logic.append(qecc.gate("ideal init |0>"))
+   >>> logic.append(qecc.gate("I"))
    >>> circ_runner = pc.circuit_runners.Standard(seed=3)
    >>> state = circ_runner.init(qecc.num_qudits)
-   >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={'p': 0.1})
+   >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
    >>> meas
    {(1, 2): {3: {3: 1}}}
    >>> err

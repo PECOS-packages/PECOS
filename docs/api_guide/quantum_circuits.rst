@@ -78,9 +78,9 @@ We can add a tick containing some gates to the end of a ``QuantumCircuit`` by us
 allows us to represent the Bell-state prep circuit:
 
 >>> qc = pc.circuits.QuantumCircuit()
->>> qc.append('init |0>', {0, 1})
->>> qc.append('H', {0})
->>> qc.append('CNOT', {(0,1)})
+>>> qc.append("init |0>", {0, 1})
+>>> qc.append("H", {0})
+>>> qc.append("CNOT", {(0, 1)})
 >>> qc
 QuantumCircuit([{'init |0>': {0, 1}}, {'H': {0}}, {'CNOT': {(0, 1)}}])
 
@@ -98,9 +98,9 @@ The above code block shows how to append a tick that consists of only one gate t
 gate-types per tick:
 
 >>> qc = pc.circuits.QuantumCircuit()
->>> qc.append({'init |0>': {0, 1, 2, 3}})
->>> qc.append({'H': {0, 2}, 'X': {1, 3}})
->>> qc.append('CNOT', {(0,1), (2, 3)})
+>>> qc.append({"init |0>": {0, 1, 2, 3}})
+>>> qc.append({"H": {0, 2}, "X": {1, 3}})
+>>> qc.append("CNOT", {(0, 1), (2, 3)})
 >>> qc
 QuantumCircuit([{'init |0>': {0, 1, 2, 3}}, {'H': {0, 2}, 'X': {1, 3}}, {'CNOT': {(0, 1), (2, 3)}}])
 
@@ -108,8 +108,8 @@ Both ``QuantumCircuits`` and gates may have extra information that we wish to in
 the ``QuantumCircuit`` by including extra keywords as seen here:
 
 >>> qc = pc.circuits.QuantumCircuit(a_var=3.0)
->>> qc.append('init |0>', {0, 1}, duration=5)
->>> qc.append({'H': {0}, 'X': {1}}, duration=1)
+>>> qc.append("init |0>", {0, 1}, duration=5)
+>>> qc.append({"H": {0}, "X": {1}}, duration=1)
 >>> qc
 QuantumCircuit(params={'a_var': 3.0}, ticks=[{'init |0>': loc: {0, 1} - params={'duration': 5}}, {'H': loc: {0} - params={'duration': 1}, 'X': loc: {1} - params={'duration': 1}}])
 
@@ -126,10 +126,10 @@ The ``update`` method of ``QuantumCircuit`` adds additional gates to a pre-exist
 is seen in the following:
 
 >>> qc = pc.circuits.QuantumCircuit()
->>> qc.append({'X': {0, 1}, 'Z': {2, 3}})
->>> qc.append({'H': {0, 1}})
->>> qc.update({'CNOT': {(6, 7), (8, 9)}, 'H': {10, 11}}, tick=0)
->>> qc.update('X', {4, 5})
+>>> qc.append({"X": {0, 1}, "Z": {2, 3}})
+>>> qc.append({"H": {0, 1}})
+>>> qc.update({"CNOT": {(6, 7), (8, 9)}, "H": {10, 11}}, tick=0)
+>>> qc.update("X", {4, 5})
 >>> qc
 QuantumCircuit([{'X': {0, 1}, 'Z': {2, 3}, 'CNOT': {(8, 9), (6, 7)}, 'H': {10, 11}}, {'H': {0, 1}, 'X': {4, 5}}])
 
@@ -142,8 +142,8 @@ locations.
 Like ``append``, ``update`` accepts other keyword arguments and stores such information in the params ``dict``:
 
 >>> qc = pc.circuits.QuantumCircuit(1)
->>> qc.update('X', {0, 1}, duration=3)
->>> qc.update('H', {2, 3}, duration=2)
+>>> qc.update("X", {0, 1}, duration=3)
+>>> qc.update("H", {2, 3}, duration=2)
 >>> qc
 QuantumCircuit([{'X': loc: {0, 1} - params={'duration': 3}, 'H': loc: {2, 3} - params={'duration': 2}}])
 
@@ -156,7 +156,7 @@ Discard
 If needed, gate locations can be removed using the method ``discard``. This can be seen in the following:
 
 >>> qc = pc.circuits.QuantumCircuit()
->>> qc.append('X', {0, 1, 2})
+>>> qc.append("X", {0, 1, 2})
 >>> qc.discard({1})
 >>> qc
 QuantumCircuit([{'X': {0, 2}}])
@@ -188,9 +188,9 @@ The ``QuantumCircuit`` data structure keeps track of which qudits have been acte
 known as ``active qudits``. The ``active_qudits`` attribute can be used to retrieve a list of these qudits:
 
 >>> qc = pc.circuits.QuantumCircuit()
->>> qc.append({'X': {0}, 'Z': {2, 3}})
->>> qc.append({'CNOT': {(0, 2), (1, 3)}})
->>> qc.append('H', {2})
+>>> qc.append({"X": {0}, "Z": {2, 3}})
+>>> qc.append({"CNOT": {(0, 2), (1, 3)}})
+>>> qc.append("H", {2})
 >>> qc.active_qudits
 [{0, 2, 3}, {0, 1, 2, 3}, {2}]
 
@@ -203,11 +203,12 @@ The ``QuantumCircuit`` class has the generator ``items``, which can be used to i
 sequence of gate symbols, locations, and params:
 
 >>> qc = pc.circuits.QuantumCircuit()
->>> qc.append({'X': {3, 5}, 'Z': {0, 1, 2}}, duration=1)
->>> qc.append({'H': {0, 1, 2, 3}})
->>> qc.append({'measure Z': {0, 3, 5}})
+>>> qc.append({"X": {3, 5}, "Z": {0, 1, 2}}, duration=1)
+>>> qc.append({"H": {0, 1, 2, 3}})
+>>> qc.append({"measure Z": {0, 3, 5}})
 >>> for gate, gate_locations, params in qc.items():
-...     print('%s -> %s, params: %s' % (gate, gate_locations, params))
+...     print("%s -> %s, params: %s" % (gate, gate_locations, params))
+...
 X -> {3, 5}, params: {'duration': 1}
 Z -> {0, 1, 2}, params: {'duration': 1}
 H -> {0, 1, 2, 3}, params: {}
@@ -217,6 +218,7 @@ One can loop over a single tick by using the keyword ``tick``:
 
 >>> # Following the previous example
 >>> for gate, gate_locations, params in qc.items(tick=0):
-...     print('%s -> %s, params: %s' % (gate, gate_locations, params))
+...     print("%s -> %s, params: %s" % (gate, gate_locations, params))
+...
 X -> {3, 5}, params: {'duration': 1}
 Z -> {0, 1, 2}, params: {'duration': 1}

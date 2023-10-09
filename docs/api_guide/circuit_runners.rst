@@ -48,8 +48,8 @@ instance of a simulator (see :ref:`simulators`). This is seen in the following:
 
 >>> state = pc.simulators.SparseSim(num_qubits=4)
 >>> qc = pc.circuits.QuantumCircuit()
->>> qc.append('X', {0, 1})
->>> qc.append('measure Z', {0, 1, 3})
+>>> qc.append("X", {0, 1})
+>>> qc.append("measure Z", {0, 1, 3})
 >>> circ_runner.run(state, qc)
 ({1: {0: 1, 1: 1}}, {})
 
@@ -63,8 +63,8 @@ The ``run_logic`` method is used to apply ``LogicalCircuits``:
 
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
->>> logic.append(surface.gate('ideal init |0>'))
->>> logic.append(surface.gate('I'))
+>>> logic.append(surface.gate("ideal init |0>"))
+>>> logic.append(surface.gate("I"))
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
 >>> circ_runner.run(state, logic)
 ({}, {})
@@ -85,10 +85,10 @@ The attribute ``total_time`` stores this value and is used in the following:
 >>> circ_runner = pc.circuit_runners.TimingRunner()
 >>> state = pc.simulators.SparseSim(4)
 >>> qc = pc.circuits.QuantumCircuit()
->>> qc.append('X', {0, 1, 2, 3})
+>>> qc.append("X", {0, 1, 2, 3})
 >>> circ_runner.run(state, qc)
 ({}, {})
->>> circ_runner.total_time   # doctest: +SKIP
+>>> circ_runner.total_time  # doctest: +SKIP
 7.22257152574457e-06
 
 ``TimingRunner`` times the execution of gates by using Python's ``perf_counter`` method. The time recorded by

@@ -19,13 +19,13 @@ We now use ``VerifyStabilizers`` to represent the checks given in the previous f
 
 >>> import pecos as pc
 >>> qecc = pc.tools.VerifyStabilizers()
->>> qecc.check('X', (3, 4, 7, 8))
->>> qecc.check('X', (5, 6, 7, 9))
->>> qecc.check('Z', (2, 4, 5, 7))
->>> qecc.check('Z', (7, 8, 9))
->>> qecc.check(('Z', 'Z', 'Y'), (0, 1, 2))
->>> qecc.check(('X', 'X', 'Z', 'Y'), (0, 2, 3, 4))
->>> qecc.check(('X', 'X', 'Z', 'Y'), (1, 2, 6, 5))
+>>> qecc.check("X", (3, 4, 7, 8))
+>>> qecc.check("X", (5, 6, 7, 9))
+>>> qecc.check("Z", (2, 4, 5, 7))
+>>> qecc.check("Z", (7, 8, 9))
+>>> qecc.check(("Z", "Z", "Y"), (0, 1, 2))
+>>> qecc.check(("X", "X", "Z", "Y"), (0, 2, 3, 4))
+>>> qecc.check(("X", "X", "Z", "Y"), (1, 2, 6, 5))
 
 Here we see that the ``check`` method can be used to specify a generator. If the first argument is a string, then this
 indicates the Pauli-type of the check. The second argument then indicates which qubits the check acts on. If the first
@@ -35,7 +35,7 @@ qubits indicated in the tuple of the second argument.
 Once one has finished specifying the generators of the code, the ``compile`` method should be used:
 
 >>> # Continuing the last listing.
->>> qecc.compile()   # doctest: +SKIP
+>>> qecc.compile()  # doctest: +SKIP
 Check:
 check(('Z', 'Z', 'Y'), (0, 1, 2))
 anticommutes with:
@@ -55,13 +55,13 @@ Re-specifying the generators according to the figure above, we run ``compile`` a
 commutation problem:
 
 >>> qecc = pc.tools.VerifyStabilizers()
->>> qecc.check('X', (3, 4, 7, 8))
->>> qecc.check('X', (5, 6, 7, 9))
->>> qecc.check('Z', (2, 4, 5, 7))
->>> qecc.check('Z', (7, 8, 9))
->>> qecc.check(('Z', 'Z', 'Z'), (0, 1, 2))
->>> qecc.check(('X', 'X', 'Z', 'Y'), (0, 2, 3, 4))
->>> qecc.check(('X', 'X', 'Z', 'Y'), (1, 2, 6, 5))
+>>> qecc.check("X", (3, 4, 7, 8))
+>>> qecc.check("X", (5, 6, 7, 9))
+>>> qecc.check("Z", (2, 4, 5, 7))
+>>> qecc.check("Z", (7, 8, 9))
+>>> qecc.check(("Z", "Z", "Z"), (0, 1, 2))
+>>> qecc.check(("X", "X", "Z", "Y"), (0, 2, 3, 4))
+>>> qecc.check(("X", "X", "Z", "Y"), (1, 2, 6, 5))
 >>> qecc.compile()
 
 It is possible that we have specified a set of generators with redundant elements. That is, some of the generators can
@@ -155,16 +155,16 @@ Evaluating the distance of this new version of the code:
 .. code-block:: python
 
    >>> qecc = pc.tools.VerifyStabilizers()
-   >>> qecc.check('Z', (2, 4, 5, 7))
+   >>> qecc.check("Z", (2, 4, 5, 7))
    >>> # qecc.check('Z', (7, 8, 9))
-   >>> qecc.check('X', (3, 4, 7, 8))
-   >>> qecc.check('X', (5, 6, 7, 9))
-   >>> qecc.check(('X', 'X', 'Z', 'Y'), (0, 2, 3, 4))
-   >>> qecc.check(('X', 'X', 'Z', 'Y'), (1, 2, 6, 5))
-   >>> qecc.check('Z', (0, 1, 2))
-   >>> qecc.check('X', (0, 1))
-   >>> qecc.check('Z', (3, 8))
-   >>> qecc.check('Z', (6, 9))
+   >>> qecc.check("X", (3, 4, 7, 8))
+   >>> qecc.check("X", (5, 6, 7, 9))
+   >>> qecc.check(("X", "X", "Z", "Y"), (0, 2, 3, 4))
+   >>> qecc.check(("X", "X", "Z", "Y"), (1, 2, 6, 5))
+   >>> qecc.check("Z", (0, 1, 2))
+   >>> qecc.check("X", (0, 1))
+   >>> qecc.check("Z", (3, 8))
+   >>> qecc.check("Z", (6, 9))
    >>> qecc.compile()
    >>> qecc.generators()
    Number of data qubits: 10

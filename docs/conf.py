@@ -36,7 +36,8 @@ from pecos import __version__
 
 project = "PECOS"
 copyright = (
-    "2018-2023 The PECOS Developers. Copyright 2018 National Technology & Engineering Solutions of Sandia, LLC (NTESS)"
+    "2018-2023, The PECOS Developers",
+    "2018, National Technology & Engineering Solutions of Sandia, LLC (NTESS)",
 )
 author = "The PECOS Developers"
 
@@ -103,6 +104,7 @@ pygments_style = "sphinx"
 # a list of builtin themes.
 #
 html_theme = "sphinx_rtd_theme"
+# html_theme = "pydata_sphinx_theme"
 
 html_theme_options = {
     "logo_only": True,

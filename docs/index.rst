@@ -25,10 +25,10 @@ Make this Documentation
 
 To build this documentation go to the ``docs`` folder and run:
 
-.. code-block:: python
+.. code-block:: console
 
-   >>> make clean
-   >>> make html
+   $ make clean
+   $ make html
 
 What's Next?
 ------------

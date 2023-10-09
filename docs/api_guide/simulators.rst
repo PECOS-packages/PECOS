@@ -27,7 +27,7 @@ The only other method expected is the ``run_gate`` method. This method can be us
 instance by using the ``run_gate`` method:
 
 >>> # Continuing from the previous code block.
->>> state.run_gate('X', {0, 1})
+>>> state.run_gate("X", {0, 1})
 {}
 
 Here the first argument is a gate symbol that is recognized by the ``simulator`` and the second argument is a set of
@@ -38,7 +38,7 @@ be used to change the behavior of the gate. For example, arguments could be used
 If measurements are made then a dictionary indicating the measurement results is returned by ``run_gate``:
 
 >>> # Continuing from the previous code block.
->>> state.run_gate('measure Z', {0, 1, 3})
+>>> state.run_gate("measure Z", {0, 1, 3})
 {0: 1, 1: 1}
 
 Here we see that the keys of the results dictionary are the qudit locations of the measurements, and the values are the
@@ -55,9 +55,9 @@ Methods that specific to ``StabSim`` will now be described.
 The ``print_stabs`` method prints a stabilizer table corresponding to the state currently store in the simulator:
 
 >>> state = StabSim(3)
->>> state.run_gate('CNOT', {(0, 1)})
+>>> state.run_gate("CNOT", {(0, 1)})
 {}
->>> state.run_gate('X', {0})
+>>> state.run_gate("X", {0})
 {}
 >>> state.print_stabs(print_destabs=True)
  -ZII
@@ -81,10 +81,10 @@ in Monte Carlo simulations to determine if logical errors have flipped the sign 
 
 >>> # Continuing with the following example:
 >>> from pecos.circuits import QuantumCircuit
->>> stab = QuantumCircuit([{'Z': {0, 1}}])
+>>> stab = QuantumCircuit([{"Z": {0, 1}}])
 >>> state.logical_sign(stab)
 1
->>> stab = QuantumCircuit([{'Z': {2}}])
+>>> stab = QuantumCircuit([{"Z": {2}}])
 >>> state.logical_sign(stab)
 0
 

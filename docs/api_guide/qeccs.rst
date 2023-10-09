@@ -66,7 +66,7 @@ is identified by a symbol (string). Using this symbol, the ``gate`` method of a 
 instance of a corresponding ``LogicalGate`` instance:
 
 >>> surface = pc.qeccs.Surface4444(distance=3)
->>> identity = surface.gate('I')
+>>> identity = surface.gate("I")
 
 In the above code, the symbol ``'I'`` is used to retrieve a logical gate corresponding to identity (syndrome
 extraction).
@@ -75,7 +75,7 @@ Keyword arguments may be used to modify ``LogicalGates``:
 
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> # Get an identity gate with only one round of syndrome extraction.
->>> identity = surface.gate('I', num_syn_extract=1)
+>>> identity = surface.gate("I", num_syn_extract=1)
 
 Here the keyword argument ``num_syn_extract`` is used to explicitly request an identity with only one round of syndrome
 extraction. Typically, the number of rounds of syndrome extraction for an identity gate is equal to the QECC's distance.
@@ -95,11 +95,11 @@ Like ``LogicalGates``, ``LogicalInstructions`` are represented by symbols (strin
 ``LogicalGate``:
 
 >>> surface = pc.qeccs.Surface4444(distance=3)
->>> identity = surface.gate('I')
+>>> identity = surface.gate("I")
 >>> identity.instr_symbols
 ['instr_syn_extract', 'instr_syn_extract', 'instr_syn_extract']
 >>> # Request an identity with a single round of syndrome extraction.
->>> identity = surface.gate('I', num_syn_extract=1)
+>>> identity = surface.gate("I", num_syn_extract=1)
 >>> identity.instr_symbols
 ['instr_syn_extract']
 
@@ -108,7 +108,7 @@ In the following, we see how to retrieve an instance of the ``'instr_syn_extract
 
 >>> surface = pc.qeccs.SurfaceMedial4444(distance=3)
 >>> # Get the LogicalInstruction instance representing the syndrome-extraction instruction.
->>> instr = surface.instruction('instr_syn_extract')
+>>> instr = surface.instruction("instr_syn_extract")
 >>> instr.circuit
 QuantumCircuit([{'init |0>': {0, 16, 4, 5, 6, 10, 11, 12}}, {'H': {0, 16, 11, 5}}, {'CNOT': {(15, 12), (11, 14),(8, 6), (5, 7), (13, 10), (0, 2)}}, {'CNOT': {(9, 12), (2, 6), (7, 10), (11, 15), (0, 3), (5, 8)}}, {'CNOT': {(7, 4), (16, 13), (14, 10), (11, 8), (5, 1), (9, 6)}}, {'CNOT': {(3, 6), (16, 14), (11, 9), (5, 2), (8, 10), (1, 4)}}, {'H': {0, 16, 11, 5}}, {'measure Z': {0, 16, 4, 5, 6, 10, 11, 12}}])
 
@@ -121,7 +121,7 @@ object. These plots can be useful in understanding the structure of a QECC and i
 The following is an example of using the ``plot`` method for a ``qecc``:
 
 >>> surface = pc.qeccs.SurfaceMedial4444(distance=3)
->>> surface.plot()   # doctest: +SKIP
+>>> surface.plot()  # doctest: +SKIP
 
 This results in the plot seen in:
 
@@ -134,8 +134,8 @@ The plot of ``LogicalInstructions`` often indicates the sequence of gate operati
 syndrome extraction instruction of ``surface`` be obtained by the following lines:
 
 >>> surface = pc.qeccs.SurfaceMedial4444(distance=3)
->>> syn_extract = surface.instruction('instr_syn_extract')
->>> syn_extract.plot()   # doctest: +SKIP
+>>> syn_extract = surface.instruction("instr_syn_extract")
+>>> syn_extract.plot()  # doctest: +SKIP
 
 The resulting plot is seen in:
 

@@ -19,18 +19,18 @@ from pecos.simulators.sparsesim.cmd_one_qubit import H5, H
 from pecos.simulators.sparsesim.state import SparseSim
 
 
-def meas_x(state: SparseSim, qubit: int, *, forced_outcome: int = -1, collapse: bool = True) -> int:
+def meas_x(state: SparseSim, qubit: int, *, forced_outcome: int = -1, collapse: bool = True, **params) -> int:
     """Measurement in the X basis.
 
     Args:
-    ----
         state (SparseSim): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         forced_outcome (int):  Integer that will be outputted by the measurement if the measurement is
             non-deterministic. If equal to -1, however, the outcome will be uniformly chosen from {0, 1}.
         collapse (bool): Whether state should be collapsed.
 
-    Returns: int
+    Returns:
+        Measurement outcome (0 or 1).
 
     """
     H(state, qubit)
@@ -42,18 +42,18 @@ def meas_x(state: SparseSim, qubit: int, *, forced_outcome: int = -1, collapse: 
     return meas_outcome
 
 
-def meas_y(state: SparseSim, qubit: int, *, forced_outcome: int = -1, collapse: bool = True) -> int:
+def meas_y(state: SparseSim, qubit: int, *, forced_outcome: int = -1, collapse: bool = True, **params) -> int:
     """Measurement in the Y basis.
 
     Args:
-    ----
         state (SparseSim): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         forced_outcome (int):  Integer that will be outputted by the measurement if the measurement is
             non-deterministic. If equal to -1, however, the outcome will be uniformly chosen from {0, 1}.
         collapse (bool): Whether to collapse the state if measurement is not already determined.
 
-    Returns: int
+    Returns:
+        Measurement outcome (0 or 1).
 
     """
     H5(state, qubit)
@@ -65,16 +65,16 @@ def meas_y(state: SparseSim, qubit: int, *, forced_outcome: int = -1, collapse: 
     return meas_outcome
 
 
-def meas_z(state: SparseSim, qubit: int, *, forced_outcome: int = -1, collapse: bool = True) -> int:
+def meas_z(state: SparseSim, qubit: int, *, forced_outcome: int = -1, collapse: bool = True, **params) -> int:
     """Args:
-    ----
         state (SparseSim): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         forced_outcome (int):  Integer that will be outputted by the measurement if the measurement is
             non-deterministic. If equal to -1, however, the outcome will be uniformly chosen from {0, 1}.
         collapse (bool): Whether to collapse the state if measurement is not already determined.
 
-    Returns: int
+    Returns:
+        Measurement outcome (0 or 1).
 
     """
     # Determine if any stabilizer gens anti-commute with the Z measurement on the qubit
@@ -132,7 +132,6 @@ def nondeterministic_meas(
     forced_outcome: int,
 ) -> int:
     """Args:
-    ----
         state (SparseSim): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
         anticom_stabs_col (Set[int]):
@@ -141,7 +140,7 @@ def nondeterministic_meas(
             non-deterministic. If equal to -1, however, the outcome will be uniformly chosen from {0, 1}.
 
     Returns:
-    -------
+        Measurement outcome (0 or 1).
 
     """
     # Removing dots
@@ -309,7 +308,8 @@ def force_output(state: SparseSim, qubit: int, forced_output: int = -1, **params
         qubit (int): Integer that indexes the qubit being acted on.
         forced_output (int): Integer that will be outputted.
 
-    Returns: int
+    Returns:
+        Measurement outcome that is force to be a particular value.
 
     """
     return forced_output

@@ -18,5 +18,5 @@ if a ``LogicalCircuit`` contains a single ``qecc`` then a gate location is not n
 
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
->>> logic.append(surface.gate('ideal init |0>'))
->>> logic.append(surface.gate('I'))
+>>> logic.append(surface.gate("ideal init |0>"))
+>>> logic.append(surface.gate("I"))

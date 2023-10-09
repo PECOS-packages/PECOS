@@ -92,8 +92,8 @@ class QuantumCircuit(MutableSequence):
         Example:
         -------
             >>> quantum_circuit = QuantumCircuit()
-            >>> quantum_circuit.append({'X': {0, 1, 5, 6}, 'Z':{7, 8, 9}})
-            >>> quantum_circuit.append('X', {0, 1, 3, 7})
+            >>> quantum_circuit.append({"X": {0, 1, 5, 6}, "Z": {7, 8, 9}})
+            >>> quantum_circuit.append("X", {0, 1, 3, 7})
 
         This then creates a new time step at the end of ``self._ticks`` and adds the gate to it.
 

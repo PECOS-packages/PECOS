@@ -1,4 +1,5 @@
 #  =========================================================================  #
+#   Copyright 2023 The PECOS Developers
 #   Copyright 2018 National Technology & Engineering Solutions of Sandia,
 #   LLC (NTESS). Under the terms of Contract DE-NA0003525 with NTESS,
 #   the U.S. Government retains certain rights in this software.
@@ -26,37 +27,37 @@
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
 import sys
+from importlib import metadata
 from pathlib import Path
 
-sys.path.insert(0, Path("../pecos/").resolve())
-sys.path.append(Path("..").resolve())
-
-from pecos import __author__, __version__
+sys.path.insert(0, str(Path("../python").resolve()))
 
 # -- Project information -----------------------------------------------------
 
 project = "PECOS"
 copyright = (
-    "2018-2023, The PECOS Developers. Copyright 2018 National Technology & Engineering Solutions of Sandia, LLC (NTESS)"
+    "2018-2023, The PECOS Developers. "
+    "\xA9 Copyright 2018, National Technology & Engineering Solutions of Sandia, LLC (NTESS)"
 )
-author = __author__
+author = "The PECOS Developers"
 
-# The short X.Y version
-version = __version__.split(".")[:2]
-version = ".".join(version)
 # The full version, including alpha/beta/rc tags
-release = __version__
+release = metadata.version("quantum-pecos")
+# The short version
+version = ".".join(release.split(".")[:3])
 
 
 # -- General configuration ---------------------------------------------------
 
 # If your documentation needs a minimal Sphinx version, state it here.
 #
-# needs_sphinx = '1.0'
+needs_sphinx = "7.1"
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
+
+# TODO: Go through these and confirm they are being used
 
 extensions = [
     "sphinx.ext.autodoc",
@@ -72,6 +73,7 @@ extensions = [
     "sphinx.ext.ifconfig",
     "sphinx.ext.extlinks",
     # 'sphinx.ext.autosectionlabel',
+    "sphinx_copybutton",
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -80,8 +82,7 @@ templates_path = ["_templates"]
 # The suffix(es) of source filenames.
 # You can specify multiple suffix as a list of string:
 #
-# source_suffix = ['.rst', '.md']
-source_suffix = ".rst"
+source_suffix = ".rst"  # ['.rst', '.md']
 
 # The encoding of source files.
 source_encoding = "utf-8-sig"
@@ -97,24 +98,50 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "sphinx", "README.md"]
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = "sphinx"
 
+# -- Extension settings  -----------------------------------------------------
+
+# Sphinx-copybutton - add copy button to code blocks
+# https://sphinx-copybutton.readthedocs.io/en/latest/index.html
+# strip the '>>>' and '...' prompt/continuation prefixes.
+copybutton_prompt_text = r">>> |\.\.\. "
+copybutton_prompt_is_regexp = True
+
 
 # -- Options for HTML output -------------------------------------------------
 
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = "sphinx_rtd_theme"
-
-html_theme_options = {
-    "logo_only": True,
-}
+# html_theme = "sphinx_rtd_theme"
+html_theme = "pydata_sphinx_theme"
 
 html_logo = "images/pecos_large_logo_white.png"
+
+github_root = "https://github.com/PECOS-packages/PECOS"
+
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
 # documentation.
 #
-# html_theme_options = {}
+html_theme_options = {
+    "logo": {
+        "image_light": "images/pecos_large_logo.png",
+        "image_dark": "images/pecos_large_logo.png",
+    },
+    "icon_links": [
+        {
+            "name": "GitHub",
+            "url": github_root,
+            "icon": "fa-brands fa-github",
+        },
+    ],
+    "navbar_end": [
+        "theme-switcher",
+        # TODO: Enable switcher: https://pydata-sphinx-theme.readthedocs.io/en/stable/user_guide/version-dropdown.html
+        # "version-switcher",
+        "navbar-icon-links",
+    ],
+}
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
@@ -159,7 +186,7 @@ latex_elements = {
 # (source start file, target name, title,
 #  author, documentclass [howto, manual, or own class]).
 latex_documents = [
-    (master_doc, "PECOS.tex", "PECOS Documentation", __author__, "manual"),
+    (master_doc, "PECOS.tex", "PECOS Documentation", author, "manual"),
 ]
 
 

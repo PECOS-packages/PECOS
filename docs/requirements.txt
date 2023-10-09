@@ -1,0 +1,8 @@
+matplotlib==3.8.0
+networkx==2.8.8
+numpy==1.26.0
+scipy==1.11.3
+
+sphinx~=7.2.4
+pydata-sphinx-theme~=0.14.1
+sphinx-copybutton==0.5.2

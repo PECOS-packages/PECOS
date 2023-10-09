@@ -18,90 +18,90 @@ One of the standard decoders used for surface codes is the minimum-weight-perfec
 decodes syndromes for a single round of error extraction:
 
 >>> import pecos as pc
->>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity')
+>>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity")
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
->>> logic.append(surface.gate('ideal init |0>'))
->>> logic.append(surface.gate('I', num_syn_extract=1))
+>>> logic.append(surface.gate("ideal init |0>"))
+>>> logic.append(surface.gate("I", num_syn_extract=1))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
 >>> decode = pc.decoders.MWPM2D(surface).decode
->>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={'p': 0.1})
->>> meas   # doctest: +SKIP
+>>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+>>> meas  # doctest: +SKIP
 {(1, 0): {7: {3: 1, 5: 1, 9: 1, 15: 1}}}
->>> err   # doctest: +SKIP
+>>> err  # doctest: +SKIP
 {(1, 0): {0: {'after': QuantumCircuit([{'Y': {4}, 'X': {10}}])}}}
->>> decode(meas)   # doctest: +SKIP
+>>> decode(meas)  # doctest: +SKIP
 QuantumCircuit([{'X': {10}, 'Y': {4}}])
 decodes syndromes for a single round of error extraction:
 
 >>> import pecos as pc
->>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity')
+>>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity")
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
->>> logic.append(surface.gate('ideal init |0>'))
->>> logic.append(surface.gate('I', num_syn_extract=1))
+>>> logic.append(surface.gate("ideal init |0>"))
+>>> logic.append(surface.gate("I", num_syn_extract=1))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
 >>> decode = pc.decoders.MWPM2D(surface).decode
->>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={'p': 0.1})
->>> meas   # doctest: +SKIP
+>>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+>>> meas  # doctest: +SKIP
 {(1, 0): {7: {3: 1, 5: 1, 9: 1, 15: 1}}}
->>> err   # doctest: +SKIP
+>>> err  # doctest: +SKIP
 {(1, 0): {0: {'after': QuantumCircuit([{'Y': {4}, 'X': {10}}])}}}
->>> decode(meas)   # doctest: +SKIP
+>>> decode(meas)  # doctest: +SKIP
 QuantumCircuit([{'X': {10}, 'Y': {4}}])
 decodes syndromes for a single round of error extraction:
 
 >>> import pecos as pc
->>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity')
+>>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity")
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
->>> logic.append(surface.gate('ideal init |0>'))
->>> logic.append(surface.gate('I', num_syn_extract=1))
+>>> logic.append(surface.gate("ideal init |0>"))
+>>> logic.append(surface.gate("I", num_syn_extract=1))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
 >>> decode = pc.decoders.MWPM2D(surface).decode
->>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={'p': 0.1})
->>> meas   # doctest: +SKIP
+>>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+>>> meas  # doctest: +SKIP
 {(1, 0): {7: {3: 1, 5: 1, 9: 1, 15: 1}}}
->>> err   # doctest: +SKIP
+>>> err  # doctest: +SKIP
 {(1, 0): {0: {'after': QuantumCircuit([{'Y': {4}, 'X': {10}}])}}}
->>> decode(meas)   # doctest: +SKIP
+>>> decode(meas)  # doctest: +SKIP
 QuantumCircuit([{'X': {10}, 'Y': {4}}])
 decodes syndromes for a single round of error extraction:
 
 >>> import pecos as pc
->>> depolar = pc.error_gens.DepolarModel(model_level='code_capacity')
+>>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity")
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
->>> logic.append(surface.gate('ideal init |0>'))
->>> logic.append(surface.gate('I', num_syn_extract=1))
+>>> logic.append(surface.gate("ideal init |0>"))
+>>> logic.append(surface.gate("I", num_syn_extract=1))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
 >>> decode = pc.decoders.MWPM2D(surface).decode
->>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={'p': 0.1})
->>> meas   # doctest: +SKIP
+>>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+>>> meas  # doctest: +SKIP
 {(1, 0): {7: {3: 1, 5: 1, 9: 1, 15: 1}}}
->>> err   # doctest: +SKIP
+>>> err  # doctest: +SKIP
 {(1, 0): {0: {'after': QuantumCircuit([{'Y': {4}, 'X': {10}}])}}}
->>> decode(meas)   # doctest: +SKIP
+>>> decode(meas)  # doctest: +SKIP
 QuantumCircuit([{'X': {10}, 'Y': {4}}])
 decodes syndromes for a single round of error extraction:
 
 >>> import pecos as pc
->>> depolar = pc.error_gens.DepolarGen(model_level='code_capacity')
+>>> depolar = pc.error_gens.DepolarGen(model_level="code_capacity")
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
->>> logic.append(surface.gate('ideal init |0>'))
->>> logic.append(surface.gate('I', num_syn_extract=1))
+>>> logic.append(surface.gate("ideal init |0>"))
+>>> logic.append(surface.gate("I", num_syn_extract=1))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
 >>> decode = pc.decoders.MWPM2D(surface).decode
->>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={'p': 0.1})
->>> meas   # doctest: +SKIP
+>>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+>>> meas  # doctest: +SKIP
 {(1, 0): {7: {3: 1, 5: 1, 9: 1, 15: 1}}}
->>> err   # doctest: +SKIP
+>>> err  # doctest: +SKIP
 {(1, 0): {0: {'after': QuantumCircuit([{'Y': {4}, 'X': {10}}])}}}
->>> decode(meas)   # doctest: +SKIP
+>>> decode(meas)  # doctest: +SKIP
 QuantumCircuit([{'X': {10}, 'Y': {4}}])

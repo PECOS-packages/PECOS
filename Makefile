@@ -1,4 +1,4 @@
-.PHONY: install dev tests lint docs clean build metadeps updatereqs
+.PHONY: install install-all dev dev-all tests lint docs clean build metadeps updatereqs
 
 install:
 	pip install .
@@ -12,6 +12,9 @@ dev:
 dev-all:
 	pip install -e .[all]
 
+uninstall:
+	pip uninstall quantum-pecos
+
 tests: install
 	pytest tests
 
@@ -19,6 +22,7 @@ lint:
 	pre-commit run --all-files
 
 docs: install
+	pip install -r ./docs/requirements.txt
 	cd docs && make clean && make html && cd -
 
 clean:
@@ -28,7 +32,7 @@ build: clean
 	python -m build --sdist --wheel -n
 
 metadeps:
-	pip install -U build pip-tools pre-commit sphinx_rtd_theme wheel
+	pip install -U build pip-tools pre-commit wheel
 
 updatereqs:
 	pip install -U pip-tools

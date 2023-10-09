@@ -1,7 +1,8 @@
 ﻿.. -*- coding: utf-8 -*-
 
-.. figure:: images/pecos_large_logo.png
-   :width: 400px
+.. image:: images/pecos_large_logo.png
+    :class: dark-light
+    :width: 400px
 
 Welcome to the PECOS Docs!
 ==========================
@@ -25,10 +26,10 @@ Make this Documentation
 
 To build this documentation go to the ``docs`` folder and run:
 
-.. code-block:: python
+.. code-block:: console
 
-   >>> make clean
-   >>> make html
+   $ make clean
+   $ make html
 
 What's Next?
 ------------

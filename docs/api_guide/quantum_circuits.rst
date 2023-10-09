@@ -131,7 +131,7 @@ is seen in the following:
 >>> qc.update({"CNOT": {(6, 7), (8, 9)}, "H": {10, 11}}, tick=0)
 >>> qc.update("X", {4, 5})
 >>> qc
-QuantumCircuit([{'X': {0, 1}, 'Z': {2, 3}, 'CNOT': {(8, 9), (6, 7)}, 'H': {10, 11}}, {'H': {0, 1}, 'X': {4, 5}}])
+QuantumCircuit([{'X': {0, 1}, 'Z': {2, 3}, 'CNOT': {(6, 7), (8, 9)}, 'H': {10, 11}}, {'H': {0, 1}, 'X': {4, 5}}])
 
 By default, ``update`` adds gates to the current last tick of the \QuantumCircuit. The ``tick`` keyword can be used to
 specify a tick. Each tick is index by an integer starting with 0.

@@ -154,12 +154,13 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             sym = expr["cop"]
             args = expr["args"]
 
-            rhs = None
-            try:
+            if sym in {"~"}:  # Unary ops
+                lhs = args[0]
+                rhs = None
+            else:
                 lhs, rhs = args
                 rhs = self.eval_expr(rhs)
-            except ValueError:
-                lhs = args[0]
+
             lhs = self.eval_expr(lhs)
             dtype = type(lhs)
 
@@ -180,8 +181,7 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             elif sym == "*":
                 return dtype(lhs * rhs)
             elif sym == "/":
-                dtype(lhs // rhs)
-                return None
+                return dtype(lhs // rhs)
             elif sym == "==":
                 return dtype(lhs == rhs)
             elif sym == "!=":

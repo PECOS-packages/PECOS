@@ -117,7 +117,6 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         op_buffer = []
 
         for op in sequence:
-            print(">>>", vars(op))
             if isinstance(op, pt.opt.QOp):
                 op_buffer.append(op)
 

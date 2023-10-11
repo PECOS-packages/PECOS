@@ -149,7 +149,7 @@ def worker_wrapper(args) -> tuple[dict, dict]:
     results = {}
     try:
         results = run(**pkwargs)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         queue.put((pid, "error", str(e)))
 
     return results, run_info

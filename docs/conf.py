@@ -1,4 +1,4 @@
-#  =========================================================================  #
+#  =========================================================================  #  # noqa: INP001
 #   Copyright 2023 The PECOS Developers
 #   Copyright 2018 National Technology & Engineering Solutions of Sandia,
 #   LLC (NTESS). Under the terms of Contract DE-NA0003525 with NTESS,

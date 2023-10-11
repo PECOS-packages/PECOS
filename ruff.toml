@@ -118,6 +118,16 @@ ignore = [
     "INP001",                       # File is part of an implicit namespace package. Add an `__init__.py` (6)
     "S101",                         # Use of `assert` detected (78)
     ]
+# TODO: comment to work on better typing
+"python/pecos/circuit_converters/**/*.py" = ["ANN"]
+"python/pecos/circuits/**/*.py" = ["ANN"]
+"python/pecos/decoders/**/*.py" = ["ANN"]
+"python/pecos/engines/**/*.py" = ["ANN"]
+"python/pecos/error_models/**/*.py" = ["ANN"]
+"python/pecos/misc/**/*.py" = ["ANN"]
+"python/pecos/qeccs/**/*.py" = ["ANN"]
+"python/pecos/simulators/**/*.py" = ["ANN"]
+"python/pecos/tools/*.py" = ["ANN"]
 
 [pycodestyle]
 max-doc-length = 120

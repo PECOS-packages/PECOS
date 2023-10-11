@@ -1,4 +1,4 @@
-.PHONY: update-pip .venv requirements install install-all dev dev-all tests lint docs doctest doctest2 clean build metadeps updatereqs
+.PHONY: .venv update-pip requirements install install-all dev dev-all tests lint docs doctest doctest2 clean build metadeps updatereqs
 
 # Try to autodetect if python3 or python is the python executable used.
 PYTHON := $(shell which python3 2>/dev/null || which python 2>/dev/null)
@@ -19,58 +19,60 @@ else
 	VENV_BIN=$(VENV)/bin
 endif
 
-update-pip:
-	$(PYTHON) -m pip install --upgrade pip
-
-.venv:  ## Set up Python virtual environment (if it doesn't already exist) and install requirements
-	[ -d $(VENV) ] || $(PYTHON) -m venv $(VENV)
+.venv:  ## Set up a new Python virtual environment and install requirements
+	rm -rf .venv/
+	$(PYTHON) -m venv $(VENV)
 	$(MAKE) requirements
+
+update-pip:  ## Update to latest pip
+	$(PYTHON) -m pip install --upgrade pip
 
 requirements: update-pip  ## Install/refresh Python project requirements
 	$(PIP) install --upgrade -r requirements.txt
 	$(PIP) install --upgrade -r docs/requirements.txt
 
-install: update-pip
+install: update-pip  ## Install PECOS
 	$(PIP) install .
 
-install-all: update-pip
+install-all: update-pip  ## Install PECOS with all optional dependencies
 	$(PIP) install .[all]
 
-dev: update-pip
+dev: update-pip  ## Install PECOS in editing mode for development
 	$(PIP) install -e .
 
-dev-all: update-pip
+dev-all: update-pip  ## Install PECOS in editing mode for development with all optional dependencies
 	$(PIP) install -e .[all]
 
-uninstall:
+uninstall:  ## Uninstall PECOS
 	$(PIP) uninstall quantum-pecos
 
-lint:
+lint:  ## Run all quality checks / linting
 	pre-commit run --all-files
 
-docs: install
+docs: install  ## Generate documentation
 	$(PIP) install -r ./docs/requirements.txt
 	cd docs && make clean && make html && cd -
 
-tests: install
+tests: install  ## Run tests
 	pytest tests
 
-doctest:
+doctest:  ## Run doctests
 	sphinx-build -b doctest ./docs ./docs/_build
 
-doctest2:
+doctest2:  ## Run doctests using pytest
 	pytest ./docs --doctest-glob=*.rst # --doctest-module
 
-clean:
-	rm -rf *.egg-info dist build docs/_build .venv/ .pytest_cache/ .ruff_cache/
+clean:  ## Clean up caches and build artifacts
+	rm -rf *.egg-info dist build docs/_build .pytest_cache/ .ruff_cache/
+	rm -r **/__pycache__
 
 build: clean
 	python -m build --sdist --wheel -n
 
-metadeps:
+metadeps:  ## Install packages used to develop/build this package
 	$(PIP) install -U build pip-tools pre-commit wheel
 
-updatereqs: update-pip
+updatereqs: update-pip  ## Autogenerate requirements
 	$(PIP) install -U pip-tools
 	rm requirements.txt
 	pip-compile --extra=tests --no-annotate --no-emit-index-url --output-file=requirements.txt --strip-extras pyproject.toml

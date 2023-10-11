@@ -24,9 +24,9 @@ def read_pickle(picklefile):
     """Read in either a file path or byte object meant to be a pickled class used to define the ccop."""
     if isinstance(picklefile, str):  # filename
         with Path.open(picklefile, "rb") as f:
-            return pickle.load(f)
+            return pickle.load(f)  # noqa: S301
     else:
-        return pickle.loads(picklefile)  # byte object
+        return pickle.loads(picklefile)  # byte object  # noqa: S301
 
 
 def get_ccop(circuit):

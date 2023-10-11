@@ -76,8 +76,8 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             self.program = self.program.to_phir_dict()
 
         if isinstance(self.program, dict):
-            assert self.program["format"] in ["PHIR/JSON", "PHIR"]
-            assert version2tuple(self.program["version"]) < (0, 2, 0)
+            assert self.program["format"] in ["PHIR/JSON", "PHIR"]  # noqa: S101
+            assert version2tuple(self.program["version"]) < (0, 2, 0)  # noqa: S101
 
         # convert to a format that will, hopefully, run faster in simulation
         if not isinstance(self.program, PyPMIR):

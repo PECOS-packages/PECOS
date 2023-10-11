@@ -35,7 +35,7 @@ def conv_expr(expr):
 
         if expr["op"] == "=":
             # op = = -> "t = a"
-            assert "b" not in expr
+            assert "b" not in expr  # noqa: S101
             left = expr["t"]
             right = expr["a"]
         else:

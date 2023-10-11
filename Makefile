@@ -13,12 +13,6 @@ ifeq ($(PYTHON),)
 endif
 	@echo Using $(PYTHON)
 
-ifeq ($(OS),Windows_NT)
-	VENV_BIN=$(VENV)/Scripts
-else
-	VENV_BIN=$(VENV)/bin
-endif
-
 .venv:  ## Set up a new Python virtual environment and install requirements
 	rm -rf .venv/
 	$(PYTHON) -m venv $(VENV)
@@ -64,9 +58,8 @@ doctest2:  ## Run doctests using pytest
 
 clean:  ## Clean up caches and build artifacts
 	rm -rf *.egg-info dist build docs/_build .pytest_cache/ .ruff_cache/
-	rm -r **/__pycache__
 
-build: clean
+build: clean  ## Build Python package for upload to pypi
 	python -m build --sdist --wheel -n
 
 metadeps:  ## Install packages used to develop/build this package

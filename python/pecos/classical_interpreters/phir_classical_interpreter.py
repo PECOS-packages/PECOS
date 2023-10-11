@@ -53,12 +53,15 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
 
         self.reset()
 
+    def _reset_env(self):
+        self.cenv = []
+        self.cid2dtype = []
+
     def reset(self):
         """Reset the state to that at initialization."""
         self.program = None
         self.foreign_obj = None
-        self.cenv = []
-        self.cid2dtype = []
+        self._reset_env()
 
     def init(self, program: str | (dict | QuantumCircuit), foreign_obj: ForeignObject | None = None) -> int:
         """Initialize the interpreter to validate the format of the program, optimize the program representation,
@@ -83,12 +86,12 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         if not isinstance(self.program, PyPMIR):
             self.program = PyPMIR.from_phir(self.program)
 
+        self.initialize_cenv()
+
         return self.program.num_qubits
 
     def shot_reinit(self):
         """Run all code needed at the beginning of each shot, e.g., resetting state."""
-        self.cenv = []
-        self.cid2dtype = []
         self.initialize_cenv()
 
     def optimize(self, machine=None, error_model=None, qsim=None):
@@ -99,13 +102,13 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         ...
 
     def initialize_cenv(self) -> None:
-        self.cenv = []
-        self.cid2dtype = []
-        for cvar in self.program.cvar_meta:
-            cvar: pt.data.CVarDefine
-            dtype = data_type_map[cvar.data_type]
-            self.cenv.append(dtype(0))
-            self.cid2dtype.append(dtype)
+        self._reset_env()
+        if self.program:
+            for cvar in self.program.cvar_meta:
+                cvar: pt.data.CVarDefine
+                dtype = data_type_map[cvar.data_type]
+                self.cenv.append(dtype(0))
+                self.cid2dtype.append(dtype)
 
     def execute(self, sequence: Sequence) -> Generator[list, Any, None]:
         """A generator that runs through and executes classical logic and yields other operations via a buffer."""
@@ -114,6 +117,7 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         op_buffer = []
 
         for op in sequence:
+            print(">>>", vars(op))
             if isinstance(op, pt.opt.QOp):
                 op_buffer.append(op)
 

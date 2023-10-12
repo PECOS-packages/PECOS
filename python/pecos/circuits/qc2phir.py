@@ -67,7 +67,7 @@ def conv_expr(expr):
     if op == "=":
         new_expr["args"] = [right]
         new_expr["returns"] = [left]
-    elif right:
+    elif right is not None:
         new_expr["args"] = [left, right]
     else:
         new_expr["args"] = [left]

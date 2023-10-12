@@ -159,9 +159,6 @@ class HybridEngine:
         -------
 
         """
-        # TODO: ErrorModel
-        # TODO: Machine: EM -> Machine (leakage/qubit loss)
-        # TODO: Leakage
         # TODO: Qubit loss
 
         if initialize:

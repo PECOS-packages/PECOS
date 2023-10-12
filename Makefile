@@ -1,6 +1,6 @@
 # A set of commands for development utilizing venv to develop, lint, test, document, and build the project.
 
-.PHONY: venv update-pip requirements install install-all dev dev-all tests lint docs doctest doctest2 clean build metadeps updatereqs
+.PHONY: requirements updatereqs metadeps install install-all docs lint tests doctest doctest2 clean venv dev-all build build-full
 
 # Try to autodetect if python3 or python is the python executable used.
 BASEPYTHON := $(shell which python3 2>/dev/null || which python 2>/dev/null)
@@ -12,43 +12,52 @@ else
 	VENV_BIN=$(VENV)/bin
 endif
 
-PYTHON := $(VENV_BIN)/python
-PIP := $(VENV_BIN)/pip
+# Requirements
+# ------------
 
-venv:  ## Set up a new Python virtual environment and install requirements
-	rm -rf .venv/
-	$(BASEPYTHON) -m venv $(VENV)
-	$(MAKE) requirements
+requirements:  ## Install/refresh Python project requirements
+	$(VENV_BIN)/python -m pip install --upgrade pip
+	$(VENV_BIN)/pip install --upgrade -r requirements.txt
+	$(VENV_BIN)/pip install --upgrade -r docs/requirements.txt
 
-update-pip:  ## Update to latest pip
-	$(PYTHON) -m pip install --upgrade pip
+updatereqs:  ## Autogenerate requirements
+	$(VENV_BIN)/python -m pip install --upgrade pip
+	$(VENV_BIN)/pip install -U pip-tools
+	rm requirements.txt
+	$(VENV_BIN)/pip-compile --extra=tests --no-annotate --no-emit-index-url --output-file=requirements.txt --strip-extras pyproject.toml
 
-requirements: update-pip  ## Install/refresh Python project requirements
-	$(PIP) install --upgrade -r requirements.txt
-	$(PIP) install --upgrade -r docs/requirements.txt
+metadeps:  ## Install packages used to develop/build this package
+	$(VENV_BIN)/python -m pip install --upgrade pip
+	$(VENV_BIN)/pip install -U build pip-tools pre-commit wheel
 
-install: update-pip  ## Install PECOS
-	$(PIP) install .
+# Installation
+# ------------
 
-install-all: update-pip  ## Install PECOS with all optional dependencies
-	$(PIP) install .[all]
+install:  ## Install PECOS
+	$(VENV_BIN)/python -m pip install --upgrade pip
+	$(VENV_BIN)/pip install .
 
-dev: update-pip  ## Install PECOS in editing mode for development
-	$(PIP) install -e .
+install-all:  ## Install PECOS with all optional dependencies
+	$(VENV_BIN)/python -m pip install --upgrade pip
+	$(VENV_BIN)/pip install .[all]
 
-dev-all: update-pip  ## Install PECOS in editing mode for development with all optional dependencies
-	$(PIP) install -e .[all]
+# Documentation
+# -------------
 
-uninstall:  ## Uninstall PECOS
-	$(PIP) uninstall quantum-pecos
+docs: install  ## Generate documentation
+	$(VENV_BIN)/python -m pip install --upgrade pip
+	$(VENV_BIN)/pip install -r ./docs/requirements.txt
+	cd docs && make clean && make html && cd -  # <<< Will run using the base env... change that make to use .venv?
+# TODO: Maybe call sphinx-build directly...
+
+# Linting / formatting
+# --------------------
 
 lint: metadeps  ## Run all quality checks / linting
 	$(VENV_BIN)/pre-commit run --all-files
 
-docs: install  ## Generate documentation
-	$(PIP) install -r ./docs/requirements.txt
-	cd docs && make clean && make html && cd -  # <<< Will run using the base env... change that make to use .venv?
-# TODO: Maybe call sphinx-build directly...
+# Testing
+# -------
 
 tests: install  ## Run tests
 	$(VENV_BIN)/pytest tests
@@ -59,16 +68,22 @@ doctest:  ## Run doctests
 doctest2:  ## Run doctests using pytest
 	$(VENV_BIN)/pytest ./docs --doctest-glob=*.rst # --doctest-module
 
+# Building / Developing
+# ---------------------
+
 clean:  ## Clean up caches and build artifacts
 	rm -rf *.egg-info dist build docs/_build .pytest_cache/ .ruff_cache/
 
-metadeps:  ## Install packages used to develop/build this package
-	$(PIP) install -U build pip-tools pre-commit wheel
+venv:  ## Build a new Python virtual environment from scratch
+	rm -rf .venv/
+	$(BASEPYTHON) -m venv $(VENV)
 
-updatereqs: update-pip  ## Autogenerate requirements
-	$(PIP) install -U pip-tools
-	rm requirements.txt
-	$(VENV_BIN)/pip-compile --extra=tests --no-annotate --no-emit-index-url --output-file=requirements.txt --strip-extras pyproject.toml
+dev-all: clean venv requirements metadeps  ## Create a development environment from scratch
+	$(VENV_BIN)/python -m pip install --upgrade pip
+	$(VENV_BIN)/pip install -e .[all]
 
-build: clean venv metadeps  ## Build Python package for upload to pypi
-	$(PYTHON) -m build --sdist --wheel -n
+build: clean venv requirements metadeps  ## Clean, create new environment, and build PECOS for pypi
+	$(VENV_BIN)/python -m build --sdist --wheel -n
+
+build-full: clean venv requirements metadeps updatereqs install-all docs lint tests doctest  ## Go through the full linting, testing, and building process
+	$(VENV_BIN)/python -m build --sdist --wheel -n

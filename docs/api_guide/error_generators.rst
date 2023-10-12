@@ -22,7 +22,7 @@ The follow section provides examples of how ``error_models`` are used in practic
 .. _DepolarModel:
 
 DepolarModel
-----------
+------------
 
 The ``DepolarModel`` class is used to represent the symmetric depolarizing channel, which is commonly studied in QEC. For
 single-qubit gates, this class is used to apply errors at probability :math:`p` from set :math:`\{X, Y, Z\}`. For

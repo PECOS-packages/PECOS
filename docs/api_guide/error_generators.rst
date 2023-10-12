@@ -3,10 +3,10 @@
 Error Generators
 ================
 
-Error models are represented by classes called "error generators" that are in the ``error_gens`` namespace. They are
+Error models are represented by classes called "error generators" that are in the ``error_models`` namespace. They are
 called upon by ``circuit_runners`` to apply noise to ideal quantum circuits.
 
-In this section I will discuss ``GatewiseGen`` and ``DepolarGen`` classes. Both represent ``stochastic error models``.
+In this section I will discuss ``GatewiseGen`` and ``DepolarModel`` classes. Both represent ``stochastic error models``.
 That is, error models that apply gates as noise according to classical probability distributions.
 
 GatewiseGen
@@ -17,45 +17,45 @@ applied to the ideal gate and the classical probability distribution for applyin
 examples of using the class are given, I have moved the discussion of the ``GatewiseGen`` class to
 :ref:`example-gate-error-models`.
 
-The follow section provides examples of how ``error_gens`` are used in practice
+The follow section provides examples of how ``error_models`` are used in practice
 
-.. _DepolarGen:
+.. _DepolarModel:
 
-DepolarGen
-----------
+DepolarModel
+------------
 
-The ``DepolarGen`` class is used to represent the symmetric depolarizing channel, which is commonly studied in QEC. For
+The ``DepolarModel`` class is used to represent the symmetric depolarizing channel, which is commonly studied in QEC. For
 single-qubit gates, this class is used to apply errors at probability :math:`p` from set :math:`\{X, Y, Z\}`. For
 two-qubit gates, errors also occur with probability :math:`p` but errors are chosen uniformally from the set
 :math:`\{I, X, Y, Z\}^{\otimes 2} \; \setminus \; I\otimes I`. Errors are always applied after ideal gates except for
 measurements. In which case, the errors are applied before.
 
-An example of creating an instance of ``DepolarGen`` is seen here:
+An example of creating an instance of ``DepolarModel`` is seen here:
 
 >>> import pecos as pc
->>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
+>>> depolar = pc.error_models.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
 
 The
 
 >>> import pecos as pc
->>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
+>>> depolar = pc.error_models.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
 
 The
 
 >>> import pecos as pc
->>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
+>>> depolar = pc.error_models.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
 
 The
 
 >>> import pecos as pc
->>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
+>>> depolar = pc.error_models.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
 
 The
 
 >>> import pecos as pc
->>> depolar = pc.error_gens.DepolarGen(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
+>>> depolar = pc.error_models.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
 
-The ``model_level`` keyword is used to specify to what set of gates the ``DepolarGen`` is applied to. If ``model_level``
+The ``model_level`` keyword is used to specify to what set of gates the ``DepolarModel`` is applied to. If ``model_level``
 is set to the value of ``'code\_capacity'``, then the error model is applied before each ``LogicalInstruction`` to each
 data qubits as if these qubits are acted on by ``'I'``. The error model is not applied to any other circuit element. If
 ``model_level`` is set to the value ``'phenomenological'``, then the error model applied to data qubits before each
@@ -72,65 +72,65 @@ measurements are errors that do not include the Pauli-basis of the initializatio
 :math:`Z` is not applied as an error to the ``'init |0>'`` operation. If the ``perp_errors`` keyword is set to
 ``False``, then there is no restriction to the errors. The default value of ``perp_errors`` is ``True``.
 
-An example of applying an error model using ``DepolarGen`` to a ``LogicalCircuit`` is seen in the following:
+An example of applying an error model using ``DepolarModel`` to a ``LogicalCircuit`` is seen in the following:
 
 
->>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity")
+>>> depolar = pc.error_models.DepolarModel(model_level="code_capacity")
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
 >>> logic.append(surface.gate("ideal init |0>"))
 >>> logic.append(surface.gate("I"))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
->>> meas, err = circ_runner.run(state, logic, error_gen=depolar, error_params={"p": 0.1})
+>>> meas, err = circ_runner.run(state, logic, error_model=depolar, error_params={"p": 0.1})
 
 Note that the keyword argument
 
 
->>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity")
+>>> depolar = pc.error_models.DepolarModel(model_level="code_capacity")
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
 >>> logic.append(surface.gate("ideal init |0>"))
 >>> logic.append(surface.gate("I"))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
->>> meas, err = circ_runner.run(state, logic, error_gen=depolar, error_params={"p": 0.1})
+>>> meas, err = circ_runner.run(state, logic, error_model=depolar, error_params={"p": 0.1})
 
 Note that the keyword argument
 
 
->>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity")
+>>> depolar = pc.error_models.DepolarModel(model_level="code_capacity")
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
 >>> logic.append(surface.gate("ideal init |0>"))
 >>> logic.append(surface.gate("I"))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
->>> meas, err = circ_runner.run(state, logic, error_gen=depolar, error_params={"p": 0.1})
+>>> meas, err = circ_runner.run(state, logic, error_model=depolar, error_params={"p": 0.1})
 
 Note that the keyword argument
 
 
->>> depolar = pc.error_gens.DepolarModel(model_level="code_capacity")
+>>> depolar = pc.error_models.DepolarModel(model_level="code_capacity")
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
 >>> logic.append(surface.gate("ideal init |0>"))
 >>> logic.append(surface.gate("I"))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
->>> meas, err = circ_runner.run(state, logic, error_gen=depolar, error_params={"p": 0.1})
+>>> meas, err = circ_runner.run(state, logic, error_model=depolar, error_params={"p": 0.1})
 
 Note that the keyword argument
 
 
->>> depolar = pc.error_gens.DepolarGen(model_level="code_capacity")
+>>> depolar = pc.error_models.DepolarModel(model_level="code_capacity")
 >>> surface = pc.qeccs.Surface4444(distance=3)
 >>> logic = pc.circuits.LogicalCircuit()
 >>> logic.append(surface.gate("ideal init |0>"))
 >>> logic.append(surface.gate("I"))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
->>> meas, err = circ_runner.run(state, logic, error_gen=depolar, error_params={"p": 0.1})
+>>> meas, err = circ_runner.run(state, logic, error_model=depolar, error_params={"p": 0.1})
 
 Note that the keyword argument ``error_params`` is used to pass a dictionary that indicates the probability :math:`p` of
 the depolarizing error model.
@@ -149,7 +149,7 @@ element is the tick index of the ``LogicalGate`` and the second element is an in
 ``LogicalInstance``. That is, the tuple records at what point in the ``LogicalCircuit`` was the measurement made. The
 value of the outer dictionary is just the measurement-outcome dictionary of a ``QuantumCircuit``.
 
-We can see the errors that were generated by the ``DepolarGen`` in these lines:
+We can see the errors that were generated by the ``DepolarModel`` in these lines:
 
 >>> # Following the previous example.
 >>> err  # doctest: +SKIP

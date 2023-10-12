@@ -3,40 +3,40 @@
 Gate-wise Error Models
 ======================
 
-The ``GatewiseGen`` is an ``error_gen``  that allows users to design error models where gates can be applied according
+The ``GatewiseModel`` is an ``error_model``  that allows users to design error models where gates can be applied according
 to classical probability distributions that are specified for individual ideal gates or groups of ideal gates. To being
 we write the following:
 
 >>> import pecos as pc
->>> myerrors = pc.error_gens.GatewiseModel()
+>>> myerrors = pc.error_models.GatewiseModel()
 
 To randomly add an
 to classical probability distributions that are specified for individual ideal gates or groups of ideal gates. To being
 we write the following:
 
 >>> import pecos as pc
->>> myerrors = pc.error_gens.GatewiseModel()
+>>> myerrors = pc.error_models.GatewiseModel()
 
 To randomly add an
 to classical probability distributions that are specified for individual ideal gates or groups of ideal gates. To being
 we write the following:
 
 >>> import pecos as pc
->>> myerrors = pc.error_gens.GatewiseModel()
+>>> myerrors = pc.error_models.GatewiseModel()
 
 To randomly add an
 to classical probability distributions that are specified for individual ideal gates or groups of ideal gates. To being
 we write the following:
 
 >>> import pecos as pc
->>> myerrors = pc.error_gens.GatewiseModel()
+>>> myerrors = pc.error_models.GatewiseModel()
 
 To randomly add an
 to classical probability distributions that are specified for individual ideal gates or groups of ideal gates. To being
 we write the following:
 
 >>> import pecos as pc
->>> myerrors = pc.error_gens.GatewiseGen()
+>>> myerrors = pc.error_models.GatewiseModel()
 
 To randomly add an :math:`X` error after every Hadamard we write:
 
@@ -154,7 +154,7 @@ Note, ``set_group_error`` will override the error distribution of any gate belon
 
 The gate groups that are defined by default can be found by running:
 
->>> newerrors = pc.error_gens.GatewiseModel()
+>>> newerrors = pc.error_models.GatewiseModel()
 >>> newerrors.gate_groups  # doctest: +SKIP
 {'measurements': {'measure X', 'measure Y', 'measure Z'},
  'inits': {'init |+>', 'init |+i>', 'init |->', 'init |-i>', 'init |0>', 'init |1>'},
@@ -167,7 +167,7 @@ corresponding gate group. These gate groups (
 
 The gate groups that are defined by default can be found by running:
 
->>> newerrors = pc.error_gens.GatewiseModel()
+>>> newerrors = pc.error_models.GatewiseModel()
 >>> newerrors.gate_groups  # doctest: +SKIP
 {'measurements': {'measure X', 'measure Y', 'measure Z'},
  'inits': {'init |+>', 'init |+i>', 'init |->', 'init |-i>', 'init |0>', 'init |1>'},
@@ -180,7 +180,7 @@ corresponding gate group. These gate groups (
 
 The gate groups that are defined by default can be found by running:
 
->>> newerrors = pc.error_gens.GatewiseModel()
+>>> newerrors = pc.error_models.GatewiseModel()
 >>> newerrors.gate_groups  # doctest: +SKIP
 {'measurements': {'measure X', 'measure Y', 'measure Z'},
  'inits': {'init |+>', 'init |+i>', 'init |->', 'init |-i>', 'init |0>', 'init |1>'},
@@ -193,7 +193,7 @@ corresponding gate group. These gate groups (
 
 The gate groups that are defined by default can be found by running:
 
->>> newerrors = pc.error_gens.GatewiseModel()
+>>> newerrors = pc.error_models.GatewiseModel()
 >>> newerrors.gate_groups  # doctest: +SKIP
 {'measurements': {'measure X', 'measure Y', 'measure Z'},
  'inits': {'init |+>', 'init |+i>', 'init |->', 'init |-i>', 'init |0>', 'init |1>'},
@@ -206,7 +206,7 @@ corresponding gate group. These gate groups (
 
 The gate groups that are defined by default can be found by running:
 
->>> newerrors = pc.error_gens.GatewiseGen()
+>>> newerrors = pc.error_models.GatewiseModel()
 >>> newerrors.gate_groups  # doctest: +SKIP
 {'measurements': {'measure X', 'measure Y', 'measure Z'},
  'inits': {'init |+>', 'init |+i>', 'init |->', 'init |-i>', 'init |0>', 'init |1>'},
@@ -222,11 +222,11 @@ Example: The Symmetric Depolarizing-channel
 -------------------------------------------
 
 As an example, the circuit-level symmetric depolarizing-channel is modeled by ``DepolarGen`` as discussed in
-:ref:`this page <DepolarGen>`, can be represented by the ``GatewiseGen`` class as follows:
+:ref:`this page <DepolarGen>`, can be represented by the ``GatewiseModel`` class as follows:
 
 .. code-block:: python
 
-    depolar_circuit = pc.error_gens.GatewiseGen()
+    depolar_circuit = pc.error_models.GatewiseModel()
     set_gate_group("Xinit", {"init |+>", "init |->"})
     set_gate_group("Yinit", {"init |+i>", "init |-i>"})
     set_gate_group("Zinit", {"init |0>", "init |1>"})
@@ -265,7 +265,7 @@ The stochastic circuit-level amplitude-dampening channel can be described as:
 
 .. code-block:: python
 
-    amp_damp = pc.error_gens.GatewiseGen()
+    amp_damp = pc.error_models.GatewiseModel()
     amp_damp.set_group_error("inits", "init |0>")
     amp_damp.set_gate_error("measurements", "init |0>", after=False)
     amp_damp.set_group_error("one_qubits", "init |0>")

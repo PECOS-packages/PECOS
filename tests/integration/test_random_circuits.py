@@ -114,7 +114,7 @@ def generate_circuit(
     return circuit
 
 
-def run_a_circuit(num_qubits: int, state_rep, circuit, verbose: bool = False):
+def run_a_circuit(num_qubits: int, state_rep, circuit, verbose: bool = False):  # noqa: FBT001
     state = state_rep(num_qubits)
     measurements = []
     gate_dict = state.bindings

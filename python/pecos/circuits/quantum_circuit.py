@@ -333,7 +333,7 @@ class QuantumCircuit(MutableSequence):
         """Create a shallow copy."""
         newone = QuantumCircuit()
         newone.metadata = dict(self.metadata)
-        newone._ticks = self._ticks_class(self._ticks)
+        newone._ticks = self._ticks_class(self._ticks)  # noqa: SLF001
 
         return newone
 

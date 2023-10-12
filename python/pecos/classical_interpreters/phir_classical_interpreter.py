@@ -79,8 +79,8 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             self.program = self.program.to_phir_dict()
 
         if isinstance(self.program, dict):
-            assert self.program["format"] in ["PHIR/JSON", "PHIR"]
-            assert version2tuple(self.program["version"]) < (0, 2, 0)
+            assert self.program["format"] in ["PHIR/JSON", "PHIR"]  # noqa: S101
+            assert version2tuple(self.program["version"]) < (0, 2, 0)  # noqa: S101
 
         # convert to a format that will, hopefully, run faster in simulation
         if not isinstance(self.program, PyPMIR):
@@ -157,12 +157,13 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             sym = expr["cop"]
             args = expr["args"]
 
-            rhs = None
-            try:
+            if sym in {"~"}:  # Unary ops
+                lhs = args[0]
+                rhs = None
+            else:
                 lhs, rhs = args
                 rhs = self.eval_expr(rhs)
-            except ValueError:
-                lhs = args[0]
+
             lhs = self.eval_expr(lhs)
             dtype = type(lhs)
 
@@ -183,8 +184,7 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             elif sym == "*":
                 return dtype(lhs * rhs)
             elif sym == "/":
-                dtype(lhs // rhs)
-                return None
+                return dtype(lhs // rhs)
             elif sym == "==":
                 return dtype(lhs == rhs)
             elif sym == "!=":

@@ -28,7 +28,12 @@ def main():
     for d in cython_dirs:
         path = Path(current_location / d)
 
-        p = subprocess.Popen("python setup.py build_ext --inplace", shell=True, cwd=path, stderr=subprocess.PIPE)
+        p = subprocess.Popen(
+            "python setup.py build_ext --inplace",  # noqa: S607
+            shell=True,  # noqa: S602
+            cwd=path,
+            stderr=subprocess.PIPE,
+        )
         p.wait()
         _, error = p.communicate()
 

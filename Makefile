@@ -3,7 +3,7 @@
 
 .DEFAULT_GOAL := help
 
-.PHONY: requirements updatereqs metadeps install install-all docs lint tests doctests tests-all clean venv dev-all build build-full help
+.PHONY: requirements updatereqs metadeps install install-all docs lint tests tests-dep doctests tests-all clean venv dev-all build build-full help
 
 # Try to autodetect if python3 or python is the python executable used.
 BASEPYTHON := $(shell which python3 2>/dev/null || which python 2>/dev/null)
@@ -55,13 +55,16 @@ lint: metadeps  ## Run all quality checks / linting / reformatting
 # Testing
 # -------
 
-tests: install  ## Run tests on the Python package
-	$(VENV_BIN)/pytest tests
+tests: install  ## Run tests on the Python package (not including optional dependencies)
+	$(VENV_BIN)/pytest tests -m "not optional_dependency"
+
+tests-dep: install  ## Run tests on the Python package only for optional dependencies
+	$(VENV_BIN)/pytest tests -m optional_dependency
 
 doctests:  ## Run doctests with pytest
 	$(VENV_BIN)/pytest ./docs --doctest-glob=*.rst --doctest-continue-on-failure
 
-tests-all: tests doctests  ## Run all tests
+tests-all: tests tests-dep doctests  ## Run all tests
 
 # Building / Developing
 # ---------------------

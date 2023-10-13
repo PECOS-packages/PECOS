@@ -29,14 +29,11 @@ class WasmerObj(ForeignObject):
     For more info on using Wasmer, see: https://wasmerio.github.io/wasmer-python/api/wasmer/wasmer.html
     """
 
-    def __init__(self, file: str | bytes, compiler: object | None = None) -> None:
+    def __init__(self, file: str | bytes | Path, compiler: object | None = None) -> None:
         self.compiler = compiler
 
-        if isinstance(file, str):
-            file = Path(file)
-            print("f2>>", file)
-            print("f3>>", file.resolve())
-            with Path.open(file.resolve(), "rb") as f:
+        if isinstance(file, (str, Path)):
+            with Path.open(Path(file), "rb") as f:
                 wasm_bytes = f.read()
         else:
             wasm_bytes = file

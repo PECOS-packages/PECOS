@@ -33,7 +33,10 @@ class WasmerObj(ForeignObject):
         self.compiler = compiler
 
         if isinstance(file, str):
-            with Path.open(file, "rb") as f:
+            file = Path(file)
+            print("f2>>", file)
+            print("f3>>", file.resolve())
+            with Path.open(file.resolve(), "rb") as f:
                 wasm_bytes = f.read()
         else:
             wasm_bytes = file

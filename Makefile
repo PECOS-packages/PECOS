@@ -1,5 +1,5 @@
 # A set of commands for development utilizing venv to develop, lint, test, document, and build the project.
-# The goal is to concretely capture the development/build process for reproducibility of the workflow.
+# The goal is to concretely capture the development/build process for reproducibility of the development workflow.
 
 .DEFAULT_GOAL := help
 
@@ -64,7 +64,7 @@ tests-dep: install  ## Run tests on the Python package only for optional depende
 doctests:  ## Run doctests with pytest
 	$(VENV_BIN)/pytest ./docs --doctest-glob=*.rst --doctest-continue-on-failure
 
-tests-all: tests tests-dep doctests  ## Run all tests
+tests-all: tests tests-dep doctests tests-allslow ## Run all tests
 
 # Building / Developing
 # ---------------------

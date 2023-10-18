@@ -1,6 +1,9 @@
 # A set of commands for development utilizing venv to develop, lint, test, document, and build the project.
+# The goal is to concretely capture the development/build process for reproducibility of the development workflow.
 
-.PHONY: requirements updatereqs metadeps install install-all docs lint tests doctest doctest2 clean venv dev-all build build-full
+.DEFAULT_GOAL := help
+
+.PHONY: requirements updatereqs metadeps install install-all docs lint tests tests-dep doctests tests-all clean venv dev-all build build-full help
 
 # Try to autodetect if python3 or python is the python executable used.
 BASEPYTHON := $(shell which python3 2>/dev/null || which python 2>/dev/null)
@@ -15,75 +18,85 @@ endif
 # Requirements
 # ------------
 
-requirements:  ## Install/refresh Python project requirements
-	$(VENV_BIN)/python -m pip install --upgrade pip
+requirements: upgrade-pip  ## Install/refresh Python project requirements
 	$(VENV_BIN)/pip install --upgrade -r requirements.txt
 	$(VENV_BIN)/pip install --upgrade -r docs/requirements.txt
 
-updatereqs:  ## Autogenerate requirements
-	$(VENV_BIN)/python -m pip install --upgrade pip
+updatereqs: upgrade-pip  ## Autogenerate requirements.txt
 	$(VENV_BIN)/pip install -U pip-tools
-	rm requirements.txt
+	-@rm requirements.txt
 	$(VENV_BIN)/pip-compile --extra=tests --no-annotate --no-emit-index-url --output-file=requirements.txt --strip-extras pyproject.toml
 
-metadeps:  ## Install packages used to develop/build this package
-	$(VENV_BIN)/python -m pip install --upgrade pip
+metadeps: upgrade-pip  ## Install extra dependencies used to develop/build this package
 	$(VENV_BIN)/pip install -U build pip-tools pre-commit wheel
 
 # Installation
 # ------------
 
-install:  ## Install PECOS
-	$(VENV_BIN)/python -m pip install --upgrade pip
+install: upgrade-pip  ## Install PECOS
 	$(VENV_BIN)/pip install .
 
-install-all:  ## Install PECOS with all optional dependencies
-	$(VENV_BIN)/python -m pip install --upgrade pip
+install-all: upgrade-pip  ## Install PECOS with all optional dependencies
 	$(VENV_BIN)/pip install .[all]
 
 # Documentation
 # -------------
 
 docs: install  ## Generate documentation
-	$(VENV_BIN)/python -m pip install --upgrade pip
 	$(VENV_BIN)/pip install -r ./docs/requirements.txt
-	cd docs && make clean && make html && cd -  # <<< Will run using the base env... change that make to use .venv?
-# TODO: Maybe call sphinx-build directly...
+	$(MAKE) -C docs SPHINXBUILD=../$(VENV_BIN)/sphinx-build clean html
 
 # Linting / formatting
 # --------------------
 
-lint: metadeps  ## Run all quality checks / linting
+lint: metadeps  ## Run all quality checks / linting / reformatting
 	$(VENV_BIN)/pre-commit run --all-files
 
 # Testing
 # -------
 
-tests: install  ## Run tests
-	$(VENV_BIN)/pytest tests
+tests: venv install metadeps  ## Run tests on the Python package (not including optional dependencies)
+	$(VENV_BIN)/pytest tests -m "not optional_dependency"
 
-doctest:  ## Run doctests
-	$(VENV_BIN)/sphinx-build -b doctest ./docs ./docs/_build
+tests-dep: venv install-all metadeps ## Run tests on the Python package only for optional dependencies
+	$(VENV_BIN)/pytest tests -m optional_dependency
 
-doctest2:  ## Run doctests using pytest
-	$(VENV_BIN)/pytest ./docs --doctest-glob=*.rst # --doctest-module
+doctests:  ## Run doctests with pytest
+	$(VENV_BIN)/pytest ./docs --doctest-glob=*.rst --doctest-continue-on-failure
+
+tests-all: tests tests-dep doctests ## Run all tests
 
 # Building / Developing
 # ---------------------
 
 clean:  ## Clean up caches and build artifacts
-	rm -rf *.egg-info dist build docs/_build .pytest_cache/ .ruff_cache/
+	-rm -rf *.egg-info dist build docs/_build .pytest_cache/ .ruff_cache/
 
 venv:  ## Build a new Python virtual environment from scratch
-	rm -rf .venv/
+	-rm -rf .venv/
 	$(BASEPYTHON) -m venv $(VENV)
 
-dev-all: clean venv requirements metadeps  ## Create a development environment from scratch
-	$(VENV_BIN)/python -m pip install --upgrade pip
+dev-all: dev-setup  ## Create a development environment from scratch with all optional dependencies and PECOS installed in editable mode
 	$(VENV_BIN)/pip install -e .[all]
 
-build: clean venv requirements metadeps  ## Clean, create new environment, and build PECOS for pypi
+build: dev-setup  ## Clean, create new environment, and build PECOS for pypi
 	$(VENV_BIN)/python -m build --sdist --wheel -n
 
-build-full: clean venv requirements metadeps updatereqs install-all docs lint tests doctest  ## Go through the full linting, testing, and building process
+build-full: dev-setup updatereqs install-all docs lint tests-all  ## Go through the full linting, testing, and building process
 	$(VENV_BIN)/python -m build --sdist --wheel -n
+
+# Help
+# ----
+
+help:  ## Show the help menu
+	@echo "Available make commands:"
+	@echo ""
+	@grep -E '^[a-z.A-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
+
+# Utility targets
+# ---------------
+
+upgrade-pip:
+	$(VENV_BIN)/python -m pip install --upgrade pip
+
+dev-setup: clean venv requirements metadeps

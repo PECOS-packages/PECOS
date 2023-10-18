@@ -27,10 +27,7 @@ def run_multisim(
     foreign_object: object = None,
     *,
     shots: int = 1,
-    error_params: dict | None = None,
-    machine_params: dict | None = None,
     seed: int | None = None,
-    optimize: bool = True,
     pool_size: int = 1,
     reset_engine: bool = True,
 ):
@@ -57,11 +54,8 @@ def run_multisim(
         "program": program,
         "foreign_object": foreign_object,
         "shots": shots,
-        "error_params": error_params,
-        "machine_params": machine_params,
         "seed": seed,
         "initialize": True,
-        "optimize": optimize,
     }
 
     np.random.seed(seed)

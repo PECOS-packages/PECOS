@@ -56,22 +56,22 @@ SYMMETRIC_P1_PAULI_MODEL = {p: 1 / 3 for p in one_qubit_paulis}
 class GenericErrorModel(ErrorModel):
     """Parameterized error mode."""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, error_params: dict) -> None:
+        super().__init__(error_params=error_params)
         self._eparams = None
 
     def reset(self):
         """Reset error generator for another round of syndrome extraction."""
-        return GenericErrorModel()
+        return GenericErrorModel(error_params=self.error_params)
 
-    def init(self, error_params, num_qubits, machine=None):
+    def init(self, num_qubits, machine=None):
         self.machine = machine
 
-        if not error_params:
+        if not self.error_params:
             msg = "Error params not set!"
             raise Exception(msg)
 
-        self._eparams = dict(error_params)
+        self._eparams = dict(self.error_params)
         self._scale()
 
         if "p1_error_model" not in self._eparams:

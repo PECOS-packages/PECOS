@@ -13,8 +13,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.simulators.projectq.state import ProjectQSim
 from pecos.simulators.sparsesim.state import SparseSim
+
+try:
+    from pecos.simulators.projectq.state import ProjectQSim
+except ImportError:
+    ProjectQSim = None
 
 if TYPE_CHECKING:
     from pecos.reps.pypmir.op_types import QOp
@@ -33,11 +37,17 @@ class QuantumSimulator:
     def init(self, num_qubits: int):
         self.num_qubits = num_qubits
 
-        if isinstance(self.backend, str) and self.backend == "stabilizer":
-            self.state = SparseSim
+        if isinstance(self.backend, str):
+            if self.backend == "stabilizer":
+                self.state = SparseSim
+            elif self.backend == "state-vector":
+                self.state = ProjectQSim
+            else:
+                msg = f"simulator `{self.state}` not currently implemented!"
+                raise NotImplementedError(msg)
 
         if self.backend is None:
-            self.state = ProjectQSim
+            self.state = SparseSim
 
         self.state = self.state(num_qubits=num_qubits)
 

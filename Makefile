@@ -55,16 +55,16 @@ lint: metadeps  ## Run all quality checks / linting / reformatting
 # Testing
 # -------
 
-tests: install  ## Run tests on the Python package (not including optional dependencies)
+tests: venv install metadeps  ## Run tests on the Python package (not including optional dependencies)
 	$(VENV_BIN)/pytest tests -m "not optional_dependency"
 
-tests-dep: install  ## Run tests on the Python package only for optional dependencies
+tests-dep: venv install-all metadeps ## Run tests on the Python package only for optional dependencies
 	$(VENV_BIN)/pytest tests -m optional_dependency
 
 doctests:  ## Run doctests with pytest
 	$(VENV_BIN)/pytest ./docs --doctest-glob=*.rst --doctest-continue-on-failure
 
-tests-all: tests tests-dep doctests tests-allslow ## Run all tests
+tests-all: tests tests-dep doctests ## Run all tests
 
 # Building / Developing
 # ---------------------

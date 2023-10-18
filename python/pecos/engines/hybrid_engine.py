@@ -91,16 +91,14 @@ class HybridEngine:
         self,
         program: Any,
         foreign_object: ForeignObject | None = None,
-        machine_params: dict | None = None,
-        error_params: dict | None = None,
     ) -> None:
         """Get objects to initialize before potentially running many simulations."""
         self.init()
         if foreign_object is not None:
             foreign_object.init()
         num_qubits = self.cinterp.init(program, foreign_object)
-        self.machine.init(machine_params, num_qubits)
-        self.error_model.init(error_params, num_qubits, self.machine)
+        self.machine.init(num_qubits)
+        self.error_model.init(num_qubits, self.machine)
         self.op_processor.init()
         self.qsim.init(num_qubits)
 
@@ -134,11 +132,8 @@ class HybridEngine:
         foreign_object: ForeignObject = None,
         *,
         shots: int = 1,
-        error_params: dict | None = None,
-        machine_params: dict | None = None,
         seed: int | None = None,
         initialize: bool = True,
-        optimize: bool = True,
         return_int=False,
     ) -> dict:
         """Main method to run simulations.
@@ -148,11 +143,8 @@ class HybridEngine:
             program:
             foreign_object:
             shots:
-            error_params:
-            machine_params:
             seed:
             initialize:
-            optimize:
             return_int:
 
         Returns:
@@ -163,11 +155,7 @@ class HybridEngine:
 
         if initialize:
             self.seed = self.use_seed(seed)
-            self.initialize_sim_components(program, foreign_object, machine_params, error_params)
-
-        if optimize:
-            # Potentially, optimize program for running simulations
-            self.cinterp.optimize(self.op_processor, self.qsim)
+            self.initialize_sim_components(program, foreign_object)
 
         for _ in range(shots):
             self.shot_reinit_components()
@@ -193,8 +181,6 @@ class HybridEngine:
         program,
         foreign_object: ForeignObject = None,
         shots: int = 1,
-        error_params: dict | None = None,
-        machine_params: dict | None = None,
         seed: int | None = None,
         pool_size: int = 1,
     ) -> dict:
@@ -204,8 +190,6 @@ class HybridEngine:
             program=program,
             foreign_object=foreign_object,
             shots=shots,
-            error_params=error_params,
-            machine_params=machine_params,
             seed=seed,
             pool_size=pool_size,
         )

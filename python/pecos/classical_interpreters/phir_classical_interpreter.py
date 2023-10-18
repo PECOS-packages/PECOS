@@ -111,13 +111,6 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         """Run all code needed at the beginning of each shot, e.g., resetting state."""
         self.initialize_cenv()
 
-    def optimize(self, machine=None, error_model=None, qsim=None):
-        """Engine provides an opportunity for the classical interpreter to optimize program after the other components
-        have initialized. This allows the interpreter to optimize utilizing knowledge and methods provided by other
-        simulation components.
-        """
-        ...
-
     def initialize_cenv(self) -> None:
         self._reset_env()
         if self.program:

@@ -48,11 +48,7 @@ def _sepc_example_noisy_wasmtime():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
 
     wasm = WasmtimeObj(str(add_wat))
-    sim = HybridEngine(error_model=GenericErrorModel())
-    sim.run(
-        program=spec_example_phir,
-        foreign_object=wasm,
-        shots=10,
+    generic_errors = GenericErrorModel(
         error_params={
             "p1": 2e-1,
             "p2": 2e-1,
@@ -65,6 +61,12 @@ def _sepc_example_noisy_wasmtime():
                 "L": 0.25,
             },
         },
+    )
+    sim = HybridEngine(error_model=generic_errors)
+    sim.run(
+        program=spec_example_phir,
+        foreign_object=wasm,
+        shots=10,
     )
 
 
@@ -87,11 +89,7 @@ def test_example1_noisy_wasmtime():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
 
     wasm = WasmtimeObj(str(add_wat))
-    sim = HybridEngine(error_model=GenericErrorModel())
-    sim.run(
-        program=example1_phir,
-        foreign_object=wasm,
-        shots=10,
+    generic_errors = GenericErrorModel(
         error_params={
             "p1": 2e-1,
             "p2": 2e-1,
@@ -104,6 +102,12 @@ def test_example1_noisy_wasmtime():
                 "L": 0.25,
             },
         },
+    )
+    sim = HybridEngine(error_model=generic_errors)
+    sim.run(
+        program=example1_phir,
+        foreign_object=wasm,
+        shots=10,
     )
 
 
@@ -126,11 +130,7 @@ def test_example1_noisy_wasmer():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
 
     wasm = WasmerObj(str(add_wat))
-    sim = HybridEngine(error_model=GenericErrorModel())
-    sim.run(
-        program=example1_phir,
-        foreign_object=wasm,
-        shots=10,
+    generic_errors = GenericErrorModel(
         error_params={
             "p1": 2e-1,
             "p2": 2e-1,
@@ -144,6 +144,12 @@ def test_example1_noisy_wasmer():
             },
         },
     )
+    sim = HybridEngine(error_model=generic_errors)
+    sim.run(
+        program=example1_phir,
+        foreign_object=wasm,
+        shots=10,
+    )
 
 
 def test_example1_no_wasm():
@@ -152,13 +158,16 @@ def test_example1_no_wasm():
     HybridEngine().run(program=example1_no_wasm_phir, shots=10)
 
 
+def test_example1_no_wasm_multisim():
+    """A random example showing that various basic aspects of PHIR is runnable by PECOS, without Wasm."""
+
+    HybridEngine().run_multisim(program=example1_no_wasm_phir, shots=10, pool_size=2)
+
+
 def test_example1_no_wasm_noisy():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, without Wasm but with noise."""
 
-    sim = HybridEngine(error_model=GenericErrorModel())
-    sim.run(
-        program=example1_no_wasm_phir,
-        shots=100,
+    generic_errors = GenericErrorModel(
         error_params={
             "p1": 2e-1,
             "p2": 2e-1,
@@ -171,4 +180,9 @@ def test_example1_no_wasm_noisy():
                 "L": 0.25,
             },
         },
+    )
+    sim = HybridEngine(error_model=generic_errors)
+    sim.run(
+        program=example1_no_wasm_phir,
+        shots=100,
     )

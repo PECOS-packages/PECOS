@@ -44,6 +44,8 @@ def test_spec_example_wasmtime():
     )
 
 
+@pytest.mark.wasmtime()
+@pytest.mark.optional_dependency()
 def test_spec_example_noisy_wasmtime():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
 

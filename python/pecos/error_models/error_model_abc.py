@@ -16,8 +16,8 @@ from abc import ABCMeta
 
 
 class ErrorModel(metaclass=ABCMeta):
-    def __init__(self) -> None:
-        self.error_params = None
+    def __init__(self, error_params: dict) -> None:
+        self.error_params = dict(error_params)
         self.machine = None
         self.num_qubits = None
 
@@ -25,9 +25,8 @@ class ErrorModel(metaclass=ABCMeta):
     def reset(self) -> None:
         """Reset state to initialization state."""
 
-    def init(self, error_params, num_qubits, machine=None):
+    def init(self, num_qubits, machine=None):
         self.machine = machine
-        self.error_params = error_params
         self.num_qubits = num_qubits
 
     @abc.abstractmethod

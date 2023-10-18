@@ -32,10 +32,6 @@ class ClassicalInterpreter(metaclass=abc.ABCMeta):
         pass
 
     @abc.abstractmethod
-    def optimize(self, machine=None, error_model=None, qsim=None) -> None:
-        pass
-
-    @abc.abstractmethod
     def shot_reinit(self) -> None:
         pass
 

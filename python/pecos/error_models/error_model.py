@@ -19,11 +19,14 @@ from pecos.error_models.error_model_abc import ErrorModel
 class NoErrorModel(ErrorModel):
     """Represents having no error model."""
 
+    def __init__(self):
+        super().__init__(error_params={})
+
     def reset(self) -> None:
         """Reset state to initialization state."""
 
-    def init(self, error_params, num_qubits, machine=None):
-        super().init(error_params, num_qubits, machine)
+    def init(self, num_qubits, machine=None):
+        super().init(num_qubits=num_qubits, machine=machine)
         if self.error_params:
             msg = "No error model is being utilized but error parameters are being provided!"
             raise Exception(msg)

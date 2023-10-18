@@ -28,9 +28,9 @@ class WasmtimeObj(ForeignObject):
     For more info on using Wasmer, see: https://wasmerio.github.io/wasmer-python/api/wasmer/wasmer.html
     """
 
-    def __init__(self, file: str | bytes) -> None:
-        if isinstance(file, str):
-            with Path.open(file, "rb") as f:
+    def __init__(self, file: str | bytes | Path) -> None:
+        if isinstance(file, (str, Path)):
+            with Path.open(Path(file), "rb") as f:
                 wasm_bytes = f.read()
         else:
             wasm_bytes = file

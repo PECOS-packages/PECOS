@@ -33,7 +33,7 @@ spec_example_phir = json.load(Path.open(this_dir / "phir/spec_example.json"))
 
 @pytest.mark.wasmtime()
 @pytest.mark.optional_dependency()
-def test_sepc_example_wasmtime():
+def test_spec_example_wasmtime():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS."""
 
     wasm = WasmtimeObj(math_wat)
@@ -44,7 +44,9 @@ def test_sepc_example_wasmtime():
     )
 
 
-def _sepc_example_noisy_wasmtime():
+@pytest.mark.wasmtime()
+@pytest.mark.optional_dependency()
+def test_spec_example_noisy_wasmtime():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
 
     wasm = WasmtimeObj(str(add_wat))

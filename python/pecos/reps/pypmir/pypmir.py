@@ -36,6 +36,7 @@ class PyPMIR:
         self.cvar_dtypes_set = set()
         self.qvar_meta = {}
         self.num_qubits = 0
+        self.foreign_func_calls = set()
 
     @classmethod
     def handle_op(cls, o: dict, p: PyPMIR) -> TypeOp:
@@ -116,11 +117,16 @@ class PyPMIR:
                     returns=o.get("returns"),
                     metadata=o.get("metadata"),
                 )
+                p.foreign_func_calls.add(o["function"])
             else:
                 instr = op.COp(name=o["cop"], args=o["args"], returns=o.get("returns"), metadata=o.get("metadata"))
 
         elif "mop" in o:
             instr = op.MOp(name=o["mop"], args=o.get("args"), returns=o.get("returns"), metadata=o.get("metadata"))
+
+        elif "//" in o:
+            # Do not include comments
+            instr = None
 
         else:
             msg = f"Instruction not recognized: {o}"
@@ -176,6 +182,7 @@ class PyPMIR:
                     p.num_qubits += data.size
             else:
                 instr = cls.handle_op(o, p)
-                p.ops.append(instr)
+                if instr:
+                    p.ops.append(instr)
 
         return p

@@ -25,6 +25,19 @@ class Op:
         self.returns = returns
         self.metadata = metadata
 
+        if returns is not None:
+            for r in returns:
+                if isinstance(r, str):
+                    pass
+                elif isinstance(r, list):
+                    sym, _id = r
+                    if not isinstance(sym, str) or not isinstance(_id, int):
+                        msg = f"Returns not of correct form of cvar (str) or cbit ([str, int]): {returns}"
+                        raise TypeError(msg)
+                else:
+                    msg = f"Returns not of correct form of cvar (str) or cbit ([str, int]): {returns}"
+                    raise TypeError(msg)
+
 
 class QOp(Op):
     """Quantum operation."""

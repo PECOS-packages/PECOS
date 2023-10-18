@@ -107,7 +107,7 @@ def generate_circuit(
         if element == "CNOT":
             q = get_qubits(num_qubits, 2)
         else:
-            q = int(get_qubits(num_qubits, 1))
+            q = int(get_qubits(num_qubits, 1)[0])
 
         circuit.append((element, q))
 

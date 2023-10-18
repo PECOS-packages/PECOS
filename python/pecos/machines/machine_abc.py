@@ -23,6 +23,8 @@ class Machine(metaclass=abc.ABCMeta):
         pos: dict | None = None,
     ) -> None:
         self.machine_params = machine_params
+        if self.machine_params is not None:
+            self.machine_params = dict(self.machine_params)
         self.num_qubits = num_qubits
         self.metadata = metadata
         self.pos = pos
@@ -32,7 +34,7 @@ class Machine(metaclass=abc.ABCMeta):
         """Reset state to initialization state."""
 
     @abc.abstractmethod
-    def init(self, machine_params: dict | None = None, num_qubits: int | None = None) -> None:
+    def init(self, num_qubits: int | None = None) -> None:
         pass
 
     @abc.abstractmethod

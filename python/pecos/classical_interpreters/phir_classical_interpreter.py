@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -86,20 +87,29 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         if not isinstance(self.program, PyPMIR):
             self.program = PyPMIR.from_phir(self.program)
 
+        self.check_ffc(self.program.foreign_func_calls, self.foreign_obj)
+
         self.initialize_cenv()
 
         return self.program.num_qubits
 
+    def check_ffc(self, call_list: list[str], fobj: ForeignObject):
+        if self.program.foreign_func_calls:
+            func_names = set(fobj.get_funcs())
+            not_supported = set(call_list) - func_names
+            if not_supported:
+                msg = (
+                    f"The following foreign function calls are listed in the program but not supported by the "
+                    f"supplied foreign object: {not_supported}"
+                )
+                raise Exception(msg)
+        elif not self.program.foreign_func_calls and self.foreign_obj:
+            msg = "No foreign function calls being made but foreign object is supplied."
+            raise warnings.warn(msg, stacklevel=2)
+
     def shot_reinit(self):
         """Run all code needed at the beginning of each shot, e.g., resetting state."""
         self.initialize_cenv()
-
-    def optimize(self, machine=None, error_model=None, qsim=None):
-        """Engine provides an opportunity for the classical interpreter to optimize program after the other components
-        have initialized. This allows the interpreter to optimize utilizing knowledge and methods provided by other
-        simulation components.
-        """
-        ...
 
     def initialize_cenv(self) -> None:
         self._reset_env()
@@ -112,7 +122,6 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
 
     def execute(self, sequence: Sequence) -> Generator[list, Any, None]:
         """A generator that runs through and executes classical logic and yields other operations via a buffer."""
-        # TODO: Recursively move through the program
 
         op_buffer = []
 
@@ -134,7 +143,8 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
                 op_buffer.append(op)
 
             else:
-                print("!!!!!!!!!!!!!!", op)
+                msg = f"Statement not recognized: {op}"
+                raise TypeError(msg)
 
     def get_cval(self, cvar):
         cid = self.program.csym2id[cvar]
@@ -241,8 +251,11 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
 
                 args.append(int(val))
 
-            if "namespace" in op.metadata:
+            if op.metadata and "namespace" in op.metadata:
                 results = self.foreign_obj.exec(op.name, args, op.metadata["namespace"])
+            elif self.foreign_obj is None:
+                msg = f"Trying to call foreign function `{op.name}` but no foreign object supplied!"
+                raise Exception(msg)
             else:
                 results = self.foreign_obj.exec(op.name, args)
 

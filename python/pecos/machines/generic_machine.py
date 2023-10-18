@@ -17,15 +17,14 @@ from pecos.machines.machine_abc import Machine
 from pecos.reps.pypmir.op_types import QOp
 
 if TYPE_CHECKING:
-    from pecos.error_models.error_model_abc import ErrorModel
     from pecos.reps.pypmir.op_types import MOp
 
 
 class GenericMachine(Machine):
     """Represents generic, abstract machine."""
 
-    def __init__(self, error_model: ErrorModel | None = None, num_qubits: int | None = None) -> None:
-        super().__init__(error_model, num_qubits)
+    def __init__(self, num_qubits: int | None = None) -> None:
+        super().__init__(num_qubits=num_qubits)
         self.leaked_qubits = None
         self.lost_qubits = None
 
@@ -34,10 +33,7 @@ class GenericMachine(Machine):
         self.leaked_qubits = set()
         self.lost_qubits = set()
 
-    def init(self, machine_params: dict | None = None, num_qubits: int | None = None) -> None:
-        if machine_params:
-            self.machine_params = machine_params
-
+    def init(self, num_qubits: int | None = None) -> None:
         self.num_qubits = num_qubits
 
     def shot_reinit(self) -> None:

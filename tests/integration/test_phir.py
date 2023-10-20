@@ -1,7 +1,11 @@
 import json
+import platform
+import sys
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import pytest
+from packaging.version import parse
 from pecos.engines.hybrid_engine import HybridEngine
 from pecos.error_models.generic_error_model import GenericErrorModel
 
@@ -29,6 +33,18 @@ spec_example_phir = json.load(Path.open(this_dir / "phir/spec_example.json"))
 # Select which marked tests to run by using the mark flag. See: https://docs.pytest.org/en/7.1.x/example/markers.html
 # run only optional_dependency tests: pytest -v -m optional_dependency
 # run all without optional_dependency tests: pytest -v -m "not optional_dependency"
+
+
+def is_wasmer_supported():
+    try:
+        wasmer_version = version("wasmer")
+    except PackageNotFoundError:
+        wasmer_version = None
+
+    if sys.version_info[:2] == (3, 12) and platform.system() == "Windows":
+        if parse(wasmer_version) < parse("1.2"):
+            return False
+    return True
 
 
 @pytest.mark.wasmtime()
@@ -113,6 +129,7 @@ def test_example1_noisy_wasmtime():
     )
 
 
+@pytest.mark.skipif(not is_wasmer_supported(), reason="Wasmer is not support on some OS/Python version combinations.")
 @pytest.mark.wasmer()
 @pytest.mark.optional_dependency()
 def test_example1_wasmer():
@@ -126,6 +143,7 @@ def test_example1_wasmer():
     )
 
 
+@pytest.mark.skipif(not is_wasmer_supported(), reason="Wasmer is not support on some OS/Python version combinations.")
 @pytest.mark.wasmer()
 @pytest.mark.optional_dependency()
 def test_example1_noisy_wasmer():

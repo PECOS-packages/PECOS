@@ -41,6 +41,9 @@ def is_wasmer_supported():
     except PackageNotFoundError:
         wasmer_version = None
 
+    if wasmer_version is None:
+        return False
+
     if parse(wasmer_version) < parse("1.2") and sys.version_info[:2] >= (3, 11):
         return False
 

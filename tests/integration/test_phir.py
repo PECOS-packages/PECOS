@@ -1,10 +1,7 @@
 import json
-import sys
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import pytest
-from packaging.version import parse
 from pecos.engines.hybrid_engine import HybridEngine
 from pecos.error_models.generic_error_model import GenericErrorModel
 
@@ -15,8 +12,11 @@ except ImportError:
 
 try:
     from pecos.foreign_objects.wasmer import WasmerObj
-except ImportError:
+
+    WASMER_ERR_MSG = None
+except ImportError as e:
     WasmerObj = None
+    WASMER_ERR_MSG = str(e)
 
 # tools for converting wasm to wat: https://github.com/WebAssembly/wabt/releases/tag/1.0.33
 
@@ -36,15 +36,8 @@ spec_example_phir = json.load(Path.open(this_dir / "phir/spec_example.json"))
 
 def is_wasmer_supported():
     """A check on whether Wasmer is known to support OS/Python versions."""
-    try:
-        wasmer_version = version("wasmer")
-    except PackageNotFoundError:
-        wasmer_version = None
 
-    if wasmer_version is None:
-        return False
-
-    if parse(wasmer_version) < parse("1.2") and sys.version_info[:2] >= (3, 11):
+    if WASMER_ERR_MSG == "Wasmer is not available on this system":
         return False
 
     return True

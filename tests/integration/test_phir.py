@@ -1,5 +1,4 @@
 import json
-import platform
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -36,14 +35,15 @@ spec_example_phir = json.load(Path.open(this_dir / "phir/spec_example.json"))
 
 
 def is_wasmer_supported():
+    """A check on whether Wasmer is known to support OS/Python versions."""
     try:
         wasmer_version = version("wasmer")
     except PackageNotFoundError:
         wasmer_version = None
 
-    if sys.version_info[:2] == (3, 12) and platform.system() == "Windows":
-        if parse(wasmer_version) < parse("1.2"):
-            return False
+    if parse(wasmer_version) < parse("1.2") and sys.version_info[:2] >= (3, 11):
+        return False
+
     return True
 
 

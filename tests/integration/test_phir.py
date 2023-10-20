@@ -40,7 +40,7 @@ def test_spec_example_wasmtime():
     HybridEngine().run(
         program=spec_example_phir,
         foreign_object=wasm,
-        shots=10,
+        shots=1000,
     )
 
 
@@ -49,7 +49,7 @@ def test_spec_example_wasmtime():
 def test_spec_example_noisy_wasmtime():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
 
-    wasm = WasmtimeObj(str(add_wat))
+    wasm = WasmtimeObj(str(math_wat))
     generic_errors = GenericErrorModel(
         error_params={
             "p1": 2e-1,
@@ -68,7 +68,7 @@ def test_spec_example_noisy_wasmtime():
     sim.run(
         program=spec_example_phir,
         foreign_object=wasm,
-        shots=10,
+        shots=1000,
     )
 
 
@@ -81,7 +81,7 @@ def test_example1_wasmtime():
     HybridEngine().run(
         program=example1_phir,
         foreign_object=wasm,
-        shots=10,
+        shots=1000,
     )
 
 
@@ -109,7 +109,7 @@ def test_example1_noisy_wasmtime():
     sim.run(
         program=example1_phir,
         foreign_object=wasm,
-        shots=10,
+        shots=1000,
     )
 
 
@@ -122,7 +122,7 @@ def test_example1_wasmer():
     HybridEngine().run(
         program=example1_phir,
         foreign_object=wasm,
-        shots=10,
+        shots=1000,
     )
 
 
@@ -150,20 +150,20 @@ def test_example1_noisy_wasmer():
     sim.run(
         program=example1_phir,
         foreign_object=wasm,
-        shots=10,
+        shots=1000,
     )
 
 
 def test_example1_no_wasm():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, without Wasm."""
 
-    HybridEngine().run(program=example1_no_wasm_phir, shots=10)
+    HybridEngine().run(program=example1_no_wasm_phir, shots=1000)
 
 
 def test_example1_no_wasm_multisim():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, without Wasm."""
 
-    HybridEngine().run_multisim(program=example1_no_wasm_phir, shots=10, pool_size=2)
+    HybridEngine().run_multisim(program=example1_no_wasm_phir, shots=1000, pool_size=2)
 
 
 def test_example1_no_wasm_noisy():
@@ -186,5 +186,5 @@ def test_example1_no_wasm_noisy():
     sim = HybridEngine(error_model=generic_errors)
     sim.run(
         program=example1_no_wasm_phir,
-        shots=100,
+        shots=1000,
     )

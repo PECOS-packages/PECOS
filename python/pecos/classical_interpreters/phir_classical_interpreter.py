@@ -259,12 +259,13 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             else:
                 results = self.foreign_obj.exec(op.name, args)
 
-            if isinstance(results, int):
-                (cvar,) = op.returns
-                self.assign_int(cvar, results)
-            else:
-                for cvar, val in zip(op.returns, results):
-                    self.assign_int(cvar, val)
+            if op.returns is not None:
+                if isinstance(results, int):
+                    (cvar,) = op.returns
+                    self.assign_int(cvar, results)
+                else:
+                    for cvar, val in zip(op.returns, results):
+                        self.assign_int(cvar, val)
 
         else:
             msg = f"Unsupported COp: {op}"

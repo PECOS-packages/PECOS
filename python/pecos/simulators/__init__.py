@@ -32,10 +32,12 @@ try:
 except ImportError:
     pass
 
-# Attempt to import optional qcgpu package
+# Attempt to import optional cuquantum and cupy packages
 try:
-    import qcgpu
+    import cuquantum
+    import cupy
 
-    from pecos.simulators._qcgpu_wrapper.state import QCQPUSim  # wrapper for qcgpu
+    from pecos.simulators.custatevec.state import CuStateVec  # wrapper for cuQuantum's cuStateVec
 except ImportError:
     pass
+

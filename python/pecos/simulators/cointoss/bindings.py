@@ -1,51 +1,52 @@
 # TODO: Include license information?
 
-from pecos.simulators.cointoss.gates import ignore_gate, measure, force_output
+from pecos.simulators.cointoss.gates import ignore_gate, measure
 
+# Supporting gates from table:
+#   https://github.com/CQCL/phir/blob/main/phir_spec_qasm.md#table-ii---quantum-operations
 gate_dict = {
-    'U1q': ignore_gate,
-    'RXY1Q': ignore_gate,
-
-    'RX': ignore_gate,
-    'RY': ignore_gate,
-    'RZ': ignore_gate,
-
-    'H': ignore_gate,
+    'Init': ignore_gate,
+    'Measure': measure,
 
     'I': ignore_gate,
     'X': ignore_gate,
     'Y': ignore_gate,
     'Z': ignore_gate,
 
-    'SqrtZZ': ignore_gate,
-    'RZZ': ignore_gate,
-    'CNOT': ignore_gate,
+    'RX': ignore_gate,
+    'RY': ignore_gate,
+    'RZ': ignore_gate,
+    'R1XY': ignore_gate,
+
+    'SX': ignore_gate,
+    'SXdg': ignore_gate,
+    'SY': ignore_gate,
+    'SYdg': ignore_gate,
+    'SZ': ignore_gate,
+    'SZdg': ignore_gate,
+
+    'H': ignore_gate,
+    'F': ignore_gate,
+    'Fdg': ignore_gate,
+
+    'T': ignore_gate,
+    'Tdg': ignore_gate,
+
     'CX': ignore_gate,
+    'CY': ignore_gate,
+    'CZ': ignore_gate,
 
-    'measure Z': measure,
-    'measure X': measure,
-    'measure Y': measure,
-    'force output': force_output,
+    'RXX': ignore_gate,
+    'RYY': ignore_gate,
+    'RZZ': ignore_gate,
+    'R2XXYYZZ': ignore_gate,
 
-    'init |0>': ignore_gate,
-    'init |1>': ignore_gate,
+    'SXX': ignore_gate,
+    'SXXdg': ignore_gate,
+    'SYY': ignore_gate,
+    'SYYdg': ignore_gate,
+    'SZZ': ignore_gate,
+    'SZZdg': ignore_gate,
 
-    'leak': ignore_gate,
-    'unleak |0>': ignore_gate,
-    'unleak |1>': ignore_gate,
-
-    # Square root of Paulis
-    'Q': ignore_gate,   # +x-y  sqrt of X
-    'Qd': ignore_gate,  # +x+y sqrt of X dagger
-    'R': ignore_gate,   # -z+x sqrt of Y
-    'Rd': ignore_gate,  # +z-x sqrt of Y dagger
-    'S': ignore_gate,   # +y+z sqrt of Z
-    'Sd': ignore_gate,  # -y+z sqrt of Z dagger
-
-    'SqrtX': ignore_gate,   # +x-y  sqrt of X
-    'SqrtXd': ignore_gate,  # +x+y sqrt of X dagger
-    'SqrtY': ignore_gate,   # -z+x sqrt of Y
-    'SqrtYd': ignore_gate,  # +z-x sqrt of Y dagger
-    'SqrtZ': ignore_gate,   # +y+z sqrt of Z
-    'SqrtZd': ignore_gate,  # -y+z sqrt of Z dagger
+    'SWAP': ignore_gate,
 }

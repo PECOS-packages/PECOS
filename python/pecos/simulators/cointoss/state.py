@@ -13,7 +13,7 @@ class CoinToss(Simulator):
 
     def __init__(self, num_qubits, prob=0.5, seed=None):
         """
-        Initializes the stabilizer state.
+        Initialization is trivial, since there is no state.
 
         Args:
             num_qubits (int): Number of qubits being represented.

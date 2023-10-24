@@ -29,20 +29,3 @@ def measure(state, qubit):
 
     """
     return 0 if random.random() < state.prob else 1
-
-
-def force_output(state, qubit, forced_output=-1):
-    """
-    Outputs value.
-
-    Used for error generators to generate outputs when replacing measurements.
-
-    Args:
-        state: An instance of ``CoinToss``.
-        qubit: The qubit the measurement is applied to.
-        forced_output: The desired output of the measurement.
-
-    Returns:
-
-    """
-    return forced_output

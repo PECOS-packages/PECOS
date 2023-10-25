@@ -13,9 +13,7 @@ GatewiseGen
 -----------
 
 The ``GatewiseGen`` class allow one to define custom stochastic error-models where for each ideal gate-type the errors
-applied to the ideal gate and the classical probability distribution for applying errors can be specified. Since many
-examples of using the class are given, I have moved the discussion of the ``GatewiseGen`` class to
-:ref:`example-gate-error-models`.
+applied to the ideal gate and the classical probability distribution for applying errors can be specified.
 
 The follow section provides examples of how ``error_models`` are used in practice
 
@@ -177,7 +175,3 @@ One use for this is to apply the same error to a different logical basis-state. 
 logical error occurs for the logical operations that stabilizer the basis state.
 
 Note that the ``circuit_runners`` can apply errors to both ``LogicalCircuits`` and ``QuantumCircuits``.
-
-.. todo::
-
-   Discuss the leakage error model when it is verified...

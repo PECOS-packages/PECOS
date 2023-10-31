@@ -19,7 +19,7 @@ except ImportError:
     custatevec_ready = False
 
 
-# TODO: Add unit tests for all gates and larger circuits
+# TODO: Add unit tests for all gates and verify correcteness of larger circuits
 
 
 def verify(simulator, qc: QuantumCircuit, final_vector: np.ndarray) -> None:
@@ -49,7 +49,9 @@ def check_measurement(simulator, qc: QuantumCircuit, final_results: dict[int,int
         final_vector = cp.zeros(shape=(2**sim.num_qubits,))
         final_vector[state] = 1
 
-        assert np.allclose(sim.vector, final_vector)
+        abs_values_vector = [abs(x) for x in sim.vector]
+
+        assert np.allclose(abs_values_vector, final_vector)
 
     else:
         pytest.skip(f"Requirements to test {simulator} are not met.")
@@ -149,3 +151,54 @@ def test_comp_basis_circ_and_measure(simulator):
     final_results = {1: 1, 3: 1}  # |0101>
 
     check_measurement(simulator, qc, final_results)
+
+
+@pytest.mark.parametrize(
+    "simulator",
+    [
+        "CuStateVec",
+    ],
+)
+def test_all_gate_circ(simulator):
+    qc = QuantumCircuit()
+
+    # Apply each gate once
+    qc.append({'Init': {0, 1, 2, 3, 4}})
+    qc.append({'SZZ': {(4, 2)}})
+    qc.append({'RX': {0, 2}}, angles=(np.pi/4,))
+    qc.append({'SXXdg': {(0, 3)}})
+    qc.append({'RY': {0, 3}}, angles=(np.pi/8,))
+    qc.append({'RZZ': {(0, 3)}}, angles=(np.pi/16,))
+    qc.append({'RZ': {1, 4}}, angles=(np.pi/16,))
+    qc.append({'R1XY': {2}}, angles=(np.pi/16, np.pi/2))
+    qc.append({'I': {0, 1, 3}})
+    qc.append({'X': {1, 2}})
+    qc.append({'Y': {3, 4}})
+    qc.append({'CY': {(2, 3)}})
+    qc.append({'SYY': {(1, 4)}})
+    qc.append({'Z': {2, 0}})
+    qc.append({'H': {3, 1}})
+    qc.append({'RYY': {(2, 1)}}, angles=(np.pi/8,))
+    qc.append({'SZZdg': {(3, 1)}})
+    qc.append({'F': {0, 2, 4}})
+    qc.append({'CX': {(0, 1)}})
+    qc.append({'Fdg': {3, 1}})
+    qc.append({'SYYdg': {(1, 3)}})
+    qc.append({'SX': {1, 2}})
+    qc.append({'R2XXYYZZ': {(0, 4)}}, angles=(np.pi/4, np.pi/16, np.pi/2))
+    qc.append({'SY': {3, 4}})
+    qc.append({'SZ': {2, 0}})
+    qc.append({'SZdg': {1, 2}})
+    qc.append({'CZ': {(1, 3)}})
+    qc.append({'SXdg': {3, 4}})
+    qc.append({'SYdg': {2, 0}})
+    qc.append({'T': {0, 2, 4}})
+    qc.append({'SXX': {(0, 2)}})
+    qc.append({'SWAP': {(4, 0)}})
+    qc.append({'Tdg': {3, 1}})
+    qc.append({'RXX': {(1, 3)}}, angles=(np.pi/4,))
+
+    # Measure
+    qc.append({'Measure': {0, 1, 2, 3, 4}})
+
+    check_measurement(simulator, qc)

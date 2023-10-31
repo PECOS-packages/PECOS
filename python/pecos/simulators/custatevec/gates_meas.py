@@ -18,12 +18,17 @@ def meas_z(state, qubit: int, **params: Any) -> int:
     Returns:
         The outcome of the measurement, either 0 or 1.
     """
+    if qubit >= state.num_qubits or qubit < 0:
+        raise ValueError(f"Qubit {qubit} out of range.")
+    # CuStateVec uses smaller qubit index as least significant
+    target = state.num_qubits - 1 - qubit
+
     return cusv.measure_on_z_basis(
         handle=state.libhandle,
         sv=state.vector.data.ptr,
         sv_data_type=state.cuda_type,
         n_index_bits=state.num_qubits,  # Number of qubits in the statevector
-        basis_bits=[qubit],  # The index of the qubit being measured
+        basis_bits=[target],  # The index of the qubit being measured
         n_basis_bits=1,  # Number of qubits being measured
         rand_num=random.random(),  # Source of randomness for the measurement
         collapse=cusv.Collapse.NORMALIZE_AND_ZERO,  # Collapse and normalise

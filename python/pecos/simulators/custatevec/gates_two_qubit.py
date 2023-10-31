@@ -19,6 +19,15 @@ def _apply_controlled_matrix(state, control: int, target: int, matrix: cp.ndarra
         target: The index of the qubit that acts as the target
         matrix: The matrix to be applied
     """
+    if control >= state.num_qubits or control < 0:
+        raise ValueError(f"Qubit {control} out of range.")
+    if target >= state.num_qubits or target < 0:
+        raise ValueError(f"Qubit {target} out of range.")
+    # CuStateVec uses smaller qubit index as least significant
+    control = state.num_qubits - 1 - control
+    target = state.num_qubits - 1 - target
+
+
     cusv.apply_matrix(
         handle=state.libhandle,
         sv=state.vector.data.ptr,
@@ -106,6 +115,14 @@ def _apply_two_qubit_matrix(state, qubits: tuple[int, int], matrix: cp.ndarray) 
         qubit: The index of the qubit where the gate is applied
         matrix: The matrix to be applied
     """
+    if qubits[0] >= state.num_qubits or qubits[0] < 0:
+        raise ValueError(f"Qubit {qubits[0]} out of range.")
+    if qubits[1] >= state.num_qubits or qubits[1] < 0:
+        raise ValueError(f"Qubit {qubits[1]} out of range.")
+    # CuStateVec uses smaller qubit index as least significant
+    q0 = state.num_qubits - 1 - qubits[0]
+    q1 = state.num_qubits - 1 - qubits[1]
+
     cusv.apply_matrix(
         handle=state.libhandle,
         sv=state.vector.data.ptr,
@@ -115,7 +132,7 @@ def _apply_two_qubit_matrix(state, qubits: tuple[int, int], matrix: cp.ndarray) 
         matrix_data_type=state.cuda_type,
         layout=cusv.MatrixLayout.ROW,
         adjoint=0,  # Don't use the adjoint
-        targets=[qubits[0], qubits[1]],
+        targets=[q0, q1],
         n_targets=2,
         controls=[],
         control_bit_values=[],  # No value of control bit assigned
@@ -293,6 +310,14 @@ def SWAP(state, qubits: tuple[int, int], **params: Any) -> None:
         state: An instance of CuStateVec
         qubits: A tuple with the index of the qubits where the gate is applied
     """
+    if qubits[0] >= state.num_qubits or qubits[0] < 0:
+        raise ValueError(f"Qubit {qubits[0]} out of range.")
+    if qubits[1] >= state.num_qubits or qubits[1] < 0:
+        raise ValueError(f"Qubit {qubits[1]} out of range.")
+    # CuStateVec uses smaller qubit index as least significant
+    q0 = state.num_qubits - 1 - qubits[0]
+    q1 = state.num_qubits - 1 - qubits[1]
+
     # Possibly faster since it may just be an internal qubit relabelling or sv reshape
     cusv.apply_generalized_permutation_matrix(
         handle=state.libhandle,
@@ -303,7 +328,7 @@ def SWAP(state, qubits: tuple[int, int], **params: Any) -> None:
         diagonals=0,  # Don't apply a diagonal gate
         diagonals_data_type=state.cuda_type,
         adjoint=0,  # Don't use the adjoint
-        targets=[qubits[0], qubits[1]],
+        targets=[q0, q1],
         n_targets=2,
         controls=[],
         control_bit_values=[],  # No value of control bit assigned

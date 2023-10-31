@@ -17,6 +17,11 @@ def _apply_one_qubit_matrix(state, qubit: int, matrix: cp.ndarray) -> None:
         qubit: The index of the qubit where the gate is applied
         matrix: The matrix to be applied
     """
+    if qubit >= state.num_qubits or qubit < 0:
+        raise ValueError(f"Qubit {qubit} out of range.")
+    # CuStateVec uses smaller qubit index as least significant
+    target = state.num_qubits - 1 - qubit
+
     cusv.apply_matrix(
         handle=state.libhandle,
         sv=state.vector.data.ptr,
@@ -26,7 +31,7 @@ def _apply_one_qubit_matrix(state, qubit: int, matrix: cp.ndarray) -> None:
         matrix_data_type=state.cuda_type,
         layout=cusv.MatrixLayout.ROW,
         adjoint=0,  # Don't use the adjoint
-        targets=[qubit],
+        targets=[target],
         n_targets=1,
         controls=[],
         control_bit_values=[],  # No value of control bit assigned

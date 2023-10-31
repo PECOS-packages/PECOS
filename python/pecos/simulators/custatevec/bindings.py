@@ -1,13 +1,14 @@
 # TODO: Include license information?
 
 from pecos.simulators.custatevec.gates_meas import meas_z
+from pecos.simulators.custatevec.gates_init import init_zero
 import pecos.simulators.custatevec.gates_one_qubit as one_q
 import pecos.simulators.custatevec.gates_two_qubit as two_q
 
 # Supporting gates from table:
 #   https://github.com/CQCL/phir/blob/main/phir_spec_qasm.md#table-ii---quantum-operations
 gate_dict = {
-#    'Init': ignore_gate,
+    'Init': init_zero,
     'Measure': meas_z,
 
     'I': one_q.I,

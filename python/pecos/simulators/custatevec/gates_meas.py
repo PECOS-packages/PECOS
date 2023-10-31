@@ -1,10 +1,11 @@
 # TODO: Include license information?
 
+from typing import Any
 import random
 
 from cuquantum import custatevec as cusv
 
-def meas_z(state, qubit) -> int:
+def meas_z(state, qubit: int, **params: Any) -> int:
     """Measure in the Z-basis, collapse and normalise.
 
     Notes:

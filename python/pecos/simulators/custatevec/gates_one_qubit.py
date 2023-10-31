@@ -1,12 +1,14 @@
 # TODO: Include license information?
 
+from typing import Any
+
+import math
+import cmath
 import cupy as cp
 
 from cuquantum import custatevec as cusv
-from cuquantum import cudaDataType
 
-
-def _apply_one_qubit_matrix(state, qubit, matrix: cp.ndarray) -> None:
+def _apply_one_qubit_matrix(state, qubit: int, matrix: cp.ndarray) -> None:
     """
     Apply the matrix to the state.
 
@@ -36,7 +38,7 @@ def _apply_one_qubit_matrix(state, qubit, matrix: cp.ndarray) -> None:
     state.stream.synchronize()
 
 
-def I(state, qubit) -> None:
+def I(state, qubit: int, **params: Any) -> None:
     """
     Identity gate.
 
@@ -47,7 +49,7 @@ def I(state, qubit) -> None:
     pass
 
 
-def X(state, qubit) -> None:
+def X(state, qubit: int, **params: Any) -> None:
     """
     Pauli X gate.
 
@@ -65,7 +67,7 @@ def X(state, qubit) -> None:
     _apply_one_qubit_matrix(state, qubit, matrix)
 
 
-def Y(state, qubit) -> None:
+def Y(state, qubit: int, **params: Any) -> None:
     """
     Pauli Y gate.
 
@@ -83,7 +85,7 @@ def Y(state, qubit) -> None:
     _apply_one_qubit_matrix(state, qubit, matrix)
 
 
-def Z(state, qubit) -> None:
+def Z(state, qubit: int, **params: Any) -> None:
     """
     Pauli Z gate.
 
@@ -101,7 +103,162 @@ def Z(state, qubit) -> None:
     _apply_one_qubit_matrix(state, qubit, matrix)
 
 
-def H(state, qubit) -> None:
+def RX(state, qubit: int, angles: tuple[float], **params: Any) -> None:
+    """
+    Apply an RX gate.
+
+    Args:
+        state: An instance of CuStateVec
+        qubit: The index of the qubit where the gate is applied
+        angles: A tuple containing a single angle in radians
+    """
+    if len(angles) != 1:
+        raise ValueError("Gate must be given 1 angle parameter.")
+    theta = angles[0]
+
+    matrix = cp.asarray(
+        [
+            math.cos(theta/2), -1j*math.sin(theta/2),
+            -1j*math.sin(theta/2), math.cos(theta/2),
+        ],
+        dtype=state.cp_type,
+    )
+    _apply_one_qubit_matrix(state, qubit, matrix)
+
+
+def RY(state, qubit: int, angles: tuple[float], **params: Any) -> None:
+    """
+    Apply an RY gate.
+
+    Args:
+        state: An instance of CuStateVec
+        qubit: The index of the qubit where the gate is applied
+        angles: A tuple containing a single angle in radians
+    """
+    if len(angles) != 1:
+        raise ValueError("Gate must be given 1 angle parameter.")
+    theta = angles[0]
+
+    matrix = cp.asarray(
+        [
+            math.cos(theta/2), -math.sin(theta/2),
+            math.sin(theta/2), math.cos(theta/2),
+        ],
+        dtype=state.cp_type,
+    )
+    _apply_one_qubit_matrix(state, qubit, matrix)
+
+
+def RZ(state, qubit: int, angles: tuple[float], **params: Any) -> None:
+    """
+    Apply an RZ gate.
+
+    Args:
+        state: An instance of CuStateVec
+        qubit: The index of the qubit where the gate is applied
+        angles: A tuple containing a single angle in radians
+    """
+    if len(angles) != 1:
+        raise ValueError("Gate must be given 1 angle parameter.")
+    theta = angles[0]
+
+    matrix = cp.asarray(
+        [
+            cmath.exp(-1j*theta/2), 0,
+            0, cmath.exp(1j*theta/2),
+        ],
+        dtype=state.cp_type,
+    )
+    _apply_one_qubit_matrix(state, qubit, matrix)
+
+
+def R1XY(state, qubit: int, angles: tuple[float, float], **params: Any) -> None:
+    """
+    Apply an R1XY gate.
+
+    Args:
+        state: An instance of CuStateVec
+        qubit: The index of the qubit where the gate is applied
+        angles: A tuple containing two angles in radians
+    """
+    if len(angles) != 2:
+        raise ValueError("Gate must be given 2 angle parameters.")
+    theta = angles[0]
+    phi = angles[1]
+
+    # Gate is equal to RZ(phi-pi/2)*RY(theta)*RZ(-phi+pi/2)
+    RZ(state, qubit, angles=(-phi + math.pi/2,))
+    RY(state, qubit, angles=(theta,))
+    RZ(state, qubit, angles=(phi - math.pi/2,))
+
+
+def SX(state, qubit: int, **params: Any) -> None:
+    """
+    Apply a square-root of X.
+
+    Args:
+        state: An instance of CuStateVec
+        qubit: The index of the qubit where the gate is applied
+    """
+    RX(state, qubit, angles=(math.pi/2,))
+
+
+def SXdg(state, qubit: int, **params: Any) -> None:
+    """
+    Apply adjoint of the square-root of X.
+
+    Args:
+        state: An instance of CuStateVec
+        qubit: The index of the qubit where the gate is applied
+    """
+    RX(state, qubit, angles=(-math.pi/2,))
+
+
+def SY(state, qubit: int, **params: Any) -> None:
+    """
+    Apply a square-root of Y.
+
+    Args:
+        state: An instance of CuStateVec
+        qubit: The index of the qubit where the gate is applied
+    """
+    RY(state, qubit, angles=(math.pi/2,))
+
+
+def SYdg(state, qubit: int, **params: Any) -> None:
+    """
+    Apply adjoint of the square-root of Y.
+
+    Args:
+        state: An instance of CuStateVec
+        qubit: The index of the qubit where the gate is applied
+    """
+    RY(state, qubit, angles=(-math.pi/2,))
+
+
+def SZ(state, qubit: int, **params: Any) -> None:
+    """
+    Apply a square-root of Z.
+
+    Args:
+        state: An instance of CuStateVec
+        qubit: The index of the qubit where the gate is applied
+    """
+    RZ(state, qubit, angles=(math.pi/2,))
+
+
+def SZdg(state, qubit: int, **params: Any) -> None:
+    """
+    Apply adjoint of the square-root of Z.
+
+    Args:
+        state: An instance of CuStateVec
+        qubit: The index of the qubit where the gate is applied
+    """
+    RZ(state, qubit, angles=(-math.pi/2,))
+
+
+def H(state, qubit: int, **params: Any) -> None:
     """
     Apply Hadamard gate.
 
@@ -117,3 +274,49 @@ def H(state, qubit) -> None:
         dtype=state.cp_type,
     )
     _apply_one_qubit_matrix(state, qubit, matrix)
+
+
+def F(state, qubit: int, **params: Any) -> None:
+    """
+    Apply face rotation of an octahedron #1 (X->Y->Z->X).
+
+    Args:
+        state: An instance of CuStateVec
+        qubit: The index of the qubit where the gate is applied
+    """
+    RX(state, qubit, angles=(math.pi/2,))
+    RZ(state, qubit, angles=(math.pi/2,))
+
+
+def Fdg(state, qubit: int, **params: Any) -> None:
+    """
+    Apply adjoint of face rotation of an octahedron #1 (X<-Y<-Z<-X).
+
+    Args:
+        state: An instance of CuStateVec
+        qubit: The index of the qubit where the gate is applied
+    """
+    RZ(state, qubit, angles=(-math.pi/2,))
+    RX(state, qubit, angles=(-math.pi/2,))
+
+
+def T(state, qubit: int, **params: Any) -> None:
+    """
+    Apply a T gate.
+
+    Args:
+        state: An instance of CuStateVec
+        qubit: The index of the qubit where the gate is applied
+    """
+    RZ(state, qubit, angles=(math.pi/4,))
+
+
+def Tdg(state, qubit: int, **params: Any) -> None:
+    """
+    Apply adjoint of a T gate.
+
+    Args:
+        state: An instance of CuStateVec
+        qubit: The index of the qubit where the gate is applied
+    """
+    RZ(state, qubit, angles=(-math.pi/4,))

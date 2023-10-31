@@ -32,10 +32,10 @@ class CuStateVec(StateVector):
         random.seed(seed)
 
         super().__init__()
-        cusv.logger_set_level(5)  # Remove! here for debugging
+        #cusv.logger_set_level(5)  # Remove! here for debugging
 
         self.bindings = bindings.gate_dict
-        self.num_qubits = num_qubits-1
+        self.num_qubits = num_qubits
 
         # Set data type as double precision complex numbers
         self.cp_type = cp.complex128

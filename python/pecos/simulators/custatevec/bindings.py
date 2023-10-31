@@ -1,7 +1,8 @@
 # TODO: Include license information?
 
 from pecos.simulators.custatevec.gates_meas import meas_z
-import pecos.simulators.custatevec.gates_one_qubit as one_qubit_gates
+import pecos.simulators.custatevec.gates_one_qubit as one_q
+import pecos.simulators.custatevec.gates_two_qubit as two_q
 
 # Supporting gates from table:
 #   https://github.com/CQCL/phir/blob/main/phir_spec_qasm.md#table-ii---quantum-operations
@@ -9,45 +10,45 @@ gate_dict = {
 #    'Init': ignore_gate,
     'Measure': meas_z,
 
-    'I': one_qubit_gates.I,
-    'X': one_qubit_gates.X,
-    'Y': one_qubit_gates.Y,
-    'Z': one_qubit_gates.Z,
+    'I': one_q.I,
+    'X': one_q.X,
+    'Y': one_q.Y,
+    'Z': one_q.Z,
 
-#    'RX': ignore_gate,
-#    'RY': ignore_gate,
-#    'RZ': ignore_gate,
-#    'R1XY': ignore_gate,
+    'RX': one_q.RX,
+    'RY': one_q.RY,
+    'RZ': one_q.RZ,
+    'R1XY': one_q.R1XY,
 
-#    'SX': ignore_gate,
-#    'SXdg': ignore_gate,
-#    'SY': ignore_gate,
-#    'SYdg': ignore_gate,
-#    'SZ': ignore_gate,
-#    'SZdg': ignore_gate,
+    'SX': one_q.SX,
+    'SXdg': one_q.SXdg,
+    'SY': one_q.SY,
+    'SYdg': one_q.SYdg,
+    'SZ': one_q.SZ,
+    'SZdg': one_q.SZdg,
 
-    'H': one_qubit_gates.H,
-#    'F': ignore_gate,
-#    'Fdg': ignore_gate,
+    'H': one_q.H,
+    'F': one_q.F,
+    'Fdg': one_q.Fdg,
 
-#    'T': ignore_gate,
-#    'Tdg': ignore_gate,
+    'T': one_q.T,
+    'Tdg': one_q.Tdg,
 
-#    'CX': ignore_gate,
-#    'CY': ignore_gate,
-#    'CZ': ignore_gate,
+    'CX': two_q.CX,
+    'CY': two_q.CY,
+    'CZ': two_q.CZ,
 
-#    'RXX': ignore_gate,
-#    'RYY': ignore_gate,
-#    'RZZ': ignore_gate,
-#    'R2XXYYZZ': ignore_gate,
+    'RXX': two_q.RXX,
+    'RYY': two_q.RYY,
+    'RZZ': two_q.RZZ,
+    'R2XXYYZZ': two_q.R2XXYYZZ,
 
-#    'SXX': ignore_gate,
-#    'SXXdg': ignore_gate,
-#    'SYY': ignore_gate,
-#    'SYYdg': ignore_gate,
-#    'SZZ': ignore_gate,
-#    'SZZdg': ignore_gate,
+    'SXX': two_q.SXX,
+    'SXXdg': two_q.SXXdg,
+    'SYY': two_q.SYY,
+    'SYYdg': two_q.SYYdg,
+    'SZZ': two_q.SZZ,
+    'SZZdg': two_q.SZZdg,
 
-#    'SWAP': ignore_gate,
+    'SWAP': two_q.SWAP,
 }

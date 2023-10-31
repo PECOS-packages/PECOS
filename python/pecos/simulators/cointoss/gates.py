@@ -1,9 +1,10 @@
 # TODO: Include license information?
 
+from typing import Any
 import random
 
 
-def ignore_gate(state, qubits):
+def ignore_gate(state, qubits: int, **params: Any) -> None:
     """
     Ignore the gate.
 
@@ -17,7 +18,7 @@ def ignore_gate(state, qubits):
     pass
 
 
-def measure(state, qubit):
+def measure(state, qubits: int, **params: Any):
     """
     Return 0 with probability ``state.prob`` or 1 otherwise.
 

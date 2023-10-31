@@ -23,7 +23,7 @@ def meas_z(state, qubit: int, **params: Any) -> int:
     # CuStateVec uses smaller qubit index as least significant
     target = state.num_qubits - 1 - qubit
 
-    return cusv.measure_on_z_basis(
+    result = cusv.measure_on_z_basis(
         handle=state.libhandle,
         sv=state.vector.data.ptr,
         sv_data_type=state.cuda_type,
@@ -34,3 +34,5 @@ def meas_z(state, qubit: int, **params: Any) -> int:
         collapse=cusv.Collapse.NORMALIZE_AND_ZERO,  # Collapse and normalise
     )
     state.stream.synchronize()
+
+    return result

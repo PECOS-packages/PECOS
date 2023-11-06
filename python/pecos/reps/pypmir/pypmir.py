@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from math import pi
 from typing import TypeVar
 
 from pecos.reps.pypmir import block_types as blk
@@ -99,6 +100,9 @@ class PyPMIR:
                     args.append(qdata.qubit_ids[qid])
 
             metadata = {} if o.get("metadata") is None else o["metadata"]
+
+            if o.get("angles"):
+                metadata = {"angles": [angle * (pi if o["angles"][1] == "pi" else 1) for angle in o["angles"][0]]}
 
             # TODO: Added to satisfy old-style error models. Remove when they not longer need this...
             if o.get("returns"):

@@ -19,11 +19,13 @@ class Op:
         args: list | None = None,
         returns: list | None = None,
         metadata: dict | None = None,
+        angles: tuple[list[float], str] | None = None,
     ) -> None:
         self.name = name
         self.args = args
         self.returns = returns
         self.metadata = metadata
+        self.angles = angles
 
         if returns is not None:
             for r in returns:
@@ -38,16 +40,27 @@ class Op:
                     msg = f"Returns not of correct form of cvar (str) or cbit ([str, int]): {returns}"
                     raise TypeError(msg)
 
+    def __str__(self) -> str:
+        return f"{self.name}, {self.args}, {self.returns}, {self.metadata}, {self.angles}"
+
 
 class QOp(Op):
     """Quantum operation."""
 
-    def __init__(self, name: str, args: list, returns: list | None = None, metadata: dict | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        args: list,
+        returns: list | None = None,
+        metadata: dict | None = None,
+        angles: tuple[list[float], str] | None = None,
+    ) -> None:
         super().__init__(
             name=name,
             args=args,
             returns=returns,
             metadata=metadata,
+            angles=angles,
         )
 
 

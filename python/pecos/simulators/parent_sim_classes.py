@@ -33,8 +33,10 @@ class Simulator:
         """
         output = {}
 
-        if params.get("simulate_gate", True):
+        if params.get("simulate_gate", True) and locations:
             for location in locations:
+                if params.get("angles") and len(params["angles"]) == 1:
+                    params.update({"angle": params["angles"][0]})
                 results = self.bindings[symbol](self, location, **params)
 
                 # TODO: get params var value ... -> result = {'sym':, 'index':, 'result': result, 'qubit': location}

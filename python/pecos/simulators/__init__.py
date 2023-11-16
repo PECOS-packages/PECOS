@@ -11,11 +11,10 @@
 # specific language governing permissions and limitations under the License.
 
 from pecos.simulators import sim_class_types
+from pecos.simulators.cointoss import CoinToss  # Ignores quantum gates, coin toss for measurements
 from pecos.simulators.parent_sim_classes import Simulator
 from pecos.simulators.paulifaultprop import PauliFaultProp  # Pauli fault propagation sim
 from pecos.simulators.sparsesim import SparseSim as pySparseSim  # Python sparse stabilizer sim
-
-from pecos.simulators.cointoss import CoinToss  # Ignores quantum gates, coin toss for measurements
 
 # C++ version of SparseStabSim wrapper
 try:
@@ -34,10 +33,9 @@ except ImportError:
 
 # Attempt to import optional cuquantum and cupy packages
 try:
-    import cuquantum
     import cupy
+    import cuquantum
 
     from pecos.simulators.custatevec.state import CuStateVec  # wrapper for cuQuantum's cuStateVec
 except ImportError:
     pass
-

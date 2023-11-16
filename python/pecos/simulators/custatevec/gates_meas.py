@@ -1,9 +1,10 @@
 # TODO: Include license information?
 
 from typing import Any
-import random
 
+import numpy as np
 from cuquantum import custatevec as cusv
+
 
 def meas_z(state, qubit: int, **params: Any) -> int:
     """Measure in the Z-basis, collapse and normalise.
@@ -19,7 +20,8 @@ def meas_z(state, qubit: int, **params: Any) -> int:
         The outcome of the measurement, either 0 or 1.
     """
     if qubit >= state.num_qubits or qubit < 0:
-        raise ValueError(f"Qubit {qubit} out of range.")
+        msg = f"Qubit {qubit} out of range."
+        raise ValueError(msg)
     # CuStateVec uses smaller qubit index as least significant
     target = state.num_qubits - 1 - qubit
 
@@ -30,7 +32,7 @@ def meas_z(state, qubit: int, **params: Any) -> int:
         n_index_bits=state.num_qubits,  # Number of qubits in the statevector
         basis_bits=[target],  # The index of the qubit being measured
         n_basis_bits=1,  # Number of qubits being measured
-        rand_num=random.random(),  # Source of randomness for the measurement
+        rand_num=np.random.random(),  # Source of randomness for the measurement
         collapse=cusv.Collapse.NORMALIZE_AND_ZERO,  # Collapse and normalise
     )
     state.stream.synchronize()

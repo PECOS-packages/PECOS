@@ -1,8 +1,9 @@
 # TODO: Include license information?
 
 import random
-from pecos.simulators.parent_sim_classes import Simulator
+
 from pecos.simulators.cointoss import bindings
+from pecos.simulators.parent_sim_classes import Simulator
 
 
 class CoinToss(Simulator):
@@ -26,9 +27,11 @@ class CoinToss(Simulator):
         """
 
         if not isinstance(num_qubits, int):
-            raise Exception('``num_qubits`` should be of type ``int``.')
+            msg = "``num_qubits`` should be of type ``int``."
+            raise TypeError(msg)
         if not (prob >= 0 and prob <= 1):
-            raise Exception('``prob`` should be a real number in [0,1].')
+            msg = "``prob`` should be a real number in [0,1]."
+            raise ValueError(msg)
         random.seed(seed)
 
         super().__init__()

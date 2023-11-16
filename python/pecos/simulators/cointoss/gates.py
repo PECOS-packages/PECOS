@@ -1,7 +1,8 @@
 # TODO: Include license information?
 
 from typing import Any
-import random
+
+import numpy as np
 
 
 def ignore_gate(state, qubits: int, **params: Any) -> None:
@@ -15,7 +16,6 @@ def ignore_gate(state, qubits: int, **params: Any) -> None:
     Returns:
 
     """
-    pass
 
 
 def measure(state, qubits: int, **params: Any):
@@ -29,4 +29,4 @@ def measure(state, qubits: int, **params: Any):
     Returns:
 
     """
-    return 0 if random.random() < state.prob else 1
+    return 0 if np.random.random() < state.prob else 1

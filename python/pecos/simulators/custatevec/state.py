@@ -1,13 +1,13 @@
 # TODO: Include license information?
 
 import random
+
 import cupy as cp
-
+from cuquantum import ComputeType, cudaDataType
 from cuquantum import custatevec as cusv
-from cuquantum import cudaDataType, ComputeType
 
-from pecos.simulators.sim_class_types import StateVector
 from pecos.simulators.custatevec import bindings
+from pecos.simulators.sim_class_types import StateVector
 
 
 class CuStateVec(StateVector):
@@ -28,11 +28,12 @@ class CuStateVec(StateVector):
         """
 
         if not isinstance(num_qubits, int):
-            raise Exception('``num_qubits`` should be of type ``int``.')
+            msg = "``num_qubits`` should be of type ``int``."
+            raise TypeError(msg)
         random.seed(seed)
 
         super().__init__()
-        #cusv.logger_set_level(5)  # Remove! here for debugging
+        # cusv.logger_set_level(5)  # Remove! here for debugging
 
         self.bindings = bindings.gate_dict
         self.num_qubits = num_qubits
@@ -54,13 +55,15 @@ class CuStateVec(StateVector):
 
         # Check CUDA version and device config
         if cp.cuda.runtime.runtimeGetVersion() < 11020:
+            msg = "CUDA 11.2+ is required."
             raise RuntimeError(
-                "CUDA 11.2+ is required."
+                msg,
             )
         dev = cp.cuda.Device()
-        if not dev.attributes['MemoryPoolsSupported']:
+        if not dev.attributes["MemoryPoolsSupported"]:
+            msg = "Device does not support CUDA Memory pools."
             raise RuntimeError(
-                "Device does not support CUDA Memory pools."
+                msg,
             )
 
         # Avoid shrinking the pool
@@ -68,7 +71,7 @@ class CuStateVec(StateVector):
         cp.cuda.runtime.memPoolSetAttribute(
             mempool,
             cp.cuda.runtime.cudaMemPoolAttrReleaseThreshold,
-            0xffffffffffffffff  # = UINT64_MAX
+            0xFFFFFFFFFFFFFFFF,  # = UINT64_MAX
         )
 
         # CuStateVec handle initialization
@@ -90,5 +93,3 @@ class CuStateVec(StateVector):
         # CuPy will release GPU memory when the variable ``self.vector`` is no longer
         # reachable. However, we need to manually destroy the library handle.
         cusv.destroy(self.libhandle)
-
-

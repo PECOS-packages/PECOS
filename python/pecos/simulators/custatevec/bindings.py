@@ -6,7 +6,8 @@ from pecos.simulators.custatevec.gates_init import init_zero
 from pecos.simulators.custatevec.gates_meas import meas_z
 
 # Supporting gates from table:
-#   https://github.com/CQCL/phir/blob/main/phir_spec_qasm.md#table-ii---quantum-operations
+#   https://github.com/CQCL/phir/blob/main/spec.md#table-ii---quantum-operations
+
 gate_dict = {
     "Init": init_zero,
     "Measure": meas_z,

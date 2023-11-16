@@ -3,7 +3,8 @@
 from pecos.simulators.cointoss.gates import ignore_gate, measure
 
 # Supporting gates from table:
-#   https://github.com/CQCL/phir/blob/main/phir_spec_qasm.md#table-ii---quantum-operations
+#   https://github.com/CQCL/phir/blob/main/spec.md#table-ii---quantum-operations
+
 gate_dict = {
     "Init": ignore_gate,
     "Measure": measure,

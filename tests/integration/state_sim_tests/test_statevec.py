@@ -69,7 +69,7 @@ def test_init(simulator):
     qc = QuantumCircuit()
     qc.append({"Init": {0, 1, 2, 3}})
 
-    final_vector = cp.zeros(shape=(2**4,))
+    final_vector = np.zeros(shape=(2**4,))
     final_vector[0] = 1
 
     verify(simulator, qc, final_vector)
@@ -102,7 +102,7 @@ def test_comp_basis_circ_and_measure(simulator):
     # Step 1
     qc.append({"X": {0, 2}})  # |0000> -> |1010>
 
-    final_vector = cp.zeros(shape=(2**4,))
+    final_vector = np.zeros(shape=(2**4,))
     final_vector[10] = 1  # |1010>
 
     verify(simulator, qc, final_vector)
@@ -110,7 +110,7 @@ def test_comp_basis_circ_and_measure(simulator):
     # Step 2
     qc.append({"CX": {(2, 1)}})  # |1010> -> |1110>
 
-    final_vector = cp.zeros(shape=(2**4,))
+    final_vector = np.zeros(shape=(2**4,))
     final_vector[14] = 1  # |1110>
 
     verify(simulator, qc, final_vector)
@@ -118,7 +118,7 @@ def test_comp_basis_circ_and_measure(simulator):
     # Step 3
     qc.append({"SWAP": {(0, 3)}})  # |1110> -> |0111>
 
-    final_vector = cp.zeros(shape=(2**4,))
+    final_vector = np.zeros(shape=(2**4,))
     final_vector[7] = 1  # |0111>
 
     verify(simulator, qc, final_vector)
@@ -126,7 +126,7 @@ def test_comp_basis_circ_and_measure(simulator):
     # Step 4
     qc.append({"CX": {(0, 2)}})  # |0111> -> |0111>
 
-    final_vector = cp.zeros(shape=(2**4,))
+    final_vector = np.zeros(shape=(2**4,))
     final_vector[7] = 1  # |0111>
 
     verify(simulator, qc, final_vector)
@@ -134,7 +134,7 @@ def test_comp_basis_circ_and_measure(simulator):
     # Step 5
     qc.append({"Init": {1}})  # |0111> -> |0011>
 
-    final_vector = cp.zeros(shape=(2**4,))
+    final_vector = np.zeros(shape=(2**4,))
     final_vector[3] = 1  # |0011>
 
     verify(simulator, qc, final_vector)
@@ -142,7 +142,7 @@ def test_comp_basis_circ_and_measure(simulator):
     # Step 6
     qc.append({"SWAP": {(1, 2)}})  # |0011> -> |0101>
 
-    final_vector = cp.zeros(shape=(2**4,))
+    final_vector = np.zeros(shape=(2**4,))
     final_vector[5] = 1  # |0011>
 
     verify(simulator, qc, final_vector)

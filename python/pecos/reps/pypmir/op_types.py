@@ -19,13 +19,11 @@ class Op:
         args: list | None = None,
         returns: list | None = None,
         metadata: dict | None = None,
-        angles: tuple[list[float], str] | None = None,
     ) -> None:
         self.name = name
         self.args = args
         self.returns = returns
         self.metadata = metadata
-        self.angles = angles
 
         if returns is not None:
             for r in returns:
@@ -60,8 +58,8 @@ class QOp(Op):
             args=args,
             returns=returns,
             metadata=metadata,
-            angles=angles,
         )
+        self.angles = angles
 
 
 class COp(Op):

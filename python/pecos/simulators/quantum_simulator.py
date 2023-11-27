@@ -63,8 +63,6 @@ class QuantumSimulator:
         for op in qops:
             if op.metadata is None:
                 op.metadata = {}
-            if self.backend == "state-vector" and op.name == "RZZ" and op.metadata["angles"][0] == 0.0:
-                continue
             output = self.state.run_gate(op.name, op.args, **op.metadata)
             if op.returns:
                 temp = {}

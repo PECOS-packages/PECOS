@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from math import pi
 from typing import TypeVar
 
 from pecos.reps.pypmir import block_types as blk
@@ -100,6 +101,10 @@ class PyPMIR:
 
             metadata = {} if o.get("metadata") is None else o["metadata"]
 
+            if o.get("angles"):
+                if not (o["qop"] == "RZZ" and o["angles"][0][0] == 0.0):
+                    metadata = {"angles": [angle * (pi if o["angles"][1] == "pi" else 1) for angle in o["angles"][0]]}
+
             # TODO: Added to satisfy old-style error models. Remove when they not longer need this...
             if o.get("returns"):
                 var_output = {}
@@ -107,7 +112,12 @@ class PyPMIR:
                     var_output[q] = cvar
                 metadata["var_output"] = var_output
 
-            instr = op.QOp(name=o["qop"], args=args, returns=o.get("returns"), metadata=metadata)
+            instr = op.QOp(
+                name="I" if o["qop"] == "RZZ" and o["angles"][0][0] == 0.0 else o["qop"],
+                args=args,
+                returns=o.get("returns"),
+                metadata=metadata,
+            )
 
         elif "cop" in o:
             if o["cop"] == "ffcall":

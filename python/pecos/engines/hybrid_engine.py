@@ -35,7 +35,7 @@ class HybridEngine:
     def __init__(
         self,
         cinterp: ClassicalInterpreter | None = None,
-        qsim: QuantumSimulator | None = None,
+        qsim: QuantumSimulator | str | None = None,
         machine: Machine | None = None,
         error_model: ErrorModel | None = None,
         op_processor: OpProcessor | None = None,
@@ -169,6 +169,10 @@ class HybridEngine:
 
                 # Allows noise to be dependent on measurement outcomes and to alter measurements
                 measurements = self.op_processor.process_meas(measurements)
+
+                # TODO: Consider adding the following to generate/evaluate errors after measurement
+                # measurements, residual_noise = self.op_processor.process_meas(measurements)
+                # self.qsim.run(residual_noise)
 
                 self.cinterp.receive_results(measurements)
 

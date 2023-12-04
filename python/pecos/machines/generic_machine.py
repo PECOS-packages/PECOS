@@ -41,7 +41,7 @@ class GenericMachine(Machine):
 
     def process(self, op_buffer: list[QOp | MOp]) -> list:
         for op in op_buffer:
-            if "mop" in op:
+            if "mop" in op.name:
                 print("MOP >", op)
 
         return op_buffer

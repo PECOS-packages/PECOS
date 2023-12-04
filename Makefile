@@ -55,10 +55,10 @@ lint: metadeps  ## Run all quality checks / linting / reformatting
 # Testing
 # -------
 
-tests: venv install metadeps  ## Run tests on the Python package (not including optional dependencies)
+tests: install metadeps  ## Run tests on the Python package (not including optional dependencies)
 	$(VENV_BIN)/pytest tests -m "not optional_dependency"
 
-tests-dep: venv install-all metadeps ## Run tests on the Python package only for optional dependencies
+tests-dep: install-all metadeps ## Run tests on the Python package only for optional dependencies
 	$(VENV_BIN)/pytest tests -m optional_dependency
 
 doctests:  ## Run doctests with pytest

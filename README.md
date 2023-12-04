@@ -66,6 +66,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -U pip setuptools
 pip install -r requirements.txt
+make metadeps
 pre-commit install
 pip install -e .
 ```
@@ -77,6 +78,7 @@ python -m venv .venv
 .\venv\Scripts\activate
 pip install -U pip setuptools
 pip install -r requirements.txt
+make metadeps
 pre-commit install
 pip install -e .
 ```

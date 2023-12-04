@@ -16,17 +16,15 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from pecos.error_models.error_model_abc import ErrorModel
-from pecos.error_models.noise_impl.noise_initz_bitflip import noise_initz_bitflip
-from pecos.error_models.noise_impl.noise_meas_bitflip import noise_meas_bitflip
-from pecos.error_models.noise_impl.noise_sq_depolarizing import noise_sq_depolarizing
-from pecos.error_models.noise_impl.noise_tq_depolarizing import noise_tq_depolarizing
 from pecos.error_models.noise_impl_old.gate_groups import one_qubits, two_qubits
+from pecos.reps.pypmir.op_types import QOp
 
 if TYPE_CHECKING:
     from pecos.reps.pypmir.block_types import SeqBlock
-    from pecos.reps.pypmir.op_types import QOp
 
-two_qubit_paulis = {
+one_qubit_paulis = ["X", "Y", "Z"]
+
+two_qubit_paulis = [
     "IX",
     "IY",
     "IZ",
@@ -42,18 +40,10 @@ two_qubit_paulis = {
     "ZX",
     "ZY",
     "ZZ",
-}
-SYMMETRIC_P2_PAULI_MODEL = {p: 1 / 15 for p in two_qubit_paulis}
-
-one_qubit_paulis = {
-    "X",
-    "Y",
-    "Z",
-}
-SYMMETRIC_P1_PAULI_MODEL = {p: 1 / 3 for p in one_qubit_paulis}
+]
 
 
-class DepolarizingErrorModel(ErrorModel):
+class SimpleDepolarizingErrorModel(ErrorModel):
     """Parameterized error mode."""
 
     def __init__(self, error_params: dict) -> None:
@@ -62,7 +52,7 @@ class DepolarizingErrorModel(ErrorModel):
 
     def reset(self):
         """Reset error generator for another round of syndrome extraction."""
-        return DepolarizingErrorModel(error_params=self.error_params)
+        return SimpleDepolarizingErrorModel(error_params=self.error_params)
 
     def init(self, num_qubits, machine=None):
         self.machine = machine
@@ -74,29 +64,13 @@ class DepolarizingErrorModel(ErrorModel):
         self._eparams = dict(self.error_params)
         self._scale()
 
-        if "p1_error_model" not in self._eparams:
-            self._eparams["p1_error_model"] = SYMMETRIC_P1_PAULI_MODEL
-
-        if "p2_error_model" not in self._eparams:
-            self._eparams["p2_error_model"] = SYMMETRIC_P2_PAULI_MODEL
-
-        if "p2_mem" in self._eparams and "p2_mem_error_model" not in self._eparams:
-            self._eparams["p2_mem_error_model"] = SYMMETRIC_P2_PAULI_MODEL
-
     def _scale(self):
         # conversion from average error to total error
         self._eparams["p1"] *= 3 / 2
         self._eparams["p2"] *= 5 / 4
 
-        scale = self._eparams.get("scale", 1.0)
-        self._eparams["p1"] *= scale
-        self._eparams["p2"] *= scale
-
         if isinstance(self._eparams["p_meas"], tuple):
             self._eparams["p_meas"] = np.mean(self._eparams["p_meas"])
-
-        self._eparams["p_meas"] *= scale
-        self._eparams["p_init"] *= scale
 
     def shot_reinit(self) -> None:
         """Run all code needed at the beginning of each shot, e.g., resetting state."""
@@ -105,66 +79,66 @@ class DepolarizingErrorModel(ErrorModel):
         noisy_ops = []
 
         for op in qops:
-            qops_after = None
-            qops_before = None
             erroneous_ops = None
 
             # ########################################
             # INITS WITH X NOISE
             if op.name in ["init |0>", "Init", "Init +Z"]:
-                qops_after = noise_initz_bitflip(
-                    op,
-                    p=self._eparams["p_init"],
-                )
+                erroneous_ops = [op]
+                rand_nums = np.random.random(len(op.args)) <= self._eparams["p_init"]
+
+                if np.any(rand_nums):
+                    for r, loc in zip(rand_nums, op.args):
+                        if r:
+                            erroneous_ops.append(QOp(name="X", args=[loc], metadata={}))
 
             # ########################################
             # ONE QUBIT GATES
-            elif op.name in one_qubits:
-                erroneous_ops = noise_sq_depolarizing(
-                    op,
-                    p=self._eparams["p1"],
-                    noise_dict=self._eparams["p1_error_model"],
-                )
+            if op.name in one_qubits:
+                erroneous_ops = [op]
+                rand_nums = np.random.random(len(op.args)) <= self._eparams["p1"]
+
+                if np.any(rand_nums):
+                    for r, loc in zip(rand_nums, op.args):
+                        if r:
+                            err = np.random.choice(one_qubit_paulis)
+                            erroneous_ops.append(QOp(name=err[0], args=[loc], metadata={}))
 
             # ########################################
             # TWO QUBIT GATES
             elif op.name in two_qubits:
-                qops_after = noise_tq_depolarizing(
-                    op,
-                    p=self._eparams["p2"],
-                    noise_dict=self._eparams["p2_error_model"],
-                )
+                erroneous_ops = [op]
+                rand_nums = np.random.random(len(op.args)) <= self._eparams["p2"]
 
-                if self._eparams.get("p2_mem"):
-                    qops_mem = noise_tq_depolarizing(
-                        op,
-                        p=self._eparams["p2_mem"],
-                        noise_dict=self._eparams["p2_mem_error_model"],
-                    )
-
-                    if qops_after:
-                        qops_after = qops_after.extend(qops_mem)
+                if np.any(rand_nums):
+                    for r, loc in zip(rand_nums, op.args):
+                        if r:
+                            err = np.random.choice(two_qubit_paulis)
+                            loc1, loc2 = loc
+                            if err[0] != "I":
+                                erroneous_ops.append(QOp(name=err[0], args=[loc1], metadata={}))
+                            if err[1] != "I":
+                                erroneous_ops.append(QOp(name=err[1], args=[loc2], metadata={}))
 
             # ########################################
             # MEASURE X NOISE
             elif op.name in ["measure Z", "Measure", "Measure +Z"]:
-                erroneous_ops = noise_meas_bitflip(
-                    op,
-                    p=self._eparams["p_meas"],
-                )
+                erroneous_ops = []
+                rand_nums = np.random.random(len(op.args)) <= self._eparams["p_meas"]
+
+                if np.any(rand_nums):
+                    for r, loc in zip(rand_nums, op.args):
+                        if r:
+                            erroneous_ops.append(QOp(name="X", args=[loc], metadata={}))
+
+                erroneous_ops.append(op)
 
             else:
                 raise Exception("This error model doesn't handle gate: %s!" % op.name)
-
-            if qops_before:
-                noisy_ops.extend(qops_before)
 
             if erroneous_ops is None:
                 noisy_ops.append(op)
             else:
                 noisy_ops.extend(erroneous_ops)
-
-            if qops_after:
-                noisy_ops.extend(qops_after)
 
         return noisy_ops

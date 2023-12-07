@@ -136,7 +136,7 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             elif isinstance(op, pt.opt.COp):
                 self.handle_cops(op)
 
-            elif isinstance(op, pt.block.IfBlock):
+            elif isinstance(op, pt.block.Block):
                 yield from self.execute_block(op)
 
             elif isinstance(op, pt.opt.MOp):
@@ -145,6 +145,9 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             else:
                 msg = f"Statement not recognized: {op}"
                 raise TypeError(msg)
+
+        if op_buffer:
+            yield op_buffer
 
     def get_cval(self, cvar):
         cid = self.program.csym2id[cvar]
@@ -155,7 +158,7 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         val >>= idx
         return val
 
-    def eval_expr(self, expr: int | (str | (list | dict))) -> int:
+    def eval_expr(self, expr: int | (str | (list | dict))) -> int | None:
         if isinstance(expr, int):
             return expr
         elif isinstance(expr, str):

@@ -188,3 +188,28 @@ def test_example1_no_wasm_noisy():
         program=example1_no_wasm_phir,
         shots=100,
     )
+
+
+def test_record_random_bit():
+    """Applying H and recording both 0 and 1."""
+
+    results = HybridEngine(qsim="stabilizer").run(
+        program=json.load(Path.open(this_dir / "phir" / "recording_random_meas.json")),
+        shots=100,
+    )
+
+    print(results)
+    c = results["c"]
+    assert c.count("01") + c.count("00") == len(c)
+
+
+def test_classical_if_00_11():
+    """Testing using an H + measurement and a conditional X gate to get 00 or 11."""
+
+    results = HybridEngine(qsim="stabilizer").run(
+        program=json.load(Path.open(this_dir / "phir" / "classical_00_11.json")),
+        shots=100,
+    )
+
+    c = results["c"]
+    assert c.count("00") + c.count("11") == len(c)

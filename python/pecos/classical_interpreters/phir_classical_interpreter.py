@@ -146,7 +146,8 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
                 msg = f"Statement not recognized: {op}"
                 raise TypeError(msg)
 
-        yield op_buffer
+        if op_buffer:
+            yield op_buffer
 
     def get_cval(self, cvar):
         cid = self.program.csym2id[cvar]

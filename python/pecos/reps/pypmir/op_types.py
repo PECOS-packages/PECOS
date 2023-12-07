@@ -61,6 +61,12 @@ class QOp(Op):
         )
         self.angles = angles
 
+    def __repr__(self):
+        return (
+            f"<QOP: {self.name} angles: {self.angles} args: {self.args} returns: {self.returns} "
+            f"meta: {self.metadata}>"
+        )
+
 
 class COp(Op):
     """Classical operation."""

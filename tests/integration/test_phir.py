@@ -15,6 +15,8 @@ from pathlib import Path
 import pytest
 from pecos.engines.hybrid_engine import HybridEngine
 from pecos.error_models.generic_error_model import GenericErrorModel
+from phir.model import PHIRModel
+from pydantic import ValidationError
 
 try:
     from pecos.foreign_objects.wasmtime import WasmtimeObj
@@ -238,3 +240,11 @@ def test_classical_if_00_11():
 
     c = results["c"]
     assert c.count("00") + c.count("11") == len(c)
+
+
+def test_throw_exception_with_bad_phir():
+    """Making sure the bad PHIR throws an exception."""
+
+    phir = json.load(Path.open(this_dir / "phir" / "bad_phir.json"))
+    with pytest.raises(ValidationError):
+        PHIRModel.model_validate(phir)

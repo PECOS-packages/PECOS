@@ -1,0 +1,68 @@
+{
+  "format": "PHIR/JSON",
+  "version": "0.1.0",
+  "metadata": {
+    "num_qubits": 4,
+    "source_program_type": ["PECOS.QuantumCircuit", ["PECOS", "0.5.dev1"]],
+    "qid2qubit_sym": {"0": ["q", 0], "1": ["q", 1], "2": ["w", 0], "3": ["w", 1]}
+  },
+  "ops": [
+    {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
+    {"data": "qvar_define", "data_type": "qubits", "variable": "w", "size": 2},
+    {"data": "cvar_define", "data_type": "i32", "variable": "a", "size": 12},
+    {"data": "cvar_define", "data_type": "i32", "variable": "b", "size": 20},
+    {"data": "cvar_define", "data_type": "i32", "variable": "c", "size": 32},
+    {"data": "cvar_define", "data_type": "i32", "variable": "d", "size": 6},
+    {"data": "cvar_define", "data_type": "i32", "variable": "e", "size": 16},
+    {"data": "cvar_define", "data_type": "i32", "variable": "f", "size": 16},
+    {"data": "cvar_define", "data_type": "i32", "variable": "g", "size": 16},
+    {"data": "cvar_define", "data_type": "i32", "variable": "i", "size": 5},
+    {"data": "cvar_define", "data_type": "i32", "variable": "j", "size": 5},
+    {"data": "cvar_define", "data_type": "i32", "variable": "m1", "size": 2},
+    {"data": "cvar_define", "data_type": "i32", "variable": "m2", "size": 2},
+    {"data": "cvar_define", "data_type": "i32", "variable": "m3", "size": 2},
+    {"data": "cvar_define", "data_type": "i32", "variable": "m4", "size": 2},
+    {"data": "cvar_define", "data_type": "i32", "variable": "m5", "size": 2},
+    {"cop": "=", "args": [3], "returns": ["b"]}, {"cop": "=", "args": [2], "returns": ["c"]},
+    {"cop": "=", "args": [2], "returns": ["d"]}, {"cop": "=", "args": [1], "returns": [["d", 0]]},
+    {"cop": "=", "args": [
+      {"cop": "-", "args": [
+        {"cop": "+", "args": ["b", {"cop": "^", "args": ["c", "d"]}]},
+        {"cop": "+", "args": [["m1", 0], 2]}]}
+    ],
+      "returns": ["a"]
+    },
+    {"cop": "=", "args": [1], "returns": ["i"]},
+    {"block": "if", "condition": {"cop": "==", "args": ["i", 1]}, "true_branch": [
+      {"cop": "=", "args": [2], "returns": ["j"]}
+    ]
+    },
+    {"qop": "SYdg", "args": [["w", 0]]},
+    {"qop": "Z", "args": [["w", 0]]},
+    {"zop": "SYdg", "args": [["w", 1]]},
+    {"qop": "SZZ", "args": [[["w", 0], ["w", 1]]]},
+    {"qop": "SZdg", "args": [["w", 0]]},
+    {"qop": "SXdg", "args": [["w", 1]]},
+    {"qop": "SZdg", "args": [["w", 1]]},
+    {"qop": "Measure", "args": [["w", 0], ["w", 1]], "returns": [["m1", 0], ["m1", 1]]},
+    {"cop": "=", "args": [7], "returns": ["f"]},
+    {"cop": "=", "args": [3], "returns": ["g"]},
+    {"qop": "SYdg", "args": [["q", 0]]},
+    {"qop": "Z", "args": [["q", 0]]},
+    {"qop": "SYdg", "args": [["q", 1]]},
+    {"qop": "SZZ", "args": [[["q", 0], ["q", 1]]]},
+    {"qop": "SZdg", "args": [["q", 0]]},
+    {"qop": "SXdg", "args": [["q", 1]]},
+    {"qop": "SZdg", "args": [["q", 1]]},
+    {"qop": "Measure", "args": [["q", 0], ["q", 1]], "returns": [["m2", 0], ["m2", 1]]},
+    {"qop": "Init", "args": [["q", 0], ["q", 1]]},
+    {"qop": "X", "args": [["q", 0], ["q", 1]]},
+    {"qop": "Measure", "args": [["q", 0], ["q", 1]], "returns": [["m3", 0], ["m3", 1]]},
+    {"qop": "Init", "args": [["q", 0], ["q", 1]]},
+    {"qop": "X", "args": [["q", 0]]},
+    {"qop": "Measure", "args": [["q", 0], ["q", 1]], "returns": [["m4", 0], ["m4", 1]]},
+    {"qop": "Init", "args": [["q", 0], ["q", 1]]},
+    {"qop": "X", "args": [["q", 1]]},
+    {"qop": "Measure", "args": [["q", 0], ["q", 1]], "returns": [["m5", 0], ["m5", 1]]}
+  ]
+}

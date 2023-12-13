@@ -248,3 +248,15 @@ def test_throw_exception_with_bad_phir():
     phir = json.load(Path.open(this_dir / "phir" / "bad_phir.json"))
     with pytest.raises(ValidationError):
         PHIRModel.model_validate(phir)
+
+
+def test_qparallel():
+    """Testing the qparallel block of 2 Xs and 2 Ys gives an output of 1111."""
+
+    results = HybridEngine(qsim="stabilizer").run(
+        program=json.load(Path.open(this_dir / "phir" / "qparallel.json")),
+        shots=10,
+    )
+
+    m = results["m"]
+    assert m.count("1111") == len(m)

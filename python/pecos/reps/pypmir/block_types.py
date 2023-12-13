@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pecos.reps.pypmir.op_types import COp
+    from pecos.reps.pypmir.op_types import COp, Op, QOp
 
 
 class Block:
@@ -25,11 +25,19 @@ class Block:
 
 
 class SeqBlock(Block):
-    """A generic sequence block."""
+    """A generic sequence block. This is not meant to indicate parallelism or lack of it but is just a way to structure
+    operations/blocks."""
 
-    def __init__(self, ops: list, metadata: dict | None = None) -> None:
+    def __init__(self, ops: list[Op | Block], metadata: dict | None = None) -> None:
         super().__init__(metadata=metadata)
         self.ops = ops
+
+
+class QParallelBlock(SeqBlock):
+    """A block to indicate that a collection of QOps are applied in parallel."""
+
+    def __init__(self, ops: list[QOp], metadata: dict | None = None) -> None:
+        super().__init__(ops=ops, metadata=metadata)
 
 
 class IfBlock(Block):

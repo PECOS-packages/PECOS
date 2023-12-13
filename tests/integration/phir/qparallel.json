@@ -1,0 +1,19 @@
+{
+    "format": "PHIR/JSON",
+    "version": "0.1.0",
+    "metadata": {},
+    "ops": [
+        {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 4},
+        {"data": "cvar_define", "data_type": "u32", "variable": "m", "size": 4},
+        {
+            "block": "qparallel",
+            "ops": [
+                {"qop": "X", "args": [["q", 1], ["q", 3]]},
+                {"qop": "Y", "args": [["q", 0], ["q", 2]]}
+            ]
+        },
+        {"qop": "Measure",
+            "returns": [["m", 0], ["m", 1], ["m", 2], ["m", 3]],
+            "args": [["q", 0], ["q", 1], ["q", 2], ["q", 3]]}
+    ]
+}

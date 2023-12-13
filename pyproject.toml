@@ -15,7 +15,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quantum-pecos"
-version = "0.5.0.dev3"
+version = "0.5.0.dev4"
 authors = [
     {name = "The PECOS Developers"},
 ]
@@ -28,7 +28,7 @@ requires-python = ">=3.10"
 license = { file = "LICENSE"}
 keywords = ["quantum", "QEC", "simulation", "PECOS"]
 dependencies = [
-    "phir~=0.1.6",
+    "phir~=0.2.1",
     "numpy>=1.15.0,<2.0",
     "scipy>=1.1.0,<2.0",
     "networkx>=2.1.0,<3.0",

@@ -51,6 +51,15 @@ class PyPMIR:
                     ops=ops,
                     metadata=o.get("metadata"),
                 )
+            elif o["block"] == "qparallel":
+                ops = []
+                for so in o["ops"]:
+                    ops.append(cls.handle_op(so, p))
+
+                instr = blk.QParallelBlock(
+                    ops=ops,
+                    metadata=o.get("metadata"),
+                )
             elif o["block"] == "if":
                 true_branch = []
                 for so in o["true_branch"]:

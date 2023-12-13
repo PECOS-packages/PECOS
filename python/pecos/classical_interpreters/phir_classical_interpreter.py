@@ -16,6 +16,7 @@ import warnings
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from phir.model import PHIRModel
 
 from pecos.classical_interpreters.classical_interpreter_abc import ClassicalInterpreter
 from pecos.reps.pypmir import PyPMIR
@@ -73,11 +74,15 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
 
         # Make sure we have `program` in the correct format or convert to PHIR/dict.
         if isinstance(program, str):  # Assume it is in the PHIR/JSON format and convert to dict
-            self.program = json.loads(self.program)
+            self.program = json.loads(program)
         elif isinstance(self.program, (PyPMIR, dict)):
             pass
         else:
             self.program = self.program.to_phir_dict()
+
+        # Assume PHIR dict format, validate PHIR
+        if isinstance(self.program, dict):
+            PHIRModel.model_validate(self.program)
 
         if isinstance(self.program, dict):
             assert self.program["format"] in ["PHIR/JSON", "PHIR"]  # noqa: S101
@@ -136,7 +141,7 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             elif isinstance(op, pt.opt.COp):
                 self.handle_cops(op)
 
-            elif isinstance(op, pt.block.IfBlock):
+            elif isinstance(op, pt.block.Block):
                 yield from self.execute_block(op)
 
             elif isinstance(op, pt.opt.MOp):
@@ -145,6 +150,9 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             else:
                 msg = f"Statement not recognized: {op}"
                 raise TypeError(msg)
+
+        if op_buffer:
+            yield op_buffer
 
     def get_cval(self, cvar):
         cid = self.program.csym2id[cvar]
@@ -155,7 +163,7 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         val >>= idx
         return val
 
-    def eval_expr(self, expr: int | (str | (list | dict))) -> int:
+    def eval_expr(self, expr: int | (str | (list | dict))) -> int | None:
         if isinstance(expr, int):
             return expr
         elif isinstance(expr, str):
@@ -259,12 +267,13 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             else:
                 results = self.foreign_obj.exec(op.name, args)
 
-            if isinstance(results, int):
-                (cvar,) = op.returns
-                self.assign_int(cvar, results)
-            else:
-                for cvar, val in zip(op.returns, results):
-                    self.assign_int(cvar, val)
+            if op.returns is not None:
+                if isinstance(results, int):
+                    (cvar,) = op.returns
+                    self.assign_int(cvar, results)
+                else:
+                    for cvar, val in zip(op.returns, results):
+                        self.assign_int(cvar, val)
 
         else:
             msg = f"Unsupported COp: {op}"

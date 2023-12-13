@@ -1,0 +1,11 @@
+{
+    "format": "PHIR/JSON",
+    "version": "0.1.0",
+    "metadata": {},
+    "ops": [
+        {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
+        {"data": "cvar_define", "data_type": "u32", "variable": "c", "size": 2},
+        {"qop": "H", "angles": null, "args": [["q", 0]]},
+        {"qop": "Measure", "returns": [["c", 0]], "args": [["q", 0]]}
+    ]
+}

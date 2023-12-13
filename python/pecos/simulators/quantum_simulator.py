@@ -63,7 +63,7 @@ class QuantumSimulator:
         for op in qops:
             if op.metadata is None:
                 op.metadata = {}
-            output = self.state.run_gate(op.name, op.args, **op.metadata)
+            output = self.state.run_gate(op.sim_name, op.args, **op.metadata)
             if op.returns:
                 temp = {}
                 bitflips = op.metadata.get("bitflips")

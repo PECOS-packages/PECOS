@@ -39,7 +39,7 @@ class Op:
                     raise TypeError(msg)
 
     def __str__(self) -> str:
-        return f"{self.name}, {self.args}, {self.returns}, {self.metadata}, {self.angles}"
+        return f"<{self.name}, {self.args}, {self.returns}, {self.metadata}>"
 
 
 class QOp(Op):
@@ -51,7 +51,8 @@ class QOp(Op):
         args: list,
         returns: list | None = None,
         metadata: dict | None = None,
-        angles: tuple[list[float], str] | None = None,
+        angles: tuple[float, ...] | None = None,
+        sim_name: str | None = None,
     ) -> None:
         super().__init__(
             name=name,
@@ -60,12 +61,18 @@ class QOp(Op):
             metadata=metadata,
         )
         self.angles = angles
+        self.sim_name = sim_name
+        if self.sim_name is None:
+            self.sim_name = name
 
     def __repr__(self):
         return (
             f"<QOP: {self.name} angles: {self.angles} args: {self.args} returns: {self.returns} "
             f"meta: {self.metadata}>"
         )
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
 
 class COp(Op):

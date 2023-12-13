@@ -1,9 +1,22 @@
+# Copyright 2023 The PECOS developers
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+# the License.You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
+
 import json
 from pathlib import Path
 
 import pytest
 from pecos.engines.hybrid_engine import HybridEngine
 from pecos.error_models.generic_error_model import GenericErrorModel
+from phir.model import PHIRModel
+from pydantic import ValidationError
 
 try:
     from pecos.foreign_objects.wasmtime import WasmtimeObj
@@ -12,8 +25,11 @@ except ImportError:
 
 try:
     from pecos.foreign_objects.wasmer import WasmerObj
-except ImportError:
+
+    WASMER_ERR_MSG = None
+except ImportError as e:
     WasmerObj = None
+    WASMER_ERR_MSG = str(e)
 
 # tools for converting wasm to wat: https://github.com/WebAssembly/wabt/releases/tag/1.0.33
 
@@ -31,6 +47,15 @@ spec_example_phir = json.load(Path.open(this_dir / "phir/spec_example.json"))
 # run all without optional_dependency tests: pytest -v -m "not optional_dependency"
 
 
+def is_wasmer_supported():
+    """A check on whether Wasmer is known to support OS/Python versions."""
+
+    if WASMER_ERR_MSG == "Wasmer is not available on this system":
+        return False
+
+    return True
+
+
 @pytest.mark.wasmtime()
 @pytest.mark.optional_dependency()
 def test_spec_example_wasmtime():
@@ -40,7 +65,7 @@ def test_spec_example_wasmtime():
     HybridEngine().run(
         program=spec_example_phir,
         foreign_object=wasm,
-        shots=10,
+        shots=1000,
     )
 
 
@@ -49,7 +74,7 @@ def test_spec_example_wasmtime():
 def test_spec_example_noisy_wasmtime():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
 
-    wasm = WasmtimeObj(str(add_wat))
+    wasm = WasmtimeObj(str(math_wat))
     generic_errors = GenericErrorModel(
         error_params={
             "p1": 2e-1,
@@ -68,7 +93,7 @@ def test_spec_example_noisy_wasmtime():
     sim.run(
         program=spec_example_phir,
         foreign_object=wasm,
-        shots=10,
+        shots=1000,
     )
 
 
@@ -81,7 +106,7 @@ def test_example1_wasmtime():
     HybridEngine().run(
         program=example1_phir,
         foreign_object=wasm,
-        shots=10,
+        shots=1000,
     )
 
 
@@ -109,10 +134,11 @@ def test_example1_noisy_wasmtime():
     sim.run(
         program=example1_phir,
         foreign_object=wasm,
-        shots=10,
+        shots=1000,
     )
 
 
+@pytest.mark.skipif(not is_wasmer_supported(), reason="Wasmer is not support on some OS/Python version combinations.")
 @pytest.mark.wasmer()
 @pytest.mark.optional_dependency()
 def test_example1_wasmer():
@@ -122,10 +148,11 @@ def test_example1_wasmer():
     HybridEngine().run(
         program=example1_phir,
         foreign_object=wasm,
-        shots=10,
+        shots=1000,
     )
 
 
+@pytest.mark.skipif(not is_wasmer_supported(), reason="Wasmer is not support on some OS/Python version combinations.")
 @pytest.mark.wasmer()
 @pytest.mark.optional_dependency()
 def test_example1_noisy_wasmer():
@@ -150,20 +177,20 @@ def test_example1_noisy_wasmer():
     sim.run(
         program=example1_phir,
         foreign_object=wasm,
-        shots=10,
+        shots=1000,
     )
 
 
 def test_example1_no_wasm():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, without Wasm."""
 
-    HybridEngine().run(program=example1_no_wasm_phir, shots=10)
+    HybridEngine().run(program=example1_no_wasm_phir, shots=1000)
 
 
 def test_example1_no_wasm_multisim():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, without Wasm."""
 
-    HybridEngine().run_multisim(program=example1_no_wasm_phir, shots=10, pool_size=2)
+    HybridEngine().run_multisim(program=example1_no_wasm_phir, shots=1000, pool_size=2)
 
 
 def test_example1_no_wasm_noisy():
@@ -186,7 +213,7 @@ def test_example1_no_wasm_noisy():
     sim = HybridEngine(error_model=generic_errors)
     sim.run(
         program=example1_no_wasm_phir,
-        shots=100,
+        shots=1000,
     )
 
 
@@ -213,3 +240,11 @@ def test_classical_if_00_11():
 
     c = results["c"]
     assert c.count("00") + c.count("11") == len(c)
+
+
+def test_throw_exception_with_bad_phir():
+    """Making sure the bad PHIR throws an exception."""
+
+    phir = json.load(Path.open(this_dir / "phir" / "bad_phir.json"))
+    with pytest.raises(ValidationError):
+        PHIRModel.model_validate(phir)

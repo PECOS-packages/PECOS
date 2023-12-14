@@ -32,10 +32,12 @@ if TYPE_CHECKING:
 
 
 class HybridEngine:
+    """A simulation engine which is capable of running noisy hybrid classical/quantum programs."""
+
     def __init__(
         self,
         cinterp: ClassicalInterpreter | None = None,
-        simulator: QuantumSimulator | str | None = None,
+        qsim: QuantumSimulator | str | None = None,
         machine: Machine | None = None,
         error_model: ErrorModel | None = None,
         op_processor: OpProcessor | None = None,
@@ -46,11 +48,11 @@ class HybridEngine:
         if self.cinterp is None:
             self.cinterp = PHIRClassicalInterpreter()
 
-        self.simulator = simulator
-        if self.simulator is None:
-            self.simulator = QuantumSimulator()
-        elif isinstance(self.simulator, str):
-            self.simulator = QuantumSimulator(self.simulator)
+        self.qsim = qsim
+        if self.qsim is None:
+            self.qsim = QuantumSimulator()
+        elif isinstance(self.qsim, str):
+            self.qsim = QuantumSimulator(self.qsim)
 
         self.machine = machine
         if machine is None:
@@ -81,7 +83,7 @@ class HybridEngine:
     def reset_all(self):
         """Reset to the state of initialization."""
         self.cinterp.reset()
-        self.simulator.reset()
+        self.qsim.reset()
         self.machine.reset()
         self.error_model.reset()
         self.op_processor.reset()
@@ -100,7 +102,7 @@ class HybridEngine:
         self.machine.init(num_qubits)
         self.error_model.init(num_qubits, self.machine)
         self.op_processor.init()
-        self.simulator.init(num_qubits)
+        self.qsim.init(num_qubits)
 
     def shot_reinit_components(self) -> None:
         """Tells components that a new shot is starting and to run any tasks necessary, such as resetting their
@@ -110,7 +112,7 @@ class HybridEngine:
         self.machine.shot_reinit()
         self.error_model.shot_reinit()
         self.op_processor.shot_reinit()
-        self.simulator.shot_reinit()
+        self.qsim.shot_reinit()
 
     @staticmethod
     def use_seed(seed=None) -> int:
@@ -164,7 +166,7 @@ class HybridEngine:
             for buffered_ops in self.cinterp.execute(self.cinterp.program.ops):
                 # Process ops, e.g., use `machine` and `error_model` to generate noisy qops
                 noisy_buffered_qops = self.op_processor.process(buffered_ops)
-                measurements = self.simulator.run(noisy_buffered_qops)
+                measurements = self.qsim.run(noisy_buffered_qops)
 
                 # Allows noise to be dependent on measurement outcomes and to alter measurements
                 measurements = self.op_processor.process_meas(measurements)

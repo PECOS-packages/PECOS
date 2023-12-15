@@ -18,15 +18,9 @@ from typing import TypeVar
 from pecos.reps.pypmir import block_types as blk
 from pecos.reps.pypmir import data_types as d
 from pecos.reps.pypmir import op_types as op
+from pecos.reps.pypmir.name_resolver import default_sim_name_resolver
 
 TypeOp = TypeVar("TypeOp", bound=op.Op)
-
-
-def default_sim_name_resolver(o: dict) -> tuple | str:
-    """Takes the name of the operation and translates it to something the simulator can recognize."""
-    if o["qop"] == "RZZ" and o["angles"][0][0] == 0.0:
-        return "I"
-    return o["qop"]
 
 
 class PyPMIR:
@@ -124,12 +118,14 @@ class PyPMIR:
 
             instr = op.QOp(
                 name=o["qop"],
-                sim_name=p.sim_name_resolver(o),
+                sim_name=None,
                 angles=angles,
                 args=args,
                 returns=o.get("returns"),
                 metadata=metadata,
             )
+
+            instr.sim_name = p.sim_name_resolver(instr)
 
         elif "cop" in o:
             if o["cop"] == "ffcall":

@@ -4,7 +4,7 @@ from pecos.reps.pypmir.op_types import QOp
 from pecos.tools.find_cliffs import r1xy2cliff, rz2cliff
 
 
-def default_sim_name_resolver(qop: QOp, *, override_sim_name: bool = False) -> str:
+def default_sim_name_resolver(qop: QOp, *, override_sim_name: bool = True) -> str:
     """Takes the name of the operation and translates it to something all the simulators recognize."""
 
     # TODO: Support conversion of all SQ gates.

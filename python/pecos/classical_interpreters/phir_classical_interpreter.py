@@ -125,12 +125,29 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
                 self.cenv.append(dtype(0))
                 self.cid2dtype.append(dtype)
 
-    def execute(self, sequence: Sequence) -> Generator[list, Any, None]:
+    def _flatten_blocks(self, seq: Sequence):
+        """Flattens the ops of blocks to be processed by the execute() method."""
+        for op in seq:
+            if isinstance(op, pt.block.SeqBlock):
+                yield from self._flatten_blocks(op.ops)
+
+            elif isinstance(op, pt.block.IfBlock):
+                if self.eval_expr(op.condition):
+                    yield from self._flatten_blocks(op.true_branch)
+                elif op.false_branch:
+                    yield from self._flatten_blocks(op.false_branch)
+                else:  # For case of no false_branch (no else)
+                    pass
+
+            else:
+                yield op
+
+    def execute(self, seq: Sequence) -> Generator[list, Any, None]:
         """A generator that runs through and executes classical logic and yields other operations via a buffer."""
 
         op_buffer = []
 
-        for op in sequence:
+        for op in self._flatten_blocks(seq):
             if isinstance(op, pt.opt.QOp):
                 op_buffer.append(op)
 
@@ -141,20 +158,6 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             elif isinstance(op, pt.opt.COp):
                 self.handle_cops(op)
 
-            elif isinstance(op, pt.block.SeqBlock):
-                yield from self._block_seq(op.ops, op_buffer)
-
-            elif isinstance(op, pt.block.IfBlock):
-                if self.eval_expr(op.condition):
-                    yield from self._block_seq(op.true_branch, op_buffer)
-
-                elif op.false_branch:
-                    yield from self._block_seq(op.false_branch, op_buffer)
-
-                else:  # For case of no false_branch
-                    # self.execute([])
-                    pass
-
             elif isinstance(op, pt.opt.MOp):
                 op_buffer.append(op)
 
@@ -164,12 +167,6 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
 
         if op_buffer:
             yield op_buffer
-
-    def _block_seq(self, seq, op_buffer):
-        for ops in self.execute(seq):
-            op_buffer.extend(ops)
-            yield op_buffer
-            op_buffer.clear()
 
     def get_cval(self, cvar):
         cid = self.program.csym2id[cvar]

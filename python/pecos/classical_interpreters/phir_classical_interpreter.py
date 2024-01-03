@@ -141,18 +141,35 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             elif isinstance(op, pt.opt.COp):
                 self.handle_cops(op)
 
-            elif isinstance(op, pt.block.Block):
-                yield from self.execute_block(op)
+            elif isinstance(op, pt.block.SeqBlock):
+                yield from self._block_seq(op.ops, op_buffer)
+
+            elif isinstance(op, pt.block.IfBlock):
+                if self.eval_expr(op.condition):
+                    yield from self._block_seq(op.true_branch, op_buffer)
+
+                elif op.false_branch:
+                    yield from self._block_seq(op.false_branch, op_buffer)
+
+                else:  # For case of no false_branch
+                    # self.execute([])
+                    pass
 
             elif isinstance(op, pt.opt.MOp):
                 op_buffer.append(op)
 
             else:
-                msg = f"Statement not recognized: {op}"
+                msg = f"Statement not recognized: {op} of type: {type(op)}"
                 raise TypeError(msg)
 
         if op_buffer:
             yield op_buffer
+
+    def _block_seq(self, seq, op_buffer):
+        for ops in self.execute(seq):
+            op_buffer.extend(ops)
+            yield op_buffer
+            op_buffer.clear()
 
     def get_cval(self, cvar):
         cid = self.program.csym2id[cvar]
@@ -278,25 +295,6 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         else:
             msg = f"Unsupported COp: {op}"
             raise Exception(msg)
-
-    def execute_block(self, op):
-        """Execute a block of ops."""
-        if isinstance(op, pt.block.IfBlock):
-            if self.eval_expr(op.condition):
-                yield from self.execute(op.true_branch)
-
-            elif op.false_branch:
-                yield from self.execute(op.false_branch)
-
-            else:
-                yield from self.execute([])
-
-        elif isinstance(op, pt.block.SeqBlock):
-            yield from self.execute(op.ops)
-
-        else:
-            msg = f"block not implemented! {op}"
-            raise NotImplementedError(msg)
 
     def receive_results(self, qsim_results: list[dict]):
         """Receive measurement results and assign as needed."""

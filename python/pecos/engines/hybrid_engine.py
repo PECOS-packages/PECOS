@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
 
 class HybridEngine:
+    """Engine that runs hybrid quantum/classical programs."""
+
     def __init__(
         self,
         cinterp: ClassicalInterpreter | None = None,

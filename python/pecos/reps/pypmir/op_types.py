@@ -13,6 +13,8 @@ from __future__ import annotations
 
 
 class Op:
+    """Parent class of operations."""
+
     def __init__(
         self,
         name: str,
@@ -39,7 +41,7 @@ class Op:
                     raise TypeError(msg)
 
     def __str__(self) -> str:
-        return f"{self.name}, {self.args}, {self.returns}, {self.metadata}, {self.angles}"
+        return f"{self.name}, {self.args}, {self.returns}, {self.metadata}"
 
 
 class QOp(Op):
@@ -60,6 +62,9 @@ class QOp(Op):
             metadata=metadata,
         )
         self.angles = angles
+
+    def __str__(self):
+        return self.__repr__()
 
     def __repr__(self):
         return (

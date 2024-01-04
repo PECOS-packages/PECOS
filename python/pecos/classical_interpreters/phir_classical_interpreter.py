@@ -125,12 +125,29 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
                 self.cenv.append(dtype(0))
                 self.cid2dtype.append(dtype)
 
-    def execute(self, sequence: Sequence) -> Generator[list, Any, None]:
+    def _flatten_blocks(self, seq: Sequence):
+        """Flattens the ops of blocks to be processed by the execute() method."""
+        for op in seq:
+            if isinstance(op, pt.block.SeqBlock):
+                yield from self._flatten_blocks(op.ops)
+
+            elif isinstance(op, pt.block.IfBlock):
+                if self.eval_expr(op.condition):
+                    yield from self._flatten_blocks(op.true_branch)
+                elif op.false_branch:
+                    yield from self._flatten_blocks(op.false_branch)
+                else:  # For case of no false_branch (no else)
+                    pass
+
+            else:
+                yield op
+
+    def execute(self, seq: Sequence) -> Generator[list, Any, None]:
         """A generator that runs through and executes classical logic and yields other operations via a buffer."""
 
         op_buffer = []
 
-        for op in sequence:
+        for op in self._flatten_blocks(seq):
             if isinstance(op, pt.opt.QOp):
                 op_buffer.append(op)
 
@@ -141,14 +158,11 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             elif isinstance(op, pt.opt.COp):
                 self.handle_cops(op)
 
-            elif isinstance(op, pt.block.Block):
-                yield from self.execute_block(op)
-
             elif isinstance(op, pt.opt.MOp):
                 op_buffer.append(op)
 
             else:
-                msg = f"Statement not recognized: {op}"
+                msg = f"Statement not recognized: {op} of type: {type(op)}"
                 raise TypeError(msg)
 
         if op_buffer:
@@ -278,25 +292,6 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         else:
             msg = f"Unsupported COp: {op}"
             raise Exception(msg)
-
-    def execute_block(self, op):
-        """Execute a block of ops."""
-        if isinstance(op, pt.block.IfBlock):
-            if self.eval_expr(op.condition):
-                yield from self.execute(op.true_branch)
-
-            elif op.false_branch:
-                yield from self.execute(op.false_branch)
-
-            else:
-                yield from self.execute([])
-
-        elif isinstance(op, pt.block.SeqBlock):
-            yield from self.execute(op.ops)
-
-        else:
-            msg = f"block not implemented! {op}"
-            raise NotImplementedError(msg)
 
     def receive_results(self, qsim_results: list[dict]):
         """Receive measurement results and assign as needed."""

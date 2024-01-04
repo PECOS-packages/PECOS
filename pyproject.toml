@@ -15,7 +15,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quantum-pecos"
-version = "0.5.0.dev4"
+version = "0.5.0.dev5"
 authors = [
     {name = "The PECOS Developers"},
 ]
@@ -98,9 +98,6 @@ include-package-data = false
 where = ["python"]
 include = ["pecos*"]
 namespaces = true
-
-[tool.pytest.ini_options]
-filterwarnings = ["ignore:::dateutil.tz.tz.*"]
 
 # Linting and autorefactoring tools
 # ---------------------------------

@@ -262,6 +262,7 @@ def test_qparallel():
     assert m.count("1111") == len(m)
 
 
+@pytest.mark.optional_dependency()  # uses projectq / state-vector
 def test_bell_qparallel():
     """Testing a program creating and measuring a Bell state and using qparallel blocks returns expected results."""
 

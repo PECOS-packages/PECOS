@@ -99,9 +99,6 @@ where = ["python"]
 include = ["pecos*"]
 namespaces = true
 
-[tool.pytest.ini_options]
-filterwarnings = ["ignore:::dateutil.tz.tz.*"]
-
 # Linting and autorefactoring tools
 # ---------------------------------
 

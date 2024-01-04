@@ -273,3 +273,16 @@ def test_bell_qparallel():
 
     m = results["m"]
     assert m.count("00") + m.count("11") == len(m)
+
+
+def test_bell_qparallel_cliff():
+    """Testing a program creating and measuring a Bell state and using qparallel blocks returns expected results (with
+    Clifford circuits and stabilizer sim)."""
+
+    results = HybridEngine(qsim="stabilizer").run(
+        program=json.load(Path.open(this_dir / "phir" / "bell_qparallel_cliff.json")),
+        shots=20,
+    )
+
+    m = results["m"]
+    assert m.count("00") + m.count("11") == len(m)

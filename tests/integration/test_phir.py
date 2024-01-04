@@ -260,3 +260,29 @@ def test_qparallel():
 
     m = results["m"]
     assert m.count("1111") == len(m)
+
+
+@pytest.mark.optional_dependency()  # uses projectq / state-vector
+def test_bell_qparallel():
+    """Testing a program creating and measuring a Bell state and using qparallel blocks returns expected results."""
+
+    results = HybridEngine(qsim="state-vector").run(
+        program=json.load(Path.open(this_dir / "phir" / "bell_qparallel.json")),
+        shots=20,
+    )
+
+    m = results["m"]
+    assert m.count("00") + m.count("11") == len(m)
+
+
+def test_bell_qparallel_cliff():
+    """Testing a program creating and measuring a Bell state and using qparallel blocks returns expected results (with
+    Clifford circuits and stabilizer sim)."""
+
+    results = HybridEngine(qsim="stabilizer").run(
+        program=json.load(Path.open(this_dir / "phir" / "bell_qparallel_cliff.json")),
+        shots=20,
+    )
+
+    m = results["m"]
+    assert m.count("00") + m.count("11") == len(m)

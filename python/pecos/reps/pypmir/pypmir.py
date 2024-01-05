@@ -164,7 +164,12 @@ class PyPMIR:
     @classmethod
     def from_phir(cls, phir: dict, sim_name_resolver=None) -> PyPMIR:
         """Takes a PHIR dictionary and converts it into a PyPMIR object."""
-        p = PyPMIR(metadata=dict(phir["metadata"]), sim_name_resolver=sim_name_resolver)
+        p = PyPMIR(
+            metadata=dict(
+                phir.get("metadata", {}),
+            ),
+            sim_name_resolver=sim_name_resolver,
+        )
 
         next_qvar_int = 0
 

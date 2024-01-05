@@ -13,6 +13,8 @@ from __future__ import annotations
 
 
 class Op:
+    """Parent class of operations."""
+
     def __init__(
         self,
         name: str,

@@ -260,11 +260,15 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         self.cenv[cid] = cval
 
     def handle_cops(self, op):
+        """Handle the processing of classical operations."""
+
         if op.name == "=":
-            (arg,) = op.args
-            (rtn,) = op.returns
-            val = self.eval_expr(arg)
-            self.assign_int(rtn, val)
+            args = []
+            for a in op.args:
+                args.append(self.eval_expr(a))
+
+            for r, a in zip(op.returns, args):
+                self.assign_int(r, a)
 
         elif isinstance(op, pt.opt.FFCall):
             args = []

@@ -155,9 +155,13 @@ class PyPMIR:
 
     @classmethod
     def from_phir(cls, phir: dict) -> PyPMIR:
-        # TODO: Build nested instructions.
+        """Converts PHIR dict to PyPMIR object."""
 
-        p = PyPMIR(metadata=dict(phir["metadata"]))
+        p = PyPMIR(
+            metadata=dict(
+                phir.get("metadata", {}),
+            ),
+        )
 
         next_qvar_int = 0
 

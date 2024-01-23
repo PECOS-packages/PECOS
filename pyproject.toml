@@ -99,6 +99,9 @@ where = ["python"]
 include = ["pecos*"]
 namespaces = true
 
+[tool.setuptools.package-data]
+"pecos" = ["py.typed"]
+
 # Linting and autorefactoring tools
 # ---------------------------------
 

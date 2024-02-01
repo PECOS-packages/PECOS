@@ -53,6 +53,8 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         self.cenv = None
         self.cid2dtype = None
 
+        self.phir_validate = True
+
         self.reset()
 
     def _reset_env(self):
@@ -81,7 +83,7 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             self.program = self.program.to_phir_dict()
 
         # Assume PHIR dict format, validate PHIR
-        if isinstance(self.program, dict):
+        if isinstance(self.program, dict) and self.phir_validate:
             PHIRModel.model_validate(self.program)
 
         if isinstance(self.program, dict):
@@ -160,6 +162,10 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
 
             elif isinstance(op, pt.opt.MOp):
                 op_buffer.append(op)
+
+            elif op is None:
+                # TODO: Make it so None ops are not included
+                continue
 
             else:
                 msg = f"Statement not recognized: {op} of type: {type(op)}"

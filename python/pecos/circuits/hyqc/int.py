@@ -84,8 +84,7 @@ class Int(CVar):
         """A << b."""
         ...
 
-    def __invert__(self):
-        ...
+    def __invert__(self): ...
 
     def __ixor__(self, other):
         """A ^= b."""

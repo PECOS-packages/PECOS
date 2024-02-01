@@ -15,19 +15,19 @@ repos:
       - id: debug-statements
 
   - repo: https://github.com/crate-ci/typos
-    rev: v1.16.18
+    rev: v1.18.0
     hooks:
       - id: typos
         args: []
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.0.292
+    rev: v0.1.15
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
 
   - repo: https://github.com/psf/black
-    rev: 23.9.1
+    rev: 24.1.1
     hooks:
       - id: black
         exclude: |
@@ -36,7 +36,7 @@ repos:
             )$
 
   - repo: https://github.com/keewis/blackdoc
-    rev: v0.3.8
+    rev: v0.3.9
     hooks:
     -   id: blackdoc
         additional_dependencies:

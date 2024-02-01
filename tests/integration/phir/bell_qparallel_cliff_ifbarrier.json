@@ -1,0 +1,53 @@
+{
+ "format": "PHIR/JSON",
+ "version": "0.1.0",
+ "metadata": {"source": "pytket-phir v0.2.0", "strict_parallelism": "true"},
+ "ops": [
+  {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
+  {"data": "cvar_define", "data_type": "u32", "variable": "m", "size": 2},
+  {"qop": "Z", "args": [["q", 0], ["q", 1]]},
+  {"block": "qparallel", "ops": [
+   {"qop": "SY", "args": [["q", 0]]},
+   {"qop": "SYdg", "args": [["q", 1]]}
+  ]},
+  { "block": "sequence", "ops": [
+   { "block":  "if",
+    "condition": {"cop":  "==", "args":  ["m", 0]},
+    "true_branch":  [{"meta":  "barrier", "args": [["q", 0], ["q", 1]]}]
+   },
+   { "block":  "if",
+    "condition": {"cop":  "==", "args":  ["m", 1]},
+    "true_branch":  [
+     {"meta":  "barrier", "args": [["q", 0], ["q", 1]]},
+     {"qop": "Z", "args": [["q", 0]]},
+     {"qop": "SZZ", "args": [[["q", 0], ["q", 1]]]},
+     {"block": "qparallel", "ops": [
+      {"qop": "SZdg", "args": [["q", 0]]},
+      {"qop": "SZ", "args": [["q", 1]]}
+     ]}
+    ],
+    "false_branch":  [
+     {"meta":  "barrier", "args": [["q", 0], ["q", 1]]},
+     {"qop": "Z", "args": [["q", 0]]},
+     {"qop": "SZZ", "args": [[["q", 0], ["q", 1]]]},
+     {"block": "qparallel", "ops": [
+      {"qop": "SZdg", "args": [["q", 0]]},
+      {"qop": "SZ", "args": [["q", 1]]}
+     ]}
+   ]
+   }
+  ]},
+  { "block": "sequence", "ops": [
+   { "block":  "if",
+    "condition": {"cop":  "==", "args":  ["m", 1]},
+    "true_branch":  [{"meta":  "barrier", "args": [["q", 0], ["q", 1]]}]
+   }
+  ]},
+  { "block":  "if",
+   "condition": {"cop":  "==", "args":  ["m", 0]},
+   "true_branch":  [{"meta":  "barrier", "args": [["q", 0], ["q", 1]]}]
+  },
+  {"qop": "SYdg", "args": [["q", 1]]},
+  {"qop": "Measure", "args": [["q", 0], ["q", 1]], "returns": [["m", 0], ["m", 1]]}
+ ]
+}

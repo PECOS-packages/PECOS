@@ -147,7 +147,7 @@ class PyPMIR:
             # TODO: Handle meta instructions
             name = o["meta"]
             if name == "barrier":
-                pass
+                instr = None
             else:
                 msg = f"Meta instruction '{name}' not implemented/supported."
                 raise NotImplementedError(msg)

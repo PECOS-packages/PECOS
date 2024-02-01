@@ -151,6 +151,15 @@ class PyPMIR:
         elif "mop" in o:
             instr = op.MOp(name=o["mop"], args=o.get("args"), returns=o.get("returns"), metadata=o.get("metadata"))
 
+        elif "meta" in o:
+            # TODO: Handle meta instructions
+            name = o["meta"]
+            if name == "barrier":
+                instr = None
+            else:
+                msg = f"Meta instruction '{name}' not implemented/supported."
+                raise NotImplementedError(msg)
+
         elif "//" in o:
             # Do not include comments
             instr = None

@@ -17,7 +17,7 @@ mdurl==0.1.2
 networkx==2.8.8
 numpy==1.26.3
 packaging==23.2
-phir==0.2.1
+phir==0.3.0
 pillow==10.2.0
 pluggy==1.4.0
 pydantic==2.6.0

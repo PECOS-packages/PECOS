@@ -294,7 +294,6 @@ def test_bell_qparallel_cliff_barrier():
     results (with Clifford circuits and stabilizer sim)."""
 
     interp = PHIRClassicalInterpreter()
-    interp.phir_validate = False
 
     results = HybridEngine(qsim="stabilizer", cinterp=interp).run(
         program=json.load(Path.open(this_dir / "phir" / "bell_qparallel_cliff_barrier.json")),
@@ -310,7 +309,6 @@ def test_bell_qparallel_cliff_ifbarrier():
     returns expected results (with Clifford circuits and stabilizer sim)."""
 
     interp = PHIRClassicalInterpreter()
-    interp.phir_validate = False
 
     results = HybridEngine(qsim="stabilizer", cinterp=interp).run(
         program=json.load(Path.open(this_dir / "phir" / "bell_qparallel_cliff_ifbarrier.json")),

@@ -15,13 +15,9 @@
 class Statement:
     """Statements are something that do something."""
 
-    ...
-
 
 class Expression:
     """Expressions are something that evaluate to a values."""
-
-    ...
 
 
 class Block:

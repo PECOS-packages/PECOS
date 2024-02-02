@@ -61,16 +61,12 @@ class QGate(QOp):
 class BarrierGate(QGate):
     """A gate that prevents compilers from moving quantum gates past the barrier."""
 
-    ...
-
 
 Barrier = BarrierGate()
 
 
 class ResetGate(QGate):
     """Resetting a qubit to the zero state."""
-
-    ...
 
 
 Reset = ResetGate()
@@ -118,13 +114,9 @@ class CliffordGate(UnitaryGate):
 class PauliGate(CliffordGate):
     """A Pauli gate."""
 
-    ...
-
 
 class NonCliffordGate(UnitaryGate):
     """A non-Clifford gate."""
-
-    ...
 
 
 class XGate(PauliGate):

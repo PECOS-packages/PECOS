@@ -17,6 +17,7 @@ from pecos.engines.cvm.sim_func import sim_exec
 from pecos.engines.cvm.wasm_vms.pywasm import read_pywasm
 from pecos.engines.cvm.wasm_vms.pywasm3 import read_pywasm3
 from pecos.engines.cvm.wasm_vms.wasmer import read_wasmer
+from pecos.engines.cvm.wasm_vms.wasmtime import read_wasmtime
 from pecos.errors import MissingCCOPError
 
 
@@ -35,12 +36,15 @@ def get_ccop(circuit):
         ccop_type = circuit.metadata["ccop_type"]
 
         if ccop_type is None:
-            ccop_type = "wasmer"
+            ccop_type = "wasmtime"
 
         # Set self.ccop
         # ------------------------------------------------
         if ccop_type in {"py", "python"}:
             ccop = read_pickle(ccop)
+
+        elif ccop_type == "wasmtime":
+            ccop = read_wasmtime(ccop)
 
         elif ccop_type == "pywasm":
             ccop = read_pywasm(ccop)

@@ -25,8 +25,8 @@ class GenericMachine(Machine):
 
     def __init__(self, num_qubits: int | None = None) -> None:
         super().__init__(num_qubits=num_qubits)
-        self.leaked_qubits = None
-        self.lost_qubits = None
+        self.leaked_qubits: set = set()
+        self.lost_qubits: set = set()
 
     def reset(self) -> None:
         """Reset state to initialization state."""

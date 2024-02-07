@@ -47,18 +47,24 @@ setup(
     long_description_content_type="text/markdown",
 
     packages=find_packages(),
-    python_requires='>=3.6',
+    python_requires=">=3.6",
     install_requires=[
-        'numpy>=1.15.0',
-        'scipy>=1.1.0',
-        'matplotlib>=2.2.0',
-        'networkx>=2.1.0',
-        'sortedcontainers>=2.0.0',
+        "numpy>=1.15.0,<2.0",
+        "scipy>=1.1.0,<2.0",
+        "matplotlib>=2.2.0,<4.0",
+        "networkx>=2.1.0,<3.0",
+        "sortedcontainers>=2.0.0,<3.0",
     ],
     tests_require=['pytest>=3.0.0'],
     extras_require={
-        'all': ['cirq', 'cython', 'projectq'],
-        'simulators': ['cirq', 'cython', 'projectq'],
+        'simulators': [
+            'cython',
+            'projectq',
+        ],
+        'all': [
+            'quantum-pecos[simulators]',
+        ],
+
     },
     license='Apache 2',
     classifiers=[

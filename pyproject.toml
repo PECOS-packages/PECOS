@@ -15,7 +15,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quantum-pecos"
-version = "0.5.0.dev4"
+version = "0.5.0.dev9"
 authors = [
     {name = "The PECOS Developers"},
 ]
@@ -28,7 +28,7 @@ requires-python = ">=3.10"
 license = { file = "LICENSE"}
 keywords = ["quantum", "QEC", "simulation", "PECOS"]
 dependencies = [
-    "phir~=0.2.1",
+    "phir~=0.3.0",
     "numpy>=1.15.0,<2.0",
     "scipy>=1.1.0,<2.0",
     "networkx>=2.1.0,<3.0",
@@ -59,7 +59,7 @@ simulators = [
     "projectq>=0.5.0,<0.9.0",
 ]
 wasmtime = [
-    "wasmtime~=13.0"
+    "wasmtime>=13.0"
 ]
 wasmer = [
     "wasmer~=1.1.0",
@@ -72,14 +72,11 @@ tests = [
     "pytest>=5.0.0"
 ]
 all = [
-    "cython",
-    "pybind11>=2.2.3,<3.0",
-    "projectq>=0.5.0,<0.9.0",
-    "wasmtime~=13.0",
-    "wasmer~=1.1.0",
-    "wasmer_compiler_cranelift~=1.1.0",
-    "plotly~=5.9.0",
-    "pytest>=5.0.0"
+    "quantum-pecos[simulators]",
+    "quantum-pecos[wasmtime]",
+    "quantum-pecos[wasmer]",
+    "quantum-pecos[visualization]",
+    "quantum-pecos[tests]",
 ]
 
 [tool.distutils.build_ext]
@@ -99,8 +96,8 @@ where = ["python"]
 include = ["pecos*"]
 namespaces = true
 
-[tool.pytest.ini_options]
-filterwarnings = ["ignore:::dateutil.tz.tz.*"]
+[tool.setuptools.package-data]
+"pecos" = ["py.typed"]
 
 # Linting and autorefactoring tools
 # ---------------------------------

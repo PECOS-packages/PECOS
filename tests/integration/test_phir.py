@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pecos.classical_interpreters.phir_classical_interpreter import PHIRClassicalInterpreter
 from pecos.engines.hybrid_engine import HybridEngine
 from pecos.error_models.generic_error_model import GenericErrorModel
 from phir.model import PHIRModel
@@ -260,3 +261,59 @@ def test_qparallel():
 
     m = results["m"]
     assert m.count("1111") == len(m)
+
+
+@pytest.mark.optional_dependency()  # uses projectq / state-vector
+def test_bell_qparallel():
+    """Testing a program creating and measuring a Bell state and using qparallel blocks returns expected results."""
+
+    results = HybridEngine(qsim="state-vector").run(
+        program=json.load(Path.open(this_dir / "phir" / "bell_qparallel.json")),
+        shots=20,
+    )
+
+    m = results["m"]
+    assert m.count("00") + m.count("11") == len(m)
+
+
+def test_bell_qparallel_cliff():
+    """Testing a program creating and measuring a Bell state and using qparallel blocks returns expected results (with
+    Clifford circuits and stabilizer sim)."""
+
+    results = HybridEngine(qsim="stabilizer").run(
+        program=json.load(Path.open(this_dir / "phir" / "bell_qparallel_cliff.json")),
+        shots=20,
+    )
+
+    m = results["m"]
+    assert m.count("00") + m.count("11") == len(m)
+
+
+def test_bell_qparallel_cliff_barrier():
+    """Testing a program creating and measuring a Bell state and using qparallel blocks and barriers returns expected
+    results (with Clifford circuits and stabilizer sim)."""
+
+    interp = PHIRClassicalInterpreter()
+
+    results = HybridEngine(qsim="stabilizer", cinterp=interp).run(
+        program=json.load(Path.open(this_dir / "phir" / "bell_qparallel_cliff_barrier.json")),
+        shots=20,
+    )
+
+    m = results["m"]
+    assert m.count("00") + m.count("11") == len(m)
+
+
+def test_bell_qparallel_cliff_ifbarrier():
+    """Testing a program creating and measuring a Bell state and using qparallel blocks and conditional barriers
+    returns expected results (with Clifford circuits and stabilizer sim)."""
+
+    interp = PHIRClassicalInterpreter()
+
+    results = HybridEngine(qsim="stabilizer", cinterp=interp).run(
+        program=json.load(Path.open(this_dir / "phir" / "bell_qparallel_cliff_ifbarrier.json")),
+        shots=20,
+    )
+
+    m = results["m"]
+    assert m.count("00") + m.count("11") == len(m)

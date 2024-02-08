@@ -1,6 +1,5 @@
-# -*- coding: utf-8 -*-
-
-#  =========================================================================  #
+#  =========================================================================  #  # noqa: INP001
+#   Copyright 2023 The PECOS Developers
 #   Copyright 2018 National Technology & Engineering Solutions of Sandia,
 #   LLC (NTESS). Under the terms of Contract DE-NA0003525 with NTESS,
 #   the U.S. Government retains certain rights in this software.
@@ -31,7 +30,7 @@ import sys
 from importlib import metadata
 from pathlib import Path
 
-sys.path.insert(0, str(Path("../pecos").resolve()))
+sys.path.insert(0, str(Path("../python").resolve()))
 
 # -- Project information -----------------------------------------------------
 
@@ -52,43 +51,44 @@ version = ".".join(release.split(".")[:3])
 
 # If your documentation needs a minimal Sphinx version, state it here.
 #
-needs_sphinx = '7.1'
+needs_sphinx = "7.1"
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
-import sphinx_rtd_theme
+
+# TODO: Go through these and confirm they are being used
 
 extensions = [
-    'sphinx.ext.autodoc',
-    'sphinx.ext.autosummary',
-    'sphinx.ext.doctest',
-    'sphinx.ext.napoleon',
-    'sphinx.ext.todo',
-    'sphinx.ext.coverage',
-    'sphinx.ext.mathjax',
-    'sphinx.ext.viewcode',
-    'sphinx.ext.githubpages',
-    'sphinx.ext.intersphinx',
-    'sphinx.ext.ifconfig',
-    'sphinx.ext.extlinks',
+    "sphinx.ext.autodoc",
+    "sphinx.ext.autosummary",
+    "sphinx.ext.doctest",
+    "sphinx.ext.napoleon",
+    "sphinx.ext.todo",
+    "sphinx.ext.coverage",
+    "sphinx.ext.mathjax",
+    "sphinx.ext.viewcode",
+    "sphinx.ext.githubpages",
+    "sphinx.ext.intersphinx",
+    "sphinx.ext.ifconfig",
+    "sphinx.ext.extlinks",
     # 'sphinx.ext.autosectionlabel',
+    "sphinx_copybutton",
 ]
 
 # Add any paths that contain templates here, relative to this directory.
-templates_path = ['_templates']
+templates_path = ["_templates"]
 
 # The suffix(es) of source filenames.
 # You can specify multiple suffix as a list of string:
 #
-# source_suffix = ['.rst', '.md']
-source_suffix = '.rst'
+source_suffix = ".rst"  # ['.rst', '.md']
 
 # The encoding of source files.
-source_encoding = 'utf-8-sig'
+source_encoding = "utf-8-sig"
 
 # The master toctree document.
-master_doc = 'index'
+master_doc = "index"
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
@@ -96,7 +96,15 @@ master_doc = 'index'
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "sphinx", "README.md"]
 
 # The name of the Pygments (syntax highlighting) style to use.
-pygments_style = 'sphinx'
+pygments_style = "sphinx"
+
+# -- Extension settings  -----------------------------------------------------
+
+# Sphinx-copybutton - add copy button to code blocks
+# https://sphinx-copybutton.readthedocs.io/en/latest/index.html
+# strip the '>>>' and '...' prompt/continuation prefixes.
+copybutton_prompt_text = r">>> |\.\.\. "
+copybutton_prompt_is_regexp = True
 
 
 # -- Options for HTML output -------------------------------------------------
@@ -104,23 +112,41 @@ pygments_style = 'sphinx'
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'sphinx_rtd_theme'
+# html_theme = "sphinx_rtd_theme"
+html_theme = "pydata_sphinx_theme"
 
-html_theme_options = {
-    'logo_only': True,
-}
+html_logo = "images/pecos_large_logo_white.png"
 
-html_logo = 'images/pecos_large_logo_white.png'
+github_root = "https://github.com/PECOS-packages/PECOS"
+
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
 # documentation.
 #
-# html_theme_options = {}
+html_theme_options = {
+    "logo": {
+        "image_light": "images/pecos_large_logo.png",
+        "image_dark": "images/pecos_large_logo.png",
+    },
+    "icon_links": [
+        {
+            "name": "GitHub",
+            "url": github_root,
+            "icon": "fa-brands fa-github",
+        },
+    ],
+    "navbar_end": [
+        "theme-switcher",
+        # TODO: Enable switcher: https://pydata-sphinx-theme.readthedocs.io/en/stable/user_guide/version-dropdown.html
+        # "version-switcher",
+        "navbar-icon-links",
+    ],
+}
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
-html_static_path = ['_static']
+html_static_path = ["_static"]
 
 # Custom sidebar templates, must be a dictionary that maps document names
 # to template names.
@@ -136,7 +162,7 @@ html_static_path = ['_static']
 # -- Options for HTMLHelp output ---------------------------------------------
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = 'PECOSdoc'
+htmlhelp_basename = "PECOSdoc"
 
 
 # -- Options for LaTeX output ------------------------------------------------
@@ -144,16 +170,13 @@ htmlhelp_basename = 'PECOSdoc'
 latex_elements = {
     # The paper size ('letterpaper' or 'a4paper').
     #
-    'papersize': 'letterpaper',
-
+    "papersize": "letterpaper",
     # The font size ('10pt', '11pt' or '12pt').
     #
     # 'pointsize': '10pt',
-
     # Additional stuff for the LaTeX preamble.
     #
     # 'preamble': '',
-
     # Latex figure (float) alignment
     #
     # 'figure_align': 'htbp',
@@ -163,8 +186,7 @@ latex_elements = {
 # (source start file, target name, title,
 #  author, documentclass [howto, manual, or own class]).
 latex_documents = [
-    (master_doc, 'PECOS.tex', 'PECOS Documentation',
-     author, 'manual'),
+    (master_doc, "PECOS.tex", "PECOS Documentation", author, "manual"),
 ]
 
 
@@ -173,8 +195,7 @@ latex_documents = [
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
 man_pages = [
-    (master_doc, 'pecos', 'PECOS Documentation',
-     [author], 1)
+    (master_doc, "pecos", "PECOS Documentation", [author], 1),
 ]
 
 
@@ -184,9 +205,7 @@ man_pages = [
 # (source start file, target name, title, author,
 #  dir menu entry, description, category)
 texinfo_documents = [
-    (master_doc, 'PECOS', 'PECOS Documentation',
-     author, 'PECOS', 'One line description of project.',
-     'Miscellaneous'),
+    (master_doc, "PECOS", "PECOS Documentation", author, "PECOS", "One line description of project.", "Miscellaneous"),
 ]
 
 # -- External links code:

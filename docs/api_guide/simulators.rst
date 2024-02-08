@@ -4,7 +4,7 @@ Simulators
 ==========
 
 Quantum states and their dynamics are simulated by classes belonging to the namespace ``simulators``. PECOS contains a
-stabilizer simulator called ``StabSim``.
+stabilizer simulator called ``SparseSim``.
 
 
 Expected Methods
@@ -18,8 +18,8 @@ the size of the quantum registry:
 
 
 
->>> from pecos.simulators import StabSim
->>> state = StabSim(4)
+>>> from pecos.simulators import SparseSim
+>>> state = SparseSim(4)
 
 Note, for all simulators, the initial state of each qudit is the state :math:`|0\rangle`.
 
@@ -47,14 +47,14 @@ corresponding measurement results except that zero results are not returned.
 Classes in the ``circuit_runners`` namespace combine ``QuantumCircuits`` and simulators to apply gates to simulated
 uantum states. For a discussion about these classes see :ref:`api-circ-run`.
 
-StabSim
--------
+SparseSim
+---------
 
-Methods that specific to ``StabSim`` will now be described.
+Methods that specific to ``SparseSim`` will now be described.
 
 The ``print_stabs`` method prints a stabilizer table corresponding to the state currently store in the simulator:
 
->>> state = StabSim(3)
+>>> state = SparseSim(3)
 >>> state.run_gate('CNOT', {(0, 1)})
 {}
 >>> state.run_gate('X', {0})

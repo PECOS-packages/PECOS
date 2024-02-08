@@ -37,8 +37,8 @@ gate_dict = {
     'PhaseRot': MakeFunc(ops.R, angle=True).func,  # Phase-shift: Same as Rz but with a 1 in upper left of matrix.
     'TOFFOLI': MakeFunc(ops.Toffoli).func,
     'CRZ': MakeFunc(ops.CRz, angle=True).func,  # Controlled-Rz gate
-    'CRX': MakeFunc(ops.C(ops.Rx, n=1), angle=True).func,  # Controlled-Rx
-    'CRY': MakeFunc(ops.C(ops.Ry, n=1), angle=True).func,  # Controlled-Ry
+    'CRX': MakeFunc(ops.C(ops.Rx, 1), angle=True).func,  # Controlled-Rx
+    'CRY': MakeFunc(ops.C(ops.Ry, 1), angle=True).func,  # Controlled-Ry
 
     'RXX': gates_two_qubit.RXX,
     'RYY': gates_two_qubit.RYY,

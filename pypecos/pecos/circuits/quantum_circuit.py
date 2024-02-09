@@ -34,12 +34,10 @@ class QuantumCircuit(MutableSequence):
 
     def __init__(self, circuit_setup=None, **metadata) -> None:
         """Args:
-        ----
             circuit_setup (None, int, list of dict):
             **params: Quantum circuit parameters.
 
         Attributes:
-        ----------
             self._ticks(list of dict): A list of parallel gates. Each element is a dictionary of gate symbol => gate
             set.
             This gate dictionary is assumed to be a collection of gates that act in parallel on the qudits.
@@ -85,12 +83,10 @@ class QuantumCircuit(MutableSequence):
         """Adds a new gate=>gate_locations (set) pair to the end of ``self.gates``.
 
         Args:
-        ----
             symbol(str or dict): A gate dictionary of gate symbol => set of qudit ids or tuples of qudit ids
             locations:
 
         Example:
-        -------
             >>> quantum_circuit = QuantumCircuit()
             >>> quantum_circuit.append({"X": {0, 1, 5, 6}, "Z": {7, 8, 9}})
             >>> quantum_circuit.append("X", {0, 1, 3, 7})
@@ -106,7 +102,6 @@ class QuantumCircuit(MutableSequence):
         """Updates that last group of parallel gates to include the gate acting on the set of qudits.
 
         Args:
-        ----
             symbol(str or dict): A gate dictionary of gate symbol => set of qudit ids or tuples of qudit ids
             locations(set or None):
             tick(int): The time (tick) when the update should occur.
@@ -123,27 +118,22 @@ class QuantumCircuit(MutableSequence):
         """Discards ``locations`` for tick ``tick``.
 
         Args:
-        ----
             locations:
             tick:
 
         Returns:
-        -------
 
         """
         self._ticks[tick].discard(locations)
 
-    def add_ticks(self, num_ticks):
+    def add_ticks(self, num_ticks) -> None:
         """Makes sure that QuantumCircuit has at least `num_tick` number of ticks. If the number of ticks in the data
         structure is less than `num_tick` then empty ticks are appended until the total number of ticks == `num_ticks`.
 
         Args:
-        ----
             num_ticks:
 
-        Returns:
-        -------
-
+        Returns: Nothing
         """
         for _ in range(num_ticks):
             self.append({})
@@ -154,11 +144,9 @@ class QuantumCircuit(MutableSequence):
         If ``tick`` is not None then it will iterate over only the qudits/qudits in the corresponding tick.
 
         Args:
-        ----
             tick:
 
         Returns:
-        -------
 
         """
         if tick is None:
@@ -181,12 +169,10 @@ class QuantumCircuit(MutableSequence):
         """Inserts ``gate_dict`` into ``ticks`` at index ``tick``.
 
         Args:
-        ----
             tick:
             item:
 
         Returns:
-        -------
 
         """
         gate_dict, params = item
@@ -267,11 +253,9 @@ class QuantumCircuit(MutableSequence):
         """Returns tick when instance[index] is used.
 
         Args:
-        ----
             tick(int): Tick index of ``self._ticks``.
 
         Returns:
-        -------
 
         """
         return self._ticks[tick]
@@ -284,7 +268,6 @@ class QuantumCircuit(MutableSequence):
         """Used to return number of ticks when len() is used on an instance of this class.
 
         Returns:
-        -------
 
         """
         return len(self._ticks)
@@ -293,11 +276,9 @@ class QuantumCircuit(MutableSequence):
         """Used to delete a tick. For example: del instance[key].
 
         Args:
-        ----
             tick:
 
         Returns:
-        -------
 
         """
         self._ticks[tick] = self._gates_class(self)
@@ -306,7 +287,6 @@ class QuantumCircuit(MutableSequence):
         """String returned when a string representation is requested. This occurs during printing.
 
         Returns:
-        -------
 
         """
         str_list = []
@@ -341,7 +321,6 @@ class QuantumCircuit(MutableSequence):
         """Create a shallow copy of the circuit.
 
         Returns:
-        -------
 
         """
         return self.__copy__()
@@ -368,12 +347,10 @@ class ParamGateCollection:
 
     def add(self, symbol, locations=None, **params):
         """Args:
-        ----
             symbol:
             locations:
 
         Returns:
-        -------
 
         """
         # If locations is None then assume symbol is a gate_dict.
@@ -397,11 +374,9 @@ class ParamGateCollection:
         """Remove gate locations.
 
         Args:
-        ----
             locations:
 
         Returns:
-        -------
 
         """
         for gate_list in self.symbols.values():
@@ -439,7 +414,6 @@ class ParamGateCollection:
         The qudit ids are added to ``self.active_qudits``.
 
         Args:
-        ----
             gate_dict:
         Raises:
             Exception: If qudit ids are not int or if non-parallel gates are found (i.e., a qudit ha already been acted
@@ -463,7 +437,6 @@ class ParamGateCollection:
         """Generator to return a dictionary-like iter.
 
         Returns:
-        -------
 
         """
         for gate_symbol, gate_list in self.symbols.items():

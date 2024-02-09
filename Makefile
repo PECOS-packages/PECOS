@@ -42,7 +42,7 @@ install-all: upgrade-pip  ## Install PECOS with all optional dependencies
 # Documentation
 # -------------
 
-docs: install  ## Generate documentation
+docs: install-all  ## Generate documentation
 	$(VENV_BIN)/pip install -r ./docs/requirements.txt
 	$(MAKE) -C docs SPHINXBUILD=../$(VENV_BIN)/sphinx-build clean html
 

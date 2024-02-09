@@ -11,10 +11,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""SparseStabSim
-=============.
-
-This is a stabilizer simulation that takes advantage of the structure of LDPC codes; more precisely, it utilizes the
+"""A stabilizer simulation that takes advantage of the structure of LDPC codes; more precisely, it utilizes the
 row and column-wise sparseness of stabilizer tableau.
 
 .. module:: __init__

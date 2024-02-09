@@ -25,9 +25,12 @@ class HybridEngine:
     """This class represents a standard model for running quantum circuits and adding in errors."""
 
     def __init__(self, seed=None, debug=False, regwidth: int = 32) -> None:
-        """Args:
-        ----
+        """
+
+        Args:
             seed:
+            debug:
+            regwidth:
         """
         self.debug = debug
         self.state = None
@@ -125,7 +128,7 @@ class HybridEngine:
 
     def run_circuit(self, state, output, output_export, circuit, error_gen, removed_locations=None):
         """Args:
-        ----
+
             circuit (QuantumCircuit): A circuit instance or object with an appropriate items() generator.
             removed_locations:
 
@@ -192,8 +195,9 @@ class HybridEngine:
 
     @staticmethod
     def run_gate(state, output, symbol: str, locations, **params):
-        """Args:
-        ----
+        """
+
+        Args:
             state:
             output:
             symbol:
@@ -201,9 +205,9 @@ class HybridEngine:
             **params:
 
         Returns:
-        -------
 
         """
+
         if params.get("simulate_gate", True):
             for location in locations:
                 try:

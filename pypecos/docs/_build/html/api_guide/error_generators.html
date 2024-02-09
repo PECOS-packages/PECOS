@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Error Generators &mdash; PECOS 0.2.dev0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=fa44fd50" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=19f00094" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="../_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="../_static/jquery.js?v=5d32c60e"></script>
+        <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script src="../_static/documentation_options.js?v=b420214a"></script>
+        <script src="../_static/doctools.js?v=888ff710"></script>
+        <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+        <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Decoders" href="decoders.html" />
+    <link rel="prev" title="Circuit Runners" href="circuit_runners.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html">
+            
+              <img src="../_static/pecos_large_logo_white.png" class="logo" alt="Logo"/>
+          </a>
+              <div class="version">
+                0.2.dev0
+              </div>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../install.html">Getting Started</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="index.html">API Guide</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="quantum_circuits.html">Quantum Circuits</a></li>
+<li class="toctree-l2"><a class="reference internal" href="qeccs.html">QECCs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="logical_circuits.html">Logical Circuits</a></li>
+<li class="toctree-l2"><a class="reference internal" href="simulators.html">Simulators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="standard_gates.html">Standard Gates</a></li>
+<li class="toctree-l2"><a class="reference internal" href="circuit_runners.html">Circuit Runners</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Error Generators</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#gatewisegen">GatewiseGen</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#depolargen">DepolarGen</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="decoders.html">Decoders</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tools.html">Tools</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../examples/index.html">Examples</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../reference/index.html">Code Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../change_log.html">Change Log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../bibliography.html">Bibliography</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../todo_list.html">Todo List</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">PECOS</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">API Guide</a></li>
+      <li class="breadcrumb-item active">Error Generators</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/api_guide/error_generators.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="error-generators">
+<span id="error-gens"></span><h1>Error Generators<a class="headerlink" href="#error-generators" title="Link to this heading"></a></h1>
+<p>Error models are represented by classes called “error generators” that are in the <code class="docutils literal notranslate"><span class="pre">error_gens</span></code> namespace. They are
+called upon by <code class="docutils literal notranslate"><span class="pre">circuit_runners</span></code> to apply noise to ideal quantum circuits.</p>
+<p>In this section I will discuss <code class="docutils literal notranslate"><span class="pre">GatewiseGen</span></code> and <code class="docutils literal notranslate"><span class="pre">DepolarGen</span></code> classes. Both represent <code class="docutils literal notranslate"><span class="pre">stochastic</span> <span class="pre">error</span> <span class="pre">models</span></code>.
+That is, error models that apply gates as noise according to classical probability distributions.</p>
+<section id="gatewisegen">
+<h2>GatewiseGen<a class="headerlink" href="#gatewisegen" title="Link to this heading"></a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">GatewiseGen</span></code> class allow one to define custom stochastic error-models where for each ideal gate-type the errors
+applied to the ideal gate and the classical probability distribution for applying errors can be specified. Since many
+examples of using the class are given, I have moved the discussion of the <code class="docutils literal notranslate"><span class="pre">GatewiseGen</span></code> class to
+<a class="reference internal" href="../examples/gatewise_error_models.html#example-gate-error-models"><span class="std std-ref">Gate-wise Error Models</span></a>.</p>
+<p>The follow section provides examples of how <code class="docutils literal notranslate"><span class="pre">error_gens</span></code> are used in practice</p>
+</section>
+<section id="depolargen">
+<span id="id1"></span><h2>DepolarGen<a class="headerlink" href="#depolargen" title="Link to this heading"></a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">DepolarGen</span></code> class is used to represent the symmetric depolarizing channel, which is commonly studied in QEC. For
+single-qubit gates, this class is used to apply errors at probability <span class="math notranslate nohighlight">\(p\)</span> from set <span class="math notranslate nohighlight">\(\{X, Y, Z\}\)</span>. For
+two-qubit gates, errors also occur with probability <span class="math notranslate nohighlight">\(p\)</span> but errors are chosen uniformally from the set
+<span class="math notranslate nohighlight">\(\{I, X, Y, Z\}^{\otimes 2} \; \setminus \; I\otimes I\)</span>. Errors are always applied after ideal gates except for
+measurements. In which case, the errors are applied before.</p>
+<p>An example of creating an instance of <code class="docutils literal notranslate"><span class="pre">DepolarGen</span></code> is seen here:</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">import</span> <span class="nn">pecos</span> <span class="k">as</span> <span class="nn">pc</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">depolar</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">error_gens</span><span class="o">.</span><span class="n">DepolarGen</span><span class="p">(</span><span class="n">model_level</span><span class="o">=</span><span class="s1">&#39;code_capacity&#39;</span><span class="p">,</span>
+<span class="gp">... </span><span class="n">has_idle_errors</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">perp_errors</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">model_level</span></code> keyword is used to specify to what set of gates the <code class="docutils literal notranslate"><span class="pre">DepolarGen</span></code> is applied to. If <code class="docutils literal notranslate"><span class="pre">model_level</span></code>
+is set to the value of <code class="docutils literal notranslate"><span class="pre">'code\_capacity'</span></code>, then the error model is applied before each <code class="docutils literal notranslate"><span class="pre">LogicalInstruction</span></code> to each
+data qubits as if these qubits are acted on by <code class="docutils literal notranslate"><span class="pre">'I'</span></code>. The error model is not applied to any other circuit element. If
+<code class="docutils literal notranslate"><span class="pre">model_level</span></code> is set to the value <code class="docutils literal notranslate"><span class="pre">'phenomenological'</span></code>, then the error model applied to data qubits before each
+<code class="docutils literal notranslate"><span class="pre">LogicalInstruction</span></code> as well as to any measurement. If <code class="docutils literal notranslate"><span class="pre">model_level</span></code> is set to the value <code class="docutils literal notranslate"><span class="pre">'circuit'</span></code>, then the
+error model is applied to all the gates in the <code class="docutils literal notranslate"><span class="pre">QuantumCircuit</span></code>. The default value of <code class="docutils literal notranslate"><span class="pre">model_level</span></code> is
+<code class="docutils literal notranslate"><span class="pre">'circuit'</span></code>.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">has_idle_errors</span></code> is a keyword that is only relevant when <code class="docutils literal notranslate"><span class="pre">model_level</span> <span class="pre">==</span> <span class="pre">'circuit'</span></code>. If <code class="docutils literal notranslate"><span class="pre">has_idle_errors</span></code> is
+set to <code class="docutils literal notranslate"><span class="pre">True</span></code>, then the error model is applied to inactive qubits as if the qubit is acted on by <code class="docutils literal notranslate"><span class="pre">'I'</span></code>. If
+<code class="docutils literal notranslate"><span class="pre">has_idle_errors</span></code> is set to <code class="docutils literal notranslate"><span class="pre">False</span></code>, then this does not occur. The default value of <code class="docutils literal notranslate"><span class="pre">has_idle_errors</span></code> is <code class="docutils literal notranslate"><span class="pre">True</span></code>.</p>
+<p>If the <code class="docutils literal notranslate"><span class="pre">perp_errors</span></code> keyword is set to <code class="docutils literal notranslate"><span class="pre">True</span></code>, then errors that are applied to Pauli-basis initializations and
+measurements are errors that do not include the Pauli-basis of the initializations or measurements. So, for example,
+<span class="math notranslate nohighlight">\(Z\)</span> is not applied as an error to the <code class="docutils literal notranslate"><span class="pre">'init</span> <span class="pre">|0&gt;'</span></code> operation. If the <code class="docutils literal notranslate"><span class="pre">perp_errors</span></code> keyword is set to
+<code class="docutils literal notranslate"><span class="pre">False</span></code>, then there is no restriction to the errors. The default value of <code class="docutils literal notranslate"><span class="pre">perp_errors</span></code> is <code class="docutils literal notranslate"><span class="pre">True</span></code>.</p>
+<p>An example of applying an error model using <code class="docutils literal notranslate"><span class="pre">DepolarGen</span></code> to a <code class="docutils literal notranslate"><span class="pre">LogicalCircuit</span></code> is seen in the following:</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">depolar</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">error_gens</span><span class="o">.</span><span class="n">DepolarGen</span><span class="p">(</span><span class="n">model_level</span><span class="o">=</span><span class="s1">&#39;code_capacity&#39;</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">surface</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">qeccs</span><span class="o">.</span><span class="n">Surface4444</span><span class="p">(</span><span class="n">distance</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">logic</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">circuits</span><span class="o">.</span><span class="n">LogicalCircuit</span><span class="p">()</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">logic</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">surface</span><span class="o">.</span><span class="n">gate</span><span class="p">(</span><span class="s1">&#39;ideal init |0&gt;&#39;</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">logic</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">surface</span><span class="o">.</span><span class="n">gate</span><span class="p">(</span><span class="s1">&#39;I&#39;</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">circ_runner</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">circuit_runners</span><span class="o">.</span><span class="n">Standard</span><span class="p">(</span><span class="n">seed</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">state</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">simulators</span><span class="o">.</span><span class="n">SparseSim</span><span class="p">(</span><span class="n">surface</span><span class="o">.</span><span class="n">num_qudits</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">meas</span><span class="p">,</span> <span class="n">err</span> <span class="o">=</span> <span class="n">circ_runner</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">logic</span><span class="p">,</span> <span class="n">error_gen</span><span class="o">=</span><span class="n">depolar</span><span class="p">,</span> <span class="n">error_params</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;p&#39;</span><span class="p">:</span> <span class="mf">0.1</span><span class="p">})</span>
+</pre></div>
+</div>
+<p>Note that the keyword argument <code class="docutils literal notranslate"><span class="pre">error_params</span></code> is used to pass a dictionary that indicates the probability <span class="math notranslate nohighlight">\(p\)</span> of
+the depolarizing error model.</p>
+<p>The values returned by the <code class="docutils literal notranslate"><span class="pre">run</span></code> method is recorded in the variables <code class="docutils literal notranslate"><span class="pre">meas</span></code> and <code class="docutils literal notranslate"><span class="pre">err</span></code>. These variables are
+dictionaries that record the measurement output and applied errors.</p>
+<p>An example of measurement outcomes is given here:</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Following the previous example.</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">meas</span>   
+<span class="go">{(1, 0): {7: {9: 1, 11: 1}}}</span>
+</pre></div>
+</div>
+<p>Here, in the last line, we see the measurement outcome. The key of the outer dictionary is a tuple where the first
+element is the tick index of the <code class="docutils literal notranslate"><span class="pre">LogicalGate</span></code> and the second element is an index corresponding to a
+<code class="docutils literal notranslate"><span class="pre">LogicalInstance</span></code>. That is, the tuple records at what point in the <code class="docutils literal notranslate"><span class="pre">LogicalCircuit</span></code> was the measurement made. The
+value of the outer dictionary is just the measurement-outcome dictionary of a <code class="docutils literal notranslate"><span class="pre">QuantumCircuit</span></code>.</p>
+<p>We can see the errors that were generated by the <code class="docutils literal notranslate"><span class="pre">DepolarGen</span></code> in these lines:</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Following the previous example.</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">err</span>   
+<span class="go">{(1, 0): {0: {&#39;after&#39;: QuantumCircuit([{&#39;X&#39;: {4}, &#39;Z&#39;: {10}}])}}}</span>
+</pre></div>
+</div>
+<p>In the above code block, we see a dictionary that stores what errors were applied to the <code class="docutils literal notranslate"><span class="pre">LogicalCircuit</span></code>. The key of the
+outer dictionary, once again, is a tuple indicating the tick of a <code class="docutils literal notranslate"><span class="pre">LogicalGate</span></code> and the index of a
+<code class="docutils literal notranslate"><span class="pre">LogicalInstance</span></code>. The key of the next inner dictionary is <code class="docutils literal notranslate"><span class="pre">QuantumCircuit</span></code> tick when the error occurred. The key
+<code class="docutils literal notranslate"><span class="pre">'after'</span></code> of the next inner dictionary indicates that the errors are applied after ideal gates. The key <code class="docutils literal notranslate"><span class="pre">'before'</span></code>
+is used when indicating that errors are applied before gates. The values of both the <code class="docutils literal notranslate"><span class="pre">'after'</span></code> and <code class="docutils literal notranslate"><span class="pre">'before'</span></code> keys
+are <code class="docutils literal notranslate"><span class="pre">QuantumCircuits</span></code>. These circuits are the errors that are applied.</p>
+<p>The data structure used to describe the errors that are applied to a <code class="docutils literal notranslate"><span class="pre">LogicalCircuit</span></code> can be directly supplied to a
+<code class="docutils literal notranslate"><span class="pre">run</span></code> method of a <code class="docutils literal notranslate"><span class="pre">circuit_runner</span></code>. Doing so will cause the <code class="docutils literal notranslate"><span class="pre">logic</span></code> method to apply the given error to a
+<code class="docutils literal notranslate"><span class="pre">LogicalCircuit</span></code>. This can be seen in the following:</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Continuing the previous examples.</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">logic2</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">circuits</span><span class="o">.</span><span class="n">LogicalCircuit</span><span class="p">()</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">logic2</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">surface</span><span class="o">.</span><span class="n">gate</span><span class="p">(</span><span class="s1">&#39;ideal init |+&gt;&#39;</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">logic2</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">surface</span><span class="o">.</span><span class="n">gate</span><span class="p">(</span><span class="s1">&#39;I&#39;</span><span class="p">))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">state2</span> <span class="o">=</span> <span class="n">pc</span><span class="o">.</span><span class="n">simulators</span><span class="o">.</span><span class="n">SparseSim</span><span class="p">(</span><span class="n">surface</span><span class="o">.</span><span class="n">num_qudits</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">meas2</span><span class="p">,</span> <span class="n">err2</span> <span class="o">=</span> <span class="n">circ_runner</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">state2</span><span class="p">,</span> <span class="n">logic2</span><span class="p">,</span> <span class="n">error_circuits</span><span class="o">=</span><span class="n">err</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>One use for this is to apply the same error to a different logical basis-state. Doing so allows one to determine if a
+logical error occurs for the logical operations that stabilizer the basis state.</p>
+<p>Note that the <code class="docutils literal notranslate"><span class="pre">circuit_runners</span></code> can apply errors to both <code class="docutils literal notranslate"><span class="pre">LogicalCircuits</span></code> and <code class="docutils literal notranslate"><span class="pre">QuantumCircuits</span></code>.</p>
+<div class="admonition-todo admonition" id="id2">
+<p class="admonition-title">Todo</p>
+<p>Discuss the leakage error model when it is verified…</p>
+</div>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="circuit_runners.html" class="btn btn-neutral float-left" title="Circuit Runners" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="decoders.html" class="btn btn-neutral float-right" title="Decoders" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2018-2023, The PECOS Developers. © Copyright 2018, National Technology &amp; Engineering Solutions of Sandia, LLC (NTESS).</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

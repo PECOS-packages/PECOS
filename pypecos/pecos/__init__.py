@@ -35,6 +35,7 @@ from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.engines import circuit_runners
 from pecos.engines.cvm.binarray import BinArray
 from pecos.engines.hybrid_engine_old import HybridEngine
+from . import pecos_pyo3 as rs
 
 __all__ = [
     "circuits",

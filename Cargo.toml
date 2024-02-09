@@ -13,7 +13,7 @@
 resolver = "2"
 members = [
     "crates/*",
-    "pypecos",
+    "python",
 ]
 default-members = [
     "crates/*",

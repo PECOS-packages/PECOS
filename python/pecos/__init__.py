@@ -35,6 +35,7 @@ from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.engines import circuit_runners
 from pecos.engines.cvm.binarray import BinArray
 from pecos.engines.hybrid_engine_old import HybridEngine
+from pecos import slr
 
 __all__ = [
     "circuits",
@@ -50,4 +51,5 @@ __all__ = [
     "QuantumCircuit",
     "BinArray",
     "HybridEngine",
+    "slr",
 ]

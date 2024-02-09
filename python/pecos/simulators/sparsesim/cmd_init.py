@@ -19,10 +19,12 @@ from pecos.simulators.sparsesim.state import SparseSim
 
 
 def init_zero(state: SparseSim, qubit: int, **params: Any) -> None:
-    """Args:
-    ----
-        state (SparseSim): Instance representing the stabilizer state.
-        qubit (int): Integer that indexes the qubit being acted on.
+    """
+
+    Args:
+        state: Instance representing the stabilizer state.
+        qubit: Integer that indexes the qubit being acted on.
+        **params:
 
     Returns: None
 
@@ -37,7 +39,6 @@ def init_one(state: SparseSim, qubit: int, **params: Any) -> None:
     """Initialize qubit in state |1>.
 
     Args:
-    ----
         state (SparseSim): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
 
@@ -52,7 +53,6 @@ def init_plus(state: SparseSim, qubit: int, **params: Any) -> None:
     """Initialize qubit in state |+>.
 
     Args:
-    ----
         state (SparseSim): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
 
@@ -67,7 +67,6 @@ def init_minus(state: SparseSim, qubit: int, **params: Any) -> None:
     """Initialize qubit in state |->.
 
     Args:
-    ----
         state (SparseSim): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
 
@@ -82,7 +81,6 @@ def init_plusi(state: SparseSim, qubit: int, **params: Any) -> None:
     """Initialize qubit in state |+i>.
 
     Args:
-    ----
         state (SparseSim): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
 
@@ -97,7 +95,6 @@ def init_minusi(state: SparseSim, qubit: int, **params: Any) -> None:
     """Initialize qubit in state |-i>.
 
     Args:
-    ----
         state (SparseSim): Instance representing the stabilizer state.
         qubit (int): Integer that indexes the qubit being acted on.
 

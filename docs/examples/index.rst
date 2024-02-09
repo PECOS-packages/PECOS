@@ -8,5 +8,4 @@ The following are a collection of examples:
 
    stab_code_verification
    creating_qecc_class
-   gatewise_error_models
    monte_carlo_script

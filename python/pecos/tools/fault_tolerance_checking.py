@@ -15,7 +15,8 @@ from itertools import permutations, product
 from typing import TYPE_CHECKING, Callable
 
 from pecos import QuantumCircuit
-from pecos.qtm.emulator.job_wrappers.run_sim import run_sim
+from pecos.engines.circuit_runners import Standard
+from pecos.simulators import SparseSim
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -64,7 +65,10 @@ def find_pauli_fault(
         num_qubits = qcirc.metadata["num_qubits"]
 
     for err in get_wt_paulis(qcirc, wt, make_qc=True):
-        output = run_sim(qcirc, shots=1, simulator=simulator, error_circuits=err)
+        # output = run_sim(qcirc, shots=1, simulator=simulator, error_circuits=err)
+        circ_sim = Standard()
+        state = SparseSim(num_qubits)
+        output, _ = circ_sim.run(state, qcirc, error_circuits=err)
 
         if fail_func(output):
             failure = True

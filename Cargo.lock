@@ -91,6 +91,14 @@ name = "pecos"
 version = "0.1.0"
 
 [[package]]
+name = "pecos-eng"
+version = "0.1.0"
+
+[[package]]
+name = "pecos-noise"
+version = "0.1.0"
+
+[[package]]
 name = "pecos-pyo3"
 version = "0.5.0"
 dependencies = [

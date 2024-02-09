@@ -70,34 +70,26 @@ class Int(CVar):
 
     def __add__(self, other):
         """A + b."""
-        ...
 
     def __sub__(self, other):
         """A - b."""
-        ...
 
     def __rshift__(self, other):
         """A >> b."""
-        ...
 
     def __lshift__(self, other):
         """A << b."""
-        ...
 
-    def __invert__(self):
-        ...
+    def __invert__(self): ...
 
     def __ixor__(self, other):
         """A ^= b."""
-        ...
 
     def __iand__(self, other):
         """A &= b."""
-        ...
 
     def __ior__(self, other):
         """A |= b."""
-        ...
 
 
 class Bit(Int):

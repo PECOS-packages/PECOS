@@ -32,5 +32,5 @@ class OpProcessor(metaclass=abc.ABCMeta):
         pass
 
     @abc.abstractmethod
-    def process_meas(self, measurements: dict) -> dict:
+    def process_meas(self, measurements: list[dict]) -> list[dict]:
         pass

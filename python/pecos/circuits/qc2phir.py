@@ -242,7 +242,7 @@ def to_phir_dict(qc: "pecos.QuantumCircuit") -> dict:
         else:  # qop
             op.update(
                 {
-                    "qop": qsym_conv[sym] if sym in qsym_conv else sym,
+                    "qop": qsym_conv.get(sym, sym),
                     "args": find_qid2qsym(qubits),
                 },
             )

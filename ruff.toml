@@ -4,7 +4,7 @@
 target-version = "py39"
 line-length = 120
 extend-exclude = ["python/pecos/simulators/cuquantum/*"]
-select = [
+lint.select = [
     "ASYNC",    # flake8-async
     "B",        # flake8-bugbear
     "BLE",      # flake8-blind-except
@@ -66,7 +66,7 @@ select = [
     # "T20",      # flake8-print (any print statement)
 ]
 
-ignore = [
+lint.ignore = [
     # pydocstyle: http://www.pydocstyle.org/en/stable/error_codes.html
     # TODO: Remove errors below to further improve docstring linting
     "D100", # Missing docstring in public module
@@ -112,7 +112,7 @@ ignore = [
     "TRY003", # Avoid specifying long messages outside the exception class
 ]
 
-[per-file-ignores]
+[lint.per-file-ignores]
 "python/**/__init__.py" = ["F401"]  # imported but unused (81)
 "tests/**/*.py"         = [
     "INP001",                       # File is part of an implicit namespace package. Add an `__init__.py` (6)
@@ -129,17 +129,17 @@ ignore = [
 "python/pecos/simulators/**/*.py" = ["ANN"]
 "python/pecos/tools/*.py" = ["ANN"]
 
-[pycodestyle]
+[lint.pycodestyle]
 max-doc-length = 120
 
-[pydocstyle]
+[lint.pydocstyle]
 convention = "google"
 
-[isort]
+[lint.isort]
 split-on-trailing-comma = true
 
-[flake8-tidy-imports]
+[lint.flake8-tidy-imports]
 ban-relative-imports = "all"
 
-[flake8-type-checking]
+[lint.flake8-type-checking]
 strict = true

@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from pecos.error_models.error_model import ErrorModel
     from pecos.foreign_objects.foreign_object_abc import ForeignObject
     from pecos.machines.generic_machine import Machine
-    from pecos.op_processors.generic_op_processor import OpProcessor
 
 
 class HybridEngine:
@@ -40,31 +39,24 @@ class HybridEngine:
         qsim: QuantumSimulator | str | None = None,
         machine: Machine | None = None,
         error_model: ErrorModel | None = None,
-        op_processor: OpProcessor | None = None,
+        op_processor: GenericOpProc | None = None,
     ) -> None:
-        self.seed = None
+        self.seed: int | None = None
 
-        self.cinterp = cinterp
-        if self.cinterp is None:
-            self.cinterp = PHIRClassicalInterpreter()
+        self.cinterp = PHIRClassicalInterpreter() if cinterp is None else cinterp
 
-        self.qsim = qsim
-        if self.qsim is None:
+        if qsim is None:
             self.qsim = QuantumSimulator()
-        elif isinstance(self.qsim, str):
-            self.qsim = QuantumSimulator(self.qsim)
+        elif isinstance(qsim, str):
+            self.qsim = QuantumSimulator(qsim)
+        else:
+            self.qsim = qsim
 
-        self.machine = machine
-        if machine is None:
-            self.machine = GenericMachine()
+        self.machine = GenericMachine() if machine is None else machine
 
-        self.error_model = error_model
-        if self.error_model is None:
-            self.error_model = NoErrorModel()
+        self.error_model = NoErrorModel() if error_model is None else error_model
 
-        self.op_processor = op_processor
-        if self.op_processor is None:
-            self.op_processor = GenericOpProc()
+        self.op_processor = GenericOpProc() if op_processor is None else op_processor
 
         if self.machine:
             self.op_processor.attach_machine(self.machine)
@@ -72,8 +64,8 @@ class HybridEngine:
         if self.error_model:
             self.op_processor.attach_error_model(self.error_model)
 
-        self.results = {}
-        self.multisim_process_info = {}
+        self.results: dict = {}
+        self.multisim_process_info: dict = {}
 
     def init(self):
         """Reset the state of `Engine` before a simulation run."""
@@ -131,7 +123,7 @@ class HybridEngine:
     def run(
         self,
         program,
-        foreign_object: ForeignObject = None,
+        foreign_object: ForeignObject | None = None,
         *,
         shots: int = 1,
         seed: int | None = None,
@@ -159,6 +151,10 @@ class HybridEngine:
             self.seed = self.use_seed(seed)
             self.initialize_sim_components(program, foreign_object)
 
+        # Sanity checks that help the type checker
+        assert self.cinterp.program  # noqa: S101
+        assert isinstance(self.cinterp, PHIRClassicalInterpreter)  # noqa: S101
+
         for _ in range(shots):
             self.shot_reinit_components()
 
@@ -185,7 +181,7 @@ class HybridEngine:
     def run_multisim(
         self,
         program,
-        foreign_object: ForeignObject = None,
+        foreign_object: ForeignObject | None = None,
         shots: int = 1,
         seed: int | None = None,
         pool_size: int = 1,

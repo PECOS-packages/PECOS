@@ -26,9 +26,7 @@ class HyQC(Block):
     def get_ast(self):
         """Get the abstract syntax tree for the program."""
         # TODO: get_ast
-        ...
 
     def parse(self, txt: str):
         """Parse a text representing HYQC."""
         # TODO: parse
-        ...

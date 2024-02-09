@@ -42,7 +42,11 @@ class GenericOpProc(OpProcessor):
         pass
 
     def process(self, buffered_ops: list) -> list:
-        buffered_noisy_qops = []
+        buffered_noisy_qops: list = []
+
+        assert self.machine  # noqa: S101
+        assert self.error_model  # noqa: S101
+
         for op in buffered_ops:
             if isinstance(op, pt.opt.MOp):
                 noisy_ops = self.machine.process([op])

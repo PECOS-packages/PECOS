@@ -1,11 +1,11 @@
-from .cliffords_tq import CH, CX, CY, CZ, SXX, SYY, SZZ, SXXdg, SYYdg, SZZdg
-from .face_rots import F4, F, F4dg, Fdg
-from .hadamards import H
-from .misc import FZ, FZdg, T, Tdg
-from .paulis import X, Y, Z
-from .projective import Measure, Reset
-from .rots import RX, RY, RZ, RZZ
-from .sqrt_paulis import SX, SY, SZ, SXdg, SYdg, SZdg
+from pecos.slr.phys.cliffords_tq import CH, CX, CY, CZ, SXX, SYY, SZZ, SXXdg, SYYdg, SZZdg
+from pecos.slr.phys.face_rots import F4, F, F4dg, Fdg
+from pecos.slr.phys.hadamards import H
+from pecos.slr.phys.misc import FZ, FZdg, T, Tdg
+from pecos.slr.phys.paulis import X, Y, Z
+from pecos.slr.phys.projective import Measure, Reset
+from pecos.slr.phys.rots import RX, RY, RZ, RZZ
+from pecos.slr.phys.sqrt_paulis import SX, SY, SZ, SXdg, SYdg, SZdg
 
 __all__ = [
     "Measure",

@@ -33,7 +33,7 @@ def noise_meas_bitflip(locations: set[int], metadata: dict, after: QuantumCircui
     # --------------
     rand_nums = np.random.random(len(locations)) <= p
 
-    for r, loc in zip(rand_nums, locations):
+    for r, loc in zip(rand_nums, locations, strict=False):
         if r:
             var = metadata["var_output"][loc] if metadata.get("var_output") else metadata["var"]
 

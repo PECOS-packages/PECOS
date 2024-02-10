@@ -33,7 +33,7 @@ class CIf:
         else:
             self.expect = ""
 
-        if len(expr) == 1 and isinstance(expr[0], (tuple, list)):
+        if len(expr) == 1 and isinstance(expr[0], tuple | list):
             self.expr = [expr[0]]
         else:
             self.expr = expr
@@ -59,7 +59,7 @@ class CIfExpect:
         else:
             self.expect = ""
 
-        if len(expr) == 1 and isinstance(expr[0], (tuple, list)):
+        if len(expr) == 1 and isinstance(expr[0], tuple | list):
             self.expr = [expr[0]]
         else:
             self.expr = expr

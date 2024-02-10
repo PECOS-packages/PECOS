@@ -192,7 +192,7 @@ def gen_pauli_errors(qubits, *, min_errors: int = 1, max_errors: bool | int = Fa
             for ps in xzs:
                 x_set = set()
                 z_set = set()
-                for p, q in zip(ps, b):
+                for p, q in zip(ps, b, strict=False):
                     if p == "X":
                         x_set.add(q)
                     else:
@@ -207,7 +207,7 @@ def gen_pauli_errors(qubits, *, min_errors: int = 1, max_errors: bool | int = Fa
                 for b in combinations(qubits, i):
                     x_set = set()
                     z_set = set()
-                    for p, q in zip(a, b):
+                    for p, q in zip(a, b, strict=False):
                         if p == "X":
                             x_set.add(q)
                         elif p == "Z":

@@ -1,4 +1,4 @@
-from .metaclasses import SingleQubitUnitary, TwoQubitUnitary
+from pecos.slr.phys.metaclasses import SingleQubitUnitary, TwoQubitUnitary
 
 
 class RXGate(SingleQubitUnitary): ...

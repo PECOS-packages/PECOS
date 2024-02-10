@@ -33,7 +33,7 @@ def noise_depolarizing_two_qubit_gates(locations: set[tuple[int, int]], after: Q
     """
     rand_nums = np.random.random(len(locations)) <= p
 
-    for r, (loc1, loc2) in zip(rand_nums, locations):
+    for r, (loc1, loc2) in zip(rand_nums, locations, strict=False):
         if r:
             index = np.random.choice(len(error_two_paulis_collection))
             err1, err2 = error_two_paulis_collection[index]
@@ -60,7 +60,7 @@ def noise_two_qubit_gates_depolarizing_with_noiseless(
     """
     rand_nums = np.random.random(len(locations)) <= p
 
-    for r, (loc1, loc2) in zip(rand_nums, locations):
+    for r, (loc1, loc2) in zip(rand_nums, locations, strict=False):
         if r:
             if loc1 in noiseless_qubits and loc1 in noiseless_qubits:
                 continue

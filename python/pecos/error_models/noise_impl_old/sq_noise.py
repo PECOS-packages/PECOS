@@ -25,7 +25,7 @@ def noise_depolarizing_sq_gate(locations: set[int], after: QuantumCircuit, p: fl
     """Apply a symmetric depolarizing noise model."""
     rand_nums = np.random.random(len(locations)) <= p
 
-    for r, loc in zip(rand_nums, locations):
+    for r, loc in zip(rand_nums, locations, strict=False):
         if r:
             err = np.random.choice(error_one_paulis_collection)
             after.append(err, {loc})

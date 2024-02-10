@@ -1,4 +1,4 @@
-from .metaclasses import SQCliffordGate
+from pecos.slr.phys.metaclasses import SQCliffordGate
 
 
 class FGate(SQCliffordGate):

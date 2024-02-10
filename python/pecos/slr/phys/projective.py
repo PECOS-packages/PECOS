@@ -1,10 +1,8 @@
-from .metaclasses import NoParamsQGate
+from pecos.slr.phys.metaclasses import NoParamsQGate
 
 
 class ResetGate(NoParamsQGate):
     """Resetting a qubit to the zero state."""
-
-    ...
 
 
 Reset = ResetGate(qasm_sym="reset")

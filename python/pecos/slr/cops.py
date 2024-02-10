@@ -15,8 +15,6 @@ from pecos.slr.fund import Expression
 class COp(Expression):
     """Classical operation"""
 
-    ...
-
 
 class BinOp(COp):
     """Binary Operation"""
@@ -49,43 +47,29 @@ class UnaryOp(COp):
 class NOT(UnaryOp):
     """bitwise ~a"""
 
-    ...
-
 
 class XOR(BinOp):
     """bitwise a ^ b"""
-
-    ...
 
 
 class AND(BinOp):
     """bitwise a & b"""
 
-    ...
-
 
 class OR(BinOp):
     """bitwise a | b"""
-
-    ...
 
 
 class PLUS(BinOp):
     """int a + b"""
 
-    ...
-
 
 class MINUS(BinOp):
     """int a - b"""
 
-    ...
-
 
 class EQUIV(CompOp):
     """bool a == b"""
-
-    ...
 
     def qasm(self):
         return f"{self.left} == {self.right}"
@@ -101,25 +85,17 @@ class NEQUIV(CompOp):
 class LT(CompOp):
     """bool a < b"""
 
-    ...
-
 
 class GT(CompOp):
     """bool a > b"""
-
-    ...
 
 
 class LE(CompOp):
     """bool a <= b"""
 
-    ...
-
 
 class GE(CompOp):
     """bool a > b"""
-
-    ...
 
 
 class PyCOp:
@@ -167,30 +143,23 @@ class PyCOp:
 
     def __add__(self, other):
         """a + b"""
-        ...
 
     def __sub__(self, other):
         """a - b"""
-        ...
 
     def __rshift__(self, other):
         """a >> b"""
-        ...
 
     def __lshift__(self, other):
         """a << b"""
-        ...
 
     def __invert__(self): ...
 
     def __ixor__(self, other):
         """a ^= b"""
-        ...
 
     def __iand__(self, other):
         """a &= b"""
-        ...
 
     def __ior__(self, other):
         """a |= b"""
-        ...

@@ -117,7 +117,7 @@ class PyPMIR:
             # TODO: Added to satisfy old-style error models. Remove when they not longer need this...
             if o.get("returns"):
                 var_output = {}
-                for q, cvar in zip(args, o["returns"]):
+                for q, cvar in zip(args, o["returns"], strict=False):
                     var_output[q] = cvar
                 metadata["var_output"] = var_output
 

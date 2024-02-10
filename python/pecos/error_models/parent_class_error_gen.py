@@ -273,8 +273,8 @@ class Generator:
             indx = np.random.choice(len(self.data))
             error_symbols = self.data[indx]
 
-            if isinstance(error_symbols, (tuple, np.ndarray)) and len(error_symbols) > 1:
-                for sym, loc in zip(error_symbols, location):
+            if isinstance(error_symbols, tuple | np.ndarray) and len(error_symbols) > 1:
+                for sym, loc in zip(error_symbols, location, strict=False):
                     if sym != "I":
                         after.update(sym, {loc}, emptyappend=True)
 
@@ -295,7 +295,7 @@ class Generator:
             error_symbols = self.data[indx]
 
             if isinstance(error_symbols, np.ndarray) and len(error_symbols) > 1:
-                for sym, loc in zip(error_symbols, location):
+                for sym, loc in zip(error_symbols, location, strict=False):
                     if sym != "I":
                         before.update(sym, {loc}, emptyappend=True)
             elif isinstance(error_symbols, str):

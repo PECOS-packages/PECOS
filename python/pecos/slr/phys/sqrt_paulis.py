@@ -1,4 +1,4 @@
-from .metaclasses import SQCliffordGate
+from pecos.slr.phys.metaclasses import SQCliffordGate
 
 
 class SXGate(SQCliffordGate):
@@ -7,8 +7,6 @@ class SXGate(SQCliffordGate):
     Z -> -Y
     Y -> Z
     """
-
-    ...
 
 
 SX = SXGate(qasm_sym="rx(pi/2)")

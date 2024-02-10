@@ -11,7 +11,10 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from pecos.error_models.error_model_abc import ErrorModel
 

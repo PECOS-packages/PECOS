@@ -67,7 +67,7 @@ class QuantumSimulator:
             if op.returns:
                 temp = {}
                 bitflips = op.metadata.get("bitflips")
-                for q, r in zip(op.args, op.returns):
+                for q, r in zip(op.args, op.returns, strict=False):
                     out = output.get(q, 0)
                     if bitflips and q in bitflips:
                         out ^= 1

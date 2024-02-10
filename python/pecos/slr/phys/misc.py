@@ -1,4 +1,4 @@
-from .metaclasses import SingleQubitUnitary
+from pecos.slr.phys.metaclasses import SingleQubitUnitary
 
 
 class TGate(SingleQubitUnitary): ...

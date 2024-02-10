@@ -77,7 +77,7 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         # Make sure we have `program` in the correct format or convert to PHIR/dict.
         if isinstance(program, str):  # Assume it is in the PHIR/JSON format and convert to dict
             self.program = json.loads(program)
-        elif isinstance(self.program, (PyPMIR, dict)):
+        elif isinstance(self.program, PyPMIR | dict):
             pass
         else:
             self.program = self.program.to_phir_dict()
@@ -246,7 +246,7 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
 
     def assign_int(self, cvar, val: int):
         i = None
-        if isinstance(cvar, (tuple, list)):
+        if isinstance(cvar, tuple | list):
             cvar, i = cvar
 
         cid = self.program.csym2id[cvar]
@@ -273,7 +273,7 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             for a in op.args:
                 args.append(self.eval_expr(a))
 
-            for r, a in zip(op.returns, args):
+            for r, a in zip(op.returns, args, strict=False):
                 self.assign_int(r, a)
 
         elif isinstance(op, pt.opt.FFCall):
@@ -296,7 +296,7 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
                     (cvar,) = op.returns
                     self.assign_int(cvar, results)
                 else:
-                    for cvar, val in zip(op.returns, results):
+                    for cvar, val in zip(op.returns, results, strict=False):
                         self.assign_int(cvar, val)
 
         else:

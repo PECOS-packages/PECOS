@@ -186,14 +186,14 @@ class OneAncillaPerCheck:
 
                 # CNOTs...
 
-                for d, t in zip(datas, data_ticks):
+                for d, t in zip(datas, data_ticks, strict=False):
                     if d is not None:
                         circuit.update({"CNOT": {(ancilla, d)}}, tick=t)
             else:
                 circuit.update({"H": {mapping[ancilla]}}, tick=h1_tick)
                 circuit.update({"H": {mapping[ancilla]}}, tick=h2_tick)
 
-                for d, t in zip(datas, data_ticks):
+                for d, t in zip(datas, data_ticks, strict=False):
                     if d is not None:
                         circuit.update({"CNOT": {(mapping[ancilla], mapping[d])}}, tick=t)
 
@@ -201,11 +201,11 @@ class OneAncillaPerCheck:
             data_ticks = ticks[1 : sides + 1]
 
             if mapping is None:
-                for d, t in zip(datas, data_ticks):
+                for d, t in zip(datas, data_ticks, strict=False):
                     if d is not None:
                         circuit.update({"CNOT": {(d, ancilla)}}, tick=t)
             else:
-                for d, t in zip(datas, data_ticks):
+                for d, t in zip(datas, data_ticks, strict=False):
                     if d is not None:
                         circuit.update({"CNOT": {(mapping[d], mapping[ancilla])}}, tick=t)
 

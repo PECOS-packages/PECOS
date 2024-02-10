@@ -205,7 +205,7 @@ class VerifyStabilizers:
         for stab_id, check in enumerate(checks):
             ps, qs, _ = check
 
-            for p, q in zip(ps, qs):
+            for p, q in zip(ps, qs, strict=False):
                 if p in {"X", "x"}:
                     row_x[stab_id].add(q)
                     col_x[q].add(stab_id)
@@ -292,7 +292,7 @@ class VerifyStabilizers:
             ancilla_qubits.add(ancilla_id)
             qc.append("init |+>", {ancilla_id})
 
-            for p, q in zip(ps, qs):
+            for p, q in zip(ps, qs, strict=False):
                 symbol = None
 
                 if p in {"X", "x"}:
@@ -334,7 +334,7 @@ class VerifyStabilizers:
         logical_x_row_z = [set() for _ in range(len(self.logical_xs))]
 
         for i, (ps, qs, _) in enumerate(self.logical_zs):
-            for p, q in zip(ps, qs):
+            for p, q in zip(ps, qs, strict=False):
                 if p in {"X", "Y"}:
                     logical_z_col_x[q].add(i)
                     logical_z_row_x[i].add(q)
@@ -344,7 +344,7 @@ class VerifyStabilizers:
                     logical_z_row_z[i].add(q)
 
         for i, (ps, qs, _) in enumerate(self.logical_xs):
-            for p, q in zip(ps, qs):
+            for p, q in zip(ps, qs, strict=False):
                 if p in {"X", "Y"}:
                     logical_x_col_x[q].add(i)
                     logical_x_row_x[i].add(q)
@@ -414,7 +414,7 @@ class VerifyStabilizers:
 
         for strings, qids, _ in self.checks:
             check_dict = {}
-            for pauli, q in zip(strings, qids):
+            for pauli, q in zip(strings, qids, strict=False):
                 if pauli == "X":
                     qset = check_dict.setdefault("X", set())
                 elif pauli == "Z":
@@ -461,7 +461,7 @@ class VerifyStabilizers:
 
         for strings, qids, _ in self.checks:
             check_dict = {}
-            for pauli, q in zip(strings, qids):
+            for pauli, q in zip(strings, qids, strict=False):
                 if pauli == "X":
                     qset = check_dict.setdefault("X", set())
                 elif pauli == "Z":
@@ -533,7 +533,7 @@ class VerifyStabilizers:
             xs = set()
             zs = set()
 
-            for p, q in zip(ps, qs):
+            for p, q in zip(ps, qs, strict=False):
                 if p in {"X", "x"}:
                     xs.add(q)
                 elif p in {"Z", "z"}:
@@ -572,7 +572,7 @@ class VerifyStabilizers:
             xs = set()
             zs = set()
 
-            for p, q in zip(ps, qs):
+            for p, q in zip(ps, qs, strict=False):
                 if p in {"X", "x"}:
                     xs.add(q)
                 elif p in {"Z", "z"}:
@@ -620,7 +620,7 @@ class VerifyStabilizers:
         while not found_all:
             if verbose:
                 print("----")
-            for g, gtuple in enumerate(zip(state.stabs.row_x, state.stabs.row_z)):
+            for g, gtuple in enumerate(zip(state.stabs.row_x, state.stabs.row_z, strict=False)):
                 if gtuple in missing_checks:
                     missing_checks.remove(gtuple)
                     try:
@@ -822,7 +822,7 @@ class VerifyStabilizers:
                 for ps in xzs:
                     x_set = set()
                     z_set = set()
-                    for p, q in zip(ps, b):
+                    for p, q in zip(ps, b, strict=False):
                         if p == "X":
                             x_set.add(q)
                         else:
@@ -837,7 +837,7 @@ class VerifyStabilizers:
                     for b in combinations(qubits, i):
                         x_set = set()
                         z_set = set()
-                        for p, q in zip(a, b):
+                        for p, q in zip(a, b, strict=False):
                             if p == "X":
                                 x_set.add(q)
                             elif p == "Z":

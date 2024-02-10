@@ -135,7 +135,7 @@ def t_errors_check(
 
             errors.simple_add(0, 0, 0, before_errors=error_circ)
 
-            for e, q in zip(error_comb, qubit_comb):
+            for e, q in zip(error_comb, qubit_comb, strict=False):
                 error_circ.update(e, {q})
 
             state_zero = pySparseSim(qecc.num_qudits)
@@ -275,7 +275,7 @@ def fault_check(
 
             errors.simple_add(0, 0, 0, before_errors=error_circ)
 
-            for e, q in zip(error_comb, qubit_comb):
+            for e, q in zip(error_comb, qubit_comb, strict=False):
                 error_circ.update(e, {q})
 
             state_zero = pySparseSim(qecc.num_qudits)

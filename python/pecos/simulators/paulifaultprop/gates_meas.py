@@ -90,7 +90,7 @@ def meas_pauli(state, qubits: int | tuple[int, ...], **params: Any) -> int:
 
     meas = 0
 
-    for q, p in zip(qubits, pauli):
+    for q, p in zip(qubits, pauli, strict=False):
         if p == "X":
             meas += meas_x(state, q)
         elif p == "Z":

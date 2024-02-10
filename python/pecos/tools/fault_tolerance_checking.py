@@ -12,14 +12,14 @@
 from __future__ import annotations
 
 from itertools import permutations, product
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from pecos import QuantumCircuit
 from pecos.engines.circuit_runners import Standard
 from pecos.simulators import SparseSim
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
 
 def find_pauli_fault(
@@ -157,13 +157,20 @@ def get_wt_paulis(circ: QuantumCircuit, wt: int, initial_qubits: Sequence[int] |
             tick_dict_before = {}
             cond_dict = {}
 
-            for errs, tick, locs, before, cond in zip(pauli_errs, tick_list, loc_list, before_list, cond_list):
+            for errs, tick, locs, before, cond in zip(
+                pauli_errs,
+                tick_list,
+                loc_list,
+                before_list,
+                cond_list,
+                strict=False,
+            ):
                 tick_dict = tick_dict_before if before else tick_dict_after
 
                 gate_dict = tick_dict.setdefault(tick, {})
                 cond_dict[tick] = cond
 
-                for p, q in zip(errs, locs):
+                for p, q in zip(errs, locs, strict=False):
                     if p != "I":
                         loc_set = gate_dict.setdefault(p, set())
                         loc_set.add(q)

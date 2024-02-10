@@ -32,7 +32,7 @@ class WasmerObj(ForeignObject):
     def __init__(self, file: str | bytes | Path, compiler: object | None = None) -> None:
         self.compiler = compiler
 
-        if isinstance(file, (str, Path)):
+        if isinstance(file, str | Path):
             with Path.open(Path(file), "rb") as f:
                 wasm_bytes = f.read()
         else:

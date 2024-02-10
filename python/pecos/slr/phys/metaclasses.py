@@ -1,6 +1,8 @@
 import copy
 from abc import ABCMeta
 
+# ruff: noqa: B024
+
 
 # TODO: Try to move more into using the class instead of instance. E.g., class methods, don't override call or
 #   use the whole H = HGate() type thing. H should be a class not an instance.
@@ -139,22 +141,14 @@ class CliffordGate(NoParamsQGate, UnitaryGate, metaclass=ABCMeta):
 class SQCliffordGate(CliffordGate, SingleQubitUnitary, metaclass=ABCMeta):
     """A Clifford gate that acts on a single qubit."""
 
-    ...
-
 
 class TQCliffordGate(CliffordGate, TwoQubitUnitary, metaclass=ABCMeta):
     """A Clifford gate that acts on a single qubit."""
-
-    ...
 
 
 class PauliGate(CliffordGate, metaclass=ABCMeta):
     """A Pauli gate"""
 
-    ...
-
 
 class SQPauliGate(SQCliffordGate, metaclass=ABCMeta):
     """A single-qubit Pauli gate"""
-
-    ...

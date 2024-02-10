@@ -7,5 +7,6 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-pecos-sims = { path = "../crates/pecos-sims" }
-pyo3 = { version = "0.20", features = ["extension-module"] }
+pecos-sim = { workspace=true }
+
+pyo3 = { workspace=true, features = ["extension-module"] }

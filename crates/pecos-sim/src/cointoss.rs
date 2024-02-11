@@ -22,14 +22,9 @@ impl Default for CoinToss {
 }
 
 impl CoinToss {
+    pub fn h(&mut self, _qubit: usize) {}
 
-    pub fn h(&mut self, _qubit: usize) -> () {
-
-    }
-
-    pub fn cx(&mut self, _control: usize, _target: usize) -> () {
-
-    }
+    pub fn cx(&mut self, _control: usize, _target: usize) {}
 
     pub fn meas(&mut self, _qubit: usize) -> bool {
         let mut rng = rand::thread_rng();

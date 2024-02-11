@@ -63,14 +63,20 @@ wasmtime = [
     "wasmtime>=13.0"
 ]
 wasmer = [
-    "wasmer~=1.1.0",
-    "wasmer_compiler_cranelift~=1.1.0",
+    "wasmer>=1.1.0",
+    "wasmer_compiler_cranelift>=1.1.0",
 ]
 visualization = [
-    "plotly~=5.9.0",
+    "plotly>=5.9.0",
 ]
 tests = [
     "pytest>=5.0.0"
+]
+lint = [
+    "mypy>=1.0",
+    "ruff>=0.2.0",
+    "black>=23.0",
+    "typos>=1.0",
 ]
 all = [
     "quantum-pecos[simulators]",
@@ -78,6 +84,7 @@ all = [
     "quantum-pecos[wasmer]",
     "quantum-pecos[visualization]",
     "quantum-pecos[tests]",
+    "quantum-pecos[lint]",
 ]
 
 [tool.maturin]

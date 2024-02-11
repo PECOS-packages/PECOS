@@ -1,8 +1,7 @@
 extern crate pecos_sim;
 
-use pyo3::prelude::*;
 use pecos_sim::CoinToss;
-
+use pyo3::prelude::*;
 
 #[pyclass]
 struct PyCoinToss {
@@ -14,11 +13,11 @@ impl PyCoinToss {
     #[new]
     fn new(prob: f64, num_qubits: usize) -> Self {
         PyCoinToss {
-            inner: CoinToss::new(num_qubits, prob)
+            inner: CoinToss::new(num_qubits, prob),
         }
     }
 
-    fn h(&mut self, qubit: usize) -> () {
+    fn h(&mut self, qubit: usize) {
         self.inner.h(qubit)
     }
 

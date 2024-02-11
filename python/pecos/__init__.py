@@ -30,7 +30,7 @@ except PackageNotFoundError:
 __path__ = __import__("pkgutil").extend_path(__path__, __name__)
 
 # PECOS namespaces
-import pecos_pyo3 as rs
+import pyo3pecos as rs
 
 from pecos import circuit_converters, circuits, decoders, engines, error_models, misc, qeccs, simulators, slr, tools
 from pecos.circuits.quantum_circuit import QuantumCircuit

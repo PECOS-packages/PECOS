@@ -89,7 +89,7 @@ all = [
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-module-name = "pecos.pecos_pyo3"
+module-name = "pecos.pyo3pecos"
 python-source = "."
 
 # Linting and autorefactoring tools

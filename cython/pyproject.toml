@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools", "wheel", "Cython"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cypecos"
+version = "0.1.0"
+description = "My awesome project that uses C++ from Python"
+
+[tool.setuptools]
+packages = ["cypecos"]

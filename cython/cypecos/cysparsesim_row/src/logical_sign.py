@@ -55,7 +55,9 @@ def find_logical_signs(state, logical_circuit, delogical_circuit):
             logical_xs.update(gate_locations)
             logical_zs.update(gate_locations)
         else:
-            raise Exception('Can not currently handle logical operator with operator "%s"!' % symbol)
+            raise Exception(
+                'Can not currently handle logical operator with operator "%s"!' % symbol,
+            )
 
     for symbol, gate_locations in delogical_circuit.items(params=False):
         if symbol == "X":
@@ -66,7 +68,9 @@ def find_logical_signs(state, logical_circuit, delogical_circuit):
             delogical_xs.update(gate_locations)
             delogical_zs.update(gate_locations)
         else:
-            raise Exception('Can not currently handle logical operator with operator "%s"!' % symbol)
+            raise Exception(
+                'Can not currently handle logical operator with operator "%s"!' % symbol,
+            )
 
     # Make sure the logical and delogical anti-commute
 

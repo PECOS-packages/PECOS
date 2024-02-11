@@ -67,7 +67,7 @@ State::State(const int_num& num_qubits, const int& reserve_buckets)
     clear();
 }
 
-void State::clear() {  // Allows state to reinitilize.
+void State::clear() {  // Allows state to reinitialize.
 
     // Initialize stabilizers.
     stabs.col_x = build_empty(num_qubits, reserve_buckets);
@@ -259,7 +259,7 @@ void State::cnot(const int_num& tqubit, const int_num& cqubit) {
 void cnot_gen_mod(Generators& gen, const int_num& tqubit, 
                   const int_num& cqubit) {
                   
-    // Xt ^= Xc  X propogates from control to target
+    // Xt ^= Xc  X propagates from control to target
     for (const int_num& x_gen_id: gen.col_x[tqubit]) {
         if (gen.row_x[x_gen_id].count(cqubit)) {
             gen.row_x[x_gen_id].erase(cqubit);
@@ -270,7 +270,7 @@ void cnot_gen_mod(Generators& gen, const int_num& tqubit,
         }
     }
 
-        // Zt ^= Zc  Z propogates from target to control
+        // Zt ^= Zc  Z propagates from target to control
     for (const int_num& z_gen_id: gen.col_z[cqubit]) {
         if (gen.row_z[z_gen_id].count(tqubit)) {
             gen.row_z[z_gen_id].erase(tqubit);

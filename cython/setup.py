@@ -1,34 +1,41 @@
-from setuptools import setup, find_packages, Extension
-from Cython.Build import cythonize
-import os
+import contextlib
 import shutil
+from pathlib import Path
+
+from Cython.Build import cythonize
+from setuptools import Extension, setup
 
 # Delete previous build folder
-current_location = os.path.dirname(os.path.abspath(__file__))
-try:
-    shutil.rmtree(os.path.join(current_location, 'build'))
-except FileNotFoundError:
-    pass
+with contextlib.suppress(FileNotFoundError):
+    current_location = Path(__file__).resolve().parent
+    shutil.rmtree(current_location / "build")
 
-compiler_flags = ["-std=c++17", "-O3", "-march=native", "-flto",
-"-fomit-frame-pointer", "-c", ]
+compiler_flags = [
+    "-std=c++17",
+    "-O3",
+    "-march=native",
+    "-flto",
+    "-fomit-frame-pointer",
+    "-c",
+]
 
 ext_modules = [
-    Extension('cypecos.cysparsesim.cylib',
-              sources=[
-                  "cypecos/cysparsesim/cysparsesim.pyx",
-                  "cypecos/cysparsesim/sparsesim.cpp",
-              ],
-              language='c++',
-              extra_compile_args=compiler_flags,
-              include_dirs=['./cypecos/cysparsesim/'],
-              ),
+    Extension(
+        "cypecos.cysparsesim.cylib",
+        sources=[
+            "cypecos/cysparsesim/cysparsesim.pyx",
+            "cypecos/cysparsesim/sparsesim.cpp",
+        ],
+        language="c++",
+        extra_compile_args=compiler_flags,
+        include_dirs=["./cypecos/cysparsesim/"],
+    ),
 ]
 
 for e in ext_modules:
     e.cython_directives = {
-        'boundscheck': False,
-        'wraparound': False,
+        "boundscheck": False,
+        "wraparound": False,
     }
 
 setup(

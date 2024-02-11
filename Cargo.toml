@@ -37,6 +37,7 @@ pecos = { version = "0.1.0", path="crates/pecos"}
 pecos-sim = { version = "0.1.0", path = "crates/pecos-sim"}
 pecos-eng = { version = "0.1.0", path = "crates/pecos-eng"}
 pecos-noise = { version = "0.1.0", path = "crates/pecos-noise"}
+pecos-cli = { version = "0.1.0", path="crates/pecos-cli"}
 
 [profile.opt-dev]
 inherits = "dev"

@@ -1,20 +1,27 @@
-// Copyright 2018 The PECOS Developers
-// Copyright 2018 National Technology & Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract
-// DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software.
+//  =========================================================================  //
+//   Copyright 2018 National Technology & Engineering Solutions of Sandia,
+//   LLC (NTESS). Under the terms of Contract DE-NA0003525 with NTESS,
+//   the U.S. Government retains certain rights in this software.
 //
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
-// the License.You may obtain a copy of the License at
+//   Licensed under the Apache License, Version 2.0 (the "License");
+//   you may not use this file except in compliance with the License.
+//   You may obtain a copy of the License at
 //
-//     https://www.apache.org/licenses/LICENSE-2.0
+//       http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
-// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
+//   Unless required by applicable law or agreed to in writing, software
+//   distributed under the License is distributed on an "AS IS" BASIS,
+//   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//   See the License for the specific language governing permissions and
+//   limitations under the License.
+//  =========================================================================  //
 
+// sparsesim.h
 #include <iostream>
 #include <cstdlib>
 #include <vector>
 #include <unordered_set>
+
 
 using namespace std;
 
@@ -66,25 +73,25 @@ class State {
         void phaseflip(const int_num& qubit); // Z
         void Y(const int_num& qubit);  // Y
         void phaserot(const int_num& qubit);  // S
-        void SZdg(const int_num& qubit);  // Sdg
-        void SY(const int_num& qubit);  // R
-        void SYdg(const int_num& qubit);  // Rd
-        void SX(const int_num& qubit);  // Q
-        void SXdg(const int_num& qubit);  // Qd
+        void Sd(const int_num& qubit);  // Sd
+        void R(const int_num& qubit);  // R
+        void Rd(const int_num& qubit);  // Rd
+        void Q(const int_num& qubit);  // Q
+        void Qd(const int_num& qubit);  // Qd
         void H2(const int_num& qubit);  // H2
         void H3(const int_num& qubit);  // H3
         void H4(const int_num& qubit);  // H4
         void H5(const int_num& qubit);  // H5
         void H6(const int_num& qubit);  // H6
-        void F(const int_num& qubit);  // F1
+        void F1(const int_num& qubit);  // F1
         void F2(const int_num& qubit);  // F2
         void F3(const int_num& qubit);  // F3
         void F4(const int_num& qubit);  // F4
-        void Fdg(const int_num& qubit);  // F1d
-        void F2dg(const int_num& qubit);  // F2d
-        void F3dg(const int_num& qubit);  // F3d
-        void F4dg(const int_num& qubit);  // F4d
-        void cx(const int_num& tqubit, const int_num& cqubit);
+        void F1d(const int_num& qubit);  // F1d
+        void F2d(const int_num& qubit);  // F2d
+        void F3d(const int_num& qubit);  // F3d
+        void F4d(const int_num& qubit);  // F4d
+        void cnot(const int_num& tqubit, const int_num& cqubit);
         void swap(const int_num& qubit1, const int_num& qubit2);
         unsigned int measure(const int_num& qubit, int forced_outcome, bool collapse);
 

@@ -1,14 +1,5 @@
-import contextlib
-import shutil
-from pathlib import Path
-
 from Cython.Build import cythonize
 from setuptools import Extension, setup
-
-# Delete previous build folder
-with contextlib.suppress(FileNotFoundError):
-    current_location = Path(__file__).resolve().parent
-    shutil.rmtree(current_location / "build")
 
 compiler_flags = [
     "-std=c++17",
@@ -21,14 +12,14 @@ compiler_flags = [
 
 ext_modules = [
     Extension(
-        "cypecos.cysparsesim.cylib",
+        "cysparsesim.cysparsesim",
         sources=[
-            "cypecos/cysparsesim/cysparsesim.pyx",
-            "cypecos/cysparsesim/sparsesim.cpp",
+            "cysparsesim/cysparsesim.pyx",
+            "../cpp/sparsesim/sparsesim.cpp",
         ],
+        include_dirs=["../cpp/sparsesim"],
         language="c++",
         extra_compile_args=compiler_flags,
-        include_dirs=["./cypecos/cysparsesim/"],
     ),
 ]
 
@@ -39,5 +30,9 @@ for e in ext_modules:
     }
 
 setup(
-    ext_modules=cythonize(ext_modules, build_dir="build", language_level=3),
+    ext_modules=cythonize(
+        ext_modules,
+        # build_dir="build",
+        language_level=3,
+    ),
 )

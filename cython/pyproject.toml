@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cypecos"
 version = "0.1.0"
-description = "My awesome project that uses C++ from Python"
+description = "C++/Cython extensions for Python PECOS."
 
 [tool.setuptools]
-packages = ["cypecos"]
+packages = ["cypecos", "cysparsesim"]
 
 # Linting and autorefactoring tools
 # ---------------------------------
@@ -19,7 +19,7 @@ packages = ["cypecos"]
 # For more details on rules see: https://docs.astral.sh/ruff/rules
 [tool.ruff]
 line-length = 120
-indent-width = 4
+# indent-width = 4
 fix = true
 target-version = "py312"
 

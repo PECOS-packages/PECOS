@@ -37,9 +37,9 @@ jobs:
       run: |
         pip install pytest-cov
         pip install ./python
-        pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+        pytest python/tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
     - name: Test optional dependencies with pytest
       run: |
         pip install pytest-cov
         pip install ./python[all]
-        pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
+        pytest python/tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency

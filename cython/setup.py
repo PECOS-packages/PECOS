@@ -10,6 +10,8 @@ compiler_flags = [
     "-c",
 ]
 
+# TODO: Add MSVC specific flags
+
 ext_modules = [
     Extension(
         "cysparsesim.cysparsesim",

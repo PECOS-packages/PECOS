@@ -53,7 +53,12 @@ class NamedObjectPool(ForeignObject):
         """Get a list of function names available from the object."""
         return []
 
-    def exec(self, func_name: str, args: Sequence, namespace: str | None = None) -> tuple:
+    def exec(
+        self,
+        func_name: str,
+        args: Sequence,
+        namespace: str | None = None,
+    ) -> tuple:
         """Execute a function given a list of arguments."""
         if namespace is None:
             obj = self.default

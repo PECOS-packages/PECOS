@@ -3,21 +3,21 @@ pecos.reps
 
 .. automodule:: pecos.reps
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -28,4 +28,3 @@ pecos.reps
    :recursive:
 
    pecos.reps.pypmir
-

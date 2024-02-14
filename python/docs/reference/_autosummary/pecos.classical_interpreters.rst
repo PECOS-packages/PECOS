@@ -3,21 +3,21 @@ pecos.classical\_interpreters
 
 .. automodule:: pecos.classical_interpreters
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -29,4 +29,3 @@ pecos.classical\_interpreters
 
    pecos.classical_interpreters.classical_interpreter_abc
    pecos.classical_interpreters.phir_classical_interpreter
-

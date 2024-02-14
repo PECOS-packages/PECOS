@@ -9,7 +9,9 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 """Tests to ensure the sequence of operations are as expected."""
-from pecos.classical_interpreters.phir_classical_interpreter import PHIRClassicalInterpreter
+from pecos.classical_interpreters.phir_classical_interpreter import (
+    PHIRClassicalInterpreter,
+)
 
 
 def get_seq(program):
@@ -49,11 +51,19 @@ def test_seq():
                 "block": "sequence",
                 "ops": [
                     {"qop": "R1XY", "angles": [[0.5, 0.5], "pi"], "args": [["q", 0]]},
-                    {"qop": "Measure", "args": [["q", 0], ["q", 1]], "returns": [["m", 0], ["m", 1]]},
+                    {
+                        "qop": "Measure",
+                        "args": [["q", 0], ["q", 1]],
+                        "returns": [["m", 0], ["m", 1]],
+                    },
                     {"qop": "R1XY", "angles": [[0.5, 0.5], "pi"], "args": [["q", 0]]},
                 ],
             },
-            {"qop": "Measure", "args": [["q", 0], ["q", 1]], "returns": [["m", 0], ["m", 1]]},
+            {
+                "qop": "Measure",
+                "args": [["q", 0], ["q", 1]],
+                "returns": [["m", 0], ["m", 1]],
+            },
             {"qop": "X", "args": [["q", 0]]},
         ],
     }
@@ -88,11 +98,19 @@ def test_qparallel():
                 "block": "qparallel",
                 "ops": [
                     {"qop": "R1XY", "angles": [[0.5, 0.5], "pi"], "args": [["q", 0]]},
-                    {"qop": "Measure", "args": [["q", 0], ["q", 1]], "returns": [["m", 0], ["m", 1]]},
+                    {
+                        "qop": "Measure",
+                        "args": [["q", 0], ["q", 1]],
+                        "returns": [["m", 0], ["m", 1]],
+                    },
                     {"qop": "R1XY", "angles": [[0.5, 0.5], "pi"], "args": [["q", 0]]},
                 ],
             },
-            {"qop": "Measure", "args": [["q", 0], ["q", 1]], "returns": [["m", 0], ["m", 1]]},
+            {
+                "qop": "Measure",
+                "args": [["q", 0], ["q", 1]],
+                "returns": [["m", 0], ["m", 1]],
+            },
             {"qop": "X", "args": [["q", 0]]},
         ],
     }

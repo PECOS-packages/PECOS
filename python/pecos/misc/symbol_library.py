@@ -47,7 +47,12 @@ class SymbolLibrary:
         """
         self.library[symbol].add((obj, params))
 
-    def get(self, symbol: str, params: dict[str, Any], default: Any | None = None) -> Any:
+    def get(
+        self,
+        symbol: str,
+        params: dict[str, Any],
+        default: Any | None = None,
+    ) -> Any:
         """Get an instance associated with `symbol` that has the parameters `params`.
 
         Args:

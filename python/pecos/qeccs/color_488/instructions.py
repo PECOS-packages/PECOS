@@ -44,7 +44,10 @@ class InstrSynExtraction(LogicalInstruction):
 
         logical_ops = [  # Each element in the list corresponds to a logical qubit
             # The keys label the type of logical operator
-            {"X": QuantumCircuit([{"X": x_qudits}]), "Z": QuantumCircuit([{"Z": z_qudits}])},
+            {
+                "X": QuantumCircuit([{"X": x_qudits}]),
+                "Z": QuantumCircuit([{"Z": z_qudits}]),
+            },
         ]
 
         self.initial_logical_ops = logical_ops
@@ -83,8 +86,18 @@ class InstrSynExtraction(LogicalInstruction):
                 break
 
         if found_square:
-            self.abstract_circuit.append("X check", polygon="square", locations={ancilla}, datas=square)
-            self.abstract_circuit.append("Z check", polygon="square", locations={ancilla}, datas=square)
+            self.abstract_circuit.append(
+                "X check",
+                polygon="square",
+                locations={ancilla},
+                datas=square,
+            )
+            self.abstract_circuit.append(
+                "Z check",
+                polygon="square",
+                locations={ancilla},
+                datas=square,
+            )
 
         else:
             if y != 0:
@@ -111,8 +124,18 @@ class InstrSynExtraction(LogicalInstruction):
                 )
                 octagon.extend([None, None, None, None])
 
-            self.abstract_circuit.append("X check", polygon="octagon", locations={ancilla}, datas=octagon)
-            self.abstract_circuit.append("Z check", polygon="octagon", locations={ancilla}, datas=octagon)
+            self.abstract_circuit.append(
+                "X check",
+                polygon="octagon",
+                locations={ancilla},
+                datas=octagon,
+            )
+            self.abstract_circuit.append(
+                "Z check",
+                polygon="octagon",
+                locations={ancilla},
+                datas=octagon,
+            )
 
 
 class InstrInitZero(LogicalInstruction):

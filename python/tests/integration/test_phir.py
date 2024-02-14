@@ -16,7 +16,9 @@ import pytest
 from phir.model import PHIRModel
 from pydantic import ValidationError
 
-from pecos.classical_interpreters.phir_classical_interpreter import PHIRClassicalInterpreter
+from pecos.classical_interpreters.phir_classical_interpreter import (
+    PHIRClassicalInterpreter,
+)
 from pecos.engines.hybrid_engine import HybridEngine
 from pecos.error_models.generic_error_model import GenericErrorModel
 
@@ -140,7 +142,10 @@ def test_example1_noisy_wasmtime():
     )
 
 
-@pytest.mark.skipif(not is_wasmer_supported(), reason="Wasmer is not support on some OS/Python version combinations.")
+@pytest.mark.skipif(
+    not is_wasmer_supported(),
+    reason="Wasmer is not support on some OS/Python version combinations.",
+)
 @pytest.mark.wasmer()
 @pytest.mark.optional_dependency()
 def test_example1_wasmer():
@@ -154,7 +159,10 @@ def test_example1_wasmer():
     )
 
 
-@pytest.mark.skipif(not is_wasmer_supported(), reason="Wasmer is not support on some OS/Python version combinations.")
+@pytest.mark.skipif(
+    not is_wasmer_supported(),
+    reason="Wasmer is not support on some OS/Python version combinations.",
+)
 @pytest.mark.wasmer()
 @pytest.mark.optional_dependency()
 def test_example1_noisy_wasmer():
@@ -297,7 +305,9 @@ def test_bell_qparallel_cliff_barrier():
     interp = PHIRClassicalInterpreter()
 
     results = HybridEngine(qsim="stabilizer", cinterp=interp).run(
-        program=json.load(Path.open(this_dir / "phir" / "bell_qparallel_cliff_barrier.json")),
+        program=json.load(
+            Path.open(this_dir / "phir" / "bell_qparallel_cliff_barrier.json"),
+        ),
         shots=20,
     )
 
@@ -312,7 +322,9 @@ def test_bell_qparallel_cliff_ifbarrier():
     interp = PHIRClassicalInterpreter()
 
     results = HybridEngine(qsim="stabilizer", cinterp=interp).run(
-        program=json.load(Path.open(this_dir / "phir" / "bell_qparallel_cliff_ifbarrier.json")),
+        program=json.load(
+            Path.open(this_dir / "phir" / "bell_qparallel_cliff_ifbarrier.json"),
+        ),
         shots=20,
     )
 

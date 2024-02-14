@@ -27,10 +27,16 @@ def precompute(instr):
     """
     qecc = instr.qecc
 
-    if qecc.name == "4.4.4.4 Surface Code" and qecc.circuit_compiler.name == "Check2Circuits":
+    if (
+        qecc.name == "4.4.4.4 Surface Code"
+        and qecc.circuit_compiler.name == "Check2Circuits"
+    ):
         precomputed_data = code_surface4444(instr)
 
-    elif qecc.name == "Medial 4.4.4.4 Surface Code" and qecc.circuit_compiler.name == "Check2Circuits":
+    elif (
+        qecc.name == "Medial 4.4.4.4 Surface Code"
+        and qecc.circuit_compiler.name == "Check2Circuits"
+    ):
         precomputed_data = code_surface4444medial(instr)
 
     else:
@@ -160,7 +166,8 @@ def surface4444_identity(instr):
                 edges = d2edge_z
             else:
                 raise Exception(
-                    "This decoder can only handle check of purely X or Z type rather than %s!" % gate_symbol,
+                    "This decoder can only handle check of purely X or Z type rather than %s!"
+                    % gate_symbol,
                 )
 
             syn_list = edges.setdefault(data, [])
@@ -255,7 +262,13 @@ def surface4444_identity(instr):
                         s1 = s2
 
                     if (n1 not in virt) and (n2 not in virt):
-                        g.add_edge(n1, n2, weight=-weight, syn_path=syn_path, data_path=data_path)
+                        g.add_edge(
+                            n1,
+                            n2,
+                            weight=-weight,
+                            syn_path=syn_path,
+                            data_path=data_path,
+                        )
 
         syn = set(g.nodes())
         syn -= virt
@@ -283,7 +296,12 @@ def surface4444_identity(instr):
                 data_path.append(data)
                 s1 = s2
 
-            virtual_edge_data[s] = {"virtual_node": v, "weight": -weight, "syn_path": syn_path, "data_path": data_path}
+            virtual_edge_data[s] = {
+                "virtual_node": v,
+                "weight": -weight,
+                "syn_path": syn_path,
+                "data_path": data_path,
+            }
 
     return info
 
@@ -368,7 +386,8 @@ def surface4444medial_identity(instr):
                 edges = d2edge_z
             else:
                 raise Exception(
-                    "This decoder can only handle check of purely X or Z type rather than %s!" % gate_symbol,
+                    "This decoder can only handle check of purely X or Z type rather than %s!"
+                    % gate_symbol,
                 )
 
             syn_list = edges.setdefault(data, [])
@@ -496,7 +515,13 @@ def surface4444medial_identity(instr):
                         s1 = s2
 
                     if (n1 not in virt) and (n2 not in virt):
-                        g.add_edge(n1, n2, weight=-weight, syn_path=syn_path, data_path=data_path)
+                        g.add_edge(
+                            n1,
+                            n2,
+                            weight=-weight,
+                            syn_path=syn_path,
+                            data_path=data_path,
+                        )
 
         syn = set(g.nodes())
         syn -= virt
@@ -524,6 +549,11 @@ def surface4444medial_identity(instr):
                 data_path.append(data)
                 s1 = s2
 
-            virtual_edge_data[s] = {"virtual_node": v, "weight": -weight, "syn_path": syn_path, "data_path": data_path}
+            virtual_edge_data[s] = {
+                "virtual_node": v,
+                "weight": -weight,
+                "syn_path": syn_path,
+                "data_path": data_path,
+            }
 
     return info

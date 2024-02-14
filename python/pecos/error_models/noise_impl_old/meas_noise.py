@@ -19,7 +19,12 @@ if TYPE_CHECKING:
     from pecos import QuantumCircuit
 
 
-def noise_meas_bitflip(locations: set[int], metadata: dict, after: QuantumCircuit, p: float) -> None:
+def noise_meas_bitflip(
+    locations: set[int],
+    metadata: dict,
+    after: QuantumCircuit,
+    p: float,
+) -> None:
     """Bit-flip noise model for measurements.
 
     Args:
@@ -35,6 +40,14 @@ def noise_meas_bitflip(locations: set[int], metadata: dict, after: QuantumCircui
 
     for r, loc in zip(rand_nums, locations, strict=False):
         if r:
-            var = metadata["var_output"][loc] if metadata.get("var_output") else metadata["var"]
+            var = (
+                metadata["var_output"][loc]
+                if metadata.get("var_output")
+                else metadata["var"]
+            )
 
-            after.append("cop", {loc}, expr={"t": var, "a": var, "op": "^", "b": 1})  # flip output bit
+            after.append(
+                "cop",
+                {loc},
+                expr={"t": var, "a": var, "op": "^", "b": 1},
+            )  # flip output bit

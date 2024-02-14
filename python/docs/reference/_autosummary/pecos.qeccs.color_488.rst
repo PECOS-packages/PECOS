@@ -3,21 +3,21 @@ pecos.qeccs.color\_488
 
 .. automodule:: pecos.qeccs.color_488
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -31,4 +31,3 @@ pecos.qeccs.color\_488
    pecos.qeccs.color_488.color_488
    pecos.qeccs.color_488.gates
    pecos.qeccs.color_488.instructions
-

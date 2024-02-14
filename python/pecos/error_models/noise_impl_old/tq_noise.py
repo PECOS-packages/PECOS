@@ -15,13 +15,20 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from pecos.error_models.noise_impl_old.gate_groups import error_one_paulis_collection, error_two_paulis_collection
+from pecos.error_models.noise_impl_old.gate_groups import (
+    error_one_paulis_collection,
+    error_two_paulis_collection,
+)
 
 if TYPE_CHECKING:
     from pecos import QuantumCircuit
 
 
-def noise_depolarizing_two_qubit_gates(locations: set[tuple[int, int]], after: QuantumCircuit, p: float) -> None:
+def noise_depolarizing_two_qubit_gates(
+    locations: set[tuple[int, int]],
+    after: QuantumCircuit,
+    p: float,
+) -> None:
     """Symmetric depolarizing noise for two-qubit gates.
 
     # TODO: Describe noise model

@@ -60,14 +60,20 @@ class InstrSynExtraction(LogicalInstruction):
 
         logical_ops = [  # Each element in the list corresponds to a logical qubit
             # The keys label the type of logical operator
-            {"X": QuantumCircuit([{"X": x_qudits}]), "Z": QuantumCircuit([{"Z": z_qudits}])},
+            {
+                "X": QuantumCircuit([{"X": x_qudits}]),
+                "Z": QuantumCircuit([{"Z": z_qudits}]),
+            },
         ]
 
         self.initial_logical_ops = logical_ops
 
         logical_ops = [  # Each element in the list corresponds to a logical qubit
             # The keys label the type of logical operator
-            {"X": QuantumCircuit([{"X": x_qudits}]), "Z": QuantumCircuit([{"Z": z_qudits}])},
+            {
+                "X": QuantumCircuit([{"X": x_qudits}]),
+                "Z": QuantumCircuit([{"Z": z_qudits}]),
+            },
         ]
 
         self.final_logical_ops = logical_ops

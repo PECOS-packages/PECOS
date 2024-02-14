@@ -15,14 +15,18 @@ from .gates_sq import X
 
 
 def init_zero(state, location, **params):
-    result = state.statevec.batch_measure(state.workspace, [location], np.random.uniform(), True)
+    result = state.statevec.batch_measure(
+        state.workspace, [location], np.random.uniform(), True
+    )
 
     if result == [1]:
         X(state, location)
 
 
 def init_one(state, location, **params):
-    result = state.statevec.batch_measure(state.workspace, [location], np.random.uniform(), True)
+    result = state.statevec.batch_measure(
+        state.workspace, [location], np.random.uniform(), True
+    )
 
     if result == [0]:
         X(state, location)

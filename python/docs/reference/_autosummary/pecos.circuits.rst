@@ -3,21 +3,21 @@ pecos.circuits
 
 .. automodule:: pecos.circuits
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -32,4 +32,3 @@ pecos.circuits
    pecos.circuits.qasm
    pecos.circuits.qc2phir
    pecos.circuits.quantum_circuit
-

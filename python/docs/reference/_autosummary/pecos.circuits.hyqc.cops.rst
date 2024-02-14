@@ -3,20 +3,20 @@ pecos.circuits.hyqc.cops
 
 .. automodule:: pecos.circuits.hyqc.cops
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
+
+
+
+
+
+
+
+
    .. rubric:: Classes
 
    .. autosummary::
-   
+
       AND
       BinOp
       COp
@@ -33,12 +33,3 @@ pecos.circuits.hyqc.cops
       PLUS
       UnaryOp
       XOR
-   
-   
-
-   
-   
-   
-
-
-

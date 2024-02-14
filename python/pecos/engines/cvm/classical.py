@@ -127,7 +127,11 @@ def recur_eval_op(expr_dict, output, width):
         a = recur_eval_op(a, output, width)
 
     elif c:  # c => unary operation
-        c = recur_eval_op(c, output, width) if isinstance(c, dict) else get_val(c, output, width)
+        c = (
+            recur_eval_op(c, output, width)
+            if isinstance(c, dict)
+            else get_val(c, output, width)
+        )
 
         a = eval_op(op, c, width=width)
 
@@ -135,7 +139,11 @@ def recur_eval_op(expr_dict, output, width):
         a = get_val(a, output, width)
 
     if b:
-        b = recur_eval_op(b, output, width) if isinstance(b, dict) else get_val(b, output, width)
+        b = (
+            recur_eval_op(b, output, width)
+            if isinstance(b, dict)
+            else get_val(b, output, width)
+        )
 
         a = eval_op(op, a, b, width=width)
 
@@ -155,7 +163,9 @@ def eval_cop(cop_expr, output, width):
     """
     # Get `t` argument
     # ----------------
-    t = cop_expr["t"]  # symbol of where the resulting value will be stored in the output
+    t = cop_expr[
+        "t"
+    ]  # symbol of where the resulting value will be stored in the output
 
     if isinstance(t, str):
         t_sym = t
@@ -203,7 +213,10 @@ def eval_condition(conditional_expr, output) -> bool:
             msg = "Expecting the second conditional element to be bool."
             raise TypeError(msg)
 
-        return eval_condition(conditional_expr[0], output) == eval_condition(conditional_expr[1], output)
+        return eval_condition(conditional_expr[0], output) == eval_condition(
+            conditional_expr[1],
+            output,
+        )
 
     if conditional_expr:
         a = conditional_expr["a"]

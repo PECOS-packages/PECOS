@@ -3,21 +3,21 @@ pecos.tools
 
 .. automodule:: pecos.tools
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -36,4 +36,3 @@ pecos.tools
    pecos.tools.threshold_tools
    pecos.tools.tool_anticommute
    pecos.tools.tool_collection
-

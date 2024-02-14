@@ -3,16 +3,16 @@ pecos.simulators.paulifaultprop.gates\_one\_qubit
 
 .. automodule:: pecos.simulators.paulifaultprop.gates_one_qubit
 
-   
-   
-   
 
-   
-   
+
+
+
+
+
    .. rubric:: Functions
 
    .. autosummary::
-   
+
       F
       F2
       F2dg
@@ -38,16 +38,3 @@ pecos.simulators.paulifaultprop.gates\_one\_qubit
       Y
       Z
       switch
-   
-   
-
-   
-   
-   
-
-   
-   
-   
-
-
-

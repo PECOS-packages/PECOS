@@ -17,7 +17,13 @@ from pecos.circuits import QuantumCircuit
 class OneAncillaPerCheck:
     """Class that describes an implementation of the 4.8.8 color code with one ancilla per face."""
 
-    def __init__(self, square_x_ticks=None, square_z_ticks=None, octagon_x_ticks=None, octagon_z_ticks=None) -> None:
+    def __init__(
+        self,
+        square_x_ticks=None,
+        square_z_ticks=None,
+        octagon_x_ticks=None,
+        octagon_z_ticks=None,
+    ) -> None:
         """Args:
         ----
             square_x_ticks:
@@ -28,7 +34,16 @@ class OneAncillaPerCheck:
 
         if square_x_ticks is None:
             # 8 ticks
-            square_x_ticks = [0, 1, 2, 3, 4, 5, 6, 7]  # init, H ticks  # Data ticks  # H, meas ticks
+            square_x_ticks = [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+            ]  # init, H ticks  # Data ticks  # H, meas ticks
 
         if square_z_ticks is None:
             # 6 ticks
@@ -36,11 +51,35 @@ class OneAncillaPerCheck:
 
         if octagon_x_ticks is None:
             # 12 ticks
-            octagon_x_ticks = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  # init, H ticks  # Data ticks  # H, meas ticks
+            octagon_x_ticks = [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+            ]  # init, H ticks  # Data ticks  # H, meas ticks
 
         if octagon_z_ticks is None:
             # 10 ticks
-            octagon_z_ticks = [12, 13, 14, 15, 16, 17, 18, 19, 20, 21]  # int tick  # Data ticks  # meas tick
+            octagon_z_ticks = [
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+            ]  # int tick  # Data ticks  # meas tick
 
         self.square_x_ticks = square_x_ticks
         self.square_z_ticks = square_z_ticks
@@ -110,7 +149,10 @@ class OneAncillaPerCheck:
 
             if polygon is None:  # This is an actual circuit element
                 if mapping:
-                    circuit.update({check_type: self.mapset(mapping, set(locations))}, tick=params["tick"])
+                    circuit.update(
+                        {check_type: self.mapset(mapping, set(locations))},
+                        tick=params["tick"],
+                    )
                 else:
                     circuit.update({check_type: set(locations)}, tick=params["tick"])
             else:
@@ -118,12 +160,24 @@ class OneAncillaPerCheck:
                 datas = params["datas"]
 
                 if polygon == "square":
-                    ticks = square_x_ticks if check_type == "X check" else square_z_ticks
+                    ticks = (
+                        square_x_ticks if check_type == "X check" else square_z_ticks
+                    )
 
                 else:
-                    ticks = octagon_x_ticks if check_type == "X check" else octagon_z_ticks
+                    ticks = (
+                        octagon_x_ticks if check_type == "X check" else octagon_z_ticks
+                    )
 
-                self._create_check(circuit, polygon, ticks, check_type, datas, ancilla, mapping)
+                self._create_check(
+                    circuit,
+                    polygon,
+                    ticks,
+                    check_type,
+                    datas,
+                    ancilla,
+                    mapping,
+                )
 
         return circuit
 
@@ -147,7 +201,16 @@ class OneAncillaPerCheck:
 
         return newset
 
-    def _create_check(self, circuit, polygon, ticks, check_type, datas, ancilla, mapping):
+    def _create_check(
+        self,
+        circuit,
+        polygon,
+        ticks,
+        check_type,
+        datas,
+        ancilla,
+        mapping,
+    ):
         """Args:
         ----
             circuit:
@@ -195,7 +258,10 @@ class OneAncillaPerCheck:
 
                 for d, t in zip(datas, data_ticks, strict=False):
                     if d is not None:
-                        circuit.update({"CNOT": {(mapping[ancilla], mapping[d])}}, tick=t)
+                        circuit.update(
+                            {"CNOT": {(mapping[ancilla], mapping[d])}},
+                            tick=t,
+                        )
 
         else:  # Z check
             data_ticks = ticks[1 : sides + 1]
@@ -207,7 +273,10 @@ class OneAncillaPerCheck:
             else:
                 for d, t in zip(datas, data_ticks, strict=False):
                     if d is not None:
-                        circuit.update({"CNOT": {(mapping[d], mapping[ancilla])}}, tick=t)
+                        circuit.update(
+                            {"CNOT": {(mapping[d], mapping[ancilla])}},
+                            tick=t,
+                        )
 
         init_tick = ticks[0]
         meas_tick = ticks[-1]

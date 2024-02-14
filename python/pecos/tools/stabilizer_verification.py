@@ -166,7 +166,11 @@ class VerifyStabilizers:
             raise Exception(msg)
 
         state = self.state
-        z, x, stab_strings, destab_strings = self.get_info(state, print_y=print_y, verbose=verbose)
+        z, x, stab_strings, destab_strings = self.get_info(
+            state,
+            print_y=print_y,
+            verbose=verbose,
+        )
 
         return z, x, stab_strings, destab_strings
 
@@ -443,7 +447,9 @@ class VerifyStabilizers:
             checks2.append(stab_dict)
 
         if checks != checks2:
-            print("WARNING: PECOS didn't refactor the stabilizers into the checks supplied!")
+            print(
+                "WARNING: PECOS didn't refactor the stabilizers into the checks supplied!",
+            )
 
         return checks != checks2
 
@@ -543,7 +549,12 @@ class VerifyStabilizers:
                     zs.add(q)
 
             try:
-                found, stab_id = state.refactor(xs, zs, choose=0, protected=found_stab_ids)
+                found, stab_id = state.refactor(
+                    xs,
+                    zs,
+                    choose=0,
+                    protected=found_stab_ids,
+                )
             except IndexError:
                 xonly = xs - zs
                 zonly = zs - xs
@@ -558,7 +569,12 @@ class VerifyStabilizers:
                 raise Exception(msg, (ps, qs))
 
         for q in self.ancilla_qubits:
-            found, stab_id = state.refactor({q}, set(), choose=-1, protected=found_stab_ids)
+            found, stab_id = state.refactor(
+                {q},
+                set(),
+                choose=-1,
+                protected=found_stab_ids,
+            )
             found_stab_ids.add(stab_id)
 
             if not found:
@@ -593,7 +609,11 @@ class VerifyStabilizers:
             return Exception("Must run `compile()` first!")
 
         self.refactor(state)
-        stab_strs, destab_strs = state.print_stabs(verbose=False, print_y=print_y, print_destabs=True)
+        stab_strs, destab_strs = state.print_stabs(
+            verbose=False,
+            print_y=print_y,
+            print_destabs=True,
+        )
 
         num_ancillas = len(self.ancilla_qubits)
 
@@ -620,14 +640,17 @@ class VerifyStabilizers:
         while not found_all:
             if verbose:
                 print("----")
-            for g, gtuple in enumerate(zip(state.stabs.row_x, state.stabs.row_z, strict=False)):
+            for g, gtuple in enumerate(
+                zip(state.stabs.row_x, state.stabs.row_z, strict=False),
+            ):
                 if gtuple in missing_checks:
                     missing_checks.remove(gtuple)
                     try:
                         notmatched_gens.remove(g)
                     except ValueError:
                         raise Exception(
-                            "list.remove(x): x not in list.\nThe stabilizer %s is likely redundant!" % str(gtuple),
+                            "list.remove(x): x not in list.\nThe stabilizer %s is likely redundant!"
+                            % str(gtuple),
                         ) from ValueError
 
                     check_gens.append(g)
@@ -738,10 +761,14 @@ class VerifyStabilizers:
             xs, zs = found
             distance = len(xs | zs)
 
-            print(f"\nThis is a [[{self.num_data_qubits}, {self.num_logical_qubits()}, {distance}]] code.")
+            print(
+                f"\nThis is a [[{self.num_data_qubits}, {self.num_logical_qubits()}, {distance}]] code.",
+            )
 
         if not found:
-            print("No logical errors found... Checks might describe a stabilizer state.")
+            print(
+                "No logical errors found... Checks might describe a stabilizer state.",
+            )
             return None
         else:
             xs, zs = found
@@ -945,7 +972,13 @@ class VerifyStabilizers:
 
                 op_product = sorted(op_product)
 
-                oplist.append({"X": paulis["X"], "Z": paulis["Z"], "equiv_ops": tuple(op_product)})
+                oplist.append(
+                    {
+                        "X": paulis["X"],
+                        "Z": paulis["Z"],
+                        "equiv_ops": tuple(op_product),
+                    },
+                )
 
         if verbose:
             print("Reference Logical Operators:")
@@ -960,12 +993,22 @@ class VerifyStabilizers:
 
             print("\nLogical Ops Found:\n")
             for foundop in oplist:
-                print("X - {} Z - {} Equiv Ops - {}".format(foundop["X"], foundop["Z"], foundop["equiv_ops"]))
+                print(
+                    "X - {} Z - {} Equiv Ops - {}".format(
+                        foundop["X"],
+                        foundop["Z"],
+                        foundop["equiv_ops"],
+                    ),
+                )
 
         return oplist, self.logical_xs_reference, self.logical_zs_reference
 
     @staticmethod
     def op_anticommute(op1, op2):
         return bool(
-            (len(op1.get("X", set()) & op2.get("Z", set())) + len(op2.get("X", set()) & op1.get("Z", set()))) % 2,
+            (
+                len(op1.get("X", set()) & op2.get("Z", set()))
+                + len(op2.get("X", set()) & op1.get("Z", set()))
+            )
+            % 2,
         )

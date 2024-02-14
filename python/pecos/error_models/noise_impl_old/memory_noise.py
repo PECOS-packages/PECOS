@@ -19,7 +19,11 @@ if TYPE_CHECKING:
     from pecos import QuantumCircuit
 
 
-def noise_tq_mem(locations: set[tuple[int, int]], after: QuantumCircuit, p: float) -> None:
+def noise_tq_mem(
+    locations: set[tuple[int, int]],
+    after: QuantumCircuit,
+    p: float,
+) -> None:
     """The memory noise model for idling qubits.
 
     Args:

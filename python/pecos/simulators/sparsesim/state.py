@@ -77,7 +77,9 @@ class SparseSim(Stabilizer):
         super().__init__()
 
         if not isinstance(num_qubits, int):
-            msg = f"`num_qubits` should be of type `int` but got type: {type(num_qubits)}"
+            msg = (
+                f"`num_qubits` should be of type `int` but got type: {type(num_qubits)}"
+            )
             raise TypeError(msg)
 
         self.num_qubits = num_qubits
@@ -119,13 +121,25 @@ class SparseSim(Stabilizer):
             # delogical_op
         )
 
-    def refactor(self, xs: set[int], zs: set[int], choose=None, prefer=None, protected=None):
+    def refactor(
+        self,
+        xs: set[int],
+        zs: set[int],
+        choose=None,
+        prefer=None,
+        protected=None,
+    ):
         return refactor_generators(self, xs, zs, choose, prefer, protected)
 
     def find_stab(self, xs: set[int], zs: set[int]):
         return find_stabilizer(self, xs, zs)
 
-    def run_direct(self, symbol: str, location: set[int | tuple[int, ...]], **gate_kwargs: Any):
+    def run_direct(
+        self,
+        symbol: str,
+        location: set[int | tuple[int, ...]],
+        **gate_kwargs: Any,
+    ):
         self.bindings[symbol](self, location, **gate_kwargs)
 
     def copy(self):
@@ -165,7 +179,14 @@ class SparseSim(Stabilizer):
 
         return sign
 
-    def col_string(self, gen, num_qubits: int | None = None, *, print_signs: bool = True, print_y: bool = False):
+    def col_string(
+        self,
+        gen,
+        num_qubits: int | None = None,
+        *,
+        print_signs: bool = True,
+        print_y: bool = False,
+    ):
         """Prints out the stabilizers for the column-wise sparse representation.
 
         Args:
@@ -252,19 +273,37 @@ class SparseSim(Stabilizer):
 
         return result
 
-    def print_stabs(self, *, verbose: bool = True, print_y: bool = True, print_destabs: bool = False):
+    def print_stabs(
+        self,
+        *,
+        verbose: bool = True,
+        print_y: bool = True,
+        print_destabs: bool = False,
+    ):
         str_s = self.print_tableau(self.stabs, verbose=verbose, print_y=print_y)
 
         if print_destabs:
             if verbose:
                 print("-------------------------------")
-            str_d = self.print_tableau(self.destabs, verbose=verbose, print_signs=False, print_y=print_y)
+            str_d = self.print_tableau(
+                self.destabs,
+                verbose=verbose,
+                print_signs=False,
+                print_y=print_y,
+            )
 
             return str_s, str_d
 
         return str_s
 
-    def print_tableau(self, gen, *, verbose: bool = True, print_signs: bool = True, print_y: bool = True):
+    def print_tableau(
+        self,
+        gen,
+        *,
+        verbose: bool = True,
+        print_signs: bool = True,
+        print_y: bool = True,
+    ):
         """Prints out the stabilizers.
         :return:
         """

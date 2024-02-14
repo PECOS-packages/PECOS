@@ -29,7 +29,11 @@ class WasmerObj(ForeignObject):
     For more info on using Wasmer, see: https://wasmerio.github.io/wasmer-python/api/wasmer/wasmer.html
     """
 
-    def __init__(self, file: str | bytes | Path, compiler: object | None = None) -> None:
+    def __init__(
+        self,
+        file: str | bytes | Path,
+        compiler: object | None = None,
+    ) -> None:
         self.compiler = compiler
 
         if isinstance(file, str | Path):

@@ -31,7 +31,11 @@ def noise_initz_bitflip_leakage(op: QOp, p: float, machine):
 
     not_leaked = args - leaked
     if not_leaked:
-        remaining_inits = QOp(name=op.name, args=list(not_leaked), metadata=dict(op.metadata))
+        remaining_inits = QOp(
+            name=op.name,
+            args=list(not_leaked),
+            metadata=dict(op.metadata),
+        )
         noisy_ops = noise_initz_bitflip(remaining_inits, p)
         if noisy_ops:
             noise.extend(noisy_ops)

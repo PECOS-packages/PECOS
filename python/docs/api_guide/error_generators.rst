@@ -31,27 +31,37 @@ measurements. In which case, the errors are applied before.
 An example of creating an instance of ``DepolarModel`` is seen here:
 
 >>> import pecos as pc
->>> depolar = pc.error_models.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
+>>> depolar = pc.error_models.DepolarModel(
+...     model_level="code_capacity", has_idle_errors=False, perp_errors=True
+... )
 
 The
 
 >>> import pecos as pc
->>> depolar = pc.error_models.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
+>>> depolar = pc.error_models.DepolarModel(
+...     model_level="code_capacity", has_idle_errors=False, perp_errors=True
+... )
 
 The
 
 >>> import pecos as pc
->>> depolar = pc.error_models.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
+>>> depolar = pc.error_models.DepolarModel(
+...     model_level="code_capacity", has_idle_errors=False, perp_errors=True
+... )
 
 The
 
 >>> import pecos as pc
->>> depolar = pc.error_models.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
+>>> depolar = pc.error_models.DepolarModel(
+...     model_level="code_capacity", has_idle_errors=False, perp_errors=True
+... )
 
 The
 
 >>> import pecos as pc
->>> depolar = pc.error_models.DepolarModel(model_level="code_capacity", has_idle_errors=False, perp_errors=True)
+>>> depolar = pc.error_models.DepolarModel(
+...     model_level="code_capacity", has_idle_errors=False, perp_errors=True
+... )
 
 The ``model_level`` keyword is used to specify to what set of gates the ``DepolarModel`` is applied to. If ``model_level``
 is set to the value of ``'code\_capacity'``, then the error model is applied before each ``LogicalInstruction`` to each
@@ -80,7 +90,9 @@ An example of applying an error model using ``DepolarModel`` to a ``LogicalCircu
 >>> logic.append(surface.gate("I"))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
->>> meas, err = circ_runner.run(state, logic, error_model=depolar, error_params={"p": 0.1})
+>>> meas, err = circ_runner.run(
+...     state, logic, error_model=depolar, error_params={"p": 0.1}
+... )
 
 Note that the keyword argument
 
@@ -92,7 +104,9 @@ Note that the keyword argument
 >>> logic.append(surface.gate("I"))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
->>> meas, err = circ_runner.run(state, logic, error_model=depolar, error_params={"p": 0.1})
+>>> meas, err = circ_runner.run(
+...     state, logic, error_model=depolar, error_params={"p": 0.1}
+... )
 
 Note that the keyword argument
 
@@ -104,7 +118,9 @@ Note that the keyword argument
 >>> logic.append(surface.gate("I"))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
->>> meas, err = circ_runner.run(state, logic, error_model=depolar, error_params={"p": 0.1})
+>>> meas, err = circ_runner.run(
+...     state, logic, error_model=depolar, error_params={"p": 0.1}
+... )
 
 Note that the keyword argument
 
@@ -116,7 +132,9 @@ Note that the keyword argument
 >>> logic.append(surface.gate("I"))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
->>> meas, err = circ_runner.run(state, logic, error_model=depolar, error_params={"p": 0.1})
+>>> meas, err = circ_runner.run(
+...     state, logic, error_model=depolar, error_params={"p": 0.1}
+... )
 
 Note that the keyword argument
 
@@ -128,7 +146,9 @@ Note that the keyword argument
 >>> logic.append(surface.gate("I"))
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
->>> meas, err = circ_runner.run(state, logic, error_model=depolar, error_params={"p": 0.1})
+>>> meas, err = circ_runner.run(
+...     state, logic, error_model=depolar, error_params={"p": 0.1}
+... )
 
 Note that the keyword argument ``error_params`` is used to pass a dictionary that indicates the probability :math:`p` of
 the depolarizing error model.

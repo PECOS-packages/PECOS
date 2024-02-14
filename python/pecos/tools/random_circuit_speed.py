@@ -18,7 +18,15 @@ from pecos.engines.circuit_runners import TimingRunner
 from pecos.simulators import pySparseSim
 
 
-def random_circuit_speed(state_sim, num_qubits, circuit_depth, trials=10000, gates=None, seed_start=0, converter=None):
+def random_circuit_speed(
+    state_sim,
+    num_qubits,
+    circuit_depth,
+    trials=10000,
+    gates=None,
+    seed_start=0,
+    converter=None,
+):
     circuits = generate_circuits(num_qubits, circuit_depth, trials, gates, seed_start)
 
     times = []
@@ -38,7 +46,14 @@ def random_circuit_speed(state_sim, num_qubits, circuit_depth, trials=10000, gat
     return times, measurements, circuits
 
 
-def generate_circuits(num_qubits, circuit_depth, trials=100000, gates=None, seed_start=0, iterate=False):
+def generate_circuits(
+    num_qubits,
+    circuit_depth,
+    trials=100000,
+    gates=None,
+    seed_start=0,
+    iterate=False,
+):
     if gates is None:
         gates = [
             "I",

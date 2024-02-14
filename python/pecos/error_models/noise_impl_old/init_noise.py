@@ -21,7 +21,12 @@ if TYPE_CHECKING:
     from pecos import QuantumCircuit
 
 
-def noise_init_bitflip(locations: Sequence[int], after: QuantumCircuit, flip: str, p: float) -> None:
+def noise_init_bitflip(
+    locations: Sequence[int],
+    after: QuantumCircuit,
+    flip: str,
+    p: float,
+) -> None:
     """The noise model for qubit (re)initialization.
 
     Args:

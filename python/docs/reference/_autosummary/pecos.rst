@@ -3,21 +3,21 @@
 
 .. automodule:: pecos
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -42,4 +42,3 @@
    pecos.reps
    pecos.simulators
    pecos.tools
-

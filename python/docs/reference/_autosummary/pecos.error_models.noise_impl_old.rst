@@ -3,21 +3,21 @@ pecos.error\_models.noise\_impl\_old
 
 .. automodule:: pecos.error_models.noise_impl_old
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -33,4 +33,3 @@ pecos.error\_models.noise\_impl\_old
    pecos.error_models.noise_impl_old.memory_noise
    pecos.error_models.noise_impl_old.sq_noise
    pecos.error_models.noise_impl_old.tq_noise
-

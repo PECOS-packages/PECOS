@@ -3,16 +3,16 @@ pecos.engines.cvm.sim\_func
 
 .. automodule:: pecos.engines.cvm.sim_func
 
-   
-   
-   
 
-   
-   
+
+
+
+
+
    .. rubric:: Functions
 
    .. autosummary::
-   
+
       sim_exec
       sim_get_amp
       sim_get_amps
@@ -21,16 +21,3 @@ pecos.engines.cvm.sim\_func
       sim_noise_on
       sim_print
       sim_test
-   
-   
-
-   
-   
-   
-
-   
-   
-   
-
-
-

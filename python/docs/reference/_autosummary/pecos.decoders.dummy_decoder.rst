@@ -3,21 +3,21 @@ pecos.decoders.dummy\_decoder
 
 .. automodule:: pecos.decoders.dummy_decoder
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -28,4 +28,3 @@ pecos.decoders.dummy\_decoder
    :recursive:
 
    pecos.decoders.dummy_decoder.dummy_decoder
-

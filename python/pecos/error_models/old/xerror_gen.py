@@ -29,14 +29,25 @@ class XModel(ParentErrorModel):
     """
 
     measurements: ClassVar[set[str]] = {"measure X", "measure Y", "measure Z"}
-    inits: ClassVar[set[str]] = {"init |0>", "init |1>", "init |+>", "init |->", "init |+i>", "init |-i>"}
+    inits: ClassVar[set[str]] = {
+        "init |0>",
+        "init |1>",
+        "init |+>",
+        "init |->",
+        "init |+i>",
+        "init |-i>",
+    }
     two_qubits: ClassVar[set[str]] = {"CNOT", "CZ", "SWAP", "G"}
 
     inits_z: ClassVar[set[str]] = {"init |0>", "init |1>"}
     inits_x: ClassVar[set[str]] = {"init |+>", "init |->"}
     inits_y: ClassVar[set[str]] = {"init |+i>", "init |-i>"}
 
-    error_two_paulis_collection: ClassVar[list[tuple[str, str]]] = [("I", "X"), ("X", "I"), ("X", "X")]
+    error_two_paulis_collection: ClassVar[list[tuple[str, str]]] = [
+        ("I", "X"),
+        ("X", "I"),
+        ("X", "X"),
+    ]
 
     def __init__(self, model_level="circuit", has_idle_errors=False) -> None:
         """Args:
@@ -55,7 +66,9 @@ class XModel(ParentErrorModel):
 
         xerror = self.gen.ErrorStaticSymbol("X")
         xerror_before = self.gen.ErrorStaticSymbol("X", after=False)
-        two_pauli_errors = self.gen.ErrorSetTwoQuditTensorProduct(self.error_two_paulis_collection)
+        two_pauli_errors = self.gen.ErrorSetTwoQuditTensorProduct(
+            self.error_two_paulis_collection,
+        )
 
         if model_level == "code_capacity":
             self.has_data_errors = True
@@ -87,7 +100,10 @@ class XModel(ParentErrorModel):
             self.has_meas_errors = True
 
             # Don't generate data errors
-            self.gen.set_gate_error("data", False)  # Don't generate errors for data qudits.
+            self.gen.set_gate_error(
+                "data",
+                False,
+            )  # Don't generate errors for data qudits.
 
             # Generate measurement errors (before errors)
             self.gen.set_group_error("measurements", xerror_before.error_func)
@@ -147,13 +163,27 @@ class XModel(ParentErrorModel):
         # ------------------------------
         if self.has_meas_errors or self.has_unitary_errors:
             for symbol, gate_locations, _ in circuit.items(tick_index):
-                self.gen.create_errors(self, symbol, gate_locations, after, before, replace)
+                self.gen.create_errors(
+                    self,
+                    symbol,
+                    gate_locations,
+                    after,
+                    before,
+                    replace,
+                )
 
         # idle errors
         # -----------
         if self.has_idle_errors:
             inactive_qudits = circuit.qudits - circuit.active_qudits[tick_index]
-            self.gen.create_errors(self, "idle", inactive_qudits, after, before, replace)
+            self.gen.create_errors(
+                self,
+                "idle",
+                inactive_qudits,
+                after,
+                before,
+                replace,
+            )
 
         self.error_circuits.add_circuits(time, before, after)
 

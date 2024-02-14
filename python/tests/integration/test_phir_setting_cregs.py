@@ -8,7 +8,11 @@ def test_setting_bits1():
         "ops": [
             {"data": "cvar_define", "data_type": "u32", "variable": "c", "size": 3},
             # c[0], c[1], c[2] = True, False, True
-            {"cop": "=", "returns": [["c", 0], ["c", 1], ["c", 2]], "args": [True, False, True]},
+            {
+                "cop": "=",
+                "returns": [["c", 0], ["c", 1], ["c", 2]],
+                "args": [True, False, True],
+            },
         ],
     }
 

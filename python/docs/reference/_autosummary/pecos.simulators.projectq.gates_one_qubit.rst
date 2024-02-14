@@ -3,16 +3,16 @@ pecos.simulators.projectq.gates\_one\_qubit
 
 .. automodule:: pecos.simulators.projectq.gates_one_qubit
 
-   
-   
-   
 
-   
-   
+
+
+
+
+
    .. rubric:: Functions
 
    .. autosummary::
-   
+
       F
       F2
       F2dg
@@ -38,16 +38,3 @@ pecos.simulators.projectq.gates\_one\_qubit
       X
       Y
       Z
-   
-   
-
-   
-   
-   
-
-   
-   
-   
-
-
-

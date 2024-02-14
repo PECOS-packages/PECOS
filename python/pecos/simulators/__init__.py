@@ -12,13 +12,21 @@
 
 from pecos.simulators import sim_class_types
 from pecos.simulators.parent_sim_classes import Simulator
-from pecos.simulators.paulifaultprop import PauliFaultProp  # Pauli fault propagation sim
-from pecos.simulators.sparsesim import SparseSim as pySparseSim  # Python sparse stabilizer sim
+from pecos.simulators.paulifaultprop import (
+    PauliFaultProp,
+)
+
+# Pauli fault propagation sim
+from pecos.simulators.sparsesim import (
+    SparseSim as pySparseSim,
+)
 
 # C++ version of SparseStabSim wrapper
 try:
     from pecos.simulators.cysparsesim import SparseSim
-    from pecos.simulators.cysparsesim import SparseSim as cySparseSim  # Cython wrapped C++ sparse stabilizer sim
+    from pecos.simulators.cysparsesim import (
+        SparseSim as cySparseSim,
+    )
 except ImportError:
     from pecos.simulators.sparsesim import SparseSim
 

@@ -15,29 +15,29 @@ repos:
       - id: debug-statements
 
   - repo: https://github.com/crate-ci/typos
-    rev: v1.16.18
+    rev: v1.18.2
     hooks:
       - id: typos
         args: []
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.0.292
+    rev: v0.2.1
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
 
   - repo: https://github.com/psf/black
-    rev: 23.9.1
+    rev: 24.2.0
     hooks:
       - id: black
         exclude: |
             (?x)^(
-                py-pecos/pecos/simulators/cuquantum/custatevec/bindings.py|
+                python/pecos/simulators/cuquantum/custatevec/bindings.py|
             )$
 
   - repo: https://github.com/keewis/blackdoc
-    rev: v0.3.8
+    rev: v0.3.9
     hooks:
     -   id: blackdoc
         additional_dependencies:
-        - black==23.9.1
+        - black==24.1.1

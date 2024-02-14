@@ -76,7 +76,13 @@ class QOp(Op):
 class COp(Op):
     """Classical operation."""
 
-    def __init__(self, name: str, args: list, returns: list | None = None, metadata: dict | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        args: list,
+        returns: list | None = None,
+        metadata: dict | None = None,
+    ) -> None:
         super().__init__(
             name=name,
             args=args,

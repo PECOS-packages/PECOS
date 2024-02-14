@@ -102,7 +102,9 @@ class SimpleDepolarizingErrorModel(ErrorModel):
                     for r, loc in zip(rand_nums, op.args, strict=False):
                         if r:
                             err = np.random.choice(one_qubit_paulis)
-                            erroneous_ops.append(QOp(name=err[0], args=[loc], metadata={}))
+                            erroneous_ops.append(
+                                QOp(name=err[0], args=[loc], metadata={}),
+                            )
 
             # ########################################
             # TWO QUBIT GATES
@@ -116,9 +118,13 @@ class SimpleDepolarizingErrorModel(ErrorModel):
                             err = np.random.choice(two_qubit_paulis)
                             loc1, loc2 = loc
                             if err[0] != "I":
-                                erroneous_ops.append(QOp(name=err[0], args=[loc1], metadata={}))
+                                erroneous_ops.append(
+                                    QOp(name=err[0], args=[loc1], metadata={}),
+                                )
                             if err[1] != "I":
-                                erroneous_ops.append(QOp(name=err[1], args=[loc2], metadata={}))
+                                erroneous_ops.append(
+                                    QOp(name=err[1], args=[loc2], metadata={}),
+                                )
 
             # ########################################
             # MEASURE X NOISE

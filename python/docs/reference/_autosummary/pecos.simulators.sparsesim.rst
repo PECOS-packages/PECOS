@@ -3,21 +3,21 @@ pecos.simulators.sparsesim
 
 .. automodule:: pecos.simulators.sparsesim
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -35,4 +35,3 @@ pecos.simulators.sparsesim
    pecos.simulators.sparsesim.logical_sign
    pecos.simulators.sparsesim.refactor
    pecos.simulators.sparsesim.state
-

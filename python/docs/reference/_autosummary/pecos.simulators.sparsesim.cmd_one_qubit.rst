@@ -3,16 +3,16 @@ pecos.simulators.sparsesim.cmd\_one\_qubit
 
 .. automodule:: pecos.simulators.sparsesim.cmd_one_qubit
 
-   
-   
-   
 
-   
-   
+
+
+
+
+
    .. rubric:: Functions
 
    .. autosummary::
-   
+
       F
       F2
       F2dg
@@ -37,16 +37,3 @@ pecos.simulators.sparsesim.cmd\_one\_qubit
       X
       Y
       Z
-   
-   
-
-   
-   
-   
-
-   
-   
-   
-
-
-

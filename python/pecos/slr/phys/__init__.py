@@ -1,4 +1,15 @@
-from pecos.slr.phys.cliffords_tq import CH, CX, CY, CZ, SXX, SYY, SZZ, SXXdg, SYYdg, SZZdg
+from pecos.slr.phys.cliffords_tq import (
+    CH,
+    CX,
+    CY,
+    CZ,
+    SXX,
+    SYY,
+    SZZ,
+    SXXdg,
+    SYYdg,
+    SZZdg,
+)
 from pecos.slr.phys.face_rots import F4, F, F4dg, Fdg
 from pecos.slr.phys.hadamards import H
 from pecos.slr.phys.misc import FZ, FZdg, T, Tdg

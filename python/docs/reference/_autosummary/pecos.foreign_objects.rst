@@ -3,21 +3,21 @@ pecos.foreign\_objects
 
 .. automodule:: pecos.foreign_objects
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -32,4 +32,3 @@ pecos.foreign\_objects
    pecos.foreign_objects.python
    pecos.foreign_objects.wasmer
    pecos.foreign_objects.wasmtime
-

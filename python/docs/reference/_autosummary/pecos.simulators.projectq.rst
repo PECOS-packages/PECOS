@@ -3,21 +3,21 @@ pecos.simulators.projectq
 
 .. automodule:: pecos.simulators.projectq
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -35,4 +35,3 @@ pecos.simulators.projectq
    pecos.simulators.projectq.helper
    pecos.simulators.projectq.logical_sign
    pecos.simulators.projectq.state
-

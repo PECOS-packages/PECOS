@@ -3,21 +3,21 @@ pecos.simulators.paulifaultprop
 
 .. automodule:: pecos.simulators.paulifaultprop
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -34,4 +34,3 @@ pecos.simulators.paulifaultprop
    pecos.simulators.paulifaultprop.gates_two_qubit
    pecos.simulators.paulifaultprop.logical_sign
    pecos.simulators.paulifaultprop.state
-

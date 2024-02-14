@@ -90,7 +90,12 @@ class HybridEngine:
             if params.get("error_free", False):
                 errors = {}
             else:
-                error_circuits = error_gen.generate_tick_errors(tick_circuit, time, output, **params)
+                error_circuits = error_gen.generate_tick_errors(
+                    tick_circuit,
+                    time,
+                    output,
+                    **params,
+                )
                 errors = error_circuits.get(time, {})
 
             # TODO: Need run the error generator whether we want errors or not because of leakage
@@ -113,7 +118,14 @@ class HybridEngine:
 
             # ideal tick circuit
             # ------------------
-            self.run_circuit(state, output, output_export, tick_circuit, error_gen, removed_locations=removed)
+            self.run_circuit(
+                state,
+                output,
+                output_export,
+                tick_circuit,
+                error_gen,
+                removed_locations=removed,
+            )
 
             if circ_inspector:
                 circ_inspector.analyze(tick_circuit, time, output)
@@ -126,7 +138,15 @@ class HybridEngine:
 
         return output, error_circuits
 
-    def run_circuit(self, state, output, output_export, circuit, error_gen, removed_locations=None):
+    def run_circuit(
+        self,
+        state,
+        output,
+        output_export,
+        circuit,
+        error_gen,
+        removed_locations=None,
+    ):
         """Args:
 
             circuit (QuantumCircuit): A circuit instance or object with an appropriate items() generator.
@@ -145,7 +165,11 @@ class HybridEngine:
             if params.get("skip"):
                 continue
 
-            eval_cond2 = eval_condition(params.get("cond2"), output) if params.get("cond2") else True
+            eval_cond2 = (
+                eval_condition(params.get("cond2"), output)
+                if params.get("cond2")
+                else True
+            )
 
             if eval_condition(params.get("cond"), output) and eval_cond2:
                 # Run quantum simulator
@@ -173,10 +197,16 @@ class HybridEngine:
                         elif isinstance(val, BinArray):
                             output_export[sym] = BinArray(str(val))
                         else:
-                            msg = f"This output type `{type(val)}` not handled at export!"
+                            msg = (
+                                f"This output type `{type(val)}` not handled at export!"
+                            )
                             raise Exception(msg)
 
-                    elif not params.get("comment") and not params.get("linebreak") and not params.get("barrier"):
+                    elif (
+                        not params.get("comment")
+                        and not params.get("linebreak")
+                        and not params.get("barrier")
+                    ):
                         print("received:", symbol, locations, params)
                         msg = "A cop must have an `expr`, `comment`, `linebreak`, or `barrier` entry!"
                         raise Exception(msg)
@@ -185,7 +215,13 @@ class HybridEngine:
                     pass
 
                 else:  # quantum operation
-                    self.run_gate(state, output, symbol, locations - removed_locations, **params)
+                    self.run_gate(
+                        state,
+                        output,
+                        symbol,
+                        locations - removed_locations,
+                        **params,
+                    )
 
                     if symbol == "leak":
                         error_gen.leaked_qubits |= locations

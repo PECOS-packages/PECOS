@@ -3,21 +3,21 @@ pecos.machines
 
 .. automodule:: pecos.machines
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -29,4 +29,3 @@ pecos.machines
 
    pecos.machines.generic_machine
    pecos.machines.machine_abc
-

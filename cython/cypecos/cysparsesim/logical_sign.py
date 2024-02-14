@@ -49,10 +49,13 @@ def find_logical_signs(state, logical_circuit, delogical_circuit=None):
             logical_zs.update(gate_locations)
         else:
             raise Exception(
-                'Can not currently handle logical operator with operator "%s"!' % symbol,
+                'Can not currently handle logical operator with operator "%s"!'
+                % symbol,
             )
 
-    if delogical_circuit:  # Check the relationship between logical operator and delogical operator.
+    if (
+        delogical_circuit
+    ):  # Check the relationship between logical operator and delogical operator.
         if len(delogical_circuit) != 1:
             msg = "Delogical operators are expected to only have one tick."
             raise Exception(msg)
@@ -74,8 +77,12 @@ def find_logical_signs(state, logical_circuit, delogical_circuit=None):
 
         # Make sure the logical and delogical anti-commute
 
-        anticom_x = len(logical_xs & delogical_zs) % 2  # Number of common elements modulo 2
-        anticom_z = len(logical_zs & delogical_xs) % 2  # Number of common elements modulo 2
+        anticom_x = (
+            len(logical_xs & delogical_zs) % 2
+        )  # Number of common elements modulo 2
+        anticom_z = (
+            len(logical_zs & delogical_xs) % 2
+        )  # Number of common elements modulo 2
 
         if not ((anticom_x + anticom_z) % 2):
             print(f"logical Xs: {logical_xs} logical Zs: {logical_zs}")
@@ -99,10 +106,14 @@ def find_logical_signs(state, logical_circuit, delogical_circuit=None):
     build_stabs = set()
 
     for q in logical_xs:  # For qubits that have Xs in for the logical operator...
-        build_stabs ^= destabs["col_z"][q]  # Add in stabilizers that anti-commute for the logical operator's Xs
+        build_stabs ^= destabs["col_z"][
+            q
+        ]  # Add in stabilizers that anti-commute for the logical operator's Xs
 
     for q in logical_zs:
-        build_stabs ^= destabs["col_x"][q]  # Add in stabilizers that anti-commute for the logical operator's Zs
+        build_stabs ^= destabs["col_x"][
+            q
+        ]  # Add in stabilizers that anti-commute for the logical operator's Zs
 
     # If a stabilizer anticommutes an even number of times for the X and/or Z Paulis... it will not appear due to ^=
 

@@ -66,14 +66,20 @@ class InstrSynExtraction(LogicalInstruction):
 
         logical_ops = [  # Each element in the list corresponds to a logical qubit
             # The keys label the type of logical operator
-            {"X": QuantumCircuit([{"X": x_qudits}]), "Z": QuantumCircuit([{"Z": z_qudits}])},
+            {
+                "X": QuantumCircuit([{"X": x_qudits}]),
+                "Z": QuantumCircuit([{"Z": z_qudits}]),
+            },
         ]
 
         self.initial_logical_ops = logical_ops
 
         logical_ops = [  # Each element in the list corresponds to a logical qubit
             # The keys label the type of logical operator
-            {"X": QuantumCircuit([{"X": x_qudits}]), "Z": QuantumCircuit([{"Z": z_qudits}])},
+            {
+                "X": QuantumCircuit([{"X": x_qudits}]),
+                "Z": QuantumCircuit([{"Z": z_qudits}]),
+            },
         ]
 
         self.final_logical_ops = logical_ops
@@ -95,7 +101,11 @@ class InstrSynExtraction(LogicalInstruction):
         data_pos = self._data_pos_x_check(x, y)
 
         # Get the actual, available data-qubits and their ticks that correspond to the possible data qubit positions
-        datas, my_data_ticks = self._find_data(position_to_qudit=self.pos2qudit, positions=data_pos, ticks=self.x_ticks)
+        datas, my_data_ticks = self._find_data(
+            position_to_qudit=self.pos2qudit,
+            positions=data_pos,
+            ticks=self.x_ticks,
+        )
 
         # Now add the check to the extended circuit
         locations = set(datas)
@@ -118,7 +128,11 @@ class InstrSynExtraction(LogicalInstruction):
         # get where the position of where the data qubits should be relative to the ancilla
         data_pos = self._data_pos_z_check(x, y)
         # Get the actual, available data-qubits and their ticks that correspond to the possible data qubit positions
-        datas, my_data_ticks = self._find_data(position_to_qudit=self.pos2qudit, positions=data_pos, ticks=self.z_ticks)
+        datas, my_data_ticks = self._find_data(
+            position_to_qudit=self.pos2qudit,
+            positions=data_pos,
+            ticks=self.z_ticks,
+        )
 
         # Now add the check to the extended circuit
         locations = set(datas)

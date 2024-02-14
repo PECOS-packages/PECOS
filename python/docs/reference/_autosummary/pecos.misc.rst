@@ -3,21 +3,21 @@ pecos.misc
 
 .. automodule:: pecos.misc
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -34,4 +34,3 @@ pecos.misc
    pecos.misc.std_output
    pecos.misc.symbol_library
    pecos.misc.threshold_curve
-

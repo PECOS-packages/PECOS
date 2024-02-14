@@ -208,7 +208,15 @@ man_pages = [
 # (source start file, target name, title, author,
 #  dir menu entry, description, category)
 texinfo_documents = [
-    (master_doc, "PECOS", "PECOS Documentation", author, "PECOS", "One line description of project.", "Miscellaneous"),
+    (
+        master_doc,
+        "PECOS",
+        "PECOS Documentation",
+        author,
+        "PECOS",
+        "One line description of project.",
+        "Miscellaneous",
+    ),
 ]
 
 # -- External links code:

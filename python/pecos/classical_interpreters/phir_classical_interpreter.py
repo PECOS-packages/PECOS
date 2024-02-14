@@ -67,7 +67,11 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         self.foreign_obj = None
         self._reset_env()
 
-    def init(self, program: str | (dict | QuantumCircuit), foreign_obj: ForeignObject | None = None) -> int:
+    def init(
+        self,
+        program: str | (dict | QuantumCircuit),
+        foreign_obj: ForeignObject | None = None,
+    ) -> int:
         """Initialize the interpreter to validate the format of the program, optimize the program representation,
         etc.
         """
@@ -75,7 +79,10 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         self.foreign_obj = foreign_obj
 
         # Make sure we have `program` in the correct format or convert to PHIR/dict.
-        if isinstance(program, str):  # Assume it is in the PHIR/JSON format and convert to dict
+        if isinstance(
+            program,
+            str,
+        ):  # Assume it is in the PHIR/JSON format and convert to dict
             self.program = json.loads(program)
         elif isinstance(self.program, PyPMIR | dict):
             pass

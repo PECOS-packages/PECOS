@@ -105,4 +105,6 @@ class Bit(Int):
         return f"{self.symbol}"
 
     def __repr__(self) -> str:
-        return f"<{self.__class__.__name__} {self.index} of {self.int.__repr__()[1:-1]}>"
+        return (
+            f"<{self.__class__.__name__} {self.index} of {self.int.__repr__()[1:-1]}>"
+        )

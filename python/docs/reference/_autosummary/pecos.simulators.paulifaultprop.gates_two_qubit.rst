@@ -3,16 +3,16 @@ pecos.simulators.paulifaultprop.gates\_two\_qubit
 
 .. automodule:: pecos.simulators.paulifaultprop.gates_two_qubit
 
-   
-   
-   
 
-   
-   
+
+
+
+
+
    .. rubric:: Functions
 
    .. autosummary::
-   
+
       CX
       CY
       CZ
@@ -25,16 +25,3 @@ pecos.simulators.paulifaultprop.gates\_two\_qubit
       SYYdg
       SZZ
       SZZdg
-   
-   
-
-   
-   
-   
-
-   
-   
-   
-
-
-

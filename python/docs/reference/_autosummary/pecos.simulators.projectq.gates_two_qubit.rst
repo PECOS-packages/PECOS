@@ -3,16 +3,16 @@ pecos.simulators.projectq.gates\_two\_qubit
 
 .. automodule:: pecos.simulators.projectq.gates_two_qubit
 
-   
-   
-   
 
-   
-   
+
+
+
+
+
    .. rubric:: Functions
 
    .. autosummary::
-   
+
       CNOT
       CY
       CZ
@@ -29,16 +29,3 @@ pecos.simulators.projectq.gates\_two\_qubit
       SYYdg
       SZZ
       SZZdg
-   
-   
-
-   
-   
-   
-
-   
-   
-   
-
-
-

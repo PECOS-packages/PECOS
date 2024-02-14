@@ -57,7 +57,13 @@ class QASM:
 class Permute:
     """Permutes the indices that the elements of the register so that Reg[i] now refers to Reg[j]."""
 
-    def __init__(self, elems_i: list[Elem] | Reg, elems_f: list[Elem] | Reg, *, comment: bool = True):
+    def __init__(
+        self,
+        elems_i: list[Elem] | Reg,
+        elems_f: list[Elem] | Reg,
+        *,
+        comment: bool = True,
+    ):
         self.elems_i = elems_i
         self.elems_f = elems_f
         self.comment = comment
@@ -76,7 +82,12 @@ class Permute:
             if set(self.elems_i) != set(self.elems_f):
                 msg = "The set of input elements are not the same as the set of output elements"
                 raise Exception(msg)
-            if not (len(self.elems_i) == len(set(self.elems_i)) == len(self.elems_f) == len(set(self.elems_f))):
+            if not (
+                len(self.elems_i)
+                == len(set(self.elems_i))
+                == len(self.elems_f)
+                == len(set(self.elems_f))
+            ):
                 msg = "The number of input and output elements are not the same."
                 raise Exception(msg)
 

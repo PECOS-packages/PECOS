@@ -90,7 +90,16 @@ class TestPythonBindings(unittest.TestCase):
 
         # Create the input (to be measured) state vector
         v = np.array(
-            [0, 0 + 0.1j, 0.1 + 0.1j, 0.1 + 0.2j, 0.2 + 0.2j, 0.3 + 0.3j, 0.3 + 0.4j, 0.4 + 0.5j],
+            [
+                0,
+                0 + 0.1j,
+                0.1 + 0.1j,
+                0.1 + 0.2j,
+                0.2 + 0.2j,
+                0.3 + 0.3j,
+                0.3 + 0.4j,
+                0.4 + 0.5j,
+            ],
             dtype=complex,
         )
         sv = cq.StateVector(v)

@@ -13,6 +13,7 @@ To begin, we create an empty Python file called ``zrepetition.py`` and import so
     """
     A representation of the Z-check repetition code.
     """
+
     from pecos.circuits import QuantumCircuit
     from pecos.qeccs import QECC, LogicalGate, LogicalInstruction
 
@@ -334,7 +335,9 @@ following simulation:
          >>> logic.append(qecc.gate("I"))
          >>> circ_runner = pc.circuit_runners.Standard(seed=3)
          >>> state = circ_runner.init(qecc.num_qudits)
-         >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+         >>> meas, err = circ_runner.run_logic(
+         ...     state, logic, error_gen=depolar, error_params={"p": 0.1}
+         ... )
          >>> meas
          {(1, 2): {3: {3: 1}}}
          >>> err
@@ -347,7 +350,9 @@ following simulation:
          >>> logic.append(qecc.gate("I"))
          >>> circ_runner = pc.circuit_runners.Standard(seed=3)
          >>> state = circ_runner.init(qecc.num_qudits)
-         >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+         >>> meas, err = circ_runner.run_logic(
+         ...     state, logic, error_gen=depolar, error_params={"p": 0.1}
+         ... )
          >>> meas
          {(1, 2): {3: {3: 1}}}
          >>> err
@@ -360,7 +365,9 @@ following simulation:
       >>> logic.append(qecc.gate("I"))
       >>> circ_runner = pc.circuit_runners.Standard(seed=3)
       >>> state = circ_runner.init(qecc.num_qudits)
-      >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+      >>> meas, err = circ_runner.run_logic(
+      ...     state, logic, error_gen=depolar, error_params={"p": 0.1}
+      ... )
       >>> meas
       {(1, 2): {3: {3: 1}}}
       >>> err
@@ -373,7 +380,9 @@ following simulation:
          >>> logic.append(qecc.gate("I"))
          >>> circ_runner = pc.circuit_runners.Standard(seed=3)
          >>> state = circ_runner.init(qecc.num_qudits)
-         >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+         >>> meas, err = circ_runner.run_logic(
+         ...     state, logic, error_gen=depolar, error_params={"p": 0.1}
+         ... )
          >>> meas
          {(1, 2): {3: {3: 1}}}
          >>> err
@@ -386,7 +395,9 @@ following simulation:
          >>> logic.append(qecc.gate("I"))
          >>> circ_runner = pc.circuit_runners.Standard(seed=3)
          >>> state = circ_runner.init(qecc.num_qudits)
-         >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+         >>> meas, err = circ_runner.run_logic(
+         ...     state, logic, error_gen=depolar, error_params={"p": 0.1}
+         ... )
          >>> meas
          {(1, 2): {3: {3: 1}}}
          >>> err
@@ -399,7 +410,9 @@ following simulation:
       >>> logic.append(qecc.gate("I"))
       >>> circ_runner = pc.circuit_runners.Standard(seed=3)
       >>> state = circ_runner.init(qecc.num_qudits)
-      >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+      >>> meas, err = circ_runner.run_logic(
+      ...     state, logic, error_gen=depolar, error_params={"p": 0.1}
+      ... )
       >>> meas
       {(1, 2): {3: {3: 1}}}
       >>> err
@@ -412,7 +425,9 @@ following simulation:
       >>> logic.append(qecc.gate("I"))
       >>> circ_runner = pc.circuit_runners.Standard(seed=3)
       >>> state = circ_runner.init(qecc.num_qudits)
-      >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+      >>> meas, err = circ_runner.run_logic(
+      ...     state, logic, error_gen=depolar, error_params={"p": 0.1}
+      ... )
       >>> meas
       {(1, 2): {3: {3: 1}}}
       >>> err
@@ -425,7 +440,9 @@ following simulation:
       >>> logic.append(qecc.gate("I"))
       >>> circ_runner = pc.circuit_runners.Standard(seed=3)
       >>> state = circ_runner.init(qecc.num_qudits)
-      >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+      >>> meas, err = circ_runner.run_logic(
+      ...     state, logic, error_gen=depolar, error_params={"p": 0.1}
+      ... )
       >>> meas
       {(1, 2): {3: {3: 1}}}
       >>> err
@@ -438,7 +455,9 @@ following simulation:
    >>> logic.append(qecc.gate("I"))
    >>> circ_runner = pc.circuit_runners.Standard(seed=3)
    >>> state = circ_runner.init(qecc.num_qudits)
-   >>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+   >>> meas, err = circ_runner.run_logic(
+   ...     state, logic, error_gen=depolar, error_params={"p": 0.1}
+   ... )
    >>> meas
    {(1, 2): {3: {3: 1}}}
    >>> err

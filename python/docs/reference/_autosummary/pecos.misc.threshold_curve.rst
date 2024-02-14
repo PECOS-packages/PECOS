@@ -3,16 +3,16 @@ pecos.misc.threshold\_curve
 
 .. automodule:: pecos.misc.threshold_curve
 
-   
-   
-   
 
-   
-   
+
+
+
+
+
    .. rubric:: Functions
 
    .. autosummary::
-   
+
       func
       func2
       func3
@@ -25,16 +25,3 @@ pecos.misc.threshold\_curve
       jackknife_p
       jackknife_pd
       threshold_fit
-   
-   
-
-   
-   
-   
-
-   
-   
-   
-
-
-

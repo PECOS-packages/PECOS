@@ -26,7 +26,9 @@ decodes syndromes for a single round of error extraction:
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
 >>> decode = pc.decoders.MWPM2D(surface).decode
->>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+>>> meas, err = circ_runner.run_logic(
+...     state, logic, error_gen=depolar, error_params={"p": 0.1}
+... )
 >>> meas  # doctest: +SKIP
 {(1, 0): {7: {3: 1, 5: 1, 9: 1, 15: 1}}}
 >>> err  # doctest: +SKIP
@@ -44,7 +46,9 @@ decodes syndromes for a single round of error extraction:
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
 >>> decode = pc.decoders.MWPM2D(surface).decode
->>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+>>> meas, err = circ_runner.run_logic(
+...     state, logic, error_gen=depolar, error_params={"p": 0.1}
+... )
 >>> meas  # doctest: +SKIP
 {(1, 0): {7: {3: 1, 5: 1, 9: 1, 15: 1}}}
 >>> err  # doctest: +SKIP
@@ -62,7 +66,9 @@ decodes syndromes for a single round of error extraction:
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
 >>> decode = pc.decoders.MWPM2D(surface).decode
->>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+>>> meas, err = circ_runner.run_logic(
+...     state, logic, error_gen=depolar, error_params={"p": 0.1}
+... )
 >>> meas  # doctest: +SKIP
 {(1, 0): {7: {3: 1, 5: 1, 9: 1, 15: 1}}}
 >>> err  # doctest: +SKIP
@@ -80,7 +86,9 @@ decodes syndromes for a single round of error extraction:
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
 >>> decode = pc.decoders.MWPM2D(surface).decode
->>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+>>> meas, err = circ_runner.run_logic(
+...     state, logic, error_gen=depolar, error_params={"p": 0.1}
+... )
 >>> meas  # doctest: +SKIP
 {(1, 0): {7: {3: 1, 5: 1, 9: 1, 15: 1}}}
 >>> err  # doctest: +SKIP
@@ -98,7 +106,9 @@ decodes syndromes for a single round of error extraction:
 >>> circ_runner = pc.circuit_runners.Standard(seed=1)
 >>> state = pc.simulators.SparseSim(surface.num_qudits)
 >>> decode = pc.decoders.MWPM2D(surface).decode
->>> meas, err = circ_runner.run_logic(state, logic, error_gen=depolar, error_params={"p": 0.1})
+>>> meas, err = circ_runner.run_logic(
+...     state, logic, error_gen=depolar, error_params={"p": 0.1}
+... )
 >>> meas  # doctest: +SKIP
 {(1, 0): {7: {3: 1, 5: 1, 9: 1, 15: 1}}}
 >>> err  # doctest: +SKIP

@@ -3,16 +3,16 @@ pecos.simulators.sparsesim.cmd\_two\_qubit
 
 .. automodule:: pecos.simulators.sparsesim.cmd_two_qubit
 
-   
-   
-   
 
-   
-   
+
+
+
+
+
    .. rubric:: Functions
 
    .. autosummary::
-   
+
       CX
       CY
       CZ
@@ -27,16 +27,3 @@ pecos.simulators.sparsesim.cmd\_two\_qubit
       SZZdg
       SqrtXX2
       iSWAP
-   
-   
-
-   
-   
-   
-
-   
-   
-   
-
-
-

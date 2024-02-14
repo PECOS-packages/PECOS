@@ -3,21 +3,21 @@ pecos.qeccs
 
 .. automodule:: pecos.qeccs
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -35,4 +35,3 @@ pecos.qeccs
    pecos.qeccs.qecc_parent_class
    pecos.qeccs.surface_4444
    pecos.qeccs.surface_medial_4444
-

@@ -3,21 +3,21 @@ pecos.error\_models.noise\_impl
 
 .. automodule:: pecos.error_models.noise_impl
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -36,4 +36,3 @@ pecos.error\_models.noise\_impl
    pecos.error_models.noise_impl.noise_sq_depolarizing_leakage
    pecos.error_models.noise_impl.noise_tq_depolarizing
    pecos.error_models.noise_impl.noise_tq_depolarizing_leakage
-

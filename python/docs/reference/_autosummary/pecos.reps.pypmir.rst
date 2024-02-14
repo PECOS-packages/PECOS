@@ -3,21 +3,21 @@ pecos.reps.pypmir
 
 .. automodule:: pecos.reps.pypmir
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -32,4 +32,3 @@ pecos.reps.pypmir
    pecos.reps.pypmir.op_types
    pecos.reps.pypmir.pypmir
    pecos.reps.pypmir.types
-

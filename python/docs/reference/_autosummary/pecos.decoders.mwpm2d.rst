@@ -3,21 +3,21 @@ pecos.decoders.mwpm2d
 
 .. automodule:: pecos.decoders.mwpm2d
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -29,4 +29,3 @@ pecos.decoders.mwpm2d
 
    pecos.decoders.mwpm2d.mwpm2d
    pecos.decoders.mwpm2d.precomputing
-

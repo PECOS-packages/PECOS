@@ -217,7 +217,9 @@ class QuantumCircuit(MutableSequence):
     def _fix_json_meta(meta):
         """Fix some of the type issues for converting json rep back to a QuantumCircuit."""
         if "var_output" in meta:
-            meta["var_output"] = {int(k): tuple(v) for k, v in meta["var_output"].items()}
+            meta["var_output"] = {
+                int(k): tuple(v) for k, v in meta["var_output"].items()
+            }
         return meta
 
     @classmethod
@@ -232,7 +234,11 @@ class QuantumCircuit(MutableSequence):
             sym = gate_dict["sym"]
 
             qubits = gate_dict["qubits"]
-            qubits = set(qubits) if qubits and isinstance(qubits[0], int) else {tuple(q) for q in qubits}
+            qubits = (
+                set(qubits)
+                if qubits and isinstance(qubits[0], int)
+                else {tuple(q) for q in qubits}
+            )
 
             meta = gate_dict["metadata"]
             meta = cls._fix_json_meta(meta)
@@ -301,7 +307,10 @@ class QuantumCircuit(MutableSequence):
             str_list.append("{%s}" % tick_list)
 
         if self.metadata:
-            return "QuantumCircuit(params={}, ticks=[{}])".format(str(self.metadata), ", ".join(str_list))
+            return "QuantumCircuit(params={}, ticks=[{}])".format(
+                str(self.metadata),
+                ", ".join(str_list),
+            )
         else:
             return "QuantumCircuit([%s])" % ", ".join(str_list)
 
@@ -366,7 +375,9 @@ class ParamGateCollection:
                     gate.locations.update(gate_locations)
                     break
             else:
-                self.symbols[gate_symbol].append(self.Gate(gate_symbol, params, gate_locations))
+                self.symbols[gate_symbol].append(
+                    self.Gate(gate_symbol, params, gate_locations),
+                )
 
         return self
 
@@ -429,7 +440,9 @@ class ParamGateCollection:
                     self.circuit.qudits.add(qi)
 
                     if qi in self.active_qudits:
-                        raise Exception("Qudit %s has already been acted on by a gate!" % str(qi))
+                        raise Exception(
+                            "Qudit %s has already been acted on by a gate!" % str(qi),
+                        )
                     else:
                         self.active_qudits.add(qi)
 

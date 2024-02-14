@@ -3,21 +3,21 @@ pecos.qeccs.surface\_4444
 
 .. automodule:: pecos.qeccs.surface_4444
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -30,4 +30,3 @@ pecos.qeccs.surface\_4444
    pecos.qeccs.surface_4444.gates
    pecos.qeccs.surface_4444.instructions
    pecos.qeccs.surface_4444.surface_4444
-

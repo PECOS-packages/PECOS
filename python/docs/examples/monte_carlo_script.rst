@@ -74,8 +74,12 @@ We now create the Monte Carlo loop, which prepares a fresh initial state, applie
         fails = 0
         for i in range(runs):
             state = pc.simulators.SparseSim(surface.num_qudits)
-            meas, _ = circ_runner.run(state, logic, error_gen=depolar, error_params={"p": p})
-            fails = determine_fails(meas, decoder, circ_runner, state, logical_ops, fails)
+            meas, _ = circ_runner.run(
+                state, logic, error_gen=depolar, error_params={"p": p}
+            )
+            fails = determine_fails(
+                meas, decoder, circ_runner, state, logical_ops, fails
+            )
         plog.append(fails / runs)
     print("ps=", list(ps))
     print("plog=", plog)
@@ -96,7 +100,18 @@ When this script is ran, an example output is:
         0.3666666666666667,
         0.4,
     ]
-    plog = [0.0588, 0.102, 0.1497, 0.1835, 0.2241, 0.2702, 0.3052, 0.3485, 0.3783, 0.4017]
+    plog = [
+        0.0588,
+        0.102,
+        0.1497,
+        0.1835,
+        0.2241,
+        0.2702,
+        0.3052,
+        0.3485,
+        0.3783,
+        0.4017,
+    ]
 
 
 One can then use plotting packages such as Matplotlib to produce plots as appropriate for the data. PECOS provides a

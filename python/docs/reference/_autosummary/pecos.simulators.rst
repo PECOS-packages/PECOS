@@ -3,21 +3,21 @@ pecos.simulators
 
 .. automodule:: pecos.simulators
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -39,4 +39,3 @@ pecos.simulators
    pecos.simulators.quantum_simulator
    pecos.simulators.sim_class_types
    pecos.simulators.sparsesim
-

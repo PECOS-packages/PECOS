@@ -29,7 +29,9 @@ def powerset(iterable, bound=None):
     powerlist = list(iterable)
     if bound is None:
         bound = len(powerlist)
-    return it.chain.from_iterable(it.combinations(powerlist, t) for t in range(bound + 1))
+    return it.chain.from_iterable(
+        it.combinations(powerlist, t) for t in range(bound + 1)
+    )
 
 
 def t_errors_check(
@@ -364,7 +366,11 @@ def dist_mode_powerset(state, qudit_set):
     """
     for x_errors in powerset(qudit_set):
         for z_errors in powerset(qudit_set):
-            if op_commutes(x_errors, z_errors, state.stabs) and not find_stab(state, x_errors, z_errors):
+            if op_commutes(x_errors, z_errors, state.stabs) and not find_stab(
+                state,
+                x_errors,
+                z_errors,
+            ):
                 return f"Logical error found: Xs - {x_errors} Zs - {z_errors}"
 
     return False
@@ -407,7 +413,11 @@ def dist_mode_x(state, qudit_set):
     """
     z_errors = ()
     for x_errors in powerset(qudit_set):
-        if op_commutes(x_errors, z_errors, state.stabs) and not find_stab(state, x_errors, z_errors):
+        if op_commutes(x_errors, z_errors, state.stabs) and not find_stab(
+            state,
+            x_errors,
+            z_errors,
+        ):
             return f"Logical error found: Xs - {x_errors} Zs - {z_errors}"
 
     return False
@@ -425,7 +435,11 @@ def dist_mode_z(state, qudit_set):
     """
     x_errors = ()
     for z_errors in powerset(qudit_set):
-        if op_commutes(x_errors, z_errors, state.stabs) and not find_stab(state, x_errors, z_errors):
+        if op_commutes(x_errors, z_errors, state.stabs) and not find_stab(
+            state,
+            x_errors,
+            z_errors,
+        ):
             return f"Logical error found: Xs - {x_errors} Zs - {z_errors}"
 
     return False

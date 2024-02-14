@@ -3,21 +3,21 @@ pecos.circuit\_converters
 
 .. automodule:: pecos.circuit_converters
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -29,4 +29,3 @@ pecos.circuit\_converters
 
    pecos.circuit_converters.checks2circuit
    pecos.circuit_converters.std2chs
-

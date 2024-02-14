@@ -93,7 +93,11 @@ def func3(x, pth, v0, a, b, c, d, uodd, ueven):
 
     x = (p - pth) * np.power(dist, 1.0 / v0)
 
-    z = np.where(bool(dist % 2), d * np.power(dist, -1.0 / uodd), d * np.power(dist, -1.0 / ueven))
+    z = np.where(
+        bool(dist % 2),
+        d * np.power(dist, -1.0 / uodd),
+        d * np.power(dist, -1.0 / ueven),
+    )
 
     z += a + b * x + c * np.power(x, 2)
 

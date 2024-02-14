@@ -3,20 +3,20 @@ pecos.circuits.hyqc.qops
 
 .. automodule:: pecos.circuits.hyqc.qops
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
+
+
+
+
+
+
+
+
    .. rubric:: Classes
 
    .. autosummary::
-   
+
       BarrierGate
       CXGate
       CYGate
@@ -52,12 +52,3 @@ pecos.circuits.hyqc.qops
       XGate
       YGate
       ZGate
-   
-   
-
-   
-   
-   
-
-
-

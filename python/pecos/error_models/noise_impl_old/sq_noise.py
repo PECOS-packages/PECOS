@@ -21,7 +21,11 @@ if TYPE_CHECKING:
     from pecos import QuantumCircuit
 
 
-def noise_depolarizing_sq_gate(locations: set[int], after: QuantumCircuit, p: float) -> None:
+def noise_depolarizing_sq_gate(
+    locations: set[int],
+    after: QuantumCircuit,
+    p: float,
+) -> None:
     """Apply a symmetric depolarizing noise model."""
     rand_nums = np.random.random(len(locations)) <= p
 

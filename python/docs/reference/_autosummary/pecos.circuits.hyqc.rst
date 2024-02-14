@@ -3,21 +3,21 @@ pecos.circuits.hyqc
 
 .. automodule:: pecos.circuits.hyqc
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
 
-   
-   
-   
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -36,4 +36,3 @@ pecos.circuits.hyqc
    pecos.circuits.hyqc.qops
    pecos.circuits.hyqc.qubits
    pecos.circuits.hyqc.vars
-

@@ -7,7 +7,13 @@ from abc import ABCMeta
 # TODO: Try to move more into using the class instead of instance. E.g., class methods, don't override call or
 #   use the whole H = HGate() type thing. H should be a class not an instance.
 class QGate(metaclass=ABCMeta):
-    def __init__(self, sym: str | None = None, qasm_sym: str | None = None, qsize: int = 1, csize: int = 0):
+    def __init__(
+        self,
+        sym: str | None = None,
+        qasm_sym: str | None = None,
+        qsize: int = 1,
+        csize: int = 0,
+    ):
         if sym is None:
             self.sym = self.__class__.__name__
             if self.sym.endswith("Gate"):

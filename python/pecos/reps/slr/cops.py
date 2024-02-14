@@ -153,8 +153,7 @@ class PyCOp:
     def __lshift__(self, other):
         """a << b"""
 
-    def __invert__(self):
-        ...
+    def __invert__(self): ...
 
     def __ixor__(self, other):
         """a ^= b"""

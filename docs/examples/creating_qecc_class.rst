@@ -13,6 +13,7 @@ To begin, we create an empty Python file called ``zrepetition.py`` and import so
     """
     A representation of the Z-check repetition code.
     """
+
     from pecos.circuits import QuantumCircuit
     from pecos.qeccs import QECC, LogicalGate, LogicalInstruction
 

@@ -60,8 +60,7 @@ class Block:
     def iter(self):
         yield from self.__iter__()
 
-    def eval(self, lang="QASM"):
-        ...
+    def eval(self, lang="QASM"): ...
 
     def qasm(self):
         qasm = []

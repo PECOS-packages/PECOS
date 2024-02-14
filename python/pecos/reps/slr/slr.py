@@ -55,5 +55,4 @@ class Main(Block):
         return qasm
 
 
-class CFunc:
-    ...
+class CFunc: ...

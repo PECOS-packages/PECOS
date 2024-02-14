@@ -45,8 +45,7 @@ class Vars:
                 return v
 
 
-class Var:
-    ...
+class Var: ...
 
 
 class Reg(Var):

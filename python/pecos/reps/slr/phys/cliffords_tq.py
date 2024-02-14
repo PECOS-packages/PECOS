@@ -1,22 +1,19 @@
 from pecos.slr.phys.metaclasses import TQCliffordGate
 
 
-class CXGate(TQCliffordGate):
-    ...
+class CXGate(TQCliffordGate): ...
 
 
 CNOT = CX = CXGate(qasm_sym="cx")
 
 
-class CYGate(TQCliffordGate):
-    ...
+class CYGate(TQCliffordGate): ...
 
 
 CY = CYGate(qasm_sym="cy")
 
 
-class CZGate(TQCliffordGate):
-    ...
+class CZGate(TQCliffordGate): ...
 
 
 CZ = CZGate(qasm_sym="cz")
@@ -30,43 +27,37 @@ class CHGate(TQCliffordGate):
 CH = CHGate(qasm_sym="ch")
 
 
-class SXXGate(TQCliffordGate):
-    ...
+class SXXGate(TQCliffordGate): ...
 
 
 SXX = SXXGate()
 
 
-class SYYGate(TQCliffordGate):
-    ...
+class SYYGate(TQCliffordGate): ...
 
 
 SYY = SYYGate()
 
 
-class SZZGate(TQCliffordGate):
-    ...
+class SZZGate(TQCliffordGate): ...
 
 
 SZZ = SZZGate(qasm_sym="ZZ")
 
 
-class SXXdgGate(TQCliffordGate):
-    ...
+class SXXdgGate(TQCliffordGate): ...
 
 
 SXXdg = SXXdgGate()
 
 
-class SYYdgGate(TQCliffordGate):
-    ...
+class SYYdgGate(TQCliffordGate): ...
 
 
 SYYdg = SYYdgGate()
 
 
-class SZZdgGate(TQCliffordGate):
-    ...
+class SZZdgGate(TQCliffordGate): ...
 
 
 SZZdg = SZZdgGate()

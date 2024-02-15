@@ -34,7 +34,7 @@ for e in ext_modules:
 setup(
     ext_modules=cythonize(
         ext_modules,
-        # build_dir="build",
+        build_dir="build",
         language_level=3,
     ),
 )

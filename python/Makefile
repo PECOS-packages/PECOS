@@ -79,9 +79,13 @@ tests-all: tests tests-dep doctests ## Run all tests
 # ---------------------
 
 .PHONY: clean
-clean:  ## Clean up caches and build artifacts
+clean:  ## Clean up caches, build artifacts, and generated library files
 	-rm -rf *.egg-info dist build docs/_build .pytest_cache/ .ruff_cache/
-	@find . \( -type d -name "__pycache__" -o -type f -name "*.pyc" \) -print0 | xargs -0 rm -rf
+	@find . \( -type d -name "__pycache__" \
+	          -o -type f -name "*.pyc" \
+	          -o -type f -name "*.so" \
+	          -o -type f -name "*.dll" \) \
+	          -print0 | xargs -0 rm -rf
 
 .PHONY: venv
 venv:  ## Build a new Python virtual environment from scratch

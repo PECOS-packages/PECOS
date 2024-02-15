@@ -14,9 +14,9 @@ compiler_flags = [
 
 ext_modules = [
     Extension(
-        "cysparsesim.cysparsesim",
+        "cypecos.cylib",
         sources=[
-            "cysparsesim/cysparsesim.pyx",
+            "cypecos/cysparsesim.pyx",
             "../cpp/sparsesim/sparsesim.cpp",
         ],
         include_dirs=["../cpp/sparsesim"],

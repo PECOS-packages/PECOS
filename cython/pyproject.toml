@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "C++/Cython extensions for Python PECOS."
 
 [tool.setuptools]
-packages = ["cypecos", "cysparsesim"]
+packages = ["cypecos", ]
 
 # Linting and autorefactoring tools
 # ---------------------------------

@@ -16,10 +16,10 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-from cypecos.cysparsesim cimport cysparsesim_header as s
-from cypecos.cysparsesim.cysparsesim_header cimport int_num, bool
+cimport cypecos.cysparsesim_header as s
+from cypecos.cysparsesim_header cimport int_num, bool
 
-from .logical_sign import find_logical_signs
+from cypecos.logical_sign import find_logical_signs
 
 cdef dict bindings = {
 
@@ -35,12 +35,12 @@ cdef dict bindings = {
     'Y': SparseSim.Y,
     'Z': SparseSim.Z,
 
-    'Q': SparseSim.Q,
-    'Qd': SparseSim.Qd,
-    'R': SparseSim.R,
-    'Rd': SparseSim.Rd,
-    'S': SparseSim.S,
-    'Sd': SparseSim.Sd,
+    'SX': SparseSim.SX,
+    'SXdg': SparseSim.SXdg,
+    'SY': SparseSim.SY,
+    'SYdg': SparseSim.SYdg,
+    'SZ': SparseSim.SZ,
+    'SZdg': SparseSim.SZdg,
 
     'H': SparseSim.hadamard,
     'H1': SparseSim.hadamard,
@@ -57,18 +57,20 @@ cdef dict bindings = {
     'H-x+y': SparseSim.H5,
     'H-x-y': SparseSim.H6,
 
-    'F1': SparseSim.F1,
+    'F': SparseSim.F,
+    'F1': SparseSim.F,
     'F2': SparseSim.F2,
     'F3': SparseSim.F3,
     'F4': SparseSim.F4,
 
-    'F1d': SparseSim.F1d,
-    'F2d': SparseSim.F2d,
-    'F3d': SparseSim.F3d,
-    'F4d': SparseSim.F4d,
+    'F1dg': SparseSim.Fdg,
+    'F2dg': SparseSim.F2dg,
+    'F3dg': SparseSim.F3dg,
+    'F4dg': SparseSim.F4dg,
 
     'II': SparseSim.II,
-    'CNOT': SparseSim.cnot,
+    'CNOT': SparseSim.cx,
+    'CX': SparseSim.cx,
     'CZ': SparseSim.cz,
     'CY': SparseSim.cy,
     'SWAP': SparseSim.swap,
@@ -104,7 +106,11 @@ cdef class SparseSim:
     cdef void hadamard(self, int_num qubit):
         self._c_state.hadamard(qubit)
 
+    cdef void H(self, int_num qubit):
+        self._c_state.hadamard(qubit)
 
+    cdef void H1(self, int_num qubit):
+        self._c_state.hadamard(qubit)
 
     cdef void H2(self, int_num qubit):
         self._c_state.H2(qubit)
@@ -121,8 +127,11 @@ cdef class SparseSim:
     cdef void H6(self, int_num qubit):
         self._c_state.H6(qubit)
 
+    cdef void F(self, int_num qubit):
+        self._c_state.F(qubit)
+
     cdef void F1(self, int_num qubit):
-        self._c_state.F1(qubit)
+        self._c_state.F(qubit)
 
     cdef void F2(self, int_num qubit):
         self._c_state.F2(qubit)
@@ -133,17 +142,20 @@ cdef class SparseSim:
     cdef void F4(self, int_num qubit):
         self._c_state.F4(qubit)
 
-    cdef void F1d(self, int_num qubit):
-        self._c_state.F1d(qubit)
+    cdef void Fdg(self, int_num qubit):
+        self._c_state.Fdg(qubit)
 
-    cdef void F2d(self, int_num qubit):
-        self._c_state.F2d(qubit)
+    cdef void F1dg(self, int_num qubit):
+        self._c_state.Fdg(qubit)
 
-    cdef void F3d(self, int_num qubit):
-        self._c_state.F3d(qubit)
+    cdef void F2dg(self, int_num qubit):
+        self._c_state.F2dg(qubit)
 
-    cdef void F4d(self, int_num qubit):
-        self._c_state.F4d(qubit)
+    cdef void F3dg(self, int_num qubit):
+        self._c_state.F3dg(qubit)
+
+    cdef void F4dg(self, int_num qubit):
+        self._c_state.F4dg(qubit)
 
     cdef void I(self, int_num qubit):
         pass
@@ -157,44 +169,44 @@ cdef class SparseSim:
     cdef void Z(self, int_num qubit):
         self._c_state.phaseflip(qubit)
 
-    cdef void S(self, int_num qubit):
+    cdef void SZ(self, int_num qubit):
         self._c_state.phaserot(qubit)
 
-    cdef void Sd(self, int_num qubit):
-        self._c_state.Sd(qubit)
+    cdef void SZdg(self, int_num qubit):
+        self._c_state.SZdg(qubit)
 
-    cdef void R(self, int_num qubit):
-        self._c_state.R(qubit)
+    cdef void SY(self, int_num qubit):
+        self._c_state.SY(qubit)
 
-    cdef void Rd(self, int_num qubit):
-        self._c_state.Rd(qubit)
+    cdef void SYdg(self, int_num qubit):
+        self._c_state.SYdg(qubit)
 
-    cdef void Q(self, int_num qubit):
-        self._c_state.Q(qubit)
+    cdef void SX(self, int_num qubit):
+        self._c_state.SX(qubit)
 
-    cdef void Qd(self, int_num qubit):
-        self._c_state.Qd(qubit)
+    cdef void SXdg(self, int_num qubit):
+        self._c_state.SXdg(qubit)
 
-    cdef void cnot(self, tuple qubits):
+    cdef void cx(self, tuple qubits):
         cdef int_num cqubit = qubits[0]
         cdef int_num tqubit = qubits[1]
 
-        self._c_state.cnot(cqubit, tqubit)
+        self._c_state.cx(cqubit, tqubit)
 
     cdef void cy(self, tuple qubits):
         cdef int_num cqubit = qubits[0]
         cdef int_num tqubit = qubits[1]
 
         self._c_state.phaserot(tqubit)
-        self._c_state.cnot(cqubit, tqubit)
-        self._c_state.Sd(tqubit)
+        self._c_state.cx(cqubit, tqubit)
+        self._c_state.SZdg(tqubit)
 
     cdef void cz(self, tuple qubits):
         cdef int_num cqubit = qubits[0]
         cdef int_num tqubit = qubits[1]
 
         self._c_state.hadamard(tqubit)
-        self._c_state.cnot(cqubit, tqubit)
+        self._c_state.cx(cqubit, tqubit)
         self._c_state.hadamard(tqubit)
 
     cdef void g2(self, tuple qubits):
@@ -202,8 +214,8 @@ cdef class SparseSim:
         cdef int_num tqubit = qubits[1]
 
         self._c_state.hadamard(cqubit)
-        self._c_state.cnot(tqubit, cqubit)
-        self._c_state.cnot(cqubit, tqubit)
+        self._c_state.cx(tqubit, cqubit)
+        self._c_state.cx(cqubit, tqubit)
         self._c_state.hadamard(tqubit)
 
     cdef void swap(self, tuple qubits):
@@ -219,11 +231,11 @@ cdef class SparseSim:
         cdef int_num qubit1 = qubits[0]
         cdef int_num qubit2 = qubits[1]
 
-        self._c_state.Q(qubit1)  # Sqrt X
-        self._c_state.Q(qubit2)  # Sqrt X
-        self._c_state.Rd(qubit1)  # (Sqrt Y)^\dagger
-        self._c_state.cnot(qubit1, qubit2)  # CNOT
-        self._c_state.R(qubit1)  # Sqrt Y
+        self._c_state.SX(qubit1)  # Sqrt X
+        self._c_state.SX(qubit2)  # Sqrt X
+        self._c_state.SYdg(qubit1)  # (Sqrt Y)^\dagger
+        self._c_state.cx(qubit1, qubit2)  # CNOT
+        self._c_state.SY(qubit1)  # Sqrt Y
 
     # cpdef unsigned int measure(self, const s.int_num qubit,
     def measure(self, const int_num qubit, int forced_outcome=-1, bool collapse=True):

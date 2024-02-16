@@ -49,8 +49,8 @@ class GenericOpProc(OpProcessor):
         buffered_noisy_qops = []
         for op in buffered_ops:
             if isinstance(op, pt.opt.MOp):
-                noisy_ops = self.machine.process([op])
-
+                ops = self.machine.process([op])
+                noisy_ops = self.error_model.process(ops)
             elif isinstance(op, pt.opt.QOp):
                 noisy_ops = self.error_model.process([op])
             else:

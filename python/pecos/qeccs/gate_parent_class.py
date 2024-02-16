@@ -31,7 +31,9 @@ class LogicalGate:
         self.params = self.gate_params
         self.instr_symbols = None
         self.instr_instances = []
-        self.circuits = []  # The circuits of the logical instructions. (Either instr instances or a QuantumCircuit or
+        self.circuits = (
+            []
+        )  # The circuits of the logical instructions. (Either instr instances or a QuantumCircuit or
         # something with the same methods as a QuantumCircuit.)
         self.error_free = gate_params.get(
             "error_free",

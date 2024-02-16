@@ -11,8 +11,6 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from pecos.simulators.sparsesim.state import SparseSim
 
 try:
@@ -20,8 +18,7 @@ try:
 except ImportError:
     ProjectQSim = None
 
-if TYPE_CHECKING:
-    from pecos.reps.pypmir.op_types import QOp
+from pecos.reps.pypmir.op_types import QOp
 
 
 class QuantumSimulator:
@@ -63,17 +60,21 @@ class QuantumSimulator:
         for op in qops:
             if op.metadata is None:
                 op.metadata = {}
-            output = self.state.run_gate(op.name, op.args, **op.metadata)
-            if op.returns:
-                temp = {}
-                bitflips = op.metadata.get("bitflips")
-                for q, r in zip(op.args, op.returns, strict=False):
-                    out = output.get(q, 0)
-                    if bitflips and q in bitflips:
-                        out ^= 1
+            if isinstance(op, QOp):
+                output = self.state.run_gate(op.sim_name, op.args, **op.metadata)
+                if op.returns:
+                    temp = {}
+                    bitflips = op.metadata.get("bitflips")
+                    for q, r in zip(op.args, op.returns, strict=False):
+                        out = output.get(q, 0)
+                        if bitflips and q in bitflips:
+                            out ^= 1
 
-                    temp[tuple(r)] = out
+                        temp[tuple(r)] = out
 
-                meas.append(temp)
+                    meas.append(temp)
+            else:
+                msg = f"Quantum simulators process type QOp but got type {type(op)}"
+                raise TypeError(msg)
 
         return meas

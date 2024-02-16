@@ -40,7 +40,11 @@ def noise_meas_bitflip(
 
     for r, loc in zip(rand_nums, locations, strict=False):
         if r:
-            var = metadata["var_output"][loc] if metadata.get("var_output") else metadata["var"]
+            var = (
+                metadata["var_output"][loc]
+                if metadata.get("var_output")
+                else metadata["var"]
+            )
 
             after.append(
                 "cop",

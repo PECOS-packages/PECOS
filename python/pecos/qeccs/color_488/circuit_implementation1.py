@@ -160,10 +160,14 @@ class OneAncillaPerCheck:
                 datas = params["datas"]
 
                 if polygon == "square":
-                    ticks = square_x_ticks if check_type == "X check" else square_z_ticks
+                    ticks = (
+                        square_x_ticks if check_type == "X check" else square_z_ticks
+                    )
 
                 else:
-                    ticks = octagon_x_ticks if check_type == "X check" else octagon_z_ticks
+                    ticks = (
+                        octagon_x_ticks if check_type == "X check" else octagon_z_ticks
+                    )
 
                 self._create_check(
                     circuit,

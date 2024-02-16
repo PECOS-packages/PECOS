@@ -124,7 +124,10 @@ class Generator:
             error_func = list(error_func)
 
             first = error_func[0]
-            if (isinstance(first, str) and first not in ["CNOT", "II", "CZ", "SWAP", "G2"]) or not hasattr(
+            if (
+                isinstance(first, str)
+                and first not in ["CNOT", "II", "CZ", "SWAP", "G2"]
+            ) or not hasattr(
                 first,
                 "__iter__",
             ):

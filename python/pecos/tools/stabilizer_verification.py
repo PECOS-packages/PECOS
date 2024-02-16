@@ -649,7 +649,8 @@ class VerifyStabilizers:
                         notmatched_gens.remove(g)
                     except ValueError:
                         raise Exception(
-                            "list.remove(x): x not in list.\nThe stabilizer %s is likely redundant!" % str(gtuple),
+                            "list.remove(x): x not in list.\nThe stabilizer %s is likely redundant!"
+                            % str(gtuple),
                         ) from ValueError
 
                     check_gens.append(g)
@@ -1005,5 +1006,9 @@ class VerifyStabilizers:
     @staticmethod
     def op_anticommute(op1, op2):
         return bool(
-            (len(op1.get("X", set()) & op2.get("Z", set())) + len(op2.get("X", set()) & op1.get("Z", set()))) % 2,
+            (
+                len(op1.get("X", set()) & op2.get("Z", set()))
+                + len(op2.get("X", set()) & op1.get("Z", set()))
+            )
+            % 2,
         )

@@ -56,7 +56,8 @@ def find_logical_signs(state, logical_circuit, delogical_circuit):
             logical_zs.update(gate_locations)
         else:
             raise Exception(
-                'Can not currently handle logical operator with operator "%s"!' % symbol,
+                'Can not currently handle logical operator with operator "%s"!'
+                % symbol,
             )
 
     for symbol, gate_locations in delogical_circuit.items(params=False):
@@ -69,7 +70,8 @@ def find_logical_signs(state, logical_circuit, delogical_circuit):
             delogical_zs.update(gate_locations)
         else:
             raise Exception(
-                'Can not currently handle logical operator with operator "%s"!' % symbol,
+                'Can not currently handle logical operator with operator "%s"!'
+                % symbol,
             )
 
     # Make sure the logical and delogical anti-commute
@@ -97,10 +99,14 @@ def find_logical_signs(state, logical_circuit, delogical_circuit):
     build_stabs = set()
 
     for q in logical_xs:  # For qubits that have Xs in for the logical operator...
-        build_stabs ^= destabs["col_z"][q]  # Add in stabilizers that anti-commute for the logical operator's Xs
+        build_stabs ^= destabs["col_z"][
+            q
+        ]  # Add in stabilizers that anti-commute for the logical operator's Xs
 
     for q in logical_zs:
-        build_stabs ^= destabs["col_x"][q]  # Add in stabilizers that anti-commute for the logical operator's Zs
+        build_stabs ^= destabs["col_x"][
+            q
+        ]  # Add in stabilizers that anti-commute for the logical operator's Zs
 
     # If a stabilizer anticommutes an even number of times for the X and/or Z Paulis... it will not appear due to ^=
 

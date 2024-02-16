@@ -88,7 +88,9 @@ class Check2Circuits:
             # find maximum tick
             for gate_symbol, _locations, params in abstract_circuit.items():
                 if gate_symbol in {"X check", "Z check"}:
-                    ancilla_ticks = params["ancilla_ticks"]  # Initialization of the ancilla.
+                    ancilla_ticks = params[
+                        "ancilla_ticks"
+                    ]  # Initialization of the ancilla.
                     data_ticks = params["data_ticks"]
                     meas_ticks = params["meas_ticks"]
 

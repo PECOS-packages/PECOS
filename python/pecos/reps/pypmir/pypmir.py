@@ -18,6 +18,7 @@ from typing import TypeVar
 from pecos.reps.pypmir import block_types as blk
 from pecos.reps.pypmir import data_types as d
 from pecos.reps.pypmir import op_types as op
+from pecos.reps.pypmir.name_resolver import default_sim_name_resolver
 
 TypeOp = TypeVar("TypeOp", bound=op.Op)
 
@@ -27,9 +28,14 @@ class PyPMIR:
     simulations.
     """
 
-    def __init__(self, metadata: dict | None = None) -> None:
+    def __init__(self, metadata: dict | None = None, sim_name_resolver=None) -> None:
         self.ops = []
         self.metadata = metadata
+
+        if sim_name_resolver is None:
+            self.sim_name_resolver = default_sim_name_resolver
+        else:
+            self.sim_name_resolver = sim_name_resolver
 
         self.cvar_meta = []
         self.cvar_dtype_list = []
@@ -84,16 +90,6 @@ class PyPMIR:
             # TODO: flatten to just list of ints even for TQ, etc.
             # TODO: Note size of gate?
 
-            """
-            data = d.QVarDefine(data_type=o["data_type"],
-                                        variable=o["variable"],
-                                        size=o["size"],
-                                        qubit_ids=qubit_ids,
-                                        metadata=o.get("metadata"), )
-
-                    p.qvar_meta[data.variable] = data
-            """
-
             args = []
             for a in o["args"]:
                 if isinstance(a[0], list):
@@ -111,10 +107,21 @@ class PyPMIR:
             metadata = {} if o.get("metadata") is None else o["metadata"]
 
             if o.get("angles"):
-                if not (o["qop"] == "RZZ" and o["angles"][0][0] == 0.0):
-                    metadata = {
-                        "angles": [angle * (pi if o["angles"][1] == "pi" else 1) for angle in o["angles"][0]],
-                    }
+                angles = tuple(
+                    [
+                        angle * (pi if o["angles"][1] == "pi" else 1)
+                        for angle in o["angles"][0]
+                    ],
+                )
+            else:
+                angles = None
+
+            # TODO: get rid of supplying angle or angles in syms and move to (sym, angles) or sym (or gate obj)
+            if angles:
+                if len(angles) == 1:
+                    metadata["angle"] = angles[0]
+                else:
+                    metadata["angles"] = angles
 
             # TODO: Added to satisfy old-style error models. Remove when they not longer need this...
             if o.get("returns"):
@@ -124,11 +131,15 @@ class PyPMIR:
                 metadata["var_output"] = var_output
 
             instr = op.QOp(
-                name=("I" if o["qop"] == "RZZ" and o["angles"][0][0] == 0.0 else o["qop"]),
+                name=o["qop"],
+                sim_name=None,
+                angles=angles,
                 args=args,
                 returns=o.get("returns"),
                 metadata=metadata,
             )
+
+            instr.sim_name = p.sim_name_resolver(instr)
 
         elif "cop" in o:
             if o["cop"] == "ffcall":
@@ -175,13 +186,13 @@ class PyPMIR:
         return instr
 
     @classmethod
-    def from_phir(cls, phir: dict) -> PyPMIR:
-        """Converts PHIR dict to PyPMIR object."""
-
+    def from_phir(cls, phir: dict, sim_name_resolver=None) -> PyPMIR:
+        """Takes a PHIR dictionary and converts it into a PyPMIR object."""
         p = PyPMIR(
             metadata=dict(
                 phir.get("metadata", {}),
             ),
+            sim_name_resolver=sim_name_resolver,
         )
 
         next_qvar_int = 0

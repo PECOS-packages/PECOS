@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 from pecos.error_models.error_model_abc import ErrorModel
+from pecos.reps.pypmir.op_types import EMOp, MOp, QOp
 
 
 class NoErrorModel(ErrorModel):
@@ -37,5 +38,14 @@ class NoErrorModel(ErrorModel):
     def shot_reinit(self):
         pass
 
-    def process(self, qops: list, call_back: Callable | None = None) -> list | None:
-        return qops
+    def process(self, ops: list, call_back: Callable | None = None) -> list | None:
+        noisy_ops = []
+        for op in ops:
+            if isinstance(op, QOp):
+                noisy_ops.append(op)
+            elif isinstance(op, MOp | EMOp):
+                pass
+            else:
+                msg = f"Operation type '{type(op)}' is not supported!"
+                raise NotImplementedError(msg)
+        return noisy_ops

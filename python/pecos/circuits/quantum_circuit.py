@@ -217,7 +217,9 @@ class QuantumCircuit(MutableSequence):
     def _fix_json_meta(meta):
         """Fix some of the type issues for converting json rep back to a QuantumCircuit."""
         if "var_output" in meta:
-            meta["var_output"] = {int(k): tuple(v) for k, v in meta["var_output"].items()}
+            meta["var_output"] = {
+                int(k): tuple(v) for k, v in meta["var_output"].items()
+            }
         return meta
 
     @classmethod
@@ -232,7 +234,11 @@ class QuantumCircuit(MutableSequence):
             sym = gate_dict["sym"]
 
             qubits = gate_dict["qubits"]
-            qubits = set(qubits) if qubits and isinstance(qubits[0], int) else {tuple(q) for q in qubits}
+            qubits = (
+                set(qubits)
+                if qubits and isinstance(qubits[0], int)
+                else {tuple(q) for q in qubits}
+            )
 
             meta = gate_dict["metadata"]
             meta = cls._fix_json_meta(meta)

@@ -55,7 +55,8 @@ def find_logical_signs(
                 op_string.append("Y%s" % loc)
         else:
             raise Exception(
-                'Can not currently handle logical operator with operator "%s"!' % symbol,
+                'Can not currently handle logical operator with operator "%s"!'
+                % symbol,
             )
 
     op_string = " ".join(op_string)

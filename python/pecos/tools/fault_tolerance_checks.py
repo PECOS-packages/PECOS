@@ -29,7 +29,9 @@ def powerset(iterable, bound=None):
     powerlist = list(iterable)
     if bound is None:
         bound = len(powerlist)
-    return it.chain.from_iterable(it.combinations(powerlist, t) for t in range(bound + 1))
+    return it.chain.from_iterable(
+        it.combinations(powerlist, t) for t in range(bound + 1)
+    )
 
 
 def t_errors_check(

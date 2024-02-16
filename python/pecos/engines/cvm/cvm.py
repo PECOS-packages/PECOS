@@ -39,4 +39,5 @@ class CVM:
     def reset_state(self):
         self.state = ()
 
-    def exec(self, func_name, args): ...
+    def exec(self, func_name, args):
+        ...

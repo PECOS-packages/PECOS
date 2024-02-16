@@ -29,7 +29,14 @@ class GatewiseModel(ParentErrorModel):
     """
 
     measurements: ClassVar[set[str]] = {"measure X", "measure Y", "measure Z"}
-    inits: ClassVar[set[str]] = {"init |0>", "init |1>", "init |+>", "init |->", "init |+i>", "init |-i>"}
+    inits: ClassVar[set[str]] = {
+        "init |0>",
+        "init |1>",
+        "init |+>",
+        "init |->",
+        "init |+i>",
+        "init |-i>",
+    }
     two_qubits: ClassVar[set[str]] = {"CNOT", "CZ", "SWAP", "G"}
     one_qubits: ClassVar[set[str]] = {
         "I",
@@ -147,7 +154,14 @@ class GatewiseModel(ParentErrorModel):
                 data_qudit_set = params["data_qudit_set"]
                 inactive_qudits -= data_qudit_set
 
-            self.gen.create_errors(self, "idle", inactive_qudits, after, before, replace)
+            self.gen.create_errors(
+                self,
+                "idle",
+                inactive_qudits,
+                after,
+                before,
+                replace,
+            )
 
         self.error_circuits.add_circuits(time, before, after)
 

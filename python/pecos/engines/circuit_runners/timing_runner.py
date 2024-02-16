@@ -65,7 +65,11 @@ class TimingRunner(Standard):
         gate_results = {}
         for symbol, physical_gate_locations, gate_kwargs in gates.items():
             ti = timer()
-            gate_results = state.run_gate(symbol, physical_gate_locations - removed_locations, **gate_kwargs)
+            gate_results = state.run_gate(
+                symbol,
+                physical_gate_locations - removed_locations,
+                **gate_kwargs,
+            )
             tf = timer()
             self.total_time += tf - ti
             self.num_gates += len(physical_gate_locations - removed_locations)

@@ -301,7 +301,10 @@ class QuantumCircuit(MutableSequence):
             str_list.append("{%s}" % tick_list)
 
         if self.metadata:
-            return "QuantumCircuit(params={}, ticks=[{}])".format(str(self.metadata), ", ".join(str_list))
+            return "QuantumCircuit(params={}, ticks=[{}])".format(
+                str(self.metadata),
+                ", ".join(str_list),
+            )
         else:
             return "QuantumCircuit([%s])" % ", ".join(str_list)
 
@@ -366,7 +369,9 @@ class ParamGateCollection:
                     gate.locations.update(gate_locations)
                     break
             else:
-                self.symbols[gate_symbol].append(self.Gate(gate_symbol, params, gate_locations))
+                self.symbols[gate_symbol].append(
+                    self.Gate(gate_symbol, params, gate_locations),
+                )
 
         return self
 
@@ -429,7 +434,9 @@ class ParamGateCollection:
                     self.circuit.qudits.add(qi)
 
                     if qi in self.active_qudits:
-                        raise Exception("Qudit %s has already been acted on by a gate!" % str(qi))
+                        raise Exception(
+                            "Qudit %s has already been acted on by a gate!" % str(qi),
+                        )
                     else:
                         self.active_qudits.add(qi)
 

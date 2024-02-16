@@ -144,7 +144,15 @@ def find_polyfit(ps, plog, deg, verbose=True):
     return pseudo_thr, popt, pcov
 
 
-def find_uniscalefit(ps, plog, distance, p0=None, maxfev=1000000, verbose=True, **kwargs):
+def find_uniscalefit(
+    ps,
+    plog,
+    distance,
+    p0=None,
+    maxfev=1000000,
+    verbose=True,
+    **kwargs,
+):
     plist = np.array(ps)
     dlist = ns2nsfit(distance, len(plist))
 
@@ -251,7 +259,12 @@ def plot(plist, plog, deg=2, figsize=(10, 10), p_start=None, p_end=None):
 
     pseudo_thr = find_pseudo(plist, plog, deg)
 
-    popt, _ = np.polyfit(plist, plog, deg, cov=True)  # C_z is estimated covariance matrix
+    popt, _ = np.polyfit(
+        plist,
+        plog,
+        deg,
+        cov=True,
+    )  # C_z is estimated covariance matrix
 
     axis_start = p_start
     axis_end = p_end
@@ -279,7 +292,13 @@ def plot(plist, plog, deg=2, figsize=(10, 10), p_start=None, p_end=None):
     plt.ylabel("Logical error rate", size=18)
 
     pth = pseudo_thr
-    plt.axvline(pth, color="green", linewidth=2, linestyle="dashed", label="Pseudo-threshold (%s)" % pth)
+    plt.axvline(
+        pth,
+        color="green",
+        linewidth=2,
+        linestyle="dashed",
+        label="Pseudo-threshold (%s)" % pth,
+    )
     plt.legend(fontsize=16)
 
     fg.canvas.draw()

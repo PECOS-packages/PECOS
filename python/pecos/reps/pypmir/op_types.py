@@ -11,8 +11,10 @@
 
 from __future__ import annotations
 
+from pecos.reps.pypmir.instr_type import Instr
 
-class Op:
+
+class Op(Instr):
     """Parent class of operations."""
 
     def __init__(
@@ -22,10 +24,10 @@ class Op:
         returns: list | None = None,
         metadata: dict | None = None,
     ) -> None:
+        super().__init__(metadata=metadata)
         self.name = name
         self.args = args
         self.returns = returns
-        self.metadata = metadata
 
         if returns is not None:
             for r in returns:
@@ -76,7 +78,13 @@ class QOp(Op):
 class COp(Op):
     """Classical operation."""
 
-    def __init__(self, name: str, args: list, returns: list | None = None, metadata: dict | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        args: list,
+        returns: list | None = None,
+        metadata: dict | None = None,
+    ) -> None:
         super().__init__(
             name=name,
             args=args,
@@ -86,7 +94,7 @@ class COp(Op):
 
 
 class FFCall(COp):
-    pass
+    """Represents a call to a foreign function."""
 
 
 class MOp(Op):

@@ -12,7 +12,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 
 class SymbolLibrary:
@@ -46,7 +47,12 @@ class SymbolLibrary:
         """
         self.library[symbol].add((obj, params))
 
-    def get(self, symbol: str, params: dict[str, Any], default: Any | None = None) -> Any:
+    def get(
+        self,
+        symbol: str,
+        params: dict[str, Any],
+        default: Any | None = None,
+    ) -> Any:
         """Get an instance associated with `symbol` that has the parameters `params`.
 
         Args:

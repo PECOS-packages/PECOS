@@ -140,10 +140,16 @@ class Check2Circuits:
                 # Add ancilla init
                 # ----------------
                 if isinstance(ancilla_ticks, int):
-                    circuit.update({"init |0>": {mapping[ancillas]}}, tick=ancilla_ticks)
+                    circuit.update(
+                        {"init |0>": {mapping[ancillas]}},
+                        tick=ancilla_ticks,
+                    )
 
                     if gate_symbol == "X check":
-                        circuit.update({"H": {mapping[ancillas]}}, tick=ancilla_ticks + 1)
+                        circuit.update(
+                            {"H": {mapping[ancillas]}},
+                            tick=ancilla_ticks + 1,
+                        )
                         circuit.update({"H": {mapping[ancillas]}}, tick=meas_ticks - 1)
                 else:
                     msg = "Can not currently handle multiple ancilla checks!"
@@ -154,10 +160,16 @@ class Check2Circuits:
                 if hasattr(data_ticks, "__iter__"):
                     if gate_symbol == "X check":
                         for i, t in enumerate(data_ticks):
-                            circuit.update({"CNOT": {(mapping[ancillas], mapping[datas[i]])}}, tick=t)
+                            circuit.update(
+                                {"CNOT": {(mapping[ancillas], mapping[datas[i]])}},
+                                tick=t,
+                            )
                     elif gate_symbol == "Z check":
                         for i, t in enumerate(data_ticks):
-                            circuit.update({"CNOT": {(mapping[datas[i]], mapping[ancillas])}}, tick=t)
+                            circuit.update(
+                                {"CNOT": {(mapping[datas[i]], mapping[ancillas])}},
+                                tick=t,
+                            )
                 else:
                     msg = "Can not currently handle single data checks!"
                     raise Exception(msg)
@@ -166,16 +178,26 @@ class Check2Circuits:
                 # ------------------------
                 if isinstance(meas_ticks, int):
                     if forced_outcome:
-                        circuit.update({"measure Z": {mapping[ancillas]}}, tick=meas_ticks)
+                        circuit.update(
+                            {"measure Z": {mapping[ancillas]}},
+                            tick=meas_ticks,
+                        )
                     else:
-                        circuit.update({"measure Z": {mapping[ancillas]}}, tick=meas_ticks, forced_outcome=0)
+                        circuit.update(
+                            {"measure Z": {mapping[ancillas]}},
+                            tick=meas_ticks,
+                            forced_outcome=0,
+                        )
                 else:
                     msg = "Can not currently handle multiple ancilla checks!"
                     raise Exception(msg)
 
             else:
                 tick = params["tick"]
-                circuit.update({gate_symbol: self.mapset(mapping, set(locations))}, tick=tick)
+                circuit.update(
+                    {gate_symbol: self.mapset(mapping, set(locations))},
+                    tick=tick,
+                )
 
         return circuit  # Return QuantumCircuit and number of ancillas used in this circuit.
 

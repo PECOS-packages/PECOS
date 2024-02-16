@@ -13,7 +13,12 @@
 
 from projectq import ops
 
-from pecos.simulators.projectq import gates_init, gates_meas, gates_one_qubit, gates_two_qubit
+from pecos.simulators.projectq import (
+    gates_init,
+    gates_meas,
+    gates_one_qubit,
+    gates_two_qubit,
+)
 from pecos.simulators.projectq.helper import MakeFunc
 
 # Note: More ProjectQ gates can be added by updating the wrapper's `gate_dict` attribute.
@@ -26,12 +31,17 @@ gate_dict = {
     "T": MakeFunc(ops.T).func,  # fourth root of Z
     "Tdg": MakeFunc(ops.Tdag).func,  # fourth root of Z dagger
     "SSWAP": MakeFunc(ops.SqrtSwap).func,
-    "Entangle": MakeFunc(ops.Entangle).func,  # H on first qubit and CNOT to all others...
+    "Entangle": MakeFunc(
+        ops.Entangle,
+    ).func,  # H on first qubit and CNOT to all others...
     "RX": gates_one_qubit.RX,  # Rotation about X (takes angle arg)
     "RY": gates_one_qubit.RY,  # Rotation about Y (takes angle arg)
     "RZ": gates_one_qubit.RZ,  # Rotation about Z (takes angle arg)
     "R1XY": gates_one_qubit.R1XY,
-    "PhaseRot": MakeFunc(ops.R, angle=True).func,  # Phase-shift: Same as Rz but with a 1 in upper left of matrix.
+    "PhaseRot": MakeFunc(
+        ops.R,
+        angle=True,
+    ).func,  # Phase-shift: Same as Rz but with a 1 in upper left of matrix.
     "TOFFOLI": MakeFunc(ops.Toffoli).func,
     "CRZ": MakeFunc(ops.CRz, angle=True).func,  # Controlled-Rz gate
     "CRX": MakeFunc(ops.C(ops.Rx, 1), angle=True).func,  # Controlled-Rx

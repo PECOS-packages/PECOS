@@ -21,7 +21,12 @@ if TYPE_CHECKING:
     from pecos import QuantumCircuit
 
 
-def noise_init_bitflip(locations: Sequence[int], after: QuantumCircuit, flip: str, p: float) -> None:
+def noise_init_bitflip(
+    locations: Sequence[int],
+    after: QuantumCircuit,
+    flip: str,
+    p: float,
+) -> None:
     """The noise model for qubit (re)initialization.
 
     Args:
@@ -32,6 +37,6 @@ def noise_init_bitflip(locations: Sequence[int], after: QuantumCircuit, flip: st
     """
     rand_nums = np.random.random(len(locations)) <= p
 
-    for r, loc in zip(rand_nums, locations):
+    for r, loc in zip(rand_nums, locations, strict=False):
         if r:
             after.append(flip, {loc})

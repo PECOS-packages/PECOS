@@ -86,7 +86,11 @@ class LogicalInstruction:
         return hash(("instr", self.symbol, self.params_tuple))
 
     def __eq__(self, other):
-        return (self.symbol, self.params_tuple, True) == (other.symbol, other.params_tuple, hasattr(other, "circuit"))
+        return (self.symbol, self.params_tuple, True) == (
+            other.symbol,
+            other.params_tuple,
+            hasattr(other, "circuit"),
+        )
 
     def __ne__(self, other):
         return not (self == other)

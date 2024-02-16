@@ -42,7 +42,14 @@ class Standard:
             random.seed(self.seed)
 
     @staticmethod
-    def run(state, circuit, error_gen=None, error_params=None, error_circuits=None, output=None):
+    def run(
+        state,
+        circuit,
+        error_gen=None,
+        error_params=None,
+        error_circuits=None,
+        output=None,
+    ):
         """Args:
         ----
             state:
@@ -85,7 +92,11 @@ class Standard:
                 errors = {}
             else:
                 if generate_errors:
-                    error_circuits = error_gen.generate_tick_errors(tick_circuit, time, **params)
+                    error_circuits = error_gen.generate_tick_errors(
+                        tick_circuit,
+                        time,
+                        **params,
+                    )
                 errors = error_circuits.get(time, {})
 
             before_errors = errors.get("before")

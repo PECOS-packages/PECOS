@@ -18,8 +18,16 @@ Generates circuits for the repetition code in the Z-Basis.
 """
 from pecos.circuit_converters.checks2circuit import Check2Circuits
 from pecos.qeccs.qecc_parent_class import QECC
-from pecos.qeccs.surface_medial_4444.gates import GateIdentity, GateInitPlus, GateInitZero
-from pecos.qeccs.surface_medial_4444.instructions import InstrInitPlus, InstrInitZero, InstrSynExtraction
+from pecos.qeccs.surface_medial_4444.gates import (
+    GateIdentity,
+    GateInitPlus,
+    GateInitZero,
+)
+from pecos.qeccs.surface_medial_4444.instructions import (
+    InstrInitPlus,
+    InstrInitZero,
+    InstrSynExtraction,
+)
 
 
 class SurfaceMedial4444(QECC):
@@ -71,7 +79,9 @@ class SurfaceMedial4444(QECC):
         # gate circuits implemented by this class.
         # --------------------------------------------------------------------------------------------------------------
         self.circuit_compiler = qecc_params.get("circuit_compiler", Check2Circuits())
-        self.num_ancilla_qudits = self.circuit_compiler.get_num_ancillas(self.num_syndromes)
+        self.num_ancilla_qudits = self.circuit_compiler.get_num_ancillas(
+            self.num_syndromes,
+        )
 
         # Total number of qudits.
         # self.qudit_set, self.data_qudit_set, self.ancilla_qudit_set will be determined when creating the layout.

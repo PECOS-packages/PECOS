@@ -15,4 +15,22 @@ from pecos.circuits.qasm.expr import Assign
 from pecos.circuits.qasm.gates import ArgGate, Gate, MeasGate, ResetGate
 from pecos.circuits.qasm.misc import Comment, br
 from pecos.circuits.qasm.qasm import QASM
-from pecos.circuits.qasm.std_gates import CNOT, CX, CY, CZ, RX, RY, RZ, H, Measure, Reset, S, Sdg, T, Tdg, X, Y, Z
+from pecos.circuits.qasm.std_gates import (
+    CNOT,
+    CX,
+    CY,
+    CZ,
+    RX,
+    RY,
+    RZ,
+    H,
+    Measure,
+    Reset,
+    S,
+    Sdg,
+    T,
+    Tdg,
+    X,
+    Y,
+    Z,
+)

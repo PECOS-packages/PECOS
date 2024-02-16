@@ -19,7 +19,9 @@ from pecos.error_models.noise_impl_old.init_noise import noise_init_bitflip
 from pecos.error_models.noise_impl_old.meas_noise import noise_meas_bitflip
 from pecos.error_models.noise_impl_old.memory_noise import noise_tq_mem
 from pecos.error_models.noise_impl_old.sq_noise import noise_depolarizing_sq_gate
-from pecos.error_models.noise_impl_old.tq_noise import noise_two_qubit_gates_depolarizing_with_noiseless
+from pecos.error_models.noise_impl_old.tq_noise import (
+    noise_two_qubit_gates_depolarizing_with_noiseless,
+)
 from pecos.error_models.parent_class_error_gen import ParentErrorModel
 
 
@@ -69,11 +71,20 @@ class DepolarizingErrorModel(ParentErrorModel):
 
         if not self.error_params.get("noiseless_qubits"):
             self.error_params["noiseless_qubits"] = set()
-        self.error_params["noiseless_qubits"] = set(self.error_params["noiseless_qubits"])
+        self.error_params["noiseless_qubits"] = set(
+            self.error_params["noiseless_qubits"],
+        )
 
         return self.error_circuits
 
-    def generate_tick_errors(self, tick_circuit, time, output=None, reset_leakage=False, **params):
+    def generate_tick_errors(
+        self,
+        tick_circuit,
+        time,
+        output=None,
+        reset_leakage=False,
+        **params,
+    ):
         """The method that gets called each circuit tick to generate circuit noise for that tick."""
         # Get the tick
         tick_index = time[-1] if isinstance(time, tuple) else time
@@ -122,7 +133,12 @@ class DepolarizingErrorModel(ParentErrorModel):
             elif symbol == "measure Z":
                 if eval_condition(cond, output):
                     noisy = set(locations) - self.error_params["noiseless_qubits"]
-                    noise_meas_bitflip(noisy, metadata, after, p=self.error_params["p_meas"])
+                    noise_meas_bitflip(
+                        noisy,
+                        metadata,
+                        after,
+                        p=self.error_params["p_meas"],
+                    )
 
             elif symbol in {"repump", "leak", "unleak"}:
                 pass

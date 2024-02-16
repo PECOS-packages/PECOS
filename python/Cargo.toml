@@ -1,0 +1,12 @@
+[package]
+name = "pyo3pecos"
+version = "0.5.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+pecos-sim = { workspace=true }
+
+pyo3 = { workspace=true, features = ["extension-module"] }

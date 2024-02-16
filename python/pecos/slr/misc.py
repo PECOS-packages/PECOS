@@ -8,15 +8,10 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
-from __future__ import annotations
 
-from typing import TYPE_CHECKING
 
 from pecos.slr.util import rm_white_space
-from pecos.slr.vars import Reg
-
-if TYPE_CHECKING:
-    from pecos.slr.vars import Elem, QReg
+from pecos.slr.vars import Elem, QReg, Reg
 
 
 class Barrier:
@@ -62,7 +57,13 @@ class QASM:
 class Permute:
     """Permutes the indices that the elements of the register so that Reg[i] now refers to Reg[j]."""
 
-    def __init__(self, elems_i: list[Elem] | Reg, elems_f: list[Elem] | Reg, *, comment: bool = True):
+    def __init__(
+        self,
+        elems_i: list[Elem] | Reg,
+        elems_f: list[Elem] | Reg,
+        *,
+        comment: bool = True,
+    ):
         self.elems_i = elems_i
         self.elems_f = elems_f
         self.comment = comment

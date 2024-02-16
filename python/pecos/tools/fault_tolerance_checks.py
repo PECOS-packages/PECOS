@@ -135,7 +135,7 @@ def t_errors_check(
 
             errors.simple_add(0, 0, 0, before_errors=error_circ)
 
-            for e, q in zip(error_comb, qubit_comb):
+            for e, q in zip(error_comb, qubit_comb, strict=False):
                 error_circ.update(e, {q})
 
             state_zero = pySparseSim(qecc.num_qudits)
@@ -275,7 +275,7 @@ def fault_check(
 
             errors.simple_add(0, 0, 0, before_errors=error_circ)
 
-            for e, q in zip(error_comb, qubit_comb):
+            for e, q in zip(error_comb, qubit_comb, strict=False):
                 error_circ.update(e, {q})
 
             state_zero = pySparseSim(qecc.num_qudits)
@@ -364,7 +364,11 @@ def dist_mode_powerset(state, qudit_set):
     """
     for x_errors in powerset(qudit_set):
         for z_errors in powerset(qudit_set):
-            if op_commutes(x_errors, z_errors, state.stabs) and not find_stab(state, x_errors, z_errors):
+            if op_commutes(x_errors, z_errors, state.stabs) and not find_stab(
+                state,
+                x_errors,
+                z_errors,
+            ):
                 return f"Logical error found: Xs - {x_errors} Zs - {z_errors}"
 
     return False
@@ -407,7 +411,11 @@ def dist_mode_x(state, qudit_set):
     """
     z_errors = ()
     for x_errors in powerset(qudit_set):
-        if op_commutes(x_errors, z_errors, state.stabs) and not find_stab(state, x_errors, z_errors):
+        if op_commutes(x_errors, z_errors, state.stabs) and not find_stab(
+            state,
+            x_errors,
+            z_errors,
+        ):
             return f"Logical error found: Xs - {x_errors} Zs - {z_errors}"
 
     return False
@@ -425,7 +433,11 @@ def dist_mode_z(state, qudit_set):
     """
     x_errors = ()
     for z_errors in powerset(qudit_set):
-        if op_commutes(x_errors, z_errors, state.stabs) and not find_stab(state, x_errors, z_errors):
+        if op_commutes(x_errors, z_errors, state.stabs) and not find_stab(
+            state,
+            x_errors,
+            z_errors,
+        ):
             return f"Logical error found: Xs - {x_errors} Zs - {z_errors}"
 
     return False

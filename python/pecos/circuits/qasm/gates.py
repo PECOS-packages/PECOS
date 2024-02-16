@@ -18,7 +18,7 @@ class Gate:
         self.results = []
 
     def __call__(self, *qargs):
-        if len(qargs) == 1 and isinstance(qargs[0], (list, set)):
+        if len(qargs) == 1 and isinstance(qargs[0], list | set):
             self.results = self._multi_call(*qargs)
 
         else:
@@ -70,7 +70,7 @@ class GateOld:
         self.locs = []
 
     def __call__(self, *qargs):
-        if len(qargs) == 1 and isinstance(qargs[0], (list, set)):
+        if len(qargs) == 1 and isinstance(qargs[0], list | set):
             return self._multi_call(*qargs)
 
         if self.size is not None and len(qargs) != self.size:
@@ -110,10 +110,10 @@ class ArgGate(Gate):
         self.num_args = num_args
 
     def __call__(self, params, *qargs):
-        if isinstance(params, (str, float, int)):
+        if isinstance(params, str | float | int):
             params = (params,)
 
-        if len(qargs) == 1 and isinstance(qargs[0], (list, set)):
+        if len(qargs) == 1 and isinstance(qargs[0], list | set):
             return self._multi_call(params, *qargs)
 
         if self.size is not None and len(qargs) != self.size:
@@ -180,7 +180,7 @@ class MeasGate(Gate):
                 msg = "The number of quantum and classical arguments must be the same."
                 raise Exception(msg)
 
-            for qloc, cloc in zip(qargs, cargs):
+            for qloc, cloc in zip(qargs, cargs, strict=False):
                 results.append(f"measure {qloc} -> {cloc}")
         else:
             for i, qloc in enumerate(qargs):
@@ -194,7 +194,7 @@ class ResetGate(Gate):
         super().__init__(sym="reset", size=1)
 
     def __call__(self, *qargs):
-        if len(qargs) == 1 and isinstance(qargs[0], (list, set)):
+        if len(qargs) == 1 and isinstance(qargs[0], list | set):
             return self._multi_call(*qargs)
 
         return "\n".join([f"reset {a};" for a in qargs])

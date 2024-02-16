@@ -22,7 +22,11 @@ if TYPE_CHECKING:
 
 
 class GenericOpProc(OpProcessor):
-    def __init__(self, machine: Machine | None = None, error_model: ErrorModel | None = None) -> None:
+    def __init__(
+        self,
+        machine: Machine | None = None,
+        error_model: ErrorModel | None = None,
+    ) -> None:
         self.machine = machine
         self.error_model = error_model
 

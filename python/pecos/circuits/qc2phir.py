@@ -79,8 +79,16 @@ def to_phir_dict(qc: "pecos.QuantumCircuit") -> dict:
     """Creates a json str representation of the QuantumCircuit listing all the gates. It does not preserve ticks or
     parallel gating of different gate types.
     """
-    prog = {"format": "PHIR/JSON", "version": "0.1.0", "metadata": deepcopy(qc.metadata), "ops": []}
-    prog["metadata"]["source_program_type"] = ["PECOS.QuantumCircuit", ["PECOS", str(pecos.__version__)]]
+    prog = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "metadata": deepcopy(qc.metadata),
+        "ops": [],
+    }
+    prog["metadata"]["source_program_type"] = [
+        "PECOS.QuantumCircuit",
+        ["PECOS", str(pecos.__version__)],
+    ]
 
     data = {"max_qid": 0}
     if "qvars" in qc.metadata:
@@ -106,7 +114,7 @@ def to_phir_dict(qc: "pecos.QuantumCircuit") -> dict:
     def find_qid2qsym(qubits):
         qs = []
         for loc in qubits:
-            if isinstance(loc, (tuple, list)):
+            if isinstance(loc, tuple | list):
                 qtup = []
                 for q in loc:
                     qsym = get_qsym(q)
@@ -129,7 +137,14 @@ def to_phir_dict(qc: "pecos.QuantumCircuit") -> dict:
             }
             ops.append(block)
 
-    def handle_ops_buffer(current_op, ops, ops_buffer, cond, current_cond, force_flush=False):
+    def handle_ops_buffer(
+        current_op,
+        ops,
+        ops_buffer,
+        cond,
+        current_cond,
+        force_flush=False,
+    ):
         if (cond != current_cond or force_flush) and ops_buffer:
             flush_ops_buffer(ops, ops_buffer, current_cond)
             ops_buffer = []
@@ -284,11 +299,24 @@ def to_phir_dict(qc: "pecos.QuantumCircuit") -> dict:
         if metadata:
             op["metadata"] = metadata
 
-        ops, ops_buffer, current_cond = handle_ops_buffer(op, ops, ops_buffer, cond, current_cond)
+        ops, ops_buffer, current_cond = handle_ops_buffer(
+            op,
+            ops,
+            ops_buffer,
+            cond,
+            current_cond,
+        )
 
     # Flush the buffer of any remaining operations
     if ops_buffer:
-        ops, ops_buffer, current_cond = handle_ops_buffer(None, ops, ops_buffer, None, current_cond, force_flush=True)
+        ops, ops_buffer, current_cond = handle_ops_buffer(
+            None,
+            ops,
+            ops_buffer,
+            None,
+            current_cond,
+            force_flush=True,
+        )
 
     num_qubits = len(qid2qsym)
     prog["metadata"]["num_qubits"] = num_qubits

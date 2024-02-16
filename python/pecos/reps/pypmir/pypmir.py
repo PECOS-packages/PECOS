@@ -112,17 +112,19 @@ class PyPMIR:
 
             if o.get("angles"):
                 if not (o["qop"] == "RZZ" and o["angles"][0][0] == 0.0):
-                    metadata = {"angles": [angle * (pi if o["angles"][1] == "pi" else 1) for angle in o["angles"][0]]}
+                    metadata = {
+                        "angles": [angle * (pi if o["angles"][1] == "pi" else 1) for angle in o["angles"][0]],
+                    }
 
             # TODO: Added to satisfy old-style error models. Remove when they not longer need this...
             if o.get("returns"):
                 var_output = {}
-                for q, cvar in zip(args, o["returns"]):
+                for q, cvar in zip(args, o["returns"], strict=False):
                     var_output[q] = cvar
                 metadata["var_output"] = var_output
 
             instr = op.QOp(
-                name="I" if o["qop"] == "RZZ" and o["angles"][0][0] == 0.0 else o["qop"],
+                name=("I" if o["qop"] == "RZZ" and o["angles"][0][0] == 0.0 else o["qop"]),
                 args=args,
                 returns=o.get("returns"),
                 metadata=metadata,
@@ -138,10 +140,20 @@ class PyPMIR:
                 )
                 p.foreign_func_calls.add(o["function"])
             else:
-                instr = op.COp(name=o["cop"], args=o["args"], returns=o.get("returns"), metadata=o.get("metadata"))
+                instr = op.COp(
+                    name=o["cop"],
+                    args=o["args"],
+                    returns=o.get("returns"),
+                    metadata=o.get("metadata"),
+                )
 
         elif "mop" in o:
-            instr = op.MOp(name=o["mop"], args=o.get("args"), returns=o.get("returns"), metadata=o.get("metadata"))
+            instr = op.MOp(
+                name=o["mop"],
+                args=o.get("args"),
+                returns=o.get("returns"),
+                metadata=o.get("metadata"),
+            )
 
         elif "meta" in o:
             # TODO: Handle meta instructions

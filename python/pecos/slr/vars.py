@@ -49,7 +49,13 @@ class Var: ...
 
 
 class Reg(Var):
-    def __init__(self, type_ste: str, sym: str, size: int, elem_type: type["Elem"]) -> None:
+    def __init__(
+        self,
+        type_ste: str,
+        sym: str,
+        size: int,
+        elem_type: type["Elem"],
+    ) -> None:
         self.type_str = type_ste
         self.sym = sym
         self.size = size

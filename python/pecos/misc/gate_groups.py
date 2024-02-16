@@ -11,7 +11,20 @@
 
 import numpy as np
 
-two_qubits = {"CNOT", "CX", "CZ", "SWAP", "G", "MS", "SqrtXX", "SqrtZZ", "RXX", "RYY", "RZZ", "RXXYYZZ"}
+two_qubits = {
+    "CNOT",
+    "CX",
+    "CZ",
+    "SWAP",
+    "G",
+    "MS",
+    "SqrtXX",
+    "SqrtZZ",
+    "RXX",
+    "RYY",
+    "RZZ",
+    "RXXYYZZ",
+}
 
 one_qubits = {
     "I",

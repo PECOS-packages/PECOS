@@ -1,102 +1,84 @@
-# A set of commands for development utilizing venv to develop, lint, test, document, and build the project.
-# The goal is to concretely capture the development/build process for reproducibility of the development workflow.
-
 .DEFAULT_GOAL := help
 
-.PHONY: requirements updatereqs metadeps install install-all docs lint tests tests-dep doctests tests-all clean venv dev-all build build-full help upgrade-pip dev-setup
-
-# Try to autodetect if python3 or python is the python executable used.
+# Minimum Python version required for the project
+MIN_PYTHON_VERSION := 3.10
+# Automatically select the appropriate Python interpreter.
 BASEPYTHON := $(shell which python3 2>/dev/null || which python 2>/dev/null)
+# Specifies the shell to use for executing commands.
+SHELL=/bin/bash
+# Directory for the Python virtual environment.
 VENV=.venv
 
+# Adjust the virtual environment binaries path based on the operating system.
 ifeq ($(OS),Windows_NT)
 	VENV_BIN=$(VENV)/Scripts
 else
 	VENV_BIN=$(VENV)/bin
 endif
 
-# Requirements
-# ------------
+.PHONY: venv
+venv: ## Create a Python virtual environment in the .venv directory
+	# Verifies that the current Python version meets the project's minimum requirement.
+	# Creates the virtual environment if the version requirement is satisfied.
+	@echo "Checking Python version..."; \
+	VERSION=$$($(BASEPYTHON) -c 'import platform; print(platform.python_version())'); \
+	echo "Found Python version $$VERSION"; \
+	MIN_VERSION=$(MIN_PYTHON_VERSION); \
+	if [ "$$(printf '%s\n' "$$VERSION" "$$MIN_VERSION" | sort -V | head -n1)" != "$$MIN_VERSION" ]; then \
+		echo "ERROR: Python version $$VERSION is less than the minimum required $$MIN_VERSION. Please upgrade Python."; \
+		exit 1; \
+	else \
+		echo "Python version $$VERSION meets the minimum requirement of $$MIN_VERSION. Proceeding..."; \
+		$(BASEPYTHON) -m venv $(VENV); \
+	fi
 
-requirements: upgrade-pip  ## Install/refresh Python project requirements
-	$(VENV_BIN)/pip install --upgrade -r requirements.txt
-	$(VENV_BIN)/pip install --upgrade -r docs/requirements.txt
-
-updatereqs: upgrade-pip  ## Autogenerate requirements.txt
-	$(VENV_BIN)/pip install -U pip-tools
-	-@rm requirements.txt
-	$(VENV_BIN)/pip-compile --extra=tests --no-annotate --no-emit-index-url --output-file=requirements.txt --strip-extras pyproject.toml
-
-metadeps: upgrade-pip  ## Install extra dependencies used to develop/build this package
-	$(VENV_BIN)/pip install -U build pip-tools pre-commit wheel pytest
-
-# Installation
-# ------------
-
-install: upgrade-pip  ## Install PECOS
-	$(VENV_BIN)/pip install .
-
-install-all: upgrade-pip  ## Install PECOS with all optional dependencies
-	$(VENV_BIN)/pip install .[all]
-
-# Documentation
-# -------------
-
-docs: install-all  ## Generate documentation
-	$(VENV_BIN)/pip install -r ./docs/requirements.txt
-	$(MAKE) -C docs SPHINXBUILD=../$(VENV_BIN)/sphinx-build clean html
-
-# Linting / formatting
-# --------------------
-
-lint: metadeps  ## Run all quality checks / linting / reformatting
-	$(VENV_BIN)/pre-commit run --all-files
-
-# Testing
-# -------
-
-tests: install metadeps  ## Run tests on the Python package (not including optional dependencies)
-	$(VENV_BIN)/pytest tests -m "not optional_dependency"
-
-tests-dep: install-all metadeps ## Run tests on the Python package only for optional dependencies
-	$(VENV_BIN)/pytest tests -m optional_dependency
-
-doctests:  ## Run doctests with pytest
-	$(VENV_BIN)/pytest ./docs --doctest-glob=*.rst --doctest-continue-on-failure
-
-tests-all: tests tests-dep doctests ## Run all tests
-
-# Building / Developing
-# ---------------------
-
-clean:  ## Clean up caches and build artifacts
-	-rm -rf *.egg-info dist build docs/_build .pytest_cache/ .ruff_cache/
-
-venv:  ## Build a new Python virtual environment from scratch
-	-rm -rf .venv/
-	$(BASEPYTHON) -m venv $(VENV)
-
-dev-all: dev-setup  ## Create a development environment from scratch with all optional dependencies and PECOS installed in editable mode
-	$(VENV_BIN)/pip install -e .[all]
-
-build: dev-setup  ## Clean, create new environment, and build PECOS for pypi
-	$(VENV_BIN)/python -m build --sdist --wheel -n
-
-build-full: dev-setup updatereqs install-all docs lint tests-all  ## Go through the full linting, testing, and building process
-	$(VENV_BIN)/python -m build --sdist --wheel -n
-
-# Help
-# ----
-
-help:  ## Show the help menu
-	@echo "Available make commands:"
-	@echo ""
-	@grep -E '^[a-z.A-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
-
-# Utility targets
-# ---------------
-
-upgrade-pip:
+.PHONY: upgrade-pip
+upgrade-pip: ## Update the pip version in the virtual environment.
 	$(VENV_BIN)/python -m pip install --upgrade pip
 
-dev-setup: clean venv requirements metadeps
+.PHONY: requirements
+requirements: venv upgrade-pip  ## Install main, documentation, and linting Python project requirements.
+	$(VENV_BIN)/pip install --upgrade -r python/requirements.txt
+	$(VENV_BIN)/pip install --upgrade -r python/docs/requirements.txt
+	$(VENV_BIN)/pip install --upgrade -r python/requirements-lint.txt
+
+.PHONY: buildpy
+buildpy: venv requirements  ## Activates the virtual environment and compiles the Python package for development.
+	@unset CONDA_PREFIX && source $(VENV_BIN)/activate \
+	&& maturin develop -m python/Cargo.toml
+
+.PHONY: clippy
+clippy:  ## Execute the Rust linter, clippy, across all project targets with all features enabled.
+	cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::dbg_macro
+
+.PHONY: clippy-default
+clippy-default: ## Run clippy with default features for a quicker analysis.
+	cargo clippy --all-targets --locked -- -D warnings -D clippy::dbg_macro
+
+.PHONY: lint
+fmt:  ## Run formatting and linting tools on the Python and Rust codebase.
+	$(VENV_BIN)/ruff check
+	$(VENV_BIN)/ruff format
+	$(VENV_BIN)/black ./cython
+	$(VENV_BIN)/black ./python
+	cargo fmt --all
+	$(VENV_BIN)/typos
+
+.PHONY: pre-commit
+pre-commit: fmt clippy clippy-default  ## Run all code quality checks before committing.
+
+.PHONY: clean
+clean: ## Removes directories and files related to the build process, ensuring a clean state.
+	# Remove the Python virtual environment and Rust target directory to clean the project workspace.
+	@rm -rf .venv/
+	@rm -rf target/
+    # Remove the Cargo lock file and clean the Rust project to ensure a fresh start on the next build.
+	@rm -f Cargo.lock
+	@cargo clean
+    # Call the clean target of the Makefile in the python directory, if necessary.
+	@$(MAKE) -s -C python/ $@
+
+help:  ## Show this help menu
+	@echo "Usage: make [TARGET]..."
+	@echo "Targets:"
+	@grep -E '^[a-z.A-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'

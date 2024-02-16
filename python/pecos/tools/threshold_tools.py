@@ -237,7 +237,13 @@ def threshold_code_capacity_calc(
 
     results = threshold_fit(plist, dlist, plog, func, p0)
 
-    return {"plist": plist, "dlist": dlist, "plog": plog, "opt": results[0], "std": results[1]}
+    return {
+        "plist": plist,
+        "dlist": dlist,
+        "plog": plog,
+        "opt": results[0],
+        "std": results[1],
+    }
 
 
 def codecapacity_logical_rate(
@@ -322,7 +328,12 @@ def codecapacity_logical_rate(
         with contextlib.suppress(AttributeError):
             total_time += circuit_runner.total_time
 
-        output, _ = circuit_runner.run(state, syn_extract, error_gen=error_gen, error_params=error_params)
+        output, _ = circuit_runner.run(
+            state,
+            syn_extract,
+            error_gen=error_gen,
+            error_params=error_params,
+        )
         with contextlib.suppress(AttributeError):
             total_time += circuit_runner.total_time
 
@@ -426,7 +437,12 @@ def codecapacity_logical_rate2(
         with contextlib.suppress(AttributeError):
             total_time += circuit_runner.total_time
 
-        output, error_circuits = circuit_runner.run(state0, syn_extract, error_gen=error_gen, error_params=error_params)
+        output, error_circuits = circuit_runner.run(
+            state0,
+            syn_extract,
+            error_gen=error_gen,
+            error_params=error_params,
+        )
         with contextlib.suppress(AttributeError):
             total_time += circuit_runner.total_time
 
@@ -571,7 +587,12 @@ def codecapacity_logical_rate3(
 
         for _duration in range(max_syn_extract):
             # Run syndrome extraction
-            output, _ = circuit_runner.run(state, syn_extract, error_gen=error_gen, error_params=error_params)
+            output, _ = circuit_runner.run(
+                state,
+                syn_extract,
+                error_gen=error_gen,
+                error_params=error_params,
+            )
             with contextlib.suppress(AttributeError):
                 total_time += circuit_runner.total_time
 
@@ -592,7 +613,9 @@ def codecapacity_logical_rate3(
         else:
             raise Exception("Max syndrome extraction (%s) met." % max_syn_extract)
 
-        run_durations.append(max_syn_extract)  # duration + 1 == number of syndrome extractions.
+        run_durations.append(
+            max_syn_extract,
+        )  # duration + 1 == number of syndrome extractions.
 
     if verbose:
         print("\nTotal number of runs: %s" % sum(run_durations))

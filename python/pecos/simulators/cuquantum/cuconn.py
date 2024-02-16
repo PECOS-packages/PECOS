@@ -12,6 +12,7 @@
 import os
 import sys
 
-cupath = os.path.abspath(os.path.join(os.path.dirname(__file__), "cuquantum_wrapper", "build", "bin"))
+cupath = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "cuquantum_wrapper", "build", "bin")
+)
 sys.path.append(cupath)
-import cuquantum_wrapper as cq

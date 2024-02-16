@@ -33,7 +33,9 @@ def qubit_pauli(first_circuit, second_circuit):
             first_xs.update(gate_locations)
             first_zs.update(gate_locations)
         else:
-            raise Exception('Can not currently handle logical operator with operator "%s"!' % symbol)
+            raise Exception(
+                'Can not currently handle logical operator with operator "%s"!' % symbol,
+            )
 
     second_xs = set()
     second_zs = set()
@@ -46,6 +48,8 @@ def qubit_pauli(first_circuit, second_circuit):
             second_xs.update(gate_locations)
             second_zs.update(gate_locations)
         else:
-            raise Exception('Can not currently handle logical operator with operator "%s"!' % symbol)
+            raise Exception(
+                'Can not currently handle logical operator with operator "%s"!' % symbol,
+            )
 
     return not (len(first_xs & second_zs) + len(first_zs & second_xs)) % 2

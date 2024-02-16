@@ -130,7 +130,10 @@ class Generator:
             ):
                 error_func = self.ErrorSet(error_func, after=after).error_func
             else:
-                error_func = self.ErrorSetMultiQuditGate(error_func, after=after).error_func
+                error_func = self.ErrorSetMultiQuditGate(
+                    error_func,
+                    after=after,
+                ).error_func
 
             self.error_func_dict[gate_symbol] = (error_func, error_param)
 
@@ -169,7 +172,16 @@ class Generator:
         """
         self.default_error_tuple = (error_func, error_param)
 
-    def create_errors(self, err_gen, gate_symbol, locations, after, before, replace, **kwargs):
+    def create_errors(
+        self,
+        err_gen,
+        gate_symbol,
+        locations,
+        after,
+        before,
+        replace,
+        **kwargs,
+    ):
         """Used to determine if an error occurs and if so, calls the error function to determine errors.
 
         It also updates the `error_circuit` with the errors.
@@ -186,7 +198,10 @@ class Generator:
         Returns: None
 
         """
-        error_func, error_param = self.error_func_dict.get(gate_symbol, self.default_error_tuple)
+        error_func, error_param = self.error_func_dict.get(
+            gate_symbol,
+            self.default_error_tuple,
+        )
 
         if error_func is True:  # Default error
             # Use the default error function.
@@ -215,7 +230,14 @@ class Generator:
             for i, loc in enumerate(locations):
                 if rand_nums[i]:
                     error_locations.add(loc)
-                    error_func(after, before, replace, loc, err_gen.error_params, **kwargs)
+                    error_func(
+                        after,
+                        before,
+                        replace,
+                        loc,
+                        err_gen.error_params,
+                        **kwargs,
+                    )
 
             return error_locations
 
@@ -273,8 +295,8 @@ class Generator:
             indx = np.random.choice(len(self.data))
             error_symbols = self.data[indx]
 
-            if isinstance(error_symbols, (tuple, np.ndarray)) and len(error_symbols) > 1:
-                for sym, loc in zip(error_symbols, location):
+            if isinstance(error_symbols, tuple | np.ndarray) and len(error_symbols) > 1:
+                for sym, loc in zip(error_symbols, location, strict=False):
                     if sym != "I":
                         after.update(sym, {loc}, emptyappend=True)
 
@@ -295,7 +317,7 @@ class Generator:
             error_symbols = self.data[indx]
 
             if isinstance(error_symbols, np.ndarray) and len(error_symbols) > 1:
-                for sym, loc in zip(error_symbols, location):
+                for sym, loc in zip(error_symbols, location, strict=False):
                     if sym != "I":
                         before.update(sym, {loc}, emptyappend=True)
             elif isinstance(error_symbols, str):

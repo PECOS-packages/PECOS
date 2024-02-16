@@ -111,7 +111,7 @@ def eval_cfunc(runner, params, output):
                 a_obj.set(b)
 
         else:
-            for asym, b in zip(assign_vars, vals):
+            for asym, b in zip(assign_vars, vals, strict=False):
                 a_obj = output[asym]
 
                 if runner.debug and func.startswith("sim_"):

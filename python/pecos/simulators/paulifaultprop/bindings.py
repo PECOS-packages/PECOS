@@ -10,7 +10,12 @@
 # specific language governing permissions and limitations under the License.
 
 """Specifies the symbol and function for each gate."""
-from pecos.simulators.paulifaultprop import gates_init, gates_meas, gates_one_qubit, gates_two_qubit
+from pecos.simulators.paulifaultprop import (
+    gates_init,
+    gates_meas,
+    gates_one_qubit,
+    gates_two_qubit,
+)
 
 gate_dict = {
     # Initialization

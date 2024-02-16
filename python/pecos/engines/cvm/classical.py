@@ -100,7 +100,7 @@ def get_val(a, output, width):
     if isinstance(a, BinArray):
         return a
 
-    if isinstance(a, (tuple, list)):
+    if isinstance(a, tuple | list):
         sym, idx = a
         val = output[sym][idx]
 
@@ -160,7 +160,7 @@ def eval_cop(cop_expr, output, width):
     if isinstance(t, str):
         t_sym = t
         t_index = None
-    elif isinstance(t, (tuple, list)) and len(t) == 2:
+    elif isinstance(t, tuple | list) and len(t) == 2:
         t_sym = t[0]
         t_index = t[1]
     else:
@@ -194,7 +194,7 @@ def eval_tick_conds(tick_circuit, output):
 
 def eval_condition(conditional_expr, output) -> bool:
     # Handle if a condition might eval to something else (eval_to)
-    if isinstance(conditional_expr, (tuple, list)):
+    if isinstance(conditional_expr, tuple | list):
         if len(conditional_expr) != 2:
             msg = "Not expected conditional to have more than 2 elements."
             raise Exception(msg)
@@ -203,7 +203,10 @@ def eval_condition(conditional_expr, output) -> bool:
             msg = "Expecting the second conditional element to be bool."
             raise TypeError(msg)
 
-        return eval_condition(conditional_expr[0], output) == eval_condition(conditional_expr[1], output)
+        return eval_condition(conditional_expr[0], output) == eval_condition(
+            conditional_expr[1],
+            output,
+        )
 
     if conditional_expr:
         a = conditional_expr["a"]
@@ -212,7 +215,7 @@ def eval_condition(conditional_expr, output) -> bool:
 
         if isinstance(a, str):
             a = output[a]  # str -> BinArray
-        elif isinstance(a, (tuple, list)) and len(a) == 2:
+        elif isinstance(a, tuple | list) and len(a) == 2:
             a = output[a[0]][a[1]]  # (str, int) -> int (1 or 0)
         else:
             msg = "`a` should be `str` or `Tuple[str, int]`!"
@@ -220,7 +223,7 @@ def eval_condition(conditional_expr, output) -> bool:
 
         if isinstance(b, str):
             b = output[b]  # str -> BinArray
-        elif isinstance(b, (tuple, list)) and len(b) == 2:
+        elif isinstance(b, tuple | list) and len(b) == 2:
             b = output[b[0]][b[1]]  # (str, int) -> int (1 or 0)
         elif isinstance(b, int):
             pass

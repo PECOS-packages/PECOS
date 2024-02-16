@@ -90,7 +90,12 @@ class HybridEngine:
             if params.get("error_free", False):
                 errors = {}
             else:
-                error_circuits = error_gen.generate_tick_errors(tick_circuit, time, output, **params)
+                error_circuits = error_gen.generate_tick_errors(
+                    tick_circuit,
+                    time,
+                    output,
+                    **params,
+                )
                 errors = error_circuits.get(time, {})
 
             # TODO: Need run the error generator whether we want errors or not because of leakage
@@ -113,7 +118,14 @@ class HybridEngine:
 
             # ideal tick circuit
             # ------------------
-            self.run_circuit(state, output, output_export, tick_circuit, error_gen, removed_locations=removed)
+            self.run_circuit(
+                state,
+                output,
+                output_export,
+                tick_circuit,
+                error_gen,
+                removed_locations=removed,
+            )
 
             if circ_inspector:
                 circ_inspector.analyze(tick_circuit, time, output)
@@ -126,7 +138,15 @@ class HybridEngine:
 
         return output, error_circuits
 
-    def run_circuit(self, state, output, output_export, circuit, error_gen, removed_locations=None):
+    def run_circuit(
+        self,
+        state,
+        output,
+        output_export,
+        circuit,
+        error_gen,
+        removed_locations=None,
+    ):
         """Args:
 
             circuit (QuantumCircuit): A circuit instance or object with an appropriate items() generator.
@@ -185,7 +205,13 @@ class HybridEngine:
                     pass
 
                 else:  # quantum operation
-                    self.run_gate(state, output, symbol, locations - removed_locations, **params)
+                    self.run_gate(
+                        state,
+                        output,
+                        symbol,
+                        locations - removed_locations,
+                        **params,
+                    )
 
                     if symbol == "leak":
                         error_gen.leaked_qubits |= locations

@@ -31,7 +31,7 @@ def make_hashable_params(params):
             dict_tuple = tuple(value.items())
             tuple_params.append(dict_tuple)
         else:
-            if isinstance(value, (list, set)):
+            if isinstance(value, list | set):
                 tuple_params.append((key, tuple(value)))
             else:
                 tuple_params.append((key, value))

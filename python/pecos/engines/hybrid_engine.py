@@ -16,7 +16,9 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from pecos.classical_interpreters.phir_classical_interpreter import PHIRClassicalInterpreter
+from pecos.classical_interpreters.phir_classical_interpreter import (
+    PHIRClassicalInterpreter,
+)
 from pecos.engines import hybrid_engine_multiprocessing
 from pecos.error_models.error_model import NoErrorModel
 from pecos.machines.generic_machine import GenericMachine
@@ -24,7 +26,9 @@ from pecos.op_processors.generic_op_processor import GenericOpProc
 from pecos.simulators.quantum_simulator import QuantumSimulator
 
 if TYPE_CHECKING:
-    from pecos.classical_interpreters.phir_classical_interpreter import ClassicalInterpreter
+    from pecos.classical_interpreters.phir_classical_interpreter import (
+        ClassicalInterpreter,
+    )
     from pecos.error_models.error_model import ErrorModel
     from pecos.foreign_objects.foreign_object_abc import ForeignObject
     from pecos.machines.generic_machine import Machine

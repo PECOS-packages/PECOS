@@ -60,9 +60,7 @@ class Surface4444(QECC):
         self.distance, self.height, self.width = self._get_distance()
 
         # n - number of data qubits
-        self.num_data_qudits = (
-            2 * self.height * self.width - self.height - self.width + 1
-        )
+        self.num_data_qudits = 2 * self.height * self.width - self.height - self.width + 1
 
         # k - number of logical qubits
         self.num_logical_qudits = 1
@@ -126,9 +124,7 @@ class Surface4444(QECC):
 
         if width is not None and height is not None:
             if distance is not None:
-                msg = (
-                    "The distance should not be specified if the height and width are."
-                )
+                msg = "The distance should not be specified if the height and width are."
                 raise Exception(msg)
 
             distance = min(width, height)

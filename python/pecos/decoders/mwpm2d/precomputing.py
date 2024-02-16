@@ -27,16 +27,10 @@ def precompute(instr):
     """
     qecc = instr.qecc
 
-    if (
-        qecc.name == "4.4.4.4 Surface Code"
-        and qecc.circuit_compiler.name == "Check2Circuits"
-    ):
+    if qecc.name == "4.4.4.4 Surface Code" and qecc.circuit_compiler.name == "Check2Circuits":
         precomputed_data = code_surface4444(instr)
 
-    elif (
-        qecc.name == "Medial 4.4.4.4 Surface Code"
-        and qecc.circuit_compiler.name == "Check2Circuits"
-    ):
+    elif qecc.name == "Medial 4.4.4.4 Surface Code" and qecc.circuit_compiler.name == "Check2Circuits":
         precomputed_data = code_surface4444medial(instr)
 
     else:
@@ -166,8 +160,7 @@ def surface4444_identity(instr):
                 edges = d2edge_z
             else:
                 raise Exception(
-                    "This decoder can only handle check of purely X or Z type rather than %s!"
-                    % gate_symbol,
+                    "This decoder can only handle check of purely X or Z type rather than %s!" % gate_symbol,
                 )
 
             syn_list = edges.setdefault(data, [])
@@ -386,8 +379,7 @@ def surface4444medial_identity(instr):
                 edges = d2edge_z
             else:
                 raise Exception(
-                    "This decoder can only handle check of purely X or Z type rather than %s!"
-                    % gate_symbol,
+                    "This decoder can only handle check of purely X or Z type rather than %s!" % gate_symbol,
                 )
 
             syn_list = edges.setdefault(data, [])

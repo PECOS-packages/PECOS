@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos import __version__
+from pecos.slr import phys
 from pecos.slr.block import Block
 from pecos.slr.cond_block import If, Repeat
 from pecos.slr.cops import Assign
@@ -17,3 +17,22 @@ from pecos.slr.misc import QASM, Barrier, Comment, Permute
 from pecos.slr.slr import Main
 from pecos.slr.slr import Main as SLR  # noqa: N814
 from pecos.slr.vars import Bit, CReg, QReg, Qubit, Vars
+
+__all__ = [
+    "Main",
+    "SLR",
+    "Block",
+    "If",
+    "Repeat",
+    "Assign",
+    "QASM",
+    "Barrier",
+    "Comment",
+    "Permute",
+    "Vars",
+    "Bit",
+    "Qubit",
+    "CReg",
+    "QReg",
+    "phys",
+]

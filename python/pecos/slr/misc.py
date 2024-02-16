@@ -82,12 +82,7 @@ class Permute:
             if set(self.elems_i) != set(self.elems_f):
                 msg = "The set of input elements are not the same as the set of output elements"
                 raise Exception(msg)
-            if not (
-                len(self.elems_i)
-                == len(set(self.elems_i))
-                == len(self.elems_f)
-                == len(set(self.elems_f))
-            ):
+            if not (len(self.elems_i) == len(set(self.elems_i)) == len(self.elems_f) == len(set(self.elems_f))):
                 msg = "The number of input and output elements are not the same."
                 raise Exception(msg)
 

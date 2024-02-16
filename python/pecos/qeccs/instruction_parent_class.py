@@ -32,20 +32,14 @@ class LogicalInstruction:
         self.symbol = symbol
         self.qecc = qecc  # The QECC object this instruction belongs to.
         self.params = params
-        self.gate_params = (
-            self.params
-        )  # Parameters used in defining the logical instruction.
+        self.gate_params = self.params  # Parameters used in defining the logical instruction.
         # TODO: should this be the same as the gate parameters?
         self.abstract_circuit = None  # Abstract representation of the circuit.
         self.circuit = None  # Compiled circuit.
 
         # The following assumes the role of ancilla and data qudits stays fixed during the instruction
-        self.data_qudit_set = (
-            self.qecc.data_qudit_set
-        )  # set of qudit ids corresponding to data qudits.
-        self.ancilla_qudit_set = (
-            self.qecc.ancilla_qudit_set
-        )  # set of qudit ids corresponding to ancilla qudits.
+        self.data_qudit_set = self.qecc.data_qudit_set  # set of qudit ids corresponding to data qudits.
+        self.ancilla_qudit_set = self.qecc.ancilla_qudit_set  # set of qudit ids corresponding to ancilla qudits.
         # The ancilla set may differ from qecc. (might be a subset)
 
         self.params["data_qudit_set"] = self.data_qudit_set

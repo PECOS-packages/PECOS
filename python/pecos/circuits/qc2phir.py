@@ -161,11 +161,7 @@ def to_phir_dict(qc: "pecos.QuantumCircuit") -> dict:
         if ops_buffer and compact_gates:
             last_op = ops_buffer[-1]
             if (
-                (
-                    "qop" in last_op
-                    and "qop" in current_op
-                    and last_op["qop"] == current_op["qop"]
-                )
+                ("qop" in last_op and "qop" in current_op and last_op["qop"] == current_op["qop"])
                 or (last_op.get("data") == last_op.get("data") == "cvar_export")
             ) and last_op.get("metadata") == current_op.get("metadata"):
                 if "args" in current_op:

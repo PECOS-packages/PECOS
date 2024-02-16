@@ -41,8 +41,7 @@ def find_logical_signs(state, logical_circuit: QuantumCircuit) -> int:
             logical_zs.update(gate_locations)
         else:
             raise Exception(
-                'Can not currently handle logical operator with operator "%s"!'
-                % symbol,
+                'Can not currently handle logical operator with operator "%s"!' % symbol,
             )
 
     anticom = len(state.faults["X"] & logical_zs)

@@ -46,11 +46,7 @@ def read_wasmer(path, compiler="wasm_cl"):
             else:
                 wasm_b = file
 
-            store = (
-                Store(engine.JIT(CompilerLLVM))
-                if compiler == "wasm_llvm"
-                else Store(engine.JIT(CompilerCranelift))
-            )
+            store = Store(engine.JIT(CompilerLLVM)) if compiler == "wasm_llvm" else Store(engine.JIT(CompilerCranelift))
 
             module = Module(store, wasm_b)
             instance = Instance(module)

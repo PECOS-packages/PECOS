@@ -113,10 +113,7 @@ class PyPMIR:
             if o.get("angles"):
                 if not (o["qop"] == "RZZ" and o["angles"][0][0] == 0.0):
                     metadata = {
-                        "angles": [
-                            angle * (pi if o["angles"][1] == "pi" else 1)
-                            for angle in o["angles"][0]
-                        ],
+                        "angles": [angle * (pi if o["angles"][1] == "pi" else 1) for angle in o["angles"][0]],
                     }
 
             # TODO: Added to satisfy old-style error models. Remove when they not longer need this...
@@ -127,9 +124,7 @@ class PyPMIR:
                 metadata["var_output"] = var_output
 
             instr = op.QOp(
-                name=(
-                    "I" if o["qop"] == "RZZ" and o["angles"][0][0] == 0.0 else o["qop"]
-                ),
+                name=("I" if o["qop"] == "RZZ" and o["angles"][0][0] == 0.0 else o["qop"]),
                 args=args,
                 returns=o.get("returns"),
                 metadata=metadata,

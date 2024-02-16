@@ -11,10 +11,11 @@
 
 from __future__ import annotations
 
+from pecos.reps.pypmir.instr_type import Instr
 
-class Data:
-    def __init__(self, metadata: dict | None = None) -> None:
-        self.metadata = metadata
+
+class Data(Instr):
+    """General data type."""
 
 
 class DefineVar(Data):

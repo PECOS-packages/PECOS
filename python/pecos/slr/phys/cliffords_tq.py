@@ -19,9 +19,7 @@ class CZGate(TQCliffordGate): ...
 CZ = CZGate(qasm_sym="cz")
 
 
-class CHGate(TQCliffordGate):
-    # TODO: Is this actually a Clifford?
-    ...
+class CHGate(TQCliffordGate): ...
 
 
 CH = CHGate(qasm_sym="ch")

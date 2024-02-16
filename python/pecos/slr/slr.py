@@ -10,7 +10,7 @@
 # specific language governing permissions and limitations under the License.
 
 
-from pecos.slr import __version__
+from pecos import __version__
 from pecos.slr.block import Block
 
 

@@ -36,10 +36,12 @@ metadeps: upgrade-pip  ## Install extra dependencies used to develop/build this 
 
 .PHONY: upgrade-pip
 install: upgrade-pip  ## Install PECOS
+	$(VENV_BIN)/pip install ../cython
 	$(VENV_BIN)/pip install .
 
 .PHONY: install-all
 install-all: upgrade-pip  ## Install PECOS with all optional dependencies
+	$(VENV_BIN)/pip install ../cython
 	$(VENV_BIN)/pip install .[all]
 
 # Documentation
@@ -94,6 +96,7 @@ venv:  ## Build a new Python virtual environment from scratch
 
 .PHONY: dev-all
 dev-all: dev-setup  ## Create a development environment from scratch with all optional dependencies and PECOS installed in editable mode
+	$(VENV_BIN)/pip install -e ../cython
 	$(VENV_BIN)/pip install -e .[all]
 
 .PHONY: build

@@ -5,7 +5,7 @@
 
 # Try to autodetect if python3 or python is the python executable used.
 BASEPYTHON := $(shell which python3 2>/dev/null || which python 2>/dev/null)
-VENV=.venv
+VENV=../.venv
 
 ifeq ($(OS),Windows_NT)
 	VENV_BIN=$(VENV)/Scripts
@@ -80,7 +80,7 @@ tests-all: tests tests-dep doctests ## Run all tests
 
 .PHONY: clean
 clean:  ## Clean up caches, build artifacts, and generated library files
-	-rm -rf *.egg-info dist build docs/_build .pytest_cache/ .ruff_cache/
+	-rm -rf *.egg-info dist build docs/_build .pytest_cache/ .ruff_cache/ .venv/
 	@find . \( -type d -name "__pycache__" \
 	          -o -type f -name "*.pyc" \
 	          -o -type f -name "*.so" \

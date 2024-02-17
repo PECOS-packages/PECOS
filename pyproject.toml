@@ -9,6 +9,27 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+# Note: This pyproject.toml file is not used to build the project, instead it is used to collect common settings for the
+#   Python/Cython packages in this project.
+
+[project]
+name = "PECOS"
+authors = [
+    {name = "The PECOS Developers"},
+    {name = "Ciaran Ryan-Anderson", email = "ciaranra@gmail.com"},
+]
+maintainers =[
+    {name = "Ciaran Ryan-Anderson", email = "ciaranra@gmail.com"},
+]
+description = """PECOS is a library/framework for the evaluation, study, and design of QEC protocols. It also provides the ability to study and evaluate the performance advanced hybrid quantum/classical compute execution models for NISQ algorithms and beyond."""
+readme = "README.md"
+license = { file = "LICENSE"}
+
+[project.urls]
+Homepage = "https://pecos.io"
+Documentation = "https://quantum-pecos.readthedocs.io"
+Repository = "https://github.com/PECOS-packages/PECOS"
+
 # Linting and autorefactoring tools
 # ---------------------------------
 
@@ -173,31 +194,3 @@ strict = true
 [tool.black]
 line-length = 120
 extend-exclude = "python/pecos/simulators/cuquantum/*"
-
-# testing
-# -------
-[tool.pytest.ini_options]
-addopts = [
-    "--strict-config",
-    "--strict-markers",
-    "--import-mode=importlib",
-    # By default, run fast tests and only tests using required dependencies. To run all tests: pytest -m ""
-    # -m not slow and not optional_dependency
-    "-m not optional_dependency",
-]
-
-testpaths = ["tests"]
-markers = [
-    # slow: mark test as slow.
-    "optional_dependency: mark a test as using one or more optional dependencies.",
-    "optional_unix: mark tests as using an optional dependency that only work with Unix-based systems.",
-    "wasmer: mark test as using the 'wasmer' option.",
-    "wasmtime: mark test as using the 'wasmtime' option.",
-]
-
-# ProjectQ has a bunch of deprecation warnings from NumPy because they still use np.matrix instead of np.array
-# TODO: comment this to deal with ProjectQ gate warnings
-filterwarnings = [
-    "ignore::PendingDeprecationWarning:projectq.ops._gates",
-    "ignore::DeprecationWarning:dateutil.tz.tz.*",
-]

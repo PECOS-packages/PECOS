@@ -32,18 +32,16 @@ venv: ## Create a Python virtual environment in the .venv directory
 		$(BASEPYTHON) -m venv $(VENV); \
 	fi
 
-.PHONY: upgrade-pip
-upgrade-pip: ## Update the pip version in the virtual environment.
-	$(VENV_BIN)/python -m pip install --upgrade pip
-
 .PHONY: requirements
-requirements: venv upgrade-pip  ## Install main, documentation, and linting Python project requirements.
+requirements: upgrade-pip  ## Install main, documentation, and development Python project requirements.
+	$(VENV_BIN)/pip install -U build pip-tools pre-commit wheel Cython
 	$(VENV_BIN)/pip install --upgrade -r python/requirements.txt
 	$(VENV_BIN)/pip install --upgrade -r python/docs/requirements.txt
 
-.PHONY: buildpy
-buildpy: venv requirements  ## Activates the virtual environment and compiles the Python package for development.
+.PHONY: build
+build: venv requirements  ## Compiles the Cython and Python packages for development.
 	@unset CONDA_PREFIX && source $(VENV_BIN)/activate \
+	&& pip install -e ./cython \
 	&& maturin develop -m python/Cargo.toml
 
 .PHONY: clippy
@@ -54,18 +52,11 @@ clippy:  ## Execute the Rust linter, clippy, across all project targets with all
 clippy-default: ## Run clippy with default features for a quicker analysis.
 	cargo clippy --all-targets --locked -- -D warnings -D clippy::dbg_macro
 
-.PHONY: lint
-fmt:  ## Run formatting and linting tools on the Python and Rust codebase.
-	# $(VENV_BIN)/ruff check
-	# $(VENV_BIN)/ruff format
-	# $(VENV_BIN)/black ./cython
-	# $(VENV_BIN)/black ./python
+.PHONY: pre-commit
+pre-commit: clippy clippy-default ## Run formatting and linting tools on the Python and Rust codebase.
 	$(VENV_BIN)/pre-commit run --all-files
 	cargo fmt --all
 	$(VENV_BIN)/typos
-
-.PHONY: pre-commit
-pre-commit: fmt clippy clippy-default  ## Run all code quality checks before committing.
 
 .PHONY: clean
 clean: ## Removes directories and files related to the build process, ensuring a clean state.
@@ -75,8 +66,13 @@ clean: ## Removes directories and files related to the build process, ensuring a
     # Remove the Cargo lock file and clean the Rust project to ensure a fresh start on the next build.
 	@rm -f Cargo.lock
 	@cargo clean
-    # Call the clean target of the Makefile in the python directory, if necessary.
+    # Call the clean target of the Makefile in the python/ and cython/ directories
 	@$(MAKE) -s -C python/ $@
+	@$(MAKE) -s -C cython/ $@
+
+.PHONY: upgrade-pip
+upgrade-pip: ## Update the pip version in the virtual environment.
+	$(VENV_BIN)/python -m pip install --upgrade pip
 
 help:  ## Show this help menu
 	@echo "Usage: make [TARGET]..."

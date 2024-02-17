@@ -40,7 +40,6 @@ upgrade-pip: ## Update the pip version in the virtual environment.
 requirements: venv upgrade-pip  ## Install main, documentation, and linting Python project requirements.
 	$(VENV_BIN)/pip install --upgrade -r python/requirements.txt
 	$(VENV_BIN)/pip install --upgrade -r python/docs/requirements.txt
-	$(VENV_BIN)/pip install --upgrade -r python/requirements-lint.txt
 
 .PHONY: buildpy
 buildpy: venv requirements  ## Activates the virtual environment and compiles the Python package for development.
@@ -57,10 +56,11 @@ clippy-default: ## Run clippy with default features for a quicker analysis.
 
 .PHONY: lint
 fmt:  ## Run formatting and linting tools on the Python and Rust codebase.
-	$(VENV_BIN)/ruff check
-	$(VENV_BIN)/ruff format
-	$(VENV_BIN)/black ./cython
-	$(VENV_BIN)/black ./python
+	# $(VENV_BIN)/ruff check
+	# $(VENV_BIN)/ruff format
+	# $(VENV_BIN)/black ./cython
+	# $(VENV_BIN)/black ./python
+	$(VENV_BIN)/pre-commit run --all-files
 	cargo fmt --all
 	$(VENV_BIN)/typos
 

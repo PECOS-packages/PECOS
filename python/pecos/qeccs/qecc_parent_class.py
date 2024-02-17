@@ -59,9 +59,7 @@ class QECC:
         self.layout = {}  # A dictionary of qudit id => (x, y, ...)
         self.position2qudit = {}
         self.lattice_dimensions = {}  # Dimensions of the physical layout
-        self.sides = (
-            {}
-        )  # Describes the geometry of the qecc so decoders can understand the QECC's shape
+        self.sides = {}  # Describes the geometry of the qecc so decoders can understand the QECC's shape
 
         self.sym2gate_class = {}  # symbol => logical gate class
         self.sym2instruction_class = {}  # symbol => logical instruction class

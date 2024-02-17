@@ -108,10 +108,7 @@ class PyPMIR:
 
             if o.get("angles"):
                 angles = tuple(
-                    [
-                        angle * (pi if o["angles"][1] == "pi" else 1)
-                        for angle in o["angles"][0]
-                    ],
+                    [angle * (pi if o["angles"][1] == "pi" else 1) for angle in o["angles"][0]],
                 )
             else:
                 angles = None

@@ -131,9 +131,7 @@ class SurfaceMedial4444(QECC):
 
         if width is not None and height is not None:
             if distance is not None:
-                msg = (
-                    "The distance should not be specified if the height and width are."
-                )
+                msg = "The distance should not be specified if the height and width are."
                 raise Exception(msg)
 
             distance = min(width, height)
@@ -175,9 +173,7 @@ class SurfaceMedial4444(QECC):
             "height": 2 * height,
         }
 
-        xy_iter = (
-            self._rotated_orientaition() if self.rotated else self._norm_orientaition()
-        )
+        xy_iter = self._rotated_orientaition() if self.rotated else self._norm_orientaition()
 
         # Determine the position of things
         for x, y in xy_iter:

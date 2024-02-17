@@ -39,9 +39,7 @@ class BinArray:
             raise TypeError(msg)
 
     def __str__(self) -> str:
-        bin_str = [
-            "1" if self.array[i] else "0" for i in range(len(self.array) - 1, -1, -1)
-        ]
+        bin_str = ["1" if self.array[i] else "0" for i in range(len(self.array) - 1, -1, -1)]
         return "".join(bin_str)
 
     def __repr__(self) -> str:

@@ -104,9 +104,7 @@ class MWPM2D:
                     n2 = matching[n1]
 
                     # Don't continue if node has already been covered or path starts and ends with virtuals.
-                    if n1 in nodes_paired or (
-                        str(n1).startswith("v") and str(n2).startswith("v")
-                    ):
+                    if n1 in nodes_paired or (str(n1).startswith("v") and str(n2).startswith("v")):
                         continue
 
                     nodes_paired.add(n2)

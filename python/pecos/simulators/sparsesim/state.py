@@ -77,9 +77,7 @@ class SparseSim(Stabilizer):
         super().__init__()
 
         if not isinstance(num_qubits, int):
-            msg = (
-                f"`num_qubits` should be of type `int` but got type: {type(num_qubits)}"
-            )
+            msg = f"`num_qubits` should be of type `int` but got type: {type(num_qubits)}"
             raise TypeError(msg)
 
         self.num_qubits = num_qubits

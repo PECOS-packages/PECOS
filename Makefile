@@ -34,7 +34,7 @@ venv: ## Create a Python virtual environment in the .venv directory
 
 .PHONY: requirements
 requirements: upgrade-pip  ## Install main, documentation, and development Python project requirements.
-	$(VENV_BIN)/pip install -U build pip-tools pre-commit wheel Cython
+	$(VENV_BIN)/pip install -U build pip-tools pre-commit wheel Cython typos
 	$(VENV_BIN)/pip install --upgrade -r python/requirements.txt
 	$(VENV_BIN)/pip install --upgrade -r python/docs/requirements.txt
 

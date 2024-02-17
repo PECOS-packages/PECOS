@@ -13,13 +13,14 @@ import json
 from pathlib import Path
 
 import pytest
+from phir.model import PHIRModel
+from pydantic import ValidationError
+
 from pecos.classical_interpreters.phir_classical_interpreter import (
     PHIRClassicalInterpreter,
 )
 from pecos.engines.hybrid_engine import HybridEngine
 from pecos.error_models.generic_error_model import GenericErrorModel
-from phir.model import PHIRModel
-from pydantic import ValidationError
 
 try:
     from pecos.foreign_objects.wasmtime import WasmtimeObj

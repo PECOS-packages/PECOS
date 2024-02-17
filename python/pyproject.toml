@@ -131,14 +131,6 @@ filterwarnings = [
 # ....
 # Define rules, plugins, and configurations for the ruff linter.
 # For more details on rules see: https://docs.astral.sh/ruff/rules
-[tool.ruff]
-line-length = 120
-indent-width = 4
-fix = true
-target-version = "py312"
-extend-exclude = ["pecos/simulators/cuquantum/*"]
-
-
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = ["F401"]  # imported but unused (81)
 "**/tests/**/*.py" = [

@@ -181,9 +181,3 @@ ban-relative-imports = "all"
 
 [tool.ruff.lint.flake8-type-checking]
 strict = true
-
-
-# Black
-# .....
-[tool.black]
-line-length = 120

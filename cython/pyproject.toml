@@ -32,18 +32,3 @@ markers = [
 filterwarnings = [
     "ignore::DeprecationWarning:dateutil.tz.tz.*",
 ]
-
-
-# Linting and autorefactoring tools
-# ---------------------------------
-
-# Ruff
-# ....
-# Define rules, plugins, and configurations for the ruff linter.
-# For more details on rules see: https://docs.astral.sh/ruff/rules
-[tool.ruff.lint.per-file-ignores]
-"**/__init__.py" = ["F401"]  # imported but unused (81)
-"**/tests/**/*.py"         = [
-    "INP001",                       # File is part of an implicit namespace package. Add an `__init__.py` (6)
-    "S101",                         # Use of `assert` detected (78)
-    ]

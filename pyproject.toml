@@ -42,7 +42,11 @@ line-length = 120
 indent-width = 4
 fix = true
 target-version = "py312"
-extend-exclude = ["python/pecos/simulators/cuquantum/*"]
+extend-exclude = [
+    "**/cuquantum/**/*",
+]
+# extend-exclude = ["python/pecos/simulators/cuquantum/*"]
+
 
 [tool.ruff.format]
 indent-style = "space"
@@ -158,10 +162,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = ["F401"]  # imported but unused (81)
-"**/tests/**/*.py"         = [
+"**/tests/**/*.py" = [
     "INP001",                       # File is part of an implicit namespace package. Add an `__init__.py` (6)
     "S101",                         # Use of `assert` detected (78)
-    ]
+]
 # TODO: comment to work on better typing
 "python/pecos/circuit_converters/**/*.py" = ["ANN"]
 "python/pecos/circuits/**/*.py" = ["ANN"]

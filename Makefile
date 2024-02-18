@@ -18,19 +18,7 @@ endif
 
 .PHONY: venv
 venv: ## Create a Python virtual environment in the .venv directory
-	# Verifies that the current Python version meets the project's minimum requirement.
-	# Creates the virtual environment if the version requirement is satisfied.
-	@echo "Checking Python version..."; \
-	VERSION=$$($(BASEPYTHON) -c 'import platform; print(platform.python_version())'); \
-	echo "Found Python version $$VERSION"; \
-	MIN_VERSION=$(MIN_PYTHON_VERSION); \
-	if [ "$$(printf '%s\n' "$$VERSION" "$$MIN_VERSION" | sort -V | head -n1)" != "$$MIN_VERSION" ]; then \
-		echo "ERROR: Python version $$VERSION is less than the minimum required $$MIN_VERSION. Please upgrade Python."; \
-		exit 1; \
-	else \
-		echo "Python version $$VERSION meets the minimum requirement of $$MIN_VERSION. Proceeding..."; \
-		$(BASEPYTHON) -m venv $(VENV); \
-	fi
+	$(BASEPYTHON) -m venv $(VENV)
 
 .PHONY: requirements
 requirements: upgrade-pip  ## Install main, documentation, and development Python project requirements.

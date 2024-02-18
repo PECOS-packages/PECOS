@@ -10,8 +10,9 @@
 # specific language governing permissions and limitations under the License.
 
 # ruff: noqa: INP001
-from Cython.Build import cythonize
 from setuptools import Extension, setup
+
+from Cython.Build import cythonize
 
 compiler_flags = [
     "-std=c++17",

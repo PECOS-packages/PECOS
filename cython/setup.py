@@ -9,10 +9,10 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-# ruff: noqa: INP001
-from setuptools import Extension, setup
-
+# Ruff is acting up with this file and acting differently between OSes
+# ruff: noqa
 from Cython.Build import cythonize
+from setuptools import Extension, setup
 
 compiler_flags = [
     "-std=c++17",

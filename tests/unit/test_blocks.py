@@ -24,8 +24,9 @@ def get_seq(program):
         # Create a simple identifier for operations
         for op in buffered_ops:
             op_ident = [op.name]
-            if hasattr(op, "metadata") and op.metadata.get("angles") is not None:
-                op_ident.append(op.metadata["angles"])
+            print("angles", op.angles)
+            if op.angles is not None:
+                op_ident.append(op.angles)
             if hasattr(op, "args") and op.args is not None:
                 op_ident.append(op.args)
             if hasattr(op, "returns") and op.returns is not None:
@@ -60,12 +61,12 @@ def test_seq():
 
     assert get_seq(program) == [
         [
-            ("RZ", [3.141592653589793], [0, 1]),
-            ("R1XY", [1.5707963267948966, 1.5707963267948966], [0]),
+            ("RZ", (3.141592653589793,), [0, 1]),
+            ("R1XY", (1.5707963267948966, 1.5707963267948966), [0]),
             ("Measure", [0, 1], [["m", 0], ["m", 1]]),
         ],
         [
-            ("R1XY", [1.5707963267948966, 1.5707963267948966], [0]),
+            ("R1XY", (1.5707963267948966, 1.5707963267948966), [0]),
             ("Measure", [0, 1], [["m", 0], ["m", 1]]),
         ],
         [
@@ -99,12 +100,12 @@ def test_qparallel():
 
     assert get_seq(program) == [
         [
-            ("RZ", [3.141592653589793], [0, 1]),
-            ("R1XY", [1.5707963267948966, 1.5707963267948966], [0]),
+            ("RZ", (3.141592653589793,), [0, 1]),
+            ("R1XY", (1.5707963267948966, 1.5707963267948966), [0]),
             ("Measure", [0, 1], [["m", 0], ["m", 1]]),
         ],
         [
-            ("R1XY", [1.5707963267948966, 1.5707963267948966], [0]),
+            ("R1XY", (1.5707963267948966, 1.5707963267948966), [0]),
             ("Measure", [0, 1], [["m", 0], ["m", 1]]),
         ],
         [

@@ -10,14 +10,13 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
-
 """Performance Estimator of Codes On Surfaces (PECOS)
-==================================================.
-
+==================================================
 A framework for developing, studying, and evaluating quantum error-correcting codes.
 """
 
-from __future__ import annotations
+# Allow for other namespace packages
+__path__ = __import__("pkgutil").extend_path(__path__, __name__)
 
 from importlib.metadata import PackageNotFoundError, version
 
@@ -25,9 +24,6 @@ try:
     __version__ = version("quantum-pecos")
 except PackageNotFoundError:
     __version__ = "0.0.0"
-
-# Allow for other namespace packages
-__path__ = __import__("pkgutil").extend_path(__path__, __name__)
 
 # PECOS namespaces
 from pecos import circuit_converters, circuits, decoders, engines, error_models, misc, qeccs, simulators, tools

@@ -46,6 +46,7 @@ from pecos.engines.hybrid_engine_old import HybridEngine
 from . import pyo3pecos as rs  # noqa: TID252
 
 __all__ = [
+    "__version__",
     "rs",
     "circuits",
     "qeccs",

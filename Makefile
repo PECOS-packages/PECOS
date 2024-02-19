@@ -32,6 +32,12 @@ build: venv requirements  ## Compiles the Cython and Python packages for develop
 	&& pip install -e ./cython \
 	&& maturin develop -m python/Cargo.toml
 
+.PHONY: build-allex
+build-allex: venv requirements  ## Compiles the Cython and Python packages for development with the "all" extra requirements.
+	@unset CONDA_PREFIX && source $(VENV_BIN)/activate \
+	&& pip install -e ./cython \
+	&& maturin develop -E=all -m python/Cargo.toml
+
 .PHONY: clippy
 clippy:  ## Execute the Rust linter, clippy, across all project targets with all features enabled.
 	cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::dbg_macro

@@ -37,6 +37,7 @@ from pecos.engines.cvm.binarray import BinArray
 from pecos.engines.hybrid_engine_old import HybridEngine
 
 __all__ = [
+    "__version__",
     "circuits",
     "qeccs",
     "simulators",

@@ -1,6 +1,6 @@
 from numpy import array
 
-from pecos.slr.phys.metaclasses import SQPauliGate
+from pecos.slr.std.phys.metaclasses import SQPauliGate
 
 
 class XGate(SQPauliGate):

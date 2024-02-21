@@ -46,7 +46,8 @@ jobs:
         run: |
           python -m venv venv
           . venv/bin/activate
-          python -m pip install ./dist/*.whl
+          WHEEL=$(ls dist/*cp${{ matrix.python-version }}*.whl)
+          python -m pip install "$WHEEL"
 
       - name: Install test dependencies
         run: |

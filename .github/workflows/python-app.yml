@@ -42,28 +42,35 @@ jobs:
           sccache: 'true'
           manylinux: auto
 
-      - name: Install the built wheel
-        run: |
-          python -m venv venv
-          . venv/bin/activate
-          WHEEL=$(ls dist/*cp${{ matrix.python-version }}*.whl)
-          python -m pip install "$WHEEL"
-
-      - name: Install test dependencies
-        run: |
-          . venv/bin/activate
-          python -m pip install pytest pytest-cov
-
-      - name: Run pytest with coverage
-        run: |
-          . venv/bin/activate
-          pytest python/tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
-
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
           name: wheels
           path: dist
+      - name: pytest
+        if: ${{ startsWith(matrix.target, 'x86_64') }}
+        shell: bash
+        run: |
+          set -e
+          pip install quantum-pecos --find-links dist --force-reinstall
+          pip install pytest
+          cd ./python && pytest
+      - name: pytest
+        if: ${{ !startsWith(matrix.target, 'x86') && matrix.target != 'ppc64' }}
+        uses: uraimo/run-on-arch-action@v2.5.0
+        with:
+          arch: ${{ matrix.target }}
+          distro: ubuntu22.04
+          githubToken: ${{ github.token }}
+          install: |
+            apt-get update
+            apt-get install -y --no-install-recommends python3 python3-pip
+            pip3 install -U pip pytest
+          run: |
+            set -e
+            pip3 install quantum-pecos --find-links dist --force-reinstall
+            cd ./python && pytest
+
 
   windows:
     runs-on: windows-latest

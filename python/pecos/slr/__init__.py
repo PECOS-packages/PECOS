@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.slr import phys
+from pecos.slr import std
 from pecos.slr.block import Block
 from pecos.slr.cond_block import If, Repeat
 from pecos.slr.cops import Assign
@@ -34,5 +34,5 @@ __all__ = [
     "Qubit",
     "CReg",
     "QReg",
-    "phys",
+    "std",
 ]

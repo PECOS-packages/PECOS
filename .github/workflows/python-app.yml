@@ -27,25 +27,25 @@ jobs:
       - uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Setup pre-commit
+        run: |
+          python -m pip install pre-commit
+          pre-commit install
+      - name: Run pre-commit on all files
+        run: pre-commit run --all-files
+
+      # Setup virtual environment for testing
       - name: Create virtual environment
         run: python -m venv venv
-      - name: Install dependencies
+      - name: Install dependencies and maturin
         run: |
-          ./venv/bin/python -m pip install --upgrade pip
-          ./venv/bin/pip install pytest pytest-cov pre-commit maturin
+          ./venv/bin/pip install --upgrade pip
+          ./venv/bin/pip install pytest pytest-cov maturin
         env:
           VIRTUAL_ENV: ${{ github.workspace }}/venv
           PATH: ${{ github.workspace }}/venv/bin:${{ env.PATH }}
-      - name: Setup pre-commit
-        run: ./venv/bin/pre-commit install
-        env:
-          VIRTUAL_ENV: ${{ github.workspace }}/venv
-          PATH: ${{ github.workspace }}/venv/bin:${{ env.PATH }}
-      - name: Run pre-commit on all files
-        run: ./venv/bin/pre-commit run --all-files
-        env:
-          VIRTUAL_ENV: ${{ github.workspace }}/venv
-          PATH: ${{ github.workspace }}/venv/bin:${{ env.PATH }}
+
+      # Build and test inside the virtual environment
       - name: Build project (compile Rust code)
         run: ./venv/bin/maturin develop --release
         env:
@@ -57,6 +57,7 @@ jobs:
         env:
           VIRTUAL_ENV: ${{ github.workspace }}/venv
           PATH: ${{ github.workspace }}/venv/bin:${{ env.PATH }}
+
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:

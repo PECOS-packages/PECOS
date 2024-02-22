@@ -44,6 +44,7 @@ jobs:
         if: ${{ startsWith(matrix.target, 'x86_64') }}
         shell: bash
         run: |
+          pip install --upgrade pip
           set -e
           PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
           WHEEL_FILE=$(ls dist/quantum_pecos-*-cp${PYTHON_VER}-*.whl)
@@ -65,7 +66,9 @@ jobs:
             pip3 install -U pip pytest
           run: |
             set -e
-            pip3 install quantum-pecos --no-index --find-links dist --force-reinstall
+            PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
+            WHEEL_FILE=$(ls dist/quantum_pecos-*-cp${PYTHON_VER}-*.whl)
+            pip3 install "${WHEEL_FILE}" --force-reinstall
             cd ./python && pytest
 
   windows:

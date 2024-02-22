@@ -62,6 +62,11 @@ State::State(const int_num& num_qubits, const int& reserve_buckets)
     clear();
 }
 
+// Static factory method definition
+std::unique_ptr<State> State::create(unsigned long long num_qubits, int reserve_buckets) {
+    return std::make_unique<State>(num_qubits, reserve_buckets);
+}
+
 void State::clear() {  // Allows state to reinitialize.
 
     // Initialize stabilizers.

@@ -11,6 +11,7 @@
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
+#include <memory>
 #include <iostream>
 #include <cstdlib>
 #include <vector>
@@ -54,6 +55,7 @@ class State {
 
         // Figure out constructors...
         // How to initialize the stabs and destabs...
+        static std::unique_ptr<State> create(unsigned long long num_qubits, int reserve_buckets);
 
         const int_num num_qubits;  // Total number of qubits.
         const int reserve_buckets; // Whether to reserve buckets.

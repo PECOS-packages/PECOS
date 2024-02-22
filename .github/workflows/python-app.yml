@@ -53,7 +53,7 @@ jobs:
           pip list
           pip install pytest
           cd ./python && pytest
-      - name: pytest for aarch64
+      - name: pytest for cross-architecture
         if: ${{ !startsWith(matrix.target, 'x86') && matrix.target != 'ppc64' }}
         uses: uraimo/run-on-arch-action@v2.5.0
         with:
@@ -62,16 +62,15 @@ jobs:
           githubToken: ${{ github.token }}
           install: |
             apt-get update
-            apt-get install -y --no-install-recommends build-essential python3 python3-pip
+            apt-get install -y --no-install-recommends build-essential python3 python3-pip cmake
             pip3 install -U pip pytest
-            python3 --version  # Confirm Python version
-            which python3      # Confirm Python binary location
           run: |
             set -e
             PYTHON_VER=$(python3 -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
             WHEEL_FILE=$(ls dist/quantum_pecos-*-cp${PYTHON_VER}-*.whl)
-            pip3 install "${WHEEL_FILE}" --force-reinstall
+            pip3 install "${WHEEL_FILE}" --force-reinstall --only-binary :all:
             cd ./python && python3 -m pytest
+
 
 
   windows:

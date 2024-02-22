@@ -63,13 +63,18 @@ jobs:
           install: |
             apt-get update
             apt-get install -y --no-install-recommends build-essential python3 python3-pip cmake
-            pip3 install -U pip pytest
+            pip3 install -U pip pytest setuptools
           run: |
+            pip3 install --upgrade pip setuptools
+            pip3 install pytest-cov
             set -e
             PYTHON_VER=$(python3 -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
             WHEEL_FILE=$(ls dist/quantum_pecos-*-cp${PYTHON_VER}-*.whl)
             pip3 install "${WHEEL_FILE}" --force-reinstall --only-binary :all:
-            cd ./python && python3 -m pytest
+            cd ./python && python3 -m pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+            cd ..
+            pip install "${WHEEL_FILE}"[all] --force-reinstall
+            cd ./python && python3 -m pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
 
 
 
@@ -108,12 +113,17 @@ jobs:
         if: ${{ !startsWith(matrix.target, 'aarch64') }}
         shell: bash
         run: |
+          pip install --upgrade pip setuptools
+          pip install pytest-cov
           set -e
           PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
           WHEEL_FILE=$(ls dist/quantum_pecos-*-cp${PYTHON_VER}-*.whl)
           pip install "${WHEEL_FILE}" --force-reinstall
           pip install pytest
-          cd ./python && pytest
+          cd ./python && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+          cd ..
+          pip install "${WHEEL_FILE}"[all] --force-reinstall
+          cd ./python && pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
 
   macos:
     runs-on: macos-latest
@@ -147,12 +157,17 @@ jobs:
         if: ${{ !startsWith(matrix.target, 'aarch64') }}
         shell: bash
         run: |
+          pip install --upgrade pip setuptools
+          pip install pytest-cov
           set -e
           PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
           WHEEL_FILE=$(ls dist/quantum_pecos-*-cp${PYTHON_VER}-*.whl)
           pip install "${WHEEL_FILE}" --force-reinstall
           pip install pytest
-          cd ./python && pytest
+          cd ./python && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+          cd ..
+          pip install "${WHEEL_FILE}"[all] --force-reinstall
+          cd ./python && pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
 
   sdist:
     runs-on: ubuntu-latest

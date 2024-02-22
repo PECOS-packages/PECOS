@@ -55,7 +55,7 @@ jobs:
           cd ./python && pytest
       - name: pytest for cross-architecture
         if: ${{ !startsWith(matrix.target, 'x86') && !startsWith(matrix.target, 'ppc64')}}
-        uses: uraimo/run-on-arch-action@v2.7.11
+        uses: uraimo/run-on-arch-action@v2.7.1
         with:
           arch: ${{ matrix.target }}
           distro: ubuntu22.04

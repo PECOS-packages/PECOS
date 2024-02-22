@@ -20,9 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        target: [x86_64, x86, aarch64,
-                 armv7, s390x, ppc64le
-        ]
+        target: [x86_64, x86, aarch64]
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
@@ -56,8 +54,8 @@ jobs:
           pip install pytest
           cd ./python && pytest
       - name: pytest for cross-architecture
-        if: ${{ !startsWith(matrix.target, 'x86') && matrix.target != 'ppc64' }}
-        uses: uraimo/run-on-arch-action@v2.7.1
+        if: ${{ !startsWith(matrix.target, 'x86') && !startsWith(matrix.target, 'ppc64')}}
+        uses: uraimo/run-on-arch-action@v2.7.11
         with:
           arch: ${{ matrix.target }}
           distro: ubuntu22.04

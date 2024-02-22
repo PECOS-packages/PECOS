@@ -52,7 +52,7 @@ jobs:
           pip list
           pip install pytest
           cd ./python && pytest
-      - name: pytest for cross-architecture
+      - name: pytest for aarch64
         if: ${{ !startsWith(matrix.target, 'x86') && !startsWith(matrix.target, 'ppc64')}}
         uses: uraimo/run-on-arch-action@v2.7.1
         with:
@@ -102,15 +102,15 @@ jobs:
           name: wheels
           path: dist
       - name: pytest
-        if: ${{ !startsWith(matrix.target, 'aarch64') }}
         shell: bash
         run: |
           set -e
           PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
           WHEEL_FILE=$(ls dist/quantum_pecos-*-cp${PYTHON_VER}-*.whl)
-          pip install "${WHEEL_FILE}" --force-reinstall
-          pip install pytest
+          pip install "${WHEEL_FILE}" --force-reinstall --only-binary :all:
+          pip install pytest --only-binary :all:
           cd ./python && pytest
+
 
   macos:
     runs-on: macos-latest

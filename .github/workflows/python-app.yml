@@ -62,7 +62,7 @@ jobs:
           githubToken: ${{ github.token }}
           install: |
             apt-get update
-            apt-get install -y --no-install-recommends python3 python3-pip
+            apt-get install -y --no-install-recommends build-essential python3 python3-pip
             pip3 install -U pip pytest
             python3 --version  # Confirm Python version
             which python3      # Confirm Python binary location

@@ -156,12 +156,11 @@ class PyPMIR:
                 )
 
         elif "mop" in o:
-            instr = op.MOp(
-                name=o["mop"],
-                args=o.get("args"),
-                returns=o.get("returns"),
-                metadata=o.get("metadata"),
-            )
+            instr = op.MOp(name=o["mop"], args=o.get("args"), returns=o.get("returns"), metadata=o.get("metadata"))
+            if "duration" in o:
+                if instr.metadata is None:
+                    instr.metadata = {}
+                instr.metadata["duration"] = o["duration"]
 
         elif "meta" in o:
             # TODO: Handle meta instructions

@@ -38,20 +38,21 @@ jobs:
         with:
           name: wheels
           path: dist
-      - name: List built wheels
-        run: ls -l dist/
       - name: pytest
         if: ${{ startsWith(matrix.target, 'x86_64') }}
         shell: bash
         run: |
-          pip install --upgrade pip
+          pip install --upgrade pip setuptools
+          pip install pytest-cov
           set -e
           PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
           WHEEL_FILE=$(ls dist/quantum_pecos-*-cp${PYTHON_VER}-*.whl)
           pip install "${WHEEL_FILE}" --force-reinstall
-          pip list
           pip install pytest
-          cd ./python && pytest
+          cd ./python && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+          cd ..
+          pip install "${WHEEL_FILE}"[all] --force-reinstall
+          cd ./python && pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
       - name: pytest aarch64
         if: ${{ !startsWith(matrix.target, 'x86') && !startsWith(matrix.target, 'ppc64')}}
         uses: uraimo/run-on-arch-action@v2.7.1
@@ -152,7 +153,6 @@ jobs:
           pip install "${WHEEL_FILE}" --force-reinstall
           pip install pytest
           cd ./python && pytest
-
 
   sdist:
     runs-on: ubuntu-latest

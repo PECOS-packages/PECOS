@@ -45,7 +45,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          pip install quantum-pecos --find-links dist --force-reinstall
+          pip install quantum-pecos -no-index --find-links dist --force-reinstall
           pip list
           pip install pytest
           cd ./python && pytest
@@ -62,7 +62,7 @@ jobs:
             pip3 install -U pip pytest
           run: |
             set -e
-            pip3 install quantum-pecos --find-links dist --force-reinstall
+            pip3 install quantum-pecos -no-index --find-links dist --force-reinstall
             cd ./python && pytest
 
   windows:

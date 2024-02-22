@@ -45,7 +45,10 @@ jobs:
         shell: bash
         run: |
           set -e
-          pip install quantum-pecos --no-index --find-links dist --force-reinstall
+          PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
+          WHEEL_FILE=$(ls dist/quantum_pecos-*-cp${PYTHON_VER}-*.whl)
+          pip install "${WHEEL_FILE}" --force-reinstall
+          # pip install quantum-pecos --find-links dist --force-reinstall
           pip list
           pip install pytest
           cd ./python && pytest

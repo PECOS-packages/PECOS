@@ -38,12 +38,15 @@ jobs:
         with:
           name: wheels
           path: dist
+      - name: List built wheels
+        run: ls -l dist/
       - name: pytest
         if: ${{ startsWith(matrix.target, 'x86_64') }}
         shell: bash
         run: |
           set -e
           pip install quantum-pecos --find-links dist --force-reinstall
+          pip list
           pip install pytest
           cd ./python && pytest
       - name: pytest

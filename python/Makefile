@@ -35,8 +35,12 @@ updatereqs: upgrade-pip ## Autogenerate requirements.txt
 # ---------------------
 
 .PHONY: build
-build: clean venv
-	$(Make) -C .. $@
+build:
+	$(MAKE) -C .. $@
+
+.PHONY: build-allex
+build-allex:
+	$(MAKE) -C .. $@
 
 # .PHONY: install-all
 # install-all: upgrade-pip  ## Install PECOS with all optional dependencies
@@ -62,32 +66,32 @@ docs: build  ## Build documentation
 
 .PHONY: pre-commit
 pre-commit: ## Run all quality checks / linting / reformatting
-	$(Make) -C .. $@
+	$(MAKE) -C .. $@
 
 # Testing
 # -------
 
 .PHONY: test
-tests: install metadeps  ## Run tests on the Python package (not including optional dependencies)
+test: build  ## Run tests on the Python package (not including optional dependencies)
 	$(VENV_BIN)/pytest tests -m "not optional_dependency"
 
 .PHONY: test-dep
-tests-dep: install-all metadeps ## Run tests on the Python package only for optional dependencies
+test-dep: build-allex ## Run tests on the Python package only for optional dependencies
 	$(VENV_BIN)/pytest tests -m optional_dependency
 
 .PHONY: doctest
-doctests:  ## Run doctests
+doctest:  ## Run doctests
 	$(VENV_BIN)/pytest ./docs --doctest-glob=*.rst --doctest-continue-on-failure
 
 .PHONY: test-all
-tests-all: tests tests-dep doctests ## Run all tests
+test-all: test test-dep doctest ## Run all tests
 
 # Utility
 # -------
 
 .PHONY: clean
 clean:  ## Clean up caches, build artifacts, and generated library files
-	-rm -rf *.egg-info dist build docs/_build .pytest_cache/ .ruff_cache/ .venv/
+	-rm -rf *.egg-info **/*.pyd dist build docs/_build .pytest_cache/ .ruff_cache/ .venv/
 	@find . \( -type d -name "__pycache__" \
 	          -o -type f -name "*.pyc" \
 	          -o -type f -name "*.so" \

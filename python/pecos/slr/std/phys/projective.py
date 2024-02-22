@@ -1,4 +1,4 @@
-from pecos.slr.phys.metaclasses import NoParamsQGate
+from pecos.slr.std.phys.metaclasses import NoParamsQGate
 
 
 class ResetGate(NoParamsQGate):

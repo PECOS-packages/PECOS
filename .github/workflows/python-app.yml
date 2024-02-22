@@ -2,44 +2,215 @@ name: Python application
 
 on:
   push:
-    branches: [ "master", "development" ]
+    branches:
+      - master
+      - development
+    tags:
+      - "*"
   pull_request:
-    branches: [ "master", "development" ]
+    branches:
+      - master
+      - development
 
 permissions:
   contents: read
 
 jobs:
-  build:
-
-    runs-on: ${{ matrix.os }}
+  linux:
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macOS-latest]
-        python-version: ["3.10", "3.11", "3.12"]
-
+        python-version: ['3.10', '3.11', '3.12']
+        target: [x86_64, x86, aarch64]
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip setuptools
-        pip install -r python/requirements.txt
-    - name: Pre-commit checks
-      run: |
-        python -m pip install pre-commit
-        pre-commit run --all-files
-    - name: Test with pytest
-      run: |
-        pip install pytest-cov
-        pip install ./python
-        pytest python/tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
-    - name: Test optional dependencies with pytest
-      run: |
-        pip install pytest-cov
-        pip install ./python[all]
-        pytest python/tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Setup pre-commit
+        run: |
+          python -m pip install pre-commit
+          pre-commit install
+      - name: Run pre-commit on all files
+        run: pre-commit run --all-files
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter --manifest-path ./python/Cargo.toml
+          sccache: 'true'
+          manylinux: auto
+      - name: Upload wheels
+        uses: actions/upload-artifact@v3
+        with:
+          name: wheels
+          path: dist
+      - name: pytest
+        if: ${{ startsWith(matrix.target, 'x86_64') }}
+        shell: bash
+        run: |
+          pip install --upgrade pip setuptools
+          pip install pytest-cov
+          set -e
+          PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
+          WHEEL_FILE=$(ls dist/quantum_pecos-*-cp${PYTHON_VER}-*.whl)
+          pip install "${WHEEL_FILE}" --force-reinstall
+          pip install pytest
+          cd ./python && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+          cd ..
+          pip install "${WHEEL_FILE}"[all] --force-reinstall
+          cd ./python && pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
+      - name: pytest aarch64
+        if: ${{ !startsWith(matrix.target, 'x86') && !startsWith(matrix.target, 'ppc64')}}
+        uses: uraimo/run-on-arch-action@v2.7.1
+        with:
+          arch: ${{ matrix.target }}
+          distro: ubuntu22.04
+          githubToken: ${{ github.token }}
+          install: |
+            apt-get update
+            apt-get install -y --no-install-recommends build-essential python3 python3-pip cmake
+            pip3 install -U pip pytest setuptools
+          run: |
+            pip3 install --upgrade pip setuptools
+            pip3 install pytest-cov
+            set -e
+            PYTHON_VER=$(python3 -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
+            WHEEL_FILE=$(ls dist/quantum_pecos-*-cp${PYTHON_VER}-*.whl)
+            pip3 install "${WHEEL_FILE}" --force-reinstall --only-binary :all:
+            cd ./python && python3 -m pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+            cd ..
+            pip install "${WHEEL_FILE}"[all] --force-reinstall
+            cd ./python && python3 -m pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
+
+  windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+        target: [x64,
+                 # x86
+        ]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: ${{ matrix.target }}
+      - name: Setup pre-commit
+        run: |
+          python -m pip install pre-commit
+          pre-commit install
+      - name: Run pre-commit on all files
+        run: pre-commit run --all-files
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter --manifest-path ./python/Cargo.toml
+          sccache: 'true'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v3
+        with:
+          name: wheels
+          path: dist
+      - name: pytest
+        if: ${{ !startsWith(matrix.target, 'aarch64') }}
+        shell: bash
+        run: |
+          pip install --upgrade pip setuptools
+          pip install pytest-cov
+          set -e
+          PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
+          WHEEL_FILE=$(ls dist/quantum_pecos-*-cp${PYTHON_VER}-*.whl)
+          pip install "${WHEEL_FILE}" --force-reinstall
+          pip install pytest
+          cd ./python && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+          cd ..
+          pip install "${WHEEL_FILE}"[all] --force-reinstall
+          cd ./python && pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
+
+  macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Setup pre-commit
+        run: |
+          python -m pip install pre-commit
+          pre-commit install
+      - name: Run pre-commit on all files
+        run: pre-commit run --all-files
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter --manifest-path ./python/Cargo.toml
+          sccache: 'true'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v3
+        with:
+          name: wheels
+          path: dist
+      - name: pytest
+        if: ${{ !startsWith(matrix.target, 'aarch64') }}
+        shell: bash
+        run: |
+          pip install --upgrade pip setuptools
+          pip install pytest-cov
+          set -e
+          PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
+          WHEEL_FILE=$(ls dist/quantum_pecos-*-cp${PYTHON_VER}-*.whl)
+          pip install "${WHEEL_FILE}" --force-reinstall
+          pip install pytest
+          cd ./python && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+          cd ..
+          pip install "${WHEEL_FILE}"[all] --force-reinstall
+          cd ./python && pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      - name: Setup pre-commit
+        run: |
+          python -m pip install pre-commit
+          pre-commit install
+      - name: Run pre-commit on all files
+        run: pre-commit run --all-files
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist --manifest-path ./python/Cargo.toml
+      - name: Upload sdist
+        uses: actions/upload-artifact@v3
+        with:
+          name: wheels
+          path: dist
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: "startsWith(github.ref, 'refs/tags/')"
+    needs: [linux, windows, macos, sdist]
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          name: wheels
+      - name: Publish to PyPI
+        uses: PyO3/maturin-action@v1
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        with:
+          command: upload
+          args: --non-interactive --skip-existing *

@@ -17,7 +17,7 @@ else
 endif
 
 .PHONY: venv
-venv: ## Create a Python virtual environment in the .venv directory
+venv: ## Create a Python virtual environment in the .venv directory. (If .venv already exist this wont replace it.)
 	$(BASEPYTHON) -m venv $(VENV)
 
 .PHONY: requirements
@@ -27,10 +27,16 @@ requirements: upgrade-pip  ## Install main, documentation, and development Pytho
 	$(VENV_BIN)/pip install --upgrade -r python/docs/requirements.txt
 
 .PHONY: build
-build: venv requirements  ## Compiles the Cython and Python packages for development.
+build: clean venv requirements  ## Compiles the Cython and Python packages for development.
 	@unset CONDA_PREFIX && source $(VENV_BIN)/activate \
 	&& pip install -e ./cython \
 	&& maturin develop -m python/Cargo.toml
+
+.PHONY: build-allex
+build-allex: clean venv requirements  ## Compiles the Cython and Python packages for development with the "all" extra requirements.
+	@unset CONDA_PREFIX && source $(VENV_BIN)/activate \
+	&& pip install -e ./cython \
+	&& maturin develop -E=all -m python/Cargo.toml
 
 .PHONY: clippy
 clippy:  ## Execute the Rust linter, clippy, across all project targets with all features enabled.
@@ -48,8 +54,6 @@ pre-commit: clippy clippy-default ## Run formatting and linting tools on the Pyt
 
 .PHONY: clean
 clean: ## Removes directories and files related to the build process, ensuring a clean state.
-	# Remove the Python virtual environment and Rust target directory to clean the project workspace.
-	@rm -rf .venv/
 	@rm -rf target/
     # Remove the Cargo lock file and clean the Rust project to ensure a fresh start on the next build.
 	@rm -f Cargo.lock
@@ -57,6 +61,10 @@ clean: ## Removes directories and files related to the build process, ensuring a
     # Call the clean target of the Makefile in the python/ and cython/ directories
 	@$(MAKE) -s -C python/ $@
 	@$(MAKE) -s -C cython/ $@
+
+.PHONY: clean-venv
+clean-venv: clean ## Removes venv, directories, and files related to the build process, ensuring a clean state.
+	@rm -rf .venv/
 
 .PHONY: upgrade-pip
 upgrade-pip: ## Update the pip version in the virtual environment.

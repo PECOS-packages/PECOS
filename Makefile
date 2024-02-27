@@ -54,7 +54,6 @@ pre-commit: clippy clippy-default ## Run formatting and linting tools on the Pyt
 
 .PHONY: clean
 clean: ## Removes directories and files related to the build process, ensuring a clean state.
-	# Remove the Python virtual environment and Rust target directory to clean the project workspace.
 	@rm -rf target/
     # Remove the Cargo lock file and clean the Rust project to ensure a fresh start on the next build.
 	@rm -f Cargo.lock
@@ -65,7 +64,6 @@ clean: ## Removes directories and files related to the build process, ensuring a
 
 .PHONY: clean-venv
 clean-venv: clean ## Removes venv, directories, and files related to the build process, ensuring a clean state.
-	# Remove the Python virtual environment and Rust target directory to clean the project workspace.
 	@rm -rf .venv/
 
 .PHONY: upgrade-pip

@@ -91,7 +91,7 @@ test-all: test test-dep doctest ## Run all tests
 
 .PHONY: clean
 clean:  ## Clean up caches, build artifacts, and generated library files
-	-rm -rf *.egg-info dist build docs/_build .pytest_cache/ .ruff_cache/ .venv/
+	-rm -rf *.egg-info **/*.pyd dist build docs/_build .pytest_cache/ .ruff_cache/ .venv/
 	@find . \( -type d -name "__pycache__" \
 	          -o -type f -name "*.pyc" \
 	          -o -type f -name "*.so" \

@@ -27,7 +27,7 @@ class CoinToss(Simulator):
 
         Args:
             num_qubits (int): Number of qubits being represented.
-            prob (float): Probability of measurements returning |0>.
+            prob (float): Probability of measurements returning |1>.
                 Default value is 0.5.
             seed (int): Seed for randomness.
 

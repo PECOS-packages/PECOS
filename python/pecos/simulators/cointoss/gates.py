@@ -29,7 +29,7 @@ def ignore_gate(state, qubits: int, **params: Any) -> None:
 
 def measure(state, qubits: int, **params: Any):
     """
-    Return 0 with probability ``state.prob`` or 1 otherwise.
+    Return |1> with probability ``state.prob`` or |0> otherwise.
 
     Args:
         state: An instance of ``CoinToss``.
@@ -38,4 +38,4 @@ def measure(state, qubits: int, **params: Any):
     Returns:
 
     """
-    return 0 if np.random.random() < state.prob else 1
+    return 1 if np.random.random() < state.prob else 0

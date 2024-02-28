@@ -3,7 +3,7 @@
 
 .DEFAULT_GOAL := help
 
-.PHONY: requirements updatereqs metadeps install install-all docs lint tests tests-dep doctests tests-all clean venv dev-all build build-full help
+.PHONY: requirements updatereqs metadeps install install-all docs lint tests tests-dep doctests tests-all clean venv dev-all build build-full help upgrade-pip dev-setup
 
 # Try to autodetect if python3 or python is the python executable used.
 BASEPYTHON := $(shell which python3 2>/dev/null || which python 2>/dev/null)
@@ -42,7 +42,7 @@ install-all: upgrade-pip  ## Install PECOS with all optional dependencies
 # Documentation
 # -------------
 
-docs: install  ## Generate documentation
+docs: install-all  ## Generate documentation
 	$(VENV_BIN)/pip install -r ./docs/requirements.txt
 	$(MAKE) -C docs SPHINXBUILD=../$(VENV_BIN)/sphinx-build clean html
 
@@ -55,10 +55,10 @@ lint: metadeps  ## Run all quality checks / linting / reformatting
 # Testing
 # -------
 
-tests: venv install metadeps  ## Run tests on the Python package (not including optional dependencies)
+tests: install metadeps  ## Run tests on the Python package (not including optional dependencies)
 	$(VENV_BIN)/pytest tests -m "not optional_dependency"
 
-tests-dep: venv install-all metadeps ## Run tests on the Python package only for optional dependencies
+tests-dep: install-all metadeps ## Run tests on the Python package only for optional dependencies
 	$(VENV_BIN)/pytest tests -m optional_dependency
 
 doctests:  ## Run doctests with pytest

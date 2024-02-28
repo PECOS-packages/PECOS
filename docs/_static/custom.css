@@ -1,0 +1,10 @@
+/* custom.css */
+[data-theme="dark"] .table {
+    background-color: #232b33;
+}
+
+[data-theme="dark"] .table th,
+[data-theme="dark"] .table td {
+    background-color: #232b33;
+    border-bottom-color: #506071;
+}

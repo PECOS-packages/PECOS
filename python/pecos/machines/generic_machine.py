@@ -41,7 +41,7 @@ class GenericMachine(Machine):
 
     def process(self, op_buffer: list[QOp | MOp]) -> list:
         for op in op_buffer:
-            if "mop" in op:
+            if "mop" in op.name:
                 print("MOP >", op)
 
         return op_buffer
@@ -49,7 +49,7 @@ class GenericMachine(Machine):
     def leak(self, qubits: set) -> list[QOp]:
         """Starts tracking qubits as leaked qubits and calls the quantum simulation appropriately to trigger leakage."""
         self.leaked_qubits |= qubits
-        return [QOp(name="Init", args=list(qubits), metadata={})]
+        return [QOp(name="Init", args=list(qubits))]
 
     def unleak(self, qubits: set) -> None:
         """Untrack qubits as leaked qubits and calls the quantum simulation appropriately to trigger leakage."""
@@ -58,5 +58,5 @@ class GenericMachine(Machine):
     def meas_leaked(self, qubits: set) -> list[QOp]:
         self.leaked_qubits -= qubits
         return [
-            QOp(name="Init -Z", args=list(qubits), metadata={}),
+            QOp(name="Init -Z", args=list(qubits)),
         ]

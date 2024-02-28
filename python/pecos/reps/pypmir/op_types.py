@@ -13,6 +13,8 @@ from __future__ import annotations
 
 
 class Op:
+    """Parent class of operations."""
+
     def __init__(
         self,
         name: str,
@@ -38,16 +40,36 @@ class Op:
                     msg = f"Returns not of correct form of cvar (str) or cbit ([str, int]): {returns}"
                     raise TypeError(msg)
 
+    def __str__(self) -> str:
+        return f"{self.name}, {self.args}, {self.returns}, {self.metadata}"
+
 
 class QOp(Op):
     """Quantum operation."""
 
-    def __init__(self, name: str, args: list, returns: list | None = None, metadata: dict | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        args: list,
+        returns: list | None = None,
+        metadata: dict | None = None,
+        angles: tuple[list[float], str] | None = None,
+    ) -> None:
         super().__init__(
             name=name,
             args=args,
             returns=returns,
             metadata=metadata,
+        )
+        self.angles = angles
+
+    def __str__(self):
+        return self.__repr__()
+
+    def __repr__(self):
+        return (
+            f"<QOP: {self.name} angles: {self.angles} args: {self.args} returns: {self.returns} "
+            f"meta: {self.metadata}>"
         )
 
 

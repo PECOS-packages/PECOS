@@ -2,7 +2,7 @@
 
 [![PyPI version](https://badge.fury.io/py/quantum-pecos.svg)](https://badge.fury.io/py/quantum-pecos)
 [![Documentation Status](https://readthedocs.org/projects/quantum-pecos/badge/?version=latest)](https://quantum-pecos.readthedocs.io/en/latest/?badge=latest)
-[![Python versions](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://img.shields.io/badge/python-3.9%2C%203.10%2C%203.11-blue.svg)
+[![Python versions](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://img.shields.io/badge/python-3.9%2C%203.10%2C%203.11-blue.svg)
 [![Supported by Quantinuum](https://img.shields.io/badge/supported_by-Quantinuum-blue)](https://www.quantinuum.com/)
 
 **Performance Estimator of Codes On Surfaces (PECOS)** is a library/framework dedicated to the study, development, and
@@ -66,6 +66,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -U pip setuptools
 pip install -r requirements.txt
+make metadeps
 pre-commit install
 pip install -e .
 ```
@@ -77,6 +78,7 @@ python -m venv .venv
 .\venv\Scripts\activate
 pip install -U pip setuptools
 pip install -r requirements.txt
+make metadeps
 pre-commit install
 pip install -e .
 ```

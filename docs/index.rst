@@ -43,6 +43,7 @@ To get started, check out the following:
    api_guide/index
    examples/index
    reference/index
+   development/index
    change_log
    bibliography
    todo_list

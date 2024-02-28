@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from math import pi
 from typing import TypeVar
 
 from pecos.reps.pypmir import block_types as blk
@@ -47,6 +48,15 @@ class PyPMIR:
                     ops.append(cls.handle_op(so, p))
 
                 instr = blk.SeqBlock(
+                    ops=ops,
+                    metadata=o.get("metadata"),
+                )
+            elif o["block"] == "qparallel":
+                ops = []
+                for so in o["ops"]:
+                    ops.append(cls.handle_op(so, p))
+
+                instr = blk.QParallelBlock(
                     ops=ops,
                     metadata=o.get("metadata"),
                 )
@@ -100,6 +110,10 @@ class PyPMIR:
 
             metadata = {} if o.get("metadata") is None else o["metadata"]
 
+            if o.get("angles"):
+                if not (o["qop"] == "RZZ" and o["angles"][0][0] == 0.0):
+                    metadata = {"angles": [angle * (pi if o["angles"][1] == "pi" else 1) for angle in o["angles"][0]]}
+
             # TODO: Added to satisfy old-style error models. Remove when they not longer need this...
             if o.get("returns"):
                 var_output = {}
@@ -107,7 +121,12 @@ class PyPMIR:
                     var_output[q] = cvar
                 metadata["var_output"] = var_output
 
-            instr = op.QOp(name=o["qop"], args=args, returns=o.get("returns"), metadata=metadata)
+            instr = op.QOp(
+                name="I" if o["qop"] == "RZZ" and o["angles"][0][0] == 0.0 else o["qop"],
+                args=args,
+                returns=o.get("returns"),
+                metadata=metadata,
+            )
 
         elif "cop" in o:
             if o["cop"] == "ffcall":
@@ -124,6 +143,15 @@ class PyPMIR:
         elif "mop" in o:
             instr = op.MOp(name=o["mop"], args=o.get("args"), returns=o.get("returns"), metadata=o.get("metadata"))
 
+        elif "meta" in o:
+            # TODO: Handle meta instructions
+            name = o["meta"]
+            if name == "barrier":
+                instr = None
+            else:
+                msg = f"Meta instruction '{name}' not implemented/supported."
+                raise NotImplementedError(msg)
+
         elif "//" in o:
             # Do not include comments
             instr = None
@@ -136,9 +164,13 @@ class PyPMIR:
 
     @classmethod
     def from_phir(cls, phir: dict) -> PyPMIR:
-        # TODO: Build nested instructions.
+        """Converts PHIR dict to PyPMIR object."""
 
-        p = PyPMIR(metadata=dict(phir["metadata"]))
+        p = PyPMIR(
+            metadata=dict(
+                phir.get("metadata", {}),
+            ),
+        )
 
         next_qvar_int = 0
 

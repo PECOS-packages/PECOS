@@ -48,7 +48,7 @@ class MWPM2D:
 
         logic_range identifies over what part of self.logic we are decoding over.
         """
-        syndromes = measurements.simplified(True)
+        syndromes = set(measurements.simplified(True))
 
         tuple_key = frozenset(syndromes)
 

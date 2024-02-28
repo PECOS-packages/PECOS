@@ -11,11 +11,7 @@
 
 from __future__ import annotations
 
-from importlib.metadata import version
-
 import numpy as np
-import pytest
-from packaging.version import parse as vparse
 from pecos.circuits import QuantumCircuit
 from pecos.simulators import CoinToss
 

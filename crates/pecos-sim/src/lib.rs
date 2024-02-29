@@ -1,8 +1,8 @@
 mod cointoss;
 
-
 pub use cointoss::CoinToss;
 
+/*
 use std::pin::Pin;
 use cxx;
 
@@ -35,6 +35,7 @@ impl RustState {
     }
 
 }
+*/
 
 pub fn add(left: usize, right: usize) -> usize {
     left + right

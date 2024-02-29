@@ -1,4 +1,5 @@
 
+/*
 fn main() {
     cc::Build::new()
         .cpp(true) // Indicates we're compiling C++ code
@@ -9,6 +10,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../../cpp/sparsesim/sparsesim.cpp");
     println!("cargo:rerun-if-changed=../../cpp/sparsesim/sparsesim.h");
 }
+*/
 
 
 /*

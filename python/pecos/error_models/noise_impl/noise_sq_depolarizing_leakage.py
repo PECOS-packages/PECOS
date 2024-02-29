@@ -28,7 +28,7 @@ def noise_sq_depolarizing_leakage(op: QOp, p: float, noise_dict: dict, machine):
 
     noise = {}
     if np.any(rand_nums):
-        for r, loc in zip(rand_nums, noisy_op.args):
+        for r, loc in zip(rand_nums, noisy_op.args, strict=False):
             if r:
                 rand = np.random.random()
                 p_tot = 0.0
@@ -48,7 +48,9 @@ def noise_sq_depolarizing_leakage(op: QOp, p: float, noise_dict: dict, machine):
                     leak_ops = machine.leak(set(noise["L"]))
                     buffered_ops.extend(leak_ops)
                 else:
-                    buffered_ops.extend((noisy_op, QOp(name=sym, args=args, metadata={})))
+                    buffered_ops.extend(
+                        (noisy_op, QOp(name=sym, args=args, metadata={})),
+                    )
 
         else:
             buffered_ops.append(noisy_op)

@@ -64,12 +64,28 @@ def fault_tolerance_check(qecc, decoder):
         err = QuantumCircuit([{"X": xs, "Z": zs}])
         state = pySparseSim(num_qudits)
 
-        sign = _apply_err(state, circ_runner, init_zero, syn_extract, err, decoder, logical_z)
+        sign = _apply_err(
+            state,
+            circ_runner,
+            init_zero,
+            syn_extract,
+            err,
+            decoder,
+            logical_z,
+        )
 
         if sign:
             raise Exception("Decoder failed to correct error: %s" % err)
 
-        sign = _apply_err(state, circ_runner, init_zero, syn_extract, err, decoder, logical_z)
+        sign = _apply_err(
+            state,
+            circ_runner,
+            init_zero,
+            syn_extract,
+            err,
+            decoder,
+            logical_z,
+        )
 
         if sign:
             raise Exception("Decoder failed to correct error: %s" % err)
@@ -87,12 +103,28 @@ def fault_tolerance_check(qecc, decoder):
 
         err_dict = form_errors(xs, zs)
 
-        sign = _apply_err_spacetime(state, circ_runner, init_zero, err_dict, decoder, logical_z, qecc)
+        sign = _apply_err_spacetime(
+            state,
+            circ_runner,
+            init_zero,
+            err_dict,
+            decoder,
+            logical_z,
+            qecc,
+        )
 
         if sign:
             raise Exception("Decoder failed to correct error: %s" % str(spacetime))
 
-        sign = _apply_err_spacetime(state, circ_runner, init_zero, err_dict, decoder, logical_z, qecc)
+        sign = _apply_err_spacetime(
+            state,
+            circ_runner,
+            init_zero,
+            err_dict,
+            decoder,
+            logical_z,
+            qecc,
+        )
 
         if sign:
             raise Exception("Decoder failed to correct error: %s" % str(spacetime))
@@ -111,7 +143,15 @@ def form_errors(xs, zs):
     return errors
 
 
-def _apply_err_spacetime(state, circ_runner, init_circ, err_dict, decoder, logical_op, qecc):
+def _apply_err_spacetime(
+    state,
+    circ_runner,
+    init_circ,
+    err_dict,
+    decoder,
+    logical_op,
+    qecc,
+):
     circ_runner.run(state, init_circ)
 
     syn_circ = qecc.instruction("instr_syn_extract", num_syn_extract=1)
@@ -162,7 +202,13 @@ def _apply_err(state, circ_runner, init_circ, syn_circ, error, decoder, logical_
     return state.logical_sign(logical_op)
 
 
-def gen_pauli_errors(qubits, *, min_errors: int = 1, max_errors: bool | int = False, css: bool = False):
+def gen_pauli_errors(
+    qubits,
+    *,
+    min_errors: int = 1,
+    max_errors: bool | int = False,
+    css: bool = False,
+):
     """Args:
     ----
         qubits:
@@ -192,7 +238,7 @@ def gen_pauli_errors(qubits, *, min_errors: int = 1, max_errors: bool | int = Fa
             for ps in xzs:
                 x_set = set()
                 z_set = set()
-                for p, q in zip(ps, b):
+                for p, q in zip(ps, b, strict=False):
                     if p == "X":
                         x_set.add(q)
                     else:
@@ -207,7 +253,7 @@ def gen_pauli_errors(qubits, *, min_errors: int = 1, max_errors: bool | int = Fa
                 for b in combinations(qubits, i):
                     x_set = set()
                     z_set = set()
-                    for p, q in zip(a, b):
+                    for p, q in zip(a, b, strict=False):
                         if p == "X":
                             x_set.add(q)
                         elif p == "Z":

@@ -11,8 +11,10 @@
 
 from __future__ import annotations
 
+from pecos.reps.pypmir.instr_type import Instr
 
-class Op:
+
+class Op(Instr):
     """Parent class of operations."""
 
     def __init__(
@@ -22,10 +24,10 @@ class Op:
         returns: list | None = None,
         metadata: dict | None = None,
     ) -> None:
+        super().__init__(metadata=metadata)
         self.name = name
         self.args = args
         self.returns = returns
-        self.metadata = metadata
 
         if returns is not None:
             for r in returns:
@@ -41,7 +43,7 @@ class Op:
                     raise TypeError(msg)
 
     def __str__(self) -> str:
-        return f"{self.name}, {self.args}, {self.returns}, {self.metadata}"
+        return f"<{self.name}, {self.args}, {self.returns}, {self.metadata}>"
 
 
 class QOp(Op):
@@ -53,7 +55,8 @@ class QOp(Op):
         args: list,
         returns: list | None = None,
         metadata: dict | None = None,
-        angles: tuple[list[float], str] | None = None,
+        angles: tuple[float, ...] | None = None,
+        sim_name: str | None = None,
     ) -> None:
         super().__init__(
             name=name,
@@ -62,9 +65,9 @@ class QOp(Op):
             metadata=metadata,
         )
         self.angles = angles
-
-    def __str__(self):
-        return self.__repr__()
+        self.sim_name = sim_name
+        if self.sim_name is None:
+            self.sim_name = name
 
     def __repr__(self):
         return (
@@ -72,11 +75,20 @@ class QOp(Op):
             f"meta: {self.metadata}>"
         )
 
+    def __str__(self) -> str:
+        return self.__repr__()
+
 
 class COp(Op):
     """Classical operation."""
 
-    def __init__(self, name: str, args: list, returns: list | None = None, metadata: dict | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        args: list,
+        returns: list | None = None,
+        metadata: dict | None = None,
+    ) -> None:
         super().__init__(
             name=name,
             args=args,
@@ -86,7 +98,7 @@ class COp(Op):
 
 
 class FFCall(COp):
-    pass
+    """Represents a call to a foreign function."""
 
 
 class MOp(Op):

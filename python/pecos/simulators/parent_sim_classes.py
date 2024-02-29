@@ -20,7 +20,12 @@ class Simulator:
     def __init__(self) -> None:
         self.bindings = {}
 
-    def run_gate(self, symbol: str, locations: set[int] | set[tuple[int, ...]], **params: Any):
+    def run_gate(
+        self,
+        symbol: str,
+        locations: set[int] | set[tuple[int, ...]],
+        **params: Any,
+    ):
         """Args:
         ----
             symbol:
@@ -64,7 +69,11 @@ class Simulator:
 
         results = {}
         for symbol, locations, params in circuit.items():
-            gate_results = self.run_gate(symbol, locations - removed_locations, **params)
+            gate_results = self.run_gate(
+                symbol,
+                locations - removed_locations,
+                **params,
+            )
             results.update(gate_results)
 
         return results

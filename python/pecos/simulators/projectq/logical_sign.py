@@ -14,7 +14,11 @@ from projectq.ops import QubitOperator
 from pecos.circuits import QuantumCircuit
 
 
-def find_logical_signs(state, logical_circuit: QuantumCircuit, allow_float=False) -> int:
+def find_logical_signs(
+    state,
+    logical_circuit: QuantumCircuit,
+    allow_float=False,
+) -> int:
     """Find the sign of the logical operator.
 
     Args:
@@ -50,11 +54,16 @@ def find_logical_signs(state, logical_circuit: QuantumCircuit, allow_float=False
             for loc in gate_locations:
                 op_string.append("Y%s" % loc)
         else:
-            raise Exception('Can not currently handle logical operator with operator "%s"!' % symbol)
+            raise Exception(
+                'Can not currently handle logical operator with operator "%s"!' % symbol,
+            )
 
     op_string = " ".join(op_string)
     state.eng.flush()
-    result = state.eng.backend.get_expectation_value(QubitOperator(op_string), state.qureg)
+    result = state.eng.backend.get_expectation_value(
+        QubitOperator(op_string),
+        state.qureg,
+    )
 
     if not allow_float:
         result = round(result, 5)

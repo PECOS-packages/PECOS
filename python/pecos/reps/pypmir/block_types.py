@@ -13,15 +13,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pecos.reps.pypmir.instr_type import Instr
+
 if TYPE_CHECKING:
     from pecos.reps.pypmir.op_types import COp, Op, QOp
 
 
-class Block:
+class Block(Instr):
     """General block type."""
-
-    def __init__(self, metadata: dict | None = None) -> None:
-        self.metadata = metadata
 
 
 class SeqBlock(Block):

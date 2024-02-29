@@ -18,7 +18,13 @@ class ErrorCircuits(dict):
     def __init__(self) -> None:
         super().__init__()
 
-    def add_circuits(self, time: int, before_faults=None, after_faults=None, replaced_locations=None):
+    def add_circuits(
+        self,
+        time: int,
+        before_faults=None,
+        after_faults=None,
+        replaced_locations=None,
+    ):
         """Add error circuits and gate locations to ignore (replaced_locations).
 
         Args:

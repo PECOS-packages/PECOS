@@ -12,12 +12,11 @@
 
 # Initial author: Tyson Lawrence
 
-import os
 import sys
 import unittest
 
 import numpy as np
-from numpy.testing import assert_array_equal, assert_allclose
+from numpy.testing import assert_allclose, assert_array_equal
 
 sys.path.append("./build/bin")
 sys.path.append("../build/bin")
@@ -91,7 +90,17 @@ class TestPythonBindings(unittest.TestCase):
 
         # Create the input (to be measured) state vector
         v = np.array(
-            [0, 0 + 0.1j, 0.1 + 0.1j, 0.1 + 0.2j, 0.2 + 0.2j, 0.3 + 0.3j, 0.3 + 0.4j, 0.4 + 0.5j], dtype=complex
+            [
+                0,
+                0 + 0.1j,
+                0.1 + 0.1j,
+                0.1 + 0.2j,
+                0.2 + 0.2j,
+                0.3 + 0.3j,
+                0.3 + 0.4j,
+                0.4 + 0.5j,
+            ],
+            dtype=complex,
         )
         sv = cq.StateVector(v)
 

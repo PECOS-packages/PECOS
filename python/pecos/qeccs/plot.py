@@ -91,7 +91,13 @@ def plot_qecc(
     nodes.set_edgecolor("black")
 
     # Label ancilla qudits
-    nx.draw_networkx_labels(g, pos=pos, labels=ancilla_labels, font_size=16, font_color="white")
+    nx.draw_networkx_labels(
+        g,
+        pos=pos,
+        labels=ancilla_labels,
+        font_size=16,
+        font_color="white",
+    )
 
     # Label data qudits
     nx.draw_networkx_labels(g, pos=pos, labels=data_labels, font_size=16)
@@ -104,7 +110,13 @@ def plot_qecc(
     ax.set_ylabel("y (arbitrary length units)", size=axis_font_size)
     ax.invert_yaxis()
 
-    plt.legend(labelspacing=2.5, borderpad=1.5, loc="upper left", bbox_to_anchor=(1, 1.01), fontsize=legend_font_size)
+    plt.legend(
+        labelspacing=2.5,
+        borderpad=1.5,
+        loc="upper left",
+        bbox_to_anchor=(1, 1.01),
+        fontsize=legend_font_size,
+    )
 
     if filename:
         plt.savefig(filename)
@@ -164,7 +176,10 @@ def plot_instr(
         labels[i] = "$" + str(i) + "$"
 
     plt.figure(num=None, figsize=figsize, dpi=dpi, edgecolor="k")
-    plt.title(f"Logical Instruction: '{instr.symbol}'  QECC: {instr.qecc.name}", size=title_font_size)
+    plt.title(
+        f"Logical Instruction: '{instr.symbol}'  QECC: {instr.qecc.name}",
+        size=title_font_size,
+    )
 
     nx.draw_networkx_edges(g, pos=pos, arrowsize=30)
     nx.draw_networkx_edge_labels(g, pos=pos, edge_labels=edge_labels)
@@ -217,7 +232,13 @@ def plot_instr(
 
     nx.draw_networkx_edge_labels(g, pos, edge_labels=edge_labels)
 
-    plt.legend(labelspacing=2.5, borderpad=1.5, loc="upper left", bbox_to_anchor=(1, 1.01), fontsize=legend_font_size)
+    plt.legend(
+        labelspacing=2.5,
+        borderpad=1.5,
+        loc="upper left",
+        bbox_to_anchor=(1, 1.01),
+        fontsize=legend_font_size,
+    )
 
     if filename:
         plt.savefig(filename)

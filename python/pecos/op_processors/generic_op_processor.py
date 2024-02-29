@@ -22,7 +22,11 @@ if TYPE_CHECKING:
 
 
 class GenericOpProc(OpProcessor):
-    def __init__(self, machine: Machine | None = None, error_model: ErrorModel | None = None) -> None:
+    def __init__(
+        self,
+        machine: Machine | None = None,
+        error_model: ErrorModel | None = None,
+    ) -> None:
         self.machine = machine
         self.error_model = error_model
 
@@ -45,8 +49,8 @@ class GenericOpProc(OpProcessor):
         buffered_noisy_qops = []
         for op in buffered_ops:
             if isinstance(op, pt.opt.MOp):
-                noisy_ops = self.machine.process([op])
-
+                ops = self.machine.process([op])
+                noisy_ops = self.error_model.process(ops)
             elif isinstance(op, pt.opt.QOp):
                 noisy_ops = self.error_model.process([op])
             else:

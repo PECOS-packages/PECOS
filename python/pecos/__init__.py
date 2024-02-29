@@ -10,14 +10,13 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
-
 """Performance Estimator of Codes On Surfaces (PECOS)
-==================================================.
-
+==================================================
 A framework for developing, studying, and evaluating quantum error-correcting codes.
 """
 
-from __future__ import annotations
+# Allow for other namespace packages
+__path__ = __import__("pkgutil").extend_path(__path__, __name__)
 
 from importlib.metadata import PackageNotFoundError, version
 
@@ -26,17 +25,29 @@ try:
 except PackageNotFoundError:
     __version__ = "0.0.0"
 
-# Allow for other namespace packages
-__path__ = __import__("pkgutil").extend_path(__path__, __name__)
-
 # PECOS namespaces
-from pecos import circuit_converters, circuits, decoders, engines, error_models, misc, qeccs, simulators, tools
+from pecos import (
+    circuit_converters,
+    circuits,
+    decoders,
+    engines,
+    error_models,
+    misc,
+    qeccs,
+    simulators,
+    slr,
+    tools,
+)
 from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.engines import circuit_runners
 from pecos.engines.cvm.binarray import BinArray
 from pecos.engines.hybrid_engine_old import HybridEngine
 
+from . import pyo3pecos as rs  # noqa: TID252
+
 __all__ = [
+    "__version__",
+    "rs",
     "circuits",
     "qeccs",
     "simulators",
@@ -50,4 +61,5 @@ __all__ = [
     "QuantumCircuit",
     "BinArray",
     "HybridEngine",
+    "slr",
 ]

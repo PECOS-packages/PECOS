@@ -29,7 +29,7 @@ class WasmtimeObj(ForeignObject):
     """
 
     def __init__(self, file: str | bytes | Path) -> None:
-        if isinstance(file, (str, Path)):
+        if isinstance(file, str | Path):
             with Path.open(Path(file), "rb") as f:
                 wasm_bytes = f.read()
         else:

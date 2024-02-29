@@ -33,12 +33,20 @@ class LogicalGate:
         self.instr_instances = []
         self.circuits = []  # The circuits of the logical instructions. (Either instr instances or a QuantumCircuit or
         # something with the same methods as a QuantumCircuit.)
-        self.error_free = gate_params.get("error_free", False)  # Whether errors should occur for this gate.
-        self.forced_outcome = gate_params.get("forced_outcome", True)  # Whether the measurements are random
+        self.error_free = gate_params.get(
+            "error_free",
+            False,
+        )  # Whether errors should occur for this gate.
+        self.forced_outcome = gate_params.get(
+            "forced_outcome",
+            True,
+        )  # Whether the measurements are random
         # (if True-> force -1)
         # Can choose 0 or 1.
 
-        self.qecc_params_tuple = make_hashable_params(qecc.qecc_params)  # Used for hashing.
+        self.qecc_params_tuple = make_hashable_params(
+            qecc.qecc_params,
+        )  # Used for hashing.
         self.gate_params_tuple = make_hashable_params(gate_params)  # Used for hashing.
 
     def final_instr(self):
@@ -61,7 +69,9 @@ class LogicalGate:
         # Added so the logical gate can be a key (gate symbol) in a ``QuantumCircuit``.
 
         # These uniquely identify the logical and do not change.
-        return hash(("gate", self.symbol, self.qecc_params_tuple, self.gate_params_tuple))
+        return hash(
+            ("gate", self.symbol, self.qecc_params_tuple, self.gate_params_tuple),
+        )
 
     def __eq__(self, other):
         return (self.symbol, self.qecc_params_tuple, self.gate_params_tuple, True) == (

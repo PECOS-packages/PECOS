@@ -114,7 +114,10 @@ def run_multisim(
 
     if errors:
         for i, pid, error_msg in errors:
-            warn(f"process {i} with pid = {pid} had this error message: {error_msg}", stacklevel=2)
+            warn(
+                f"process {i} with pid = {pid} had this error message: {error_msg}",
+                stacklevel=2,
+            )
         msg = "Processes experienced errors!"
         raise MultisimError(msg)
 
@@ -137,8 +140,13 @@ def worker_wrapper(args) -> tuple[dict, dict]:
 
     # TODO: Find a more elegant solution.
     foreign_object = pkwargs["foreign_object"]
-    if isinstance(foreign_object, dict) and hasattr(foreign_object["fobj_class"], "from_dict"):
-        pkwargs["foreign_object"] = foreign_object["fobj_class"].from_dict(foreign_object)
+    if isinstance(foreign_object, dict) and hasattr(
+        foreign_object["fobj_class"],
+        "from_dict",
+    ):
+        pkwargs["foreign_object"] = foreign_object["fobj_class"].from_dict(
+            foreign_object,
+        )
 
     results = {}
     try:

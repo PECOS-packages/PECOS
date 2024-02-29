@@ -30,7 +30,7 @@ def noise_meas_bitflip(op: QOp, p: float):
 
     if np.any(rand_nums):
         bitflips = []
-        for r, loc in zip(rand_nums, op.args):
+        for r, loc in zip(rand_nums, op.args, strict=False):
             if r:
                 bitflips.append(loc)
 

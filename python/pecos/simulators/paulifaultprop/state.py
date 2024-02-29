@@ -125,7 +125,12 @@ class PauliFaultProp(PauliPropagation):
 
             # need to return output?
 
-    def add_faults(self, circuit: QuantumCircuit | ParamGateCollection, *, minus=False) -> None:
+    def add_faults(
+        self,
+        circuit: QuantumCircuit | ParamGateCollection,
+        *,
+        minus=False,
+    ) -> None:
         """A methods to add faults to the state.
 
         Args:
@@ -301,4 +306,8 @@ class PauliFaultProp(PauliPropagation):
         return wt
 
     def __str__(self) -> str:
-        return "{{'X': {}, 'Y': {}, 'Z': {}}}".format(self.faults["X"], self.faults["Y"], self.faults["Z"])
+        return "{{'X': {}, 'Y': {}, 'Z': {}}}".format(
+            self.faults["X"],
+            self.faults["Y"],
+            self.faults["Z"],
+        )

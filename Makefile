@@ -1,102 +1,76 @@
-# A set of commands for development utilizing venv to develop, lint, test, document, and build the project.
-# The goal is to concretely capture the development/build process for reproducibility of the development workflow.
-
 .DEFAULT_GOAL := help
 
-.PHONY: requirements updatereqs metadeps install install-all docs lint tests tests-dep doctests tests-all clean venv dev-all build build-full help upgrade-pip dev-setup
-
-# Try to autodetect if python3 or python is the python executable used.
+# Minimum Python version required for the project
+MIN_PYTHON_VERSION := 3.10
+# Automatically select the appropriate Python interpreter.
 BASEPYTHON := $(shell which python3 2>/dev/null || which python 2>/dev/null)
+# Specifies the shell to use for executing commands.
+SHELL=/bin/bash
+# Directory for the Python virtual environment.
 VENV=.venv
 
+# Adjust the virtual environment binaries path based on the operating system.
 ifeq ($(OS),Windows_NT)
 	VENV_BIN=$(VENV)/Scripts
 else
 	VENV_BIN=$(VENV)/bin
 endif
 
-# Requirements
-# ------------
-
-requirements: upgrade-pip  ## Install/refresh Python project requirements
-	$(VENV_BIN)/pip install --upgrade -r requirements.txt
-	$(VENV_BIN)/pip install --upgrade -r docs/requirements.txt
-
-updatereqs: upgrade-pip  ## Autogenerate requirements.txt
-	$(VENV_BIN)/pip install -U pip-tools
-	-@rm requirements.txt
-	$(VENV_BIN)/pip-compile --extra=tests --no-annotate --no-emit-index-url --output-file=requirements.txt --strip-extras pyproject.toml
-
-metadeps: upgrade-pip  ## Install extra dependencies used to develop/build this package
-	$(VENV_BIN)/pip install -U build pip-tools pre-commit wheel pytest
-
-# Installation
-# ------------
-
-install: upgrade-pip  ## Install PECOS
-	$(VENV_BIN)/pip install .
-
-install-all: upgrade-pip  ## Install PECOS with all optional dependencies
-	$(VENV_BIN)/pip install .[all]
-
-# Documentation
-# -------------
-
-docs: install-all  ## Generate documentation
-	$(VENV_BIN)/pip install -r ./docs/requirements.txt
-	$(MAKE) -C docs SPHINXBUILD=../$(VENV_BIN)/sphinx-build clean html
-
-# Linting / formatting
-# --------------------
-
-lint: metadeps  ## Run all quality checks / linting / reformatting
-	$(VENV_BIN)/pre-commit run --all-files
-
-# Testing
-# -------
-
-tests: install metadeps  ## Run tests on the Python package (not including optional dependencies)
-	$(VENV_BIN)/pytest tests -m "not optional_dependency"
-
-tests-dep: install-all metadeps ## Run tests on the Python package only for optional dependencies
-	$(VENV_BIN)/pytest tests -m optional_dependency
-
-doctests:  ## Run doctests with pytest
-	$(VENV_BIN)/pytest ./docs --doctest-glob=*.rst --doctest-continue-on-failure
-
-tests-all: tests tests-dep doctests ## Run all tests
-
-# Building / Developing
-# ---------------------
-
-clean:  ## Clean up caches and build artifacts
-	-rm -rf *.egg-info dist build docs/_build .pytest_cache/ .ruff_cache/
-
-venv:  ## Build a new Python virtual environment from scratch
-	-rm -rf .venv/
+.PHONY: venv
+venv: ## Create a Python virtual environment in the .venv directory. (If .venv already exist this wont replace it.)
 	$(BASEPYTHON) -m venv $(VENV)
 
-dev-all: dev-setup  ## Create a development environment from scratch with all optional dependencies and PECOS installed in editable mode
-	$(VENV_BIN)/pip install -e .[all]
+.PHONY: requirements
+requirements: upgrade-pip  ## Install main, documentation, and development Python project requirements.
+	$(VENV_BIN)/pip install -U build pip-tools pre-commit wheel Cython typos
+	$(VENV_BIN)/pip install --upgrade -r python/requirements.txt
+	$(VENV_BIN)/pip install --upgrade -r python/docs/requirements.txt
 
-build: dev-setup  ## Clean, create new environment, and build PECOS for pypi
-	$(VENV_BIN)/python -m build --sdist --wheel -n
+.PHONY: build
+build: clean venv requirements  ## Compiles the Cython and Python packages for development.
+	@unset CONDA_PREFIX && source $(VENV_BIN)/activate \
+	&& pip install -e ./cython \
+	&& maturin develop -m python/Cargo.toml
 
-build-full: dev-setup updatereqs install-all docs lint tests-all  ## Go through the full linting, testing, and building process
-	$(VENV_BIN)/python -m build --sdist --wheel -n
+.PHONY: build-allex
+build-allex: clean venv requirements  ## Compiles the Cython and Python packages for development with the "all" extra requirements.
+	@unset CONDA_PREFIX && source $(VENV_BIN)/activate \
+	&& pip install -e ./cython \
+	&& maturin develop -E=all -m python/Cargo.toml
 
-# Help
-# ----
+.PHONY: clippy
+clippy:  ## Execute the Rust linter, clippy, across all project targets with all features enabled.
+	cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::dbg_macro
 
-help:  ## Show the help menu
-	@echo "Available make commands:"
-	@echo ""
-	@grep -E '^[a-z.A-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
+.PHONY: clippy-default
+clippy-default: ## Run clippy with default features for a quicker analysis.
+	cargo clippy --all-targets --locked -- -D warnings -D clippy::dbg_macro
 
-# Utility targets
-# ---------------
+.PHONY: pre-commit
+pre-commit: clippy clippy-default ## Run formatting and linting tools on the Python and Rust codebase.
+	$(VENV_BIN)/pre-commit run --all-files
+	cargo fmt --all
+	$(VENV_BIN)/typos
 
-upgrade-pip:
+.PHONY: clean
+clean: ## Removes directories and files related to the build process, ensuring a clean state.
+	@rm -rf target/
+    # Remove the Cargo lock file and clean the Rust project to ensure a fresh start on the next build.
+	@rm -f Cargo.lock
+	@cargo clean
+    # Call the clean target of the Makefile in the python/ and cython/ directories
+	@$(MAKE) -s -C python/ $@
+	@$(MAKE) -s -C cython/ $@
+
+.PHONY: clean-venv
+clean-venv: clean ## Removes venv, directories, and files related to the build process, ensuring a clean state.
+	@rm -rf .venv/
+
+.PHONY: upgrade-pip
+upgrade-pip: ## Update the pip version in the virtual environment.
 	$(VENV_BIN)/python -m pip install --upgrade pip
 
-dev-setup: clean venv requirements metadeps
+help:  ## Show this help menu
+	@echo "Usage: make [TARGET]..."
+	@echo "Targets:"
+	@grep -E '^[a-z.A-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'

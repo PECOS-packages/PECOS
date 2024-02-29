@@ -30,7 +30,10 @@ class GateIdentity(LogicalGate):
         """
         super().__init__(qecc, symbol, **gate_params)
 
-        expected_params(gate_params, {"num_syn_extract", "error_free", "forced_outcome"})
+        expected_params(
+            gate_params,
+            {"num_syn_extract", "error_free", "forced_outcome"},
+        )
 
         self.num_syn_extract = gate_params.get("num_syn_extract", qecc.distance)
 
@@ -50,7 +53,10 @@ class GateInitZero(LogicalGate):
         """
         super().__init__(qecc, symbol, **gate_params)
 
-        expected_params(gate_params, {"num_syn_extract", "error_free", "forced_outcome"})
+        expected_params(
+            gate_params,
+            {"num_syn_extract", "error_free", "forced_outcome"},
+        )
 
         self.num_syn_extract = gate_params.get("num_syn_extract", 0)
 
@@ -72,7 +78,10 @@ class GateInitPlus(LogicalGate):
         """
         super().__init__(qecc, symbol, **gate_params)
 
-        expected_params(gate_params, {"num_syn_extract", "error_free", "forced_outcome"})
+        expected_params(
+            gate_params,
+            {"num_syn_extract", "error_free", "forced_outcome"},
+        )
 
         self.num_syn_extract = gate_params.get("num_syn_extract", 0)
 

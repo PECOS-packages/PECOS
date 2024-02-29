@@ -166,7 +166,11 @@ class VerifyStabilizers:
             raise Exception(msg)
 
         state = self.state
-        z, x, stab_strings, destab_strings = self.get_info(state, print_y=print_y, verbose=verbose)
+        z, x, stab_strings, destab_strings = self.get_info(
+            state,
+            print_y=print_y,
+            verbose=verbose,
+        )
 
         return z, x, stab_strings, destab_strings
 
@@ -205,7 +209,7 @@ class VerifyStabilizers:
         for stab_id, check in enumerate(checks):
             ps, qs, _ = check
 
-            for p, q in zip(ps, qs):
+            for p, q in zip(ps, qs, strict=False):
                 if p in {"X", "x"}:
                     row_x[stab_id].add(q)
                     col_x[q].add(stab_id)
@@ -292,7 +296,7 @@ class VerifyStabilizers:
             ancilla_qubits.add(ancilla_id)
             qc.append("init |+>", {ancilla_id})
 
-            for p, q in zip(ps, qs):
+            for p, q in zip(ps, qs, strict=False):
                 symbol = None
 
                 if p in {"X", "x"}:
@@ -334,7 +338,7 @@ class VerifyStabilizers:
         logical_x_row_z = [set() for _ in range(len(self.logical_xs))]
 
         for i, (ps, qs, _) in enumerate(self.logical_zs):
-            for p, q in zip(ps, qs):
+            for p, q in zip(ps, qs, strict=False):
                 if p in {"X", "Y"}:
                     logical_z_col_x[q].add(i)
                     logical_z_row_x[i].add(q)
@@ -344,7 +348,7 @@ class VerifyStabilizers:
                     logical_z_row_z[i].add(q)
 
         for i, (ps, qs, _) in enumerate(self.logical_xs):
-            for p, q in zip(ps, qs):
+            for p, q in zip(ps, qs, strict=False):
                 if p in {"X", "Y"}:
                     logical_x_col_x[q].add(i)
                     logical_x_row_x[i].add(q)
@@ -414,7 +418,7 @@ class VerifyStabilizers:
 
         for strings, qids, _ in self.checks:
             check_dict = {}
-            for pauli, q in zip(strings, qids):
+            for pauli, q in zip(strings, qids, strict=False):
                 if pauli == "X":
                     qset = check_dict.setdefault("X", set())
                 elif pauli == "Z":
@@ -443,7 +447,9 @@ class VerifyStabilizers:
             checks2.append(stab_dict)
 
         if checks != checks2:
-            print("WARNING: PECOS didn't refactor the stabilizers into the checks supplied!")
+            print(
+                "WARNING: PECOS didn't refactor the stabilizers into the checks supplied!",
+            )
 
         return checks != checks2
 
@@ -461,7 +467,7 @@ class VerifyStabilizers:
 
         for strings, qids, _ in self.checks:
             check_dict = {}
-            for pauli, q in zip(strings, qids):
+            for pauli, q in zip(strings, qids, strict=False):
                 if pauli == "X":
                     qset = check_dict.setdefault("X", set())
                 elif pauli == "Z":
@@ -533,7 +539,7 @@ class VerifyStabilizers:
             xs = set()
             zs = set()
 
-            for p, q in zip(ps, qs):
+            for p, q in zip(ps, qs, strict=False):
                 if p in {"X", "x"}:
                     xs.add(q)
                 elif p in {"Z", "z"}:
@@ -543,7 +549,12 @@ class VerifyStabilizers:
                     zs.add(q)
 
             try:
-                found, stab_id = state.refactor(xs, zs, choose=0, protected=found_stab_ids)
+                found, stab_id = state.refactor(
+                    xs,
+                    zs,
+                    choose=0,
+                    protected=found_stab_ids,
+                )
             except IndexError:
                 xonly = xs - zs
                 zonly = zs - xs
@@ -558,7 +569,12 @@ class VerifyStabilizers:
                 raise Exception(msg, (ps, qs))
 
         for q in self.ancilla_qubits:
-            found, stab_id = state.refactor({q}, set(), choose=-1, protected=found_stab_ids)
+            found, stab_id = state.refactor(
+                {q},
+                set(),
+                choose=-1,
+                protected=found_stab_ids,
+            )
             found_stab_ids.add(stab_id)
 
             if not found:
@@ -572,7 +588,7 @@ class VerifyStabilizers:
             xs = set()
             zs = set()
 
-            for p, q in zip(ps, qs):
+            for p, q in zip(ps, qs, strict=False):
                 if p in {"X", "x"}:
                     xs.add(q)
                 elif p in {"Z", "z"}:
@@ -593,7 +609,11 @@ class VerifyStabilizers:
             return Exception("Must run `compile()` first!")
 
         self.refactor(state)
-        stab_strs, destab_strs = state.print_stabs(verbose=False, print_y=print_y, print_destabs=True)
+        stab_strs, destab_strs = state.print_stabs(
+            verbose=False,
+            print_y=print_y,
+            print_destabs=True,
+        )
 
         num_ancillas = len(self.ancilla_qubits)
 
@@ -620,7 +640,9 @@ class VerifyStabilizers:
         while not found_all:
             if verbose:
                 print("----")
-            for g, gtuple in enumerate(zip(state.stabs.row_x, state.stabs.row_z)):
+            for g, gtuple in enumerate(
+                zip(state.stabs.row_x, state.stabs.row_z, strict=False),
+            ):
                 if gtuple in missing_checks:
                     missing_checks.remove(gtuple)
                     try:
@@ -738,10 +760,14 @@ class VerifyStabilizers:
             xs, zs = found
             distance = len(xs | zs)
 
-            print(f"\nThis is a [[{self.num_data_qubits}, {self.num_logical_qubits()}, {distance}]] code.")
+            print(
+                f"\nThis is a [[{self.num_data_qubits}, {self.num_logical_qubits()}, {distance}]] code.",
+            )
 
         if not found:
-            print("No logical errors found... Checks might describe a stabilizer state.")
+            print(
+                "No logical errors found... Checks might describe a stabilizer state.",
+            )
             return None
         else:
             xs, zs = found
@@ -822,7 +848,7 @@ class VerifyStabilizers:
                 for ps in xzs:
                     x_set = set()
                     z_set = set()
-                    for p, q in zip(ps, b):
+                    for p, q in zip(ps, b, strict=False):
                         if p == "X":
                             x_set.add(q)
                         else:
@@ -837,7 +863,7 @@ class VerifyStabilizers:
                     for b in combinations(qubits, i):
                         x_set = set()
                         z_set = set()
-                        for p, q in zip(a, b):
+                        for p, q in zip(a, b, strict=False):
                             if p == "X":
                                 x_set.add(q)
                             elif p == "Z":
@@ -945,7 +971,13 @@ class VerifyStabilizers:
 
                 op_product = sorted(op_product)
 
-                oplist.append({"X": paulis["X"], "Z": paulis["Z"], "equiv_ops": tuple(op_product)})
+                oplist.append(
+                    {
+                        "X": paulis["X"],
+                        "Z": paulis["Z"],
+                        "equiv_ops": tuple(op_product),
+                    },
+                )
 
         if verbose:
             print("Reference Logical Operators:")
@@ -960,7 +992,13 @@ class VerifyStabilizers:
 
             print("\nLogical Ops Found:\n")
             for foundop in oplist:
-                print("X - {} Z - {} Equiv Ops - {}".format(foundop["X"], foundop["Z"], foundop["equiv_ops"]))
+                print(
+                    "X - {} Z - {} Equiv Ops - {}".format(
+                        foundop["X"],
+                        foundop["Z"],
+                        foundop["equiv_ops"],
+                    ),
+                )
 
         return oplist, self.logical_xs_reference, self.logical_zs_reference
 

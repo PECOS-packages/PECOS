@@ -10,6 +10,7 @@
 # specific language governing permissions and limitations under the License.
 
 import numpy as np
+
 from .gates_sq import X
 
 

@@ -24,7 +24,7 @@ class NamedObjectPool(ForeignObject):
 
     def __init__(self, **objects: ForeignObject) -> None:
         self.objs = objects
-        self.default = objects["default"] if "default" in objects else None
+        self.default = objects.get("default", None)
 
     def new_instance(self) -> None:
         """Create new instance/internal state."""
@@ -53,7 +53,12 @@ class NamedObjectPool(ForeignObject):
         """Get a list of function names available from the object."""
         return []
 
-    def exec(self, func_name: str, args: Sequence, namespace: str | None = None) -> tuple:
+    def exec(
+        self,
+        func_name: str,
+        args: Sequence,
+        namespace: str | None = None,
+    ) -> tuple:
         """Execute a function given a list of arguments."""
         if namespace is None:
             obj = self.default

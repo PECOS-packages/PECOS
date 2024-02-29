@@ -99,7 +99,10 @@ class LogicalCircuit(QuantumCircuit):
         for logical_tick in range(len(self)):
             for logical_gate, _, _ in self.items(tick=logical_tick):
                 for instr_index, instr_circuit in enumerate(logical_gate.circuits):
-                    params = {"logical_circuit_params": self.metadata, "gate": logical_gate}
+                    params = {
+                        "logical_circuit_params": self.metadata,
+                        "gate": logical_gate,
+                    }
                     params.update(instr_circuit.metadata)
 
                     for tick in range(len(instr_circuit)):

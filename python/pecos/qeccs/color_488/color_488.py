@@ -17,7 +17,11 @@ Generates circuits for the repetition code in the Z-Basis.
 """
 from pecos.qeccs.color_488.circuit_implementation1 import OneAncillaPerCheck
 from pecos.qeccs.color_488.gates import GateIdentity, GateInitPlus, GateInitZero
-from pecos.qeccs.color_488.instructions import InstrInitPlus, InstrInitZero, InstrSynExtraction
+from pecos.qeccs.color_488.instructions import (
+    InstrInitPlus,
+    InstrInitZero,
+    InstrSynExtraction,
+)
 from pecos.qeccs.qecc_parent_class import QECC
 
 
@@ -67,8 +71,13 @@ class Color488(QECC):
         # Determine number of ancillas to reserve given the check circuit implementation and, perhaps, the logical
         # gate circuits implemented by this class.
         # --------------------------------------------------------------------------------------------------------------
-        self.circuit_compiler = qecc_params.get("circuit_compiler", OneAncillaPerCheck())
-        self.num_ancilla_qudits = self.circuit_compiler.get_num_ancillas(self.num_syndromes)
+        self.circuit_compiler = qecc_params.get(
+            "circuit_compiler",
+            OneAncillaPerCheck(),
+        )
+        self.num_ancilla_qudits = self.circuit_compiler.get_num_ancillas(
+            self.num_syndromes,
+        )
 
         # Total number of qudits.
         # self.qudit_set, self.data_qudit_set, self.ancilla_qudit_set will be determined when creating the layout.
@@ -116,8 +125,12 @@ class Color488(QECC):
             distance_width = distance_height = distance
 
         else:
-            distance_width = params.get("distance_width")  # The width of the code. == Z? distance
-            distance_height = params.get("distance_height")  # The height of the code. == X? distance
+            distance_width = params.get(
+                "distance_width",
+            )  # The width of the code. == Z? distance
+            distance_height = params.get(
+                "distance_height",
+            )  # The height of the code. == X? distance
             distance = min(distance_width, distance_height)
 
         return distance, distance_height, distance_width

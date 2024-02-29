@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools", "wheel", "Cython"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cypecos"
+version = "0.1.0"
+description = "C++/Cython extensions for Python PECOS."
+
+[tool.setuptools]
+packages = ["cypecos", "cypecos.cysparsesim"]
+
+# testing
+# -------
+[tool.pytest.ini_options]
+addopts = [
+    "--strict-config",
+    "--strict-markers",
+    "--import-mode=importlib",
+    # By default, run fast tests and only tests using required dependencies. To run all tests: pytest -m ""
+    # -m not slow and not optional_dependency
+    "-m not optional_dependency",
+]
+
+testpaths = ["tests"]
+markers = [
+    # slow: mark test as slow.
+    "optional_dependency: mark a test as using one or more optional dependencies.",
+    "optional_unix: mark tests as using an optional dependency that only work with Unix-based systems.",
+]
+
+filterwarnings = [
+    "ignore::DeprecationWarning:dateutil.tz.tz.*",
+]

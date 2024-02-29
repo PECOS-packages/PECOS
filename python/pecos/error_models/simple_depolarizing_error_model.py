@@ -88,7 +88,7 @@ class SimpleDepolarizingErrorModel(ErrorModel):
                 rand_nums = np.random.random(len(op.args)) <= self._eparams["p_init"]
 
                 if np.any(rand_nums):
-                    for r, loc in zip(rand_nums, op.args):
+                    for r, loc in zip(rand_nums, op.args, strict=False):
                         if r:
                             erroneous_ops.append(QOp(name="X", args=[loc], metadata={}))
 
@@ -99,10 +99,12 @@ class SimpleDepolarizingErrorModel(ErrorModel):
                 rand_nums = np.random.random(len(op.args)) <= self._eparams["p1"]
 
                 if np.any(rand_nums):
-                    for r, loc in zip(rand_nums, op.args):
+                    for r, loc in zip(rand_nums, op.args, strict=False):
                         if r:
                             err = np.random.choice(one_qubit_paulis)
-                            erroneous_ops.append(QOp(name=err[0], args=[loc], metadata={}))
+                            erroneous_ops.append(
+                                QOp(name=err[0], args=[loc], metadata={}),
+                            )
 
             # ########################################
             # TWO QUBIT GATES
@@ -111,14 +113,18 @@ class SimpleDepolarizingErrorModel(ErrorModel):
                 rand_nums = np.random.random(len(op.args)) <= self._eparams["p2"]
 
                 if np.any(rand_nums):
-                    for r, loc in zip(rand_nums, op.args):
+                    for r, loc in zip(rand_nums, op.args, strict=False):
                         if r:
                             err = np.random.choice(two_qubit_paulis)
                             loc1, loc2 = loc
                             if err[0] != "I":
-                                erroneous_ops.append(QOp(name=err[0], args=[loc1], metadata={}))
+                                erroneous_ops.append(
+                                    QOp(name=err[0], args=[loc1], metadata={}),
+                                )
                             if err[1] != "I":
-                                erroneous_ops.append(QOp(name=err[1], args=[loc2], metadata={}))
+                                erroneous_ops.append(
+                                    QOp(name=err[1], args=[loc2], metadata={}),
+                                )
 
             # ########################################
             # MEASURE X NOISE
@@ -127,7 +133,7 @@ class SimpleDepolarizingErrorModel(ErrorModel):
                 rand_nums = np.random.random(len(op.args)) <= self._eparams["p_meas"]
 
                 if np.any(rand_nums):
-                    for r, loc in zip(rand_nums, op.args):
+                    for r, loc in zip(rand_nums, op.args, strict=False):
                         if r:
                             erroneous_ops.append(QOp(name="X", args=[loc], metadata={}))
 

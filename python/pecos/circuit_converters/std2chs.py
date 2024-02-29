@@ -138,6 +138,8 @@ def std2chs(quantum_circuit):
                     compiled_circuit.append("CNOT", new_locations, **params)
 
         else:
-            raise Exception('Symbol "%s" is not currently handled by this converter!' % symbol)
+            raise Exception(
+                'Symbol "%s" is not currently handled by this converter!' % symbol,
+            )
 
     return compiled_circuit

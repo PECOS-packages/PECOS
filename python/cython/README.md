@@ -124,7 +124,7 @@ For publications utilizing PECOS, kindly cite PECOS such as:
 
 ## License
 
-This project is licensed under the Apache-2.0 License - see the [LICENSE](./LICENSE) and [NOTICE](NOTICE) files for
+This project is licensed under the Apache-2.0 License - see the [LICENSE](LICENSE) and [NOTICE](NOTICE) files for
 details.
 
 ## Supported by

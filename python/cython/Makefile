@@ -5,7 +5,7 @@
 
 # Try to autodetect if python3 or python is the python executable used.
 BASEPYTHON := $(shell which python3 2>/dev/null || which python 2>/dev/null)
-VENV=../.venv
+VENV=../../.venv
 
 ifeq ($(OS),Windows_NT)
 	VENV_BIN=$(VENV)/Scripts
@@ -19,7 +19,6 @@ endif
 .PHONY: requirements
 requirements: upgrade-pip  ## Install/refresh Python project requirements
 	$(VENV_BIN)/pip install --upgrade -r requirements.txt
-	$(VENV_BIN)/pip install --upgrade -r docs/requirements.txt
 
 .PHONY: updatereqs
 updatereqs: upgrade-pip  ## Autogenerate requirements.txt
@@ -41,14 +40,6 @@ install: upgrade-pip  ## Install PECOS
 .PHONY: install-all
 install-all: upgrade-pip  ## Install PECOS with all optional dependencies
 	$(VENV_BIN)/pip install .[all]
-
-# Documentation
-# -------------
-
-.PHONY: docs
-docs: install-all  ## Generate documentation
-	$(VENV_BIN)/pip install -r ./docs/requirements.txt
-	$(MAKE) -C docs SPHINXBUILD=../$(VENV_BIN)/sphinx-build clean html
 
 # Linting / formatting
 # --------------------

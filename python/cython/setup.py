@@ -13,6 +13,20 @@
 # ruff: noqa
 from Cython.Build import cythonize
 from setuptools import Extension, setup
+import os
+import shutil
+
+
+# Temporarily copy C++ files
+cpp_src_path = "../../cpp/sparsesim"
+temp_include_path = "cypecos/cysparsesim/src/"
+
+# Ensure the target directory exists
+os.makedirs(temp_include_path, exist_ok=True)
+
+# Copy the necessary files
+for filename in ["sparsesim.cpp", "sparsesim.h"]:
+    shutil.copy(os.path.join(cpp_src_path, filename), temp_include_path)
 
 compiler_flags = [
     "-std=c++17",
@@ -30,9 +44,9 @@ ext_modules = [
         "cypecos.cysparsesim.cysparsesim",
         sources=[
             "cypecos/cysparsesim/cysparsesim.pyx",
-            "../cpp/sparsesim/sparsesim.cpp",
+            "cypecos/cysparsesim/src/sparsesim.cpp",
         ],
-        include_dirs=["../cpp/sparsesim"],
+        include_dirs=[temp_include_path],
         language="c++",
         extra_compile_args=compiler_flags,
     ),
@@ -51,3 +65,7 @@ setup(
         language_level=3,
     ),
 )
+
+# Remove temporary C++ files
+if os.path.exists(temp_include_path):
+    shutil.rmtree(temp_include_path)

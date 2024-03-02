@@ -13,7 +13,7 @@
 Test all one-qubit gates.
 """
 
-from pecos.simulators import pySparseSim
+from pypecos.simulators import pySparseSim
 
 states = [pySparseSim]
 

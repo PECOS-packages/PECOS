@@ -18,7 +18,7 @@ the size of the quantum registry:
 
 
 
->>> from pecos.simulators import SparseSim
+>>> from pypecos.simulators import SparseSim
 >>> state = SparseSim(4)
 
 Note, for all simulators, the initial state of each qudit is the state :math:`|0\rangle`.
@@ -80,7 +80,7 @@ in Monte Carlo simulations to determine if logical errors have flipped the sign 
  An example of using the ``logical_sign`` method is seen in the following:
 
 >>> # Continuing with the following example:
->>> from pecos.circuits import QuantumCircuit
+>>> from pypecos.circuits import QuantumCircuit
 >>> stab = QuantumCircuit([{"Z": {0, 1}}])
 >>> state.logical_sign(stab)
 1

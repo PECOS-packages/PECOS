@@ -14,8 +14,8 @@ To begin, we create an empty Python file called ``zrepetition.py`` and import so
     A representation of the Z-check repetition code.
     """
 
-    from pecos.circuits import QuantumCircuit
-    from pecos.qeccs import QECC, LogicalGate, LogicalInstruction
+    from pypecos.circuits import QuantumCircuit
+    from pypecos.qeccs import QECC, LogicalGate, LogicalInstruction
 
 Subclasses of ``QECC``, ``LogicalGate``, and ``LogicalInstruction`` inherit numerous methods and attributes that
 simplify the creation of new ``qeccs``. If some of the inherited methods and attributes are not appropriate for a QECC,

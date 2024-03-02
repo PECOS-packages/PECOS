@@ -1,4 +1,4 @@
-from pecos.engines.hybrid_engine import HybridEngine
+from pypecos.engines.hybrid_engine import HybridEngine
 
 
 def test_setting_bits1():

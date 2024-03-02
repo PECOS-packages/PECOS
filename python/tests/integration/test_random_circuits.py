@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import numpy as np
-from pecos.simulators import SparseSim as StateSparse
+from pypecos.simulators import SparseSim as StateSparse
 
 
 def test_random_circuits():
@@ -21,7 +21,7 @@ def test_random_circuits():
 
     # Add wrapped CHP
     try:
-        from pecos.state_sims.cychp import State as StateCHP
+        from pypecos.state_sims.cychp import State as StateCHP
 
         state_sims.append(StateCHP)
 
@@ -30,7 +30,7 @@ def test_random_circuits():
 
     # Add wrapped GraphSim
     try:
-        from pecos.state_sims.cygraphsim import State as StateGraph
+        from pypecos.state_sims.cygraphsim import State as StateGraph
 
         state_sims.append(StateGraph)
 
@@ -39,7 +39,7 @@ def test_random_circuits():
 
     # Add wrapped C++ version of SparseStabSim
     try:
-        from pecos.state_sims.cysparsesim import State as StateCySparse
+        from pypecos.state_sims.cysparsesim import State as StateCySparse
 
         state_sims.append(StateCySparse)
 
@@ -47,7 +47,7 @@ def test_random_circuits():
         pass
 
     try:
-        from pecos.state_sims.cysparsesim_simple import State as StateCySparseSim
+        from pypecos.state_sims.cysparsesim_simple import State as StateCySparseSim
 
         state_sims.append(StateCySparseSim)
 

@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from pecos.circuits import QuantumCircuit
+from pypecos.circuits import QuantumCircuit
 
 
 def test_quantum_circuits():

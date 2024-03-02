@@ -13,21 +13,21 @@ import json
 from pathlib import Path
 
 import pytest
-from pecos.classical_interpreters.phir_classical_interpreter import (
-    PHIRClassicalInterpreter,
-)
-from pecos.engines.hybrid_engine import HybridEngine
-from pecos.error_models.generic_error_model import GenericErrorModel
 from phir.model import PHIRModel
 from pydantic import ValidationError
+from pypecos.classical_interpreters.phir_classical_interpreter import (
+    PHIRClassicalInterpreter,
+)
+from pypecos.engines.hybrid_engine import HybridEngine
+from pypecos.error_models.generic_error_model import GenericErrorModel
 
 try:
-    from pecos.foreign_objects.wasmtime import WasmtimeObj
+    from pypecos.foreign_objects.wasmtime import WasmtimeObj
 except ImportError:
     WasmtimeObj = None
 
 try:
-    from pecos.foreign_objects.wasmer import WasmerObj
+    from pypecos.foreign_objects.wasmer import WasmerObj
 
     WASMER_ERR_MSG = None
 except ImportError as e:

@@ -11,8 +11,8 @@
 # specific language governing permissions and limitations under the License.
 
 import numpy as np
-import pecos as pc
-from pecos.misc.threshold_curve import func
+import pypecos as pc
+from pypecos.misc.threshold_curve import func
 
 
 def test_finding_threshold():

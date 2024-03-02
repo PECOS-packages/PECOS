@@ -115,7 +115,7 @@ tool for quickly plotting and evaluating logical vs physical error-rates:
 
 .. code-block:: python
 
-    from pecos.tools import plot_pseudo
+    from pypecos.tools import plot_pseudo
 
     plot_pseudo(deg=2, plist=ps, plog=plog)
 

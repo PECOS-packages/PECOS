@@ -57,7 +57,7 @@ jobs:
           pip install "${WHEEL_FILE}" --force-reinstall
           pip install pytest
           cd ./python/pypecos && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
-          cd ..
+          cd ../..
           pip install "${WHEEL_FILE}"[all] --force-reinstall
           cd ./python/pypecos && pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
       - name: pytest aarch64
@@ -79,7 +79,7 @@ jobs:
             WHEEL_FILE=$(ls dist/pypecos-*-cp${PYTHON_VER}-*.whl)
             pip3 install "${WHEEL_FILE}" --force-reinstall --only-binary :all:
             cd ./python/pypecos && python3 -m pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
-            cd ..
+            cd ../..
             pip install "${WHEEL_FILE}"[all] --force-reinstall
             cd ./python/pypecos && python3 -m pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
 
@@ -126,7 +126,7 @@ jobs:
           pip install "${WHEEL_FILE}" --force-reinstall
           pip install pytest
           cd ./python/pypecos && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
-          cd ..
+          cd ../..
           pip install "${WHEEL_FILE}"[all] --force-reinstall
           cd ./python/pypecos && pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
 
@@ -170,7 +170,7 @@ jobs:
           pip install "${WHEEL_FILE}" --force-reinstall
           pip install pytest
           cd ./python/pypecos && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
-          cd ..
+          cd ../..
           pip install "${WHEEL_FILE}"[all] --force-reinstall
           cd ./python/pypecos && pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
 

@@ -53,7 +53,7 @@ jobs:
           pip install pytest-cov
           set -e
           PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
-          WHEEL_FILE=$(ls dist/python/pypecos/pypecos-*-cp${PYTHON_VER}-*.whl)
+          WHEEL_FILE=$(ls dist/pypecos-*-cp${PYTHON_VER}-*.whl)
           pip install "${WHEEL_FILE}" --force-reinstall
           pip install pytest
           cd ./python/pypecos && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
@@ -76,7 +76,7 @@ jobs:
             pip3 install pytest-cov
             set -e
             PYTHON_VER=$(python3 -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
-            WHEEL_FILE=$(ls dist/python/pypecos/pypecos-*-cp${PYTHON_VER}-*.whl)
+            WHEEL_FILE=$(ls dist/pypecos-*-cp${PYTHON_VER}-*.whl)
             pip3 install "${WHEEL_FILE}" --force-reinstall --only-binary :all:
             cd ./python/pypecos && python3 -m pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
             cd ..
@@ -122,7 +122,7 @@ jobs:
           pip install pytest-cov
           set -e
           PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
-          WHEEL_FILE=$(ls dist/python/pypecos/pypecos-*-cp${PYTHON_VER}-*.whl)
+          WHEEL_FILE=$(ls dist/pypecos-*-cp${PYTHON_VER}-*.whl)
           pip install "${WHEEL_FILE}" --force-reinstall
           pip install pytest
           cd ./python/pypecos && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
@@ -166,7 +166,7 @@ jobs:
           pip install pytest-cov
           set -e
           PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
-          WHEEL_FILE=$(ls dist/python/pypecos/pypecos-*-cp${PYTHON_VER}-*.whl)
+          WHEEL_FILE=$(ls dist/pypecos-*-cp${PYTHON_VER}-*.whl)
           pip install "${WHEEL_FILE}" --force-reinstall
           pip install pytest
           cd ./python/pypecos && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html

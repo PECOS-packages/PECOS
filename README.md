@@ -57,6 +57,8 @@ options. To install all optional dependencies use:
 pip install .[all]
 ```
 
+Certain simulators have special requirements and are not installed by the command above. Installation instructions for these are provided [here](#simulators-with-special-requirements).
+
 For development, use (while including installation options as necessary):
 
 On Linux/Mac:
@@ -90,6 +92,12 @@ Tests can be run using:
 ```sh
 pytest tests
 ```
+
+### Simulators with special requirements
+
+Certain simulators from `pecos.simulators` require external packages that are not installed by `pip install .[all]`.
+
+- `CuStateVec` requires a Linux machine with an NVIDIA GPU (see requirements [here](https://docs.nvidia.com/cuda/cuquantum/latest/getting_started/getting_started.html#dependencies-custatevec-label)). PECOS' dependencies are specified in the `[cuda]` section of `pyproject.toml` and can be installed via `pip install .[cuda]`. If installation is not successful, see alternative instructions [here](https://docs.nvidia.com/cuda/cuquantum/latest/getting_started/getting_started.html#installing-cuquantum).
 
 ## Uninstall
 

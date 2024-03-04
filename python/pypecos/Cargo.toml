@@ -8,5 +8,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pecos-sim = { workspace=true }
+# path = "../../../crates/pecos-sim"
 
 pyo3 = { workspace=true, features = ["extension-module"] }

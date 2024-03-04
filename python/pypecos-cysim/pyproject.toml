@@ -3,12 +3,12 @@ requires = ["setuptools", "wheel", "Cython"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cypecos"
+name = "pypecos-cysim"
 version = "0.1.0"
 description = "C++/Cython extensions for Python PECOS."
 
 [tool.setuptools]
-packages = ["cypecos", "cypecos.cysparsesim"]
+packages = ["pypecos_cysim", "pypecos_cysim.cysparsesim"]
 
 # testing
 # -------

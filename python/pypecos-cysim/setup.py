@@ -11,15 +11,15 @@
 
 # Ruff is acting up with this file and acting differently between OSes
 # ruff: noqa
-from Cython.Build import cythonize
-from setuptools import Extension, setup
 import os
 import shutil
 
+from Cython.Build import cythonize
+from setuptools import Extension, setup
 
 # Temporarily copy C++ files
 cpp_src_path = "../../cpp/sparsesim"
-temp_include_path = "cypecos/cysparsesim/src/"
+temp_include_path = "pypecos_cysim/cysparsesim/src/"
 
 # Ensure the target directory exists
 os.makedirs(temp_include_path, exist_ok=True)
@@ -41,10 +41,10 @@ compiler_flags = [
 
 ext_modules = [
     Extension(
-        "cypecos.cysparsesim.cysparsesim",
+        "pypecos_cysim.cysparsesim.cysparsesim",
         sources=[
-            "cypecos/cysparsesim/cysparsesim.pyx",
-            "cypecos/cysparsesim/src/sparsesim.cpp",
+            "pypecos_cysim/cysparsesim/cysparsesim.pyx",
+            "pypecos_cysim/cysparsesim/src/sparsesim.cpp",
         ],
         include_dirs=[temp_include_path],
         language="c++",

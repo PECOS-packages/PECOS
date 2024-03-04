@@ -15,4 +15,4 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 #  =========================================================================  #
-from cypecos.cysparsesim.cysparsesim import SparseSim as CySparseSim
+from pypecos_cysim.cysparsesim.cysparsesim import SparseSim as CySparseSim

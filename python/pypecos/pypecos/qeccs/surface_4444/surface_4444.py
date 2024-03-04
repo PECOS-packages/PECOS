@@ -17,8 +17,8 @@
 Generates circuits for the repetition code in the Z-Basis.
 """
 from pypecos.circuit_converters.checks2circuit import Check2Circuits
-from pypecos.pecos.qeccs.surface_4444.gates import GateIdentity, GateInitPlus, GateInitZero
 from pypecos.qeccs.qecc_parent_class import QECC
+from pypecos.qeccs.surface_4444.gates import GateIdentity, GateInitPlus, GateInitZero
 from pypecos.qeccs.surface_4444.instructions import (
     InstrInitPlus,
     InstrInitZero,

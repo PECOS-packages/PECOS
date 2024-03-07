@@ -90,20 +90,6 @@ class PyPMIR:
             # TODO: flatten to just list of ints even for TQ, etc.
             # TODO: Note size of gate?
 
-            args = []
-            for a in o["args"]:
-                if isinstance(a[0], list):
-                    tup = []
-                    for b in a:
-                        qsym, qid = b
-                        qdata = p.qvar_meta[qsym]
-                        tup.append(qdata.qubit_ids[qid])
-                    args.append(tup)
-                else:
-                    qsym, qid = a
-                    qdata = p.qvar_meta[qsym]
-                    args.append(qdata.qubit_ids[qid])
-
             metadata = {} if o.get("metadata") is None else o["metadata"]
 
             if o.get("angles"):
@@ -117,6 +103,8 @@ class PyPMIR:
                     metadata["angle"] = angles[0]
                 else:
                     metadata["angles"] = angles
+
+            args = cls.get_qargs(o, p)
 
             # TODO: Added to satisfy old-style error models. Remove when they not longer need this...
             if o.get("returns"):
@@ -149,7 +137,13 @@ class PyPMIR:
                 instr = op.COp(name=o["cop"], args=o["args"], returns=o.get("returns"), metadata=o.get("metadata"))
 
         elif "mop" in o:
-            instr = op.MOp(name=o["mop"], args=o.get("args"), returns=o.get("returns"), metadata=o.get("metadata"))
+            if "args" in o:
+                # TODO: Assuming qargs... but that might not always be the case...
+                args = cls.get_qargs(o, p)
+            else:
+                args = None
+
+            instr = op.MOp(name=o["mop"], args=args, returns=o.get("returns"), metadata=o.get("metadata"))
             if "duration" in o:
                 if instr.metadata is None:
                     instr.metadata = {}
@@ -173,6 +167,23 @@ class PyPMIR:
             raise Exception(msg)
 
         return instr
+
+    @staticmethod
+    def get_qargs(o, p) -> list[int] | list[tuple[int]]:
+        args = []
+        for a in o["args"]:
+            if isinstance(a[0], list):
+                tup = []
+                for b in a:
+                    qsym, qid = b
+                    qdata = p.qvar_meta[qsym]
+                    tup.append(qdata.qubit_ids[qid])
+                args.append(tup)
+            else:
+                qsym, qid = a
+                qdata = p.qvar_meta[qsym]
+                args.append(qdata.qubit_ids[qid])
+        return args
 
     @classmethod
     def from_phir(cls, phir: dict, sim_name_resolver=None) -> PyPMIR:

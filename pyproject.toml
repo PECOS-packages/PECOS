@@ -104,4 +104,4 @@ namespaces = true
 
 [tool.black]
 line-length = 120
-extend-exclude = "python/pecos/simulators/cuquantum/*"
+extend-exclude = "python/pecos/simulators/cuquantum_old/*"

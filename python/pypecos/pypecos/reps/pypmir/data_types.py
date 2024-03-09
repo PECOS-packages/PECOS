@@ -19,12 +19,7 @@ class Data(Instr):
 
 
 class DefineVar(Data):
-    def __init__(
-        self,
-        data_type: str | type,
-        variable: str,
-        metadata: dict | None = None,
-    ) -> None:
+    def __init__(self, data_type: str | type, variable: str, metadata: dict | None = None) -> None:
         super().__init__(metadata=metadata)
         self.data_type = data_type
         self.variable = variable
@@ -59,12 +54,7 @@ class QVarDefine(DefineVar):
 
 
 class ExportVar(Data):
-    def __init__(
-        self,
-        variables: list[str],
-        to: list[str] | None = None,
-        metadata: dict | None = None,
-    ) -> None:
+    def __init__(self, variables: list[str], to: list[str] | None = None, metadata: dict | None = None) -> None:
         super().__init__(metadata=metadata)
         self.variables = variables
         self.to = to

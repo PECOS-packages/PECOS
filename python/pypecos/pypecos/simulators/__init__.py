@@ -37,3 +37,5 @@ try:
     from pypecos.simulators.projectq.state import ProjectQSim  # wrapper for ProjectQ sim
 except ImportError:
     pass
+
+from pypecos.simulators.cointoss.state import CoinToss

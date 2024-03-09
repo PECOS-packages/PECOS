@@ -20,7 +20,7 @@ from numpy.testing import assert_allclose, assert_array_equal
 
 sys.path.append("./build/bin")
 sys.path.append("../build/bin")
-import cuquantum_wrapper as cq
+from pypecos.simulators.cuquantum_old import cuquantum_wrapper as cq
 
 
 class TestPythonBindings(unittest.TestCase):

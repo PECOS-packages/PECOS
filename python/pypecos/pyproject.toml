@@ -85,8 +85,12 @@ all = [
     "pypecos[wasmtime]",
     "pypecos[wasmer]",
     "pypecos[visualization]",
-    "pypecos[tests]",
     "pypecos[lint]",
+    "pypecos[tests]",
+]
+cuda = [
+    "cuquantum-python>=23.6.0",
+    "cupy>=10.4.0",
 ]
 
 [tool.maturin]

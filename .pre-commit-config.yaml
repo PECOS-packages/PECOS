@@ -34,7 +34,7 @@ repos:
       - id: black
         exclude: |
             (?x)^(
-                python/pecos/simulators/cuquantum/custatevec/bindings.py|
+                python/pecos/simulators/cuquantum_old/custatevec/bindings.py|
             )$
 
   - repo: https://github.com/keewis/blackdoc

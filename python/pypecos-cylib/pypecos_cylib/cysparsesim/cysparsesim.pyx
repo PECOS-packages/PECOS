@@ -16,10 +16,10 @@
 #   limitations under the License.
 #  =========================================================================  #
 
-from pypecos_cysim.cysparsesim cimport cysparsesim_header as s
-from pypecos_cysim.cysparsesim.cysparsesim_header cimport int_num, bool
+from pypecos_cylib.cysparsesim cimport cysparsesim_header as s
+from pypecos_cylib.cysparsesim.cysparsesim_header cimport int_num, bool
 
-from pypecos_cysim.cysparsesim.logical_sign import find_logical_signs
+from pypecos_cylib.cysparsesim.logical_sign import find_logical_signs
 
 cdef dict bindings = {
 

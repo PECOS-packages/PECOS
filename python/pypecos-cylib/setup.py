@@ -19,7 +19,7 @@ from setuptools import Extension, setup
 
 # Temporarily copy C++ files
 cpp_src_path = "../../cpp/sparsesim"
-temp_include_path = "pypecos_cysim/cysparsesim/src/"
+temp_include_path = "pypecos_cylib/cysparsesim/src/"
 
 # Ensure the target directory exists
 os.makedirs(temp_include_path, exist_ok=True)
@@ -41,10 +41,10 @@ compiler_flags = [
 
 ext_modules = [
     Extension(
-        "pypecos_cysim.cysparsesim.cysparsesim",
+        "pypecos_cylib.cysparsesim.cysparsesim",
         sources=[
-            "pypecos_cysim/cysparsesim/cysparsesim.pyx",
-            "pypecos_cysim/cysparsesim/src/sparsesim.cpp",
+            "pypecos_cylib/cysparsesim/cysparsesim.pyx",
+            "pypecos_cylib/cysparsesim/src/sparsesim.cpp",
         ],
         include_dirs=[temp_include_path],
         language="c++",

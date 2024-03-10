@@ -1,0 +1,13 @@
+[package]
+name = "pypecos-rslib"
+version = "0.5.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+pecos-sim = { workspace=true }
+# path = "../../../crates/pecos-sim"
+
+pyo3 = { workspace=true, features = ["extension-module"] }

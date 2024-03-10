@@ -25,18 +25,16 @@ pre-commit: fmt clippy clippy-default  ## Run autoformatting and linting
 .PHONY: test
 test:  ## Run tests
 	cargo test --all-features \
-		-p pecos-eng \
 		-p pecos-sim \
-		-p pecos-noise \
+		-p pecos-cli \
 		-- \
 		--test-threads=4
 
 .PHONY: publish
 publish:  ## Publish Polars crates
-	cargo publish --allow-dirty -p pecos-noise
 	cargo publish --allow-dirty -p pecos-sim
-	cargo publish --allow-dirty -p pecos-eng
 	cargo publish --allow-dirty -p pecos
+	cargo publish --allow-dirty -p pecos-cli
 
 # Help
 # ----

@@ -23,20 +23,20 @@ venv: ## Create a Python virtual environment in the .venv directory. (If .venv a
 .PHONY: requirements
 requirements: upgrade-pip  ## Install main, documentation, and development Python project requirements.
 	$(VENV_BIN)/pip install -U build pip-tools pre-commit wheel Cython typos
-	$(VENV_BIN)/pip install --upgrade -r python/requirements.txt
+	$(VENV_BIN)/pip install --upgrade -r python/pypecos/requirements.txt
 	$(VENV_BIN)/pip install --upgrade -r python/docs/requirements.txt
 
 .PHONY: build
 build: clean venv requirements  ## Compiles the Cython and Python packages for development.
 	@unset CONDA_PREFIX && source $(VENV_BIN)/activate \
-	&& pip install -e ./cython \
-	&& maturin develop -m python/Cargo.toml
+	&& pip install -e ./python/pypecos-cylib \
+	&& maturin develop -m python/pypecos/Cargo.toml
 
 .PHONY: build-allex
 build-allex: clean venv requirements  ## Compiles the Cython and Python packages for development with the "all" extra requirements.
 	@unset CONDA_PREFIX && source $(VENV_BIN)/activate \
-	&& pip install -e ./cython \
-	&& maturin develop -E=all -m python/Cargo.toml
+	&& pip install -e ./python/pypecos-cylib \
+	&& maturin develop -E=all -m python/pypecos/Cargo.toml
 
 .PHONY: clippy
 clippy:  ## Execute the Rust linter, clippy, across all project targets with all features enabled.
@@ -60,7 +60,6 @@ clean: ## Removes directories and files related to the build process, ensuring a
 	@cargo clean
     # Call the clean target of the Makefile in the python/ and cython/ directories
 	@$(MAKE) -s -C python/ $@
-	@$(MAKE) -s -C cython/ $@
 
 .PHONY: clean-venv
 clean-venv: clean ## Removes venv, directories, and files related to the build process, ensuring a clean state.

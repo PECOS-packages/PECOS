@@ -43,11 +43,8 @@ from pypecos.engines import circuit_runners
 from pypecos.engines.cvm.binarray import BinArray
 from pypecos.engines.hybrid_engine_old import HybridEngine
 
-from . import pyo3pecos as rs  # noqa: TID252
-
 __all__ = [
     "__version__",
-    "rs",
     "circuits",
     "qeccs",
     "simulators",

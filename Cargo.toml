@@ -13,7 +13,6 @@
 resolver = "2"
 members = [
     "crates/*",
-    "python/pypecos",
     "python/pypecos-rslib",
 ]
 default-members = [

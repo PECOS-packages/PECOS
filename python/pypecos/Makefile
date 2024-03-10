@@ -5,7 +5,7 @@
 
 # Try to autodetect if python3 or python is the python executable used.
 BASEPYTHON := $(shell which python3 2>/dev/null || which python 2>/dev/null)
-VENV=../.venv
+VENV=../../.venv
 
 ifeq ($(OS),Windows_NT)
 	VENV_BIN=$(VENV)/Scripts

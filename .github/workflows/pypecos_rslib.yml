@@ -1,4 +1,4 @@
-name: Python application
+name: PECOS-rslib
 
 on:
   push:
@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 jobs:
-  linux:
+  linux-pypecos-rslib:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -37,7 +37,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --manifest-path ./python/pypecos/Cargo.toml
+          args: --release --out dist --find-interpreter --manifest-path ./python/pypecos-rslib/Cargo.toml
           sccache: 'true'
           manylinux: auto
       - name: Upload wheels
@@ -53,13 +53,13 @@ jobs:
           pip install pytest-cov
           set -e
           PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
-          WHEEL_FILE=$(ls dist/pypecos-*-cp${PYTHON_VER}-*.whl)
+          WHEEL_FILE=$(ls dist/pypecos-rslib-*-cp${PYTHON_VER}-*.whl)
           pip install "${WHEEL_FILE}" --force-reinstall
           pip install pytest
-          cd ./python/pypecos && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+          cd ./python/pypecos-rslib && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
           cd ../..
           pip install "${WHEEL_FILE}"[all] --force-reinstall
-          cd ./python/pypecos && pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
+          cd ./python/pypecos-rslib && pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
       - name: pytest aarch64
         if: ${{ !startsWith(matrix.target, 'x86') && !startsWith(matrix.target, 'ppc64')}}
         uses: uraimo/run-on-arch-action@v2.7.1
@@ -76,14 +76,14 @@ jobs:
             pip3 install pytest-cov
             set -e
             PYTHON_VER=$(python3 -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
-            WHEEL_FILE=$(ls dist/pypecos-*-cp${PYTHON_VER}-*.whl)
+            WHEEL_FILE=$(ls dist/pypecos-rslib-*-cp${PYTHON_VER}-*.whl)
             pip3 install "${WHEEL_FILE}" --force-reinstall --only-binary :all:
-            cd ./python/pypecos && python3 -m pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+            cd ./python/pypecos-rslib && python3 -m pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
             cd ../..
             pip install "${WHEEL_FILE}"[all] --force-reinstall
-            cd ./python/pypecos && python3 -m pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
+            cd ./python/pypecos-rslib && python3 -m pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
 
-  windows:
+  windows-pypecos-rslib:
     runs-on: windows-latest
     strategy:
       matrix:
@@ -107,7 +107,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --manifest-path ./python/pypecos/Cargo.toml
+          args: --release --out dist --find-interpreter --manifest-path ./python/pypecos-rslib/Cargo.toml
           sccache: 'true'
       - name: Upload wheels
         uses: actions/upload-artifact@v3
@@ -122,15 +122,15 @@ jobs:
           pip install pytest-cov
           set -e
           PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
-          WHEEL_FILE=$(ls dist/pypecos-*-cp${PYTHON_VER}-*.whl)
+          WHEEL_FILE=$(ls dist/pypecos-rslib-*-cp${PYTHON_VER}-*.whl)
           pip install "${WHEEL_FILE}" --force-reinstall
           pip install pytest
-          cd ./python/pypecos && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+          cd ./python/pypecos-rslib && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
           cd ../..
           pip install "${WHEEL_FILE}"[all] --force-reinstall
-          cd ./python/pypecos && pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
+          cd ./python/pypecos-rslib && pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
 
-  macos:
+  macos-pypecos-rslib:
     runs-on: macos-latest
     strategy:
       matrix:
@@ -151,7 +151,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --manifest-path ./python/pypecos/Cargo.toml
+          args: --release --out dist --find-interpreter --manifest-path ./python/pypecos-rslib/Cargo.toml
           sccache: 'true'
       - name: Upload wheels
         uses: actions/upload-artifact@v3
@@ -166,15 +166,15 @@ jobs:
           pip install pytest-cov
           set -e
           PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
-          WHEEL_FILE=$(ls dist/pypecos-*-cp${PYTHON_VER}-*.whl)
+          WHEEL_FILE=$(ls dist/pypecos-rslib-*-cp${PYTHON_VER}-*.whl)
           pip install "${WHEEL_FILE}" --force-reinstall
           pip install pytest
-          cd ./python/pypecos && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+          cd ./python/pypecos-rslib && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
           cd ../..
           pip install "${WHEEL_FILE}"[all] --force-reinstall
-          cd ./python/pypecos && pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
+          cd ./python/pypecos-rslib && pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
 
-  sdist:
+  sdist-pypecos-rslib:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -191,18 +191,18 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
-          args: --out dist --manifest-path ./python/pypecos/Cargo.toml
+          args: --out dist --manifest-path ./python/pypecos-rslib/Cargo.toml
       - name: Upload sdist
         uses: actions/upload-artifact@v3
         with:
           name: wheels
           path: dist
 
-  release:
+  release-pypecos-rslib:
     name: Release
     runs-on: ubuntu-latest
     if: "startsWith(github.ref, 'refs/tags/')"
-    needs: [linux, windows, macos, sdist]
+    needs: [linux-pypecos-rslib, windows-pypecos-rslib, macos-pypecos-rslib, sdist-pypecos-rslib]
     steps:
       - uses: actions/download-artifact@v3
         with:

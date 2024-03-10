@@ -1,0 +1,90 @@
+name: PyPECOS
+
+on:
+  push:
+    branches:
+      - master
+      - development
+    tags:
+      - "*"
+  pull_request:
+    branches:
+      - master
+      - development
+
+permissions:
+  contents: read
+
+jobs:
+  build-pypecos:
+
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools
+        pip install -r requirements.txt
+    - name: Pre-commit checks
+      run: |
+        python -m pip install pre-commit
+        pre-commit run --all-files
+    - name: Test with pytest
+      run: |
+        pip install pytest-cov
+        pip install .
+        pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+    - name: Test optional dependencies with pytest
+      run: |
+        pip install pytest-cov
+        pip install .[all]
+        pytest tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
+  sdist-pypecos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      - name: Setup pre-commit
+        run: |
+          python -m pip install pre-commit
+          pre-commit install
+      - name: Run pre-commit on all files
+        run: pre-commit run --all-files
+      - name: Build sdist and wheel
+        run: |
+          python -m build --sdist --wheel --outdir dist .
+      - name: Upload sdist and wheel
+        uses: actions/upload-artifact@v2
+        with:
+          name: pypecos-distributions
+          path: dist/*
+
+  release-pypecos:
+    name: Release PyPECOS
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [ build-pypecos, sdist-pypecos ]
+    steps:
+      - uses: actions/checkout@v2
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: pypecos-distributions
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.4.2
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages_dir: ./dist

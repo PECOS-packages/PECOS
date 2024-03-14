@@ -16,45 +16,234 @@ permissions:
   contents: read
 
 jobs:
+  linux-pypecos-rslib:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+        target: [x86_64, x86, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Setup pre-commit
+        run: |
+          python -m pip install pre-commit
+          pre-commit install
+      - name: Run pre-commit on all files
+        run: pre-commit run --all-files
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --interpreter python${{ matrix.python-version }} --manifest-path ./python/pypecos-rslib/Cargo.toml
+          sccache: 'true'
+          manylinux: auto
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: pypecos-rslib-wheels-linux-${{ matrix.python-version }}-${{ matrix.target }}
+          path: dist
+      - name: List wheel files in dist
+        if: ${{ always() }}
+        run: |
+          echo "Listing generated wheel files..."
+          ls -lah dist/
+      - name: pytest
+        if: ${{ startsWith(matrix.target, 'x86_64') }}
+        shell: bash
+        run: |
+          pip install --upgrade pip setuptools
+          pip install pytest-cov
+          set -e
+          PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
+          WHEEL_FILE=$(ls dist/pypecos_rslib-*-cp${PYTHON_VER}-*.whl)
+          pip install "${WHEEL_FILE}" --force-reinstall
+          pip install pytest
+          cd ./python/pypecos-rslib && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+      - name: pytest aarch64
+        if: ${{ !startsWith(matrix.target, 'x86') && !startsWith(matrix.target, 'ppc64')}}
+        uses: uraimo/run-on-arch-action@v2.7.1
+        with:
+          arch: ${{ matrix.target }}
+          distro: ubuntu_latest
+          githubToken: ${{ github.token }}
+          install: |
+            apt-get update
+            apt-get install -y software-properties-common curl
+            add-apt-repository ppa:deadsnakes/ppa -y
+            apt-get update
+            apt-get install -y --no-install-recommends build-essential cmake
+            apt-get install -y python${{ matrix.python-version }}-dev python${{ matrix.python-version }}-distutils
+            curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+            python${{ matrix.python-version }} get-pip.py
+            python${{ matrix.python-version }} -m pip install -U pip pytest setuptools
+          run: |
+            PYTHON_BIN=python${{ matrix.python-version }}
+            PYTHON_VER=${{ matrix.python-version }}
+            PYTHON_VER_NO_DOT="${PYTHON_VER//./}"  # Replace dot with nothing
+            $PYTHON_BIN -m pip install --upgrade pip setuptools
+            $PYTHON_BIN -m pip install pytest-cov
+            set -e
+            WHEEL_FILE=$(ls dist/pypecos_rslib-*-cp${PYTHON_VER_NO_DOT}-*.whl)
+            $PYTHON_BIN -m pip install "${WHEEL_FILE}" --force-reinstall --only-binary :all:
+            cd ./python/pypecos-rslib && $PYTHON_BIN -m pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+
+  windows-pypecos-rslib:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+        target: [x64,
+                 # x86
+        ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: ${{ matrix.target }}
+      - name: Setup pre-commit
+        run: |
+          python -m pip install pre-commit
+          pre-commit install
+      - name: Run pre-commit on all files
+        run: pre-commit run --all-files
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --interpreter python${{ matrix.python-version }} --manifest-path ./python/pypecos-rslib/Cargo.toml
+          sccache: 'true'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: pypecos-rslib-wheels-windows-${{ matrix.python-version }}-${{ matrix.target }}
+          path: dist
+      - name: pytest
+        if: ${{ !startsWith(matrix.target, 'aarch64') }}
+        shell: bash
+        run: |
+          pip install --upgrade pip setuptools
+          pip install pytest-cov
+          set -e
+          PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
+          WHEEL_FILE=$(ls dist/pypecos_rslib-*-cp${PYTHON_VER}-*.whl)
+          pip install "${WHEEL_FILE}" --force-reinstall
+          pip install pytest
+          cd ./python/pypecos-rslib && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+
+  macos-pypecos-rslib:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Setup pre-commit
+        run: |
+          python -m pip install pre-commit
+          pre-commit install
+      - name: Run pre-commit on all files
+        run: pre-commit run --all-files
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --interpreter python${{ matrix.python-version }} --manifest-path ./python/pypecos-rslib/Cargo.toml
+          sccache: 'true'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: pypecos-rslib-wheels-macos-${{ matrix.python-version }}-${{ matrix.target }}
+          path: dist
+      - name: pytest
+        if: ${{ !startsWith(matrix.target, 'aarch64') }}
+        shell: bash
+        run: |
+          pip install --upgrade pip setuptools
+          pip install pytest-cov
+          set -e
+          PYTHON_VER=$(python -c "import sys; print(''.join(map(str, sys.version_info[:2])))")
+          WHEEL_FILE=$(ls dist/pypecos_rslib-*-cp${PYTHON_VER}-*.whl)
+          pip install "${WHEEL_FILE}" --force-reinstall
+          pip install pytest
+          cd ./python/pypecos-rslib && pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+
+  sdist-pypecos-rslib:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Setup pre-commit
+        run: |
+          python -m pip install pre-commit
+          pre-commit install
+      - name: Run pre-commit on all files
+        run: pre-commit run --all-files
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist --manifest-path ./python/pypecos-rslib/Cargo.toml
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: pypecos-rslib-sdist
+          path: dist
+
+  # pypecos building/testing (Pure Python)
   build-pypecos:
 
+    needs: [
+      linux-pypecos-rslib,
+      windows-pypecos-rslib,
+      macos-pypecos-rslib,
+      sdist-pypecos-rslib
+    ]
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macOS-latest]
-        python-version: ["3.10", "3.11", "3.12"]
+        os: [ ubuntu-latest, windows-latest, macOS-latest ]
+        python-version: [ "3.10", "3.11", "3.12" ]
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip setuptools
-        pip install -r python/pypecos/requirements.txt
-    - name: Pre-commit checks
-      run: |
-        python -m pip install pre-commit
-        pre-commit run --all-files
-    - name: Test with pytest
-      run: |
-        pip install pytest-cov
-        pip install .
-        pytest python/pypecos/tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
-    - name: Test optional dependencies with pytest
-      run: |
-        pip install pytest-cov
-        pip install .[all]
-        pytest python/pypecos/tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools
+          pip install -r python/pypecos/requirements.txt
+      - name: Pre-commit checks
+        run: |
+          python -m pip install pre-commit
+          pre-commit run --all-files
+      - name: Test with pytest
+        run: |
+          pip install pytest-cov
+          pip install ./python/pypecos
+          pytest ./python/pypecos/tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+      - name: Test optional dependencies with pytest
+        run: |
+          pip install pytest-cov
+          pip install ./python/pypecos[all]
+          pytest ./python/pypecos/tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency
 
   sdist-pypecos:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Setup pre-commit
@@ -66,12 +255,29 @@ jobs:
       - name: Build sdist and wheel
         run: |
           python -m pip install -U build wheel
-          python -m build --sdist --wheel --outdir dist python/pypecos/
+          python -m build --sdist --wheel --outdir dist ./python/pypecos/
       - name: Upload sdist and wheel
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: pypecos-distributions
           path: dist/*
+
+  release-pypecos-rslib:
+    name: Release PyPECOS-rslib
+    runs-on: ubuntu-latest
+    if: "startsWith(github.ref, 'refs/tags/')"
+    needs: [linux-pypecos-rslib, windows-pypecos-rslib, macos-pypecos-rslib, sdist-pypecos-rslib]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels
+      - name: Publish to PyPI
+        uses: PyO3/maturin-action@v1
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        with:
+          command: upload
+          args: --non-interactive --skip-existing *
 
   release-pypecos:
     name: Release PyPECOS
@@ -79,13 +285,13 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     needs: [ build-pypecos, sdist-pypecos ]
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Download artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: pypecos-distributions
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@v1.4.2
+        uses: pypa/gh-action-pypi-publish@v1.8.14
         with:
           user: __token__
           password: ${{ secrets.PYPI_API_TOKEN }}

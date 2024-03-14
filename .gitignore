@@ -1,3 +1,6 @@
+# pytest
+**/test-results.xml
+
 # Cython
 *.pyc
 *.pyd

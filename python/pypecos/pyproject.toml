@@ -106,7 +106,7 @@ license-files = ["LICENSE"]
 include-package-data = false
 
 [tool.setuptools.packages.find]
-where = ["pypecos"]
+where = ["."]
 include = ["pypecos*"]
 namespaces = true
 

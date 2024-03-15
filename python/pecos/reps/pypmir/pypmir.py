@@ -13,11 +13,15 @@
 from __future__ import annotations
 
 from math import pi
-from typing import TypeVar
+from typing import TYPE_CHECKING, Callable, TypeVar
 
 from pecos.reps.pypmir import block_types as blk
 from pecos.reps.pypmir import data_types as d
 from pecos.reps.pypmir import op_types as op
+from pecos.reps.pypmir.name_resolver import sim_name_resolver
+
+if TYPE_CHECKING:
+    from pecos.reps.pypmir.op_types import QOp
 
 TypeOp = TypeVar("TypeOp", bound=op.Op)
 
@@ -27,9 +31,14 @@ class PyPMIR:
     simulations.
     """
 
-    def __init__(self, metadata: dict | None = None) -> None:
+    def __init__(self, metadata: dict | None = None, name_resolver: Callable[[QOp], str] | None = None) -> None:
         self.ops = []
         self.metadata = metadata
+
+        if name_resolver is None:
+            self.name_resolver = sim_name_resolver
+        else:
+            self.name_resolver = name_resolver
 
         self.cvar_meta = []
         self.cvar_dtype_list = []
@@ -84,35 +93,21 @@ class PyPMIR:
             # TODO: flatten to just list of ints even for TQ, etc.
             # TODO: Note size of gate?
 
-            """
-            data = d.QVarDefine(data_type=o["data_type"],
-                                        variable=o["variable"],
-                                        size=o["size"],
-                                        qubit_ids=qubit_ids,
-                                        metadata=o.get("metadata"), )
-
-                    p.qvar_meta[data.variable] = data
-            """
-
-            args = []
-            for a in o["args"]:
-                if isinstance(a[0], list):
-                    tup = []
-                    for b in a:
-                        qsym, qid = b
-                        qdata = p.qvar_meta[qsym]
-                        tup.append(qdata.qubit_ids[qid])
-                    args.append(tup)
-                else:
-                    qsym, qid = a
-                    qdata = p.qvar_meta[qsym]
-                    args.append(qdata.qubit_ids[qid])
-
             metadata = {} if o.get("metadata") is None else o["metadata"]
 
             if o.get("angles"):
-                if not (o["qop"] == "RZZ" and o["angles"][0][0] == 0.0):
-                    metadata = {"angles": [angle * (pi if o["angles"][1] == "pi" else 1) for angle in o["angles"][0]]}
+                angles = tuple([angle * (pi if o["angles"][1] == "pi" else 1) for angle in o["angles"][0]])
+            else:
+                angles = None
+
+            # TODO: get rid of supplying angle or angles in syms and move to (sym, angles) or sym (or gate obj)
+            if angles:
+                if len(angles) == 1:
+                    metadata["angle"] = angles[0]
+                else:
+                    metadata["angles"] = angles
+
+            args = cls.get_qargs(o, p)
 
             # TODO: Added to satisfy old-style error models. Remove when they not longer need this...
             if o.get("returns"):
@@ -122,11 +117,15 @@ class PyPMIR:
                 metadata["var_output"] = var_output
 
             instr = op.QOp(
-                name="I" if o["qop"] == "RZZ" and o["angles"][0][0] == 0.0 else o["qop"],
+                name=o["qop"],
+                sim_name=None,
+                angles=angles,
                 args=args,
                 returns=o.get("returns"),
                 metadata=metadata,
             )
+
+            instr.sim_name = p.name_resolver(instr)
 
         elif "cop" in o:
             if o["cop"] == "ffcall":
@@ -141,7 +140,17 @@ class PyPMIR:
                 instr = op.COp(name=o["cop"], args=o["args"], returns=o.get("returns"), metadata=o.get("metadata"))
 
         elif "mop" in o:
-            instr = op.MOp(name=o["mop"], args=o.get("args"), returns=o.get("returns"), metadata=o.get("metadata"))
+            if "args" in o:
+                # TODO: Assuming qargs... but that might not always be the case...
+                args = cls.get_qargs(o, p)
+            else:
+                args = None
+
+            instr = op.MOp(name=o["mop"], args=args, returns=o.get("returns"), metadata=o.get("metadata"))
+            if "duration" in o:
+                if instr.metadata is None:
+                    instr.metadata = {}
+                instr.metadata["duration"] = o["duration"]
 
         elif "meta" in o:
             # TODO: Handle meta instructions
@@ -162,14 +171,31 @@ class PyPMIR:
 
         return instr
 
-    @classmethod
-    def from_phir(cls, phir: dict) -> PyPMIR:
-        """Converts PHIR dict to PyPMIR object."""
+    @staticmethod
+    def get_qargs(o, p) -> list[int] | list[tuple[int]]:
+        args = []
+        for a in o["args"]:
+            if isinstance(a[0], list):
+                tup = []
+                for b in a:
+                    qsym, qid = b
+                    qdata = p.qvar_meta[qsym]
+                    tup.append(qdata.qubit_ids[qid])
+                args.append(tup)
+            else:
+                qsym, qid = a
+                qdata = p.qvar_meta[qsym]
+                args.append(qdata.qubit_ids[qid])
+        return args
 
+    @classmethod
+    def from_phir(cls, phir: dict, name_resolver=None) -> PyPMIR:
+        """Takes a PHIR dictionary and converts it into a PyPMIR object."""
         p = PyPMIR(
             metadata=dict(
                 phir.get("metadata", {}),
             ),
+            name_resolver=name_resolver,
         )
 
         next_qvar_int = 0

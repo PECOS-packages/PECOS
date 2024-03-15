@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 
 class HybridEngine:
-    """Engine that runs hybrid quantum/classical programs."""
+    """A simulation engine which is capable of running noisy hybrid classical/quantum programs."""
 
     def __init__(
         self,
@@ -166,7 +166,6 @@ class HybridEngine:
             for buffered_ops in self.cinterp.execute(self.cinterp.program.ops):
                 # Process ops, e.g., use `machine` and `error_model` to generate noisy qops
                 noisy_buffered_qops = self.op_processor.process(buffered_ops)
-
                 measurements = self.qsim.run(noisy_buffered_qops)
 
                 # Allows noise to be dependent on measurement outcomes and to alter measurements
@@ -174,7 +173,7 @@ class HybridEngine:
 
                 # TODO: Consider adding the following to generate/evaluate errors after measurement
                 # measurements, residual_noise = self.op_processor.process_meas(measurements)
-                # self.qsim.run(residual_noise)
+                # self.simulator.run(residual_noise)
 
                 self.cinterp.receive_results(measurements)
 

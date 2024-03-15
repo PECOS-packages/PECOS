@@ -61,16 +61,12 @@ class QGate(QOp):
 class BarrierGate(QGate):
     """A gate that prevents compilers from moving quantum gates past the barrier."""
 
-    ...
-
 
 Barrier = BarrierGate()
 
 
 class ResetGate(QGate):
     """Resetting a qubit to the zero state."""
-
-    ...
 
 
 Reset = ResetGate()
@@ -118,13 +114,9 @@ class CliffordGate(UnitaryGate):
 class PauliGate(CliffordGate):
     """A Pauli gate."""
 
-    ...
-
 
 class NonCliffordGate(UnitaryGate):
     """A non-Clifford gate."""
-
-    ...
 
 
 class XGate(PauliGate):
@@ -202,162 +194,139 @@ class ZGate(PauliGate):
 Z = ZGate()
 
 
-class SqrtXGate(CliffordGate):
-    ...
+class SqrtXGate(CliffordGate): ...
 
 
 SqrtX = SqrtXGate()
 
 
-class SqrtYGate(CliffordGate):
-    ...
+class SqrtYGate(CliffordGate): ...
 
 
 SqrtY = SqrtYGate()
 
 
-class SqrtZGate(CliffordGate):
-    ...
+class SqrtZGate(CliffordGate): ...
 
 
 S = SqrtZ = SqrtZGate()
 
 
-class SqrtXdgGate(CliffordGate):
-    ...
+class SqrtXdgGate(CliffordGate): ...
 
 
 SqrtXdg = SqrtXdgGate()
 
 
-class SqrtYdgGate(CliffordGate):
-    ...
+class SqrtYdgGate(CliffordGate): ...
 
 
 SqrtYdg = SqrtYdgGate()
 
 
-class SqrtZdgGate(CliffordGate):
-    ...
+class SqrtZdgGate(CliffordGate): ...
 
 
 Sdg = SqrtZdg = SqrtZGate()
 
 
-class RXGate(NonCliffordGate):
-    ...
+class RXGate(NonCliffordGate): ...
 
 
 RX = RXGate()
 
 
-class RYGate(NonCliffordGate):
-    ...
+class RYGate(NonCliffordGate): ...
 
 
 RY = RYGate()
 
 
-class RZGate(NonCliffordGate):
-    ...
+class RZGate(NonCliffordGate): ...
 
 
 RZ = RZGate()
 
 
-class TGate(NonCliffordGate):
-    ...
+class TGate(NonCliffordGate): ...
 
 
 T = TGate()
 
 
-class TdgGate(NonCliffordGate):
-    ...
+class TdgGate(NonCliffordGate): ...
 
 
 Tdg = TdgGate()
 
 
-class HGate(CliffordGate):
-    ...
+class HGate(CliffordGate): ...
 
 
 H = HGate()
 
 
-class FGate(CliffordGate):
-    ...
+class FGate(CliffordGate): ...
 
 
 F = FGate()
 
 
-class FdgGate(CliffordGate):
-    ...
+class FdgGate(CliffordGate): ...
 
 
 Fdg = FdgGate()
 
 
-class CXGate(CliffordGate):
-    ...
+class CXGate(CliffordGate): ...
 
 
 CNOT = CX = CXGate()
 
 
-class CYGate(CliffordGate):
-    ...
+class CYGate(CliffordGate): ...
 
 
 CY = CYGate()
 
 
-class CZGate(CliffordGate):
-    ...
+class CZGate(CliffordGate): ...
 
 
 CZ = CZGate()
 
 
-class SqrtXXGate(CliffordGate):
-    ...
+class SqrtXXGate(CliffordGate): ...
 
 
 SqrtXX = SqrtXXGate()
 
 
-class SqrtYYGate(CliffordGate):
-    ...
+class SqrtYYGate(CliffordGate): ...
 
 
 SqrtYY = SqrtYYGate()
 
 
-class SqrtZZGate(CliffordGate):
-    ...
+class SqrtZZGate(CliffordGate): ...
 
 
 SqrtZZ = SqrtZZGate()
 
 
-class SqrtXXdgGate(CliffordGate):
-    ...
+class SqrtXXdgGate(CliffordGate): ...
 
 
 SqrtXXdg = SqrtXXdgGate()
 
 
-class SqrtYYdgGate(CliffordGate):
-    ...
+class SqrtYYdgGate(CliffordGate): ...
 
 
 SqrtYYdg = SqrtYYdgGate()
 
 
-class SqrtZZdgGate(CliffordGate):
-    ...
+class SqrtZZdgGate(CliffordGate): ...
 
 
 SqrtZZdg = SqrtZZdgGate()

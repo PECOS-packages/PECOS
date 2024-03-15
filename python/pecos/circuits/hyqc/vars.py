@@ -32,10 +32,6 @@ class Var(Expression):
 class CVar(Var):
     """Type for classical variables."""
 
-    ...
-
 
 class QVar(Var):
     """Type for quantum variables."""
-
-    ...

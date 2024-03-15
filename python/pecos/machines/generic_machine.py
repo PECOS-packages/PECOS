@@ -25,13 +25,13 @@ class GenericMachine(Machine):
 
     def __init__(self, num_qubits: int | None = None) -> None:
         super().__init__(num_qubits=num_qubits)
-        self.leaked_qubits = None
-        self.lost_qubits = None
+        self.leaked_qubits = set()
+        self.lost_qubits = set()
 
     def reset(self) -> None:
         """Reset state to initialization state."""
-        self.leaked_qubits = set()
-        self.lost_qubits = set()
+        self.leaked_qubits.clear()
+        self.lost_qubits.clear()
 
     def init(self, num_qubits: int | None = None) -> None:
         self.num_qubits = num_qubits
@@ -46,16 +46,17 @@ class GenericMachine(Machine):
 
         return op_buffer
 
-    def leak(self, qubits: set) -> list[QOp]:
+    def leak(self, qubits: set[int]) -> list[QOp]:
         """Starts tracking qubits as leaked qubits and calls the quantum simulation appropriately to trigger leakage."""
         self.leaked_qubits |= qubits
         return [QOp(name="Init", args=list(qubits))]
 
-    def unleak(self, qubits: set) -> None:
+    def unleak(self, qubits: set[int]) -> list[QOp]:
         """Untrack qubits as leaked qubits and calls the quantum simulation appropriately to trigger leakage."""
         self.leaked_qubits -= qubits
+        return []
 
-    def meas_leaked(self, qubits: set) -> list[QOp]:
+    def meas_leaked(self, qubits: set[int]) -> list[QOp]:
         self.leaked_qubits -= qubits
         return [
             QOp(name="Init -Z", args=list(qubits)),

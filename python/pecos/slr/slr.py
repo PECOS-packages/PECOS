@@ -31,7 +31,7 @@ class Main(Block):
 
     def qasm(self, include="hqslib1.inc", header=None):
         def stamp_version(qasm):
-            qasm.append(f"// Generated using: SLR {__version__} and qeclib {__version__}")
+            qasm.append(f"// Generated using: PECOS version {__version__}")
 
         qasm = []
         if header is not None:
@@ -48,7 +48,9 @@ class Main(Block):
                 qasm.append(v.qasm())
 
         for op in self.ops:
-            qasm.append(op.qasm())
+            qm = op.qasm()
+            if qm is not None:
+                qasm.append(qm)
 
         qasm = "\n".join(qasm)
 

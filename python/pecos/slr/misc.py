@@ -102,4 +102,4 @@ class Permute:
                 qstr.append(f"{ei} -> {ej}")
             return "// Permuting: " + ", ".join(qstr)
         else:
-            return ""
+            return

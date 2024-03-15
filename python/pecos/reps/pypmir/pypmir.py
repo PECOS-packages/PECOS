@@ -13,12 +13,15 @@
 from __future__ import annotations
 
 from math import pi
-from typing import TypeVar
+from typing import TYPE_CHECKING, Callable, TypeVar
 
 from pecos.reps.pypmir import block_types as blk
 from pecos.reps.pypmir import data_types as d
 from pecos.reps.pypmir import op_types as op
-from pecos.reps.pypmir.name_resolver import default_sim_name_resolver
+from pecos.reps.pypmir.name_resolver import sim_name_resolver
+
+if TYPE_CHECKING:
+    from pecos.reps.pypmir.op_types import QOp
 
 TypeOp = TypeVar("TypeOp", bound=op.Op)
 
@@ -28,14 +31,14 @@ class PyPMIR:
     simulations.
     """
 
-    def __init__(self, metadata: dict | None = None, sim_name_resolver=None) -> None:
+    def __init__(self, metadata: dict | None = None, name_resolver: Callable[[QOp], str] | None = None) -> None:
         self.ops = []
         self.metadata = metadata
 
-        if sim_name_resolver is None:
-            self.sim_name_resolver = default_sim_name_resolver
+        if name_resolver is None:
+            self.name_resolver = sim_name_resolver
         else:
-            self.sim_name_resolver = sim_name_resolver
+            self.name_resolver = name_resolver
 
         self.cvar_meta = []
         self.cvar_dtype_list = []
@@ -122,7 +125,7 @@ class PyPMIR:
                 metadata=metadata,
             )
 
-            instr.sim_name = p.sim_name_resolver(instr)
+            instr.sim_name = p.name_resolver(instr)
 
         elif "cop" in o:
             if o["cop"] == "ffcall":
@@ -186,13 +189,13 @@ class PyPMIR:
         return args
 
     @classmethod
-    def from_phir(cls, phir: dict, sim_name_resolver=None) -> PyPMIR:
+    def from_phir(cls, phir: dict, name_resolver=None) -> PyPMIR:
         """Takes a PHIR dictionary and converts it into a PyPMIR object."""
         p = PyPMIR(
             metadata=dict(
                 phir.get("metadata", {}),
             ),
-            sim_name_resolver=sim_name_resolver,
+            name_resolver=name_resolver,
         )
 
         next_qvar_int = 0

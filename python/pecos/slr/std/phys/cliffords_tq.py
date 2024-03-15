@@ -1,4 +1,4 @@
-from pecos.slr.phys.metaclasses import TQCliffordGate
+from pecos.slr.std.phys.metaclasses import TQCliffordGate
 
 
 class CXGate(TQCliffordGate): ...

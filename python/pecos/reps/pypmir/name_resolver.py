@@ -4,14 +4,11 @@ from pecos.reps.pypmir.op_types import QOp
 from pecos.tools.find_cliffs import r1xy2cliff, rz2cliff
 
 
-def default_sim_name_resolver(qop: QOp, *, override_sim_name: bool = True) -> str:
+def sim_name_resolver(qop: QOp) -> str:
     """Takes the name of the operation and translates it to something all the simulators recognize."""
 
     # TODO: Support conversion of all SQ gates.
     # TODO: Try to support as many TQ gates... but at least all the allowed ones to standard TQ Cliffords
-
-    if not override_sim_name and qop.sim_name is not None:
-        return qop.sim_name
 
     if qop.name == "RZZ" and qop.angles == (0.0,):
         return "I"

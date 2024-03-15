@@ -19,6 +19,7 @@ pecos.reps.pypmir.block\_types
    
       Block
       IfBlock
+      QParallelBlock
       SeqBlock
    
    

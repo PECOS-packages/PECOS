@@ -27,8 +27,10 @@ pecos.simulators
    :toctree:
    :recursive:
 
+   pecos.simulators.cointoss
    pecos.simulators.compile_cython
-   pecos.simulators.cuquantum
+   pecos.simulators.cuquantum_old
+   pecos.simulators.custatevec
    pecos.simulators.cysparsesim
    pecos.simulators.cysparsesim_col
    pecos.simulators.cysparsesim_row

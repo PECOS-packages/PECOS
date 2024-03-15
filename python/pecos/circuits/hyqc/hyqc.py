@@ -15,7 +15,7 @@ from pecos.circuits.hyqc.fund import Block
 
 
 class HyQC(Block):
-    """Represents a full program for HyQC. A high-level ''language'' for hybrid quantum-classical computing."""
+    """Represents a full program for HyQC, a high-level ''language'' for hybrid quantum-classical computing."""
 
     def __init__(self, *stmts) -> None:
         super().__init__(*stmts)

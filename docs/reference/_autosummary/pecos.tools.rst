@@ -29,6 +29,7 @@ pecos.tools
 
    pecos.tools.fault_tolerance_checking
    pecos.tools.fault_tolerance_checks
+   pecos.tools.find_cliffs
    pecos.tools.logic_circuit_speed
    pecos.tools.pseudo_threshold_tools
    pecos.tools.random_circuit_speed

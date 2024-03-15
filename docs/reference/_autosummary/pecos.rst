@@ -41,5 +41,7 @@
    pecos.qeccs
    pecos.reps
    pecos.simulators
+   pecos.slr
    pecos.tools
+   pecos.typed_list
 

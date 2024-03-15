@@ -15,7 +15,7 @@ from pecos.circuits.hyqc.fund import Block
 
 
 class HyQC(Block):
-    """Represents a full program for HyQC. A high-level ''language'' for hybrid quantum-classical computing."""
+    """Represents a full program for HyQC, a high-level ''language'' for hybrid quantum-classical computing."""
 
     def __init__(self, *stmts) -> None:
         super().__init__(*stmts)
@@ -26,9 +26,7 @@ class HyQC(Block):
     def get_ast(self):
         """Get the abstract syntax tree for the program."""
         # TODO: get_ast
-        ...
 
     def parse(self, txt: str):
         """Parse a text representing HYQC."""
         # TODO: parse
-        ...

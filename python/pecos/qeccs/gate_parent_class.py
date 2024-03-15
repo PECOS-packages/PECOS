@@ -75,10 +75,7 @@ class LogicalGate:
         return not (self == other)
 
     def __str__(self) -> str:
-        return "Logical gate: '{}' params={} - QECC: {} params={} - Instructions: {}".format(
-            self.symbol,
-            self.gate_params,
-            self.qecc.name,
-            self.qecc.qecc_params,
-            self.instr_symbols,
+        return (
+            f"Logical gate: '{self.symbol}' params={self.gate_params} - QECC: {self.qecc.name} "
+            f"params={self.qecc.qecc_params} - Instructions: {self.instr_symbols}"
         )

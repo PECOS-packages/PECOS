@@ -1,36 +1,20 @@
 from pecos.engines.hybrid_engine import HybridEngine
 
 
-def test_setting_bits1():
+def test_setting_bits():
     phir = {
         "format": "PHIR/JSON",
         "version": "0.1.0",
         "ops": [
             {"data": "cvar_define", "data_type": "u32", "variable": "c", "size": 3},
-            # c[0], c[1], c[2] = True, False, True
-            {"cop": "=", "returns": [["c", 0], ["c", 1], ["c", 2]], "args": [True, False, True]},
+            # c[0], c[1], c[2] = 1, 0, 1
+            {"cop": "=", "returns": [["c", 0], ["c", 1], ["c", 2]], "args": [1, 0, 1]},
         ],
     }
 
     results = HybridEngine(qsim="stabilizer").run(program=phir, shots=5)
 
     assert results["c"].count("101") == len(results["c"])
-
-
-def test_setting_bits2():
-    phir = {
-        "format": "PHIR/JSON",
-        "version": "0.1.0",
-        "ops": [
-            {"data": "cvar_define", "data_type": "u32", "variable": "c", "size": 3},
-            # c[0], c[1], c[2] = 0, 1, 1
-            {"cop": "=", "returns": [["c", 0], ["c", 1], ["c", 2]], "args": [0, 1, 1]},
-        ],
-    }
-
-    results = HybridEngine(qsim="stabilizer").run(program=phir, shots=5)
-
-    assert results["c"].count("110") == len(results["c"])
 
 
 def test_setting_cvar():

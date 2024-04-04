@@ -17,12 +17,14 @@ import numpy as np
 import pytest
 from packaging.version import parse as vparse
 from pecos.circuits import QuantumCircuit
+from pecos.simulators import BasicSV
 
+# Try to import the requirements for CuStateVec
 try:
     import cuquantum
 
     imported_cuquantum = vparse(cuquantum._version.__version__) >= vparse("23.6.0")  # noqa: SLF001
-    import cupy as cp
+    import cupy as cp  # noqa: F401
 
     imported_cupy = vparse(version("cupy")) >= vparse("10.4.0")
     from pecos.simulators import CuStateVec
@@ -32,45 +34,46 @@ except ImportError:
     custatevec_ready = False
 
 
-# TODO: Add unit tests for all gates and verify correcteness of larger circuits
-
-
 def verify(simulator, qc: QuantumCircuit, final_vector: np.ndarray) -> None:
-    if simulator == "CuStateVec" and custatevec_ready:
+    if simulator == "BasicSV":
+        sim = BasicSV(len(qc.qudits))
+    elif simulator == "CuStateVec" and custatevec_ready:
         sim = CuStateVec(len(qc.qudits))
-        sim.run_circuit(qc)
-
-        assert np.allclose(sim.vector, final_vector)
-
     else:
         pytest.skip(f"Requirements to test {simulator} are not met.")
+
+    sim.run_circuit(qc)
+    assert np.allclose(sim.vector, final_vector)
 
 
 def check_measurement(simulator, qc: QuantumCircuit, final_results: dict[int, int] | None = None) -> None:
-    if simulator == "CuStateVec" and custatevec_ready:
+    if simulator == "BasicSV":
+        sim = BasicSV(len(qc.qudits))
+    elif simulator == "CuStateVec" and custatevec_ready:
         sim = CuStateVec(len(qc.qudits))
-        results = sim.run_circuit(qc)
-
-        if final_results is not None:
-            assert results == final_results
-
-        state = 0
-        for q, value in results.items():
-            state += value * 2 ** (sim.num_qubits - 1 - q)
-        final_vector = cp.zeros(shape=(2**sim.num_qubits,))
-        final_vector[state] = 1
-
-        abs_values_vector = [abs(x) for x in sim.vector]
-
-        assert np.allclose(abs_values_vector, final_vector)
-
     else:
         pytest.skip(f"Requirements to test {simulator} are not met.")
+
+    results = sim.run_circuit(qc)
+
+    if final_results is not None:
+        assert results == final_results
+
+    state = 0
+    for q, value in results.items():
+        state += value * 2 ** (sim.num_qubits - 1 - q)
+    final_vector = np.zeros(shape=(2**sim.num_qubits,))
+    final_vector[state] = 1
+
+    abs_values_vector = [abs(x) for x in sim.vector]
+
+    assert np.allclose(abs_values_vector, final_vector)
 
 
 @pytest.mark.parametrize(
     "simulator",
     [
+        "BasicSV",
         "CuStateVec",
     ],
 )
@@ -87,6 +90,7 @@ def test_init(simulator):
 @pytest.mark.parametrize(
     "simulator",
     [
+        "BasicSV",
         "CuStateVec",
     ],
 )
@@ -101,6 +105,7 @@ def test_H_measure(simulator):
 @pytest.mark.parametrize(
     "simulator",
     [
+        "BasicSV",
         "CuStateVec",
     ],
 )
@@ -167,6 +172,7 @@ def test_comp_basis_circ_and_measure(simulator):
 @pytest.mark.parametrize(
     "simulator",
     [
+        "BasicSV",
         "CuStateVec",
     ],
 )

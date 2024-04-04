@@ -11,6 +11,7 @@
 # specific language governing permissions and limitations under the License.
 
 from pecos.simulators import sim_class_types
+from pecos.simulators.basic_sv.state import BasicSV  # Basic numpy statevector simulator
 from pecos.simulators.cointoss import CoinToss  # Ignores quantum gates, coin toss for measurements
 from pecos.simulators.parent_sim_classes import Simulator
 from pecos.simulators.paulifaultprop import PauliFaultProp  # Pauli fault propagation sim

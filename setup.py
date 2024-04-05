@@ -60,6 +60,7 @@ setup(
         'simulators': [
             'cython',
             'projectq',
+            'cuquantum',
         ],
         'all': [
             'quantum-pecos[simulators]',

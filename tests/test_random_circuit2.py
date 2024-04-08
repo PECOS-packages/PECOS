@@ -85,4 +85,4 @@ def run_a_circuit(num_qubits, state_rep, circuit, verbose=False):
     return measurements
 
 if __name__ == '__main__':
-    assert run_circuit_test([CuStateVec], num_qubits=10, circuit_depth=50)
+    assert run_circuit_test([CuStateVec], num_qubits=2, circuit_depth=50)

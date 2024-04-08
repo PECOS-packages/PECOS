@@ -11,63 +11,49 @@
 
 from typing import Tuple, Any
 from numpy import pi
-import cuquantum
-from cuquantum import custatevec as cusv
-import cupy as cp
+import numpy as np
 
+def mat_paulix():
+    return np.matrix([
+        [0,1],
+        [1,0]
+        ], dtype=np.complex64)
 
-def apply2x2matrix(q, U):
-    # Check the inputs
-    #  q: integer
-    #  U: np.array([], dtype=np.complex64) -OR- cp.array([], dtype=np.complex64)
+def mat_pauliy():
+    return np.matrix([
+        [0,-1j],
+        [1j,0]
+        ], dtype=np.complex64)
 
-    if not isinstance(1, int):
-        raise ValueError("q must be integer, found", q)
+def mat_pauliz():
+    return np.matrix([
+        [1,0],
+        [0,-1]
+        ], dtype=np.complex64)
 
-    if isinstance(U, cp.ndarray):
-        U_ptr = U.data.ptr
-    elif isinstance(U, np.ndarray):
-        U_ptr = U.ctypes.data
-    else:
-        raise ValueError
+def mat_hadamaard():
+    return np.matrix([
+        [np.sqrt(2),np.sqrt(2)],
+        [np.sqrt(2),-np.sqrt(2)]
+        ], dtype=np.complex64)
 
-    assert U.shape == (2,2), "Invalid 2x2 unitary"
+def mat_Rx(theta):
+    return np.matrix([
+        [np.cos(theta/2),        -1j*np.sin(theta/2)],
+        [-1j*np.sin(theta/2), np.cos(theta/2)]
+        ], dtype=np.complex64)
 
-    nIndexBits = 3
-    nSvSize    = (1 << nIndexBits)
-    nTargets   = 1
-    nControls  = 0
-    adjoint    = 0
+def mat_Ry(theta):
+    return np.matrix([
+        [np.cos(theta/2),        -np.sin(theta/2)],
+        [np.sin(theta/2),     np.cos(theta/2)]
+        ], dtype=np.complex64)
 
-    targets    = np.asarray([q], dtype=np.int32)
-    controls   = np.asarray([], dtype=np.int32)
-
-    h_sv       = np.asarray([0.0+0.0j, 0.0+0.1j, 0.1+0.1j, 0.1+0.2j,
-                            0.2+0.2j, 0.3+0.3j, 0.3+0.4j, 0.4+0.5j], dtype=np.complex64)
-
-    d_sv = cp.asarray(h_sv)
-
-    # cuStateVec handle initialization
-    handle = cusv.create()
-    workspaceSize = cusv.apply_matrix_get_workspace_size(
-        handle, cuquantum.cudaDataType.CUDA_C_32F, nIndexBits, matrix_ptr, cuquantum.cudaDataType.CUDA_C_32F,
-        cusv.MatrixLayout.ROW, adjoint, nTargets, nControls, cuquantum.ComputeType.COMPUTE_32F)
-
-    # check the size of external workspace
-    if workspaceSize > 0:
-        workspace = cp.cuda.memory.alloc(workspaceSize)
-        workspace_ptr = workspace.ptr
-    else:
-        workspace_ptr = 0
-
-    # apply gate
-    cusv.apply_matrix(
-        handle, d_sv.data.ptr, cuquantum.cudaDataType.CUDA_C_32F, nIndexBits, matrix_ptr, cuquantum.cudaDataType.CUDA_C_32F,
-        cusv.MatrixLayout.ROW, adjoint, targets.ctypes.data, nTargets, controls.ctypes.data, 0, nControls,
-        cuquantum.ComputeType.COMPUTE_32F, workspace_ptr, workspaceSize)
-
-    # destroy handle
-    cusv.destroy(handle)
+def mat_Rz(theta):
+    return np.matrix([
+        [np.cos(theta/2) - 1j*np.sin(theta/2),        0.0],
+        [0.0,                                      np.cos(theta/2) + 1j*np.sin(theta/2)]
+        ], dtype=np.complex64)
 
 def U1q(state,
         qubit: int,
@@ -95,14 +81,12 @@ def U1q(state,
     # g.free_on_device()
 
     # CUQUANTUM STUFF
-    cusv.apply_matrix(
-        handle, d_sv.data.ptr, cuquantum.cudaDataType.CUDA_C_32F, nIndexBits, matrix_ptr, cuquantum.cudaDataType.CUDA_C_32F,
-        cusv.MatrixLayout.ROW, adjoint, targets.ctypes.data, nTargets, controls.ctypes.data, 0, nControls,
-        cuquantum.ComputeType.COMPUTE_32F, workspace_ptr, workspaceSize)
+    U = Rz(phi-pi/2) * Ry(theta) * Rz(-phi+pi/2)
+    state.apply2x2matrix(location, U)
 
 def RX(state, location, **params):
 
-    # angle = params['angle']
+    angle = params['angle']
 
     # OLD CODE
     # g = cq.Rx(angle)
@@ -111,10 +95,8 @@ def RX(state, location, **params):
     # g.free_on_device()
 
     # CUQUANTUM STUFF
-    cusv.apply_matrix(
-        handle, d_sv.data.ptr, cuquantum.cudaDataType.CUDA_C_32F, nIndexBits, matrix_ptr, cuquantum.cudaDataType.CUDA_C_32F,
-        cusv.MatrixLayout.ROW, adjoint, targets.ctypes.data, nTargets, controls.ctypes.data, 0, nControls,
-        cuquantum.ComputeType.COMPUTE_32F, workspace_ptr, workspaceSize)
+    U = mat_Rx(angle)
+    state.apply2x2matrix(location, U)
 
 
 def RY(state, location, **params):
@@ -128,10 +110,8 @@ def RY(state, location, **params):
     # g.free_on_device()
 
     # CUQUANTUM STUFF
-    cusv.apply_matrix(
-        handle, d_sv.data.ptr, cuquantum.cudaDataType.CUDA_C_32F, nIndexBits, matrix_ptr, cuquantum.cudaDataType.CUDA_C_32F,
-        cusv.MatrixLayout.ROW, adjoint, targets.ctypes.data, nTargets, controls.ctypes.data, 0, nControls,
-        cuquantum.ComputeType.COMPUTE_32F, workspace_ptr, workspaceSize)
+    U = mat_Ry(angle)
+    state.apply2x2matrix(location, U)
 
 def RZ(state, location, **params):
 
@@ -144,10 +124,8 @@ def RZ(state, location, **params):
     # g.free_on_device()
 
     # CUQUANTUM STUFF
-    cusv.apply_matrix(
-        handle, d_sv.data.ptr, cuquantum.cudaDataType.CUDA_C_32F, nIndexBits, matrix_ptr, cuquantum.cudaDataType.CUDA_C_32F,
-        cusv.MatrixLayout.ROW, adjoint, targets.ctypes.data, nTargets, controls.ctypes.data, 0, nControls,
-        cuquantum.ComputeType.COMPUTE_32F, workspace_ptr, workspaceSize)
+    U = mat_Rz(angle)
+    state.apply2x2matrix(location, U)
 
 def I(state, location, **params):
     pass
@@ -162,10 +140,8 @@ def X(state, location, **params):
     # g.free_on_device()
 
     # CUQUANTUM STUFF
-    cusv.apply_matrix(
-        handle, d_sv.data.ptr, cuquantum.cudaDataType.CUDA_C_32F, nIndexBits, matrix_ptr, cuquantum.cudaDataType.CUDA_C_32F,
-        cusv.MatrixLayout.ROW, adjoint, targets.ctypes.data, nTargets, controls.ctypes.data, 0, nControls,
-        cuquantum.ComputeType.COMPUTE_32F, workspace_ptr, workspaceSize)
+    U = mat_paulix()
+    state.apply2x2matrix(location, U)
 
 def Y(state, location, **params):
 
@@ -174,6 +150,10 @@ def Y(state, location, **params):
     # g.copy_to_device()
     # g.apply(state.statevec, state.workspace, [], [location], False)
     # g.free_on_device()
+
+    # CUQUANTUM STUFF
+    U = mat_pauliy()
+    state.apply2x2matrix(location, U)
 
 
 def Z(state, location, **params):
@@ -184,6 +164,9 @@ def Z(state, location, **params):
     # g.apply(state.statevec, state.workspace, [], [location], False)
     # g.free_on_device()
 
+    # CUQUANTUM STUFF
+    U = mat_pauliz()
+    state.apply2x2matrix(location, U)
 
 def H(state, location, **params):
 
@@ -193,6 +176,9 @@ def H(state, location, **params):
     # g.apply(state.statevec, state.workspace, [], [location], False)
     # g.free_on_device()
 
+    # CUQUANTUM STUFF
+    U = mat_hadamaard()
+    state.apply2x2matrix(location, U)
 
 def Q(state, location, **params):
 
@@ -202,6 +188,7 @@ def Q(state, location, **params):
     # g.apply(state.statevec, state.workspace, [], [location], False)
     # g.free_on_device()
 
+    RX(state, location, angle=pi/2)
 
 def Qd(state, location, **params):
 
@@ -211,35 +198,41 @@ def Qd(state, location, **params):
     # g.apply(state.statevec, state.workspace, [], [location], False)
     # g.free_on_device()
 
+    RX(state, location, angle=-pi/2)
 
 def R(state, location, **params):
 
     # OLD CODE
-    g = cq.Ry(pi/2)
-    g.copy_to_device()
-    g.apply(state.statevec, state.workspace, [], [location], False)
-    g.free_on_device()
+    # g = cq.Ry(pi/2)
+    # g.copy_to_device()
+    # g.apply(state.statevec, state.workspace, [], [location], False)
+    # g.free_on_device()
 
+    RY(state, location, angle=pi/2)
 
 def Rd(state, location, **params):
 
-    g = cq.Ry(-pi/2)
-    g.copy_to_device()
-    g.apply(state.statevec, state.workspace, [], [location], False)
-    g.free_on_device()
+    # g = cq.Ry(-pi/2)
+    # g.copy_to_device()
+    # g.apply(state.statevec, state.workspace, [], [location], False)
+    # g.free_on_device()
 
+    RY(state, location, angle=-pi/2)
 
 def S(state, location, **params):
 
-    g = cq.Rz(pi/2)
-    g.copy_to_device()
-    g.apply(state.statevec, state.workspace, [], [location], False)
-    g.free_on_device()
+    # g = cq.Rz(pi/2)
+    # g.copy_to_device()
+    # g.apply(state.statevec, state.workspace, [], [location], False)
+    # g.free_on_device()
 
+    RZ(state, location, angle=pi/2)
 
 def Sd(state, location, **params):
 
-    g = cq.Rz(-pi/2)
-    g.copy_to_device()
-    g.apply(state.statevec, state.workspace, [], [location], False)
-    g.free_on_device()
+    # g = cq.Rz(-pi/2)
+    # g.copy_to_device()
+    # g.apply(state.statevec, state.workspace, [], [location], False)
+    # g.free_on_device()
+
+    RZ(state, location, angle=-pi/2)

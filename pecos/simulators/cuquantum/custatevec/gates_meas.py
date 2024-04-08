@@ -10,9 +10,10 @@
 # specific language governing permissions and limitations under the License.
 
 import numpy as np
-
+import cupy as cp
+from cuquantum import custatevec as cusv
+from cuquantum import cudaDataType
 
 def Measure(state, location, **params):
-    rn = np.random.uniform()
-    meas = state.statevec.batch_measure(state.workspace, [location], rn, True)
+    meas = state.batch_measure([location], np.random.uniform(), True)
     return meas[0]

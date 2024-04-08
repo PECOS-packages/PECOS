@@ -10,18 +10,23 @@
 # specific language governing permissions and limitations under the License.
 
 import numpy as np
+import cupy as cp
+from cuquantum import custatevec as cusv
+from cuquantum import cudaDataType
 from .gates_sq import X
 
-
 def init_zero(state, location, **params):
-    result = state.statevec.batch_measure(state.workspace, [location], np.random.uniform(), True)
+    print(location)
+    result = state.batch_measure([location], np.random.uniform(), True)
+
+    print("result", result)
 
     if result == [1]:
         X(state, location)
 
 
 def init_one(state, location, **params):
-    result = state.statevec.batch_measure(state.workspace, [location], np.random.uniform(), True)
+    result = state.batch_measure(state, [location], np.random.uniform(), True)
 
     if result == [0]:
         X(state, location)

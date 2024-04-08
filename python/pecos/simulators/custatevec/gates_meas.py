@@ -36,7 +36,7 @@ def meas_z(state, qubit: int, **params: Any) -> int:
 
     result = cusv.measure_on_z_basis(
         handle=state.libhandle,
-        sv=state.vector.data.ptr,
+        sv=state.internal_vector.data.ptr,
         sv_data_type=state.cuda_type,
         n_index_bits=state.num_qubits,  # Number of qubits in the statevector
         basis_bits=[target],  # The index of the qubit being measured

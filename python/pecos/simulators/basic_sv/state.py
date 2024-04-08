@@ -103,5 +103,5 @@ class BasicSV(StateVector):
         return "".join(qubit_ids)
 
     @property
-    def vector(self):
+    def vector(self) -> np.ndarray:
         return np.reshape(self.internal_vector, newshape=2**self.num_qubits)

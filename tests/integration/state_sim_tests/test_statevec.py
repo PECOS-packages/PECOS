@@ -16,6 +16,7 @@ from importlib.metadata import version
 import numpy as np
 import pytest
 from packaging.version import parse as vparse
+
 from pecos.circuits import QuantumCircuit
 from pecos.simulators import BasicSV
 
@@ -68,6 +69,38 @@ def check_measurement(simulator, qc: QuantumCircuit, final_results: dict[int, in
     abs_values_vector = [abs(x) for x in sim.vector]
 
     assert np.allclose(abs_values_vector, final_vector)
+
+
+def compare_against_basicsv(simulator, qc: QuantumCircuit):
+    basicsv = BasicSV(len(qc.qudits))
+    basicsv.run_circuit(qc)
+    verify(simulator, qc, basicsv.vector)
+
+
+def generate_random_state(seed=None) -> QuantumCircuit:
+    np.random.seed(seed)
+
+    qc = QuantumCircuit()
+    qc.append({"Init": {0, 1, 2, 3, 4}})
+
+    for _ in range(3):
+        qc.append({"RZ": {0}}, angles=(np.pi * np.random.random(),))
+        qc.append({"RZ": {1}}, angles=(np.pi * np.random.random(),))
+        qc.append({"RZ": {2}}, angles=(np.pi * np.random.random(),))
+        qc.append({"RZ": {3}}, angles=(np.pi * np.random.random(),))
+        qc.append({"RZ": {4}}, angles=(np.pi * np.random.random(),))
+        qc.append({"RXX": {(0, 1)}}, angles=(np.pi * np.random.random(),))
+        qc.append({"RXX": {(0, 2)}}, angles=(np.pi * np.random.random(),))
+        qc.append({"RXX": {(0, 3)}}, angles=(np.pi * np.random.random(),))
+        qc.append({"RXX": {(0, 4)}}, angles=(np.pi * np.random.random(),))
+        qc.append({"RXX": {(1, 2)}}, angles=(np.pi * np.random.random(),))
+        qc.append({"RXX": {(1, 3)}}, angles=(np.pi * np.random.random(),))
+        qc.append({"RXX": {(1, 4)}}, angles=(np.pi * np.random.random(),))
+        qc.append({"RXX": {(2, 3)}}, angles=(np.pi * np.random.random(),))
+        qc.append({"RXX": {(2, 4)}}, angles=(np.pi * np.random.random(),))
+        qc.append({"RXX": {(3, 4)}}, angles=(np.pi * np.random.random(),))
+
+    return qc
 
 
 @pytest.mark.parametrize(
@@ -172,50 +205,90 @@ def test_comp_basis_circ_and_measure(simulator):
 @pytest.mark.parametrize(
     "simulator",
     [
-        "BasicSV",
         "CuStateVec",
     ],
 )
 def test_all_gate_circ(simulator):
-    qc = QuantumCircuit()
 
-    # Apply each gate once
-    qc.append({"Init": {0, 1, 2, 3, 4}})
-    qc.append({"SZZ": {(4, 2)}})
-    qc.append({"RX": {0, 2}}, angles=(np.pi / 4,))
-    qc.append({"SXXdg": {(0, 3)}})
-    qc.append({"RY": {0, 3}}, angles=(np.pi / 8,))
-    qc.append({"RZZ": {(0, 3)}}, angles=(np.pi / 16,))
-    qc.append({"RZ": {1, 4}}, angles=(np.pi / 16,))
-    qc.append({"R1XY": {2}}, angles=(np.pi / 16, np.pi / 2))
-    qc.append({"I": {0, 1, 3}})
-    qc.append({"X": {1, 2}})
-    qc.append({"Y": {3, 4}})
-    qc.append({"CY": {(2, 3)}})
-    qc.append({"SYY": {(1, 4)}})
-    qc.append({"Z": {2, 0}})
-    qc.append({"H": {3, 1}})
-    qc.append({"RYY": {(2, 1)}}, angles=(np.pi / 8,))
-    qc.append({"SZZdg": {(3, 1)}})
-    qc.append({"F": {0, 2, 4}})
-    qc.append({"CX": {(0, 1)}})
-    qc.append({"Fdg": {3, 1}})
-    qc.append({"SYYdg": {(1, 3)}})
-    qc.append({"SX": {1, 2}})
-    qc.append({"R2XXYYZZ": {(0, 4)}}, angles=(np.pi / 4, np.pi / 16, np.pi / 2))
-    qc.append({"SY": {3, 4}})
-    qc.append({"SZ": {2, 0}})
-    qc.append({"SZdg": {1, 2}})
-    qc.append({"CZ": {(1, 3)}})
-    qc.append({"SXdg": {3, 4}})
-    qc.append({"SYdg": {2, 0}})
-    qc.append({"T": {0, 2, 4}})
-    qc.append({"SXX": {(0, 2)}})
-    qc.append({"SWAP": {(4, 0)}})
-    qc.append({"Tdg": {3, 1}})
-    qc.append({"RXX": {(1, 3)}}, angles=(np.pi / 4,))
+    # Generate three different arbitrary states
+    qcs: list[QuantumCircuit] = []
+    qcs.append(generate_random_state(seed=1234))
+    qcs.append(generate_random_state(seed=5555))
+    qcs.append(generate_random_state(seed=42))
 
-    # Measure
-    qc.append({"Measure": {0, 1, 2, 3, 4}})
+    # Verify that each of these states matches with BasicSV
+    for qc in qcs:
+        compare_against_basicsv(simulator, qc)
 
-    check_measurement(simulator, qc)
+    # Apply each gate on randomly generated states and compare again
+    for qc in qcs:
+        qc.append({"SZZ": {(4, 2)}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"RX": {0, 2}}, angles=(np.pi / 4,))
+        compare_against_basicsv(simulator, qc)
+        qc.append({"SXXdg": {(0, 3)}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"RY": {0, 3}}, angles=(np.pi / 8,))
+        compare_against_basicsv(simulator, qc)
+        qc.append({"RZZ": {(0, 3)}}, angles=(np.pi / 16,))
+        compare_against_basicsv(simulator, qc)
+        qc.append({"RZ": {1, 4}}, angles=(np.pi / 16,))
+        compare_against_basicsv(simulator, qc)
+        qc.append({"R1XY": {2}}, angles=(np.pi / 16, np.pi / 2))
+        compare_against_basicsv(simulator, qc)
+        qc.append({"I": {0, 1, 3}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"X": {1, 2}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"Y": {3, 4}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"CY": {(2, 3), (4, 1)}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"SYY": {(1, 4)}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"Z": {2, 0}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"H": {3, 1}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"RYY": {(2, 1)}}, angles=(np.pi / 8,))
+        compare_against_basicsv(simulator, qc)
+        qc.append({"SZZdg": {(3, 1)}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"F": {0, 2, 4}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"CX": {(0, 1), (4, 2)}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"Fdg": {3, 1}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"SYYdg": {(1, 3)}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"SX": {1, 2}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"R2XXYYZZ": {(0, 4)}}, angles=(np.pi / 4, np.pi / 16, np.pi / 2))
+        compare_against_basicsv(simulator, qc)
+        qc.append({"SY": {3, 4}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"SZ": {2, 0}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"SZdg": {1, 2}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"CZ": {(1, 3)}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"SXdg": {3, 4}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"SYdg": {2, 0}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"T": {0, 2, 4}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"SXX": {(0, 2)}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"SWAP": {(4, 0)}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"Tdg": {3, 1}})
+        compare_against_basicsv(simulator, qc)
+        qc.append({"RXX": {(1, 3)}}, angles=(np.pi / 4,))
+        compare_against_basicsv(simulator, qc)
+
+        # Measure
+        qc.append({"Measure": {0, 1, 2, 3, 4}})
+        check_measurement(simulator, qc)

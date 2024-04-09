@@ -30,6 +30,13 @@ def pauliz(q, N):
         np.matrix([[1,0],[0,-1]], dtype=np.complex64),
         np.eye(1 << q)
     ])
+def cnot(qc,qt,N):
+    return np.matrix([
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 0, 1],
+        [0, 0, 1, 0]
+        ], dtype=np.complex64)
 def sqrtzz(qc,qt,N):
     return np.matrix([
         [1, 0,  0,  0],
@@ -116,10 +123,22 @@ del state, psi
 N = 2
 state = CuStateVec(N)
 state.reset()
-# state.bindings["X"](state, 0)
-state.bindings["CNOT"](state, [0,1])
+state.bindings["X"](state, 0)
 psi = cp.asnumpy(state._psi)
 testpsi = np.ravel(paulix(0,N)@zeropsi(N))
+print(psi,testpsi)
+print([state.bindings["measure Z"](state, i) for i in range(N)])
+print({i:np.abs(j)**2 for i,j in enumerate(testpsi) if np.abs(j)**2>1e-4})
+assert all(psi==testpsi), "States are not equal"
+del state, psi
+
+# Check CNOT
+N = 2
+state = CuStateVec(N)
+state.reset()
+state.bindings["CNOT"](state, (0,1))
+psi = cp.asnumpy(state._psi)
+testpsi = np.ravel(cnot(0,1,N)@zeropsi(N))
 print(psi,testpsi)
 print([state.bindings["measure Z"](state, i) for i in range(N)])
 print({i:np.abs(j)**2 for i,j in enumerate(testpsi) if np.abs(j)**2>1e-4})

@@ -56,7 +56,7 @@ def mat_Rz(theta):
         ], dtype=np.complex64)
 
 def U1q(state,
-        qubit: int,
+        location: int,
         angles: Tuple[float, float],
         **params: Any) -> None:
     """
@@ -81,7 +81,7 @@ def U1q(state,
     # g.free_on_device()
 
     # CUQUANTUM STUFF
-    U = Rz(phi-pi/2) * Ry(theta) * Rz(-phi+pi/2)
+    U = mat_Rz(phi-pi/2) @ mat_Ry(theta) @ mat_Rz(-phi+pi/2)
     state.apply2x2matrix(location, U)
 
 def RX(state, location, **params):

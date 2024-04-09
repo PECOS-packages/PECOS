@@ -44,10 +44,8 @@ except ImportError:
     pass
 
 # Attempt to import optional cuquantum package
-import cuquantum
-from .cuquantum.custatevec.state import CuStateVec  # wrapper for ProjectQ sim
-# try:
-#     import cuquantum
-#     from ._cuquantum.state import CuStateVec  # wrapper for ProjectQ sim
-# except ImportError:
-#     pass
+try:
+    import cuquantum
+    from ._cuquantum.state import CuStateVec  # wrapper for ProjectQ sim
+except ImportError:
+    pass

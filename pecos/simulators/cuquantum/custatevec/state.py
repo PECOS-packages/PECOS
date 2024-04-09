@@ -69,8 +69,13 @@ class CuStateVec:
         return [int(i) for i in bitStrings]
 
     def get_probs(self) -> None:
-        self.statevec.read_from_device()
-        return self.statevec.get_probabilities(self.workspace)[0]
+        bit_string_order = np.arange(self.num_qubits-1, -1, -1, dtype=np.int32)
+        probs   = cp.zeros(self._nSvSize, dtype=cp.float64)
+        cusv.abs2sum_array(
+            self._workspace, self._psi.data.ptr, self._dtype, self.num_qubits,
+            probs.data.ptr, bit_string_order.ctypes.data, bit_string_order.size,
+            0, 0, 0)
+        return cp.asnumpy(probs)
 
     def __del__(self):
         cusv.destroy(self._workspace)

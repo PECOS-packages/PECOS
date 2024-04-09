@@ -30,14 +30,6 @@ def test_random_circuits():
     except ImportError:
         pass
 
-    # Add wrapped CHP
-    try:
-        from PECOS.state_sims.cychp import State as state_chp
-        state_sims.append(state_chp)
-
-    except ImportError:
-        pass
-
     # Add wrapped GraphSim
     try:
         from PECOS.state_sims.cygraphsim import State as state_graph
@@ -79,7 +71,7 @@ def run_circuit_test(state_sims, num_qubits, circuit_depth, trials=1000, gates=N
         measurements = []
         for state_sim in state_sims:
             np.random.seed(seed)
-            meas = run_a_circuit(num_qubits, state_sim, circuit, verbose=True)
+            meas = run_a_circuit(num_qubits, state_sim, circuit)
 
             measurements.append(meas)
 

@@ -42,10 +42,3 @@ try:
     from ._qcgpu_wrapper.state import QCQPUSim  # wrapper for qcgpu
 except ImportError:
     pass
-
-# Attempt to import optional cuquantum package
-try:
-    import cuquantum
-    from ._cuquantum.state import CuStateVec  # wrapper for ProjectQ sim
-except ImportError:
-    pass

@@ -70,7 +70,7 @@ def SqrtZZ(state, location, **params):
 
     # CUQUANTUM STUFF
     U = mat_sqrtzz()
-    state.applyControlled4x4matrix(location[0], location[1], U)
+    state.apply4x4matrix(location[0], location[1], U)
 
 
 def RZZ(state, location, **params):
@@ -83,4 +83,4 @@ def RZZ(state, location, **params):
 
     # CUQUANTUM STUFF
     U = mat_rzz(angle)
-    state.applyControlled2x2matrix(location[0], location[1], U)
+    state.apply4x4matrix(location[0], location[1], U)

@@ -48,6 +48,8 @@ class HybridEngine:
         if self.cinterp is None:
             self.cinterp = PHIRClassicalInterpreter()
 
+        self._internal_cinterp = PHIRClassicalInterpreter()
+
         self.qsim = qsim
         if self.qsim is None:
             self.qsim = QuantumSimulator()
@@ -83,6 +85,7 @@ class HybridEngine:
     def reset_all(self):
         """Reset to the state of initialization."""
         self.cinterp.reset()
+        self._internal_cinterp.reset()
         self.qsim.reset()
         self.machine.reset()
         self.error_model.reset()
@@ -99,6 +102,7 @@ class HybridEngine:
         if foreign_object is not None:
             foreign_object.init()
         num_qubits = self.cinterp.init(program, foreign_object)
+        self._internal_cinterp.init(program, foreign_object)
         self.machine.init(num_qubits)
         self.error_model.init(num_qubits, self.machine)
         self.op_processor.init()
@@ -109,6 +113,7 @@ class HybridEngine:
         states.
         """
         self.cinterp.shot_reinit()
+        self._internal_cinterp.shot_reinit()
         self.machine.shot_reinit()
         self.error_model.shot_reinit()
         self.op_processor.shot_reinit()
@@ -155,6 +160,8 @@ class HybridEngine:
         """
         # TODO: Qubit loss
 
+        measurements = MeasData()
+
         if initialize:
             self.seed = self.use_seed(seed)
             self.initialize_sim_components(program, foreign_object)
@@ -162,20 +169,24 @@ class HybridEngine:
         for _ in range(shots):
             self.shot_reinit_components()
 
-            # Execute classical program till quantum sim is needed
+            # Execute the classical program till quantum sim is needed
             for buffered_ops in self.cinterp.execute(self.cinterp.program.ops):
-                # Process ops, e.g., use `machine` and `error_model` to generate noisy qops
-                noisy_buffered_qops = self.op_processor.process(buffered_ops)
-                measurements = self.qsim.run(noisy_buffered_qops)
+                # Process ops, e.g., use `machine` and `error_model` to generate noisy qops & cops
+                noisy_buffered_ops = self.op_processor.process(buffered_ops)
 
-                # Allows noise to be dependent on measurement outcomes and to alter measurements
-                measurements = self.op_processor.process_meas(measurements)
+                # TODO: Think about the safety of evolving the internal registers...
+                # TODO: Maybe make the error model explicitly declare internal registers...
 
-                # TODO: Consider adding the following to generate/evaluate errors after measurement
-                # measurements, residual_noise = self.op_processor.process_meas(measurements)
-                # self.simulator.run(residual_noise)
+                # Process noisy operations
+                measurements.clear()
+                for noisy_qops in self._internal_cinterp.execute(noisy_buffered_ops):
+                    temp_meas = self.qsim.run(noisy_qops)
+                    self._internal_cinterp.receive_results(temp_meas)
+                    measurements.extend(temp_meas)
 
-                self.cinterp.receive_results(measurements)
+                transmit_meas = self._internal_cinterp.result_bits(measurements)
+
+                self.cinterp.receive_results([transmit_meas])
 
             self.results_accumulator(self.cinterp.results(return_int))
 
@@ -198,3 +209,7 @@ class HybridEngine:
             seed=seed,
             pool_size=pool_size,
         )
+
+
+class MeasData(list):
+    """Class representing a collection of measurements."""

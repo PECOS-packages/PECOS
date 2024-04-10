@@ -23,7 +23,7 @@ from pecos.reps.pypmir import PyPMIR
 from pecos.reps.pypmir import types as pt
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Sequence
+    from collections.abc import Generator, Iterable, Sequence
 
     from pecos import QuantumCircuit
     from pecos.foreign_objects.foreign_object_abc import ForeignObject
@@ -320,3 +320,12 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             result[csym] = cval
 
         return result
+
+    def result_bits(self, bits: Iterable[tuple[str, int]]) -> dict[tuple[str, int], int]:
+        """Git a dictionary of bit values given an iterable of bits (which are encoded as tuple[str, int]
+        for str[int])."""
+        send_meas = {}
+        for b in bits:
+            for m, i in b:
+                send_meas[(m, i)] = self.get_bit(m, i)
+        return send_meas

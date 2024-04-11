@@ -343,11 +343,15 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
 
         return result
 
-    def result_bits(self, bits: Iterable[tuple[str, int]]) -> dict[tuple[str, int], int]:
+    def result_bits(self, bits: Iterable[tuple[str, int]], *, filter_private=True) -> dict[tuple[str, int], int]:
         """Git a dictionary of bit values given an iterable of bits (which are encoded as tuple[str, int]
         for str[int])."""
         send_meas = {}
         for b in bits:
             for m, i in b:
+                m: str
+                i: int
+                if filter_private and m.startswith("__"):
+                    continue
                 send_meas[(m, i)] = self.get_bit(m, i)
         return send_meas

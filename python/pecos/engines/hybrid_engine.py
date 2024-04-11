@@ -187,7 +187,6 @@ class HybridEngine:
                     measurements.extend(temp_meas)
 
                 transmit_meas = self._internal_cinterp.result_bits(measurements)
-
                 self.cinterp.receive_results([transmit_meas])
 
             self.results_accumulator(self.cinterp.results(return_int))

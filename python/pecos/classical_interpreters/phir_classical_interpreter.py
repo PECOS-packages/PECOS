@@ -35,11 +35,17 @@ def version2tuple(v):
 
 
 data_type_map = {
+    "i8": np.int8,
+    "i16": np.int16,
     "i32": np.int32,
     "i64": np.int64,
+    "u8": np.uint8,
+    "u16": np.uint16,
     "u32": np.uint32,
     "u64": np.uint64,
 }
+
+data_type_map_rev = {v: k for k, v in data_type_map.items()}
 
 
 class PHIRClassicalInterpreter(ClassicalInterpreter):
@@ -52,6 +58,8 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         self.foreign_obj = None
         self.cenv = None
         self.cid2dtype = None
+        self.csym2id = None
+        self.cvar_meta = None
 
         self.phir_validate = True
 
@@ -96,6 +104,9 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
 
         self.check_ffc(self.program.foreign_func_calls, self.foreign_obj)
 
+        self.csym2id = dict(self.program.csym2id)
+        self.cvar_meta = list(self.program.cvar_meta)
+
         self.initialize_cenv()
 
         return self.program.num_qubits
@@ -121,11 +132,22 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
     def initialize_cenv(self) -> None:
         self._reset_env()
         if self.program:
-            for cvar in self.program.cvar_meta:
+            for cvar in self.cvar_meta:
                 cvar: pt.data.CVarDefine
                 dtype = data_type_map[cvar.data_type]
                 self.cenv.append(dtype(0))
                 self.cid2dtype.append(dtype)
+
+    def add_cvar(self, cvar: str, dtype, size: int):
+        """Adds a new classical variable to the interpreter."""
+        if cvar not in self.csym2id:
+            cid = len(self.csym2id)
+            self.csym2id[cvar] = cid
+            self.cenv.append(dtype(0))
+            self.cid2dtype.append(dtype)
+            self.cvar_meta.append(
+                pt.data.CVarDefine(size=size, data_type=data_type_map_rev[dtype], cvar_id=cid, variable=cvar),
+            )
 
     def _flatten_blocks(self, seq: Sequence):
         """Flattens the ops of blocks to be processed by the execute() method."""
@@ -175,7 +197,7 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             yield op_buffer
 
     def get_cval(self, cvar):
-        cid = self.program.csym2id[cvar]
+        cid = self.csym2id[cvar]
         return self.cenv[cid]
 
     def get_bit(self, cvar, idx):
@@ -249,9 +271,9 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         if isinstance(cvar, (tuple, list)):
             cvar, i = cvar
 
-        cid = self.program.csym2id[cvar]
+        cid = self.csym2id[cvar]
         dtype = self.cid2dtype[cid]
-        size = self.program.cvar_meta[cid].size
+        size = self.cvar_meta[cid].size
 
         cval = self.cenv[cid]
         val = dtype(val)
@@ -312,10 +334,10 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
     def results(self, return_int=True) -> dict:
         """Dumps program final results."""
         result = {}
-        for csym, cid in self.program.csym2id.items():
+        for csym, cid in self.csym2id.items():
             cval = self.cenv[cid]
             if not return_int:
-                size = self.program.cvar_meta[cid].size
+                size = self.cvar_meta[cid].size
                 cval = "{:0{width}b}".format(cval, width=size)
             result[csym] = cval
 

@@ -114,6 +114,8 @@ class HybridEngine:
         """
         self.cinterp.shot_reinit()
         self._internal_cinterp.shot_reinit()
+        for i in range(self.machine.num_qubits):
+            self._internal_cinterp.add_cvar(f"__q{i}__", np.uint8, 1)
         self.machine.shot_reinit()
         self.error_model.shot_reinit()
         self.op_processor.shot_reinit()

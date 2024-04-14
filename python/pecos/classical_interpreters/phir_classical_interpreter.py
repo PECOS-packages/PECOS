@@ -205,66 +205,69 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         val >>= idx
         return val
 
-    def eval_expr(self, expr: int | (str | (list | dict))) -> int | None:
-        if isinstance(expr, int):
-            return expr
-        elif isinstance(expr, str):
-            return self.get_cval(expr)
-        elif isinstance(expr, list):
-            return self.get_bit(*expr)
-        elif isinstance(expr, dict):
-            # TODO: Expressions need to be converted to nested COps!
-            sym = expr["cop"]
-            args = expr["args"]
+    def eval_expr(self, expr: int | str | list | pt.opt.COp) -> int | None:
+        """Evaluates integer expressions."""
+        match expr:
+            case int():
+                return expr
 
-            if sym in {"~"}:  # Unary ops
-                lhs = args[0]
-                rhs = None
-            else:
-                lhs, rhs = args
-                rhs = self.eval_expr(rhs)
+            case str():
+                return self.get_cval(expr)
+            case list():
+                return self.get_bit(*expr)
+            case pt.opt.COp():
+                sym = expr.name
+                args = expr.args
 
-            lhs = self.eval_expr(lhs)
-            dtype = type(lhs)
+                if sym in {"~"}:  # Unary ops
+                    lhs = args[0]
+                    rhs = None
+                else:
+                    lhs, rhs = args
+                    rhs = self.eval_expr(rhs)
 
-            if sym == "^":
-                return dtype(lhs ^ rhs)
-            elif sym == "+":
-                return dtype(lhs + rhs)
-            elif sym == "-":
-                return dtype(lhs - rhs)
-            elif sym == "|":
-                return dtype(lhs | rhs)
-            elif sym == "&":
-                return dtype(lhs & rhs)
-            elif sym == ">>":
-                return dtype(lhs >> rhs)
-            elif sym == "<<":
-                return dtype(lhs << rhs)
-            elif sym == "*":
-                return dtype(lhs * rhs)
-            elif sym == "/":
-                return dtype(lhs // rhs)
-            elif sym == "==":
-                return dtype(lhs == rhs)
-            elif sym == "!=":
-                return dtype(lhs != rhs)
-            elif sym == "<=":
-                return dtype(lhs <= rhs)
-            elif sym == ">=":
-                return dtype(lhs >= rhs)
-            elif sym == "<":
-                return dtype(lhs < rhs)
-            elif sym == ">":
-                return dtype(lhs > rhs)
-            elif sym == "%":
-                return dtype(lhs % rhs)
-            elif sym == "~":
-                return dtype(~lhs)
-            else:
-                msg = f"Unknown expression type: {sym}"
-                raise ValueError(msg)
-        return None
+                lhs = self.eval_expr(lhs)
+                dtype = type(lhs)
+
+                if sym == "^":
+                    return dtype(lhs ^ rhs)
+                elif sym == "+":
+                    return dtype(lhs + rhs)
+                elif sym == "-":
+                    return dtype(lhs - rhs)
+                elif sym == "|":
+                    return dtype(lhs | rhs)
+                elif sym == "&":
+                    return dtype(lhs & rhs)
+                elif sym == ">>":
+                    return dtype(lhs >> rhs)
+                elif sym == "<<":
+                    return dtype(lhs << rhs)
+                elif sym == "*":
+                    return dtype(lhs * rhs)
+                elif sym == "/":
+                    return dtype(lhs // rhs)
+                elif sym == "==":
+                    return dtype(lhs == rhs)
+                elif sym == "!=":
+                    return dtype(lhs != rhs)
+                elif sym == "<=":
+                    return dtype(lhs <= rhs)
+                elif sym == ">=":
+                    return dtype(lhs >= rhs)
+                elif sym == "<":
+                    return dtype(lhs < rhs)
+                elif sym == ">":
+                    return dtype(lhs > rhs)
+                elif sym == "%":
+                    return dtype(lhs % rhs)
+                elif sym == "~":
+                    return dtype(~lhs)
+                else:
+                    msg = f"Unknown expression type: {sym}"
+                    raise ValueError(msg)
+            case _:
+                return None
 
     def assign_int(self, cvar, val: int):
         i = None

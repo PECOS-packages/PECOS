@@ -14,9 +14,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from wasmtime import FuncType, Instance, Module, Store
+from wasmtime import FuncType, Instance, Module, Store, Trap
 
 from pecos.foreign_objects.foreign_object_abc import ForeignObject
+from pecos.errors import WasmRuntimeError, MissingCCOPError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -81,8 +82,19 @@ class WasmtimeObj(ForeignObject):
         return self.func_names
 
     def exec(self, func_name: str, args: Sequence) -> tuple:
-        func = self.instance.exports(self.store)[func_name]
-        return func(self.store, *args)
+        try:
+            func = self.instance.exports(self.store)[func_name]
+        except KeyError as e:
+            raise MissingCCOPError(f"No method found with name {func_name} in WASM") from e
+        
+        try:
+            return func(self.store, *args)
+        except Trap as t:
+            message = (f"Error during execution of function '{func_name}' with args: {args}\n"
+                    f"Trap code: {t.trap_code}\n{t.message}")
+            raise WasmRuntimeError(message) from t 
+        except Exception as e:
+            raise WasmRuntimeError(f"Error during execution of function {func_name} with args {args}") from e
 
     def to_dict(self) -> dict:
         return {"fobj_class": WasmtimeObj, "wasm_bytes": self.wasm_bytes}

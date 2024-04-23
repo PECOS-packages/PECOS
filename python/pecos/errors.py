@@ -17,5 +17,12 @@ class NotSupportedGateError(PECOSError):
     """Indicates a gate not supported by a simulator."""
 
 
-class MissingCCOPError(PECOSError):
+class WasmError(PECOSError):
+    """Base WASM-related exception type"""
+
+
+class MissingCCOPError(WasmError):
     """Indicates missing a classical function library."""
+
+class WasmRuntimeError(WasmError):
+    """Indicates a runtime WASM error."""

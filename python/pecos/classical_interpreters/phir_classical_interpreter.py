@@ -261,8 +261,10 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             cval &= ~(1 << i)
             cval |= (val & 1) << i
 
-        # mask off bits give the size of the register
-        cval &= (1 << size) - 1
+        if not isinstance(cval, (np.int64, np.int32)):
+            # mask off bits give the size of the register
+            # (doesn't work for negative integers)
+            cval &= (1 << size) - 1
         self.cenv[cid] = cval
 
     def handle_cops(self, op):

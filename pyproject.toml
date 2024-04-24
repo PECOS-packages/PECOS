@@ -73,7 +73,8 @@ visualization = [
     "plotly~=5.9.0",
 ]
 tests = [
-    "pytest>=5.0.0"
+    "pytest>=5.0.0",
+    "hypothesis"
 ]
 all = [
     "quantum-pecos[simulators]",

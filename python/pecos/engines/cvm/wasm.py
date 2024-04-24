@@ -12,7 +12,7 @@
 import pickle
 from pathlib import Path
 
-from pecos.engines.cvm.binarray import BinArray
+from pecos.engines.cvm.binarray2 import BinArray2 as BinArray
 from pecos.engines.cvm.sim_func import sim_exec
 from pecos.engines.cvm.wasm_vms.pywasm import read_pywasm
 from pecos.engines.cvm.wasm_vms.pywasm3 import read_pywasm3

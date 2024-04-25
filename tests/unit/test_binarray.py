@@ -5,8 +5,6 @@ from hypothesis import assume, given
 from hypothesis import strategies as st
 from pecos.engines.cvm.binarray2 import BinArray2 as BinArray
 
-# from pecos.engines.cvm.binarray import BinArray
-
 DEFAULT_SIZE: Final = 63
 MIN: Final = -(2**DEFAULT_SIZE)
 MAX: Final = 2**DEFAULT_SIZE - 1

@@ -35,6 +35,8 @@ class BinArray2:
     def set(self, value):
         if isinstance(value, self.dtype):
             self.value = value
+        elif isinstance(value, BinArray2):
+            self.value = value.value
         else:
             if isinstance(value, str):
                 value = int(value, 2)

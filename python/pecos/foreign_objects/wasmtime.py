@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from wasmtime import FuncType, Instance, Module, Store, Trap
+from wasmtime import FuncType, Instance, Module, Store, Trap, Config, Engine
 
 from pecos.foreign_objects.foreign_object_abc import ForeignObject
 from pecos.errors import WasmRuntimeError, MissingCCOPError
@@ -22,6 +22,17 @@ from pecos.errors import WasmRuntimeError, MissingCCOPError
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+WASM_EXECUTION_TICKS = 1 * 1000000
+
+from threading import Event, Thread
+
+def call_repeatedly(interval, func, *args):
+    stopped = Event()
+    def loop():
+        while not stopped.wait(interval): # the first call is in `interval` secs
+            func(*args)
+    Thread(target=loop).start()    
+    return stopped.set
 
 class WasmtimeObj(ForeignObject):
     """Wrapper class to create a wasmtime instance and access its functions.
@@ -66,7 +77,11 @@ class WasmtimeObj(ForeignObject):
         self.instance = Instance(self.store, self.module, [])
 
     def spin_up_wasm(self) -> None:
-        self.store = Store()
+        config = Config()
+        config.epoch_interruption = True
+        engine = Engine(config)
+        engine.increment_epoch() # Not sure this is required
+        self.store = Store(engine)
         self.module = Module(self.store.engine, self.wasm_bytes)
         self.new_instance()
 
@@ -81,6 +96,10 @@ class WasmtimeObj(ForeignObject):
 
         return self.func_names
 
+    def _increment_engine(self):
+        print('Incrementing epoch')
+        self.store.engine.increment_epoch()
+
     def exec(self, func_name: str, args: Sequence) -> tuple:
         try:
             func = self.instance.exports(self.store)[func_name]
@@ -88,12 +107,17 @@ class WasmtimeObj(ForeignObject):
             raise MissingCCOPError(f"No method found with name {func_name} in WASM") from e
         
         try:
+            self.store.engine.increment_epoch()
+            call_repeatedly(1, lambda: self._increment_engine)
+            self.store.set_epoch_deadline(1)
             return func(self.store, *args)
         except Trap as t:
+            print(t)
             message = (f"Error during execution of function '{func_name}' with args: {args}\n"
                     f"Trap code: {t.trap_code}\n{t.message}")
             raise WasmRuntimeError(message) from t 
         except Exception as e:
+            print(e)
             raise WasmRuntimeError(f"Error during execution of function {func_name} with args {args}") from e
 
     def to_dict(self) -> dict:

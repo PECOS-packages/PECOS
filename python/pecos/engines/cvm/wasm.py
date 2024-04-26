@@ -22,8 +22,6 @@ from pecos.engines.cvm.wasm_vms.wasmtime import read_wasmtime
 from pecos.errors import MissingCCOPError, WasmRuntimeError
 
 WASM_MAX_EXECUTION_TIME_S = 1
-
-WASM_CURRENT_FUNCTION = ""
     
 def read_pickle(picklefile):
     """Read in either a file path or byte object meant to be a pickled class used to define the ccop."""
@@ -77,15 +75,8 @@ def get_ccop(circuit):
 
     return ccop
 
-def wasm_timeout_handler(signum, frame):
-    print(f'In timeout handler for signum {signum} frame {frame}')
-    raise WasmRuntimeError(
-        f'WASM function {WASM_CURRENT_FUNCTION} exceeded maximum execution time of {WASM_MAX_EXECUTION_TIME_S} seconds\n {frame}')
-
 def eval_cfunc(runner, params, output):
     func = params["func"]
-    global WASM_CURRENT_FUNCTION 
-    WASM_CURRENT_FUNCTION = func
     assign_vars = params["assign_vars"]
     args = params["args"]
 
@@ -98,13 +89,7 @@ def eval_cfunc(runner, params, output):
             vals = sim_exec(func, runner, valargs)
 
         else:
-            print(f'Preparing sig_alrm for fxn {WASM_CURRENT_FUNCTION}')
-            signal.signal(signal.SIGALRM, wasm_timeout_handler)
-            signal.alarm(WASM_MAX_EXECUTION_TIME_S)
-            try:
-                vals = runner.ccop.exec(func, valargs, debug=runner.debug)
-            finally:
-                signal.alarm(0)
+            vals = runner.ccop.exec(func, valargs, debug=runner.debug)
 
     except AttributeError:
         ccop = runner.circuit.metadata["ccop"]

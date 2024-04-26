@@ -19,7 +19,9 @@ from pecos.simulators.custatevec.gates_meas import meas_z
 
 gate_dict = {
     "Init": init_zero,
+    "init |0>": init_zero,
     "Measure": meas_z,
+    "measure Z": meas_z,
     "I": one_q.identity,
     "X": one_q.X,
     "Y": one_q.Y,
@@ -28,6 +30,7 @@ gate_dict = {
     "RY": one_q.RY,
     "RZ": one_q.RZ,
     "R1XY": one_q.R1XY,
+    "RXY1Q": one_q.R1XY,
     "SX": one_q.SX,
     "SXdg": one_q.SXdg,
     "SY": one_q.SY,
@@ -50,6 +53,7 @@ gate_dict = {
     "SXXdg": two_q.SXXdg,
     "SYY": two_q.SYY,
     "SYYdg": two_q.SYYdg,
+    "SZZ": two_q.SZZ,
     "SZZ": two_q.SZZ,
     "SZZdg": two_q.SZZdg,
     "SWAP": two_q.SWAP,

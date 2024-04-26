@@ -15,7 +15,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quantum-pecos"
-version = "0.5.0.dev10"
+version = "0.5.0.dev11"
 authors = [
     {name = "The PECOS Developers"},
 ]
@@ -59,7 +59,7 @@ simulators = [
     "projectq>=0.5.0,<0.9.0",
 ]
 cuda = [
-    "cuquantum-python>=23.6.0",
+    "cuquantum-python>=24.0.0",
     "cupy>=10.4.0",
 ]
 wasmtime = [

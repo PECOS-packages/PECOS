@@ -41,7 +41,7 @@ def meas_z(state, qubit: int, **params: Any) -> int:
         n_index_bits=state.num_qubits,  # Number of qubits in the statevector
         basis_bits=[target],  # The index of the qubit being measured
         n_basis_bits=1,  # Number of qubits being measured
-        rand_num=np.random.random(),  # Source of randomness for the measurement
+        randnum=np.random.random(),  # Source of randomness for the measurement
         collapse=cusv.Collapse.NORMALIZE_AND_ZERO,  # Collapse and normalise
     )
     state.stream.synchronize()

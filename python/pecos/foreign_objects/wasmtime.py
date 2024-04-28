@@ -12,7 +12,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable, Mapping
+import logging
+import time
 
 from wasmtime import FuncType, Instance, Module, Store, Trap, Config, Engine
 
@@ -22,17 +24,34 @@ from pecos.errors import WasmRuntimeError, MissingCCOPError
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-WASM_EXECUTION_TICKS = 1 * 1000000
+# These values multiplied should equal the intended maximum execution time
+WASM_EXECUTION_TICK_LENGTH_S: float = 0.25
+WASM_EXECUTION_MAX_TICKS: int = 4
+
+logger = logging.getLogger(__name__)
 
 from threading import Event, Thread
 
-def call_repeatedly(interval, func, *args):
-    stopped = Event()
-    def loop():
-        while not stopped.wait(interval): # the first call is in `interval` secs
-            func(*args)
-    Thread(target=loop).start()    
-    return stopped.set
+class RepeaterThread(Thread):
+    def __init__(self, stop_event: Event, func) -> None:
+        Thread.__init__(self, daemon=True)
+        self._stop_event = stop_event
+        self._func = func
+        self._tick_count = 0
+        print('repeater thread init', flush=True)
+
+    def run(self):
+        print('Starting run', flush=True)
+        while not self._stop_event.wait(WASM_EXECUTION_TICK_LENGTH_S):
+        #while True:
+            #time.sleep(0.25)
+            print('Executing', flush=True)
+            self._tick_count += 1
+            self._func()
+        print(f'Exiting scope, tick count: {self._tick_count}')
+
+    def get_tick_count(self):
+        return self._tick_count
 
 class WasmtimeObj(ForeignObject):
     """Wrapper class to create a wasmtime instance and access its functions.
@@ -80,7 +99,7 @@ class WasmtimeObj(ForeignObject):
         config = Config()
         config.epoch_interruption = True
         engine = Engine(config)
-        engine.increment_epoch() # Not sure this is required
+        # engine.increment_epoch() # Not sure this is required
         self.store = Store(engine)
         self.module = Module(self.store.engine, self.wasm_bytes)
         self.new_instance()
@@ -97,7 +116,8 @@ class WasmtimeObj(ForeignObject):
         return self.func_names
 
     def _increment_engine(self):
-        print('Incrementing epoch')
+        print('Incrementing epoch', flush=True)
+        logger.info('Incrementing engine epoch')
         self.store.engine.increment_epoch()
 
     def exec(self, func_name: str, args: Sequence) -> tuple:
@@ -107,12 +127,20 @@ class WasmtimeObj(ForeignObject):
             raise MissingCCOPError(f"No method found with name {func_name} in WASM") from e
         
         try:
+            stop_flag = Event()
             self.store.engine.increment_epoch()
-            call_repeatedly(1, lambda: self._increment_engine)
-            self.store.set_epoch_deadline(1)
-            return func(self.store, *args)
+            self.store.set_epoch_deadline(WASM_EXECUTION_MAX_TICKS)
+            thread_handle = RepeaterThread(stop_flag, self._increment_engine)
+            thread_handle.start()
+            print(f'Repeater thread started for func {func_name}', flush=True)
+            output = func(self.store, *args)
+            stop_flag.set()
+            thread_handle.join()
+            print(f'Repeater thread shutdown for func {func_name}, tick_count={thread_handle.get_tick_count()}', flush=True)
+            return output
         except Trap as t:
             print(t)
+            print(f'Tick count: {thread_handle.get_tick_count()}')
             message = (f"Error during execution of function '{func_name}' with args: {args}\n"
                     f"Trap code: {t.trap_code}\n{t.message}")
             raise WasmRuntimeError(message) from t 

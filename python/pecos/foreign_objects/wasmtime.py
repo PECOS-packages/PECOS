@@ -37,21 +37,21 @@ class RepeaterThread(Thread):
         Thread.__init__(self, daemon=True)
         self._stop_event = stop_event
         self._func = func
-        self._tick_count = 0
-        print('repeater thread init', flush=True)
+        #self._tick_count = 0
+        #print('repeater thread init', flush=True)
 
     def run(self):
         print('Starting run', flush=True)
-        while not self._stop_event.wait(WASM_EXECUTION_TICK_LENGTH_S):
-        #while True:
-            #time.sleep(0.25)
-            print('Executing', flush=True)
-            self._tick_count += 1
+        #while not self._stop_event.wait(WASM_EXECUTION_TICK_LENGTH_S):
+        while True:
+            time.sleep(WASM_EXECUTION_TICK_LENGTH_S)
+            print(f'Executing at {time.time()}', flush=True)
+            #self._tick_count += 1
             self._func()
-        print(f'Exiting scope, tick count: {self._tick_count}')
+        #print(f'Exiting scope, tick count: {self._tick_count}')
 
     def get_tick_count(self):
-        return self._tick_count
+        return 0
 
 class WasmtimeObj(ForeignObject):
     """Wrapper class to create a wasmtime instance and access its functions.
@@ -102,6 +102,9 @@ class WasmtimeObj(ForeignObject):
         # engine.increment_epoch() # Not sure this is required
         self.store = Store(engine)
         self.module = Module(self.store.engine, self.wasm_bytes)
+        self.inc_thread_handle = RepeaterThread(Event(), self._increment_engine)
+        self.inc_thread_handle.start()
+        print(f'Tick increment thread started: {self.inc_thread_handle.name}')
         self.new_instance()
 
     def get_funcs(self) -> list[str]:
@@ -130,17 +133,18 @@ class WasmtimeObj(ForeignObject):
             stop_flag = Event()
             self.store.engine.increment_epoch()
             self.store.set_epoch_deadline(WASM_EXECUTION_MAX_TICKS)
-            thread_handle = RepeaterThread(stop_flag, self._increment_engine)
-            thread_handle.start()
-            print(f'Repeater thread started for func {func_name}', flush=True)
+            print(f'Epoch deadline set to {WASM_EXECUTION_MAX_TICKS} for func {func_name}')
+            #thread_handle = RepeaterThread(stop_flag, self._increment_engine)
+            #thread_handle.start()
+            #print(f'Repeater thread started for func {func_name}', flush=True)
             output = func(self.store, *args)
-            stop_flag.set()
-            thread_handle.join()
-            print(f'Repeater thread shutdown for func {func_name}, tick_count={thread_handle.get_tick_count()}', flush=True)
+            #stop_flag.set()
+            #thread_handle.join()
+            #print(f'Repeater thread shutdown for func {func_name}, tick_count={thread_handle.get_tick_count()}', flush=True)
             return output
         except Trap as t:
             print(t)
-            print(f'Tick count: {thread_handle.get_tick_count()}')
+            #print(f'Tick count: {thread_handle.get_tick_count()}')
             message = (f"Error during execution of function '{func_name}' with args: {args}\n"
                     f"Trap code: {t.trap_code}\n{t.message}")
             raise WasmRuntimeError(message) from t 
@@ -148,6 +152,10 @@ class WasmtimeObj(ForeignObject):
             print(e)
             raise WasmRuntimeError(f"Error during execution of function {func_name} with args {args}") from e
 
+    def teardown(self) -> None:
+        self.inc_thread_handle.join()
+        print(f'Teardown of thread {self.inc_thread_handle.name}') 
+        
     def to_dict(self) -> dict:
         return {"fobj_class": WasmtimeObj, "wasm_bytes": self.wasm_bytes}
 

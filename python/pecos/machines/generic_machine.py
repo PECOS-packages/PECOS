@@ -25,6 +25,7 @@ class GenericMachine(Machine):
 
     def __init__(self, num_qubits: int | None = None) -> None:
         super().__init__(num_qubits=num_qubits)
+        self.qubit_set = set()
         self.leaked_qubits = set()
         self.lost_qubits = set()
 
@@ -35,6 +36,7 @@ class GenericMachine(Machine):
 
     def init(self, num_qubits: int | None = None) -> None:
         self.num_qubits = num_qubits
+        self.qubit_set = set(range(num_qubits))
 
     def shot_reinit(self) -> None:
         self.reset()

@@ -45,8 +45,8 @@ class IfBlock(Block):
     def __init__(
         self,
         condition: COp,
-        true_branch: list[COp],
-        false_branch: list | None = None,
+        true_branch: list[Op],
+        false_branch: list[Op] | None = None,
         metadata: dict | None = None,
     ) -> None:
         super().__init__(metadata=metadata)

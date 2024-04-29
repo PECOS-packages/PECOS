@@ -49,125 +49,149 @@ class PyPMIR:
         self.foreign_func_calls = set()
 
     @classmethod
-    def handle_op(cls, o: dict, p: PyPMIR) -> TypeOp:
-        if "block" in o:
-            if o["block"] == "sequence":
-                ops = []
-                for so in o["ops"]:
-                    ops.append(cls.handle_op(so, p))
+    def handle_op(cls, o: dict | str | int, p: PyPMIR) -> TypeOp | str | list | int:
 
-                instr = blk.SeqBlock(
-                    ops=ops,
-                    metadata=o.get("metadata"),
-                )
-            elif o["block"] == "qparallel":
-                ops = []
-                for so in o["ops"]:
-                    ops.append(cls.handle_op(so, p))
+        match o:
+            case int() | str():  # Assume int value or register
+                o: int | str
+                return o
 
-                instr = blk.QParallelBlock(
-                    ops=ops,
-                    metadata=o.get("metadata"),
-                )
-            elif o["block"] == "if":
-                true_branch = []
-                for so in o["true_branch"]:
-                    true_branch.append(cls.handle_op(so, p))
-
-                false_branch = []
-                for so in o.get("false_branch", []):
-                    false_branch.append(cls.handle_op(so, p))
-
-                instr = blk.IfBlock(
-                    condition=o["condition"],
-                    true_branch=true_branch,
-                    false_branch=false_branch,
-                    metadata=o.get("metadata"),
-                )
-            else:
-                msg = f"Block not recognized: {o}"
-                raise Exception(msg)
-
-        elif "qop" in o:
-            # TODO: convert [qsym, qubit_init] to int
-            # TODO: flatten to just list of ints even for TQ, etc.
-            # TODO: Note size of gate?
-
-            metadata = {} if o.get("metadata") is None else o["metadata"]
-
-            if o.get("angles"):
-                angles = tuple([angle * (pi if o["angles"][1] == "pi" else 1) for angle in o["angles"][0]])
-            else:
-                angles = None
-
-            # TODO: get rid of supplying angle or angles in syms and move to (sym, angles) or sym (or gate obj)
-            if angles:
-                if len(angles) == 1:
-                    metadata["angle"] = angles[0]
+            case list():
+                if len(o) == 2 and isinstance(o[0], str) and isinstance(o[1], int):
+                    o: list
+                    return o
                 else:
-                    metadata["angles"] = angles
+                    msg = f"A bit or qubit was assumed for list types. Got: {o}"
+                    raise ValueError(msg)
 
-            args = cls.get_qargs(o, p)
+            case dict():
 
-            # TODO: Added to satisfy old-style error models. Remove when they not longer need this...
-            if o.get("returns"):
-                var_output = {}
-                for q, cvar in zip(args, o["returns"]):
-                    var_output[q] = cvar
-                metadata["var_output"] = var_output
+                if "block" in o:
+                    if o["block"] == "sequence":
+                        ops = []
+                        for so in o["ops"]:
+                            ops.append(cls.handle_op(so, p))
 
-            instr = op.QOp(
-                name=o["qop"],
-                sim_name=None,
-                angles=angles,
-                args=args,
-                returns=o.get("returns"),
-                metadata=metadata,
-            )
+                        instr = blk.SeqBlock(
+                            ops=ops,
+                            metadata=o.get("metadata"),
+                        )
+                    elif o["block"] == "qparallel":
+                        ops = []
+                        for so in o["ops"]:
+                            ops.append(cls.handle_op(so, p))
 
-            instr.sim_name = p.name_resolver(instr)
+                        instr = blk.QParallelBlock(
+                            ops=ops,
+                            metadata=o.get("metadata"),
+                        )
+                    elif o["block"] == "if":
+                        true_branch = []
+                        for so in o["true_branch"]:
+                            true_branch.append(cls.handle_op(so, p))
 
-        elif "cop" in o:
-            if o["cop"] == "ffcall":
-                instr = op.FFCall(
-                    name=o["function"],
-                    args=o["args"],
-                    returns=o.get("returns"),
-                    metadata=o.get("metadata"),
-                )
-                p.foreign_func_calls.add(o["function"])
-            else:
-                instr = op.COp(name=o["cop"], args=o["args"], returns=o.get("returns"), metadata=o.get("metadata"))
+                        false_branch = []
+                        for so in o.get("false_branch", []):
+                            false_branch.append(cls.handle_op(so, p))
 
-        elif "mop" in o:
-            if "args" in o:
-                # TODO: Assuming qargs... but that might not always be the case...
-                args = cls.get_qargs(o, p)
-            else:
-                args = None
+                        instr = blk.IfBlock(
+                            # condition=o["condition"],
+                            condition=cls.handle_op(o["condition"], p),
+                            true_branch=true_branch,
+                            false_branch=false_branch,
+                            metadata=o.get("metadata"),
+                        )
+                    else:
+                        msg = f"Block not recognized: {o}"
+                        raise Exception(msg)
 
-            instr = op.MOp(name=o["mop"], args=args, returns=o.get("returns"), metadata=o.get("metadata"))
-            if "duration" in o:
-                if instr.metadata is None:
-                    instr.metadata = {}
-                instr.metadata["duration"] = o["duration"]
+                elif "qop" in o:
+                    # TODO: convert [qsym, qubit_init] to int
+                    # TODO: flatten to just list of ints even for TQ, etc.
+                    # TODO: Note size of gate?
 
-        elif "meta" in o:
-            # TODO: Handle meta instructions
-            name = o["meta"]
-            if name == "barrier":
-                instr = None
-            else:
-                msg = f"Meta instruction '{name}' not implemented/supported."
-                raise NotImplementedError(msg)
+                    metadata = {} if o.get("metadata") is None else o["metadata"]
 
-        elif "//" in o:
-            # Do not include comments
-            instr = None
+                    if o.get("angles"):
+                        angles = tuple([angle * (pi if o["angles"][1] == "pi" else 1) for angle in o["angles"][0]])
+                    else:
+                        angles = None
 
-        else:
-            msg = f"Instruction not recognized: {o}"
-            raise Exception(msg)
+                    # TODO: get rid of supplying angle or angles in syms and move to (sym, angles) or sym (or gate obj)
+                    if angles:
+                        if len(angles) == 1:
+                            metadata["angle"] = angles[0]
+                        else:
+                            metadata["angles"] = angles
+
+                    args = cls.get_qargs(o, p)
+
+                    # TODO: Added to satisfy old-style error models. Remove when they not longer need this...
+                    if o.get("returns"):
+                        var_output = {}
+                        for q, cvar in zip(args, o["returns"]):
+                            var_output[q] = cvar
+                        metadata["var_output"] = var_output
+
+                    instr = op.QOp(
+                        name=o["qop"],
+                        sim_name=None,
+                        angles=angles,
+                        args=args,
+                        returns=o.get("returns"),
+                        metadata=metadata,
+                    )
+
+                    instr.sim_name = p.name_resolver(instr)
+
+                elif "cop" in o:
+                    if o["cop"] == "ffcall":
+                        instr = op.FFCall(
+                            name=o["function"],
+                            args=o["args"],
+                            returns=o.get("returns"),
+                            metadata=o.get("metadata"),
+                        )
+                        p.foreign_func_calls.add(o["function"])
+                    else:
+                        instr = op.COp(
+                            name=o["cop"],
+                            args=[cls.handle_op(a, p) for a in o["args"]],
+                            returns=o.get("returns"),
+                            metadata=o.get("metadata"),
+                        )
+
+                elif "mop" in o:
+                    if "args" in o:
+                        # TODO: Assuming qargs... but that might not always be the case...
+                        args = cls.get_qargs(o, p)
+                    else:
+                        args = None
+
+                    instr = op.MOp(name=o["mop"], args=args, returns=o.get("returns"), metadata=o.get("metadata"))
+                    if "duration" in o:
+                        if instr.metadata is None:
+                            instr.metadata = {}
+                        instr.metadata["duration"] = o["duration"]
+
+                elif "meta" in o:
+                    # TODO: Handle meta instructions
+                    name = o["meta"]
+                    if name == "barrier":
+                        instr = None
+                    else:
+                        msg = f"Meta instruction '{name}' not implemented/supported."
+                        raise NotImplementedError(msg)
+
+                elif "//" in o:
+                    # Do not include comments
+                    instr = None
+                else:
+                    msg = f"Unknown instruction: {o}"
+                    raise NotImplementedError(msg)
+            case _:
+                msg = f"Instruction not recognized: {o}"
+                raise Exception(msg)
 
         return instr
 

@@ -11,7 +11,6 @@
 
 import pickle
 from pathlib import Path
-import signal
 
 from pecos.engines.cvm.binarray import BinArray
 from pecos.engines.cvm.sim_func import sim_exec
@@ -21,7 +20,6 @@ from pecos.engines.cvm.wasm_vms.wasmer import read_wasmer
 from pecos.engines.cvm.wasm_vms.wasmtime import read_wasmtime
 from pecos.errors import MissingCCOPError, WasmRuntimeError
 
-WASM_MAX_EXECUTION_TIME_S = 1
     
 def read_pickle(picklefile):
     """Read in either a file path or byte object meant to be a pickled class used to define the ccop."""

@@ -24,5 +24,6 @@ class WasmError(PECOSError):
 class MissingCCOPError(WasmError):
     """Indicates missing a classical function library."""
 
+
 class WasmRuntimeError(WasmError):
     """Indicates a runtime WASM error."""

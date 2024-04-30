@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING
 from wasmer import FunctionType, Instance, Module, Store, engine
 from wasmer_compiler_cranelift import Compiler as Cranelift
 
+from pecos.errors import MissingCCOPError, WasmRuntimeError
 from pecos.foreign_objects.foreign_object_abc import ForeignObject
-from pecos.errors import WasmRuntimeError, MissingCCOPError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -92,17 +92,18 @@ class WasmerObj(ForeignObject):
         try:
             func = getattr(self.instance.exports, func_name)
         except AttributeError as e:
-            raise MissingCCOPError(f"Func {func_name} not found in WASM") from e
-        
+            message = f"Func {func_name} not found in WASM"
+            raise MissingCCOPError(message) from e
+
         params = func.type.params
         if len(args) != len(params):
             msg = f"Wasmer function `{func_name}` takes {len(params)} args and {len(args)} were given!"
             raise WasmRuntimeError(msg)
-        
+
         try:
             return func(*args)
-        except Exception as ex:
-            raise WasmRuntimeError() from ex
+        except Exception as ex:  # noqa: BLE001
+            raise WasmRuntimeError(ex.args[0]) from ex
 
     def to_dict(self) -> dict:
         return {"fobj_class": WasmerObj, "wasm_bytes": self.wasm_bytes}

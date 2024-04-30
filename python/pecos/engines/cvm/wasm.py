@@ -18,9 +18,9 @@ from pecos.engines.cvm.wasm_vms.pywasm import read_pywasm
 from pecos.engines.cvm.wasm_vms.pywasm3 import read_pywasm3
 from pecos.engines.cvm.wasm_vms.wasmer import read_wasmer
 from pecos.engines.cvm.wasm_vms.wasmtime import read_wasmtime
-from pecos.errors import MissingCCOPError, WasmRuntimeError
+from pecos.errors import MissingCCOPError
 
-    
+
 def read_pickle(picklefile):
     """Read in either a file path or byte object meant to be a pickled class used to define the ccop."""
     if isinstance(picklefile, str):  # filename
@@ -72,6 +72,7 @@ def get_ccop(circuit):
         ccop = None
 
     return ccop
+
 
 def eval_cfunc(runner, params, output):
     func = params["func"]

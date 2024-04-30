@@ -43,6 +43,6 @@ def read_pywasm(wasm):
             return self.p.exec(func, args)
 
         def teardown(self):
-            pass # Only needed for wasmtime
+            pass  # Only needed for wasmtime
 
     return PywasmReader(p)

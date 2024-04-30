@@ -1,8 +1,9 @@
-from threading import Thread, Event
+from threading import Event, Thread
 
 # These values multiplied should equal the intended maximum execution time
 WASM_EXECUTION_TICK_LENGTH_S: float = 0.25
 WASM_EXECUTION_MAX_TICKS: int = 4
+
 
 class WasmExecutionTimerThread(Thread):
     def __init__(self, stop_event: Event, func) -> None:

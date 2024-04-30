@@ -125,8 +125,8 @@ class HybridEngine:
             output = output_export
 
         if self.ccop:
-            self.ccop.teardown() # Tear down WASM execution context
-    
+            self.ccop.teardown()  # Tear down WASM execution context
+
         return output, error_circuits
 
     def run_circuit(self, state, output, output_export, circuit, error_gen, removed_locations=None):

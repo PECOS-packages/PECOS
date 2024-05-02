@@ -52,8 +52,8 @@ def _apply_controlled_matrix(state, control: int, target: int, matrix: cp.ndarra
         control_bit_values=[],  # No value of control bit assigned
         n_controls=1,
         compute_type=state.compute_type,
-        workspace=0,  # Let cuQuantum use the mempool we configured
-        workspace_size=0,  # Let cuQuantum use the mempool we configured
+        extra_workspace=0,  # Let cuQuantum use the mempool we configured
+        extra_workspace_size_in_bytes=0,  # Let cuQuantum use the mempool we configured
     )
     state.stream.synchronize()
 
@@ -155,8 +155,8 @@ def _apply_two_qubit_matrix(state, qubits: tuple[int, int], matrix: cp.ndarray) 
         control_bit_values=[],  # No value of control bit assigned
         n_controls=0,
         compute_type=state.compute_type,
-        workspace=0,  # Let cuQuantum use the mempool we configured
-        workspace_size=0,  # Let cuQuantum use the mempool we configured
+        extra_workspace=0,  # Let cuQuantum use the mempool we configured
+        extra_workspace_size_in_bytes=0,  # Let cuQuantum use the mempool we configured
     )
     state.stream.synchronize()
 
@@ -392,7 +392,7 @@ def SWAP(state, qubits: tuple[int, int], **params: Any) -> None:
         controls=[],
         control_bit_values=[],  # No value of control bit assigned
         n_controls=0,
-        workspace=0,  # Let cuQuantum use the mempool we configured
-        workspace_size=0,  # Let cuQuantum use the mempool we configured
+        extra_workspace=0,  # Let cuQuantum use the mempool we configured
+        extra_workspace_size_in_bytes=0,  # Let cuQuantum use the mempool we configured
     )
     state.stream.synchronize()

@@ -81,7 +81,9 @@ class CuStateVec(StateVector):
             cp.cuda.runtime.cudaMemPoolAttrReleaseThreshold,
             0xFFFFFFFFFFFFFFFF,  # = UINT64_MAX
         )
-
+        self.__init_helper()
+        
+    def __init_helper(self):
         # CuStateVec handle initialization
         self.libhandle = cusv.create()
         self.stream = cp.cuda.Stream()
@@ -96,6 +98,13 @@ class CuStateVec(StateVector):
 
         mem_handler = (malloc, free, "GPU memory handler")
         cusv.set_device_mem_handler(self.libhandle, mem_handler)
+
+    def reset(self):
+        """Reset the quantum state for another run without reinitializing."""
+        # Initialize all qubits in the zero state
+        cusv.destroy(self.libhandle)
+        self.__init_helper()
+        return self
 
     def __del__(self) -> None:
         # CuPy will release GPU memory when the variable ``self.vector`` is no longer

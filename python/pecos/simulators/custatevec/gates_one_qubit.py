@@ -47,8 +47,8 @@ def _apply_one_qubit_matrix(state, qubit: int, matrix: cp.ndarray) -> None:
         control_bit_values=[],  # No value of control bit assigned
         n_controls=0,
         compute_type=state.compute_type,
-        workspace=0,  # Let cuQuantum use the mempool we configured
-        workspace_size=0,  # Let cuQuantum use the mempool we configured
+        extra_workspace=0,  # Let cuQuantum use the mempool we configured
+        extra_workspace_size_in_bytes=0,  # Let cuQuantum use the mempool we configured
     )
     state.stream.synchronize()
 
@@ -184,6 +184,8 @@ def RZ(state, qubit: int, angles: tuple[float], **params: Any) -> None:
         qubit: The index of the qubit where the gate is applied
         angles: A tuple containing a single angle in radians
     """
+    if "angle" in params:
+        angles = (params['angle'],)
     if len(angles) != 1:
         msg = "Gate must be given 1 angle parameter."
         raise ValueError(msg)

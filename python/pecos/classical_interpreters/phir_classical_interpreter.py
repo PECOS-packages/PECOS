@@ -15,11 +15,10 @@ import json
 import warnings
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 from phir.model import PHIRModel
 
 from pecos.classical_interpreters.classical_interpreter_abc import ClassicalInterpreter
-from pecos.reps.pypmir import PyPMIR
+from pecos.reps.pypmir import PyPMIR, signed_data_types, unsigned_data_types
 from pecos.reps.pypmir import types as pt
 
 if TYPE_CHECKING:
@@ -34,16 +33,7 @@ def version2tuple(v):
     return tuple(map(int, (v.split("."))))
 
 
-data_type_map = {
-    "i8": np.int8,
-    "i16": np.int16,
-    "i32": np.int32,
-    "i64": np.int64,
-    "u8": np.uint8,
-    "u16": np.uint16,
-    "u32": np.uint32,
-    "u64": np.uint64,
-}
+data_type_map = signed_data_types | unsigned_data_types
 
 data_type_map_rev = {v: k for k, v in data_type_map.items()}
 
@@ -276,7 +266,6 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
 
         cid = self.csym2id[cvar]
         dtype = self.cid2dtype[cid]
-        size = self.cvar_meta[cid].size
 
         cval = self.cenv[cid]
         val = dtype(val)
@@ -286,9 +275,10 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             cval &= ~(1 << i)
             cval |= (val & 1) << i
 
-        if not isinstance(cval, (np.int64, np.int32)):
-            # mask off bits give the size of the register
-            # (doesn't work for negative integers)
+        if type(cval) not in signed_data_types.values():
+            # mask off bits given the size of the register
+            # (only valid for unsigned data types)
+            size = self.cvar_meta[cid].size
             cval &= (1 << size) - 1
         self.cenv[cid] = cval
 

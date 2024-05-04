@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from pecos.reps.pypmir import unsigned_data_types
+
 
 class BinArray2:
     """As opposed to the original unsigned 32-bit BinArray, this class defaults to signed 64-bit type."""
@@ -45,7 +47,7 @@ class BinArray2:
 
     def new_val(self, value):
         b = BinArray2(self.size, value, self.dtype)
-        if self.dtype in (np.uint32, np.uint64):
+        if self.dtype in unsigned_data_types.values():
             b.clamp(self.size)
         return b
 

@@ -72,3 +72,17 @@ class MPS(StateTN):
         # CuPy will release GPU memory when the variable ``self.mps`` is no longer
         # reachable. However, we need to manually destroy the library handle.
         self.libhandle.destroy()
+
+    @property
+    def vector(self) -> np.ndarray:
+        """Obtain the statevector encoded in this MPS.
+
+        Note:
+            This is meant to be used for debugging only. Obtaining the statevector
+            from the MPS on a large number of qubits completely defeats the purpose
+            of tensor network methods.
+
+        Returns:
+            The statevector represented by the MPS as a numpy array.
+        """
+        return self.mps.get_statevector().get()

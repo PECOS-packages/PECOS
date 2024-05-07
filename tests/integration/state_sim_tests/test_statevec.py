@@ -33,12 +33,24 @@ try:
 except ImportError:
     custatevec_ready = False
 
+# Try to import pytket-cutensornet
+try:
+    import pytket.extensions.cutensornet
+
+    from pecos.simulators import MPS
+
+    mps_ready = imported_cuquantum and imported_cupy  # Same requirements as CuStateVec
+except ImportError:
+    mps_ready = False
+
 
 def verify(simulator, qc: QuantumCircuit, final_vector: np.ndarray) -> None:
     if simulator == "BasicSV":
         sim = BasicSV(len(qc.qudits))
     elif simulator == "CuStateVec" and custatevec_ready:
         sim = CuStateVec(len(qc.qudits))
+    elif simulator == "MPS" and mps_ready:
+        sim = MPS(len(qc.qudits))
     else:
         pytest.skip(f"Requirements to test {simulator} are not met.")
 
@@ -51,6 +63,8 @@ def check_measurement(simulator, qc: QuantumCircuit, final_results: dict[int, in
         sim = BasicSV(len(qc.qudits))
     elif simulator == "CuStateVec" and custatevec_ready:
         sim = CuStateVec(len(qc.qudits))
+    elif simulator == "MPS" and mps_ready:
+        sim = MPS(len(qc.qudits))
     else:
         pytest.skip(f"Requirements to test {simulator} are not met.")
 
@@ -107,6 +121,7 @@ def generate_random_state(seed=None) -> QuantumCircuit:
     [
         "BasicSV",
         "CuStateVec",
+        "MPS",
     ],
 )
 def test_init(simulator):
@@ -124,6 +139,7 @@ def test_init(simulator):
     [
         "BasicSV",
         "CuStateVec",
+        "MPS",
     ],
 )
 def test_H_measure(simulator):
@@ -139,6 +155,7 @@ def test_H_measure(simulator):
     [
         "BasicSV",
         "CuStateVec",
+        "MPS",
     ],
 )
 def test_comp_basis_circ_and_measure(simulator):
@@ -205,6 +222,7 @@ def test_comp_basis_circ_and_measure(simulator):
     "simulator",
     [
         "CuStateVec",
+        "MPS",
     ],
 )
 def test_all_gate_circ(simulator):

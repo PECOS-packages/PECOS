@@ -60,7 +60,8 @@ simulators = [
 ]
 cuda = [
     "cuquantum-python>=23.6.0",
-    "cupy>=10.4.0",
+    "cupy>=12.3.0",
+    "pytket-cutensornet>=0.6.2",
 ]
 wasmtime = [
     "wasmtime>=13.0"

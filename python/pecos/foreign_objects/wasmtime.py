@@ -124,7 +124,7 @@ class WasmtimeObj(ForeignObject):
                     f"Trap code: {t.trap_code}\n{t.message}"
                 )
             raise WasmRuntimeError(message) from t
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             message = f"Error during execution of function '{func_name}' with args {args}"
             raise WasmRuntimeError(message) from e
 

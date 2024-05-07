@@ -102,7 +102,7 @@ class WasmerObj(ForeignObject):
 
         try:
             return func(*args)
-        except Exception as ex:  # noqa: BLE001
+        except Exception as ex:
             raise WasmRuntimeError(ex.args[0]) from ex
 
     def to_dict(self) -> dict:

@@ -9,10 +9,10 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-import pecos.simulators.custatevec.gates_one_qubit as one_q
-import pecos.simulators.custatevec.gates_two_qubit as two_q
-from pecos.simulators.custatevec.gates_init import init_zero
-from pecos.simulators.custatevec.gates_meas import meas_z
+import pecos.simulators.mps_pytket.gates_one_qubit as one_q
+import pecos.simulators.mps_pytket.gates_two_qubit as two_q
+from pecos.simulators.mps_pytket.gates_init import init_zero
+from pecos.simulators.mps_pytket.gates_meas import meas_z
 
 # Supporting gates from table:
 #   https://github.com/CQCL/phir/blob/main/spec.md#table-ii---quantum-operations

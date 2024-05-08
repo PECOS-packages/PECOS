@@ -19,9 +19,13 @@ repos:
     hooks:
       - id: typos
         args: []
+        exclude: |
+            (?x)^(
+                python/pecos/simulators/cuquantum_old/.*|
+            )$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.4.2
+    rev: v0.4.3
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]

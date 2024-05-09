@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import numpy as np
+
 from pecos.circuits import QuantumCircuit
 from pecos.simulators import CoinToss
 

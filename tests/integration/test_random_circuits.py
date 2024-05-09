@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import numpy as np
+
 from pecos.simulators import SparseSim as StateSparse
 
 

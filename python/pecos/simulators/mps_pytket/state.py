@@ -85,4 +85,4 @@ class MPS(StateTN):
         Returns:
             The statevector represented by the MPS as a numpy array.
         """
-        return self.mps.get_statevector().get()
+        return self.mps.get_statevector()

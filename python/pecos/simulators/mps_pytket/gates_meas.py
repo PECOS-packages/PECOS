@@ -31,6 +31,6 @@ def meas_z(state, qubit: int, **params: Any) -> int:
         msg = f"Qubit {qubit} out of range."
         raise ValueError(msg)
 
-    result = state.mps.measure({Qubit(qubit)})
+    result = state.mps.measure({Qubit(qubit)}, destructive=False)
 
     return result[Qubit(qubit)]

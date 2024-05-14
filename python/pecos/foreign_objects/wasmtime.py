@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from threading import Event
 from typing import TYPE_CHECKING
@@ -107,21 +106,20 @@ class WasmtimeObj(ForeignObject):
         try:
             self.store.engine.increment_epoch()
             self.store.set_epoch_deadline(WASM_EXECUTION_MAX_TICKS)
-            start_time = time.time()
             output = func(self.store, *args)
             return output  # noqa: TRY300
         except Trap as t:
             if t.trap_code is TrapCode.INTERRUPT:
-                end_time = time.time()
                 message = (
-                    f"Execution time of function '{func_name}' exceeded maximum "
-                    f"{WASM_EXECUTION_MAX_TICKS * WASM_EXECUTION_TICK_LENGTH_S}s, "
-                    f"took: {end_time - start_time}s"
+                    f"WASM error: WASM failed during run-time. Execution time of "
+                    f"function '{func_name}' exceeded maximum "
+                    f"{WASM_EXECUTION_MAX_TICKS * WASM_EXECUTION_TICK_LENGTH_S}s"
                 )
             else:
                 message = (
-                    f"Error during execution of function '{func_name}' with args: {args}\n"
-                    f"Trap code: {t.trap_code}\n{t.message}"
+                    f"WASM error: WASM failed during run-time. Execution of "
+                    f"function '{func_name}' resulted in {t.trap_code}\n"
+                    f"{t.message}"
                 )
             raise WasmRuntimeError(message) from t
         except Exception as e:

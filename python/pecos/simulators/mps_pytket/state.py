@@ -52,21 +52,25 @@ class MPS(StateTN):
 
         # Configure the simulator
         # TODO: we might want to allow users to change some of these
-        config = Config(
+        self.config = Config(
             chi=None,  # No truncation (exact simulation)
             truncation_fidelity=None,  # No truncation (exact simulation)
             float_precision=np.float64,  # np.float32 is also supported
             value_of_zero=1e-16,  # Values below this threshold are set to 0
             loglevel=30,  # Set to 10 for debug mode
         )
-        self.dtype = config._complex_t  # noqa: SLF001
+        self.dtype = self.config._complex_t  # noqa: SLF001
 
         # cuTensorNet handle initialization
         self.libhandle = CuTensorNetHandle()
 
         # Initialise the MPS on state |0>
-        qubits = [Qubit(q) for q in range(num_qubits)]
-        self.mps = MPSxGate(self.libhandle, qubits, config)
+        self.reset()
+
+    def reset(self) -> None:
+        """Reset the quantum state to all 0 for another run."""
+        qubits = [Qubit(q) for q in range(self.num_qubits)]
+        self.mps = MPSxGate(self.libhandle, qubits, self.config)
 
     def __del__(self) -> None:
         # CuPy will release GPU memory when the variable ``self.mps`` is no longer

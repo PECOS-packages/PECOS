@@ -18,6 +18,11 @@ try:
 except ImportError:
     ProjectQSim = None
 
+try:
+    from pecos.simulators import MPS
+except ImportError:
+    MPS = None
+
 from pecos.reps.pypmir.op_types import QOp
 
 
@@ -39,6 +44,8 @@ class QuantumSimulator:
                 self.state = SparseSim
             elif self.backend == "state-vector":
                 self.state = ProjectQSim
+            elif self.backend in {"MPS", "mps"}:
+                self.state = MPS
             else:
                 msg = f"simulator `{self.state}` not currently implemented!"
                 raise NotImplementedError(msg)

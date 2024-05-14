@@ -24,5 +24,18 @@ def init_zero(state, qubit: int, **params: Any) -> None:
     """
     result = meas_z(state, qubit)
 
-    if result:
+    if result != 0:
+        X(state, qubit)
+
+
+def init_one(state, qubit: int, **params: Any) -> None:
+    """Initialise or reset the qubit to state |1>
+
+    Args:
+        state: An instance of MPS
+        qubit: The index of the qubit to be initialised
+    """
+    result = meas_z(state, qubit)
+
+    if result != 1:
         X(state, qubit)

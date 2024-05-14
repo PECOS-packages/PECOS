@@ -11,7 +11,7 @@
 
 import pecos.simulators.mps_pytket.gates_one_qubit as one_q
 import pecos.simulators.mps_pytket.gates_two_qubit as two_q
-from pecos.simulators.mps_pytket.gates_init import init_zero
+from pecos.simulators.mps_pytket.gates_init import init_one, init_zero
 from pecos.simulators.mps_pytket.gates_meas import meas_z
 
 # Supporting gates from table:
@@ -19,6 +19,13 @@ from pecos.simulators.mps_pytket.gates_meas import meas_z
 
 gate_dict = {
     "Init": init_zero,
+    "Init +Z": init_zero,
+    "Init -Z": init_one,
+    "leak": init_zero,
+    "leak |0>": init_zero,
+    "leak |1>": init_one,
+    "unleak |0>": init_zero,
+    "unleak |1>": init_one,
     "Measure": meas_z,
     "I": one_q.identity,
     "X": one_q.X,

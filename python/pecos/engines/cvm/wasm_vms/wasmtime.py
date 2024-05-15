@@ -41,4 +41,7 @@ def read_wasmtime(path: str | bytes):
                 args = [int(b) for _, b in args]
                 return self.wasmtime.exec(func_name, args)
 
+        def teardown(self):
+            self.wasmtime.teardown()
+
     return WASM(path)

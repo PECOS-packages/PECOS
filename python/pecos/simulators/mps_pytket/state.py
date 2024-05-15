@@ -9,7 +9,6 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-import random
 
 import numpy as np
 from pytket import Qubit
@@ -28,13 +27,15 @@ class MPS(StateTN):
     Simulation using the gate-by-gate on demand MPS simulator from pytket-cutensornet.
     """
 
-    def __init__(self, num_qubits, seed=None) -> None:
+    def __init__(self, num_qubits, **mps_params) -> None:
         """
         Initializes the MPS.
 
         Args:
             num_qubits (int): Number of qubits being represented.
-            seed (int): Seed for randomness.
+            mps_params: a collection of keyword arguments passed down to
+                the ``Config`` object of the MPS. See the docs of pytket-cutensornet
+                for a list of all available parameters.
 
         Returns:
 
@@ -43,7 +44,6 @@ class MPS(StateTN):
         if not isinstance(num_qubits, int):
             msg = "``num_qubits`` should be of type ``int``."
             raise TypeError(msg)
-        random.seed(seed)  # TODO: This should instead be passed to Config
 
         super().__init__()
 
@@ -51,14 +51,7 @@ class MPS(StateTN):
         self.num_qubits = num_qubits
 
         # Configure the simulator
-        # TODO: we might want to allow users to change some of these
-        self.config = Config(
-            chi=None,  # No truncation (exact simulation)
-            truncation_fidelity=None,  # No truncation (exact simulation)
-            float_precision=np.float64,  # np.float32 is also supported
-            value_of_zero=1e-16,  # Values below this threshold are set to 0
-            loglevel=30,  # Set to 10 for debug mode
-        )
+        self.config = Config(**mps_params)
         self.dtype = self.config._complex_t  # noqa: SLF001
 
         # cuTensorNet handle initialization
@@ -71,6 +64,7 @@ class MPS(StateTN):
         """Reset the quantum state to all 0 for another run."""
         qubits = [Qubit(q) for q in range(self.num_qubits)]
         self.mps = MPSxGate(self.libhandle, qubits, self.config)
+        self.mps._logger.debug("Resetting MPS...")  # noqa: SLF001
 
     def __del__(self) -> None:
         # CuPy will release GPU memory when the variable ``self.mps`` is no longer

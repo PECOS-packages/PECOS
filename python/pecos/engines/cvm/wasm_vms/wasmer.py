@@ -72,4 +72,7 @@ def read_wasmer(path, compiler="wasm_cl"):
                 args = [int(b) for _, b in args]
                 return method(*args)
 
+        def teardown(self):
+            pass  # Only needed for wasmtime
+
     return WasmerInstance(path, compiler)

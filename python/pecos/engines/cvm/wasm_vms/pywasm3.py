@@ -28,4 +28,7 @@ def read_pywasm3(wasm, stack_size=1000000):
             args = [int(b) for _, b in args]
             return self.rt.find_function(func)(*args)
 
+        def teardown(self):
+            pass  # Only needed for wasmtime
+
     return Reader(rt)

@@ -42,4 +42,7 @@ def read_pywasm(wasm):
             args = [int(b) for _, b in args]
             return self.p.exec(func, args)
 
+        def teardown(self):
+            pass  # Only needed for wasmtime
+
     return PywasmReader(p)

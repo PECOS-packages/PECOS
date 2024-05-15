@@ -12,11 +12,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event
 from typing import TYPE_CHECKING
 
-from wasmtime import FuncType, Instance, Module, Store
+from wasmtime import Config, Engine, FuncType, Instance, Module, Store, Trap, TrapCode
 
+from pecos.errors import MissingCCOPError, WasmRuntimeError
 from pecos.foreign_objects.foreign_object_abc import ForeignObject
+from pecos.foreign_objects.wasm_execution_timer_thread import (
+    WASM_EXECUTION_MAX_TICKS,
+    WASM_EXECUTION_TICK_LENGTH_S,
+    WasmExecutionTimerThread,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -65,8 +72,14 @@ class WasmtimeObj(ForeignObject):
         self.instance = Instance(self.store, self.module, [])
 
     def spin_up_wasm(self) -> None:
-        self.store = Store()
+        config = Config()
+        config.epoch_interruption = True
+        engine = Engine(config)
+        self.store = Store(engine)
         self.module = Module(self.store.engine, self.wasm_bytes)
+        self.stop_flag = Event()
+        self.inc_thread_handle = WasmExecutionTimerThread(self.stop_flag, self._increment_engine)
+        self.inc_thread_handle.start()
         self.new_instance()
 
     def get_funcs(self) -> list[str]:
@@ -80,9 +93,42 @@ class WasmtimeObj(ForeignObject):
 
         return self.func_names
 
+    def _increment_engine(self):
+        self.store.engine.increment_epoch()
+
     def exec(self, func_name: str, args: Sequence) -> tuple:
-        func = self.instance.exports(self.store)[func_name]
-        return func(self.store, *args)
+        try:
+            func = self.instance.exports(self.store)[func_name]
+        except KeyError as e:
+            message = f"No method found with name {func_name} in WASM"
+            raise MissingCCOPError(message) from e
+
+        try:
+            self.store.engine.increment_epoch()
+            self.store.set_epoch_deadline(WASM_EXECUTION_MAX_TICKS)
+            output = func(self.store, *args)
+            return output  # noqa: TRY300
+        except Trap as t:
+            if t.trap_code is TrapCode.INTERRUPT:
+                message = (
+                    f"WASM error: WASM failed during run-time. Execution time of "
+                    f"function '{func_name}' exceeded maximum "
+                    f"{WASM_EXECUTION_MAX_TICKS * WASM_EXECUTION_TICK_LENGTH_S}s"
+                )
+            else:
+                message = (
+                    f"WASM error: WASM failed during run-time. Execution of "
+                    f"function '{func_name}' resulted in {t.trap_code}\n"
+                    f"{t.message}"
+                )
+            raise WasmRuntimeError(message) from t
+        except Exception as e:
+            message = f"Error during execution of function '{func_name}' with args {args}"
+            raise WasmRuntimeError(message) from e
+
+    def teardown(self) -> None:
+        self.stop_flag.set()
+        self.inc_thread_handle.join()
 
     def to_dict(self) -> dict:
         return {"fobj_class": WasmtimeObj, "wasm_bytes": self.wasm_bytes}

@@ -29,7 +29,7 @@ except PackageNotFoundError:
 from pecos import circuit_converters, circuits, decoders, engines, error_models, misc, qeccs, simulators, tools
 from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.engines import circuit_runners
-from pecos.engines.cvm.binarray import BinArray
+from pecos.engines.cvm.binarray2 import BinArray2 as BinArray
 from pecos.engines.hybrid_engine_old import HybridEngine
 
 __all__ = [

@@ -13,9 +13,13 @@ from __future__ import annotations
 
 import numpy as np
 
+from pecos.reps.pypmir import unsigned_data_types
+
 
 class BinArray2:
-    def __init__(self, size, value=0, dtype=np.int32) -> None:
+    """As opposed to the original unsigned 32-bit BinArray, this class defaults to signed 64-bit type."""
+
+    def __init__(self, size, value=0, dtype=np.int64) -> None:
         self.size = size
         self.value = None
         self.dtype = dtype
@@ -33,6 +37,8 @@ class BinArray2:
     def set(self, value):
         if isinstance(value, self.dtype):
             self.value = value
+        elif isinstance(value, BinArray2):
+            self.value = value.value
         else:
             if isinstance(value, str):
                 value = int(value, 2)
@@ -41,7 +47,8 @@ class BinArray2:
 
     def new_val(self, value):
         b = BinArray2(self.size, value, self.dtype)
-        b.clamp(self.size)
+        if self.dtype in unsigned_data_types.values():
+            b.clamp(self.size)
         return b
 
     def num_bits(self):

@@ -9,4 +9,4 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.reps.pypmir.pypmir import PyPMIR
+from pecos.reps.pypmir.pypmir import PyPMIR, signed_data_types, unsigned_data_types

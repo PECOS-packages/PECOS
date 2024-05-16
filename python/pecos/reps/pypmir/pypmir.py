@@ -15,6 +15,8 @@ from __future__ import annotations
 from math import pi
 from typing import TYPE_CHECKING, Callable, TypeVar
 
+import numpy as np
+
 from pecos.reps.pypmir import block_types as blk
 from pecos.reps.pypmir import data_types as d
 from pecos.reps.pypmir import op_types as op
@@ -24,6 +26,20 @@ if TYPE_CHECKING:
     from pecos.reps.pypmir.op_types import QOp
 
 TypeOp = TypeVar("TypeOp", bound=op.Op)
+
+signed_data_types = {
+    "i8": np.int8,
+    "i16": np.int16,
+    "i32": np.int32,
+    "i64": np.int64,
+}
+
+unsigned_data_types = {
+    "u8": np.uint8,
+    "u16": np.uint16,
+    "u32": np.uint32,
+    "u64": np.uint64,
+}
 
 
 class PyPMIR:
@@ -229,10 +245,14 @@ class PyPMIR:
                 name = o["data"]
 
                 if name == "cvar_define":
+                    data_type = o["data_type"]
+                    size = int(data_type[1:])
+                    if "size" in o:
+                        size = o["size"]
                     data = d.CVarDefine(
-                        data_type=o["data_type"],
+                        data_type=data_type,
                         variable=o["variable"],
-                        size=o["size"],
+                        size=size,
                         cvar_id=len(p.cvar_meta),
                         metadata=o.get("metadata"),
                     )

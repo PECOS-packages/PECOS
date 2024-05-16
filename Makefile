@@ -28,7 +28,7 @@ updatereqs: upgrade-pip  ## Autogenerate requirements.txt
 	$(VENV_BIN)/pip-compile --extra=tests --no-annotate --no-emit-index-url --output-file=requirements.txt --strip-extras pyproject.toml
 
 metadeps: upgrade-pip  ## Install extra dependencies used to develop/build this package
-	$(VENV_BIN)/pip install -U build pip-tools pre-commit wheel pytest
+	$(VENV_BIN)/pip install -U build pip-tools pre-commit wheel pytest hypothesis
 
 # Installation
 # ------------

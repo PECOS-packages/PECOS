@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from pecos.engines.cvm.binarray import BinArray
+from pecos.engines.cvm.binarray2 import BinArray2 as BinArray
 
 
 def set_output(state, circuit, output_spec, output):

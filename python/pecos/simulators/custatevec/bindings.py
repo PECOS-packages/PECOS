@@ -11,7 +11,7 @@
 
 import pecos.simulators.custatevec.gates_one_qubit as one_q
 import pecos.simulators.custatevec.gates_two_qubit as two_q
-from pecos.simulators.custatevec.gates_init import init_zero
+from pecos.simulators.custatevec.gates_init import init_one, init_zero
 from pecos.simulators.custatevec.gates_meas import meas_z
 
 # Supporting gates from table:
@@ -19,7 +19,15 @@ from pecos.simulators.custatevec.gates_meas import meas_z
 
 gate_dict = {
     "Init": init_zero,
+    "init |0>": init_zero,
+    "init |1>": init_one,
     "Measure": meas_z,
+    "measure Z": meas_z,
+    "leak": init_zero,
+    "leak |0>": init_zero,
+    "leak |1>": init_one,
+    "unleak |0>": init_zero,
+    "unleak |1>": init_one,
     "I": one_q.identity,
     "X": one_q.X,
     "Y": one_q.Y,
@@ -28,6 +36,7 @@ gate_dict = {
     "RY": one_q.RY,
     "RZ": one_q.RZ,
     "R1XY": one_q.R1XY,
+    "RXY1Q": one_q.R1XY,
     "SX": one_q.SX,
     "SXdg": one_q.SXdg,
     "SY": one_q.SY,
@@ -51,6 +60,7 @@ gate_dict = {
     "SYY": two_q.SYY,
     "SYYdg": two_q.SYYdg,
     "SZZ": two_q.SZZ,
+    "SqrtZZ": two_q.SZZ,
     "SZZdg": two_q.SZZdg,
     "SWAP": two_q.SWAP,
 }

@@ -98,6 +98,13 @@ class CuStateVec(StateVector):
         mem_handler = (malloc, free, "GPU memory handler")
         cusv.set_device_mem_handler(self.libhandle, mem_handler)
 
+    def reset(self):
+        """Reset the quantum state for another run without reinitializing."""
+        # Initialize all qubits in the zero state
+        self.vector = cp.zeros(shape=2**self.num_qubits, dtype=self.cp_type)
+        self.vector[0] = 1
+        return self
+
     def __del__(self) -> None:
         # CuPy will release GPU memory when the variable ``self.cupy_vector`` is no longer
         # reachable. However, we need to manually destroy the library handle.

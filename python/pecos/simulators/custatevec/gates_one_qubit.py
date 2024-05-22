@@ -34,7 +34,7 @@ def _apply_one_qubit_matrix(state, qubit: int, matrix: cp.ndarray) -> None:
 
     cusv.apply_matrix(
         handle=state.libhandle,
-        sv=state.vector.data.ptr,
+        sv=state.cupy_vector.data.ptr,
         sv_data_type=state.cuda_type,
         n_index_bits=state.num_qubits,
         matrix=matrix.data.ptr,

@@ -39,7 +39,7 @@ def _apply_controlled_matrix(state, control: int, target: int, matrix: cp.ndarra
 
     cusv.apply_matrix(
         handle=state.libhandle,
-        sv=state.vector.data.ptr,
+        sv=state.cupy_vector.data.ptr,
         sv_data_type=state.cuda_type,
         n_index_bits=state.num_qubits,
         matrix=matrix.data.ptr,
@@ -142,7 +142,7 @@ def _apply_two_qubit_matrix(state, qubits: tuple[int, int], matrix: cp.ndarray) 
 
     cusv.apply_matrix(
         handle=state.libhandle,
-        sv=state.vector.data.ptr,
+        sv=state.cupy_vector.data.ptr,
         sv_data_type=state.cuda_type,
         n_index_bits=state.num_qubits,
         matrix=matrix.data.ptr,
@@ -380,7 +380,7 @@ def SWAP(state, qubits: tuple[int, int], **params: Any) -> None:
     # Possibly faster since it may just be an internal qubit relabelling or sv reshape
     cusv.apply_generalized_permutation_matrix(
         handle=state.libhandle,
-        sv=state.vector.data.ptr,
+        sv=state.cupy_vector.data.ptr,
         sv_data_type=state.cuda_type,
         n_index_bits=state.num_qubits,
         permutation=[0, 2, 1, 3],  # Leave |00> and |11> where they are, swap the other two

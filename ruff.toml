@@ -112,6 +112,9 @@ ignore = [
     # TODO: Remove to improve error handling...
     "TRY002", # Custom exceptions
     "TRY003", # Avoid specifying long messages outside the exception class
+
+    # UP031 should be enabled after fixing all suggestions in a separate PR
+    "UP031",
 ]
 
 [lint.per-file-ignores]

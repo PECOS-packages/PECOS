@@ -35,8 +35,7 @@ except ImportError:
 
 # Try to import pytket-cutensornet
 try:
-    import pytket.extensions.cutensornet
-
+    import pytket.extensions.cutensornet  # noqa: F401
     from pecos.simulators import MPS
 
     mps_ready = imported_cuquantum and imported_cupy  # Same requirements as CuStateVec

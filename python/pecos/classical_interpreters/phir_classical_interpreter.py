@@ -37,8 +37,6 @@ data_type_map = signed_data_types | unsigned_data_types
 
 data_type_map_rev = {v: k for k, v in data_type_map.items()}
 
-data_type_map_rev = {v: k for k, v in data_type_map.items()}
-
 
 class PHIRClassicalInterpreter(ClassicalInterpreter):
     """An interpreter that takes in a PHIR program and runs the classical side of the program."""

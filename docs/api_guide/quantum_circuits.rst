@@ -167,7 +167,7 @@ A ``tick`` keyword can be used to specify which tick the gate is discarded from.
 Retrieving Information
 ----------------------
 
-Next, how to retrieve information from a ``QuantumCircuit`` will be dicuss, for example, through attributes or for
+Next, how to retrieve information from a ``QuantumCircuit`` will be discussed, for example, through attributes or for
 loops.
 
 Number of Ticks

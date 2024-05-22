@@ -15,7 +15,8 @@ import struct
 
 import numpy as np
 
-from pecos.engines.cvm.classical import BinArray, eval_condition, eval_cop, set_output
+from pecos.engines.cvm.binarray2 import BinArray2 as BinArray
+from pecos.engines.cvm.classical import eval_condition, eval_cop, set_output
 from pecos.engines.cvm.wasm import eval_cfunc, get_ccop
 from pecos.error_models.fake_error_model import FakeErrorModel
 from pecos.errors import NotSupportedGateError
@@ -123,6 +124,9 @@ class HybridEngine:
 
         if output_export:
             output = output_export
+
+        if self.ccop:
+            self.ccop.teardown()  # Tear down WASM execution context
 
         return output, error_circuits
 

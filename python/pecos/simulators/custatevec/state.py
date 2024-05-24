@@ -12,6 +12,7 @@
 import random
 
 import cupy as cp
+import numpy as np
 from cuquantum import ComputeType, cudaDataType
 from cuquantum import custatevec as cusv
 
@@ -52,8 +53,8 @@ class CuStateVec(StateVector):
         self.compute_type = ComputeType.COMPUTE_64F
 
         # Allocate the statevector in GPU and initialize it to |0>
-        self.vector = cp.zeros(shape=2**num_qubits, dtype=self.cp_type)
-        self.vector[0] = 1
+        self.cupy_vector = cp.zeros(shape=2**num_qubits, dtype=self.cp_type)
+        self.cupy_vector[0] = 1
 
         ####################################################
         # Set up cuStateVec library and GPU memory handles #
@@ -97,7 +98,18 @@ class CuStateVec(StateVector):
         mem_handler = (malloc, free, "GPU memory handler")
         cusv.set_device_mem_handler(self.libhandle, mem_handler)
 
+    def reset(self):
+        """Reset the quantum state for another run without reinitializing."""
+        # Initialize all qubits in the zero state
+        self.vector = cp.zeros(shape=2**self.num_qubits, dtype=self.cp_type)
+        self.vector[0] = 1
+        return self
+
     def __del__(self) -> None:
-        # CuPy will release GPU memory when the variable ``self.vector`` is no longer
+        # CuPy will release GPU memory when the variable ``self.cupy_vector`` is no longer
         # reachable. However, we need to manually destroy the library handle.
         cusv.destroy(self.libhandle)
+
+    @property
+    def vector(self) -> np.ndarray:
+        return self.cupy_vector.get()

@@ -59,7 +59,8 @@ simulators = [
     "projectq>=0.5.0,<0.9.0",
 ]
 cuda = [
-    "cuquantum-python>=23.6.0",
+    "cuquantum-python>=24.03.0",
+    "custatevec>=1.6.0",
     "cupy>=10.4.0",
 ]
 wasmtime = [

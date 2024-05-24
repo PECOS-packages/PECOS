@@ -21,7 +21,7 @@ from pecos.circuits import QuantumCircuit
 try:
     import cuquantum
 
-    imported_cuquantum = vparse(cuquantum._version.__version__) >= vparse("23.6.0")  # noqa: SLF001
+    imported_cuquantum = vparse(cuquantum._version.__version__) >= vparse("24.03.0")  # noqa: SLF001
     import cupy as cp
 
     imported_cupy = vparse(version("cupy")) >= vparse("10.4.0")

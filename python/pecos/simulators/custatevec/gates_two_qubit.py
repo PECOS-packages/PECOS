@@ -39,7 +39,7 @@ def _apply_controlled_matrix(state, control: int, target: int, matrix: cp.ndarra
 
     cusv.apply_matrix(
         handle=state.libhandle,
-        sv=state.vector.data.ptr,
+        sv=state.cupy_vector.data.ptr,
         sv_data_type=state.cuda_type,
         n_index_bits=state.num_qubits,
         matrix=matrix.data.ptr,
@@ -52,8 +52,8 @@ def _apply_controlled_matrix(state, control: int, target: int, matrix: cp.ndarra
         control_bit_values=[],  # No value of control bit assigned
         n_controls=1,
         compute_type=state.compute_type,
-        workspace=0,  # Let cuQuantum use the mempool we configured
-        workspace_size=0,  # Let cuQuantum use the mempool we configured
+        extra_workspace=0,  # Let cuQuantum use the mempool we configured
+        extra_workspace_size_in_bytes=0,  # Let cuQuantum use the mempool we configured
     )
     state.stream.synchronize()
 
@@ -142,7 +142,7 @@ def _apply_two_qubit_matrix(state, qubits: tuple[int, int], matrix: cp.ndarray) 
 
     cusv.apply_matrix(
         handle=state.libhandle,
-        sv=state.vector.data.ptr,
+        sv=state.cupy_vector.data.ptr,
         sv_data_type=state.cuda_type,
         n_index_bits=state.num_qubits,
         matrix=matrix.data.ptr,
@@ -155,8 +155,8 @@ def _apply_two_qubit_matrix(state, qubits: tuple[int, int], matrix: cp.ndarray) 
         control_bit_values=[],  # No value of control bit assigned
         n_controls=0,
         compute_type=state.compute_type,
-        workspace=0,  # Let cuQuantum use the mempool we configured
-        workspace_size=0,  # Let cuQuantum use the mempool we configured
+        extra_workspace=0,  # Let cuQuantum use the mempool we configured
+        extra_workspace_size_in_bytes=0,  # Let cuQuantum use the mempool we configured
     )
     state.stream.synchronize()
 
@@ -218,7 +218,7 @@ def RYY(state, qubits: tuple[int, int], angles: tuple[float], **params: Any) -> 
             math.cos(theta / 2),
             0,
             0,
-            math.sin(theta / 2),
+            1j * math.sin(theta / 2),
             0,
             math.cos(theta / 2),
             -1j * math.sin(theta / 2),
@@ -227,7 +227,7 @@ def RYY(state, qubits: tuple[int, int], angles: tuple[float], **params: Any) -> 
             -1j * math.sin(theta / 2),
             math.cos(theta / 2),
             0,
-            math.sin(theta / 2),
+            1j * math.sin(theta / 2),
             0,
             0,
             math.cos(theta / 2),
@@ -380,7 +380,7 @@ def SWAP(state, qubits: tuple[int, int], **params: Any) -> None:
     # Possibly faster since it may just be an internal qubit relabelling or sv reshape
     cusv.apply_generalized_permutation_matrix(
         handle=state.libhandle,
-        sv=state.vector.data.ptr,
+        sv=state.cupy_vector.data.ptr,
         sv_data_type=state.cuda_type,
         n_index_bits=state.num_qubits,
         permutation=[0, 2, 1, 3],  # Leave |00> and |11> where they are, swap the other two
@@ -392,7 +392,7 @@ def SWAP(state, qubits: tuple[int, int], **params: Any) -> None:
         controls=[],
         control_bit_values=[],  # No value of control bit assigned
         n_controls=0,
-        workspace=0,  # Let cuQuantum use the mempool we configured
-        workspace_size=0,  # Let cuQuantum use the mempool we configured
+        extra_workspace=0,  # Let cuQuantum use the mempool we configured
+        extra_workspace_size_in_bytes=0,  # Let cuQuantum use the mempool we configured
     )
     state.stream.synchronize()

@@ -51,12 +51,8 @@ class BasicSV(StateVector):
         self.bindings = bindings.gate_dict
         self.num_qubits = num_qubits
 
-        # Initialize state vector to |0>
-        self.internal_vector = np.zeros(shape=2**num_qubits)
-        self.internal_vector[0] = 1
-        # Internally use a ndarray representation so that it's easier to apply gates
-        # without needing to apply tensor products.
-        self.internal_vector = np.reshape(self.internal_vector, newshape=[2] * num_qubits)
+        self.internal_vector = None
+        self.reset()
 
     def subscript_string(self, qubits: tuple[int], labels: tuple[chr]):
         """Returns a string of subscripts to use with `np.einsum`.
@@ -101,6 +97,16 @@ class BasicSV(StateVector):
 
         # Concatenate characters into a string and return
         return "".join(qubit_ids)
+
+    def reset(self):
+        """Reset the quantum state for another run without reinitializing."""
+        # Initialize state vector to |0>
+        self.internal_vector = np.zeros(shape=2**self.num_qubits)
+        self.internal_vector[0] = 1
+        # Internally use a ndarray representation so that it's easier to apply gates
+        # without needing to apply tensor products.
+        self.internal_vector = np.reshape(self.internal_vector, newshape=[2] * self.num_qubits)
+        return self
 
     @property
     def vector(self) -> np.ndarray:

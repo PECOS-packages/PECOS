@@ -34,7 +34,7 @@ def _apply_one_qubit_matrix(state, qubit: int, matrix: cp.ndarray) -> None:
 
     cusv.apply_matrix(
         handle=state.libhandle,
-        sv=state.internal_vector.data.ptr,
+        sv=state.cupy_vector.data.ptr,
         sv_data_type=state.cuda_type,
         n_index_bits=state.num_qubits,
         matrix=matrix.data.ptr,
@@ -47,8 +47,8 @@ def _apply_one_qubit_matrix(state, qubit: int, matrix: cp.ndarray) -> None:
         control_bit_values=[],  # No value of control bit assigned
         n_controls=0,
         compute_type=state.compute_type,
-        workspace=0,  # Let cuQuantum use the mempool we configured
-        workspace_size=0,  # Let cuQuantum use the mempool we configured
+        extra_workspace=0,  # Let cuQuantum use the mempool we configured
+        extra_workspace_size_in_bytes=0,  # Let cuQuantum use the mempool we configured
     )
     state.stream.synchronize()
 

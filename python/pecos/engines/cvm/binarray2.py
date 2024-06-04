@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from pecos.reps.pypmir import unsigned_data_types
+from pecos.reps.pypmir import signed_data_types, unsigned_data_types
 
 
 class BinArray2:
@@ -100,7 +100,11 @@ class BinArray2:
 
     def __str__(self) -> str:
         self.check_size()
-        return format(self.value, f"0{self.size}b")
+        return (
+            str(self.value)
+            if self.dtype in signed_data_types.values() and self.size in [32, 64]
+            else format(self.value, f"0{self.size}b")
+        )
 
     def __repr__(self) -> str:
         return self.__str__()

@@ -200,7 +200,6 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         match expr:
             case int():
                 return expr
-
             case str():
                 return self.get_cval(expr)
             case list():

@@ -1,10 +1,6 @@
 from pecos.engines.hybrid_engine import HybridEngine
 
 
-def bin2int(result: list[str]) -> int:
-    return int(result[0], base=2)
-
-
 def test_setting_cvar():
     phir = {
         "format": "PHIR/JSON",
@@ -25,11 +21,11 @@ def test_setting_cvar():
         ],
     }
 
-    results = HybridEngine(qsim="stabilizer").run(program=phir, shots=5)
+    results = HybridEngine(qsim="stabilizer").run(program=phir, return_int=True)
 
-    assert bin2int(results["var_i32"]) == 2**31 - 1
-    assert bin2int(results["var_u32"]) == 2**32 - 1
-    assert bin2int(results["var_i64"]) == 2**63 - 1
-    assert bin2int(results["var_u64"]) == 2**64 - 1
-    assert bin2int(results["var_i32neg"]) == -(2**31)
-    assert bin2int(results["var_i64neg"]) == -(2**63)
+    assert results["var_i32"] == [2**31 - 1]
+    assert results["var_u32"] == [2**32 - 1]
+    assert results["var_i64"] == [2**63 - 1]
+    assert results["var_u64"] == [2**64 - 1]
+    assert results["var_i32neg"] == [-(2**31)]
+    assert results["var_i64neg"] == [-(2**63)]

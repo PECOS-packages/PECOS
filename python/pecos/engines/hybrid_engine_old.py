@@ -211,6 +211,8 @@ class HybridEngine:
         if params.get("simulate_gate", True):
             for location in locations:
                 try:
+                    if symbol in {"RZ", "RZZ"} and 'angle' in params:
+                        params['angles'] = (params['angle'],)
                     result = state.bindings[symbol](state, location, **params)
                 except KeyError:
                     if symbol not in state.bindings:

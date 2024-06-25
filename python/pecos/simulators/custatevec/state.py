@@ -82,7 +82,9 @@ class CuStateVec(StateVector):
             cp.cuda.runtime.cudaMemPoolAttrReleaseThreshold,
             0xFFFFFFFFFFFFFFFF,  # = UINT64_MAX
         )
+        self.__init_helper()
 
+    def __init_helper(self):
         # CuStateVec handle initialization
         self.libhandle = cusv.create()
         self.stream = cp.cuda.Stream()
@@ -101,8 +103,10 @@ class CuStateVec(StateVector):
     def reset(self):
         """Reset the quantum state for another run without reinitializing."""
         # Initialize all qubits in the zero state
-        self.vector = cp.zeros(shape=2**self.num_qubits, dtype=self.cp_type)
-        self.vector[0] = 1
+        # self.vector = cp.zeros(shape=2**self.num_qubits, dtype=self.cp_type)
+        # self.vector[0] = 1
+        cusv.destroy(self.libhandle)
+        self.__init_helper()
         return self
 
     def __del__(self) -> None:

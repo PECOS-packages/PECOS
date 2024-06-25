@@ -184,6 +184,8 @@ def RZ(state, qubit: int, angles: tuple[float], **params: Any) -> None:
         qubit: The index of the qubit where the gate is applied
         angles: A tuple containing a single angle in radians
     """
+    if "angle" in params:
+        angles = (params['angle'],)
     if len(angles) != 1:
         msg = "Gate must be given 1 angle parameter."
         raise ValueError(msg)

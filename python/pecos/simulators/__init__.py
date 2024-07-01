@@ -32,6 +32,14 @@ try:
 except ImportError:
     pass
 
+# Attempt to import optional Qulacs package
+try:
+    import qulacs as qulacs_sim
+
+    from pecos.simulators.qulacs.state import Qulacs  # wrapper for Qulacs sim
+except ImportError:
+    pass
+
 # Attempt to import optional cuquantum and cupy packages
 try:
     import cupy

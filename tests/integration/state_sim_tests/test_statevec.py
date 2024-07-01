@@ -16,8 +16,19 @@ from importlib.metadata import version
 import numpy as np
 import pytest
 from packaging.version import parse as vparse
+
 from pecos.circuits import QuantumCircuit
 from pecos.simulators import BasicSV
+
+# Try to import the requirements for Qulacs
+try:
+    import qulacs  # noqa: F401
+
+    from pecos.simulators import Qulacs
+
+    qulacs_ready = True
+except ImportError:
+    qulacs_ready = False
 
 # Try to import the requirements for CuStateVec
 try:
@@ -37,6 +48,8 @@ except ImportError:
 def verify(simulator, qc: QuantumCircuit, final_vector: np.ndarray) -> None:
     if simulator == "BasicSV":
         sim = BasicSV(len(qc.qudits))
+    elif simulator == "Qulacs" and qulacs_ready:
+        sim = Qulacs(len(qc.qudits))
     elif simulator == "CuStateVec" and custatevec_ready:
         sim = CuStateVec(len(qc.qudits))
     else:
@@ -49,6 +62,8 @@ def verify(simulator, qc: QuantumCircuit, final_vector: np.ndarray) -> None:
 def check_measurement(simulator, qc: QuantumCircuit, final_results: dict[int, int] | None = None) -> None:
     if simulator == "BasicSV":
         sim = BasicSV(len(qc.qudits))
+    elif simulator == "Qulacs" and qulacs_ready:
+        sim = Qulacs(len(qc.qudits))
     elif simulator == "CuStateVec" and custatevec_ready:
         sim = CuStateVec(len(qc.qudits))
     else:
@@ -106,6 +121,7 @@ def generate_random_state(seed=None) -> QuantumCircuit:
     "simulator",
     [
         "BasicSV",
+        "Qulacs",
         "CuStateVec",
     ],
 )
@@ -123,6 +139,7 @@ def test_init(simulator):
     "simulator",
     [
         "BasicSV",
+        "Qulacs",
         "CuStateVec",
     ],
 )
@@ -138,6 +155,7 @@ def test_H_measure(simulator):
     "simulator",
     [
         "BasicSV",
+        "Qulacs",
         "CuStateVec",
     ],
 )
@@ -204,6 +222,7 @@ def test_comp_basis_circ_and_measure(simulator):
 @pytest.mark.parametrize(
     "simulator",
     [
+        "Qulacs",
         "CuStateVec",
     ],
 )

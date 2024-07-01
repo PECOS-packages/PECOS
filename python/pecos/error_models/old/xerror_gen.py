@@ -50,7 +50,7 @@ class XModel(ParentErrorModel):
 
         self.gen = self.generator_class()
         self.gen.set_gate_group("measurements", self.measurements)
-        self.gen.set_gate_group("inits", self.inits)
+        self.gen.set_gate_group("preps", self.inits)
         self.gen.set_gate_group("two_qubits", self.two_qubits)
 
         xerror = self.gen.ErrorStaticSymbol("X")

@@ -16,11 +16,11 @@ from pecos.slr.util import rm_white_space
 from pecos.slr.vars import Reg
 
 if TYPE_CHECKING:
-    from pecos.slr.vars import Elem, QReg
+    from pecos.slr.vars import Elem, QReg, Qubit
 
 
 class Barrier:
-    def __init__(self, *qregs: QReg | tuple[QReg]):
+    def __init__(self, *qregs: QReg | tuple[QReg] | Qubit):
         self.qregs = qregs
 
     def qasm(self):

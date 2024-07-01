@@ -1,4 +1,4 @@
-# Copyright 2022 The PECOS Developers
+# Copyright 2024 The PECOS Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 # the License.You may obtain a copy of the License at
@@ -9,10 +9,26 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from pecos.qeclib import qubit
+from pecos.slr import Block, Comment, QReg
 
-class Statement:
-    """Statements are something that do something."""
 
+class H(Block):
+    """
+    Hadamard
 
-class Expression:
-    """Expressions are something that evaluate to a values."""
+    X -> Z
+    Z -> X
+
+    Y -> -Y
+    """
+
+    def __init__(self, q: QReg):
+        if len(q.elems) != 7:
+            msg = f"Size of register {len(q.elems)} != 7"
+            raise Exception(msg)
+
+        super().__init__(
+            Comment("Logical H"),
+            qubit.H(q),
+        )

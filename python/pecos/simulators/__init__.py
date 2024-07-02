@@ -33,17 +33,13 @@ except ImportError:
     pass
 
 # Attempt to import optional Qulacs package
-try:
-    import qulacs as qulacs_sim
-
+try:  # noqa: SIM105
     from pecos.simulators.qulacs.state import Qulacs  # wrapper for Qulacs sim
 except ImportError:
     pass
 
 # Attempt to import optional QuEST package
-try:
-    import pyquest as quest_sim
-
+try:  # noqa: SIM105
     from pecos.simulators.quest.state import QuEST  # wrapper for QuEST sim
 except ImportError:
     pass

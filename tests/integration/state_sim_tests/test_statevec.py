@@ -21,7 +21,6 @@ from pecos.simulators import BasicSV
 
 # Try to import the requirements for Qulacs
 try:
-    import qulacs  # noqa: F401
     from pecos.simulators import Qulacs
 
     qulacs_ready = True
@@ -30,7 +29,6 @@ except ImportError:
 
 # Try to import the requirements for QuEST
 try:
-    import pyquest  # noqa: F401
     from pecos.simulators import QuEST
 
     quest_ready = True

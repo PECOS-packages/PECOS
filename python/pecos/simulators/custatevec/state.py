@@ -12,9 +12,9 @@
 import random
 
 import cupy as cp
-import numpy as np
 from cuquantum import ComputeType, cudaDataType
 from cuquantum import custatevec as cusv
+from numpy.typing import ArrayLike
 
 from pecos.simulators.custatevec import bindings
 from pecos.simulators.sim_class_types import StateVector
@@ -111,5 +111,5 @@ class CuStateVec(StateVector):
         cusv.destroy(self.libhandle)
 
     @property
-    def vector(self) -> np.ndarray:
+    def vector(self) -> ArrayLike:
         return self.cupy_vector.get()

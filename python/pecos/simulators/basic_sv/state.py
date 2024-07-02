@@ -11,6 +11,7 @@
 
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 from pecos.simulators.basic_sv import bindings
 from pecos.simulators.sim_class_types import StateVector
@@ -109,5 +110,5 @@ class BasicSV(StateVector):
         return self
 
     @property
-    def vector(self) -> np.ndarray:
+    def vector(self) -> ArrayLike:
         return np.reshape(self.internal_vector, newshape=2**self.num_qubits)

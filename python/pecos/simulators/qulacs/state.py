@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-import numpy as np
+from numpy.typing import ArrayLike
 from qulacs import QuantumState
 
 from pecos.simulators.qulacs import bindings
@@ -46,5 +46,5 @@ class Qulacs(StateVector):
         return self
 
     @property
-    def vector(self) -> np.ndarray:
+    def vector(self) -> ArrayLike:
         return self.qulacs_state.get_vector()

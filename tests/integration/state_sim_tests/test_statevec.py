@@ -16,14 +16,12 @@ from importlib.metadata import version
 import numpy as np
 import pytest
 from packaging.version import parse as vparse
-
 from pecos.circuits import QuantumCircuit
 from pecos.simulators import BasicSV
 
 # Try to import the requirements for Qulacs
 try:
     import qulacs  # noqa: F401
-
     from pecos.simulators import Qulacs
 
     qulacs_ready = True
@@ -41,7 +39,7 @@ try:
     from pecos.simulators import CuStateVec
 
     custatevec_ready = imported_cuquantum and imported_cupy
-except ImportError:
+except (ImportError, AttributeError):
     custatevec_ready = False
 
 

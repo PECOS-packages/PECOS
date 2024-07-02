@@ -37,6 +37,9 @@ class Simulator:
             for location in locations:
                 if params.get("angles") and len(params["angles"]) == 1:
                     params.update({"angle": params["angles"][0]})
+                elif "angle" in params and "angles" not in params:
+                    params["angles"] = (params["angle"],)
+
                 results = self.bindings[symbol](self, location, **params)
 
                 # TODO: get params var value ... -> result = {'sym':, 'index':, 'result': result, 'qubit': location}

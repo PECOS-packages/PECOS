@@ -11,7 +11,7 @@
 
 from typing import Any
 
-from qulacs.gate import Measurement
+from pyquest.gates import M
 
 
 def meas_z(state, qubit: int, **params: Any) -> int:
@@ -21,15 +21,12 @@ def meas_z(state, qubit: int, **params: Any) -> int:
         The number of qubits in the state remains the same.
 
     Args:
-        state: An instance of Qulacs
+        state: An instance of QuEST
         qubit: The index of the qubit to be measured
 
     Returns:
         The outcome of the measurement, either 0 or 1.
     """
-    # Qulacs uses qubit index 0 as the least significant bit
+    # QuEST uses qubit index 0 as the least significant bit
     idx = state.num_qubits - qubit - 1
-
-    m = Measurement(index=idx, register=idx)
-    m.update_quantum_state(state.qulacs_state)
-    return state.qulacs_state.get_classical_value(idx)
+    return state.quest_state.apply_operator(M(idx))[0]

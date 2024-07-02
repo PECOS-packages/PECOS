@@ -28,6 +28,15 @@ try:
 except ImportError:
     qulacs_ready = False
 
+# Try to import the requirements for QuEST
+try:
+    import pyquest  # noqa: F401
+    from pecos.simulators import QuEST
+
+    quest_ready = True
+except ImportError:
+    quest_ready = False
+
 # Try to import the requirements for CuStateVec
 try:
     import cuquantum
@@ -48,6 +57,8 @@ def verify(simulator, qc: QuantumCircuit, final_vector: np.ndarray) -> None:
         sim = BasicSV(len(qc.qudits))
     elif simulator == "Qulacs" and qulacs_ready:
         sim = Qulacs(len(qc.qudits))
+    elif simulator == "QuEST" and quest_ready:
+        sim = QuEST(len(qc.qudits))
     elif simulator == "CuStateVec" and custatevec_ready:
         sim = CuStateVec(len(qc.qudits))
     else:
@@ -62,6 +73,8 @@ def check_measurement(simulator, qc: QuantumCircuit, final_results: dict[int, in
         sim = BasicSV(len(qc.qudits))
     elif simulator == "Qulacs" and qulacs_ready:
         sim = Qulacs(len(qc.qudits))
+    elif simulator == "QuEST" and quest_ready:
+        sim = QuEST(len(qc.qudits))
     elif simulator == "CuStateVec" and custatevec_ready:
         sim = CuStateVec(len(qc.qudits))
     else:
@@ -120,6 +133,7 @@ def generate_random_state(seed=None) -> QuantumCircuit:
     [
         "BasicSV",
         "Qulacs",
+        "QuEST",
         "CuStateVec",
     ],
 )
@@ -138,6 +152,7 @@ def test_init(simulator):
     [
         "BasicSV",
         "Qulacs",
+        "QuEST",
         "CuStateVec",
     ],
 )
@@ -154,6 +169,7 @@ def test_H_measure(simulator):
     [
         "BasicSV",
         "Qulacs",
+        "QuEST",
         "CuStateVec",
     ],
 )
@@ -221,6 +237,7 @@ def test_comp_basis_circ_and_measure(simulator):
     "simulator",
     [
         "Qulacs",
+        "QuEST",
         "CuStateVec",
     ],
 )

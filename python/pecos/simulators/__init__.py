@@ -40,6 +40,14 @@ try:
 except ImportError:
     pass
 
+# Attempt to import optional QuEST package
+try:
+    import pyquest as quest_sim
+
+    from pecos.simulators.quest.state import QuEST  # wrapper for QuEST sim
+except ImportError:
+    pass
+
 # Attempt to import optional cuquantum and cupy packages
 try:
     import cupy

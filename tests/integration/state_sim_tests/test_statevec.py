@@ -11,12 +11,23 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Callable
+
+    from pecos.simulators.sim_class_types import StateVector
+
+import json
 from importlib.metadata import version
+from pathlib import Path
 
 import numpy as np
 import pytest
 from packaging.version import parse as vparse
 from pecos.circuits import QuantumCircuit
+from pecos.engines.hybrid_engine import HybridEngine
+from pecos.error_models.generic_error_model import GenericErrorModel
 from pecos.simulators import BasicSV
 
 # Try to import the requirements for CuStateVec
@@ -30,7 +41,7 @@ try:
     from pecos.simulators import CuStateVec
 
     custatevec_ready = imported_cuquantum and imported_cupy
-except ImportError:
+except (ImportError, AttributeError):
     custatevec_ready = False
 
 # Try to import pytket-cutensornet
@@ -43,29 +54,28 @@ except ImportError:
     mps_ready = False
 
 
-def verify(simulator, qc: QuantumCircuit, final_vector: np.ndarray) -> None:
+def check_dependencies(simulator) -> Callable[[int], StateVector]:
     if simulator == "BasicSV":
-        sim = BasicSV(len(qc.qudits))
+        sim = BasicSV
     elif simulator == "CuStateVec" and custatevec_ready:
-        sim = CuStateVec(len(qc.qudits))
+        sim = CuStateVec
     elif simulator == "MPS" and mps_ready:
-        sim = MPS(len(qc.qudits))
+        sim = MPS
     else:
         pytest.skip(f"Requirements to test {simulator} are not met.")
+
+    return sim
+
+
+def verify(simulator, qc: QuantumCircuit, final_vector: np.ndarray) -> None:
+    sim = check_dependencies(simulator)(len(qc.qudits))
 
     sim.run_circuit(qc)
     assert np.allclose(sim.vector, final_vector)
 
 
 def check_measurement(simulator, qc: QuantumCircuit, final_results: dict[int, int] | None = None) -> None:
-    if simulator == "BasicSV":
-        sim = BasicSV(len(qc.qudits))
-    elif simulator == "CuStateVec" and custatevec_ready:
-        sim = CuStateVec(len(qc.qudits))
-    elif simulator == "MPS" and mps_ready:
-        sim = MPS(len(qc.qudits))
-    else:
-        pytest.skip(f"Requirements to test {simulator} are not met.")
+    sim = check_dependencies(simulator)(len(qc.qudits))
 
     results = sim.run_circuit(qc)
 
@@ -308,3 +318,59 @@ def test_all_gate_circ(simulator):
         # Measure
         qc.append({"Measure": {0, 1, 2, 3, 4}})
         check_measurement(simulator, qc)
+
+
+@pytest.mark.parametrize(
+    "simulator",
+    [
+        "MPS",
+    ],
+)
+def test_hybrid_engine_no_noise(simulator):
+    """Test that HybridEngine can use these simulators"""
+    check_dependencies(simulator)
+
+    n_shots = 1000
+    phir_folder = Path(__file__).parent.parent / "phir"
+
+    results = HybridEngine(qsim=simulator).run(
+        program=json.load(Path.open(phir_folder / "bell_qparallel.json")),
+        shots=n_shots,
+    )
+
+    m = results["m"]
+    assert np.isclose(m.count("00") / n_shots, m.count("11") / n_shots, atol=0.1)
+
+
+@pytest.mark.parametrize(
+    "simulator",
+    [
+        "MPS",
+    ],
+)
+def test_hybrid_engine_noisy(simulator):
+    """Test that HybridEngine with noise can use these simulators"""
+    check_dependencies(simulator)
+
+    n_shots = 1000
+    phir_folder = Path(__file__).parent.parent / "phir"
+
+    generic_errors = GenericErrorModel(
+        error_params={
+            "p1": 2e-1,
+            "p2": 2e-1,
+            "p_meas": 2e-1,
+            "p_init": 1e-1,
+            "p1_error_model": {
+                "X": 0.25,
+                "Y": 0.25,
+                "Z": 0.25,
+                "L": 0.25,
+            },
+        },
+    )
+    sim = HybridEngine(error_model=generic_errors)
+    sim.run(
+        program=json.load(Path.open(phir_folder / "example1_no_wasm.json")),
+        shots=n_shots,
+    )

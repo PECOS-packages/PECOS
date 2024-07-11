@@ -386,7 +386,7 @@ def test_hybrid_engine_noisy(simulator):
             },
         },
     )
-    sim = HybridEngine(error_model=generic_errors)
+    sim = HybridEngine(qsim=simulator, error_model=generic_errors)
     sim.run(
         program=json.load(Path.open(phir_folder / "example1_no_wasm.json")),
         shots=n_shots,

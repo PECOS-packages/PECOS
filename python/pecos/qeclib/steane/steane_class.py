@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from warnings import warn
 
 from pecos.qeclib.steane.gates_sq import paulis, sqrt_paulis
 from pecos.qeclib.steane.gates_sq.hadarmards import H
@@ -20,7 +21,7 @@ from pecos.qeclib.steane.meas.destructive_meas import MeasDecode
 from pecos.qeclib.steane.preps.pauli_states import PrepRUS
 from pecos.qeclib.steane.preps.t_plus_state import PrepEncodeTPlusFTRUS, PrepEncodeTPlusNonFT
 from pecos.qeclib.steane.qec.qec_3parallel import ParallelFlagQECActiveCorrection
-from pecos.slr import Assign, Block, CReg, If, QReg
+from pecos.slr import Assign, Block, CReg, If, Permute, QReg
 
 if TYPE_CHECKING:
     from pecos.slr import Bit
@@ -81,6 +82,7 @@ class Steane:
         self.pf_x = c[3]
         self.pf_z = c[4]
         self.t_meas = c[5]
+        self.tdg_meas = c[6]
 
         self.default_rus_limit = default_rus_limit
 
@@ -234,6 +236,22 @@ class Steane:
             block.extend(Assign(reject, self.log))
         return block
 
+    def nonft_prep_tdg_plus_state(self):
+        """Prepare logical Tdg|+X> in a non-fault tolerant manner."""
+
+        return Block(
+            self.nonft_prep_t_plus_state(),
+            self.z(),
+        )
+
+    def prep_tdg_plus_state(self, reject: Bit, rus_limit: int | None = None):
+        """Prepare logical Tdg|+X> in a fault tolerant manner."""
+
+        return Block(
+            self.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
+            self.z(),
+        )
+
     def x(self):
         """Logical Pauli X gate"""
         return paulis.X(self.d)
@@ -291,6 +309,107 @@ class Steane:
         if reject is not None:
             block.extend(Assign(reject, self.log))
         return block
+
+    def nonft_tdg(self, aux: Steane):
+        """Tdg gate via teleportation using non-fault-tolerant initialization of the Tdg|+> state."""
+        return Block(
+            aux.nonft_prep_tdg_plus_state(),
+            self.cx(aux),
+            aux.mz(self.tdg_meas),
+            If(self.tdg_meas == 1).Then(self.szdg()),
+        )
+
+    def tdg(self, aux: Steane, reject: Bit, rus_limit: int | None):
+        """Tdg gate via teleportation using fault-tolerant initialization of the Tdg|+> state."""
+        block = Block(
+            aux.prep_tdg_plus_state(reject=reject, rus_limit=rus_limit),
+            self.cx(aux),
+            aux.mz(self.tdg_meas),
+            If(self.t_meas == 1).Then(self.szdg()),  # SZdg/Sdg correction.
+        )
+
+        if reject is not None:
+            block.extend(Assign(reject, self.log))
+        return block
+
+    #  Begin Experimental: ------------------------------------
+    def nonft_t_tel(self, aux: Steane):
+        """Warning:
+            This is experimental.
+
+        T gate via teleportation using non-fault-tolerant initialization of the T|+> state.
+
+        This version teleports the logical qubit from the original qubit to the auxiliary logical qubit. For
+        convenience, the qubits are relabeled, so you can continue to use the original Steane code logical qubit."""
+        warn("Using experimental feature: nonft_t_tel", stacklevel=2)
+        return Block(
+            aux.nonft_prep_t_plus_state(),
+            aux.cx(self),
+            self.mz(self.t_meas),
+            If(self.t_meas == 1).Then(aux.x(), aux.sz()),
+            Permute(self.d, aux.d),
+        )
+
+    def t_tel(self, aux: Steane, reject: Bit, rus_limit: int | None):
+        """Warning:
+            This is experimental.
+
+        T gate via teleportation using fault-tolerant initialization of the T|+> state.
+
+        This version teleports the logical qubit from the original qubit to the auxiliary logical qubit. For
+        convenience, the qubits are relabeled, so you can continue to use the original Steane code logical qubit."""
+        warn("Using experimental feature: t_tel", stacklevel=2)
+        block = Block(
+            aux.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
+            aux.cx(self),
+            self.mz(self.t_meas),
+            If(self.t_meas == 1).Then(aux.x(), aux.sz()),  # SZ/S correction.
+            Permute(self.d, aux.d),
+        )
+
+        if reject is not None:
+            block.extend(Assign(reject, self.log))
+        return block
+
+    def nonft_tdg_tel(self, aux: Steane):
+        """Warning:
+            This is experimental.
+
+        Tdg gate via teleportation using non-fault-tolerant initialization of the Tdg|+> state.
+
+        This version teleports the logical qubit from the original qubit to the auxiliary logical qubit. For
+        convenience, the qubits are relabeled, so you can continue to use the original Steane code logical qubit."""
+        warn("Using experimental feature: nonft_tdg_tel", stacklevel=2)
+        return Block(
+            aux.nonft_prep_tdg_plus_state(),
+            aux.cx(self),
+            self.mz(self.tdg_meas),
+            If(self.tdg_meas == 1).Then(aux.x(), aux.szdg()),
+            Permute(self.d, aux.d),
+        )
+
+    def tdg_tel(self, aux: Steane, reject: Bit, rus_limit: int | None):
+        """Warning:
+            This is experimental.
+
+        Tdg gate via teleportation using fault-tolerant initialization of the Tdg|+> state.
+
+        This version teleports the logical qubit from the original qubit to the auxiliary logical qubit. For
+        convenience, the qubits are relabeled, so you can continue to use the original Steane code logical qubit."""
+        warn("Using experimental feature: tdg_tel", stacklevel=2)
+        block = Block(
+            aux.prep_tdg_plus_state(reject=reject, rus_limit=rus_limit),
+            aux.cx(self),
+            self.mz(self.tdg_meas),
+            If(self.t_meas == 1).Then(aux.x(), aux.szdg()),  # SZdg/Sdg correction.
+            Permute(self.d, aux.d),
+        )
+
+        if reject is not None:
+            block.extend(Assign(reject, self.log))
+        return block
+
+    # End Experimental: ------------------------------------
 
     def szdg(self):
         """Adjoint of Sqrt of Z. Also known as the Sdg gate."""

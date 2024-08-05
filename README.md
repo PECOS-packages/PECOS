@@ -97,7 +97,8 @@ pytest tests
 
 Certain simulators from `pecos.simulators` require external packages that are not installed by `pip install .[all]`.
 
-- `CuStateVec` requires a Linux machine with an NVIDIA GPU (see requirements [here](https://docs.nvidia.com/cuda/cuquantum/latest/getting_started/getting_started.html#dependencies-custatevec-label)). PECOS' dependencies are specified in the `[cuda]` section of `pyproject.toml` and can be installed via `pip install .[cuda]`. If installation is not successful, see alternative instructions [here](https://docs.nvidia.com/cuda/cuquantum/latest/getting_started/getting_started.html#installing-cuquantum).
+- `QuEST` is installed along with the python package `pyquest` when calling `pip install .[all]`. However, it uses 64-bit float point precision by default, and if you wish to make use of 32-bit float point precision you will need to follow the installation instructions provided by the developers [here](https://github.com/rrmeister/pyQuEST/tree/develop).
+- `CuStateVec` requires a Linux machine with an NVIDIA GPU (see requirements [here](https://docs.nvidia.com/cuda/cuquantum/latest/getting_started/getting_started.html#dependencies-custatevec-label)). PECOS' dependencies are specified in the `[cuda]` section of `pyproject.toml`, however, installation via `pip` is not reliable. The recommended method of installation is via `conda`, as discussed [here](https://docs.nvidia.com/cuda/cuquantum/latest/getting_started/getting_started.html#installing-cuquantum). Note that there might be conflicts between `conda` and `venv`; if you intend to use `CuStateVec`, you may follow the installation instructions for PECOS within a `conda` environment without involving the `venv` commands.
 
 ## Uninstall
 

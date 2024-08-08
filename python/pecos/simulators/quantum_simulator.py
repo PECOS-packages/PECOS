@@ -22,6 +22,8 @@ try:
     from pecos.simulators import MPS
 except ImportError:
     MPS = None
+
+try:
     from pecos.simulators import Qulacs
 except ImportError:
     Qulacs = None

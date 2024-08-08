@@ -30,6 +30,22 @@ from pecos.engines.hybrid_engine import HybridEngine
 from pecos.error_models.generic_error_model import GenericErrorModel
 from pecos.simulators import BasicSV
 
+# Try to import the requirements for Qulacs
+try:
+    from pecos.simulators import Qulacs
+
+    qulacs_ready = True
+except ImportError:
+    qulacs_ready = False
+
+# Try to import the requirements for QuEST
+try:
+    from pecos.simulators import QuEST
+
+    quest_ready = True
+except ImportError:
+    quest_ready = False
+
 # Try to import the requirements for CuStateVec
 try:
     import cuquantum
@@ -57,6 +73,10 @@ except ImportError:
 def check_dependencies(simulator) -> Callable[[int], StateVector]:
     if simulator == "BasicSV":
         sim = BasicSV
+    elif simulator == "Qulacs" and qulacs_ready:
+        sim = Qulacs
+    elif simulator == "QuEST" and quest_ready:
+        sim = QuEST
     elif simulator == "CuStateVec" and custatevec_ready:
         sim = CuStateVec
     elif simulator == "MPS" and mps_ready:
@@ -129,6 +149,8 @@ def generate_random_state(seed=None) -> QuantumCircuit:
     "simulator",
     [
         "BasicSV",
+        "Qulacs",
+        "QuEST",
         "CuStateVec",
         "MPS",
     ],
@@ -147,6 +169,8 @@ def test_init(simulator):
     "simulator",
     [
         "BasicSV",
+        "Qulacs",
+        "QuEST",
         "CuStateVec",
         "MPS",
     ],
@@ -163,6 +187,8 @@ def test_H_measure(simulator):
     "simulator",
     [
         "BasicSV",
+        "Qulacs",
+        "QuEST",
         "CuStateVec",
         "MPS",
     ],
@@ -230,6 +256,8 @@ def test_comp_basis_circ_and_measure(simulator):
 @pytest.mark.parametrize(
     "simulator",
     [
+        "Qulacs",
+        "QuEST",
         "CuStateVec",
         "MPS",
     ],
@@ -324,6 +352,9 @@ def test_all_gate_circ(simulator):
     "simulator",
     [
         "MPS",
+        "Qulacs",
+        "QuEST",
+        "CuStateVec",
     ],
 )
 def test_hybrid_engine_no_noise(simulator):
@@ -346,6 +377,9 @@ def test_hybrid_engine_no_noise(simulator):
     "simulator",
     [
         "MPS",
+        "Qulacs",
+        "QuEST",
+        "CuStateVec",
     ],
 )
 def test_hybrid_engine_noisy(simulator):

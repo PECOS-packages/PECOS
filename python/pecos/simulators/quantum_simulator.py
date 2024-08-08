@@ -22,6 +22,19 @@ try:
     from pecos.simulators import MPS
 except ImportError:
     MPS = None
+    from pecos.simulators import Qulacs
+except ImportError:
+    Qulacs = None
+
+try:
+    from pecos.simulators import QuEST
+except ImportError:
+    QuEST = None
+
+try:
+    from pecos.simulators import CuStateVec
+except ImportError:
+    CuStateVec = None
 
 from pecos.reps.pypmir.op_types import QOp
 
@@ -60,9 +73,17 @@ class QuantumSimulator:
             if self.backend == "stabilizer":
                 self.state = SparseSim
             elif self.backend == "state-vector":
+                self.state = Qulacs  # Seems to be the better default choice for now
+            elif self.backend == "ProjectQSim":
                 self.state = ProjectQSim
             elif self.backend in {"MPS", "mps"}:
                 self.state = MPS
+            elif self.backend == "Qulacs":
+                self.state = Qulacs
+            elif self.backend == "QuEST":
+                self.state = QuEST
+            elif self.backend == "CuStateVec":
+                self.state = CuStateVec
             else:
                 msg = f"simulator `{self.state}` not currently implemented!"
                 raise NotImplementedError(msg)

@@ -12,9 +12,9 @@
 import random
 
 import cupy as cp
-import numpy as np
 from cuquantum import ComputeType, cudaDataType
 from cuquantum import custatevec as cusv
+from numpy.typing import ArrayLike
 
 from pecos.simulators.custatevec import bindings
 from pecos.simulators.sim_class_types import StateVector
@@ -53,8 +53,7 @@ class CuStateVec(StateVector):
         self.compute_type = ComputeType.COMPUTE_64F
 
         # Allocate the statevector in GPU and initialize it to |0>
-        self.cupy_vector = cp.zeros(shape=2**num_qubits, dtype=self.cp_type)
-        self.cupy_vector[0] = 1
+        self.reset()
 
         ####################################################
         # Set up cuStateVec library and GPU memory handles #
@@ -101,8 +100,8 @@ class CuStateVec(StateVector):
     def reset(self):
         """Reset the quantum state for another run without reinitializing."""
         # Initialize all qubits in the zero state
-        self.vector = cp.zeros(shape=2**self.num_qubits, dtype=self.cp_type)
-        self.vector[0] = 1
+        self.cupy_vector = cp.zeros(shape=2**self.num_qubits, dtype=self.cp_type)
+        self.cupy_vector[0] = 1
         return self
 
     def __del__(self) -> None:
@@ -111,5 +110,5 @@ class CuStateVec(StateVector):
         cusv.destroy(self.libhandle)
 
     @property
-    def vector(self) -> np.ndarray:
+    def vector(self) -> ArrayLike:
         return self.cupy_vector.get()

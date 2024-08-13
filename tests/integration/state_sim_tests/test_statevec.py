@@ -60,6 +60,15 @@ try:
 except (ImportError, AttributeError):
     custatevec_ready = False
 
+# Try to import pytket-cutensornet
+try:
+    import pytket.extensions.cutensornet  # noqa: F401
+    from pecos.simulators import MPS
+
+    mps_ready = imported_cuquantum and imported_cupy  # Same requirements as CuStateVec
+except ImportError:
+    mps_ready = False
+
 
 def check_dependencies(simulator) -> Callable[[int], StateVector]:
     if simulator == "BasicSV":
@@ -70,6 +79,8 @@ def check_dependencies(simulator) -> Callable[[int], StateVector]:
         sim = QuEST
     elif simulator == "CuStateVec" and custatevec_ready:
         sim = CuStateVec
+    elif simulator == "MPS" and mps_ready:
+        sim = MPS
     else:
         pytest.skip(f"Requirements to test {simulator} are not met.")
 
@@ -141,6 +152,7 @@ def generate_random_state(seed=None) -> QuantumCircuit:
         "Qulacs",
         "QuEST",
         "CuStateVec",
+        "MPS",
     ],
 )
 def test_init(simulator):
@@ -160,6 +172,7 @@ def test_init(simulator):
         "Qulacs",
         "QuEST",
         "CuStateVec",
+        "MPS",
     ],
 )
 def test_H_measure(simulator):
@@ -177,6 +190,7 @@ def test_H_measure(simulator):
         "Qulacs",
         "QuEST",
         "CuStateVec",
+        "MPS",
     ],
 )
 def test_comp_basis_circ_and_measure(simulator):
@@ -245,6 +259,7 @@ def test_comp_basis_circ_and_measure(simulator):
         "Qulacs",
         "QuEST",
         "CuStateVec",
+        "MPS",
     ],
 )
 def test_all_gate_circ(simulator):
@@ -336,6 +351,7 @@ def test_all_gate_circ(simulator):
 @pytest.mark.parametrize(
     "simulator",
     [
+        "MPS",
         "Qulacs",
         "QuEST",
         "CuStateVec",
@@ -360,6 +376,7 @@ def test_hybrid_engine_no_noise(simulator):
 @pytest.mark.parametrize(
     "simulator",
     [
+        "MPS",
         "Qulacs",
         "QuEST",
         "CuStateVec",

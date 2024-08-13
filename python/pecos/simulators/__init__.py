@@ -50,5 +50,6 @@ try:
     import cuquantum
 
     from pecos.simulators.custatevec.state import CuStateVec  # wrapper for cuQuantum's cuStateVec
+    from pecos.simulators.mps_pytket import MPS  # MPS implementation from pytket-cutensornet
 except ImportError:
     pass

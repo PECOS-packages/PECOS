@@ -32,7 +32,12 @@ if TYPE_CHECKING:
 
 
 class HybridEngine:
-    """A simulation engine which is capable of running noisy hybrid classical/quantum programs."""
+    """A simulation engine which is capable of running noisy hybrid classical/quantum programs.
+
+    Note:
+        Parameters of the quantum simulator are provided as extra keyword arguments passed
+        down to ``QuantumSimulator`` as the dictionary ``**params``.
+    """
 
     def __init__(
         self,
@@ -41,6 +46,7 @@ class HybridEngine:
         machine: Machine | None = None,
         error_model: ErrorModel | None = None,
         op_processor: OpProcessor | None = None,
+        **params,
     ) -> None:
         self.seed = None
 
@@ -54,7 +60,7 @@ class HybridEngine:
         if self.qsim is None:
             self.qsim = QuantumSimulator()
         elif isinstance(self.qsim, str):
-            self.qsim = QuantumSimulator(self.qsim)
+            self.qsim = QuantumSimulator(self.qsim, **params)
 
         self.machine = machine
         if machine is None:

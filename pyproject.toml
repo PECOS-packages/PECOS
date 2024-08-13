@@ -64,6 +64,7 @@ cuda = [
     "cuquantum-python>=24.03.0",
     "custatevec>=1.6.0",
     "cupy>=10.4.0",
+    "pytket-cutensornet>=0.7.0",
 ]
 wasmtime = [
     "wasmtime>=13.0"

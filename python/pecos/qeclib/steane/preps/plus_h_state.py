@@ -69,6 +69,6 @@ class PrepHStateFT(Block):
             QASM(f"{reject} = 0;"),
             QASM(f"if({out[0]}!=0) {reject} = 1;"),
             QASM(f"if({out[1]}!=0) {reject} = 1;"),
-            QASM(f"if(flags!=0) {reject} = 1;"),
+            QASM(f"if({flags}!=0) {reject} = 1;"),
             # Reject on the results of the `reject` bit. 0 is good. 1 means the prep failed.
         )

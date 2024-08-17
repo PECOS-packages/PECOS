@@ -21,7 +21,12 @@ class MeasureX(Block):
     SYdg: X->Z, Y->Y, Z->-X
     """
 
-    def __init__(self, qubits: QReg, meas_creg: CReg, log_raw: CReg, *, barrier: bool = True):
+    def __init__(self,
+                 qubits: QReg,
+                 meas_creg: CReg,
+                 log_raw: CReg,
+                 *,
+                 barrier: bool = True):
         super().__init__()
 
         self.extend(

@@ -78,7 +78,7 @@ class F4Gate(SQCliffordGate):
         return " ".join(str_list)
 
 
-F4 = FdgGate("F4")
+F4 = F4Gate("F4")
 
 
 class F4dgGate(SQCliffordGate):

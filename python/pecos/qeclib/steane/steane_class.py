@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from warnings import warn
 
 from pecos.qeclib.steane.gates_sq import paulis, sqrt_paulis
-from pecos.qeclib.steane.gates_sq.hadarmards import H
+from pecos.qeclib.steane.gates_sq.hadamards import H
 from pecos.qeclib.steane.gates_tq import transversal_tq
 from pecos.qeclib.steane.meas.destructive_meas import MeasDecode
 from pecos.qeclib.steane.preps.pauli_states import PrepRUS

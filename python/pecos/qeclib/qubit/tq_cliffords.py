@@ -15,7 +15,7 @@ from pecos.qeclib.qubit.metaclasses import TQCliffordGate
 class CXGate(TQCliffordGate): ...
 
 
-CNOT = CX = CXGate(qasm_sym="cx")
+CX = CXGate(qasm_sym="cx")
 
 
 class CYGate(TQCliffordGate): ...

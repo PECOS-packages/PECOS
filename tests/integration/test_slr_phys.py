@@ -1,6 +1,6 @@
 from pecos import __version__
+from pecos.qeclib import qubit as p
 from pecos.slr import QASM, Assign, Bit, Block, Comment, CReg, If, Main, Permute, QReg, Qubit, Repeat
-from pecos.slr.std import phys as p
 
 # TODO: Remove reference to hqslib1.inc... better yet, don't have tests on qasm
 
@@ -37,8 +37,8 @@ def test_if_bell():
         def __init__(self, q0: Qubit, q1: Qubit, m0: Bit, m1: Bit):
             super().__init__()
             self.extend(
-                p.Reset(q0),
-                p.Reset(q1),
+                p.Prep(q0),
+                p.Prep(q1),
                 p.H(q0),
                 p.CX(q0, q1),
                 p.Measure(q0) > m0,

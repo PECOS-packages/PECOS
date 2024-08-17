@@ -12,7 +12,7 @@
 from pecos.qeclib import qubit
 from pecos.qeclib.qubit import Prep
 from pecos.qeclib.steane.gates_sq import sqrt_paulis
-from pecos.qeclib.steane.gates_sq.hadarmards import H
+from pecos.qeclib.steane.gates_sq.hadamards import H
 from pecos.qeclib.steane.gates_sq.paulis import X, Z
 from pecos.slr import QASM, Barrier, Bit, Block, If, QReg, Qubit, Repeat, util
 

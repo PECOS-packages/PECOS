@@ -9,10 +9,10 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.qeclib.qubit.metaclasses import SQCliffordGate
+from pecos.qeclib.qubit.qgate_base import QGate
 
 
-class SXGate(SQCliffordGate):
+class SX(QGate):
     """
     X -> X
     Z -> -Y
@@ -20,34 +20,22 @@ class SXGate(SQCliffordGate):
     """
 
 
-SX = SXGate(qasm_sym="rx(pi/2)")
+class SY(QGate): ...
 
 
-class SYGate(SQCliffordGate): ...
+class SZ(QGate): ...
 
 
-SY = SYGate(qasm_sym="ry(pi/2)")
+S = SZ
 
 
-class SZGate(SQCliffordGate): ...
+class SXdg(QGate): ...
 
 
-S = SZ = SZGate(qasm_sym="rz(pi/2)")
+class SYdg(QGate): ...
 
 
-class SXdgGate(SQCliffordGate): ...
+class SZdg(QGate): ...
 
 
-SXdg = SXdgGate(qasm_sym="rx(-pi/2)")
-
-
-class SYdgGate(SQCliffordGate): ...
-
-
-SYdg = SYdgGate(qasm_sym="ry(-pi/2)")
-
-
-class SZdgGate(SQCliffordGate): ...
-
-
-Sdg = SZdg = SZdgGate(qasm_sym="rz(-pi/2)")
+Sdg = SZdg

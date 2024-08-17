@@ -10,9 +10,17 @@
 # specific language governing permissions and limitations under the License.
 
 
-class Statement:
-    """Statements are something that do something."""
+class Node:
+    """Base language object"""
 
 
-class Expression:
-    """Expressions are something that evaluate to a values."""
+class Operation(Node):
+    """A fundamental unit of work."""
+
+
+class Statement(Operation):
+    """Statements are units that do something."""
+
+
+class Expression(Operation):
+    """Expressions are operations that evaluate to a values."""

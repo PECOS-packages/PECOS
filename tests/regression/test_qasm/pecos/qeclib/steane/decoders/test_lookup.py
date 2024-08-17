@@ -19,6 +19,7 @@ def test_FlagLookupQASM(compare_qasm):
         block = FlagLookupQASM(basis, syn, syndromes, raw_syn, pf[0], flag, flags, scratch)
         compare_qasm(block, basis)
 
+
 def test_FlagLookupQASMActiveCorrectionX(compare_qasm):
     q = QReg("q_test", 7)
     syn = CReg("syn_test", 3)
@@ -28,10 +29,12 @@ def test_FlagLookupQASMActiveCorrectionX(compare_qasm):
     flag = CReg("flag_test", 1)
     flags = CReg("flags_test", 3)
     scratch = CReg("scratch_test", 32)
+    pf_copy = CReg("pf_copy_test", 1)
 
-    for pf_bit_copy in [True, False]:
+    for pf_bit_copy in [None, pf_copy]:
         block = FlagLookupQASMActiveCorrectionX(q, syn, syndromes, raw_syn, pf[0], flag, flags, scratch, pf_bit_copy)
         compare_qasm(block, pf_bit_copy)
+
 
 def test_FlagLookupQASMActiveCorrectionZ(compare_qasm):
     q = QReg("q_test", 7)
@@ -42,8 +45,8 @@ def test_FlagLookupQASMActiveCorrectionZ(compare_qasm):
     flag = CReg("flag_test", 1)
     flags = CReg("flags_test", 3)
     scratch = CReg("scratch_test", 32)
+    pf_copy = CReg("pf_copy_test", 1)
 
-    for pf_bit_copy in [True, False]:
+    for pf_bit_copy in [None, pf_copy]:
         block = FlagLookupQASMActiveCorrectionZ(q, syn, syndromes, raw_syn, pf[0], flag, flags, scratch, pf_bit_copy)
         compare_qasm(block, pf_bit_copy)
-

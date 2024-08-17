@@ -67,11 +67,11 @@ cx smid_d[0], smid_d[3];
 cx smid_d[4], smid_d[1];
 cx smid_d[3], smid_d[2];
 
-barrier smid_a[0],smid_d[1],smid_d[3],smid_d[5];
-//verification step
-cx smid_d[5],smid_a[0];
-cx smid_d[1],smid_a[0];
-cx smid_d[3],smid_a[0];
+barrier smid_a[0], smid_d[1], smid_d[3], smid_d[5];
+// verification step
+cx smid_d[5], smid_a[0];
+cx smid_d[1], smid_a[0];
+cx smid_d[3], smid_a[0];
 measure smid_a[0] -> smid_c[0];
 
 
@@ -93,11 +93,11 @@ if(smid_c[0] == 1) cx smid_d[0], smid_d[3];
 if(smid_c[0] == 1) cx smid_d[4], smid_d[1];
 if(smid_c[0] == 1) cx smid_d[3], smid_d[2];
 
-if(smid_c[0] == 1) barrier smid_a[0],smid_d[1],smid_d[3],smid_d[5];
-//verification step
-if(smid_c[0] == 1) cx smid_d[5],smid_a[0];
-if(smid_c[0] == 1) cx smid_d[1],smid_a[0];
-if(smid_c[0] == 1) cx smid_d[3],smid_a[0];
+if(smid_c[0] == 1) barrier smid_a[0], smid_d[1], smid_d[3], smid_d[5];
+// verification step
+if(smid_c[0] == 1) cx smid_d[5], smid_a[0];
+if(smid_c[0] == 1) cx smid_d[1], smid_a[0];
+if(smid_c[0] == 1) cx smid_d[3], smid_a[0];
 if(smid_c[0] == 1) measure smid_a[0] -> smid_c[0];
 
 
@@ -119,11 +119,11 @@ if(smid_c[0] == 1) cx smid_d[0], smid_d[3];
 if(smid_c[0] == 1) cx smid_d[4], smid_d[1];
 if(smid_c[0] == 1) cx smid_d[3], smid_d[2];
 
-if(smid_c[0] == 1) barrier smid_a[0],smid_d[1],smid_d[3],smid_d[5];
-//verification step
-if(smid_c[0] == 1) cx smid_d[5],smid_a[0];
-if(smid_c[0] == 1) cx smid_d[1],smid_a[0];
-if(smid_c[0] == 1) cx smid_d[3],smid_a[0];
+if(smid_c[0] == 1) barrier smid_a[0], smid_d[1], smid_d[3], smid_d[5];
+// verification step
+if(smid_c[0] == 1) cx smid_d[5], smid_a[0];
+if(smid_c[0] == 1) cx smid_d[1], smid_a[0];
+if(smid_c[0] == 1) cx smid_d[3], smid_a[0];
 if(smid_c[0] == 1) measure smid_a[0] -> smid_c[0];
 
 
@@ -146,11 +146,11 @@ cx sout_d[0], sout_d[3];
 cx sout_d[4], sout_d[1];
 cx sout_d[3], sout_d[2];
 
-barrier sout_a[0],sout_d[1],sout_d[3],sout_d[5];
-//verification step
-cx sout_d[5],sout_a[0];
-cx sout_d[1],sout_a[0];
-cx sout_d[3],sout_a[0];
+barrier sout_a[0], sout_d[1], sout_d[3], sout_d[5];
+// verification step
+cx sout_d[5], sout_a[0];
+cx sout_d[1], sout_a[0];
+cx sout_d[3], sout_a[0];
 measure sout_a[0] -> sout_c[0];
 
 
@@ -172,11 +172,11 @@ if(sout_c[0] == 1) cx sout_d[0], sout_d[3];
 if(sout_c[0] == 1) cx sout_d[4], sout_d[1];
 if(sout_c[0] == 1) cx sout_d[3], sout_d[2];
 
-if(sout_c[0] == 1) barrier sout_a[0],sout_d[1],sout_d[3],sout_d[5];
-//verification step
-if(sout_c[0] == 1) cx sout_d[5],sout_a[0];
-if(sout_c[0] == 1) cx sout_d[1],sout_a[0];
-if(sout_c[0] == 1) cx sout_d[3],sout_a[0];
+if(sout_c[0] == 1) barrier sout_a[0], sout_d[1], sout_d[3], sout_d[5];
+// verification step
+if(sout_c[0] == 1) cx sout_d[5], sout_a[0];
+if(sout_c[0] == 1) cx sout_d[1], sout_a[0];
+if(sout_c[0] == 1) cx sout_d[3], sout_a[0];
 if(sout_c[0] == 1) measure sout_a[0] -> sout_c[0];
 
 
@@ -198,11 +198,11 @@ if(sout_c[0] == 1) cx sout_d[0], sout_d[3];
 if(sout_c[0] == 1) cx sout_d[4], sout_d[1];
 if(sout_c[0] == 1) cx sout_d[3], sout_d[2];
 
-if(sout_c[0] == 1) barrier sout_a[0],sout_d[1],sout_d[3],sout_d[5];
-//verification step
-if(sout_c[0] == 1) cx sout_d[5],sout_a[0];
-if(sout_c[0] == 1) cx sout_d[1],sout_a[0];
-if(sout_c[0] == 1) cx sout_d[3],sout_a[0];
+if(sout_c[0] == 1) barrier sout_a[0], sout_d[1], sout_d[3], sout_d[5];
+// verification step
+if(sout_c[0] == 1) cx sout_d[5], sout_a[0];
+if(sout_c[0] == 1) cx sout_d[1], sout_a[0];
+if(sout_c[0] == 1) cx sout_d[3], sout_a[0];
 if(sout_c[0] == 1) measure sout_a[0] -> sout_c[0];
 
 
@@ -234,29 +234,29 @@ h smid_a[0];
 h smid_a[1];
 h smid_a[2];
 
-cx smid_a[0],smid_d[3];  // 5 -> 4
-cz smid_a[1],smid_d[5];  // 6 -> 6
-cz smid_a[2],smid_d[2];  // 7 -> 3
+cx smid_a[0], smid_d[3];  // 5 -> 4
+cz smid_a[1], smid_d[5];  // 6 -> 6
+cz smid_a[2], smid_d[2];  // 7 -> 3
 
-barrier smid_a[0],smid_a[1];
-cz smid_a[0],smid_a[1];
-barrier smid_a[0],smid_a[1];
+barrier smid_a[0], smid_a[1];
+cz smid_a[0], smid_a[1];
+barrier smid_a[0], smid_a[1];
 
-cx smid_a[0],smid_d[0];  // 1 -> 1
-cz smid_a[1],smid_d[4];  // 2 -> 5
-cz smid_a[2],smid_d[3];  // 5 -> 4
+cx smid_a[0], smid_d[0];  // 1 -> 1
+cz smid_a[1], smid_d[4];  // 2 -> 5
+cz smid_a[2], smid_d[3];  // 5 -> 4
 
-cx smid_a[0],smid_d[1];  // 3 -> 2
-cz smid_a[1],smid_d[2];  // 7 -> 3
-cz smid_a[2],smid_d[6];  // 4 -> 7
+cx smid_a[0], smid_d[1];  // 3 -> 2
+cz smid_a[1], smid_d[2];  // 7 -> 3
+cz smid_a[2], smid_d[6];  // 4 -> 7
 
-barrier smid_a[0],smid_a[2];
-cz smid_a[0],smid_a[2];
-barrier smid_a[0],smid_a[2];
+barrier smid_a[0], smid_a[2];
+cz smid_a[0], smid_a[2];
+barrier smid_a[0], smid_a[2];
 
-cx smid_a[0],smid_d[2];  // 7 -> 3
-cz smid_a[1],smid_d[1];  // 3 -> 2
-cz smid_a[2],smid_d[5];  // 6 -> 6
+cx smid_a[0], smid_d[2];  // 7 -> 3
+cz smid_a[1], smid_d[1];  // 3 -> 2
+cz smid_a[2], smid_d[5];  // 6 -> 6
 
 h smid_a[0];
 h smid_a[1];
@@ -284,77 +284,65 @@ if(smid_flags == 0) h smid_a[0];
 if(smid_flags == 0) h smid_a[1];
 if(smid_flags == 0) h smid_a[2];
 
+if(smid_flags == 0) barrier smid_a[0], smid_d[3];
+if(smid_flags == 0) cz smid_a[0], smid_d[3];  // 5 -> 4
+if(smid_flags == 0) barrier smid_a[0], smid_d[3];
 
-if(smid_flags == 0) barrier smid_a[0],smid_d[3];
-if(smid_flags == 0) cz smid_a[0],smid_d[3];
-if(smid_flags == 0) barrier smid_a[0],smid_d[3];
+if(smid_flags == 0) barrier smid_a[1], smid_d[5];
+if(smid_flags == 0) cx smid_a[1], smid_d[5];  // 6 -> 6
+if(smid_flags == 0) barrier smid_a[1], smid_d[5];
 
-if(smid_flags == 0) barrier smid_a[1],smid_d[5];
-if(smid_flags == 0) cx smid_a[1],smid_d[5];
-if(smid_flags == 0) barrier smid_a[1],smid_d[5];
-
-if(smid_flags == 0) barrier smid_a[2],smid_d[2];
-if(smid_flags == 0) cx smid_a[2],smid_d[2];
-if(smid_flags == 0) barrier smid_a[2],smid_d[2];
-
-
+if(smid_flags == 0) barrier smid_a[2], smid_d[2];
+if(smid_flags == 0) cx smid_a[2], smid_d[2];  // 7 -> 3
+if(smid_flags == 0) barrier smid_a[2], smid_d[2];
 
 if(smid_flags == 0) barrier smid_a[0], smid_d[0], smid_d[1], smid_d[2], smid_d[3], smid_d[4], smid_d[5], smid_d[6], smid_a[1], smid_a[2];
-if(smid_flags == 0) cz smid_a[1],smid_a[0];
+if(smid_flags == 0) cz smid_a[1], smid_a[0];
 if(smid_flags == 0) barrier smid_a[0], smid_d[0], smid_d[1], smid_d[2], smid_d[3], smid_d[4], smid_d[5], smid_d[6], smid_a[1], smid_a[2];
 
+if(smid_flags == 0) barrier smid_a[0], smid_d[0];
+if(smid_flags == 0) cz smid_a[0], smid_d[0];  // 1 -> 1
+if(smid_flags == 0) barrier smid_a[0], smid_d[0];
 
-if(smid_flags == 0) barrier smid_a[0],smid_d[0];
-if(smid_flags == 0) cz smid_a[0],smid_d[0];
-if(smid_flags == 0) barrier smid_a[0],smid_d[0];
+if(smid_flags == 0) barrier smid_a[1], smid_d[4];
+if(smid_flags == 0) cx smid_a[1], smid_d[4];  // 2 -> 5
+if(smid_flags == 0) barrier smid_a[1], smid_d[4];
 
-if(smid_flags == 0) barrier smid_a[1],smid_d[4];
-if(smid_flags == 0) cx smid_a[1],smid_d[4];
-if(smid_flags == 0) barrier smid_a[1],smid_d[4];
+if(smid_flags == 0) barrier smid_a[2], smid_d[3];
+if(smid_flags == 0) cx smid_a[2], smid_d[3];  // 5 -> 4
+if(smid_flags == 0) barrier smid_a[2], smid_d[3];
 
-if(smid_flags == 0) barrier smid_a[2],smid_d[3];
-if(smid_flags == 0) cx smid_a[2],smid_d[3];
-if(smid_flags == 0) barrier smid_a[2],smid_d[3];
+if(smid_flags == 0) barrier smid_a[0], smid_d[1];
+if(smid_flags == 0) cz smid_a[0], smid_d[1];  // 3 -> 2
+if(smid_flags == 0) barrier smid_a[0], smid_d[1];
 
+if(smid_flags == 0) barrier smid_a[1], smid_d[2];
+if(smid_flags == 0) cx smid_a[1], smid_d[2];  // 7 -> 3
+if(smid_flags == 0) barrier smid_a[1], smid_d[2];
 
-
-if(smid_flags == 0) barrier smid_a[0],smid_d[1];
-if(smid_flags == 0) cz smid_a[0],smid_d[1];
-if(smid_flags == 0) barrier smid_a[0],smid_d[1];
-
-if(smid_flags == 0) barrier smid_a[1],smid_d[2];
-if(smid_flags == 0) cx smid_a[1],smid_d[2];
-if(smid_flags == 0) barrier smid_a[1],smid_d[2];
-
-if(smid_flags == 0) barrier smid_a[2],smid_d[6];
-if(smid_flags == 0) cx smid_a[2],smid_d[6];
-if(smid_flags == 0) barrier smid_a[2],smid_d[6];
-
+if(smid_flags == 0) barrier smid_a[2], smid_d[6];
+if(smid_flags == 0) cx smid_a[2], smid_d[6];  // 4 -> 7
+if(smid_flags == 0) barrier smid_a[2], smid_d[6];
 
 if(smid_flags == 0) barrier smid_a[0], smid_d[0], smid_d[1], smid_d[2], smid_d[3], smid_d[4], smid_d[5], smid_d[6], smid_a[1], smid_a[2];
-if(smid_flags == 0) cz smid_a[2],smid_a[0];
+if(smid_flags == 0) cz smid_a[2], smid_a[0];
 if(smid_flags == 0) barrier smid_a[0], smid_d[0], smid_d[1], smid_d[2], smid_d[3], smid_d[4], smid_d[5], smid_d[6], smid_a[1], smid_a[2];
 
+if(smid_flags == 0) barrier smid_a[0], smid_d[2];
+if(smid_flags == 0) cz smid_a[0], smid_d[2];  // 7 -> 3
+if(smid_flags == 0) barrier smid_a[0], smid_d[2];
 
+if(smid_flags == 0) barrier smid_a[1], smid_d[1];
+if(smid_flags == 0) cx smid_a[1], smid_d[1];  // 3 -> 2
+if(smid_flags == 0) barrier smid_a[1], smid_d[1];
 
-if(smid_flags == 0) barrier smid_a[0],smid_d[2];
-if(smid_flags == 0) cz smid_a[0],smid_d[2];
-if(smid_flags == 0) barrier smid_a[0],smid_d[2];
-
-if(smid_flags == 0) barrier smid_a[1],smid_d[1];
-if(smid_flags == 0) cx smid_a[1],smid_d[1];
-if(smid_flags == 0) barrier smid_a[1],smid_d[1];
-
-if(smid_flags == 0) barrier smid_a[2],smid_d[5];
-if(smid_flags == 0) cx smid_a[2],smid_d[5];
-if(smid_flags == 0) barrier smid_a[2],smid_d[5];
-
+if(smid_flags == 0) barrier smid_a[2], smid_d[5];
+if(smid_flags == 0) cx smid_a[2], smid_d[5];  // 6 -> 6
+if(smid_flags == 0) barrier smid_a[2], smid_d[5];
 
 if(smid_flags == 0) h smid_a[0];
 if(smid_flags == 0) h smid_a[1];
 if(smid_flags == 0) h smid_a[2];
-
-
 
 if(smid_flags == 0) measure smid_a[0] -> smid_flags_z[0];
 if(smid_flags == 0) measure smid_a[1] -> smid_flag_x[1];
@@ -383,21 +371,21 @@ if(smid_flags != 0) h smid_a[0];
 if(smid_flags != 0) h smid_a[1];
 if(smid_flags != 0) h smid_a[2];
 
-if(smid_flags != 0) cx smid_a[0],smid_d[2];
-if(smid_flags != 0) cz smid_a[1],smid_d[5];
-if(smid_flags != 0) cz smid_a[2],smid_d[6];
+if(smid_flags != 0) cx smid_a[0], smid_d[2];  // X1
+if(smid_flags != 0) cz smid_a[1], smid_d[5];  // Z2
+if(smid_flags != 0) cz smid_a[2], smid_d[6];  // Z3
 
-if(smid_flags != 0) cx smid_a[0],smid_d[1];
-if(smid_flags != 0) cz smid_a[1],smid_d[2];
-if(smid_flags != 0) cz smid_a[2],smid_d[5];
+if(smid_flags != 0) cx smid_a[0], smid_d[1];  // X1
+if(smid_flags != 0) cz smid_a[1], smid_d[2];  // Z2
+if(smid_flags != 0) cz smid_a[2], smid_d[5];  // Z3
 
-if(smid_flags != 0) cx smid_a[0],smid_d[3];
-if(smid_flags != 0) cz smid_a[1],smid_d[1];
-if(smid_flags != 0) cz smid_a[2],smid_d[2];
+if(smid_flags != 0) cx smid_a[0], smid_d[3];  // X1
+if(smid_flags != 0) cz smid_a[1], smid_d[1];  // Z2
+if(smid_flags != 0) cz smid_a[2], smid_d[2];  // Z3
 
-if(smid_flags != 0) cx smid_a[0],smid_d[0];
-if(smid_flags != 0) cz smid_a[1],smid_d[4];
-if(smid_flags != 0) cz smid_a[2],smid_d[3];
+if(smid_flags != 0) cx smid_a[0], smid_d[0];  // X1
+if(smid_flags != 0) cz smid_a[1], smid_d[4];  // Z2
+if(smid_flags != 0) cz smid_a[2], smid_d[3];  // Z3
 
 if(smid_flags != 0) h smid_a[0];
 if(smid_flags != 0) h smid_a[1];
@@ -417,21 +405,21 @@ if(smid_flags != 0) h smid_a[0];
 if(smid_flags != 0) h smid_a[1];
 if(smid_flags != 0) h smid_a[2];
 
-if(smid_flags != 0) cz smid_a[0],smid_d[2];
-if(smid_flags != 0) cx smid_a[1],smid_d[5];
-if(smid_flags != 0) cx smid_a[2],smid_d[6];
+if(smid_flags != 0) cz smid_a[0], smid_d[2];  // Z1 0,3
+if(smid_flags != 0) cx smid_a[1], smid_d[5];  // X2 6,8
+if(smid_flags != 0) cx smid_a[2], smid_d[6];  // X3 7,9
 
-if(smid_flags != 0) cz smid_a[0],smid_d[1];
-if(smid_flags != 0) cx smid_a[1],smid_d[2];
-if(smid_flags != 0) cx smid_a[2],smid_d[5];
+if(smid_flags != 0) cz smid_a[0], smid_d[1];  // Z1 0,2
+if(smid_flags != 0) cx smid_a[1], smid_d[2];  // X2 3,8
+if(smid_flags != 0) cx smid_a[2], smid_d[5];  // X3 6,9
 
-if(smid_flags != 0) cz smid_a[0],smid_d[3];
-if(smid_flags != 0) cx smid_a[1],smid_d[1];
-if(smid_flags != 0) cx smid_a[2],smid_d[2];
+if(smid_flags != 0) cz smid_a[0], smid_d[3];  // Z1 0,4
+if(smid_flags != 0) cx smid_a[1], smid_d[1];  // X2 2,8
+if(smid_flags != 0) cx smid_a[2], smid_d[2];  // X3 3,9
 
-if(smid_flags != 0) cz smid_a[0],smid_d[0];
-if(smid_flags != 0) cx smid_a[1],smid_d[4];
-if(smid_flags != 0) cx smid_a[2],smid_d[3];
+if(smid_flags != 0) cz smid_a[0], smid_d[0];  // Z1 0,1
+if(smid_flags != 0) cx smid_a[1], smid_d[4];  // X2 5,8
+if(smid_flags != 0) cx smid_a[2], smid_d[3];  // X3 4,9
 
 if(smid_flags != 0) h smid_a[0];
 if(smid_flags != 0) h smid_a[1];
@@ -446,8 +434,8 @@ if(smid_flags != 0) measure smid_a[2] -> smid_syn_x[2];
 // BEGIN Run X decoder
 // =========================
 
-if(smid_flags!=0) smid_syndromes = smid_syn_x ^ smid_last_raw_syn_x;
-if(smid_flags==0) smid_syndromes = 0;
+if(smid_flags != 0) smid_syndromes = smid_syn_x ^ smid_last_raw_syn_x;
+if(smid_flags == 0) smid_syndromes = 0;
 
 // apply corrections
 if(smid_syndromes == 2) smid_c[4] = smid_c[4] ^ 1;
@@ -475,7 +463,6 @@ if(smid_syndromes == 4) smid_scratch[1] = 1;
 smid_scratch[2] = smid_scratch[0] & smid_scratch[1];
 if(smid_scratch[2] == 1) smid_c[4] = smid_c[4] ^ 1;
 
-
 // 6&4 (2,3 -> 3)
 // ------------
 smid_scratch = 0;
@@ -485,7 +472,7 @@ if(smid_syndromes == 4) smid_scratch[1] = 1;
 smid_scratch[2] = smid_scratch[0] & smid_scratch[1];
 if(smid_scratch[2] == 1) smid_c[4] = smid_c[4] ^ 1;
 
-if(smid_flags!=0) smid_last_raw_syn_x = smid_syn_x;
+if(smid_flags != 0) smid_last_raw_syn_x = smid_syn_x;
 
 // =========================
 // END Run X decoder
@@ -495,16 +482,19 @@ if(smid_flags!=0) smid_last_raw_syn_x = smid_syn_x;
 
 // ACTIVE ERROR CORRECTION FOR X SYNDROMES
 
-smid_scratch  = 0;
+smid_scratch = 0;
 
-if(smid_syndromes[0] == 1) smid_scratch = smid_scratch  ^ 1;  // only part that differs for X vs Z syns
-if(smid_syndromes[1] == 1) smid_scratch  = smid_scratch  ^ 12;
-if(smid_syndromes[2] == 1) smid_scratch  = smid_scratch  ^ 48;
+// only part that differs for X vs Z syns V
+if(smid_syndromes[0] == 1) smid_scratch = smid_scratch ^ 1;
+if(smid_syndromes[1] == 1) smid_scratch = smid_scratch ^ 12;
+if(smid_syndromes[2] == 1) smid_scratch = smid_scratch ^ 48;
 
-if(smid_c[4]==1) smid_scratch  = smid_scratch  ^ 112;  // logical operator
+// logical operator
+if(smid_c[4] == 1) smid_scratch = smid_scratch ^ 112;
 
 if(smid_scratch[0] == 1) z smid_d[0];
-// if(smid_scratch[1] == 1) z smid_d[1];  // not possible for X stabilizers
+// not possible for X stabilizers V
+// if(smid_scratch[1] == 1) z smid_d[1];
 if(smid_scratch[2] == 1) z smid_d[2];
 if(smid_scratch[3] == 1) z smid_d[3];
 if(smid_scratch[4] == 1) z smid_d[4];
@@ -524,8 +514,8 @@ smid_last_raw_syn_x = 0;
 // BEGIN Run Z decoder
 // =========================
 
-if(smid_flags!=0) smid_syndromes = smid_syn_z ^ smid_last_raw_syn_z;
-if(smid_flags==0) smid_syndromes = 0;
+if(smid_flags != 0) smid_syndromes = smid_syn_z ^ smid_last_raw_syn_z;
+if(smid_flags == 0) smid_syndromes = 0;
 
 // apply corrections
 if(smid_syndromes == 2) smid_c[3] = smid_c[3] ^ 1;
@@ -553,7 +543,6 @@ if(smid_syndromes == 4) smid_scratch[1] = 1;
 smid_scratch[2] = smid_scratch[0] & smid_scratch[1];
 if(smid_scratch[2] == 1) smid_c[3] = smid_c[3] ^ 1;
 
-
 // 6&4 (2,3 -> 3)
 // ------------
 smid_scratch = 0;
@@ -563,7 +552,7 @@ if(smid_syndromes == 4) smid_scratch[1] = 1;
 smid_scratch[2] = smid_scratch[0] & smid_scratch[1];
 if(smid_scratch[2] == 1) smid_c[3] = smid_c[3] ^ 1;
 
-if(smid_flags!=0) smid_last_raw_syn_z = smid_syn_z;
+if(smid_flags != 0) smid_last_raw_syn_z = smid_syn_z;
 
 // =========================
 // END Run Z decoder
@@ -573,15 +562,18 @@ if(smid_flags!=0) smid_last_raw_syn_z = smid_syn_z;
 
 // ACTIVE ERROR CORRECTION FOR Z SYNDROMES
 
-smid_scratch  = 0;
+smid_scratch = 0;
 
-if(smid_syndromes[0] == 1) smid_scratch = smid_scratch  ^ 14;  // only part that differs for X vs Z syns
-if(smid_syndromes[1] == 1) smid_scratch  = smid_scratch  ^ 12;
-if(smid_syndromes[2] == 1) smid_scratch  = smid_scratch  ^ 48;
+// only part that differs for X vs Z syns V
+if(smid_syndromes[0] == 1) smid_scratch = smid_scratch ^ 14;
+if(smid_syndromes[1] == 1) smid_scratch = smid_scratch ^ 12;
+if(smid_syndromes[2] == 1) smid_scratch = smid_scratch ^ 48;
 
-if(smid_c[3]==1) smid_scratch  = smid_scratch  ^ 112;  // logical operator
+// logical operator
+if(smid_c[3] == 1) smid_scratch = smid_scratch ^ 112;
 
-// if(smid_scratch[0] == 1) z smid_d[0]; // not possible for X stabilizers
+// not possible for X stabilizers V
+// if(smid_scratch[0] == 1) z smid_d[0];
 if(smid_scratch[1] == 1) x smid_d[1];
 if(smid_scratch[2] == 1) x smid_d[2];
 if(smid_scratch[3] == 1) x smid_d[3];
@@ -611,29 +603,29 @@ h sout_a[0];
 h sout_a[1];
 h sout_a[2];
 
-cx sout_a[0],sout_d[3];  // 5 -> 4
-cz sout_a[1],sout_d[5];  // 6 -> 6
-cz sout_a[2],sout_d[2];  // 7 -> 3
+cx sout_a[0], sout_d[3];  // 5 -> 4
+cz sout_a[1], sout_d[5];  // 6 -> 6
+cz sout_a[2], sout_d[2];  // 7 -> 3
 
-barrier sout_a[0],sout_a[1];
-cz sout_a[0],sout_a[1];
-barrier sout_a[0],sout_a[1];
+barrier sout_a[0], sout_a[1];
+cz sout_a[0], sout_a[1];
+barrier sout_a[0], sout_a[1];
 
-cx sout_a[0],sout_d[0];  // 1 -> 1
-cz sout_a[1],sout_d[4];  // 2 -> 5
-cz sout_a[2],sout_d[3];  // 5 -> 4
+cx sout_a[0], sout_d[0];  // 1 -> 1
+cz sout_a[1], sout_d[4];  // 2 -> 5
+cz sout_a[2], sout_d[3];  // 5 -> 4
 
-cx sout_a[0],sout_d[1];  // 3 -> 2
-cz sout_a[1],sout_d[2];  // 7 -> 3
-cz sout_a[2],sout_d[6];  // 4 -> 7
+cx sout_a[0], sout_d[1];  // 3 -> 2
+cz sout_a[1], sout_d[2];  // 7 -> 3
+cz sout_a[2], sout_d[6];  // 4 -> 7
 
-barrier sout_a[0],sout_a[2];
-cz sout_a[0],sout_a[2];
-barrier sout_a[0],sout_a[2];
+barrier sout_a[0], sout_a[2];
+cz sout_a[0], sout_a[2];
+barrier sout_a[0], sout_a[2];
 
-cx sout_a[0],sout_d[2];  // 7 -> 3
-cz sout_a[1],sout_d[1];  // 3 -> 2
-cz sout_a[2],sout_d[5];  // 6 -> 6
+cx sout_a[0], sout_d[2];  // 7 -> 3
+cz sout_a[1], sout_d[1];  // 3 -> 2
+cz sout_a[2], sout_d[5];  // 6 -> 6
 
 h sout_a[0];
 h sout_a[1];
@@ -661,77 +653,65 @@ if(sout_flags == 0) h sout_a[0];
 if(sout_flags == 0) h sout_a[1];
 if(sout_flags == 0) h sout_a[2];
 
+if(sout_flags == 0) barrier sout_a[0], sout_d[3];
+if(sout_flags == 0) cz sout_a[0], sout_d[3];  // 5 -> 4
+if(sout_flags == 0) barrier sout_a[0], sout_d[3];
 
-if(sout_flags == 0) barrier sout_a[0],sout_d[3];
-if(sout_flags == 0) cz sout_a[0],sout_d[3];
-if(sout_flags == 0) barrier sout_a[0],sout_d[3];
+if(sout_flags == 0) barrier sout_a[1], sout_d[5];
+if(sout_flags == 0) cx sout_a[1], sout_d[5];  // 6 -> 6
+if(sout_flags == 0) barrier sout_a[1], sout_d[5];
 
-if(sout_flags == 0) barrier sout_a[1],sout_d[5];
-if(sout_flags == 0) cx sout_a[1],sout_d[5];
-if(sout_flags == 0) barrier sout_a[1],sout_d[5];
-
-if(sout_flags == 0) barrier sout_a[2],sout_d[2];
-if(sout_flags == 0) cx sout_a[2],sout_d[2];
-if(sout_flags == 0) barrier sout_a[2],sout_d[2];
-
-
+if(sout_flags == 0) barrier sout_a[2], sout_d[2];
+if(sout_flags == 0) cx sout_a[2], sout_d[2];  // 7 -> 3
+if(sout_flags == 0) barrier sout_a[2], sout_d[2];
 
 if(sout_flags == 0) barrier sout_a[0], sout_d[0], sout_d[1], sout_d[2], sout_d[3], sout_d[4], sout_d[5], sout_d[6], sout_a[1], sout_a[2];
-if(sout_flags == 0) cz sout_a[1],sout_a[0];
+if(sout_flags == 0) cz sout_a[1], sout_a[0];
 if(sout_flags == 0) barrier sout_a[0], sout_d[0], sout_d[1], sout_d[2], sout_d[3], sout_d[4], sout_d[5], sout_d[6], sout_a[1], sout_a[2];
 
+if(sout_flags == 0) barrier sout_a[0], sout_d[0];
+if(sout_flags == 0) cz sout_a[0], sout_d[0];  // 1 -> 1
+if(sout_flags == 0) barrier sout_a[0], sout_d[0];
 
-if(sout_flags == 0) barrier sout_a[0],sout_d[0];
-if(sout_flags == 0) cz sout_a[0],sout_d[0];
-if(sout_flags == 0) barrier sout_a[0],sout_d[0];
+if(sout_flags == 0) barrier sout_a[1], sout_d[4];
+if(sout_flags == 0) cx sout_a[1], sout_d[4];  // 2 -> 5
+if(sout_flags == 0) barrier sout_a[1], sout_d[4];
 
-if(sout_flags == 0) barrier sout_a[1],sout_d[4];
-if(sout_flags == 0) cx sout_a[1],sout_d[4];
-if(sout_flags == 0) barrier sout_a[1],sout_d[4];
+if(sout_flags == 0) barrier sout_a[2], sout_d[3];
+if(sout_flags == 0) cx sout_a[2], sout_d[3];  // 5 -> 4
+if(sout_flags == 0) barrier sout_a[2], sout_d[3];
 
-if(sout_flags == 0) barrier sout_a[2],sout_d[3];
-if(sout_flags == 0) cx sout_a[2],sout_d[3];
-if(sout_flags == 0) barrier sout_a[2],sout_d[3];
+if(sout_flags == 0) barrier sout_a[0], sout_d[1];
+if(sout_flags == 0) cz sout_a[0], sout_d[1];  // 3 -> 2
+if(sout_flags == 0) barrier sout_a[0], sout_d[1];
 
+if(sout_flags == 0) barrier sout_a[1], sout_d[2];
+if(sout_flags == 0) cx sout_a[1], sout_d[2];  // 7 -> 3
+if(sout_flags == 0) barrier sout_a[1], sout_d[2];
 
-
-if(sout_flags == 0) barrier sout_a[0],sout_d[1];
-if(sout_flags == 0) cz sout_a[0],sout_d[1];
-if(sout_flags == 0) barrier sout_a[0],sout_d[1];
-
-if(sout_flags == 0) barrier sout_a[1],sout_d[2];
-if(sout_flags == 0) cx sout_a[1],sout_d[2];
-if(sout_flags == 0) barrier sout_a[1],sout_d[2];
-
-if(sout_flags == 0) barrier sout_a[2],sout_d[6];
-if(sout_flags == 0) cx sout_a[2],sout_d[6];
-if(sout_flags == 0) barrier sout_a[2],sout_d[6];
-
+if(sout_flags == 0) barrier sout_a[2], sout_d[6];
+if(sout_flags == 0) cx sout_a[2], sout_d[6];  // 4 -> 7
+if(sout_flags == 0) barrier sout_a[2], sout_d[6];
 
 if(sout_flags == 0) barrier sout_a[0], sout_d[0], sout_d[1], sout_d[2], sout_d[3], sout_d[4], sout_d[5], sout_d[6], sout_a[1], sout_a[2];
-if(sout_flags == 0) cz sout_a[2],sout_a[0];
+if(sout_flags == 0) cz sout_a[2], sout_a[0];
 if(sout_flags == 0) barrier sout_a[0], sout_d[0], sout_d[1], sout_d[2], sout_d[3], sout_d[4], sout_d[5], sout_d[6], sout_a[1], sout_a[2];
 
+if(sout_flags == 0) barrier sout_a[0], sout_d[2];
+if(sout_flags == 0) cz sout_a[0], sout_d[2];  // 7 -> 3
+if(sout_flags == 0) barrier sout_a[0], sout_d[2];
 
+if(sout_flags == 0) barrier sout_a[1], sout_d[1];
+if(sout_flags == 0) cx sout_a[1], sout_d[1];  // 3 -> 2
+if(sout_flags == 0) barrier sout_a[1], sout_d[1];
 
-if(sout_flags == 0) barrier sout_a[0],sout_d[2];
-if(sout_flags == 0) cz sout_a[0],sout_d[2];
-if(sout_flags == 0) barrier sout_a[0],sout_d[2];
-
-if(sout_flags == 0) barrier sout_a[1],sout_d[1];
-if(sout_flags == 0) cx sout_a[1],sout_d[1];
-if(sout_flags == 0) barrier sout_a[1],sout_d[1];
-
-if(sout_flags == 0) barrier sout_a[2],sout_d[5];
-if(sout_flags == 0) cx sout_a[2],sout_d[5];
-if(sout_flags == 0) barrier sout_a[2],sout_d[5];
-
+if(sout_flags == 0) barrier sout_a[2], sout_d[5];
+if(sout_flags == 0) cx sout_a[2], sout_d[5];  // 6 -> 6
+if(sout_flags == 0) barrier sout_a[2], sout_d[5];
 
 if(sout_flags == 0) h sout_a[0];
 if(sout_flags == 0) h sout_a[1];
 if(sout_flags == 0) h sout_a[2];
-
-
 
 if(sout_flags == 0) measure sout_a[0] -> sout_flags_z[0];
 if(sout_flags == 0) measure sout_a[1] -> sout_flag_x[1];
@@ -760,21 +740,21 @@ if(sout_flags != 0) h sout_a[0];
 if(sout_flags != 0) h sout_a[1];
 if(sout_flags != 0) h sout_a[2];
 
-if(sout_flags != 0) cx sout_a[0],sout_d[2];
-if(sout_flags != 0) cz sout_a[1],sout_d[5];
-if(sout_flags != 0) cz sout_a[2],sout_d[6];
+if(sout_flags != 0) cx sout_a[0], sout_d[2];  // X1
+if(sout_flags != 0) cz sout_a[1], sout_d[5];  // Z2
+if(sout_flags != 0) cz sout_a[2], sout_d[6];  // Z3
 
-if(sout_flags != 0) cx sout_a[0],sout_d[1];
-if(sout_flags != 0) cz sout_a[1],sout_d[2];
-if(sout_flags != 0) cz sout_a[2],sout_d[5];
+if(sout_flags != 0) cx sout_a[0], sout_d[1];  // X1
+if(sout_flags != 0) cz sout_a[1], sout_d[2];  // Z2
+if(sout_flags != 0) cz sout_a[2], sout_d[5];  // Z3
 
-if(sout_flags != 0) cx sout_a[0],sout_d[3];
-if(sout_flags != 0) cz sout_a[1],sout_d[1];
-if(sout_flags != 0) cz sout_a[2],sout_d[2];
+if(sout_flags != 0) cx sout_a[0], sout_d[3];  // X1
+if(sout_flags != 0) cz sout_a[1], sout_d[1];  // Z2
+if(sout_flags != 0) cz sout_a[2], sout_d[2];  // Z3
 
-if(sout_flags != 0) cx sout_a[0],sout_d[0];
-if(sout_flags != 0) cz sout_a[1],sout_d[4];
-if(sout_flags != 0) cz sout_a[2],sout_d[3];
+if(sout_flags != 0) cx sout_a[0], sout_d[0];  // X1
+if(sout_flags != 0) cz sout_a[1], sout_d[4];  // Z2
+if(sout_flags != 0) cz sout_a[2], sout_d[3];  // Z3
 
 if(sout_flags != 0) h sout_a[0];
 if(sout_flags != 0) h sout_a[1];
@@ -794,21 +774,21 @@ if(sout_flags != 0) h sout_a[0];
 if(sout_flags != 0) h sout_a[1];
 if(sout_flags != 0) h sout_a[2];
 
-if(sout_flags != 0) cz sout_a[0],sout_d[2];
-if(sout_flags != 0) cx sout_a[1],sout_d[5];
-if(sout_flags != 0) cx sout_a[2],sout_d[6];
+if(sout_flags != 0) cz sout_a[0], sout_d[2];  // Z1 0,3
+if(sout_flags != 0) cx sout_a[1], sout_d[5];  // X2 6,8
+if(sout_flags != 0) cx sout_a[2], sout_d[6];  // X3 7,9
 
-if(sout_flags != 0) cz sout_a[0],sout_d[1];
-if(sout_flags != 0) cx sout_a[1],sout_d[2];
-if(sout_flags != 0) cx sout_a[2],sout_d[5];
+if(sout_flags != 0) cz sout_a[0], sout_d[1];  // Z1 0,2
+if(sout_flags != 0) cx sout_a[1], sout_d[2];  // X2 3,8
+if(sout_flags != 0) cx sout_a[2], sout_d[5];  // X3 6,9
 
-if(sout_flags != 0) cz sout_a[0],sout_d[3];
-if(sout_flags != 0) cx sout_a[1],sout_d[1];
-if(sout_flags != 0) cx sout_a[2],sout_d[2];
+if(sout_flags != 0) cz sout_a[0], sout_d[3];  // Z1 0,4
+if(sout_flags != 0) cx sout_a[1], sout_d[1];  // X2 2,8
+if(sout_flags != 0) cx sout_a[2], sout_d[2];  // X3 3,9
 
-if(sout_flags != 0) cz sout_a[0],sout_d[0];
-if(sout_flags != 0) cx sout_a[1],sout_d[4];
-if(sout_flags != 0) cx sout_a[2],sout_d[3];
+if(sout_flags != 0) cz sout_a[0], sout_d[0];  // Z1 0,1
+if(sout_flags != 0) cx sout_a[1], sout_d[4];  // X2 5,8
+if(sout_flags != 0) cx sout_a[2], sout_d[3];  // X3 4,9
 
 if(sout_flags != 0) h sout_a[0];
 if(sout_flags != 0) h sout_a[1];
@@ -823,8 +803,8 @@ if(sout_flags != 0) measure sout_a[2] -> sout_syn_x[2];
 // BEGIN Run X decoder
 // =========================
 
-if(sout_flags!=0) sout_syndromes = sout_syn_x ^ sout_last_raw_syn_x;
-if(sout_flags==0) sout_syndromes = 0;
+if(sout_flags != 0) sout_syndromes = sout_syn_x ^ sout_last_raw_syn_x;
+if(sout_flags == 0) sout_syndromes = 0;
 
 // apply corrections
 if(sout_syndromes == 2) sout_c[4] = sout_c[4] ^ 1;
@@ -852,7 +832,6 @@ if(sout_syndromes == 4) sout_scratch[1] = 1;
 sout_scratch[2] = sout_scratch[0] & sout_scratch[1];
 if(sout_scratch[2] == 1) sout_c[4] = sout_c[4] ^ 1;
 
-
 // 6&4 (2,3 -> 3)
 // ------------
 sout_scratch = 0;
@@ -862,7 +841,7 @@ if(sout_syndromes == 4) sout_scratch[1] = 1;
 sout_scratch[2] = sout_scratch[0] & sout_scratch[1];
 if(sout_scratch[2] == 1) sout_c[4] = sout_c[4] ^ 1;
 
-if(sout_flags!=0) sout_last_raw_syn_x = sout_syn_x;
+if(sout_flags != 0) sout_last_raw_syn_x = sout_syn_x;
 
 // =========================
 // END Run X decoder
@@ -872,16 +851,19 @@ if(sout_flags!=0) sout_last_raw_syn_x = sout_syn_x;
 
 // ACTIVE ERROR CORRECTION FOR X SYNDROMES
 
-sout_scratch  = 0;
+sout_scratch = 0;
 
-if(sout_syndromes[0] == 1) sout_scratch = sout_scratch  ^ 1;  // only part that differs for X vs Z syns
-if(sout_syndromes[1] == 1) sout_scratch  = sout_scratch  ^ 12;
-if(sout_syndromes[2] == 1) sout_scratch  = sout_scratch  ^ 48;
+// only part that differs for X vs Z syns V
+if(sout_syndromes[0] == 1) sout_scratch = sout_scratch ^ 1;
+if(sout_syndromes[1] == 1) sout_scratch = sout_scratch ^ 12;
+if(sout_syndromes[2] == 1) sout_scratch = sout_scratch ^ 48;
 
-if(sout_c[4]==1) sout_scratch  = sout_scratch  ^ 112;  // logical operator
+// logical operator
+if(sout_c[4] == 1) sout_scratch = sout_scratch ^ 112;
 
 if(sout_scratch[0] == 1) z sout_d[0];
-// if(sout_scratch[1] == 1) z sout_d[1];  // not possible for X stabilizers
+// not possible for X stabilizers V
+// if(sout_scratch[1] == 1) z sout_d[1];
 if(sout_scratch[2] == 1) z sout_d[2];
 if(sout_scratch[3] == 1) z sout_d[3];
 if(sout_scratch[4] == 1) z sout_d[4];
@@ -901,8 +883,8 @@ sout_last_raw_syn_x = 0;
 // BEGIN Run Z decoder
 // =========================
 
-if(sout_flags!=0) sout_syndromes = sout_syn_z ^ sout_last_raw_syn_z;
-if(sout_flags==0) sout_syndromes = 0;
+if(sout_flags != 0) sout_syndromes = sout_syn_z ^ sout_last_raw_syn_z;
+if(sout_flags == 0) sout_syndromes = 0;
 
 // apply corrections
 if(sout_syndromes == 2) sout_c[3] = sout_c[3] ^ 1;
@@ -930,7 +912,6 @@ if(sout_syndromes == 4) sout_scratch[1] = 1;
 sout_scratch[2] = sout_scratch[0] & sout_scratch[1];
 if(sout_scratch[2] == 1) sout_c[3] = sout_c[3] ^ 1;
 
-
 // 6&4 (2,3 -> 3)
 // ------------
 sout_scratch = 0;
@@ -940,7 +921,7 @@ if(sout_syndromes == 4) sout_scratch[1] = 1;
 sout_scratch[2] = sout_scratch[0] & sout_scratch[1];
 if(sout_scratch[2] == 1) sout_c[3] = sout_c[3] ^ 1;
 
-if(sout_flags!=0) sout_last_raw_syn_z = sout_syn_z;
+if(sout_flags != 0) sout_last_raw_syn_z = sout_syn_z;
 
 // =========================
 // END Run Z decoder
@@ -950,15 +931,18 @@ if(sout_flags!=0) sout_last_raw_syn_z = sout_syn_z;
 
 // ACTIVE ERROR CORRECTION FOR Z SYNDROMES
 
-sout_scratch  = 0;
+sout_scratch = 0;
 
-if(sout_syndromes[0] == 1) sout_scratch = sout_scratch  ^ 14;  // only part that differs for X vs Z syns
-if(sout_syndromes[1] == 1) sout_scratch  = sout_scratch  ^ 12;
-if(sout_syndromes[2] == 1) sout_scratch  = sout_scratch  ^ 48;
+// only part that differs for X vs Z syns V
+if(sout_syndromes[0] == 1) sout_scratch = sout_scratch ^ 14;
+if(sout_syndromes[1] == 1) sout_scratch = sout_scratch ^ 12;
+if(sout_syndromes[2] == 1) sout_scratch = sout_scratch ^ 48;
 
-if(sout_c[3]==1) sout_scratch  = sout_scratch  ^ 112;  // logical operator
+// logical operator
+if(sout_c[3] == 1) sout_scratch = sout_scratch ^ 112;
 
-// if(sout_scratch[0] == 1) z sout_d[0]; // not possible for X stabilizers
+// not possible for X stabilizers V
+// if(sout_scratch[0] == 1) z sout_d[0];
 if(sout_scratch[1] == 1) x sout_d[1];
 if(sout_scratch[2] == 1) x sout_d[2];
 if(sout_scratch[3] == 1) x sout_d[3];
@@ -992,11 +976,11 @@ cx sin_d[0], sin_d[3];
 cx sin_d[4], sin_d[1];
 cx sin_d[3], sin_d[2];
 
-barrier sin_a[0],sin_d[1],sin_d[3],sin_d[5];
-//verification step
-cx sin_d[5],sin_a[0];
-cx sin_d[1],sin_a[0];
-cx sin_d[3],sin_a[0];
+barrier sin_a[0], sin_d[1], sin_d[3], sin_d[5];
+// verification step
+cx sin_d[5], sin_a[0];
+cx sin_d[1], sin_a[0];
+cx sin_d[3], sin_a[0];
 measure sin_a[0] -> sin_c[0];
 
 
@@ -1018,11 +1002,11 @@ if(sin_c[0] == 1) cx sin_d[0], sin_d[3];
 if(sin_c[0] == 1) cx sin_d[4], sin_d[1];
 if(sin_c[0] == 1) cx sin_d[3], sin_d[2];
 
-if(sin_c[0] == 1) barrier sin_a[0],sin_d[1],sin_d[3],sin_d[5];
-//verification step
-if(sin_c[0] == 1) cx sin_d[5],sin_a[0];
-if(sin_c[0] == 1) cx sin_d[1],sin_a[0];
-if(sin_c[0] == 1) cx sin_d[3],sin_a[0];
+if(sin_c[0] == 1) barrier sin_a[0], sin_d[1], sin_d[3], sin_d[5];
+// verification step
+if(sin_c[0] == 1) cx sin_d[5], sin_a[0];
+if(sin_c[0] == 1) cx sin_d[1], sin_a[0];
+if(sin_c[0] == 1) cx sin_d[3], sin_a[0];
 if(sin_c[0] == 1) measure sin_a[0] -> sin_c[0];
 
 
@@ -1044,11 +1028,11 @@ if(sin_c[0] == 1) cx sin_d[0], sin_d[3];
 if(sin_c[0] == 1) cx sin_d[4], sin_d[1];
 if(sin_c[0] == 1) cx sin_d[3], sin_d[2];
 
-if(sin_c[0] == 1) barrier sin_a[0],sin_d[1],sin_d[3],sin_d[5];
-//verification step
-if(sin_c[0] == 1) cx sin_d[5],sin_a[0];
-if(sin_c[0] == 1) cx sin_d[1],sin_a[0];
-if(sin_c[0] == 1) cx sin_d[3],sin_a[0];
+if(sin_c[0] == 1) barrier sin_a[0], sin_d[1], sin_d[3], sin_d[5];
+// verification step
+if(sin_c[0] == 1) cx sin_d[5], sin_a[0];
+if(sin_c[0] == 1) cx sin_d[1], sin_a[0];
+if(sin_c[0] == 1) cx sin_d[3], sin_a[0];
 if(sin_c[0] == 1) measure sin_a[0] -> sin_c[0];
 
 // Logical X
@@ -1070,29 +1054,29 @@ h sin_a[0];
 h sin_a[1];
 h sin_a[2];
 
-cx sin_a[0],sin_d[3];  // 5 -> 4
-cz sin_a[1],sin_d[5];  // 6 -> 6
-cz sin_a[2],sin_d[2];  // 7 -> 3
+cx sin_a[0], sin_d[3];  // 5 -> 4
+cz sin_a[1], sin_d[5];  // 6 -> 6
+cz sin_a[2], sin_d[2];  // 7 -> 3
 
-barrier sin_a[0],sin_a[1];
-cz sin_a[0],sin_a[1];
-barrier sin_a[0],sin_a[1];
+barrier sin_a[0], sin_a[1];
+cz sin_a[0], sin_a[1];
+barrier sin_a[0], sin_a[1];
 
-cx sin_a[0],sin_d[0];  // 1 -> 1
-cz sin_a[1],sin_d[4];  // 2 -> 5
-cz sin_a[2],sin_d[3];  // 5 -> 4
+cx sin_a[0], sin_d[0];  // 1 -> 1
+cz sin_a[1], sin_d[4];  // 2 -> 5
+cz sin_a[2], sin_d[3];  // 5 -> 4
 
-cx sin_a[0],sin_d[1];  // 3 -> 2
-cz sin_a[1],sin_d[2];  // 7 -> 3
-cz sin_a[2],sin_d[6];  // 4 -> 7
+cx sin_a[0], sin_d[1];  // 3 -> 2
+cz sin_a[1], sin_d[2];  // 7 -> 3
+cz sin_a[2], sin_d[6];  // 4 -> 7
 
-barrier sin_a[0],sin_a[2];
-cz sin_a[0],sin_a[2];
-barrier sin_a[0],sin_a[2];
+barrier sin_a[0], sin_a[2];
+cz sin_a[0], sin_a[2];
+barrier sin_a[0], sin_a[2];
 
-cx sin_a[0],sin_d[2];  // 7 -> 3
-cz sin_a[1],sin_d[1];  // 3 -> 2
-cz sin_a[2],sin_d[5];  // 6 -> 6
+cx sin_a[0], sin_d[2];  // 7 -> 3
+cz sin_a[1], sin_d[1];  // 3 -> 2
+cz sin_a[2], sin_d[5];  // 6 -> 6
 
 h sin_a[0];
 h sin_a[1];
@@ -1120,77 +1104,65 @@ if(sin_flags == 0) h sin_a[0];
 if(sin_flags == 0) h sin_a[1];
 if(sin_flags == 0) h sin_a[2];
 
+if(sin_flags == 0) barrier sin_a[0], sin_d[3];
+if(sin_flags == 0) cz sin_a[0], sin_d[3];  // 5 -> 4
+if(sin_flags == 0) barrier sin_a[0], sin_d[3];
 
-if(sin_flags == 0) barrier sin_a[0],sin_d[3];
-if(sin_flags == 0) cz sin_a[0],sin_d[3];
-if(sin_flags == 0) barrier sin_a[0],sin_d[3];
+if(sin_flags == 0) barrier sin_a[1], sin_d[5];
+if(sin_flags == 0) cx sin_a[1], sin_d[5];  // 6 -> 6
+if(sin_flags == 0) barrier sin_a[1], sin_d[5];
 
-if(sin_flags == 0) barrier sin_a[1],sin_d[5];
-if(sin_flags == 0) cx sin_a[1],sin_d[5];
-if(sin_flags == 0) barrier sin_a[1],sin_d[5];
-
-if(sin_flags == 0) barrier sin_a[2],sin_d[2];
-if(sin_flags == 0) cx sin_a[2],sin_d[2];
-if(sin_flags == 0) barrier sin_a[2],sin_d[2];
-
-
+if(sin_flags == 0) barrier sin_a[2], sin_d[2];
+if(sin_flags == 0) cx sin_a[2], sin_d[2];  // 7 -> 3
+if(sin_flags == 0) barrier sin_a[2], sin_d[2];
 
 if(sin_flags == 0) barrier sin_a[0], sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[1], sin_a[2];
-if(sin_flags == 0) cz sin_a[1],sin_a[0];
+if(sin_flags == 0) cz sin_a[1], sin_a[0];
 if(sin_flags == 0) barrier sin_a[0], sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[1], sin_a[2];
 
+if(sin_flags == 0) barrier sin_a[0], sin_d[0];
+if(sin_flags == 0) cz sin_a[0], sin_d[0];  // 1 -> 1
+if(sin_flags == 0) barrier sin_a[0], sin_d[0];
 
-if(sin_flags == 0) barrier sin_a[0],sin_d[0];
-if(sin_flags == 0) cz sin_a[0],sin_d[0];
-if(sin_flags == 0) barrier sin_a[0],sin_d[0];
+if(sin_flags == 0) barrier sin_a[1], sin_d[4];
+if(sin_flags == 0) cx sin_a[1], sin_d[4];  // 2 -> 5
+if(sin_flags == 0) barrier sin_a[1], sin_d[4];
 
-if(sin_flags == 0) barrier sin_a[1],sin_d[4];
-if(sin_flags == 0) cx sin_a[1],sin_d[4];
-if(sin_flags == 0) barrier sin_a[1],sin_d[4];
+if(sin_flags == 0) barrier sin_a[2], sin_d[3];
+if(sin_flags == 0) cx sin_a[2], sin_d[3];  // 5 -> 4
+if(sin_flags == 0) barrier sin_a[2], sin_d[3];
 
-if(sin_flags == 0) barrier sin_a[2],sin_d[3];
-if(sin_flags == 0) cx sin_a[2],sin_d[3];
-if(sin_flags == 0) barrier sin_a[2],sin_d[3];
+if(sin_flags == 0) barrier sin_a[0], sin_d[1];
+if(sin_flags == 0) cz sin_a[0], sin_d[1];  // 3 -> 2
+if(sin_flags == 0) barrier sin_a[0], sin_d[1];
 
+if(sin_flags == 0) barrier sin_a[1], sin_d[2];
+if(sin_flags == 0) cx sin_a[1], sin_d[2];  // 7 -> 3
+if(sin_flags == 0) barrier sin_a[1], sin_d[2];
 
-
-if(sin_flags == 0) barrier sin_a[0],sin_d[1];
-if(sin_flags == 0) cz sin_a[0],sin_d[1];
-if(sin_flags == 0) barrier sin_a[0],sin_d[1];
-
-if(sin_flags == 0) barrier sin_a[1],sin_d[2];
-if(sin_flags == 0) cx sin_a[1],sin_d[2];
-if(sin_flags == 0) barrier sin_a[1],sin_d[2];
-
-if(sin_flags == 0) barrier sin_a[2],sin_d[6];
-if(sin_flags == 0) cx sin_a[2],sin_d[6];
-if(sin_flags == 0) barrier sin_a[2],sin_d[6];
-
+if(sin_flags == 0) barrier sin_a[2], sin_d[6];
+if(sin_flags == 0) cx sin_a[2], sin_d[6];  // 4 -> 7
+if(sin_flags == 0) barrier sin_a[2], sin_d[6];
 
 if(sin_flags == 0) barrier sin_a[0], sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[1], sin_a[2];
-if(sin_flags == 0) cz sin_a[2],sin_a[0];
+if(sin_flags == 0) cz sin_a[2], sin_a[0];
 if(sin_flags == 0) barrier sin_a[0], sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[1], sin_a[2];
 
+if(sin_flags == 0) barrier sin_a[0], sin_d[2];
+if(sin_flags == 0) cz sin_a[0], sin_d[2];  // 7 -> 3
+if(sin_flags == 0) barrier sin_a[0], sin_d[2];
 
+if(sin_flags == 0) barrier sin_a[1], sin_d[1];
+if(sin_flags == 0) cx sin_a[1], sin_d[1];  // 3 -> 2
+if(sin_flags == 0) barrier sin_a[1], sin_d[1];
 
-if(sin_flags == 0) barrier sin_a[0],sin_d[2];
-if(sin_flags == 0) cz sin_a[0],sin_d[2];
-if(sin_flags == 0) barrier sin_a[0],sin_d[2];
-
-if(sin_flags == 0) barrier sin_a[1],sin_d[1];
-if(sin_flags == 0) cx sin_a[1],sin_d[1];
-if(sin_flags == 0) barrier sin_a[1],sin_d[1];
-
-if(sin_flags == 0) barrier sin_a[2],sin_d[5];
-if(sin_flags == 0) cx sin_a[2],sin_d[5];
-if(sin_flags == 0) barrier sin_a[2],sin_d[5];
-
+if(sin_flags == 0) barrier sin_a[2], sin_d[5];
+if(sin_flags == 0) cx sin_a[2], sin_d[5];  // 6 -> 6
+if(sin_flags == 0) barrier sin_a[2], sin_d[5];
 
 if(sin_flags == 0) h sin_a[0];
 if(sin_flags == 0) h sin_a[1];
 if(sin_flags == 0) h sin_a[2];
-
-
 
 if(sin_flags == 0) measure sin_a[0] -> sin_flags_z[0];
 if(sin_flags == 0) measure sin_a[1] -> sin_flag_x[1];
@@ -1219,21 +1191,21 @@ if(sin_flags != 0) h sin_a[0];
 if(sin_flags != 0) h sin_a[1];
 if(sin_flags != 0) h sin_a[2];
 
-if(sin_flags != 0) cx sin_a[0],sin_d[2];
-if(sin_flags != 0) cz sin_a[1],sin_d[5];
-if(sin_flags != 0) cz sin_a[2],sin_d[6];
+if(sin_flags != 0) cx sin_a[0], sin_d[2];  // X1
+if(sin_flags != 0) cz sin_a[1], sin_d[5];  // Z2
+if(sin_flags != 0) cz sin_a[2], sin_d[6];  // Z3
 
-if(sin_flags != 0) cx sin_a[0],sin_d[1];
-if(sin_flags != 0) cz sin_a[1],sin_d[2];
-if(sin_flags != 0) cz sin_a[2],sin_d[5];
+if(sin_flags != 0) cx sin_a[0], sin_d[1];  // X1
+if(sin_flags != 0) cz sin_a[1], sin_d[2];  // Z2
+if(sin_flags != 0) cz sin_a[2], sin_d[5];  // Z3
 
-if(sin_flags != 0) cx sin_a[0],sin_d[3];
-if(sin_flags != 0) cz sin_a[1],sin_d[1];
-if(sin_flags != 0) cz sin_a[2],sin_d[2];
+if(sin_flags != 0) cx sin_a[0], sin_d[3];  // X1
+if(sin_flags != 0) cz sin_a[1], sin_d[1];  // Z2
+if(sin_flags != 0) cz sin_a[2], sin_d[2];  // Z3
 
-if(sin_flags != 0) cx sin_a[0],sin_d[0];
-if(sin_flags != 0) cz sin_a[1],sin_d[4];
-if(sin_flags != 0) cz sin_a[2],sin_d[3];
+if(sin_flags != 0) cx sin_a[0], sin_d[0];  // X1
+if(sin_flags != 0) cz sin_a[1], sin_d[4];  // Z2
+if(sin_flags != 0) cz sin_a[2], sin_d[3];  // Z3
 
 if(sin_flags != 0) h sin_a[0];
 if(sin_flags != 0) h sin_a[1];
@@ -1253,21 +1225,21 @@ if(sin_flags != 0) h sin_a[0];
 if(sin_flags != 0) h sin_a[1];
 if(sin_flags != 0) h sin_a[2];
 
-if(sin_flags != 0) cz sin_a[0],sin_d[2];
-if(sin_flags != 0) cx sin_a[1],sin_d[5];
-if(sin_flags != 0) cx sin_a[2],sin_d[6];
+if(sin_flags != 0) cz sin_a[0], sin_d[2];  // Z1 0,3
+if(sin_flags != 0) cx sin_a[1], sin_d[5];  // X2 6,8
+if(sin_flags != 0) cx sin_a[2], sin_d[6];  // X3 7,9
 
-if(sin_flags != 0) cz sin_a[0],sin_d[1];
-if(sin_flags != 0) cx sin_a[1],sin_d[2];
-if(sin_flags != 0) cx sin_a[2],sin_d[5];
+if(sin_flags != 0) cz sin_a[0], sin_d[1];  // Z1 0,2
+if(sin_flags != 0) cx sin_a[1], sin_d[2];  // X2 3,8
+if(sin_flags != 0) cx sin_a[2], sin_d[5];  // X3 6,9
 
-if(sin_flags != 0) cz sin_a[0],sin_d[3];
-if(sin_flags != 0) cx sin_a[1],sin_d[1];
-if(sin_flags != 0) cx sin_a[2],sin_d[2];
+if(sin_flags != 0) cz sin_a[0], sin_d[3];  // Z1 0,4
+if(sin_flags != 0) cx sin_a[1], sin_d[1];  // X2 2,8
+if(sin_flags != 0) cx sin_a[2], sin_d[2];  // X3 3,9
 
-if(sin_flags != 0) cz sin_a[0],sin_d[0];
-if(sin_flags != 0) cx sin_a[1],sin_d[4];
-if(sin_flags != 0) cx sin_a[2],sin_d[3];
+if(sin_flags != 0) cz sin_a[0], sin_d[0];  // Z1 0,1
+if(sin_flags != 0) cx sin_a[1], sin_d[4];  // X2 5,8
+if(sin_flags != 0) cx sin_a[2], sin_d[3];  // X3 4,9
 
 if(sin_flags != 0) h sin_a[0];
 if(sin_flags != 0) h sin_a[1];
@@ -1282,8 +1254,8 @@ if(sin_flags != 0) measure sin_a[2] -> sin_syn_x[2];
 // BEGIN Run X decoder
 // =========================
 
-if(sin_flags!=0) sin_syndromes = sin_syn_x ^ sin_last_raw_syn_x;
-if(sin_flags==0) sin_syndromes = 0;
+if(sin_flags != 0) sin_syndromes = sin_syn_x ^ sin_last_raw_syn_x;
+if(sin_flags == 0) sin_syndromes = 0;
 
 // apply corrections
 if(sin_syndromes == 2) sin_c[4] = sin_c[4] ^ 1;
@@ -1311,7 +1283,6 @@ if(sin_syndromes == 4) sin_scratch[1] = 1;
 sin_scratch[2] = sin_scratch[0] & sin_scratch[1];
 if(sin_scratch[2] == 1) sin_c[4] = sin_c[4] ^ 1;
 
-
 // 6&4 (2,3 -> 3)
 // ------------
 sin_scratch = 0;
@@ -1321,7 +1292,7 @@ if(sin_syndromes == 4) sin_scratch[1] = 1;
 sin_scratch[2] = sin_scratch[0] & sin_scratch[1];
 if(sin_scratch[2] == 1) sin_c[4] = sin_c[4] ^ 1;
 
-if(sin_flags!=0) sin_last_raw_syn_x = sin_syn_x;
+if(sin_flags != 0) sin_last_raw_syn_x = sin_syn_x;
 
 // =========================
 // END Run X decoder
@@ -1331,16 +1302,19 @@ if(sin_flags!=0) sin_last_raw_syn_x = sin_syn_x;
 
 // ACTIVE ERROR CORRECTION FOR X SYNDROMES
 
-sin_scratch  = 0;
+sin_scratch = 0;
 
-if(sin_syndromes[0] == 1) sin_scratch = sin_scratch  ^ 1;  // only part that differs for X vs Z syns
-if(sin_syndromes[1] == 1) sin_scratch  = sin_scratch  ^ 12;
-if(sin_syndromes[2] == 1) sin_scratch  = sin_scratch  ^ 48;
+// only part that differs for X vs Z syns V
+if(sin_syndromes[0] == 1) sin_scratch = sin_scratch ^ 1;
+if(sin_syndromes[1] == 1) sin_scratch = sin_scratch ^ 12;
+if(sin_syndromes[2] == 1) sin_scratch = sin_scratch ^ 48;
 
-if(sin_c[4]==1) sin_scratch  = sin_scratch  ^ 112;  // logical operator
+// logical operator
+if(sin_c[4] == 1) sin_scratch = sin_scratch ^ 112;
 
 if(sin_scratch[0] == 1) z sin_d[0];
-// if(sin_scratch[1] == 1) z sin_d[1];  // not possible for X stabilizers
+// not possible for X stabilizers V
+// if(sin_scratch[1] == 1) z sin_d[1];
 if(sin_scratch[2] == 1) z sin_d[2];
 if(sin_scratch[3] == 1) z sin_d[3];
 if(sin_scratch[4] == 1) z sin_d[4];
@@ -1360,8 +1334,8 @@ sin_last_raw_syn_x = 0;
 // BEGIN Run Z decoder
 // =========================
 
-if(sin_flags!=0) sin_syndromes = sin_syn_z ^ sin_last_raw_syn_z;
-if(sin_flags==0) sin_syndromes = 0;
+if(sin_flags != 0) sin_syndromes = sin_syn_z ^ sin_last_raw_syn_z;
+if(sin_flags == 0) sin_syndromes = 0;
 
 // apply corrections
 if(sin_syndromes == 2) sin_c[3] = sin_c[3] ^ 1;
@@ -1389,7 +1363,6 @@ if(sin_syndromes == 4) sin_scratch[1] = 1;
 sin_scratch[2] = sin_scratch[0] & sin_scratch[1];
 if(sin_scratch[2] == 1) sin_c[3] = sin_c[3] ^ 1;
 
-
 // 6&4 (2,3 -> 3)
 // ------------
 sin_scratch = 0;
@@ -1399,7 +1372,7 @@ if(sin_syndromes == 4) sin_scratch[1] = 1;
 sin_scratch[2] = sin_scratch[0] & sin_scratch[1];
 if(sin_scratch[2] == 1) sin_c[3] = sin_c[3] ^ 1;
 
-if(sin_flags!=0) sin_last_raw_syn_z = sin_syn_z;
+if(sin_flags != 0) sin_last_raw_syn_z = sin_syn_z;
 
 // =========================
 // END Run Z decoder
@@ -1409,15 +1382,18 @@ if(sin_flags!=0) sin_last_raw_syn_z = sin_syn_z;
 
 // ACTIVE ERROR CORRECTION FOR Z SYNDROMES
 
-sin_scratch  = 0;
+sin_scratch = 0;
 
-if(sin_syndromes[0] == 1) sin_scratch = sin_scratch  ^ 14;  // only part that differs for X vs Z syns
-if(sin_syndromes[1] == 1) sin_scratch  = sin_scratch  ^ 12;
-if(sin_syndromes[2] == 1) sin_scratch  = sin_scratch  ^ 48;
+// only part that differs for X vs Z syns V
+if(sin_syndromes[0] == 1) sin_scratch = sin_scratch ^ 14;
+if(sin_syndromes[1] == 1) sin_scratch = sin_scratch ^ 12;
+if(sin_syndromes[2] == 1) sin_scratch = sin_scratch ^ 48;
 
-if(sin_c[3]==1) sin_scratch  = sin_scratch  ^ 112;  // logical operator
+// logical operator
+if(sin_c[3] == 1) sin_scratch = sin_scratch ^ 112;
 
-// if(sin_scratch[0] == 1) z sin_d[0]; // not possible for X stabilizers
+// not possible for X stabilizers V
+// if(sin_scratch[0] == 1) z sin_d[0];
 if(sin_scratch[1] == 1) x sin_d[1];
 if(sin_scratch[2] == 1) x sin_d[2];
 if(sin_scratch[3] == 1) x sin_d[3];
@@ -1458,7 +1434,7 @@ measure sin_d[6] -> sin_raw_meas[6];
 
 // determine raw logical output
 // ============================
-sin_c[1] = sin_raw_meas[4] ^ sin_raw_meas[5] ^ sin_raw_meas[6];
+sin_c[1] = (sin_raw_meas[4] ^ sin_raw_meas[5]) ^ sin_raw_meas[6];
 
 
 
@@ -1468,9 +1444,9 @@ sin_c[1] = sin_raw_meas[4] ^ sin_raw_meas[5] ^ sin_raw_meas[6];
 
 // Determine correction to get logical output
 // ==========================================
-sin_syn_meas[0] = sin_raw_meas[0] ^ sin_raw_meas[1] ^ sin_raw_meas[2] ^ sin_raw_meas[3];
-sin_syn_meas[1] = sin_raw_meas[1] ^ sin_raw_meas[2] ^ sin_raw_meas[4] ^ sin_raw_meas[5];
-sin_syn_meas[2] = sin_raw_meas[2] ^ sin_raw_meas[3] ^ sin_raw_meas[5] ^ sin_raw_meas[6];
+sin_syn_meas[0] = ((sin_raw_meas[0] ^ sin_raw_meas[1]) ^ sin_raw_meas[2]) ^ sin_raw_meas[3];
+sin_syn_meas[1] = ((sin_raw_meas[1] ^ sin_raw_meas[2]) ^ sin_raw_meas[4]) ^ sin_raw_meas[5];
+sin_syn_meas[2] = ((sin_raw_meas[2] ^ sin_raw_meas[3]) ^ sin_raw_meas[5]) ^ sin_raw_meas[6];
 
 // XOR syndromes
 sin_syn_meas = sin_syn_meas ^ sin_last_raw_syn_z;
@@ -1499,7 +1475,7 @@ measure smid_d[6] -> smid_raw_meas[6];
 
 // determine raw logical output
 // ============================
-smid_c[1] = smid_raw_meas[4] ^ smid_raw_meas[5] ^ smid_raw_meas[6];
+smid_c[1] = (smid_raw_meas[4] ^ smid_raw_meas[5]) ^ smid_raw_meas[6];
 
 
 
@@ -1509,9 +1485,9 @@ smid_c[1] = smid_raw_meas[4] ^ smid_raw_meas[5] ^ smid_raw_meas[6];
 
 // Determine correction to get logical output
 // ==========================================
-smid_syn_meas[0] = smid_raw_meas[0] ^ smid_raw_meas[1] ^ smid_raw_meas[2] ^ smid_raw_meas[3];
-smid_syn_meas[1] = smid_raw_meas[1] ^ smid_raw_meas[2] ^ smid_raw_meas[4] ^ smid_raw_meas[5];
-smid_syn_meas[2] = smid_raw_meas[2] ^ smid_raw_meas[3] ^ smid_raw_meas[5] ^ smid_raw_meas[6];
+smid_syn_meas[0] = ((smid_raw_meas[0] ^ smid_raw_meas[1]) ^ smid_raw_meas[2]) ^ smid_raw_meas[3];
+smid_syn_meas[1] = ((smid_raw_meas[1] ^ smid_raw_meas[2]) ^ smid_raw_meas[4]) ^ smid_raw_meas[5];
+smid_syn_meas[2] = ((smid_raw_meas[2] ^ smid_raw_meas[3]) ^ smid_raw_meas[5]) ^ smid_raw_meas[6];
 
 // XOR syndromes
 smid_syn_meas = smid_syn_meas ^ smid_last_raw_syn_z;
@@ -1548,7 +1524,7 @@ measure sout_d[6] -> sout_raw_meas[6];
 
 // determine raw logical output
 // ============================
-sout_c[1] = sout_raw_meas[4] ^ sout_raw_meas[5] ^ sout_raw_meas[6];
+sout_c[1] = (sout_raw_meas[4] ^ sout_raw_meas[5]) ^ sout_raw_meas[6];
 
 
 
@@ -1558,9 +1534,9 @@ sout_c[1] = sout_raw_meas[4] ^ sout_raw_meas[5] ^ sout_raw_meas[6];
 
 // Determine correction to get logical output
 // ==========================================
-sout_syn_meas[0] = sout_raw_meas[0] ^ sout_raw_meas[1] ^ sout_raw_meas[2] ^ sout_raw_meas[3];
-sout_syn_meas[1] = sout_raw_meas[1] ^ sout_raw_meas[2] ^ sout_raw_meas[4] ^ sout_raw_meas[5];
-sout_syn_meas[2] = sout_raw_meas[2] ^ sout_raw_meas[3] ^ sout_raw_meas[5] ^ sout_raw_meas[6];
+sout_syn_meas[0] = ((sout_raw_meas[0] ^ sout_raw_meas[1]) ^ sout_raw_meas[2]) ^ sout_raw_meas[3];
+sout_syn_meas[1] = ((sout_raw_meas[1] ^ sout_raw_meas[2]) ^ sout_raw_meas[4]) ^ sout_raw_meas[5];
+sout_syn_meas[2] = ((sout_raw_meas[2] ^ sout_raw_meas[3]) ^ sout_raw_meas[5]) ^ sout_raw_meas[6];
 
 // XOR syndromes
 sout_syn_meas = sout_syn_meas ^ sout_last_raw_syn_z;

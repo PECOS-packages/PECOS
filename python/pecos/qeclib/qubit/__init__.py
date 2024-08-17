@@ -14,7 +14,7 @@ from pecos.qeclib.qubit.preps import Prep
 from pecos.qeclib.qubit.rots import RX, RY, RZ, RZZ
 from pecos.qeclib.qubit.sq_face_rots import F4, F, F4dg, Fdg
 from pecos.qeclib.qubit.sq_hadamards import H
-from pecos.qeclib.qubit.sq_noncliffords import FZ, FZdg, T, Tdg
+from pecos.qeclib.qubit.sq_noncliffords import T, Tdg
 from pecos.qeclib.qubit.sq_paulis import X, Y, Z
 from pecos.qeclib.qubit.sq_sqrt_paulis import SX, SY, SZ, SXdg, SYdg, SZdg
 from pecos.qeclib.qubit.tq_cliffords import CX, CY, CZ, SXX, SYY, SZZ, SXXdg, SYYdg, SZZdg
@@ -53,6 +53,4 @@ __all__ = [
     "CH",
     "T",
     "Tdg",
-    "FZ",
-    "FZdg",
 ]

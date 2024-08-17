@@ -13,29 +13,29 @@ h a_test[0];
 h a_test[1];
 h a_test[2];
 
-cx a_test[0],q_test[3];  // 5 -> 4
-cz a_test[1],q_test[5];  // 6 -> 6
-cz a_test[2],q_test[2];  // 7 -> 3
+cx a_test[0], q_test[3];  // 5 -> 4
+cz a_test[1], q_test[5];  // 6 -> 6
+cz a_test[2], q_test[2];  // 7 -> 3
 
-barrier a_test[0],a_test[1];
-cz a_test[0],a_test[1];
-barrier a_test[0],a_test[1];
+barrier a_test[0], a_test[1];
+cz a_test[0], a_test[1];
+barrier a_test[0], a_test[1];
 
-cx a_test[0],q_test[0];  // 1 -> 1
-cz a_test[1],q_test[4];  // 2 -> 5
-cz a_test[2],q_test[3];  // 5 -> 4
+cx a_test[0], q_test[0];  // 1 -> 1
+cz a_test[1], q_test[4];  // 2 -> 5
+cz a_test[2], q_test[3];  // 5 -> 4
 
-cx a_test[0],q_test[1];  // 3 -> 2
-cz a_test[1],q_test[2];  // 7 -> 3
-cz a_test[2],q_test[6];  // 4 -> 7
+cx a_test[0], q_test[1];  // 3 -> 2
+cz a_test[1], q_test[2];  // 7 -> 3
+cz a_test[2], q_test[6];  // 4 -> 7
 
-barrier a_test[0],a_test[2];
-cz a_test[0],a_test[2];
-barrier a_test[0],a_test[2];
+barrier a_test[0], a_test[2];
+cz a_test[0], a_test[2];
+barrier a_test[0], a_test[2];
 
-cx a_test[0],q_test[2];  // 7 -> 3
-cz a_test[1],q_test[1];  // 3 -> 2
-cz a_test[2],q_test[5];  // 6 -> 6
+cx a_test[0], q_test[2];  // 7 -> 3
+cz a_test[1], q_test[1];  // 3 -> 2
+cz a_test[2], q_test[5];  // 6 -> 6
 
 h a_test[0];
 h a_test[1];

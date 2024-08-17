@@ -21,19 +21,20 @@ from pecos.qeclib.steane.meas.destructive_meas import MeasDecode
 from pecos.qeclib.steane.preps.pauli_states import PrepRUS
 from pecos.qeclib.steane.preps.t_plus_state import PrepEncodeTPlusFTRUS, PrepEncodeTPlusNonFT
 from pecos.qeclib.steane.qec.qec_3parallel import ParallelFlagQECActiveCorrection
-from pecos.slr import Assign, Block, CReg, If, Permute, QReg
+from pecos.slr import Block, CReg, If, Permute, QReg, Vars
 
 if TYPE_CHECKING:
     from pecos.slr import Bit
 
 
-class Steane:
+class Steane(Vars):
     """A generic implementation of a Steane code and operations.
 
     This represents one particular choice of Steane protocols. For finer control construct your own class
     or utilize the library of Steane code protocols directly."""
 
     def __init__(self, name: str, default_rus_limit: int = 3):
+        super().__init__()
         self.d = QReg(f"{name}_d", 7)
         self.a = QReg(f"{name}_a", 3)
         self.c = CReg(f"{name}_c", 32)
@@ -85,12 +86,6 @@ class Steane:
         self.tdg_meas = c[6]
 
         self.default_rus_limit = default_rus_limit
-
-    def qasm(self):
-        qasm = []
-        for v in self.vars:
-            qasm.append(v.qasm())
-        return "\n".join(qasm)
 
     def p(self, state: str, rus_limit: int | None = None):
         """Prepare a logical qubit in a logical Pauli basis state."""
@@ -218,7 +213,7 @@ class Steane:
             rus_limit = self.default_rus_limit
 
         block = Block(
-            Assign(self.scratch, 0),
+            self.scratch.set(0),
             PrepEncodeTPlusFTRUS(
                 d=self.d,
                 a=self.a,
@@ -233,7 +228,7 @@ class Steane:
             ),
         )
         if reject is not None:
-            block.extend(Assign(reject, self.log))
+            block.extend(reject.set(self.log))
         return block
 
     def nonft_prep_tdg_plus_state(self):
@@ -307,7 +302,7 @@ class Steane:
         )
 
         if reject is not None:
-            block.extend(Assign(reject, self.log))
+            block.extend(reject.set(self.log))
         return block
 
     def nonft_tdg(self, aux: Steane):
@@ -329,7 +324,7 @@ class Steane:
         )
 
         if reject is not None:
-            block.extend(Assign(reject, self.log))
+            block.extend(reject.set(self.log))
         return block
 
     #  Begin Experimental: ------------------------------------
@@ -368,7 +363,7 @@ class Steane:
         )
 
         if reject is not None:
-            block.extend(Assign(reject, self.log))
+            block.extend(reject.set(self.log))
         return block
 
     def nonft_tdg_tel(self, aux: Steane):
@@ -406,7 +401,7 @@ class Steane:
         )
 
         if reject is not None:
-            block.extend(Assign(reject, self.log))
+            block.extend(reject.set(self.log))
         return block
 
     # End Experimental: ------------------------------------
@@ -444,7 +439,7 @@ class Steane:
             ),
         )
         if log is not None:
-            block.extend(Assign(log, self.log))
+            block.extend(log.set(self.log))
         return block
 
     def mx(self, log: Bit | None):
@@ -464,7 +459,7 @@ class Steane:
             ),
         )
         if log is not None:
-            block.extend(Assign(log, self.log))
+            block.extend(log.set(self.log))
         return block
 
     def my(self, log: Bit | None):
@@ -484,7 +479,7 @@ class Steane:
             ),
         )
         if log is not None:
-            block.extend(Assign(log, self.log))
+            block.extend(log.set(self.log))
         return block
 
     def mz(self, log: Bit | None):
@@ -504,7 +499,7 @@ class Steane:
             ),
         )
         if log is not None:
-            block.extend(Assign(log, self.log))
+            block.extend(log.set(self.log))
         return block
 
     def qec(self):

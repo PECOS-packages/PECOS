@@ -13,6 +13,7 @@ def test_PrepEncodingNonFTZero(compare_qasm):
     block = PrepEncodingNonFTZero(q)
     compare_qasm(block)
 
+
 def test_PrepZeroVerify(compare_qasm):
     q = QReg("q_test", 7)
     a = QReg("a_test", 1)
@@ -20,6 +21,7 @@ def test_PrepZeroVerify(compare_qasm):
     for reset_ancilla in [True, False]:
         block = PrepZeroVerify(q, a[0], init_bit[0], reset_ancilla=reset_ancilla)
         compare_qasm(block, reset_ancilla)
+
 
 def test_PrepEncodingFTZero(compare_qasm):
     q = QReg("q_test", 7)
@@ -41,6 +43,7 @@ def test_PrepRUS(compare_qasm):
             for first_round_reset in [True, False]:
                 block = PrepRUS(q, a[0], init[0], limit, state, first_round_reset=first_round_reset)
                 compare_qasm(block, limit, state, first_round_reset)
+
 
 def test_LogZeroRot(compare_qasm):
     q = QReg("q_test", 7)

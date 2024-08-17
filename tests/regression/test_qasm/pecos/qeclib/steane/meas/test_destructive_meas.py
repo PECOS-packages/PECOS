@@ -11,6 +11,7 @@ def test_MeasureX(compare_qasm):
         block = MeasureX(q, meas_creg, log_raw, barrier=barrier)
         compare_qasm(block, barrier)
 
+
 def test_MeasureY(compare_qasm):
     q = QReg("q_test", 7)
     meas_creg = CReg("meas_creg_test", 7)
@@ -19,6 +20,7 @@ def test_MeasureY(compare_qasm):
     for barrier in [True, False]:
         block = MeasureY(q, meas_creg, log_raw, barrier=barrier)
         compare_qasm(block, barrier)
+
 
 def test_MeasureZ(compare_qasm):
     q = QReg("q_test", 7)
@@ -29,6 +31,7 @@ def test_MeasureZ(compare_qasm):
         block = MeasureZ(q, meas_creg, log_raw, barrier=barrier)
         compare_qasm(block, barrier)
 
+
 def test_Measure(compare_qasm):
     q = QReg("q_test", 7)
     meas_creg = CReg("meas_creg_test", 7)
@@ -37,6 +40,7 @@ def test_Measure(compare_qasm):
     for meas_basis in ["X", "Y", "Z"]:
         block = Measure(q, meas_creg, log_raw, meas_basis=meas_basis)
         compare_qasm(block, meas_basis)
+
 
 def test_ProcessMeas(compare_qasm):
     meas = CReg("meas_test", 7)
@@ -49,9 +53,21 @@ def test_ProcessMeas(compare_qasm):
 
     for basis in ["X", "Y", "Z"]:
         for check_type in ["xy", "xz", "yz"]:
-            block = ProcessMeas(basis, meas, log[0], log[1], syn_meas, pf[0], pf[1], check_type, last_raw_syn_x,
-                                last_raw_syn_y, last_raw_syn_z)
+            block = ProcessMeas(
+                basis,
+                meas,
+                log[0],
+                log[1],
+                syn_meas,
+                pf[0],
+                pf[1],
+                check_type,
+                last_raw_syn_x,
+                last_raw_syn_y,
+                last_raw_syn_z,
+            )
             compare_qasm(block, basis, check_type)
+
 
 def test_MeasDecode(compare_qasm):
     q = QReg("q_test", 7)

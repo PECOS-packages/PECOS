@@ -14,7 +14,7 @@ from pecos.qeclib.qubit import Prep
 from pecos.qeclib.steane.gates_sq import sqrt_paulis
 from pecos.qeclib.steane.gates_sq.hadamards import H
 from pecos.qeclib.steane.gates_sq.paulis import X, Z
-from pecos.slr import QASM, Barrier, Bit, Block, If, QReg, Qubit, Repeat, util
+from pecos.slr import Barrier, Bit, Block, Comment, If, QReg, Qubit, Repeat
 
 
 class PrepEncodingNonFTZero(Block):
@@ -31,7 +31,7 @@ class PrepEncodingNonFTZero(Block):
                 q[4],
                 q[6],
             ),
-            QASM(""),
+            Comment(),
             qubit.CX(
                 (q[4], q[5]),
                 (q[0], q[1]),
@@ -45,35 +45,35 @@ class PrepEncodingNonFTZero(Block):
         )
 
 
-class PrepZeroVerify:
+class PrepZeroVerify(Block):
     """Verify the initialization of InitEncodingNonFTZero"""
 
     def __init__(self, qubits: QReg, ancilla: Qubit, init_bit: Bit, *, reset_ancilla: bool = True):
-        self.qubits = qubits
-        self.ancilla = ancilla
-        self.init_bit = init_bit
-        self.reset_ancilla = reset_ancilla
+        q = qubits
+        a = ancilla
+        c = init_bit
 
-    def qasm(self):
-        q = self.qubits
-        a = self.ancilla
-        c = self.init_bit
+        super().__init__(
+            Comment(),
+            Barrier(a, q[1], q[3], q[5]),
+            Comment("verification step"),
+        )
 
-        qasm = f"""
-        barrier {a},{q[1]},{q[3]},{q[5]};
-        //verification step
-        """
+        if reset_ancilla:
+            self.extend(
+                Comment(),
+                Prep(a),
+            )
 
-        if self.reset_ancilla:
-            qasm += f"\nreset {a};\n"
-
-        qasm += f"""cx {q[5]},{a};
-        cx {q[1]},{a};
-        cx {q[3]},{a};
-        measure {a} -> {c};
-        """
-
-        return util.rm_white_space(qasm)
+        self.extend(
+            qubit.CX(
+                (q[5], a),
+                (q[1], a),
+                (q[3], a),
+            ),
+            qubit.Measure(a) > c,
+            Comment(""),
+        )
 
 
 class PrepEncodingFTZero(Block):
@@ -93,9 +93,9 @@ class PrepEncodingFTZero(Block):
         super().__init__()
 
         self.extend(
-            QASM(""),
+            Comment(),
             Barrier(q[0], q[1], q[2], q[3], q[4], q[5], q[6], a),
-            QASM(""),
+            Comment(),
         )
 
         if reset:
@@ -132,6 +132,13 @@ class PrepRUS(Block):
                     PrepEncodingFTZero(q, a, init, reset=True),
                 ),
             ),
+        )
+        if limit == 1:
+            self.extend(
+                Comment(),
+            )
+
+        self.extend(
             # Rotate to the Paulli basis of choice
             LogZeroRot(q, state),
         )

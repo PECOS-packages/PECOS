@@ -10,61 +10,15 @@
 # specific language governing permissions and limitations under the License.
 
 from pecos.qeclib import qubit
-from pecos.slr import Block, Comment, QReg, util
+from pecos.slr import Block, Comment, QReg
 
 
-class EncodingCircuit:
+class EncodingCircuit(Block):
     def __init__(self, q: QReg):
         self.q = q
-
-    def qasm(self):
-        qasm = f"""
-        // Encoding circuit
-        // ---------------
-        reset {self.q[0]};
-        reset {self.q[1]};
-        reset {self.q[2]};
-        reset {self.q[3]};
-        reset {self.q[4]};
-        reset {self.q[5]};
-
-        // q[6] is the input qubit
-
-        cx {self.q[6]},{self.q[5]};
-
-        h {self.q[1]};
-        cx {self.q[1]}, {self.q[0]};
-
-        h {self.q[2]};
-        cx {self.q[2]}, {self.q[4]};
-
-        // ---------------
-        h {self.q[3]};
-        cx {self.q[3]}, {self.q[5]};
-        cx {self.q[2]}, {self.q[0]};
-        cx {self.q[6]}, {self.q[4]};
-
-        // ---------------
-        cx {self.q[2]}, {self.q[6]};
-        cx {self.q[3]}, {self.q[4]};
-        cx {self.q[1]}, {self.q[5]};
-
-        // ---------------
-        cx {self.q[1]}, {self.q[6]};
-        cx {self.q[3]}, {self.q[0]};
-        """
-
-        return util.rm_white_space(qasm)
-
-
-class EncodingCircuit2(Block):
-    def __init__(self, q: QReg):
-        if len(q.elems) != 7:
-            msg = f"Size of register {len(q.elems)} != 7"
-            raise Exception(msg)
-
-        super().__init__(
-            Comment("Encoding circuit"),
+        super().__init__()
+        self.extend(
+            Comment("\nEncoding circuit"),
             Comment("---------------"),
             qubit.Prep(
                 q[0],
@@ -100,4 +54,5 @@ class EncodingCircuit2(Block):
                 (q[1], q[6]),
                 (q[3], q[0]),
             ),
+            Comment(""),
         )

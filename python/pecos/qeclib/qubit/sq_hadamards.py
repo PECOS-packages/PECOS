@@ -9,10 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.qeclib.qubit.metaclasses import SQCliffordGate
+from pecos.qeclib.qubit.qgate_base import QGate
 
 
-class HGate(SQCliffordGate): ...
-
-
-H = HGate(qasm_sym="h")
+class H(QGate): ...

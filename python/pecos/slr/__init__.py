@@ -11,10 +11,9 @@
 
 from pecos.slr.block import Block
 from pecos.slr.cond_block import If, Repeat
-from pecos.slr.cops import Assign
-from pecos.slr.misc import QASM, Barrier, Comment, Permute
-from pecos.slr.slr import Main
-from pecos.slr.slr import Main as SLR  # noqa: N814
+from pecos.slr.main import Main
+from pecos.slr.main import Main as SLR  # noqa: N814
+from pecos.slr.misc import Barrier, Comment, Permute
 from pecos.slr.vars import Bit, CReg, QReg, Qubit, Vars
 
 __all__ = [
@@ -23,8 +22,6 @@ __all__ = [
     "Block",
     "If",
     "Repeat",
-    "Assign",
-    "QASM",
     "Barrier",
     "Comment",
     "Permute",

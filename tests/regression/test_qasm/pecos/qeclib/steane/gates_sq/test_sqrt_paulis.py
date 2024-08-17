@@ -8,11 +8,13 @@ def test_SX(compare_qasm):
     block = SX(q)
     compare_qasm(block)
 
+
 def test_SXdg(compare_qasm):
     q = QReg("q_test", 7)
 
     block = SXdg(q)
     compare_qasm(block)
+
 
 def test_SY(compare_qasm):
     q = QReg("q_test", 7)
@@ -20,17 +22,20 @@ def test_SY(compare_qasm):
     block = SY(q)
     compare_qasm(block)
 
+
 def test_SYdg(compare_qasm):
     q = QReg("q_test", 7)
 
     block = SYdg(q)
     compare_qasm(block)
 
+
 def test_SZ(compare_qasm):
     q = QReg("q_test", 7)
 
     block = SZ(q)
     compare_qasm(block)
+
 
 def test_SZdg(compare_qasm):
     q = QReg("q_test", 7)

@@ -9,18 +9,10 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.qeclib.qubit.metaclasses import SingleQubitUnitary
+from pecos.qeclib.qubit.qgate_base import QGate
 
 
-class TGate(SingleQubitUnitary): ...
+class T(QGate): ...
 
 
-T = TGate(qasm_sym="rz(pi/4)")
-FZ = T
-
-
-class TdgGate(SingleQubitUnitary): ...
-
-
-Tdg = TdgGate(qasm_sym="rz(-pi/4)")
-FZdg = Tdg
+class Tdg(QGate): ...

@@ -10,7 +10,7 @@ reset q_test[5];
 
 // q[6] is the input qubit
 
-cx q_test[6],q_test[5];
+cx q_test[6], q_test[5];
 
 h q_test[1];
 cx q_test[1], q_test[0];

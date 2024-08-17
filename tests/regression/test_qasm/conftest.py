@@ -24,8 +24,15 @@ def compare_qasm():
         file_dir = directory / "regression_qasm" / filename
 
         with Path(file_dir).open() as file:
-            qasm = file.read()
+            qasm1 = file.read()
 
-        assert (qasm == block.qasm())
+        qasm1 = qasm1.strip()
+
+        if hasattr(block, "gen"):
+            qasm2 = block.gen("qasm").strip()
+        else:
+            qasm2 = block.qasm().strip()
+
+        assert qasm1 == qasm2
 
     return _compare_qasm

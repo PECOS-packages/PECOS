@@ -14,7 +14,7 @@ measure q_test[6] -> meas_test[6];
 
 // determine raw logical output
 // ============================
-log_test[0] = meas_test[4] ^ meas_test[5] ^ meas_test[6];
+log_test[0] = (meas_test[4] ^ meas_test[5]) ^ meas_test[6];
 
 
 
@@ -24,9 +24,9 @@ log_test[0] = meas_test[4] ^ meas_test[5] ^ meas_test[6];
 
 // Determine correction to get logical output
 // ==========================================
-syn_meas_test[0] = meas_test[0] ^ meas_test[1] ^ meas_test[2] ^ meas_test[3];
-syn_meas_test[1] = meas_test[1] ^ meas_test[2] ^ meas_test[4] ^ meas_test[5];
-syn_meas_test[2] = meas_test[2] ^ meas_test[3] ^ meas_test[5] ^ meas_test[6];
+syn_meas_test[0] = ((meas_test[0] ^ meas_test[1]) ^ meas_test[2]) ^ meas_test[3];
+syn_meas_test[1] = ((meas_test[1] ^ meas_test[2]) ^ meas_test[4]) ^ meas_test[5];
+syn_meas_test[2] = ((meas_test[2] ^ meas_test[3]) ^ meas_test[5]) ^ meas_test[6];
 
 // XOR syndromes
 syn_meas_test = syn_meas_test ^ last_raw_syn_x_test;

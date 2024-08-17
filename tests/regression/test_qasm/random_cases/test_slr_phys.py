@@ -1,6 +1,7 @@
 from pecos import __version__
 from pecos.qeclib import qubit as p
-from pecos.slr import QASM, Assign, Bit, Block, Comment, CReg, If, Main, Permute, QReg, Qubit, Repeat
+from pecos.slr import Bit, Block, Comment, CReg, If, Main, Permute, QReg, Qubit, Repeat
+from pecos.slr.gen_codes.gen_qasm import QASMGenerator
 
 # TODO: Remove reference to hqslib1.inc... better yet, don't have tests on qasm
 
@@ -26,7 +27,7 @@ def test_bell():
         "measure q -> m;"
     )
 
-    assert prog.qasm() == qasm
+    assert prog.gen(QASMGenerator()) == qasm
 
 
 def test_if_bell():
@@ -67,7 +68,7 @@ def test_if_bell():
         "if(c == 1) measure q[1] -> m[1];"
     )
 
-    assert prog.qasm() == qasm
+    assert prog.gen("qasm") == qasm
 
 
 def test_strange_program():
@@ -76,12 +77,13 @@ def test_strange_program():
     prog = Main(
         q := QReg("q", 2),
         c := CReg("c", 4),
+        b := CReg("b", 4),
         Repeat(3).block(
-            Assign(c, 3),
+            c.set(3),
         ),
         Comment("Here is some injected QASM:"),
-        QASM("c = 0 & 1;"),
-        Permute([q[0], q[1]], [q[1], q[0]], comment=False),
+        c.set(b & 1),
+        Permute([q[0], q[1]], [q[1], q[0]]),
         p.H(q[0]),
     )
 
@@ -91,14 +93,16 @@ def test_strange_program():
         f"// Generated using: PECOS version {__version__}\n"
         "qreg q[2];\n"
         "creg c[4];\n"
+        "creg b[4];\n"
         "c = 3;\n"
         "c = 3;\n"
         "c = 3;\n"
         "// Here is some injected QASM:\n"
-        "c = 0 & 1;\n"
+        "c = b & 1;\n"
+        "// Permuting: q[1] -> q[0], q[0] -> q[1]\n"
         "h q[1];"
     )
 
     # TODO: Weird things can happen with Permute... if you run a program twice
 
-    assert prog.qasm() == qasm
+    assert prog.gen(QASMGenerator()) == qasm

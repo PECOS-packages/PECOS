@@ -9,10 +9,10 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.qeclib.qubit.metaclasses import SQCliffordGate
+from pecos.qeclib.qubit.qgate_base import QGate
 
 
-class FGate(SQCliffordGate):
+class F(QGate):
     """Face  rotation.
 
     Sdg; H; = SX; SZ; = SY; SX; = SZ; SY;
@@ -24,18 +24,8 @@ class FGate(SQCliffordGate):
     Y -> Z
     """
 
-    def qasm(self):
-        str_list = []
-        for q in self.qargs:
-            str_list.append(f"rx(pi/2) {str(q)};\nrz(pi/2) {str(q)};")
 
-        return " ".join(str_list)
-
-
-F = FGate("F")
-
-
-class FdgGate(SQCliffordGate):
+class Fdg(QGate):
     """Adjoint of the face  rotations.
 
     H; S; = SXdg; SYdg = SYdg; SZdg; = SZdg; SXdg;
@@ -47,18 +37,8 @@ class FdgGate(SQCliffordGate):
     Y -> X
     """
 
-    def qasm(self):
-        str_list = []
-        for q in self.qargs:
-            str_list.append(f"ry(-pi/2) {str(q)};\nrz(-pi/2) {str(q)};")
 
-        return " ".join(str_list)
-
-
-Fdg = FdgGate("Fdg")
-
-
-class F4Gate(SQCliffordGate):
+class F4(QGate):
     """Face  4 rotation.
 
     H; Sdg = SX; SYdg = SYdg; SZ; = SZ; SX;
@@ -70,18 +50,8 @@ class F4Gate(SQCliffordGate):
     Y -> -X
     """
 
-    def qasm(self):
-        str_list = []
-        for q in self.qargs:
-            str_list.append(f"ry(-pi/2) {str(q)};\nrz(pi/2) {str(q)};")
 
-        return " ".join(str_list)
-
-
-F4 = F4Gate("F4")
-
-
-class F4dgGate(SQCliffordGate):
+class F4dg(QGate):
     """Adjoint of the face 4  rotation.
 
     S; H; = SY; SXdg = SZdg; SY; = SXdg; SZdg;
@@ -93,13 +63,3 @@ class F4dgGate(SQCliffordGate):
 
     Y -> -Z
     """
-
-    def qasm(self):
-        str_list = []
-        for q in self.qargs:
-            str_list.append(f"rx(-pi/2) {str(q)};\nrz(-pi/2) {str(q)};")
-
-        return " ".join(str_list)
-
-
-F4dg = F4dgGate("F4dg")

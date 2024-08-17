@@ -10,6 +10,7 @@ def test_CX(compare_qasm):
         block = CX(q1, q2, barrier=barrier)
         compare_qasm(block, barrier)
 
+
 def test_CY(compare_qasm):
     q1 = QReg("q1_test", 7)
     q2 = QReg("q2_test", 7)
@@ -17,12 +18,14 @@ def test_CY(compare_qasm):
     block = CY(q1, q2)
     compare_qasm(block)
 
+
 def test_CZ(compare_qasm):
     q1 = QReg("q1_test", 7)
     q2 = QReg("q2_test", 7)
 
     block = CZ(q1, q2)
     compare_qasm(block)
+
 
 def test_SZZ(compare_qasm):
     q1 = QReg("q1_test", 7)

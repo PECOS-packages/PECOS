@@ -53,11 +53,11 @@ cx sin_d[0], sin_d[3];
 cx sin_d[4], sin_d[1];
 cx sin_d[3], sin_d[2];
 
-barrier sin_a[0],sin_d[1],sin_d[3],sin_d[5];
-//verification step
-cx sin_d[5],sin_a[0];
-cx sin_d[1],sin_a[0];
-cx sin_d[3],sin_a[0];
+barrier sin_a[0], sin_d[1], sin_d[3], sin_d[5];
+// verification step
+cx sin_d[5], sin_a[0];
+cx sin_d[1], sin_a[0];
+cx sin_d[3], sin_a[0];
 measure sin_a[0] -> sin_c[0];
 
 
@@ -79,11 +79,11 @@ if(sin_c[0] == 1) cx sin_d[0], sin_d[3];
 if(sin_c[0] == 1) cx sin_d[4], sin_d[1];
 if(sin_c[0] == 1) cx sin_d[3], sin_d[2];
 
-if(sin_c[0] == 1) barrier sin_a[0],sin_d[1],sin_d[3],sin_d[5];
-//verification step
-if(sin_c[0] == 1) cx sin_d[5],sin_a[0];
-if(sin_c[0] == 1) cx sin_d[1],sin_a[0];
-if(sin_c[0] == 1) cx sin_d[3],sin_a[0];
+if(sin_c[0] == 1) barrier sin_a[0], sin_d[1], sin_d[3], sin_d[5];
+// verification step
+if(sin_c[0] == 1) cx sin_d[5], sin_a[0];
+if(sin_c[0] == 1) cx sin_d[1], sin_a[0];
+if(sin_c[0] == 1) cx sin_d[3], sin_a[0];
 if(sin_c[0] == 1) measure sin_a[0] -> sin_c[0];
 
 
@@ -105,11 +105,11 @@ if(sin_c[0] == 1) cx sin_d[0], sin_d[3];
 if(sin_c[0] == 1) cx sin_d[4], sin_d[1];
 if(sin_c[0] == 1) cx sin_d[3], sin_d[2];
 
-if(sin_c[0] == 1) barrier sin_a[0],sin_d[1],sin_d[3],sin_d[5];
-//verification step
-if(sin_c[0] == 1) cx sin_d[5],sin_a[0];
-if(sin_c[0] == 1) cx sin_d[1],sin_a[0];
-if(sin_c[0] == 1) cx sin_d[3],sin_a[0];
+if(sin_c[0] == 1) barrier sin_a[0], sin_d[1], sin_d[3], sin_d[5];
+// verification step
+if(sin_c[0] == 1) cx sin_d[5], sin_a[0];
+if(sin_c[0] == 1) cx sin_d[1], sin_a[0];
+if(sin_c[0] == 1) cx sin_d[3], sin_a[0];
 if(sin_c[0] == 1) measure sin_a[0] -> sin_c[0];
 
 
@@ -128,7 +128,7 @@ reset saux_d[5];
 
 // q[6] is the input qubit
 
-cx saux_d[6],saux_d[5];
+cx saux_d[6], saux_d[5];
 
 h saux_d[1];
 cx saux_d[1], saux_d[0];
@@ -193,29 +193,29 @@ h saux_a[0];
 h saux_a[1];
 h saux_a[2];
 
-cx saux_a[0],saux_d[3];  // 5 -> 4
-cz saux_a[1],saux_d[5];  // 6 -> 6
-cz saux_a[2],saux_d[2];  // 7 -> 3
+cx saux_a[0], saux_d[3];  // 5 -> 4
+cz saux_a[1], saux_d[5];  // 6 -> 6
+cz saux_a[2], saux_d[2];  // 7 -> 3
 
-barrier saux_a[0],saux_a[1];
-cz saux_a[0],saux_a[1];
-barrier saux_a[0],saux_a[1];
+barrier saux_a[0], saux_a[1];
+cz saux_a[0], saux_a[1];
+barrier saux_a[0], saux_a[1];
 
-cx saux_a[0],saux_d[0];  // 1 -> 1
-cz saux_a[1],saux_d[4];  // 2 -> 5
-cz saux_a[2],saux_d[3];  // 5 -> 4
+cx saux_a[0], saux_d[0];  // 1 -> 1
+cz saux_a[1], saux_d[4];  // 2 -> 5
+cz saux_a[2], saux_d[3];  // 5 -> 4
 
-cx saux_a[0],saux_d[1];  // 3 -> 2
-cz saux_a[1],saux_d[2];  // 7 -> 3
-cz saux_a[2],saux_d[6];  // 4 -> 7
+cx saux_a[0], saux_d[1];  // 3 -> 2
+cz saux_a[1], saux_d[2];  // 7 -> 3
+cz saux_a[2], saux_d[6];  // 4 -> 7
 
-barrier saux_a[0],saux_a[2];
-cz saux_a[0],saux_a[2];
-barrier saux_a[0],saux_a[2];
+barrier saux_a[0], saux_a[2];
+cz saux_a[0], saux_a[2];
+barrier saux_a[0], saux_a[2];
 
-cx saux_a[0],saux_d[2];  // 7 -> 3
-cz saux_a[1],saux_d[1];  // 3 -> 2
-cz saux_a[2],saux_d[5];  // 6 -> 6
+cx saux_a[0], saux_d[2];  // 7 -> 3
+cz saux_a[1], saux_d[1];  // 3 -> 2
+cz saux_a[2], saux_d[5];  // 6 -> 6
 
 h saux_a[0];
 h saux_a[1];
@@ -243,77 +243,65 @@ if(saux_flags == 0) h saux_a[0];
 if(saux_flags == 0) h saux_a[1];
 if(saux_flags == 0) h saux_a[2];
 
+if(saux_flags == 0) barrier saux_a[0], saux_d[3];
+if(saux_flags == 0) cz saux_a[0], saux_d[3];  // 5 -> 4
+if(saux_flags == 0) barrier saux_a[0], saux_d[3];
 
-if(saux_flags == 0) barrier saux_a[0],saux_d[3];
-if(saux_flags == 0) cz saux_a[0],saux_d[3];
-if(saux_flags == 0) barrier saux_a[0],saux_d[3];
+if(saux_flags == 0) barrier saux_a[1], saux_d[5];
+if(saux_flags == 0) cx saux_a[1], saux_d[5];  // 6 -> 6
+if(saux_flags == 0) barrier saux_a[1], saux_d[5];
 
-if(saux_flags == 0) barrier saux_a[1],saux_d[5];
-if(saux_flags == 0) cx saux_a[1],saux_d[5];
-if(saux_flags == 0) barrier saux_a[1],saux_d[5];
-
-if(saux_flags == 0) barrier saux_a[2],saux_d[2];
-if(saux_flags == 0) cx saux_a[2],saux_d[2];
-if(saux_flags == 0) barrier saux_a[2],saux_d[2];
-
-
+if(saux_flags == 0) barrier saux_a[2], saux_d[2];
+if(saux_flags == 0) cx saux_a[2], saux_d[2];  // 7 -> 3
+if(saux_flags == 0) barrier saux_a[2], saux_d[2];
 
 if(saux_flags == 0) barrier saux_a[0], saux_d[0], saux_d[1], saux_d[2], saux_d[3], saux_d[4], saux_d[5], saux_d[6], saux_a[1], saux_a[2];
-if(saux_flags == 0) cz saux_a[1],saux_a[0];
+if(saux_flags == 0) cz saux_a[1], saux_a[0];
 if(saux_flags == 0) barrier saux_a[0], saux_d[0], saux_d[1], saux_d[2], saux_d[3], saux_d[4], saux_d[5], saux_d[6], saux_a[1], saux_a[2];
 
+if(saux_flags == 0) barrier saux_a[0], saux_d[0];
+if(saux_flags == 0) cz saux_a[0], saux_d[0];  // 1 -> 1
+if(saux_flags == 0) barrier saux_a[0], saux_d[0];
 
-if(saux_flags == 0) barrier saux_a[0],saux_d[0];
-if(saux_flags == 0) cz saux_a[0],saux_d[0];
-if(saux_flags == 0) barrier saux_a[0],saux_d[0];
+if(saux_flags == 0) barrier saux_a[1], saux_d[4];
+if(saux_flags == 0) cx saux_a[1], saux_d[4];  // 2 -> 5
+if(saux_flags == 0) barrier saux_a[1], saux_d[4];
 
-if(saux_flags == 0) barrier saux_a[1],saux_d[4];
-if(saux_flags == 0) cx saux_a[1],saux_d[4];
-if(saux_flags == 0) barrier saux_a[1],saux_d[4];
+if(saux_flags == 0) barrier saux_a[2], saux_d[3];
+if(saux_flags == 0) cx saux_a[2], saux_d[3];  // 5 -> 4
+if(saux_flags == 0) barrier saux_a[2], saux_d[3];
 
-if(saux_flags == 0) barrier saux_a[2],saux_d[3];
-if(saux_flags == 0) cx saux_a[2],saux_d[3];
-if(saux_flags == 0) barrier saux_a[2],saux_d[3];
+if(saux_flags == 0) barrier saux_a[0], saux_d[1];
+if(saux_flags == 0) cz saux_a[0], saux_d[1];  // 3 -> 2
+if(saux_flags == 0) barrier saux_a[0], saux_d[1];
 
+if(saux_flags == 0) barrier saux_a[1], saux_d[2];
+if(saux_flags == 0) cx saux_a[1], saux_d[2];  // 7 -> 3
+if(saux_flags == 0) barrier saux_a[1], saux_d[2];
 
-
-if(saux_flags == 0) barrier saux_a[0],saux_d[1];
-if(saux_flags == 0) cz saux_a[0],saux_d[1];
-if(saux_flags == 0) barrier saux_a[0],saux_d[1];
-
-if(saux_flags == 0) barrier saux_a[1],saux_d[2];
-if(saux_flags == 0) cx saux_a[1],saux_d[2];
-if(saux_flags == 0) barrier saux_a[1],saux_d[2];
-
-if(saux_flags == 0) barrier saux_a[2],saux_d[6];
-if(saux_flags == 0) cx saux_a[2],saux_d[6];
-if(saux_flags == 0) barrier saux_a[2],saux_d[6];
-
+if(saux_flags == 0) barrier saux_a[2], saux_d[6];
+if(saux_flags == 0) cx saux_a[2], saux_d[6];  // 4 -> 7
+if(saux_flags == 0) barrier saux_a[2], saux_d[6];
 
 if(saux_flags == 0) barrier saux_a[0], saux_d[0], saux_d[1], saux_d[2], saux_d[3], saux_d[4], saux_d[5], saux_d[6], saux_a[1], saux_a[2];
-if(saux_flags == 0) cz saux_a[2],saux_a[0];
+if(saux_flags == 0) cz saux_a[2], saux_a[0];
 if(saux_flags == 0) barrier saux_a[0], saux_d[0], saux_d[1], saux_d[2], saux_d[3], saux_d[4], saux_d[5], saux_d[6], saux_a[1], saux_a[2];
 
+if(saux_flags == 0) barrier saux_a[0], saux_d[2];
+if(saux_flags == 0) cz saux_a[0], saux_d[2];  // 7 -> 3
+if(saux_flags == 0) barrier saux_a[0], saux_d[2];
 
+if(saux_flags == 0) barrier saux_a[1], saux_d[1];
+if(saux_flags == 0) cx saux_a[1], saux_d[1];  // 3 -> 2
+if(saux_flags == 0) barrier saux_a[1], saux_d[1];
 
-if(saux_flags == 0) barrier saux_a[0],saux_d[2];
-if(saux_flags == 0) cz saux_a[0],saux_d[2];
-if(saux_flags == 0) barrier saux_a[0],saux_d[2];
-
-if(saux_flags == 0) barrier saux_a[1],saux_d[1];
-if(saux_flags == 0) cx saux_a[1],saux_d[1];
-if(saux_flags == 0) barrier saux_a[1],saux_d[1];
-
-if(saux_flags == 0) barrier saux_a[2],saux_d[5];
-if(saux_flags == 0) cx saux_a[2],saux_d[5];
-if(saux_flags == 0) barrier saux_a[2],saux_d[5];
-
+if(saux_flags == 0) barrier saux_a[2], saux_d[5];
+if(saux_flags == 0) cx saux_a[2], saux_d[5];  // 6 -> 6
+if(saux_flags == 0) barrier saux_a[2], saux_d[5];
 
 if(saux_flags == 0) h saux_a[0];
 if(saux_flags == 0) h saux_a[1];
 if(saux_flags == 0) h saux_a[2];
-
-
 
 if(saux_flags == 0) measure saux_a[0] -> saux_flags_z[0];
 if(saux_flags == 0) measure saux_a[1] -> saux_flag_x[1];
@@ -326,13 +314,10 @@ if(saux_flags == 0) saux_flag_x[2] = saux_flag_x[2] ^ saux_last_raw_syn_x[2];
 
 if(saux_flags == 0) saux_flags = saux_flag_x | saux_flags_z;
 
-saux_scratch[2] = 0;
-if(saux_scratch[0]!=0) saux_scratch[2] = 1;
-if(saux_scratch[1]!=0) saux_scratch[2] = 1;
-if(saux_flags!=0) saux_scratch[2] = 1;
+saux_scratch[2] = (((saux_scratch[0] | saux_scratch[1]) | saux_flags[0]) | saux_flags[1]) | saux_flags[2];
+
 rx(-pi/2) saux_d;
 rz(-pi/2) saux_d;
-
 m_reject[0] = saux_c[2];
 // Transversal Logical CX
 barrier sin_d, saux_d;
@@ -358,7 +343,7 @@ measure saux_d[6] -> saux_raw_meas[6];
 
 // determine raw logical output
 // ============================
-saux_c[1] = saux_raw_meas[4] ^ saux_raw_meas[5] ^ saux_raw_meas[6];
+saux_c[1] = (saux_raw_meas[4] ^ saux_raw_meas[5]) ^ saux_raw_meas[6];
 
 
 
@@ -368,9 +353,9 @@ saux_c[1] = saux_raw_meas[4] ^ saux_raw_meas[5] ^ saux_raw_meas[6];
 
 // Determine correction to get logical output
 // ==========================================
-saux_syn_meas[0] = saux_raw_meas[0] ^ saux_raw_meas[1] ^ saux_raw_meas[2] ^ saux_raw_meas[3];
-saux_syn_meas[1] = saux_raw_meas[1] ^ saux_raw_meas[2] ^ saux_raw_meas[4] ^ saux_raw_meas[5];
-saux_syn_meas[2] = saux_raw_meas[2] ^ saux_raw_meas[3] ^ saux_raw_meas[5] ^ saux_raw_meas[6];
+saux_syn_meas[0] = ((saux_raw_meas[0] ^ saux_raw_meas[1]) ^ saux_raw_meas[2]) ^ saux_raw_meas[3];
+saux_syn_meas[1] = ((saux_raw_meas[1] ^ saux_raw_meas[2]) ^ saux_raw_meas[4]) ^ saux_raw_meas[5];
+saux_syn_meas[2] = ((saux_raw_meas[2] ^ saux_raw_meas[3]) ^ saux_raw_meas[5]) ^ saux_raw_meas[6];
 
 // XOR syndromes
 saux_syn_meas = saux_syn_meas ^ saux_last_raw_syn_z;
@@ -404,7 +389,7 @@ measure sin_d[6] -> sin_raw_meas[6];
 
 // determine raw logical output
 // ============================
-sin_c[1] = sin_raw_meas[4] ^ sin_raw_meas[5] ^ sin_raw_meas[6];
+sin_c[1] = (sin_raw_meas[4] ^ sin_raw_meas[5]) ^ sin_raw_meas[6];
 
 
 
@@ -414,9 +399,9 @@ sin_c[1] = sin_raw_meas[4] ^ sin_raw_meas[5] ^ sin_raw_meas[6];
 
 // Determine correction to get logical output
 // ==========================================
-sin_syn_meas[0] = sin_raw_meas[0] ^ sin_raw_meas[1] ^ sin_raw_meas[2] ^ sin_raw_meas[3];
-sin_syn_meas[1] = sin_raw_meas[1] ^ sin_raw_meas[2] ^ sin_raw_meas[4] ^ sin_raw_meas[5];
-sin_syn_meas[2] = sin_raw_meas[2] ^ sin_raw_meas[3] ^ sin_raw_meas[5] ^ sin_raw_meas[6];
+sin_syn_meas[0] = ((sin_raw_meas[0] ^ sin_raw_meas[1]) ^ sin_raw_meas[2]) ^ sin_raw_meas[3];
+sin_syn_meas[1] = ((sin_raw_meas[1] ^ sin_raw_meas[2]) ^ sin_raw_meas[4]) ^ sin_raw_meas[5];
+sin_syn_meas[2] = ((sin_raw_meas[2] ^ sin_raw_meas[3]) ^ sin_raw_meas[5]) ^ sin_raw_meas[6];
 
 // XOR syndromes
 sin_syn_meas = sin_syn_meas ^ sin_last_raw_syn_x;
@@ -446,7 +431,7 @@ reset saux_d[5];
 
 // q[6] is the input qubit
 
-cx saux_d[6],saux_d[5];
+cx saux_d[6], saux_d[5];
 
 h saux_d[1];
 cx saux_d[1], saux_d[0];
@@ -511,29 +496,29 @@ h saux_a[0];
 h saux_a[1];
 h saux_a[2];
 
-cx saux_a[0],saux_d[3];  // 5 -> 4
-cz saux_a[1],saux_d[5];  // 6 -> 6
-cz saux_a[2],saux_d[2];  // 7 -> 3
+cx saux_a[0], saux_d[3];  // 5 -> 4
+cz saux_a[1], saux_d[5];  // 6 -> 6
+cz saux_a[2], saux_d[2];  // 7 -> 3
 
-barrier saux_a[0],saux_a[1];
-cz saux_a[0],saux_a[1];
-barrier saux_a[0],saux_a[1];
+barrier saux_a[0], saux_a[1];
+cz saux_a[0], saux_a[1];
+barrier saux_a[0], saux_a[1];
 
-cx saux_a[0],saux_d[0];  // 1 -> 1
-cz saux_a[1],saux_d[4];  // 2 -> 5
-cz saux_a[2],saux_d[3];  // 5 -> 4
+cx saux_a[0], saux_d[0];  // 1 -> 1
+cz saux_a[1], saux_d[4];  // 2 -> 5
+cz saux_a[2], saux_d[3];  // 5 -> 4
 
-cx saux_a[0],saux_d[1];  // 3 -> 2
-cz saux_a[1],saux_d[2];  // 7 -> 3
-cz saux_a[2],saux_d[6];  // 4 -> 7
+cx saux_a[0], saux_d[1];  // 3 -> 2
+cz saux_a[1], saux_d[2];  // 7 -> 3
+cz saux_a[2], saux_d[6];  // 4 -> 7
 
-barrier saux_a[0],saux_a[2];
-cz saux_a[0],saux_a[2];
-barrier saux_a[0],saux_a[2];
+barrier saux_a[0], saux_a[2];
+cz saux_a[0], saux_a[2];
+barrier saux_a[0], saux_a[2];
 
-cx saux_a[0],saux_d[2];  // 7 -> 3
-cz saux_a[1],saux_d[1];  // 3 -> 2
-cz saux_a[2],saux_d[5];  // 6 -> 6
+cx saux_a[0], saux_d[2];  // 7 -> 3
+cz saux_a[1], saux_d[1];  // 3 -> 2
+cz saux_a[2], saux_d[5];  // 6 -> 6
 
 h saux_a[0];
 h saux_a[1];
@@ -561,77 +546,65 @@ if(saux_flags == 0) h saux_a[0];
 if(saux_flags == 0) h saux_a[1];
 if(saux_flags == 0) h saux_a[2];
 
+if(saux_flags == 0) barrier saux_a[0], saux_d[3];
+if(saux_flags == 0) cz saux_a[0], saux_d[3];  // 5 -> 4
+if(saux_flags == 0) barrier saux_a[0], saux_d[3];
 
-if(saux_flags == 0) barrier saux_a[0],saux_d[3];
-if(saux_flags == 0) cz saux_a[0],saux_d[3];
-if(saux_flags == 0) barrier saux_a[0],saux_d[3];
+if(saux_flags == 0) barrier saux_a[1], saux_d[5];
+if(saux_flags == 0) cx saux_a[1], saux_d[5];  // 6 -> 6
+if(saux_flags == 0) barrier saux_a[1], saux_d[5];
 
-if(saux_flags == 0) barrier saux_a[1],saux_d[5];
-if(saux_flags == 0) cx saux_a[1],saux_d[5];
-if(saux_flags == 0) barrier saux_a[1],saux_d[5];
-
-if(saux_flags == 0) barrier saux_a[2],saux_d[2];
-if(saux_flags == 0) cx saux_a[2],saux_d[2];
-if(saux_flags == 0) barrier saux_a[2],saux_d[2];
-
-
+if(saux_flags == 0) barrier saux_a[2], saux_d[2];
+if(saux_flags == 0) cx saux_a[2], saux_d[2];  // 7 -> 3
+if(saux_flags == 0) barrier saux_a[2], saux_d[2];
 
 if(saux_flags == 0) barrier saux_a[0], saux_d[0], saux_d[1], saux_d[2], saux_d[3], saux_d[4], saux_d[5], saux_d[6], saux_a[1], saux_a[2];
-if(saux_flags == 0) cz saux_a[1],saux_a[0];
+if(saux_flags == 0) cz saux_a[1], saux_a[0];
 if(saux_flags == 0) barrier saux_a[0], saux_d[0], saux_d[1], saux_d[2], saux_d[3], saux_d[4], saux_d[5], saux_d[6], saux_a[1], saux_a[2];
 
+if(saux_flags == 0) barrier saux_a[0], saux_d[0];
+if(saux_flags == 0) cz saux_a[0], saux_d[0];  // 1 -> 1
+if(saux_flags == 0) barrier saux_a[0], saux_d[0];
 
-if(saux_flags == 0) barrier saux_a[0],saux_d[0];
-if(saux_flags == 0) cz saux_a[0],saux_d[0];
-if(saux_flags == 0) barrier saux_a[0],saux_d[0];
+if(saux_flags == 0) barrier saux_a[1], saux_d[4];
+if(saux_flags == 0) cx saux_a[1], saux_d[4];  // 2 -> 5
+if(saux_flags == 0) barrier saux_a[1], saux_d[4];
 
-if(saux_flags == 0) barrier saux_a[1],saux_d[4];
-if(saux_flags == 0) cx saux_a[1],saux_d[4];
-if(saux_flags == 0) barrier saux_a[1],saux_d[4];
+if(saux_flags == 0) barrier saux_a[2], saux_d[3];
+if(saux_flags == 0) cx saux_a[2], saux_d[3];  // 5 -> 4
+if(saux_flags == 0) barrier saux_a[2], saux_d[3];
 
-if(saux_flags == 0) barrier saux_a[2],saux_d[3];
-if(saux_flags == 0) cx saux_a[2],saux_d[3];
-if(saux_flags == 0) barrier saux_a[2],saux_d[3];
+if(saux_flags == 0) barrier saux_a[0], saux_d[1];
+if(saux_flags == 0) cz saux_a[0], saux_d[1];  // 3 -> 2
+if(saux_flags == 0) barrier saux_a[0], saux_d[1];
 
+if(saux_flags == 0) barrier saux_a[1], saux_d[2];
+if(saux_flags == 0) cx saux_a[1], saux_d[2];  // 7 -> 3
+if(saux_flags == 0) barrier saux_a[1], saux_d[2];
 
-
-if(saux_flags == 0) barrier saux_a[0],saux_d[1];
-if(saux_flags == 0) cz saux_a[0],saux_d[1];
-if(saux_flags == 0) barrier saux_a[0],saux_d[1];
-
-if(saux_flags == 0) barrier saux_a[1],saux_d[2];
-if(saux_flags == 0) cx saux_a[1],saux_d[2];
-if(saux_flags == 0) barrier saux_a[1],saux_d[2];
-
-if(saux_flags == 0) barrier saux_a[2],saux_d[6];
-if(saux_flags == 0) cx saux_a[2],saux_d[6];
-if(saux_flags == 0) barrier saux_a[2],saux_d[6];
-
+if(saux_flags == 0) barrier saux_a[2], saux_d[6];
+if(saux_flags == 0) cx saux_a[2], saux_d[6];  // 4 -> 7
+if(saux_flags == 0) barrier saux_a[2], saux_d[6];
 
 if(saux_flags == 0) barrier saux_a[0], saux_d[0], saux_d[1], saux_d[2], saux_d[3], saux_d[4], saux_d[5], saux_d[6], saux_a[1], saux_a[2];
-if(saux_flags == 0) cz saux_a[2],saux_a[0];
+if(saux_flags == 0) cz saux_a[2], saux_a[0];
 if(saux_flags == 0) barrier saux_a[0], saux_d[0], saux_d[1], saux_d[2], saux_d[3], saux_d[4], saux_d[5], saux_d[6], saux_a[1], saux_a[2];
 
+if(saux_flags == 0) barrier saux_a[0], saux_d[2];
+if(saux_flags == 0) cz saux_a[0], saux_d[2];  // 7 -> 3
+if(saux_flags == 0) barrier saux_a[0], saux_d[2];
 
+if(saux_flags == 0) barrier saux_a[1], saux_d[1];
+if(saux_flags == 0) cx saux_a[1], saux_d[1];  // 3 -> 2
+if(saux_flags == 0) barrier saux_a[1], saux_d[1];
 
-if(saux_flags == 0) barrier saux_a[0],saux_d[2];
-if(saux_flags == 0) cz saux_a[0],saux_d[2];
-if(saux_flags == 0) barrier saux_a[0],saux_d[2];
-
-if(saux_flags == 0) barrier saux_a[1],saux_d[1];
-if(saux_flags == 0) cx saux_a[1],saux_d[1];
-if(saux_flags == 0) barrier saux_a[1],saux_d[1];
-
-if(saux_flags == 0) barrier saux_a[2],saux_d[5];
-if(saux_flags == 0) cx saux_a[2],saux_d[5];
-if(saux_flags == 0) barrier saux_a[2],saux_d[5];
-
+if(saux_flags == 0) barrier saux_a[2], saux_d[5];
+if(saux_flags == 0) cx saux_a[2], saux_d[5];  // 6 -> 6
+if(saux_flags == 0) barrier saux_a[2], saux_d[5];
 
 if(saux_flags == 0) h saux_a[0];
 if(saux_flags == 0) h saux_a[1];
 if(saux_flags == 0) h saux_a[2];
-
-
 
 if(saux_flags == 0) measure saux_a[0] -> saux_flags_z[0];
 if(saux_flags == 0) measure saux_a[1] -> saux_flag_x[1];
@@ -644,230 +617,210 @@ if(saux_flags == 0) saux_flag_x[2] = saux_flag_x[2] ^ saux_last_raw_syn_x[2];
 
 if(saux_flags == 0) saux_flags = saux_flag_x | saux_flags_z;
 
-saux_scratch[2] = 0;
-if(saux_scratch[0]!=0) saux_scratch[2] = 1;
-if(saux_scratch[1]!=0) saux_scratch[2] = 1;
-if(saux_flags!=0) saux_scratch[2] = 1;
-rx(-pi/2) saux_d;
-rz(-pi/2) saux_d;
-if(saux_scratch != 0) reset saux_d[6];
-if(saux_scratch != 0) ry(0.7853981633974483) saux_d[6];
+saux_scratch[2] = (((saux_scratch[0] | saux_scratch[1]) | saux_flags[0]) | saux_flags[1]) | saux_flags[2];
+if(saux_scratch[2] != 0) reset saux_d[6];
+if(saux_scratch[2] != 0) ry(0.7853981633974483) saux_d[6];
 
 // Encoding circuit
 // ---------------
-if(saux_scratch != 0) reset saux_d[0];
-if(saux_scratch != 0) reset saux_d[1];
-if(saux_scratch != 0) reset saux_d[2];
-if(saux_scratch != 0) reset saux_d[3];
-if(saux_scratch != 0) reset saux_d[4];
-if(saux_scratch != 0) reset saux_d[5];
+if(saux_scratch[2] != 0) reset saux_d[0];
+if(saux_scratch[2] != 0) reset saux_d[1];
+if(saux_scratch[2] != 0) reset saux_d[2];
+if(saux_scratch[2] != 0) reset saux_d[3];
+if(saux_scratch[2] != 0) reset saux_d[4];
+if(saux_scratch[2] != 0) reset saux_d[5];
 
 // q[6] is the input qubit
 
-if(saux_scratch != 0) cx saux_d[6],saux_d[5];
+if(saux_scratch[2] != 0) cx saux_d[6], saux_d[5];
 
-if(saux_scratch != 0) h saux_d[1];
-if(saux_scratch != 0) cx saux_d[1], saux_d[0];
+if(saux_scratch[2] != 0) h saux_d[1];
+if(saux_scratch[2] != 0) cx saux_d[1], saux_d[0];
 
-if(saux_scratch != 0) h saux_d[2];
-if(saux_scratch != 0) cx saux_d[2], saux_d[4];
-
-// ---------------
-if(saux_scratch != 0) h saux_d[3];
-if(saux_scratch != 0) cx saux_d[3], saux_d[5];
-if(saux_scratch != 0) cx saux_d[2], saux_d[0];
-if(saux_scratch != 0) cx saux_d[6], saux_d[4];
+if(saux_scratch[2] != 0) h saux_d[2];
+if(saux_scratch[2] != 0) cx saux_d[2], saux_d[4];
 
 // ---------------
-if(saux_scratch != 0) cx saux_d[2], saux_d[6];
-if(saux_scratch != 0) cx saux_d[3], saux_d[4];
-if(saux_scratch != 0) cx saux_d[1], saux_d[5];
+if(saux_scratch[2] != 0) h saux_d[3];
+if(saux_scratch[2] != 0) cx saux_d[3], saux_d[5];
+if(saux_scratch[2] != 0) cx saux_d[2], saux_d[0];
+if(saux_scratch[2] != 0) cx saux_d[6], saux_d[4];
 
 // ---------------
-if(saux_scratch != 0) cx saux_d[1], saux_d[6];
-if(saux_scratch != 0) cx saux_d[3], saux_d[0];
+if(saux_scratch[2] != 0) cx saux_d[2], saux_d[6];
+if(saux_scratch[2] != 0) cx saux_d[3], saux_d[4];
+if(saux_scratch[2] != 0) cx saux_d[1], saux_d[5];
+
+// ---------------
+if(saux_scratch[2] != 0) cx saux_d[1], saux_d[6];
+if(saux_scratch[2] != 0) cx saux_d[3], saux_d[0];
 
 // Measure check HHHHHHH
-if(saux_scratch != 0) reset saux_a[0];
-if(saux_scratch != 0) reset saux_a[1];
-if(saux_scratch != 0) h saux_a[0];
-if(saux_scratch != 0) barrier saux_a[0], saux_d[0];
-if(saux_scratch != 0) ch saux_a[0], saux_d[0];
-if(saux_scratch != 0) barrier saux_a[0], saux_a[1];
-if(saux_scratch != 0) cx saux_a[0], saux_a[1];
-if(saux_scratch != 0) barrier saux_a[0], saux_a[1];
-if(saux_scratch != 0) ch saux_a[0], saux_d[1];
-if(saux_scratch != 0) barrier saux_a[0], saux_d[1];
-if(saux_scratch != 0) ch saux_a[0], saux_d[2];
-if(saux_scratch != 0) barrier saux_a[0], saux_d[2];
-if(saux_scratch != 0) ch saux_a[0], saux_d[3];
-if(saux_scratch != 0) barrier saux_a[0], saux_d[3];
-if(saux_scratch != 0) ch saux_a[0], saux_d[4];
-if(saux_scratch != 0) barrier saux_a[0], saux_d[4];
-if(saux_scratch != 0) ch saux_a[0], saux_d[5];
-if(saux_scratch != 0) barrier saux_a[0], saux_d[5];
-if(saux_scratch != 0) barrier saux_a[0], saux_a[1];
-if(saux_scratch != 0) cx saux_a[0], saux_a[1];
-if(saux_scratch != 0) barrier saux_a[0], saux_a[1];
-if(saux_scratch != 0) ch saux_a[0], saux_d[6];
-if(saux_scratch != 0) barrier saux_a[0], saux_d[6];
-if(saux_scratch != 0) h saux_a[0];
-if(saux_scratch != 0) measure saux_a[0] -> saux_scratch[0];
-if(saux_scratch != 0) measure saux_a[1] -> saux_scratch[1];
+if(saux_scratch[2] != 0) reset saux_a[0];
+if(saux_scratch[2] != 0) reset saux_a[1];
+if(saux_scratch[2] != 0) h saux_a[0];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[0];
+if(saux_scratch[2] != 0) ch saux_a[0], saux_d[0];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_a[1];
+if(saux_scratch[2] != 0) cx saux_a[0], saux_a[1];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_a[1];
+if(saux_scratch[2] != 0) ch saux_a[0], saux_d[1];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[1];
+if(saux_scratch[2] != 0) ch saux_a[0], saux_d[2];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[2];
+if(saux_scratch[2] != 0) ch saux_a[0], saux_d[3];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[3];
+if(saux_scratch[2] != 0) ch saux_a[0], saux_d[4];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[4];
+if(saux_scratch[2] != 0) ch saux_a[0], saux_d[5];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[5];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_a[1];
+if(saux_scratch[2] != 0) cx saux_a[0], saux_a[1];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_a[1];
+if(saux_scratch[2] != 0) ch saux_a[0], saux_d[6];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[6];
+if(saux_scratch[2] != 0) h saux_a[0];
+if(saux_scratch[2] != 0) measure saux_a[0] -> saux_scratch[0];
+if(saux_scratch[2] != 0) measure saux_a[1] -> saux_scratch[1];
 
-if(saux_scratch != 0) saux_flag_x = 0;
-if(saux_scratch != 0) saux_flags_z = 0;
+if(saux_scratch[2] != 0) saux_flag_x = 0;
+if(saux_scratch[2] != 0) saux_flags_z = 0;
 
 // X check 1, Z check 2, Z check 3
 // ===============================
 
-if(saux_scratch != 0) reset saux_a[0];
-if(saux_scratch != 0) reset saux_a[1];
-if(saux_scratch != 0) reset saux_a[2];
+if(saux_scratch[2] != 0) reset saux_a[0];
+if(saux_scratch[2] != 0) reset saux_a[1];
+if(saux_scratch[2] != 0) reset saux_a[2];
 
-if(saux_scratch != 0) h saux_a[0];
-if(saux_scratch != 0) h saux_a[1];
-if(saux_scratch != 0) h saux_a[2];
+if(saux_scratch[2] != 0) h saux_a[0];
+if(saux_scratch[2] != 0) h saux_a[1];
+if(saux_scratch[2] != 0) h saux_a[2];
 
-if(saux_scratch != 0) cx saux_a[0],saux_d[3];
-if(saux_scratch != 0) cz saux_a[1],saux_d[5];
-if(saux_scratch != 0) cz saux_a[2],saux_d[2];
+if(saux_scratch[2] != 0) cx saux_a[0], saux_d[3];  // 5 -> 4
+if(saux_scratch[2] != 0) cz saux_a[1], saux_d[5];  // 6 -> 6
+if(saux_scratch[2] != 0) cz saux_a[2], saux_d[2];  // 7 -> 3
 
-if(saux_scratch != 0) barrier saux_a[0],saux_a[1];
-if(saux_scratch != 0) cz saux_a[0],saux_a[1];
-if(saux_scratch != 0) barrier saux_a[0],saux_a[1];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_a[1];
+if(saux_scratch[2] != 0) cz saux_a[0], saux_a[1];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_a[1];
 
-if(saux_scratch != 0) cx saux_a[0],saux_d[0];
-if(saux_scratch != 0) cz saux_a[1],saux_d[4];
-if(saux_scratch != 0) cz saux_a[2],saux_d[3];
+if(saux_scratch[2] != 0) cx saux_a[0], saux_d[0];  // 1 -> 1
+if(saux_scratch[2] != 0) cz saux_a[1], saux_d[4];  // 2 -> 5
+if(saux_scratch[2] != 0) cz saux_a[2], saux_d[3];  // 5 -> 4
 
-if(saux_scratch != 0) cx saux_a[0],saux_d[1];
-if(saux_scratch != 0) cz saux_a[1],saux_d[2];
-if(saux_scratch != 0) cz saux_a[2],saux_d[6];
+if(saux_scratch[2] != 0) cx saux_a[0], saux_d[1];  // 3 -> 2
+if(saux_scratch[2] != 0) cz saux_a[1], saux_d[2];  // 7 -> 3
+if(saux_scratch[2] != 0) cz saux_a[2], saux_d[6];  // 4 -> 7
 
-if(saux_scratch != 0) barrier saux_a[0],saux_a[2];
-if(saux_scratch != 0) cz saux_a[0],saux_a[2];
-if(saux_scratch != 0) barrier saux_a[0],saux_a[2];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_a[2];
+if(saux_scratch[2] != 0) cz saux_a[0], saux_a[2];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_a[2];
 
-if(saux_scratch != 0) cx saux_a[0],saux_d[2];
-if(saux_scratch != 0) cz saux_a[1],saux_d[1];
-if(saux_scratch != 0) cz saux_a[2],saux_d[5];
+if(saux_scratch[2] != 0) cx saux_a[0], saux_d[2];  // 7 -> 3
+if(saux_scratch[2] != 0) cz saux_a[1], saux_d[1];  // 3 -> 2
+if(saux_scratch[2] != 0) cz saux_a[2], saux_d[5];  // 6 -> 6
 
-if(saux_scratch != 0) h saux_a[0];
-if(saux_scratch != 0) h saux_a[1];
-if(saux_scratch != 0) h saux_a[2];
+if(saux_scratch[2] != 0) h saux_a[0];
+if(saux_scratch[2] != 0) h saux_a[1];
+if(saux_scratch[2] != 0) h saux_a[2];
 
-if(saux_scratch != 0) measure saux_a[0] -> saux_flag_x[0];
-if(saux_scratch != 0) measure saux_a[1] -> saux_flags_z[1];
-if(saux_scratch != 0) measure saux_a[2] -> saux_flags_z[2];
+if(saux_scratch[2] != 0) measure saux_a[0] -> saux_flag_x[0];
+if(saux_scratch[2] != 0) measure saux_a[1] -> saux_flags_z[1];
+if(saux_scratch[2] != 0) measure saux_a[2] -> saux_flags_z[2];
 
-if(saux_scratch != 0) saux_flag_x[0] = saux_flag_x[0] ^ saux_last_raw_syn_x[0];
-if(saux_scratch != 0) saux_flags_z[1] = saux_flags_z[1] ^ saux_last_raw_syn_z[1];
-if(saux_scratch != 0) saux_flags_z[2] = saux_flags_z[2] ^ saux_last_raw_syn_z[2];
+if(saux_scratch[2] != 0) saux_flag_x[0] = saux_flag_x[0] ^ saux_last_raw_syn_x[0];
+if(saux_scratch[2] != 0) saux_flags_z[1] = saux_flags_z[1] ^ saux_last_raw_syn_z[1];
+if(saux_scratch[2] != 0) saux_flags_z[2] = saux_flags_z[2] ^ saux_last_raw_syn_z[2];
 
-if(saux_scratch != 0) saux_flags = saux_flag_x | saux_flags_z;
+if(saux_scratch[2] != 0) saux_flags = saux_flag_x | saux_flags_z;
 
 
 // Z check 1, X check 2, X check 3
 // ===============================
 
-if(saux_scratch != 0) if(saux_flags == 0) reset saux_a[0];
-if(saux_scratch != 0) if(saux_flags == 0) reset saux_a[1];
-if(saux_scratch != 0) if(saux_flags == 0) reset saux_a[2];
+if(saux_scratch[2] != 0) reset saux_a[0];
+if(saux_scratch[2] != 0) reset saux_a[1];
+if(saux_scratch[2] != 0) reset saux_a[2];
 
-if(saux_scratch != 0) if(saux_flags == 0) h saux_a[0];
-if(saux_scratch != 0) if(saux_flags == 0) h saux_a[1];
-if(saux_scratch != 0) if(saux_flags == 0) h saux_a[2];
+if(saux_scratch[2] != 0) h saux_a[0];
+if(saux_scratch[2] != 0) h saux_a[1];
+if(saux_scratch[2] != 0) h saux_a[2];
 
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[3];
+if(saux_scratch[2] != 0) cz saux_a[0], saux_d[3];  // 5 -> 4
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[3];
 
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[0],saux_d[3];
-if(saux_scratch != 0) if(saux_flags == 0) cz saux_a[0],saux_d[3];
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[0],saux_d[3];
+if(saux_scratch[2] != 0) barrier saux_a[1], saux_d[5];
+if(saux_scratch[2] != 0) cx saux_a[1], saux_d[5];  // 6 -> 6
+if(saux_scratch[2] != 0) barrier saux_a[1], saux_d[5];
 
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[1],saux_d[5];
-if(saux_scratch != 0) if(saux_flags == 0) cx saux_a[1],saux_d[5];
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[1],saux_d[5];
+if(saux_scratch[2] != 0) barrier saux_a[2], saux_d[2];
+if(saux_scratch[2] != 0) cx saux_a[2], saux_d[2];  // 7 -> 3
+if(saux_scratch[2] != 0) barrier saux_a[2], saux_d[2];
 
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[2],saux_d[2];
-if(saux_scratch != 0) if(saux_flags == 0) cx saux_a[2],saux_d[2];
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[2],saux_d[2];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[0], saux_d[1], saux_d[2], saux_d[3], saux_d[4], saux_d[5], saux_d[6], saux_a[1], saux_a[2];
+if(saux_scratch[2] != 0) cz saux_a[1], saux_a[0];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[0], saux_d[1], saux_d[2], saux_d[3], saux_d[4], saux_d[5], saux_d[6], saux_a[1], saux_a[2];
 
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[0];
+if(saux_scratch[2] != 0) cz saux_a[0], saux_d[0];  // 1 -> 1
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[0];
 
+if(saux_scratch[2] != 0) barrier saux_a[1], saux_d[4];
+if(saux_scratch[2] != 0) cx saux_a[1], saux_d[4];  // 2 -> 5
+if(saux_scratch[2] != 0) barrier saux_a[1], saux_d[4];
 
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[0], saux_d[0], saux_d[1], saux_d[2], saux_d[3], saux_d[4], saux_d[5], saux_d[6], saux_a[1], saux_a[2];
-if(saux_scratch != 0) if(saux_flags == 0) cz saux_a[1],saux_a[0];
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[0], saux_d[0], saux_d[1], saux_d[2], saux_d[3], saux_d[4], saux_d[5], saux_d[6], saux_a[1], saux_a[2];
+if(saux_scratch[2] != 0) barrier saux_a[2], saux_d[3];
+if(saux_scratch[2] != 0) cx saux_a[2], saux_d[3];  // 5 -> 4
+if(saux_scratch[2] != 0) barrier saux_a[2], saux_d[3];
 
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[1];
+if(saux_scratch[2] != 0) cz saux_a[0], saux_d[1];  // 3 -> 2
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[1];
 
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[0],saux_d[0];
-if(saux_scratch != 0) if(saux_flags == 0) cz saux_a[0],saux_d[0];
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[0],saux_d[0];
+if(saux_scratch[2] != 0) barrier saux_a[1], saux_d[2];
+if(saux_scratch[2] != 0) cx saux_a[1], saux_d[2];  // 7 -> 3
+if(saux_scratch[2] != 0) barrier saux_a[1], saux_d[2];
 
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[1],saux_d[4];
-if(saux_scratch != 0) if(saux_flags == 0) cx saux_a[1],saux_d[4];
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[1],saux_d[4];
+if(saux_scratch[2] != 0) barrier saux_a[2], saux_d[6];
+if(saux_scratch[2] != 0) cx saux_a[2], saux_d[6];  // 4 -> 7
+if(saux_scratch[2] != 0) barrier saux_a[2], saux_d[6];
 
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[2],saux_d[3];
-if(saux_scratch != 0) if(saux_flags == 0) cx saux_a[2],saux_d[3];
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[2],saux_d[3];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[0], saux_d[1], saux_d[2], saux_d[3], saux_d[4], saux_d[5], saux_d[6], saux_a[1], saux_a[2];
+if(saux_scratch[2] != 0) cz saux_a[2], saux_a[0];
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[0], saux_d[1], saux_d[2], saux_d[3], saux_d[4], saux_d[5], saux_d[6], saux_a[1], saux_a[2];
 
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[2];
+if(saux_scratch[2] != 0) cz saux_a[0], saux_d[2];  // 7 -> 3
+if(saux_scratch[2] != 0) barrier saux_a[0], saux_d[2];
 
+if(saux_scratch[2] != 0) barrier saux_a[1], saux_d[1];
+if(saux_scratch[2] != 0) cx saux_a[1], saux_d[1];  // 3 -> 2
+if(saux_scratch[2] != 0) barrier saux_a[1], saux_d[1];
 
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[0],saux_d[1];
-if(saux_scratch != 0) if(saux_flags == 0) cz saux_a[0],saux_d[1];
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[0],saux_d[1];
+if(saux_scratch[2] != 0) barrier saux_a[2], saux_d[5];
+if(saux_scratch[2] != 0) cx saux_a[2], saux_d[5];  // 6 -> 6
+if(saux_scratch[2] != 0) barrier saux_a[2], saux_d[5];
 
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[1],saux_d[2];
-if(saux_scratch != 0) if(saux_flags == 0) cx saux_a[1],saux_d[2];
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[1],saux_d[2];
+if(saux_scratch[2] != 0) h saux_a[0];
+if(saux_scratch[2] != 0) h saux_a[1];
+if(saux_scratch[2] != 0) h saux_a[2];
 
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[2],saux_d[6];
-if(saux_scratch != 0) if(saux_flags == 0) cx saux_a[2],saux_d[6];
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[2],saux_d[6];
-
-
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[0], saux_d[0], saux_d[1], saux_d[2], saux_d[3], saux_d[4], saux_d[5], saux_d[6], saux_a[1], saux_a[2];
-if(saux_scratch != 0) if(saux_flags == 0) cz saux_a[2],saux_a[0];
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[0], saux_d[0], saux_d[1], saux_d[2], saux_d[3], saux_d[4], saux_d[5], saux_d[6], saux_a[1], saux_a[2];
-
-
-
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[0],saux_d[2];
-if(saux_scratch != 0) if(saux_flags == 0) cz saux_a[0],saux_d[2];
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[0],saux_d[2];
-
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[1],saux_d[1];
-if(saux_scratch != 0) if(saux_flags == 0) cx saux_a[1],saux_d[1];
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[1],saux_d[1];
-
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[2],saux_d[5];
-if(saux_scratch != 0) if(saux_flags == 0) cx saux_a[2],saux_d[5];
-if(saux_scratch != 0) if(saux_flags == 0) barrier saux_a[2],saux_d[5];
-
-
-if(saux_scratch != 0) if(saux_flags == 0) h saux_a[0];
-if(saux_scratch != 0) if(saux_flags == 0) h saux_a[1];
-if(saux_scratch != 0) if(saux_flags == 0) h saux_a[2];
-
-
-
-if(saux_scratch != 0) if(saux_flags == 0) measure saux_a[0] -> saux_flags_z[0];
-if(saux_scratch != 0) if(saux_flags == 0) measure saux_a[1] -> saux_flag_x[1];
-if(saux_scratch != 0) if(saux_flags == 0) measure saux_a[2] -> saux_flag_x[2];
+if(saux_scratch[2] != 0) measure saux_a[0] -> saux_flags_z[0];
+if(saux_scratch[2] != 0) measure saux_a[1] -> saux_flag_x[1];
+if(saux_scratch[2] != 0) measure saux_a[2] -> saux_flag_x[2];
 
 // XOR flags/syndromes
-if(saux_scratch != 0) if(saux_flags == 0) saux_flags_z[0] = saux_flags_z[0] ^ saux_last_raw_syn_z[0];
-if(saux_scratch != 0) if(saux_flags == 0) saux_flag_x[1] = saux_flag_x[1] ^ saux_last_raw_syn_x[1];
-if(saux_scratch != 0) if(saux_flags == 0) saux_flag_x[2] = saux_flag_x[2] ^ saux_last_raw_syn_x[2];
+if(saux_scratch[2] != 0) saux_flags_z[0] = saux_flags_z[0] ^ saux_last_raw_syn_z[0];
+if(saux_scratch[2] != 0) saux_flag_x[1] = saux_flag_x[1] ^ saux_last_raw_syn_x[1];
+if(saux_scratch[2] != 0) saux_flag_x[2] = saux_flag_x[2] ^ saux_last_raw_syn_x[2];
 
-if(saux_scratch != 0) if(saux_flags == 0) saux_flags = saux_flag_x | saux_flags_z;
+if(saux_scratch[2] != 0) saux_flags = saux_flag_x | saux_flags_z;
 
-if(saux_scratch != 0) saux_scratch[2] = 0;
-if(saux_scratch != 0) if(saux_scratch[0]!=0) saux_scratch[2] = 1;
-if(saux_scratch != 0) if(saux_scratch[1]!=0) saux_scratch[2] = 1;
-if(saux_scratch != 0) if(saux_flags!=0) saux_scratch[2] = 1;
-if(saux_scratch != 0) rx(-pi/2) saux_d;
-if(saux_scratch != 0) rz(-pi/2) saux_d;
+if(saux_scratch[2] != 0) saux_scratch[2] = (((saux_scratch[0] | saux_scratch[1]) | saux_flags[0]) | saux_flags[1]) | saux_flags[2];
+rx(-pi/2) saux_d;
+rz(-pi/2) saux_d;
 m_reject[1] = saux_c[2];
 
 barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];
@@ -888,11 +841,11 @@ cx sin_d[0], sin_d[3];
 cx sin_d[4], sin_d[1];
 cx sin_d[3], sin_d[2];
 
-barrier sin_a[0],sin_d[1],sin_d[3],sin_d[5];
-//verification step
-cx sin_d[5],sin_a[0];
-cx sin_d[1],sin_a[0];
-cx sin_d[3],sin_a[0];
+barrier sin_a[0], sin_d[1], sin_d[3], sin_d[5];
+// verification step
+cx sin_d[5], sin_a[0];
+cx sin_d[1], sin_a[0];
+cx sin_d[3], sin_a[0];
 measure sin_a[0] -> sin_c[0];
 
 
@@ -914,11 +867,11 @@ if(sin_c[0] == 1) cx sin_d[0], sin_d[3];
 if(sin_c[0] == 1) cx sin_d[4], sin_d[1];
 if(sin_c[0] == 1) cx sin_d[3], sin_d[2];
 
-if(sin_c[0] == 1) barrier sin_a[0],sin_d[1],sin_d[3],sin_d[5];
-//verification step
-if(sin_c[0] == 1) cx sin_d[5],sin_a[0];
-if(sin_c[0] == 1) cx sin_d[1],sin_a[0];
-if(sin_c[0] == 1) cx sin_d[3],sin_a[0];
+if(sin_c[0] == 1) barrier sin_a[0], sin_d[1], sin_d[3], sin_d[5];
+// verification step
+if(sin_c[0] == 1) cx sin_d[5], sin_a[0];
+if(sin_c[0] == 1) cx sin_d[1], sin_a[0];
+if(sin_c[0] == 1) cx sin_d[3], sin_a[0];
 if(sin_c[0] == 1) measure sin_a[0] -> sin_c[0];
 
 
@@ -946,7 +899,7 @@ measure saux_d[6] -> saux_raw_meas[6];
 
 // determine raw logical output
 // ============================
-saux_c[1] = saux_raw_meas[4] ^ saux_raw_meas[5] ^ saux_raw_meas[6];
+saux_c[1] = (saux_raw_meas[4] ^ saux_raw_meas[5]) ^ saux_raw_meas[6];
 
 
 
@@ -956,9 +909,9 @@ saux_c[1] = saux_raw_meas[4] ^ saux_raw_meas[5] ^ saux_raw_meas[6];
 
 // Determine correction to get logical output
 // ==========================================
-saux_syn_meas[0] = saux_raw_meas[0] ^ saux_raw_meas[1] ^ saux_raw_meas[2] ^ saux_raw_meas[3];
-saux_syn_meas[1] = saux_raw_meas[1] ^ saux_raw_meas[2] ^ saux_raw_meas[4] ^ saux_raw_meas[5];
-saux_syn_meas[2] = saux_raw_meas[2] ^ saux_raw_meas[3] ^ saux_raw_meas[5] ^ saux_raw_meas[6];
+saux_syn_meas[0] = ((saux_raw_meas[0] ^ saux_raw_meas[1]) ^ saux_raw_meas[2]) ^ saux_raw_meas[3];
+saux_syn_meas[1] = ((saux_raw_meas[1] ^ saux_raw_meas[2]) ^ saux_raw_meas[4]) ^ saux_raw_meas[5];
+saux_syn_meas[2] = ((saux_raw_meas[2] ^ saux_raw_meas[3]) ^ saux_raw_meas[5]) ^ saux_raw_meas[6];
 
 // XOR syndromes
 saux_syn_meas = saux_syn_meas ^ saux_last_raw_syn_z;
@@ -991,7 +944,7 @@ measure sin_d[6] -> sin_raw_meas[6];
 
 // determine raw logical output
 // ============================
-sin_c[1] = sin_raw_meas[4] ^ sin_raw_meas[5] ^ sin_raw_meas[6];
+sin_c[1] = (sin_raw_meas[4] ^ sin_raw_meas[5]) ^ sin_raw_meas[6];
 
 
 
@@ -1001,9 +954,9 @@ sin_c[1] = sin_raw_meas[4] ^ sin_raw_meas[5] ^ sin_raw_meas[6];
 
 // Determine correction to get logical output
 // ==========================================
-sin_syn_meas[0] = sin_raw_meas[0] ^ sin_raw_meas[1] ^ sin_raw_meas[2] ^ sin_raw_meas[3];
-sin_syn_meas[1] = sin_raw_meas[1] ^ sin_raw_meas[2] ^ sin_raw_meas[4] ^ sin_raw_meas[5];
-sin_syn_meas[2] = sin_raw_meas[2] ^ sin_raw_meas[3] ^ sin_raw_meas[5] ^ sin_raw_meas[6];
+sin_syn_meas[0] = ((sin_raw_meas[0] ^ sin_raw_meas[1]) ^ sin_raw_meas[2]) ^ sin_raw_meas[3];
+sin_syn_meas[1] = ((sin_raw_meas[1] ^ sin_raw_meas[2]) ^ sin_raw_meas[4]) ^ sin_raw_meas[5];
+sin_syn_meas[2] = ((sin_raw_meas[2] ^ sin_raw_meas[3]) ^ sin_raw_meas[5]) ^ sin_raw_meas[6];
 
 // XOR syndromes
 sin_syn_meas = sin_syn_meas ^ sin_last_raw_syn_x;

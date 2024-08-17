@@ -14,6 +14,7 @@ def test_ThreeParallelFlaggingXZZ(compare_qasm):
     block = ThreeParallelFlaggingXZZ(q, a, flag_x, flag_z, flags, last_raw_syn_x, last_raw_syn_z)
     compare_qasm(block)
 
+
 def test_ThreeParallelFlaggingZXX(compare_qasm):
     q = QReg("q_test", 7)
     a = QReg("a_test", 3)

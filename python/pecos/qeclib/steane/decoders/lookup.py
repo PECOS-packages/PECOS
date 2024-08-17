@@ -8,222 +8,216 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
+from __future__ import annotations
 
-from pecos.slr import Bit, util
+from typing import TYPE_CHECKING
+
+from pecos.qeclib import qubit
+from pecos.slr import Block, Comment, If
+
+if TYPE_CHECKING:
+    from pecos.slr import Bit, CReg, QReg
 
 
-class FlagLookupQASM:
-    def __init__(self, basis, syn, syndromes, raw_syn, pf: Bit, flag, flags, scratch):
+class FlagLookupQASM(Block):
+    def __init__(
+        self,
+        basis: str,
+        syn: CReg,
+        syndromes: CReg,
+        raw_syn: CReg,
+        pf: Bit,
+        flag: Bit,
+        flags: CReg,
+        scratch: CReg,
+    ):
+        super().__init__()
+
         # qasm_syn_decoder('X', syn_x, flag_x, 'last_raw_syn_x', 'pf_z1')
         # qasm_syn_decoder(basis_check, syn, flag, raw_syn, pf, pf_index=0)
-        self.basis = basis
-        self.syn = syn
-        self.syndromes = syndromes
-        self.raw_syn = raw_syn
-        self.pf = pf
-        self.flag = flag
-        self.flags = flags
-        self.scratch = scratch
 
-    def qasm(self):
-        syn = self.syn  # syn_x
-        syndromes = self.syndromes  # syndromes
-        raw_syn = self.raw_syn  # last_raw_syn_x
-        pf = self.pf  # pf_z1[0]
-        flag = self.flag  # flag_x
-        flags = self.flags  # flags
-        scratch = self.scratch  # scratch
-
-        qasm = f"""
-        // =========================
-        // BEGIN Run {self.basis} decoder
-        // =========================
-
-        if({flags}!=0) {syndromes} = {syn} ^ {raw_syn};
-        if({flags}==0) {syndromes} = 0;
-
-        // apply corrections
-        if({syndromes} == 2) {pf} = {pf} ^ 1;
-        if({syndromes} == 4) {pf} = {pf} ^ 1;
-        if({syndromes} == 6) {pf} = {pf} ^ 1;
-
-        // alter correction based on flags
-        // ===============================
-
-        // 1&2 (1 -> 2)
-        // ------------
-        {scratch} = 0;
-        if({flag} == 1) {scratch[0]} = 1;
-        if({syndromes} == 2) {scratch[1]} = 1;
-
-        {scratch[2]} = {scratch[0]} & {scratch[1]};
-        if({scratch[2]} == 1) {pf} = {pf} ^ 1;
-
-        // 1&4 (1 -> 3)
-        // ------------
-        {scratch} = 0;
-        if({flag} == 1) {scratch[0]} = 1;
-        if({syndromes} == 4) {scratch[1]} = 1;
-
-        {scratch[2]} = {scratch[0]} & {scratch[1]};
-        if({scratch[2]} == 1) {pf} = {pf} ^ 1;
-
-
-        // 6&4 (2,3 -> 3)
-        // ------------
-        {scratch} = 0;
-        if({flag} == 6) {scratch[0]} = 1;
-        if({syndromes} == 4) {scratch[1]} = 1;
-
-        {scratch[2]} = {scratch[0]} & {scratch[1]};
-        if({scratch[2]} == 1) {pf} = {pf} ^ 1;
-
-        if({flags}!=0) {raw_syn} = {syn};
-
-        // =========================
-        // END Run {self.basis} decoder
-        // =========================
-        """
-
-        return util.rm_white_space(qasm)
+        self.extend(
+            Comment(
+                f"""
+=========================
+BEGIN Run {basis} decoder
+=========================\n""",
+            ),
+            If(flags != 0).Then(syndromes.set(syn ^ raw_syn)),
+            If(flags == 0).Then(syndromes.set(0)),
+            Comment("\napply corrections"),
+            If(syndromes == 2).Then(pf.set(pf ^ 1)),
+            If(syndromes == 4).Then(pf.set(pf ^ 1)),
+            If(syndromes == 6).Then(pf.set(pf ^ 1)),
+            Comment(),
+            Comment("alter correction based on flags"),
+            Comment("==============================="),
+            Comment(),
+            Comment("1&2 (1 -> 2)"),
+            Comment("------------"),
+            scratch.set(0),
+            If(flag == 1).Then(scratch[0].set(1)),
+            If(syndromes == 2).Then(scratch[1].set(1)),
+            Comment(),
+            scratch[2].set(scratch[0] & scratch[1]),
+            If(scratch[2] == 1).Then(pf.set(pf ^ 1)),
+            Comment(),
+            Comment("1&4 (1 -> 3)"),
+            Comment("------------"),
+            scratch.set(0),
+            If(flag == 1).Then(scratch[0].set(1)),
+            If(syndromes == 4).Then(scratch[1].set(1)),
+            Comment(),
+            scratch[2].set(scratch[0] & scratch[1]),
+            If(scratch[2] == 1).Then(pf.set(pf ^ 1)),
+            Comment(),
+            Comment("6&4 (2,3 -> 3)"),
+            Comment("------------"),
+            scratch.set(0),
+            If(flag == 6).Then(scratch[0].set(1)),
+            If(syndromes == 4).Then(scratch[1].set(1)),
+            Comment(),
+            scratch[2].set(scratch[0] & scratch[1]),
+            If(scratch[2] == 1).Then(pf.set(pf ^ 1)),
+            Comment(),
+            If(flags != 0).Then(raw_syn.set(syn)),
+            Comment(),
+            Comment("========================="),
+            Comment(f"END Run {basis} decoder"),
+            Comment("=========================\n"),
+        )
 
 
-class FlagLookupQASMActiveCorrectionX:
+class FlagLookupQASMActiveCorrectionX(Block):
+
+    def __init__(
+        self,
+        qubits: QReg,
+        syn: CReg,
+        syndromes: CReg,
+        raw_syn: CReg,
+        pf: Bit,
+        flag: Bit,
+        flags: CReg,
+        scratch: CReg,
+        pf_bit_copy: Bit | None = None,
+    ):
+        super().__init__()
+        # qasm_syn_decoder('X', syn_x, flag_x, 'last_raw_syn_x', 'pf_z1')
+        # qasm_syn_decoder(basis_check, syn, flag, raw_syn, pf, pf_index=0)
+        q = qubits
+
+        self.extend(
+            FlagLookupQASM(
+                basis="X",
+                syn=syn,
+                syndromes=syndromes,
+                raw_syn=raw_syn,
+                pf=pf,
+                flag=flag,
+                flags=flags,
+                scratch=scratch,
+            ),
+        )
+
+        if pf_bit_copy is not None:
+            self.extend(
+                Comment(),
+                Comment("copy Pauli frame"),
+                pf_bit_copy.set(pf),
+            )
+
+        self.extend(
+            Comment(),
+            Comment(),
+            Comment("ACTIVE ERROR CORRECTION FOR X SYNDROMES"),
+            Comment(),
+            scratch.set(0),
+            Comment(),
+            Comment("only part that differs for X vs Z syns V"),
+            If(syndromes[0] == 1).Then(scratch.set(scratch ^ 1)),
+            If(syndromes[1] == 1).Then(scratch.set(scratch ^ 12)),
+            If(syndromes[2] == 1).Then(scratch.set(scratch ^ 48)),
+            Comment(),
+            Comment("logical operator"),
+            If(pf == 1).Then(scratch.set(scratch ^ 112)),
+            Comment(),
+            If(scratch[0] == 1).Then(qubit.Z(q[0])),
+            Comment("not possible for X stabilizers V"),
+            Comment(f"if({scratch[1]} == 1) z {q[1]};"),  # If(scratch[2] == 1).Then(qubit.Z(q[1])),
+            If(scratch[2] == 1).Then(qubit.Z(q[2])),
+            If(scratch[3] == 1).Then(qubit.Z(q[3])),
+            If(scratch[4] == 1).Then(qubit.Z(q[4])),
+            If(scratch[5] == 1).Then(qubit.Z(q[5])),
+            If(scratch[6] == 1).Then(qubit.Z(q[6])),
+            Comment(),
+            pf.set(0),
+            Comment(f"{syndromes} = 0;"),
+            raw_syn.set(0),
+            Comment(f"{syn} = 0;"),
+            Comment(f"{flag} = 0;"),
+            Comment(f"{flags} = 0;"),
+            Comment(),
+            Comment(),
+        )
+
+
+class FlagLookupQASMActiveCorrectionZ(Block):
     def __init__(self, qubits, syn, syndromes, raw_syn, pf, flag, flags, scratch, pf_bit_copy: Bit = None):
+        super().__init__()
+        q = qubits
+
         # qasm_syn_decoder('X', syn_x, flag_x, 'last_raw_syn_x', 'pf_z1')
         # qasm_syn_decoder(basis_check, syn, flag, raw_syn, pf, pf_index=0)
-        self.qubits = qubits
-        self.syn = syn
-        self.syndromes = syndromes
-        self.raw_syn = raw_syn
-        self.pf = pf
-        self.flag = flag
-        self.flags = flags
-        self.scratch = scratch
-        self.pf_bit_copy = pf_bit_copy  # copy of pf_z bit
+        self.extend(
+            FlagLookupQASM(
+                basis="Z",
+                syn=syn,
+                syndromes=syndromes,
+                raw_syn=raw_syn,
+                pf=pf,
+                flag=flag,
+                flags=flags,
+                scratch=scratch,
+            ),
+        )
 
-    def qasm(self):
-        q = self.qubits
+        if pf_bit_copy is not None:
+            self.extend(
+                Comment(),
+                Comment("copy Pauli frame"),
+                pf_bit_copy.set(pf),
+            )
 
-        qasm = FlagLookupQASM(
-            basis="X",
-            syn=self.syn,
-            syndromes=self.syndromes,
-            raw_syn=self.raw_syn,
-            pf=self.pf,
-            flag=self.flag,
-            flags=self.flags,
-            scratch=self.scratch,
-        ).qasm()
-
-        qasm_active = ""
-
-        if self.pf_bit_copy:
-            qasm_active += f"""
-            // copy Pauli frame
-            {self.pf_bit_copy} = {self.pf};
-            """
-
-        qasm_active += f"""
-
-        // ACTIVE ERROR CORRECTION FOR X SYNDROMES
-
-        {self.scratch}  = 0;
-
-        if({self.syndromes[0]} == 1) {self.scratch} = {self.scratch}  ^ 1;  // only part that differs for X vs Z syns
-        if({self.syndromes[1]} == 1) {self.scratch}  = {self.scratch}  ^ 12;
-        if({self.syndromes[2]} == 1) {self.scratch}  = {self.scratch}  ^ 48;
-
-        if({self.pf}==1) {self.scratch}  = {self.scratch}  ^ 112;  // logical operator
-
-        if({self.scratch[0]} == 1) z {q[0]};
-        // if({self.scratch[1]} == 1) z {q[1]};  // not possible for X stabilizers
-        if({self.scratch[2]} == 1) z {q[2]};
-        if({self.scratch[3]} == 1) z {q[3]};
-        if({self.scratch[4]} == 1) z {q[4]};
-        if({self.scratch[5]} == 1) z {q[5]};
-        if({self.scratch[6]} == 1) z {q[6]};
-
-        {self.pf} = 0;
-        // {self.syndromes} = 0;
-        {self.raw_syn} = 0;
-        // {self.syn} = 0;
-        // {self.flag} = 0;
-        // {self.flags} = 0;
-
-        """
-
-        qasm_list = util.str2list(qasm)
-        qasm_list.extend(util.str2list(qasm_active))
-
-        return util.list2str(qasm_list)
-
-
-class FlagLookupQASMActiveCorrectionZ:
-    def __init__(self, qubits, syn, syndromes, raw_syn, pf, flag, flags, scratch, pf_bit_copy: Bit = None):
-        # qasm_syn_decoder('X', syn_x, flag_x, 'last_raw_syn_x', 'pf_z1')
-        # qasm_syn_decoder(basis_check, syn, flag, raw_syn, pf, pf_index=0)
-        self.qubits = qubits
-        self.syn = syn
-        self.syndromes = syndromes
-        self.raw_syn = raw_syn
-        self.pf = pf
-        self.flag = flag
-        self.flags = flags
-        self.scratch = scratch
-        self.pf_bit_copy = pf_bit_copy  # copy of pf_x bit
-
-    def qasm(self):
-        q = self.qubits
-
-        qasm = FlagLookupQASM(
-            basis="Z",
-            syn=self.syn,
-            syndromes=self.syndromes,
-            raw_syn=self.raw_syn,
-            pf=self.pf,
-            flag=self.flag,
-            flags=self.flags,
-            scratch=self.scratch,
-        ).qasm()
-
-        qasm_active = ""
-
-        if self.pf_bit_copy:
-            qasm_active += f"""
-            // copy Pauli frame
-            {self.pf_bit_copy} = {self.pf};
-            """
-
-        qasm_active += f"""
-
-        // ACTIVE ERROR CORRECTION FOR Z SYNDROMES
-
-        {self.scratch}  = 0;
-
-        if({self.syndromes[0]} == 1) {self.scratch} = {self.scratch}  ^ 14;  // only part that differs for X vs Z syns
-        if({self.syndromes[1]} == 1) {self.scratch}  = {self.scratch}  ^ 12;
-        if({self.syndromes[2]} == 1) {self.scratch}  = {self.scratch}  ^ 48;
-
-        if({self.pf}==1) {self.scratch}  = {self.scratch}  ^ 112;  // logical operator
-
-        // if({self.scratch[0]} == 1) z {q[0]}; // not possible for X stabilizers
-        if({self.scratch[1]} == 1) x {q[1]};
-        if({self.scratch[2]} == 1) x {q[2]};
-        if({self.scratch[3]} == 1) x {q[3]};
-        if({self.scratch[4]} == 1) x {q[4]};
-        if({self.scratch[5]} == 1) x {q[5]};
-        if({self.scratch[6]} == 1) x {q[6]};
-
-        {self.pf} = 0;
-        // {self.syndromes} = 0;
-        {self.raw_syn} = 0;
-        // {self.syn} = 0;
-        // {self.flag} = 0;
-        // {self.flags} = 0;
-        """
-
-        qasm_list = util.str2list(qasm)
-        qasm_list.extend(util.str2list(qasm_active))
-
-        return util.list2str(qasm_list)
+        self.extend(
+            Comment(),
+            Comment(),
+            Comment("ACTIVE ERROR CORRECTION FOR Z SYNDROMES"),
+            Comment(),
+            scratch.set(0),
+            Comment(),
+            Comment("only part that differs for X vs Z syns V"),
+            If(syndromes[0] == 1).Then(scratch.set(scratch ^ 14)),
+            If(syndromes[1] == 1).Then(scratch.set(scratch ^ 12)),
+            If(syndromes[2] == 1).Then(scratch.set(scratch ^ 48)),
+            Comment(),
+            Comment("logical operator"),
+            If(pf == 1).Then(scratch.set(scratch ^ 112)),
+            Comment(),
+            Comment("not possible for X stabilizers V"),
+            Comment(f"if({scratch[0]} == 1) z {q[0]};"),
+            If(scratch[1] == 1).Then(qubit.X(q[1])),
+            If(scratch[2] == 1).Then(qubit.X(q[2])),
+            If(scratch[3] == 1).Then(qubit.X(q[3])),
+            If(scratch[4] == 1).Then(qubit.X(q[4])),
+            If(scratch[5] == 1).Then(qubit.X(q[5])),
+            If(scratch[6] == 1).Then(qubit.X(q[6])),
+            Comment(),
+            pf.set(0),
+            Comment(f"{syndromes} = 0;"),
+            raw_syn.set(0),
+            Comment(f"{syn} = 0;"),
+            Comment(f"{flag} = 0;"),
+            Comment(f"{flags} = 0;"),
+            Comment(),
+        )

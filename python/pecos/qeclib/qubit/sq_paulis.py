@@ -11,73 +11,55 @@
 
 from numpy import array
 
-from pecos.qeclib.qubit.metaclasses import SQPauliGate
+from pecos.qeclib.qubit.qgate_base import QGate
 
 
-class XGate(SQPauliGate):
+class X(QGate):
     """The Pauli X unitary."""
 
-    def __init__(self):
-        super().__init__("X", qasm_sym="x")
+    matrix = array(
+        [
+            [0, 1],
+            [1, 0],
+        ],
+        dtype=complex,
+    )
 
-        self.matrix = array(
-            [
-                [0, 1],
-                [1, 0],
-            ],
-            dtype=complex,
-        )
-
-        self.pauli_rules = {
-            "X": "+X",
-            "Z": "-Z",
-        }
+    pauli_rules = (
+        ("X", "+X"),
+        ("Z", "-Z"),
+    )
 
 
-X = XGate()
-
-
-class YGate(SQPauliGate):
+class Y(QGate):
     """The Pauli Y unitary."""
 
-    def __init__(self):
-        super().__init__("Y", qasm_sym="y")
+    matrix = array(
+        [
+            [0, -1j],
+            [1j, 0],
+        ],
+        dtype=complex,
+    )
 
-        self.matrix = array(
-            [
-                [0, -1j],
-                [1j, 0],
-            ],
-            dtype=complex,
-        )
-
-        self.pauli_rules = {
-            "X": "-X",
-            "Z": "-Z",
-        }
+    pauli_rules = (
+        ("X", "-X"),
+        ("Z", "-Z"),
+    )
 
 
-Y = YGate()
-
-
-class ZGate(SQPauliGate):
+class Z(QGate):
     """The Pauli Z unitary."""
 
-    def __init__(self):
-        super().__init__("Z", qasm_sym="z")
+    matrix = array(
+        [
+            [1, 0],
+            [0, -1],
+        ],
+        dtype=complex,
+    )
 
-        self.matrix = array(
-            [
-                [1, 0],
-                [0, -1],
-            ],
-            dtype=complex,
-        )
-
-        self.pauli_rules = {
-            "X": "-X",
-            "Z": "+Z",
-        }
-
-
-Z = ZGate()
+    pauli_rules = (
+        ("X", "-X"),
+        ("Z", "+Z"),
+    )

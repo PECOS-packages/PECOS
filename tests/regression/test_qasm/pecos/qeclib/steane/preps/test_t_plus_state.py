@@ -12,10 +12,12 @@ def test_PrepEncodeTPlusNonFT(compare_qasm):
     block = PrepEncodeTPlusNonFT(q)
     compare_qasm(block)
 
+
 def test_PrepEncodeTDagPlusNonFT(compare_qasm):
     q = QReg("q_test", 7)
     block = PrepEncodeTDagPlusNonFT(q)
     compare_qasm(block)
+
 
 def test_PrepEncodeTPlusFT(compare_qasm):
     q = QReg("q_test", 7)
@@ -29,6 +31,7 @@ def test_PrepEncodeTPlusFT(compare_qasm):
     last_raw_syn_z = CReg("last_raw_syn_z_test", 3)
     block = PrepEncodeTPlusFT(q, a, out, reject[0], flag_x, flag_z, flags, last_raw_syn_x, last_raw_syn_z)
     compare_qasm(block)
+
 
 def test_PrepEncodeTPlusFTRUS(compare_qasm):
     q = QReg("q_test", 7)

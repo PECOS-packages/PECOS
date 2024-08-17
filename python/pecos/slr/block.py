@@ -8,13 +8,15 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
+from __future__ import annotations
 
-
+from pecos.slr.fund import Node
+from pecos.slr.gen_codes.gen_qasm import QASMGenerator
 from pecos.slr.vars import Var, Vars
 
 
-class Block:
-    """A collection of other things: other blocks, operations, etc."""
+class Block(Node):
+    """A collection of other operations and blocks."""
 
     def __init__(self, *args, ops=None, vargs=None, allow_no_ops=True):
         self.ops = []
@@ -60,12 +62,17 @@ class Block:
     def iter(self):
         yield from self.__iter__()
 
-    def eval(self, lang="QASM"): ...
+    def gen(self, target: object | str):
+
+        if isinstance(target, str):
+            if target == "qasm":
+                target = QASMGenerator()
+            else:
+                msg = f"Code gen target '{target}' is not supported."
+                raise NotImplementedError(msg)
+
+        target.generate_block(self)
+        return target.get_output()
 
     def qasm(self):
-        qasm = []
-        for op in self.ops:
-            qasm.append(op.qasm())
-
-        qasm = "\n".join(qasm)
-        return qasm
+        return self.gen("qasm")

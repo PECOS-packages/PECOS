@@ -12,8 +12,8 @@
 from pecos.qeclib import qubit
 from pecos.qeclib.steane.gates_sq.face_rots import F
 from pecos.qeclib.steane.preps.encoding_circ import EncodingCircuit
-from pecos.qeclib.steane.preps.plus_h_state import PrepHStateFT
-from pecos.slr import Bit, Block, Comment, CReg, If, QReg, Repeat
+from pecos.qeclib.steane.preps.plus_h_state import PrepHStateFT, PrepHStateFTRUS
+from pecos.slr import Bit, Block, Comment, CReg, QReg
 
 
 class PrepEncodeTPlusNonFT(Block):
@@ -51,7 +51,7 @@ class PrepEncodeTPlusFT(Block):
         d: Data qubits (size 7)
         a: Axillary qubits (size 2)
         out: Measurement outputs (size 2). out[0] is the Measure H result and out[1] is the flag result.
-        reject:
+        reject: Whether the procedure failed and should be rejected. 0 it is good, 1 prep failed.
     """
 
     def __init__(
@@ -82,6 +82,7 @@ class PrepEncodeTPlusFTRUS(Block):
         a: Axillary qubits (size 2)
         out: Measurement outputs (size 2). out[0] is the Measure H result and out[1] is the flag result.
         limit: The number of RUS steps to take.
+        reject: Whether the procedure failed and should be rejected. 0 it is good, 1 prep failed.
     """
 
     def __init__(
@@ -97,11 +98,8 @@ class PrepEncodeTPlusFTRUS(Block):
         last_raw_syn_z: CReg,
         limit: int,
     ):
+        # NOTE: For QASM, have to avoid nested If statements
         super().__init__(
-            PrepEncodeTPlusFT(d, a, out, reject, flag_x, flag_z, flags, last_raw_syn_x, last_raw_syn_z),
-            Repeat(limit - 1).block(
-                If(out != 0).Then(
-                    PrepEncodeTPlusFT(d, a, out, reject, flag_x, flag_z, flags, last_raw_syn_x, last_raw_syn_z),
-                ),
-            ),
+            PrepHStateFTRUS(d, a, out, reject, flag_x, flag_z, flags, last_raw_syn_x, last_raw_syn_z, limit),
+            F(d),
         )

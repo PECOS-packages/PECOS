@@ -9,58 +9,31 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.qeclib.qubit.metaclasses import TQCliffordGate
+from pecos.qeclib.qubit.qgate_base import TQGate
 
 
-class CXGate(TQCliffordGate): ...
+class CX(TQGate): ...
 
 
-CX = CXGate(qasm_sym="cx")
+class CY(TQGate): ...
 
 
-class CYGate(TQCliffordGate): ...
+class CZ(TQGate): ...
 
 
-CY = CYGate(qasm_sym="cy")
+class SXX(TQGate): ...
 
 
-class CZGate(TQCliffordGate): ...
+class SYY(TQGate): ...
 
 
-CZ = CZGate(qasm_sym="cz")
+class SZZ(TQGate): ...
 
 
-class SXXGate(TQCliffordGate): ...
+class SXXdg(TQGate): ...
 
 
-SXX = SXXGate()
+class SYYdg(TQGate): ...
 
 
-class SYYGate(TQCliffordGate): ...
-
-
-SYY = SYYGate()
-
-
-class SZZGate(TQCliffordGate): ...
-
-
-SZZ = SZZGate(qasm_sym="ZZ")
-
-
-class SXXdgGate(TQCliffordGate): ...
-
-
-SXXdg = SXXdgGate()
-
-
-class SYYdgGate(TQCliffordGate): ...
-
-
-SYYdg = SYYdgGate()
-
-
-class SZZdgGate(TQCliffordGate): ...
-
-
-SZZdg = SZZdgGate()
+class SZZdg(TQGate): ...

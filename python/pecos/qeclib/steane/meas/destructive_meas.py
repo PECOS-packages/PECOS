@@ -8,9 +8,16 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
+from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from pecos.qeclib import qubit
 from pecos.qeclib.steane.gates_sq.sqrt_paulis import SX, SYdg
-from pecos.slr import Block, Comment, CReg, QReg, util
+from pecos.slr import Barrier, Block, Comment, If
+
+if TYPE_CHECKING:
+    from pecos.slr import Bit, CReg, QReg
 
 
 class MeasureX(Block):
@@ -21,12 +28,7 @@ class MeasureX(Block):
     SYdg: X->Z, Y->Y, Z->-X
     """
 
-    def __init__(self,
-                 qubits: QReg,
-                 meas_creg: CReg,
-                 log_raw: CReg,
-                 *,
-                 barrier: bool = True):
+    def __init__(self, qubits: QReg, meas_creg: CReg, log_raw: Bit, *, barrier: bool = True):
         super().__init__()
 
         self.extend(
@@ -43,7 +45,7 @@ class MeasureY(Block):
     SX: X->X, Y->Z, Z->-Y
     """
 
-    def __init__(self, qubits: QReg, meas_creg: CReg, log_raw: CReg, *, barrier: bool = True):
+    def __init__(self, qubits: QReg, meas_creg: CReg, log_raw: Bit, *, barrier: bool = True):
         super().__init__()
 
         self.extend(
@@ -52,44 +54,45 @@ class MeasureY(Block):
         )
 
 
-class MeasureZ:
+class MeasureZ(Block):
     """Measure in the logical Z basis."""
 
-    def __init__(self, qubits: QReg, meas: CReg, log_raw: CReg, *, barrier: bool = True):
+    def __init__(self, qubits: QReg, meas: CReg, log_raw: Bit, *, barrier: bool = True):
+        super().__init__()
+
+        q = qubits
+        m = meas
+
+        if barrier:
+            self.extend(
+                Comment(),
+                Barrier(q),
+            )
+
+        self.extend(
+            Comment(),
+            qubit.Measure(q[0]) > m[0],
+            qubit.Measure(q[1]) > m[1],
+            qubit.Measure(q[2]) > m[2],
+            qubit.Measure(q[3]) > m[3],
+            qubit.Measure(q[4]) > m[4],
+            qubit.Measure(q[5]) > m[5],
+            qubit.Measure(q[6]) > m[6],
+            Comment(),
+            Comment("determine raw logical output"),
+            Comment("============================"),
+            log_raw.set(m[4] ^ m[5] ^ m[6]),
+            Comment("\n"),
+        )
+
         self.qubits = qubits
         self.meas = meas
         self.log_raw = log_raw
         self.barrier = barrier
 
-    def qasm(self):
-        q = self.qubits
-        m = self.meas
-        log_raw = self.log_raw
-
-        qasm = ""
-
-        if self.barrier:
-            qasm += f"\nbarrier {q};\n"
-
-        qasm += f"""
-        measure {q[0]} -> {m[0]};
-        measure {q[1]} -> {m[1]};
-        measure {q[2]} -> {m[2]};
-        measure {q[3]} -> {m[3]};
-        measure {q[4]} -> {m[4]};
-        measure {q[5]} -> {m[5]};
-        measure {q[6]} -> {m[6]};
-
-        // determine raw logical output
-        // ============================
-        {log_raw} = {m[4]} ^ {m[5]} ^ {m[6]};
-
-        """
-        return util.rm_white_space(qasm)
-
 
 class Measure(Block):
-    def __init__(self, q: QReg, meas_creg: CReg, log_raw: CReg, meas_basis: str):
+    def __init__(self, q: QReg, meas_creg: CReg, log_raw: Bit, meas_basis: str):
         super().__init__()
 
         if meas_basis == "X":
@@ -112,138 +115,133 @@ class Measure(Block):
             raise Exception(msg)
 
 
-class ProcessMeas:
+class ProcessMeas(Block):
     """Process measurement results to determine additional corrections. Applies these and previous corrections to
     logical measurement."""
 
     def __init__(
         self,
-        basis,
-        meas,
-        log_raw_bit,
-        log_bit,
-        syn_meas,
-        pf_x,
-        pf_z,
+        basis: str,
+        meas: CReg,
+        log_raw_bit: Bit,
+        log_bit: Bit,
+        syn_meas: CReg,
+        pf_x: Bit,
+        pf_z: Bit,
         check_type="xz",
-        last_raw_syn_x=None,
-        last_raw_syn_y=None,
-        last_raw_syn_z=None,
+        last_raw_syn_x: CReg | None = None,
+        last_raw_syn_y: CReg | None = None,
+        last_raw_syn_z: CReg | None = None,
         *,
-        ft_meas=True,
+        ft_meas: bool = True,
     ):
-        self.meas = meas
-        self.log_raw = log_raw_bit
-        self.log = log_bit
-        self.syn_meas = syn_meas
-        self.basis = basis
-        self.check_type = check_type
-        self.last_raw_syn_x = last_raw_syn_x
-        self.last_raw_syn_y = last_raw_syn_y
-        self.last_raw_syn_z = last_raw_syn_z
-        self.pf_x = pf_x
-        self.pf_z = pf_z
-        self.ft_meas = ft_meas
+        super().__init__()
 
-    def qasm(self):
-        meas = self.meas
-        log_raw = self.log_raw
-        log = self.log
-        syn_meas = self.syn_meas
-        basis = self.basis
-        last_raw_syn_x = self.last_raw_syn_x
-        last_raw_syn_y = self.last_raw_syn_y
-        last_raw_syn_z = self.last_raw_syn_z
+        log = log_bit
+        log_raw = log_raw_bit
 
-        qasm = f"""
-        // =================== //
-        // PROCESS MEASUREMENT //
-        // =================== //
+        self.extend(
+            Comment(
+                """
+=================== //
+PROCESS MEASUREMENT //
+=================== //
 
-        // Determine correction to get logical output
-        // ==========================================
-        {syn_meas[0]} = {meas[0]} ^ {meas[1]} ^ {meas[2]} ^ {meas[3]};
-        {syn_meas[1]} = {meas[1]} ^ {meas[2]} ^ {meas[4]} ^ {meas[5]};
-        {syn_meas[2]} = {meas[2]} ^ {meas[3]} ^ {meas[5]} ^ {meas[6]};
-        """
-
-        qasm_list = util.str2list(qasm)
-
-        qasm_list.append("// XOR syndromes")
-
-        if self.check_type not in {"xy", "xz", "yz"}:
+Determine correction to get logical output
+==========================================""",
+            ),
+            syn_meas[0].set(meas[0] ^ meas[1] ^ meas[2] ^ meas[3]),
+            syn_meas[1].set(meas[1] ^ meas[2] ^ meas[4] ^ meas[5]),
+            syn_meas[2].set(meas[2] ^ meas[3] ^ meas[5] ^ meas[6]),
+            Comment("\nXOR syndromes"),
+        )
+        if check_type not in {"xy", "xz", "yz"}:
             msg = "QEC type not recognized!"
             raise Exception(msg)
 
         if basis == "X":
-            if "x" in self.check_type:
-                qasm_list.append(f"{syn_meas} = {syn_meas} ^ {last_raw_syn_x};")
+            if "x" in check_type:
+                self.extend(
+                    syn_meas.set(syn_meas ^ last_raw_syn_x),
+                )
             else:  # yz
-                qasm_list.append(f"{syn_meas} = {syn_meas} ^ {last_raw_syn_y};")
-                qasm_list.append(f"{syn_meas} = {syn_meas} ^ {last_raw_syn_z};")
-
+                self.extend(
+                    syn_meas.set(syn_meas ^ last_raw_syn_y),
+                    syn_meas.set(syn_meas ^ last_raw_syn_z),
+                )
         elif basis == "Y":
-            if "y" in self.check_type:
-                qasm_list.append(f"{syn_meas} = {syn_meas} ^ {last_raw_syn_y};")
+            if "y" in check_type:
+                self.extend(
+                    syn_meas.set(syn_meas ^ last_raw_syn_y),
+                )
             else:  # xz
-                qasm_list.append(f"{syn_meas} = {syn_meas} ^ {last_raw_syn_x};")
-                qasm_list.append(f"{syn_meas} = {syn_meas} ^ {last_raw_syn_z};")
+                self.extend(
+                    syn_meas.set(syn_meas ^ last_raw_syn_x),
+                    syn_meas.set(syn_meas ^ last_raw_syn_z),
+                )
 
         elif basis == "Z":
-            if "z" in self.check_type:
-                qasm_list.append(f"{syn_meas} = {syn_meas} ^ {last_raw_syn_z};")
+            if "z" in check_type:
+                self.extend(
+                    syn_meas.set(syn_meas ^ last_raw_syn_z),
+                )
             else:  # xy
-                qasm_list.append(f"{syn_meas} = {syn_meas} ^ {last_raw_syn_x};")
-                qasm_list.append(f"{syn_meas} = {syn_meas} ^ {last_raw_syn_y};")
+                self.extend(
+                    syn_meas.set(syn_meas ^ last_raw_syn_x),
+                    syn_meas.set(syn_meas ^ last_raw_syn_y),
+                )
 
         else:
             msg = f"Measurement basis must be X, Y, or Z, not {basis}!"
             raise Exception(msg)
 
-        if self.ft_meas:
-            cor_qasm = f"""
-                // Correct logical output based on measured out syndromes
-                {log} = {log_raw};
-                if({syn_meas} == 2) {log} = {log} ^ 1;
-                if({syn_meas} == 4) {log} = {log} ^ 1;
-                if({syn_meas} == 6) {log} = {log} ^ 1;
-                """
+        if ft_meas:
+            self.extend(
+                Comment("\nCorrect logical output based on measured out syndromes"),
+                log.set(log_raw),
+                If(syn_meas == 2).Then(log.set(log ^ 1)),
+                If(syn_meas == 4).Then(log.set(log ^ 1)),
+                If(syn_meas == 6).Then(log.set(log ^ 1)),
+                Comment(),
+            )
         else:
-            cor_qasm = f"""
-                // non-FT measure out
-                {log} = {log_raw};
-                """
+            self.extend(
+                Comment("\nnon-FT measure out"),
+                log.set(log_raw),
+            )
 
-        qasm_list.extend(util.str2list(cor_qasm))
-
-        qasm_list.append("// Apply Pauli frame update (flip the logical output)")
+        self.extend(Comment("Apply Pauli frame update (flip the logical output)"))
 
         if basis == "X":
-            qasm_list.append("// Update for logical X out")
-            qasm_list.append(f"{log} = {log} ^ {self.pf_z};")
+            self.extend(
+                Comment("Update for logical X out"),
+                log.set(log ^ pf_z),
+            )
         elif basis == "Y":
-            qasm_list.append("// Update for logical Y out")
-            qasm_list.append(f"{log} = {log} ^ {self.pf_x};")
-            qasm_list.append(f"{log} = {log} ^ {self.pf_z};")
+            self.extend(
+                Comment("Update for logical Y out"),
+                log.set(log ^ pf_x),
+                log.set(log ^ pf_z),
+            )
         elif basis == "Z":
-            qasm_list.append("// Update for logical Z out")
-            qasm_list.append(f"{log} = {log} ^ {self.pf_x};")
+            self.extend(
+                Comment("Update for logical Z out"),
+                log.set(log ^ pf_x),
+            )
         else:
             msg = f"Basis `{basis}` not supported!"
             raise Exception(msg)
-
-        return util.rm_white_space(util.list2str(qasm_list))
 
 
 def MeasDecode(
     q: QReg,
     meas_basis: str,
     meas: CReg,
-    log_raw: CReg,
-    log: CReg,
+    log_raw: Bit,
+    log: Bit,
     syn_meas: CReg,
-    pf_x: CReg,
-    pf_z: CReg,
+    pf_x: Bit,
+    pf_z: Bit,
     last_raw_syn_x: CReg,
     last_raw_syn_z: CReg,
 ) -> Block:

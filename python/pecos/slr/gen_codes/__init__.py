@@ -8,33 +8,3 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
-
-from pecos.qeclib.qubit.qgate_base import QGate, TQGate
-
-
-class RXGate(QGate):
-    has_parameters = True
-
-
-RX = RXGate()
-
-
-class RYGate(QGate):
-    has_parameters = True
-
-
-RY = RYGate()
-
-
-class RZGate(QGate):
-    has_parameters = True
-
-
-RZ = RZGate()
-
-
-class RZZGate(TQGate):
-    has_parameters = True
-
-
-RZZ = RZZGate()

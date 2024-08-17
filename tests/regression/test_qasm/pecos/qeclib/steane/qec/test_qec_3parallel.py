@@ -16,6 +16,19 @@ def test_ParallelFlagQECActiveCorrection(compare_qasm):
     pf = CReg("pf_test", 2)
     scratch = CReg("scratch_test", 32)
 
-    block = ParallelFlagQECActiveCorrection(q, a, flag_x, flag_z, flags, syn_x, syn_z, last_raw_syn_x, last_raw_syn_z,
-                                            syndromes, pf[0], pf[1], scratch)
+    block = ParallelFlagQECActiveCorrection(
+        q,
+        a,
+        flag_x,
+        flag_z,
+        flags,
+        syn_x,
+        syn_z,
+        last_raw_syn_x,
+        last_raw_syn_z,
+        syndromes,
+        pf[0],
+        pf[1],
+        scratch,
+    )
     compare_qasm(block)

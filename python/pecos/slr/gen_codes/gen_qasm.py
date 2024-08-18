@@ -92,7 +92,6 @@ class QASMGenerator:
                     self.write(self.generate_op(op))
 
     def generate_op(self, op):
-        print("asdfasdfsa")
         op_name = type(op).__name__
 
         stat = False
@@ -160,7 +159,6 @@ class QASMGenerator:
             op_str = str(op)
 
         elif hasattr(op, "is_qgate") and op.is_qgate:
-            print("TTTTTT")
             stat = True
             op_str = self.process_qgate(op)
 

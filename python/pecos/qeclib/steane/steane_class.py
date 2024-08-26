@@ -39,6 +39,9 @@ class Steane(Vars):
         self.a = ancillas or QReg(f"{name}_a", 3)
         self.c = CReg(f"{name}_c", 32)
 
+        if self.a.size < 3:
+            raise ValueError(f"Steane ancilla registers must have >= 3 qubits (provided: {self.a.size})")
+
         # TODO: Make it so I can put these in self.c... need to convert things like if(c) and c = a ^ b, a = 0;
         #  to allow lists of bits
         self.syn_meas = CReg(f"{name}_syn_meas", 32)

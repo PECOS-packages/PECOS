@@ -33,10 +33,10 @@ class Steane(Vars):
     This represents one particular choice of Steane protocols. For finer control construct your own class
     or utilize the library of Steane code protocols directly."""
 
-    def __init__(self, name: str, default_rus_limit: int = 3):
+    def __init__(self, name: str, default_rus_limit: int = 3, ancillas: QReg | None = None):
         super().__init__()
         self.d = QReg(f"{name}_d", 7)
-        self.a = QReg(f"{name}_a", 3)
+        self.a = ancillas or QReg(f"{name}_a", 3)
         self.c = CReg(f"{name}_c", 32)
 
         # TODO: Make it so I can put these in self.c... need to convert things like if(c) and c = a ^ b, a = 0;
@@ -59,7 +59,6 @@ class Steane(Vars):
 
         self.vars = [
             self.d,
-            self.a,
             self.c,
             self.syn_meas,
             self.last_raw_syn_x,
@@ -74,6 +73,8 @@ class Steane(Vars):
             self.syndromes,
             self.verify_prep,
         ]
+        if ancillas is None:
+            self.vars.append(self.a)
 
         # derived classical registers
         c = self.c

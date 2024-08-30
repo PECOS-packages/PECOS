@@ -241,6 +241,8 @@ class Steane(Vars):
 
     def prep_tdg_plus_state(self, reject: Bit, rus_limit: int | None = None):
         """Prepare logical Tdg|+X> in a fault tolerant manner."""
+        if rus_limit is None:
+            rus_limit = self.default_rus_limit
 
         return Block(
             self.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
@@ -294,6 +296,9 @@ class Steane(Vars):
 
     def t(self, aux: Steane, reject: Bit, rus_limit: int | None):
         """T gate via teleportation using fault-tolerant initialization of the T|+> state."""
+        if rus_limit is None:
+            rus_limit = self.default_rus_limit
+
         block = Block(
             aux.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
             self.cx(aux),
@@ -316,6 +321,9 @@ class Steane(Vars):
 
     def tdg(self, aux: Steane, reject: Bit, rus_limit: int | None):
         """Tdg gate via teleportation using fault-tolerant initialization of the Tdg|+> state."""
+        if rus_limit is None:
+            rus_limit = self.default_rus_limit
+
         block = Block(
             aux.prep_tdg_plus_state(reject=reject, rus_limit=rus_limit),
             self.cx(aux),
@@ -354,6 +362,10 @@ class Steane(Vars):
         This version teleports the logical qubit from the original qubit to the auxiliary logical qubit. For
         convenience, the qubits are relabeled, so you can continue to use the original Steane code logical qubit."""
         warn("Using experimental feature: t_tel", stacklevel=2)
+
+        if rus_limit is None:
+            rus_limit = self.default_rus_limit
+
         block = Block(
             aux.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
             aux.cx(self),
@@ -392,6 +404,10 @@ class Steane(Vars):
         This version teleports the logical qubit from the original qubit to the auxiliary logical qubit. For
         convenience, the qubits are relabeled, so you can continue to use the original Steane code logical qubit."""
         warn("Using experimental feature: tdg_tel", stacklevel=2)
+
+        if rus_limit is None:
+            rus_limit = self.default_rus_limit
+
         block = Block(
             aux.prep_tdg_plus_state(reject=reject, rus_limit=rus_limit),
             aux.cx(self),

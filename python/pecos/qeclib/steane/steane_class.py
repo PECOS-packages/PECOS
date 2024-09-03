@@ -292,7 +292,7 @@ class Steane(Vars):
             If(self.t_meas == 1).Then(self.sz()),
         )
 
-    def t(self, aux: Steane, reject: Bit, rus_limit: int | None):
+    def t(self, aux: Steane, reject: Bit, rus_limit: int | None = None):
         """T gate via teleportation using fault-tolerant initialization of the T|+> state."""
         block = Block(
             aux.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
@@ -314,7 +314,7 @@ class Steane(Vars):
             If(self.tdg_meas == 1).Then(self.szdg()),
         )
 
-    def tdg(self, aux: Steane, reject: Bit, rus_limit: int | None):
+    def tdg(self, aux: Steane, reject: Bit, rus_limit: int | None = None):
         """Tdg gate via teleportation using fault-tolerant initialization of the Tdg|+> state."""
         block = Block(
             aux.prep_tdg_plus_state(reject=reject, rus_limit=rus_limit),
@@ -345,7 +345,7 @@ class Steane(Vars):
             Permute(self.d, aux.d),
         )
 
-    def t_tel(self, aux: Steane, reject: Bit, rus_limit: int | None):
+    def t_tel(self, aux: Steane, reject: Bit, rus_limit: int | None = None):
         """Warning:
             This is experimental.
 
@@ -383,7 +383,7 @@ class Steane(Vars):
             Permute(self.d, aux.d),
         )
 
-    def tdg_tel(self, aux: Steane, reject: Bit, rus_limit: int | None):
+    def tdg_tel(self, aux: Steane, reject: Bit, rus_limit: int | None = None):
         """Warning:
             This is experimental.
 

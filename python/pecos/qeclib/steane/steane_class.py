@@ -62,7 +62,6 @@ class Steane(Vars):
 
         self.vars = [
             self.d,
-            self.a,
             self.c,
             self.syn_meas,
             self.last_raw_syn_x,
@@ -77,6 +76,8 @@ class Steane(Vars):
             self.syndromes,
             self.verify_prep,
         ]
+        if ancillas is None:
+            self.vars.append(self.a)
 
         # derived classical registers
         c = self.c

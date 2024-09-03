@@ -23,7 +23,9 @@ class Vars:
 
     def extend(self, vars_obj: "Vars"):
         if isinstance(vars_obj, Vars):
-            self.vars.extend(vars_obj.vars)
+            # identify and add only new variables
+            new_vars = [var for var in vars_obj.vars if var not in self]
+            self.vars.extend(new_vars)
         else:
             msg = f"Was expecting a Vars object. Instead got type: {type(vars_obj)}"
             raise TypeError(msg)
@@ -48,6 +50,9 @@ class Vars:
 
     def __iter__(self):
         return iter(self.vars)
+
+    def __contains__(self, var: object) -> bool:
+        return any(var is self_var for self_var in self.vars)
 
 
 class Var: ...

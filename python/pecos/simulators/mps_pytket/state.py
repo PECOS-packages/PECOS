@@ -60,11 +60,12 @@ class MPS(StateTN):
         # Initialise the MPS on state |0>
         self.reset()
 
-    def reset(self) -> None:
+    def reset(self) -> StateTN:
         """Reset the quantum state to all 0 for another run."""
         qubits = [Qubit(q) for q in range(self.num_qubits)]
         self.mps = MPSxGate(self.libhandle, qubits, self.config)
-        self.mps._logger.debug("Resetting MPS...")  # noqa: SLF001
+        self.mps._logger.info("Resetting MPS...")  # noqa: SLF001
+        return self
 
     def __del__(self) -> None:
         # CuPy will release GPU memory when the variable ``self.mps`` is no longer

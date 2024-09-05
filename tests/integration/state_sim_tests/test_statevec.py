@@ -19,72 +19,34 @@ if TYPE_CHECKING:
     from pecos.simulators.sim_class_types import StateVector
 
 import json
-from importlib.metadata import version
 from pathlib import Path
 
 import numpy as np
 import pytest
-from packaging.version import parse as vparse
 from pecos.circuits import QuantumCircuit
 from pecos.engines.hybrid_engine import HybridEngine
 from pecos.error_models.generic_error_model import GenericErrorModel
-from pecos.simulators import BasicSV
+from pecos.simulators import (
+    MPS,
+    BasicSV,
+    CuStateVec,
+    QuEST,
+    Qulacs,
+)
 
-# Try to import the requirements for Qulacs
-try:
-    from pecos.simulators import Qulacs
-
-    qulacs_ready = True
-except ImportError:
-    qulacs_ready = False
-
-# Try to import the requirements for QuEST
-try:
-    from pecos.simulators import QuEST
-
-    quest_ready = True
-except ImportError:
-    quest_ready = False
-
-# Try to import the requirements for CuStateVec
-try:
-    import cuquantum
-
-    imported_cuquantum = vparse(cuquantum._version.__version__) >= vparse("24.03.0")  # noqa: SLF001
-    import cupy as cp  # noqa: F401
-
-    imported_cupy = vparse(version("cupy")) >= vparse("10.4.0")
-    from pecos.simulators import CuStateVec
-
-    custatevec_ready = imported_cuquantum and imported_cupy
-except (ImportError, AttributeError):
-    custatevec_ready = False
-
-# Try to import pytket-cutensornet
-try:
-    import pytket.extensions.cutensornet  # noqa: F401
-    from pecos.simulators import MPS
-
-    mps_ready = imported_cuquantum and imported_cupy  # Same requirements as CuStateVec
-except ImportError:
-    mps_ready = False
+str_to_sim = {
+    "BasicSV": BasicSV,
+    "Qulacs": Qulacs,
+    "QuEST": QuEST,
+    "CuStateVec": CuStateVec,
+    "MPS": MPS,
+}
 
 
 def check_dependencies(simulator) -> Callable[[int], StateVector]:
-    if simulator == "BasicSV":
-        sim = BasicSV
-    elif simulator == "Qulacs" and qulacs_ready:
-        sim = Qulacs
-    elif simulator == "QuEST" and quest_ready:
-        sim = QuEST
-    elif simulator == "CuStateVec" and custatevec_ready:
-        sim = CuStateVec
-    elif simulator == "MPS" and mps_ready:
-        sim = MPS
-    else:
+    if simulator not in str_to_sim or str_to_sim[simulator] is None:
         pytest.skip(f"Requirements to test {simulator} are not met.")
-
-    return sim
+    return str_to_sim[simulator]
 
 
 def verify(simulator, qc: QuantumCircuit, final_vector: np.ndarray) -> None:

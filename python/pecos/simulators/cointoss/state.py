@@ -48,3 +48,8 @@ class CoinToss(Simulator):
         self.bindings = bindings.gate_dict
         self.num_qubits = num_qubits
         self.prob = prob
+
+    def reset(self):
+        """Reset the quantum state for another run without reinitializing."""
+        # Do nothing, this simulator does not keep a state!
+        return self

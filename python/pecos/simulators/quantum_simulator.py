@@ -46,23 +46,7 @@ class QuantumSimulator:
         self.num_qubits = None
         self.state = None
         self.backend = backend
-
-        if backend in {"MPS", "mps"}:
-            self.qsim_params = {
-                k: v
-                for k, v in params.items()
-                if k
-                in {
-                    "chi",
-                    "truncation_fidelity",
-                    "float_precision",
-                    "value_of_zero",
-                    "loglevel",
-                    "seed",
-                }
-            }  # These are listed in the docs for ``Config`` of pytket-cutensornet
-        else:
-            self.qsim_params = {}
+        self.qsim_params = params
 
     def reset(self):
         self.num_qubits = None

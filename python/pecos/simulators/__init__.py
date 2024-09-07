@@ -30,19 +30,19 @@ try:
 
     from pecos.simulators.projectq.state import ProjectQSim  # wrapper for ProjectQ sim
 except ImportError:
-    pass
+    ProjectQSim = None
 
 # Attempt to import optional Qulacs package
-try:  # noqa: SIM105
+try:
     from pecos.simulators.qulacs.state import Qulacs  # wrapper for Qulacs sim
 except ImportError:
-    pass
+    Qulacs = None
 
 # Attempt to import optional QuEST package
-try:  # noqa: SIM105
+try:
     from pecos.simulators.quest.state import QuEST  # wrapper for QuEST sim
 except ImportError:
-    pass
+    QuEST = None
 
 # Attempt to import optional cuquantum and cupy packages
 try:
@@ -50,5 +50,7 @@ try:
     import cuquantum
 
     from pecos.simulators.custatevec.state import CuStateVec  # wrapper for cuQuantum's cuStateVec
+    from pecos.simulators.mps_pytket import MPS  # MPS implementation from pytket-cutensornet
 except ImportError:
-    pass
+    CuStateVec = None
+    MPS = None

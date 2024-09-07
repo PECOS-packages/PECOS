@@ -19,6 +19,11 @@ except ImportError:
     ProjectQSim = None
 
 try:
+    from pecos.simulators import MPS
+except ImportError:
+    MPS = None
+
+try:
     from pecos.simulators import Qulacs
 except ImportError:
     Qulacs = None
@@ -37,10 +42,11 @@ from pecos.reps.pypmir.op_types import QOp
 
 
 class QuantumSimulator:
-    def __init__(self, backend: str | object | None = None) -> None:
+    def __init__(self, backend: str | object | None = None, **params) -> None:
         self.num_qubits = None
         self.state = None
         self.backend = backend
+        self.qsim_params = params
 
     def reset(self):
         self.num_qubits = None
@@ -56,6 +62,8 @@ class QuantumSimulator:
                 self.state = Qulacs  # Seems to be the better default choice for now
             elif self.backend == "ProjectQSim":
                 self.state = ProjectQSim
+            elif self.backend in {"MPS", "mps"}:
+                self.state = MPS
             elif self.backend == "Qulacs":
                 self.state = Qulacs
             elif self.backend == "QuEST":
@@ -69,7 +77,7 @@ class QuantumSimulator:
         if self.backend is None:
             self.state = SparseSim
 
-        self.state = self.state(num_qubits=num_qubits)
+        self.state = self.state(num_qubits=num_qubits, **self.qsim_params)
 
     def shot_reinit(self):
         """Run all code needed at the beginning of each shot, e.g., resetting state."""

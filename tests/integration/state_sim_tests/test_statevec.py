@@ -19,61 +19,34 @@ if TYPE_CHECKING:
     from pecos.simulators.sim_class_types import StateVector
 
 import json
-from importlib.metadata import version
 from pathlib import Path
 
 import numpy as np
 import pytest
-from packaging.version import parse as vparse
 from pecos.circuits import QuantumCircuit
 from pecos.engines.hybrid_engine import HybridEngine
 from pecos.error_models.generic_error_model import GenericErrorModel
-from pecos.simulators import BasicSV
+from pecos.simulators import (
+    MPS,
+    BasicSV,
+    CuStateVec,
+    QuEST,
+    Qulacs,
+)
 
-# Try to import the requirements for Qulacs
-try:
-    from pecos.simulators import Qulacs
-
-    qulacs_ready = True
-except ImportError:
-    qulacs_ready = False
-
-# Try to import the requirements for QuEST
-try:
-    from pecos.simulators import QuEST
-
-    quest_ready = True
-except ImportError:
-    quest_ready = False
-
-# Try to import the requirements for CuStateVec
-try:
-    import cuquantum
-
-    imported_cuquantum = vparse(cuquantum._version.__version__) >= vparse("24.03.0")  # noqa: SLF001
-    import cupy as cp  # noqa: F401
-
-    imported_cupy = vparse(version("cupy")) >= vparse("10.4.0")
-    from pecos.simulators import CuStateVec
-
-    custatevec_ready = imported_cuquantum and imported_cupy
-except (ImportError, AttributeError):
-    custatevec_ready = False
+str_to_sim = {
+    "BasicSV": BasicSV,
+    "Qulacs": Qulacs,
+    "QuEST": QuEST,
+    "CuStateVec": CuStateVec,
+    "MPS": MPS,
+}
 
 
 def check_dependencies(simulator) -> Callable[[int], StateVector]:
-    if simulator == "BasicSV":
-        sim = BasicSV
-    elif simulator == "Qulacs" and qulacs_ready:
-        sim = Qulacs
-    elif simulator == "QuEST" and quest_ready:
-        sim = QuEST
-    elif simulator == "CuStateVec" and custatevec_ready:
-        sim = CuStateVec
-    else:
+    if simulator not in str_to_sim or str_to_sim[simulator] is None:
         pytest.skip(f"Requirements to test {simulator} are not met.")
-
-    return sim
+    return str_to_sim[simulator]
 
 
 def verify(simulator, qc: QuantumCircuit, final_vector: np.ndarray) -> None:
@@ -141,6 +114,7 @@ def generate_random_state(seed=None) -> QuantumCircuit:
         "Qulacs",
         "QuEST",
         "CuStateVec",
+        "MPS",
     ],
 )
 def test_init(simulator):
@@ -160,6 +134,7 @@ def test_init(simulator):
         "Qulacs",
         "QuEST",
         "CuStateVec",
+        "MPS",
     ],
 )
 def test_H_measure(simulator):
@@ -177,6 +152,7 @@ def test_H_measure(simulator):
         "Qulacs",
         "QuEST",
         "CuStateVec",
+        "MPS",
     ],
 )
 def test_comp_basis_circ_and_measure(simulator):
@@ -245,6 +221,7 @@ def test_comp_basis_circ_and_measure(simulator):
         "Qulacs",
         "QuEST",
         "CuStateVec",
+        "MPS",
     ],
 )
 def test_all_gate_circ(simulator):
@@ -336,6 +313,7 @@ def test_all_gate_circ(simulator):
 @pytest.mark.parametrize(
     "simulator",
     [
+        "MPS",
         "Qulacs",
         "QuEST",
         "CuStateVec",
@@ -360,6 +338,7 @@ def test_hybrid_engine_no_noise(simulator):
 @pytest.mark.parametrize(
     "simulator",
     [
+        "MPS",
         "Qulacs",
         "QuEST",
         "CuStateVec",

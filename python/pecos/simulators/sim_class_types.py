@@ -33,6 +33,13 @@ class StateVector(Simulator):
         super().__init__()
 
 
+class StateTN(Simulator):
+    """Base class for simulators whose state is represented as a tensor network."""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+
 class DensityMatrix(Simulator):
     """Base class for density-matrix simulators."""
 

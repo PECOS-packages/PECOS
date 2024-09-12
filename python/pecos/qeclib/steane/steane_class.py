@@ -62,22 +62,28 @@ class Steane(Vars):
 
         self.vars = [
             self.d,
-            self.c,
-            self.syn_meas,
-            self.last_raw_syn_x,
-            self.last_raw_syn_z,
-            self.scratch,
-            self.flag_x,
-            self.flag_z,
-            self.flags,
-            self.raw_meas,
-            self.syn_x,
-            self.syn_z,
-            self.syndromes,
-            self.verify_prep,
         ]
+
         if ancillas is None:
             self.vars.append(self.a)
+
+        self.vars.extend(
+            [
+                self.c,
+                self.syn_meas,
+                self.last_raw_syn_x,
+                self.last_raw_syn_z,
+                self.scratch,
+                self.flag_x,
+                self.flag_z,
+                self.flags,
+                self.raw_meas,
+                self.syn_x,
+                self.syn_z,
+                self.syndromes,
+                self.verify_prep,
+            ]
+        )
 
         # derived classical registers
         c = self.c

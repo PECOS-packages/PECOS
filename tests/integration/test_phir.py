@@ -51,10 +51,7 @@ spec_example_phir = json.load(Path.open(this_dir / "phir/spec_example.json"))
 def is_wasmer_supported():
     """A check on whether Wasmer is known to support OS/Python versions."""
 
-    if WASMER_ERR_MSG == "Wasmer is not available on this system":
-        return False
-
-    return True
+    return WASMER_ERR_MSG != "Wasmer is not available on this system"
 
 
 @pytest.mark.wasmtime()

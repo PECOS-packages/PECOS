@@ -9,14 +9,18 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""
-Fundamental definitions for HYQC.
-"""
+
+class Node:
+    """Base language object"""
 
 
-class Statement:
-    """Statements are something that do something."""
+class Operation(Node):
+    """A fundamental unit of work."""
 
 
-class Expression:
-    """Expressions are something that evaluate to a values."""
+class Statement(Operation):
+    """Statements are units that do something."""
+
+
+class Expression(Operation):
+    """Expressions are operations that evaluate to a values."""

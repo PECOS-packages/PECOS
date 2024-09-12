@@ -68,7 +68,7 @@ class DepolarModel(ParentErrorModel):
 
         self.gen = self.generator_class()
         self.gen.set_gate_group("measurements", self.measurements)
-        self.gen.set_gate_group("inits", self.inits)
+        self.gen.set_gate_group("preps", self.inits)
         self.gen.set_gate_group("two_qubits", self.two_qubits)
 
         xerror = self.gen.ErrorStaticSymbol("X")
@@ -118,17 +118,17 @@ class DepolarModel(ParentErrorModel):
         else:
             raise Exception("Can not handle model_level == %s" % model_level)
 
-        # If errors need to be perpendicular to inits and measurements.
+        # If errors need to be perpendicular to preps and measurements.
         if self.perp_errors and model_level != "code_capacity":
             self.gen.set_gate_error("measure X", zerror_before.error_func)
             self.gen.set_gate_error("measure Y", zerror_before.error_func)
             self.gen.set_gate_error("measure Z", xerror_before.error_func)
 
             if model_level == "circuit":
-                self.gen.set_gate_group("Z on inits", {"init |+>", "init |->", "init |+i>", "init |-i>"})
-                self.gen.set_gate_group("X on inits", {"init |0>", "init |1>"})
-                self.gen.set_group_error("Z on inits", zerror.error_func)
-                self.gen.set_group_error("X on inits", xerror.error_func)
+                self.gen.set_gate_group("Z on preps", {"init |+>", "init |->", "init |+i>", "init |-i>"})
+                self.gen.set_gate_group("X on preps", {"init |0>", "init |1>"})
+                self.gen.set_group_error("Z on preps", zerror.error_func)
+                self.gen.set_group_error("X on preps", xerror.error_func)
 
         if has_idle_errors:
             self.gen.set_gate_error("idle", pauli_errors.error_func)

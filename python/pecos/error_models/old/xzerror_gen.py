@@ -61,7 +61,7 @@ class XZModel(ParentErrorModel):
 
         self.gen = self.generator_class()
         self.gen.set_gate_group("measurements", self.measurements)
-        self.gen.set_gate_group("inits", self.inits)
+        self.gen.set_gate_group("preps", self.inits)
         self.gen.set_gate_group("two_qubits", self.two_qubits)
 
         xerror = self.gen.ErrorStaticSymbol("X")
@@ -111,7 +111,7 @@ class XZModel(ParentErrorModel):
         else:
             raise Exception("Can not handle model_level == %s" % model_level)
 
-        # If errors need to be perpendicular to inits and measurements.
+        # If errors need to be perpendicular to preps and measurements.
         if self.perp_error and model_level != "code_capacity":
             self.gen.set_gate_error("measure X", zerror_before.error_func)
             self.gen.set_gate_error("measure Y", zerror_before.error_func)

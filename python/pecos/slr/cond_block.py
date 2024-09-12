@@ -14,6 +14,7 @@ from pecos.slr.block import Block
 
 
 class CondBlock(Block):
+
     def __init__(self, *args, cond=None, ops=None):
         if cond is None and args:
             if len(args) > 1:
@@ -34,6 +35,7 @@ class CondBlock(Block):
 
 
 class If(CondBlock):
+
     def __init__(self, *args, cond=None, then_block=None, else_block=None):
         super().__init__(*args, cond=cond, ops=then_block)
         self.else_block = None if else_block is None else self.Else(else_block)
@@ -45,27 +47,9 @@ class If(CondBlock):
     def Else(self, *args):
         raise NotImplementedError
 
-    def qasm(self):
-        qasm = []
-
-        cond = self.cond.qasm()
-
-        for op in self.ops:
-            for q in op.qasm().split("\n"):
-                # TODO: Make this more eloquent....
-                q = q.strip()
-                if q != "" and not q.startswith("//"):
-                    for qi in q.split(";"):
-                        qi = qi.strip()
-                        if qi != "" and not qi.startswith("//"):
-                            qasm.append(f"if({cond}) {qi};")
-                else:
-                    qasm.append(q)
-
-        return "\n".join(qasm)
-
 
 class Repeat(CondBlock):
+
     def __init__(self, cond=None):
         if not isinstance(cond, int):
             msg = f"Condition for Repeat block must be an int! Got type: {type(cond)}"
@@ -75,10 +59,3 @@ class Repeat(CondBlock):
     def block(self, *args):
         super()._extend(*args)
         return self
-
-    def qasm(self):
-        qasm = []
-        for _ in range(self.cond):
-            for op in self.ops:
-                qasm.append(op.qasm())
-        return "\n".join(qasm)

@@ -10,7 +10,9 @@
 # specific language governing permissions and limitations under the License.
 
 
-from pecos.slr.cops import PyCOp
+from pecos.slr.cops import SET, PyCOp
+
+# TODO: Make it a VarDef
 
 
 class Vars:
@@ -44,13 +46,15 @@ class Vars:
             if v.sym == sym:
                 return v
 
+    def __iter__(self):
+        return iter(self.vars)
+
 
 class Var: ...
 
 
 class Reg(Var):
-    def __init__(self, type_ste: str, sym: str, size: int, elem_type: type["Elem"]) -> None:
-        self.type_str = type_ste
+    def __init__(self, sym: str, size: int, elem_type: type["Elem"]) -> None:
         self.sym = sym
         self.size = size
         self.elems = []
@@ -62,8 +66,8 @@ class Reg(Var):
     def new_elem(self, item):
         return self.elem_type(self, item)
 
-    def qasm(self):
-        return f"{self.type_str} {self.sym}[{self.size}];"
+    def set(self, other):
+        return SET(self, other)
 
     def __getitem__(self, item):
         return self.elems[item]
@@ -85,12 +89,14 @@ class Elem(Var):
         self.reg = reg
         self.index = idx
 
+    def set(self, other):
+        return SET(self, other)
+
     def __getitem__(self, item: int):
         msg = f"'{self.__class__.__name__}' object is not subscriptable"
         raise TypeError(msg)
 
     def __repr__(self):
-        # f'<{self.__class__.__name__} {self.index} of {self.int.__repr__()[1:-1]}>'
         return f"<{self.__class__.__name__} {self.index} of {self.reg.sym}>"
 
     def __str__(self):
@@ -99,7 +105,7 @@ class Elem(Var):
 
 class QReg(Reg):
     def __init__(self, sym: str, size: int) -> None:
-        super().__init__("qreg", sym, size, elem_type=Qubit)
+        super().__init__(sym, size, elem_type=Qubit)
 
 
 class Qubit(Elem):
@@ -117,7 +123,7 @@ class CReg(Reg, PyCOp):
             size:
         """
 
-        super().__init__("creg", sym, size, elem_type=Bit)
+        super().__init__(sym, size, elem_type=Bit)
 
 
 class Bit(Elem, PyCOp):

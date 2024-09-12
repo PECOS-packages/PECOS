@@ -30,7 +30,7 @@ def main():
 
         p = subprocess.Popen(
             "python setup.py build_ext --inplace",  # noqa: S607
-            shell=True,
+            shell=True,  # noqa: S602
             cwd=path,
             stderr=subprocess.PIPE,
         )

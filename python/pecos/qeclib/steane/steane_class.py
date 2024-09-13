@@ -105,7 +105,7 @@ class Steane(Vars):
 
         match state:
             case "+X" | "X":
-                return self.pz(rus_limit=rus_limit)
+                return self.px(rus_limit=rus_limit)
             case "-X":
                 return self.pnx(rus_limit=rus_limit)
             case "+Y" | "Y":

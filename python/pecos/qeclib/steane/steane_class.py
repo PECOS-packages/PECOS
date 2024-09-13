@@ -331,7 +331,7 @@ class Steane(Vars):
             aux.prep_tdg_plus_state(reject=reject, rus_limit=rus_limit),
             self.cx(aux),
             aux.mz(self.tdg_meas),
-            If(self.t_meas == 1).Then(self.szdg()),  # SZdg/Sdg correction.
+            If(self.tdg_meas == 1).Then(self.szdg()),  # SZdg/Sdg correction.
         )
 
         if reject is not None:

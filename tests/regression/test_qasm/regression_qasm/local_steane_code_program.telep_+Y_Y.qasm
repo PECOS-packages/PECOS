@@ -72,59 +72,59 @@ barrier smid_a[0], smid_d[1], smid_d[3], smid_d[5];
 cx smid_d[5], smid_a[0];
 cx smid_d[1], smid_a[0];
 cx smid_d[3], smid_a[0];
-measure smid_a[0] -> smid_c[0];
+measure smid_a[0] -> smid_verify_prep[0];
 
 
-if(smid_c[0] == 1) barrier smid_d[0], smid_d[1], smid_d[2], smid_d[3], smid_d[4], smid_d[5], smid_d[6], smid_a[0];
+if(smid_verify_prep[0] == 1) barrier smid_d[0], smid_d[1], smid_d[2], smid_d[3], smid_d[4], smid_d[5], smid_d[6], smid_a[0];
 
-if(smid_c[0] == 1) reset smid_d;
-if(smid_c[0] == 1) reset smid_a[0];
-if(smid_c[0] == 1) barrier smid_d, smid_a[0];
-if(smid_c[0] == 1) h smid_d[0];
-if(smid_c[0] == 1) h smid_d[4];
-if(smid_c[0] == 1) h smid_d[6];
+if(smid_verify_prep[0] == 1) reset smid_d;
+if(smid_verify_prep[0] == 1) reset smid_a[0];
+if(smid_verify_prep[0] == 1) barrier smid_d, smid_a[0];
+if(smid_verify_prep[0] == 1) h smid_d[0];
+if(smid_verify_prep[0] == 1) h smid_d[4];
+if(smid_verify_prep[0] == 1) h smid_d[6];
 
-if(smid_c[0] == 1) cx smid_d[4], smid_d[5];
-if(smid_c[0] == 1) cx smid_d[0], smid_d[1];
-if(smid_c[0] == 1) cx smid_d[6], smid_d[3];
-if(smid_c[0] == 1) cx smid_d[4], smid_d[2];
-if(smid_c[0] == 1) cx smid_d[6], smid_d[5];
-if(smid_c[0] == 1) cx smid_d[0], smid_d[3];
-if(smid_c[0] == 1) cx smid_d[4], smid_d[1];
-if(smid_c[0] == 1) cx smid_d[3], smid_d[2];
+if(smid_verify_prep[0] == 1) cx smid_d[4], smid_d[5];
+if(smid_verify_prep[0] == 1) cx smid_d[0], smid_d[1];
+if(smid_verify_prep[0] == 1) cx smid_d[6], smid_d[3];
+if(smid_verify_prep[0] == 1) cx smid_d[4], smid_d[2];
+if(smid_verify_prep[0] == 1) cx smid_d[6], smid_d[5];
+if(smid_verify_prep[0] == 1) cx smid_d[0], smid_d[3];
+if(smid_verify_prep[0] == 1) cx smid_d[4], smid_d[1];
+if(smid_verify_prep[0] == 1) cx smid_d[3], smid_d[2];
 
-if(smid_c[0] == 1) barrier smid_a[0], smid_d[1], smid_d[3], smid_d[5];
+if(smid_verify_prep[0] == 1) barrier smid_a[0], smid_d[1], smid_d[3], smid_d[5];
 // verification step
-if(smid_c[0] == 1) cx smid_d[5], smid_a[0];
-if(smid_c[0] == 1) cx smid_d[1], smid_a[0];
-if(smid_c[0] == 1) cx smid_d[3], smid_a[0];
-if(smid_c[0] == 1) measure smid_a[0] -> smid_c[0];
+if(smid_verify_prep[0] == 1) cx smid_d[5], smid_a[0];
+if(smid_verify_prep[0] == 1) cx smid_d[1], smid_a[0];
+if(smid_verify_prep[0] == 1) cx smid_d[3], smid_a[0];
+if(smid_verify_prep[0] == 1) measure smid_a[0] -> smid_verify_prep[0];
 
 
-if(smid_c[0] == 1) barrier smid_d[0], smid_d[1], smid_d[2], smid_d[3], smid_d[4], smid_d[5], smid_d[6], smid_a[0];
+if(smid_verify_prep[0] == 1) barrier smid_d[0], smid_d[1], smid_d[2], smid_d[3], smid_d[4], smid_d[5], smid_d[6], smid_a[0];
 
-if(smid_c[0] == 1) reset smid_d;
-if(smid_c[0] == 1) reset smid_a[0];
-if(smid_c[0] == 1) barrier smid_d, smid_a[0];
-if(smid_c[0] == 1) h smid_d[0];
-if(smid_c[0] == 1) h smid_d[4];
-if(smid_c[0] == 1) h smid_d[6];
+if(smid_verify_prep[0] == 1) reset smid_d;
+if(smid_verify_prep[0] == 1) reset smid_a[0];
+if(smid_verify_prep[0] == 1) barrier smid_d, smid_a[0];
+if(smid_verify_prep[0] == 1) h smid_d[0];
+if(smid_verify_prep[0] == 1) h smid_d[4];
+if(smid_verify_prep[0] == 1) h smid_d[6];
 
-if(smid_c[0] == 1) cx smid_d[4], smid_d[5];
-if(smid_c[0] == 1) cx smid_d[0], smid_d[1];
-if(smid_c[0] == 1) cx smid_d[6], smid_d[3];
-if(smid_c[0] == 1) cx smid_d[4], smid_d[2];
-if(smid_c[0] == 1) cx smid_d[6], smid_d[5];
-if(smid_c[0] == 1) cx smid_d[0], smid_d[3];
-if(smid_c[0] == 1) cx smid_d[4], smid_d[1];
-if(smid_c[0] == 1) cx smid_d[3], smid_d[2];
+if(smid_verify_prep[0] == 1) cx smid_d[4], smid_d[5];
+if(smid_verify_prep[0] == 1) cx smid_d[0], smid_d[1];
+if(smid_verify_prep[0] == 1) cx smid_d[6], smid_d[3];
+if(smid_verify_prep[0] == 1) cx smid_d[4], smid_d[2];
+if(smid_verify_prep[0] == 1) cx smid_d[6], smid_d[5];
+if(smid_verify_prep[0] == 1) cx smid_d[0], smid_d[3];
+if(smid_verify_prep[0] == 1) cx smid_d[4], smid_d[1];
+if(smid_verify_prep[0] == 1) cx smid_d[3], smid_d[2];
 
-if(smid_c[0] == 1) barrier smid_a[0], smid_d[1], smid_d[3], smid_d[5];
+if(smid_verify_prep[0] == 1) barrier smid_a[0], smid_d[1], smid_d[3], smid_d[5];
 // verification step
-if(smid_c[0] == 1) cx smid_d[5], smid_a[0];
-if(smid_c[0] == 1) cx smid_d[1], smid_a[0];
-if(smid_c[0] == 1) cx smid_d[3], smid_a[0];
-if(smid_c[0] == 1) measure smid_a[0] -> smid_c[0];
+if(smid_verify_prep[0] == 1) cx smid_d[5], smid_a[0];
+if(smid_verify_prep[0] == 1) cx smid_d[1], smid_a[0];
+if(smid_verify_prep[0] == 1) cx smid_d[3], smid_a[0];
+if(smid_verify_prep[0] == 1) measure smid_a[0] -> smid_verify_prep[0];
 
 
 
@@ -151,59 +151,59 @@ barrier sout_a[0], sout_d[1], sout_d[3], sout_d[5];
 cx sout_d[5], sout_a[0];
 cx sout_d[1], sout_a[0];
 cx sout_d[3], sout_a[0];
-measure sout_a[0] -> sout_c[0];
+measure sout_a[0] -> sout_verify_prep[0];
 
 
-if(sout_c[0] == 1) barrier sout_d[0], sout_d[1], sout_d[2], sout_d[3], sout_d[4], sout_d[5], sout_d[6], sout_a[0];
+if(sout_verify_prep[0] == 1) barrier sout_d[0], sout_d[1], sout_d[2], sout_d[3], sout_d[4], sout_d[5], sout_d[6], sout_a[0];
 
-if(sout_c[0] == 1) reset sout_d;
-if(sout_c[0] == 1) reset sout_a[0];
-if(sout_c[0] == 1) barrier sout_d, sout_a[0];
-if(sout_c[0] == 1) h sout_d[0];
-if(sout_c[0] == 1) h sout_d[4];
-if(sout_c[0] == 1) h sout_d[6];
+if(sout_verify_prep[0] == 1) reset sout_d;
+if(sout_verify_prep[0] == 1) reset sout_a[0];
+if(sout_verify_prep[0] == 1) barrier sout_d, sout_a[0];
+if(sout_verify_prep[0] == 1) h sout_d[0];
+if(sout_verify_prep[0] == 1) h sout_d[4];
+if(sout_verify_prep[0] == 1) h sout_d[6];
 
-if(sout_c[0] == 1) cx sout_d[4], sout_d[5];
-if(sout_c[0] == 1) cx sout_d[0], sout_d[1];
-if(sout_c[0] == 1) cx sout_d[6], sout_d[3];
-if(sout_c[0] == 1) cx sout_d[4], sout_d[2];
-if(sout_c[0] == 1) cx sout_d[6], sout_d[5];
-if(sout_c[0] == 1) cx sout_d[0], sout_d[3];
-if(sout_c[0] == 1) cx sout_d[4], sout_d[1];
-if(sout_c[0] == 1) cx sout_d[3], sout_d[2];
+if(sout_verify_prep[0] == 1) cx sout_d[4], sout_d[5];
+if(sout_verify_prep[0] == 1) cx sout_d[0], sout_d[1];
+if(sout_verify_prep[0] == 1) cx sout_d[6], sout_d[3];
+if(sout_verify_prep[0] == 1) cx sout_d[4], sout_d[2];
+if(sout_verify_prep[0] == 1) cx sout_d[6], sout_d[5];
+if(sout_verify_prep[0] == 1) cx sout_d[0], sout_d[3];
+if(sout_verify_prep[0] == 1) cx sout_d[4], sout_d[1];
+if(sout_verify_prep[0] == 1) cx sout_d[3], sout_d[2];
 
-if(sout_c[0] == 1) barrier sout_a[0], sout_d[1], sout_d[3], sout_d[5];
+if(sout_verify_prep[0] == 1) barrier sout_a[0], sout_d[1], sout_d[3], sout_d[5];
 // verification step
-if(sout_c[0] == 1) cx sout_d[5], sout_a[0];
-if(sout_c[0] == 1) cx sout_d[1], sout_a[0];
-if(sout_c[0] == 1) cx sout_d[3], sout_a[0];
-if(sout_c[0] == 1) measure sout_a[0] -> sout_c[0];
+if(sout_verify_prep[0] == 1) cx sout_d[5], sout_a[0];
+if(sout_verify_prep[0] == 1) cx sout_d[1], sout_a[0];
+if(sout_verify_prep[0] == 1) cx sout_d[3], sout_a[0];
+if(sout_verify_prep[0] == 1) measure sout_a[0] -> sout_verify_prep[0];
 
 
-if(sout_c[0] == 1) barrier sout_d[0], sout_d[1], sout_d[2], sout_d[3], sout_d[4], sout_d[5], sout_d[6], sout_a[0];
+if(sout_verify_prep[0] == 1) barrier sout_d[0], sout_d[1], sout_d[2], sout_d[3], sout_d[4], sout_d[5], sout_d[6], sout_a[0];
 
-if(sout_c[0] == 1) reset sout_d;
-if(sout_c[0] == 1) reset sout_a[0];
-if(sout_c[0] == 1) barrier sout_d, sout_a[0];
-if(sout_c[0] == 1) h sout_d[0];
-if(sout_c[0] == 1) h sout_d[4];
-if(sout_c[0] == 1) h sout_d[6];
+if(sout_verify_prep[0] == 1) reset sout_d;
+if(sout_verify_prep[0] == 1) reset sout_a[0];
+if(sout_verify_prep[0] == 1) barrier sout_d, sout_a[0];
+if(sout_verify_prep[0] == 1) h sout_d[0];
+if(sout_verify_prep[0] == 1) h sout_d[4];
+if(sout_verify_prep[0] == 1) h sout_d[6];
 
-if(sout_c[0] == 1) cx sout_d[4], sout_d[5];
-if(sout_c[0] == 1) cx sout_d[0], sout_d[1];
-if(sout_c[0] == 1) cx sout_d[6], sout_d[3];
-if(sout_c[0] == 1) cx sout_d[4], sout_d[2];
-if(sout_c[0] == 1) cx sout_d[6], sout_d[5];
-if(sout_c[0] == 1) cx sout_d[0], sout_d[3];
-if(sout_c[0] == 1) cx sout_d[4], sout_d[1];
-if(sout_c[0] == 1) cx sout_d[3], sout_d[2];
+if(sout_verify_prep[0] == 1) cx sout_d[4], sout_d[5];
+if(sout_verify_prep[0] == 1) cx sout_d[0], sout_d[1];
+if(sout_verify_prep[0] == 1) cx sout_d[6], sout_d[3];
+if(sout_verify_prep[0] == 1) cx sout_d[4], sout_d[2];
+if(sout_verify_prep[0] == 1) cx sout_d[6], sout_d[5];
+if(sout_verify_prep[0] == 1) cx sout_d[0], sout_d[3];
+if(sout_verify_prep[0] == 1) cx sout_d[4], sout_d[1];
+if(sout_verify_prep[0] == 1) cx sout_d[3], sout_d[2];
 
-if(sout_c[0] == 1) barrier sout_a[0], sout_d[1], sout_d[3], sout_d[5];
+if(sout_verify_prep[0] == 1) barrier sout_a[0], sout_d[1], sout_d[3], sout_d[5];
 // verification step
-if(sout_c[0] == 1) cx sout_d[5], sout_a[0];
-if(sout_c[0] == 1) cx sout_d[1], sout_a[0];
-if(sout_c[0] == 1) cx sout_d[3], sout_a[0];
-if(sout_c[0] == 1) measure sout_a[0] -> sout_c[0];
+if(sout_verify_prep[0] == 1) cx sout_d[5], sout_a[0];
+if(sout_verify_prep[0] == 1) cx sout_d[1], sout_a[0];
+if(sout_verify_prep[0] == 1) cx sout_d[3], sout_a[0];
+if(sout_verify_prep[0] == 1) measure sout_a[0] -> sout_verify_prep[0];
 
 
 barrier smid_d, sout_d;

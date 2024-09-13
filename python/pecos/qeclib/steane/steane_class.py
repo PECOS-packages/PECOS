@@ -88,7 +88,6 @@ class Steane(Vars):
 
         # derived classical registers
         c = self.c
-        self.c_init = c[0]
         self.log_raw = c[1]
         self.log = c[2]
         self.pf_x = c[3]
@@ -189,7 +188,7 @@ class Steane(Vars):
         return PrepRUS(
             q=self.d,
             a=self.a[0],
-            init=self.c_init,
+            init=self.verify_prep[0],
             limit=rus_limit,
             state="+Z",
             first_round_reset=True,
@@ -204,7 +203,7 @@ class Steane(Vars):
         return PrepRUS(
             q=self.d,
             a=self.a[0],
-            init=self.c_init,
+            init=self.verify_prep[0],
             limit=rus_limit,
             state="-Z",
             first_round_reset=True,

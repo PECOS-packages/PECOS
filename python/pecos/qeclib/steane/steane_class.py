@@ -88,7 +88,6 @@ class Steane(Vars):
 
         # derived classical registers
         c = self.c
-        self.c_init = c[0]
         self.log_raw = c[1]
         self.log = c[2]
         self.pf_x = c[3]
@@ -105,7 +104,7 @@ class Steane(Vars):
 
         match state:
             case "+X" | "X":
-                return self.pz(rus_limit=rus_limit)
+                return self.px(rus_limit=rus_limit)
             case "-X":
                 return self.pnx(rus_limit=rus_limit)
             case "+Y" | "Y":
@@ -189,7 +188,7 @@ class Steane(Vars):
         return PrepRUS(
             q=self.d,
             a=self.a[0],
-            init=self.c_init,
+            init=self.verify_prep[0],
             limit=rus_limit,
             state="+Z",
             first_round_reset=True,
@@ -204,7 +203,7 @@ class Steane(Vars):
         return PrepRUS(
             q=self.d,
             a=self.a[0],
-            init=self.c_init,
+            init=self.verify_prep[0],
             limit=rus_limit,
             state="-Z",
             first_round_reset=True,
@@ -331,7 +330,7 @@ class Steane(Vars):
             aux.prep_tdg_plus_state(reject=reject, rus_limit=rus_limit),
             self.cx(aux),
             aux.mz(self.tdg_meas),
-            If(self.t_meas == 1).Then(self.szdg()),  # SZdg/Sdg correction.
+            If(self.tdg_meas == 1).Then(self.szdg()),  # SZdg/Sdg correction.
         )
 
         if reject is not None:

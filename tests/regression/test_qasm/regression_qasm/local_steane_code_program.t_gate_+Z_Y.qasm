@@ -58,59 +58,59 @@ barrier sin_a[0], sin_d[1], sin_d[3], sin_d[5];
 cx sin_d[5], sin_a[0];
 cx sin_d[1], sin_a[0];
 cx sin_d[3], sin_a[0];
-measure sin_a[0] -> sin_c[0];
+measure sin_a[0] -> sin_verify_prep[0];
 
 
-if(sin_c[0] == 1) barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];
+if(sin_verify_prep[0] == 1) barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];
 
-if(sin_c[0] == 1) reset sin_d;
-if(sin_c[0] == 1) reset sin_a[0];
-if(sin_c[0] == 1) barrier sin_d, sin_a[0];
-if(sin_c[0] == 1) h sin_d[0];
-if(sin_c[0] == 1) h sin_d[4];
-if(sin_c[0] == 1) h sin_d[6];
+if(sin_verify_prep[0] == 1) reset sin_d;
+if(sin_verify_prep[0] == 1) reset sin_a[0];
+if(sin_verify_prep[0] == 1) barrier sin_d, sin_a[0];
+if(sin_verify_prep[0] == 1) h sin_d[0];
+if(sin_verify_prep[0] == 1) h sin_d[4];
+if(sin_verify_prep[0] == 1) h sin_d[6];
 
-if(sin_c[0] == 1) cx sin_d[4], sin_d[5];
-if(sin_c[0] == 1) cx sin_d[0], sin_d[1];
-if(sin_c[0] == 1) cx sin_d[6], sin_d[3];
-if(sin_c[0] == 1) cx sin_d[4], sin_d[2];
-if(sin_c[0] == 1) cx sin_d[6], sin_d[5];
-if(sin_c[0] == 1) cx sin_d[0], sin_d[3];
-if(sin_c[0] == 1) cx sin_d[4], sin_d[1];
-if(sin_c[0] == 1) cx sin_d[3], sin_d[2];
+if(sin_verify_prep[0] == 1) cx sin_d[4], sin_d[5];
+if(sin_verify_prep[0] == 1) cx sin_d[0], sin_d[1];
+if(sin_verify_prep[0] == 1) cx sin_d[6], sin_d[3];
+if(sin_verify_prep[0] == 1) cx sin_d[4], sin_d[2];
+if(sin_verify_prep[0] == 1) cx sin_d[6], sin_d[5];
+if(sin_verify_prep[0] == 1) cx sin_d[0], sin_d[3];
+if(sin_verify_prep[0] == 1) cx sin_d[4], sin_d[1];
+if(sin_verify_prep[0] == 1) cx sin_d[3], sin_d[2];
 
-if(sin_c[0] == 1) barrier sin_a[0], sin_d[1], sin_d[3], sin_d[5];
+if(sin_verify_prep[0] == 1) barrier sin_a[0], sin_d[1], sin_d[3], sin_d[5];
 // verification step
-if(sin_c[0] == 1) cx sin_d[5], sin_a[0];
-if(sin_c[0] == 1) cx sin_d[1], sin_a[0];
-if(sin_c[0] == 1) cx sin_d[3], sin_a[0];
-if(sin_c[0] == 1) measure sin_a[0] -> sin_c[0];
+if(sin_verify_prep[0] == 1) cx sin_d[5], sin_a[0];
+if(sin_verify_prep[0] == 1) cx sin_d[1], sin_a[0];
+if(sin_verify_prep[0] == 1) cx sin_d[3], sin_a[0];
+if(sin_verify_prep[0] == 1) measure sin_a[0] -> sin_verify_prep[0];
 
 
-if(sin_c[0] == 1) barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];
+if(sin_verify_prep[0] == 1) barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];
 
-if(sin_c[0] == 1) reset sin_d;
-if(sin_c[0] == 1) reset sin_a[0];
-if(sin_c[0] == 1) barrier sin_d, sin_a[0];
-if(sin_c[0] == 1) h sin_d[0];
-if(sin_c[0] == 1) h sin_d[4];
-if(sin_c[0] == 1) h sin_d[6];
+if(sin_verify_prep[0] == 1) reset sin_d;
+if(sin_verify_prep[0] == 1) reset sin_a[0];
+if(sin_verify_prep[0] == 1) barrier sin_d, sin_a[0];
+if(sin_verify_prep[0] == 1) h sin_d[0];
+if(sin_verify_prep[0] == 1) h sin_d[4];
+if(sin_verify_prep[0] == 1) h sin_d[6];
 
-if(sin_c[0] == 1) cx sin_d[4], sin_d[5];
-if(sin_c[0] == 1) cx sin_d[0], sin_d[1];
-if(sin_c[0] == 1) cx sin_d[6], sin_d[3];
-if(sin_c[0] == 1) cx sin_d[4], sin_d[2];
-if(sin_c[0] == 1) cx sin_d[6], sin_d[5];
-if(sin_c[0] == 1) cx sin_d[0], sin_d[3];
-if(sin_c[0] == 1) cx sin_d[4], sin_d[1];
-if(sin_c[0] == 1) cx sin_d[3], sin_d[2];
+if(sin_verify_prep[0] == 1) cx sin_d[4], sin_d[5];
+if(sin_verify_prep[0] == 1) cx sin_d[0], sin_d[1];
+if(sin_verify_prep[0] == 1) cx sin_d[6], sin_d[3];
+if(sin_verify_prep[0] == 1) cx sin_d[4], sin_d[2];
+if(sin_verify_prep[0] == 1) cx sin_d[6], sin_d[5];
+if(sin_verify_prep[0] == 1) cx sin_d[0], sin_d[3];
+if(sin_verify_prep[0] == 1) cx sin_d[4], sin_d[1];
+if(sin_verify_prep[0] == 1) cx sin_d[3], sin_d[2];
 
-if(sin_c[0] == 1) barrier sin_a[0], sin_d[1], sin_d[3], sin_d[5];
+if(sin_verify_prep[0] == 1) barrier sin_a[0], sin_d[1], sin_d[3], sin_d[5];
 // verification step
-if(sin_c[0] == 1) cx sin_d[5], sin_a[0];
-if(sin_c[0] == 1) cx sin_d[1], sin_a[0];
-if(sin_c[0] == 1) cx sin_d[3], sin_a[0];
-if(sin_c[0] == 1) measure sin_a[0] -> sin_c[0];
+if(sin_verify_prep[0] == 1) cx sin_d[5], sin_a[0];
+if(sin_verify_prep[0] == 1) cx sin_d[1], sin_a[0];
+if(sin_verify_prep[0] == 1) cx sin_d[3], sin_a[0];
+if(sin_verify_prep[0] == 1) measure sin_a[0] -> sin_verify_prep[0];
 
 
 saux_scratch = 0;
@@ -848,33 +848,33 @@ barrier sin_a[0], sin_d[1], sin_d[3], sin_d[5];
 cx sin_d[5], sin_a[0];
 cx sin_d[1], sin_a[0];
 cx sin_d[3], sin_a[0];
-measure sin_a[0] -> sin_c[0];
+measure sin_a[0] -> sin_verify_prep[0];
 
 
-if(sin_c[0] == 1) barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];
+if(sin_verify_prep[0] == 1) barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];
 
-if(sin_c[0] == 1) reset sin_d;
-if(sin_c[0] == 1) reset sin_a[0];
-if(sin_c[0] == 1) barrier sin_d, sin_a[0];
-if(sin_c[0] == 1) h sin_d[0];
-if(sin_c[0] == 1) h sin_d[4];
-if(sin_c[0] == 1) h sin_d[6];
+if(sin_verify_prep[0] == 1) reset sin_d;
+if(sin_verify_prep[0] == 1) reset sin_a[0];
+if(sin_verify_prep[0] == 1) barrier sin_d, sin_a[0];
+if(sin_verify_prep[0] == 1) h sin_d[0];
+if(sin_verify_prep[0] == 1) h sin_d[4];
+if(sin_verify_prep[0] == 1) h sin_d[6];
 
-if(sin_c[0] == 1) cx sin_d[4], sin_d[5];
-if(sin_c[0] == 1) cx sin_d[0], sin_d[1];
-if(sin_c[0] == 1) cx sin_d[6], sin_d[3];
-if(sin_c[0] == 1) cx sin_d[4], sin_d[2];
-if(sin_c[0] == 1) cx sin_d[6], sin_d[5];
-if(sin_c[0] == 1) cx sin_d[0], sin_d[3];
-if(sin_c[0] == 1) cx sin_d[4], sin_d[1];
-if(sin_c[0] == 1) cx sin_d[3], sin_d[2];
+if(sin_verify_prep[0] == 1) cx sin_d[4], sin_d[5];
+if(sin_verify_prep[0] == 1) cx sin_d[0], sin_d[1];
+if(sin_verify_prep[0] == 1) cx sin_d[6], sin_d[3];
+if(sin_verify_prep[0] == 1) cx sin_d[4], sin_d[2];
+if(sin_verify_prep[0] == 1) cx sin_d[6], sin_d[5];
+if(sin_verify_prep[0] == 1) cx sin_d[0], sin_d[3];
+if(sin_verify_prep[0] == 1) cx sin_d[4], sin_d[1];
+if(sin_verify_prep[0] == 1) cx sin_d[3], sin_d[2];
 
-if(sin_c[0] == 1) barrier sin_a[0], sin_d[1], sin_d[3], sin_d[5];
+if(sin_verify_prep[0] == 1) barrier sin_a[0], sin_d[1], sin_d[3], sin_d[5];
 // verification step
-if(sin_c[0] == 1) cx sin_d[5], sin_a[0];
-if(sin_c[0] == 1) cx sin_d[1], sin_a[0];
-if(sin_c[0] == 1) cx sin_d[3], sin_a[0];
-if(sin_c[0] == 1) measure sin_a[0] -> sin_c[0];
+if(sin_verify_prep[0] == 1) cx sin_d[5], sin_a[0];
+if(sin_verify_prep[0] == 1) cx sin_d[1], sin_a[0];
+if(sin_verify_prep[0] == 1) cx sin_d[3], sin_a[0];
+if(sin_verify_prep[0] == 1) measure sin_a[0] -> sin_verify_prep[0];
 
 
 // Transversal Logical CX

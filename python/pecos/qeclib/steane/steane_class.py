@@ -254,7 +254,7 @@ class Steane(Vars):
 
         return Block(
             self.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
-            self.z(),
+            self.szdg(),
         )
 
     def x(self):

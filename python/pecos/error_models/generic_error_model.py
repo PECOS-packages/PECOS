@@ -18,6 +18,7 @@ import numpy as np
 from pecos.error_models.error_model_abc import ErrorModel
 from pecos.error_models.noise_impl.noise_initz_bitflip_leakage import noise_initz_bitflip_leakage
 from pecos.error_models.noise_impl.noise_meas_bitflip_leakage import noise_meas_bitflip_leakage
+from pecos.error_models.noise_impl.noise_meas_bitflip import noise_meas_bitflip
 from pecos.error_models.noise_impl.noise_sq_depolarizing_leakage import noise_sq_depolarizing_leakage
 from pecos.error_models.noise_impl.noise_tq_depolarizing_leakage import noise_tq_depolarizing_leakage
 from pecos.error_models.noise_impl_old.gate_groups import one_qubits, two_qubits

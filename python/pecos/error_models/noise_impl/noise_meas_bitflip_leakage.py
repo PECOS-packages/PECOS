@@ -51,4 +51,7 @@ def noise_meas_bitflip_leakage(op: QOp, p: float, machine):
         return noise
 
     else:
-        return noise
+        if noise:
+            return noise
+        else:
+            return None

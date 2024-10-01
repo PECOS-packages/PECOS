@@ -42,8 +42,7 @@ def noise_meas_bitflip(op: QOp, p: float):
         )
         noisy_op.metadata["bitflips"] = bitflips
         noise.append(noisy_op)
-
         return noise
 
     else:
-        return noise
+        return None

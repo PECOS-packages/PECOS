@@ -97,115 +97,94 @@ class Steane(Vars):
 
         self.default_rus_limit = default_rus_limit
 
-    def p(self, state: str, rus_limit: int | None = None):
+    def p(self, state: str, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare a logical qubit in a logical Pauli basis state."""
-        if rus_limit is None:
-            rus_limit = self.default_rus_limit
-
         match state:
             case "+X" | "X":
-                return self.px(rus_limit=rus_limit)
+                return self.px(reject=reject, rus_limit=rus_limit)
             case "-X":
-                return self.pnx(rus_limit=rus_limit)
+                return self.pnx(reject=reject, rus_limit=rus_limit)
             case "+Y" | "Y":
-                return self.py(rus_limit=rus_limit)
+                return self.py(reject=reject, rus_limit=rus_limit)
             case "-Y":
-                return self.pny(rus_limit=rus_limit)
+                return self.pny(reject=reject, rus_limit=rus_limit)
             case "+Z" | "Z":
-                return self.pz(rus_limit=rus_limit)
+                return self.pz(reject=reject, rus_limit=rus_limit)
             case "-Z":
-                return self.pnz(rus_limit=rus_limit)
+                return self.pnz(reject=reject, rus_limit=rus_limit)
             case _:
                 msg = f"State {state} is not implemented!"
                 raise NotImplementedError(msg)
 
-    def px(self, rus_limit: int | None = None):
+    def px(self, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare logical |+X>, a.k.a. |+>"""
-
-        if rus_limit is None:
-            rus_limit = self.default_rus_limit
-
         return PrepRUS(
             q=self.d,
             a=self.a[0],
             init=self.verify_prep[0],
-            limit=rus_limit,
+            limit=rus_limit or self.default_rus_limit,
             state="+X",
+            reject=reject or self.scratch[2],
             first_round_reset=True,
         )
 
-    def pnx(self, rus_limit: int | None = None):
+    def pnx(self, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare logical |-X>, a.k.a. |->"""
-
-        if rus_limit is None:
-            rus_limit = self.default_rus_limit
-
         return PrepRUS(
             q=self.d,
             a=self.a[0],
             init=self.verify_prep[0],
-            limit=rus_limit,
+            limit=rus_limit or self.default_rus_limit,
             state="-X",
+            reject=reject or self.scratch[2],
             first_round_reset=True,
         )
 
-    def py(self, rus_limit: int | None = None):
+    def py(self, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare logical |+Y>, a.k.a. |+i>"""
-
-        if rus_limit is None:
-            rus_limit = self.default_rus_limit
-
         return PrepRUS(
             q=self.d,
             a=self.a[0],
             init=self.verify_prep[0],
-            limit=rus_limit,
+            limit=rus_limit or self.default_rus_limit,
             state="+Y",
+            reject=reject or self.scratch[2],
             first_round_reset=True,
         )
 
-    def pny(self, rus_limit: int | None = None):
+    def pny(self, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare logical |-Y>, a.k.a. |-i>"""
-
-        if rus_limit is None:
-            rus_limit = self.default_rus_limit
-
         return PrepRUS(
             q=self.d,
             a=self.a[0],
             init=self.verify_prep[0],
-            limit=rus_limit,
+            limit=rus_limit or self.default_rus_limit,
             state="-Y",
+            reject=reject or self.scratch[2],
             first_round_reset=True,
         )
 
-    def pz(self, rus_limit: int | None = None):
+    def pz(self, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare logical |+Z>, a.k.a. |0>"""
-
-        if rus_limit is None:
-            rus_limit = self.default_rus_limit
-
         return PrepRUS(
             q=self.d,
             a=self.a[0],
             init=self.verify_prep[0],
-            limit=rus_limit,
+            limit=rus_limit or self.default_rus_limit,
             state="+Z",
+            reject=reject or self.scratch[2],
             first_round_reset=True,
         )
 
-    def pnz(self, rus_limit: int | None = None):
+    def pnz(self, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare logical |-Z>, a.k.a. |1>"""
-
-        if rus_limit is None:
-            rus_limit = self.default_rus_limit
-
         return PrepRUS(
             q=self.d,
             a=self.a[0],
             init=self.verify_prep[0],
-            limit=rus_limit,
+            limit=rus_limit or self.default_rus_limit,
             state="-Z",
+            reject=reject or self.scratch[2],
             first_round_reset=True,
         )
 
@@ -218,32 +197,24 @@ class Steane(Vars):
 
     def prep_t_plus_state(self, reject: Bit, rus_limit: int | None = None):
         """Prepare logical T|+X> in a fault tolerant manner."""
-
-        if rus_limit is None:
-            rus_limit = self.default_rus_limit
-
-        block = Block(
+        return Block(
             self.scratch.set(0),
             PrepEncodeTPlusFTRUS(
                 d=self.d,
                 a=self.a,
                 out=self.scratch,
-                reject=self.scratch[2],
+                reject=reject or self.scratch[2],
                 flag_x=self.flag_x,
                 flag_z=self.flag_z,
                 flags=self.flags,
                 last_raw_syn_x=self.last_raw_syn_x,
                 last_raw_syn_z=self.last_raw_syn_z,
-                limit=rus_limit,
+                limit=rus_limit or self.default_rus_limit,
             ),
         )
-        if reject is not None:
-            block.extend(reject.set(self.log))
-        return block
 
     def nonft_prep_tdg_plus_state(self):
         """Prepare logical Tdg|+X> in a non-fault tolerant manner."""
-
         return Block(
             self.nonft_prep_t_plus_state(),
             self.z(),
@@ -251,7 +222,6 @@ class Steane(Vars):
 
     def prep_tdg_plus_state(self, reject: Bit, rus_limit: int | None = None):
         """Prepare logical Tdg|+X> in a fault tolerant manner."""
-
         return Block(
             self.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
             self.szdg(),
@@ -304,16 +274,12 @@ class Steane(Vars):
 
     def t(self, aux: Steane, reject: Bit, rus_limit: int | None = None):
         """T gate via teleportation using fault-tolerant initialization of the T|+> state."""
-        block = Block(
+        return Block(
             aux.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
             self.cx(aux),
             aux.mz(self.t_meas),
             If(self.t_meas == 1).Then(self.sz()),  # SZ/S correction.
         )
-
-        if reject is not None:
-            block.extend(reject.set(self.log))
-        return block
 
     def nonft_tdg(self, aux: Steane):
         """Tdg gate via teleportation using non-fault-tolerant initialization of the Tdg|+> state."""
@@ -326,16 +292,12 @@ class Steane(Vars):
 
     def tdg(self, aux: Steane, reject: Bit, rus_limit: int | None = None):
         """Tdg gate via teleportation using fault-tolerant initialization of the Tdg|+> state."""
-        block = Block(
+        return Block(
             aux.prep_tdg_plus_state(reject=reject, rus_limit=rus_limit),
             self.cx(aux),
             aux.mz(self.tdg_meas),
             If(self.tdg_meas == 1).Then(self.szdg()),  # SZdg/Sdg correction.
         )
-
-        if reject is not None:
-            block.extend(reject.set(self.log))
-        return block
 
     #  Begin Experimental: ------------------------------------
     def nonft_t_tel(self, aux: Steane):
@@ -355,7 +317,7 @@ class Steane(Vars):
             Permute(self.d, aux.d),
         )
 
-    def t_tel(self, aux: Steane, reject: Bit, rus_limit: int | None = None):
+    def t_tel(self, aux: Steane, reject: Bit | None = None, rus_limit: int | None = None):
         """Warning:
             This is experimental.
 
@@ -364,17 +326,13 @@ class Steane(Vars):
         This version teleports the logical qubit from the original qubit to the auxiliary logical qubit. For
         convenience, the qubits are relabeled, so you can continue to use the original Steane code logical qubit."""
         warn("Using experimental feature: t_tel", stacklevel=2)
-        block = Block(
+        return Block(
             aux.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
             aux.cx(self),
             self.mz(self.t_meas),
             If(self.t_meas == 1).Then(aux.x(), aux.sz()),  # SZ/S correction.
             Permute(self.d, aux.d),
         )
-
-        if reject is not None:
-            block.extend(reject.set(self.log))
-        return block
 
     def nonft_tdg_tel(self, aux: Steane):
         """Warning:
@@ -393,7 +351,7 @@ class Steane(Vars):
             Permute(self.d, aux.d),
         )
 
-    def tdg_tel(self, aux: Steane, reject: Bit, rus_limit: int | None = None):
+    def tdg_tel(self, aux: Steane, reject: Bit | None = None, rus_limit: int | None = None):
         """Warning:
             This is experimental.
 
@@ -402,17 +360,13 @@ class Steane(Vars):
         This version teleports the logical qubit from the original qubit to the auxiliary logical qubit. For
         convenience, the qubits are relabeled, so you can continue to use the original Steane code logical qubit."""
         warn("Using experimental feature: tdg_tel", stacklevel=2)
-        block = Block(
+        return Block(
             aux.prep_tdg_plus_state(reject=reject, rus_limit=rus_limit),
             aux.cx(self),
             self.mz(self.tdg_meas),
             If(self.t_meas == 1).Then(aux.x(), aux.szdg()),  # SZdg/Sdg correction.
             Permute(self.d, aux.d),
         )
-
-        if reject is not None:
-            block.extend(reject.set(self.log))
-        return block
 
     # End Experimental: ------------------------------------
 
@@ -512,7 +466,7 @@ class Steane(Vars):
             block.extend(log.set(self.log))
         return block
 
-    def qec(self):
+    def qec(self, flag_bit: Bit | None = None):
         return ParallelFlagQECActiveCorrection(
             q=self.d,
             a=self.a,
@@ -527,4 +481,5 @@ class Steane(Vars):
             pf_x=self.pf_x,
             pf_z=self.pf_z,
             scratch=self.scratch,
+            flag_bit=flag_bit,
         )

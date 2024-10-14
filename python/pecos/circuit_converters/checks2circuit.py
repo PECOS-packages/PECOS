@@ -76,8 +76,7 @@ class Check2Circuits:
             if make_ticks["max_zdatas"]:
                 # init [data ticks] meas
                 temp = make_ticks["max_zdatas"] + 1
-                if temp > largest_tick:
-                    largest_tick = temp
+                largest_tick = max(temp, largest_tick)
 
             if not make_ticks["max_xdatas"] and not make_ticks["max_zdatas"]:
                 msg = "Something very weird happened!"
@@ -98,14 +97,12 @@ class Check2Circuits:
                             tick_list = [ticks]
 
                         for t in tick_list:
-                            if t > largest_tick:
-                                largest_tick = t
+                            largest_tick = max(t, largest_tick)
 
                 else:
                     tick = params["tick"]
 
-                    if tick > largest_tick:
-                        largest_tick = tick
+                    largest_tick = max(tick, largest_tick)
 
         # A quantum circuit with number of ticks == ``largest_tick``
         circuit = QuantumCircuit(largest_tick + 1, **gate_params)
@@ -220,8 +217,7 @@ class Check2Circuits:
                     break
 
                 if gate_symbol == "X check":
-                    if len(datas) > max_xdatas:
-                        max_xdatas = len(datas)
+                    max_xdatas = max(len(datas), max_xdatas)
 
                 elif len(datas) > max_zdatas:
                     max_zdatas = len(datas)

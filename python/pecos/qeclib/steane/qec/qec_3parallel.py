@@ -8,11 +8,17 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from pecos.qeclib.steane.decoders.lookup import FlagLookupQASMActiveCorrectionX, FlagLookupQASMActiveCorrectionZ
 from pecos.qeclib.steane.syn_extract.six_check_nonflagging import SixUnflaggedSyn
 from pecos.qeclib.steane.syn_extract.three_parallel_flagging import ThreeParallelFlaggingXZZ, ThreeParallelFlaggingZXX
-from pecos.slr import Bit, Block, CReg, If, QReg
+from pecos.slr import Block, If
+
+if TYPE_CHECKING:
+    from pecos.slr import Bit, CReg, QReg
 
 
 class ParallelFlagQECActiveCorrection(Block):

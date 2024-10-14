@@ -8,13 +8,19 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from pecos.qeclib import qubit
 from pecos.qeclib.qubit import Prep
 from pecos.qeclib.steane.gates_sq import sqrt_paulis
 from pecos.qeclib.steane.gates_sq.hadamards import H
 from pecos.qeclib.steane.gates_sq.paulis import X, Z
-from pecos.slr import Barrier, Bit, Block, Comment, If, QReg, Qubit, Repeat
+from pecos.slr import Barrier, Block, Comment, If, Repeat
+
+if TYPE_CHECKING:
+    from pecos.slr import Bit, QReg, Qubit
 
 
 class PrepEncodingNonFTZero(Block):
@@ -123,6 +129,7 @@ class PrepRUS(Block):
         limit: int,
         state: str = "|0>",
         *,
+        reject: Bit | None = None,
         first_round_reset: bool = True,
     ):
         super().__init__(
@@ -142,6 +149,8 @@ class PrepRUS(Block):
             # Rotate to the Paulli basis of choice
             LogZeroRot(q, state),
         )
+        if reject is not None:
+            self.extend(reject.set(init))
 
 
 class LogZeroRot(Block):

@@ -8,15 +8,21 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from pecos.qeclib.steane.decoders.lookup import FlagLookupQASMActiveCorrectionX, FlagLookupQASMActiveCorrectionZ
 from pecos.qeclib.steane.syn_extract.six_check_nonflagging import SixUnflaggedSyn
 from pecos.qeclib.steane.syn_extract.three_parallel_flagging import ThreeParallelFlaggingXZZ, ThreeParallelFlaggingZXX
-from pecos.slr import Bit, Block, CReg, If, QReg
+from pecos.slr import Block, If
+
+if TYPE_CHECKING:
+    from pecos.slr import Bit, CReg, QReg
 
 
 class ParallelFlagQECActiveCorrection(Block):
-    """Defining QEC Block that does adaptive syndrome extraction, decodes, and updates the Paul frame."""
+    """Defining QEC Block that does adaptive syndrome extraction, decodes, and updates the Pauli frame."""
 
     def __init__(
         self,
@@ -33,6 +39,7 @@ class ParallelFlagQECActiveCorrection(Block):
         pf_x: Bit,
         pf_z: Bit,
         scratch: CReg,
+        flag_bit: Bit | None = None,
     ):
         super().__init__(
             # flagging XZZ checks
@@ -48,3 +55,5 @@ class ParallelFlagQECActiveCorrection(Block):
             FlagLookupQASMActiveCorrectionX(q, syn_x, syndromes, last_raw_syn_x, pf_z, flag_x, flags, scratch),
             FlagLookupQASMActiveCorrectionZ(q, syn_z, syndromes, last_raw_syn_z, pf_x, flag_z, flags, scratch),
         )
+        if flag_bit is not None:
+            self.extend(If(flags != 0).Then(flag_bit.set(1)))

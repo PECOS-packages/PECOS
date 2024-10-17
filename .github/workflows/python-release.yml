@@ -1,0 +1,269 @@
+name: Python Artifacts
+
+env:
+  TRIGGER_ON_PR_PUSH: false  # Set to true to enable triggers on PR pushes
+  PYTHON_VERSION: '3.10'
+
+on:
+  push:
+    branches:
+      - development
+      - master
+    tags:
+      - 'py-*'
+  pull_request:
+    branches:
+      - development
+      - master
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit SHA
+        type: string
+      dry_run:
+        description: 'Dry run (build but not publish)'
+        type: boolean
+        default: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check_pr_push:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - name: Check if should run on PR push
+        id: check
+        run: |
+          if [ "${{ env.TRIGGER_ON_PR_PUSH }}" = "true" ]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+          else
+            echo "run=false" >> $GITHUB_OUTPUT
+          fi
+
+  build_sdist_pecos_rslib:
+    needs: check_pr_push
+    if: |
+      always() &&
+      (needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true' || needs.check_pr_push.result == 'skipped') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.merged == true || github.event.action == 'opened' || github.event.action == 'synchronize')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Remove conflicting README.md
+        run: |
+          if [ -f crates/pecos-python/README.md ]; then
+            mv crates/pecos-python/README.md crates/pecos-python/README.md.bak
+            echo "Moved conflicting README.md to README.md.bak"
+          else
+            echo "No conflicting README.md found"
+          fi
+
+      - name: Build pecos-rslib SDist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+          working-directory: python/pecos-rslib
+
+      - name: Restore README.md
+        if: always()
+        run: |
+          if [ -f crates/pecos-python/README.md.bak ]; then
+            mv crates/pecos-python/README.md.bak crates/pecos-python/README.md
+            echo "Restored README.md from backup"
+          else
+            echo "No README.md backup found"
+          fi
+
+      - name: Test pecos-rslib SDist
+        run: |
+          pip install --force-reinstall --verbose python/pecos-rslib/dist/*.tar.gz
+          python -c 'import pecos_rslib; print(pecos_rslib.__version__)'
+
+      - name: Upload pecos-rslib SDist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist-pecos-rslib
+          path: python/pecos-rslib/dist/*.tar.gz
+
+  build_wheels_pecos_rslib:
+    needs: check_pr_push
+    if: |
+      always() &&
+      (needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true' || needs.check_pr_push.result == 'skipped') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.merged == true || github.event.action == 'opened' || github.event.action == 'synchronize')
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.10', '3.11', '3.12']
+        architecture: [ x86_64, aarch64 ]
+        exclude:
+          - os: windows-latest
+            architecture: aarch64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Remove conflicting README.md
+        run: |
+          if [ -f crates/pecos-python/README.md ]; then
+            mv crates/pecos-python/README.md crates/pecos-python/README.md.bak
+            echo "Moved conflicting README.md to README.md.bak"
+          else
+            echo "No conflicting README.md found"
+          fi
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --out dist --interpreter python${{ matrix.python-version }}
+          working-directory: python/pecos-rslib
+          target: ${{ matrix.architecture == 'aarch64' && (matrix.os == 'macos-latest' && 'aarch64-apple-darwin' || 'aarch64-unknown-linux-gnu') || '' }}
+          manylinux: auto
+
+      - name: Restore README.md
+        if: always()
+        run: |
+          if [ -f crates/pecos-python/README.md.bak ]; then
+            mv crates/pecos-python/README.md.bak crates/pecos-python/README.md
+            echo "Restored README.md from backup"
+          else
+            echo "No README.md backup found"
+          fi
+
+      - name: Test wheel
+        if: matrix.architecture == 'x86_64'
+        run: |
+          pip install --force-reinstall --verbose python/pecos-rslib/dist/*.whl
+          python -c 'import pecos_rslib; print(pecos_rslib.__version__)'
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-pecos-rslib-${{ matrix.os }}-${{ matrix.architecture }}-py${{ matrix.python-version }}
+          path: python/pecos-rslib/dist/*.whl
+
+  build_sdist_quantum_pecos:
+    needs: [check_pr_push, build_sdist_pecos_rslib, build_wheels_pecos_rslib]
+    if: |
+      always() &&
+      (needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true' || needs.check_pr_push.result == 'skipped') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.merged == true || github.event.action == 'opened' || github.event.action == 'synchronize')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download pecos-rslib wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel-pecos-rslib-ubuntu-latest-x86_64-py${{ env.PYTHON_VERSION }}
+          path: ./pecos-rslib-wheel
+
+      - name: Install pecos-rslib
+        run: pip install ./pecos-rslib-wheel/*.whl
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+
+      - name: Build quantum-pecos SDist
+        run: |
+          cd python/quantum-pecos
+          python -m build --sdist --outdir dist
+
+      - name: Test quantum-pecos SDist
+        run: |
+          pip install python/quantum-pecos/dist/*.tar.gz
+          python -c 'import pecos; print(pecos.__version__)'
+
+      - name: Upload quantum-pecos SDist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist-quantum-pecos
+          path: python/quantum-pecos/dist/*.tar.gz
+
+  build_wheels_quantum_pecos:
+    needs: [check_pr_push, build_wheels_pecos_rslib, build_sdist_quantum_pecos]
+    if: |
+      always() &&
+      (needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true' || needs.check_pr_push.result == 'skipped') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.merged == true || github.event.action == 'opened' || github.event.action == 'synchronize')
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Download pecos-rslib wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel-pecos-rslib-ubuntu-latest-x86_64-py${{ matrix.python-version }}
+          path: ./pecos-rslib-wheel
+
+      - name: Install pecos-rslib
+        run: pip install ./pecos-rslib-wheel/*.whl
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+
+      - name: Build quantum-pecos wheel
+        run: |
+          cd python/quantum-pecos
+          python -m build --wheel --outdir dist
+
+      - name: Test quantum-pecos wheel
+        run: |
+          pip install python/quantum-pecos/dist/*.whl
+          python -c 'import pecos; print(pecos.__version__)'
+
+      - name: Upload quantum-pecos wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-quantum-pecos-py${{ matrix.python-version }}
+          path: python/quantum-pecos/dist/*.whl

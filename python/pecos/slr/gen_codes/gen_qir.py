@@ -54,6 +54,7 @@ class QIRGenerator:
 
         # Now implement the function
         self.entry_block = func.append_basic_block(name="entry")
+        self.current_block = self.entry_block
         self.builder = ir.IRBuilder(block)
         a, b = func.args
         result = builder.fadd(a, b, name="")
@@ -64,7 +65,7 @@ class QIRGenerator:
         """Process an slr block."""
         block_name = type(block).__name__
 
-        #TODO: see if I can refactor to remove casing on string name
+        #TODO: see if we can refactor to remove casing on string name
         # of types
         match block_name:
             case "If":
@@ -78,4 +79,3 @@ class QIRGenerator:
             case _:
                 self.block_op_loop(block)
 
-        self.current_scope = previous_scope

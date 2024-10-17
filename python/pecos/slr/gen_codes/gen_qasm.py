@@ -12,9 +12,10 @@
 from __future__ import annotations
 
 from pecos import __version__
+from pecos.slr.gen_codes.generator import Generator
 
 
-class QASMGenerator:
+class QASMGenerator(Generator):
     def __init__(self, includes: list[str] | None = None):
         self.output = []
         self.current_scope = None

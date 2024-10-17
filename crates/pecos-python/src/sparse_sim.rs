@@ -1,6 +1,7 @@
-use pecos_core::VecSet;
-use pecos_qsims::CliffordSimulator;
-use pecos_qsims::SparseStab;
+// use pecos_core::VecSet;
+// use pecos_qsims::CliffordSimulator;
+// use pecos_qsims::SparseStab;
+use pecos::prelude::*;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 use std::collections::HashMap;
@@ -213,7 +214,7 @@ impl SparseSim {
     ) -> PyResult<Option<HashMap<usize, u8>>> {
         match (symbol, location.len()) {
             ("X", 1) => {
-                self.x(location.get_item(0)?.extract()?);
+                self.inner.x(location.get_item(0)?.extract()?);
                 Ok(None)
             }
             ("Y", 1) => {

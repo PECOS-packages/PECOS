@@ -16,8 +16,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { workspace=true, features = ["extension-module"] }
-pecos-core = { path = "../pecos-core" }
-pecos-qsims = { path = "../pecos-qsims" }
+pecos = { path = "../pecos" }
 
 [lints]
 workspace = true

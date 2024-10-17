@@ -105,9 +105,9 @@ For developers who want to contribute or modify PECOS:
    make build
    ```
 
-3. Run tests:
+3. Run Python and Rust tests:
    ```sh
-   make test
+   make test-all
    ```
 
 4. Run pre-commit (after [installing it](https://pre-commit.com/))

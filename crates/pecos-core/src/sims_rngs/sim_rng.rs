@@ -53,12 +53,4 @@ pub trait SimRng: RngCore + SeedableRng + Debug {
     fn from_entropy() -> Self {
         SeedableRng::from_entropy()
     }
-
-    // fn seed_from_u64(seed: u64);
-    // fn from_entropy();
-    // fn from_rng<R: RngCore>(rng: R) -> Result<Self, Error>;
-    // seed: https://docs.rs/rand/latest/rand/rngs/struct.SmallRng.html
-
-    // fn for_thread() or something... kick off main rng for a simulation instance to seed everything else.
-    // main -seed-> main rng for instance -seed-> component rng
 }

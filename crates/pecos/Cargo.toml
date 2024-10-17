@@ -15,6 +15,7 @@ description = "A crate for evaluating and exploring quantum error correction."
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rand_xoshiro = { workspace = true }
+pecos-core = { path= "../pecos-core" }
 pecos-qsims = { path= "../pecos-qsims" }
 pecos-qec = { path= "../pecos-qec" }
 

@@ -10,15 +10,4 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-// re-exporting pecos-qsims
-pub use pecos_qsims::clifford_simulator::CliffordSimulator;
-pub use pecos_qsims::gens::Gens;
-pub use pecos_qsims::measurement::{MeasBitValue, MeasValue, Measurement}; // TODO: Distinguish between trait and struct/enum
-pub use pecos_qsims::nonclifford_simulator::NonCliffordSimulator;
-pub use pecos_qsims::pauli_prop::{PauliProp, StdPauliProp};
-pub use pecos_qsims::paulis::Paulis;
-pub use pecos_qsims::quantum_simulator::QuantumSimulator;
-pub use pecos_qsims::sparse_stab::SparseStab;
-
-// re-exporting pecos-qec
-pub use pecos_qec::rot_surface;
+pub mod prelude;

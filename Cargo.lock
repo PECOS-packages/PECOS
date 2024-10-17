@@ -1152,6 +1152,7 @@ dependencies = [
  "criterion",
  "flamegraph",
  "getrandom",
+ "pecos-core",
  "pecos-qec",
  "pecos-qsims",
  "rand",
@@ -1173,8 +1174,7 @@ dependencies = [
 name = "pecos-python"
 version = "0.1.0"
 dependencies = [
- "pecos-core",
- "pecos-qsims",
+ "pecos",
  "pyo3",
 ]
 

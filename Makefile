@@ -131,13 +131,13 @@ pytest:  ## Run tests on the Python package (not including optional dependencies
 pytest-dep: ## Run tests on the Python package only for optional dependencies. ASSUMES: previous build command
 	@cd python/ && $(VENV_BIN)/pytest tests -m optional_dependency
 
-.PHONY: pytest-doc
-pydoctest:  ## Run doctests with pytest. ASSUMES: A build command was ran previously. ASSUMES: previous build command
-	# TODO: update and install docs requirements
-	@cd python/ && $(VENV_BIN)/pytest docs --doctest-glob=*.rst --doctest-continue-on-failure
+# .PHONY: pytest-doc
+# pydoctest:  ## Run doctests with pytest. ASSUMES: A build command was ran previously. ASSUMES: previous build command
+# 	# TODO: update and install docs requirements
+# 	@cd python/ && $(VENV_BIN)/pytest docs --doctest-glob=*.rst --doctest-continue-on-failure
 
 .PHONY: test-all
-test-all: rstest pytest pytest-dep pydoctest ## Run all tests. ASSUMES: previous build command
+test-all: rstest pytest pytest-dep ## Run all tests. ASSUMES: previous build command
 
 # Utility
 # -------

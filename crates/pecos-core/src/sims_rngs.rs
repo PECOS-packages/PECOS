@@ -13,6 +13,6 @@
 pub mod chacha_rng;
 pub mod choices;
 pub mod cyclic_rng;
-pub mod mock_rng;
+// pub mod mock_rng;
 pub mod sim_rng;
 pub mod xoshiro_rng;

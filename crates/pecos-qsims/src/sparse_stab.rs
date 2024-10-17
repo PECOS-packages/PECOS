@@ -355,20 +355,6 @@ where
     }
 }
 
-// impl<T, E> SparseStab<T, E, ChaCha8Rng>
-// where
-//     T: for<'a> Set<'a, Element = E>,
-//     E: IndexableElement,
-// {
-//     #[inline]
-//     #[must_use]
-//     pub fn new(num_qubits: usize) -> Self {
-//         let rng = ChaCha8Rng::from_entropy();
-//         Self::with_rng(num_qubits, rng)
-//     }
-//
-// }
-
 impl<T, E, R> QuantumSimulator for SparseStab<T, E, R>
 where
     E: IndexableElement,
@@ -516,81 +502,6 @@ where
         }
     }
 
-    /// Controlled-not gate. IX -> IX, IZ -> ZZ, XI -> XX, ZI -> ZZ
-    // pub fn cx(&mut self, q1: U, q2: U) {
-    //    let qu1 = q1.to_usize();
-    //    let qu2 = q2.to_usize();
-    //
-    //    // TODO: Figure out the most efficient method to modify q.col_*[i] while iterating over q.col_*[j]
-    //    // It seems the the borrow checker doesn't like this...
-    //
-    //    for g in [&mut self.stabs, &mut self.destabs] {
-    //        for i in g.col_x[qu1].iter() {
-    //            let iu = i.to_usize();
-    //            g.row_x[iu] ^= &q2;
-    //            g.col_x[qu2] ^= i; // g.col_x[qu2] ^= &g.col_x[qu1];
-    //        }
-    //
-    //        for i in g.col_z[qu2].iter() {
-    //            let iu = i.to_usize();
-    //            g.row_z[iu] ^= &q1;
-    //            g.col_z[qu1] ^= i; // g.col_z[qu1] ^= &g.col_z[qu2];
-    //        }
-
-    // pub fn cx(&mut self, q1: U, q2: U) {
-    //     let qu1 = q1.to_usize();
-    //     let qu2 = q2.to_usize();
-    //
-    //     for g in [&mut self.stabs, &mut self.destabs] {
-    //         for i in g.col_x[qu1].iter() {
-    //             let iu = i.to_usize();
-    //             g.row_x[iu] ^= &q2;
-    //         }
-    //
-    //         for i in g.col_z[qu2].iter() {
-    //             let iu = i.to_usize();
-    //             g.row_z[iu] ^= &q1;
-    //         }
-    //
-    //         // Create local variables to hold the values of the immutable references
-    //         let col_x_qu1 = g.col_x[qu1].clone();
-    //         let col_z_qu2 = g.col_z[qu2].clone();
-    //
-    //         // Perform the mutable operations using the local variables
-    //         g.col_x[qu2] ^= &col_x_qu1;
-    //         g.col_z[qu1] ^= &col_z_qu2;
-    //     }
-    // }
-
-    // pub fn cx(&mut self, q1: U, q2: U) {
-    //     let qu1 = q1.to_usize();
-    //     let qu2 = q2.to_usize();
-    //
-    //     for g in [&mut self.stabs, &mut self.destabs] {
-    //         for i in g.col_x[qu1].iter() {
-    //             let iu = i.to_usize();
-    //             g.row_x[iu] ^= &q2;
-    //         }
-    //
-    //         for i in g.col_z[qu2].iter() {
-    //             let iu = i.to_usize();
-    //             g.row_z[iu] ^= &q1;
-    //         }
-    //
-    //         // Temporarily replace the values with empty sets
-    //         let col_x_qu1 = mem::take(&mut g.col_x[qu1]);
-    //         let col_z_qu2 = mem::take(&mut g.col_z[qu2]);
-    //
-    //         // Perform the mutable operations using the temporary values
-    //         g.col_x[qu2] ^= &col_x_qu1;
-    //         g.col_z[qu1] ^= &col_z_qu2;
-    //
-    //         // Restore the original values
-    //         g.col_x[qu1] = col_x_qu1;
-    //         g.col_z[qu2] = col_z_qu2;
-    //     }
-    // }
-
     /// CX: +IX -> +IX; +IZ -> +ZZ; +XI -> +XX; +ZI -> +ZI
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
@@ -649,53 +560,6 @@ where
             }
         }
     }
-
-    // pub fn cz_old(&mut self, q1: U, q2: U) {
-    //     let qu1 = q1.to_usize();
-    //     let qu2 = q2.to_usize();
-    //
-    //     for i in self.stabs.col_x[qu1].intersection(&self.stabs.col_x[qu2]) {
-    //         self.stabs.signs_minus ^= i;
-    //     }
-    //
-    //     for g in [&mut self.stabs, &mut self.destabs] {
-    //         let old_z1_col = g.col_z[qu1].clone();
-    //         let old_z2_col = g.col_z[qu2].clone();
-    //
-    //         g.col_z[qu1] ^= &g.col_x[qu2];
-    //         g.col_z[qu2] ^= &g.col_x[qu1];
-    //
-    //         for i in g.col_z[qu1].difference(&old_z1_col) {
-    //             let iu = i.to_usize();
-    //             g.row_z[iu].insert(q1);
-    //         }
-    //
-    //         for i in g.col_z[qu2].difference(&old_z2_col) {
-    //             let iu = i.to_usize();
-    //             g.row_z[iu].insert(q1);
-    //         }
-    //
-    //         for i in g.col_x[qu1].iter() {
-    //             let iu = i.to_usize();
-    //             g.row_x[iu] ^= &q2;
-    //         }
-    //
-    //         for i in g.col_z[qu2].iter() {
-    //             let iu = i.to_usize();
-    //             g.row_z[iu] ^= &q1;
-    //         }
-    //
-    //         for i in old_z1_col.difference(&g.col_z[qu1]) {
-    //             let iu = i.to_usize();
-    //             g.row_z[iu].remove(&q1);
-    //         }
-    //
-    //         for i in old_z2_col.difference(&g.col_z[qu2]) {
-    //             let iu = i.to_usize();
-    //             g.row_z[iu].remove(&q2);
-    //         }
-    //     }
-    // }
 }
 
 #[cfg(test)]
@@ -1080,10 +944,6 @@ mod tests {
         assert!(meas1);
     }
 
-    // #[test]
-    // fn test_mny() {
-    //     todo!()
-    // }
     #[test]
     fn test_nondeterministic_mny() {
         let mut state = prep_state(&["Z"], &["X"]);

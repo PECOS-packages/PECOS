@@ -1,1 +1,1 @@
-pub mod rot_surface;
+// pecos-qec stub. Left intentionally blank for now.

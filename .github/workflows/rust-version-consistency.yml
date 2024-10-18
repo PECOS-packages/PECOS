@@ -1,0 +1,53 @@
+name: Rust Version Consistency Check
+
+on:
+  push:
+    paths:
+      - 'Cargo.toml'
+      - 'crates/**/Cargo.toml'
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'crates/**/Cargo.toml'
+
+jobs:
+  check_rust_versions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check Rust crate configurations
+        run: |
+          # Check root Cargo.toml for workspace version
+          ROOT_VERSION=$(grep -oP 'version\s*=\s*"\K[^"]+' Cargo.toml)
+          if [ -z "$ROOT_VERSION" ]; then
+            echo "Error: No version specified in root Cargo.toml"
+            exit 1
+          fi
+          echo "Workspace version: $ROOT_VERSION"
+
+          # Check each Cargo.toml in crates/
+          INCONSISTENT=false
+          for file in crates/*/Cargo.toml; do
+            echo "Checking $file"
+
+            # Check if the crate is using workspace inheritance for version
+            if ! grep -q "version.workspace\s*=\s*true" "$file"; then
+              echo "Error: $file is not inheriting version from workspace"
+              INCONSISTENT=true
+            fi
+
+            # Check if version is explicitly specified (it shouldn't be)
+            if grep -qP '^version\s*=\s*"[^"]+"' "$file"; then
+              echo "Error: $file specifies its own version, should inherit from workspace"
+              INCONSISTENT=true
+            fi
+          done
+
+          if [ "$INCONSISTENT" = true ]; then
+            echo "Error: Inconsistencies found in Rust crate configurations"
+            exit 1
+          else
+            echo "Success: All Rust crates are correctly configured in the workspace"
+          fi

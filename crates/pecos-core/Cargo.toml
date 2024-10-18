@@ -1,0 +1,19 @@
+[package]
+name = "pecos-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Provides core definitions and functions for PECOS simulations."
+
+[dependencies]
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+rand_xoshiro = { workspace = true }
+
+[lints]
+workspace = true

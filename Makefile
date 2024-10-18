@@ -28,7 +28,7 @@ venv:  ## Build Python virtual environment and install requirements
 # Requirements
 # ------------
 .PHONY: requirements
-requirements: updatereqs installreqs metadeps  ## Install/refresh Python project requirements including those needed for development
+requirements: metadeps installreqs  ## Install/refresh Python project requirements including those needed for development
 
 .PHONY: updatereqs
 updatereqs:  ## Auto update and generate requirements.txt
@@ -60,7 +60,7 @@ installreqs: upgrade-pip ## Install Python project requirements
 
 .PHONY: metadeps
 metadeps: upgrade-pip  ## Install extra dependencies used to develop/build this package
-	$(VENV_BIN)/pip install -U pip-tools pre-commit pytest hypothesis maturin
+	$(VENV_BIN)/pip install -U setuptools pip-tools pre-commit pytest hypothesis maturin
 
 # Function to extract version from pyproject.toml
 define get_version
@@ -70,22 +70,22 @@ endef
 # Building development environments
 # ---------------------------------
 .PHONY: build
-build: venv ## Compile and install for development
+build: requirements ## Compile and install for development
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && $(VENV_BIN)/maturin develop
 	@unset CONDA_PREFIX && cd python/quantum-pecos && $(VENV_BIN)/pip install -e .[all]
 
 .PHONY: build-basic
-build-basic: venv ## Compile and install for development but do not include install extras
+build-basic: requirements ## Compile and install for development but do not include install extras
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && $(VENV_BIN)/maturin develop
 	@unset CONDA_PREFIX && cd python/quantum-pecos && $(VENV_BIN)/pip install -e .
 
 .PHONY: build-release
-build-release: venv ## Build a faster version of binaries
+build-release: requirements ## Build a faster version of binaries
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && $(VENV_BIN)/maturin develop --release
 	@unset CONDA_PREFIX && cd python/quantum-pecos && $(VENV_BIN)/pip install -e .[all]
 
 .PHONY: build-native
-build-native: venv ## Build a faster version of binaries with native CPU optimization
+build-native: requirements ## Build a faster version of binaries with native CPU optimization
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && RUSTFLAGS='-C target-cpu=native' \
 	&& $(VENV_BIN)/maturin develop --release
 	@unset CONDA_PREFIX && cd python/quantum-pecos && $(VENV_BIN)/pip install -e .[all]
@@ -93,9 +93,9 @@ build-native: venv ## Build a faster version of binaries with native CPU optimiz
 # Documentation
 # -------------
 
-.PHONY: docs
-docs:  ## Generate documentation
-	#TODO: ...
+# .PHONY: docs
+# docs:  ## Generate documentation
+# 	#TODO: ...
 
 # Linting / formatting
 # --------------------
@@ -113,7 +113,7 @@ fmt: ## Run autoformatting for cargo
 	cargo fmt --all -- --check
 
 .PHONY: pre-commit  ## Run all quality checks / linting / reformatting
-pre-commit: venv fmt clippy
+pre-commit: fmt clippy
 	$(VENV_BIN)/pre-commit run --all-files
 
 # Testing
@@ -157,7 +157,6 @@ clean:  ## Clean up caches and build artifacts
 	@rm -rf .ruff_cache/
 	@rm -rf **/.hypothesis/
 	@rm -rf **/junit/
-	@rm -rf **/.venv/
 	@cargo clean
 
 # Help

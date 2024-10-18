@@ -60,7 +60,7 @@ Stay updated with the latest developments on the
 
 ### Python Package
 
-To install the main Python package:
+To install the main Python package for general usage:
 
 ```sh
 pip install quantum-pecos
@@ -76,7 +76,13 @@ pip install quantum-pecos[all]
 
 **NOTE:** The `quantum-pecos` package is imported like: `import pecos` and not `import quantum_pecos`.
 
-Certain simulators have special requirements and are not installed by the command above. Installation instructions for
+**NOTE:** To install pre-releases (the latest development code) from pypi you may have to specify the version you are
+interested like so (e.g., for version `0.6.0.dev5`):
+```sh
+pip install quantum-pecos==0.6.0.dev5
+```
+
+**NOTE:** Certain simulators have special requirements and are not installed by the command above. Installation instructions for
 these are provided [here](#simulators-with-special-requirements).
 
 
@@ -91,29 +97,8 @@ pecos = "0.x.x"  # Replace with the latest version
 
 ## Development Setup
 
-For developers who want to contribute or modify PECOS:
-
-1. Clone the repository:
-   ```sh
-   git clone https://github.com/PECOS-packages/PECOS.git
-   cd PECOS
-   ```
-
-2. Set up the development environment using the makefile (for Windows you may need to use a shell that has access to Linux commands such as utilizing [git bash](https://gitforwindows.org/)):
-   ```sh
-   make venv
-   make build
-   ```
-
-3. Run Python and Rust tests:
-   ```sh
-   make test-all
-   ```
-
-4. Run pre-commit (after [installing it](https://pre-commit.com/))
-   ```sh
-   make pre-commit
-   ```
+If you are interested in editing or developing the code in this project, see this
+[development documentation](dev_steps.md) to get started.
 
 ## Simulators with special requirements
 

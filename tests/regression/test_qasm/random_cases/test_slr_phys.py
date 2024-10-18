@@ -1,8 +1,6 @@
 from pecos import __version__
 from pecos.qeclib import qubit as p
 from pecos.slr import Bit, Block, Comment, CReg, If, Main, Permute, QReg, Qubit, Repeat
-from pecos.slr.gen_codes.gen_qasm import QASMGenerator
-from pecos.slr.gen_codes.gen_qir import QIRGenerator
 
 # TODO: Remove reference to hqslib1.inc... better yet, don't have tests on qasm
 

@@ -10,55 +10,59 @@
 # specific language governing permissions and limitations under the License.
 
 from __future__ import annotations
-from pecos import __version__
-from pecos.slr.gen_codes.generator import Generator
-from pecos.slr.vars import CReg, QReg, Reg, Vars
-from pecos.slr.misc import Barrier, Comment, Permute
-#from pecos.slr.block import Block
-import pecos.slr.block as block
-from collections import OrderedDict
-#from pecos.qeclib.qubit.qgate_base import QGate
-import pecos.qeclib.qubit.qgate_base as qgate_base
-from pecos.qeclib.qubit.sq_hadamards import H
-from pecos.qeclib.qubit.sq_noncliffords import T, Tdg
-from pecos.qeclib.qubit.sq_paulis import X, Y, Z
-from pecos.qeclib.qubit.sq_sqrt_paulis import SX, SY, SZ, SXdg, SYdg, SZdg
-from pecos.qeclib.qubit.tq_cliffords import CX, CY, CZ, SXX, SYY, SZZ, SXXdg, SYYdg, SZZdg
 
+from collections import OrderedDict
 from dataclasses import dataclass
+
 from llvmlite import ir
 from llvmlite.ir import IntType, PointerType, VoidType
+
+from pecos import __version__
+
+# from pecos.qeclib.qubit.qgate_base import QGate
+from pecos.qeclib.qubit import qgate_base
+from pecos.qeclib.qubit.sq_hadamards import H
+from pecos.qeclib.qubit.tq_cliffords import CX
+
+# from pecos.slr.block import Block
+from pecos.slr import block
+from pecos.slr.gen_codes.generator import Generator
+from pecos.slr.misc import Barrier, Comment, Permute
+from pecos.slr.vars import CReg, QReg, Reg, Vars
+
 
 @dataclass
 class QIRTypes:
     """Dataclass to hold the types used in QIR compilation"""
+
     boolType: IntType
     intType: IntType
     qubitPtrType: PointerType
     resultPtrType: PointerType
 
-    
+
 class QIRGenerator(Generator):
     """Class to generate QIR from SLR. This should enable better compilation of conditional programs."""
+
     def __init__(self, includes: list[str] | None = None):
-        #self.output = []
+        # self.output = []
         self.current_block: block.Block = None
-        #self.includes = includes
-        #self.cond = None
+        # self.includes = includes
+        # self.cond = None
         self.setup_module()
         # Create a field qreg_list
         self.qreg_dict: dict[str, tuple[int, int]] = OrderedDict()
         self._qubit_count: int = 0
-        self._creg: dict[str, object] = {} # replace 'object' with the correct type
-        
+        self._creg: dict[str, object] = {}  # replace 'object' with the correct type
+
     def setup_module(self):
-        self._module = ir.Module(name=__file__)   
+        self._module = ir.Module(name=__file__)
 
         # Create some useful types to use in compilation later
         boolTy = ir.IntType(1)
         intTy = ir.IntType(64)
-        qubitTy = self._module.context.get_identified_type('Qubit')
-        resultTy = self._module.context.get_identified_type('Result')
+        qubitTy = self._module.context.get_identified_type("Qubit")
+        resultTy = self._module.context.get_identified_type("Result")
         qubitPtrTy = qubitTy.as_pointer()
         resultPtrTy = resultTy.as_pointer()
 
@@ -67,22 +71,26 @@ class QIRGenerator(Generator):
 
         self._main_func = ir.Function(self._module, fnty, name="main")
 
-#         declare i1 @get_creg_bit(i1*, i64)
- 
-# declare void @set_creg_bit(i1*, i64, i1)
- 
-# declare void @set_creg_to_int(i1*, i64)
- 
-# declare i1 @__quantum__qis__read_result__body(%Result*)
- 
-# declare i1* @create_creg(i64)
- 
-# declare i64 @get_int_from_creg(i1*)
- 
-# declare void @mz_to_creg_bit(%Qubit*, i1*, i64)
- 
-# declare void @__quantum__rt__int_record_output(i64, i8*)
-        self.create_creg_func = ir.Function(self._module, ir.FunctionType(boolTy.as_pointer(), [intTy]), name="create_creg")
+        #         declare i1 @get_creg_bit(i1*, i64)
+
+        # declare void @set_creg_bit(i1*, i64, i1)
+
+        # declare void @set_creg_to_int(i1*, i64)
+
+        # declare i1 @__quantum__qis__read_result__body(%Result*)
+
+        # declare i1* @create_creg(i64)
+
+        # declare i64 @get_int_from_creg(i1*)
+
+        # declare void @mz_to_creg_bit(%Qubit*, i1*, i64)
+
+        # declare void @__quantum__rt__int_record_output(i64, i8*)
+        self.create_creg_func = ir.Function(
+            self._module,
+            ir.FunctionType(boolTy.as_pointer(), [intTy]),
+            name="create_creg",
+        )
 
         # Now implement the function
         self.entry_block = self._main_func.append_basic_block(name="entry")
@@ -92,14 +100,18 @@ class QIRGenerator(Generator):
 
     def create_creg(self, creg: CReg):
         """Add a call to create_creg in the current block."""
-        self._creg[creg.sym] = self.builder.call(self.create_creg_func, [ir.Constant(ir.IntType(64), creg.size)], name = f"{creg.sym}")
-    
+        self._creg[creg.sym] = self.builder.call(
+            self.create_creg_func,
+            [ir.Constant(ir.IntType(64), creg.size)],
+            name=f"{creg.sym}",
+        )
+
     def create_qreg(self, qreg: QReg):
         """Uses an OrderedDict to globally flatten quantum registers into a single global register."""
         self.qreg_dict[qreg.sym] = (self._qubit_count, self._qubit_count + qreg.size - 1)
         self._qubit_count += qreg.size
-        #return self.builder.call(self.create_creg_func, [ir.Constant(ir.IntType(64), creg.size)], name = f"{creg.sym}")
-        
+        # return self.builder.call(self.create_creg_func, [ir.Constant(ir.IntType(64), creg.size)], name = f"{creg.sym}")
+
     def generate_block(self, block):
         """Process an slr block."""
 
@@ -107,18 +119,18 @@ class QIRGenerator(Generator):
 
         block_name = type(block).__name__
 
-        #TODO: see if we can refactor to remove casing on string name
+        # TODO: see if we can refactor to remove casing on string name
         # of types
         match block_name:
             case "Main":
                 self._handle_main_block(block)
-                
-            case "If": # NOT IMPLEMENTED 
+
+            case "If":  # NOT IMPLEMENTED
                 self.cond = self.generate_op(block.cond)
                 self.block_op_loop(block)
                 self.cond = None
 
-            case "Repeat": # NOT IMPLEMENTED
+            case "Repeat":  # NOT IMPLEMENTED
                 for _ in range(block.cond):
                     self.block_op_loop(block)
             case _:
@@ -146,7 +158,7 @@ class QIRGenerator(Generator):
         """Process a block of operations."""
         self._current_block = block
         for op in block.ops:
-            if hasattr(op, "ops"): # TODO: figure out how to identify Block types without using isinstance
+            if hasattr(op, "ops"):  # TODO: figure out how to identify Block types without using isinstance
                 self._handle_block(op)
             else:
                 self._handle_op(op)
@@ -167,7 +179,6 @@ class QIRGenerator(Generator):
                 pass
             case qgate_base.QGate(_, _):
                 self._handle_quantum_gate(op)
-
 
         # From gen_qasm.py:
         # op_name = type(op).__name__
@@ -271,25 +282,30 @@ class QIRGenerator(Generator):
         #     op_str = "\n".join(op_new)
 
         # return op_str
-    
-    def _handle_quantum_gate(self, gate:  qgate_base.QGate):
+
+    def _handle_quantum_gate(self, gate: qgate_base.QGate):
         """Process a quantum gate."""
-        #gate.qargs gate.params
+        # gate.qargs gate.params
         match gate:
             case H(sym, qargs, params):
-                h_func = ir.Function(self._module, ir.FunctionType(VoidType, [self._types.qubitPtrType]), name="__quantum__qis__h__body") # move this to earlier
+                h_func = ir.Function(
+                    self._module,
+                    ir.FunctionType(VoidType, [self._types.qubitPtrType]),
+                    name="__quantum__qis__h__body",
+                )  # move this to earlier
                 index = qargs[0].index
                 qubit_index = self.qreg_dict[qargs[0].sym][0] + index
                 inttoptr = self.builder.inttoptr(ir.Constant(ir.IntType(64), qubit_index), self._types.qubitPtrType)
-                self.builder.call(h_func, [inttoptr], name = f"")
+                self.builder.call(h_func, [inttoptr], name="")
             case CX(_, _):
-                cx_func = ir.Function(self._module, ir.FunctionType(VoidType, [self._types.qubitPtrType, self._types.qubitPtrType]), name="__quantum__qis__cnot__body")
-        
+                cx_func = ir.Function(
+                    self._module,
+                    ir.FunctionType(VoidType, [self._types.qubitPtrType, self._types.qubitPtrType]),
+                    name="__quantum__qis__cnot__body",
+                )
+
     def get_output(self) -> str:
         return str(self._module)
-        
-
-
 
 
 #         declare void @__quantum__qis__h__body(%Qubit*) local_unnamed_addr

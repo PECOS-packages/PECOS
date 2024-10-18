@@ -9,7 +9,11 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.slr.gen_codes.gen_qasm import QASMGenerator
-from pecos.slr.gen_codes.gen_qir import QIRGenerator
-from pecos.slr.gen_codes.generator import Generator
-from pecos.slr.gen_codes.language import Language
+from enum import Enum
+
+
+class Language(Enum):
+    """Language options to compile SLR to"""
+
+    QASM = 0
+    QIR = 1

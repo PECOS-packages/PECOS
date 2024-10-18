@@ -2,6 +2,7 @@ from pecos import __version__
 from pecos.qeclib import qubit as p
 from pecos.slr import Bit, Block, Comment, CReg, If, Main, Permute, QReg, Qubit, Repeat
 from pecos.slr.gen_codes.gen_qasm import QASMGenerator
+from pecos.slr.gen_codes.gen_qir import QIRGenerator
 
 # TODO: Remove reference to hqslib1.inc... better yet, don't have tests on qasm
 
@@ -27,7 +28,20 @@ def test_bell():
         "measure q -> m;"
     )
 
-    assert prog.gen(QASMGenerator()) == qasm
+    assert prog.qasm() == qasm
+
+
+def test_bell_qir():
+    """Test that a simple Bell prep and measure circuit can be created."""
+    prog: Main = Main(
+        q := QReg("q", 2),
+        m := CReg("m", 2),
+        p.H(q[0]),
+        p.CX(q[0], q[1]),
+        p.Measure(q) > m,
+    )
+
+    assert prog.qir() == "intentionally wrong"
 
 
 def test_if_bell():
@@ -68,7 +82,7 @@ def test_if_bell():
         "if(c == 1) measure q[1] -> m[1];"
     )
 
-    assert prog.gen("qasm") == qasm
+    assert prog.qasm() == qasm
 
 
 def test_strange_program():
@@ -105,4 +119,4 @@ def test_strange_program():
 
     # TODO: Weird things can happen with Permute... if you run a program twice
 
-    assert prog.gen(QASMGenerator()) == qasm
+    assert prog.qasm() == qasm

@@ -25,7 +25,7 @@ from pecos.qeclib.qubit.tq_cliffords import CX
 from pecos.slr import Block, Main
 from pecos.slr.gen_codes.generator import Generator
 from pecos.slr.misc import Barrier, Comment, Permute
-from pecos.slr.vars import CReg, QReg, Reg, Vars
+from pecos.slr.vars import CReg, QReg, Reg, Vars, Qubit
 
 
 @dataclass
@@ -64,7 +64,7 @@ class QIRGenerator(Generator):
         resultPtrTy = resultTy.as_pointer()
 
         self._types = QIRTypes(boolTy, intTy, qubitPtrTy, resultPtrTy)
-        fnty = ir.FunctionType(VoidType, [])
+        fnty = ir.FunctionType(VoidType(), [])
 
         self._main_func = ir.Function(self._module, fnty, name="main")
 
@@ -145,20 +145,21 @@ class QIRGenerator(Generator):
                 pass
             case CReg(sym, size):
                 pass
-            case qgate_base.QGate(_, _):
+            case qgate_base.QGate():
                 self._handle_quantum_gate(op)
 
     def _handle_quantum_gate(self, gate: qgate_base.QGate) -> None:
         """Process a quantum gate."""
+        # Reminder: qgate has sym, qargs, and params properties
         match gate:
-            case H(sym, qargs, params):
-                self.builder.call(self._h_func, [self._qarg_to_qubit_ptr(qargs[0])], name="")
-            case CX(_, qargs, _):
+            case H():
+                self.builder.call(self._h_func, [self._qarg_to_qubit_ptr(gate.qargs[0])], name="")
+            case CX():
                 self.builder.call(
                     self._cx_func,
                     [
-                        self._qarg_to_qubit_ptr(qargs[0]),
-                        self._qarg_to_qubit_ptr(qargs[1]),
+                        self._qarg_to_qubit_ptr(gate.qargs[0]),
+                        self._qarg_to_qubit_ptr(gate.qargs[1]),
                     ],
                     name="",
                 )
@@ -167,7 +168,7 @@ class QIRGenerator(Generator):
     def _h_func(self) -> ir.Function:
         return ir.Function(
             self._module,
-            ir.FunctionType(VoidType, [self._types.qubitPtrType]),
+            ir.FunctionType(VoidType(), [self._types.qubitPtrType]),
             name="__quantum__qis__h__body",
         )
 
@@ -175,15 +176,15 @@ class QIRGenerator(Generator):
     def _cx_func(self) -> ir.Function:
         return ir.Function(
             self._module,
-            ir.FunctionType(VoidType, [self._types.qubitPtrType, self._types.qubitPtrType]),
+            ir.FunctionType(VoidType(), [self._types.qubitPtrType, self._types.qubitPtrType]),
             name="__quantum__qis__cnot__body",
         )
 
-    def _qarg_to_qubit_ptr(self, qarg):
+    def _qarg_to_qubit_ptr(self, qarg: Qubit):
         """Return a pointer to a qubit in the global register, based on the register and index
         passed in the `qarg` param."""
         index = qarg.index
-        qubit_index = self.qreg_dict[qarg.sym][0] + index
+        qubit_index = self.qreg_dict[qarg.reg.sym][0] + index
         return self.builder.inttoptr(ir.Constant(ir.IntType(64), qubit_index), self._types.qubitPtrType)
 
     def get_output(self) -> str:

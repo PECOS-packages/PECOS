@@ -92,6 +92,12 @@ class QIRGenerator(Generator):
             name="create_creg",
         )
 
+        self.mz_to_creg_bit_func = ir.Function(
+            self._module,
+            ir.FunctionType(VoidType, qubitPtrType, [boolTy.as_pointer(), intTy]),
+            name="mz_to_creg_bit"
+        )
+
         # Now implement the function
         self.entry_block = self._main_func.append_basic_block(name="entry")
         self.current_block = self.entry_block
@@ -303,6 +309,8 @@ class QIRGenerator(Generator):
                     ir.FunctionType(VoidType, [self._types.qubitPtrType, self._types.qubitPtrType]),
                     name="__quantum__qis__cnot__body",
                 )
+            case Measure():
+                self.mz_to_creg_bit
 
     def get_output(self) -> str:
         return str(self._module)

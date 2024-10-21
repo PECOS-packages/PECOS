@@ -11,15 +11,8 @@
 from __future__ import annotations
 
 from pecos.slr.fund import Node
-from pecos.slr.gen_codes.gen_qasm import QASMGenerator
 from pecos.slr.vars import Var, Vars
 
-from enum import Enum
-
-class Language(Enum):
-    """Language options to compile SLR to"""
-    QASM = 0
-    QIR = 1
 
 class Block(Node):
     """A collection of other operations and blocks."""
@@ -68,21 +61,21 @@ class Block(Node):
     def iter(self):
         yield from self.__iter__()
 
-    def gen(self, target: object | str) -> str | NotImplementedError:
-        if isinstance(target, str):
-            if target == "qasm":
-                target = QASMGenerator()
-            elif target == "qir":
-                target = QIRGenerator()
-            else:
-                msg = f"Code gen target '{target}' is not supported."
-                raise NotImplementedError(msg)
+    # def gen(self, target: object | str) -> str | NotImplementedError:
+    #     if isinstance(target, str):
+    #         if target == "qasm":
+    #             target = QASMGenerator()
+    #         elif target == "qir":
+    #             target = QIRGenerator()
+    #         else:
+    #             msg = f"Code gen target '{target}' is not supported."
+    #             raise NotImplementedError(msg)
 
-        target.generate_block(self)
-        return target.get_output()
+    #     target.generate_block(self)
+    #     return target.get_output()
 
-    def qasm(self):
-        return self.gen("qasm")
+    # def qasm(self):
+    #     return self.gen("qasm")
 
-    def qir(self):
-        return self.gen("qir")
+    # def qir(self):
+    #     return self.gen("qir")

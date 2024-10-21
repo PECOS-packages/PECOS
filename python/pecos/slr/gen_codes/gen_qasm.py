@@ -16,11 +16,12 @@ from pecos.slr.gen_codes.generator import Generator
 
 
 class QASMGenerator(Generator):
-    def __init__(self, includes: list[str] | None = None):
+    def __init__(self, includes: list[str] | None = None, skip_headers=False):
         self.output = []
         self.current_scope = None
         self.includes = includes
         self.cond = None
+        self.skip_headers = skip_headers
 
     def write(self, line):
         self.output.append(line)
@@ -32,7 +33,7 @@ class QASMGenerator(Generator):
         block_name = type(block).__name__
 
         # self.output.append("# Entering new block")
-        if block_name == "Main":
+        if block_name == "Main" and not self.skip_headers:
             self.write("OPENQASM 2.0;")
             if self.includes:
                 for inc in self.includes:

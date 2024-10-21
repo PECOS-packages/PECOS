@@ -9,24 +9,24 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 
 
 class Generator(ABC):
     """An abstract class representing a code generator for an slr block."""
+
     @abstractmethod
     def __init__(self, includes: list[str] | None = None):
         pass
 
-    
     @abstractmethod
-    def generate_block(self):
+    def generate_block(self, block):
         """Takes an slr block and generates a series of operations in the target format."""
-        pass
 
-    
     @abstractmethod
     def get_output(self) -> str:
         """Resolves an slr block into a string. For QIR this is only expected to be called
         on a block containing the entire program."""
-        pass

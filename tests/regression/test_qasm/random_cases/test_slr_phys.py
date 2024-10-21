@@ -1,6 +1,6 @@
 from pecos import __version__
 from pecos.qeclib import qubit as p
-from pecos.slr import Bit, Block, Comment, CReg, If, Main, Permute, QReg, Qubit, Repeat
+from pecos.slr import Bit, Block, Comment, CReg, If, Main, Permute, QReg, Qubit, Repeat, SlrConverter
 
 # TODO: Remove reference to hqslib1.inc... better yet, don't have tests on qasm
 
@@ -26,7 +26,7 @@ def test_bell():
         "measure q -> m;"
     )
 
-    assert prog.qasm() == qasm
+    assert SlrConverter(prog).qasm() == qasm
 
 
 def test_bell_qir():
@@ -39,7 +39,7 @@ def test_bell_qir():
         p.Measure(q) > m,
     )
 
-    assert prog.qir() == "intentionally wrong"
+    assert SlrConverter(prog).qir() == "intentionally wrong"
 
 
 def test_if_bell():
@@ -80,7 +80,7 @@ def test_if_bell():
         "if(c == 1) measure q[1] -> m[1];"
     )
 
-    assert prog.qasm() == qasm
+    assert SlrConverter(prog).qasm() == qasm
 
 
 def test_strange_program():
@@ -117,4 +117,4 @@ def test_strange_program():
 
     # TODO: Weird things can happen with Permute... if you run a program twice
 
-    assert prog.qasm() == qasm
+    assert SlrConverter(prog).qasm() == qasm

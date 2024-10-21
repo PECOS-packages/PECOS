@@ -39,7 +39,9 @@ def test_bell_qir():
         p.Measure(q) > m,
     )
 
-    assert SlrConverter(prog).qir() == "intentionally wrong"
+    qir = SlrConverter(prog).qir()
+    print(qir)
+    assert qir == "intentionally wrong"
 
 
 def test_if_bell():

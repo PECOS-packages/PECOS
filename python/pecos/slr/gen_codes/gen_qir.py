@@ -32,6 +32,11 @@ class QIRTypes:
     """Class to hold the types used in QIR compilation"""
 
     def __init__(self, module: ir.Module):
+        """Parameters:
+        
+        module (llvmlite.ir.Module): an LLVM module to write to.
+        """
+        
         # Create some useful types to use in compilation later
         qubitTy = module.context.get_identified_type("Qubit")
         resultTy = module.context.get_identified_type("Result")
@@ -47,6 +52,13 @@ class QIRFunc:
     """Represents a callable function in a QIR program"""
     
     def __init__(self, module: ir.Module, ret_ty: Type, arg_tys: list[Type], name: str):
+        """Parameters:
+
+        module (llvmlite.ir.Module): an LLVM module to write to.
+        ret_ty (llvmlite.ir.Type): the LLVM return type for the QIR function
+        arg_tys (list[llvmlite.ir.Type]): a list of types for parameters of the QIR function
+        name (str): the name of the QIR function
+        """
         self.binding = ir.Function(
             module,
             ir.FunctionType(ret_ty, arg_tys),
@@ -54,7 +66,12 @@ class QIRFunc:
         )
 
     def call(self, builder: ir.IRBuilder, args: list[binding.ValueRef], name: str) -> binding.ValueRef:
-        """A helper method to call a QIR Gate"""
+        """A helper method to call a QIR Gate.
+
+        Parameters:
+        builder (llvmlite.ir.IRBuilder): a builder for generating instructions in the
+        current LLVM basic block."""
+        
         return builder.call(self.binding, args, name)
 
     def __repr__(self) -> str:
@@ -65,6 +82,12 @@ class QIRGate(QIRFunc):
     """Represents a quantum gate in QIR"""
     
     def __init__(self, module: ir.Module, arg_tys: list[Type], name: str):
+        """Parameters:
+
+        module (llvmlite.ir.Module): and LLVM module to write to.
+        arg_tys (QIRTypes): a collection of LLVM types for the QIR to use.
+        name (str): the name of the quantum gate without QIR mangling."""
+        
         self._arg_tys = arg_tys
         self._mangled_name: str = "__quantum__qis__" + name + "__body"
         self._name:str = name
@@ -72,15 +95,19 @@ class QIRGate(QIRFunc):
 
     @property
     def mangled_name(self) -> str:
+        """Returns the full mangled QIR name for a gate."""
+        
         return self._mangled_name
 
     @property
     def name(self) -> str:
+        """Returns the core name of the quantum gate in QIR naming convention."""
+        
         return self._name
 
     @property
     def llvm_type_str(self) -> str:
-        """returns the llvm typeas a string"""
+        """Returns the llvm type as a string."""
         
         return f'void @{self_mangle_name}({", ".join(map(str, self._arg_tys))})'
 
@@ -89,6 +116,11 @@ class QIRGates:
     """A collection of QIR gates."""
     
     def __init__(self, module: ir.Module, types: QIRTypes):
+        """Parameters:
+
+        module (llvmlite.ir.Module): and LLVM module to write to.
+        types (QIRTypes): a collection of LLVM types for the QIR to use."""
+        
         self.h_func = QIRGate(
             module,
             [types.qubitPtrType],
@@ -105,6 +137,11 @@ class CRegFuncs:
     """A collection of QIR Functions that aren't gates"""
     
     def __init__(self, module: ir.Module, types: QIRTypes):
+        """Parameters:
+
+        module (llvmlite.ir.Module): and LLVM module to write to.
+        types (QIRTypes): a collection of LLVM types for the QIR to use."""
+        
         self.create_creg_func = QIRFunc(
             module,
             types.boolType.as_pointer(),
@@ -115,9 +152,15 @@ class CRegFuncs:
 
     
 class MzToBit(QIRFunc):
-    """Represents a QIR measure call in the Z basis that writes to a bit in a creg"""
+    """Represents a QIR measure call in the Z basis that writes to a bit in a creg."""
     
     def __init__(self, module: ir.Module, types: QIRTypes):
+        """Parameters:
+
+        module (llvmlite.ir.Module): an LLVM module to write to.
+        types (QIRTypes): a collection of LLVM types for the QIR to use.
+        """
+        
         super().__init__(module,
                          types.voidType,
                          [types.qubitPtrType, types.boolType.as_pointer(), types.intType],
@@ -128,6 +171,8 @@ class QIRGenerator(Generator):
     """Class to generate QIR from SLR. This should enable better compilation of conditional programs."""
 
     def __init__(self, includes: list[str] | None = None):
+        # NOTE: Include files don't exist in QIR, should we just remove
+        # the parameter to init
         self.current_block: Block = None
         self.setup_module()
         # Create a field qreg_list
@@ -136,6 +181,9 @@ class QIRGenerator(Generator):
         self._creg_dict: dict[str, object] = {}  # replace 'object' with the correct type
 
     def setup_module(self):
+        """Helper function to help setup various types and functions needed
+        in the QIR production."""
+        
         self._module = ir.Module(name=__file__)        
 
         # store them in a read-only object
@@ -161,8 +209,13 @@ class QIRGenerator(Generator):
         self._builder.comment(f"// Generated using: PECOS version {__version__}")
 
     def create_creg(self, creg: CReg):
-        """Add a call to create_creg in the current block."""
+        """Add a call to create_creg in the current block.
 
+        Parameters:
+
+        creg (slr.vars.CReg): An SLR classical register that should transform into a
+        classical register in the QIR.
+        """
         
         self._creg_dict[creg.sym] = self._creg_funcs.create_creg_func.call(
             self._builder,
@@ -171,13 +224,22 @@ class QIRGenerator(Generator):
         )
 
     def create_qreg(self, qreg: QReg):
-        """Uses an OrderedDict to globally flatten quantum registers into a single global register."""
+        """Uses an OrderedDict to globally flatten quantum registers into a single global register.
+        Parameters:
+
+        qreg (slr.vars.QReg): An SLR quantum register.
+        Its qubits will map to unique numbered qubits in the QIR.
+        """
         
         self._qreg_dict[qreg.sym] = (self._qubit_count, self._qubit_count + qreg.size - 1)
         self._qubit_count += qreg.size
         
     def generate_block(self, block: Main) -> None:
-        """Primary entry point for generation. Processes an slr Main block."""
+        """Primary entry point for generation of QIR.
+
+        Parameters:
+
+        block (slr.block.Main): An SLR entry-point block."""
 
         self._handle_main_block(block)
         self._handle_block(block)
@@ -191,8 +253,12 @@ class QIRGenerator(Generator):
             case CReg():
                 self.create_creg(reg)
 
-    def _handle_main_block(self, block) -> None:
-        """Process the main block of the program."""
+    def _handle_main_block(self, block: Main) -> None:
+        """Process the main block of the SLR program for conversion into a QIR program.
+
+        Parameters:
+
+        block (Main): the SLR entry-point block"""
         
         for var in block.vars:
             self._handle_var(var)
@@ -204,7 +270,11 @@ class QIRGenerator(Generator):
                     self._handle_var(var)
 
     def _handle_block(self, block: Block) -> None:
-        """Process a block of operations."""
+        """Process a block of operations.
+
+        Parameters:
+
+        block (Block): the current SLR block to convert into a QIR block."""
 
         self._current_block = block
         for block_or_op in block.ops:
@@ -215,7 +285,9 @@ class QIRGenerator(Generator):
                     self._handle_op(block_or_op)
 
     def _handle_op(self, op) -> None:
-        """Process a single operation."""
+        """Process a single operation.
+
+        op (Any): An op must be an SLR construct and not an arbitrary python type. """
 
         match op:
             case Barrier(qregs):
@@ -232,7 +304,10 @@ class QIRGenerator(Generator):
                 self._handle_quantum_gate(op)
 
     def _handle_quantum_gate(self, gate: qgate_base.QGate) -> None:
-        """Process a quantum gate."""
+        """Process a quantum gate.
+
+        gate (slr.qubit.qgate_base.QGate): An SLR quantum gate or measurement operation
+        to transform into a QIR Gate"""
         
         # Reminder: qgate has sym, qargs, and params properties
         match gate:
@@ -255,9 +330,13 @@ class QIRGenerator(Generator):
                                         [qubit_ptr, ll_creg, ir.Constant(self._types.intType, i)],
                                         name="")    
 
-    def _qarg_to_qubit_ptr(self, qarg: Qubit):
-        """Return a pointer to a qubit in the global register, based on the register and index
-        passed in the `qarg` param."""
+    def _qarg_to_qubit_ptr(self, qarg: Qubit) -> ir.Constant:
+        """Return a pointer to a qubit in the 'global quantum register', based on the register
+        and index passed in the `qarg` param.
+
+        Parameters:
+
+        qarg (slr.qubit.vars.Qubit): a qubit in an SLR quantum register (QReg)"""
         
         index = qarg.index
         qubit_index = self._qreg_dict[qarg.reg.sym][0] + index

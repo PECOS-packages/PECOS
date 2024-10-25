@@ -249,16 +249,10 @@ class QIRGenerator(Generator):
         
         self._qreg_dict[qreg.sym] = (self._qubit_count, self._qubit_count + qreg.size - 1)
         self._qubit_count += qreg.size
-        
-    def generate_block(self, block: Main) -> None:
-        """Primary entry point for generation of QIR.
 
-        Parameters:
-
-        block (slr.block.Main): An SLR entry-point block."""
-
-        self._handle_main_block(block)
-        self._handle_block(block)
+    def _generate_results(self) -> None:
+        """Generates the proper results calls at the end of the SLR program,
+        according to all the classical registers that were defined."""
         for reg_name, reg_inst in self._creg_dict.items():
             # add global tag for each CReg
             reg_name_bytes = bytearray(reg_name.encode('utf-8'))
@@ -272,7 +266,17 @@ class QIRGenerator(Generator):
             c_int = self._creg_funcs.creg_to_int_func.call(self._builder, [reg_inst], '')
             reg_tag_gep = reg_tag.gep((ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)))
             self._creg_funcs.int_result_func.call(self._builder, [c_int, reg_tag_gep], '')
+                
+    def generate_block(self, block: Main) -> None:
+        """Primary entry point for generation of QIR.
 
+        Parameters:
+
+        block (slr.block.Main): An SLR entry-point block."""
+
+        self._handle_main_block(block)
+        self._handle_block(block)
+        self._generate_results()
         self._builder.ret_void()
 
     def _handle_var(self, reg: Reg) -> None:

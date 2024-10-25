@@ -8,19 +8,13 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
 
 from pecos.qeclib import qubit
 from pecos.qeclib.qubit import Prep
 from pecos.qeclib.steane.gates_sq import sqrt_paulis
 from pecos.qeclib.steane.gates_sq.hadamards import H
 from pecos.qeclib.steane.gates_sq.paulis import X, Z
-from pecos.slr import Barrier, Block, Comment, If, Repeat
-
-if TYPE_CHECKING:
-    from pecos.slr import Bit, QReg, Qubit
+from pecos.slr import Barrier, Bit, Block, Comment, If, QReg, Qubit, Repeat
 
 
 class PrepEncodingNonFTZero(Block):

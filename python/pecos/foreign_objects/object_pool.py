@@ -24,7 +24,7 @@ class NamedObjectPool(ForeignObject):
 
     def __init__(self, **objects: ForeignObject) -> None:
         self.objs = objects
-        self.default = objects.get("default")
+        self.default = objects.get("default", None)
 
     def new_instance(self) -> None:
         """Create new instance/internal state."""

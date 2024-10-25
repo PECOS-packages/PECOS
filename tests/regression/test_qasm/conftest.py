@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.fixture
+@pytest.fixture()
 def compare_qasm():
     def _compare_qasm(block, *params, directory: Path | None = None, filename: str | None = None):
 

@@ -913,7 +913,8 @@ class VerifyStabilizers:
 
         qudit_set = self.data_qubits
 
-        end_weight = min(end_weight, len(qudit_set))
+        if end_weight > len(qudit_set):
+            end_weight = len(qudit_set)
 
         state = self.state
         found = self._dist_mode_smallest(

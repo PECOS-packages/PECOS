@@ -54,8 +54,8 @@ def is_wasmer_supported():
     return WASMER_ERR_MSG != "Wasmer is not available on this system"
 
 
-@pytest.mark.wasmtime
-@pytest.mark.optional_dependency
+@pytest.mark.wasmtime()
+@pytest.mark.optional_dependency()
 def test_spec_example_wasmtime():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS."""
 
@@ -67,8 +67,8 @@ def test_spec_example_wasmtime():
     )
 
 
-@pytest.mark.wasmtime
-@pytest.mark.optional_dependency
+@pytest.mark.wasmtime()
+@pytest.mark.optional_dependency()
 def test_spec_example_noisy_wasmtime():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
 
@@ -95,8 +95,8 @@ def test_spec_example_noisy_wasmtime():
     )
 
 
-@pytest.mark.wasmtime
-@pytest.mark.optional_dependency
+@pytest.mark.wasmtime()
+@pytest.mark.optional_dependency()
 def test_example1_wasmtime():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS."""
 
@@ -108,8 +108,8 @@ def test_example1_wasmtime():
     )
 
 
-@pytest.mark.wasmtime
-@pytest.mark.optional_dependency
+@pytest.mark.wasmtime()
+@pytest.mark.optional_dependency()
 def test_example1_noisy_wasmtime():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
 
@@ -137,8 +137,8 @@ def test_example1_noisy_wasmtime():
 
 
 @pytest.mark.skipif(not is_wasmer_supported(), reason="Wasmer is not support on some OS/Python version combinations.")
-@pytest.mark.wasmer
-@pytest.mark.optional_dependency
+@pytest.mark.wasmer()
+@pytest.mark.optional_dependency()
 def test_example1_wasmer():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS."""
 
@@ -151,8 +151,8 @@ def test_example1_wasmer():
 
 
 @pytest.mark.skipif(not is_wasmer_supported(), reason="Wasmer is not support on some OS/Python version combinations.")
-@pytest.mark.wasmer
-@pytest.mark.optional_dependency
+@pytest.mark.wasmer()
+@pytest.mark.optional_dependency()
 def test_example1_noisy_wasmer():
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
 
@@ -260,7 +260,7 @@ def test_qparallel():
     assert m.count("1111") == len(m)
 
 
-@pytest.mark.optional_dependency  # uses projectq / state-vector
+@pytest.mark.optional_dependency()  # uses projectq / state-vector
 def test_bell_qparallel():
     """Testing a program creating and measuring a Bell state and using qparallel blocks returns expected results."""
 

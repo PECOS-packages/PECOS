@@ -1,6 +1,6 @@
 from pecos import __version__
 from pecos.qeclib import qubit as p
-from pecos.slr import Bit, Block, Comment, CReg, If, Main, Permute, QReg, Qubit, Repeat, SlrConverter
+from pecos.slr import Bit, Block, Comment, CReg, If, Main, Permute, QReg, Qubit, Repeat, SlrConverter, Result
 
 # TODO: Remove reference to hqslib1.inc... better yet, don't have tests on qasm
 
@@ -120,3 +120,20 @@ def test_strange_program():
     # TODO: Weird things can happen with Permute... if you run a program twice
 
     assert SlrConverter(prog).qasm() == qasm
+
+def test_control_flow_qir():
+    """Test a program with control flow into QIR."""
+
+    prog = Main(
+        q := QReg("q", 2),
+        m := CReg("m", 2),
+        Repeat(3).block(
+            p.H(q[0]),
+        ),
+        p.CX(q[0], q[1]),
+        p.RX[0.3](q[0]),
+        p.Measure(q) > m,
+        Result(m),
+    )
+
+    assert SlrConverter(prog).qir() == "intentionally wrong"

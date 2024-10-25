@@ -12,20 +12,19 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass
-from functools import cached_property
 
 from llvmlite import binding, ir
 from llvmlite.ir import IntType, DoubleType, PointerType, Type, VoidType
 
 from pecos import __version__
 from pecos.qeclib.qubit import qgate_base
+from pecos.qeclib.qubit.qgate_base import TQGate
 from pecos.qeclib.qubit.measures import Measure
 from pecos.qeclib.qubit.sq_hadamards import H
-from pecos.qeclib.qubit.tq_cliffords import CX
-from pecos.slr import Block, Main
+from pecos.qeclib.qubit.tq_cliffords import CX, CZ
+from pecos.slr import Block, Main, Repeat, If
 from pecos.slr.gen_codes.generator import Generator
-from pecos.slr.misc import Barrier, Comment, Permute
+from pecos.slr.misc import Barrier, Comment, Permute, Result
 from pecos.slr.vars import CReg, QReg, Reg, Vars, Qubit
 
 class QIRTypes:
@@ -65,7 +64,7 @@ class QIRFunc:
             name=name,
         )
 
-    def call(self, builder: ir.IRBuilder, args: list[binding.ValueRef], name: str) -> binding.ValueRef:
+    def create_call(self, builder: ir.IRBuilder, args: list[binding.ValueRef], name: str) -> binding.ValueRef:
         """A helper method to call a QIR Gate.
 
         Parameters:
@@ -109,7 +108,7 @@ class QIRGate(QIRFunc):
     def llvm_type_str(self) -> str:
         """Returns the llvm type as a string."""
         
-        return f'void @{self_mangle_name}({", ".join(map(str, self._arg_tys))})'
+        return f'void @{self.self_mangle_name}({", ".join(map(str, self._arg_tys))})'
 
         
 class QIRGates:
@@ -121,16 +120,79 @@ class QIRGates:
         module (llvmlite.ir.Module): and LLVM module to write to.
         types (QIRTypes): a collection of LLVM types for the QIR to use."""
         
-        self.h_func = QIRGate(
-            module,
-            [types.qubitPtrType],
-            name="h",
-        )
-        self.cx_func = QIRGate(
-            module,
-            [types.qubitPtrType, types.qubitPtrType],
-            name="cx",
-        )
+        # self.h_func = QIRGate(
+        #     module,
+        #     [types.qubitPtrType],
+        #     name="h",
+        # )
+        # self.cx_func = QIRGate(
+        #     module,
+        #     [types.qubitPtrType, types.qubitPtrType],
+        #     name="cx",
+        # )
+
+        self._gate_declaration_cache: dict[str, QIRGate] = {}
+        self._gate_name_map = {
+            "U1q": "r1xy",
+        }
+        self._types = types
+    
+    def create_gate_call(self, builder: ir.IRBuilder, gate: qgate_base.QGate, qreg_dict) -> binding.ValueRef:
+        """A helper method to call a QIR Gate.
+
+        Parameters:
+
+        builder (llvmlite.ir.IRBuilder): a builder for generating instructions in the
+        current LLVM basic block.
+        gate (QGate): a quantum gate to call in the QIR.
+        qargs (list[Qubit]): a list of qubits to pass to the quantum gate."""
+
+        qargs: list[Qubit] = gate.qargs
+        if len(qargs) != gate.qsize:
+            raise ValueError(f"Gate {gate.sym} expects {gate.qsize} qubits, but {len(qargs)} were provided.")
+
+        if not gate.sym in self._gate_declaration_cache:
+            gate_name = gate.sym.lower()
+            # Handle situations where SLR gate name doesn't match QIR gate name
+            if gate_name in self._gate_name_map:
+                gate_name = self._gate_name_map[gate_name]
+
+            declare_args = []
+            if gate.has_parameters:
+                declare_args = [self._types.doubleType] * len(gate.params)
+            #declare_args.extend([self._types.qubitPtrType] * gate.qsize)
+            for _ in qargs:
+                declare_args.append(self._types.qubitPtrType)
+
+            gate_declaration = QIRGate(
+                builder.module,
+                declare_args,
+                name=gate_name,
+            )
+            self._gate_declaration_cache[gate.sym] = gate_declaration
+            print(f"Created gate {gate.sym} with args {declare_args}")
+
+        gate_declaration = self._gate_declaration_cache[gate.sym]
+        gate_args = [ir.Constant(self._types.qubitPtrType, qarg.index) for qarg in qargs]
+        gate_args = []
+        if gate.has_parameters:
+            gate_args = [ir.Constant(self._types.doubleType, param) for param in gate.params]
+        gate_args.extend([self._qarg_to_qubit_ptr(qarg, qreg_dict) for qarg in qargs])
+
+        # Create the actual invocation on the builder using the args passed in
+        gate_declaration.create_call(builder, gate_args, name="")
+
+    def _qarg_to_qubit_ptr(self, qarg: Qubit, qreg_dict) -> ir.Constant:
+        """Return a pointer to a qubit in the 'global quantum register', based on the register
+        and index passed in the `qarg` param.
+
+        Parameters:
+
+        qarg (slr.qubit.vars.Qubit): a qubit in an SLR quantum register (QReg)"""
+        
+        index = qarg.index
+        qubit_index = qreg_dict[qarg.reg.sym][0] + index
+        return ir.Constant(self._types.intType, qubit_index).inttoptr(self._types.qubitPtrType)
 
         
 class CRegFuncs:
@@ -179,6 +241,7 @@ class QIRGenerator(Generator):
         self._qreg_dict: dict[str, tuple[int, int]] = OrderedDict()
         self._qubit_count: int = 0
         self._creg_dict: dict[str, object] = {}  # replace 'object' with the correct type
+        self._result_cregs: set[str] = set()
 
     def setup_module(self):
         """Helper function to help setup various types and functions needed
@@ -217,7 +280,7 @@ class QIRGenerator(Generator):
         classical register in the QIR.
         """
         
-        self._creg_dict[creg.sym] = self._creg_funcs.create_creg_func.call(
+        self._creg_dict[creg.sym] = self._creg_funcs.create_creg_func.create_call(
             self._builder,
             [ir.Constant(ir.IntType(64), creg.size)],
             f"{creg.sym}",
@@ -277,12 +340,16 @@ class QIRGenerator(Generator):
         block (Block): the current SLR block to convert into a QIR block."""
 
         self._current_block = block
-        for block_or_op in block.ops:
-            match block_or_op:
-                case Block():
-                    self._handle_block(block_or_op)
-                case _:  # non-block operation
-                    self._handle_op(block_or_op)
+        repeat_times = block.cond if isinstance(block, Repeat) else 1
+
+        for _ in range(repeat_times):
+            for block_or_op in block.ops:
+                match block_or_op:
+                    case Block():
+                        self._handle_block(block_or_op)
+                    case _:  # non-block operation
+                        self._handle_op(block_or_op)
+        
 
     def _handle_op(self, op) -> None:
         """Process a single operation.
@@ -290,16 +357,18 @@ class QIRGenerator(Generator):
         op (Any): An op must be an SLR construct and not an arbitrary python type. """
 
         match op:
-            case Barrier(qregs):
-                pass
-            case Comment(txt, space, newline):
-                pass
-            case Permute(elems_i, elems_f, comment):
-                pass
-            case Vars(vars):
-                pass
-            case CReg(sym, size):
-                pass
+            case Barrier():
+                raise NotImplementedError("Barrier not implemented in QIR")
+            case Comment():
+                self._builder.comment(op.txt) # TODO: Handle 'space', 'newline' params
+            case Permute():
+                raise NotImplementedError("Permute not implemented in QIR")
+            case Vars():
+                raise NotImplementedError("Vars not implemented in QIR")
+            case CReg():
+                raise NotImplementedError("CReg not implemented in QIR")
+            case Result():
+                self._result_cregs.add(op.creg.sym)
             case qgate_base.QGate():
                 self._handle_quantum_gate(op)
 
@@ -311,24 +380,27 @@ class QIRGenerator(Generator):
         
         # Reminder: qgate has sym, qargs, and params properties
         match gate:
-            case H():
-                self._gates.h_func.call(self._builder, [self._qarg_to_qubit_ptr(gate.qargs[0])], name="")
-            case CX():
-                    self._gates.cx_func.call(self._builder,
-                    [
-                        self._qarg_to_qubit_ptr(gate.qargs[0]),
-                        self._qarg_to_qubit_ptr(gate.qargs[1]),
-                    ],
-                    name="",
-                )
+            # case H():
+            #     #self._gates.h_func.create_call(self._builder, [self._qarg_to_qubit_ptr(gate.qargs[0])], name="")
+            #     self._gates.create_gate_call(self._builder, gate, self._qreg_dict)
+            # case CX():
+            #         # self._gates.cx_func.create_call(self._builder,
+            #         #     [
+            #         #         self._qarg_to_qubit_ptr(gate.qargs[0]),
+            #         #         self._qarg_to_qubit_ptr(gate.qargs[1]),
+            #         #     ],
+            #         #     name="",
+            #         # )      
             case Measure():
                 creg = gate.cout[0]
                 ll_creg = self._creg_dict[creg.sym]
                 for i, q in enumerate(gate.qargs[0]):
                     qubit_ptr = self._qarg_to_qubit_ptr(q)                    
-                    self._mz_to_bit.call(self._builder,
+                    self._mz_to_bit.create_call(self._builder,
                                         [qubit_ptr, ll_creg, ir.Constant(self._types.intType, i)],
-                                        name="")    
+                                        name="")
+            case _:
+                self._gates.create_gate_call(self._builder, gate, self._qreg_dict) 
 
     def _qarg_to_qubit_ptr(self, qarg: Qubit) -> ir.Constant:
         """Return a pointer to a qubit in the 'global quantum register', based on the register

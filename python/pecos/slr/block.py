@@ -60,22 +60,3 @@ class Block(Node):
 
     def iter(self):
         yield from self.__iter__()
-
-    # def gen(self, target: object | str) -> str | NotImplementedError:
-    #     if isinstance(target, str):
-    #         if target == "qasm":
-    #             target = QASMGenerator()
-    #         elif target == "qir":
-    #             target = QIRGenerator()
-    #         else:
-    #             msg = f"Code gen target '{target}' is not supported."
-    #             raise NotImplementedError(msg)
-
-    #     target.generate_block(self)
-    #     return target.get_output()
-
-    # def qasm(self):
-    #     return self.gen("qasm")
-
-    # def qir(self):
-    #     return self.gen("qir")

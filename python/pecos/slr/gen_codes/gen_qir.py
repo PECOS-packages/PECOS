@@ -21,7 +21,7 @@ from pecos.qeclib.qubit import qgate_base
 from pecos.qeclib.qubit.measures import Measure
 from pecos.slr import Block, Main, Repeat
 from pecos.slr.gen_codes.generator import Generator
-from pecos.slr.misc import Barrier, Comment, Permute, Result
+from pecos.slr.misc import Barrier, Comment, Permute
 from pecos.slr.vars import CReg, QReg, Qubit, Reg, Vars
 
 
@@ -139,8 +139,8 @@ class CRegFuncs:
             [types.intType, types.tagType],
             "__quantum__rt__int_record_output",
         )
-    #TODO: add functions to set and read bits in a creg
-        
+
+    # TODO: add functions to set and read bits in a creg
 
 
 class MzToBit(QIRFunc):
@@ -154,7 +154,10 @@ class MzToBit(QIRFunc):
         """
 
         super().__init__(
-            module, types.voidType, [types.qubitPtrType, types.boolType.as_pointer(), types.intType], "mz_to_creg_bit"
+            module,
+            types.voidType,
+            [types.qubitPtrType, types.boolType.as_pointer(), types.intType],
+            "mz_to_creg_bit",
         )
 
 
@@ -169,7 +172,7 @@ class QIRGenerator(Generator):
         # Create a field qreg_list
         self._qreg_dict: dict[str, tuple[int, int]] = OrderedDict()
         self._qubit_count: int = 0
-        self._creg_dict: dict[str, object] = {}  # replace 'object' with the correct type
+        self._creg_dict: dict[str, tuple[binding.ValueRef, bool]] = {}
         self._result_cregs: set[str] = set()
         self._gate_declaration_cache: dict[str, QIRGate] = {}
         # TODO: Fill this out completely using some reference
@@ -211,10 +214,11 @@ class QIRGenerator(Generator):
         classical register in the QIR.
         """
 
-        self._creg_dict[creg.sym] = self._creg_funcs.create_creg_func.create_call(
-            self._builder,
-            [ir.Constant(ir.IntType(64), creg.size)],
-            f"{creg.sym}",
+        self._creg_dict[creg.sym] = (
+            self._creg_funcs.create_creg_func.create_call(
+                self._builder, [ir.Constant(ir.IntType(64), creg.size)], f"{creg.sym}"
+            ),
+            creg.result,
         )
 
     def create_qreg(self, qreg: QReg):
@@ -237,19 +241,24 @@ class QIRGenerator(Generator):
 
         self._handle_main_block(block)
         self._handle_block(block)
-        for reg_name, reg_inst in self._creg_dict.items():
+
+        # Handle the classical register outputs
+        for reg_name, (reg_inst, result) in self._creg_dict.items():
+            if not result:
+                continue
+
             # add global tag for each CReg
-            reg_name_bytes = bytearray(reg_name.encode('utf-8'))
+            reg_name_bytes = bytearray(reg_name.encode("utf-8"))
             tag_type = ir.ArrayType(ir.IntType(8), len(reg_name))
             reg_tag = ir.GlobalVariable(self._module, tag_type, reg_name)
             reg_tag.initializer = ir.Constant(tag_type, reg_name_bytes)
             reg_tag.global_constant = True
-            reg_tag.linkage = 'private'
+            reg_tag.linkage = "private"
 
             # convert creg to an integer and return that as a result
-            c_int = self._creg_funcs.creg_to_int_func.create_call(self._builder, [reg_inst], '')
+            c_int = self._creg_funcs.creg_to_int_func.create_call(self._builder, [reg_inst], "")
             reg_tag_gep = reg_tag.gep((ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)))
-            self._creg_funcs.int_result_func.create_call(self._builder, [c_int, reg_tag_gep], '')
+            self._creg_funcs.int_result_func.create_call(self._builder, [c_int, reg_tag_gep], "")
 
         self._builder.ret_void()
 
@@ -310,8 +319,6 @@ class QIRGenerator(Generator):
                 raise NotImplementedError("Vars not implemented in QIR")
             case CReg():
                 raise NotImplementedError("CReg not implemented in QIR")
-            case Result():
-                self._result_cregs.add(op.creg.sym)
             case qgate_base.QGate():
                 self._handle_quantum_gate(op)
 
@@ -324,11 +331,13 @@ class QIRGenerator(Generator):
         match gate:
             case Measure():
                 creg = gate.cout[0]
-                ll_creg = self._creg_dict[creg.sym]
+                ll_creg = self._creg_dict[creg.sym][0]
                 for i, q in enumerate(gate.qargs[0]):
                     qubit_ptr = self._qarg_to_qubit_ptr(q)
                     self._mz_to_bit.create_call(
-                        self._builder, [qubit_ptr, ll_creg, ir.Constant(self._types.intType, i)], name=""
+                        self._builder,
+                        [qubit_ptr, ll_creg, ir.Constant(self._types.intType, i)],
+                        name="",
                     )
             case _:
                 self._create_qgate_call(gate)
@@ -351,9 +360,7 @@ class QIRGenerator(Generator):
             declare_args = []
             if gate.has_parameters:
                 declare_args = [self._types.doubleType] * len(gate.params)
-            # declare_args.extend([self._types.qubitPtrType] * gate.qsize)
-            for _ in qargs:
-                declare_args.append(self._types.qubitPtrType)
+            declare_args.extend([self._types.qubitPtrType] * gate.qsize)
 
             gate_declaration = QIRGate(
                 self._module,

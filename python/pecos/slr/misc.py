@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pecos.slr.vars import Elem, QReg, Qubit, Reg, CReg
+    from pecos.slr.vars import Elem, QReg, Qubit, Reg
 
 from pecos.slr.fund import Statement
 
@@ -40,9 +40,3 @@ class Permute(Statement):
         self.elems_i = elems_i
         self.elems_f = elems_f
         self.comment = comment
-
-class Result(Statement):
-    """Indicates the classical register should be returned as part of the results."""
-
-    def __init__(self, creg: CReg):
-        self.creg = creg

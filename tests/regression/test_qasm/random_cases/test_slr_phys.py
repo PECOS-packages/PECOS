@@ -1,6 +1,6 @@
 from pecos import __version__
 from pecos.qeclib import qubit as p
-from pecos.slr import Bit, Block, Comment, CReg, If, Main, Permute, QReg, Qubit, Repeat, SlrConverter, Result
+from pecos.slr import Bit, Block, Comment, CReg, If, Main, Permute, QReg, Qubit, Repeat, SlrConverter
 
 # TODO: Remove reference to hqslib1.inc... better yet, don't have tests on qasm
 
@@ -121,19 +121,20 @@ def test_strange_program():
 
     assert SlrConverter(prog).qasm() == qasm
 
+
 def test_control_flow_qir():
     """Test a program with control flow into QIR."""
 
     prog = Main(
         q := QReg("q", 2),
         m := CReg("m", 2),
+        m_hidden := CReg("m_hidden", 2, result=False),
         Repeat(3).block(
             p.H(q[0]),
         ),
         p.CX(q[0], q[1]),
         p.RX[0.3](q[0]),
         p.Measure(q) > m,
-        Result(m),
     )
 
     assert SlrConverter(prog).qir() == "intentionally wrong"

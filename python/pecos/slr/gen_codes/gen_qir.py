@@ -45,7 +45,8 @@ class QIRTypes:
         self.intType: IntType = ir.IntType(64)
         self.doubleType: DoubleType = ir.DoubleType()
         self.qubitPtrType: PointerType = qubitTy.as_pointer()
-        self.resultPtrType: PointerType = resultTy.as_pointer()        
+        self.resultPtrType: PointerType = resultTy.as_pointer()
+        self.tagType: PointerType = ir.IntType(8).as_pointer()
 
 
 class QIRFunc:
@@ -148,7 +149,22 @@ class CRegFuncs:
             [types.intType],
             "create_creg",
         )
-    #TODO: add functions to set and read bits in a creg and also conver to an integer
+
+        self.creg_to_int_func = QIRFunc(
+            module,
+            types.intType,
+            [types.boolType.as_pointer()],
+            "get_int_from_creg",
+        )
+
+        self.int_result_func = QIRFunc(
+            module,
+            types.voidType,
+            [types.intType, types.tagType],
+            "__quantum__rt__int_record_output",
+        )
+    #TODO: add functions to set and read bits in a creg
+        
 
     
 class MzToBit(QIRFunc):
@@ -243,6 +259,23 @@ class QIRGenerator(Generator):
 
         self._handle_main_block(block)
         self._handle_block(block)
+        for reg_name, reg_inst in self._creg_dict.items():
+            # add global tag for each CReg
+            reg_name_bytes = bytearray(reg_name.encode('utf-8'))
+            tag_type = ir.ArrayType(ir.IntType(8), len(reg_name))
+            reg_tag = ir.GlobalVariable(self._module, tag_type, reg_name)
+            reg_tag.initializer = ir.Constant(tag_type, reg_name_bytes)
+            reg_tag.global_constant = True
+            reg_tag.linkage = 'private'
+
+            # convert creg to an integer and return that as a result
+            c_int = self._creg_funcs.creg_to_int_func.call(self._builder, [reg_inst], '')
+            #reg_tag_gep = reg_tag.initializer.as_pointer().gep(0)
+            reg_tag_gep = reg_tag.gep((ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)))
+            #reg_tag_gep = self._builder.gep(reg_tag,
+            #    (ir.Constant(ir.IntType(32), 0),
+            #     ir.Constant(ir.IntType(32), 0)), name='reg_tag_gep')
+            self._creg_funcs.int_result_func.call(self._builder, [c_int, reg_tag_gep], '')
 
         self._builder.ret_void()
 

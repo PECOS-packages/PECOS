@@ -270,11 +270,7 @@ class QIRGenerator(Generator):
 
             # convert creg to an integer and return that as a result
             c_int = self._creg_funcs.creg_to_int_func.call(self._builder, [reg_inst], '')
-            #reg_tag_gep = reg_tag.initializer.as_pointer().gep(0)
             reg_tag_gep = reg_tag.gep((ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)))
-            #reg_tag_gep = self._builder.gep(reg_tag,
-            #    (ir.Constant(ir.IntType(32), 0),
-            #     ir.Constant(ir.IntType(32), 0)), name='reg_tag_gep')
             self._creg_funcs.int_result_func.call(self._builder, [c_int, reg_tag_gep], '')
 
         self._builder.ret_void()

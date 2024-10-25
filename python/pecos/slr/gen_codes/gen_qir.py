@@ -16,6 +16,8 @@ from collections import OrderedDict
 from llvmlite import binding, ir
 from llvmlite.ir import DoubleType, IntType, PointerType, Type, VoidType
 
+import re
+
 from pecos import __version__
 from pecos.qeclib.qubit import qgate_base
 from pecos.qeclib.qubit.measures import Measure
@@ -172,12 +174,14 @@ class QIRGenerator(Generator):
         # Create a field qreg_list
         self._qreg_dict: dict[str, tuple[int, int]] = OrderedDict()
         self._qubit_count: int = 0
+        self._measure_count: int = 0
         self._creg_dict: dict[str, tuple[binding.ValueRef, bool]] = {}
         self._result_cregs: set[str] = set()
         self._gate_declaration_cache: dict[str, QIRGate] = {}
         # TODO: Fill this out completely using some reference
         self._gate_name_map = {
             "U1q": "r1xy",
+            "cx": "cnot",
         }
 
     def setup_module(self):
@@ -232,21 +236,13 @@ class QIRGenerator(Generator):
         self._qreg_dict[qreg.sym] = (self._qubit_count, self._qubit_count + qreg.size - 1)
         self._qubit_count += qreg.size
 
-    def generate_block(self, block: Main) -> None:
-        """Primary entry point for generation of QIR.
 
-        Parameters:
-
-        block (slr.block.Main): An SLR entry-point block."""
-
-        self._handle_main_block(block)
-        self._handle_block(block)
-
-        # Handle the classical register outputs
+    def _generate_results(self) -> None:
+        """Generates the proper results calls at the end of the SLR program,
+        according to all the classical registers that were defined."""
         for reg_name, (reg_inst, result) in self._creg_dict.items():
-            if not result:
+            if not result: # ignore non-result cregs
                 continue
-
             # add global tag for each CReg
             reg_name_bytes = bytearray(reg_name.encode("utf-8"))
             tag_type = ir.ArrayType(ir.IntType(8), len(reg_name))
@@ -258,8 +254,17 @@ class QIRGenerator(Generator):
             # convert creg to an integer and return that as a result
             c_int = self._creg_funcs.creg_to_int_func.create_call(self._builder, [reg_inst], "")
             reg_tag_gep = reg_tag.gep((ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)))
-            self._creg_funcs.int_result_func.create_call(self._builder, [c_int, reg_tag_gep], "")
+            self._creg_funcs.int_result_func.create_call(self._builder, [c_int, reg_tag_gep], '')
+                
+    def generate_block(self, block: Main) -> None:
+        """Primary entry point for generation of QIR.
+        Parameters:
 
+        block (slr.block.Main): An SLR entry-point block."""
+
+        self._handle_main_block(block)
+        self._handle_block(block)
+        self._generate_results()
         self._builder.ret_void()
 
     def _handle_var(self, reg: Reg) -> None:
@@ -333,6 +338,7 @@ class QIRGenerator(Generator):
                 creg = gate.cout[0]
                 ll_creg = self._creg_dict[creg.sym][0]
                 for i, q in enumerate(gate.qargs[0]):
+                    self._measure_count += 1
                     qubit_ptr = self._qarg_to_qubit_ptr(q)
                     self._mz_to_bit.create_call(
                         self._builder,
@@ -392,7 +398,41 @@ class QIRGenerator(Generator):
         qubit_index = self._qreg_dict[qarg.reg.sym][0] + index
         return ir.Constant(self._types.intType, qubit_index).inttoptr(self._types.qubitPtrType)
 
+    def _ll_with_attributes(self) -> str:
+        """Patches attributes into the .ll for the program:
+
+        Example attributes:
+        attributes #0 = { "entry_point" "output_labeling_schema" "qir_profiles"="custom" "required_num_qubits"="22" "required_num_results"="22" }
+        """
+        ll_text: str = _fix_internal_consts(str(self._module))
+        mod_w_attr = ll_text.replace("@main()", "@main() #0")
+
+        # to get around line length limitations
+        mod_w_attr += "\nattributes #0 = { \"entry_point\""
+        mod_w_attr += ' "qir_profiles"="custom"'
+        mod_w_attr += f" \"required_num_qubits\"=\"{self._qubit_count}\""
+        mod_w_attr += f" \"required_num_results\"=\"{self._measure_count}\" }}"
+        return mod_w_attr
+
     def get_output(self) -> str:
         """Stringify the module as .ll text"""
+        return self._ll_with_attributes()
+        
+def _fix_internal_consts(llvm_ir: str) -> str:
+    """Converts all global variable tag declarations to remove quotation marks
+    from the numbers. Ex. @"1" = --- becomes @1 = ---
+    
+    Parameters
+    ----------
+    llvm_ir : str
+    The llvm string we are trying to modify
+    
+    Returns
+    -------
+    tuple(str, dict)
+    Returns a tuple that contains the updated llvm ir string, and a dictionary that contains
+    the variable and its corresponding string constant
+    """
 
-        return str(self._module)
+    # substitute all instances of variable num with quotes, with just number (@"0" -> @0)
+    return re.sub("([@%])\"([^\"]+)\"", r"\1\2", llvm_ir)

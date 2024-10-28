@@ -15,6 +15,8 @@ from typing import Any
 import numpy as np
 import pyquest.unitaries as qgate
 
+from pecos.simulators.quest.gates_one_qubit import H
+
 
 def CX(state, qubits: tuple[int, int], **params: Any) -> None:
     """
@@ -241,3 +243,13 @@ def SWAP(state, qubits: tuple[int, int], **params: Any) -> None:
     idxs = [state.num_qubits - q - 1 for q in qubits]
 
     state.quest_state.apply_operator(qgate.Swap(targets=idxs))
+
+
+def G(state, qubits: tuple[int, int], **params: Any) -> None:
+    """'G': (('I', 'H'), 'CNOT', ('H', 'H'), 'CNOT', ('I', 'H'))"""
+    H(state, qubits[1])
+    CX(state, qubits)
+    H(state, qubits[0])
+    H(state, qubits[1])
+    CX(state, qubits)
+    H(state, qubits[1])

@@ -62,11 +62,10 @@ class Block(Node):
     def iter(self):
         yield from self.__iter__()
 
-    def gen(self, target: object | str):
-
+    def gen(self, target: object | str, add_versions=True):
         if isinstance(target, str):
             if target == "qasm":
-                target = QASMGenerator()
+                target = QASMGenerator(add_versions=add_versions)
             else:
                 msg = f"Code gen target '{target}' is not supported."
                 raise NotImplementedError(msg)
@@ -74,5 +73,5 @@ class Block(Node):
         target.generate_block(self)
         return target.get_output()
 
-    def qasm(self):
-        return self.gen("qasm")
+    def qasm(self, add_versions=True):
+        return self.gen("qasm", add_versions=add_versions)

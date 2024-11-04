@@ -15,11 +15,12 @@ from pecos import __version__
 
 
 class QASMGenerator:
-    def __init__(self, includes: list[str] | None = None):
+    def __init__(self, includes: list[str] | None = None, add_versions=True):
         self.output = []
         self.current_scope = None
         self.includes = includes
         self.cond = None
+        self.add_versions = add_versions
 
     def write(self, line):
         self.output.append(line)
@@ -37,8 +38,10 @@ class QASMGenerator:
                 for inc in self.includes:
                     self.write(f'include "{str(inc)}";')
             else:
+                # TODO: dump definitions in for things that are used instead of using includes
                 self.write('include "hqslib1.inc";')
-            self.write(f"// Generated using: PECOS version {__version__}")
+            if self.add_versions:
+                self.write(f"// Generated using: PECOS version {__version__}")
             for var in block.vars:
                 var_def = self.process_var_def(var)
                 self.write(var_def)
@@ -71,7 +74,6 @@ class QASMGenerator:
             self.cond = None
 
         elif block_name == "Repeat":
-
             for _ in range(block.cond):
                 self.block_op_loop(block)
         else:
@@ -180,7 +182,6 @@ class QASMGenerator:
             op_list = op_str.split("\n")
             op_new = []
             for o in op_list:
-
                 o = o.strip()
                 if o != "" and not o.startswith("//"):
                     for qi in o.split(";"):
@@ -215,22 +216,31 @@ class QASMGenerator:
                     op_str = self.qgate_tq_qasm(op)
 
         else:
-
             match sym:
                 case "Measure":
-                    op_str = " ".join([f"measure {str(q)} -> {c};" for q, c in zip(op.qargs, op.cout, strict=True)])
+                    op_str = " ".join(
+                        [f"measure {str(q)} -> {c};" for q, c in zip(op.qargs, op.cout, strict=True)],
+                    )
 
                 case "F":
-                    op_str = " ".join([f"rx(pi/2) {str(q)};\nrz(pi/2) {str(q)};" for q in op.qargs])
+                    op_str = " ".join(
+                        [f"rx(pi/2) {str(q)};\nrz(pi/2) {str(q)};" for q in op.qargs],
+                    )
 
                 case "Fdg":
-                    op_str = " ".join([f"ry(-pi/2) {str(q)};\nrz(-pi/2) {str(q)};" for q in op.qargs])
+                    op_str = " ".join(
+                        [f"ry(-pi/2) {str(q)};\nrz(-pi/2) {str(q)};" for q in op.qargs],
+                    )
 
                 case "F4":
-                    op_str = " ".join([f"ry(-pi/2) {str(q)};\nrz(pi/2) {str(q)};" for q in op.qargs])
+                    op_str = " ".join(
+                        [f"ry(-pi/2) {str(q)};\nrz(pi/2) {str(q)};" for q in op.qargs],
+                    )
 
                 case "F4dg":
-                    op_str = " ".join([f"rx(-pi/2) {str(q)};\nrz(-pi/2) {str(q)};" for q in op.qargs])
+                    op_str = " ".join(
+                        [f"rx(-pi/2) {str(q)};\nrz(-pi/2) {str(q)};" for q in op.qargs],
+                    )
 
                 case "Prep":
                     op_str = self.qgate_qasm(op, "reset")

@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 import qulacs.gate as qgate
 
-from pecos.simulators.qulacs.gates_one_qubit import SZ, SZdg
+from pecos.simulators.qulacs.gates_one_qubit import SZ, H, SZdg
 
 
 def CX(state, qubits: tuple[int, int], **params: Any) -> None:
@@ -231,3 +231,13 @@ def SWAP(state, qubits: tuple[int, int], **params: Any) -> None:
     idxs = [state.num_qubits - q - 1 for q in qubits]
 
     qgate.SWAP(idxs[0], idxs[1]).update_quantum_state(state.qulacs_state)
+
+
+def G(state, qubits: tuple[int, int], **params: Any) -> None:
+    """'G': (('I', 'H'), 'CNOT', ('H', 'H'), 'CNOT', ('I', 'H'))"""
+    H(state, qubits[1])
+    CX(state, qubits)
+    H(state, qubits[0])
+    H(state, qubits[1])
+    CX(state, qubits)
+    H(state, qubits[1])

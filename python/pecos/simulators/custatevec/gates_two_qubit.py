@@ -16,6 +16,8 @@ from typing import Any
 import cupy as cp
 from cuquantum import custatevec as cusv
 
+from pecos.simulators.custatevec.gates_one_qubit import H
+
 
 def _apply_controlled_matrix(state, control: int, target: int, matrix: cp.ndarray) -> None:
     """
@@ -396,3 +398,13 @@ def SWAP(state, qubits: tuple[int, int], **params: Any) -> None:
         extra_workspace_size_in_bytes=0,  # Let cuQuantum use the mempool we configured
     )
     state.stream.synchronize()
+
+
+def G(state, qubits: tuple[int, int], **params: Any) -> None:
+    """'G': (('I', 'H'), 'CNOT', ('H', 'H'), 'CNOT', ('I', 'H'))"""
+    H(state, qubits[1])
+    CX(state, qubits)
+    H(state, qubits[0])
+    H(state, qubits[1])
+    CX(state, qubits)
+    H(state, qubits[1])

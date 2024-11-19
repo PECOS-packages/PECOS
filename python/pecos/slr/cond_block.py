@@ -38,7 +38,7 @@ class If(CondBlock):
 
     def __init__(self, *args, cond=None):
         super().__init__(*args, cond=cond)
-        self.then_block = None
+        self.then_block = None # TODO: Set back to args*
         self.else_block = None
 
     def Then(self, *args):

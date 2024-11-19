@@ -183,7 +183,7 @@ class QIRGenerator(Generator):
         # TODO: Fill this out completely using some reference
         self._gate_name_map = {
             "u1q": "r1xy",
-            #"cx": "cnot",
+            "cx": "cnot",
             "szz": "zz",
         }
 
@@ -333,8 +333,7 @@ class QIRGenerator(Generator):
             rhs = ir.Constant(self._types.intType, cond.right)
         else:
             rhs_reg_fetch = self._creg_dict[cond.right.sym][0]
-            rhs = self._creg_funcs.creg_to_int_func.create_call(self._builder, [rhs_reg_fetch], "")
-        rhs = ir.Constant(self._types.intType, cond.right)
+            rhs = self._creg_funcs.creg_to_int_func.create_call(self._builder, [rhs_reg_fetch], "")        
         return self._builder.icmp_signed(cond.symbol, lhs, rhs)
 
     def _handle_op(self, op) -> None:

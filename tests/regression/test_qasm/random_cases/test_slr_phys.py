@@ -40,7 +40,6 @@ def test_bell_qir():
     )
 
     qir = SlrConverter(prog).qir()
-    print(qir)
     assert qir == "intentionally wrong"
 
 
@@ -149,5 +148,4 @@ def test_control_flow_qir():
         p.Measure(q) > m,
     )
     qir = SlrConverter(prog).qir()
-    print(qir)
     assert qir == "intentionally wrong"

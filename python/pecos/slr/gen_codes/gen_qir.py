@@ -21,10 +21,12 @@ import re
 from pecos import __version__
 from pecos.qeclib.qubit import qgate_base
 from pecos.qeclib.qubit.measures import Measure
-from pecos.slr import Block, Main, Repeat
+from pecos.slr import Block, Main, Repeat, If
+from pecos.slr.cops import EQUIV, LT, GT, LE, GE, NOT, CompOp
+from pecos.slr.fund import Expression
 from pecos.slr.gen_codes.generator import Generator
 from pecos.slr.misc import Barrier, Comment, Permute
-from pecos.slr.vars import CReg, QReg, Qubit, Reg, Vars
+from pecos.slr.vars import CReg, QReg, Qubit, Reg, Vars, PyCOp
 
 
 class QIRTypes:
@@ -220,7 +222,7 @@ class QIRGenerator(Generator):
 
         self._creg_dict[creg.sym] = (
             self._creg_funcs.create_creg_func.create_call(
-                self._builder, [ir.Constant(ir.IntType(64), creg.size)], f"{creg.sym}"
+                self._builder, [ir.Constant(ir.IntType(64), creg.size)], f"{creg.sym}",
             ),
             creg.result,
         )
@@ -255,7 +257,7 @@ class QIRGenerator(Generator):
             c_int = self._creg_funcs.creg_to_int_func.create_call(self._builder, [reg_inst], "")
             reg_tag_gep = reg_tag.gep((ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)))
             self._creg_funcs.int_result_func.create_call(self._builder, [c_int, reg_tag_gep], '')
-                
+
     def generate_block(self, block: Main) -> None:
         """Primary entry point for generation of QIR.
         Parameters:
@@ -303,10 +305,31 @@ class QIRGenerator(Generator):
         for _ in range(repeat_times):
             for block_or_op in block.ops:
                 match block_or_op:
+                    case If():
+                        test_pred = self._convert_cond(block_or_op.cond)
+                        # pred = self._builder.icmp_signed("==", block_or_op.cond, ir.Constant(self._types.intType, 1))
+                        # with self._builder.if_then(pred):
+                        #     self._handle_block(block_or_op.then_block)
+                        pass
                     case Block():
                         self._handle_block(block_or_op)
                     case _:  # non-block operation
                         self._handle_op(block_or_op)
+
+    def _convert_cond(self, cond: Expression):
+        """Converts an SLR expression into a QIR condition."""
+        match cond:
+            case CompOp():
+                #return
+                # for something like if(reg == 3) we'll have the register on the left
+                creg: CReg = cond.left
+                # left symbol is creg object
+                creg.
+                return self._builder.icmp_signed(cond.symbol, None, ir.Constant(self._types.intType, cond.right))
+                pass
+
+        pass
+
 
     def _handle_op(self, op) -> None:
         """Process a single operation.
@@ -417,16 +440,16 @@ class QIRGenerator(Generator):
     def get_output(self) -> str:
         """Stringify the module as .ll text"""
         return self._ll_with_attributes()
-        
+
 def _fix_internal_consts(llvm_ir: str) -> str:
     """Converts all global variable tag declarations to remove quotation marks
     from the numbers. Ex. @"1" = --- becomes @1 = ---
-    
+
     Parameters
     ----------
     llvm_ir : str
     The llvm string we are trying to modify
-    
+
     Returns
     -------
     tuple(str, dict)

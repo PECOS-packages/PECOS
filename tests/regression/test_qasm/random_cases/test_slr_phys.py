@@ -132,6 +132,13 @@ def test_control_flow_qir():
         Repeat(3).block(
             p.H(q[0]),
         ),
+        Comment("Comments go here"),
+        If(m == 0).Then(
+            p.H(q[0]),
+            Block(
+                p.H(q[1]),
+            ),
+        ),
         p.CX(q[0], q[1]),
         p.RX[0.3](q[0]),
         p.Measure(q) > m,

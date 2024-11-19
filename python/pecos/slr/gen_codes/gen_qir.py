@@ -182,8 +182,9 @@ class QIRGenerator(Generator):
         self._gate_declaration_cache: dict[str, QIRGate] = {}
         # TODO: Fill this out completely using some reference
         self._gate_name_map = {
-            "U1q": "r1xy",
-            "cx": "cnot",
+            "u1q": "r1xy",
+            #"cx": "cnot",
+            "szz": "zz",
         }
 
     def setup_module(self):
@@ -405,7 +406,7 @@ class QIRGenerator(Generator):
             print(f"Created gate {gate.sym} with args {declare_args}")
 
         gate_declaration = self._gate_declaration_cache[gate.sym]
-        gate_args = [ir.Constant(self._types.qubitPtrType, qarg.index) for qarg in qargs]
+        gate_args = []
         if gate.has_parameters:
             gate_args = [ir.Constant(self._types.doubleType, param) for param in gate.params]
         gate_args.extend([self._qarg_to_qubit_ptr(qarg) for qarg in qargs])

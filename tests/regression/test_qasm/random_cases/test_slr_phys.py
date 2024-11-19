@@ -45,7 +45,7 @@ def test_bell_qir():
 
 
 def test_if_bell():
-    """Test that a more complex Bell prep and measure circuit with if statemenscan be created."""
+    """Test that a more complex Bell prep and measure circuit with if statements can be created."""
 
     class Bell(Block):
 

@@ -148,5 +148,6 @@ def test_control_flow_qir():
         p.RX[0.3](q[0]),
         p.Measure(q) > m,
     )
-
-    assert SlrConverter(prog).qir() == "intentionally wrong"
+    qir = SlrConverter(prog).qir()
+    print(qir)
+    assert qir == "intentionally wrong"

@@ -138,6 +138,11 @@ def test_control_flow_qir():
             Block(
                 p.H(q[1]),
             ),
+        ).Else(
+            p.RX[0.3](q[0]),
+        ),
+        If(m < m_hidden).Then(
+            p.H(q[0]),
         ),
         p.CX(q[0], q[1]),
         p.RX[0.3](q[0]),

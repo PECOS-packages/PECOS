@@ -22,7 +22,7 @@ from pecos import __version__
 from pecos.qeclib.qubit import qgate_base
 from pecos.qeclib.qubit.measures import Measure
 from pecos.slr import Block, Main, Repeat, If
-from pecos.slr.cops import EQUIV, LT, GT, LE, GE, NOT, CompOp
+from pecos.slr.cops import EQUIV, LT, GT, LE, GE, NOT, CompOp, NEQUIV
 from pecos.slr.fund import Expression
 from pecos.slr.gen_codes.generator import Generator
 from pecos.slr.misc import Barrier, Comment, Permute
@@ -306,30 +306,35 @@ class QIRGenerator(Generator):
             for block_or_op in block.ops:
                 match block_or_op:
                     case If():
-                        test_pred = self._convert_cond(block_or_op.cond)
-                        # pred = self._builder.icmp_signed("==", block_or_op.cond, ir.Constant(self._types.intType, 1))
-                        # with self._builder.if_then(pred):
-                        #     self._handle_block(block_or_op.then_block)
-                        pass
+                        pred = self._convert_cond_to_pred(block_or_op.cond)
+                        if block_or_op.else_block:
+                            with self._builder.if_else(pred) as (then, otherwise):
+                                with then:
+                                    self._handle_block(block_or_op.then_block)
+                                with otherwise:
+                                    self._handle_block(block_or_op.else_block)
+                        else:
+                            with self._builder.if_then(pred):
+                                self._handle_block(block_or_op.then_block)
                     case Block():
                         self._handle_block(block_or_op)
                     case _:  # non-block operation
                         self._handle_op(block_or_op)
 
-    def _convert_cond(self, cond: Expression):
+    def _convert_cond_to_pred(self, cond: CompOp):
         """Converts an SLR expression into a QIR condition."""
-        match cond:
-            case CompOp():
-                #return
-                # for something like if(reg == 3) we'll have the register on the left
-                creg: CReg = cond.left
-                # left symbol is creg object
-                creg.
-                return self._builder.icmp_signed(cond.symbol, None, ir.Constant(self._types.intType, cond.right))
-                pass
-
-        pass
-
+        if not isinstance(cond.left, Reg):
+            raise ValueError("Left side of condition must be a register")
+        
+        reg_fetch = self._creg_dict[cond.left.sym][0]
+        lhs = self._creg_funcs.creg_to_int_func.create_call(self._builder, [reg_fetch], "")
+        if isinstance(cond.right, int):
+            rhs = ir.Constant(self._types.intType, cond.right)
+        else:
+            rhs_reg_fetch = self._creg_dict[cond.right.sym][0]
+            rhs = self._creg_funcs.creg_to_int_func.create_call(self._builder, [rhs_reg_fetch], "")
+        rhs = ir.Constant(self._types.intType, cond.right)
+        return self._builder.icmp_signed(cond.symbol, lhs, rhs)
 
     def _handle_op(self, op) -> None:
         """Process a single operation.
@@ -401,7 +406,6 @@ class QIRGenerator(Generator):
 
         gate_declaration = self._gate_declaration_cache[gate.sym]
         gate_args = [ir.Constant(self._types.qubitPtrType, qarg.index) for qarg in qargs]
-        gate_args = []
         if gate.has_parameters:
             gate_args = [ir.Constant(self._types.doubleType, param) for param in gate.params]
         gate_args.extend([self._qarg_to_qubit_ptr(qarg) for qarg in qargs])

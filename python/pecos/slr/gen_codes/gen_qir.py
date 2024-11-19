@@ -311,15 +311,15 @@ class QIRGenerator(Generator):
                         if block_or_op.else_block:
                             with self._builder.if_else(pred) as (then, otherwise):
                                 with then:
-                                    self._handle_block(block_or_op.then_block)
+                                    self._handle_block(Block(block_or_op.ops))
                                 with otherwise:
                                     self._handle_block(block_or_op.else_block)
                         else:
                             with self._builder.if_then(pred):
-                                self._handle_block(block_or_op.then_block)
+                                self._handle_block(Block(block_or_op.ops))
                     case Block():
                         self._handle_block(block_or_op)
-                    case _:  # non-block operation
+                    case _:  # non-Block operation
                         self._handle_op(block_or_op)
 
     def _convert_cond_to_pred(self, cond: CompOp):

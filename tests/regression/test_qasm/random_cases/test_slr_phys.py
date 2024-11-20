@@ -143,6 +143,8 @@ def test_control_flow_qir():
         If(m < m_hidden).Then(
             p.H(q[0]),
         ),
+        p.F4dg(q[1]),
+        p.Sdg(q[0]),
         p.CX(q[0], q[1]),
         p.RX[0.3](q[0]),
         p.Measure(q) > m,

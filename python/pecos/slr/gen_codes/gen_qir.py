@@ -27,6 +27,7 @@ from pecos.slr.fund import Expression
 from pecos.slr.gen_codes.generator import Generator
 from pecos.slr.misc import Barrier, Comment, Permute
 from pecos.slr.vars import CReg, QReg, Qubit, Reg, Vars, PyCOp
+from pecos.slr.gen_codes.qir_gate_mapping import QIRGateMetadata
 
 
 class QIRTypes:
@@ -91,7 +92,8 @@ class QIRGate(QIRFunc):
         name (str): the name of the quantum gate without QIR mangling."""
 
         self._arg_tys = arg_tys
-        self._mangled_name: str = "__quantum__qis__" + name + "__body"
+        suffix = "__body" if not "adj" in name else "" # Handle __adj gates
+        self._mangled_name: str = f"__quantum__qis__{name}{suffix}"
         self._name: str = name
         super().__init__(module, ir.VoidType(), arg_tys, self._mangled_name)
 
@@ -381,16 +383,20 @@ class QIRGenerator(Generator):
 
         gate (QGate): a quantum gate to generate as QIR."""
 
+        qgate_meta = QIRGateMetadata[gate.sym]
+
+        if len(qgate_meta.decomposition) > 0:
+            print(f"Decomposing gate {gate.sym} into {qgate_meta.decomposition}")
+            for qgate_type in qgate_meta.decomposition:
+                qgate_type.add_qargs(gate.qargs)
+                self._create_qgate_call(qgate_type)
+            return
+
         qargs: list[Qubit] = gate.qargs
         if len(qargs) != gate.qsize:
             raise ValueError(f"Gate {gate.sym} expects {gate.qsize} qubits, but {len(qargs)} were provided.")
 
         if gate.sym not in self._gate_declaration_cache:
-            gate_name = gate.sym.lower()
-            # Handle situations where SLR gate name doesn't match QIR gate name
-            if gate_name in self._gate_name_map:
-                gate_name = self._gate_name_map[gate_name]
-
             declare_args = []
             if gate.has_parameters:
                 declare_args = [self._types.doubleType] * len(gate.params)
@@ -399,7 +405,7 @@ class QIRGenerator(Generator):
             gate_declaration = QIRGate(
                 self._module,
                 declare_args,
-                name=gate_name,
+                name=qgate_meta.qir_name,
             )
             self._gate_declaration_cache[gate.sym] = gate_declaration
             print(f"Created gate {gate.sym} with args {declare_args}")

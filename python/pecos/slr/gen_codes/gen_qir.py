@@ -11,23 +11,21 @@
 
 from __future__ import annotations
 
+import re
 from collections import OrderedDict
 
 from llvmlite import binding, ir
 from llvmlite.ir import DoubleType, IntType, PointerType, Type, VoidType
 
-import re
-
 from pecos import __version__
 from pecos.qeclib.qubit import qgate_base
 from pecos.qeclib.qubit.measures import Measure
-from pecos.slr import Block, Main, Repeat, If
-from pecos.slr.cops import EQUIV, LT, GT, LE, GE, NOT, CompOp, NEQUIV
-from pecos.slr.fund import Expression
+from pecos.slr import Block, If, Main, Repeat
+from pecos.slr.cops import CompOp
 from pecos.slr.gen_codes.generator import Generator
-from pecos.slr.misc import Barrier, Comment, Permute
-from pecos.slr.vars import CReg, QReg, Qubit, Reg, Vars, PyCOp
 from pecos.slr.gen_codes.qir_gate_mapping import QIRGateMetadata
+from pecos.slr.misc import Barrier, Comment, Permute
+from pecos.slr.vars import CReg, QReg, Qubit, Reg, Vars
 
 
 class QIRTypes:
@@ -92,7 +90,7 @@ class QIRGate(QIRFunc):
         name (str): the name of the quantum gate without QIR mangling."""
 
         self._arg_tys = arg_tys
-        suffix = "__body" if not "adj" in name else "" # Handle __adj gates
+        suffix = "__body" if "adj" not in name else ""  # Handle __adj gates
         self._mangled_name: str = f"__quantum__qis__{name}{suffix}"
         self._name: str = name
         super().__init__(module, ir.VoidType(), arg_tys, self._mangled_name)
@@ -182,12 +180,7 @@ class QIRGenerator(Generator):
         self._creg_dict: dict[str, tuple[binding.ValueRef, bool]] = {}
         self._result_cregs: set[str] = set()
         self._gate_declaration_cache: dict[str, QIRGate] = {}
-        # TODO: Fill this out completely using some reference
-        self._gate_name_map = {
-            "u1q": "r1xy",
-            "cx": "cnot",
-            "szz": "zz",
-        }
+        self._barrier_cache: dict[int, QIRFunc] = {}
 
     def setup_module(self):
         """Helper function to help setup various types and functions needed
@@ -225,7 +218,9 @@ class QIRGenerator(Generator):
 
         self._creg_dict[creg.sym] = (
             self._creg_funcs.create_creg_func.create_call(
-                self._builder, [ir.Constant(ir.IntType(64), creg.size)], f"{creg.sym}",
+                self._builder,
+                [ir.Constant(ir.IntType(64), creg.size)],
+                f"{creg.sym}",
             ),
             creg.result,
         )
@@ -241,12 +236,11 @@ class QIRGenerator(Generator):
         self._qreg_dict[qreg.sym] = (self._qubit_count, self._qubit_count + qreg.size - 1)
         self._qubit_count += qreg.size
 
-
     def _generate_results(self) -> None:
         """Generates the proper results calls at the end of the SLR program,
         according to all the classical registers that were defined."""
         for reg_name, (reg_inst, result) in self._creg_dict.items():
-            if not result: # ignore non-result cregs
+            if not result:  # ignore non-result cregs
                 continue
             # add global tag for each CReg
             reg_name_bytes = bytearray(reg_name.encode("utf-8"))
@@ -259,7 +253,7 @@ class QIRGenerator(Generator):
             # convert creg to an integer and return that as a result
             c_int = self._creg_funcs.creg_to_int_func.create_call(self._builder, [reg_inst], "")
             reg_tag_gep = reg_tag.gep((ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)))
-            self._creg_funcs.int_result_func.create_call(self._builder, [c_int, reg_tag_gep], '')
+            self._creg_funcs.int_result_func.create_call(self._builder, [c_int, reg_tag_gep], "")
 
     def generate_block(self, block: Main) -> None:
         """Primary entry point for generation of QIR.
@@ -328,14 +322,14 @@ class QIRGenerator(Generator):
         """Converts an SLR expression into a QIR condition."""
         if not isinstance(cond.left, Reg):
             raise ValueError("Left side of condition must be a register")
-        
+
         reg_fetch = self._creg_dict[cond.left.sym][0]
         lhs = self._creg_funcs.creg_to_int_func.create_call(self._builder, [reg_fetch], "")
         if isinstance(cond.right, int):
             rhs = ir.Constant(self._types.intType, cond.right)
         else:
             rhs_reg_fetch = self._creg_dict[cond.right.sym][0]
-            rhs = self._creg_funcs.creg_to_int_func.create_call(self._builder, [rhs_reg_fetch], "")        
+            rhs = self._creg_funcs.creg_to_int_func.create_call(self._builder, [rhs_reg_fetch], "")
         return self._builder.icmp_signed(cond.symbol, lhs, rhs)
 
     def _handle_op(self, op) -> None:
@@ -345,17 +339,45 @@ class QIRGenerator(Generator):
 
         match op:
             case Barrier():
-                raise NotImplementedError("Barrier not implemented in QIR")
+                self._handle_barrier(op)
             case Comment():
                 self._builder.comment(op.txt)  # TODO: Handle 'space', 'newline' params
             case Permute():
+                # TODO: Ask Ciaran about what this actually does
                 raise NotImplementedError("Permute not implemented in QIR")
             case Vars():
-                raise NotImplementedError("Vars not implemented in QIR")
+                raise NotImplementedError("Block Vars not implemented in QIR")
             case CReg():
-                raise NotImplementedError("CReg not implemented in QIR")
+                raise NotImplementedError("Block CReg not implemented in QIR")
             case qgate_base.QGate():
                 self._handle_quantum_gate(op)
+
+    def _handle_barrier(self, barrier: Barrier) -> None:
+        """Process a barrier operation."""
+        length = 0
+        qubits: list[Qubit] = []
+
+        for item in barrier.qregs:
+            match item:
+                case Qubit():
+                    length += 1
+                    qubits.append(item)
+
+                case QReg():
+                    length += len(item.size)
+                    for qubit in item.elems:
+                        qubits.append(qubit)
+                # TODO: tuple[QReg]
+
+        if length not in self._barrier_cache:
+            self._barrier_cache[length] = QIRFunc(
+                self._module,
+                self._types.voidType,
+                [self._types.qubitPtrType] * length,
+                f"__quantum__qis__barrier{length}__body",
+            )
+        barrier_func = self._barrier_cache[length]
+        barrier_func.create_call(self._builder, [self._qarg_to_qubit_ptr(index) for index in qubits], name="")
 
     def _handle_quantum_gate(self, gate: qgate_base.QGate) -> None:
         """Process a quantum gate.
@@ -385,11 +407,15 @@ class QIRGenerator(Generator):
 
         qgate_meta = QIRGateMetadata[gate.sym]
 
-        if len(qgate_meta.decomposition) > 0:
-            print(f"Decomposing gate {gate.sym} into {qgate_meta.decomposition}")
-            for qgate_type in qgate_meta.decomposition:
-                qgate_type.add_qargs(gate.qargs)
-                self._create_qgate_call(qgate_type)
+        # If theres a decomposition lambda, invoke that with the gate to generate
+        # the decomposed gates needed in the circuit. The lambda defines any
+        # necessary mappings of parameters and qargs to the decomposed gates from
+        # the 'source' gate
+        if qgate_meta.decomposer:
+            decomposed_gates = qgate_meta.decomposer(gate)
+            print(f"Decomposing gate {gate.sym} into {decomposed_gates}")
+            for decomposed_gate in decomposed_gates:
+                self._create_qgate_call(decomposed_gate)
             return
 
         qargs: list[Qubit] = gate.qargs
@@ -441,15 +467,16 @@ class QIRGenerator(Generator):
         mod_w_attr = ll_text.replace("@main()", "@main() #0")
 
         # to get around line length limitations
-        mod_w_attr += "\nattributes #0 = { \"entry_point\""
+        mod_w_attr += '\nattributes #0 = { "entry_point"'
         mod_w_attr += ' "qir_profiles"="custom"'
-        mod_w_attr += f" \"required_num_qubits\"=\"{self._qubit_count}\""
-        mod_w_attr += f" \"required_num_results\"=\"{self._measure_count}\" }}"
+        mod_w_attr += f' "required_num_qubits"="{self._qubit_count}"'
+        mod_w_attr += f' "required_num_results"="{self._measure_count}" }}'
         return mod_w_attr
 
     def get_output(self) -> str:
         """Stringify the module as .ll text"""
         return self._ll_with_attributes()
+
 
 def _fix_internal_consts(llvm_ir: str) -> str:
     """Converts all global variable tag declarations to remove quotation marks
@@ -468,4 +495,4 @@ def _fix_internal_consts(llvm_ir: str) -> str:
     """
 
     # substitute all instances of variable num with quotes, with just number (@"0" -> @0)
-    return re.sub("([@%])\"([^\"]+)\"", r"\1\2", llvm_ir)
+    return re.sub('([@%])"([^"]+)"', r"\1\2", llvm_ir)

@@ -1,11 +1,15 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+    rev: v5.0.0
     hooks:
       - id: trailing-whitespace
-        exclude: ^docs/reference/_autosummary/
+        exclude: ^python/docs/reference/_autosummary/
       - id: end-of-file-fixer
-        exclude: ^docs/reference/_autosummary/
+        exclude: |
+          (?x)^(
+            python/docs/reference/_autosummary/|
+            .*\.rs$
+          )
       - id: check-toml
       - id: check-yaml
       - id: check-added-large-files
@@ -15,33 +19,25 @@ repos:
       - id: debug-statements
 
   - repo: https://github.com/crate-ci/typos
-    rev: v1.21.0
+    rev: v1.27.0
     hooks:
       - id: typos
         args: []
-        exclude: |
-            (?x)^(
-                python/pecos/simulators/cuquantum_old/.*|
-            )$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.4.3
+    rev: v0.7.2
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
 
   - repo: https://github.com/psf/black
-    rev: 24.4.2
+    rev: 24.10.0
     hooks:
       - id: black
-        exclude: |
-            (?x)^(
-                python/pecos/simulators/cuquantum_old/custatevec/bindings.py|
-            )$
 
   - repo: https://github.com/keewis/blackdoc
     rev: v0.3.9
     hooks:
     -   id: blackdoc
         additional_dependencies:
-        - black==24.1.1
+        - black==24.8.0

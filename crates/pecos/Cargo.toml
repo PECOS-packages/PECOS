@@ -1,0 +1,48 @@
+[package]
+name = "pecos"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
+description = "A crate for evaluating and exploring quantum error correction."
+
+[dependencies]
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+rand_xoshiro = { workspace = true }
+pecos-core = { path= "../pecos-core" }
+pecos-qsims = { path= "../pecos-qsims" }
+pecos-qec = { path= "../pecos-qec" }
+
+# For Wasm tests, see: https://rustwasm.github.io/wasm-bindgen/wasm-bindgen-test/index.html
+# make sure to run:
+#   rustup target add wasm32-unknown-unknown
+#   cargo install wasm-pack
+#   wasm-pack test --node
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+getrandom = { version = "0.2", features = ["js"] }
+rand = { version = "0.8", features = ["getrandom"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion = "0.5"
+flamegraph = "0.6"
+
+# Read the following for opitmization settings: https://nnethercote.github.io/perf-book/build-configuration.html
+# Compress filesize: https://github.com/johnthagen/min-sized-rust
+
+#[profile.release]
+#codegen-units = 1
+#lto = "fat" # false, "fat", "thin", "off"
+#
+## opt-level = "z" # "z", "s"
+## panic = "abort"
+## strip = "symbols" # "debuginfo", "symbols"
+
+[lints]
+workspace = true

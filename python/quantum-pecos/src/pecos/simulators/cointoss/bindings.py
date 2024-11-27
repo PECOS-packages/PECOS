@@ -1,0 +1,101 @@
+# Copyright 2023 The PECOS Developers
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+# the License.You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
+
+from pecos.simulators.cointoss.gates import ignore_gate, measure
+
+# Supporting gates from table:
+#   https://github.com/CQCL/phir/blob/main/spec.md#table-ii---quantum-operations
+
+gate_dict = {
+    "Init": ignore_gate,
+    "Init +Z": ignore_gate,
+    "Init -Z": ignore_gate,
+    "init |0>": ignore_gate,
+    "init |1>": ignore_gate,
+    "leak": ignore_gate,
+    "leak |0>": ignore_gate,
+    "leak |1>": ignore_gate,
+    "unleak |0>": ignore_gate,
+    "unleak |1>": ignore_gate,
+    "Measure": measure,
+    "measure Z": measure,
+    "I": ignore_gate,
+    "X": ignore_gate,
+    "Y": ignore_gate,
+    "Z": ignore_gate,
+    "RX": ignore_gate,
+    "RY": ignore_gate,
+    "RZ": ignore_gate,
+    "R1XY": ignore_gate,
+    "RXY1Q": ignore_gate,
+    "SX": ignore_gate,
+    "SXdg": ignore_gate,
+    "SqrtX": ignore_gate,
+    "SqrtXd": ignore_gate,
+    "SY": ignore_gate,
+    "SYdg": ignore_gate,
+    "SqrtY": ignore_gate,
+    "SqrtYd": ignore_gate,
+    "SZ": ignore_gate,
+    "SZdg": ignore_gate,
+    "SqrtZ": ignore_gate,
+    "SqrtZd": ignore_gate,
+    "H": ignore_gate,
+    "F": ignore_gate,
+    "Fdg": ignore_gate,
+    "T": ignore_gate,
+    "Tdg": ignore_gate,
+    "CX": ignore_gate,
+    "CY": ignore_gate,
+    "CZ": ignore_gate,
+    "RXX": ignore_gate,
+    "RYY": ignore_gate,
+    "RZZ": ignore_gate,
+    "R2XXYYZZ": ignore_gate,
+    "SXX": ignore_gate,
+    "SXXdg": ignore_gate,
+    "SYY": ignore_gate,
+    "SYYdg": ignore_gate,
+    "SZZ": ignore_gate,
+    "SqrtZZ": ignore_gate,
+    "SZZdg": ignore_gate,
+    "SWAP": ignore_gate,
+    # Additional Cliffords from `circuit_converters/std2chs.py`
+    "Q": ignore_gate,
+    "Qd": ignore_gate,
+    "R": ignore_gate,
+    "Rd": ignore_gate,
+    "S": ignore_gate,
+    "Sd": ignore_gate,
+    "H1": ignore_gate,
+    "H2": ignore_gate,
+    "H3": ignore_gate,
+    "H4": ignore_gate,
+    "H5": ignore_gate,
+    "H6": ignore_gate,
+    "H+z+x": ignore_gate,
+    "H-z-x": ignore_gate,
+    "H+y-z": ignore_gate,
+    "H-y-z": ignore_gate,
+    "H-x+y": ignore_gate,
+    "H-x-y": ignore_gate,
+    "F1": ignore_gate,
+    "F1d": ignore_gate,
+    "F2": ignore_gate,
+    "F2d": ignore_gate,
+    "F3": ignore_gate,
+    "F3d": ignore_gate,
+    "F4": ignore_gate,
+    "F4d": ignore_gate,
+    "CNOT": ignore_gate,
+    "G": ignore_gate,
+    "II": ignore_gate,
+}

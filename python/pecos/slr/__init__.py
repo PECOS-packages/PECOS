@@ -17,17 +17,17 @@ from pecos.slr.misc import Barrier, Comment, Permute
 from pecos.slr.vars import Bit, CReg, QReg, Qubit, Vars
 
 __all__ = [
-    "Main",
     "SLR",
-    "Block",
-    "If",
-    "Repeat",
     "Barrier",
-    "Comment",
-    "Permute",
-    "Vars",
     "Bit",
-    "Qubit",
+    "Block",
     "CReg",
+    "Comment",
+    "If",
+    "Main",
+    "Permute",
     "QReg",
+    "Qubit",
+    "Repeat",
+    "Vars",
 ]

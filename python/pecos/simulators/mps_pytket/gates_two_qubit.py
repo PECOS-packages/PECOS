@@ -16,6 +16,8 @@ from typing import Any
 import cupy as cp
 from pytket import Qubit
 
+from pecos.simulators.mps_pytket.gates_one_qubit import H
+
 
 def _apply_two_qubit_matrix(state, qubits: tuple[int, int], matrix: cp.ndarray) -> None:
     """
@@ -279,3 +281,13 @@ def SWAP(state, qubits: tuple[int, int], **params: Any) -> None:
         dtype=state.dtype,
     )
     _apply_two_qubit_matrix(state, qubits, matrix)
+
+
+def G(state, qubits: tuple[int, int], **params: Any) -> None:
+    """'G': (('I', 'H'), 'CNOT', ('H', 'H'), 'CNOT', ('I', 'H'))"""
+    H(state, qubits[1])
+    CX(state, qubits)
+    H(state, qubits[0])
+    H(state, qubits[1])
+    CX(state, qubits)
+    H(state, qubits[1])

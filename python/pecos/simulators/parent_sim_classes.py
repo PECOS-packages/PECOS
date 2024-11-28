@@ -40,7 +40,11 @@ class Simulator:
                 elif "angle" in params and "angles" not in params:
                     params["angles"] = (params["angle"],)
 
-                results = self.bindings[symbol](self, location, **params)
+                if symbol in self.bindings:
+                    results = self.bindings[symbol](self, location, **params)
+                else:
+                    msg = f"Gate {symbol} is not supported in this simulator."
+                    raise Exception(msg)
 
                 # TODO: get params var value ... -> result = {'sym':, 'index':, 'result': result, 'qubit': location}
 

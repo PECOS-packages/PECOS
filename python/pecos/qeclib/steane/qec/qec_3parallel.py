@@ -16,7 +16,7 @@ from pecos.slr import Bit, Block, CReg, If, QReg
 
 
 class ParallelFlagQECActiveCorrection(Block):
-    """Defining QEC Block that does adaptive syndrome extraction, decodes, and updates the Pauli frame."""
+    """Defining QEC Block that does adaptive syndrome extraction, decodes, and updates the Paul frame."""
 
     def __init__(
         self,

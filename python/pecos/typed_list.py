@@ -37,7 +37,7 @@ class TypedList(list[T], Generic[T]):
         else:
             super().__init__()
 
-    def _check_type(self, __object: T) -> None:
+    def _check_type(self, /, __object: T) -> None:
         """Checks if an item is of the specified type.
 
         Args:
@@ -50,7 +50,7 @@ class TypedList(list[T], Generic[T]):
             msg = f"Item must be of type {self.type.__name__}, got type {type(__object).__name__} instead"
             raise TypeError(msg)
 
-    def append(self, __object: T):
+    def append(self, /, __object: T):
         """Appends an item to the end of the list, checking its type.
 
         Args:
@@ -62,7 +62,7 @@ class TypedList(list[T], Generic[T]):
         self._check_type(__object)
         super().append(__object)
 
-    def extend(self, __iterable: Iterable[T]) -> None:
+    def extend(self, /, __iterable: Iterable[T]) -> None:
         """Extends the list by appending elements from the iterable, checking their type.
 
         Args:
@@ -76,7 +76,7 @@ class TypedList(list[T], Generic[T]):
             self._check_type(i)
         super().extend(__iterable)
 
-    def insert(self, __index: int, __object: T) -> None:
+    def insert(self, /, __index: int, __object: T) -> None:
         """Inserts an item en position, checking its type.
 
         Args:

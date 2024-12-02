@@ -59,7 +59,7 @@ impl<E: Element> VecSet<E> {
 
     #[inline]
     pub fn iter(&self) -> Iter<'_, E> {
-        return self.elements.iter();
+        self.elements.iter()
     }
 }
 
@@ -78,7 +78,7 @@ impl<'a, E: Element> IntoIterator for &'a VecSet<E> {
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
-        return self.iter();
+        self.iter()
     }
 }
 

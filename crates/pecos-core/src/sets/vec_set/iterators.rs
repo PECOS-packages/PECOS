@@ -170,7 +170,7 @@ impl<E: Element> fmt::Debug for Difference<'_, E>
 {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        return f.debug_list().entries(self.clone()).finish();
+        f.debug_list().entries(self.clone()).finish()
     }
 }
 
@@ -180,7 +180,7 @@ impl<E: Element> fmt::Debug for SymmetricDifference<'_, E>
 {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        return f.debug_list().entries(self.clone()).finish();
+        f.debug_list().entries(self.clone()).finish()
     }
 }
 
@@ -190,7 +190,7 @@ impl<E: Element> fmt::Debug for Intersection<'_, E>
 {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        return f.debug_list().entries(self.clone()).finish();
+        f.debug_list().entries(self.clone()).finish()
     }
 }
 
@@ -200,6 +200,6 @@ impl<E: Element> fmt::Debug for Union<'_, E>
 {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        return f.debug_list().entries(self.clone()).finish();
+        f.debug_list().entries(self.clone()).finish()
     }
 }

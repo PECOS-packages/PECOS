@@ -32,7 +32,7 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
 
     #[inline]
     fn reset(&mut self) -> &mut Self {
-        return <Self as QuantumSimulator>::reset(self);
+        <Self as QuantumSimulator>::reset(self)
     }
 
     /// Preparation of the +`X_q` operator.

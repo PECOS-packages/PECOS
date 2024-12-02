@@ -45,7 +45,7 @@ pub trait SimRng: RngCore + SeedableRng + Debug {
     /// Choose between options given a weighted probabilities.
     #[inline]
     fn choose_weighted<'a, T>(&mut self, choices: &'a Choices<T>) -> &'a T {
-        return choices.sample(self);
+        choices.sample(self)
     }
 
     #[inline]

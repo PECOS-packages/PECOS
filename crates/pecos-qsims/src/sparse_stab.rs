@@ -374,7 +374,7 @@ where
 
     #[inline]
     fn reset(&mut self) -> &mut Self {
-        return Self::reset(self);
+        Self::reset(self)
     }
 }
 

@@ -22,9 +22,9 @@ impl<'a, E: Element> BitAnd<&'a VecSet<E>> for &'a VecSet<E> {
 
     #[inline]
     fn bitand(self, rhs: &'a VecSet<E>) -> Self::Output {
-        return VecSet {
+        VecSet {
             elements: self.intersection(rhs).copied().collect(),
-        };
+        }
     }
 }
 
@@ -33,9 +33,9 @@ impl<'a, E: Element> BitOr<&'a VecSet<E>> for &VecSet<E> {
 
     #[inline]
     fn bitor(self, rhs: &'a VecSet<E>) -> VecSet<E> {
-        return VecSet {
+        VecSet {
             elements: self.union(rhs).copied().collect(),
-        };
+        }
     }
 }
 
@@ -44,9 +44,9 @@ impl<'a, E: Element> BitXor<&'a VecSet<E>> for &VecSet<E> {
 
     #[inline]
     fn bitxor(self, rhs: &'a VecSet<E>) -> VecSet<E> {
-        return VecSet {
+        VecSet {
             elements: self.symmetric_difference(rhs).copied().collect(),
-        };
+        }
     }
 }
 
@@ -55,9 +55,9 @@ impl<'a, E: Element> Sub<&'a VecSet<E>> for &VecSet<E> {
 
     #[inline]
     fn sub(self, rhs: &'a VecSet<E>) -> VecSet<E> {
-        return VecSet {
+        VecSet {
             elements: self.difference(rhs).copied().collect(),
-        };
+        }
     }
 }
 

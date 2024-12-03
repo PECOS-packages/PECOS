@@ -159,15 +159,15 @@ class Steane(Vars):
             q=self.d,
         )
 
-    def prep_t_plus_state(self, reject: Bit, rus_limit: int | None = None):
+    def prep_t_plus_state(self, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare logical T|+X> in a fault tolerant manner."""
-        return Block(
+        block = Block(
             self.scratch.set(0),
             PrepEncodeTPlusFTRUS(
                 d=self.d,
                 a=self.a,
                 out=self.scratch,
-                reject=reject or self.scratch[2],
+                reject=self.scratch[2],  # the first two bits of self.scratch are used by "out"
                 flag_x=self.flag_x,
                 flag_z=self.flag_z,
                 flags=self.flags,
@@ -176,6 +176,9 @@ class Steane(Vars):
                 limit=rus_limit or self.default_rus_limit,
             ),
         )
+        if reject is not None:
+            block.extend(reject.set(self.scratch[2]))
+        return block
 
     def nonft_prep_tdg_plus_state(self):
         """Prepare logical Tdg|+X> in a non-fault tolerant manner."""
@@ -184,7 +187,7 @@ class Steane(Vars):
             self.z(),
         )
 
-    def prep_tdg_plus_state(self, reject: Bit, rus_limit: int | None = None):
+    def prep_tdg_plus_state(self, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare logical Tdg|+X> in a fault tolerant manner."""
         return Block(
             self.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
@@ -236,7 +239,7 @@ class Steane(Vars):
             If(self.t_meas == 1).Then(self.sz()),
         )
 
-    def t(self, aux: Steane, reject: Bit, rus_limit: int | None = None):
+    def t(self, aux: Steane, reject: Bit | None = None, rus_limit: int | None = None):
         """T gate via teleportation using fault-tolerant initialization of the T|+> state."""
         return Block(
             aux.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
@@ -254,7 +257,7 @@ class Steane(Vars):
             If(self.tdg_meas == 1).Then(self.szdg()),
         )
 
-    def tdg(self, aux: Steane, reject: Bit, rus_limit: int | None = None):
+    def tdg(self, aux: Steane, reject: Bit | None = None, rus_limit: int | None = None):
         """Tdg gate via teleportation using fault-tolerant initialization of the Tdg|+> state."""
         return Block(
             aux.prep_tdg_plus_state(reject=reject, rus_limit=rus_limit),

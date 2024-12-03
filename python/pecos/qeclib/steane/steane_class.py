@@ -352,6 +352,9 @@ class Steane(Vars):
 
     def m(self, meas_basis: str, log: Bit | None):
         """Destructively measure the logical qubit in some Pauli basis."""
+        if meas_basis not in ["X", "Y", "Z"]:
+            msg = f"Measurement basis {meas_basis} is not supported!"
+            raise NotImplementedError(msg)
         block = Block(
             MeasDecode(
                 q=self.d,
@@ -372,63 +375,15 @@ class Steane(Vars):
 
     def mx(self, log: Bit | None):
         """Logical destructive measurement of the logical X operator."""
-        block = Block(
-            MeasDecode(
-                q=self.d,
-                meas_basis="X",
-                meas=self.raw_meas,
-                log_raw=self.log_raw,
-                log=self.log,
-                syn_meas=self.syn_meas,
-                pf_x=self.pf_x,
-                pf_z=self.pf_z,
-                last_raw_syn_x=self.last_raw_syn_x,
-                last_raw_syn_z=self.last_raw_syn_z,
-            ),
-        )
-        if log is not None:
-            block.extend(log.set(self.log))
-        return block
+        return self.m("X", log=log)
 
     def my(self, log: Bit | None):
         """Logical destructive measurement of the logical Y operator."""
-        block = Block(
-            MeasDecode(
-                q=self.d,
-                meas_basis="Y",
-                meas=self.raw_meas,
-                log_raw=self.log_raw,
-                log=self.log,
-                syn_meas=self.syn_meas,
-                pf_x=self.pf_x,
-                pf_z=self.pf_z,
-                last_raw_syn_x=self.last_raw_syn_x,
-                last_raw_syn_z=self.last_raw_syn_z,
-            ),
-        )
-        if log is not None:
-            block.extend(log.set(self.log))
-        return block
+        return self.m("Y", log=log)
 
     def mz(self, log: Bit | None):
         """Logical destructive measurement of the logical Z operator."""
-        block = Block(
-            MeasDecode(
-                q=self.d,
-                meas_basis="Z",
-                meas=self.raw_meas,
-                log_raw=self.log_raw,
-                log=self.log,
-                syn_meas=self.syn_meas,
-                pf_x=self.pf_x,
-                pf_z=self.pf_z,
-                last_raw_syn_x=self.last_raw_syn_x,
-                last_raw_syn_z=self.last_raw_syn_z,
-            ),
-        )
-        if log is not None:
-            block.extend(log.set(self.log))
-        return block
+        return self.m("Z", log=log)
 
     def qec(self, flag_bit: Bit | None = None):
         block = ParallelFlagQECActiveCorrection(

@@ -123,7 +123,6 @@ class PrepRUS(Block):
         limit: int,
         state: str = "|0>",
         *,
-        reject: Bit | None = None,
         first_round_reset: bool = True,
     ):
         super().__init__(
@@ -143,8 +142,6 @@ class PrepRUS(Block):
             # Rotate to the Pauli basis of choice
             LogZeroRot(q, state),
         )
-        if reject is not None:
-            self.extend(reject.set(init))
 
 
 class LogZeroRot(Block):

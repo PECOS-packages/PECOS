@@ -100,93 +100,59 @@ class Steane(Vars):
     def p(self, state: str, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare a logical qubit in a logical Pauli basis state."""
         match state:
-            case "+X" | "X":
-                return self.px(reject=reject, rus_limit=rus_limit)
-            case "-X":
-                return self.pnx(reject=reject, rus_limit=rus_limit)
-            case "+Y" | "Y":
-                return self.py(reject=reject, rus_limit=rus_limit)
-            case "-Y":
-                return self.pny(reject=reject, rus_limit=rus_limit)
-            case "+Z" | "Z":
-                return self.pz(reject=reject, rus_limit=rus_limit)
-            case "-Z":
-                return self.pnz(reject=reject, rus_limit=rus_limit)
+            case "|0>" | "+Z" | "Z":
+                state = "+Z"
+            case "|1>" | "-Z":
+                state = "-Z"
+            case "|+>" | "+X" | "X":
+                state = "+X"
+            case "|->" | "-X":
+                state = "-X"
+            case "|+i>" | "+Y" | "Y":
+                state = "+Y"
+            case "|-i>" | "-Y":
+                state = "-Y"
             case _:
                 msg = f"State {state} is not implemented!"
                 raise NotImplementedError(msg)
 
-    def px(self, reject: Bit | None = None, rus_limit: int | None = None):
-        """Prepare logical |+X>, a.k.a. |+>"""
-        return PrepRUS(
+        block = PrepRUS(
             q=self.d,
             a=self.a[0],
             init=self.verify_prep[0],
             limit=rus_limit or self.default_rus_limit,
-            state="+X",
+            state=state,
             reject=reject or self.scratch[2],
             first_round_reset=True,
         )
+        if reject is not None:
+            block.extend(reject.set(self.verify_prep[0]))
+
+        return block
+
+    def px(self, reject: Bit | None = None, rus_limit: int | None = None):
+        """Prepare logical |+X>, a.k.a. |+>"""
+        return self.p("+X", reject=reject, rus_limit=rus_limit)
 
     def pnx(self, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare logical |-X>, a.k.a. |->"""
-        return PrepRUS(
-            q=self.d,
-            a=self.a[0],
-            init=self.verify_prep[0],
-            limit=rus_limit or self.default_rus_limit,
-            state="-X",
-            reject=reject or self.scratch[2],
-            first_round_reset=True,
-        )
+        return self.p("-X", reject=reject, rus_limit=rus_limit)
 
     def py(self, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare logical |+Y>, a.k.a. |+i>"""
-        return PrepRUS(
-            q=self.d,
-            a=self.a[0],
-            init=self.verify_prep[0],
-            limit=rus_limit or self.default_rus_limit,
-            state="+Y",
-            reject=reject or self.scratch[2],
-            first_round_reset=True,
-        )
+        return self.p("+Y", reject=reject, rus_limit=rus_limit)
 
     def pny(self, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare logical |-Y>, a.k.a. |-i>"""
-        return PrepRUS(
-            q=self.d,
-            a=self.a[0],
-            init=self.verify_prep[0],
-            limit=rus_limit or self.default_rus_limit,
-            state="-Y",
-            reject=reject or self.scratch[2],
-            first_round_reset=True,
-        )
+        return self.p("-Y", reject=reject, rus_limit=rus_limit)
 
     def pz(self, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare logical |+Z>, a.k.a. |0>"""
-        return PrepRUS(
-            q=self.d,
-            a=self.a[0],
-            init=self.verify_prep[0],
-            limit=rus_limit or self.default_rus_limit,
-            state="+Z",
-            reject=reject or self.scratch[2],
-            first_round_reset=True,
-        )
+        return self.p("+Z", reject=reject, rus_limit=rus_limit)
 
     def pnz(self, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare logical |-Z>, a.k.a. |1>"""
-        return PrepRUS(
-            q=self.d,
-            a=self.a[0],
-            init=self.verify_prep[0],
-            limit=rus_limit or self.default_rus_limit,
-            state="-Z",
-            reject=reject or self.scratch[2],
-            first_round_reset=True,
-        )
+        return self.p("-Z", reject=reject, rus_limit=rus_limit)
 
     def nonft_prep_t_plus_state(self):
         """Prepare logical T|+X> in a non-fault tolerant manner."""

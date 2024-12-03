@@ -122,7 +122,6 @@ class Steane(Vars):
             init=self.verify_prep[0],
             limit=rus_limit or self.default_rus_limit,
             state=state,
-            reject=reject or self.scratch[2],
             first_round_reset=True,
         )
         if reject is not None:

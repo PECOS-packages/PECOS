@@ -140,7 +140,7 @@ class PrepRUS(Block):
             )
 
         self.extend(
-            # Rotate to the Paulli basis of choice
+            # Rotate to the Pauli basis of choice
             LogZeroRot(q, state),
         )
         if reject is not None:

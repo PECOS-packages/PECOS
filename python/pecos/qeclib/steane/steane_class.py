@@ -353,7 +353,7 @@ class Steane(Vars):
         """Logical CZ"""
         return transversal_tq.CZ(self.d, target.d)
 
-    def m(self, meas_basis: str, log: Bit | None):
+    def m(self, meas_basis: str, log: Bit | None = None):
         """Destructively measure the logical qubit in some Pauli basis."""
         if meas_basis not in ["X", "Y", "Z"]:
             msg = f"Measurement basis {meas_basis} is not supported!"
@@ -376,15 +376,15 @@ class Steane(Vars):
             block.extend(log.set(self.log))
         return block
 
-    def mx(self, log: Bit | None):
+    def mx(self, log: Bit | None = None):
         """Logical destructive measurement of the logical X operator."""
         return self.m("X", log=log)
 
-    def my(self, log: Bit | None):
+    def my(self, log: Bit | None = None):
         """Logical destructive measurement of the logical Y operator."""
         return self.m("Y", log=log)
 
-    def mz(self, log: Bit | None):
+    def mz(self, log: Bit | None = None):
         """Logical destructive measurement of the logical Z operator."""
         return self.m("Z", log=log)
 

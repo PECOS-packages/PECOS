@@ -33,7 +33,6 @@ class ParallelFlagQECActiveCorrection(Block):
         pf_x: Bit,
         pf_z: Bit,
         scratch: CReg,
-        flag_bit: Bit | None = None,
     ):
         super().__init__(
             # flagging XZZ checks
@@ -49,5 +48,3 @@ class ParallelFlagQECActiveCorrection(Block):
             FlagLookupQASMActiveCorrectionX(q, syn_x, syndromes, last_raw_syn_x, pf_z, flag_x, flags, scratch),
             FlagLookupQASMActiveCorrectionZ(q, syn_z, syndromes, last_raw_syn_z, pf_x, flag_z, flags, scratch),
         )
-        if flag_bit is not None:
-            self.extend(If(flags != 0).Then(flag_bit.set(1)))

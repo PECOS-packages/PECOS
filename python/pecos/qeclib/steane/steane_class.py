@@ -127,7 +127,6 @@ class Steane(Vars):
         )
         if reject is not None:
             block.extend(reject.set(self.verify_prep[0]))
-
         return block
 
     def px(self, reject: Bit | None = None, rus_limit: int | None = None):
@@ -433,7 +432,7 @@ class Steane(Vars):
         return block
 
     def qec(self, flag_bit: Bit | None = None):
-        return ParallelFlagQECActiveCorrection(
+        block = ParallelFlagQECActiveCorrection(
             q=self.d,
             a=self.a,
             flag_x=self.flag_x,
@@ -447,5 +446,7 @@ class Steane(Vars):
             pf_x=self.pf_x,
             pf_z=self.pf_z,
             scratch=self.scratch,
-            flag_bit=flag_bit,
         )
+        if flag_bit is not None:
+            self.extend(If(self.flags != 0).Then(flag_bit.set(1)))
+        return block

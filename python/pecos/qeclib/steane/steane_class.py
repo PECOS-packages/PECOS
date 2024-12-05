@@ -405,5 +405,5 @@ class Steane(Vars):
             scratch=self.scratch,
         )
         if flag_bit is not None:
-            self.extend(If(self.flags != 0).Then(flag_bit.set(1)))
+            block.extend(If(self.flags != 0).Then(flag_bit.set(1)))
         return block

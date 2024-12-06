@@ -99,22 +99,8 @@ class Steane(Vars):
 
     def p(self, state: str, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare a logical qubit in a logical Pauli basis state."""
-        match state:
-            case "|0>" | "+Z" | "Z":
-                state = "+Z"
-            case "|1>" | "-Z":
-                state = "-Z"
-            case "|+>" | "+X" | "X":
-                state = "+X"
-            case "|->" | "-X":
-                state = "-X"
-            case "|+i>" | "+Y" | "Y":
-                state = "+Y"
-            case "|-i>" | "-Y":
-                state = "-Y"
-            case _:
-                msg = f"State {state} is not implemented!"
-                raise NotImplementedError(msg)
+        if state in ["X", "Y", "Z"]:
+            state = f"+{state}"
 
         block = PrepRUS(
             q=self.d,

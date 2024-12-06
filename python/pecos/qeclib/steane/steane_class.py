@@ -341,9 +341,6 @@ class Steane(Vars):
 
     def m(self, meas_basis: str, log: Bit | None = None):
         """Destructively measure the logical qubit in some Pauli basis."""
-        if meas_basis not in ["X", "Y", "Z"]:
-            msg = f"Measurement basis {meas_basis} is not supported!"
-            raise NotImplementedError(msg)
         block = Block(
             MeasDecode(
                 q=self.d,

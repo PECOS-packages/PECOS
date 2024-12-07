@@ -317,7 +317,7 @@ saux_scratch[2] = (((saux_scratch[0] | saux_scratch[1]) | saux_flags[0]) | saux_
 
 rx(-pi/2) saux_d;
 rz(-pi/2) saux_d;
-m_reject[0] = saux_c[2];
+m_reject[0] = saux_scratch[2];
 // Transversal Logical CX
 barrier sin_d, saux_d;
 cx sin_d[0], saux_d[0];
@@ -371,7 +371,6 @@ saux_c[2] = saux_c[2] ^ saux_c[3];
 sin_c[5] = saux_c[2];
 // Logical SZ
 if(sin_c[5] == 1) rz(-pi/2) sin_d;
-m_reject[0] = sin_c[2];
 // Destructive logical Z measurement
 
 barrier sin_d;
@@ -818,7 +817,7 @@ if(saux_scratch[2] != 0) saux_flags = saux_flag_x | saux_flags_z;
 if(saux_scratch[2] != 0) saux_scratch[2] = (((saux_scratch[0] | saux_scratch[1]) | saux_flags[0]) | saux_flags[1]) | saux_flags[2];
 rx(-pi/2) saux_d;
 rz(-pi/2) saux_d;
-m_reject[1] = saux_c[2];
+m_reject[1] = saux_scratch[2];
 
 barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];
 

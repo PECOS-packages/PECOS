@@ -68,9 +68,9 @@ For developers who want to contribute or modify PECOS:
    Note: Make sure you have run a build command before running tests.
 
 
-7. Run pre-commit (after [installing it](https://pre-commit.com/)) to make sure all everything is properly linted/formated
+7. Run linters using pre-commit (after [installing it](https://pre-commit.com/)) to make sure all everything is properly linted/formated
    ```sh
-   make pre-commit
+   make lint
    ```
 
 8. To deactivate your development venv:

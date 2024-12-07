@@ -49,6 +49,16 @@ def gen_layout(distance: int):
     return nodeid2pos, polygons
 
 
+def get_boundaries(nodeid2pos):
+    """Determines the nodes that lie along the left, right, and bottom boundaries
+
+    Returns:
+        Three lists: 1) nodes of the left, 2) bottom, and  3) right boundaries of a triangular 4.8.8 color code.
+    """
+    # TODO: do this...
+    pass
+
+
 def found_square(x, y, pos2nodeid):
     square = [(x - 1, y + 1), (x - 1, y - 1), (x + 1, y - 1), (x + 1, y + 1)]
     square_ids = []

@@ -14,9 +14,34 @@ For developers who want to contribute or modify PECOS:
    ```sh
    make venv
    ```
-    or manually following [these steps](venv_setup.md).
+   <details>
+   <summary>or manually set up a Python virtual environment for develop of this project's code.</summary>
 
-    When developing in the development environment, be sure to activate the venv:
+   On Linux/Mac:
+   
+   ```sh
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -U pip setuptools
+   pip install -r python/quantum-pecos/requirements.txt
+   make metadeps
+   pre-commit install
+   ```
+   
+   On Windows:
+   
+   ```sh
+   python -m venv .venv
+   .\venv\Scripts\activate
+   pip install -U pip setuptools
+   pip install -r python/quantum-pecos/requirements.txt
+   make metadeps
+   pre-commit install
+   ```
+   </details>
+
+
+4. When developing in the development environment, be sure to activate the venv:
 
     On Linux/Mac:
     ```sh
@@ -28,24 +53,27 @@ For developers who want to contribute or modify PECOS:
     .\venv\Scripts\activate
     ```
 
-4. Build the project in editable mode
+
+5. Build the project in editable mode
     ```sh
    make build
    ```
    See other build options in the `Makefile`.
 
-5. Run all Python and Rust tests:
+
+6. Run all Python and Rust tests:
    ```sh
    make test
    ```
-   Note: Make sure you have ran a build command before running tests.
+   Note: Make sure you have run a build command before running tests.
 
-6. Run pre-commit (after [installing it](https://pre-commit.com/)) to make sure all everything is properly linted/formated
+
+7. Run pre-commit (after [installing it](https://pre-commit.com/)) to make sure all everything is properly linted/formated
    ```sh
    make pre-commit
    ```
 
-7. To deactivate your development venv:
+8. To deactivate your development venv:
     ```sh
     deactivate
     ```

@@ -150,7 +150,11 @@ class Steane(Vars):
             q=self.d,
         )
 
-    def prep_t_plus_state(self, reject: Bit | None = None, rus_limit: int | None = None):
+    def prep_t_plus_state(
+        self,
+        reject: Bit | None = None,
+        rus_limit: int | None = None,
+    ):
         """Prepare logical T|+X> in a fault tolerant manner."""
         block = Block(
             self.scratch.set(0),
@@ -158,7 +162,9 @@ class Steane(Vars):
                 d=self.d,
                 a=self.a,
                 out=self.scratch,
-                reject=self.scratch[2],  # the first two bits of self.scratch are used by "out"
+                reject=self.scratch[
+                    2
+                ],  # the first two bits of self.scratch are used by "out"
                 flag_x=self.flag_x,
                 flag_z=self.flag_z,
                 flags=self.flags,
@@ -178,7 +184,11 @@ class Steane(Vars):
             self.z(),
         )
 
-    def prep_tdg_plus_state(self, reject: Bit | None = None, rus_limit: int | None = None):
+    def prep_tdg_plus_state(
+        self,
+        reject: Bit | None = None,
+        rus_limit: int | None = None,
+    ):
         """Prepare logical Tdg|+X> in a fault tolerant manner."""
         return Block(
             self.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
@@ -276,7 +286,12 @@ class Steane(Vars):
             Permute(self.d, aux.d),
         )
 
-    def t_tel(self, aux: Steane, reject: Bit | None = None, rus_limit: int | None = None):
+    def t_tel(
+        self,
+        aux: Steane,
+        reject: Bit | None = None,
+        rus_limit: int | None = None,
+    ):
         """Warning:
             This is experimental.
 
@@ -312,7 +327,12 @@ class Steane(Vars):
             Permute(self.d, aux.d),
         )
 
-    def tdg_tel(self, aux: Steane, reject: Bit | None = None, rus_limit: int | None = None):
+    def tdg_tel(
+        self,
+        aux: Steane,
+        reject: Bit | None = None,
+        rus_limit: int | None = None,
+    ):
         """Warning:
             This is experimental.
 

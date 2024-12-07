@@ -100,7 +100,7 @@ pecos = "0.x.x"  # Replace with the latest version
 ## Development Setup
 
 If you are interested in editing or developing the code in this project, see this
-[development documentation](development) to get started.
+[development documentation](development.md) to get started.
 
 ## Simulators with special requirements
 

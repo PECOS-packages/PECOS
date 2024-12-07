@@ -112,8 +112,8 @@ clippy:  ## Run cargo clippy with all features
 fmt: ## Run autoformatting for cargo
 	cargo fmt --all -- --check
 
-.PHONY: pre-commit  ## Run all quality checks / linting / reformatting
-pre-commit: fmt clippy
+.PHONY: lint  ## Run all quality checks / linting / reformatting
+lint: fmt clippy
 	$(VENV_BIN)/pre-commit run --all-files
 
 # Testing

@@ -18,7 +18,7 @@ For developers who want to contribute or modify PECOS:
    <summary>or manually set up a Python virtual environment for develop of this project's code.</summary>
 
    On Linux/Mac:
-   
+
    ```sh
    python -m venv .venv
    source .venv/bin/activate
@@ -27,9 +27,9 @@ For developers who want to contribute or modify PECOS:
    make metadeps
    pre-commit install
    ```
-   
+
    On Windows:
-   
+
    ```sh
    python -m venv .venv
    .\venv\Scripts\activate

@@ -155,9 +155,9 @@ class LogZeroRot(Block):
                 self.extend(
                     X(q),
                 )
-            case "|0>" | "+Z":
+            case "|0>" | "+Z" | "Z":
                 pass
-            case "|+>" | "+X":
+            case "|+>" | "+X" | "X":
                 self.extend(
                     H(q),
                 )
@@ -166,7 +166,7 @@ class LogZeroRot(Block):
                     H(q),
                     Z(q),
                 )
-            case "|+i>" | "+Y":
+            case "|+i>" | "+Y" | "Y":
                 self.extend(
                     sqrt_paulis.SXdg(q),
                 )

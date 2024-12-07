@@ -99,9 +99,6 @@ class Steane(Vars):
 
     def p(self, state: str, reject: Bit | None = None, rus_limit: int | None = None):
         """Prepare a logical qubit in a logical Pauli basis state."""
-        if state in ["X", "Y", "Z"]:
-            state = f"+{state}"
-
         block = PrepRUS(
             q=self.d,
             a=self.a[0],

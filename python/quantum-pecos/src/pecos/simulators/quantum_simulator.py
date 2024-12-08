@@ -58,9 +58,7 @@ class QuantumSimulator:
         if isinstance(self.backend, str):
             if self.backend == "stabilizer":
                 self.state = SparseSim
-            elif self.backend == "state-vector":
-                self.state = Qulacs  # Seems to be the better default choice for now
-            elif self.backend == "ProjectQSim":
+            elif self.backend in ("state-vector", "ProjectQSim"):
                 self.state = ProjectQSim
             elif self.backend in {"MPS", "mps"}:
                 self.state = MPS

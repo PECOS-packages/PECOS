@@ -284,8 +284,10 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         if i is None:
             cval = val
         else:
-            cval &= ~(1 << i)
-            cval |= (val & 1) << i
+            one = dtype(1)
+            i = dtype(i)
+            cval &= ~(one << i)
+            cval |= (val & one) << i
 
         if type(cval) not in signed_data_types.values():
             # mask off bits given the size of the register

@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 
 # Try to autodetect if python3 or python is the python executable used.
-PYTHONPATH := $(shell which python3 2>/dev/null || which python 2>/dev/null)
+PYTHONPATH := $(shell which python 2>/dev/null || which python3 2>/dev/null)
 
 SHELL=bash
 
@@ -9,7 +9,7 @@ SHELL=bash
 BASE_DIR := $(shell realpath .)
 VENV=$(BASE_DIR)/.venv
 ifeq ($(OS),Windows_NT)
-    VENV_BIN := $(VENV)/Scriptsexit
+    VENV_BIN := $(VENV)/Scripts
 else
     VENV_BIN := $(VENV)/bin
 endif

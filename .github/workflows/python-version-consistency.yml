@@ -1,0 +1,48 @@
+name: Python Version Consistency Check
+
+on:
+  push:
+    paths:
+      - 'python/**/pyproject.toml'
+  pull_request:
+    paths:
+      - 'python/**/pyproject.toml'
+
+jobs:
+  check_versions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check version consistency
+        run: |
+          # Find all pyproject.toml files in the python/ directory
+          PYPROJECT_FILES=$(find python -name pyproject.toml)
+
+          # Initialize variables
+          FIRST_VERSION=""
+          INCONSISTENT=false
+
+          # Check each pyproject.toml file
+          for file in $PYPROJECT_FILES; do
+            VERSION=$(grep -oP 'version = "\K[^"]+' $file)
+
+            if [ -z "$FIRST_VERSION" ]; then
+              FIRST_VERSION=$VERSION
+              echo "Reference version: $FIRST_VERSION (from $file)"
+            elif [ "$VERSION" != "$FIRST_VERSION" ]; then
+              echo "Inconsistent version found in $file: $VERSION"
+              INCONSISTENT=true
+            else
+              echo "Consistent version found in $file: $VERSION"
+            fi
+          done
+
+          # Exit with error if versions are inconsistent
+          if [ "$INCONSISTENT" = true ]; then
+            echo "Error: Inconsistent versions found across pyproject.toml files"
+            exit 1
+          else
+            echo "Success: All pyproject.toml files have consistent versions"
+          fi

@@ -3,9 +3,13 @@ repos:
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
-        exclude: ^docs/reference/_autosummary/
+        exclude: ^python/docs/reference/_autosummary/
       - id: end-of-file-fixer
-        exclude: ^docs/reference/_autosummary/
+        exclude: |
+          (?x)^(
+            python/docs/reference/_autosummary/|
+            .*\.rs$
+          )
       - id: check-toml
       - id: check-yaml
       - id: check-added-large-files
@@ -19,10 +23,6 @@ repos:
     hooks:
       - id: typos
         args: []
-        exclude: |
-            (?x)^(
-                python/pecos/simulators/cuquantum_old/.*|
-            )$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.8.0
@@ -34,14 +34,10 @@ repos:
     rev: 24.10.0
     hooks:
       - id: black
-        exclude: |
-            (?x)^(
-                python/pecos/simulators/cuquantum_old/custatevec/bindings.py|
-            )$
 
   - repo: https://github.com/keewis/blackdoc
     rev: v0.3.9
     hooks:
     -   id: blackdoc
         additional_dependencies:
-        - black==24.1.1
+        - black==24.8.0

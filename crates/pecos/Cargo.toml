@@ -12,12 +12,9 @@ readme = "../../README.md"
 description = "A crate for evaluating and exploring quantum error correction."
 
 [dependencies]
-rand = { workspace = true }
-rand_chacha = { workspace = true }
-rand_xoshiro = { workspace = true }
-pecos-core = { path= "../pecos-core" }
-pecos-qsim = { path= "../pecos-qsim" }
-pecos-qec = { path= "../pecos-qec" }
+pecos-core = { workspace = true }
+pecos-qsim = { workspace = true }
+pecos-qec = { workspace = true }
 
 # For Wasm tests, see: https://rustwasm.github.io/wasm-bindgen/wasm-bindgen-test/index.html
 # make sure to run:

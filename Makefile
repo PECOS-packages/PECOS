@@ -21,9 +21,8 @@ PYPROJECT_PATH := python/quantum-pecos/pyproject.toml
 # -------------------
 
 .PHONY: venv
-venv:  ## Build Python virtual environment and install requirements
+venv:  ## Build Python virtual environment
 	$(PYTHONPATH) -m venv $(VENV)
-	$(MAKE) requirements
 
 # Requirements
 # ------------
@@ -46,6 +45,7 @@ updatereqs:  ## Auto update and generate requirements.txt
 	@mv $(PYPROJECT_PATH).bak $(PYPROJECT_PATH)
 	@echo "Adding pecos-rslib back to requirements.txt..."
 	@echo "pecos-rslib==$(call get_version)" >> python/quantum-pecos/requirements.txt
+	@echo "numpy==1.26.4 ; python_version < \"3.13\"" >> python/quantum-pecos/requirements.txt
 
 .PHONY: installreqs
 installreqs: upgrade-pip ## Install Python project requirements

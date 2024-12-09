@@ -92,9 +92,11 @@ jobs:
 
     - name: Run standard tests
       run: |
+        pip install pytest-cov
         pytest ./python/tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
 
     - name: Run tests with optional dependencies
       run: |
+        pip install pytest-cov
         pip install ./python/quantum-pecos/[all]
         pytest ./python/tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency

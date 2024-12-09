@@ -293,6 +293,9 @@ class QASMGenerator:
 
         for q in op.qargs:
             if isinstance(q, QReg):
+                # Broadcasting across a qubit register is inconsistent with the current Permute
+                # strategy, so "unroll" broadcast operations to make them act on individual qubits.
+                # See, for example, https://github.com/PECOS-packages/PECOS/issues/95.
                 lines = [f"{repr_str} {qubit};" for qubit in q]
                 str_list.extend(lines)
 

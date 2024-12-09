@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from pecos import __version__
+from pecos.slr.vars import QReg
 
 
 class QASMGenerator:
@@ -291,14 +292,19 @@ class QASMGenerator:
                 op.qargs = (op.qargs,)
 
         for q in op.qargs:
-            if isinstance(q, tuple):
+            if isinstance(q, QReg):
+                lines = [f"{repr_str} {qubit};" for qubit in q]
+                str_list.extend(lines)
+
+            elif isinstance(q, tuple):
                 if len(q) != op.qsize:
                     msg = f"Expected size {op.qsize} got size {len(q)}"
                     raise Exception(msg)
                 qs = ",".join([str(qi) for qi in q])
                 str_list.append(f"{repr_str} {qs};")
 
-            str_list.append(f"{repr_str} {str(q)};")
+            else:
+                str_list.append(f"{repr_str} {q};")
 
         return "\n".join(str_list)
 

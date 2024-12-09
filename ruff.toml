@@ -3,7 +3,6 @@
 
 target-version = "py39"
 line-length = 120
-extend-exclude = ["python/pecos/simulators/cuquantum_old/*"]
 
 [lint]
 select = [
@@ -119,20 +118,20 @@ ignore = [
 
 [lint.per-file-ignores]
 "python/**/__init__.py" = ["F401"]  # imported but unused (81)
-"tests/**/*.py"         = [
+"python/tests/**/*.py"         = [
     "INP001",                       # File is part of an implicit namespace package. Add an `__init__.py` (6)
     "S101",                         # Use of `assert` detected (78)
     ]
 # TODO: comment to work on better typing
-"python/pecos/circuit_converters/**/*.py" = ["ANN"]
-"python/pecos/circuits/**/*.py" = ["ANN"]
-"python/pecos/decoders/**/*.py" = ["ANN"]
-"python/pecos/engines/**/*.py" = ["ANN"]
-"python/pecos/error_models/**/*.py" = ["ANN"]
-"python/pecos/misc/**/*.py" = ["ANN"]
-"python/pecos/qeccs/**/*.py" = ["ANN"]
-"python/pecos/simulators/**/*.py" = ["ANN"]
-"python/pecos/tools/*.py" = ["ANN"]
+"python/pecos/src/pecos/circuit_converters/**/*.py" = ["ANN"]
+"python/pecos/src/pecos/circuits/**/*.py" = ["ANN"]
+"python/pecos/src/pecos/decoders/**/*.py" = ["ANN"]
+"python/pecos/src/pecos/engines/**/*.py" = ["ANN"]
+"python/pecos/src/pecos/error_models/**/*.py" = ["ANN"]
+"python/pecos/src/pecos/misc/**/*.py" = ["ANN"]
+"python/pecos/src/pecos/qeccs/**/*.py" = ["ANN"]
+"python/pecos/src/pecos/simulators/**/*.py" = ["ANN"]
+"python/pecos/src/pecos/tools/*.py" = ["ANN"]
 
 [lint.pycodestyle]
 max-doc-length = 120

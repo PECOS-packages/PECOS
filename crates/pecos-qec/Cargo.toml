@@ -1,0 +1,17 @@
+[package]
+name = "pecos-qec"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "QEC for Rust PECOS."
+
+[dependencies]
+pecos-qsim = { workspace = true }
+
+[lints]
+workspace = true

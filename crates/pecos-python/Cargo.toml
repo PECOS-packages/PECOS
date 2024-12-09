@@ -1,0 +1,22 @@
+[package]
+name = "pecos-python"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Allows running Rust code in Python."
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { workspace=true, features = ["extension-module"] }
+pecos = { workspace = true }
+
+[lints]
+workspace = true

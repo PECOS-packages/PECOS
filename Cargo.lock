@@ -170,7 +170,7 @@ dependencies = [
  "pecos",
  "pecos-core",
  "pecos-qec",
- "pecos-qsims",
+ "pecos-qsim",
 ]
 
 [[package]]
@@ -1154,7 +1154,7 @@ dependencies = [
  "getrandom",
  "pecos-core",
  "pecos-qec",
- "pecos-qsims",
+ "pecos-qsim",
  "rand",
  "rand_chacha",
  "rand_xoshiro",
@@ -1182,11 +1182,11 @@ dependencies = [
 name = "pecos-qec"
 version = "0.1.0"
 dependencies = [
- "pecos-qsims",
+ "pecos-qsim",
 ]
 
 [[package]]
-name = "pecos-qsims"
+name = "pecos-qsim"
 version = "0.1.0"
 dependencies = [
  "pecos-core",

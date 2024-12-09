@@ -16,7 +16,7 @@ rand = { workspace = true }
 rand_chacha = { workspace = true }
 rand_xoshiro = { workspace = true }
 pecos-core = { path= "../pecos-core" }
-pecos-qsims = { path= "../pecos-qsims" }
+pecos-qsim = { path= "../pecos-qsim" }
 pecos-qec = { path= "../pecos-qec" }
 
 # For Wasm tests, see: https://rustwasm.github.io/wasm-bindgen/wasm-bindgen-test/index.html

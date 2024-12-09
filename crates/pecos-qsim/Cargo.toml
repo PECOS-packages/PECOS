@@ -1,5 +1,5 @@
 [package]
-name = "pecos-qsims"
+name = "pecos-qsim"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

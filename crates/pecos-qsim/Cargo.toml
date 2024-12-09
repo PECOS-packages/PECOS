@@ -1,0 +1,18 @@
+[package]
+name = "pecos-qsim"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Provides simulators and related elements for PECOS simulations."
+
+[dependencies]
+pecos-core = { workspace = true }
+rand_chacha = { workspace = true }
+
+[lints]
+workspace = true

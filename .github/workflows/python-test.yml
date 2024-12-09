@@ -1,0 +1,100 @@
+name: Python test / linting
+
+on:
+  push:
+    branches: [ "master", "development" ]
+    paths:
+      - 'python/**'
+      - '.github/workflows/python-test.yml'
+      - '.typos.toml'
+      - 'ruff.toml'
+      - '.pre-commit-config.yaml'
+  pull_request:
+    branches: [ "master", "development" ]
+    paths:
+      - 'python/**'
+      - '.github/workflows/python-test.yml'
+      - '.typos.toml'
+      - 'ruff.toml'
+      - '.pre-commit-config.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+
+env:
+  RUSTFLAGS: -C debuginfo=0
+  RUST_BACKTRACE: 1
+  PYTHONUTF8: 1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  python-test:
+
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Create and activate virtual environment
+      env:
+        BIN: ${{ matrix.os == 'windows-latest' && 'Scripts' || 'bin' }}
+      run: |
+          python -m venv .venv
+          source .venv/$BIN/activate
+          echo "$GITHUB_WORKSPACE/.venv/$BIN" >> $GITHUB_PATH
+          echo "VIRTUAL_ENV=$GITHUB_WORKSPACE/.venv" >> $GITHUB_ENV
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools
+        pip install maturin pre-commit
+        echo "Temporarily removing pecos-rslib from requirements... because we need to build it"
+        grep -v "pecos-rslib" python/quantum-pecos/requirements.txt > temp_requirements.txt
+        echo "Installing project requirements (excluding pecos-rslib)..."
+        pip install -r temp_requirements.txt
+        echo "Cleaning up temporary files..."
+        rm temp_requirements.txt
+
+    - name: Set up Rust
+      run: rustup show
+
+    - name: Cache Rust
+      uses: Swatinem/rust-cache@v2
+      with:
+          workspaces: python/pecos-rslib
+
+    - name: Install pecos-rslib with maturin develop
+      run: |
+        cd python/pecos-rslib
+        maturin develop
+
+    - name: Install pure Python PECOS
+      run: pip install ./python/quantum-pecos/
+
+    - name: Run pre-commit checks
+      run: |
+        pre-commit run --all-files --show-diff-on-failure
+
+    - name: Run standard tests
+      run: |
+        pytest ./python/tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+
+    - name: Run tests with optional dependencies
+      run: |
+        pip install ./python/quantum-pecos/[all]
+        pytest ./python/tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency

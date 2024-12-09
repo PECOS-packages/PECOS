@@ -1,0 +1,25 @@
+[package]
+name = "benchmarks"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[dev-dependencies]
+criterion = "0.5"
+pecos = { workspace = true }
+pecos-core = { workspace = true }
+pecos-qsim = { workspace = true }
+pecos-qec = { workspace = true }
+
+[[bench]]
+name = "benchmarks"
+harness = false
+
+[lints]
+workspace = true

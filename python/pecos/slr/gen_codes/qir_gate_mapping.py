@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable
 
+from numpy import pi
+
 from pecos.qeclib import qubit as q
 from pecos.qeclib.qubit.qgate_base import QGate
 
@@ -64,26 +66,111 @@ class QIRGateMetadata(Enum):
         lambda f: [
             q.SZdg(f.qargs[0]),
             q.H(f.qargs[0]),
-        ]
+        ],
     )
     Fdg = QG.decompose(
         lambda fdg: [
             q.H(fdg.qargs[0]),
             q.SZ(fdg.qargs[0]),
-        ]
+        ],
     )
     F4 = QG.decompose(
         lambda f4: [
             q.H(f4.qargs[0]),
             q.SZdg(f4.qargs[0]),
-        ]
+        ],
     )
     F4dg = QG.decompose(
         lambda f4dg: [
             q.SZ(f4dg.qargs[0]),
             q.H(f4dg.qargs[0]),
-        ]
+        ],
     )
 
-    # Remaining QIR gates seen:
-    #     '__quantum__qis__rxxyyzz__body',
+    # CH q1, q2; = RY(pi/4) q2; CZ q1, q2; RY(-pi/4) q2;
+    CH = QG.decompose(
+        lambda ch: [
+            q.RY[pi / 4](ch.qargs[1]),
+            q.CZ(ch.qargs[0], ch.qargs[1]),
+            q.RY[-pi / 4](ch.qargs[1]),
+        ],
+    )
+
+    # CY q1,q2 = S q2; CX q1,q2; S_adj q2;
+    CY = QG.decompose(
+        lambda cy: [
+            q.S(cy.qargs[1]),
+            q.CX(cy.qargs[0], cy.qargs[1]),
+            q.Sdg(cy.qargs[1]),
+        ],
+    )
+
+    # SXX q1, q2 = RX(pi/2) q1; RX(pi/2) q2; RY(-pi/2) q1; CX q1, q2; RY(pi/2) q1;
+    SXX = QG.decompose(
+        lambda sxx: [
+            q.RX[pi / 2](sxx.qargs[0]),
+            q.RX[pi / 2](sxx.qargs[1]),
+            q.RY[-pi / 2](sxx.qargs[0]),
+            q.CX(sxx.qargs[0], sxx.qargs[1]),
+            q.RY[pi / 2](sxx.qargs[0]),
+        ],
+    )
+
+    # SYY q1, q2 = S_adj q1; S_adj q2; SXX q1, q2; S q1; S q2;
+    SYY = QG.decompose(
+        lambda syy: [
+            q.Sdg(syy.qargs[0]),
+            q.Sdg(syy.qargs[1]),
+            q.SXX(syy.qargs[0], syy.qargs[1]),
+            q.S(syy.qargs[0]),
+            q.S(syy.qargs[1]),
+        ],
+    )
+
+    # SXXdg q1, q2 = X q1; X q2; SXX q1, q2;
+    SXXdg = QG.decompose(
+        lambda sxxdg: [
+            q.X(sxxdg.qargs[0]),
+            q.X(sxxdg.qargs[1]),
+            q.SXX(sxxdg.qargs[0], sxxdg.qargs[1]),
+        ],
+    )
+
+    # SYYdg q1, q2 = Y q1; Y q2; SYY q1, q2;
+    SYYdg = QG.decompose(
+        lambda syydg: [
+            q.Y(syydg.qargs[0]),
+            q.Y(syydg.qargs[1]),
+            q.SYY(syydg.qargs[0], syydg.qargs[1]),
+        ],
+    )
+
+    # SZZdg = Z q1; Z q2; ZZ (ZZMax?) q1, q2;
+    SZZdg = QG.decompose(
+        lambda szzdg: [
+            q.Z(szzdg.qargs[0]),
+            q.Z(szzdg.qargs[1]),
+            q.SZZ(szzdg.qargs[0], szzdg.qargs[1]),
+        ],
+    )
+
+    # SXdg = RX(-pi/2)
+    SXdg = QG.decompose(
+        lambda sxxdg: [
+            q.RX[-pi / 2](sxxdg.qargs[0]),
+        ],
+    )
+
+    # SYdg = RY(-pi/2)
+    SYdg = QG.decompose(
+        lambda syydg: [
+            q.RY[-pi / 2](syydg.qargs[0]),
+        ],
+    )
+
+    # SX = RX(pi/2)
+    SX = QG.decompose(
+        lambda sx: [
+            q.RX[pi / 2](sx.qargs[0]),
+        ],
+    )

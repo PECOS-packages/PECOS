@@ -62,7 +62,7 @@ jobs:
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip setuptools
-        pip install maturin pytest pre-commit
+        pip install maturin pre-commit
         echo "Temporarily removing pecos-rslib from requirements... because we need to build it"
         grep -v "pecos-rslib" python/quantum-pecos/requirements.txt > temp_requirements.txt
         echo "Installing project requirements (excluding pecos-rslib)..."
@@ -92,11 +92,9 @@ jobs:
 
     - name: Run standard tests
       run: |
-        pip install pytest-cov
         pytest ./python/tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
 
     - name: Run tests with optional dependencies
       run: |
-        pip install pytest-cov
         pip install ./python/quantum-pecos/[all]
         pytest ./python/tests --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html -m optional_dependency

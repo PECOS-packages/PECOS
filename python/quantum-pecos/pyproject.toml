@@ -68,7 +68,8 @@ visualization = [
 ]
 tests = [
     "pytest>=5.0.0,<8.3.4",  # 8.3.4 seems to be causing errors
-    "hypothesis"
+    "pytest-cov",
+    "hypothesis",
 ]
 all = [
     "quantum-pecos[projectq]",

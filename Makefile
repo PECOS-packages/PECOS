@@ -60,7 +60,7 @@ installreqs: upgrade-pip ## Install Python project requirements
 
 .PHONY: metadeps
 metadeps: upgrade-pip  ## Install extra dependencies used to develop/build this package
-	$(VENV_BIN)/pip install -U setuptools pip-tools pre-commit pytest hypothesis maturin
+	$(VENV_BIN)/pip install -U setuptools pip-tools pre-commit maturin
 
 # Function to extract version from pyproject.toml
 define get_version

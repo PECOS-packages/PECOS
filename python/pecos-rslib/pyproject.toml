@@ -1,0 +1,23 @@
+[project]
+name = "pecos-rslib"
+version = "0.6.0.dev7"
+description = "Rust libary extensions for Python PECOS."
+authors = [
+    {name = "The PECOS Developers"},
+]
+maintainers =[
+    {name = "Ciaran Ryan-Anderson", email = "ciaranra@gmail.com"},
+]
+dependencies = []
+readme = "README.md"
+requires-python = ">= 3.8"
+
+[build-system]
+requires = ["maturin>=1.2,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "src"
+module-name = "pecos_rslib._pecos_rslib"
+manifest-path = "../../crates/pecos-python/Cargo.toml"

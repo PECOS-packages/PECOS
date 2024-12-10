@@ -1,0 +1,132 @@
+# Copyright 2023 The PECOS Developers
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+# the License.You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
+
+[build-system]
+requires = ["setuptools>=62.6"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quantum-pecos"
+version = "0.6.0.dev7"
+authors = [
+    {name = "The PECOS Developers"},
+]
+maintainers =[
+    {name = "Ciaran Ryan-Anderson", email = "ciaranra@gmail.com"},
+]
+description = """PECOS is a library/framework for the evaluation, study, and design of QEC protocols. It also provides the ability to study and evaluate the performance advanced hybrid quantum/classical compute execution models for NISQ algorithms and beyond."""
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE"}
+keywords = ["quantum", "QEC", "simulation", "PECOS"]
+dependencies = [
+    "pecos-rslib==0.6.0.dev7",
+    "phir>=0.3.3",
+    "numpy>=1.15.0; python_version >= '3.13'",
+    "numpy>=1.15.0,<2.0; python_version < '3.13'",
+    "scipy>=1.1.0",
+    "networkx>=2.1.0",
+    "matplotlib>=2.2.0",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[project.urls]
+documentation = "https://quantum-pecos.readthedocs.io"
+repository = "https://github.com/PECOS-packages/PECOS"
+
+[project.optional-dependencies]
+projectq = [  # State-vector sims using ProjectQ
+    "pybind11>=2.2.3",
+    "projectq",
+]
+wasmtime = [
+    "wasmtime>=13.0"
+]
+visualization = [
+    "plotly~=5.9.0",
+]
+tests = [
+    "pytest>=5.0.0,<8.3.4",  # 8.3.4 seems to be causing errors
+    "pytest-cov",
+    "hypothesis",
+]
+all = [
+    "quantum-pecos[projectq]",
+    "quantum-pecos[wasmtime]",
+    "quantum-pecos[visualization]",
+    "quantum-pecos[tests]",
+    "quantum-pecos[qulacs]; python_version < '3.13'",
+    "quantum-pecos[pyquest]; python_version < '3.13'",
+    "quantum-pecos[wasmer]",  # TODO: avoid installing for 3.13 and adjust tests for this
+]
+# The following only work for some environments/Python verions:
+qulacs = [  # State-vector sims using Qulacs
+    "qulacs>=0.6.4", # Package not currently compatible with Python 3.13
+]
+pyquest = [
+        "pyquest>=0.0.1",  # Package not currently compatible with Python 3.13
+]
+wasmer = [
+    "wasmer~=1.1.0", # Package not currently compatible with Python 3.13
+    "wasmer_compiler_cranelift~=1.1.0",
+]
+cuda = [
+    # CUDA dependencies. See README.md
+    "cupy>=10.4.0",
+    "cuquantum-python>=24.03.0",
+    "custatevec>=1.6.0",
+    "pytket-cutensornet>=0.7.0",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pecos"]
+
+[tool.distutils.build_ext]
+inplace = 1
+
+[tool.distutils.bdist_wheel]
+universal = 1
+
+[tool.setuptools]
+zip-safe = false
+package-dir = {"" = "src"}
+license-files = ["LICENSE"]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["pecos*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+"pecos" = ["py.typed"]
+
+# Linting and autorefactoring tools
+# ---------------------------------
+
+[tool.black]
+line-length = 120

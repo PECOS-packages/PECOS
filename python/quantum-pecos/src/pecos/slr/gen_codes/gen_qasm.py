@@ -299,6 +299,9 @@ class QASMGenerator:
                 # Broadcasting across a qubit register is inconsistent with the current Permute
                 # strategy, so "unroll" broadcast operations to make them act on individual qubits.
                 # See, for example, https://github.com/PECOS-packages/PECOS/issues/95.
+                if op.qsize != 1:
+                    msg = "Only single-qubit gates can be broadcast across a qubit register"
+                    raise Exception(msg)
                 lines = [f"{repr_str} {qubit};" for qubit in q]
                 str_list.extend(lines)
 

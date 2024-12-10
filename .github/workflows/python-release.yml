@@ -159,7 +159,7 @@ jobs:
           fi
 
       - name: Test wheel
-        if: matrix.architecture == 'x86_64'
+        if: ${{ !(matrix.architecture == 'x86_64' && matrix.os == 'macos-latest') && matrix.architecture != 'aarch64' }}
         run: |
           pip install --force-reinstall --verbose python/pecos-rslib/dist/*.whl
           python -c 'import pecos_rslib; print(pecos_rslib.__version__)'

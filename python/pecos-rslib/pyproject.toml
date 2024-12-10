@@ -1,6 +1,6 @@
 [project]
 name = "pecos-rslib"
-version = "0.6.0.dev6"
+version = "0.6.0.dev7"
 description = "Rust libary extensions for Python PECOS."
 authors = [
     {name = "The PECOS Developers"},

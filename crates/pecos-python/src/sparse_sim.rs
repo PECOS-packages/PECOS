@@ -10,13 +10,9 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-// use pecos_core::VecSet;
-// use pecos_qsims::CliffordSimulator;
-// use pecos_qsims::SparseStab;
 use pecos::prelude::*;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
-use std::collections::HashMap;
 
 #[pyclass]
 pub struct SparseSim {
@@ -32,195 +28,117 @@ impl SparseSim {
         }
     }
 
+    fn reset(&mut self) {
+        self.inner.reset();
+    }
+
     #[allow(clippy::too_many_lines)]
     #[pyo3(signature = (symbol, location, params=None))]
-    fn run_gate(
+    fn run_1q_gate(
         &mut self,
         symbol: &str,
-        location: &Bound<'_, PyTuple>,
+        location: usize,
         params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Option<HashMap<usize, u8>>> {
-        match (symbol, location.len()) {
-            ("X", 1) => {
-                self.inner.x(location.get_item(0)?.extract()?);
+    ) -> PyResult<Option<u8>> {
+        match symbol {
+            "X" => {
+                self.inner.x(location);
                 Ok(None)
             }
-            ("Y", 1) => {
-                self.inner.y(location.get_item(0)?.extract()?);
+            "Y" => {
+                self.inner.y(location);
                 Ok(None)
             }
-            ("Z", 1) => {
-                self.inner.z(location.get_item(0)?.extract()?);
+            "Z" => {
+                self.inner.z(location);
                 Ok(None)
             }
-            ("H", 1) => {
-                self.inner.h(location.get_item(0)?.extract()?);
+            "H" => {
+                self.inner.h(location);
                 Ok(None)
             }
-            ("H2", 1) => {
-                self.inner.h2(location.get_item(0)?.extract()?);
+            "H2" => {
+                self.inner.h2(location);
                 Ok(None)
             }
-            ("H3", 1) => {
-                self.inner.h3(location.get_item(0)?.extract()?);
+            "H3" => {
+                self.inner.h3(location);
                 Ok(None)
             }
-            ("H4", 1) => {
-                self.inner.h4(location.get_item(0)?.extract()?);
+            "H4" => {
+                self.inner.h4(location);
                 Ok(None)
             }
-            ("H5", 1) => {
-                self.inner.h5(location.get_item(0)?.extract()?);
+            "H5" => {
+                self.inner.h5(location);
                 Ok(None)
             }
-            ("H6", 1) => {
-                self.inner.h6(location.get_item(0)?.extract()?);
+            "H6" => {
+                self.inner.h6(location);
                 Ok(None)
             }
-            ("F", 1) => {
-                self.inner.f(location.get_item(0)?.extract()?);
+            "F" => {
+                self.inner.f(location);
                 Ok(None)
             }
-            ("Fdg", 1) => {
-                self.inner.fdg(location.get_item(0)?.extract()?);
+            "Fdg" => {
+                self.inner.fdg(location);
                 Ok(None)
             }
-            ("F2", 1) => {
-                self.inner.f2(location.get_item(0)?.extract()?);
+            "F2" => {
+                self.inner.f2(location);
                 Ok(None)
             }
-            ("F2dg", 1) => {
-                self.inner.f2dg(location.get_item(0)?.extract()?);
+            "F2dg" => {
+                self.inner.f2dg(location);
                 Ok(None)
             }
-            ("F3", 1) => {
-                self.inner.f3(location.get_item(0)?.extract()?);
+            "F3" => {
+                self.inner.f3(location);
                 Ok(None)
             }
-            ("F3dg", 1) => {
-                self.inner.f3dg(location.get_item(0)?.extract()?);
+            "F3dg" => {
+                self.inner.f3dg(location);
                 Ok(None)
             }
-            ("F4", 1) => {
-                self.inner.f4(location.get_item(0)?.extract()?);
+            "F4" => {
+                self.inner.f4(location);
                 Ok(None)
             }
-            ("F4dg", 1) => {
-                self.inner.f4dg(location.get_item(0)?.extract()?);
+            "F4dg" => {
+                self.inner.f4dg(location);
                 Ok(None)
             }
-            ("SX", 1) => {
-                self.inner.sx(location.get_item(0)?.extract()?);
+            "SX" => {
+                self.inner.sx(location);
                 Ok(None)
             }
-            ("SXdg", 1) => {
-                self.inner.sxdg(location.get_item(0)?.extract()?);
+            "SXdg" => {
+                self.inner.sxdg(location);
                 Ok(None)
             }
-            ("SY", 1) => {
-                self.inner.sy(location.get_item(0)?.extract()?);
+            "SY" => {
+                self.inner.sy(location);
                 Ok(None)
             }
-            ("SYdg", 1) => {
-                self.inner.sydg(location.get_item(0)?.extract()?);
+            "SYdg" => {
+                self.inner.sydg(location);
                 Ok(None)
             }
-            ("SZ", 1) => {
-                self.inner.sz(location.get_item(0)?.extract()?);
+            "SZ" => {
+                self.inner.sz(location);
                 Ok(None)
             }
-            ("SZdg", 1) => {
-                self.inner.szdg(location.get_item(0)?.extract()?);
+            "SZdg" => {
+                self.inner.szdg(location);
                 Ok(None)
             }
-            ("CX", 2) => {
-                self.inner.cx(
-                    location.get_item(0)?.extract()?,
-                    location.get_item(1)?.extract()?,
-                );
-                Ok(None)
-            }
-            ("CY", 2) => {
-                self.inner.cy(
-                    location.get_item(0)?.extract()?,
-                    location.get_item(1)?.extract()?,
-                );
-                Ok(None)
-            }
-            ("CZ", 2) => {
-                self.inner.cz(
-                    location.get_item(0)?.extract()?,
-                    location.get_item(1)?.extract()?,
-                );
-                Ok(None)
-            }
-            ("SXX", 2) => {
-                self.inner.sxx(
-                    location.get_item(0)?.extract()?,
-                    location.get_item(1)?.extract()?,
-                );
-                Ok(None)
-            }
-            ("SXXdg", 2) => {
-                self.inner.sxxdg(
-                    location.get_item(0)?.extract()?,
-                    location.get_item(1)?.extract()?,
-                );
-                Ok(None)
-            }
-            ("SYY", 2) => {
-                self.inner.syy(
-                    location.get_item(0)?.extract()?,
-                    location.get_item(1)?.extract()?,
-                );
-                Ok(None)
-            }
-            ("SYYdg", 2) => {
-                self.inner.syydg(
-                    location.get_item(0)?.extract()?,
-                    location.get_item(1)?.extract()?,
-                );
-                Ok(None)
-            }
-            ("SZZ", 2) => {
-                self.inner.szz(
-                    location.get_item(0)?.extract()?,
-                    location.get_item(1)?.extract()?,
-                );
-                Ok(None)
-            }
-            ("SZZdg", 2) => {
-                self.inner.szzdg(
-                    location.get_item(0)?.extract()?,
-                    location.get_item(1)?.extract()?,
-                );
-                Ok(None)
-            }
-            ("SWAP", 2) => {
-                self.inner.swap(
-                    location.get_item(0)?.extract()?,
-                    location.get_item(1)?.extract()?,
-                );
-                Ok(None)
-            }
-
-            ("G2", 2) => {
-                self.inner.g2(
-                    location.get_item(0)?.extract()?,
-                    location.get_item(1)?.extract()?,
-                );
-                Ok(None)
-            }
-            (
-                "MZ" | "MX" | "MY" | "MZForced" | "PZ" | "PX" | "PY" | "PZForced" | "PnZ" | "PnX"
-                | "PnY",
-                1,
-            ) => {
-                let qubit: usize = location.get_item(0)?.extract()?;
+            "MZ" | "MX" | "MY" | "MZForced" | "PZ" | "PX" | "PY" | "PZForced" | "PnZ" | "PnX"
+            | "PnY" => {
                 let (result, _) = match symbol {
-                    "MZ" => self.inner.mz(qubit),
-                    "MX" => self.inner.mx(qubit),
-                    "MY" => self.inner.my(qubit),
+                    "MZ" => self.inner.mz(location),
+                    "MX" => self.inner.mx(location),
+                    "MY" => self.inner.my(location),
                     "MZForced" => {
                         let forced_value = params
                             .ok_or_else(|| {
@@ -236,11 +154,11 @@ impl SparseSim {
                             })?
                             .call_method0("__bool__")?
                             .extract::<bool>()?;
-                        self.inner.mz_forced(qubit, forced_value)
+                        self.inner.mz_forced(location, forced_value)
                     }
-                    "PZ" => self.inner.pz(qubit),
-                    "PX" => self.inner.px(qubit),
-                    "PY" => self.inner.py(qubit),
+                    "PZ" => self.inner.pz(location),
+                    "PX" => self.inner.px(location),
+                    "PY" => self.inner.py(location),
                     "PZForced" => {
                         let forced_value = params
                             .ok_or_else(|| {
@@ -256,21 +174,103 @@ impl SparseSim {
                             })?
                             .call_method0("__bool__")?
                             .extract::<bool>()?;
-                        self.inner.pz_forced(qubit, forced_value)
+                        self.inner.pz_forced(location, forced_value)
                     }
-                    "PnZ" => self.inner.pnz(qubit),
-                    "PnX" => self.inner.pnx(qubit),
-                    "PnY" => self.inner.pny(qubit),
+                    "PnZ" => self.inner.pnz(location),
+                    "PnX" => self.inner.pnx(location),
+                    "PnY" => self.inner.pny(location),
                     _ => unreachable!(),
                 };
-                let mut map = HashMap::new();
-                if result {
-                    map.insert(qubit, 1);
-                }
-                Ok(Some(map))
+                Ok(Some(u8::from(result)))
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Unsupported gate or incorrect number of qubits",
+                "Unsupported single-qubit gate",
+            )),
+        }
+    }
+
+    #[pyo3(signature = (symbol, location, _params))]
+    fn run_2q_gate(
+        &mut self,
+        symbol: &str,
+        location: &Bound<'_, PyTuple>,
+        _params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Option<u8>> {
+        if location.len() != 2 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Two-qubit gate requires exactly 2 qubit locations",
+            ));
+        }
+
+        let q1: usize = location.get_item(0)?.extract()?;
+        let q2: usize = location.get_item(1)?.extract()?;
+
+        match symbol {
+            "CX" => {
+                self.inner.cx(q1, q2);
+                Ok(None)
+            }
+            "CY" => {
+                self.inner.cy(q1, q2);
+                Ok(None)
+            }
+            "CZ" => {
+                self.inner.cz(q1, q2);
+                Ok(None)
+            }
+            "SXX" => {
+                self.inner.sxx(q1, q2);
+                Ok(None)
+            }
+            "SXXdg" => {
+                self.inner.sxxdg(q1, q2);
+                Ok(None)
+            }
+            "SYY" => {
+                self.inner.syy(q1, q2);
+                Ok(None)
+            }
+            "SYYdg" => {
+                self.inner.syydg(q1, q2);
+                Ok(None)
+            }
+            "SZZ" => {
+                self.inner.szz(q1, q2);
+                Ok(None)
+            }
+            "SZZdg" => {
+                self.inner.szzdg(q1, q2);
+                Ok(None)
+            }
+            "SWAP" => {
+                self.inner.swap(q1, q2);
+                Ok(None)
+            }
+            "G2" => {
+                self.inner.g2(q1, q2);
+                Ok(None)
+            }
+            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Unsupported two-qubit gate",
+            )),
+        }
+    }
+
+    #[pyo3(signature = (symbol, location, params=None))]
+    fn run_gate(
+        &mut self,
+        symbol: &str,
+        location: &Bound<'_, PyTuple>,
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Option<u8>> {
+        match location.len() {
+            1 => {
+                let qubit: usize = location.get_item(0)?.extract()?;
+                self.run_1q_gate(symbol, qubit, params)
+            }
+            2 => self.run_2q_gate(symbol, location, params),
+            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Gate location must be specified for either 1 or 2 qubits",
             )),
         }
     }

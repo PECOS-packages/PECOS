@@ -32,6 +32,10 @@ impl SparseSim {
         }
     }
 
+    fn reset(&mut self) {
+        self.inner.reset();
+    }
+
     #[allow(clippy::too_many_lines)]
     #[pyo3(signature = (symbol, location, params=None))]
     fn run_gate(

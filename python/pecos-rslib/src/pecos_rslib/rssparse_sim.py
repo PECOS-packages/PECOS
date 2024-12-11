@@ -272,7 +272,6 @@ gate_dict = {
     "measure Z": lambda sim, q, **params: sim._sim.run_1q_gate("MZ", q, params),
     "MZForced": lambda sim, q, **params: sim._sim.run_1q_gate("MZForced", q, params),
     "PZForced": lambda sim, q, **params: sim._sim.run_1q_gate("PZForced", q, params),
-    
     "SqrtXXd": lambda sim, qs, **params: sim._sim.run_2q_gate("SXXdg", qs, params),
     "SqrtYYd": lambda sim, qs, **params: sim._sim.run_2q_gate("SYYdg", qs, params),
     "SqrtZZd": lambda sim, qs, **params: sim._sim.run_2q_gate("SZZdg", qs, params),

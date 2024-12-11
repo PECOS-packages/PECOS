@@ -145,7 +145,7 @@ jobs:
           command: build
           args: --release --out dist --interpreter python${{ matrix.python-version }}
           working-directory: python/pecos-rslib
-          target: ${{ matrix.architecture == 'aarch64' && (matrix.os == 'macos-latest' && 'aarch64-apple-darwin' || 'aarch64-unknown-linux-gnu') || '' }}
+          target: ${{ matrix.architecture == 'aarch64' && (matrix.os == 'macos-latest' && 'aarch64-apple-darwin' || 'aarch64-unknown-linux-gnu') || (matrix.os == 'macos-latest' && 'x86_64-apple-darwin' || '') }}
           manylinux: auto
 
       - name: Restore README.md
@@ -159,7 +159,7 @@ jobs:
           fi
 
       - name: Test wheel
-        if: matrix.architecture == 'x86_64'
+        if: ${{ !(matrix.architecture == 'x86_64' && matrix.os == 'macos-latest') && matrix.architecture != 'aarch64' }}
         run: |
           pip install --force-reinstall --verbose python/pecos-rslib/dist/*.whl
           python -c 'import pecos_rslib; print(pecos_rslib.__version__)'
@@ -264,6 +264,7 @@ jobs:
 
       - name: Upload quantum-pecos wheel
         uses: actions/upload-artifact@v4
+        if: matrix.python-version == '3.10'
         with:
-          name: wheel-quantum-pecos-py${{ matrix.python-version }}
+          name: wheel-quantum-pecos
           path: python/quantum-pecos/dist/*.whl

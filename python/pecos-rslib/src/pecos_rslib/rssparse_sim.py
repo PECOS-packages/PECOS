@@ -46,14 +46,11 @@ class SparseSimRs:
                 if symbol in self.bindings:
                     results = self.bindings[symbol](self, location, **params)
                 else:
-                    # msg = f"Gate {symbol} is not supported in this simulator."
-                    # raise Exception(msg)
-                    results = self._sim.run_gate(symbol, location, params)
+                    msg = f"Gate {symbol} is not supported in this simulator."
+                    raise Exception(msg)
 
                 if results:
-                    # output[location] = results
-                    output.update(results)
-                # TODO: Work out why there is a change from the normal run_gate()
+                    output[location] = results
 
         return output
 

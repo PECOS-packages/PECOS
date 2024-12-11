@@ -13,7 +13,6 @@
 use pecos::prelude::*;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
-use std::collections::HashMap;
 
 #[pyclass]
 pub struct SparseSim {
@@ -40,7 +39,7 @@ impl SparseSim {
         symbol: &str,
         location: usize,
         params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Option<HashMap<usize, u8>>> {
+    ) -> PyResult<Option<u8>> {
         match symbol {
             "X" => {
                 self.inner.x(location);
@@ -182,11 +181,7 @@ impl SparseSim {
                     "PnY" => self.inner.pny(location),
                     _ => unreachable!(),
                 };
-                let mut map = HashMap::new();
-                if result {
-                    map.insert(location, 1);
-                }
-                Ok(Some(map))
+                Ok(Some(u8::from(result)))
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Unsupported single-qubit gate",
@@ -200,7 +195,7 @@ impl SparseSim {
         symbol: &str,
         location: &Bound<'_, PyTuple>,
         _params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Option<HashMap<usize, u8>>> {
+    ) -> PyResult<Option<u8>> {
         if location.len() != 2 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Two-qubit gate requires exactly 2 qubit locations",
@@ -267,7 +262,7 @@ impl SparseSim {
         symbol: &str,
         location: &Bound<'_, PyTuple>,
         params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Option<HashMap<usize, u8>>> {
+    ) -> PyResult<Option<u8>> {
         match location.len() {
             1 => {
                 let qubit: usize = location.get_item(0)?.extract()?;

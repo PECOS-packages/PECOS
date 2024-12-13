@@ -3,11 +3,10 @@ resolver = "2"
 members = [
     "crates/pecos*",
     "crates/benchmarks",
-    # "examples/*",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 readme = "README.md"
 authors = [
@@ -21,16 +20,16 @@ keywords = ["scientific", "quantum", "QEC"]
 categories = ["science", "simulation"]
 
 [workspace.dependencies]
-pyo3 = "0.22"
+pyo3 = "0.23"
 rand = "0.8"
 rand_chacha = "0.3"
 rand_xoshiro = "0.6"
 
-pecos-core = { version = "0.1.0", path = "crates/pecos-core" }
-pecos-qsim = { version = "0.1.0", path = "crates/pecos-qsim" }
-pecos-qec = { version = "0.1.0", path = "crates/pecos-qec" }
-pecos = { version = "0.1.0", path = "crates/pecos" }
-pecos-python = { version = "0.1.0", path = "crates/pecos-python" }
+pecos-core = { version = "0.1.1", path = "crates/pecos-core" }
+pecos-qsim = { version = "0.1.1", path = "crates/pecos-qsim" }
+pecos-qec = { version = "0.1.1", path = "crates/pecos-qec" }
+pecos = { version = "0.1.1", path = "crates/pecos" }
+pecos-python = { version = "0.1.1", path = "crates/pecos-python" }
 
 [profile.release]
 codegen-units = 1

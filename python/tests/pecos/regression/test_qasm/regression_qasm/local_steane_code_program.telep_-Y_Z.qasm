@@ -50,7 +50,13 @@ creg sout_verify_prep[32];
 
 barrier smid_d[0], smid_d[1], smid_d[2], smid_d[3], smid_d[4], smid_d[5], smid_d[6], smid_a[0];
 
-reset smid_d;
+reset smid_d[0];
+reset smid_d[1];
+reset smid_d[2];
+reset smid_d[3];
+reset smid_d[4];
+reset smid_d[5];
+reset smid_d[6];
 reset smid_a[0];
 barrier smid_d, smid_a[0];
 h smid_d[0];
@@ -76,7 +82,13 @@ measure smid_a[0] -> smid_verify_prep[0];
 
 if(smid_verify_prep[0] == 1) barrier smid_d[0], smid_d[1], smid_d[2], smid_d[3], smid_d[4], smid_d[5], smid_d[6], smid_a[0];
 
-if(smid_verify_prep[0] == 1) reset smid_d;
+if(smid_verify_prep[0] == 1) reset smid_d[0];
+if(smid_verify_prep[0] == 1) reset smid_d[1];
+if(smid_verify_prep[0] == 1) reset smid_d[2];
+if(smid_verify_prep[0] == 1) reset smid_d[3];
+if(smid_verify_prep[0] == 1) reset smid_d[4];
+if(smid_verify_prep[0] == 1) reset smid_d[5];
+if(smid_verify_prep[0] == 1) reset smid_d[6];
 if(smid_verify_prep[0] == 1) reset smid_a[0];
 if(smid_verify_prep[0] == 1) barrier smid_d, smid_a[0];
 if(smid_verify_prep[0] == 1) h smid_d[0];
@@ -102,7 +114,13 @@ if(smid_verify_prep[0] == 1) measure smid_a[0] -> smid_verify_prep[0];
 
 if(smid_verify_prep[0] == 1) barrier smid_d[0], smid_d[1], smid_d[2], smid_d[3], smid_d[4], smid_d[5], smid_d[6], smid_a[0];
 
-if(smid_verify_prep[0] == 1) reset smid_d;
+if(smid_verify_prep[0] == 1) reset smid_d[0];
+if(smid_verify_prep[0] == 1) reset smid_d[1];
+if(smid_verify_prep[0] == 1) reset smid_d[2];
+if(smid_verify_prep[0] == 1) reset smid_d[3];
+if(smid_verify_prep[0] == 1) reset smid_d[4];
+if(smid_verify_prep[0] == 1) reset smid_d[5];
+if(smid_verify_prep[0] == 1) reset smid_d[6];
 if(smid_verify_prep[0] == 1) reset smid_a[0];
 if(smid_verify_prep[0] == 1) barrier smid_d, smid_a[0];
 if(smid_verify_prep[0] == 1) h smid_d[0];
@@ -129,7 +147,13 @@ if(smid_verify_prep[0] == 1) measure smid_a[0] -> smid_verify_prep[0];
 
 barrier sout_d[0], sout_d[1], sout_d[2], sout_d[3], sout_d[4], sout_d[5], sout_d[6], sout_a[0];
 
-reset sout_d;
+reset sout_d[0];
+reset sout_d[1];
+reset sout_d[2];
+reset sout_d[3];
+reset sout_d[4];
+reset sout_d[5];
+reset sout_d[6];
 reset sout_a[0];
 barrier sout_d, sout_a[0];
 h sout_d[0];
@@ -155,7 +179,13 @@ measure sout_a[0] -> sout_verify_prep[0];
 
 if(sout_verify_prep[0] == 1) barrier sout_d[0], sout_d[1], sout_d[2], sout_d[3], sout_d[4], sout_d[5], sout_d[6], sout_a[0];
 
-if(sout_verify_prep[0] == 1) reset sout_d;
+if(sout_verify_prep[0] == 1) reset sout_d[0];
+if(sout_verify_prep[0] == 1) reset sout_d[1];
+if(sout_verify_prep[0] == 1) reset sout_d[2];
+if(sout_verify_prep[0] == 1) reset sout_d[3];
+if(sout_verify_prep[0] == 1) reset sout_d[4];
+if(sout_verify_prep[0] == 1) reset sout_d[5];
+if(sout_verify_prep[0] == 1) reset sout_d[6];
 if(sout_verify_prep[0] == 1) reset sout_a[0];
 if(sout_verify_prep[0] == 1) barrier sout_d, sout_a[0];
 if(sout_verify_prep[0] == 1) h sout_d[0];
@@ -181,7 +211,13 @@ if(sout_verify_prep[0] == 1) measure sout_a[0] -> sout_verify_prep[0];
 
 if(sout_verify_prep[0] == 1) barrier sout_d[0], sout_d[1], sout_d[2], sout_d[3], sout_d[4], sout_d[5], sout_d[6], sout_a[0];
 
-if(sout_verify_prep[0] == 1) reset sout_d;
+if(sout_verify_prep[0] == 1) reset sout_d[0];
+if(sout_verify_prep[0] == 1) reset sout_d[1];
+if(sout_verify_prep[0] == 1) reset sout_d[2];
+if(sout_verify_prep[0] == 1) reset sout_d[3];
+if(sout_verify_prep[0] == 1) reset sout_d[4];
+if(sout_verify_prep[0] == 1) reset sout_d[5];
+if(sout_verify_prep[0] == 1) reset sout_d[6];
 if(sout_verify_prep[0] == 1) reset sout_a[0];
 if(sout_verify_prep[0] == 1) barrier sout_d, sout_a[0];
 if(sout_verify_prep[0] == 1) h sout_d[0];
@@ -207,7 +243,13 @@ if(sout_verify_prep[0] == 1) measure sout_a[0] -> sout_verify_prep[0];
 
 barrier smid_d, sout_d;
 // Logical H
-h smid_d;
+h smid_d[0];
+h smid_d[1];
+h smid_d[2];
+h smid_d[3];
+h smid_d[4];
+h smid_d[5];
+h smid_d[6];
 // Transversal Logical CX
 barrier smid_d, sout_d;
 cx smid_d[0], sout_d[0];
@@ -959,7 +1001,13 @@ sout_last_raw_syn_z = 0;
 
 barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];
 
-reset sin_d;
+reset sin_d[0];
+reset sin_d[1];
+reset sin_d[2];
+reset sin_d[3];
+reset sin_d[4];
+reset sin_d[5];
+reset sin_d[6];
 reset sin_a[0];
 barrier sin_d, sin_a[0];
 h sin_d[0];
@@ -985,7 +1033,13 @@ measure sin_a[0] -> sin_verify_prep[0];
 
 if(sin_verify_prep[0] == 1) barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];
 
-if(sin_verify_prep[0] == 1) reset sin_d;
+if(sin_verify_prep[0] == 1) reset sin_d[0];
+if(sin_verify_prep[0] == 1) reset sin_d[1];
+if(sin_verify_prep[0] == 1) reset sin_d[2];
+if(sin_verify_prep[0] == 1) reset sin_d[3];
+if(sin_verify_prep[0] == 1) reset sin_d[4];
+if(sin_verify_prep[0] == 1) reset sin_d[5];
+if(sin_verify_prep[0] == 1) reset sin_d[6];
 if(sin_verify_prep[0] == 1) reset sin_a[0];
 if(sin_verify_prep[0] == 1) barrier sin_d, sin_a[0];
 if(sin_verify_prep[0] == 1) h sin_d[0];
@@ -1011,7 +1065,13 @@ if(sin_verify_prep[0] == 1) measure sin_a[0] -> sin_verify_prep[0];
 
 if(sin_verify_prep[0] == 1) barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];
 
-if(sin_verify_prep[0] == 1) reset sin_d;
+if(sin_verify_prep[0] == 1) reset sin_d[0];
+if(sin_verify_prep[0] == 1) reset sin_d[1];
+if(sin_verify_prep[0] == 1) reset sin_d[2];
+if(sin_verify_prep[0] == 1) reset sin_d[3];
+if(sin_verify_prep[0] == 1) reset sin_d[4];
+if(sin_verify_prep[0] == 1) reset sin_d[5];
+if(sin_verify_prep[0] == 1) reset sin_d[6];
 if(sin_verify_prep[0] == 1) reset sin_a[0];
 if(sin_verify_prep[0] == 1) barrier sin_d, sin_a[0];
 if(sin_verify_prep[0] == 1) h sin_d[0];
@@ -1035,7 +1095,13 @@ if(sin_verify_prep[0] == 1) cx sin_d[3], sin_a[0];
 if(sin_verify_prep[0] == 1) measure sin_a[0] -> sin_verify_prep[0];
 
 // Logical SX
-rx(-pi/2) sin_d;
+rx(-pi/2) sin_d[0];
+rx(-pi/2) sin_d[1];
+rx(-pi/2) sin_d[2];
+rx(-pi/2) sin_d[3];
+rx(-pi/2) sin_d[4];
+rx(-pi/2) sin_d[5];
+rx(-pi/2) sin_d[6];
 
 sin_flag_x = 0;
 sin_flags_z = 0;
@@ -1416,7 +1482,13 @@ cx sin_d[5], smid_d[5];
 cx sin_d[6], smid_d[6];
 barrier sin_d, smid_d;
 // Logical H
-h sin_d;
+h sin_d[0];
+h sin_d[1];
+h sin_d[2];
+h sin_d[3];
+h sin_d[4];
+h sin_d[5];
+h sin_d[6];
 // Destructive logical Z measurement
 
 barrier sin_d;

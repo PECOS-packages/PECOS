@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from pecos import __version__
+from pecos.slr.vars import QReg
 
 
 class QASMGenerator:
@@ -246,38 +247,42 @@ class QASMGenerator:
                     )
 
                 case "Prep":
-                    op_str = self.qgate_qasm(op, "reset")
+                    op_str = self.qgate_sq_qasm(op, "reset")
 
                 case "T":
-                    op_str = self.qgate_qasm(op, "rz(pi/4)")
+                    op_str = self.qgate_sq_qasm(op, "rz(pi/4)")
 
                 case "Tdg":
-                    op_str = self.qgate_qasm(op, "rz(-pi/4)")
+                    op_str = self.qgate_sq_qasm(op, "rz(-pi/4)")
 
                 case "SX":
-                    op_str = self.qgate_qasm(op, "rx(pi/2)")
+                    op_str = self.qgate_sq_qasm(op, "rx(pi/2)")
 
                 case "SY":
-                    op_str = self.qgate_qasm(op, "ry(pi/2)")
+                    op_str = self.qgate_sq_qasm(op, "ry(pi/2)")
 
                 case "SZ":
-                    op_str = self.qgate_qasm(op, "rz(pi/2)")
+                    op_str = self.qgate_sq_qasm(op, "rz(pi/2)")
 
                 case "SXdg":
-                    op_str = self.qgate_qasm(op, "rx(-pi/2)")
+                    op_str = self.qgate_sq_qasm(op, "rx(-pi/2)")
 
                 case "SYdg":
-                    op_str = self.qgate_qasm(op, "ry(-pi/2)")
+                    op_str = self.qgate_sq_qasm(op, "ry(-pi/2)")
 
                 case "SZdg":
-                    op_str = self.qgate_qasm(op, "rz(-pi/2)")
+                    op_str = self.qgate_sq_qasm(op, "rz(-pi/2)")
 
                 case _:
-                    op_str = self.qgate_qasm(op)
+                    op_str = self.qgate_sq_qasm(op)
 
         return op_str
 
-    def qgate_qasm(self, op, repr_str: str | None = None):
+    def qgate_sq_qasm(self, op, repr_str: str | None = None):
+        if op.qsize != 1:
+            msg = "qgate_qasm only supports single qubit gates"
+            raise Exception(msg)
+
         if repr_str is None:
             repr_str = op.sym.lower()
 
@@ -287,25 +292,28 @@ class QASMGenerator:
 
         str_list = []
 
-        # TODO: Make sure this all works for different sized multi-qubit gates!!!!!!!!!!!!!!! <<<<<<<<<<
-
-        if op.qsize > 1:
-            if not isinstance(op.qargs[0], tuple) and len(op.qargs) > 1:
-                op.qargs = (op.qargs,)
-
         for q in op.qargs:
-            if isinstance(q, tuple):
+            if isinstance(q, QReg):
+                lines = [f"{repr_str} {qubit};" for qubit in q]
+                str_list.extend(lines)
+
+            elif isinstance(q, tuple):
                 if len(q) != op.qsize:
                     msg = f"Expected size {op.qsize} got size {len(q)}"
                     raise Exception(msg)
                 qs = ",".join([str(qi) for qi in q])
                 str_list.append(f"{repr_str} {qs};")
 
-            str_list.append(f"{repr_str} {str(q)};")
+            else:
+                str_list.append(f"{repr_str} {q};")
 
         return "\n".join(str_list)
 
     def qgate_tq_qasm(self, op, repr_str: str | None = None):
+        if op.qsize != 2:
+            msg = "qgate_tq_qasm only supports single qubit gates"
+            raise Exception(msg)
+
         if repr_str is None:
             repr_str = op.sym.lower()
 

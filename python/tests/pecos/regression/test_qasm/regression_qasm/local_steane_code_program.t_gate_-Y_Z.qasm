@@ -36,7 +36,13 @@ creg saux_verify_prep[32];
 
 barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];
 
-reset sin_d;
+reset sin_d[0];
+reset sin_d[1];
+reset sin_d[2];
+reset sin_d[3];
+reset sin_d[4];
+reset sin_d[5];
+reset sin_d[6];
 reset sin_a[0];
 barrier sin_d, sin_a[0];
 h sin_d[0];
@@ -62,7 +68,13 @@ measure sin_a[0] -> sin_verify_prep[0];
 
 if(sin_verify_prep[0] == 1) barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];
 
-if(sin_verify_prep[0] == 1) reset sin_d;
+if(sin_verify_prep[0] == 1) reset sin_d[0];
+if(sin_verify_prep[0] == 1) reset sin_d[1];
+if(sin_verify_prep[0] == 1) reset sin_d[2];
+if(sin_verify_prep[0] == 1) reset sin_d[3];
+if(sin_verify_prep[0] == 1) reset sin_d[4];
+if(sin_verify_prep[0] == 1) reset sin_d[5];
+if(sin_verify_prep[0] == 1) reset sin_d[6];
 if(sin_verify_prep[0] == 1) reset sin_a[0];
 if(sin_verify_prep[0] == 1) barrier sin_d, sin_a[0];
 if(sin_verify_prep[0] == 1) h sin_d[0];
@@ -88,7 +100,13 @@ if(sin_verify_prep[0] == 1) measure sin_a[0] -> sin_verify_prep[0];
 
 if(sin_verify_prep[0] == 1) barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];
 
-if(sin_verify_prep[0] == 1) reset sin_d;
+if(sin_verify_prep[0] == 1) reset sin_d[0];
+if(sin_verify_prep[0] == 1) reset sin_d[1];
+if(sin_verify_prep[0] == 1) reset sin_d[2];
+if(sin_verify_prep[0] == 1) reset sin_d[3];
+if(sin_verify_prep[0] == 1) reset sin_d[4];
+if(sin_verify_prep[0] == 1) reset sin_d[5];
+if(sin_verify_prep[0] == 1) reset sin_d[6];
 if(sin_verify_prep[0] == 1) reset sin_a[0];
 if(sin_verify_prep[0] == 1) barrier sin_d, sin_a[0];
 if(sin_verify_prep[0] == 1) h sin_d[0];
@@ -112,7 +130,13 @@ if(sin_verify_prep[0] == 1) cx sin_d[3], sin_a[0];
 if(sin_verify_prep[0] == 1) measure sin_a[0] -> sin_verify_prep[0];
 
 // Logical SX
-rx(-pi/2) sin_d;
+rx(-pi/2) sin_d[0];
+rx(-pi/2) sin_d[1];
+rx(-pi/2) sin_d[2];
+rx(-pi/2) sin_d[3];
+rx(-pi/2) sin_d[4];
+rx(-pi/2) sin_d[5];
+rx(-pi/2) sin_d[6];
 saux_scratch = 0;
 reset saux_d[6];
 ry(0.7853981633974483) saux_d[6];
@@ -371,7 +395,13 @@ if(saux_syn_meas == 6) saux_c[2] = saux_c[2] ^ 1;
 saux_c[2] = saux_c[2] ^ saux_c[3];
 sin_c[5] = saux_c[2];
 // Logical SZ
-if(sin_c[5] == 1) rz(-pi/2) sin_d;
+if(sin_c[5] == 1) rz(-pi/2) sin_d[0];
+if(sin_c[5] == 1) rz(-pi/2) sin_d[1];
+if(sin_c[5] == 1) rz(-pi/2) sin_d[2];
+if(sin_c[5] == 1) rz(-pi/2) sin_d[3];
+if(sin_c[5] == 1) rz(-pi/2) sin_d[4];
+if(sin_c[5] == 1) rz(-pi/2) sin_d[5];
+if(sin_c[5] == 1) rz(-pi/2) sin_d[6];
 // Destructive logical Z measurement
 
 barrier sin_d;
@@ -822,7 +852,13 @@ m_reject[1] = saux_scratch[2];
 
 barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];
 
-reset sin_d;
+reset sin_d[0];
+reset sin_d[1];
+reset sin_d[2];
+reset sin_d[3];
+reset sin_d[4];
+reset sin_d[5];
+reset sin_d[6];
 reset sin_a[0];
 barrier sin_d, sin_a[0];
 h sin_d[0];
@@ -848,7 +884,13 @@ measure sin_a[0] -> sin_verify_prep[0];
 
 if(sin_verify_prep[0] == 1) barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];
 
-if(sin_verify_prep[0] == 1) reset sin_d;
+if(sin_verify_prep[0] == 1) reset sin_d[0];
+if(sin_verify_prep[0] == 1) reset sin_d[1];
+if(sin_verify_prep[0] == 1) reset sin_d[2];
+if(sin_verify_prep[0] == 1) reset sin_d[3];
+if(sin_verify_prep[0] == 1) reset sin_d[4];
+if(sin_verify_prep[0] == 1) reset sin_d[5];
+if(sin_verify_prep[0] == 1) reset sin_d[6];
 if(sin_verify_prep[0] == 1) reset sin_a[0];
 if(sin_verify_prep[0] == 1) barrier sin_d, sin_a[0];
 if(sin_verify_prep[0] == 1) h sin_d[0];
@@ -872,7 +914,13 @@ if(sin_verify_prep[0] == 1) cx sin_d[3], sin_a[0];
 if(sin_verify_prep[0] == 1) measure sin_a[0] -> sin_verify_prep[0];
 
 // Logical SX
-rx(-pi/2) sin_d;
+rx(-pi/2) sin_d[0];
+rx(-pi/2) sin_d[1];
+rx(-pi/2) sin_d[2];
+rx(-pi/2) sin_d[3];
+rx(-pi/2) sin_d[4];
+rx(-pi/2) sin_d[5];
+rx(-pi/2) sin_d[6];
 // Transversal Logical CX
 barrier sin_d, saux_d;
 cx sin_d[0], saux_d[0];
@@ -925,7 +973,13 @@ if(saux_syn_meas == 6) saux_c[2] = saux_c[2] ^ 1;
 saux_c[2] = saux_c[2] ^ saux_c[3];
 m_t[0] = saux_c[2];
 // Logical SZ
-if(sin_c[5] == 1) rz(-pi/2) sin_d;
+if(sin_c[5] == 1) rz(-pi/2) sin_d[0];
+if(sin_c[5] == 1) rz(-pi/2) sin_d[1];
+if(sin_c[5] == 1) rz(-pi/2) sin_d[2];
+if(sin_c[5] == 1) rz(-pi/2) sin_d[3];
+if(sin_c[5] == 1) rz(-pi/2) sin_d[4];
+if(sin_c[5] == 1) rz(-pi/2) sin_d[5];
+if(sin_c[5] == 1) rz(-pi/2) sin_d[6];
 // Destructive logical Z measurement
 
 barrier sin_d;

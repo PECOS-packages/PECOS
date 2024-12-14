@@ -31,9 +31,9 @@ requirements: metadeps installreqs  ## Install/refresh Python project requiremen
 
 .PHONY: updatereqs
 updatereqs:  ## Auto update and generate requirements.txt
-	@echo "Upgrading pip..."
-	$(VENV_BIN)/python -m pip install --upgrade pip
-	$(VENV_BIN)/pip install -U pip-tools
+	@echo "Upgrading uv..."
+	$(VENV_BIN)/python -m pip install --upgrade uv
+	$(VENV_BIN)/uv pip install -U pip-tools
 	-@rm python/quantum-pecos/requirements.txt
 	@echo "Using version: $(call get_version)"
 	@echo "Temporarily modifying pyproject.toml..."
@@ -48,19 +48,22 @@ updatereqs:  ## Auto update and generate requirements.txt
 	@echo "numpy==1.26.4 ; python_version < \"3.13\"" >> python/quantum-pecos/requirements.txt
 
 .PHONY: installreqs
-installreqs: upgrade-pip ## Install Python project requirements
+installreqs: ## Install Python project requirements
+	@unset CONDA_PREFIX \
+	&& $(VENV_BIN)/python -m pip install --upgrade uv
 	@echo "Temporarily removing pecos-rslib from requirements..."
 	@grep -v "pecos-rslib" python/quantum-pecos/requirements.txt > temp_requirements.txt
 
 	@echo "Installing project requirements (excluding pecos-rslib)..."
-	$(VENV_BIN)/pip install -r temp_requirements.txt
-
+	$(VENV_BIN)/uv pip install --upgrade --compile-bytecode --no-build \
+		   -r temp_requirements.txt
 	@echo "Cleaning up temporary files..."
 	@rm temp_requirements.txt
 
 .PHONY: metadeps
-metadeps: upgrade-pip  ## Install extra dependencies used to develop/build this package
-	$(VENV_BIN)/pip install -U setuptools pip-tools pre-commit maturin
+metadeps: ## Install extra dependencies used to develop/build this package
+	$(VENV_BIN)/python -m pip install --upgrade uv
+	$(VENV_BIN)/uv pip install -U setuptools pip-tools pre-commit maturin
 
 # Function to extract version from pyproject.toml
 define get_version
@@ -72,23 +75,23 @@ endef
 .PHONY: build
 build: requirements ## Compile and install for development
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && $(VENV_BIN)/maturin develop
-	@unset CONDA_PREFIX && cd python/quantum-pecos && $(VENV_BIN)/pip install -e .[all]
+	@unset CONDA_PREFIX && cd python/quantum-pecos && $(VENV_BIN)/uv pip install -e .[all]
 
 .PHONY: build-basic
 build-basic: requirements ## Compile and install for development but do not include install extras
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && $(VENV_BIN)/maturin develop
-	@unset CONDA_PREFIX && cd python/quantum-pecos && $(VENV_BIN)/pip install -e .
+	@unset CONDA_PREFIX && cd python/quantum-pecos && $(VENV_BIN)/uv pip install -e .
 
 .PHONY: build-release
 build-release: requirements ## Build a faster version of binaries
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && $(VENV_BIN)/maturin develop --release
-	@unset CONDA_PREFIX && cd python/quantum-pecos && $(VENV_BIN)/pip install -e .[all]
+	@unset CONDA_PREFIX && cd python/quantum-pecos && $(VENV_BIN)/uv pip install -e .[all]
 
 .PHONY: build-native
 build-native: requirements ## Build a faster version of binaries with native CPU optimization
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && RUSTFLAGS='-C target-cpu=native' \
 	&& $(VENV_BIN)/maturin develop --release
-	@unset CONDA_PREFIX && cd python/quantum-pecos && $(VENV_BIN)/pip install -e .[all]
+	@unset CONDA_PREFIX && cd python/quantum-pecos && $(VENV_BIN)/uv pip install -e .[all]
 
 # Documentation
 # -------------
@@ -141,10 +144,6 @@ test: rstest pytest pytest-dep ## Run all tests. ASSUMES: previous build command
 
 # Utility
 # -------
-
-.PHONY: upgrade-pip
-upgrade-pip:
-	$(VENV_BIN)/python -m pip install --upgrade pip
 
 .PHONY: clean
 clean:  ## Clean up caches and build artifacts

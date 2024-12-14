@@ -280,7 +280,8 @@ class QASMGenerator:
 
     def qgate_sq_qasm(self, op, repr_str: str | None = None):
         if op.qsize != 1:
-            raise Exception("qgate_qasm only supports single qubit gates")
+            msg = "qgate_qasm only supports single qubit gates"
+            raise Exception(msg)
 
         if repr_str is None:
             repr_str = op.sym.lower()
@@ -310,7 +311,8 @@ class QASMGenerator:
 
     def qgate_tq_qasm(self, op, repr_str: str | None = None):
         if op.qsize != 2:
-            raise Exception("qgate_tq_qasm only supports single qubit gates")
+            msg = "qgate_tq_qasm only supports single qubit gates"
+            raise Exception(msg)
 
         if repr_str is None:
             repr_str = op.sym.lower()

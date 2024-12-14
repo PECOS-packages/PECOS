@@ -15,7 +15,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quantum-pecos"
-version = "0.6.0.dev7"
+version = "0.6.0.dev8"
 authors = [
     {name = "The PECOS Developers"},
 ]
@@ -28,7 +28,7 @@ requires-python = ">=3.10"
 license = { file = "LICENSE"}
 keywords = ["quantum", "QEC", "simulation", "PECOS"]
 dependencies = [
-    "pecos-rslib==0.6.0.dev7",
+    "pecos-rslib==0.6.0.dev8",
     "phir>=0.3.3",
     "numpy>=1.15.0; python_version >= '3.13'",
     "numpy>=1.15.0,<2.0; python_version < '3.13'",
@@ -70,6 +70,15 @@ tests = [
     "pytest>=5.0.0,<8.3.4",  # 8.3.4 seems to be causing errors
     "pytest-cov",
     "hypothesis",
+]
+simulators = [
+    "quantum-pecos[projectq]",
+    "quantum-pecos[qulacs]; python_version < '3.13'",
+    "quantum-pecos[pyquest]; python_version < '3.13'",
+]
+wasm = [
+    "quantum-pecos[wasmtime]",
+    "quantum-pecos[wasmer]",  # TODO: avoid installing for 3.13 and adjust tests for this
 ]
 all = [
     "quantum-pecos[projectq]",

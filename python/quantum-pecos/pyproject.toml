@@ -66,28 +66,19 @@ wasmtime = [
 visualization = [
     "plotly~=5.9.0",
 ]
-tests = [
-    "pytest>=5.0.0,<8.3.4",  # 8.3.4 seems to be causing errors
-    "pytest-cov",
-    "hypothesis",
-]
 simulators = [
     "quantum-pecos[projectq]",
     "quantum-pecos[qulacs]; python_version < '3.13'",
     "quantum-pecos[pyquest]; python_version < '3.13'",
 ]
-wasm = [
+wasm-all = [
     "quantum-pecos[wasmtime]",
     "quantum-pecos[wasmer]",  # TODO: avoid installing for 3.13 and adjust tests for this
 ]
 all = [
-    "quantum-pecos[projectq]",
-    "quantum-pecos[wasmtime]",
+    "quantum-pecos[simulators]",
+    "quantum-pecos[wasm-all]",
     "quantum-pecos[visualization]",
-    "quantum-pecos[tests]",
-    "quantum-pecos[qulacs]; python_version < '3.13'",
-    "quantum-pecos[pyquest]; python_version < '3.13'",
-    "quantum-pecos[wasmer]",  # TODO: avoid installing for 3.13 and adjust tests for this
 ]
 # The following only work for some environments/Python verions:
 qulacs = [  # State-vector sims using Qulacs
@@ -100,13 +91,30 @@ wasmer = [
     "wasmer~=1.1.0", # Package not currently compatible with Python 3.13
     "wasmer_compiler_cranelift~=1.1.0",
 ]
-cuda = [
-    # CUDA dependencies. See README.md
-    "cupy>=10.4.0",
-    "cuquantum-python>=24.03.0",
-    "custatevec>=1.6.0",
-    "pytket-cutensornet>=0.7.0",
+
+## CUDA dependencies. See README.md
+#cuda = [
+#    "cupy>=10.4.0",
+#    "cuquantum-python>=24.03.0",
+#    "custatevec>=1.6.0",
+#    "pytket-cutensornet>=0.7.0",
+#]
+
+[dependency-groups]
+dev = [
+    "setuptools>=62.6",      # Build system
+    "pre-commit",           # Git hooks
+    "black",               # Code formatting
+    "ruff",               # Fast Python linting
 ]
+test = [ # pinning testing environment
+    "pytest==8.3.3", # 8.3.4 seems to be causing errors
+    "pytest-cov==6.0.0",
+    "hypothesis==6.122.3",
+]
+
+[tool.uv]
+default-groups = ["dev", "test"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

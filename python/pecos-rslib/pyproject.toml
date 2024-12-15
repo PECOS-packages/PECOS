@@ -21,3 +21,14 @@ features = ["pyo3/extension-module"]
 python-source = "src"
 module-name = "pecos_rslib._pecos_rslib"
 manifest-path = "../../crates/pecos-python/Cargo.toml"
+
+[dependency-groups]
+dev = [
+    "maturin>=1.2,<2.0",  # For building (should match build requirements)
+    "pre-commit",         # Git hooks
+    "black",              # Code formatting
+    "ruff",              # Fast Python linting
+]
+
+[tool.uv]
+default-groups = ["dev"]

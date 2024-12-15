@@ -30,40 +30,24 @@ venv:  ## Build Python virtual environment
 requirements: metadeps installreqs  ## Install/refresh Python project requirements including those needed for development
 
 .PHONY: updatereqs
-updatereqs:  ## Auto update and generate requirements.txt
+updatereqs:  ## Generate/update lockfiles for both packages
 	@echo "Upgrading uv..."
 	$(VENV_BIN)/python -m pip install --upgrade uv
-	$(VENV_BIN)/uv pip install -U pip-tools
-	-@rm python/quantum-pecos/requirements.txt
-	@echo "Using version: $(call get_version)"
-	@echo "Temporarily modifying pyproject.toml..."
-	@sed -i.bak '/pecos-rslib==/d' $(PYPROJECT_PATH)
-	$(VENV_BIN)/pip-compile --extra=tests --no-annotate --no-emit-index-url \
-		--output-file=python/quantum-pecos/requirements.txt \
-		--strip-extras $(PYPROJECT_PATH)
-	@echo "Restoring original pyproject.toml..."
-	@mv $(PYPROJECT_PATH).bak $(PYPROJECT_PATH)
-	@echo "Adding pecos-rslib back to requirements.txt..."
-	@echo "pecos-rslib==$(call get_version)" >> python/quantum-pecos/requirements.txt
-	@echo "numpy==1.26.4 ; python_version < \"3.13\"" >> python/quantum-pecos/requirements.txt
+	@echo "Generating lockfiles..."
+	cd python/pecos-rslib && $(VENV_BIN)/uv lock
+	cd python/quantum-pecos && $(VENV_BIN)/uv lock
 
 .PHONY: installreqs
-installreqs: ## Install Python project requirements
+installreqs: ## Install Python project requirements from lockfiles
 	@unset CONDA_PREFIX \
 	&& $(VENV_BIN)/python -m pip install --upgrade uv
-	@echo "Temporarily removing pecos-rslib from requirements..."
-	@grep -v "pecos-rslib" python/quantum-pecos/requirements.txt > temp_requirements.txt
-
-	@echo "Installing project requirements (excluding pecos-rslib)..."
-	$(VENV_BIN)/uv pip install --upgrade --compile-bytecode --no-build \
-		   -r temp_requirements.txt
-	@echo "Cleaning up temporary files..."
-	@rm temp_requirements.txt
+	@echo "Installing from lockfiles..."
+	cd python/pecos-rslib && $(VENV_BIN)/uv sync
+	cd python/quantum-pecos && $(VENV_BIN)/uv sync
 
 .PHONY: metadeps
-metadeps: ## Install extra dependencies used to develop/build this package
-	$(VENV_BIN)/python -m pip install --upgrade uv
-	$(VENV_BIN)/uv pip install -U setuptools pip-tools pre-commit maturin
+metadeps: ## Install uv and maturin for building
+	$(VENV_BIN)/python -m pip install --upgrade uv maturin
 
 # Function to extract version from pyproject.toml
 define get_version

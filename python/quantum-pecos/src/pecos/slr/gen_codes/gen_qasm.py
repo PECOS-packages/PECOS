@@ -231,7 +231,7 @@ class QASMGenerator:
                         [
                             self.qgate_sq_qasm(op, "rx(pi/2)"),
                             self.qgate_sq_qasm(op, "rz(pi/2)"),
-                        ]
+                        ],
                     )
 
                 case "Fdg":
@@ -239,7 +239,7 @@ class QASMGenerator:
                         [
                             self.qgate_sq_qasm(op, "ry(-pi/2)"),
                             self.qgate_sq_qasm(op, "rz(-pi/2)"),
-                        ]
+                        ],
                     )
 
                 case "F4":
@@ -247,7 +247,7 @@ class QASMGenerator:
                         [
                             self.qgate_sq_qasm(op, "ry(-pi/2)"),
                             self.qgate_sq_qasm(op, "rz(pi/2)"),
-                        ]
+                        ],
                     )
 
                 case "F4dg":
@@ -255,7 +255,7 @@ class QASMGenerator:
                         [
                             self.qgate_sq_qasm(op, "rx(-pi/2)"),
                             self.qgate_sq_qasm(op, "rz(-pi/2)"),
-                        ]
+                        ],
                     )
 
                 case "Prep":

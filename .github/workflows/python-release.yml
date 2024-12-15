@@ -1,7 +1,7 @@
 name: Python Artifacts
 
 env:
-  TRIGGER_ON_PR_PUSH: false  # Set to true to enable triggers on PR pushes
+  TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   PYTHON_VERSION: '3.10'
 
 on:
@@ -61,10 +61,11 @@ jobs:
         with:
           ref: ${{ inputs.sha || github.sha }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
 
       - name: Remove conflicting README.md
         run: |
@@ -94,7 +95,7 @@ jobs:
 
       - name: Test pecos-rslib SDist
         run: |
-          pip install --force-reinstall --verbose python/pecos-rslib/dist/*.tar.gz
+          uv pip install --force-reinstall python/pecos-rslib/dist/*.tar.gz
           python -c 'import pecos_rslib; print(pecos_rslib.__version__)'
 
       - name: Upload pecos-rslib SDist
@@ -125,10 +126,11 @@ jobs:
         with:
           ref: ${{ inputs.sha || github.sha }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
         with:
           python-version: ${{ matrix.python-version }}
+          enable-cache: true
 
       - name: Remove conflicting README.md
         run: |
@@ -161,7 +163,7 @@ jobs:
       - name: Test wheel
         if: ${{ !(matrix.architecture == 'x86_64' && matrix.os == 'macos-latest') && matrix.architecture != 'aarch64' }}
         run: |
-          pip install --force-reinstall --verbose python/pecos-rslib/dist/*.whl
+          uv pip install --force-reinstall python/pecos-rslib/dist/*.whl
           python -c 'import pecos_rslib; print(pecos_rslib.__version__)'
 
       - name: Upload wheel
@@ -182,10 +184,11 @@ jobs:
         with:
           ref: ${{ inputs.sha || github.sha }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
 
       - name: Download pecos-rslib wheel
         uses: actions/download-artifact@v4
@@ -194,12 +197,10 @@ jobs:
           path: ./pecos-rslib-wheel
 
       - name: Install pecos-rslib
-        run: pip install ./pecos-rslib-wheel/*.whl
+        run: uv pip install ./pecos-rslib-wheel/*.whl
 
       - name: Install build dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install build
+        run: uv pip install build
 
       - name: Build quantum-pecos SDist
         run: |
@@ -208,7 +209,7 @@ jobs:
 
       - name: Test quantum-pecos SDist
         run: |
-          pip install python/quantum-pecos/dist/*.tar.gz
+          uv pip install python/quantum-pecos/dist/*.tar.gz
           python -c 'import pecos; print(pecos.__version__)'
 
       - name: Upload quantum-pecos SDist
@@ -233,10 +234,11 @@ jobs:
         with:
           ref: ${{ inputs.sha || github.sha }}
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
         with:
           python-version: ${{ matrix.python-version }}
+          enable-cache: true
 
       - name: Download pecos-rslib wheel
         uses: actions/download-artifact@v4
@@ -245,12 +247,10 @@ jobs:
           path: ./pecos-rslib-wheel
 
       - name: Install pecos-rslib
-        run: pip install ./pecos-rslib-wheel/*.whl
+        run: uv pip install ./pecos-rslib-wheel/*.whl
 
       - name: Install build dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install build
+        run: uv pip install build
 
       - name: Build quantum-pecos wheel
         run: |
@@ -259,7 +259,7 @@ jobs:
 
       - name: Test quantum-pecos wheel
         run: |
-          pip install python/quantum-pecos/dist/*.whl
+          uv pip install python/quantum-pecos/dist/*.whl
           python -c 'import pecos; print(pecos.__version__)'
 
       - name: Upload quantum-pecos wheel

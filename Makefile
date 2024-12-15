@@ -21,61 +21,49 @@ PYPROJECT_PATH := python/quantum-pecos/pyproject.toml
 # -------------------
 
 .PHONY: venv
-venv:  ## Build Python virtual environment
-	$(PYTHONPATH) -m venv $(VENV)
+venv:  ## Create virtual environment and install all dependencies
+	@echo "Installing uv..."
+	$(PYTHONPATH) -m pip install --upgrade uv
+	@echo "Creating venv and installing dependencies..."
+	uv sync
 
 # Requirements
 # ------------
-.PHONY: requirements
-requirements: metadeps installreqs  ## Install/refresh Python project requirements including those needed for development
 
 .PHONY: updatereqs
 updatereqs:  ## Generate/update lockfiles for both packages
-	@echo "Upgrading uv..."
-	$(VENV_BIN)/python -m pip install --upgrade uv
+	@echo "Ensuring uv is installed..."
+	$(PYTHONPATH) -m pip install --upgrade uv
 	@echo "Generating lockfiles..."
-	cd python/pecos-rslib && $(VENV_BIN)/uv lock
-	cd python/quantum-pecos && $(VENV_BIN)/uv lock
+	uv lock
 
 .PHONY: installreqs
-installreqs: ## Install Python project requirements from lockfiles
-	@unset CONDA_PREFIX \
-	&& $(VENV_BIN)/python -m pip install --upgrade uv
-	@echo "Installing from lockfiles..."
-	cd python/pecos-rslib && $(VENV_BIN)/uv sync
-	cd python/quantum-pecos && $(VENV_BIN)/uv sync
-
-.PHONY: metadeps
-metadeps: ## Install uv and maturin for building
-	$(VENV_BIN)/python -m pip install --upgrade uv maturin
-
-# Function to extract version from pyproject.toml
-define get_version
-$(shell grep -m 1 'version\s*=' $(PYPROJECT_PATH) | sed 's/.*version\s*=\s*"\(.*\)".*/\1/')
-endef
+installreqs: ## Install Python project requirements to root .venv
+	@echo "Installing requirements..."
+	@unset CONDA_PREFIX && uv sync
 
 # Building development environments
 # ---------------------------------
 .PHONY: build
-build: requirements ## Compile and install for development
-	@unset CONDA_PREFIX && cd python/pecos-rslib/ && $(VENV_BIN)/maturin develop
-	@unset CONDA_PREFIX && cd python/quantum-pecos && $(VENV_BIN)/uv pip install -e .[all]
+build: installreqs ## Compile and install for development
+	@unset CONDA_PREFIX && cd python/pecos-rslib/ && $(VENV_BIN)/maturin develop --uv
+	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .[all]
 
 .PHONY: build-basic
-build-basic: requirements ## Compile and install for development but do not include install extras
-	@unset CONDA_PREFIX && cd python/pecos-rslib/ && $(VENV_BIN)/maturin develop
-	@unset CONDA_PREFIX && cd python/quantum-pecos && $(VENV_BIN)/uv pip install -e .
+build-basic: installreqs ## Compile and install for development but do not include install extras
+	@unset CONDA_PREFIX && cd python/pecos-rslib/ && $(VENV_BIN)/maturin develop --uv
+	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .
 
 .PHONY: build-release
-build-release: requirements ## Build a faster version of binaries
-	@unset CONDA_PREFIX && cd python/pecos-rslib/ && $(VENV_BIN)/maturin develop --release
-	@unset CONDA_PREFIX && cd python/quantum-pecos && $(VENV_BIN)/uv pip install -e .[all]
+build-release: installreqs ## Build a faster version of binaries
+	@unset CONDA_PREFIX && cd python/pecos-rslib/ && $(VENV_BIN)/maturin develop --uv --release
+	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .[all]
 
 .PHONY: build-native
-build-native: requirements ## Build a faster version of binaries with native CPU optimization
+build-native: installreqs ## Build a faster version of binaries with native CPU optimization
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && RUSTFLAGS='-C target-cpu=native' \
-	&& $(VENV_BIN)/maturin develop --release
-	@unset CONDA_PREFIX && cd python/quantum-pecos && $(VENV_BIN)/uv pip install -e .[all]
+	&& $(VENV_BIN)/maturin develop --uv --release
+	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .[all]
 
 # Documentation
 # -------------

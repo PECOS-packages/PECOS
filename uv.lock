@@ -5,6 +5,13 @@ resolution-markers = [
     "python_full_version >= '3.13'",
 ]
 
+[manifest]
+members = [
+    "pecos-rslib",
+    "pecos-workspace",
+    "quantum-pecos",
+]
+
 [[package]]
 name = "annotated-types"
 version = "0.7.0"
@@ -563,6 +570,29 @@ wheels = [
 ]
 
 [[package]]
+name = "maturin"
+version = "1.7.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "tomli", marker = "python_full_version < '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ab/1e/085ddc0e5b08ae7af7a743a0dd6ed06b22a1332288488f1a333137885150/maturin-1.7.8.tar.gz", hash = "sha256:649c6ef3f0fa4c5f596140d761dc5a4d577c485cc32fb5b9b344a8280352880d", size = 195704 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7e/ed/c8bb26e91c879e418ae1b01630722ed20b6fe0e6755be8d538d83666f136/maturin-1.7.8-py3-none-linux_armv6l.whl", hash = "sha256:c6950fd2790acd93265e1501cea66f9249cff19724654424ca75a3b17ebb315b", size = 7515691 },
+    { url = "https://files.pythonhosted.org/packages/38/7a/573f969315f0b92a09a0a565d45e98812c87796e2e19a7856159ab234faf/maturin-1.7.8-py3-none-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:f98288d5c382bacf0c076871dfd50c38f1eb2248f417551e98dd6f47f6ee8afa", size = 14434454 },
+    { url = "https://files.pythonhosted.org/packages/a6/17/46834841fbf19231487f185e68b95ca348cc05cce49be8787e0bc7e9dc47/maturin-1.7.8-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:b2d4e0f674ca29864e6b86c2eb9fee8236d1c7496c25f7300e34229272468f4c", size = 7509122 },
+    { url = "https://files.pythonhosted.org/packages/c1/8f/bf8b4871eb390a4baef2e0bb5016852c7c0311a9772e2945534cfa2ee40e/maturin-1.7.8-py3-none-manylinux_2_12_i686.manylinux2010_i686.musllinux_1_1_i686.whl", hash = "sha256:6cafb17bf57822bdc04423d9e3e766d42918d474848fe9833e397267514ba891", size = 7598870 },
+    { url = "https://files.pythonhosted.org/packages/dc/43/c842be67a7c59568082345249b956138ae93d0b2474fb41c186ce26d05e1/maturin-1.7.8-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.musllinux_1_1_x86_64.whl", hash = "sha256:2b2bdee0c3a84696b3a809054c43ead1a04b7b3321cbd5b8f5676e4ba4691d0f", size = 7932310 },
+    { url = "https://files.pythonhosted.org/packages/12/12/42435d05f2d6c75eb621751e6f021d29eb34d18e3b9c5c94d828744c2d54/maturin-1.7.8-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl", hash = "sha256:b8188b71259fc2bc568d9c8acc186fcfed96f42539bcb55b8e6f4ec26e411f37", size = 7321964 },
+    { url = "https://files.pythonhosted.org/packages/b4/26/f3272ee985ebf9b3e8c4cd4f4efb022af1e12c9f53aed0dcc9a255399f4e/maturin-1.7.8-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.musllinux_1_1_armv7l.whl", hash = "sha256:a4f58c2a53c2958a1bf090960b08b28e676136cd88ac2f5dfdcf1b14ea54ec06", size = 7408613 },
+    { url = "https://files.pythonhosted.org/packages/36/7d/be27bcc7d3ac6e6c2136a8ec0cc56f227a292d6cfdde55e095b6c0aa24a9/maturin-1.7.8-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.musllinux_1_1_ppc64le.whl", hash = "sha256:c5d6c0c631d1fc646cd3834795e6cfd72ab4271d289df7e0f911261a02bec75f", size = 9496974 },
+    { url = "https://files.pythonhosted.org/packages/e1/e8/0d7323e9a31c11edf69c4473d73eca74803ce3e2390abf8ae3ac7eb10b04/maturin-1.7.8-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:c23664d19dadcbf800ef70f26afb2e0485a985c62889930934f019c565534c23", size = 10828401 },
+    { url = "https://files.pythonhosted.org/packages/7e/82/5080e052c0d8c9872f6d4b94cae84c17ed7f2ea270d709210ea6445b655f/maturin-1.7.8-py3-none-win32.whl", hash = "sha256:403eebf1afa6f19b49425f089e39c53b8e597bc86a47f3a76e828dc78d27fa80", size = 6845240 },
+    { url = "https://files.pythonhosted.org/packages/6d/c9/9b162361ded893f36038c2f8ac6a972ec441c11df8d17c440997eb28090f/maturin-1.7.8-py3-none-win_amd64.whl", hash = "sha256:1ce48d007438b895f8665314b6748ac0dab31e4f32049a60b52281dd2dccbdde", size = 7762332 },
+    { url = "https://files.pythonhosted.org/packages/fa/40/46d4742db742f69a7fe0054cd7c82bc79b2d70cb8c91f7e737e75c28a5f3/maturin-1.7.8-py3-none-win_arm64.whl", hash = "sha256:cc92a62953205e8945b6cfe6943d6a8576a4442d30d9c67141f944f4f4640e62", size = 6501353 },
+]
+
+[[package]]
 name = "mdurl"
 version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -651,28 +681,41 @@ wheels = [
 [[package]]
 name = "pecos-rslib"
 version = "0.6.0.dev8"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fb/71/504fb16cb0445e8c29df4d3a8ff83c0e497bf166a71de718f7f138b16c01/pecos_rslib-0.6.0.dev8.tar.gz", hash = "sha256:a2535b689cfebe15b9d9ff3b7378736102caedc9bb355deecead6d82632de70f", size = 56736 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3b/cd/7c58e13080bebd0cba93656ebb0bc8f388f99dcbaebbfc16590c28f3a65a/pecos_rslib-0.6.0.dev8-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:94471ff09fd8329b360f8b1b67fd80816de94261ce2ceeaa74dc8a4c86ab44da", size = 248863 },
-    { url = "https://files.pythonhosted.org/packages/e3/00/d924506d82e0e29a665514f2706d9e97d8db3d37e359b416c43afaf10cca/pecos_rslib-0.6.0.dev8-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:a96071210a84eb90f13c96817dc9b1486bc04c91d3d5f5a29141681a74fa3a5c", size = 238333 },
-    { url = "https://files.pythonhosted.org/packages/ee/92/b739e46bfd407129a66e23e07e1b39ad8f8cfa1404ef6554ce4b9abff809/pecos_rslib-0.6.0.dev8-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:cb3d14250507a030ed9161e214bacf3e8f8e4b6277da75de3dd40bd933c15d7f", size = 264940 },
-    { url = "https://files.pythonhosted.org/packages/7f/27/1375fae53496a26f2785b4650ea23640aa5f92b2ea44e6030af8ce494d8d/pecos_rslib-0.6.0.dev8-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b1fce1182522f274fcb622c7c124022a4e6105e55aefd5ccfcc873966fd2f2d9", size = 271629 },
-    { url = "https://files.pythonhosted.org/packages/05/39/1c8a14e32359a71f271691bdf686e517b7f4abecee8a1dbebf6371ae9af0/pecos_rslib-0.6.0.dev8-cp310-cp310-win_amd64.whl", hash = "sha256:1b035ad9d455dc1863e54388d07854e77e6fad16b9aad7f719a907deb9eb1ac8", size = 150904 },
-    { url = "https://files.pythonhosted.org/packages/9e/0c/512f34265ad07339b16fd91db9437b4a561c8e7e1781c3cb283afce3e95b/pecos_rslib-0.6.0.dev8-cp311-cp311-macosx_10_12_x86_64.whl", hash = "sha256:4fa21344f2d9da405f5086fdc5e5416c835c36bc96c32510832f39dcf09d02ed", size = 248711 },
-    { url = "https://files.pythonhosted.org/packages/36/49/332640c9fba7e1872e77e53fc7caa34b9c1bbc31493ccd085f9c81b8c0a1/pecos_rslib-0.6.0.dev8-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:1c8d2f8a044b6c887b67fecf71f7ad39dfae74db42cf1dacc8bd49438040fe25", size = 238285 },
-    { url = "https://files.pythonhosted.org/packages/a6/24/ea993bec872587c400d6e865ee258fd52983016ba4c1425ed89a9d047b14/pecos_rslib-0.6.0.dev8-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:93dfb65a09b531b65901f5cea08edf130e8885f7bd53b9f9115152f2e7ab7618", size = 264739 },
-    { url = "https://files.pythonhosted.org/packages/40/64/5a7f6663825fc68619276525af26d22ad25c92148f74456d9f0eed59137a/pecos_rslib-0.6.0.dev8-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f6830c894972e676b16b339d818f0a66194743719f340a2d2aa1f74d3d962b49", size = 271410 },
-    { url = "https://files.pythonhosted.org/packages/61/48/02f02ecff5cb027516a9521cb199103871094fee4fe00aa01b0f3f31d3ee/pecos_rslib-0.6.0.dev8-cp311-cp311-win_amd64.whl", hash = "sha256:7e8455872199e87c34d77442b1730bb09092c9f398a255fc3c83e68c8f9352e1", size = 150951 },
-    { url = "https://files.pythonhosted.org/packages/dc/f5/326df0fda7b3ab7c8841d761dccc83ec15ce6314dc409ee4c37ca4656ac0/pecos_rslib-0.6.0.dev8-cp312-cp312-macosx_10_12_x86_64.whl", hash = "sha256:adf8c876b3735b76b764f36d82c8d816a84b234df7eec1a3c013e976cebaf307", size = 246973 },
-    { url = "https://files.pythonhosted.org/packages/db/3d/d03a4588b96305f06295837aa08ed5cf9956b114e270ce7f2fa475283cfd/pecos_rslib-0.6.0.dev8-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:ca15967874afa16489aa409464ab7fd14cb7ea129f21ff40fa30fb6cd8a43ab2", size = 236111 },
-    { url = "https://files.pythonhosted.org/packages/e8/c9/7d371aab0a11c510f8e6a163067d878ef4a8c8295a78332ecd4c901b99d5/pecos_rslib-0.6.0.dev8-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:49c36810923501cbc57665d761bb7d921e8c27ac21ff4f00a94bd96a03fe78bb", size = 262649 },
-    { url = "https://files.pythonhosted.org/packages/c3/75/5fb6efb4532ad9d55b97ae8e9b8827973eb84ce4ec5d2fe50b6181f66de6/pecos_rslib-0.6.0.dev8-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7c6d719a51397296f4d76af859b4a45407a942f8b33f536afc00089ced311fd5", size = 269781 },
-    { url = "https://files.pythonhosted.org/packages/fc/b6/4999c8613c1af91344e6f29c35af147d38f9552c19d39dd131910a36f7ef/pecos_rslib-0.6.0.dev8-cp313-cp313-macosx_10_12_x86_64.whl", hash = "sha256:c09b734a4046732d506a5608daa4edf30b51a8e671a5ee106844c5b3fe94a973", size = 246548 },
-    { url = "https://files.pythonhosted.org/packages/f9/2b/4f8fbc2164032a080c76058841bbc4d39ef9a19957bd7ea7fb9858c27ca9/pecos_rslib-0.6.0.dev8-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:af1f29da16c9932dd6a57f38a5cf7e257615936a30cf1f3bf972e8b20c334566", size = 235721 },
-    { url = "https://files.pythonhosted.org/packages/27/2e/86d072cb9492c090fcd4f5bed00c093ccd87cfa36e772bd86871ec669851/pecos_rslib-0.6.0.dev8-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:acd94458a7c5d957f6ce2d42df8bb7a7f983264e1ff615ccfb9050991a2d4374", size = 262122 },
-    { url = "https://files.pythonhosted.org/packages/04/bf/2d7a405c9be66940ad8ff6ff66ef3181a94d6ced4e4b13b51911ea614ed3/pecos_rslib-0.6.0.dev8-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:86ff383ccb5fc6e8888cb973d494864125737a48747754a1b2e08e6e305cb19f", size = 269137 },
-    { url = "https://files.pythonhosted.org/packages/32/68/babeba66bff978c62df5c0349d5d47f507ea79f10d0019fb6201f3eb345e/pecos_rslib-0.6.0.dev8-cp313-cp313-win_amd64.whl", hash = "sha256:309271af7a9ad712a2e00b6420e6ff40e68aefc01e07e42b12aae8389d492f1c", size = 150820 },
+source = { editable = "python/pecos-rslib" }
+
+[[package]]
+name = "pecos-workspace"
+version = "0.6.0.dev8"
+source = { virtual = "." }
+
+[package.dev-dependencies]
+dev = [
+    { name = "black" },
+    { name = "maturin" },
+    { name = "pre-commit" },
+    { name = "ruff" },
+    { name = "setuptools" },
+]
+test = [
+    { name = "hypothesis" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "black" },
+    { name = "maturin", specifier = ">=1.2,<2.0" },
+    { name = "pre-commit" },
+    { name = "ruff" },
+    { name = "setuptools", specifier = ">=62.6" },
+]
+test = [
+    { name = "hypothesis", specifier = "==6.122.3" },
+    { name = "pytest", specifier = "==8.3.3" },
+    { name = "pytest-cov", specifier = "==6.0.0" },
 ]
 
 [[package]]
@@ -1053,7 +1096,7 @@ wheels = [
 [[package]]
 name = "quantum-pecos"
 version = "0.6.0.dev8"
-source = { editable = "." }
+source = { editable = "python/quantum-pecos" }
 dependencies = [
     { name = "matplotlib" },
     { name = "networkx" },
@@ -1106,29 +1149,16 @@ wasmtime = [
     { name = "wasmtime" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "black" },
-    { name = "pre-commit" },
-    { name = "ruff" },
-    { name = "setuptools" },
-]
-test = [
-    { name = "hypothesis" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "matplotlib", specifier = ">=2.2.0" },
     { name = "networkx", specifier = ">=2.1.0" },
     { name = "numpy", marker = "python_full_version < '3.13'", specifier = ">=1.15.0,<2.0" },
     { name = "numpy", marker = "python_full_version >= '3.13'", specifier = ">=1.15.0" },
-    { name = "pecos-rslib", specifier = "==0.6.0.dev8" },
+    { name = "pecos-rslib", editable = "python/pecos-rslib" },
     { name = "phir", specifier = ">=0.3.3" },
     { name = "plotly", marker = "extra == 'visualization'", specifier = "~=5.9.0" },
-    { name = "projectq", marker = "extra == 'projectq'" },
+    { name = "projectq", marker = "extra == 'projectq'", specifier = ">=0.5" },
     { name = "pybind11", marker = "extra == 'projectq'", specifier = ">=2.2.3" },
     { name = "pyquest", marker = "extra == 'pyquest'", specifier = ">=0.0.1" },
     { name = "quantum-pecos", extras = ["projectq"], marker = "extra == 'simulators'" },
@@ -1144,19 +1174,6 @@ requires-dist = [
     { name = "wasmer", marker = "extra == 'wasmer'", specifier = "~=1.1.0" },
     { name = "wasmer-compiler-cranelift", marker = "extra == 'wasmer'", specifier = "~=1.1.0" },
     { name = "wasmtime", marker = "extra == 'wasmtime'", specifier = ">=13.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "black" },
-    { name = "pre-commit" },
-    { name = "ruff" },
-    { name = "setuptools", specifier = ">=62.6" },
-]
-test = [
-    { name = "hypothesis", specifier = "==6.122.3" },
-    { name = "pytest", specifier = "==8.3.3" },
-    { name = "pytest-cov", specifier = "==6.0.0" },
 ]
 
 [[package]]

@@ -58,7 +58,7 @@ repository = "https://github.com/PECOS-packages/PECOS"
 [project.optional-dependencies]
 projectq = [  # State-vector sims using ProjectQ
     "pybind11>=2.2.3",
-    "projectq",
+    "projectq>=0.5",
 ]
 wasmtime = [
     "wasmtime>=13.0"
@@ -100,21 +100,11 @@ wasmer = [
 #    "pytket-cutensornet>=0.7.0",
 #]
 
-[dependency-groups]
-dev = [
-    "setuptools>=62.6",      # Build system
-    "pre-commit",           # Git hooks
-    "black",               # Code formatting
-    "ruff",               # Fast Python linting
-]
-test = [ # pinning testing environment
-    "pytest==8.3.3", # 8.3.4 seems to be causing errors
-    "pytest-cov==6.0.0",
-    "hypothesis==6.122.3",
-]
-
 [tool.uv]
 default-groups = ["dev", "test"]
+
+[tool.uv.sources]
+pecos-rslib = { workspace = true }
 
 [tool.hatch.metadata]
 allow-direct-references = true

@@ -88,11 +88,15 @@ rstest:  ## Run Rust tests
 
 .PHONY: pytest
 pytest:  ## Run tests on the Python package (not including optional dependencies). ASSUMES: previous build command
-	uv run pytest . -m "not optional_dependency"
+	uv run pytest ./python/tests/ -m "not optional_dependency"
 
 .PHONY: pytest-dep
 pytest-dep: ## Run tests on the Python package only for optional dependencies. ASSUMES: previous build command
-	uv run pytest . -m optional_dependency
+	uv run pytest ./python/tests/ -m optional_dependency
+
+.PHONY: pytest-all
+pytest-all:  ## Run all tests on the Python package ASSUMES: previous build command
+	uv run pytest ./python/tests/
 
 # .PHONY: pytest-doc
 # pydoctest:  ## Run doctests with pytest. ASSUMES: A build command was ran previously. ASSUMES: previous build command
@@ -100,7 +104,7 @@ pytest-dep: ## Run tests on the Python package only for optional dependencies. A
 # 	uv run pytest docs --doctest-glob=*.rst --doctest-continue-on-failure
 
 .PHONY: test
-test: rstest pytest pytest-dep ## Run all tests. ASSUMES: previous build command
+test: rstest pytest-all ## Run all tests. ASSUMES: previous build command
 
 # Utility
 # -------

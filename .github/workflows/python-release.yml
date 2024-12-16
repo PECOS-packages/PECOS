@@ -70,6 +70,12 @@ jobs:
         uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
+          ignore-nothing-to-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/requirements*.txt
+            **/uv.lock
+
       - name: Remove conflicting README.md
         run: |
           if [ -f crates/pecos-python/README.md ]; then

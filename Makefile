@@ -92,7 +92,7 @@ pytest:  ## Run tests on the Python package (not including optional dependencies
 
 .PHONY: pytest-dep
 pytest-dep: ## Run tests on the Python package only for optional dependencies. ASSUMES: previous build command
-	uv run pytest tests -m optional_dependency
+	uv run pytest . -m optional_dependency
 
 # .PHONY: pytest-doc
 # pydoctest:  ## Run doctests with pytest. ASSUMES: A build command was ran previously. ASSUMES: previous build command

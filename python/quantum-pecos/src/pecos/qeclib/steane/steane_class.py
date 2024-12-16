@@ -435,11 +435,88 @@ class Steane(Vars):
     ) -> Block:
         """Run a Steane-type error-correction cycle of this code."""
         return Block(
+            self.qec_steane_z(
+                aux, reject=reject_z, flag_bit=flag_bit_z, rus_limit=rus_limit
+            ),
             self.qec_steane_x(
                 aux, reject=reject_x, flag_bit=flag_bit_x, rus_limit=rus_limit
             ),
-            self.qec_steane_z(
+        )
+
+    def qec_steane_tel(
+        self,
+        aux: Steane,
+        reject_x: Bit | None = None,
+        reject_z: Bit | None = None,
+        flag_bit_x: Bit | None = None,
+        flag_bit_z: Bit | None = None,
+        rus_limit: int | None = None,
+    ) -> Block:
+        """Run a Steane-type error-correction cycle of this code with one-bit teleportation."""
+        return Block(
+            self.qec_steane_z_tel(
                 aux, reject=reject_z, flag_bit=flag_bit_z, rus_limit=rus_limit
+            ),
+            self.qec_steane_x_tel(
+                aux, reject=reject_x, flag_bit=flag_bit_x, rus_limit=rus_limit
+            ),
+        )
+
+    def qec_steane_z(
+        self,
+        aux: Steane,
+        reject: Bit | None = None,
+        flag_bit: Bit | None = None,
+        rus_limit: int | None = None,
+    ) -> Block:
+        """Run a Steane-type error-correction cycle for Z stabilizers (X errors)."""
+        flag_bit = flag_bit or self.scratch.elems[7]
+        return Block(
+            aux.px(reject=reject, rus_limit=rus_limit),
+            self.cx(aux),
+            aux.mz(),
+            self.syn_z.set(aux.syn_meas),
+            If(self.syn_z != 0).Then(flag_bit.set(1)),
+            self.last_raw_syn_z.set(0),
+            self.pf_x.set(0),
+            FlagLookupQASMActiveCorrectionZ(
+                self.d,
+                self.syn_z,
+                self.syndromes,
+                self.last_raw_syn_z,
+                self.pf_x,
+                flag_bit,
+                self.syn_z,
+                self.scratch,
+            ),
+        )
+
+    def qec_steane_z_tel(
+        self,
+        aux: Steane,
+        reject: Bit | None = None,
+        flag_bit: Bit | None = None,
+        rus_limit: int | None = None,
+    ) -> Block:
+        """Run a Steane-type error-correction cycle for Z stabilizers with one-bit teleportation."""
+        flag_bit = flag_bit or self.scratch.elems[7]
+        return Block(
+            aux.px(reject=reject, rus_limit=rus_limit),
+            self.cx(aux),
+            aux.mz(),
+            self.syn_z.set(aux.syn_meas),
+            If(self.syn_z != 0).Then(flag_bit.set(1)),
+            self.last_raw_syn_z.set(0),
+            self.pf_x.set(0),
+            FlagLookupQASMActiveCorrectionZ(
+                self.d,
+                self.syn_z,
+                self.syndromes,
+                self.last_raw_syn_z,
+                self.pf_x,
+                flag_bit,
+                self.syn_z,
+                self.scratch,
             ),
         )
 
@@ -450,7 +527,7 @@ class Steane(Vars):
         flag_bit: Bit | None = None,
         rus_limit: int | None = None,
     ) -> Block:
-        """Run a Steane-type error-correction cycle of for X stabilizers (Z errors)."""
+        """Run a Steane-type error-correction cycle for X stabilizers (Z errors)."""
         flag_bit = flag_bit or self.scratch.elems[7]
         return Block(
             aux.pz(reject=reject, rus_limit=rus_limit),
@@ -472,31 +549,31 @@ class Steane(Vars):
             ),
         )
 
-    def qec_steane_z(
+    def qec_steane_x_tel(
         self,
         aux: Steane,
         reject: Bit | None = None,
         flag_bit: Bit | None = None,
         rus_limit: int | None = None,
     ) -> Block:
-        """Run a Steane-type error-correction cycle of for Z stabilizers (X errors)."""
+        """Run a Steane-type error-correction cycle for X stabilizers with one-bit teleportation."""
         flag_bit = flag_bit or self.scratch.elems[7]
         return Block(
-            aux.px(reject=reject, rus_limit=rus_limit),
-            self.cx(aux),
-            aux.mz(),
-            self.syn_z.set(aux.syn_meas),
-            If(self.syn_z != 0).Then(flag_bit.set(1)),
-            self.last_raw_syn_z.set(0),
-            self.pf_x.set(0),
-            FlagLookupQASMActiveCorrectionZ(
+            aux.pz(reject=reject, rus_limit=rus_limit),
+            aux.cx(self),
+            aux.mx(),
+            self.syn_x.set(aux.syn_meas),
+            If(self.syn_x != 0).Then(flag_bit.set(1)),
+            self.last_raw_syn_x.set(0),
+            self.pf_z.set(0),
+            FlagLookupQASMActiveCorrectionX(
                 self.d,
-                self.syn_z,
+                self.syn_x,
                 self.syndromes,
-                self.last_raw_syn_z,
-                self.pf_x,
+                self.last_raw_syn_x,
+                self.pf_z,
                 flag_bit,
-                self.syn_z,
+                self.syn_x,
                 self.scratch,
             ),
         )

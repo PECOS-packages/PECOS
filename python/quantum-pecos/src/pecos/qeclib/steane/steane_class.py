@@ -451,13 +451,13 @@ class Steane(Vars):
         rus_limit: int | None = None,
     ) -> Block:
         """Run a Steane-type error-correction cycle of for X stabilizers (Z errors)."""
-        flag = self.scratch.elems[7]  # unused bit to flag the presence of errors
+        flag_bit = flag_bit or self.scratch.elems[7]
         return Block(
-            aux.px(reject=reject, rus_limit=rus_limit),
-            self.cx(aux),
-            aux.mz(),
+            aux.pz(reject=reject, rus_limit=rus_limit),
+            aux.cx(self),
+            aux.mx(),
             self.syn_x.set(aux.syn_meas),
-            If(self.syn_x != 0).Then(flag.set(1)),
+            If(self.syn_x != 0).Then(flag_bit.set(1)),
             self.last_raw_syn_x.set(0),
             self.pf_z.set(0),
             FlagLookupQASMActiveCorrectionX(
@@ -466,7 +466,7 @@ class Steane(Vars):
                 self.syndromes,
                 self.last_raw_syn_x,
                 self.pf_z,
-                flag,
+                flag_bit,
                 self.syn_x,
                 self.scratch,
             ),
@@ -480,13 +480,13 @@ class Steane(Vars):
         rus_limit: int | None = None,
     ) -> Block:
         """Run a Steane-type error-correction cycle of for Z stabilizers (X errors)."""
-        flag = self.scratch.elems[7]  # unused bit to flag the presence of errors
+        flag_bit = flag_bit or self.scratch.elems[7]
         return Block(
             aux.px(reject=reject, rus_limit=rus_limit),
             self.cx(aux),
             aux.mz(),
             self.syn_z.set(aux.syn_meas),
-            If(self.syn_z != 0).Then(flag.set(1)),
+            If(self.syn_z != 0).Then(flag_bit.set(1)),
             self.last_raw_syn_z.set(0),
             self.pf_x.set(0),
             FlagLookupQASMActiveCorrectionZ(
@@ -495,7 +495,7 @@ class Steane(Vars):
                 self.syndromes,
                 self.last_raw_syn_z,
                 self.pf_x,
-                flag,
+                flag_bit,
                 self.syn_z,
                 self.scratch,
             ),

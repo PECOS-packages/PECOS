@@ -201,10 +201,8 @@ jobs:
       - name: Build quantum-pecos SDist
         run: |
           cd python/quantum-pecos
-          # Use main environment's uv to install build
-          uv pip install build
-          # Build using main environment
-          uv run python -m build --sdist --outdir dist
+          uv pip install --system build
+          python -m build --sdist --outdir dist
 
       - name: Test quantum-pecos SDist
         run: |

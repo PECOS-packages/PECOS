@@ -422,7 +422,7 @@ class Steane(Vars):
             block.extend(If(self.flags != 0).Then(flag_bit.set(1)))
         return block
 
-    def steane_qec(
+    def qec_steane(
         self,
         aux: Steane,
         reject_x: Bit | None = None,
@@ -433,65 +433,71 @@ class Steane(Vars):
     ) -> Block:
         """Run a Steane-type error-correction cycle of this code."""
         return Block(
-            self.steane_qec_x(
+            self.qec_steane_x(
                 aux, reject=reject_x, flag_bit=flag_bit_x, rus_limit=rus_limit
             ),
-            self.steane_qec_z(
+            self.qec_steane_z(
                 aux, reject=reject_z, flag_bit=flag_bit_z, rus_limit=rus_limit
             ),
         )
 
-    def steane_qec_x(
+    def qec_steane_x(
         self,
         aux: Steane,
         reject: Bit | None = None,
         flag_bit: Bit | None = None,
         rus_limit: int | None = None,
     ) -> Block:
-        """Run a Steane-type error-correction cycle of this code, for X-type errors."""
+        """Run a Steane-type error-correction cycle of for X stabilizers (Z errors)."""
+        flag = self.scratch.elems[7]  # unused bit to flag the presence of errors
         return Block(
             aux.px(reject=reject, rus_limit=rus_limit),
             self.cx(aux),
-            aux.mx(),
+            aux.mz(),
+            self.syn_x.set(aux.syn_meas),
+            If(self.syn_x != 0).Then(flag.set(1)),
+            self.last_raw_syn_x.set(0),
+            self.pf_z.set(0),
             FlagLookupQASMActiveCorrectionX(
                 self.d,
-                aux.syn_x,
-                aux.syndromes,
-                aux.last_raw_syn_x,
-                aux.pf_z,
-                aux.flag_x,
-                aux.flags,
-                aux.scratch,
+                self.syn_x,
+                self.syndromes,
+                self.last_raw_syn_x,
+                self.pf_z,
+                flag,
+                self.syn_x,
+                self.scratch,
             ),
-            Permute(self.syn_x, aux.syn_x),
-            Permute(self.last_raw_syn_x, aux.last_raw_syn_x),
-            Permute(self.pf_z, aux.pf_z),
-            Permute(self.flags_x, aux.flags_x),
         )
 
-    # def steane_qec_z(
-    #     self,
-    #     aux: Steane,
-    #     reject: Bit | None = None,
-    #     flag_bit: Bit | None = None,
-    #     rus_limit: int | None = None,
-    # ) -> Block:
-    #     """Run a Steane-type error-correction cycle of this code, for Z-type errors."""
-    #     return Block(
-    #         aux.pz(reject=reject, rus_limit=rus_limit),
-    #         aux.cx(self),
-    #         aux.mz(),
-    #         FlagLookupQASMActiveCorrectionZ(
-    #             self.d,
-    #             aux.syn_x,
-    #             aux.syndromes,
-    #             aux.last_raw_syn_x,
-    #             aux.pf_z,
-    #             aux.flag_x,
-    #             aux.flags,
-    #             aux.scratch,
-    #         ),
-    #     )
+    def qec_steane_z(
+        self,
+        aux: Steane,
+        reject: Bit | None = None,
+        flag_bit: Bit | None = None,
+        rus_limit: int | None = None,
+    ) -> Block:
+        """Run a Steane-type error-correction cycle of for Z stabilizers (X errors)."""
+        flag = self.scratch.elems[7]  # unused bit to flag the presence of errors
+        return Block(
+            aux.px(reject=reject, rus_limit=rus_limit),
+            self.cx(aux),
+            aux.mz(),
+            self.syn_z.set(aux.syn_meas),
+            If(self.syn_z != 0).Then(flag.set(1)),
+            self.last_raw_syn_z.set(0),
+            self.pf_x.set(0),
+            FlagLookupQASMActiveCorrectionZ(
+                self.d,
+                self.syn_z,
+                self.syndromes,
+                self.last_raw_syn_z,
+                self.pf_x,
+                flag,
+                self.syn_z,
+                self.scratch,
+            ),
+        )
 
     def permute(self, other: Steane):
         """Permute this Steane qubit with another."""

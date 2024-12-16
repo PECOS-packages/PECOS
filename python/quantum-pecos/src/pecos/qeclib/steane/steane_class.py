@@ -374,17 +374,19 @@ class Steane(Vars):
 
     def m(self, meas_basis: str, log: Bit | None = None):
         """Destructively measure the logical qubit in some Pauli basis."""
-        block = MeasDecode(
-            q=self.d,
-            meas_basis=meas_basis,
-            meas=self.raw_meas,
-            log_raw=self.log_raw,
-            log=self.log,
-            syn_meas=self.syn_meas,
-            pf_x=self.pf_x,
-            pf_z=self.pf_z,
-            last_raw_syn_x=self.last_raw_syn_x,
-            last_raw_syn_z=self.last_raw_syn_z,
+        block = Block(
+            MeasDecode(
+                q=self.d,
+                meas_basis=meas_basis,
+                meas=self.raw_meas,
+                log_raw=self.log_raw,
+                log=self.log,
+                syn_meas=self.syn_meas,
+                pf_x=self.pf_x,
+                pf_z=self.pf_z,
+                last_raw_syn_x=self.last_raw_syn_x,
+                last_raw_syn_z=self.last_raw_syn_z,
+            ),
         )
         if log is not None:
             block.extend(log.set(self.log))

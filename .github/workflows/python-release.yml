@@ -129,8 +129,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install uv
-        run: pip install uv
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
 
       - name: Remove conflicting README.md
         run: |
@@ -184,8 +186,10 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install uv
-        run: pip install uv
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
 
       - name: Download pecos-rslib wheel
         uses: actions/download-artifact@v4
@@ -237,8 +241,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install uv
-        run: pip install uv
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
 
       - name: Download pecos-rslib wheel
         uses: actions/download-artifact@v4

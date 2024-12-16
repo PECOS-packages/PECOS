@@ -10,19 +10,17 @@ For developers who want to contribute or modify PECOS:
    cd PECOS
    ```
 
-3. Set up the development environment either using the `Makefile` (Note: for Windows to use the `Makefile` you may need to use a shell that has access to Linux commands such as utilizing [git bash](https://gitforwindows.org/)):
-   ```sh
-   make venv
-   ```
+   3. Set up the development environment either using the `Makefile` (Note: for Windows to use the `Makefile` you may need to use a shell that has access to Linux commands such as utilizing [git bash](https://gitforwindows.org/)):
+      ```sh
+      make venv
+      ```
 
-   or manually set up a Python [virtual environment using uv](https://docs.astral.sh/uv/getting-started/installation/) for development.
+      or [install uv for your system](https://docs.astral.sh/uv/getting-started/installation/) and set up your virtual 
+      environment for develop by navigating to the root of the project and run:
 
-   To do so, navigate to the root of this project and run:
-
-   ```sh
-   python -m pip install --upgrade uv
-   uv sync
-   ```
+      ```sh
+      uv sync
+      ```
 
 4. You can use the virtual environment to develop. To so activate it as follows:
 

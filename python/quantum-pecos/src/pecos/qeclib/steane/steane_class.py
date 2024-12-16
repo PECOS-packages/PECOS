@@ -14,6 +14,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from warnings import warn
 
+from pecos.qeclib.steane.decoders.lookup import (
+    FlagLookupQASMActiveCorrectionX,
+    FlagLookupQASMActiveCorrectionZ,
+)
 from pecos.qeclib.steane.gates_sq import paulis, sqrt_paulis
 from pecos.qeclib.steane.gates_sq.hadamards import H
 from pecos.qeclib.steane.gates_tq import transversal_tq
@@ -283,7 +287,7 @@ class Steane(Vars):
             aux.cx(self),
             self.mz(self.t_meas),
             If(self.t_meas == 1).Then(aux.x(), aux.sz()),
-            Permute(self.d, aux.d),
+            self.permute(aux),
         )
 
     def t_tel(
@@ -306,7 +310,7 @@ class Steane(Vars):
             aux.cx(self),
             self.mz(self.t_meas),
             If(self.t_meas == 1).Then(aux.x(), aux.sz()),  # SZ/S correction.
-            Permute(self.d, aux.d),
+            self.permute(aux),
         )
 
     def nonft_tdg_tel(self, aux: Steane):
@@ -324,7 +328,7 @@ class Steane(Vars):
             aux.cx(self),
             self.mz(self.tdg_meas),
             If(self.tdg_meas == 1).Then(aux.x(), aux.szdg()),
-            Permute(self.d, aux.d),
+            self.permute(aux),
         )
 
     def tdg_tel(
@@ -347,7 +351,7 @@ class Steane(Vars):
             aux.cx(self),
             self.mz(self.tdg_meas),
             If(self.t_meas == 1).Then(aux.x(), aux.szdg()),  # SZdg/Sdg correction.
-            Permute(self.d, aux.d),
+            self.permute(aux),
         )
 
     # End Experimental: ------------------------------------
@@ -370,19 +374,17 @@ class Steane(Vars):
 
     def m(self, meas_basis: str, log: Bit | None = None):
         """Destructively measure the logical qubit in some Pauli basis."""
-        block = Block(
-            MeasDecode(
-                q=self.d,
-                meas_basis=meas_basis,
-                meas=self.raw_meas,
-                log_raw=self.log_raw,
-                log=self.log,
-                syn_meas=self.syn_meas,
-                pf_x=self.pf_x,
-                pf_z=self.pf_z,
-                last_raw_syn_x=self.last_raw_syn_x,
-                last_raw_syn_z=self.last_raw_syn_z,
-            ),
+        block = MeasDecode(
+            q=self.d,
+            meas_basis=meas_basis,
+            meas=self.raw_meas,
+            log_raw=self.log_raw,
+            log=self.log,
+            syn_meas=self.syn_meas,
+            pf_x=self.pf_x,
+            pf_z=self.pf_z,
+            last_raw_syn_x=self.last_raw_syn_x,
+            last_raw_syn_z=self.last_raw_syn_z,
         )
         if log is not None:
             block.extend(log.set(self.log))
@@ -419,3 +421,85 @@ class Steane(Vars):
         if flag_bit is not None:
             block.extend(If(self.flags != 0).Then(flag_bit.set(1)))
         return block
+
+    def steane_qec(
+        self,
+        aux: Steane,
+        reject_x: Bit | None = None,
+        reject_z: Bit | None = None,
+        flag_bit_x: Bit | None = None,
+        flag_bit_z: Bit | None = None,
+        rus_limit: int | None = None,
+    ) -> Block:
+        """Run a Steane-type error-correction cycle of this code."""
+        return Block(
+            self.steane_qec_x(
+                aux, reject=reject_x, flag_bit=flag_bit_x, rus_limit=rus_limit
+            ),
+            self.steane_qec_z(
+                aux, reject=reject_z, flag_bit=flag_bit_z, rus_limit=rus_limit
+            ),
+        )
+
+    def steane_qec_x(
+        self,
+        aux: Steane,
+        reject: Bit | None = None,
+        flag_bit: Bit | None = None,
+        rus_limit: int | None = None,
+    ) -> Block:
+        """Run a Steane-type error-correction cycle of this code, for X-type errors."""
+        return Block(
+            aux.px(reject=reject, rus_limit=rus_limit),
+            self.cx(aux),
+            aux.mx(),
+            FlagLookupQASMActiveCorrectionX(
+                self.d,
+                aux.syn_x,
+                aux.syndromes,
+                aux.last_raw_syn_x,
+                aux.pf_z,
+                aux.flag_x,
+                aux.flags,
+                aux.scratch,
+            ),
+            Permute(self.syn_x, aux.syn_x),
+            Permute(self.last_raw_syn_x, aux.last_raw_syn_x),
+            Permute(self.pf_z, aux.pf_z),
+            Permute(self.flags_x, aux.flags_x),
+        )
+
+    # def steane_qec_z(
+    #     self,
+    #     aux: Steane,
+    #     reject: Bit | None = None,
+    #     flag_bit: Bit | None = None,
+    #     rus_limit: int | None = None,
+    # ) -> Block:
+    #     """Run a Steane-type error-correction cycle of this code, for Z-type errors."""
+    #     return Block(
+    #         aux.pz(reject=reject, rus_limit=rus_limit),
+    #         aux.cx(self),
+    #         aux.mz(),
+    #         FlagLookupQASMActiveCorrectionZ(
+    #             self.d,
+    #             aux.syn_x,
+    #             aux.syndromes,
+    #             aux.last_raw_syn_x,
+    #             aux.pf_z,
+    #             aux.flag_x,
+    #             aux.flags,
+    #             aux.scratch,
+    #         ),
+    #     )
+
+    def permute(self, other: Steane):
+        """Permute this Steane qubit with another."""
+        # collect all variables in self and other, noting that self.a may or may not be in self.vars
+        self_vars = [var for var in self.vars if var is not self.a] + [self.a]
+        other_vars = [var for var in other.vars if var is not other.a] + [other.a]
+        permutes = [
+            Permute(self_var, other_var)
+            for self_var, other_var in zip(self_vars, other_vars)
+        ]
+        return Block(*permutes)

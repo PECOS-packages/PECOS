@@ -66,9 +66,10 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install uv
-        run: pip install uv
-
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
       - name: Remove conflicting README.md
         run: |
           if [ -f crates/pecos-python/README.md ]; then

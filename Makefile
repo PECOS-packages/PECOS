@@ -21,8 +21,8 @@ venv:  ## Create virtual environment and install all dependencies
 .PHONY: updatereqs
 updatereqs:  ## Generate/update lockfiles for both packages
 	@echo "Ensuring uv is installed..."
-	$(PYTHONPATH) -m pip install --upgrade uv
-	@echo "Generating lockfiles..."
+	uv self update
+	@echo "Generating lock files..."
 	uv lock
 
 .PHONY: installreqs

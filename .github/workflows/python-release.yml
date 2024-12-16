@@ -61,11 +61,13 @@ jobs:
         with:
           ref: ${{ inputs.sha || github.sha }}
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          enable-cache: true
+
+      - name: Install uv
+        run: pip install uv
 
       - name: Remove conflicting README.md
         run: |
@@ -93,10 +95,11 @@ jobs:
             echo "No README.md backup found"
           fi
 
-      - name: Test pecos-rslib SDist
+      - name: Install and test pecos-rslib SDist
         run: |
+          uv sync --project .  # This creates venv and installs dependencies
           uv pip install --force-reinstall python/pecos-rslib/dist/*.tar.gz
-          python -c 'import pecos_rslib; print(pecos_rslib.__version__)'
+          uv run python -c 'import pecos_rslib; print(pecos_rslib.__version__)'
 
       - name: Upload pecos-rslib SDist
         uses: actions/upload-artifact@v4

@@ -5,18 +5,6 @@ PYTHONPATH := $(shell which python 2>/dev/null || which python3 2>/dev/null)
 
 SHELL=bash
 
-# Get absolute path of venv directory
-BASE_DIR := $(shell realpath .)
-VENV=$(BASE_DIR)/.venv
-ifeq ($(OS),Windows_NT)
-    VENV_BIN := $(VENV)/Scripts
-else
-    VENV_BIN := $(VENV)/bin
-endif
-
-# Define the path to main Python pyproject.toml
-PYPROJECT_PATH := python/quantum-pecos/pyproject.toml
-
 # Virtual environment
 # -------------------
 
@@ -46,23 +34,23 @@ installreqs: ## Install Python project requirements to root .venv
 # ---------------------------------
 .PHONY: build
 build: installreqs ## Compile and install for development
-	@unset CONDA_PREFIX && cd python/pecos-rslib/ && $(VENV_BIN)/maturin develop --uv
+	@unset CONDA_PREFIX && cd python/pecos-rslib/ && uv run maturin develop --uv
 	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .[all]
 
 .PHONY: build-basic
 build-basic: installreqs ## Compile and install for development but do not include install extras
-	@unset CONDA_PREFIX && cd python/pecos-rslib/ && $(VENV_BIN)/maturin develop --uv
+	@unset CONDA_PREFIX && cd python/pecos-rslib/ && uv run maturin develop --uv
 	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .
 
 .PHONY: build-release
 build-release: installreqs ## Build a faster version of binaries
-	@unset CONDA_PREFIX && cd python/pecos-rslib/ && $(VENV_BIN)/maturin develop --uv --release
+	@unset CONDA_PREFIX && cd python/pecos-rslib/ && uv run maturin develop --uv --release
 	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .[all]
 
 .PHONY: build-native
 build-native: installreqs ## Build a faster version of binaries with native CPU optimization
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && RUSTFLAGS='-C target-cpu=native' \
-	&& $(VENV_BIN)/maturin develop --uv --release
+	&& uv run maturin develop --uv --release
 	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .[all]
 
 # Documentation
@@ -89,7 +77,7 @@ fmt: ## Run autoformatting for cargo
 
 .PHONY: lint  ## Run all quality checks / linting / reformatting
 lint: fmt clippy
-	$(VENV_BIN)/pre-commit run --all-files
+	uv run pre-commit run --all-files
 
 # Testing
 # -------
@@ -100,16 +88,16 @@ rstest:  ## Run Rust tests
 
 .PHONY: pytest
 pytest:  ## Run tests on the Python package (not including optional dependencies). ASSUMES: previous build command
-	@cd python/tests/ && $(VENV_BIN)/pytest . -m "not optional_dependency"
+	uv run pytest . -m "not optional_dependency"
 
 .PHONY: pytest-dep
 pytest-dep: ## Run tests on the Python package only for optional dependencies. ASSUMES: previous build command
-	@cd python/ && $(VENV_BIN)/pytest tests -m optional_dependency
+	uv run pytest tests -m optional_dependency
 
 # .PHONY: pytest-doc
 # pydoctest:  ## Run doctests with pytest. ASSUMES: A build command was ran previously. ASSUMES: previous build command
 # 	# TODO: update and install docs requirements
-# 	@cd python/ && $(VENV_BIN)/pytest docs --doctest-glob=*.rst --doctest-continue-on-failure
+# 	uv run pytest docs --doctest-glob=*.rst --doctest-continue-on-failure
 
 .PHONY: test
 test: rstest pytest pytest-dep ## Run all tests. ASSUMES: previous build command

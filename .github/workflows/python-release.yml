@@ -73,9 +73,6 @@ jobs:
         run: |
           if [ -f crates/pecos-python/README.md ]; then
             mv crates/pecos-python/README.md crates/pecos-python/README.md.bak
-            echo "Moved conflicting README.md to README.md.bak"
-          else
-            echo "No conflicting README.md found"
           fi
 
       - name: Build pecos-rslib SDist
@@ -90,14 +87,11 @@ jobs:
         run: |
           if [ -f crates/pecos-python/README.md.bak ]; then
             mv crates/pecos-python/README.md.bak crates/pecos-python/README.md
-            echo "Restored README.md from backup"
-          else
-            echo "No README.md backup found"
           fi
 
       - name: Install and test pecos-rslib SDist
         run: |
-          uv sync --project .  # This creates venv and installs dependencies
+          uv sync --project .
           uv pip install --force-reinstall python/pecos-rslib/dist/*.tar.gz
           uv run python -c 'import pecos_rslib; print(pecos_rslib.__version__)'
 
@@ -129,19 +123,18 @@ jobs:
         with:
           ref: ${{ inputs.sha || github.sha }}
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          enable-cache: true
+
+      - name: Install uv
+        run: pip install uv
 
       - name: Remove conflicting README.md
         run: |
           if [ -f crates/pecos-python/README.md ]; then
             mv crates/pecos-python/README.md crates/pecos-python/README.md.bak
-            echo "Moved conflicting README.md to README.md.bak"
-          else
-            echo "No conflicting README.md found"
           fi
 
       - name: Build wheel
@@ -158,16 +151,14 @@ jobs:
         run: |
           if [ -f crates/pecos-python/README.md.bak ]; then
             mv crates/pecos-python/README.md.bak crates/pecos-python/README.md
-            echo "Restored README.md from backup"
-          else
-            echo "No README.md backup found"
           fi
 
       - name: Test wheel
         if: ${{ !(matrix.architecture == 'x86_64' && matrix.os == 'macos-latest') && matrix.architecture != 'aarch64' }}
         run: |
+          uv sync --project .
           uv pip install --force-reinstall python/pecos-rslib/dist/*.whl
-          python -c 'import pecos_rslib; print(pecos_rslib.__version__)'
+          uv run python -c 'import pecos_rslib; print(pecos_rslib.__version__)'
 
       - name: Upload wheel
         uses: actions/upload-artifact@v4
@@ -187,11 +178,13 @@ jobs:
         with:
           ref: ${{ inputs.sha || github.sha }}
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          enable-cache: true
+
+      - name: Install uv
+        run: pip install uv
 
       - name: Download pecos-rslib wheel
         uses: actions/download-artifact@v4
@@ -199,21 +192,21 @@ jobs:
           name: wheel-pecos-rslib-ubuntu-latest-x86_64-py${{ env.PYTHON_VERSION }}
           path: ./pecos-rslib-wheel
 
-      - name: Install pecos-rslib
-        run: uv pip install ./pecos-rslib-wheel/*.whl
-
-      - name: Install build dependencies
-        run: uv pip install build
+      - name: Setup environment and install dependencies
+        run: |
+          uv sync --project .
+          uv pip install ./pecos-rslib-wheel/*.whl
+          uv pip install build
 
       - name: Build quantum-pecos SDist
         run: |
           cd python/quantum-pecos
-          python -m build --sdist --outdir dist
+          uv run python -m build --sdist --outdir dist
 
       - name: Test quantum-pecos SDist
         run: |
           uv pip install python/quantum-pecos/dist/*.tar.gz
-          python -c 'import pecos; print(pecos.__version__)'
+          uv run python -c 'import pecos; print(pecos.__version__)'
 
       - name: Upload quantum-pecos SDist
         uses: actions/upload-artifact@v4
@@ -237,11 +230,13 @@ jobs:
         with:
           ref: ${{ inputs.sha || github.sha }}
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          enable-cache: true
+
+      - name: Install uv
+        run: pip install uv
 
       - name: Download pecos-rslib wheel
         uses: actions/download-artifact@v4
@@ -249,21 +244,21 @@ jobs:
           name: wheel-pecos-rslib-ubuntu-latest-x86_64-py${{ matrix.python-version }}
           path: ./pecos-rslib-wheel
 
-      - name: Install pecos-rslib
-        run: uv pip install ./pecos-rslib-wheel/*.whl
-
-      - name: Install build dependencies
-        run: uv pip install build
+      - name: Setup environment and install dependencies
+        run: |
+          uv sync --project .
+          uv pip install ./pecos-rslib-wheel/*.whl
+          uv pip install build
 
       - name: Build quantum-pecos wheel
         run: |
           cd python/quantum-pecos
-          python -m build --wheel --outdir dist
+          uv run python -m build --wheel --outdir dist
 
       - name: Test quantum-pecos wheel
         run: |
           uv pip install python/quantum-pecos/dist/*.whl
-          python -c 'import pecos; print(pecos.__version__)'
+          uv run python -c 'import pecos; print(pecos.__version__)'
 
       - name: Upload quantum-pecos wheel
         uses: actions/upload-artifact@v4

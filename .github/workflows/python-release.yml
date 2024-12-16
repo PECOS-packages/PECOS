@@ -247,7 +247,7 @@ jobs:
 
       - name: Setup environment and install dependencies
         run: |
-          uv sync --project .
+          uv sync --project . --no-config
           uv pip install ./pecos-rslib-wheel/*.whl
           uv pip install build
 

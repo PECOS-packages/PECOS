@@ -283,7 +283,7 @@ class Steane(Vars):
             aux.cx(self),
             self.mz(self.t_meas),
             If(self.t_meas == 1).Then(aux.x(), aux.sz()),
-            Permute(self.d, aux.d),
+            self.permute(aux),
         )
 
     def t_tel(
@@ -306,7 +306,7 @@ class Steane(Vars):
             aux.cx(self),
             self.mz(self.t_meas),
             If(self.t_meas == 1).Then(aux.x(), aux.sz()),  # SZ/S correction.
-            Permute(self.d, aux.d),
+            self.permute(aux),
         )
 
     def nonft_tdg_tel(self, aux: Steane):
@@ -324,7 +324,7 @@ class Steane(Vars):
             aux.cx(self),
             self.mz(self.tdg_meas),
             If(self.tdg_meas == 1).Then(aux.x(), aux.szdg()),
-            Permute(self.d, aux.d),
+            self.permute(aux),
         )
 
     def tdg_tel(
@@ -347,7 +347,7 @@ class Steane(Vars):
             aux.cx(self),
             self.mz(self.tdg_meas),
             If(self.t_meas == 1).Then(aux.x(), aux.szdg()),  # SZdg/Sdg correction.
-            Permute(self.d, aux.d),
+            self.permute(aux),
         )
 
     # End Experimental: ------------------------------------
@@ -370,19 +370,17 @@ class Steane(Vars):
 
     def m(self, meas_basis: str, log: Bit | None = None):
         """Destructively measure the logical qubit in some Pauli basis."""
-        block = Block(
-            MeasDecode(
-                q=self.d,
-                meas_basis=meas_basis,
-                meas=self.raw_meas,
-                log_raw=self.log_raw,
-                log=self.log,
-                syn_meas=self.syn_meas,
-                pf_x=self.pf_x,
-                pf_z=self.pf_z,
-                last_raw_syn_x=self.last_raw_syn_x,
-                last_raw_syn_z=self.last_raw_syn_z,
-            ),
+        block = MeasDecode(
+            q=self.d,
+            meas_basis=meas_basis,
+            meas=self.raw_meas,
+            log_raw=self.log_raw,
+            log=self.log,
+            syn_meas=self.syn_meas,
+            pf_x=self.pf_x,
+            pf_z=self.pf_z,
+            last_raw_syn_x=self.last_raw_syn_x,
+            last_raw_syn_z=self.last_raw_syn_z,
         )
         if log is not None:
             block.extend(log.set(self.log))
@@ -419,3 +417,14 @@ class Steane(Vars):
         if flag_bit is not None:
             block.extend(If(self.flags != 0).Then(flag_bit.set(1)))
         return block
+
+    def permute(self, other: Steane):
+        """Permute this Steane qubit with another."""
+        # collect all variables in self and other, noting that self.a may or may not be in self.vars
+        self_vars = [var for var in self.vars if var is not self.a] + [self.a]
+        other_vars = [var for var in other.vars if var is not other.a] + [other.a]
+        permutes = [
+            Permute(self_var, other_var)
+            for self_var, other_var in zip(self_vars, other_vars)
+        ]
+        return Block(*permutes)

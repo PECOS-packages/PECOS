@@ -15,7 +15,7 @@ For developers who want to contribute or modify PECOS:
    make venv
    ```
 
-   or manually set up a Python [virtual environment using uv](https://docs.astral.sh/uv/getting-started/installation/) for develop of this project's code.
+   or manually set up a Python [virtual environment using uv](https://docs.astral.sh/uv/getting-started/installation/) for development.
 
    To do so, navigate to the root of this project and run:
 

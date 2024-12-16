@@ -287,7 +287,7 @@ class Steane(Vars):
             aux.cx(self),
             self.mz(self.t_meas),
             If(self.t_meas == 1).Then(aux.x(), aux.sz()),
-            self.permute(aux),
+            Permute(self.d, aux.d),
         )
 
     def t_tel(
@@ -310,7 +310,7 @@ class Steane(Vars):
             aux.cx(self),
             self.mz(self.t_meas),
             If(self.t_meas == 1).Then(aux.x(), aux.sz()),  # SZ/S correction.
-            self.permute(aux),
+            Permute(self.d, aux.d),
         )
 
     def nonft_tdg_tel(self, aux: Steane):
@@ -328,7 +328,7 @@ class Steane(Vars):
             aux.cx(self),
             self.mz(self.tdg_meas),
             If(self.tdg_meas == 1).Then(aux.x(), aux.szdg()),
-            self.permute(aux),
+            Permute(self.d, aux.d),
         )
 
     def tdg_tel(
@@ -351,7 +351,7 @@ class Steane(Vars):
             aux.cx(self),
             self.mz(self.tdg_meas),
             If(self.t_meas == 1).Then(aux.x(), aux.szdg()),  # SZdg/Sdg correction.
-            self.permute(aux),
+            Permute(self.d, aux.d),
         )
 
     # End Experimental: ------------------------------------
@@ -498,14 +498,3 @@ class Steane(Vars):
                 self.scratch,
             ),
         )
-
-    def permute(self, other: Steane):
-        """Permute this Steane qubit with another."""
-        # collect all variables in self and other, noting that self.a may or may not be in self.vars
-        self_vars = [var for var in self.vars if var is not self.a] + [self.a]
-        other_vars = [var for var in other.vars if var is not other.a] + [other.a]
-        permutes = [
-            Permute(self_var, other_var)
-            for self_var, other_var in zip(self_vars, other_vars)
-        ]
-        return Block(*permutes)

@@ -14,34 +14,17 @@ For developers who want to contribute or modify PECOS:
    ```sh
    make venv
    ```
-   <details>
-   <summary>or manually set up a Python virtual environment for develop of this project's code.</summary>
 
-   On Linux/Mac:
+   or manually set up a Python [virtual environment using uv](https://docs.astral.sh/uv/getting-started/installation/) for develop of this project's code.
 
-   ```sh
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install -U pip setuptools
-   pip install -r python/quantum-pecos/requirements.txt
-   make metadeps
-   pre-commit install
-   ```
-
-   On Windows:
+   To do so, navigate to the root of this project and run:
 
    ```sh
-   python -m venv .venv
-   .\venv\Scripts\activate
-   pip install -U pip setuptools
-   pip install -r python/quantum-pecos/requirements.txt
-   make metadeps
-   pre-commit install
+   python -m pip install --upgrade uv
+   uv sync
    ```
-   </details>
 
-
-4. When developing in the development environment, be sure to activate the venv:
+4. You can use the virtual environment to develop. To so activate it as follows:
 
     On Linux/Mac:
     ```sh
@@ -50,9 +33,8 @@ For developers who want to contribute or modify PECOS:
 
     On Windows:
     ```sh
-    .\venv\Scripts\activate
+    .\.venv\Scripts\activate
     ```
-
 
 5. Build the project in editable mode
     ```sh
@@ -60,13 +42,11 @@ For developers who want to contribute or modify PECOS:
    ```
    See other build options in the `Makefile`.
 
-
 6. Run all Python and Rust tests:
    ```sh
    make test
    ```
    Note: Make sure you have run a build command before running tests.
-
 
 7. Run linters using pre-commit (after [installing it](https://pre-commit.com/)) to make sure all everything is properly linted/formated
    ```sh
@@ -77,5 +57,7 @@ For developers who want to contribute or modify PECOS:
     ```sh
     deactivate
     ```
+
+Before pull requests are merged, they must pass linting and the test.
 
 Note: For the Rust side of the project, you can use `cargo` to run tests, benchmarks, formatting, etc.

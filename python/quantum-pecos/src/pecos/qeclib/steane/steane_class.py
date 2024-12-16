@@ -419,7 +419,7 @@ class Steane(Vars):
         return block
 
     def permute(self, other: Steane):
-        """Permute this Steane qubit with another."""
+        """Permute this code block (including both quantum and classical registers) with another."""
         # collect all variables in self and other, noting that self.a may or may not be in self.vars
         self_vars = [var for var in self.vars if var is not self.a] + [self.a]
         other_vars = [var for var in other.vars if var is not other.a] + [other.a]

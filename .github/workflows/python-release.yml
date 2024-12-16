@@ -247,17 +247,16 @@ jobs:
 
       - name: Setup environment and install dependencies
         run: |
-          uv sync --project . --no-dev  # Ignore dev dependencies
-          uv pip install ./pecos-rslib-wheel/*.whl
-          uv pip install build
+          uv pip install --system ./pecos-rslib-wheel/*.whl build
 
       - name: Build quantum-pecos wheel
         run: |
           cd python/quantum-pecos
-          uv run --no-dev python -m build --wheel --outdir dist
+          python -m build --wheel --outdir dist
 
       - name: Test quantum-pecos wheel
         run: |
+          uv sync  # This will use the workspace config correctly
           uv pip install python/quantum-pecos/dist/*.whl
           uv run python -c 'import pecos; print(pecos.__version__)'
 

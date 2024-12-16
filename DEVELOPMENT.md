@@ -10,7 +10,7 @@ For developers who want to contribute or modify PECOS:
    cd PECOS
    ```
 
-3. It is recommended to [install uv for your system](https://docs.astral.sh/uv/getting-started/installation/). 
+3. It is recommended to [install uv for your system](https://docs.astral.sh/uv/getting-started/installation/).
    After installing `uv`, run following from the root of the project (this will create a `.venv/` that will house the virtual environment):
 
    ```sh
@@ -21,7 +21,7 @@ For developers who want to contribute or modify PECOS:
    ```sh
     make venv
    ```
-   
+
 4. Once setup, you can use the virtual environment to develop. To so activate it as follows:
 
     On Linux/Mac:

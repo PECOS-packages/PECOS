@@ -402,7 +402,7 @@ class Steane(Vars):
         """Logical destructive measurement of the logical Z operator."""
         return self.m("Z", log=log)
 
-    def qec(self, flag_bit: Bit | None = None):
+    def qec(self, flag: Bit | None = None):
         block = ParallelFlagQECActiveCorrection(
             q=self.d,
             a=self.a,
@@ -418,8 +418,8 @@ class Steane(Vars):
             pf_z=self.pf_z,
             scratch=self.scratch,
         )
-        if flag_bit is not None:
-            block.extend(If(self.flags != 0).Then(flag_bit.set(1)))
+        if flag is not None:
+            block.extend(If(self.flags != 0).Then(flag.set(1)))
         return block
 
     def qec_steane(
@@ -427,8 +427,8 @@ class Steane(Vars):
         aux: Steane,
         reject_x: Bit | None = None,
         reject_z: Bit | None = None,
-        flag_bit_x: Bit | None = None,
-        flag_bit_z: Bit | None = None,
+        flag_x: Bit | None = None,
+        flag_z: Bit | None = None,
         rus_limit: int | None = None,
     ) -> Block:
         """Run a Steane-type error-correction cycle of this code."""
@@ -436,13 +436,13 @@ class Steane(Vars):
             self.qec_steane_z(
                 aux,
                 reject=reject_z,
-                flag_bit=flag_bit_z,
+                flag=flag_z,
                 rus_limit=rus_limit,
             ),
             self.qec_steane_x(
                 aux,
                 reject=reject_x,
-                flag_bit=flag_bit_x,
+                flag=flag_x,
                 rus_limit=rus_limit,
             ),
         )
@@ -451,17 +451,17 @@ class Steane(Vars):
         self,
         aux: Steane,
         reject: Bit | None = None,
-        flag_bit: Bit | None = None,
+        flag: Bit | None = None,
         rus_limit: int | None = None,
     ) -> Block:
         """Run a Steane-type error-correction cycle for Z stabilizers (X errors)."""
         warn("Using experimental feature: qec_steane_z", stacklevel=2)
-        flag_bit = flag_bit or self.scratch.elems[7]
+        flag = flag or self.scratch.elems[7]
         return Block(
             aux.px(reject=reject, rus_limit=rus_limit),
             self.cx(aux),
             aux.mz(),
-            If(aux.syn_meas != 0).Then(flag_bit.set(1)),
+            If(aux.syn_meas != 0).Then(flag.set(1)),
             self.last_raw_syn_z.set(0),
             self.pf_x.set(0),
             FlagLookupQASMActiveCorrectionZ(
@@ -470,7 +470,7 @@ class Steane(Vars):
                 self.syndromes,
                 self.last_raw_syn_z,
                 self.pf_x,
-                flag_bit,
+                flag,
                 aux.syn_meas,
                 self.scratch,
             ),
@@ -480,17 +480,17 @@ class Steane(Vars):
         self,
         aux: Steane,
         reject: Bit | None = None,
-        flag_bit: Bit | None = None,
+        flag: Bit | None = None,
         rus_limit: int | None = None,
     ) -> Block:
         """Run a Steane-type error-correction cycle for X stabilizers (Z errors)."""
         warn("Using experimental feature: qec_steane_x", stacklevel=2)
-        flag_bit = flag_bit or self.scratch.elems[7]
+        flag = flag or self.scratch.elems[7]
         return Block(
             aux.pz(reject=reject, rus_limit=rus_limit),
             aux.cx(self),
             aux.mx(),
-            If(aux.syn_meas != 0).Then(flag_bit.set(1)),
+            If(aux.syn_meas != 0).Then(flag.set(1)),
             self.last_raw_syn_x.set(0),
             self.pf_z.set(0),
             FlagLookupQASMActiveCorrectionX(
@@ -499,7 +499,7 @@ class Steane(Vars):
                 self.syndromes,
                 self.last_raw_syn_x,
                 self.pf_z,
-                flag_bit,
+                flag,
                 aux.syn_meas,
                 self.scratch,
             ),
@@ -510,21 +510,21 @@ class Steane(Vars):
         aux: Steane,
         reject_x: Bit | None = None,
         reject_z: Bit | None = None,
-        flag_bit_x: Bit | None = None,
-        flag_bit_z: Bit | None = None,
+        flag_x: Bit | None = None,
+        flag_z: Bit | None = None,
         rus_limit: int | None = None,
     ) -> Block:
         """Run a teleportation-based error correction cycle."""
         return Block(
-            self.qec_tel_x(aux, reject_x, flag_bit_x, rus_limit),
-            self.qec_tel_z(aux, reject_z, flag_bit_z, rus_limit),
+            self.qec_tel_x(aux, reject_x, flag_x, rus_limit),
+            self.qec_tel_z(aux, reject_z, flag_z, rus_limit),
         )
 
     def qec_tel_x(
         self,
         aux: Steane,
         reject: Bit | None = None,
-        flag_bit: Bit | None = None,
+        flag: Bit | None = None,
         rus_limit: int | None = None,
     ) -> Block:
         """Run a teleportation-based error correction cycle for X errors."""
@@ -542,15 +542,15 @@ class Steane(Vars):
             self.syn_z.set(self.syn_meas),
             self.pf_x.set(0),
         )
-        if flag_bit is not None:
-            block.extend(If(self.syn_meas != 0).Then(flag_bit.set(1)))
+        if flag is not None:
+            block.extend(If(self.syn_meas != 0).Then(flag.set(1)))
         return block
 
     def qec_tel_z(
         self,
         aux: Steane,
         reject: Bit | None = None,
-        flag_bit: Bit | None = None,
+        flag: Bit | None = None,
         rus_limit: int | None = None,
     ) -> Block:
         """Run a teleportation-based error correction cycle for Z errors."""
@@ -568,6 +568,6 @@ class Steane(Vars):
             self.syn_x.set(self.syn_meas),
             self.pf_z.set(0),
         )
-        if flag_bit is not None:
-            block.extend(If(self.syn_meas != 0).Then(flag_bit.set(1)))
+        if flag is not None:
+            block.extend(If(self.syn_meas != 0).Then(flag.set(1)))
         return block

@@ -447,31 +447,6 @@ class Steane(Vars):
             ),
         )
 
-    def qec_steane_tel(
-        self,
-        aux: Steane,
-        reject_x: Bit | None = None,
-        reject_z: Bit | None = None,
-        flag_bit_x: Bit | None = None,
-        flag_bit_z: Bit | None = None,
-        rus_limit: int | None = None,
-    ) -> Block:
-        """Run a Steane-type error-correction cycle of this code with one-bit teleportation."""
-        return Block(
-            self.qec_steane_z_tel(
-                aux,
-                reject=reject_z,
-                flag_bit=flag_bit_z,
-                rus_limit=rus_limit,
-            ),
-            self.qec_steane_x_tel(
-                aux,
-                reject=reject_x,
-                flag_bit=flag_bit_x,
-                rus_limit=rus_limit,
-            ),
-        )
-
     def qec_steane_z(
         self,
         aux: Steane,
@@ -528,62 +503,64 @@ class Steane(Vars):
             ),
         )
 
-    def qec_steane_z_tel(
+    def qec_tel(
+        self,
+        aux: Steane,
+        reject_x: Bit | None = None,
+        reject_z: Bit | None = None,
+        flag_bit: Bit | None = None,
+        rus_limit: int | None = None,
+    ) -> Block:
+        """Run a teleportation-based error correction cycle."""
+        return Block(
+            self.qec_tel_x(aux, reject_x, rus_limit=rus_limit),
+            self.qec_tel_z(aux, reject_x, flag_bit, rus_limit),
+        )
+
+    def qec_tel_x(
         self,
         aux: Steane,
         reject: Bit | None = None,
         flag_bit: Bit | None = None,
         rus_limit: int | None = None,
     ) -> Block:
-        """Run a Steane-type error-correction cycle for Z stabilizers with one-bit teleportation."""
-        flag_bit = flag_bit or self.scratch.elems[7]
-        return Block(
+        """Run a teleportation-based error correction cycle for X errors."""
+        block = Block(
+            # teleport
             aux.px(reject=reject, rus_limit=rus_limit),
             aux.cx(self),
             self.mz(),
             If(self.log).Then(aux.x()),
-            If(aux.syn_meas != 0).Then(flag_bit.set(1)),
-            self.last_raw_syn_z.set(0),
-            self.pf_x.set(0),
-            FlagLookupQASMActiveCorrectionZ(
-                aux.d,
-                aux.syn_meas,
-                self.syndromes,
-                self.last_raw_syn_z,
-                self.pf_x,
-                flag_bit,
-                aux.syn_meas,
-                self.scratch,
-            ),
             Permute(self.d, aux.d),
+            # update syndromes and pauli frame
+            self.last_raw_syn_z.set(self.syn_meas),
+            self.last_raw_syn_x.set(0),
+            self.pf_x.set(0),
         )
+        if flag_bit is not None:
+            block.extend(If(self.syn_meas != 0).Then(flag_bit.set(1)))
+        return block
 
-    def qec_steane_x_tel(
+    def qec_tel_z(
         self,
         aux: Steane,
         reject: Bit | None = None,
         flag_bit: Bit | None = None,
         rus_limit: int | None = None,
     ) -> Block:
-        """Run a Steane-type error-correction cycle for X stabilizers with one-bit teleportation."""
-        flag_bit = flag_bit or self.scratch.elems[7]
-        return Block(
+        """Run a teleportation-based error correction cycle for X errors."""
+        block = Block(
+            # teleport
             aux.pz(reject=reject, rus_limit=rus_limit),
             self.cx(aux),
             self.mx(),
             If(self.log).Then(aux.z()),
-            If(self.syn_meas != 0).Then(flag_bit.set(1)),
-            self.last_raw_syn_x.set(0),
-            self.pf_z.set(0),
-            FlagLookupQASMActiveCorrectionX(
-                self.d,
-                self.syn_meas,
-                self.syndromes,
-                self.last_raw_syn_x,
-                self.pf_z,
-                flag_bit,
-                self.syn_meas,
-                self.scratch,
-            ),
             Permute(self.d, aux.d),
+            # update syndromes and pauli frame
+            self.last_raw_syn_x.set(self.syn_meas),
+            self.last_raw_syn_z.set(0),
+            self.pf_z.set(0),
         )
+        if flag_bit is not None:
+            block.extend(If(self.syn_meas != 0).Then(flag_bit.set(1)))
+        return block

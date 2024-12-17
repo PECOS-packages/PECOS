@@ -28,30 +28,30 @@ updatereqs:  ## Generate/update lockfiles for both packages
 .PHONY: installreqs
 installreqs: ## Install Python project requirements to root .venv
 	@echo "Installing requirements..."
-	@unset CONDA_PREFIX && uv sync
+	uv sync
 
 # Building development environments
 # ---------------------------------
 .PHONY: build
 build: installreqs ## Compile and install for development
-	@unset CONDA_PREFIX && cd python/pecos-rslib/ && uv run maturin develop --uv
-	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .[all]
+	cd python/pecos-rslib/ && uv run maturin develop --uv
+	cd python/quantum-pecos && uv pip install -e .[all]
 
 .PHONY: build-basic
 build-basic: installreqs ## Compile and install for development but do not include install extras
-	@unset CONDA_PREFIX && cd python/pecos-rslib/ && uv run maturin develop --uv
-	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .
+	cd python/pecos-rslib/ && uv run maturin develop --uv
+	cd python/quantum-pecos && uv pip install -e .
 
 .PHONY: build-release
 build-release: installreqs ## Build a faster version of binaries
-	@unset CONDA_PREFIX && cd python/pecos-rslib/ && uv run maturin develop --uv --release
-	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .[all]
+	cd python/pecos-rslib/ && uv run maturin develop --uv --release
+	cd python/quantum-pecos && uv pip install -e .[all]
 
 .PHONY: build-native
 build-native: installreqs ## Build a faster version of binaries with native CPU optimization
-	@unset CONDA_PREFIX && cd python/pecos-rslib/ && RUSTFLAGS='-C target-cpu=native' \
+	cd python/pecos-rslib/ && RUSTFLAGS='-C target-cpu=native' \
 	&& uv run maturin develop --uv --release
-	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .[all]
+	cd python/quantum-pecos && uv pip install -e .[all]
 
 # Documentation
 # -------------

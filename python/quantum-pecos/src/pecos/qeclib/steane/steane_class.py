@@ -424,7 +424,9 @@ class Steane(Vars):
         )
         for var_a, var_b in zip(self.vars, other.vars):
             if isinstance(var_a, CReg):
-                block.extend(var_a.set(var_a ^ var_b))
-                block.extend(var_a.set(var_b ^ var_a))
-                block.extend(var_a.set(var_a ^ var_b))
+                block.extend(
+                    var_a.set(var_a ^ var_b),
+                    var_a.set(var_b ^ var_a),
+                    var_a.set(var_a ^ var_b),
+                )
         return block

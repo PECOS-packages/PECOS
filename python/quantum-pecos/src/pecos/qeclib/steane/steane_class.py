@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 from warnings import warn
 
 from pecos.qeclib.steane.decoders.lookup import (
-    FlagLookupQASMActiveCorrectionX,
     FlagLookupQASMActiveCorrectionZ,
 )
 from pecos.qeclib.steane.gates_sq import paulis, sqrt_paulis

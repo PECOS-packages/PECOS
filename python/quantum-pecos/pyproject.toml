@@ -80,7 +80,6 @@ wasm-all = [
     "quantum-pecos[wasmer]",  # TODO: avoid installing for 3.13 and adjust tests for this
 ]
 all = [
-    "quantum-pecos[guppy]",
     "quantum-pecos[simulators]",
     "quantum-pecos[wasm-all]",
     "quantum-pecos[visualization]",

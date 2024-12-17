@@ -502,14 +502,15 @@ class Steane(Vars):
         flag_bit = flag_bit or self.scratch.elems[7]
         return Block(
             aux.px(reject=reject, rus_limit=rus_limit),
-            self.cx(aux),
-            aux.mz(),
+            aux.cx(self),
+            self.mz(),
+            If(self.log).Then(aux.x()),
             self.syn_z.set(aux.syn_meas),
             If(self.syn_z != 0).Then(flag_bit.set(1)),
             self.last_raw_syn_z.set(0),
             self.pf_x.set(0),
             FlagLookupQASMActiveCorrectionZ(
-                self.d,
+                aux.d,
                 self.syn_z,
                 self.syndromes,
                 self.last_raw_syn_z,
@@ -518,6 +519,7 @@ class Steane(Vars):
                 self.syn_z,
                 self.scratch,
             ),
+            Permute(self.d, aux.d),
         )
 
     def qec_steane_x(
@@ -560,9 +562,10 @@ class Steane(Vars):
         flag_bit = flag_bit or self.scratch.elems[7]
         return Block(
             aux.pz(reject=reject, rus_limit=rus_limit),
-            aux.cx(self),
-            aux.mx(),
-            self.syn_x.set(aux.syn_meas),
+            self.cx(aux),
+            self.mx(),
+            If(self.log).Then(aux.z()),
+            self.syn_x.set(self.syn_meas),
             If(self.syn_x != 0).Then(flag_bit.set(1)),
             self.last_raw_syn_x.set(0),
             self.pf_z.set(0),
@@ -576,4 +579,5 @@ class Steane(Vars):
                 self.syn_x,
                 self.scratch,
             ),
+            Permute(self.d, aux.d),
         )

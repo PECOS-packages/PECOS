@@ -548,7 +548,7 @@ class Steane(Vars):
         flag_bit: Bit | None = None,
         rus_limit: int | None = None,
     ) -> Block:
-        """Run a teleportation-based error correction cycle for X errors."""
+        """Run a teleportation-based error correction cycle for Z errors."""
         block = Block(
             # teleport
             aux.pz(reject=reject, rus_limit=rus_limit),

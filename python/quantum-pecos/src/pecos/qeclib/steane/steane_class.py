@@ -162,7 +162,7 @@ class Steane(Vars):
                 d=self.d,
                 a=self.a,
                 out=self.scratch,
-                reject=self.scratch[2],  # the first two bits of self.scratch are used by "out"
+                reject=self.scratch[2],  # the first two bits are used by "out"
                 flag_x=self.flag_x,
                 flag_z=self.flag_z,
                 flags=self.flags,

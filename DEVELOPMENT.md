@@ -10,38 +10,14 @@ For developers who want to contribute or modify PECOS:
    cd PECOS
    ```
 
-3. Set up the development environment either using the `Makefile` (Note: for Windows to use the `Makefile` you may need to use a shell that has access to Linux commands such as utilizing [git bash](https://gitforwindows.org/)):
-   ```sh
-   make venv
-   ```
-   <details>
-   <summary>or manually set up a Python virtual environment for develop of this project's code.</summary>
-
-   On Linux/Mac:
+3. [Install `uv` for your system](https://docs.astral.sh/uv/getting-started/installation/).
+   And run the following at the root of the project to create a development environment, which will be stored in `.venv/`:
 
    ```sh
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install -U pip setuptools
-   pip install -r python/quantum-pecos/requirements.txt
-   make metadeps
-   pre-commit install
+   uv sync
    ```
 
-   On Windows:
-
-   ```sh
-   python -m venv .venv
-   .\venv\Scripts\activate
-   pip install -U pip setuptools
-   pip install -r python/quantum-pecos/requirements.txt
-   make metadeps
-   pre-commit install
-   ```
-   </details>
-
-
-4. When developing in the development environment, be sure to activate the venv:
+4. You may wish to explicitly activate the environment for development. To do so:
 
     On Linux/Mac:
     ```sh
@@ -50,9 +26,8 @@ For developers who want to contribute or modify PECOS:
 
     On Windows:
     ```sh
-    .\venv\Scripts\activate
+    .\.venv\Scripts\activate
     ```
-
 
 5. Build the project in editable mode
     ```sh
@@ -60,13 +35,11 @@ For developers who want to contribute or modify PECOS:
    ```
    See other build options in the `Makefile`.
 
-
 6. Run all Python and Rust tests:
    ```sh
    make test
    ```
    Note: Make sure you have run a build command before running tests.
-
 
 7. Run linters using pre-commit (after [installing it](https://pre-commit.com/)) to make sure all everything is properly linted/formated
    ```sh
@@ -77,5 +50,7 @@ For developers who want to contribute or modify PECOS:
     ```sh
     deactivate
     ```
+
+Before pull requests are merged, they must pass linting and the test.
 
 Note: For the Rust side of the project, you can use `cargo` to run tests, benchmarks, formatting, etc.

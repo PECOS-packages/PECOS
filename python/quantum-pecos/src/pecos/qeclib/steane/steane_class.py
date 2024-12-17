@@ -533,8 +533,9 @@ class Steane(Vars):
             If(self.log).Then(aux.x()),
             Permute(self.d, aux.d),
             # update syndromes and pauli frame
-            self.last_raw_syn_z.set(self.syn_meas),
             self.last_raw_syn_x.set(0),
+            self.last_raw_syn_z.set(0),
+            self.syn_z.set(self.syn_meas),
             self.pf_x.set(0),
         )
         if flag_bit is not None:
@@ -557,8 +558,9 @@ class Steane(Vars):
             If(self.log).Then(aux.z()),
             Permute(self.d, aux.d),
             # update syndromes and pauli frame
-            self.last_raw_syn_x.set(self.syn_meas),
+            self.last_raw_syn_x.set(0),
             self.last_raw_syn_z.set(0),
+            self.syn_x.set(self.syn_meas),
             self.pf_z.set(0),
         )
         if flag_bit is not None:

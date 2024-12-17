@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import linecache
+from textwrap import dedent
 from pecos.slr.vars import QReg
 
 
@@ -345,7 +347,10 @@ class GuppyGenerator:
 
         for q in op.qargs:
             if isinstance(q, QReg):
-                lines = [f"{repr_str}({qubit})" for qubit in q]
+                if angle is not None:
+                    lines = [f"{repr_str}({qubit}, {angle})" for qubit in q]
+                else:
+                    lines = [f"{repr_str}({qubit})" for qubit in q]
                 str_list.extend(lines)
 
             elif isinstance(q, tuple):
@@ -481,3 +486,25 @@ def process_permute(op):
         return "# Permuting: " + ", ".join(qstr)
     else:
         return ""
+
+
+def run_guppy_from_str(code_string):
+    """
+    Creates and evaluate a GuppyModule from a string of code.
+    """
+    code_string = dedent(code_string).strip() + '\n'
+    filename = "<guppy-string>"
+
+    linecache.cache[filename] = (
+        len(code_string),
+        None,
+        code_string.splitlines(keepends=True),
+        filename
+    )
+
+    # Execute the code
+    namespace = {}
+    code = compile(code_string, filename, 'exec')
+    exec(code, namespace, namespace)
+
+    return namespace['mod']

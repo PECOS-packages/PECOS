@@ -80,6 +80,7 @@ wasm-all = [
     "quantum-pecos[wasmer]",  # TODO: avoid installing for 3.13 and adjust tests for this
 ]
 all = [
+    "quantum-pecos[guppy]",
     "quantum-pecos[simulators]",
     "quantum-pecos[wasm-all]",
     "quantum-pecos[visualization]",
@@ -103,9 +104,6 @@ wasmer = [
 #    "custatevec>=1.6.0",
 #    "pytket-cutensornet>=0.7.0",
 #]
-
-[tool.uv]
-default-groups = ["dev", "test"]
 
 [tool.uv.sources]
 pecos-rslib = { workspace = true }

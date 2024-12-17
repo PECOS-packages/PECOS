@@ -11,13 +11,15 @@
 
 from pecos.qeclib.steane.steane_class import Steane
 from pecos.slr import Barrier, CReg, If, Main
+from pecos.slr.gen_codes.gen_guppy import GuppyGenerator
+# from pecos.slr.gen_codes.gen_hugr import HUGRGenerator
 
 # ruff: noqa: INP001
 # Turn of Black's formatting to allow for newline spacing below:
 # fmt: off
 
 
-def telep(prep_basis: str, meas_basis: str) -> str:
+def telep(prep_basis: str, meas_basis: str) -> Main:
     """A simple example of creating a logical teleportation circuit.
 
     Args:
@@ -69,10 +71,14 @@ def telep(prep_basis: str, meas_basis: str) -> str:
         sout.m(meas_basis, m_out[0]),
     )
 
-    return prog.qasm()  # Convert the program to extended OpenQASM 2.0
+    return prog
 
 
-def t_gate(prep_basis: str, meas_basis: str) -> str:
+prog = telep("+X", "X")
+tel_qasm_str = prog.qasm()  # Convert the program to extended OpenQASM 2.0
+tel_guppy_str = prog.gen(GuppyGenerator())  # Convert the program to a guppy file
+
+def t_gate(prep_basis: str, meas_basis: str) -> Main:
     """A simple example of teleporting a T gate on a state.
 
     Args:
@@ -117,6 +123,11 @@ def t_gate(prep_basis: str, meas_basis: str) -> str:
         sin.m(meas_basis, m_out[1]),
     )
 
-    return prog.qasm()
+    return prog
+
+prog = t_gate("+X", "X")
+t_qasm_str = prog.qasm()  # Convert the program to extended OpenQASM 2.0
+t_guppy_str = prog.gen(GuppyGenerator())  # Convert the program to a guppy file
+# hugr_json = prog.Gen(HUGRGenerator())
 
 # fmt: on

@@ -284,9 +284,9 @@ class Steane(Vars):
         return Block(
             aux.nonft_prep_t_plus_state(),
             aux.cx(self),
-            Permute(self.d, aux.d),
             aux.mz(self.t_meas),
-            If(self.t_meas == 1).Then(self.x(), self.sz()),
+            If(self.t_meas == 1).Then(aux.x(), aux.sz()),
+            Permute(self.d, aux.d),
         )
 
     def t_tel(
@@ -307,9 +307,9 @@ class Steane(Vars):
         return Block(
             aux.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
             aux.cx(self),
+            self.mz(self.t_meas),
+            If(self.t_meas == 1).Then(aux.x(), aux.sz()),  # SZ/S correction.
             Permute(self.d, aux.d),
-            aux.mz(self.t_meas),
-            If(self.t_meas == 1).Then(self.x(), self.sz()),  # SZ/S correction.
         )
 
     def nonft_tdg_tel(self, aux: Steane):
@@ -325,9 +325,9 @@ class Steane(Vars):
         return Block(
             aux.nonft_prep_tdg_plus_state(),
             aux.cx(self),
+            self.mz(self.tdg_meas),
+            If(self.tdg_meas == 1).Then(aux.x(), aux.szdg()),
             Permute(self.d, aux.d),
-            aux.mz(self.tdg_meas),
-            If(self.tdg_meas == 1).Then(self.x(), self.szdg()),
         )
 
     def tdg_tel(
@@ -348,9 +348,9 @@ class Steane(Vars):
         return Block(
             aux.prep_tdg_plus_state(reject=reject, rus_limit=rus_limit),
             aux.cx(self),
+            self.mz(self.tdg_meas),
+            If(self.t_meas == 1).Then(aux.x(), aux.szdg()),  # SZdg/Sdg correction.
             Permute(self.d, aux.d),
-            aux.mz(self.tdg_meas),
-            If(self.t_meas == 1).Then(self.x(), self.szdg()),  # SZdg/Sdg correction.
         )
 
     def t_cor(
@@ -365,21 +365,29 @@ class Steane(Vars):
         Applies active corrections of errors diagnozed by the measurement for gate teleportation.
         """
         warn("Using experimental feature: t_cor", stacklevel=2)
+        flag = flag or self.scratch.elems[7]
         return Block(
-            self.t(aux, reject, rus_limit),
-            If(aux.syn_meas != 0).Then(flag.set(1)),
+            # gate teleportation without logical correction
+            aux.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
+            self.cx(aux),
+            aux.mz(self.t_meas),
+            # active error correction
+            self.syn_z.set(aux.syn_meas),
+            If(self.syn_z != 0).Then(flag.set(1)),
             self.last_raw_syn_z.set(0),
             self.pf_x.set(0),
             FlagLookupQASMActiveCorrectionZ(
                 self.d,
-                aux.syn_meas,
+                self.syn_z,
                 self.syndromes,
                 self.last_raw_syn_z,
                 self.pf_x,
                 flag,
-                aux.syn_meas,
+                self.syn_z,
                 self.scratch,
             ),
+            # logical correction
+            If(self.t_meas == 1).Then(self.sz()),
         )
 
     def tdg_cor(
@@ -394,6 +402,7 @@ class Steane(Vars):
         Applies active corrections of errors diagnozed by the measurement for gate teleportation.
         """
         warn("Using experimental feature: t_cor", stacklevel=2)
+        flag = flag or self.scratch.elems[7]
         return Block(
             self.tdg(aux, reject, rus_limit),
             If(aux.syn_meas != 0).Then(flag.set(1)),
@@ -426,6 +435,7 @@ class Steane(Vars):
         Applies active corrections of errors diagnozed by the measurement for gate teleportation.
         """
         warn("Using experimental feature: t_cor", stacklevel=2)
+        flag = flag or self.scratch.elems[7]
         return Block(
             self.t_tel(aux, reject, rus_limit),
             If(aux.syn_meas != 0).Then(flag.set(1)),
@@ -458,6 +468,7 @@ class Steane(Vars):
         Applies active corrections of errors diagnozed by the measurement for gate teleportation.
         """
         warn("Using experimental feature: t_cor", stacklevel=2)
+        flag = flag or self.scratch.elems[7]
         return Block(
             self.tdg_tel(aux, reject, rus_limit),
             If(aux.syn_meas != 0).Then(flag.set(1)),

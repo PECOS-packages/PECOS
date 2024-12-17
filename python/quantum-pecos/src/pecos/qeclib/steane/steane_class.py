@@ -160,13 +160,14 @@ class Steane(Vars):
         rus_limit: int | None = None,
     ):
         """Prepare logical T|+X> in a fault tolerant manner."""
-        block = Block(
+        reject = reject or self.scratch[2]  # the first two scratch bits are used by "out"
+        return Block(
             self.scratch.set(0),
             PrepEncodeTPlusFTRUS(
                 d=self.d,
                 a=self.a,
                 out=self.scratch,
-                reject=self.scratch[2],  # the first two bits of self.scratch are used by "out"
+                reject=reject,
                 flag_x=self.flag_x,
                 flag_z=self.flag_z,
                 flags=self.flags,
@@ -175,9 +176,6 @@ class Steane(Vars):
                 limit=rus_limit or self.default_rus_limit,
             ),
         )
-        if reject is not None:
-            block.extend(reject.set(self.scratch[2]))
-        return block
 
     def nonft_prep_tdg_plus_state(self):
         """Prepare logical Tdg|+X> in a non-fault tolerant manner."""
@@ -433,8 +431,12 @@ class Steane(Vars):
     ) -> Block:
         """Run a Steane-type error-correction cycle of this code."""
         return Block(
-            self.qec_steane_z(aux, reject=reject_z, flag_bit=flag_bit_z, rus_limit=rus_limit),
-            self.qec_steane_x(aux, reject=reject_x, flag_bit=flag_bit_x, rus_limit=rus_limit),
+            self.qec_steane_z(
+                aux, reject=reject_z, flag_bit=flag_bit_z, rus_limit=rus_limit
+            ),
+            self.qec_steane_x(
+                aux, reject=reject_x, flag_bit=flag_bit_x, rus_limit=rus_limit
+            ),
         )
 
     def qec_steane_tel(
@@ -448,8 +450,12 @@ class Steane(Vars):
     ) -> Block:
         """Run a Steane-type error-correction cycle of this code with one-bit teleportation."""
         return Block(
-            self.qec_steane_z_tel(aux, reject=reject_z, flag_bit=flag_bit_z, rus_limit=rus_limit),
-            self.qec_steane_x_tel(aux, reject=reject_x, flag_bit=flag_bit_x, rus_limit=rus_limit),
+            self.qec_steane_z_tel(
+                aux, reject=reject_z, flag_bit=flag_bit_z, rus_limit=rus_limit
+            ),
+            self.qec_steane_x_tel(
+                aux, reject=reject_x, flag_bit=flag_bit_x, rus_limit=rus_limit
+            ),
         )
 
     def qec_steane_z(

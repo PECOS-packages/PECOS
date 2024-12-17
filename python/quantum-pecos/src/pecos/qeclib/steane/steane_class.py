@@ -166,9 +166,7 @@ class Steane(Vars):
                 d=self.d,
                 a=self.a,
                 out=self.scratch,
-                reject=self.scratch[
-                    2
-                ],  # the first two bits of self.scratch are used by "out"
+                reject=self.scratch[2],  # the first two bits of self.scratch are used by "out"
                 flag_x=self.flag_x,
                 flag_z=self.flag_z,
                 flags=self.flags,
@@ -435,12 +433,8 @@ class Steane(Vars):
     ) -> Block:
         """Run a Steane-type error-correction cycle of this code."""
         return Block(
-            self.qec_steane_z(
-                aux, reject=reject_z, flag_bit=flag_bit_z, rus_limit=rus_limit
-            ),
-            self.qec_steane_x(
-                aux, reject=reject_x, flag_bit=flag_bit_x, rus_limit=rus_limit
-            ),
+            self.qec_steane_z(aux, reject=reject_z, flag_bit=flag_bit_z, rus_limit=rus_limit),
+            self.qec_steane_x(aux, reject=reject_x, flag_bit=flag_bit_x, rus_limit=rus_limit),
         )
 
     def qec_steane_tel(
@@ -454,12 +448,8 @@ class Steane(Vars):
     ) -> Block:
         """Run a Steane-type error-correction cycle of this code with one-bit teleportation."""
         return Block(
-            self.qec_steane_z_tel(
-                aux, reject=reject_z, flag_bit=flag_bit_z, rus_limit=rus_limit
-            ),
-            self.qec_steane_x_tel(
-                aux, reject=reject_x, flag_bit=flag_bit_x, rus_limit=rus_limit
-            ),
+            self.qec_steane_z_tel(aux, reject=reject_z, flag_bit=flag_bit_z, rus_limit=rus_limit),
+            self.qec_steane_x_tel(aux, reject=reject_x, flag_bit=flag_bit_x, rus_limit=rus_limit),
         )
 
     def qec_steane_z(

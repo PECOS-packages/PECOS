@@ -485,18 +485,45 @@ class Steane(Vars):
             aux.px(reject=reject, rus_limit=rus_limit),
             self.cx(aux),
             aux.mz(),
-            self.syn_z.set(aux.syn_meas),
-            If(self.syn_z != 0).Then(flag_bit.set(1)),
+            If(aux.syn_meas != 0).Then(flag_bit.set(1)),
             self.last_raw_syn_z.set(0),
             self.pf_x.set(0),
             FlagLookupQASMActiveCorrectionZ(
                 self.d,
-                self.syn_z,
+                aux.syn_meas,
                 self.syndromes,
                 self.last_raw_syn_z,
                 self.pf_x,
                 flag_bit,
-                self.syn_z,
+                aux.syn_meas,
+                self.scratch,
+            ),
+        )
+
+    def qec_steane_x(
+        self,
+        aux: Steane,
+        reject: Bit | None = None,
+        flag_bit: Bit | None = None,
+        rus_limit: int | None = None,
+    ) -> Block:
+        """Run a Steane-type error-correction cycle for X stabilizers (Z errors)."""
+        flag_bit = flag_bit or self.scratch.elems[7]
+        return Block(
+            aux.pz(reject=reject, rus_limit=rus_limit),
+            aux.cx(self),
+            aux.mx(),
+            If(aux.syn_meas != 0).Then(flag_bit.set(1)),
+            self.last_raw_syn_x.set(0),
+            self.pf_z.set(0),
+            FlagLookupQASMActiveCorrectionX(
+                self.d,
+                aux.syn_meas,
+                self.syndromes,
+                self.last_raw_syn_x,
+                self.pf_z,
+                flag_bit,
+                aux.syn_meas,
                 self.scratch,
             ),
         )
@@ -515,50 +542,20 @@ class Steane(Vars):
             aux.cx(self),
             self.mz(),
             If(self.log).Then(aux.x()),
-            self.syn_z.set(aux.syn_meas),
-            If(self.syn_z != 0).Then(flag_bit.set(1)),
+            If(aux.syn_meas != 0).Then(flag_bit.set(1)),
             self.last_raw_syn_z.set(0),
             self.pf_x.set(0),
             FlagLookupQASMActiveCorrectionZ(
                 aux.d,
-                self.syn_z,
+                aux.syn_meas,
                 self.syndromes,
                 self.last_raw_syn_z,
                 self.pf_x,
                 flag_bit,
-                self.syn_z,
+                aux.syn_meas,
                 self.scratch,
             ),
             Permute(self.d, aux.d),
-        )
-
-    def qec_steane_x(
-        self,
-        aux: Steane,
-        reject: Bit | None = None,
-        flag_bit: Bit | None = None,
-        rus_limit: int | None = None,
-    ) -> Block:
-        """Run a Steane-type error-correction cycle for X stabilizers (Z errors)."""
-        flag_bit = flag_bit or self.scratch.elems[7]
-        return Block(
-            aux.pz(reject=reject, rus_limit=rus_limit),
-            aux.cx(self),
-            aux.mx(),
-            self.syn_x.set(aux.syn_meas),
-            If(self.syn_x != 0).Then(flag_bit.set(1)),
-            self.last_raw_syn_x.set(0),
-            self.pf_z.set(0),
-            FlagLookupQASMActiveCorrectionX(
-                self.d,
-                self.syn_x,
-                self.syndromes,
-                self.last_raw_syn_x,
-                self.pf_z,
-                flag_bit,
-                self.syn_x,
-                self.scratch,
-            ),
         )
 
     def qec_steane_x_tel(
@@ -575,18 +572,17 @@ class Steane(Vars):
             self.cx(aux),
             self.mx(),
             If(self.log).Then(aux.z()),
-            self.syn_x.set(self.syn_meas),
-            If(self.syn_x != 0).Then(flag_bit.set(1)),
+            If(self.syn_meas != 0).Then(flag_bit.set(1)),
             self.last_raw_syn_x.set(0),
             self.pf_z.set(0),
             FlagLookupQASMActiveCorrectionX(
                 self.d,
-                self.syn_x,
+                self.syn_meas,
                 self.syndromes,
                 self.last_raw_syn_x,
                 self.pf_z,
                 flag_bit,
-                self.syn_x,
+                self.syn_meas,
                 self.scratch,
             ),
             Permute(self.d, aux.d),

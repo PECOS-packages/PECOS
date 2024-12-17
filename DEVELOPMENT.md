@@ -10,19 +10,14 @@ For developers who want to contribute or modify PECOS:
    cd PECOS
    ```
 
-3. It is recommended to [install uv for your system](https://docs.astral.sh/uv/getting-started/installation/).
-   After installing `uv`, run following from the root of the project (this will create a `.venv/` that will house the virtual environment):
+3. [Install `uv` for your system](https://docs.astral.sh/uv/getting-started/installation/).
+   And run the following at the root of the project to create a development environment, which will be stored in `.venv/`:
 
    ```sh
    uv sync
    ```
 
-   Alternatively, you can use the `Makefile` to use your system's Python to install uv and set up the virtual environment (Note: for Windows to use the `Makefile` you may need to use a shell that has access to Linux commands such as utilizing [git bash](https://gitforwindows.org/)):
-   ```sh
-    make venv
-   ```
-
-4. Once setup, you can use the virtual environment to develop. To so activate it as follows:
+4. You may wish to explicitly activate the environment for development. To do so:
 
     On Linux/Mac:
     ```sh

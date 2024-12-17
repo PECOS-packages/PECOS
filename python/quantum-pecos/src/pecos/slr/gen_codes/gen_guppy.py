@@ -11,20 +11,20 @@
 
 from __future__ import annotations
 
-from pecos import __version__
 from pecos.slr.vars import QReg
 
 
-class QASMGenerator:
+class GuppyGenerator:
     def __init__(self, includes: list[str] | None = None, add_versions=True):
         self.output = []
         self.current_scope = None
         self.includes = includes
         self.cond = None
         self.add_versions = add_versions
+        self.indent = 0
 
     def write(self, line):
-        self.output.append(line)
+        self.output.append("    " * self.indent + line)
 
     def enter_block(self, block):
         previous_scope = self.current_scope
@@ -32,20 +32,32 @@ class QASMGenerator:
 
         block_name = type(block).__name__
 
-        # self.output.append("# Entering new block")
         if block_name == "Main":
-            self.write("OPENQASM 2.0;")
-            if self.includes:
-                for inc in self.includes:
-                    self.write(f'include "{str(inc)}";')
-            else:
-                # TODO: dump definitions in for things that are used instead of using includes
-                self.write('include "hqslib1.inc";')
-            if self.add_versions:
-                self.write(f"// Generated using: PECOS version {__version__}")
+            self.write("import guppylang")
+            self.write("from guppylang import guppy")
+            self.write("from guppylang import GuppyModule")
+            self.write("import pecos.qeclib.guppy.func_helpers")
+            self.write("")
+            self.write("mod = GuppyModule(\"mod\")")
+            self.write("mod.load_all(guppylang.std.quantum)")
+            self.write("mod.load_all(guppylang.std.builtins)")
+            self.write("mod.load_all(guppylang.std.angles)")
+            self.write("mod.load_all(pecos.qeclib.guppy.func_helpers.func_helpers)")
+            self.write("")
+            self.write("guppylang.enable_experimental_features()")
+            self.write("")
+            self.write("@guppy(mod)")
+            self.write("def main() -> None:")
+            self.indent += 1
+
             for var in block.vars:
-                var_def = self.process_var_def(var)
-                self.write(var_def)
+                if type(var).__name__ == "CReg":
+                    arr = [0] * var.size
+                    self.write(f"{var.sym} = {str(arr)}")
+                elif type(var).__name__ == "QReg":
+                    arr = ["qubit()"] * var.size
+                    arr = ", ".join(arr)
+                    self.write(f"{var.sym} = [{arr}]")
 
             for op in block.ops:
                 op_name = type(op).__name__
@@ -53,6 +65,15 @@ class QASMGenerator:
                     for var in op.vars:
                         var_def = self.process_var_def(var)
                         self.write(var_def)
+        elif block_name == "If":
+            self.cond = self.generate_op(block.cond)
+            cond = self.cond
+            if cond.startswith("(") and cond.endswith(")"):
+                cond = cond[1:-1]
+            self.write(f"if({cond}):")
+            self.indent += 1
+            # pass
+
         return previous_scope
 
     def process_var_def(self, var):
@@ -60,8 +81,22 @@ class QASMGenerator:
         return f"{var_type.lower()} {var.sym}[{var.size}];"
 
     def exit_block(self, block):
-        # self.output.append("# Exiting block")
-        pass
+        block_name = type(block).__name__
+        if block_name == "Main":
+            for var in block.vars:
+                if type(var).__name__ == "CReg":
+                    self.write(f"result(\"{var.sym}\", bool_list2int({var.sym}))")
+
+                elif type(var).__name__ == "QReg":
+                    self.write(f"for _q in {var.sym}:")
+                    self.indent += 1
+                    self.write("discard(_q)")
+                    self.indent -= 1
+
+            self.indent -= 1
+        elif block_name == "If":
+            self.indent -= 1
+            # pass
 
     def generate_block(self, block):
         previous_scope = self.enter_block(block)
@@ -69,8 +104,6 @@ class QASMGenerator:
         block_name = type(block).__name__
 
         if block_name == "If":
-            # self.cond = block.cond.qasm()
-            self.cond = self.generate_op(block.cond)
             self.block_op_loop(block)
             self.cond = None
 
@@ -109,7 +142,7 @@ class QASMGenerator:
             else:
                 qubits = op.qregs
 
-            op_str = f"barrier {qubits};"
+            op_str = f"# barrier {qubits};"
         elif op_name == "Comment":
             txt = op.txt.split("\n")
             if op.space:
@@ -117,8 +150,9 @@ class QASMGenerator:
             if not op.newline:
                 txt = [f"<same_line>{t}" if t.strip() != "" else t for t in txt]
 
-            txt = [f"//{t}" if t.strip() != "" else t for t in txt]
-            op_str = "\n".join(txt)
+            txt = [f"#{t}" if t.strip() != "" else t for t in txt]
+            sp = "    " * self.indent
+            op_str = f"\n{sp}".join(txt)
 
         elif op_name == "Permute":
             op_str = process_permute(op)
@@ -177,9 +211,8 @@ class QASMGenerator:
             raise NotImplementedError(msg)
 
         if self.cond and stat and op_str:
-            cond = self.cond
-            if cond.startswith("(") and cond.endswith(")"):
-                cond = cond[1:-1]
+            sp = "    " * self.indent
+
             op_list = op_str.split("\n")
             op_new = []
             for o in op_list:
@@ -188,11 +221,16 @@ class QASMGenerator:
                     for qi in o.split(";"):
                         qi = qi.strip()
                         if qi != "" and not qi.startswith("//"):
-                            op_new.append(f"if({cond}) {qi};")
+                            if "barrier" in qi:
+                                # op_new.append(f"#if({cond}):\n{sp}#    {qi}")
+                                op_new.append(f"{qi}")
+                            else:
+                                # op_new.append(f"if({cond}):\n{sp}    {qi}")
+                                op_new.append(f"{qi}")
                 else:
                     op_new.append(o)
 
-            op_str = "\n".join(op_new)
+            op_str = f"\n{sp}".join(op_new)
 
         return op_str
 
@@ -200,7 +238,6 @@ class QASMGenerator:
         sym = op.sym
         if op.qsize == 2:
             match sym:
-                # TODO: Fix this... These are not qasm gates
                 case "SXX":
                     op_str = self.qgate_tq_qasm(op, "SXX")
                 case "SYY":
@@ -219,42 +256,46 @@ class QASMGenerator:
         else:
             match sym:
                 case "Measure":
-                    op_str = " ".join(
-                        [
-                            f"measure {str(q)} -> {c};"
-                            for q, c in zip(op.qargs, op.cout, strict=True)
-                        ],
-                    )
+
+                    temp = []
+                    for q, c in zip(op.qargs, op.cout, strict=True):
+                        qsym = q.reg.sym
+                        qi = q.index
+                        ci = c.index
+                        csym = c.reg.sym
+                        temp.append(f"measure_to_bit({qsym}, {qi}, {csym}, {ci})")
+
+                    op_str = " ".join(temp)
 
                 case "F":
                     op_str = "\n".join(
                         [
-                            self.qgate_sq_qasm(op, "rx(pi/2)"),
-                            self.qgate_sq_qasm(op, "rz(pi/2)"),
+                            self.qgate_sq_qasm(op, "rx", "pi/2"),
+                            self.qgate_sq_qasm(op, "rz", "pi/2"),
                         ],
                     )
 
                 case "Fdg":
                     op_str = "\n".join(
                         [
-                            self.qgate_sq_qasm(op, "ry(-pi/2)"),
-                            self.qgate_sq_qasm(op, "rz(-pi/2)"),
+                            self.qgate_sq_qasm(op, "ry", "-pi/2"),
+                            self.qgate_sq_qasm(op, "rz", "-pi/2"),
                         ],
                     )
 
                 case "F4":
                     op_str = "\n".join(
                         [
-                            self.qgate_sq_qasm(op, "ry(-pi/2)"),
-                            self.qgate_sq_qasm(op, "rz(pi/2)"),
+                            self.qgate_sq_qasm(op, "ry", "-pi/2"),
+                            self.qgate_sq_qasm(op, "rz", "pi/2"),
                         ],
                     )
 
                 case "F4dg":
                     op_str = "\n".join(
                         [
-                            self.qgate_sq_qasm(op, "rx(-pi/2)"),
-                            self.qgate_sq_qasm(op, "rz(-pi/2)"),
+                            self.qgate_sq_qasm(op, "rx", "-pi/2"),
+                            self.qgate_sq_qasm(op, "rz", "-pi/2"),
                         ],
                     )
 
@@ -262,35 +303,35 @@ class QASMGenerator:
                     op_str = self.qgate_sq_qasm(op, "reset")
 
                 case "T":
-                    op_str = self.qgate_sq_qasm(op, "rz(pi/4)")
+                    op_str = self.qgate_sq_qasm(op, "rz", "pi/4")
 
                 case "Tdg":
-                    op_str = self.qgate_sq_qasm(op, "rz(-pi/4)")
+                    op_str = self.qgate_sq_qasm(op, "rz", "-pi/4")
 
                 case "SX":
-                    op_str = self.qgate_sq_qasm(op, "rx(pi/2)")
+                    op_str = self.qgate_sq_qasm(op, "rx", "pi/2")
 
                 case "SY":
-                    op_str = self.qgate_sq_qasm(op, "ry(pi/2)")
+                    op_str = self.qgate_sq_qasm(op, "ry", "pi/2")
 
                 case "SZ":
-                    op_str = self.qgate_sq_qasm(op, "rz(pi/2)")
+                    op_str = self.qgate_sq_qasm(op, "rz", "pi/2")
 
                 case "SXdg":
-                    op_str = self.qgate_sq_qasm(op, "rx(-pi/2)")
+                    op_str = self.qgate_sq_qasm(op, "rx", "-pi/2")
 
                 case "SYdg":
-                    op_str = self.qgate_sq_qasm(op, "ry(-pi/2)")
+                    op_str = self.qgate_sq_qasm(op, "ry", "-pi/2")
 
                 case "SZdg":
-                    op_str = self.qgate_sq_qasm(op, "rz(-pi/2)")
+                    op_str = self.qgate_sq_qasm(op, "rz", "-pi/2")
 
                 case _:
                     op_str = self.qgate_sq_qasm(op)
 
         return op_str
 
-    def qgate_sq_qasm(self, op, repr_str: str | None = None):
+    def qgate_sq_qasm(self, op, repr_str: str | None = None, angle: str | None = None):
         if op.qsize != 1:
             msg = "qgate_qasm only supports single qubit gates"
             raise Exception(msg)
@@ -298,15 +339,13 @@ class QASMGenerator:
         if repr_str is None:
             repr_str = op.sym.lower()
 
-        if op.params:
-            str_cargs = ", ".join([str(p) for p in op.params])
-            repr_str = f"{repr_str}({str_cargs})"
+        sp = "    " * self.indent
 
         str_list = []
 
         for q in op.qargs:
             if isinstance(q, QReg):
-                lines = [f"{repr_str} {qubit};" for qubit in q]
+                lines = [f"{repr_str}({qubit})" for qubit in q]
                 str_list.extend(lines)
 
             elif isinstance(q, tuple):
@@ -314,17 +353,25 @@ class QASMGenerator:
                     msg = f"Expected size {op.qsize} got size {len(q)}"
                     raise Exception(msg)
                 qs = ",".join([str(qi) for qi in q])
-                str_list.append(f"{repr_str} {qs};")
+                if angle is not None:
+                    str_list.append(f"{repr_str}({qs}, {angle})")
+                else:
+                    str_list.append(f"{repr_str}({qs})")
 
             else:
-                str_list.append(f"{repr_str} {q};")
+                if angle is not None:
+                    str_list.append(f"{repr_str}({q}, {angle})")
+                else:
+                    str_list.append(f"{repr_str}({q})")
 
-        return "\n".join(str_list)
+        return f"\n{sp}".join(str_list)
 
     def qgate_tq_qasm(self, op, repr_str: str | None = None):
         if op.qsize != 2:
             msg = "qgate_tq_qasm only supports single qubit gates"
             raise Exception(msg)
+
+        sp = "    " * self.indent
 
         if repr_str is None:
             repr_str = op.sym.lower()
@@ -341,29 +388,48 @@ class QASMGenerator:
         for q in op.qargs:
             if isinstance(q, tuple):
                 q1, q2 = q
-                str_list.append(f"{repr_str} {str(q1)}, {str(q2)};")
+                str_list.append(f"{repr_str}({str(q1)}, {str(q2)})")
             else:
                 msg = f"For TQ gate, expected args to be a collection of size two tuples! Got: {op.qargs}"
                 raise TypeError(msg)
 
-        return "\n".join(str_list)
+        return f"\n{sp}".join(str_list)
 
     def process_set(self, op):
+        # TODO: make sure all combinations of a[0] and a on both sides works
+
         right_qasm = (
             op.right.qasm() if hasattr(op.right, "qasm") else self.generate_op(op.right)
         )
         if right_qasm.startswith("(") and right_qasm.endswith(")"):
             right_qasm = right_qasm[1:-1]
-        return f"{op.left} = {right_qasm};"
+
+        c = op.left
+        if type(c).__name__ == "CReg":
+            if isinstance(op.right, int):
+                op_str = f"{c} = int2bool_list({op.right}, {c.size})"
+            elif type(op.right).__name__ == "CReg":
+                op_str = f"{c} = {right_qasm}\n"
+            else:
+                op_str = f"{c} = int2bool_list({right_qasm}, {c.size})"
+
+        else:
+            op_str = f"list_insert_int({c.reg.sym}, {c.index}, {right_qasm})"
+
+        return op_str
 
     def process_general_binary_op(self, op):
-        left_qasm = (
-            op.left.qasm() if hasattr(op.left, "qasm") else self.generate_op(op.left)
-        )
-        right_qasm = (
-            op.right.qasm() if hasattr(op.right, "qasm") else self.generate_op(op.right)
-        )
-        return f"({left_qasm} {op.symbol} {right_qasm})"
+        if type(op.left).__name__ == "CReg":
+            left_str = f"bool_list2int({op.left.sym})"
+        else:
+            left_str = op.left.qasm() if hasattr(op.left, "qasm") else self.generate_op(op.left)
+
+        if type(op.right).__name__ == "CReg":
+            right_str = f"bool_list2int({op.right.sym})"
+        else:
+            right_str = op.right.qasm() if hasattr(op.right, "qasm") else self.generate_op(op.right)
+
+        return f"({left_str} {op.symbol} {right_str})"
 
     def process_general_unary_op(self, op):
         right_qasm = (
@@ -412,6 +478,6 @@ def process_permute(op):
         qstr = []
         for ei, ej in zip(op.elems_i, op.elems_f, strict=True):
             qstr.append(f"{ei} -> {ej}")
-        return "// Permuting: " + ", ".join(qstr)
+        return "# Permuting: " + ", ".join(qstr)
     else:
         return ""

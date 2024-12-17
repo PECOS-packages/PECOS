@@ -18,6 +18,7 @@ name = "quantum-pecos"
 version = "0.6.0.dev8"
 authors = [
     {name = "The PECOS Developers"},
+    {name = "Ciaran Ryan-Anderson<ciaranra@gmail.com>"},
 ]
 maintainers =[
     {name = "Ciaran Ryan-Anderson", email = "ciaranra@gmail.com"},
@@ -56,9 +57,12 @@ documentation = "https://quantum-pecos.readthedocs.io"
 repository = "https://github.com/PECOS-packages/PECOS"
 
 [project.optional-dependencies]
+guppy = [
+    "guppylang ~= 0.13.0",
+]
 projectq = [  # State-vector sims using ProjectQ
     "pybind11>=2.2.3",
-    "projectq",
+    "projectq>=0.5",
 ]
 wasmtime = [
     "wasmtime>=13.0"
@@ -66,28 +70,20 @@ wasmtime = [
 visualization = [
     "plotly~=5.9.0",
 ]
-tests = [
-    "pytest>=5.0.0,<8.3.4",  # 8.3.4 seems to be causing errors
-    "pytest-cov",
-    "hypothesis",
-]
 simulators = [
     "quantum-pecos[projectq]",
     "quantum-pecos[qulacs]; python_version < '3.13'",
     "quantum-pecos[pyquest]; python_version < '3.13'",
 ]
-wasm = [
+wasm-all = [
     "quantum-pecos[wasmtime]",
     "quantum-pecos[wasmer]",  # TODO: avoid installing for 3.13 and adjust tests for this
 ]
 all = [
-    "quantum-pecos[projectq]",
-    "quantum-pecos[wasmtime]",
+    "quantum-pecos[guppy]",
+    "quantum-pecos[simulators]",
+    "quantum-pecos[wasm-all]",
     "quantum-pecos[visualization]",
-    "quantum-pecos[tests]",
-    "quantum-pecos[qulacs]; python_version < '3.13'",
-    "quantum-pecos[pyquest]; python_version < '3.13'",
-    "quantum-pecos[wasmer]",  # TODO: avoid installing for 3.13 and adjust tests for this
 ]
 # The following only work for some environments/Python verions:
 qulacs = [  # State-vector sims using Qulacs
@@ -100,13 +96,20 @@ wasmer = [
     "wasmer~=1.1.0", # Package not currently compatible with Python 3.13
     "wasmer_compiler_cranelift~=1.1.0",
 ]
-cuda = [
-    # CUDA dependencies. See README.md
-    "cupy>=10.4.0",
-    "cuquantum-python>=24.03.0",
-    "custatevec>=1.6.0",
-    "pytket-cutensornet>=0.7.0",
-]
+
+## CUDA dependencies. See README.md
+#cuda = [
+#    "cupy>=10.4.0",
+#    "cuquantum-python>=24.03.0",
+#    "custatevec>=1.6.0",
+#    "pytket-cutensornet>=0.7.0",
+#]
+
+[tool.uv]
+default-groups = ["dev", "test"]
+
+[tool.uv.sources]
+pecos-rslib = { workspace = true }
 
 [tool.hatch.metadata]
 allow-direct-references = true

@@ -336,8 +336,20 @@ if(saux_flags == 0) saux_flags = saux_flag_x | saux_flags_z;
 
 saux_scratch[2] = (((saux_scratch[0] | saux_scratch[1]) | saux_flags[0]) | saux_flags[1]) | saux_flags[2];
 
-rx(-pi/2) saux_d;
-rz(-pi/2) saux_d;
+rx(-pi/2) saux_d[0];
+rx(-pi/2) saux_d[1];
+rx(-pi/2) saux_d[2];
+rx(-pi/2) saux_d[3];
+rx(-pi/2) saux_d[4];
+rx(-pi/2) saux_d[5];
+rx(-pi/2) saux_d[6];
+rz(-pi/2) saux_d[0];
+rz(-pi/2) saux_d[1];
+rz(-pi/2) saux_d[2];
+rz(-pi/2) saux_d[3];
+rz(-pi/2) saux_d[4];
+rz(-pi/2) saux_d[5];
+rz(-pi/2) saux_d[6];
 m_reject[0] = saux_scratch[2];
 // Transversal Logical CX
 barrier sin_d, saux_d;
@@ -850,8 +862,20 @@ if(saux_scratch[2] != 0) saux_flag_x[2] = saux_flag_x[2] ^ saux_last_raw_syn_x[2
 if(saux_scratch[2] != 0) saux_flags = saux_flag_x | saux_flags_z;
 
 if(saux_scratch[2] != 0) saux_scratch[2] = (((saux_scratch[0] | saux_scratch[1]) | saux_flags[0]) | saux_flags[1]) | saux_flags[2];
-rx(-pi/2) saux_d;
-rz(-pi/2) saux_d;
+rx(-pi/2) saux_d[0];
+rx(-pi/2) saux_d[1];
+rx(-pi/2) saux_d[2];
+rx(-pi/2) saux_d[3];
+rx(-pi/2) saux_d[4];
+rx(-pi/2) saux_d[5];
+rx(-pi/2) saux_d[6];
+rz(-pi/2) saux_d[0];
+rz(-pi/2) saux_d[1];
+rz(-pi/2) saux_d[2];
+rz(-pi/2) saux_d[3];
+rz(-pi/2) saux_d[4];
+rz(-pi/2) saux_d[5];
+rz(-pi/2) saux_d[6];
 m_reject[1] = saux_scratch[2];
 
 barrier sin_d[0], sin_d[1], sin_d[2], sin_d[3], sin_d[4], sin_d[5], sin_d[6], sin_a[0];

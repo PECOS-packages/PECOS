@@ -455,6 +455,7 @@ class Steane(Vars):
         rus_limit: int | None = None,
     ) -> Block:
         """Run a Steane-type error-correction cycle for Z stabilizers (X errors)."""
+        warn("Using experimental feature: qec_steane_z", stacklevel=2)
         flag_bit = flag_bit or self.scratch.elems[7]
         return Block(
             aux.px(reject=reject, rus_limit=rus_limit),
@@ -483,6 +484,7 @@ class Steane(Vars):
         rus_limit: int | None = None,
     ) -> Block:
         """Run a Steane-type error-correction cycle for X stabilizers (Z errors)."""
+        warn("Using experimental feature: qec_steane_x", stacklevel=2)
         flag_bit = flag_bit or self.scratch.elems[7]
         return Block(
             aux.pz(reject=reject, rus_limit=rus_limit),
@@ -526,6 +528,7 @@ class Steane(Vars):
         rus_limit: int | None = None,
     ) -> Block:
         """Run a teleportation-based error correction cycle for X errors."""
+        warn("Using experimental feature: qec_tel_x", stacklevel=2)
         block = Block(
             # teleport
             aux.px(reject=reject, rus_limit=rus_limit),
@@ -551,6 +554,7 @@ class Steane(Vars):
         rus_limit: int | None = None,
     ) -> Block:
         """Run a teleportation-based error correction cycle for Z errors."""
+        warn("Using experimental feature: qec_tel_z", stacklevel=2)
         block = Block(
             # teleport
             aux.pz(reject=reject, rus_limit=rus_limit),

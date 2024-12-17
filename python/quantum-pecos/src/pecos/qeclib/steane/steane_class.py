@@ -426,7 +426,7 @@ class Steane(Vars):
             if isinstance(var_a, CReg):
                 block.extend(
                     var_a.set(var_a ^ var_b),
-                    var_a.set(var_b ^ var_a),
+                    var_b.set(var_b ^ var_a),
                     var_a.set(var_a ^ var_b),
                 )
         return block

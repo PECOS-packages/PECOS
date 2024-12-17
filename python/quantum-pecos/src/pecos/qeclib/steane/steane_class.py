@@ -508,13 +508,14 @@ class Steane(Vars):
         aux: Steane,
         reject_x: Bit | None = None,
         reject_z: Bit | None = None,
-        flag_bit: Bit | None = None,
+        flag_bit_x: Bit | None = None,
+        flag_bit_z: Bit | None = None,
         rus_limit: int | None = None,
     ) -> Block:
         """Run a teleportation-based error correction cycle."""
         return Block(
-            self.qec_tel_x(aux, reject_x, rus_limit=rus_limit),
-            self.qec_tel_z(aux, reject_x, flag_bit, rus_limit),
+            self.qec_tel_x(aux, reject_x, flag_bit_x, rus_limit),
+            self.qec_tel_z(aux, reject_z, flag_bit_z, rus_limit),
         )
 
     def qec_tel_x(

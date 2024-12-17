@@ -404,20 +404,27 @@ class Steane(Vars):
         warn("Using experimental feature: t_cor", stacklevel=2)
         flag = flag or self.scratch.elems[7]
         return Block(
-            self.tdg(aux, reject, rus_limit),
-            If(aux.syn_meas != 0).Then(flag.set(1)),
+            # gate teleportation without logical correction
+            aux.prep_tdg_plus_state(reject=reject, rus_limit=rus_limit),
+            self.cx(aux),
+            aux.mz(self.tdg_meas),
+            # active error correction
+            self.syn_z.set(aux.syn_meas),
+            If(self.syn_z != 0).Then(flag.set(1)),
             self.last_raw_syn_z.set(0),
             self.pf_x.set(0),
             FlagLookupQASMActiveCorrectionZ(
                 self.d,
-                aux.syn_meas,
+                self.syn_z,
                 self.syndromes,
                 self.last_raw_syn_z,
                 self.pf_x,
                 flag,
-                aux.syn_meas,
+                self.syn_z,
                 self.scratch,
             ),
+            # logical correction
+            If(self.t_meas == 1).Then(self.sz()),
         )
 
     def t_tel_cor(
@@ -437,20 +444,28 @@ class Steane(Vars):
         warn("Using experimental feature: t_cor", stacklevel=2)
         flag = flag or self.scratch.elems[7]
         return Block(
-            self.t_tel(aux, reject, rus_limit),
-            If(aux.syn_meas != 0).Then(flag.set(1)),
+            # gate teleportation without logical correction
+            aux.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
+            aux.cx(self),
+            self.mz(self.t_meas),
+            Permute(self.d, aux.d),
+            # active error correction
+            self.syn_z.set(self.syn_meas),
+            If(self.syn_z != 0).Then(flag.set(1)),
             self.last_raw_syn_z.set(0),
             self.pf_x.set(0),
             FlagLookupQASMActiveCorrectionZ(
                 self.d,
-                aux.syn_meas,
+                self.syn_z,
                 self.syndromes,
                 self.last_raw_syn_z,
                 self.pf_x,
                 flag,
-                aux.syn_meas,
+                self.syn_z,
                 self.scratch,
             ),
+            # logical correction
+            If(self.t_meas == 1).Then(self.x(), self.sz()),
         )
 
     def tdg_tel_cor(
@@ -470,20 +485,28 @@ class Steane(Vars):
         warn("Using experimental feature: t_cor", stacklevel=2)
         flag = flag or self.scratch.elems[7]
         return Block(
-            self.tdg_tel(aux, reject, rus_limit),
-            If(aux.syn_meas != 0).Then(flag.set(1)),
+            # gate teleportation without logical correction
+            aux.prep_tdg_plus_state(reject=reject, rus_limit=rus_limit),
+            aux.cx(self),
+            self.mz(self.tdg_meas),
+            Permute(self.d, aux.d),
+            # active error correction
+            self.syn_z.set(self.syn_meas),
+            If(self.syn_z != 0).Then(flag.set(1)),
             self.last_raw_syn_z.set(0),
             self.pf_x.set(0),
             FlagLookupQASMActiveCorrectionZ(
                 self.d,
-                aux.syn_meas,
+                self.syn_z,
                 self.syndromes,
                 self.last_raw_syn_z,
                 self.pf_x,
                 flag,
-                aux.syn_meas,
+                self.syn_z,
                 self.scratch,
             ),
+            # logical correction
+            If(self.t_meas == 1).Then(self.x(), self.szdg()),  # SZdg/Sdg correction.
         )
 
     # End Experimental: ------------------------------------
@@ -552,4 +575,169 @@ class Steane(Vars):
         )
         if flag is not None:
             block.extend(If(self.flags != 0).Then(flag.set(1)))
+        return block
+
+    def qec_steane(
+        self,
+        aux: Steane,
+        reject_x: Bit | None = None,
+        reject_z: Bit | None = None,
+        flag_x: Bit | None = None,
+        flag_z: Bit | None = None,
+        rus_limit: int | None = None,
+    ) -> Block:
+        """Run a Steane-type error-correction cycle of this code."""
+        return Block(
+            self.qec_steane_z(
+                aux,
+                reject=reject_z,
+                flag=flag_z,
+                rus_limit=rus_limit,
+            ),
+            self.qec_steane_x(
+                aux,
+                reject=reject_x,
+                flag=flag_x,
+                rus_limit=rus_limit,
+            ),
+        )
+
+    def qec_steane_z(
+        self,
+        aux: Steane,
+        reject: Bit | None = None,
+        flag: Bit | None = None,
+        rus_limit: int | None = None,
+    ) -> Block:
+        """Run a Steane-type error-correction cycle for Z stabilizers (X errors)."""
+        warn("Using experimental feature: qec_steane_z", stacklevel=2)
+        flag = flag or self.scratch.elems[7]
+        return Block(
+            aux.px(reject=reject, rus_limit=rus_limit),
+            self.cx(aux),
+            aux.mz(),
+            If(aux.syn_meas != 0).Then(flag.set(1)),
+            self.last_raw_syn_z.set(0),
+            self.pf_x.set(0),
+            FlagLookupQASMActiveCorrectionZ(
+                self.d,
+                aux.syn_meas,
+                self.syndromes,
+                self.last_raw_syn_z,
+                self.pf_x,
+                flag,
+                aux.syn_meas,
+                self.scratch,
+            ),
+        )
+
+    def qec_steane_x(
+        self,
+        aux: Steane,
+        reject: Bit | None = None,
+        flag: Bit | None = None,
+        rus_limit: int | None = None,
+    ) -> Block:
+        """Run a Steane-type error-correction cycle for X stabilizers (Z errors)."""
+        warn("Using experimental feature: qec_steane_x", stacklevel=2)
+        flag = flag or self.scratch.elems[7]
+        return Block(
+            aux.pz(reject=reject, rus_limit=rus_limit),
+            aux.cx(self),
+            aux.mx(),
+            If(aux.syn_meas != 0).Then(flag.set(1)),
+            self.last_raw_syn_x.set(0),
+            self.pf_z.set(0),
+            FlagLookupQASMActiveCorrectionX(
+                self.d,
+                aux.syn_meas,
+                self.syndromes,
+                self.last_raw_syn_x,
+                self.pf_z,
+                flag,
+                aux.syn_meas,
+                self.scratch,
+            ),
+        )
+
+    def qec_tel(
+        self,
+        aux: Steane,
+        reject_x: Bit | None = None,
+        reject_z: Bit | None = None,
+        flag_x: Bit | None = None,
+        flag_z: Bit | None = None,
+        rus_limit: int | None = None,
+    ) -> Block:
+        """Run a teleportation-based error correction cycle."""
+        return Block(
+            self.qec_tel_x(aux, reject_x, flag_x, rus_limit),
+            self.qec_tel_z(aux, reject_z, flag_z, rus_limit),
+        )
+
+    def qec_tel_x(
+        self,
+        aux: Steane,
+        reject: Bit | None = None,
+        flag: Bit | None = None,
+        rus_limit: int | None = None,
+    ) -> Block:
+        """Run a teleportation-based error correction cycle for X errors."""
+        warn("Using experimental feature: qec_tel_x", stacklevel=2)
+        block = Block(
+            # teleport
+            aux.px(reject=reject, rus_limit=rus_limit),
+            aux.cx(self),
+            self.mz(),
+            If(self.log).Then(aux.x()),
+            Permute(self.d, aux.d),
+            # update syndromes and pauli frame
+            self.last_raw_syn_x.set(0),
+            self.last_raw_syn_z.set(0),
+            self.syn_z.set(self.syn_meas),
+            self.pf_x.set(0),
+        )
+        if flag is not None:
+            block.extend(If(self.syn_meas != 0).Then(flag.set(1)))
+        return block
+
+    def qec_tel_z(
+        self,
+        aux: Steane,
+        reject: Bit | None = None,
+        flag: Bit | None = None,
+        rus_limit: int | None = None,
+    ) -> Block:
+        """Run a teleportation-based error correction cycle for Z errors."""
+        warn("Using experimental feature: qec_tel_z", stacklevel=2)
+        block = Block(
+            # teleport
+            aux.pz(reject=reject, rus_limit=rus_limit),
+            self.cx(aux),
+            self.mx(),
+            If(self.log).Then(aux.z()),
+            Permute(self.d, aux.d),
+            # update syndromes and pauli frame
+            self.last_raw_syn_x.set(0),
+            self.last_raw_syn_z.set(0),
+            self.syn_x.set(self.syn_meas),
+            self.pf_z.set(0),
+        )
+        if flag is not None:
+            block.extend(If(self.syn_meas != 0).Then(flag.set(1)))
+        return block
+
+    def permute(self, other: Steane):
+        """Permute this code block (including both quantum and classical registers) with another."""
+        block = Block(
+            Permute(self.d, other.d),
+            Permute(self.a, other.a),
+        )
+        for var_a, var_b in zip(self.vars, other.vars):
+            if isinstance(var_a, CReg):
+                block.extend(
+                    var_a.set(var_a ^ var_b),
+                    var_b.set(var_b ^ var_a),
+                    var_a.set(var_a ^ var_b),
+                )
         return block

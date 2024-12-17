@@ -160,14 +160,13 @@ class Steane(Vars):
         rus_limit: int | None = None,
     ):
         """Prepare logical T|+X> in a fault tolerant manner."""
-        reject = reject or self.scratch[2]  # the first two scratch bits are used by "out"
-        return Block(
+        block = Block(
             self.scratch.set(0),
             PrepEncodeTPlusFTRUS(
                 d=self.d,
                 a=self.a,
                 out=self.scratch,
-                reject=reject,
+                reject=self.scratch[2],  # the first two bits are used by "out"
                 flag_x=self.flag_x,
                 flag_z=self.flag_z,
                 flags=self.flags,
@@ -176,6 +175,9 @@ class Steane(Vars):
                 limit=rus_limit or self.default_rus_limit,
             ),
         )
+        if reject is not None:
+            block.extend(reject.set(self.scratch[2]))
+        return block
 
     def nonft_prep_tdg_plus_state(self):
         """Prepare logical Tdg|+X> in a non-fault tolerant manner."""

@@ -284,7 +284,7 @@ class Steane(Vars):
         return Block(
             aux.nonft_prep_t_plus_state(),
             aux.cx(self),
-            aux.mz(self.t_meas),
+            self.mz(self.t_meas),
             If(self.t_meas == 1).Then(aux.x(), aux.sz()),
             Permute(self.d, aux.d),
         )

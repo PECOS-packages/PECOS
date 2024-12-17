@@ -434,10 +434,16 @@ class Steane(Vars):
         """Run a Steane-type error-correction cycle of this code."""
         return Block(
             self.qec_steane_z(
-                aux, reject=reject_z, flag_bit=flag_bit_z, rus_limit=rus_limit
+                aux,
+                reject=reject_z,
+                flag_bit=flag_bit_z,
+                rus_limit=rus_limit,
             ),
             self.qec_steane_x(
-                aux, reject=reject_x, flag_bit=flag_bit_x, rus_limit=rus_limit
+                aux,
+                reject=reject_x,
+                flag_bit=flag_bit_x,
+                rus_limit=rus_limit,
             ),
         )
 
@@ -453,10 +459,16 @@ class Steane(Vars):
         """Run a Steane-type error-correction cycle of this code with one-bit teleportation."""
         return Block(
             self.qec_steane_z_tel(
-                aux, reject=reject_z, flag_bit=flag_bit_z, rus_limit=rus_limit
+                aux,
+                reject=reject_z,
+                flag_bit=flag_bit_z,
+                rus_limit=rus_limit,
             ),
             self.qec_steane_x_tel(
-                aux, reject=reject_x, flag_bit=flag_bit_x, rus_limit=rus_limit
+                aux,
+                reject=reject_x,
+                flag_bit=flag_bit_x,
+                rus_limit=rus_limit,
             ),
         )
 

@@ -423,7 +423,7 @@ class Steane(Vars):
                 self.scratch,
             ),
             # logical correction
-            If(self.t_meas == 1).Then(self.sz()),
+            If(self.tdg_meas == 1).Then(self.szdg()),
         )
 
     # End Experimental: ------------------------------------

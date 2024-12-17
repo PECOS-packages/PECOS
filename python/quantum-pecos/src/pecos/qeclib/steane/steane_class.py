@@ -162,9 +162,7 @@ class Steane(Vars):
                 d=self.d,
                 a=self.a,
                 out=self.scratch,
-                reject=self.scratch[
-                    2
-                ],  # the first two bits of self.scratch are used by "out"
+                reject=self.scratch[2],  # the first two bits of self.scratch are used by "out"
                 flag_x=self.flag_x,
                 flag_z=self.flag_z,
                 flags=self.flags,
@@ -420,11 +418,13 @@ class Steane(Vars):
 
     def permute(self, other: Steane):
         """Permute this code block (including both quantum and classical registers) with another."""
-        # collect all variables in self and other, noting that self.a may or may not be in self.vars
-        self_vars = [var for var in self.vars if var is not self.a] + [self.a]
-        other_vars = [var for var in other.vars if var is not other.a] + [other.a]
-        permutes = [
-            Permute(self_var, other_var)
-            for self_var, other_var in zip(self_vars, other_vars)
-        ]
-        return Block(*permutes)
+        block = Block(
+            Permute(self.d, other.d),
+            Permute(self.a, other.a),
+        )
+        for var_a, var_b in zip(self.vars, other.vars):
+            if isinstance(var_a, CReg):
+                block.extend(var_a.set(var_a ^ var_b))
+                block.extend(var_a.set(var_b ^ var_a))
+                block.extend(var_a.set(var_a ^ var_b))
+        return block

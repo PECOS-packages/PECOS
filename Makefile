@@ -5,16 +5,6 @@ PYTHONPATH := $(shell which python 2>/dev/null || which python3 2>/dev/null)
 
 SHELL=bash
 
-# Virtual environment
-# -------------------
-
-.PHONY: venv
-venv:  ## Create virtual environment and install all dependencies
-	@echo "Installing uv..."
-	$(PYTHONPATH) -m pip install --upgrade uv
-	@echo "Creating venv and installing dependencies..."
-	uv sync
-
 # Requirements
 # ------------
 
@@ -121,6 +111,13 @@ clean:  ## Clean up caches and build artifacts
 	@rm -rf **/.hypothesis/
 	@rm -rf **/junit/
 	@cargo clean
+
+.PHONY: pip-install-uv
+pip-install-uv:  ## Install uv using pip and create a venv. (Recommended to instead follow: https://docs.astral.sh/uv/getting-started/installation/
+	@echo "Installing uv..."
+	$(PYTHONPATH) -m pip install --upgrade uv
+	@echo "Creating venv and installing dependencies..."
+	uv sync
 
 # Help
 # ----

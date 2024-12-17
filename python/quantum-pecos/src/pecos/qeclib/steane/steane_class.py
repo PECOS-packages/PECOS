@@ -520,6 +520,7 @@ class Steane(Vars):
                 self.scratch,
             ),
             Permute(self.d, aux.d),
+            Permute(self.a, aux.a),
         )
 
     def qec_steane_x(
@@ -580,4 +581,5 @@ class Steane(Vars):
                 self.scratch,
             ),
             Permute(self.d, aux.d),
+            Permute(self.a, aux.a),
         )

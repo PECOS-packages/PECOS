@@ -400,5 +400,17 @@ if(reject_test[0] != 0) flag_x_test[2] = flag_x_test[2] ^ last_raw_syn_x_test[2]
 if(reject_test[0] != 0) flags_test = flag_x_test | flag_z_test;
 
 if(reject_test[0] != 0) reject_test[0] = (((out_test[0] | out_test[1]) | flags_test[0]) | flags_test[1]) | flags_test[2];
-rx(-pi/2) q_test;
-rz(-pi/2) q_test;
+rx(-pi/2) q_test[0];
+rx(-pi/2) q_test[1];
+rx(-pi/2) q_test[2];
+rx(-pi/2) q_test[3];
+rx(-pi/2) q_test[4];
+rx(-pi/2) q_test[5];
+rx(-pi/2) q_test[6];
+rz(-pi/2) q_test[0];
+rz(-pi/2) q_test[1];
+rz(-pi/2) q_test[2];
+rz(-pi/2) q_test[3];
+rz(-pi/2) q_test[4];
+rz(-pi/2) q_test[5];
+rz(-pi/2) q_test[6];

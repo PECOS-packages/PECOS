@@ -1,0 +1,26 @@
+[project]
+name = "pecos-workspace"
+version = "0.6.0.dev8"
+
+[tool.uv.workspace]
+members = [
+    "python/pecos-rslib",
+    "python/quantum-pecos"
+]
+
+[dependency-groups]
+dev = [
+    "maturin>=1.2,<2.0",  # For building (should match build requirements)
+    "setuptools>=62.6",      # Build system
+    "pre-commit",           # Git hooks
+    "black",               # Code formatting
+    "ruff",               # Fast Python linting
+]
+test = [ # pinning testing environment
+    "pytest==8.3.3", # 8.3.4 seems to be causing errors
+    "pytest-cov==6.0.0",
+    "hypothesis==6.122.3",
+]
+
+[tool.uv]
+default-groups = ["dev", "test"]

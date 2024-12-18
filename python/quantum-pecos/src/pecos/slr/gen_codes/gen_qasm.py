@@ -227,23 +227,35 @@ class QASMGenerator:
                     )
 
                 case "F":
-                    op_str = " ".join(
-                        [f"rx(pi/2) {str(q)};\nrz(pi/2) {str(q)};" for q in op.qargs],
+                    op_str = "\n".join(
+                        [
+                            self.qgate_sq_qasm(op, "rx(pi/2)"),
+                            self.qgate_sq_qasm(op, "rz(pi/2)"),
+                        ],
                     )
 
                 case "Fdg":
-                    op_str = " ".join(
-                        [f"ry(-pi/2) {str(q)};\nrz(-pi/2) {str(q)};" for q in op.qargs],
+                    op_str = "\n".join(
+                        [
+                            self.qgate_sq_qasm(op, "ry(-pi/2)"),
+                            self.qgate_sq_qasm(op, "rz(-pi/2)"),
+                        ],
                     )
 
                 case "F4":
-                    op_str = " ".join(
-                        [f"ry(-pi/2) {str(q)};\nrz(pi/2) {str(q)};" for q in op.qargs],
+                    op_str = "\n".join(
+                        [
+                            self.qgate_sq_qasm(op, "ry(-pi/2)"),
+                            self.qgate_sq_qasm(op, "rz(pi/2)"),
+                        ],
                     )
 
                 case "F4dg":
-                    op_str = " ".join(
-                        [f"rx(-pi/2) {str(q)};\nrz(-pi/2) {str(q)};" for q in op.qargs],
+                    op_str = "\n".join(
+                        [
+                            self.qgate_sq_qasm(op, "rx(-pi/2)"),
+                            self.qgate_sq_qasm(op, "rz(-pi/2)"),
+                        ],
                     )
 
                 case "Prep":

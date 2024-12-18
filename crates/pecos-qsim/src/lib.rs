@@ -18,6 +18,7 @@ pub mod gens;
 // pub mod paulis;
 pub mod quantum_simulator;
 pub mod sparse_stab;
+pub mod statevec;
 
 pub use clifford_simulator::CliffordSimulator;
 pub use gens::Gens;
@@ -27,3 +28,4 @@ pub use gens::Gens;
 // pub use paulis::Paulis;
 pub use quantum_simulator::QuantumSimulator;
 pub use sparse_stab::SparseStab;
+pub use statevec::StateVec;

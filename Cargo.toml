@@ -24,6 +24,7 @@ pyo3 = "0.23"
 rand = "0.8"
 rand_chacha = "0.3"
 rand_xoshiro = "0.6"
+num-complex = "0.4"
 
 pecos-core = { version = "0.1.1", path = "crates/pecos-core" }
 pecos-qsim = { version = "0.1.1", path = "crates/pecos-qsim" }

@@ -18,6 +18,83 @@ use pecos_core::{IndexableElement, Set};
 use rand_chacha::ChaCha8Rng;
 // TODO: Look into seeing if a dense bool for signs_minus and signs_i is more efficient
 
+/// A sparse representation of a stabilizer state using the stabilizer/destabilizer formalism.
+///
+/// This implementation is based on the work found in the thesis "Quantum Algorithms, Architecture,
+/// and Error Correction" by Ciarán Ryan-Anderson (<https://arxiv.org/abs/1812.04735>).
+///
+/// # State Representation
+/// The quantum state is represented by:
+/// - A set of n stabilizer generators that mutually commute
+/// - A set of n destabilizer generators where destab[i] anti-commutes with stab[i] and
+///   commutes with all other stabilizers
+///
+/// The implementation uses a sparse matrix representation for efficiency and speed, storing:
+/// - Row-wise X and Z Pauli operators
+/// - Column-wise X and Z Pauli operators
+/// - Signs (± and ±i) for each generator
+///
+/// # Type Parameters
+/// - T: A set type that implements the Set trait, used for storing operator locations
+/// - E: An indexable element type that can convert between usize indices
+/// - R: A random number generator type, defaults to `ChaCha8Rng`
+///
+/// # Examples
+/// ```rust
+/// use pecos_core::VecSet;
+/// use pecos_qsim::{QuantumSimulator, CliffordSimulator, SparseStab};
+///
+/// // Create a new 2-qubit stabilizer state
+/// let mut sim = SparseStab::<VecSet<u32>, u32>::new(2);
+///
+/// // Initialize to |+> ⊗ |0>
+/// sim.h(0);  // Apply Hadamard to first qubit
+///
+/// // Create Bell state |Φ+> = (|00> + |11>)/√2
+/// sim.cx(0, 1);
+///
+/// // Measure first qubit in Z basis
+/// let (outcome, determined) = sim.mz(0);
+/// ```
+///
+/// # Measurement Behavior
+/// Measurements can be either:
+/// - Deterministic: The outcome is predetermined by the current stabilizer state
+/// - Non-deterministic: The outcome is random with 50-50 probability
+///
+/// The measurement functions return both the outcome and whether it was deterministic.
+///
+/// # Gate Operations
+/// The simulator supports common Clifford gates:
+/// - Pauli gates (X, Y, Z)
+/// - Hadamard (H)
+/// - Phase gates (S = SZ = √Z)
+/// - CX and other 2-qubit Clifford gates
+///
+/// Each gate operation updates the stabilizer and destabilizer generators according to
+/// the appropriate Heisenberg representation transformations.
+///
+/// # Memory Efficiency
+/// The sparse representation is memory efficient for:
+/// - States with local correlations
+/// - Circuit intermediates with limited entanglement
+/// - Error correction scenarios where most stabilizers are low-weight
+///
+/// # Performance Considerations
+/// - Row/column access patterns are optimized for common operations
+/// - Signs are stored separately from Pauli operators
+/// - Non-deterministic measurements require tableau updates
+///
+/// # Limitations
+/// - Only supports Clifford operations
+/// - Cannot represent arbitrary quantum states
+/// - Measurement outcomes are truly random (not pseudo-random)
+///
+/// # References
+/// 1. Aaronson & Gottesman, "Improved Simulation of Stabilizer Circuits"
+///    <https://arxiv.org/abs/quant-ph/0406196>
+/// 2. Ryan-Anderson, "Quantum Algorithms, Architecture, and Error Correction"
+///    <https://arxiv.org/abs/1812.04735>
 #[derive(Clone, Debug)]
 pub struct SparseStab<T, E, R = ChaCha8Rng>
 where
@@ -38,7 +115,7 @@ where
 {
     #[inline]
     #[must_use]
-    fn new(num_qubits: usize) -> Self {
+    pub fn new(num_qubits: usize) -> Self {
         let rng = SimRng::from_entropy();
         Self::with_rng(num_qubits, rng)
     }
@@ -387,8 +464,37 @@ where
     // TODO: pub fun p(&mut self, pauli: &pauli, q: U) { todo!() }
     // TODO: pub fun m(&mut self, pauli: &pauli, q: U) -> bool { todo!() }
 
-    /// Measurement of the +`Z_q` operator.
+
+    /// Measures a qubit in the Z basis.
+    ///
+    /// Returns a tuple containing:
+    /// - The measurement outcome (true = |1>, false = |0>)
+    /// - Whether the measurement was deterministic
+    ///
+    /// The measurement can be:
+    /// - Deterministic: The outcome is fixed by the current stabilizer state
+    /// - Non-deterministic: The outcome is random with 50% probability for each result
+    ///
+    /// # Arguments
+    /// * q - The qubit index to measure
+    ///
+    /// # Returns
+    /// * (bool, bool) - (`measurement_outcome`, `is_deterministic`)
+    ///
+    /// # Example
+    /// ```rust
+    /// use pecos_core::VecSet;
+    /// use pecos_qsim::{QuantumSimulator, CliffordSimulator, SparseStab};
+    /// let mut state = SparseStab::<VecSet<u32>, u32>::new(2);
+    ///
+    /// let (outcome, deterministic) = state.mz(0);
+    /// if deterministic {
+    ///     println!("Measurement was deterministic with outcome: {}", outcome);
+    /// }
+    /// ```
+    ///
     /// # Panics
+    ///
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
     fn mz(&mut self, q: E) -> (bool, bool) {
@@ -502,6 +608,33 @@ where
         }
     }
 
+    /// Applies a CX or CNOT (Controlled-X) gate between two qubits.
+    ///
+    /// The CX performs the transformation:
+    /// - |0⟩|b⟩ → |0⟩|b⟩
+    /// - |1⟩|b⟩ → |1⟩|b⊕1⟩
+    ///
+    /// In the Heisenberg picture, it transforms the Pauli operators as:
+    /// - IX → IX
+    /// - XI → XX
+    /// - IZ → ZZ
+    /// - ZI → ZI
+    ///
+    /// # Arguments
+    /// * q1 - Control qubit index
+    /// * q2 - Target qubit index
+    ///
+    /// # Example
+    /// ```rust
+    /// use pecos_core::VecSet;
+    /// use pecos_qsim::{QuantumSimulator, CliffordSimulator, SparseStab};
+    /// let mut state = SparseStab::<VecSet<u32>, u32>::new(2);
+    /// 
+    /// // Create Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
+    /// state.h(0);  // Put first qubit in |+⟩
+    /// state.cx(0, 1);  // Entangle qubits
+    /// ```
+    ///
     /// CX: +IX -> +IX; +IZ -> +ZZ; +XI -> +XX; +ZI -> +ZI
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.

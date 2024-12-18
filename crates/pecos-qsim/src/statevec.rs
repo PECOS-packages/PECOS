@@ -1605,7 +1605,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "assertion failed: control != target")]
+    #[should_panic(expected = "assertion `left != right` failed\n  left: 0\n right: 0")]
     fn test_control_equals_target() {
         let mut q = StateVec::new(2);
         q.cx(0, 0); // Control and target are the same

@@ -16,13 +16,21 @@ impl StateVec {
     }
 
     /// Initialize from a custom state vector
+    ///
+    /// # Panics
+    ///
+    /// Panics if the input state requires more qubits then `StateVec` has.
     #[must_use] pub fn from_state(state: Vec<Complex64>) -> Self {
-        let num_qubits = (state.len() as f64).log2() as usize;
+        let num_qubits = state.len().trailing_zeros() as usize;
         assert_eq!(1 << num_qubits, state.len(), "Invalid state vector size");
         StateVec { num_qubits, state }
     }
 
-    /// Apply Hadamard gate
+    /// Apply Hadamard gate to the target qubit
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit index is >= number of qubits
     pub fn hadamard(&mut self, target: usize) {
         assert!(target < self.num_qubits);
         let factor = Complex64::new(1.0 / 2.0_f64.sqrt(), 0.0);
@@ -43,6 +51,10 @@ impl StateVec {
     }
 
     /// Apply Pauli-X gate
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit index is >= number of qubits
     pub fn x(&mut self, target: usize) {
         assert!(target < self.num_qubits);
         let step = 1 << target;
@@ -55,6 +67,10 @@ impl StateVec {
     }
 
     /// Apply Y = [[0, -i], [i, 0]] gate to target qubit
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit index is >= number of qubits
     pub fn y(&mut self, target: usize) {
         assert!(target < self.num_qubits);
 
@@ -69,6 +85,10 @@ impl StateVec {
     }
 
     /// Apply Z = [[1, 0], [0, -1]] gate to target qubit
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit index is >= number of qubits
     pub fn z(&mut self, target: usize) {
         assert!(target < self.num_qubits);
 
@@ -82,6 +102,10 @@ impl StateVec {
     /// Gate RX(θ) = exp(-i θ X/2) = cos(θ/2) I - i*sin(θ/2) X
     /// RX(θ) = [[cos(θ/2), -i*sin(θ/2)],
     ///          [-i*sin(θ/2), cos(θ/2)]]
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit index is >= number of qubits
     pub fn rx(&mut self, theta: f64, target: usize) {
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
@@ -99,6 +123,10 @@ impl StateVec {
     /// Gate RY(θ) = exp(-i θ Y/2) = cos(θ/2) I - i*sin(θ/2) Y
     /// RY(θ) = [[cos(θ/2), -sin(θ/2)],
     ///          [-sin(θ/2), cos(θ/2)]]
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit index is >= number of qubits
     pub fn ry(&mut self, theta: f64, target: usize) {
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
@@ -115,6 +143,10 @@ impl StateVec {
     /// Gate RZ(θ) = exp(-i θ Z/2) = cos(θ/2) I - i*sin(θ/2) Z
     /// RZ(θ) = [[cos(θ/2)-i*sin(θ/2), 0],
     ///          [0, cos(θ/2)+i*sin(θ/2)]]
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit index is >= number of qubits
     pub fn rz(&mut self, theta: f64, target: usize) {
         let exp_minus_i_theta_2 = Complex64::from_polar(1.0, -theta / 2.0);
         let exp_plus_i_theta_2 = Complex64::from_polar(1.0, theta / 2.0);
@@ -128,6 +160,11 @@ impl StateVec {
         );
     }
 
+    /// General single-qubit unitary that takes in matrix elements
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit index is >= number of qubits
     pub fn single_qubit_rotation(
         &mut self,
         target: usize,
@@ -154,6 +191,10 @@ impl StateVec {
     }
 
     /// Apply a SWAP gate between two qubits
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit1 or qubit2 index is >= number of qubits
     pub fn swap(&mut self, qubit1: usize, qubit2: usize) {
         assert!(qubit1 < self.num_qubits && qubit2 < self.num_qubits);
         if qubit1 == qubit2 {
@@ -179,6 +220,10 @@ impl StateVec {
     /// Apply U3(theta, phi, lambda) gate
     /// U3 = [[cos(θ/2), -e^(iλ)sin(θ/2)],
     ///       [e^(iφ)sin(θ/2), e^(i(λ+φ))cos(θ/2)]]
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit index is >= number of qubits
     pub fn u3(&mut self, target: usize, theta: f64, phi: f64, lambda: f64) {
         assert!(target < self.num_qubits);
 
@@ -206,6 +251,10 @@ impl StateVec {
 
     /// Apply controlled-X gate
     /// CX = |0⟩⟨0| ⊗ I + |1⟩⟨1| ⊗ X
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit1 or qubit2 index is >= number of qubits or qubit1 == qubit2
     pub fn cx(&mut self, control: usize, target: usize) {
         assert!(control < self.num_qubits);
         assert!(target < self.num_qubits);
@@ -216,15 +265,17 @@ impl StateVec {
             let target_val = (i >> target) & 1;
             if control_val == 1 && target_val == 0 {
                 let flipped_i = i ^ (1 << target);
-                let i = i;
                 self.state.swap(i, flipped_i);
-                // self.state.swap(i, flipped_i);
             }
         }
     }
 
     /// Apply controlled-Y gate
     /// CY = |0⟩⟨0| ⊗ I + |1⟩⟨1| ⊗ Y
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit1 or qubit2 index is >= number of qubits or qubit1 == qubit2
     pub fn cy(&mut self, control: usize, target: usize) {
         assert!(control < self.num_qubits);
         assert!(target < self.num_qubits);
@@ -249,6 +300,10 @@ impl StateVec {
 
     /// Apply controlled-Z gate
     /// CZ = |0⟩⟨0| ⊗ I + |1⟩⟨1| ⊗ Z
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit1 or qubit2 index is >= number of qubits or qubit1 == qubit2
     pub fn cz(&mut self, control: usize, target: usize) {
         assert!(control < self.num_qubits);
         assert!(target < self.num_qubits);
@@ -267,6 +322,10 @@ impl StateVec {
 
     /// Apply RXX(θ) = exp(-i θ XX/2) gate
     /// This implements evolution under the XX coupling between two qubits
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit1 or qubit2 index is >= number of qubits or qubit1 == qubit2
     pub fn rxx(&mut self, theta: f64, qubit1: usize, qubit2: usize) {
         assert!(qubit1 < self.num_qubits);
         assert!(qubit2 < self.num_qubits);
@@ -307,6 +366,10 @@ impl StateVec {
     }
 
     /// Apply RYY(θ) = exp(-i θ YY/2) gate
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit1 or qubit2 index is >= number of qubits or qubit1 == qubit2
     pub fn ryy(&mut self, theta: f64, qubit1: usize, qubit2: usize) {
         assert!(qubit1 < self.num_qubits);
         assert!(qubit2 < self.num_qubits);
@@ -346,6 +409,10 @@ impl StateVec {
     }
 
     /// Apply RZZ(θ) = exp(-i θ ZZ/2) gate
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit1 or qubit2 index is >= number of qubits or qubit1 == qubit2
     pub fn rzz(&mut self, theta: f64, qubit1: usize, qubit2: usize) {
         assert!(qubit1 < self.num_qubits);
         assert!(qubit2 < self.num_qubits);
@@ -374,6 +441,10 @@ impl StateVec {
     ///      [u10, u11, u12, u13],
     ///      [u20, u21, u22, u23],
     ///      [u30, u31, u32, u33]]
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit1 or qubit2 index is >= number of qubits or qubit1 == qubit2
     pub fn two_qubit_unitary(&mut self, qubit1: usize, qubit2: usize, matrix: [[Complex64; 4]; 4]) {
         assert!(qubit1 < self.num_qubits);
         assert!(qubit2 < self.num_qubits);
@@ -427,6 +498,10 @@ impl StateVec {
     }
 
     /// Measure a single qubit in the Z basis and collapse the state
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit index is >= number of qubits
     pub fn measure(&mut self, target: usize) -> usize {
         assert!(target < self.num_qubits);
         let mut rng = rand::thread_rng();
@@ -443,16 +518,16 @@ impl StateVec {
         }
 
         // Decide measurement outcome
-        let result = if rng.gen::<f64>() < prob_one { 1 } else { 0 };
+        let result = usize::from(rng.gen::<f64>() < prob_one);
 
         // Collapse and normalize state
         let mut norm = 0.0;
         for i in 0..self.state.len() {
             let bit = (i >> target) & 1;
-            if bit != result {
-                self.state[i] = Complex64::new(0.0, 0.0);
-            } else {
+            if bit == result {
                 norm += self.state[i].norm_sqr();
+            } else {
+                self.state[i] = Complex64::new(0.0, 0.0);
             }
         }
 
@@ -465,6 +540,10 @@ impl StateVec {
     }
 
     /// Reset a qubit to the |0⟩ state
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit index is >= number of qubits
     pub fn reset(&mut self, target: usize) {
         assert!(target < self.num_qubits);
 
@@ -668,8 +747,8 @@ mod tests {
         q.hadamard(0);
         let initial_state = q.state.clone();
         q.x(0); // X|+> = |+>
-        for i in 0..2 {
-            assert!((q.state[i] - initial_state[i]).norm() < 1e-10);
+        for (state, initial) in q.state.iter().zip(initial_state.iter()) {
+            assert!((state - initial).norm() < 1e-10);
         }
 
         // Test X on second qubit of two-qubit system
@@ -1431,11 +1510,7 @@ mod tests {
 
         // Check each basis state contribution
         for i in 0..8 {
-            let expected = if i & 1 == 0 {
-                FRAC_1_SQRT_2
-            } else {
-                FRAC_1_SQRT_2
-            };
+            let expected = FRAC_1_SQRT_2;
             if (q.state[i].norm() - expected).abs() >= 1e-10 {
                 println!("\nMismatch at index {i}: {i:03b}");
                 println!("Expected norm {}, got {}", expected, q.state[i].norm());
@@ -1463,21 +1538,21 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "assertion failed: target < self.num_qubits")]
     fn test_invalid_qubit_index_single() {
         let mut q = StateVec::new(2);
         q.x(3); // Invalid qubit index
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "assertion failed: target < self.num_qubits")]
     fn test_invalid_qubit_index_controlled() {
         let mut q = StateVec::new(2);
         q.cx(1, 2); // Invalid target qubit
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "assertion failed: control != target")]
     fn test_control_equals_target() {
         let mut q = StateVec::new(2);
         q.cx(0, 0); // Control and target are the same

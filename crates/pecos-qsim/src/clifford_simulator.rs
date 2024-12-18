@@ -13,7 +13,87 @@
 use super::quantum_simulator::QuantumSimulator;
 use pecos_core::IndexableElement;
 
-/// A simulator that implements Clifford gates.
+/// A simulator trait for quantum systems that implement Clifford operations.
+///
+/// # Overview
+/// The Clifford group is a set of quantum operations that map Pauli operators to Pauli operators
+/// under conjugation. A Clifford operation C transforms a Pauli operator P as:
+/// ```text
+/// C P C† = P'
+/// ```
+/// where P' is another Pauli operator (possibly with a phase ±1 or ±i).
+///
+/// # Gate Set
+/// This trait provides:
+///
+/// ## Single-qubit gates
+/// - Pauli gates (X, Y, Z)
+/// - Hadamard (H) and variants (H2-H6)
+/// - Phase gates (SX, SY, SZ) and their adjoints
+/// - Face (F) gates and variants (F, F2-F4) and their adjoints
+///
+/// ## Two-qubit gates
+/// - CNOT (CX)
+/// - Controlled-Y (CY)
+/// - Controlled-Z (CZ)
+/// - SWAP
+/// - √XX, √YY, √ZZ and their adjoints
+/// - G2 (a two-qubit Clifford)
+///
+/// ## Measurements and Preparations
+/// - Measurements in X, Y, Z bases (including ± variants)
+/// - State preparations in X, Y, Z bases (including ± variants)
+///
+/// # Type Parameters
+/// - T: An indexable element type that can convert between qubit indices and usizes
+///
+/// # Gate Transformations
+/// Gates transform Pauli operators according to their Heisenberg representation. For example:
+///
+/// Hadamard (H):
+/// ```text
+/// X → Z
+/// Z → X
+/// Y → -Y
+/// ```
+///
+/// CNOT (with control c and target t):
+/// ```text
+/// Xc → Xc⊗Xt
+/// Xt → Xt
+/// Zc → Zc
+/// Zt → Zc⊗Zt
+/// ```
+///
+/// # Measurement Semantics
+/// - All measurements return (outcome, deterministic)
+/// - outcome: true = +1 eigenstate, false = -1 eigenstate
+/// - deterministic: true if state was already in an eigenstate
+///
+/// # Examples
+/// ```rust
+/// use pecos_core::VecSet;
+/// use pecos_qsim::{CliffordSimulator, SparseStab};
+///
+/// let mut sim = SparseStab::<VecSet<u32>, u32>::new(2);
+///
+/// // Create Bell state
+/// sim.h(0);
+/// sim.cx(0, 1);
+///
+/// // Measure in Z basis
+/// let (outcome, deterministic) = sim.mz(0);
+/// ```
+///
+/// # Implementation Notes
+/// - Most multi-qubit gates are implemented in terms of simpler gates
+/// - The trait provides default implementations where possible
+/// - Implementors must provide: `mz()`, `x()`, `y()`, `z()`, `h()`, `sz()`, `cx()`
+/// - All other operations have default implementations
+///
+/// # References
+/// - Gottesman, "The Heisenberg Representation of Quantum Computers"
+///   <https://arxiv.org/abs/quant-ph/9807006>
 #[expect(clippy::min_ident_chars)]
 pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     #[inline]
@@ -35,7 +115,16 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         <Self as QuantumSimulator>::reset(self)
     }
 
-    /// Preparation of the +`X_q` operator.
+    /// Prepares a qubit in the +1 eigenstate of the X operator.
+    ///
+    /// Equivalent to preparing |+⟩ = (|0⟩ + |1⟩)/√2
+    ///
+    /// # Arguments
+    /// * `q` - Target qubit
+    ///
+    /// # Returns
+    /// * `(bool, bool)` - (`measurement_outcome`, `was_deterministic`)
+    ///
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
@@ -44,12 +133,21 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         if meas {
             self.z(q);
         }
-
         (meas, deter)
     }
 
-    /// Preparation of the -`X_q` operator.
+    /// Prepares a qubit in the -1 eigenstate of the X operator.
+    ///
+    /// Equivalent to preparing |-⟩ = (|0⟩ - |1⟩)/√2
+    ///
+    /// # Arguments
+    /// * `q` - Target qubit
+    ///
+    /// # Returns
+    /// * `(bool, bool)` - (`measurement_outcome`, `was_deterministic`)
+    ///
     /// # Panics
+    ///
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
     fn pnx(&mut self, q: T) -> (bool, bool) {
@@ -69,8 +167,6 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         if meas {
             self.z(q);
         }
-        // let (meas, deter) = self.pz(q);
-        // self.h5(q);
         (meas, deter)
     }
 
@@ -83,13 +179,21 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         if meas {
             self.z(q);
         }
-        // let (meas, deter) = self.pz(q);
-        // self.h6(q);
         (meas, deter)
     }
 
-    /// Preparation of the +`Z_q` operator.
+    /// Prepares a qubit in the +1 eigenstate of the Z operator.
+    ///
+    /// Equivalent to preparing |0⟩
+    ///
+    /// # Arguments
+    /// * `q` - Target qubit
+    ///
+    /// # Returns
+    /// * `(bool, bool)` - (`measurement_outcome`, `was_deterministic`)
+    ///
     /// # Panics
+    ///
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
     fn pz(&mut self, q: T) -> (bool, bool) {
@@ -100,8 +204,18 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         (meas, deter)
     }
 
-    /// Preparation of the -`Z_q` operator.
+    /// Prepares a qubit in the -1 eigenstate of the Z operator.
+    ///
+    /// Equivalent to preparing |1⟩
+    ///
+    /// # Arguments
+    /// * `q` - Target qubit
+    ///
+    /// # Returns
+    /// * `(bool, bool)` - (`measurement_outcome`, `was_deterministic`)
+    ///
     /// # Panics
+    ///
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
     fn pnz(&mut self, q: T) -> (bool, bool) {
@@ -145,11 +259,9 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     fn my(&mut self, q: T) -> (bool, bool) {
         // +Y -> +Z
         self.sx(q);
-        // self.h5(q);
         let (meas, deter) = self.mz(q);
         // +Z -> +Y
         self.sxdg(q);
-        // self.h5(q);
 
         (meas, deter)
     }
@@ -161,11 +273,9 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     fn mny(&mut self, q: T) -> (bool, bool) {
         // -Y -> +Z
         self.sxdg(q);
-        // self.h6(q);
         let (meas, deter) = self.mz(q);
         // +Z -> -Y
         self.sx(q);
-        // self.h6(q);
 
         (meas, deter)
     }
@@ -207,9 +317,6 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     ///     Y -> Z
     #[inline]
     fn sx(&mut self, q: T) {
-        // X -H-> Z -SZ-> Z -H-> X
-        // Z -H-> X -SZ-> Y -H-> -Y
-        // Y -H-> -Y -SZ-> X -H-> Z
         self.h(q);
         self.sz(q);
         self.h(q);
@@ -222,9 +329,6 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     ///     Y -> -Z
     #[inline]
     fn sxdg(&mut self, q: T) {
-        // X -H-> Z -Z-> Z -SZ-> Z -H-> X
-        // Z -H-> X -Z-> -X -SZ-> -Y -H-> Y
-        // Y -H-> -Y -Z-> Y -SZ-> -X -H-> -Z
         self.h(q);
         self.szdg(q);
         self.h(q);
@@ -266,9 +370,6 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     ///     Y -> X
     #[inline]
     fn szdg(&mut self, q: T) {
-        // X -Z-> -X -SZ-> -Y
-        // Z -Z-> Z -SZ-> Z
-        // Y -Z-> -Y -SZ-> X
         self.z(q);
         self.sz(q);
     }
@@ -367,7 +468,25 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         self.szdg(q);
     }
 
-    /// Controlled-not gate. IX -> IX, IZ -> ZZ, XI -> XX, ZI -> ZZ
+    /// Performs a controlled-NOT operation between two qubits.
+    ///
+    /// The operation performs:
+    /// ```text
+    /// |0⟩|b⟩ → |0⟩|b⟩
+    /// |1⟩|b⟩ → |1⟩|b⊕1⟩
+    /// ```
+    ///
+    /// In the Heisenberg picture, transforms Pauli operators as:
+    /// ```text
+    /// IX → IX  (X on target unchanged)
+    /// XI → XX  (X on control propagates to target)
+    /// IZ → ZZ  (Z on target propagates to control)
+    /// ZI → ZI  (Z on control unchanged)
+    /// ```
+    ///
+    /// # Arguments
+    /// * `q1` - Control qubit
+    /// * `q2` - Target qubit
     fn cx(&mut self, q1: T, q2: T);
 
     /// CY: +IX -> +ZX; +IZ -> +ZZ; +XI -> -XY; +ZI -> +ZI;
@@ -386,10 +505,24 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         self.h(q2);
     }
 
-    /// SXX: XI -> XI
-    ///      IX -> IX
-    ///      ZI -> -YX
-    ///      IZ -> -XY
+    /// Performs a square root of XX operation (√XX).
+    ///
+    /// This is a symmetric two-qubit Clifford that implements:
+    /// ```text
+    /// SXX = exp(-iπ X⊗X/4)
+    /// ```
+    ///
+    /// Transforms Pauli operators as:
+    /// ```text
+    /// XI → XI
+    /// IX → IX
+    /// ZI → -YX
+    /// IZ → -XY
+    /// ```
+    ///
+    /// # Arguments
+    /// * q1 - First qubit
+    /// * q2 - Second qubit
     #[inline]
     fn sxx(&mut self, q1: T, q2: T) {
         self.sx(q1);
@@ -399,10 +532,24 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         self.sy(q1);
     }
 
-    /// `SXXdg`: XI -> XI
-    ///        IX -> IX
-    ///        ZI -> YX
-    ///        IZ -> XY
+    /// Performs an adjoint of the square root of XX operation (√XX†).
+    ///
+    /// This is a symmetric two-qubit Clifford that implements:
+    /// ```text
+    /// SXXdg = exp(+iπ X⊗X/4)
+    /// ```
+    ///
+    /// Transforms Pauli operators as:
+    /// ```text
+    /// XI → XI
+    /// IX → IX
+    /// ZI → YX
+    /// IZ → XY
+    /// ```
+    ///
+    /// # Arguments
+    /// * `q1` - First qubit
+    /// * `q2` - Second qubit
     #[inline]
     fn sxxdg(&mut self, q1: T, q2: T) {
         self.x(q1);
@@ -410,10 +557,24 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         self.sxx(q1, q2);
     }
 
-    /// SYY: XI -> -ZY
-    ///      IX -> -YZ
-    ///      ZI -> XY
-    ///      IZ -> YX
+    /// Performs a square root of YY operation (√YY).
+    ///
+    /// This is a symmetric two-qubit Clifford that implements:
+    /// ```text
+    /// SYY = exp(-iπ Y⊗Y/4)
+    /// ```
+    ///
+    /// Transforms Pauli operators as:
+    /// ```text
+    /// XI → -ZY
+    /// IX → -YZ
+    /// ZI → XY
+    /// IZ → YX
+    /// ```
+    ///
+    /// # Arguments
+    /// * `q1` - First qubit
+    /// * `q2` - Second qubit
     #[inline]
     fn syy(&mut self, q1: T, q2: T) {
         self.szdg(q1);
@@ -423,10 +584,24 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         self.sz(q2);
     }
 
-    /// `SYYdg`: XI -> ZY
-    ///        IX -> YZ
-    ///        ZI -> -XY
-    ///        IZ -> -YX
+    /// Performs an adjoint of the square root of YY operation (√YY†).
+    ///
+    /// This is a symmetric two-qubit Clifford that implements:
+    /// ```text
+    /// SYY = exp(+iπ Y⊗Y/4)
+    /// ```
+    ///
+    /// Transforms Pauli operators as:
+    /// ```text
+    /// XI → ZY
+    /// IX → YZ
+    /// ZI → -XY
+    /// IZ → -YX
+    /// ```
+    ///
+    /// # Arguments
+    /// * `q1` - First qubit
+    /// * `q2` - Second qubit
     #[inline]
     fn syydg(&mut self, q1: T, q2: T) {
         self.y(q1);
@@ -434,10 +609,24 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         self.syy(q1, q2);
     }
 
-    /// SZZ: +IX -> +ZY;
-    ///      +IZ -> +IZ;
-    ///      +XI -> +YZ;
-    ///      +ZI -> +ZI;
+    /// Performs a square root of ZZ operation (√ZZ).
+    ///
+    /// This is a symmetric two-qubit Clifford that implements:
+    /// ```text
+    /// SZZ = exp(-iπ Z⊗Z/4)
+    /// ```
+    ///
+    /// Transforms Pauli operators as:
+    /// ```text
+    /// XI → YZ
+    /// IX → ZY
+    /// ZI → ZI
+    /// IZ → IZ
+    /// ```
+    ///
+    /// # Arguments
+    /// * `q1` - First qubit
+    /// * `q2` - Second qubit
     #[inline]
     fn szz(&mut self, q1: T, q2: T) {
         self.sydg(q1);
@@ -447,20 +636,29 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         self.sy(q2);
     }
 
-    /// `SZZdg`: +IX -> -ZY;
-    ///        +IZ -> +IZ;
-    ///        +XI -> -ZY;
-    ///        +ZI -> +ZI;
+    /// Performs an adjoint of the square root of ZZ operation (√ZZ).
+    ///
+    /// This is a symmetric two-qubit Clifford that implements:
+    /// ```text
+    /// SZZdg = exp(+iπ Z⊗Z/4)
+    /// ```
+    ///
+    /// Transforms Pauli operators as:
+    /// ```text
+    /// XI → -ZY
+    /// IX → -YZ TODO: verify
+    /// ZI → ZI
+    /// IZ → IZ
+    /// ```
+    ///
+    /// # Arguments
+    /// * `q1` - First qubit
+    /// * `q2` - Second qubit
     #[inline]
     fn szzdg(&mut self, q1: T, q2: T) {
         self.z(q1);
         self.z(q2);
         self.szz(q1, q2);
-        // self.sy(q1);
-        // self.sy(q2);
-        // self.sxxdg(q1, q2);
-        // self.sydg(q1);
-        // self.sydg(q2);
     }
 
     /// SWAP: +IX -> XI;

@@ -452,7 +452,7 @@ class Steane(Vars):
         flag: Bit | None = None,
         rus_limit: int | None = None,
     ) -> Block:
-        """Run a Steane-type error-correction cycle to correct X errors."""
+        """Run a Steane-type error-correction cycle for X errors."""
         warn("Using experimental feature: qec_steane_z", stacklevel=2)
         flag = flag or self.scratch.elems[7]
         return Block(
@@ -481,7 +481,7 @@ class Steane(Vars):
         flag: Bit | None = None,
         rus_limit: int | None = None,
     ) -> Block:
-        """Run a Steane-type error-correction cycle to correct Z errors."""
+        """Run a Steane-type error-correction cycle for Z errors."""
         warn("Using experimental feature: qec_steane_x", stacklevel=2)
         flag = flag or self.scratch.elems[7]
         return Block(

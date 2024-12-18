@@ -12,7 +12,13 @@ description = "Provides simulators and related elements for PECOS simulations."
 
 [dependencies]
 pecos-core = { workspace = true }
+rand = { workspace = true }
 rand_chacha = { workspace = true }
+num-complex = { workspace = true }
+
+[dev-dependencies]
+approx = "0.5"
 
 [lints]
 workspace = true
+

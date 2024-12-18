@@ -21,3 +21,6 @@ features = ["pyo3/extension-module"]
 python-source = "src"
 module-name = "pecos_rslib._pecos_rslib"
 manifest-path = "../../crates/pecos-python/Cargo.toml"
+
+[tool.uv.sources]
+pecos-rslib = { workspace = true }

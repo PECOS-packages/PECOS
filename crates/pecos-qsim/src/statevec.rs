@@ -1,6 +1,7 @@
 use num_complex::Complex64;
 use rand::Rng;
 
+#[derive(Clone, Debug)]
 pub struct StateVec {
     num_qubits: usize,
     state: Vec<Complex64>,
@@ -24,6 +25,43 @@ impl StateVec {
         let num_qubits = state.len().trailing_zeros() as usize;
         assert_eq!(1 << num_qubits, state.len(), "Invalid state vector size");
         StateVec { num_qubits, state }
+    }
+
+    /// Prepare a specific computational basis state
+    ///
+    /// # Panics
+    ///
+    /// Panics if `basis_state` >= `2^num_qubits` (i.e., if the basis state index is too large for the number of qubits)
+    pub fn prepare_computational_basis(&mut self, basis_state: usize) {
+        assert!(basis_state < 1 << self.num_qubits);
+        self.state.fill(Complex64::new(0.0, 0.0));
+        self.state[basis_state] = Complex64::new(1.0, 0.0);
+    }
+
+    /// Prepare all qubits in |+⟩ state
+    pub fn prepare_plus_state(&mut self) {
+        let factor = Complex64::new(1.0 / f64::from(1 << self.num_qubits), 0.0);
+        self.state.fill(factor);
+    }
+
+    /// Returns the number of qubits in the system
+    #[must_use] pub fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
+    /// Returns reference to the state vector
+    #[must_use] pub fn state(&self) -> &[Complex64] {
+        &self.state
+    }
+
+    /// Returns the probability of measuring a specific basis state
+    ///
+    /// # Panics
+    ///
+    /// Panics if `basis_state` >= `2^num_qubits` (i.e., if the basis state index is too large for the number of qubits)
+    #[must_use] pub fn probability(&self, basis_state: usize) -> f64 {
+        assert!(basis_state < 1 << self.num_qubits);
+        self.state[basis_state].norm_sqr()
     }
 
     /// Apply Hadamard gate to the target qubit
@@ -160,7 +198,22 @@ impl StateVec {
         );
     }
 
-    /// General single-qubit unitary that takes in matrix elements
+    /// Apply a general single-qubit unitary gate
+    ///
+    /// # Examples
+    /// ```
+    /// use pecos_qsim::statevec::StateVec;
+    /// use std::f64::consts::FRAC_1_SQRT_2;
+    /// use num_complex::Complex64;
+    /// let mut q = StateVec::new(1);
+    /// // Apply Hadamard gate
+    /// q.single_qubit_rotation(0,
+    ///     Complex64::new(FRAC_1_SQRT_2, 0.0),  // u00
+    ///     Complex64::new(FRAC_1_SQRT_2, 0.0),  // u01
+    ///     Complex64::new(FRAC_1_SQRT_2, 0.0),  // u10
+    ///     Complex64::new(-FRAC_1_SQRT_2, 0.0), // u11
+    /// );
+    /// ```
     ///
     /// # Panics
     ///
@@ -258,7 +311,7 @@ impl StateVec {
     pub fn cx(&mut self, control: usize, target: usize) {
         assert!(control < self.num_qubits);
         assert!(target < self.num_qubits);
-        assert!(control != target);
+        assert_ne!(control, target);
 
         for i in 0..self.state.len() {
             let control_val = (i >> control) & 1;
@@ -279,7 +332,7 @@ impl StateVec {
     pub fn cy(&mut self, control: usize, target: usize) {
         assert!(control < self.num_qubits);
         assert!(target < self.num_qubits);
-        assert!(control != target);
+        assert_ne!(control, target);
 
         // Only process when control bit is 1 and target bit is 0
         for i in 0..self.state.len() {
@@ -307,7 +360,7 @@ impl StateVec {
     pub fn cz(&mut self, control: usize, target: usize) {
         assert!(control < self.num_qubits);
         assert!(target < self.num_qubits);
-        assert!(control != target);
+        assert_ne!(control, target);
 
         // CZ is simpler - just add phase when both control and target are 1
         for i in 0..self.state.len() {
@@ -329,7 +382,7 @@ impl StateVec {
     pub fn rxx(&mut self, theta: f64, qubit1: usize, qubit2: usize) {
         assert!(qubit1 < self.num_qubits);
         assert!(qubit2 < self.num_qubits);
-        assert!(qubit1 != qubit2);
+        assert_ne!(qubit1, qubit2);
 
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
@@ -373,7 +426,7 @@ impl StateVec {
     pub fn ryy(&mut self, theta: f64, qubit1: usize, qubit2: usize) {
         assert!(qubit1 < self.num_qubits);
         assert!(qubit2 < self.num_qubits);
-        assert!(qubit1 != qubit2);
+        assert_ne!(qubit1, qubit2);
 
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
@@ -416,7 +469,7 @@ impl StateVec {
     pub fn rzz(&mut self, theta: f64, qubit1: usize, qubit2: usize) {
         assert!(qubit1 < self.num_qubits);
         assert!(qubit2 < self.num_qubits);
-        assert!(qubit1 != qubit2);
+        assert_ne!(qubit1, qubit2);
 
         // RZZ is diagonal in computational basis - just add phases
         for i in 0..self.state.len() {
@@ -448,7 +501,7 @@ impl StateVec {
     pub fn two_qubit_unitary(&mut self, qubit1: usize, qubit2: usize, matrix: [[Complex64; 4]; 4]) {
         assert!(qubit1 < self.num_qubits);
         assert!(qubit2 < self.num_qubits);
-        assert!(qubit1 != qubit2);
+        assert_ne!(qubit1, qubit2);
 
         // Make sure qubit1 < qubit2 for consistent ordering
         let (q1, q2) = if qubit1 < qubit2 {

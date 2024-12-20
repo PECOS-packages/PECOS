@@ -532,7 +532,7 @@ class Steane(Vars):
             aux.px(reject=reject, rus_limit=rus_limit),
             aux.cx(self),
             self.mz(),
-            If(self.log).Then(aux.x()),
+            If(self.log == 1).Then(aux.x()),
             Permute(self.d, aux.d),
             # update syndromes and pauli frame
             self.last_raw_syn_x.set(0),
@@ -558,7 +558,7 @@ class Steane(Vars):
             aux.pz(reject=reject, rus_limit=rus_limit),
             self.cx(aux),
             self.mx(),
-            If(self.log).Then(aux.z()),
+            If(self.log == 1).Then(aux.z()),
             Permute(self.d, aux.d),
             # update syndromes and pauli frame
             self.last_raw_syn_x.set(0),

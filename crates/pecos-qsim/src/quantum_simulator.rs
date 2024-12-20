@@ -11,8 +11,6 @@
 // the License.
 
 pub trait QuantumSimulator {
-    fn new(num_qubits: usize) -> Self;
-
     fn num_qubits(&self) -> usize;
 
     fn reset(&mut self) -> &mut Self;

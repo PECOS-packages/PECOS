@@ -9,7 +9,8 @@ pub struct StateVec {
 
 impl StateVec {
     /// Create a new state initialized to |0...0⟩
-    #[must_use] pub fn new(num_qubits: usize) -> Self {
+    #[must_use]
+    pub fn new(num_qubits: usize) -> Self {
         let size = 1 << num_qubits; // 2^n
         let mut state = vec![Complex64::new(0.0, 0.0); size];
         state[0] = Complex64::new(1.0, 0.0); // Prep |0...0>
@@ -21,7 +22,8 @@ impl StateVec {
     /// # Panics
     ///
     /// Panics if the input state requires more qubits then `StateVec` has.
-    #[must_use] pub fn from_state(state: Vec<Complex64>) -> Self {
+    #[must_use]
+    pub fn from_state(state: Vec<Complex64>) -> Self {
         let num_qubits = state.len().trailing_zeros() as usize;
         assert_eq!(1 << num_qubits, state.len(), "Invalid state vector size");
         StateVec { num_qubits, state }
@@ -45,12 +47,14 @@ impl StateVec {
     }
 
     /// Returns the number of qubits in the system
-    #[must_use] pub fn num_qubits(&self) -> usize {
+    #[must_use]
+    pub fn num_qubits(&self) -> usize {
         self.num_qubits
     }
 
     /// Returns reference to the state vector
-    #[must_use] pub fn state(&self) -> &[Complex64] {
+    #[must_use]
+    pub fn state(&self) -> &[Complex64] {
         &self.state
     }
 
@@ -59,7 +63,8 @@ impl StateVec {
     /// # Panics
     ///
     /// Panics if `basis_state` >= `2^num_qubits` (i.e., if the basis state index is too large for the number of qubits)
-    #[must_use] pub fn probability(&self, basis_state: usize) -> f64 {
+    #[must_use]
+    pub fn probability(&self, basis_state: usize) -> f64 {
         assert!(basis_state < 1 << self.num_qubits);
         self.state[basis_state].norm_sqr()
     }
@@ -202,7 +207,7 @@ impl StateVec {
     ///
     /// # Examples
     /// ```
-    /// use pecos_qsim::statevec::StateVec;
+    /// use pecos_qsim::state_vec::StateVec;
     /// use std::f64::consts::FRAC_1_SQRT_2;
     /// use num_complex::Complex64;
     /// let mut q = StateVec::new(1);

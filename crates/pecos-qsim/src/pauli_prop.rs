@@ -39,17 +39,6 @@ where
     T: for<'a> Set<'a, Element = E>,
 {
     #[inline]
-    #[must_use]
-    fn new(num_qubits: usize) -> PauliProp<T, E> {
-        Self {
-            num_qubits,
-            xs: T::new(),
-            zs: T::new(),
-            _marker: PhantomData,
-        }
-    }
-
-    #[inline]
     fn num_qubits(&self) -> usize {
         self.num_qubits
     }

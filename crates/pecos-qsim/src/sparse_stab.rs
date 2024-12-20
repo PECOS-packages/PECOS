@@ -13,10 +13,13 @@
 use crate::{CliffordSimulator, Gens, QuantumSimulator};
 use core::fmt::Debug;
 use core::mem;
-use pecos_core::SimRng;
 use pecos_core::{IndexableElement, Set};
+use pecos_core::{SimRng, VecSet};
 use rand_chacha::ChaCha8Rng;
 // TODO: Look into seeing if a dense bool for signs_minus and signs_i is more efficient
+
+#[expect(clippy::module_name_repetitions)]
+pub type StdSparseStab = SparseStab<VecSet<usize>, usize>;
 
 /// A sparse representation of a stabilizer state using the stabilizer/destabilizer formalism.
 ///
@@ -439,12 +442,6 @@ where
     T: for<'a> Set<'a, Element = E>,
 {
     #[inline]
-    #[must_use]
-    fn new(num_qubits: usize) -> Self {
-        Self::new(num_qubits)
-    }
-
-    #[inline]
     fn num_qubits(&self) -> usize {
         self.num_qubits
     }
@@ -463,7 +460,6 @@ where
 {
     // TODO: pub fun p(&mut self, pauli: &pauli, q: U) { todo!() }
     // TODO: pub fun m(&mut self, pauli: &pauli, q: U) -> bool { todo!() }
-
 
     /// Measures a qubit in the Z basis.
     ///
@@ -629,7 +625,7 @@ where
     /// use pecos_core::VecSet;
     /// use pecos_qsim::{QuantumSimulator, CliffordSimulator, SparseStab};
     /// let mut state = SparseStab::<VecSet<u32>, u32>::new(2);
-    /// 
+    ///
     /// // Create Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
     /// state.h(0);  // Put first qubit in |+⟩
     /// state.cx(0, 1);  // Entangle qubits

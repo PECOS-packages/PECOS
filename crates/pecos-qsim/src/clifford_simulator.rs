@@ -45,7 +45,7 @@ use pecos_core::IndexableElement;
 /// - State preparations in X, Y, Z bases (including ± variants)
 ///
 /// # Type Parameters
-/// - T: An indexable element type that can convert between qubit indices and usizes
+/// - `T`: An indexable element type that can convert between qubit indices and usizes
 ///
 /// # Gate Transformations
 /// Gates transform Pauli operators according to their Heisenberg representation. For example:
@@ -59,10 +59,10 @@ use pecos_core::IndexableElement;
 ///
 /// CNOT (with control c and target t):
 /// ```text
-/// Xc → Xc⊗Xt
-/// Xt → Xt
-/// Zc → Zc
-/// Zt → Zc⊗Zt
+/// Xc⊗It → Xc⊗Xt
+/// Ic⊗Xt → Ic⊗Xt
+/// Zc⊗It → Zc⊗It
+/// Ic⊗Zt → Zc⊗Zt
 /// ```
 ///
 /// # Measurement Semantics
@@ -72,10 +72,8 @@ use pecos_core::IndexableElement;
 ///
 /// # Examples
 /// ```rust
-/// use pecos_core::VecSet;
-/// use pecos_qsim::{CliffordSimulator, SparseStab};
-///
-/// let mut sim = SparseStab::<VecSet<u32>, u32>::new(2);
+/// use pecos_qsim::{CliffordSimulator, StdSparseStab};
+/// let mut sim = StdSparseStab::new(2);
 ///
 /// // Create Bell state
 /// sim.h(0);
@@ -85,31 +83,43 @@ use pecos_core::IndexableElement;
 /// let (outcome, deterministic) = sim.mz(0);
 /// ```
 ///
-/// # Implementation Notes
-/// - Most multi-qubit gates are implemented in terms of simpler gates
-/// - The trait provides default implementations where possible
-/// - Implementors must provide: `mz()`, `x()`, `y()`, `z()`, `h()`, `sz()`, `cx()`
-/// - All other operations have default implementations
+/// # Required Implementations
+/// When implementing this trait, the following methods must be provided at minimum:
+/// - `mz()`: Z-basis measurement
+/// - `x()`: Pauli X gate
+/// - `y()`: Pauli Y gate
+/// - `z()`: Pauli Z gate
+/// - `h()`: Hadamard gate
+/// - `sz()`: Square root of Z gate
+/// - `cx()`: Controlled-NOT gate
+///
+/// All other operations have default implementations in terms of these basic gates.
+/// Implementors may override any default implementation for efficiency.
 ///
 /// # References
 /// - Gottesman, "The Heisenberg Representation of Quantum Computers"
 ///   <https://arxiv.org/abs/quant-ph/9807006>
 #[expect(clippy::min_ident_chars)]
 pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
-    #[inline]
-    #[must_use]
-    fn new(num_qubits: usize) -> Self
-    where
-        Self: Sized,
-    {
-        <Self as QuantumSimulator>::new(num_qubits)
-    }
-
+    /// Returns the number of qubits in the system.
+    ///
+    /// This method is inherited from `QuantumSimulator` and returns the total number
+    /// of qubits that this simulator instance is configured to handle.
+    ///
+    /// # Returns
+    /// * `usize` - The number of qubits in the system
     #[inline]
     fn num_qubits(&self) -> usize {
         <Self as QuantumSimulator>::num_qubits(self)
     }
 
+    /// Resets the quantum system to its initial state.
+    ///
+    /// This method returns all qubits to the |0⟩ state and clears any entanglement
+    /// or quantum correlations between qubits.
+    ///
+    /// # Returns
+    /// * `&mut Self` - A mutable reference to the simulator for method chaining
     #[inline]
     fn reset(&mut self) -> &mut Self {
         <Self as QuantumSimulator>::reset(self)
@@ -280,7 +290,31 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         (meas, deter)
     }
 
-    /// Measurement of the +`Z_q` operator.
+    /// Performs a measurement in the Z basis on the specified qubit.
+    ///
+    /// This measurement projects the qubit state onto the +1 or -1 eigenstate
+    /// of the Z operator (corresponding to |0⟩ or |1⟩ respectively).
+    ///
+    /// # Arguments
+    /// * `q` - The qubit to measure
+    ///
+    /// For all measurement operations (mx, my, mz, mnx, mny, mnz):
+    ///
+    /// # Return Values
+    /// Returns a tuple `(outcome, deterministic)` where:
+    /// * `outcome`:
+    ///   - `true` indicates projection onto the +1 eigenstate
+    ///   - `false` indicates projection onto the -1 eigenstate
+    /// * `deterministic`:
+    ///   - `true` if the state was already in an eigenstate of the measured operator
+    ///   - `false` if the measurement result was random (state was in superposition)
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::{CliffordSimulator, StdSparseStab};
+    /// let mut sim = StdSparseStab::new(1);
+    /// let (outcome, deterministic) = sim.mz(0);
+    /// ```
     fn mz(&mut self, q: T) -> (bool, bool);
 
     /// Measurement of the -`Z_q` operator.
@@ -301,13 +335,67 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     #[inline]
     fn identity(&mut self, _q: T) {}
 
-    /// Pauli X gate. X -> X, Z -> -Z
+    /// Applies a Pauli X (NOT) gate to the specified qubit.
+    ///
+    /// The X gate is equivalent to a classical NOT operation in the computational basis.
+    /// It transforms the Pauli operators as follows:
+    /// ```text
+    /// X → X
+    /// Y → -Y
+    /// Z → -Z
+    /// ```
+    ///
+    /// # Arguments
+    /// * `q` - The target qubit
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::{CliffordSimulator, StdSparseStab};
+    /// let mut sim = StdSparseStab::new(1);
+    /// sim.x(0); // Apply X gate to qubit 0
+    /// ```
     fn x(&mut self, q: T);
 
-    /// Pauli Y gate. X -> -X, Z -> -Z
+    /// Applies a Pauli Y gate to the specified qubit.
+    ///
+    /// The Y gate is a rotation by π radians around the Y axis of the Bloch sphere.
+    /// It transforms the Pauli operators as follows:
+    /// ```text
+    /// X → -X
+    /// Y → Y
+    /// Z → -Z
+    /// ```
+    ///
+    /// # Arguments
+    /// * `q` - The target qubit
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::{CliffordSimulator, StdSparseStab};
+    /// let mut sim = StdSparseStab::new(1);
+    /// sim.y(0); // Apply Y gate to qubit 0
+    /// ```
     fn y(&mut self, q: T);
 
-    /// Pauli Z gate. X -> -X, Z -> Z
+    /// Applies a Pauli Z gate to the specified qubit.
+    ///
+    /// The Z gate applies a phase flip in the computational basis.
+    /// It transforms the Pauli operators as follows:
+    /// ```text
+    /// X → -X
+    /// Y → -Y
+    /// Z → Z
+    /// ```
+    ///
+    /// # Arguments
+    /// * `q` - The target qubit
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::{CliffordSimulator, StdSparseStab};
+    /// let mut sim = StdSparseStab::new(1);
+    /// sim.z(0); // Apply X gate to qubit 0
+    /// ```
     fn z(&mut self, q: T);
 
     /// Sqrt of X gate.
@@ -334,11 +422,33 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         self.h(q);
     }
 
-    /// Sqrt of Y gate.
-    ///     X -> -Z
-    ///     Z -> X
-    ///     W -> W
-    ///     Y -> Y
+    /// Applies a square root of Y gate to the specified qubit.
+    ///
+    /// The SY gate is equivalent to a rotation by π/2 radians around the Y axis
+    /// of the Bloch sphere. It transforms the Pauli operators as follows:
+    /// ```text
+    /// X → -Z
+    /// Z → X
+    /// Y → Y
+    /// ```
+    ///
+    /// # Arguments
+    /// * `q` - The target qubit
+    ///
+    /// # Mathematical Details
+    /// The SY gate has the following matrix representation:
+    /// ```text
+    /// SY = 1/√2 [1  -1]
+    ///          [1   1]
+    /// ```
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::{CliffordSimulator, StdSparseStab};
+    /// let mut sim = StdSparseStab::new(1);
+    /// sim.sy(0); // Apply square root of Y gate to qubit 0
+    /// ```
+    ///
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
@@ -360,7 +470,25 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         self.h(q);
     }
 
-    /// Sqrt of Z gate. +X -> +Y; +Z -> +Z; +Y -> -X;
+    /// Applies a square root of Z gate (S or SZ gate) to the specified qubit.
+    ///
+    /// The SZ gate is equivalent to a rotation by π/2 radians around the Z axis
+    /// of the Bloch sphere. It transforms the Pauli operators as follows:
+    /// ```text
+    /// X → Y
+    /// Y → -X
+    /// Z → Z
+    /// ```
+    ///
+    /// # Arguments
+    /// * `q` - The target qubit
+    ///
+    /// # Mathematical Details
+    /// The S gate has the following matrix representation:
+    /// ```text
+    /// S = [1  0]
+    ///     [0  i]
+    /// ```
     fn sz(&mut self, q: T);
 
     /// Adjoint of Sqrt of Z gate. X -> ..., Z -> ...
@@ -374,10 +502,44 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         self.sz(q);
     }
 
-    /// Hadamard gate. X -> Z, Z -> X
+    /// Applies a Hadamard gate to the specified qubit.
+    ///
+    /// The Hadamard gate creates an equal superposition of the computational basis
+    /// states and is fundamental to many quantum algorithms. It transforms the
+    /// Pauli operators as follows:
+    /// ```text
+    /// X → Z
+    /// Y → -Y
+    /// Z → X
+    /// ```
+    ///
+    /// # Arguments
+    /// * `q` - The target qubit
+    ///
+    /// # Mathematical Details
+    /// The Hadamard gate has the following matrix representation:
+    /// ```text
+    /// H = 1/√2 [1   1]
+    ///          [1  -1]
+    /// ```
     fn h(&mut self, q: T);
 
-    /// X -> -Z, Z -> -X, Y -> -Y
+    /// Applies a variant of the Hadamard gate (H2) to the specified qubit.
+    ///
+    /// H2 is part of the family of Hadamard-like gates that map X to Z and Z to X
+    /// with different sign combinations. It transforms the Pauli operators as follows:
+    /// ```text
+    /// X → -Z
+    /// Z → -X
+    /// Y → -Y
+    /// ```
+    ///
+    /// # Arguments
+    /// * `q` - The target qubit
+    ///
+    /// # Notes
+    /// - H2 is equivalent to the composition SY • Z  # TODO: Verify
+    /// - H2 differs from H by introducing additional minus signs
     #[inline]
     fn h2(&mut self, q: T) {
         self.sy(q);
@@ -412,7 +574,28 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         self.y(q);
     }
 
-    /// X -> Y, Z -> X, Y -> Z
+    /// Applies a Face gate (F) to the specified qubit.
+    ///
+    /// The F gate is a member of the Clifford group that cyclically permutes
+    /// the Pauli operators. It transforms them as follows:
+    /// ```text
+    /// X → Y
+    /// Y → Z
+    /// Z → X
+    /// ```
+    ///
+    /// # Arguments
+    /// * `q` - The target qubit
+    ///
+    /// # Mathematical Details
+    /// The F gate can be implemented as F = SX • SZ  # TODO: verify
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::{CliffordSimulator, StdSparseStab};
+    /// let mut sim = StdSparseStab::new(1);
+    /// sim.f(0); // Apply F gate to qubit 0
+    /// ```
     #[inline]
     fn f(&mut self, q: T) {
         self.sx(q);
@@ -672,10 +855,30 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
         self.cx(q1, q2);
     }
 
-    /// G2: +XI -> +IX
-    ///     +IX -> +XI
-    ///     +ZI -> +XZ
-    ///     +IZ -> +ZX
+    /// Applies the G2 two-qubit Clifford operation.
+    ///
+    /// G2 is a symmetric two-qubit operation that implements a particular permutation
+    /// of single-qubit Paulis. It transforms the Pauli operators as follows:
+    /// ```text
+    /// XI → IX
+    /// IX → XI
+    /// ZI → XZ
+    /// IZ → ZX
+    /// ```
+    ///
+    /// # Arguments
+    /// * `q1` - First qubit
+    /// * `q2` - Second qubit
+    ///
+    /// # Implementation Details
+    /// G2 can be implemented as: CZ • (H⊗H) • CZ
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::{CliffordSimulator, StdSparseStab};
+    /// let mut sim = StdSparseStab::new(2);
+    /// sim.g2(0, 1); // Apply G2 operation between qubits 0 and 1
+    /// ```
     #[inline]
     fn g2(&mut self, q1: T, q2: T) {
         self.cz(q1, q2);

@@ -11,7 +11,7 @@
 // the License.
 
 use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
-use super::clifford_gateable::CliffordGateable;
+use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator_state::QuantumSimulatorState;
 
 use num_complex::Complex64;
@@ -165,7 +165,12 @@ impl StateVec {
     ///
     /// Panics if target qubit1 or qubit2 index is >= number of qubits or qubit1 == qubit2
     #[inline]
-    pub fn two_qubit_unitary(&mut self, qubit1: usize, qubit2: usize, matrix: [[Complex64; 4]; 4]) {
+    pub fn two_qubit_unitary(
+        &mut self,
+        qubit1: usize,
+        qubit2: usize,
+        matrix: [[Complex64; 4]; 4],
+    ) -> &mut Self {
         assert!(qubit1 < self.num_qubits);
         assert!(qubit2 < self.num_qubits);
         assert_ne!(qubit1, qubit2);
@@ -215,6 +220,7 @@ impl StateVec {
                     + matrix[3][3] * a11;
             }
         }
+        self
     }
 }
 
@@ -435,7 +441,7 @@ impl CliffordGateable<usize> for StateVec {
     ///
     /// Panics if target qubit index is >= number of qubits
     #[inline]
-    fn mz(&mut self, target: usize) -> bool {
+    fn mz(&mut self, target: usize) -> MeasurementResult {
         assert!(target < self.num_qubits);
         let mut rng = rand::thread_rng();
 
@@ -469,7 +475,10 @@ impl CliffordGateable<usize> for StateVec {
             *amp *= norm_inv;
         }
 
-        result != 0
+        MeasurementResult {
+            outcome: result != 0,
+            is_deterministic: false,
+        }
     }
 }
 
@@ -598,7 +607,7 @@ impl ArbitraryRotationGateable<usize> for StateVec {
 
         let cos = (theta / 2.0).cos();
         let sin = (theta / 2.0).sin();
-        let neg_i_sin = Complex64::new(0.0, -sin);
+        let i_sin = Complex64::new(0.0, sin); // Changed name and sign
 
         let (q1, q2) = if qubit1 < qubit2 {
             (qubit1, qubit2)
@@ -606,31 +615,39 @@ impl ArbitraryRotationGateable<usize> for StateVec {
             (qubit2, qubit1)
         };
 
-        for i in 0..self.state.len() {
-            let bit1 = (i >> q1) & 1;
-            let bit2 = (i >> q2) & 1;
+        let step1 = 1 << q1;
+        let step2 = 1 << q2;
+        for i in (0..self.state.len()).step_by(2 * step2) {
+            for j in (i..i + step2).step_by(2 * step1) {
+                let i00 = j;
+                let i01 = j ^ step2;
+                let i10 = j ^ step1;
+                let i11 = i10 ^ step2;
 
-            if bit1 == 0 && bit2 == 0 {
-                let i01 = i ^ (1 << q2);
-                let i10 = i ^ (1 << q1);
-                let i11 = i ^ (1 << q1) ^ (1 << q2);
-
-                let a00 = self.state[i];
+                let a00 = self.state[i00];
                 let a01 = self.state[i01];
                 let a10 = self.state[i10];
                 let a11 = self.state[i11];
 
-                // YY has an extra minus sign compared to XX when acting on |01⟩ and |10⟩
-                self.state[i] = cos * a00 + neg_i_sin * a11;
-                self.state[i01] = cos * a01 - neg_i_sin * a10;
-                self.state[i10] = cos * a10 - neg_i_sin * a01;
-                self.state[i11] = cos * a11 + neg_i_sin * a00;
+                self.state[i00] = cos * a00 - i_sin * a11;
+                self.state[i01] = cos * a01 - i_sin * a10;
+                self.state[i10] = cos * a10 - i_sin * a01;
+                self.state[i11] = cos * a11 - i_sin * a00;
             }
         }
         self
     }
 
     /// Apply RZZ(θ) = exp(-i θ ZZ/2) gate
+    ///
+    /// This is an optimized implementation of the general two-qubit unitary:
+    /// ```text
+    /// RZZ(θ) = [[e^(-iθ/2),     0,          0,          0        ],
+    ///           [0,          e^(iθ/2),      0,          0        ],
+    ///           [0,             0,       e^(iθ/2),      0        ],
+    ///           [0,             0,          0,       e^(-iθ/2)   ]]
+    /// ```
+    /// Optimized by taking advantage of the diagonal structure.
     ///
     /// # Panics
     ///
@@ -664,7 +681,7 @@ impl ArbitraryRotationGateable<usize> for StateVec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_3, PI, TAU};
+    use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_3, FRAC_PI_6, PI, TAU};
 
     #[test]
     fn test_new_state() {
@@ -1006,27 +1023,94 @@ mod tests {
 
     #[test]
     fn test_ryy() {
-        // Test 1: RYY(π/2) on |00⟩ should give (|00⟩ - i|11⟩)/√2
+        let expected = FRAC_1_SQRT_2;
+
+        // Test all basis states for RYY(π/2)
+        // |00⟩ -> (1/√2)|00⟩ - i(1/√2)|11⟩
         let mut q = StateVec::new(2);
         q.ryy(FRAC_PI_2, 0, 1);
-
-        let expected = FRAC_1_SQRT_2;
         assert!((q.state[0].re - expected).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
         assert!(q.state[2].norm() < 1e-10);
         assert!((q.state[3].im + expected).abs() < 1e-10);
 
-        // Test 2: RYY(2π) should return to original state up to global phase
+        // |11⟩ -> (1/√2)|11⟩ - i(1/√2)|00⟩
         let mut q = StateVec::new(2);
-        q.h(0); // Create some initial state
+        q.x(0).x(1); // Prepare |11⟩
+        q.ryy(FRAC_PI_2, 0, 1);
+        assert!((q.state[0].im + expected).abs() < 1e-10);
+        assert!(q.state[1].norm() < 1e-10);
+        assert!(q.state[2].norm() < 1e-10);
+        assert!((q.state[3].re - expected).abs() < 1e-10);
+
+        // |01⟩ -> (1/√2)|01⟩ + i(1/√2)|10⟩
+        let mut q = StateVec::new(2);
+        q.x(1); // Prepare |01⟩
+        q.ryy(FRAC_PI_2, 0, 1);
+        assert!(q.state[0].norm() < 1e-10);
+        assert!(q.state[1].re.abs() < 1e-10);
+        assert!((q.state[1].im + expected).abs() < 1e-10);
+        assert!((q.state[2].re - expected).abs() < 1e-10);
+        assert!(q.state[2].im.abs() < 1e-10);
+        assert!(q.state[3].norm() < 1e-10);
+
+        // |10⟩ -> (1/√2)|10⟩ + i(1/√2)|01⟩
+        let mut q = StateVec::new(2);
+        q.x(0); // Prepare |10⟩
+        q.ryy(FRAC_PI_2, 0, 1);
+        assert!(q.state[0].norm() < 1e-10);
+        assert!((q.state[1].re - expected).abs() < 1e-10);
+        assert!(q.state[1].im.abs() < 1e-10);
+        assert!(q.state[2].re.abs() < 1e-10);
+        assert!((q.state[2].im + expected).abs() < 1e-10);
+        assert!(q.state[3].norm() < 1e-10);
+
+        // Test properties
+
+        // 1. Periodicity: RYY(2π) = I
+        let mut q = StateVec::new(2);
+        q.h(0); // Create non-trivial initial state
         let initial = q.state.clone();
         q.ryy(TAU, 0, 1);
-
+        // Need to account for potential global phase
         if q.state[0].norm() > 1e-10 {
             let phase = q.state[0] / initial[0];
             for (a, b) in q.state.iter().zip(initial.iter()) {
-                assert!((a - b * phase).norm() < 1e-10);
+                assert!(
+                    (a - b * phase).norm() < 1e-10,
+                    "Periodicity test failed: a={a}, b={b}"
+                );
             }
+        }
+
+        // 2. Composition: RYY(θ₁)RYY(θ₂) = RYY(θ₁ + θ₂)
+        let mut q1 = StateVec::new(2);
+        let mut q2 = StateVec::new(2);
+        q1.h(0); // Create non-trivial initial state
+        q2.h(0); // Same initial state
+        q1.ryy(FRAC_PI_3, 0, 1).ryy(FRAC_PI_6, 0, 1);
+        q2.ryy(FRAC_PI_2, 0, 1);
+        // Compare up to global phase
+        if q1.state[0].norm() > 1e-10 {
+            let phase = q1.state[0] / q2.state[0];
+            for (a, b) in q1.state.iter().zip(q2.state.iter()) {
+                assert!(
+                    (a - b * phase).norm() < 1e-10,
+                    "Composition test failed: a={a}, b={b}"
+                );
+            }
+        }
+
+        // 3. Symmetry: RYY(θ,0,1) = RYY(θ,1,0)
+        let mut q1 = StateVec::new(2);
+        let mut q2 = StateVec::new(2);
+        q1.h(0).h(1); // Create non-trivial initial state
+        q2.h(0).h(1); // Same initial state
+        q1.ryy(FRAC_PI_3, 0, 1);
+        q2.ryy(FRAC_PI_3, 1, 0);
+        // States should be exactly equal (no phase difference)
+        for (a, b) in q1.state.iter().zip(q2.state.iter()) {
+            assert!((a - b).norm() < 1e-10, "Symmetry test failed: a={a}, b={b}");
         }
     }
 
@@ -1122,7 +1206,7 @@ mod tests {
         // Test 1: Measuring |0> state
         let mut q = StateVec::new(1);
         let result = q.mz(0);
-        assert!(!result);
+        assert!(!result.outcome);
         assert!((q.state[0].re - 1.0).abs() < 1e-10);
         assert!(q.state[1].norm() < 1e-10);
 
@@ -1130,7 +1214,7 @@ mod tests {
         let mut q = StateVec::new(1);
         q.x(0);
         let result = q.mz(0);
-        assert!(result);
+        assert!(result.outcome);
         assert!(q.state[0].norm() < 1e-10);
         assert!((q.state[1].re - 1.0).abs() < 1e-10);
 
@@ -1142,7 +1226,7 @@ mod tests {
             let mut q = StateVec::new(1);
             q.h(0);
             let result = q.mz(0);
-            if !result {
+            if !result.outcome {
                 zeros += 1;
             }
         }
@@ -1160,7 +1244,7 @@ mod tests {
         let result1 = q.mz(0);
         // Measure second qubit - should match first
         let result2 = q.mz(1);
-        assert_eq!(result1, result2);
+        assert_eq!(result1.outcome, result2.outcome);
     }
 
     #[test]
@@ -1673,8 +1757,8 @@ mod tests {
         let result1 = q.mz(0);
         let result2 = q.mz(0);
 
-        assert!(result1);
-        assert!(result2);
+        assert!(result1.outcome);
+        assert!(result2.outcome);
     }
 
     #[test]
@@ -1691,6 +1775,6 @@ mod tests {
         // Measure the second qubit - should match the first
         let result2 = q.mz(1);
 
-        assert_eq!(result1, result2);
+        assert_eq!(result1.outcome, result2.outcome);
     }
 }

@@ -13,6 +13,11 @@
 use super::quantum_simulator_state::QuantumSimulatorState;
 use pecos_core::IndexableElement;
 
+pub struct MeasurementResult {
+    pub outcome: bool,
+    pub is_deterministic: bool,
+}
+
 /// A simulator trait for quantum systems that implement Clifford operations.
 ///
 /// # Overview
@@ -643,7 +648,7 @@ pub trait CliffordGateable<T: IndexableElement>: QuantumSimulatorState {
 
     /// Measurement of the +`X_q` operator.
     #[inline]
-    fn mx(&mut self, q: T) -> bool {
+    fn mx(&mut self, q: T) -> MeasurementResult {
         // +X -> +Z
         self.h(q);
         let meas = self.mz(q);
@@ -655,7 +660,7 @@ pub trait CliffordGateable<T: IndexableElement>: QuantumSimulatorState {
 
     /// Measurement of the -`X_q` operator.
     #[inline]
-    fn mnx(&mut self, q: T) -> bool {
+    fn mnx(&mut self, q: T) -> MeasurementResult {
         // -X -> +Z
         self.h(q);
         self.x(q);
@@ -671,7 +676,7 @@ pub trait CliffordGateable<T: IndexableElement>: QuantumSimulatorState {
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn my(&mut self, q: T) -> bool {
+    fn my(&mut self, q: T) -> MeasurementResult {
         // +Y -> +Z
         self.sx(q);
         let meas = self.mz(q);
@@ -685,7 +690,7 @@ pub trait CliffordGateable<T: IndexableElement>: QuantumSimulatorState {
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn mny(&mut self, q: T) -> bool {
+    fn mny(&mut self, q: T) -> MeasurementResult {
         // -Y -> +Z
         self.sxdg(q);
         let meas = self.mz(q);
@@ -720,13 +725,13 @@ pub trait CliffordGateable<T: IndexableElement>: QuantumSimulatorState {
     /// let mut sim = StdSparseStab::new(1);
     /// let outcome = sim.mz(0);
     /// ```
-    fn mz(&mut self, q: T) -> bool;
+    fn mz(&mut self, q: T) -> MeasurementResult;
 
     /// Measurement of the -`Z_q` operator.
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn mnz(&mut self, q: T) -> bool {
+    fn mnz(&mut self, q: T) -> MeasurementResult {
         // -Z -> +Z
         self.x(q);
         let meas = self.mz(q);
@@ -749,11 +754,12 @@ pub trait CliffordGateable<T: IndexableElement>: QuantumSimulatorState {
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn px(&mut self, q: T) -> &mut Self {
-        if self.mx(q) {
+    fn px(&mut self, q: T) -> MeasurementResult {
+        let result = self.mx(q);
+        if result.outcome {
             self.z(q);
         }
-        self
+        result
     }
 
     /// Prepares a qubit in the -1 eigenstate of the X operator.
@@ -770,33 +776,36 @@ pub trait CliffordGateable<T: IndexableElement>: QuantumSimulatorState {
     ///
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn pnx(&mut self, q: T) -> &mut Self {
-        if self.mnx(q) {
+    fn pnx(&mut self, q: T) -> MeasurementResult {
+        let result = self.mnx(q);
+        if result.outcome {
             self.z(q);
         }
-        self
+        result
     }
 
     /// Preparation of the +`Y_q` operator.
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn py(&mut self, q: T) -> &mut Self {
-        if self.my(q) {
+    fn py(&mut self, q: T) -> MeasurementResult {
+        let result = self.my(q);
+        if result.outcome {
             self.z(q);
         }
-        self
+        result
     }
 
     /// Preparation of the -`Y_q` operator.
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn pny(&mut self, q: T) -> &mut Self {
-        if self.mny(q) {
+    fn pny(&mut self, q: T) -> MeasurementResult {
+        let result = self.mny(q);
+        if result.outcome {
             self.z(q);
         }
-        self
+        result
     }
 
     /// Prepares a qubit in the +1 eigenstate of the Z operator.
@@ -813,11 +822,12 @@ pub trait CliffordGateable<T: IndexableElement>: QuantumSimulatorState {
     ///
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn pz(&mut self, q: T) -> &mut Self {
-        if self.mz(q) {
+    fn pz(&mut self, q: T) -> MeasurementResult {
+        let result = self.mz(q);
+        if result.outcome {
             self.x(q);
         }
-        self
+        result
     }
 
     /// Prepares a qubit in the -1 eigenstate of the Z operator.
@@ -834,10 +844,11 @@ pub trait CliffordGateable<T: IndexableElement>: QuantumSimulatorState {
     ///
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn pnz(&mut self, q: T) -> &mut Self {
-        if self.mnz(q) {
+    fn pnz(&mut self, q: T) -> MeasurementResult {
+        let result = self.mnz(q);
+        if result.outcome {
             self.x(q);
         }
-        self
+        result
     }
 }

@@ -11,7 +11,7 @@
 // the License.
 #![allow(unused_variables)]
 
-use super::clifford_gateable::CliffordGateable;
+use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use crate::quantum_simulator_state::QuantumSimulatorState;
 use core::marker::PhantomData;
 use pecos_core::{IndexableElement, Set, VecSet};
@@ -119,7 +119,11 @@ where
 
     /// Output true if there is an X on the qubit.
     #[inline]
-    fn mz(&mut self, q: E) -> bool {
-        self.xs.contains(&q)
+    fn mz(&mut self, q: E) -> MeasurementResult {
+        let outcome = self.xs.contains(&q);
+        MeasurementResult {
+            outcome,
+            is_deterministic: false,
+        }
     }
 }

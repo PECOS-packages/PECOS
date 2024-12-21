@@ -12,8 +12,6 @@
 
 pub mod clifford_gateable;
 pub mod gens;
-// pub mod measurement;
-// pub mod nonclifford_simulator;
 pub mod pauli_prop;
 // pub mod paulis;
 pub mod arbitrary_rotation_gateable;
@@ -22,11 +20,8 @@ pub mod quantum_simulator_state;
 pub mod sparse_stab;
 pub mod state_vec;
 
-pub use clifford_gateable::CliffordGateable;
+pub use clifford_gateable::{CliffordGateable, MeasurementResult};
 pub use gens::Gens;
-// pub use measurement::{MeasBitValue, MeasValue, Measurement}; // TODO: Distinguish between trait and struct/enum
-// pub use nonclifford_simulator::NonCliffordSimulator;
-// pub use pauli_prop::{PauliProp, StdPauliProp};
 // pub use paulis::Paulis;
 pub use quantum_simulator_state::QuantumSimulatorState;
 pub use sparse_stab::{SparseStab, StdSparseStab};

@@ -197,7 +197,7 @@ impl SparseSim {
                     }
                     _ => unreachable!(),
                 };
-                Ok(Some(u8::from(result)))
+                Ok(Some(u8::from(result.outcome)))
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Unsupported single-qubit gate",

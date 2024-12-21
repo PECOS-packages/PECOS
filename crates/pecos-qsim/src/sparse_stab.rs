@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::{CliffordGateable, Gens, QuantumSimulatorState};
+use crate::{CliffordGateable, Gens, MeasurementResult, QuantumSimulatorState};
 use core::fmt::Debug;
 use core::mem;
 use pecos_core::{IndexableElement, Set};
@@ -50,14 +50,18 @@ pub type StdSparseStab = SparseStab<VecSet<usize>, usize>;
 /// // Create a new 2-qubit stabilizer state
 /// let mut sim = SparseStab::<VecSet<u32>, u32>::new(2);
 ///
-/// // Initialize to |+> ⊗ |0>
-/// sim.h(0);  // Apply Hadamard to first qubit
-///
 /// // Create Bell state |Φ+> = (|00> + |11>)/√2
-/// sim.cx(0, 1);
+/// sim.h(0)
+///    .cx(0, 1);
 ///
-/// // Measure first qubit in Z basis
-/// let outcome = sim.mz(0);
+/// // Measure the two qubits in the Z basis
+/// let r0 = sim.mz(0);
+/// let r1 = sim.mz(1);
+///
+/// // Both measurements should equal each other
+/// assert_eq!(r0.outcome, r1.outcome);
+/// // But should be random
+/// assert!(!r0.is_deterministic);
 /// ```
 ///
 /// # Measurement Behavior
@@ -226,7 +230,7 @@ where
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn deterministic_meas(&mut self, q: E) -> bool {
+    fn deterministic_meas(&mut self, q: E) -> MeasurementResult {
         let qu = q.to_usize();
 
         let mut num_minuses = self.destabs.col_x[qu]
@@ -247,13 +251,18 @@ where
             // num_is % 4 != 0
             num_minuses += 1;
         }
-        num_minuses & 1 != 0 // num_minuses % 2 != 0 (is odd)
+        let outcome = num_minuses & 1 != 0; // num_minuses % 2 != 0 (is odd)
+        MeasurementResult {
+            outcome,
+            is_deterministic: true,
+        }
     }
 
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
+    #[allow(clippy::too_many_lines)]
     #[inline]
-    fn nondeterministic_meas(&mut self, q: E, result: bool) -> bool {
+    fn nondeterministic_meas(&mut self, q: E, result: bool) -> MeasurementResult {
         let qu = q.to_usize();
 
         let mut anticom_stabs_col = self.stabs.col_x[qu].clone();
@@ -387,61 +396,18 @@ where
         self.destabs.row_x[id_usize] = removed_row_x;
         self.destabs.row_z[id_usize] = removed_row_z;
 
-        self.apply_outcome(id, result)
-    }
-
-    /// Measures a qubit in the Z basis and get if deterministic result.
-    ///
-    /// Returns a tuple containing:
-    /// - The measurement outcome (true = |1>, false = |0>)
-    /// - Whether the measurement was deterministic
-    ///
-    /// The measurement can be:
-    /// - Deterministic: The outcome is fixed by the current stabilizer state
-    /// - Non-deterministic: The outcome is random with 50% probability for each result
-    ///
-    /// # Arguments
-    /// * q - The qubit index to measure
-    ///
-    /// # Returns
-    /// * (bool, bool) - (`measurement_outcome`, `is_deterministic`)
-    ///
-    /// # Example
-    /// ```rust
-    /// use pecos_core::VecSet;
-    /// use pecos_qsim::{QuantumSimulatorState, CliffordGateable, SparseStab};
-    /// let mut state = SparseStab::<VecSet<u32>, u32>::new(2);
-    ///
-    /// let (outcome, deterministic) = state.mz_determine(0);
-    /// if deterministic {
-    ///     println!("Measurement was deterministic with outcome: {}", outcome);
-    /// }
-    /// ```
-    ///
-    /// # Panics
-    ///
-    /// Will panic if qubit ids don't convert to usize.
-    #[inline]
-    pub fn mz_determine(&mut self, q: E) -> (bool, bool) {
-        let qu = q.to_usize();
-
-        let deterministic = self.stabs.col_x[qu].is_empty();
-
-        let meas_out = if deterministic {
-            // There are no stabilizers that anti-commute with Z_q
-            self.deterministic_meas(q)
-        } else {
-            let result = self.rng.gen_bool(0.5);
-            self.nondeterministic_meas(q, result)
-        };
-        (meas_out, deterministic)
+        let outcome = self.apply_outcome(id, result);
+        MeasurementResult {
+            outcome,
+            is_deterministic: false,
+        }
     }
 
     /// Measurement of the +`Z_q` operator where random outcomes are forced to a particular value.
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    pub fn mz_forced(&mut self, q: E, forced_outcome: bool) -> bool {
+    pub fn mz_forced(&mut self, q: E, forced_outcome: bool) -> MeasurementResult {
         let qu = q.to_usize();
 
         if self.stabs.col_x[qu].is_empty() {
@@ -452,101 +418,6 @@ where
         }
     }
 
-    #[inline]
-    pub fn mx_determine(&mut self, q: E) -> (bool, bool) {
-        self.h(q);
-        let result = self.mz_determine(q);
-        self.h(q);
-        result
-    }
-
-    #[inline]
-    pub fn mnx_determine(&mut self, q: E) -> (bool, bool) {
-        self.h(q);
-        let result = self.mnz_determine(q);
-        self.h(q);
-        result
-    }
-
-    #[inline]
-    pub fn my_determine(&mut self, q: E) -> (bool, bool) {
-        self.sx(q);
-        let result = self.mz_determine(q);
-        self.sxdg(q);
-        result
-    }
-
-    #[inline]
-    pub fn mny_determine(&mut self, q: E) -> (bool, bool) {
-        self.sxdg(q);
-        let result = self.mz_determine(q);
-        self.sx(q);
-        result
-    }
-
-    #[inline]
-    pub fn mnz_determine(&mut self, q: E) -> (bool, bool) {
-        self.x(q);
-        let result = self.mz_determine(q);
-        self.x(q);
-
-        result
-    }
-
-    #[inline]
-    pub fn px_determine(&mut self, q: E) -> (bool, bool) {
-        let result = self.mx_determine(q);
-        if result.0 {
-            self.z(q);
-        }
-        result
-    }
-
-    #[inline]
-    pub fn pnx_determine(&mut self, q: E) -> (bool, bool) {
-        let result = self.mnx_determine(q);
-        if result.0 {
-            self.z(q);
-        }
-        result
-    }
-
-    #[inline]
-    pub fn py_determine(&mut self, q: E) -> (bool, bool) {
-        let result = self.my_determine(q);
-        if result.0 {
-            self.z(q);
-        }
-        result
-    }
-
-    #[inline]
-    pub fn pny_determine(&mut self, q: E) -> (bool, bool) {
-        let result = self.mny_determine(q);
-        if result.0 {
-            self.z(q);
-        }
-        result
-    }
-
-    #[inline]
-    pub fn pz_determine(&mut self, q: E) -> (bool, bool) {
-        let result = self.mz_determine(q);
-        if result.0 {
-            self.x(q);
-        }
-        result
-    }
-
-    #[inline]
-    pub fn pnz_determine(&mut self, q: E) -> (bool, bool) {
-        let result = self.mnz_determine(q);
-        if result.0 {
-            self.x(q);
-        }
-        result
-    }
-
     /// Preparation of the +`Z_q` operator where random outcomes are forced to a particular value.
     ///
     /// # Panics
@@ -554,7 +425,7 @@ where
     #[inline]
     pub fn pz_forced(&mut self, q: E, forced_outcome: bool) -> &mut Self {
         let result = self.mz_forced(q, forced_outcome);
-        if result {
+        if result.outcome {
             self.x(q);
         }
         self
@@ -783,26 +654,6 @@ where
         self
     }
 
-    #[inline]
-    fn mx(&mut self, q: E) -> bool {
-        self.mx_determine(q).0
-    }
-
-    #[inline]
-    fn mnx(&mut self, q: E) -> bool {
-        self.mnx_determine(q).0
-    }
-
-    #[inline]
-    fn my(&mut self, q: E) -> bool {
-        self.my_determine(q).0
-    }
-
-    #[inline]
-    fn mny(&mut self, q: E) -> bool {
-        self.mny_determine(q).0
-    }
-
     /// Measures a qubit in the Z basis.
     ///
     /// Returns a tuple containing:
@@ -832,13 +683,18 @@ where
     ///
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn mz(&mut self, q: E) -> bool {
-        self.mz_determine(q).0
-    }
+    fn mz(&mut self, q: E) -> MeasurementResult {
+        let qu = q.to_usize();
 
-    #[inline]
-    fn mnz(&mut self, q: E) -> bool {
-        self.mnz_determine(q).0
+        let deterministic = self.stabs.col_x[qu].is_empty();
+
+        if deterministic {
+            // There are no stabilizers that anti-commute with Z_q
+            self.deterministic_meas(q)
+        } else {
+            let result = self.rng.gen_bool(0.5);
+            self.nondeterministic_meas(q, result)
+        }
     }
 }
 
@@ -1024,12 +880,14 @@ mod tests {
     fn test_nondeterministic_px() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["Z"], &["X"]);
-            let (_m0, d0) = state.px_determine(0);
-            let (m1, d1) = state.mx_determine(0);
+            let r0 = state.px(0);
+            let meas = state.mx(0);
+            let m1 = meas.outcome;
+            let d1 = meas.is_deterministic;
             let m1_int = u8::from(m1);
 
             assert_eq!(m1_int, 0); // |+X>
-            assert!(!d0); // Not deterministic
+            assert!(!r0.is_deterministic); // Not deterministic
             assert!(d1); // Deterministic
         }
     }
@@ -1037,10 +895,10 @@ mod tests {
     #[test]
     fn test_deterministic_px() {
         let mut state = prep_state(&["X"], &["Z"]);
-        let (m0, d0) = state.px_determine(0);
-        let m0_int = u8::from(m0);
+        let r0 = state.px(0);
+        let m0_int = u8::from(r0.outcome);
 
-        assert!(d0); // Deterministic
+        assert!(r0.is_deterministic); // Deterministic
         assert_eq!(m0_int, 0); // |+X>
     }
 
@@ -1048,23 +906,23 @@ mod tests {
     fn test_nondeterministic_pnx() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["Z"], &["X"]);
-            let (_m0, d0) = state.pnx_determine(0);
-            let (m1, d1) = state.mx_determine(0);
-            let m1_int = u8::from(m1);
+            let r0 = state.pnx(0);
+            let result = state.mx(0);
+            let m1_int = u8::from(result.outcome);
 
             assert_eq!(m1_int, 1); // |-X>
-            assert!(!d0); // Not deterministic
-            assert!(d1); // Deterministic
+            assert!(!r0.is_deterministic); // Not deterministic
+            assert!(result.is_deterministic); // Deterministic
         }
     }
 
     #[test]
     fn test_deterministic_pnx() {
         let mut state = prep_state(&["-X"], &["Z"]);
-        let (m0, d0) = state.pnx_determine(0);
-        let m0_int = u8::from(m0);
+        let r0 = state.pnx(0);
+        let m0_int = u8::from(r0.outcome);
 
-        assert!(d0); // Deterministic
+        assert!(r0.is_deterministic); // Deterministic
         assert_eq!(m0_int, 0); // |-X>
     }
 
@@ -1072,23 +930,23 @@ mod tests {
     fn test_nondeterministic_py() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["Z"], &["X"]);
-            let (_m0, d0) = state.py_determine(0);
-            let (m1, d1) = state.my_determine(0);
-            let m1_int = u8::from(m1);
+            let r0 = state.py(0);
+            let r1 = state.my(0);
+            let m1_int = u8::from(r1.outcome);
 
             assert_eq!(m1_int, 0); // |+Y>
-            assert!(!d0); // Not deterministic
-            assert!(d1); // Deterministic
+            assert!(!r0.is_deterministic); // Not deterministic
+            assert!(r1.is_deterministic); // Deterministic
         }
     }
 
     #[test]
     fn test_deterministic_py() {
         let mut state = prep_state(&["iW"], &["Z"]);
-        let (m0, d0) = state.py_determine(0);
-        let m0_int = u8::from(m0);
+        let r0 = state.py(0);
+        let m0_int = u8::from(r0.outcome);
 
-        assert!(d0); // Deterministic
+        assert!(r0.is_deterministic); // Deterministic
         assert_eq!(m0_int, 0); // |+Y>
     }
 
@@ -1096,23 +954,23 @@ mod tests {
     fn test_nondeterministic_pny() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["Z"], &["X"]);
-            let (_m0, d0) = state.pny_determine(0);
-            let (m1, d1) = state.my_determine(0);
-            let m1_int = u8::from(m1);
+            let r0 = state.pny(0);
+            let r1 = state.my(0);
+            let m1_int = u8::from(r1.outcome);
 
             assert_eq!(m1_int, 1); // |-Y>
-            assert!(!d0); // Not deterministic
-            assert!(d1); // Deterministic
+            assert!(!r0.is_deterministic); // Not deterministic
+            assert!(r1.is_deterministic); // Deterministic
         }
     }
 
     #[test]
     fn test_deterministic_pny() {
         let mut state = prep_state(&["-iW"], &["Z"]);
-        let (m0, d0) = state.pny_determine(0);
-        let m0_int = u8::from(m0);
+        let r0 = state.pny(0);
+        let m0_int = u8::from(r0.outcome);
 
-        assert!(d0); // Deterministic
+        assert!(r0.is_deterministic); // Deterministic
         assert_eq!(m0_int, 0); // |-Y>
     }
 
@@ -1120,23 +978,23 @@ mod tests {
     fn test_nondeterministic_pz() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["X"], &["Z"]);
-            let (_m0, d0) = state.pz_determine(0);
-            let (m1, d1) = state.mz_determine(0);
-            let m1_int = u8::from(m1);
+            let r0 = state.pz(0);
+            let r1 = state.mz(0);
+            let m1_int = u8::from(r1.outcome);
 
             assert_eq!(m1_int, 0); // |0>
-            assert!(!d0); // Not deterministic
-            assert!(d1); // Deterministic
+            assert!(!r0.is_deterministic); // Not deterministic
+            assert!(r1.is_deterministic); // Deterministic
         }
     }
 
     #[test]
     fn test_deterministic_pz() {
         let mut state = prep_state(&["Z"], &["X"]);
-        let (m0, d0) = state.pz_determine(0);
-        let m0_int = u8::from(m0);
+        let r0 = state.pz(0);
+        let m0_int = u8::from(r0.outcome);
 
-        assert!(d0); // Deterministic
+        assert!(r0.is_deterministic); // Deterministic
         assert_eq!(m0_int, 0); // |+Z>
     }
 
@@ -1144,144 +1002,144 @@ mod tests {
     fn test_nondeterministic_pnz() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["X"], &["Z"]);
-            let (_m0, d0) = state.pnz_determine(0);
-            let (m1, d1) = state.mz_determine(0);
-            let m1_int = u8::from(m1);
+            let r0 = state.pnz(0);
+            let r1 = state.mz(0);
+            let m1_int = u8::from(r1.outcome);
 
             assert_eq!(m1_int, 1); // |1>
-            assert!(!d0); // Not deterministic
-            assert!(d1); // Deterministic
+            assert!(!r0.is_deterministic); // Not deterministic
+            assert!(r1.is_deterministic); // Deterministic
         }
     }
 
     #[test]
     fn test_deterministic_pnz() {
         let mut state = prep_state(&["-Z"], &["X"]);
-        let (m0, d0) = state.pnz_determine(0);
-        let m0_int = u8::from(m0);
+        let r0 = state.pnz(0);
+        let m0_int = u8::from(r0.outcome);
 
-        assert!(d0); // Deterministic
+        assert!(r0.is_deterministic); // Deterministic
         assert_eq!(m0_int, 0); // |-Z>
     }
 
     #[test]
     fn test_nondeterministic_mx() {
         let mut state = prep_state(&["Z"], &["X"]);
-        let (_meas, determined) = state.mx_determine(0);
-        assert!(!determined);
+        let r = state.mx(0);
+        assert!(!r.is_deterministic);
     }
 
     #[test]
     fn test_deterministic_mx() {
         let mut state0 = prep_state(&["X"], &["Z"]);
-        let (meas0, determined0) = state0.mx_determine(0);
-        assert!(determined0);
-        assert!(!meas0);
+        let r0 = state0.mx(0);
+        assert!(r0.is_deterministic);
+        assert!(!r0.outcome);
 
         let mut state1 = prep_state(&["-X"], &["Z"]);
-        let (meas1, determined1) = state1.mx_determine(0);
-        assert!(determined1);
-        assert!(meas1);
+        let r1 = state1.mx(0);
+        assert!(r1.is_deterministic);
+        assert!(r1.outcome);
     }
 
     #[test]
     fn test_nondeterministic_mnx() {
         let mut state = prep_state(&["Z"], &["X"]);
-        let (_meas, determined) = state.mnx_determine(0);
-        assert!(!determined);
+        let r = state.mnx(0);
+        assert!(!r.is_deterministic);
     }
 
     #[test]
     fn test_deterministic_mnx() {
         let mut state0 = prep_state(&["-X"], &["Z"]);
-        let (meas0, determined0) = state0.mnx_determine(0);
-        assert!(determined0);
-        assert!(!meas0);
+        let r0 = state0.mnx(0);
+        assert!(r0.is_deterministic);
+        assert!(!r0.outcome);
 
         let mut state1 = prep_state(&["X"], &["Z"]);
-        let (meas1, determined1) = state1.mnx_determine(0);
-        assert!(determined1);
-        assert!(meas1);
+        let r1 = state1.mnx(0);
+        assert!(r1.is_deterministic);
+        assert!(r1.outcome);
     }
 
     #[test]
     fn test_nondeterministic_my() {
         let mut state = prep_state(&["Z"], &["X"]);
-        let (_meas, determined) = state.my_determine(0);
-        assert!(!determined);
+        let r = state.my(0);
+        assert!(!r.is_deterministic);
     }
 
     #[test]
     fn test_deterministic_my() {
         let mut state0 = prep_state(&["iW"], &["Z"]);
-        let (meas0, determined0) = state0.my_determine(0);
-        assert!(determined0);
-        assert!(!meas0);
+        let r0 = state0.my(0);
+        assert!(r0.is_deterministic);
+        assert!(!r0.outcome);
 
         let mut state1 = prep_state(&["-iW"], &["Z"]);
-        let (meas1, determined1) = state1.my_determine(0);
-        assert!(determined1);
-        assert!(meas1);
+        let r1 = state1.my(0);
+        assert!(r1.is_deterministic);
+        assert!(r1.outcome);
     }
 
     #[test]
     fn test_nondeterministic_mny() {
         let mut state = prep_state(&["Z"], &["X"]);
-        let (_meas, determined) = state.mny_determine(0);
-        assert!(!determined);
+        let r = state.mny(0);
+        assert!(!r.is_deterministic);
     }
 
     #[test]
     fn test_deterministic_mny() {
         let mut state0 = prep_state(&["-iW"], &["Z"]);
-        let (meas0, determined0) = state0.mny_determine(0);
-        assert!(determined0);
-        assert!(!meas0);
+        let r0 = state0.mny(0);
+        assert!(r0.is_deterministic);
+        assert!(!r0.outcome);
 
         let mut state1 = prep_state(&["iW"], &["Z"]);
-        let (meas1, determined1) = state1.mny_determine(0);
-        assert!(determined1);
-        assert!(meas1);
+        let r1 = state1.mny(0);
+        assert!(r1.is_deterministic);
+        assert!(r1.outcome);
     }
 
     #[test]
     fn test_nondeterministic_mz() {
         let mut state = prep_state(&["X"], &["Z"]);
-        let (_meas, determined) = state.mz_determine(0);
-        assert!(!determined);
+        let r = state.mz(0);
+        assert!(!r.is_deterministic);
     }
 
     #[test]
     fn test_deterministic_mz() {
         let mut state0 = prep_state(&["Z"], &["X"]);
-        let (meas0, determined0) = state0.mz_determine(0);
-        assert!(determined0);
-        assert!(!meas0);
+        let r0 = state0.mz(0);
+        assert!(r0.is_deterministic);
+        assert!(!r0.outcome);
 
         let mut state1 = prep_state(&["-Z"], &["X"]);
-        let (meas1, determined1) = state1.mz_determine(0);
-        assert!(determined1);
-        assert!(meas1);
+        let r1 = state1.mz(0);
+        assert!(r1.is_deterministic);
+        assert!(r1.outcome);
     }
 
     #[test]
     fn test_nondeterministic_mnz() {
         let mut state = prep_state(&["X"], &["Z"]);
-        let (_meas, determined) = state.mnz_determine(0);
-        assert!(!determined);
+        let r = state.mnz(0);
+        assert!(!r.is_deterministic);
     }
 
     #[test]
     fn test_deterministic_mnz() {
         let mut state0 = prep_state(&["Z"], &["X"]);
-        let (meas0, determined0) = state0.mnz_determine(0);
-        assert!(determined0);
-        assert!(meas0);
+        let r0 = state0.mnz(0);
+        assert!(r0.is_deterministic);
+        assert!(r0.outcome);
 
         let mut state1 = prep_state(&["-Z"], &["X"]);
-        let (meas1, determined1) = state1.mnz_determine(0);
-        assert!(determined1);
-        assert!(!meas1);
+        let r1 = state1.mnz(0);
+        assert!(r1.is_deterministic);
+        assert!(!r1.outcome);
     }
 
     #[test]
@@ -2240,13 +2098,12 @@ mod tests {
     fn one_bit_z_teleport(
         mut state: SparseStab<VecSet<u32>, u32>,
     ) -> (SparseStab<VecSet<u32>, u32>, bool) {
-        state.cx(1, 0);
-        state.h(1);
-        let (m1, d1) = state.mz_determine(1);
-        if m1 {
+        state.cx(1, 0).h(1);
+        let r1 = state.mz(1);
+        if r1.outcome {
             state.z(0);
         }
-        (state, d1)
+        (state, r1.is_deterministic)
     }
 
     /// Test one-bit Z teleportation of |+X>
@@ -2261,11 +2118,11 @@ mod tests {
             (state, d1) = one_bit_z_teleport(state);
             // X basis meas
             state.h(0);
-            let (m0, d0) = state.mz_determine(0);
-            let m0_int = u8::from(m0);
+            let r0 = state.mz(0);
+            let m0_int = u8::from(r0.outcome);
             assert_eq!(m0_int, 0); // |+> -> 0 == false
             assert!(!d1); // Not deterministic
-            assert!(d0); // Deterministic
+            assert!(r0.is_deterministic); // Deterministic
         }
     }
 
@@ -2282,11 +2139,11 @@ mod tests {
             (state, d1) = one_bit_z_teleport(state);
             // X basis meas
             state.h(0);
-            let (m0, d0) = state.mz_determine(0);
-            let m0_int = u8::from(m0);
+            let r0 = state.mz(0);
+            let m0_int = u8::from(r0.outcome);
             assert_eq!(m0_int, 1); // |-> -> 1 == true
             assert!(!d1); // Not deterministic
-            assert!(d0); // Deterministic
+            assert!(r0.is_deterministic); // Deterministic
         }
     }
 
@@ -2302,11 +2159,11 @@ mod tests {
             (state, d1) = one_bit_z_teleport(state);
             // Y basis meas
             state.sx(0); // Y -> Z
-            let (m0, d0) = state.mz_determine(0);
-            let m0_int = u8::from(m0);
+            let r0 = state.mz(0);
+            let m0_int = u8::from(r0.outcome);
             assert_eq!(m0_int, 0); // |+X> -> 0 == false
             assert!(!d1); // Not deterministic
-            assert!(d0); // Deterministic
+            assert!(r0.is_deterministic); // Deterministic
         }
     }
 
@@ -2323,11 +2180,11 @@ mod tests {
             (state, d1) = one_bit_z_teleport(state);
             // Y basis meas
             state.sx(0); // Y -> Z
-            let (m0, d0) = state.mz_determine(0);
-            let m0_int = u8::from(m0);
+            let r0 = state.mz(0);
+            let m0_int = u8::from(r0.outcome);
             assert_eq!(m0_int, 1); // |-Y> -> 1 == true
             assert!(!d1); // Not deterministic
-            assert!(d0); // Deterministic
+            assert!(r0.is_deterministic); // Deterministic
         }
     }
 
@@ -2341,11 +2198,11 @@ mod tests {
             let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(2);
             // Set input to |0>
             (state, d1) = one_bit_z_teleport(state);
-            let (m0, d0) = state.mz_determine(0);
-            let m0_int = u8::from(m0);
+            let r0 = state.mz(0);
+            let m0_int = u8::from(r0.outcome);
             assert_eq!(m0_int, 0); // |0>
             assert!(!d1); // Not deterministic
-            assert!(d0); // Deterministic
+            assert!(r0.is_deterministic); // Deterministic
         }
     }
 
@@ -2359,11 +2216,11 @@ mod tests {
             let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(2);
             state.x(1); // Set input to |1>
             (state, d1) = one_bit_z_teleport(state);
-            let (m0, d0) = state.mz_determine(0);
-            let m0_int = u8::from(m0);
+            let r0 = state.mz(0);
+            let m0_int = u8::from(r0.outcome);
             assert_eq!(m0_int, 1); // |1> -> 1 == true
             assert!(!d1); // Not deterministic
-            assert!(d0); // Deterministic
+            assert!(r0.is_deterministic); // Deterministic
         }
     }
 
@@ -2380,15 +2237,15 @@ mod tests {
         state.cx(1, 2);
         state.cx(0, 1);
         state.h(0);
-        let (m0, d0) = state.mz_determine(0);
-        let (m1, d1) = state.mz_determine(1);
-        if m1 {
+        let r0 = state.mz(0);
+        let r1 = state.mz(1);
+        if r1.outcome {
             state.x(2);
         }
-        if m0 {
+        if r0.outcome {
             state.z(2);
         }
-        (state, d0, d1)
+        (state, r0.is_deterministic, r1.is_deterministic)
     }
 
     #[test]
@@ -2400,12 +2257,12 @@ mod tests {
             state.h(0);
             (state, d0, d1) = teleport(state);
             state.h(2);
-            let (m2, d2) = state.mz_determine(2);
-            let m2_int = u8::from(m2);
+            let r2 = state.mz(2);
+            let m2_int = u8::from(r2.outcome);
             assert_eq!(m2_int, 0);
             assert!(!d0);
             assert!(!d1);
-            assert!(d2);
+            assert!(r2.is_deterministic);
         }
     }
 
@@ -2419,13 +2276,13 @@ mod tests {
             state.h(0);
             (state, d0, d1) = teleport(state);
             state.h(2);
-            let (m2, d2) = state.mz_determine(2);
-            let m2_int = u8::from(m2);
+            let r2 = state.mz(2);
+            let m2_int = u8::from(r2.outcome);
 
             assert_eq!(m2_int, 1);
             assert!(!d0);
             assert!(!d1);
-            assert!(d2);
+            assert!(r2.is_deterministic);
         }
     }
 
@@ -2438,12 +2295,12 @@ mod tests {
             state.sxdg(0);
             (state, d0, d1) = teleport(state);
             state.sx(2);
-            let (m2, d2) = state.mz_determine(2);
-            let m2_int = u8::from(m2);
+            let r2 = state.mz(2);
+            let m2_int = u8::from(r2.outcome);
             assert_eq!(m2_int, 0);
             assert!(!d0);
             assert!(!d1);
-            assert!(d2);
+            assert!(r2.is_deterministic);
         }
     }
 
@@ -2457,12 +2314,12 @@ mod tests {
             state.sxdg(0);
             (state, d0, d1) = teleport(state);
             state.sx(2);
-            let (m2, d2) = state.mz_determine(2);
-            let m2_int = u8::from(m2);
+            let r2 = state.mz(2);
+            let m2_int = u8::from(r2.outcome);
             assert_eq!(m2_int, 1);
             assert!(!d0);
             assert!(!d1);
-            assert!(d2);
+            assert!(r2.is_deterministic);
         }
     }
 
@@ -2473,13 +2330,13 @@ mod tests {
             let d1;
             let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(3);
             (state, d0, d1) = teleport(state);
-            let (m2, d2) = state.mz_determine(2);
-            let m2_int = u8::from(m2);
+            let r2 = state.mz(2);
+            let m2_int = u8::from(r2.outcome);
 
             assert_eq!(m2_int, 0);
             assert!(!d0);
             assert!(!d1);
-            assert!(d2);
+            assert!(r2.is_deterministic);
         }
     }
 
@@ -2491,13 +2348,13 @@ mod tests {
             let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(3);
             state.x(0); // input state |-Z>
             (state, d0, d1) = teleport(state);
-            let (m2, d2) = state.mz_determine(2);
-            let m2_int = u8::from(m2);
+            let r2 = state.mz(2);
+            let m2_int = u8::from(r2.outcome);
 
             assert_eq!(m2_int, 1);
             assert!(!d0);
             assert!(!d1);
-            assert!(d2);
+            assert!(r2.is_deterministic);
         }
     }
 

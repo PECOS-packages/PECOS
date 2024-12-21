@@ -27,7 +27,7 @@ class FlagLookupQASM(Block):
         syndromes: CReg,
         raw_syn: CReg,
         pf: Bit,
-        flag: Bit,
+        flag: CReg,
         flags: CReg,
         scratch: CReg,
     ):
@@ -96,7 +96,7 @@ class FlagLookupQASMActiveCorrectionX(Block):
         syndromes: CReg,
         raw_syn: CReg,
         pf: Bit,
-        flag: Bit,
+        flag: CReg,
         flags: CReg,
         scratch: CReg,
         pf_bit_copy: Bit | None = None,

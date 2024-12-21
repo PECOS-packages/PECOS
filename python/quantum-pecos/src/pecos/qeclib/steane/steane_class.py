@@ -454,25 +454,27 @@ class Steane(Vars):
     ) -> Block:
         """Run a Steane-type error-correction cycle for X errors."""
         warn("Using experimental feature: qec_steane_z", stacklevel=2)
-        flag = flag or self.scratch.elems[7]
-        return Block(
+        block = Block(
             aux.px(reject=reject, rus_limit=rus_limit),
             self.cx(aux),
             aux.mz(),
-            If(aux.syn_meas != 0).Then(flag.set(1)),
+            self.syn_z.set(aux.syn_meas),
             self.last_raw_syn_z.set(0),
             self.pf_x.set(0),
             FlagLookupQASMActiveCorrectionZ(
                 self.d,
-                aux.syn_meas,
-                self.syndromes,
+                self.syn_z,
+                self.syn_z,
                 self.last_raw_syn_z,
                 self.pf_x,
-                flag,
-                aux.syn_meas,
+                self.syn_z,
+                self.syn_z,
                 self.scratch,
             ),
         )
+        if flag is not None:
+            block.extend(If(self.syn_x != 0).Then(flag.set(1)))
+        return block
 
     def qec_steane_z(
         self,
@@ -483,25 +485,27 @@ class Steane(Vars):
     ) -> Block:
         """Run a Steane-type error-correction cycle for Z errors."""
         warn("Using experimental feature: qec_steane_x", stacklevel=2)
-        flag = flag or self.scratch.elems[7]
-        return Block(
+        block = Block(
             aux.pz(reject=reject, rus_limit=rus_limit),
             aux.cx(self),
             aux.mx(),
-            If(aux.syn_meas != 0).Then(flag.set(1)),
+            self.syn_x.set(aux.syn_meas),
             self.last_raw_syn_x.set(0),
             self.pf_z.set(0),
             FlagLookupQASMActiveCorrectionX(
                 self.d,
-                aux.syn_meas,
-                self.syndromes,
+                self.syn_x,
+                self.syn_x,
                 self.last_raw_syn_x,
                 self.pf_z,
-                flag,
-                aux.syn_meas,
+                self.syn_x,
+                self.syn_x,
                 self.scratch,
             ),
         )
+        if flag is not None:
+            block.extend(If(self.syn_x != 0).Then(flag.set(1)))
+        return block
 
     def qec_tel(
         self,

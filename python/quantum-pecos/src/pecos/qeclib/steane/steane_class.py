@@ -14,6 +14,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from warnings import warn
 
+from pecos.qeclib.steane.decoders.lookup import (
+    FlagLookupQASMActiveCorrectionZ,
+)
 from pecos.qeclib.steane.gates_sq import paulis, sqrt_paulis
 from pecos.qeclib.steane.gates_sq.hadamards import H
 from pecos.qeclib.steane.gates_tq import transversal_tq
@@ -162,9 +165,7 @@ class Steane(Vars):
                 d=self.d,
                 a=self.a,
                 out=self.scratch,
-                reject=self.scratch[
-                    2
-                ],  # the first two bits of self.scratch are used by "out"
+                reject=self.scratch[2],  # the first two bits are used by "out"
                 flag_x=self.flag_x,
                 flag_z=self.flag_z,
                 flags=self.flags,
@@ -268,6 +269,7 @@ class Steane(Vars):
         )
 
     #  Begin Experimental: ------------------------------------
+
     def nonft_t_tel(self, aux: Steane):
         """Warning:
             This is experimental.
@@ -350,6 +352,82 @@ class Steane(Vars):
             Permute(self.d, aux.d),
         )
 
+    def t_cor(
+        self,
+        aux: Steane,
+        reject: Bit | None = None,
+        flag: Bit | None = None,
+        rus_limit: int | None = None,
+    ):
+        """T gate via teleportation using fault-tolerant initialization of the T|+> state.
+
+        Applies active corrections of errors diagnozed by the measurement for gate teleportation.
+        """
+        warn("Using experimental feature: t_cor", stacklevel=2)
+        block = Block(
+            # gate teleportation without logical correction
+            aux.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
+            self.cx(aux),
+            aux.mz(self.t_meas),
+            # active error correction
+            self.syn_z.set(aux.syn_meas),
+            self.last_raw_syn_z.set(0),
+            self.pf_x.set(0),
+            FlagLookupQASMActiveCorrectionZ(
+                self.d,
+                self.syn_z,
+                self.syn_z,
+                self.last_raw_syn_z,
+                self.pf_x,
+                self.syn_z,
+                self.syn_z,
+                self.scratch,
+            ),
+            # logical correction
+            If(self.t_meas == 1).Then(self.sz()),
+        )
+        if flag is not None:
+            block.extend(If(self.syn_z != 0).Then(flag.set(1)))
+        return block
+
+    def tdg_cor(
+        self,
+        aux: Steane,
+        reject: Bit | None = None,
+        flag: Bit | None = None,
+        rus_limit: int | None = None,
+    ):
+        """Tdg gate via teleportation using fault-tolerant initialization of the Tdg|+> state.
+
+        Applies active corrections of errors diagnozed by the measurement for gate teleportation.
+        """
+        warn("Using experimental feature: t_cor", stacklevel=2)
+        block = Block(
+            # gate teleportation without logical correction
+            aux.prep_tdg_plus_state(reject=reject, rus_limit=rus_limit),
+            self.cx(aux),
+            aux.mz(self.tdg_meas),
+            # active error correction
+            self.syn_z.set(aux.syn_meas),
+            self.last_raw_syn_z.set(0),
+            self.pf_x.set(0),
+            FlagLookupQASMActiveCorrectionZ(
+                self.d,
+                self.syn_z,
+                self.syn_z,
+                self.last_raw_syn_z,
+                self.pf_x,
+                self.syn_z,
+                self.syn_z,
+                self.scratch,
+            ),
+            # logical correction
+            If(self.tdg_meas == 1).Then(self.szdg()),
+        )
+        if flag is not None:
+            block.extend(If(self.syn_z != 0).Then(flag.set(1)))
+        return block
+
     # End Experimental: ------------------------------------
 
     def szdg(self):
@@ -370,19 +448,17 @@ class Steane(Vars):
 
     def m(self, meas_basis: str, log: Bit | None = None):
         """Destructively measure the logical qubit in some Pauli basis."""
-        block = Block(
-            MeasDecode(
-                q=self.d,
-                meas_basis=meas_basis,
-                meas=self.raw_meas,
-                log_raw=self.log_raw,
-                log=self.log,
-                syn_meas=self.syn_meas,
-                pf_x=self.pf_x,
-                pf_z=self.pf_z,
-                last_raw_syn_x=self.last_raw_syn_x,
-                last_raw_syn_z=self.last_raw_syn_z,
-            ),
+        block = MeasDecode(
+            q=self.d,
+            meas_basis=meas_basis,
+            meas=self.raw_meas,
+            log_raw=self.log_raw,
+            log=self.log,
+            syn_meas=self.syn_meas,
+            pf_x=self.pf_x,
+            pf_z=self.pf_z,
+            last_raw_syn_x=self.last_raw_syn_x,
+            last_raw_syn_z=self.last_raw_syn_z,
         )
         if log is not None:
             block.extend(log.set(self.log))
@@ -400,7 +476,7 @@ class Steane(Vars):
         """Logical destructive measurement of the logical Z operator."""
         return self.m("Z", log=log)
 
-    def qec(self, flag_bit: Bit | None = None):
+    def qec(self, flag: Bit | None = None):
         block = ParallelFlagQECActiveCorrection(
             q=self.d,
             a=self.a,
@@ -416,6 +492,6 @@ class Steane(Vars):
             pf_z=self.pf_z,
             scratch=self.scratch,
         )
-        if flag_bit is not None:
-            block.extend(If(self.flags != 0).Then(flag_bit.set(1)))
+        if flag is not None:
+            block.extend(If(self.flags != 0).Then(flag.set(1)))
         return block

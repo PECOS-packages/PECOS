@@ -105,7 +105,7 @@ where
     E: IndexableElement,
     R: SimRng,
 {
-    num_qubits: usize,
+    pub(crate) num_qubits: usize,
     stabs: Gens<T, E>,
     destabs: Gens<T, E>,
     rng: R,
@@ -783,6 +783,26 @@ where
         self
     }
 
+    #[inline]
+    fn mx(&mut self, q: E) -> bool {
+        self.mx_determine(q).0
+    }
+
+    #[inline]
+    fn mnx(&mut self, q: E) -> bool {
+        self.mnx_determine(q).0
+    }
+
+    #[inline]
+    fn my(&mut self, q: E) -> bool {
+        self.my_determine(q).0
+    }
+
+    #[inline]
+    fn mny(&mut self, q: E) -> bool {
+        self.mny_determine(q).0
+    }
+
     /// Measures a qubit in the Z basis.
     ///
     /// Returns a tuple containing:
@@ -819,26 +839,6 @@ where
     #[inline]
     fn mnz(&mut self, q: E) -> bool {
         self.mnz_determine(q).0
-    }
-
-    #[inline]
-    fn mx(&mut self, q: E) -> bool {
-        self.mx_determine(q).0
-    }
-
-    #[inline]
-    fn mnx(&mut self, q: E) -> bool {
-        self.mnx_determine(q).0
-    }
-
-    #[inline]
-    fn my(&mut self, q: E) -> bool {
-        self.my_determine(q).0
-    }
-
-    #[inline]
-    fn mny(&mut self, q: E) -> bool {
-        self.mny_determine(q).0
     }
 }
 

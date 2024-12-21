@@ -16,10 +16,12 @@ pub mod gens;
 // pub mod nonclifford_simulator;
 pub mod pauli_prop;
 // pub mod paulis;
+pub mod arbitrary_rotation_gateable;
 pub mod prelude;
 pub mod quantum_simulator_state;
 pub mod sparse_stab;
 pub mod state_vec;
+
 pub use clifford_gateable::CliffordGateable;
 pub use gens::Gens;
 // pub use measurement::{MeasBitValue, MeasValue, Measurement}; // TODO: Distinguish between trait and struct/enum

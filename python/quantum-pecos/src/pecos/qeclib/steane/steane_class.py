@@ -364,30 +364,31 @@ class Steane(Vars):
         Applies active corrections of errors diagnozed by the measurement for gate teleportation.
         """
         warn("Using experimental feature: t_cor", stacklevel=2)
-        flag = flag or self.scratch.elems[7]
-        return Block(
+        block = Block(
             # gate teleportation without logical correction
             aux.prep_t_plus_state(reject=reject, rus_limit=rus_limit),
             self.cx(aux),
             aux.mz(self.t_meas),
             # active error correction
             self.syn_z.set(aux.syn_meas),
-            If(self.syn_z != 0).Then(flag.set(1)),
             self.last_raw_syn_z.set(0),
             self.pf_x.set(0),
             FlagLookupQASMActiveCorrectionZ(
                 self.d,
                 self.syn_z,
-                self.syndromes,
+                self.syn_z,
                 self.last_raw_syn_z,
                 self.pf_x,
-                flag,
+                self.syn_z,
                 self.syn_z,
                 self.scratch,
             ),
             # logical correction
             If(self.t_meas == 1).Then(self.sz()),
         )
+        if flag is not None:
+            block.extend(If(self.syn_z != 0).Then(flag.set(1)))
+        return block
 
     def tdg_cor(
         self,
@@ -401,30 +402,31 @@ class Steane(Vars):
         Applies active corrections of errors diagnozed by the measurement for gate teleportation.
         """
         warn("Using experimental feature: t_cor", stacklevel=2)
-        flag = flag or self.scratch.elems[7]
-        return Block(
+        block = Block(
             # gate teleportation without logical correction
             aux.prep_tdg_plus_state(reject=reject, rus_limit=rus_limit),
             self.cx(aux),
             aux.mz(self.tdg_meas),
             # active error correction
             self.syn_z.set(aux.syn_meas),
-            If(self.syn_z != 0).Then(flag.set(1)),
             self.last_raw_syn_z.set(0),
             self.pf_x.set(0),
             FlagLookupQASMActiveCorrectionZ(
                 self.d,
                 self.syn_z,
-                self.syndromes,
+                self.syn_z,
                 self.last_raw_syn_z,
                 self.pf_x,
-                flag,
+                self.syn_z,
                 self.syn_z,
                 self.scratch,
             ),
             # logical correction
             If(self.tdg_meas == 1).Then(self.szdg()),
         )
+        if flag is not None:
+            block.extend(If(self.syn_z != 0).Then(flag.set(1)))
+        return block
 
     # End Experimental: ------------------------------------
 

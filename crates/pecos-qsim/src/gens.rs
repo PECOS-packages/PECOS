@@ -52,12 +52,13 @@ where
         }
     }
 
+    #[inline]
     pub fn get_num_qubits(&self) -> usize {
         self.num_qubits
     }
 
     #[inline]
-    pub fn clear(&mut self) {
+    fn clear(&mut self) {
         self.col_x.clear();
         self.col_z.clear();
         self.row_x.clear();

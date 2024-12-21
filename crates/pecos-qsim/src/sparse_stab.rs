@@ -171,6 +171,7 @@ where
     }
 
     /// Utility that creates a string for the Pauli generates of a `Gens`.
+    #[inline]
     fn tableau_string(num_qubits: usize, gens: &Gens<T, E>) -> String {
         // TODO: calculate signs so we are really doing Y and not W
         let mut result =
@@ -766,6 +767,7 @@ mod tests {
         }
     }
 
+    #[inline]
     fn check_state(state: &SparseStab<VecSet<u32>, u32>, stabs: &[&str], destabs: &[&str]) {
         check_matrix(stabs, &state.stabs);
         check_matrix(destabs, &state.destabs);
@@ -773,6 +775,7 @@ mod tests {
         // TODO: Add matrix verification func
     }
 
+    #[inline]
     fn split_pauli(pauli_str: &str) -> (usize, &str, &str) {
         let (phase, pauli_str) = if pauli_str.contains("+i") || pauli_str.contains("-i") {
             pauli_str.split_at(2)

@@ -134,27 +134,6 @@ impl StateVec {
         self
     }
 
-    /// Apply U3(theta, phi, lambda) gate
-    /// U3 = [[cos(θ/2), -e^(iλ)sin(θ/2)],
-    ///       [e^(iφ)sin(θ/2), e^(i(λ+φ))cos(θ/2)]]
-    ///
-    /// # Panics
-    ///
-    /// Panics if target qubit index is >= number of qubits
-    #[inline]
-    pub fn u3(&mut self, target: usize, theta: f64, phi: f64, lambda: f64) -> &mut Self {
-        let cos = (theta / 2.0).cos();
-        let sin = (theta / 2.0).sin();
-
-        // Calculate matrix elements
-        let u00 = Complex64::new(cos, 0.0);
-        let u01 = -Complex64::from_polar(sin, lambda);
-        let u10 = Complex64::from_polar(sin, phi);
-        let u11 = Complex64::from_polar(cos, phi + lambda);
-
-        self.single_qubit_rotation(target, u00, u01, u10, u11)
-    }
-
     /// Apply a general two-qubit unitary given by a 4x4 complex matrix
     /// U = [[u00, u01, u02, u03],
     ///      [u10, u11, u12, u13],
@@ -545,6 +524,27 @@ impl ArbitraryRotationGateable<usize> for StateVec {
             Complex64::new(0.0, 0.0), // u10
             exp_plus_i_theta_2,       // u11
         )
+    }
+
+    /// Apply U(theta, phi, lambda) gate
+    /// U1_3 = [[cos(θ/2), -e^(iλ)sin(θ/2)],
+    ///         [e^(iφ)sin(θ/2), e^(i(λ+φ))cos(θ/2)]]
+    ///
+    /// # Panics
+    ///
+    /// Panics if target qubit index is >= number of qubits
+    #[inline]
+    fn u(&mut self, theta: f64, phi: f64, lambda: f64, target: usize) -> &mut Self {
+        let cos = (theta / 2.0).cos();
+        let sin = (theta / 2.0).sin();
+
+        // Calculate matrix elements
+        let u00 = Complex64::new(cos, 0.0);
+        let u01 = -Complex64::from_polar(sin, lambda);
+        let u10 = Complex64::from_polar(sin, phi);
+        let u11 = Complex64::from_polar(cos, phi + lambda);
+
+        self.single_qubit_rotation(target, u00, u01, u10, u11)
     }
 
     /// Apply RXX(θ) = exp(-i θ XX/2) gate
@@ -1354,44 +1354,44 @@ mod tests {
     }
 
     #[test]
-    fn test_u3_special_cases() {
-        // Test 1: U3(π, 0, π) should be X gate
+    fn test_u_special_cases() {
+        // Test 1: U(π, 0, π) should be X gate
         let mut q = StateVec::new(1);
-        q.u3(0, PI, 0.0, PI);
+        q.u(PI, 0.0, PI, 0);
         assert!(q.state[0].norm() < 1e-10);
         assert!((q.state[1].re - 1.0).abs() < 1e-10);
 
         // Test 2: Hadamard gate
-        // H = U3(π/2, 0, π)
+        // H = U(π/2, 0, π)
         let mut q = StateVec::new(1);
-        q.u3(0, PI / 2.0, 0.0, PI);
+        q.u(PI / 2.0, 0.0, PI, 0);
         assert!((q.state[0].re - FRAC_1_SQRT_2).abs() < 1e-10);
         assert!((q.state[1].re - FRAC_1_SQRT_2).abs() < 1e-10);
 
-        // Test 3: U3(0, 0, π) should be Z gate
+        // Test 3: U(0, 0, π) should be Z gate
         let mut q = StateVec::new(1);
         q.h(0); // First put in superposition
         let initial = q.state.clone();
-        q.u3(0, 0.0, 0.0, PI);
+        q.u(0.0, 0.0, PI, 0);
         assert!((q.state[0] - initial[0]).norm() < 1e-10);
         assert!((q.state[1] + initial[1]).norm() < 1e-10);
 
         // Additional test: U3(π/2, π/2, -π/2) should be S†H
         let mut q = StateVec::new(1);
-        q.u3(0, PI / 2.0, PI / 2.0, -PI / 2.0);
+        q.u(PI / 2.0, PI / 2.0, -PI / 2.0, 0);
         // This creates the state (|0⟩ + i|1⟩)/√2
         assert!((q.state[0].re - FRAC_1_SQRT_2).abs() < 1e-10);
         assert!((q.state[1].im - FRAC_1_SQRT_2).abs() < 1e-10);
     }
 
     #[test]
-    fn test_u3_composition() {
+    fn test_u_composition() {
         let mut q1 = StateVec::new(1);
         let q2 = StateVec::new(1);
 
-        // Two U3 gates that should multiply to identity
-        q1.u3(0, PI / 3.0, PI / 4.0, PI / 6.0);
-        q1.u3(0, -PI / 3.0, -PI / 6.0, -PI / 4.0);
+        // Two U gates that should multiply to identity
+        q1.u(PI / 3.0, PI / 4.0, PI / 6.0, 0);
+        q1.u(-PI / 3.0, -PI / 6.0, -PI / 4.0, 0);
 
         // Compare with initial state
         for (a, b) in q1.state.iter().zip(q2.state.iter()) {
@@ -1400,14 +1400,14 @@ mod tests {
     }
 
     #[test]
-    fn test_u3_arbitrary() {
+    fn test_u_arbitrary() {
         let mut q = StateVec::new(1);
 
         // Apply some arbitrary rotation
         let theta = PI / 5.0;
         let phi = PI / 7.0;
         let lambda = PI / 3.0;
-        q.u3(0, theta, phi, lambda);
+        q.u(theta, phi, lambda, 0);
 
         // Verify normalization is preserved
         let norm: f64 = q.state.iter().map(num_complex::Complex::norm_sqr).sum();

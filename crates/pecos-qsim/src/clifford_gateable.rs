@@ -131,6 +131,7 @@ pub trait CliffordGateable<T: IndexableElement>: QuantumSimulatorState {
     /// let mut sim = StdSparseStab::new(1);
     /// sim.x(0); // Apply X gate to qubit 0
     /// ```
+    #[inline]
     fn x(&mut self, q: T) -> &mut Self {
         self.h(q).z(q).h(q)
     }
@@ -154,6 +155,7 @@ pub trait CliffordGateable<T: IndexableElement>: QuantumSimulatorState {
     /// let mut sim = StdSparseStab::new(1);
     /// sim.y(0); // Apply Y gate to qubit 0
     /// ```
+    #[inline]
     fn y(&mut self, q: T) -> &mut Self {
         self.z(q).x(q)
     }
@@ -177,6 +179,7 @@ pub trait CliffordGateable<T: IndexableElement>: QuantumSimulatorState {
     /// let mut sim = StdSparseStab::new(1);
     /// sim.z(0); // Apply X gate to qubit 0
     /// ```
+    #[inline]
     fn z(&mut self, q: T) -> &mut Self {
         self.sz(q).sz(q);
         self

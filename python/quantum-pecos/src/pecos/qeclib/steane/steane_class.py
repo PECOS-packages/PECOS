@@ -473,7 +473,7 @@ class Steane(Vars):
             ),
         )
         if flag is not None:
-            block.extend(If(self.syn_x != 0).Then(flag.set(1)))
+            block.extend(If(self.syn_z != 0).Then(flag.set(1)))
         return block
 
     def qec_steane_z(

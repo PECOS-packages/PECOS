@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use super::quantum_simulator::QuantumSimulator;
+use super::quantum_simulator_state::QuantumSimulatorState;
 use pecos_core::IndexableElement;
 
 /// A simulator trait for quantum systems that implement Clifford operations.
@@ -72,7 +72,7 @@ use pecos_core::IndexableElement;
 ///
 /// # Examples
 /// ```rust
-/// use pecos_qsim::{CliffordSimulator, StdSparseStab};
+/// use pecos_qsim::{CliffordGateable, StdSparseStab};
 /// let mut sim = StdSparseStab::new(2);
 ///
 /// // Create Bell state
@@ -80,7 +80,7 @@ use pecos_core::IndexableElement;
 /// sim.cx(0, 1);
 ///
 /// // Measure in Z basis
-/// let (outcome, deterministic) = sim.mz(0);
+/// let outcome = sim.mz(0);
 /// ```
 ///
 /// # Required Implementations
@@ -100,240 +100,12 @@ use pecos_core::IndexableElement;
 /// - Gottesman, "The Heisenberg Representation of Quantum Computers"
 ///   <https://arxiv.org/abs/quant-ph/9807006>
 #[expect(clippy::min_ident_chars)]
-pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
-    /// Returns the number of qubits in the system.
-    ///
-    /// This method is inherited from `QuantumSimulator` and returns the total number
-    /// of qubits that this simulator instance is configured to handle.
-    ///
-    /// # Returns
-    /// * `usize` - The number of qubits in the system
-    #[inline]
-    fn num_qubits(&self) -> usize {
-        <Self as QuantumSimulator>::num_qubits(self)
-    }
-
-    /// Resets the quantum system to its initial state.
-    ///
-    /// This method returns all qubits to the |0⟩ state and clears any entanglement
-    /// or quantum correlations between qubits.
-    ///
-    /// # Returns
-    /// * `&mut Self` - A mutable reference to the simulator for method chaining
-    #[inline]
-    fn reset(&mut self) -> &mut Self {
-        <Self as QuantumSimulator>::reset(self)
-    }
-
-    /// Prepares a qubit in the +1 eigenstate of the X operator.
-    ///
-    /// Equivalent to preparing |+⟩ = (|0⟩ + |1⟩)/√2
-    ///
-    /// # Arguments
-    /// * `q` - Target qubit
-    ///
-    /// # Returns
-    /// * `(bool, bool)` - (`measurement_outcome`, `was_deterministic`)
-    ///
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
-    #[inline]
-    fn px(&mut self, q: T) -> (bool, bool) {
-        let (meas, deter) = self.mx(q);
-        if meas {
-            self.z(q);
-        }
-        (meas, deter)
-    }
-
-    /// Prepares a qubit in the -1 eigenstate of the X operator.
-    ///
-    /// Equivalent to preparing |-⟩ = (|0⟩ - |1⟩)/√2
-    ///
-    /// # Arguments
-    /// * `q` - Target qubit
-    ///
-    /// # Returns
-    /// * `(bool, bool)` - (`measurement_outcome`, `was_deterministic`)
-    ///
-    /// # Panics
-    ///
-    /// Will panic if qubit ids don't convert to usize.
-    #[inline]
-    fn pnx(&mut self, q: T) -> (bool, bool) {
-        let (meas, deter) = self.mnx(q);
-        if meas {
-            self.z(q);
-        }
-        (meas, deter)
-    }
-
-    /// Preparation of the +`Y_q` operator.
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
-    #[inline]
-    fn py(&mut self, q: T) -> (bool, bool) {
-        let (meas, deter) = self.my(q);
-        if meas {
-            self.z(q);
-        }
-        (meas, deter)
-    }
-
-    /// Preparation of the -`Y_q` operator.
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
-    #[inline]
-    fn pny(&mut self, q: T) -> (bool, bool) {
-        let (meas, deter) = self.mny(q);
-        if meas {
-            self.z(q);
-        }
-        (meas, deter)
-    }
-
-    /// Prepares a qubit in the +1 eigenstate of the Z operator.
-    ///
-    /// Equivalent to preparing |0⟩
-    ///
-    /// # Arguments
-    /// * `q` - Target qubit
-    ///
-    /// # Returns
-    /// * `(bool, bool)` - (`measurement_outcome`, `was_deterministic`)
-    ///
-    /// # Panics
-    ///
-    /// Will panic if qubit ids don't convert to usize.
-    #[inline]
-    fn pz(&mut self, q: T) -> (bool, bool) {
-        let (meas, deter) = self.mz(q);
-        if meas {
-            self.x(q);
-        }
-        (meas, deter)
-    }
-
-    /// Prepares a qubit in the -1 eigenstate of the Z operator.
-    ///
-    /// Equivalent to preparing |1⟩
-    ///
-    /// # Arguments
-    /// * `q` - Target qubit
-    ///
-    /// # Returns
-    /// * `(bool, bool)` - (`measurement_outcome`, `was_deterministic`)
-    ///
-    /// # Panics
-    ///
-    /// Will panic if qubit ids don't convert to usize.
-    #[inline]
-    fn pnz(&mut self, q: T) -> (bool, bool) {
-        let (meas, deter) = self.mnz(q);
-        if meas {
-            self.x(q);
-        }
-        (meas, deter)
-    }
-
-    /// Measurement of the +`X_q` operator.
-    #[inline]
-    fn mx(&mut self, q: T) -> (bool, bool) {
-        // +X -> +Z
-        self.h(q);
-        let (meas, deter) = self.mz(q);
-        // +Z -> +X
-        self.h(q);
-
-        (meas, deter)
-    }
-
-    /// Measurement of the -`X_q` operator.
-    #[inline]
-    fn mnx(&mut self, q: T) -> (bool, bool) {
-        // -X -> +Z
-        self.h(q);
-        self.x(q);
-        let (meas, deter) = self.mz(q);
-        // +Z -> -X
-        self.x(q);
-        self.h(q);
-
-        (meas, deter)
-    }
-
-    /// Measurement of the +`Y_q` operator.
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
-    #[inline]
-    fn my(&mut self, q: T) -> (bool, bool) {
-        // +Y -> +Z
-        self.sx(q);
-        let (meas, deter) = self.mz(q);
-        // +Z -> +Y
-        self.sxdg(q);
-
-        (meas, deter)
-    }
-
-    /// Measurement of the -`Y_q` operator.
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
-    #[inline]
-    fn mny(&mut self, q: T) -> (bool, bool) {
-        // -Y -> +Z
-        self.sxdg(q);
-        let (meas, deter) = self.mz(q);
-        // +Z -> -Y
-        self.sx(q);
-
-        (meas, deter)
-    }
-
-    /// Performs a measurement in the Z basis on the specified qubit.
-    ///
-    /// This measurement projects the qubit state onto the +1 or -1 eigenstate
-    /// of the Z operator (corresponding to |0⟩ or |1⟩ respectively).
-    ///
-    /// # Arguments
-    /// * `q` - The qubit to measure
-    ///
-    /// For all measurement operations (mx, my, mz, mnx, mny, mnz):
-    ///
-    /// # Return Values
-    /// Returns a tuple `(outcome, deterministic)` where:
-    /// * `outcome`:
-    ///   - `true` indicates projection onto the +1 eigenstate
-    ///   - `false` indicates projection onto the -1 eigenstate
-    /// * `deterministic`:
-    ///   - `true` if the state was already in an eigenstate of the measured operator
-    ///   - `false` if the measurement result was random (state was in superposition)
-    ///
-    /// # Examples
-    /// ```rust
-    /// use pecos_qsim::{CliffordSimulator, StdSparseStab};
-    /// let mut sim = StdSparseStab::new(1);
-    /// let (outcome, deterministic) = sim.mz(0);
-    /// ```
-    fn mz(&mut self, q: T) -> (bool, bool);
-
-    /// Measurement of the -`Z_q` operator.
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
-    #[inline]
-    fn mnz(&mut self, q: T) -> (bool, bool) {
-        // -Z -> +Z
-        self.x(q);
-        let (meas, deter) = self.mz(q);
-        // +Z -> -Z
-        self.x(q);
-
-        (meas, deter)
-    }
-
+pub trait CliffordGateable<T: IndexableElement>: QuantumSimulatorState {
     /// Identity on qubit q. X -> X, Z -> Z
     #[inline]
-    fn identity(&mut self, _q: T) {}
+    fn identity(&mut self, _q: T) -> &mut Self {
+        self
+    }
 
     /// Applies a Pauli X (NOT) gate to the specified qubit.
     ///
@@ -350,11 +122,13 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_qsim::{CliffordSimulator, StdSparseStab};
+    /// use pecos_qsim::{CliffordGateable, StdSparseStab};
     /// let mut sim = StdSparseStab::new(1);
     /// sim.x(0); // Apply X gate to qubit 0
     /// ```
-    fn x(&mut self, q: T);
+    fn x(&mut self, q: T) -> &mut Self {
+        self.h(q).z(q).h(q)
+    }
 
     /// Applies a Pauli Y gate to the specified qubit.
     ///
@@ -371,11 +145,13 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_qsim::{CliffordSimulator, StdSparseStab};
+    /// use pecos_qsim::{CliffordGateable, StdSparseStab};
     /// let mut sim = StdSparseStab::new(1);
     /// sim.y(0); // Apply Y gate to qubit 0
     /// ```
-    fn y(&mut self, q: T);
+    fn y(&mut self, q: T) -> &mut Self {
+        self.z(q).x(q)
+    }
 
     /// Applies a Pauli Z gate to the specified qubit.
     ///
@@ -392,11 +168,14 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_qsim::{CliffordSimulator, StdSparseStab};
+    /// use pecos_qsim::{CliffordGateable, StdSparseStab};
     /// let mut sim = StdSparseStab::new(1);
     /// sim.z(0); // Apply X gate to qubit 0
     /// ```
-    fn z(&mut self, q: T);
+    fn z(&mut self, q: T) -> &mut Self {
+        self.sz(q).sz(q);
+        self
+    }
 
     /// Sqrt of X gate.
     ///     X -> X
@@ -404,10 +183,11 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     ///     W -> -iZ
     ///     Y -> Z
     #[inline]
-    fn sx(&mut self, q: T) {
+    fn sx(&mut self, q: T) -> &mut Self {
         self.h(q);
         self.sz(q);
         self.h(q);
+        self
     }
 
     /// Adjoint of Sqrt X gate.
@@ -416,10 +196,11 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     ///     W -> iZ
     ///     Y -> -Z
     #[inline]
-    fn sxdg(&mut self, q: T) {
+    fn sxdg(&mut self, q: T) -> &mut Self {
         self.h(q);
         self.szdg(q);
         self.h(q);
+        self
     }
 
     /// Applies a square root of Y gate to the specified qubit.
@@ -444,7 +225,7 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_qsim::{CliffordSimulator, StdSparseStab};
+    /// use pecos_qsim::{CliffordGateable, StdSparseStab};
     /// let mut sim = StdSparseStab::new(1);
     /// sim.sy(0); // Apply square root of Y gate to qubit 0
     /// ```
@@ -452,9 +233,10 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn sy(&mut self, q: T) {
+    fn sy(&mut self, q: T) -> &mut Self {
         self.h(q);
         self.x(q);
+        self
     }
 
     /// Adjoint of sqrt of Y gate.
@@ -465,9 +247,10 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn sydg(&mut self, q: T) {
+    fn sydg(&mut self, q: T) -> &mut Self {
         self.x(q);
         self.h(q);
+        self
     }
 
     /// Applies a square root of Z gate (S or SZ gate) to the specified qubit.
@@ -489,7 +272,7 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     /// S = [1  0]
     ///     [0  i]
     /// ```
-    fn sz(&mut self, q: T);
+    fn sz(&mut self, q: T) -> &mut Self;
 
     /// Adjoint of Sqrt of Z gate. X -> ..., Z -> ...
     ///     X -> -iW = -Y
@@ -497,9 +280,10 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     ///     W -> -iX
     ///     Y -> X
     #[inline]
-    fn szdg(&mut self, q: T) {
+    fn szdg(&mut self, q: T) -> &mut Self {
         self.z(q);
         self.sz(q);
+        self
     }
 
     /// Applies a Hadamard gate to the specified qubit.
@@ -522,7 +306,7 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     /// H = 1/√2 [1   1]
     ///          [1  -1]
     /// ```
-    fn h(&mut self, q: T);
+    fn h(&mut self, q: T) -> &mut Self;
 
     /// Applies a variant of the Hadamard gate (H2) to the specified qubit.
     ///
@@ -541,37 +325,42 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     /// - H2 is equivalent to the composition SY • Z  # TODO: Verify
     /// - H2 differs from H by introducing additional minus signs
     #[inline]
-    fn h2(&mut self, q: T) {
+    fn h2(&mut self, q: T) -> &mut Self {
         self.sy(q);
         self.z(q);
+        self
     }
 
     /// X -> Y, Z -> -Z, Y -> X
     #[inline]
-    fn h3(&mut self, q: T) {
+    fn h3(&mut self, q: T) -> &mut Self {
         self.sz(q);
         self.y(q);
+        self
     }
 
     /// X -> -Y, Z -> -Z, Y -> -X
     #[inline]
-    fn h4(&mut self, q: T) {
+    fn h4(&mut self, q: T) -> &mut Self {
         self.sz(q);
         self.x(q);
+        self
     }
 
     /// X -> -X, Z -> Y, Y -> Z
     #[inline]
-    fn h5(&mut self, q: T) {
+    fn h5(&mut self, q: T) -> &mut Self {
         self.sx(q);
         self.z(q);
+        self
     }
 
     /// X -> -X, Z -> -Y, Y -> -Z
     #[inline]
-    fn h6(&mut self, q: T) {
+    fn h6(&mut self, q: T) -> &mut Self {
         self.sx(q);
         self.y(q);
+        self
     }
 
     /// Applies a Face gate (F) to the specified qubit.
@@ -592,63 +381,55 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_qsim::{CliffordSimulator, StdSparseStab};
+    /// use pecos_qsim::{CliffordGateable, StdSparseStab};
     /// let mut sim = StdSparseStab::new(1);
     /// sim.f(0); // Apply F gate to qubit 0
     /// ```
     #[inline]
-    fn f(&mut self, q: T) {
-        self.sx(q);
-        self.sz(q);
+    fn f(&mut self, q: T) -> &mut Self {
+        self.sx(q).sz(q)
     }
 
     /// X -> Z, Z -> Y, Y -> X
     #[inline]
-    fn fdg(&mut self, q: T) {
-        self.szdg(q);
-        self.sxdg(q);
+    fn fdg(&mut self, q: T) -> &mut Self {
+        self.szdg(q).sxdg(q)
     }
 
     /// X -> -Z, Z -> Y, Y -> -X
     #[inline]
-    fn f2(&mut self, q: T) {
-        self.sxdg(q);
-        self.sy(q);
+    fn f2(&mut self, q: T) -> &mut Self {
+        self.sxdg(q).sy(q)
     }
 
     /// X -> -Y, Z -> -X, Y -> Z
     #[inline]
-    fn f2dg(&mut self, q: T) {
-        self.sydg(q);
-        self.sx(q);
+    fn f2dg(&mut self, q: T) -> &mut Self {
+        self.sydg(q).sx(q)
     }
 
     /// X -> Y, Z -> -X, Y -> -Z
     #[inline]
-    fn f3(&mut self, q: T) {
-        self.sxdg(q);
-        self.sz(q);
+    fn f3(&mut self, q: T) -> &mut Self {
+        self.sxdg(q).sz(q)
     }
 
     /// X -> -Z, Z -> -Y, Y -> X
     #[inline]
-    fn f3dg(&mut self, q: T) {
-        self.szdg(q);
-        self.sx(q);
+    fn f3dg(&mut self, q: T) -> &mut Self {
+        self.szdg(q).sx(q)
     }
 
     /// X -> Z, Z -> -Y, Y -> -X
     #[inline]
-    fn f4(&mut self, q: T) {
-        self.sz(q);
-        self.sx(q);
+    fn f4(&mut self, q: T) -> &mut Self {
+        self.sz(q).sx(q)
     }
 
     /// X -> -Y, Z -> X, Y -> -Z
     #[inline]
-    fn f4dg(&mut self, q: T) {
-        self.sxdg(q);
-        self.szdg(q);
+    fn f4dg(&mut self, q: T) -> &mut Self {
+        self.sxdg(q).szdg(q)
     }
 
     /// Performs a controlled-NOT operation between two qubits.
@@ -670,22 +451,18 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     /// # Arguments
     /// * `q1` - Control qubit
     /// * `q2` - Target qubit
-    fn cx(&mut self, q1: T, q2: T);
+    fn cx(&mut self, q1: T, q2: T) -> &mut Self;
 
     /// CY: +IX -> +ZX; +IZ -> +ZZ; +XI -> -XY; +ZI -> +ZI;
     #[inline]
-    fn cy(&mut self, q1: T, q2: T) {
-        self.sz(q2);
-        self.cx(q1, q2);
-        self.szdg(q2);
+    fn cy(&mut self, q1: T, q2: T) -> &mut Self {
+        self.sz(q2).cx(q1, q2).szdg(q2)
     }
 
     /// CZ: +IX -> +ZX; +IZ -> +IZ; +XI -> +XZ; +ZI -> +ZI;
     #[inline]
-    fn cz(&mut self, q1: T, q2: T) {
-        self.h(q2);
-        self.cx(q1, q2);
-        self.h(q2);
+    fn cz(&mut self, q1: T, q2: T) -> &mut Self {
+        self.h(q2).cx(q1, q2).h(q2)
     }
 
     /// Performs a square root of XX operation (√XX).
@@ -707,12 +484,8 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     /// * q1 - First qubit
     /// * q2 - Second qubit
     #[inline]
-    fn sxx(&mut self, q1: T, q2: T) {
-        self.sx(q1);
-        self.sx(q2);
-        self.sydg(q1);
-        self.cx(q1, q2);
-        self.sy(q1);
+    fn sxx(&mut self, q1: T, q2: T) -> &mut Self {
+        self.sx(q1).sx(q2).sydg(q1).cx(q1, q2).sy(q1)
     }
 
     /// Performs an adjoint of the square root of XX operation (√XX†).
@@ -734,10 +507,8 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     /// * `q1` - First qubit
     /// * `q2` - Second qubit
     #[inline]
-    fn sxxdg(&mut self, q1: T, q2: T) {
-        self.x(q1);
-        self.x(q2);
-        self.sxx(q1, q2);
+    fn sxxdg(&mut self, q1: T, q2: T) -> &mut Self {
+        self.x(q1).x(q2).sxx(q1, q2)
     }
 
     /// Performs a square root of YY operation (√YY).
@@ -759,12 +530,8 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     /// * `q1` - First qubit
     /// * `q2` - Second qubit
     #[inline]
-    fn syy(&mut self, q1: T, q2: T) {
-        self.szdg(q1);
-        self.szdg(q2);
-        self.sxx(q1, q2);
-        self.sz(q1);
-        self.sz(q2);
+    fn syy(&mut self, q1: T, q2: T) -> &mut Self {
+        self.szdg(q1).szdg(q2).sxx(q1, q2).sz(q1).sz(q2)
     }
 
     /// Performs an adjoint of the square root of YY operation (√YY†).
@@ -786,10 +553,8 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     /// * `q1` - First qubit
     /// * `q2` - Second qubit
     #[inline]
-    fn syydg(&mut self, q1: T, q2: T) {
-        self.y(q1);
-        self.y(q2);
-        self.syy(q1, q2);
+    fn syydg(&mut self, q1: T, q2: T) -> &mut Self {
+        self.y(q1).y(q2).syy(q1, q2)
     }
 
     /// Performs a square root of ZZ operation (√ZZ).
@@ -811,12 +576,8 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     /// * `q1` - First qubit
     /// * `q2` - Second qubit
     #[inline]
-    fn szz(&mut self, q1: T, q2: T) {
-        self.sydg(q1);
-        self.sydg(q2);
-        self.sxx(q1, q2);
-        self.sy(q1);
-        self.sy(q2);
+    fn szz(&mut self, q1: T, q2: T) -> &mut Self {
+        self.sydg(q1).sydg(q2).sxx(q1, q2).sy(q1).sy(q2)
     }
 
     /// Performs an adjoint of the square root of ZZ operation (√ZZ).
@@ -838,10 +599,8 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     /// * `q1` - First qubit
     /// * `q2` - Second qubit
     #[inline]
-    fn szzdg(&mut self, q1: T, q2: T) {
-        self.z(q1);
-        self.z(q2);
-        self.szz(q1, q2);
+    fn szzdg(&mut self, q1: T, q2: T) -> &mut Self {
+        self.z(q1).z(q2).szz(q1, q2)
     }
 
     /// SWAP: +IX -> XI;
@@ -849,10 +608,8 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     ///       +XI -> IX;
     ///       +ZI -> IZ;
     #[inline]
-    fn swap(&mut self, q1: T, q2: T) {
-        self.cx(q1, q2);
-        self.cx(q2, q1);
-        self.cx(q1, q2);
+    fn swap(&mut self, q1: T, q2: T) -> &mut Self {
+        self.cx(q1, q2).cx(q2, q1).cx(q1, q2)
     }
 
     /// Applies the G2 two-qubit Clifford operation.
@@ -875,15 +632,212 @@ pub trait CliffordSimulator<T: IndexableElement>: QuantumSimulator {
     ///
     /// # Examples
     /// ```rust
-    /// use pecos_qsim::{CliffordSimulator, StdSparseStab};
+    /// use pecos_qsim::{CliffordGateable, StdSparseStab};
     /// let mut sim = StdSparseStab::new(2);
     /// sim.g2(0, 1); // Apply G2 operation between qubits 0 and 1
     /// ```
     #[inline]
-    fn g2(&mut self, q1: T, q2: T) {
-        self.cz(q1, q2);
-        self.h(q1);
-        self.h(q2);
-        self.cz(q1, q2);
+    fn g2(&mut self, q1: T, q2: T) -> &mut Self {
+        self.cz(q1, q2).h(q1).h(q2).cz(q1, q2)
+    }
+
+    /// Measurement of the +`X_q` operator.
+    #[inline]
+    fn mx(&mut self, q: T) -> bool {
+        // +X -> +Z
+        self.h(q);
+        let meas = self.mz(q);
+        // +Z -> +X
+        self.h(q);
+
+        meas
+    }
+
+    /// Measurement of the -`X_q` operator.
+    #[inline]
+    fn mnx(&mut self, q: T) -> bool {
+        // -X -> +Z
+        self.h(q);
+        self.x(q);
+        let meas = self.mz(q);
+        // +Z -> -X
+        self.x(q);
+        self.h(q);
+
+        meas
+    }
+
+    /// Measurement of the +`Y_q` operator.
+    /// # Panics
+    /// Will panic if qubit ids don't convert to usize.
+    #[inline]
+    fn my(&mut self, q: T) -> bool {
+        // +Y -> +Z
+        self.sx(q);
+        let meas = self.mz(q);
+        // +Z -> +Y
+        self.sxdg(q);
+
+        meas
+    }
+
+    /// Measurement of the -`Y_q` operator.
+    /// # Panics
+    /// Will panic if qubit ids don't convert to usize.
+    #[inline]
+    fn mny(&mut self, q: T) -> bool {
+        // -Y -> +Z
+        self.sxdg(q);
+        let meas = self.mz(q);
+        // +Z -> -Y
+        self.sx(q);
+
+        meas
+    }
+
+    /// Performs a measurement in the Z basis on the specified qubit.
+    ///
+    /// This measurement projects the qubit state onto the +1 or -1 eigenstate
+    /// of the Z operator (corresponding to |0⟩ or |1⟩ respectively).
+    ///
+    /// # Arguments
+    /// * `q` - The qubit to measure
+    ///
+    /// For all measurement operations (mx, my, mz, mnx, mny, mnz):
+    ///
+    /// # Return Values
+    /// Returns a tuple `(outcome, deterministic)` where:
+    /// * `outcome`:
+    ///   - `true` indicates projection onto the +1 eigenstate
+    ///   - `false` indicates projection onto the -1 eigenstate
+    /// * `deterministic`:
+    ///   - `true` if the state was already in an eigenstate of the measured operator
+    ///   - `false` if the measurement result was random (state was in superposition)
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::{CliffordGateable, StdSparseStab};
+    /// let mut sim = StdSparseStab::new(1);
+    /// let outcome = sim.mz(0);
+    /// ```
+    fn mz(&mut self, q: T) -> bool;
+
+    /// Measurement of the -`Z_q` operator.
+    /// # Panics
+    /// Will panic if qubit ids don't convert to usize.
+    #[inline]
+    fn mnz(&mut self, q: T) -> bool {
+        // -Z -> +Z
+        self.x(q);
+        let meas = self.mz(q);
+        // +Z -> -Z
+        self.x(q);
+
+        meas
+    }
+
+    /// Prepares a qubit in the +1 eigenstate of the X operator.
+    ///
+    /// Equivalent to preparing |+⟩ = (|0⟩ + |1⟩)/√2
+    ///
+    /// # Arguments
+    /// * `q` - Target qubit
+    ///
+    /// # Returns
+    /// * `(bool, bool)` - (`measurement_outcome`, `was_deterministic`)
+    ///
+    /// # Panics
+    /// Will panic if qubit ids don't convert to usize.
+    #[inline]
+    fn px(&mut self, q: T) -> &mut Self {
+        if self.mx(q) {
+            self.z(q);
+        }
+        self
+    }
+
+    /// Prepares a qubit in the -1 eigenstate of the X operator.
+    ///
+    /// Equivalent to preparing |-⟩ = (|0⟩ - |1⟩)/√2
+    ///
+    /// # Arguments
+    /// * `q` - Target qubit
+    ///
+    /// # Returns
+    /// * `(bool, bool)` - (`measurement_outcome`, `was_deterministic`)
+    ///
+    /// # Panics
+    ///
+    /// Will panic if qubit ids don't convert to usize.
+    #[inline]
+    fn pnx(&mut self, q: T) -> &mut Self {
+        if self.mnx(q) {
+            self.z(q);
+        }
+        self
+    }
+
+    /// Preparation of the +`Y_q` operator.
+    /// # Panics
+    /// Will panic if qubit ids don't convert to usize.
+    #[inline]
+    fn py(&mut self, q: T) -> &mut Self {
+        if self.my(q) {
+            self.z(q);
+        }
+        self
+    }
+
+    /// Preparation of the -`Y_q` operator.
+    /// # Panics
+    /// Will panic if qubit ids don't convert to usize.
+    #[inline]
+    fn pny(&mut self, q: T) -> &mut Self {
+        if self.mny(q) {
+            self.z(q);
+        }
+        self
+    }
+
+    /// Prepares a qubit in the +1 eigenstate of the Z operator.
+    ///
+    /// Equivalent to preparing |0⟩
+    ///
+    /// # Arguments
+    /// * `q` - Target qubit
+    ///
+    /// # Returns
+    /// * `(bool, bool)` - (`measurement_outcome`, `was_deterministic`)
+    ///
+    /// # Panics
+    ///
+    /// Will panic if qubit ids don't convert to usize.
+    #[inline]
+    fn pz(&mut self, q: T) -> &mut Self {
+        if self.mz(q) {
+            self.x(q);
+        }
+        self
+    }
+
+    /// Prepares a qubit in the -1 eigenstate of the Z operator.
+    ///
+    /// Equivalent to preparing |1⟩
+    ///
+    /// # Arguments
+    /// * `q` - Target qubit
+    ///
+    /// # Returns
+    /// * `(bool, bool)` - (`measurement_outcome`, `was_deterministic`)
+    ///
+    /// # Panics
+    ///
+    /// Will panic if qubit ids don't convert to usize.
+    #[inline]
+    fn pnz(&mut self, q: T) -> &mut Self {
+        if self.mnz(q) {
+            self.x(q);
+        }
+        self
     }
 }

@@ -1073,7 +1073,7 @@ mod tests {
 
     #[test]
     fn test_measure() {
-        // Test 1: Meauring |0> state
+        // Test 1: Measuring |0> state
         let mut q = StateVec::new(1);
         let result = q.measure(0);
         assert_eq!(result, 0);

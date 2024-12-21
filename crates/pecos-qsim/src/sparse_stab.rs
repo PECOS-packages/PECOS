@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::{CliffordSimulator, Gens, QuantumSimulator};
+use crate::{CliffordGateable, Gens, QuantumSimulatorState};
 use core::fmt::Debug;
 use core::mem;
 use pecos_core::{IndexableElement, Set};
@@ -45,7 +45,7 @@ pub type StdSparseStab = SparseStab<VecSet<usize>, usize>;
 /// # Examples
 /// ```rust
 /// use pecos_core::VecSet;
-/// use pecos_qsim::{QuantumSimulator, CliffordSimulator, SparseStab};
+/// use pecos_qsim::{QuantumSimulatorState, CliffordGateable, SparseStab};
 ///
 /// // Create a new 2-qubit stabilizer state
 /// let mut sim = SparseStab::<VecSet<u32>, u32>::new(2);
@@ -57,7 +57,7 @@ pub type StdSparseStab = SparseStab<VecSet<usize>, usize>;
 /// sim.cx(0, 1);
 ///
 /// // Measure first qubit in Z basis
-/// let (outcome, determined) = sim.mz(0);
+/// let outcome = sim.mz(0);
 /// ```
 ///
 /// # Measurement Behavior
@@ -135,9 +135,8 @@ where
         stab
     }
 
-    #[expect(clippy::single_call_fn)]
     #[inline]
-    fn reset(&mut self) -> &mut Self {
+    pub fn reset(&mut self) -> &mut Self {
         self.stabs.init_all_z();
         self.destabs.init_all_x();
         self
@@ -254,7 +253,7 @@ where
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn nondeterministic_meas(&mut self, q: E) -> E {
+    fn nondeterministic_meas(&mut self, q: E, result: bool) -> bool {
         let qu = q.to_usize();
 
         let mut anticom_stabs_col = self.stabs.col_x[qu].clone();
@@ -388,80 +387,10 @@ where
         self.destabs.row_x[id_usize] = removed_row_x;
         self.destabs.row_z[id_usize] = removed_row_z;
 
-        id
+        self.apply_outcome(id, result)
     }
 
-    /// Measurement of the +`Z_q` operator where random outcomes are forced to a particular value.
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
-    #[inline]
-    pub fn mz_forced(&mut self, q: E, forced_outcome: bool) -> (bool, bool) {
-        let qu = q.to_usize();
-
-        let deterministic = self.stabs.col_x[qu].is_empty();
-
-        // There are no stabilizers that anti-commute with Z_q
-        let meas_out = if deterministic {
-            self.deterministic_meas(q)
-        } else {
-            let id = self.nondeterministic_meas(q);
-
-            self.apply_outcome(id, forced_outcome)
-        };
-        (meas_out, deterministic)
-    }
-
-    /// Preparation of the +`Z_q` operator where random outcomes are forced to a particular value.
-    /// # Panics
-    /// Will panic if qubit ids don't convert to usize.
-    #[inline]
-    pub fn pz_forced(&mut self, q: E, forced_outcome: bool) -> (bool, bool) {
-        let (meas, deter) = self.mz_forced(q, forced_outcome);
-        if meas {
-            self.x(q);
-        }
-        (meas, deter)
-    }
-
-    /// Apply measurement outcome
-    #[inline]
-    fn apply_outcome(&mut self, id: E, meas_outcome: bool) -> bool {
-        if meas_outcome {
-            self.stabs.signs_minus.insert(id);
-        } else {
-            self.stabs.signs_minus.remove(&id);
-        }
-        meas_outcome
-    }
-}
-
-impl<T, E, R> QuantumSimulator for SparseStab<T, E, R>
-where
-    E: IndexableElement,
-    R: SimRng,
-    T: for<'a> Set<'a, Element = E>,
-{
-    #[inline]
-    fn num_qubits(&self) -> usize {
-        self.num_qubits
-    }
-
-    #[inline]
-    fn reset(&mut self) -> &mut Self {
-        Self::reset(self)
-    }
-}
-
-impl<T, E, R> CliffordSimulator<E> for SparseStab<T, E, R>
-where
-    T: for<'a> Set<'a, Element = E>,
-    E: IndexableElement,
-    R: SimRng,
-{
-    // TODO: pub fun p(&mut self, pauli: &pauli, q: U) { todo!() }
-    // TODO: pub fun m(&mut self, pauli: &pauli, q: U) -> bool { todo!() }
-
-    /// Measures a qubit in the Z basis.
+    /// Measures a qubit in the Z basis and get if deterministic result.
     ///
     /// Returns a tuple containing:
     /// - The measurement outcome (true = |1>, false = |0>)
@@ -480,10 +409,10 @@ where
     /// # Example
     /// ```rust
     /// use pecos_core::VecSet;
-    /// use pecos_qsim::{QuantumSimulator, CliffordSimulator, SparseStab};
+    /// use pecos_qsim::{QuantumSimulatorState, CliffordGateable, SparseStab};
     /// let mut state = SparseStab::<VecSet<u32>, u32>::new(2);
     ///
-    /// let (outcome, deterministic) = state.mz(0);
+    /// let (outcome, deterministic) = state.mz_determine(0);
     /// if deterministic {
     ///     println!("Measurement was deterministic with outcome: {}", outcome);
     /// }
@@ -493,53 +422,214 @@ where
     ///
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn mz(&mut self, q: E) -> (bool, bool) {
+    pub fn mz_determine(&mut self, q: E) -> (bool, bool) {
         let qu = q.to_usize();
 
         let deterministic = self.stabs.col_x[qu].is_empty();
 
-        // There are no stabilizers that anti-commute with Z_q
         let meas_out = if deterministic {
+            // There are no stabilizers that anti-commute with Z_q
             self.deterministic_meas(q)
         } else {
-            let id = self.nondeterministic_meas(q);
-
-            let meas_outcome = self.rng.gen_bool(0.5);
-
-            self.apply_outcome(id, meas_outcome)
+            let result = self.rng.gen_bool(0.5);
+            self.nondeterministic_meas(q, result)
         };
         (meas_out, deterministic)
     }
+
+    /// Measurement of the +`Z_q` operator where random outcomes are forced to a particular value.
+    /// # Panics
+    /// Will panic if qubit ids don't convert to usize.
+    #[inline]
+    pub fn mz_forced(&mut self, q: E, forced_outcome: bool) -> bool {
+        let qu = q.to_usize();
+
+        if self.stabs.col_x[qu].is_empty() {
+            // There are no stabilizers that anti-commute with Z_q
+            self.deterministic_meas(q)
+        } else {
+            self.nondeterministic_meas(q, forced_outcome)
+        }
+    }
+
+    #[inline]
+    pub fn mx_determine(&mut self, q: E) -> (bool, bool) {
+        self.h(q);
+        let result = self.mz_determine(q);
+        self.h(q);
+        result
+    }
+
+    #[inline]
+    pub fn mnx_determine(&mut self, q: E) -> (bool, bool) {
+        self.h(q);
+        let result = self.mnz_determine(q);
+        self.h(q);
+        result
+    }
+
+    #[inline]
+    pub fn my_determine(&mut self, q: E) -> (bool, bool) {
+        self.sx(q);
+        let result = self.mz_determine(q);
+        self.sxdg(q);
+        result
+    }
+
+    #[inline]
+    pub fn mny_determine(&mut self, q: E) -> (bool, bool) {
+        self.sxdg(q);
+        let result = self.mz_determine(q);
+        self.sx(q);
+        result
+    }
+
+    #[inline]
+    pub fn mnz_determine(&mut self, q: E) -> (bool, bool) {
+        self.x(q);
+        let result = self.mz_determine(q);
+        self.x(q);
+
+        result
+    }
+
+    #[inline]
+    pub fn px_determine(&mut self, q: E) -> (bool, bool) {
+        let result = self.mx_determine(q);
+        if result.0 {
+            self.z(q);
+        }
+        result
+    }
+
+    #[inline]
+    pub fn pnx_determine(&mut self, q: E) -> (bool, bool) {
+        let result = self.mnx_determine(q);
+        if result.0 {
+            self.z(q);
+        }
+        result
+    }
+
+    #[inline]
+    pub fn py_determine(&mut self, q: E) -> (bool, bool) {
+        let result = self.my_determine(q);
+        if result.0 {
+            self.z(q);
+        }
+        result
+    }
+
+    #[inline]
+    pub fn pny_determine(&mut self, q: E) -> (bool, bool) {
+        let result = self.mny_determine(q);
+        if result.0 {
+            self.z(q);
+        }
+        result
+    }
+
+    #[inline]
+    pub fn pz_determine(&mut self, q: E) -> (bool, bool) {
+        let result = self.mz_determine(q);
+        if result.0 {
+            self.x(q);
+        }
+        result
+    }
+
+    #[inline]
+    pub fn pnz_determine(&mut self, q: E) -> (bool, bool) {
+        let result = self.mnz_determine(q);
+        if result.0 {
+            self.x(q);
+        }
+        result
+    }
+
+    /// Preparation of the +`Z_q` operator where random outcomes are forced to a particular value.
+    ///
+    /// # Panics
+    /// Will panic if qubit ids don't convert to usize.
+    #[inline]
+    pub fn pz_forced(&mut self, q: E, forced_outcome: bool) -> &mut Self {
+        let result = self.mz_forced(q, forced_outcome);
+        if result {
+            self.x(q);
+        }
+        self
+    }
+
+    /// Apply measurement outcome
+    #[inline]
+    fn apply_outcome(&mut self, id: E, meas_outcome: bool) -> bool {
+        if meas_outcome {
+            self.stabs.signs_minus.insert(id);
+        } else {
+            self.stabs.signs_minus.remove(&id);
+        }
+        meas_outcome
+    }
+}
+
+impl<T, E, R> QuantumSimulatorState for SparseStab<T, E, R>
+where
+    E: IndexableElement,
+    R: SimRng,
+    T: for<'a> Set<'a, Element = E>,
+{
+    #[inline]
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+
+    #[inline]
+    fn reset(&mut self) -> &mut Self {
+        Self::reset(self)
+    }
+}
+
+impl<T, E, R> CliffordGateable<E> for SparseStab<T, E, R>
+where
+    T: for<'a> Set<'a, Element = E>,
+    E: IndexableElement,
+    R: SimRng,
+{
+    // TODO: pub fun p(&mut self, pauli: &pauli, q: U) { todo!() }
+    // TODO: pub fun m(&mut self, pauli: &pauli, q: U) -> bool { todo!() }
 
     /// Pauli X gate. X -> X, Z -> -Z
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn x(&mut self, q: E) {
+    fn x(&mut self, q: E) -> &mut Self {
         let qu = q.to_usize();
         self.stabs.signs_minus ^= &self.stabs.col_z[qu];
+        self
     }
 
     /// Pauli Y gate. X -> -X, Z -> -Z
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn y(&mut self, q: E) {
+    fn y(&mut self, q: E) -> &mut Self {
         // TODO: Add test
         let qu = q.to_usize();
         // stabs.signs_minus ^= stabs.col_x[qubit] ^ stabs.col_z[qubit]
         for i in self.stabs.col_x[qu].symmetric_difference(&self.stabs.col_z[qu]) {
             self.stabs.signs_minus ^= i;
         }
+        self
     }
 
     /// Pauli Z gate. X -> -X, Z -> Z
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn z(&mut self, q: E) {
+    fn z(&mut self, q: E) -> &mut Self {
         // TODO: Add test
         self.stabs.signs_minus ^= &self.stabs.col_x[q.to_usize()];
+        self
     }
 
     /// Sqrt of Z gate.
@@ -550,7 +640,7 @@ where
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn sz(&mut self, q: E) {
+    fn sz(&mut self, q: E) -> &mut Self {
         let qu = q.to_usize();
 
         // X -> i
@@ -572,13 +662,14 @@ where
                 g.row_z[iu] ^= &q;
             }
         }
+        self
     }
 
     /// Hadamard gate. X -> Z, Z -> X
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn h(&mut self, q: E) {
+    fn h(&mut self, q: E) -> &mut Self {
         let qu = q.to_usize();
 
         // self.stabs.signs_minus.symmetric_difference_update(self.stabs.col_x[qu].intersection())
@@ -602,6 +693,7 @@ where
 
             mem::swap(&mut g.col_x[qu], &mut g.col_z[qu]);
         }
+        self
     }
 
     /// Applies a CX or CNOT (Controlled-X) gate between two qubits.
@@ -623,7 +715,7 @@ where
     /// # Example
     /// ```rust
     /// use pecos_core::VecSet;
-    /// use pecos_qsim::{QuantumSimulator, CliffordSimulator, SparseStab};
+    /// use pecos_qsim::{QuantumSimulatorState, CliffordGateable, SparseStab};
     /// let mut state = SparseStab::<VecSet<u32>, u32>::new(2);
     ///
     /// // Create Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
@@ -635,7 +727,7 @@ where
     /// # Panics
     /// Will panic if qubit ids don't convert to usize.
     #[inline]
-    fn cx(&mut self, q1: E, q2: E) {
+    fn cx(&mut self, q1: E, q2: E) -> &mut Self {
         let qu1 = q1.to_usize();
         let qu2 = q2.to_usize();
 
@@ -688,6 +780,65 @@ where
                 col_z_qu1.symmetric_difference_update(col_z_qu2);
             }
         }
+        self
+    }
+
+    /// Measures a qubit in the Z basis.
+    ///
+    /// Returns a tuple containing:
+    /// - The measurement outcome (true = |1>, false = |0>)
+    /// - Whether the measurement was deterministic
+    ///
+    /// The measurement can be:
+    /// - Deterministic: The outcome is fixed by the current stabilizer state
+    /// - Non-deterministic: The outcome is random with 50% probability for each result
+    ///
+    /// # Arguments
+    /// * q - The qubit index to measure
+    ///
+    /// # Returns
+    /// * (bool, bool) - (`measurement_outcome`, `is_deterministic`)
+    ///
+    /// # Example
+    /// ```rust
+    /// use pecos_core::VecSet;
+    /// use pecos_qsim::{QuantumSimulatorState, CliffordGateable, SparseStab};
+    /// let mut state = SparseStab::<VecSet<u32>, u32>::new(2);
+    ///
+    /// let outcome = state.mz(0);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Will panic if qubit ids don't convert to usize.
+    #[inline]
+    fn mz(&mut self, q: E) -> bool {
+        self.mz_determine(q).0
+    }
+
+    #[inline]
+    fn mnz(&mut self, q: E) -> bool {
+        self.mnz_determine(q).0
+    }
+
+    #[inline]
+    fn mx(&mut self, q: E) -> bool {
+        self.mx_determine(q).0
+    }
+
+    #[inline]
+    fn mnx(&mut self, q: E) -> bool {
+        self.mnx_determine(q).0
+    }
+
+    #[inline]
+    fn my(&mut self, q: E) -> bool {
+        self.my_determine(q).0
+    }
+
+    #[inline]
+    fn mny(&mut self, q: E) -> bool {
+        self.mny_determine(q).0
     }
 }
 
@@ -873,8 +1024,8 @@ mod tests {
     fn test_nondeterministic_px() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["Z"], &["X"]);
-            let (_m0, d0) = state.px(0);
-            let (m1, d1) = state.mx(0);
+            let (_m0, d0) = state.px_determine(0);
+            let (m1, d1) = state.mx_determine(0);
             let m1_int = u8::from(m1);
 
             assert_eq!(m1_int, 0); // |+X>
@@ -886,7 +1037,7 @@ mod tests {
     #[test]
     fn test_deterministic_px() {
         let mut state = prep_state(&["X"], &["Z"]);
-        let (m0, d0) = state.px(0);
+        let (m0, d0) = state.px_determine(0);
         let m0_int = u8::from(m0);
 
         assert!(d0); // Deterministic
@@ -897,8 +1048,8 @@ mod tests {
     fn test_nondeterministic_pnx() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["Z"], &["X"]);
-            let (_m0, d0) = state.pnx(0);
-            let (m1, d1) = state.mx(0);
+            let (_m0, d0) = state.pnx_determine(0);
+            let (m1, d1) = state.mx_determine(0);
             let m1_int = u8::from(m1);
 
             assert_eq!(m1_int, 1); // |-X>
@@ -910,7 +1061,7 @@ mod tests {
     #[test]
     fn test_deterministic_pnx() {
         let mut state = prep_state(&["-X"], &["Z"]);
-        let (m0, d0) = state.pnx(0);
+        let (m0, d0) = state.pnx_determine(0);
         let m0_int = u8::from(m0);
 
         assert!(d0); // Deterministic
@@ -921,8 +1072,8 @@ mod tests {
     fn test_nondeterministic_py() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["Z"], &["X"]);
-            let (_m0, d0) = state.py(0);
-            let (m1, d1) = state.my(0);
+            let (_m0, d0) = state.py_determine(0);
+            let (m1, d1) = state.my_determine(0);
             let m1_int = u8::from(m1);
 
             assert_eq!(m1_int, 0); // |+Y>
@@ -934,7 +1085,7 @@ mod tests {
     #[test]
     fn test_deterministic_py() {
         let mut state = prep_state(&["iW"], &["Z"]);
-        let (m0, d0) = state.py(0);
+        let (m0, d0) = state.py_determine(0);
         let m0_int = u8::from(m0);
 
         assert!(d0); // Deterministic
@@ -945,8 +1096,8 @@ mod tests {
     fn test_nondeterministic_pny() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["Z"], &["X"]);
-            let (_m0, d0) = state.pny(0);
-            let (m1, d1) = state.my(0);
+            let (_m0, d0) = state.pny_determine(0);
+            let (m1, d1) = state.my_determine(0);
             let m1_int = u8::from(m1);
 
             assert_eq!(m1_int, 1); // |-Y>
@@ -958,7 +1109,7 @@ mod tests {
     #[test]
     fn test_deterministic_pny() {
         let mut state = prep_state(&["-iW"], &["Z"]);
-        let (m0, d0) = state.pny(0);
+        let (m0, d0) = state.pny_determine(0);
         let m0_int = u8::from(m0);
 
         assert!(d0); // Deterministic
@@ -969,8 +1120,8 @@ mod tests {
     fn test_nondeterministic_pz() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["X"], &["Z"]);
-            let (_m0, d0) = state.pz(0);
-            let (m1, d1) = state.mz(0);
+            let (_m0, d0) = state.pz_determine(0);
+            let (m1, d1) = state.mz_determine(0);
             let m1_int = u8::from(m1);
 
             assert_eq!(m1_int, 0); // |0>
@@ -982,7 +1133,7 @@ mod tests {
     #[test]
     fn test_deterministic_pz() {
         let mut state = prep_state(&["Z"], &["X"]);
-        let (m0, d0) = state.pz(0);
+        let (m0, d0) = state.pz_determine(0);
         let m0_int = u8::from(m0);
 
         assert!(d0); // Deterministic
@@ -993,8 +1144,8 @@ mod tests {
     fn test_nondeterministic_pnz() {
         for _ in 1_u32..=100 {
             let mut state = prep_state(&["X"], &["Z"]);
-            let (_m0, d0) = state.pnz(0);
-            let (m1, d1) = state.mz(0);
+            let (_m0, d0) = state.pnz_determine(0);
+            let (m1, d1) = state.mz_determine(0);
             let m1_int = u8::from(m1);
 
             assert_eq!(m1_int, 1); // |1>
@@ -1006,7 +1157,7 @@ mod tests {
     #[test]
     fn test_deterministic_pnz() {
         let mut state = prep_state(&["-Z"], &["X"]);
-        let (m0, d0) = state.pnz(0);
+        let (m0, d0) = state.pnz_determine(0);
         let m0_int = u8::from(m0);
 
         assert!(d0); // Deterministic
@@ -1016,19 +1167,19 @@ mod tests {
     #[test]
     fn test_nondeterministic_mx() {
         let mut state = prep_state(&["Z"], &["X"]);
-        let (_meas, determined) = state.mx(0);
+        let (_meas, determined) = state.mx_determine(0);
         assert!(!determined);
     }
 
     #[test]
     fn test_deterministic_mx() {
         let mut state0 = prep_state(&["X"], &["Z"]);
-        let (meas0, determined0) = state0.mx(0);
+        let (meas0, determined0) = state0.mx_determine(0);
         assert!(determined0);
         assert!(!meas0);
 
         let mut state1 = prep_state(&["-X"], &["Z"]);
-        let (meas1, determined1) = state1.mx(0);
+        let (meas1, determined1) = state1.mx_determine(0);
         assert!(determined1);
         assert!(meas1);
     }
@@ -1036,19 +1187,19 @@ mod tests {
     #[test]
     fn test_nondeterministic_mnx() {
         let mut state = prep_state(&["Z"], &["X"]);
-        let (_meas, determined) = state.mnx(0);
+        let (_meas, determined) = state.mnx_determine(0);
         assert!(!determined);
     }
 
     #[test]
     fn test_deterministic_mnx() {
         let mut state0 = prep_state(&["-X"], &["Z"]);
-        let (meas0, determined0) = state0.mnx(0);
+        let (meas0, determined0) = state0.mnx_determine(0);
         assert!(determined0);
         assert!(!meas0);
 
         let mut state1 = prep_state(&["X"], &["Z"]);
-        let (meas1, determined1) = state1.mnx(0);
+        let (meas1, determined1) = state1.mnx_determine(0);
         assert!(determined1);
         assert!(meas1);
     }
@@ -1056,19 +1207,19 @@ mod tests {
     #[test]
     fn test_nondeterministic_my() {
         let mut state = prep_state(&["Z"], &["X"]);
-        let (_meas, determined) = state.my(0);
+        let (_meas, determined) = state.my_determine(0);
         assert!(!determined);
     }
 
     #[test]
     fn test_deterministic_my() {
         let mut state0 = prep_state(&["iW"], &["Z"]);
-        let (meas0, determined0) = state0.my(0);
+        let (meas0, determined0) = state0.my_determine(0);
         assert!(determined0);
         assert!(!meas0);
 
         let mut state1 = prep_state(&["-iW"], &["Z"]);
-        let (meas1, determined1) = state1.my(0);
+        let (meas1, determined1) = state1.my_determine(0);
         assert!(determined1);
         assert!(meas1);
     }
@@ -1076,19 +1227,19 @@ mod tests {
     #[test]
     fn test_nondeterministic_mny() {
         let mut state = prep_state(&["Z"], &["X"]);
-        let (_meas, determined) = state.mny(0);
+        let (_meas, determined) = state.mny_determine(0);
         assert!(!determined);
     }
 
     #[test]
     fn test_deterministic_mny() {
         let mut state0 = prep_state(&["-iW"], &["Z"]);
-        let (meas0, determined0) = state0.mny(0);
+        let (meas0, determined0) = state0.mny_determine(0);
         assert!(determined0);
         assert!(!meas0);
 
         let mut state1 = prep_state(&["iW"], &["Z"]);
-        let (meas1, determined1) = state1.mny(0);
+        let (meas1, determined1) = state1.mny_determine(0);
         assert!(determined1);
         assert!(meas1);
     }
@@ -1096,19 +1247,19 @@ mod tests {
     #[test]
     fn test_nondeterministic_mz() {
         let mut state = prep_state(&["X"], &["Z"]);
-        let (_meas, determined) = state.mz(0);
+        let (_meas, determined) = state.mz_determine(0);
         assert!(!determined);
     }
 
     #[test]
     fn test_deterministic_mz() {
         let mut state0 = prep_state(&["Z"], &["X"]);
-        let (meas0, determined0) = state0.mz(0);
+        let (meas0, determined0) = state0.mz_determine(0);
         assert!(determined0);
         assert!(!meas0);
 
         let mut state1 = prep_state(&["-Z"], &["X"]);
-        let (meas1, determined1) = state1.mz(0);
+        let (meas1, determined1) = state1.mz_determine(0);
         assert!(determined1);
         assert!(meas1);
     }
@@ -1116,19 +1267,19 @@ mod tests {
     #[test]
     fn test_nondeterministic_mnz() {
         let mut state = prep_state(&["X"], &["Z"]);
-        let (_meas, determined) = state.mnz(0);
+        let (_meas, determined) = state.mnz_determine(0);
         assert!(!determined);
     }
 
     #[test]
     fn test_deterministic_mnz() {
         let mut state0 = prep_state(&["Z"], &["X"]);
-        let (meas0, determined0) = state0.mnz(0);
+        let (meas0, determined0) = state0.mnz_determine(0);
         assert!(determined0);
         assert!(meas0);
 
         let mut state1 = prep_state(&["-Z"], &["X"]);
-        let (meas1, determined1) = state1.mnz(0);
+        let (meas1, determined1) = state1.mnz_determine(0);
         assert!(determined1);
         assert!(!meas1);
     }
@@ -2091,7 +2242,7 @@ mod tests {
     ) -> (SparseStab<VecSet<u32>, u32>, bool) {
         state.cx(1, 0);
         state.h(1);
-        let (m1, d1) = state.mz(1);
+        let (m1, d1) = state.mz_determine(1);
         if m1 {
             state.z(0);
         }
@@ -2110,7 +2261,7 @@ mod tests {
             (state, d1) = one_bit_z_teleport(state);
             // X basis meas
             state.h(0);
-            let (m0, d0) = state.mz(0);
+            let (m0, d0) = state.mz_determine(0);
             let m0_int = u8::from(m0);
             assert_eq!(m0_int, 0); // |+> -> 0 == false
             assert!(!d1); // Not deterministic
@@ -2131,7 +2282,7 @@ mod tests {
             (state, d1) = one_bit_z_teleport(state);
             // X basis meas
             state.h(0);
-            let (m0, d0) = state.mz(0);
+            let (m0, d0) = state.mz_determine(0);
             let m0_int = u8::from(m0);
             assert_eq!(m0_int, 1); // |-> -> 1 == true
             assert!(!d1); // Not deterministic
@@ -2151,7 +2302,7 @@ mod tests {
             (state, d1) = one_bit_z_teleport(state);
             // Y basis meas
             state.sx(0); // Y -> Z
-            let (m0, d0) = state.mz(0);
+            let (m0, d0) = state.mz_determine(0);
             let m0_int = u8::from(m0);
             assert_eq!(m0_int, 0); // |+X> -> 0 == false
             assert!(!d1); // Not deterministic
@@ -2172,7 +2323,7 @@ mod tests {
             (state, d1) = one_bit_z_teleport(state);
             // Y basis meas
             state.sx(0); // Y -> Z
-            let (m0, d0) = state.mz(0);
+            let (m0, d0) = state.mz_determine(0);
             let m0_int = u8::from(m0);
             assert_eq!(m0_int, 1); // |-Y> -> 1 == true
             assert!(!d1); // Not deterministic
@@ -2190,7 +2341,7 @@ mod tests {
             let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(2);
             // Set input to |0>
             (state, d1) = one_bit_z_teleport(state);
-            let (m0, d0) = state.mz(0);
+            let (m0, d0) = state.mz_determine(0);
             let m0_int = u8::from(m0);
             assert_eq!(m0_int, 0); // |0>
             assert!(!d1); // Not deterministic
@@ -2208,7 +2359,7 @@ mod tests {
             let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(2);
             state.x(1); // Set input to |1>
             (state, d1) = one_bit_z_teleport(state);
-            let (m0, d0) = state.mz(0);
+            let (m0, d0) = state.mz_determine(0);
             let m0_int = u8::from(m0);
             assert_eq!(m0_int, 1); // |1> -> 1 == true
             assert!(!d1); // Not deterministic
@@ -2229,8 +2380,8 @@ mod tests {
         state.cx(1, 2);
         state.cx(0, 1);
         state.h(0);
-        let (m0, d0) = state.mz(0);
-        let (m1, d1) = state.mz(1);
+        let (m0, d0) = state.mz_determine(0);
+        let (m1, d1) = state.mz_determine(1);
         if m1 {
             state.x(2);
         }
@@ -2249,7 +2400,7 @@ mod tests {
             state.h(0);
             (state, d0, d1) = teleport(state);
             state.h(2);
-            let (m2, d2) = state.mz(2);
+            let (m2, d2) = state.mz_determine(2);
             let m2_int = u8::from(m2);
             assert_eq!(m2_int, 0);
             assert!(!d0);
@@ -2268,7 +2419,7 @@ mod tests {
             state.h(0);
             (state, d0, d1) = teleport(state);
             state.h(2);
-            let (m2, d2) = state.mz(2);
+            let (m2, d2) = state.mz_determine(2);
             let m2_int = u8::from(m2);
 
             assert_eq!(m2_int, 1);
@@ -2287,7 +2438,7 @@ mod tests {
             state.sxdg(0);
             (state, d0, d1) = teleport(state);
             state.sx(2);
-            let (m2, d2) = state.mz(2);
+            let (m2, d2) = state.mz_determine(2);
             let m2_int = u8::from(m2);
             assert_eq!(m2_int, 0);
             assert!(!d0);
@@ -2306,7 +2457,7 @@ mod tests {
             state.sxdg(0);
             (state, d0, d1) = teleport(state);
             state.sx(2);
-            let (m2, d2) = state.mz(2);
+            let (m2, d2) = state.mz_determine(2);
             let m2_int = u8::from(m2);
             assert_eq!(m2_int, 1);
             assert!(!d0);
@@ -2322,7 +2473,7 @@ mod tests {
             let d1;
             let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(3);
             (state, d0, d1) = teleport(state);
-            let (m2, d2) = state.mz(2);
+            let (m2, d2) = state.mz_determine(2);
             let m2_int = u8::from(m2);
 
             assert_eq!(m2_int, 0);
@@ -2340,7 +2491,7 @@ mod tests {
             let mut state: SparseStab<VecSet<u32>, u32> = SparseStab::new(3);
             state.x(0); // input state |-Z>
             (state, d0, d1) = teleport(state);
-            let (m2, d2) = state.mz(2);
+            let (m2, d2) = state.mz_determine(2);
             let m2_int = u8::from(m2);
 
             assert_eq!(m2_int, 1);

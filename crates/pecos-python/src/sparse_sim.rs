@@ -133,9 +133,48 @@ impl SparseSim {
                 self.inner.szdg(location);
                 Ok(None)
             }
-            "MZ" | "MX" | "MY" | "MZForced" | "PZ" | "PX" | "PY" | "PZForced" | "PnZ" | "PnX"
-            | "PnY" => {
-                let (result, _) = match symbol {
+            "PZ" => {
+                self.inner.pz(location);
+                Ok(None)
+            }
+            "PX" => {
+                self.inner.px(location);
+                Ok(None)
+            }
+            "PY" => {
+                self.inner.py(location);
+                Ok(None)
+            }
+            "PnZ" => {
+                self.inner.pnz(location);
+                Ok(None)
+            }
+            "PnX" => {
+                self.inner.pnx(location);
+                Ok(None)
+            }
+            "PnY" => {
+                self.inner.pny(location);
+                Ok(None)
+            }
+            "PZForced" => {
+                let forced_value = params
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>("PZForced requires params")
+                    })?
+                    .get_item("forced_outcome")?
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "PZForced requires a 'forced_outcome' parameter",
+                        )
+                    })?
+                    .call_method0("__bool__")?
+                    .extract::<bool>()?;
+                self.inner.pz_forced(location, forced_value);
+                Ok(None)
+            }
+            "MZ" | "MX" | "MY" | "MZForced" => {
+                let result = match symbol {
                     "MZ" => self.inner.mz(location),
                     "MX" => self.inner.mx(location),
                     "MY" => self.inner.my(location),
@@ -156,29 +195,6 @@ impl SparseSim {
                             .extract::<bool>()?;
                         self.inner.mz_forced(location, forced_value)
                     }
-                    "PZ" => self.inner.pz(location),
-                    "PX" => self.inner.px(location),
-                    "PY" => self.inner.py(location),
-                    "PZForced" => {
-                        let forced_value = params
-                            .ok_or_else(|| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    "PZForced requires params",
-                                )
-                            })?
-                            .get_item("forced_outcome")?
-                            .ok_or_else(|| {
-                                PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    "PZForced requires a 'forced_outcome' parameter",
-                                )
-                            })?
-                            .call_method0("__bool__")?
-                            .extract::<bool>()?;
-                        self.inner.pz_forced(location, forced_value)
-                    }
-                    "PnZ" => self.inner.pnz(location),
-                    "PnX" => self.inner.pnx(location),
-                    "PnY" => self.inner.pny(location),
                     _ => unreachable!(),
                 };
                 Ok(Some(u8::from(result)))

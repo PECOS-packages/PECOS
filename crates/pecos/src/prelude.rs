@@ -14,7 +14,7 @@
 pub use pecos_core::VecSet;
 
 // re-exporting pecos-qsim
-pub use pecos_qsim::CliffordSimulator;
+pub use pecos_qsim::CliffordGateable;
 pub use pecos_qsim::SparseStab;
 // TODO: add the following in the future as makes sense...
 // pub use pecos_qsim::clifford_simulator::CliffordSimulator;

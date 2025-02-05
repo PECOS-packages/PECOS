@@ -43,7 +43,7 @@ class SlrConverter:
         return generator.get_output()
 
     def qasm(self, skip_headers: False = False):
-        return self.generate(Language.QASM, skip_headers)
+        return self.generate(Language.QASM, skip_headers=skip_headers)
 
     def qir(self):
         return self.generate(Language.QIR)

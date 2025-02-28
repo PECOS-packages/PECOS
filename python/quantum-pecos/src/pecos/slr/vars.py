@@ -124,6 +124,9 @@ class CReg(Reg, PyCOp):
             result: Whether this register is a result register (default True)
         """
 
+        if size > 64:
+            raise ValueError(f"Classical registers are limited to storing 64 bits (requested: {size})")
+
         super().__init__(sym, size, elem_type=Bit)
         self.result = result
 

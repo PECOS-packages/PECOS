@@ -93,7 +93,23 @@ class MWPM2D:
                             real_graph.add_edge(vi, vj, weight=0)
 
                 # Find a matching
-                matching_edges = nx.max_weight_matching(real_graph, maxcardinality=True)
+                # Handle different NetworkX versions
+                try:
+                    # For NetworkX >= 2.5
+                    matching_edges = nx.algorithms.matching.max_weight_matching(
+                        real_graph,
+                        maxcardinality=True,
+                    )
+                    # Convert to a list of tuples if it's a set of frozen sets (NetworkX 2.5+)
+                    if isinstance(matching_edges, set):
+                        matching_edges = list(matching_edges)
+                except (TypeError, AttributeError):
+                    # For older NetworkX versions
+                    matching_edges = nx.max_weight_matching(
+                        real_graph,
+                        maxcardinality=True,
+                    )
+
                 matching = {n1: n2 for n2, n1 in matching_edges}
                 matching.update(dict(matching_edges))
 

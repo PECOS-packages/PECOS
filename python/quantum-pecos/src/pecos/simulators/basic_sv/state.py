@@ -108,10 +108,10 @@ class BasicSV(StateVector):
         # without needing to apply tensor products.
         self.internal_vector = np.reshape(
             self.internal_vector,
-            newshape=[2] * self.num_qubits,
+            shape=[2] * self.num_qubits,
         )
         return self
 
     @property
     def vector(self) -> ArrayLike:
-        return np.reshape(self.internal_vector, newshape=2**self.num_qubits)
+        return np.reshape(self.internal_vector, shape=2**self.num_qubits)

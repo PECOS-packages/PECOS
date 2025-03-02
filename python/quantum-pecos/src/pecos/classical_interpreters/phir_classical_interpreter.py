@@ -15,6 +15,7 @@ import json
 import warnings
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 from phir.model import PHIRModel
 
 from pecos.classical_interpreters.classical_interpreter_abc import ClassicalInterpreter
@@ -203,8 +204,22 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
         return self.cenv[cid]
 
     def get_bit(self, cvar, idx):
-        val = self.get_cval(cvar) & (1 << idx)
-        val >>= idx
+        cval = self.get_cval(cvar)
+        dtype = type(cval)
+
+        # Check if idx is within valid range for the data type
+        bit_width = 8 * np.dtype(dtype).itemsize
+        if idx >= bit_width:
+            msg = f"Bit index {idx} out of range for {dtype} (max {bit_width - 1})"
+            raise ValueError(
+                msg,
+            )
+
+        # Use the same data type for the constant 1
+        one = dtype(1)
+        mask = one << dtype(idx)
+
+        val = (cval & mask) >> dtype(idx)
         return val
 
     def eval_expr(self, expr: int | str | list | pt.opt.COp) -> int | None:

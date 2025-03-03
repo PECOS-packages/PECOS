@@ -86,6 +86,29 @@ def code_surface4444medial(instr):
     return decoder_data
 
 
+def compute_all_shortest_paths(graph):
+    """
+    Compute all shortest paths in a graph, handling NetworkX API changes.
+
+    This function will explicitly generate the all-pairs shortest paths
+    to be compatible with different NetworkX versions.
+
+    Args:
+        graph: NetworkX graph
+
+    Returns:
+        Dictionary of dictionaries with path[source][target] = list of nodes in path
+    """
+    # Compute all-pairs shortest paths explicitly
+    all_paths = {}
+    for source in graph.nodes():
+        # For each source, get paths to all targets
+        source_paths = nx.single_source_shortest_path(graph, source)
+        all_paths[source] = source_paths
+
+    return all_paths
+
+
 def surface4444_identity(instr):
     """For X and Z decoding separately:
 
@@ -246,7 +269,8 @@ def surface4444_identity(instr):
             edge2d = edges_z
             virtual_edge_data = virtual_edge_data_z
 
-        paths = dict(nx.shortest_path(temp_graph))
+        # Use a future-proof approach to get all shortest paths
+        paths = compute_all_shortest_paths(temp_graph)
 
         for n1, wdict in paths.items():
             for n2, syn_path in wdict.items():
@@ -499,7 +523,8 @@ def surface4444medial_identity(instr):
             edge2d = edges_z
             virtual_edge_data = virtual_edge_data_z
 
-        paths = dict(nx.shortest_path(temp_graph))
+        # Use a future-proof approach to get all shortest paths
+        paths = compute_all_shortest_paths(temp_graph)
 
         for n1, wdict in paths.items():
             for n2, syn_path in wdict.items():

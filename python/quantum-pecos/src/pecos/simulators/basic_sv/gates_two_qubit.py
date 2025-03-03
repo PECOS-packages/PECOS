@@ -35,7 +35,8 @@ def _apply_two_qubit_matrix(state, qubits: tuple[int, int], matrix: np.array) ->
         raise ValueError(msg)
 
     # Reshape the matrix into an ndarray of shape (2,2,2,2)
-    reshaped_matrix = np.reshape(matrix, newshape=(2, 2, 2, 2))
+    # Use positional argument for backward compatibility with NumPy < 2.0
+    reshaped_matrix = np.reshape(matrix, (2, 2, 2, 2))
 
     # Use np.einsum to apply the gate to `qubit`.
     # To do so, we need to assign subscript labels to each array axis.

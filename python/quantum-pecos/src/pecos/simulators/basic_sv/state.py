@@ -106,12 +106,15 @@ class BasicSV(StateVector):
         self.internal_vector[0] = 1
         # Internally use a ndarray representation so that it's easier to apply gates
         # without needing to apply tensor products.
+
+        # Use positional argument for backward compatibility with NumPy < 2.0
         self.internal_vector = np.reshape(
             self.internal_vector,
-            newshape=[2] * self.num_qubits,
+            [2] * self.num_qubits,
         )
         return self
 
     @property
     def vector(self) -> ArrayLike:
-        return np.reshape(self.internal_vector, newshape=2**self.num_qubits)
+        # Use positional argument for backward compatibility with NumPy < 2.0
+        return np.reshape(self.internal_vector, 2**self.num_qubits)

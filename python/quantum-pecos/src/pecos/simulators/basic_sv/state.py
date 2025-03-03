@@ -102,7 +102,7 @@ class BasicSV(StateVector):
     def reset(self):
         """Reset the quantum state for another run without reinitializing."""
         # Initialize state vector to |0>
-        self.internal_vector = np.zeros(shape=2 ** self.num_qubits)
+        self.internal_vector = np.zeros(shape=2**self.num_qubits)
         self.internal_vector[0] = 1
         # Internally use a ndarray representation so that it's easier to apply gates
         # without needing to apply tensor products.
@@ -117,4 +117,4 @@ class BasicSV(StateVector):
     @property
     def vector(self) -> ArrayLike:
         # Use positional argument for backward compatibility with NumPy < 2.0
-        return np.reshape(self.internal_vector, 2 ** self.num_qubits)
+        return np.reshape(self.internal_vector, 2**self.num_qubits)

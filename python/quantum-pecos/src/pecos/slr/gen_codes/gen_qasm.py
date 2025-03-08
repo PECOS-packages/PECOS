@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from pecos import __version__
 from pecos.slr.gen_codes.generator import Generator
+from pecos.slr.vars import Reg
 
 
 class QASMGenerator(Generator):
@@ -28,6 +29,7 @@ class QASMGenerator(Generator):
         self.cond = None
         self.skip_headers = skip_headers
         self.add_versions = add_versions
+        self.permutation_map = {}  # Maps (reg_name, index) to (new_reg_name, new_index)
 
     def write(self, line):
         self.output.append(line)
@@ -75,10 +77,29 @@ class QASMGenerator(Generator):
         block_name = type(block).__name__
 
         if block_name == "If":
-            # self.cond = block.cond.qasm()
+            # Generate the condition with permutations applied
             self.cond = self.generate_op(block.cond)
-            self.block_op_loop(block)
+            
+            # Process the operations inside the If block
+            # We need to create a new instance of the block_op_loop method
+            # to ensure that permutations are applied to the operations inside the If block
+            if len(block.ops) == 0:
+                self.write("")
+            else:
+                for op in block.ops:
+                    # TODO: figure out how to identify Block types without using isinstance
+                    if hasattr(op, "ops"):
+                        self.generate_block(op)
+                    else:
+                        self.write(self.generate_op(op))
+            
+            # Reset the condition
             self.cond = None
+            
+            # Process the else block if it exists
+            if block.else_block:
+                # TODO: Handle else blocks
+                pass
 
         elif block_name == "Repeat":
             for _ in range(block.cond):
@@ -93,12 +114,18 @@ class QASMGenerator(Generator):
         if len(block.ops) == 0:
             self.write("")
         else:
+            # Save the current permutation map
+            saved_permutation_map = self.permutation_map.copy()
+            
             for op in block.ops:
                 # TODO: figure out how to identify Block types without using isinstance
                 if hasattr(op, "ops"):
                     self.generate_block(op)
                 else:
                     self.write(self.generate_op(op))
+            
+            # Restore the permutation map
+            self.permutation_map = saved_permutation_map
 
     def generate_op(self, op):
         op_name = type(op).__name__
@@ -127,7 +154,88 @@ class QASMGenerator(Generator):
             op_str = "\n".join(txt)
 
         elif op_name == "Permute":
-            op_str = process_permute(op)
+            # For Permute operations, we need to update the permutation_map
+            # to track the permutation for subsequent operations
+            
+            # Get the input and output elements
+            elems_i = op.elems_i
+            elems_f = op.elems_f
+            
+            # Check if we're permuting whole registers or individual elements
+            if isinstance(elems_i, Reg) and isinstance(elems_f, Reg):
+                # Whole register permutation
+                reg_i = elems_i
+                reg_f = elems_f
+                
+                # Check if registers have the same size
+                if reg_i.size != reg_f.size:
+                    msg = f"Cannot permute registers of different sizes: {reg_i.sym}[{reg_i.size}] and {reg_f.sym}[{reg_f.size}]"
+                    raise ValueError(msg)
+                
+                # Create a permutation map for each element in the registers
+                new_perm_map = {}
+                for i in range(reg_i.size):
+                    new_perm_map[(reg_i.sym, i)] = (reg_f.sym, i)
+                    new_perm_map[(reg_f.sym, i)] = (reg_i.sym, i)
+                
+                # Create a comment string to describe the permutation
+                comment = ""
+                if op.comment:
+                    comment = f"// Permutation: {reg_i.sym} <-> {reg_f.sym}"
+            else:
+                # Element-wise permutation
+                if hasattr(elems_i, "elems") and hasattr(elems_f, "elems"):
+                    elems_i = elems_i.elems
+                    elems_f = elems_f.elems
+                
+                # Validate that the permutation is valid
+                if len(elems_i) != len(elems_f):
+                    msg = "Number of input and output elements are not the same."
+                    raise Exception(msg)
+                
+                if set(str(e) for e in elems_i) != set(str(e) for e in elems_f):
+                    msg = "The set of input elements are not the same as the set of output elements"
+                    raise Exception(msg)
+                
+                # Create a new permutation map for this permutation
+                new_perm_map = {}
+                for ei, ef in zip(elems_i, elems_f, strict=True):
+                    if hasattr(ei.reg, 'sym') and hasattr(ef.reg, 'sym'):
+                        # Create a key from the input element's register sym and index
+                        key = (ei.reg.sym, ei.index)
+                        # Map it to the output element's register sym and index
+                        new_perm_map[key] = (ef.reg.sym, ef.index)
+                
+                # Create a comment string to describe the permutation
+                comment = ""
+                if op.comment:
+                    qstr = []
+                    for ei, ej in zip(elems_i, elems_f, strict=True):
+                        qstr.append(f"{ei} -> {ej}")
+                    comment = "// Permutation: " + ", ".join(qstr)
+            
+            # Compose the new permutation with the existing one
+            updated_perm_map = {}
+            
+            # For each source element in the existing permutation map
+            for src, intermediate in self.permutation_map.items():
+                # If the intermediate element is in the new permutation map,
+                # update the mapping to point to the new destination
+                if intermediate in new_perm_map:
+                    updated_perm_map[src] = new_perm_map[intermediate]
+                else:
+                    # Otherwise, keep the existing mapping
+                    updated_perm_map[src] = intermediate
+            
+            # Add new mappings from the new permutation map
+            for src, dst in new_perm_map.items():
+                if src not in self.permutation_map:
+                    updated_perm_map[src] = dst
+            
+            # Update the permutation map
+            self.permutation_map = updated_perm_map
+            
+            op_str = comment
 
         elif op_name == "SET":
             stat = True
@@ -178,6 +286,30 @@ class QASMGenerator(Generator):
             stat = True
             op_str = op.qasm()
 
+        elif op_name == "Measure":
+            # Check if this is a register-wide measurement (QReg > CReg)
+            if len(op.qargs) == 1 and len(op.cout) == 1 and hasattr(op.qargs[0], 'elems') and hasattr(op.cout[0], 'elems'):
+                # This is a register-wide measurement, unroll it into individual measurements
+                qreg = op.qargs[0]
+                creg = op.cout[0]
+                
+                # Generate individual measurements for each qubit in the register
+                measurements = []
+                for i in range(qreg.size):
+                    qubit = qreg[i]
+                    cbit = creg[i]
+                    measurements.append(f"measure {self.apply_permutation(qubit)} -> {self.apply_permutation(cbit)};")
+                
+                op_str = " ".join(measurements)
+            else:
+                # This is an individual measurement, handle it as before
+                op_str = " ".join(
+                    [
+                        f"measure {self.apply_permutation(q)} -> {self.apply_permutation(c)};"
+                        for q, c in zip(op.qargs, op.cout, strict=True)
+                    ],
+                )
+
         else:
             msg = f"Operation '{op}' not handled!"
             raise NotImplementedError(msg)
@@ -227,7 +359,7 @@ class QASMGenerator(Generator):
                 case "Measure":
                     op_str = " ".join(
                         [
-                            f"measure {str(q)} -> {c};"
+                            f"measure {self.apply_permutation(q)} -> {self.apply_permutation(c)};"
                             for q, c in zip(op.qargs, op.cout, strict=True)
                         ],
                     )
@@ -323,7 +455,9 @@ class QASMGenerator(Generator):
                 str_list.append(f"{repr_str} {qs};")
 
             else:
-                str_list.append(f"{repr_str} {q};")
+                # Apply permutation to the qubit
+                q_str = self.apply_permutation(q)
+                str_list.append(f"{repr_str} {q_str};")
 
         return "\n".join(str_list)
 
@@ -347,7 +481,12 @@ class QASMGenerator(Generator):
         for q in op.qargs:
             if isinstance(q, tuple):
                 q1, q2 = q
-                str_list.append(f"{repr_str} {str(q1)}, {str(q2)};")
+                
+                # Apply permutation to the qubits
+                q1_str = self.apply_permutation(q1)
+                q2_str = self.apply_permutation(q2)
+                
+                str_list.append(f"{repr_str} {q1_str}, {q2_str};")
             else:
                 msg = f"For TQ gate, expected args to be a collection of size two tuples! Got: {op.qargs}"
                 raise TypeError(msg)
@@ -360,15 +499,25 @@ class QASMGenerator(Generator):
         )
         if right_qasm.startswith("(") and right_qasm.endswith(")"):
             right_qasm = right_qasm[1:-1]
-        return f"{op.left} = {right_qasm};"
+        
+        # Apply permutation to the left-hand side
+        left_str = self.apply_permutation(op.left)
+        
+        return f"{left_str} = {right_qasm};"
 
     def process_general_binary_op(self, op):
-        left_qasm = (
-            op.left.qasm() if hasattr(op.left, "qasm") else self.generate_op(op.left)
-        )
-        right_qasm = (
-            op.right.qasm() if hasattr(op.right, "qasm") else self.generate_op(op.right)
-        )
+        # Apply permutation to the left operand if it's a register element
+        if hasattr(op.left, 'reg') and hasattr(op.left, 'index') and hasattr(op.left.reg, 'sym'):
+            left_qasm = self.apply_permutation(op.left)
+        else:
+            left_qasm = op.left.qasm() if hasattr(op.left, "qasm") else self.generate_op(op.left)
+        
+        # Apply permutation to the right operand if it's a register element
+        if hasattr(op.right, 'reg') and hasattr(op.right, 'index') and hasattr(op.right.reg, 'sym'):
+            right_qasm = self.apply_permutation(op.right)
+        else:
+            right_qasm = op.right.qasm() if hasattr(op.right, "qasm") else self.generate_op(op.right)
+        
         return f"({left_qasm} {op.symbol} {right_qasm})"
 
     def process_general_unary_op(self, op):
@@ -381,43 +530,11 @@ class QASMGenerator(Generator):
         qasm = "\n".join(self.output)
         return qasm.replace("\n//<same_line>", "  //")
 
-
-def process_permute(op):
-    # TODO: Make permuting safer...
-    if hasattr(op.elems_i, "elems") and hasattr(op.elems_f, "elems"):
-        if len(op.elems_i.elems) != len(op.elems_f.elems):
-            msg = "Number of input and output elements are not the same."
-            raise Exception(msg)
-
-        for ei, ej in zip(op.elems_i.elems, op.elems_f.elems, strict=True):
-            ei.reg, ej.reg = ej.reg, ei.reg
-            ei.index, ej.index = ej.index, ei.index
-
-    else:
-        if set(op.elems_i) != set(op.elems_f):
-            msg = "The set of input elements are not the same as the set of output elements"
-            raise Exception(msg)
-        if not (
-            len(op.elems_i)
-            == len(set(op.elems_i))
-            == len(op.elems_f)
-            == len(set(op.elems_f))
-        ):
-            msg = "The number of input and output elements are not the same."
-            raise Exception(msg)
-
-        temp = []
-        for ei in op.elems_i:
-            temp.append((ei.reg, ei.index))
-
-        for ti, ef in zip(temp, op.elems_f, strict=True):
-            ef.reg = ti[0]
-            ef.index = ti[1]
-
-    if op.comment:
-        qstr = []
-        for ei, ej in zip(op.elems_i, op.elems_f, strict=True):
-            qstr.append(f"{ei} -> {ej}")
-        return "// Permuting: " + ", ".join(qstr)
-    else:
-        return ""
+    def apply_permutation(self, elem):
+        """Apply the permutation mapping to an element and return the permuted element as a string."""
+        if hasattr(elem, 'reg') and hasattr(elem, 'index') and hasattr(elem.reg, 'sym'):
+            key = (elem.reg.sym, elem.index)
+            if key in self.permutation_map:
+                new_reg_sym, new_index = self.permutation_map[key]
+                return f"{new_reg_sym}[{new_index}]"
+        return str(elem)

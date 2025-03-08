@@ -220,6 +220,8 @@ class QIRGenerator(Generator):
         self._result_cregs: set[str] = set()
         self._gate_declaration_cache: dict[str, QIRGate] = {}
         self._barrier_cache: dict[int, QIRFunc] = {}
+        # Add a permutation map to track permutations
+        self.permutation_map = {}
 
     def setup_module(self):
         """Helper function to help setup various types and functions needed
@@ -399,20 +401,32 @@ class QIRGenerator(Generator):
 
     def _convert_cond_to_pred(self, cond: CompOp):
         """Converts an SLR expression into a QIR condition."""
+        from pecos.slr.vars import Bit, Reg
 
         if not isinstance(cond.left, (Reg, Bit)):
             msg = "Left side of condition must be a register"
             raise TypeError(msg)
         if isinstance(cond.left, Reg):
-            reg_fetch = self._creg_dict[cond.left.sym][0]
+            # Apply permutation to the register
+            reg_sym, _ = self.apply_permutation(cond.left)
+            
+            # Get the register pointer
+            reg_fetch = self._creg_dict[reg_sym][0]
+            
             lhs = self._creg_funcs.creg_to_int_func.create_call(
                 self._builder,
                 [reg_fetch],
                 "",
             )
         elif isinstance(cond.left, Bit):
-            reg_fetch = self._creg_dict[cond.left.reg.sym][0]
-            index = ir.Constant(self._types.int_type, cond.left.index)
+            # Apply permutation to the bit
+            reg_sym, idx = self.apply_permutation(cond.left)
+            
+            # Get the register pointer
+            reg_fetch = self._creg_dict[reg_sym][0]
+            
+            # Get the bit value
+            index = ir.Constant(self._types.int_type, idx)
             lhs = self._creg_funcs.get_creg_bit_func.create_call(
                 self._builder,
                 [reg_fetch, index],
@@ -421,7 +435,13 @@ class QIRGenerator(Generator):
         if isinstance(cond.right, int):
             rhs = ir.Constant(self._types.int_type, cond.right)
         else:
-            rhs_reg_fetch = self._creg_dict[cond.right.sym][0]
+            # Apply permutation to the right side if it's a register or bit
+            if isinstance(cond.right, (Reg, Bit)):
+                reg_sym, _ = self.apply_permutation(cond.right)
+                rhs_reg_fetch = self._creg_dict[reg_sym][0]
+            else:
+                rhs_reg_fetch = self._creg_dict[cond.right.sym][0]
+                
             rhs = self._creg_funcs.creg_to_int_func.create_call(
                 self._builder,
                 [rhs_reg_fetch],
@@ -431,46 +451,101 @@ class QIRGenerator(Generator):
 
     def _convert_set_op(self, op):
         """Converts an slr assignment operation to a QIR one"""
+        from pecos.slr.vars import Bit, CReg
 
-        if isinstance(op.right, int):
-            if isinstance(op.left, CReg):
-                rhs = ir.Constant(self._types.int_type, op.right)
+        if isinstance(op.left, Bit):
+            # Apply permutation to the bit
+            reg_sym, idx = self.apply_permutation(op.left)
+            
+            # Get the register pointer
+            reg_ptr = self._creg_dict[reg_sym][0]
+            
+            if isinstance(op.right, int):
+                if op.right == 0 or op.right == 1:
+                    rhs = ir.Constant(self._types.bool_type, op.right)
+                else:
+                    msg = f"SET operation for bit must have rhs of 0 or 1, got {op.right}"
+                    raise ValueError(msg)
+            elif isinstance(op.right, BinOp):
+                rhs = self._convert_binary_op(op.right)
+            elif isinstance(op.right, UnaryOp):
+                rhs = self._convert_unary_op(op.right)
+            elif isinstance(op.right, Bit):
+                # Apply permutation to the right side bit
+                right_reg_sym, right_idx = self.apply_permutation(op.right)
+                
+                # Get the register pointer
+                rhs_reg_fetch = self._creg_dict[right_reg_sym][0]
+                
+                r_index = ir.Constant(self._types.int_type, right_idx)
+                rhs = self._creg_funcs.get_creg_bit_func.create_call(
+                    self._builder,
+                    [rhs_reg_fetch, r_index],
+                    "",
+                )
             else:
-                rhs = ir.Constant(self._types.bool_type, op.right)
-        elif isinstance(op.right, BinOp):
-            rhs = self._convert_binary_op(op.right)
-        elif isinstance(op.right, UnaryOp):
-            rhs = self._convert_unary_op(op.right)
-        elif isinstance(op.right, Bit):
-            rhs_reg_fetch = self._creg_dict[op.right.reg.sym][0]
-            r_index = ir.Constant(self._types.int_type, op.right.index)
-            rhs = self._creg_funcs.get_creg_bit_func.create_call(
+                rhs_reg_fetch = self._creg_dict[op.right.sym][0]
+                rhs = self._creg_funcs.creg_to_int_func.create_call(
+                    self._builder,
+                    [rhs_reg_fetch],
+                    "",
+                )
+                
+            # Set the bit value
+            l_index = ir.Constant(self._types.int_type, idx)
+            return self._creg_funcs.set_creg_bit_func.create_call(
                 self._builder,
-                [rhs_reg_fetch, r_index],
+                [reg_ptr, l_index, rhs],
+                "",
+            )
+        elif isinstance(op.left, CReg):
+            # Apply permutation to the register
+            reg_sym, _ = self.apply_permutation(op.left)
+            
+            # Get the register pointer
+            reg_ptr = self._creg_dict[reg_sym][0]
+            
+            if isinstance(op.right, int):
+                rhs = ir.Constant(self._types.int_type, op.right)
+            elif isinstance(op.right, BinOp):
+                rhs = self._convert_binary_op(op.right)
+            elif isinstance(op.right, UnaryOp):
+                rhs = self._convert_unary_op(op.right)
+            elif isinstance(op.right, Bit):
+                # Apply permutation to the right side bit
+                right_reg_sym, right_idx = self.apply_permutation(op.right)
+                
+                # Get the register pointer
+                rhs_reg_fetch = self._creg_dict[right_reg_sym][0]
+                
+                r_index = ir.Constant(self._types.int_type, right_idx)
+                rhs = self._creg_funcs.get_creg_bit_func.create_call(
+                    self._builder,
+                    [rhs_reg_fetch, r_index],
+                    "",
+                )
+            else:
+                # Apply permutation to the right side register
+                right_reg_sym, _ = self.apply_permutation(op.right)
+                
+                # Get the register pointer
+                rhs_reg_fetch = self._creg_dict[right_reg_sym][0]
+                
+                rhs = self._creg_funcs.creg_to_int_func.create_call(
+                    self._builder,
+                    [rhs_reg_fetch],
+                    "",
+                )
+                
+            # Set the register value
+            return self._creg_funcs.set_creg_func.create_call(
+                self._builder,
+                [reg_ptr, rhs],
                 "",
             )
         else:
-            rhs_reg_fetch = self._creg_dict[op.right.sym][0]
-            rhs = self._creg_funcs.creg_to_int_func.create_call(
-                self._builder,
-                [rhs_reg_fetch],
-                "",
-            )
-        if isinstance(op.left, CReg):
-            lhs = self._creg_dict[op.left.sym][0]
-            return self._creg_funcs.set_creg_func.create_call(
-                self._builder,
-                [lhs, rhs],
-                "",
-            )
-        elif isinstance(op.left, Bit):
-            lhs = self._creg_dict[op.left.reg.sym][0]
-            l_index = ir.Constant(self._types.int_type, op.left.index)
-            return self._creg_funcs.set_creg_bit_func.create_call(
-                self._builder,
-                [lhs, l_index, rhs],
-                "",
-            )
+            msg = f"SET operation not implemented for {op.left} (type: {type(op.left)})"
+            raise NotImplementedError(msg)
 
     def _convert_binary_op(self, op):
         """Converts an SLR binary operation to a QIR arithmetic instruction"""
@@ -576,9 +651,8 @@ class QIRGenerator(Generator):
                     new_comment,
                 )  # TODO: Handle 'space', 'newline' params
             case Permute():
-                # TODO: Ask Ciaran about what this actually does
-                msg = "Permute not implemented in QIR"
-                raise NotImplementedError(msg)
+                # Handle permutation operations
+                self._handle_permute(op)
             case SET():
                 self._convert_set_op(op)
             case BinOp():
@@ -746,11 +820,123 @@ class QIRGenerator(Generator):
 
         qarg (slr.qubit.vars.Qubit): a qubit in an SLR quantum register (QReg)"""
 
-        index = qarg.index
-        qubit_index = self._qreg_dict[qarg.reg.sym][0] + index
+        # Apply permutation to the qubit
+        reg_sym, index = self.apply_permutation(qarg)
+        
+        # Get the qubit index in the global array
+        qubit_index = self._qreg_dict[reg_sym][0] + index
+        
         return ir.Constant(self._types.int_type, qubit_index).inttoptr(
             self._types.qubit_ptr_type,
         )
+
+    def _handle_permute(self, op: Permute) -> None:
+        """Handle a permutation operation.
+        
+        Parameters:
+            op (Permute): The permutation operation to handle.
+        """
+        # Get the input and output elements
+        elems_i = op.elems_i
+        elems_f = op.elems_f
+        
+        # Check if we're permuting whole registers or individual elements
+        from pecos.slr.vars import Reg
+        
+        if isinstance(elems_i, Reg) and isinstance(elems_f, Reg):
+            # Whole register permutation
+            reg_i = elems_i
+            reg_f = elems_f
+            
+            # Check if registers have the same size
+            if reg_i.size != reg_f.size:
+                msg = f"Cannot permute registers of different sizes: {reg_i.sym}[{reg_i.size}] and {reg_f.sym}[{reg_f.size}]"
+                raise ValueError(msg)
+            
+            # Create a permutation map for each element in the registers
+            new_perm_map = {}
+            for i in range(reg_i.size):
+                new_perm_map[(reg_i.sym, i)] = (reg_f.sym, i)
+                new_perm_map[(reg_f.sym, i)] = (reg_i.sym, i)
+            
+            # Add a comment to describe the permutation
+            if op.comment:
+                comment = f"Permutation: {reg_i.sym} <-> {reg_f.sym}"
+                self._builder.comment(comment)
+        else:
+            # Element-wise permutation
+            if hasattr(elems_i, "elems") and hasattr(elems_f, "elems"):
+                elems_i = elems_i.elems
+                elems_f = elems_f.elems
+            
+            # Validate that the permutation is valid
+            if len(elems_i) != len(elems_f):
+                msg = "Number of input and output elements are not the same."
+                raise Exception(msg)
+            
+            if set(str(e) for e in elems_i) != set(str(e) for e in elems_f):
+                msg = "The set of input elements are not the same as the set of output elements"
+                raise Exception(msg)
+            
+            # Create a new permutation map for this permutation
+            new_perm_map = {}
+            for ei, ef in zip(elems_i, elems_f, strict=True):
+                if hasattr(ei.reg, 'sym') and hasattr(ef.reg, 'sym'):
+                    # Create a key from the input element's register sym and index
+                    key = (ei.reg.sym, ei.index)
+                    # Map it to the output element's register sym and index
+                    new_perm_map[key] = (ef.reg.sym, ef.index)
+            
+            # Add a comment to describe the permutation
+            if op.comment:
+                qstr = []
+                for ei, ej in zip(elems_i, elems_f, strict=True):
+                    qstr.append(f"{ei} -> {ej}")
+                comment = "Permutation: " + ", ".join(qstr)
+                self._builder.comment(comment)
+        
+        # Compose the new permutation with the existing one
+        updated_perm_map = {}
+        
+        # For each source element in the existing permutation map
+        for src, intermediate in self.permutation_map.items():
+            # If the intermediate element is in the new permutation map,
+            # update the mapping to point to the new destination
+            if intermediate in new_perm_map:
+                updated_perm_map[src] = new_perm_map[intermediate]
+            else:
+                # Otherwise, keep the existing mapping
+                updated_perm_map[src] = intermediate
+        
+        # Add new mappings from the new permutation map
+        for src, dst in new_perm_map.items():
+            if src not in self.permutation_map:
+                updated_perm_map[src] = dst
+        
+        # Update the permutation map
+        self.permutation_map = updated_perm_map
+
+    def apply_permutation(self, qarg: Qubit | Bit | QReg | CReg) -> tuple[str, int]:
+        """Apply the permutation mapping to a qubit or bit and return the permuted register symbol and index.
+
+        Parameters:
+            qarg (Qubit | Bit | QReg | CReg): The qubit, bit, or register to apply the permutation to.
+
+        Returns:
+            tuple[str, int]: The permuted register symbol and index.
+        """
+        # Handle Qubit/Bit objects which have a reg attribute
+        if hasattr(qarg, 'reg') and hasattr(qarg, 'index') and hasattr(qarg.reg, 'sym'):
+            key = (qarg.reg.sym, qarg.index)
+            if key in self.permutation_map:
+                return self.permutation_map[key]
+            return (qarg.reg.sym, qarg.index)
+        # Handle QReg/CReg objects which are registers themselves
+        elif hasattr(qarg, 'sym'):
+            # For a register, we return the symbol and index 0 (whole register)
+            return (qarg.sym, 0)
+        # Fallback for other types
+        return (qarg.reg.sym, qarg.index)
 
     def _ll_with_attributes(self) -> str:
         """Patches attributes into the .ll for the program:

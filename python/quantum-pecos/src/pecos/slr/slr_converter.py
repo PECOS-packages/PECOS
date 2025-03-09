@@ -60,7 +60,7 @@ class SlrConverter:
 
     def qasm(self, *, skip_headers: bool = False, add_versions: bool = False):
         # Create a QASM generator
-        generator = QASMGenerator(skip_headers=skip_headers)
+        generator = QASMGenerator(Language.QASM, skip_headers=skip_headers, add_versions=add_versions)
 
         # Generate the QASM code
         generator.generate_block(self._block)

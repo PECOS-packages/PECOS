@@ -1,31 +1,34 @@
 """Pytest fixtures for SLR tests."""
 
 import pytest
-from pecos.slr import Main, QReg, CReg, Permute
 from pecos.qeclib import qubit as Q
+from pecos.slr import CReg, Main, Permute, QReg
+
 
 @pytest.fixture
 def basic_permutation_program():
     """Create a basic program with permutation of classical registers."""
     a = CReg("a", 2)
     b = CReg("b", 2)
-    
+
     prog = Main(
-        a, b,
+        a,
+        b,
         Permute(
             [a[0], b[1]],
             [b[1], a[0]],
         ),
-        a[0].set(1)  # Should become b[1] = 1 after permutation
+        a[0].set(1),  # Should become b[1] = 1 after permutation
     )
-    
+
     return prog, a, b
+
 
 @pytest.fixture
 def same_register_permutation_program():
     """Create a program with permutation within the same register."""
     a = CReg("a", 3)
-    
+
     prog = Main(
         a,
         Permute(
@@ -36,17 +39,19 @@ def same_register_permutation_program():
         a[1].set(0),  # Should become a[0] = 0
         a[2].set(1),  # Should become a[1] = 1
     )
-    
+
     return prog, a
+
 
 @pytest.fixture
 def quantum_permutation_program():
     """Create a program with permutation of quantum registers."""
     a = QReg("a", 2)
     b = QReg("b", 2)
-    
+
     prog = Main(
-        a, b,
+        a,
+        b,
         Permute(
             [a[0], b[0]],
             [b[0], a[0]],
@@ -54,8 +59,9 @@ def quantum_permutation_program():
         Q.H(a[0]),  # Should become H(b[0]) after permutation
         Q.CX(a[0], a[1]),  # Should become CX(b[0], a[1]) after permutation
     )
-    
+
     return prog, a, b
+
 
 @pytest.fixture
 def measurement_program():
@@ -64,26 +70,28 @@ def measurement_program():
     b = QReg("b", 2)
     m = CReg("m", 2)
     n = CReg("n", 2)
-    
+
     prog = Main(
-        a, b, m, n,
+        a,
+        b,
+        m,
+        n,
         # Apply permutations to both quantum and classical registers
         Permute(
             [a[0], b[0]],
             [b[0], a[0]],
         ),
-        
         Permute(
             [m[0], n[0]],
             [n[0], m[0]],
         ),
-        
         # Apply quantum operations
         Q.H(a[0]),
         Q.CX(a[0], b[0]),
     )
-    
+
     return prog, a, b, m, n
+
 
 @pytest.fixture
 def individual_measurement_program():
@@ -92,30 +100,31 @@ def individual_measurement_program():
     b = QReg("b", 2)
     m = CReg("m", 2)
     n = CReg("n", 2)
-    
+
     prog = Main(
-        a, b, m, n,
+        a,
+        b,
+        m,
+        n,
         # Apply permutations to both quantum and classical registers
         Permute(
             [a[0], b[0]],
             [b[0], a[0]],
         ),
-        
         Permute(
             [m[0], n[0]],
             [n[0], m[0]],
         ),
-        
         # Apply quantum operations
         Q.H(a[0]),
         Q.CX(a[0], b[0]),
-        
         # Add individual measurements
         Q.Measure(a[0]) > m[0],
         Q.Measure(a[1]) > m[1],
     )
-    
+
     return prog, a, b, m, n
+
 
 @pytest.fixture
 def register_measurement_program():
@@ -124,26 +133,26 @@ def register_measurement_program():
     b = QReg("b", 2)
     m = CReg("m", 2)
     n = CReg("n", 2)
-    
+
     prog = Main(
-        a, b, m, n,
+        a,
+        b,
+        m,
+        n,
         # Apply permutations to both quantum and classical registers
         Permute(
             [a[0], b[0]],
             [b[0], a[0]],
         ),
-        
         Permute(
             [m[0], n[0]],
             [n[0], m[0]],
         ),
-        
         # Apply quantum operations
         Q.H(a[0]),
         Q.CX(a[0], b[0]),
-        
         # Add register-wide measurement
         Q.Measure(a) > m,
     )
-    
-    return prog, a, b, m, n 
+
+    return prog, a, b, m, n

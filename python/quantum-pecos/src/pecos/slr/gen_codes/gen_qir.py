@@ -227,8 +227,7 @@ class QIRGenerator(Generator):
     def setup_module(self):
         """Helper function to help setup various types and functions needed
         in the QIR production."""
-
-        self._module = ir.Module(name=__file__, context=ir.Context())
+        self._module = ir.Module(name=__file__)
 
         # store them in a read-only object
         self._types = QIRTypes(self._module)
@@ -1156,11 +1155,15 @@ class QIRGenerator(Generator):
 
     def get_output(self) -> str:
         """Stringify the module as .ll text"""
+        binding.shutdown()
         return self._ll_with_attributes()
 
     def get_bc(self) -> bytes:
         """Return LLVM bitcode for the text"""
-        return binding.parse_assembly(self.get_output()).as_bitcode()
+        bc = binding.parse_assembly(self.get_output()).as_bitcode()
+        binding.shutdown()
+        return bc
+        
 
 
 def _fix_internal_consts(llvm_ir: str) -> str:

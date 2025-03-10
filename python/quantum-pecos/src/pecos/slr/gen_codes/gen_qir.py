@@ -221,7 +221,8 @@ class QIRGenerator(Generator):
         self._result_cregs: set[str] = set()
         self._gate_declaration_cache: dict[str, QIRGate] = {}
         self._barrier_cache: dict[int, QIRFunc] = {}
-        # Add a permutation map to track permutations
+        
+        # Initialize the permutation map
         self.permutation_map = {}
 
     def setup_module(self):
@@ -654,7 +655,6 @@ class QIRGenerator(Generator):
                     new_comment,
                 )  # TODO: Handle 'space', 'newline' params
             case Permute():
-                # Handle permutation operations
                 self._handle_permute(op)
             case SET():
                 self._convert_set_op(op)
@@ -663,13 +663,13 @@ class QIRGenerator(Generator):
             case UnaryOp():
                 self._convert_unary_op(op)
             case Vars():
-                msg = "Block Vars not implemented in QIR"
-                raise NotImplementedError(msg)
-            case CReg():
-                msg = "Block CReg not implemented in QIR"
-                raise NotImplementedError(msg)
+                for var in op.vars:
+                    self._handle_var(var)
             case qgate_base.QGate():
                 self._handle_quantum_gate(op)
+            case _:
+                msg = f"Unsupported operation: {type(op).__name__}"
+                raise NotImplementedError(msg)
 
     def _handle_barrier(self, barrier: Barrier) -> None:
         """Process a barrier operation."""
@@ -720,10 +720,7 @@ class QIRGenerator(Generator):
                     ll_creg = self._creg_dict[creg_or_bit.sym][0]
                     for i, q in enumerate(gate.qargs[0]):
                         self._measure_count += 1
-                        # Apply permutation to the qubit
                         qubit_ptr = self._qarg_to_qubit_ptr(q)
-                        # For classical bits, we don't change the name, just the value
-                        # So we use the original bit index
                         self._mz_to_bit.create_call(
                             self._builder,
                             [qubit_ptr, ll_creg, ir.Constant(self._types.int_type, i)],
@@ -732,10 +729,7 @@ class QIRGenerator(Generator):
                 elif isinstance(creg_or_bit, Bit):
                     ll_creg = self._creg_dict[creg_or_bit.reg.sym][0]
                     self._measure_count += 1
-                    # Apply permutation to the qubit
                     qubit_ptr = self._qarg_to_qubit_ptr(gate.qargs[0])
-                    # For classical bits, we don't change the name, just the value
-                    # So we use the original bit index
                     self._mz_to_bit.create_call(
                         self._builder,
                         [
@@ -849,11 +843,36 @@ class QIRGenerator(Generator):
         elems_i = op.elems_i
         elems_f = op.elems_f
 
-        # Check if we're permuting whole registers or individual elements
-        from pecos.slr.vars import CReg, QReg, Reg
+        # Import Reg for type checking
+        from pecos.slr.vars import Reg
 
-        # Handle classical register permutations using XOR swap
-        if isinstance(elems_i, CReg) and isinstance(elems_f, CReg):
+        # Check if we're permuting whole registers or individual elements
+        if isinstance(elems_i, QReg) and isinstance(elems_f, QReg):
+            # Whole quantum register permutation
+            reg_i = elems_i
+            reg_f = elems_f
+
+            # Check if registers have the same size
+            if reg_i.size != reg_f.size:
+                msg = f"Cannot permute registers of different sizes: {reg_i.sym}[{reg_i.size}] and {reg_f.sym}[{reg_f.size}]"
+                raise ValueError(msg)
+
+            # Create a permutation map for each element in the registers
+            new_perm_map = {}
+            for i in range(reg_i.size):
+                new_perm_map[(reg_i.sym, i)] = (reg_f.sym, i)
+                new_perm_map[(reg_f.sym, i)] = (reg_i.sym, i)
+
+            # Add a comment to describe the permutation
+            self._builder.comment(f"; Permutation: {reg_i.sym} <-> {reg_f.sym}")
+
+            # Compose the new permutation with the existing one
+            updated_perm_map = self._compose_permutation_maps(new_perm_map)
+
+            # Update the permutation map
+            self.permutation_map = updated_perm_map
+
+        elif isinstance(elems_i, CReg) and isinstance(elems_f, CReg):
             # Whole classical register permutation
             reg_i = elems_i
             reg_f = elems_f
@@ -914,208 +933,171 @@ class QIRGenerator(Generator):
             )
 
             # Add a comment to describe the permutation
-            if op.comment:
-                self._builder.comment(f"Permutation: {reg_i.sym} <-> {reg_f.sym}")
+            self._builder.comment(f"; Permutation: {reg_i.sym} <-> {reg_f.sym}")
 
-            return
-
-        # Handle classical bit permutations using a single temporary bit
-        if (
-            not isinstance(elems_i, Reg)
-            and not isinstance(elems_f, Reg)
-            and hasattr(elems_i, "__iter__")
-            and hasattr(elems_f, "__iter__")
-            and all(hasattr(e, "reg") and isinstance(e.reg, CReg) for e in elems_i)
-            and all(hasattr(e, "reg") and isinstance(e.reg, CReg) for e in elems_f)
-        ):
-            # Create a mapping from input elements to output elements
-            perm_map = {}
-            for i, ei in enumerate(elems_i):
-                perm_map[str(ei)] = elems_f[i]
-
-            # Find all cycles in the permutation
-            visited = set()
-            cycles = []
-
-            for start_elem in elems_i:
-                if str(start_elem) in visited:
-                    continue
-
-                # Start a new cycle
-                cycle = [start_elem]
-                visited.add(str(start_elem))
-
-                # Follow the cycle
-                next_elem = perm_map[str(start_elem)]
-                while str(next_elem) != str(start_elem):
-                    for e in elems_i:
-                        if str(e) == str(next_elem):
-                            cycle.append(e)
-                            break
-                    visited.add(str(next_elem))
-                    next_elem = perm_map[str(next_elem)]
-
-                # Skip cycles of length 1 (elements that map to themselves)
-                if len(cycle) > 1:
-                    cycles.append(cycle)
-
-            # Create a temporary bit if needed
-            if cycles:
-                temp_var = "_bit_swap"
-                if temp_var not in self._creg_dict:
-                    temp_ptr = self._creg_funcs.create_creg_func.create_call(
-                        self._builder,
-                        [ir.Constant(self._types.int_type, 1)],
-                        temp_var,
-                    )
-                    self._creg_dict[temp_var] = (temp_ptr, 1)
-                else:
-                    temp_ptr = self._creg_dict[temp_var][0]
-
-            # Process each cycle
-            for cycle in cycles:
-                # Use the temporary bit for all cycles
-                first = cycle[0]
-                first_ptr = self._creg_dict[first.reg.sym][0]
-
-                # Save the first element's value to the temporary bit
-                first_val = self._creg_funcs.get_creg_bit_func.create_call(
-                    self._builder,
-                    [first_ptr, ir.Constant(self._types.int_type, first.index)],
-                    "",
-                )
-                self._creg_funcs.set_creg_bit_func.create_call(
-                    self._builder,
-                    [temp_ptr, ir.Constant(self._types.int_type, 0), first_val],
-                    "",
-                )
-
-                # Move each element's value to its predecessor in the cycle
-                for i in range(len(cycle) - 1):
-                    curr = cycle[i]
-                    next_elem = cycle[i + 1]
-                    curr_ptr = self._creg_dict[curr.reg.sym][0]
-                    next_ptr = self._creg_dict[next_elem.reg.sym][0]
-
-                    next_val = self._creg_funcs.get_creg_bit_func.create_call(
-                        self._builder,
-                        [next_ptr, ir.Constant(self._types.int_type, next_elem.index)],
-                        "",
-                    )
-                    self._creg_funcs.set_creg_bit_func.create_call(
-                        self._builder,
-                        [
-                            curr_ptr,
-                            ir.Constant(self._types.int_type, curr.index),
-                            next_val,
-                        ],
-                        "",
-                    )
-
-                # Assign the temporary bit to the last element
-                last = cycle[-1]
-                last_ptr = self._creg_dict[last.reg.sym][0]
-                temp_val = self._creg_funcs.get_creg_bit_func.create_call(
-                    self._builder,
-                    [temp_ptr, ir.Constant(self._types.int_type, 0)],
-                    "",
-                )
-                self._creg_funcs.set_creg_bit_func.create_call(
-                    self._builder,
-                    [last_ptr, ir.Constant(self._types.int_type, last.index), temp_val],
-                    "",
-                )
-
-            # Add a comment to describe the permutation
-            if op.comment:
-                qstr = []
-                for ei, ef in zip(elems_i, elems_f):
-                    qstr.append(f"{ei} -> {ef}")
-                self._builder.comment("Permutation: " + ", ".join(qstr))
-
-            # For classical bit permutations, we're physically moving the values,
-            # so we don't need to update the permutation map.
-            # The operations should still refer to the original bits.
-
-            return
-
-        # For quantum registers and qubits, update the permutation map
-        # Check if we're permuting whole registers or individual elements
-        if isinstance(elems_i, QReg) and isinstance(elems_f, QReg):
-            # Whole quantum register permutation
-            reg_i = elems_i
-            reg_f = elems_f
-
-            # Check if registers have the same size
-            if reg_i.size != reg_f.size:
-                msg = f"Cannot permute registers of different sizes: {reg_i.sym}[{reg_i.size}] and {reg_f.sym}[{reg_f.size}]"
-                raise ValueError(msg)
-
-            # Create a permutation map for each element in the registers
-            new_perm_map = {}
-            for i in range(reg_i.size):
-                new_perm_map[(reg_i.sym, i)] = (reg_f.sym, i)
-                new_perm_map[(reg_f.sym, i)] = (reg_i.sym, i)
-
-            # Add a comment to describe the permutation
-            if op.comment:
-                self._builder.comment(f"Permutation: {reg_i.sym} <-> {reg_f.sym}")
-
-            # Compose the new permutation with the existing one
-            updated_perm_map = self._compose_permutation_maps(new_perm_map)
-
-            # Update the permutation map
-            self.permutation_map = updated_perm_map
         elif (
             not isinstance(elems_i, Reg)
             and not isinstance(elems_f, Reg)
             and hasattr(elems_i, "__iter__")
             and hasattr(elems_f, "__iter__")
-            and any(hasattr(e, "reg") and isinstance(e.reg, QReg) for e in elems_i)
-            and any(hasattr(e, "reg") and isinstance(e.reg, QReg) for e in elems_f)
         ):
-            # Element-wise permutation for quantum registers
-            if hasattr(elems_i, "elems") and hasattr(elems_f, "elems"):
-                elems_i = elems_i.elems
-                elems_f = elems_f.elems
-
-            # Validate that the permutation is valid
+            # Element-wise permutation
             if len(elems_i) != len(elems_f):
-                msg = "Number of input and output elements are not the same."
-                raise Exception(msg)
+                msg = f"Cannot permute different numbers of elements: {len(elems_i)} and {len(elems_f)}"
+                raise ValueError(msg)
 
-            if {str(e) for e in elems_i} != {str(e) for e in elems_f}:
-                msg = "The set of input elements are not the same as the set of output elements"
-                raise Exception(msg)
+            # Check if we're dealing with quantum bits
+            if any(hasattr(e, "reg") and isinstance(e.reg, QReg) for e in elems_i):
+                # Element-wise permutation for quantum registers
+                if hasattr(elems_i, "elems") and hasattr(elems_f, "elems"):
+                    elems_i = elems_i.elems
+                    elems_f = elems_f.elems
 
-            # Create a new permutation map for this permutation
-            new_perm_map = {}
-            for ei, ef in zip(elems_i, elems_f, strict=True):
-                if (
-                    hasattr(ei.reg, "sym")
-                    and hasattr(ef.reg, "sym")
-                    and isinstance(ei.reg, QReg)
-                ):
-                    # Create a key from the input element's register sym and index
-                    key = (ei.reg.sym, ei.index)
-                    # Map it to the output element's register sym and index
-                    new_perm_map[key] = (ef.reg.sym, ef.index)
+                # Validate that the permutation is valid
+                if len(elems_i) != len(elems_f):
+                    msg = "Number of input and output elements are not the same."
+                    raise Exception(msg)
 
-            # Add a comment to describe the permutation
-            if op.comment:
-                qstr = []
-                for ei, ef in zip(elems_i, elems_f):
-                    qstr.append(f"{ei} -> {ef}")
-                self._builder.comment("Permutation: " + ", ".join(qstr))
+                if {str(e) for e in elems_i} != {str(e) for e in elems_f}:
+                    msg = "The set of input elements are not the same as the set of output elements"
+                    raise Exception(msg)
 
-            # Compose the new permutation with the existing one
-            updated_perm_map = self._compose_permutation_maps(new_perm_map)
+                # Create a new permutation map for this permutation
+                new_perm_map = {}
+                for ei, ef in zip(elems_i, elems_f, strict=True):
+                    if (
+                        hasattr(ei.reg, "sym")
+                        and hasattr(ef.reg, "sym")
+                        and isinstance(ei.reg, QReg)
+                    ):
+                        # Create a key from the input element's register sym and index
+                        key = (ei.reg.sym, ei.index)
+                        # Map it to the output element's register sym and index
+                        new_perm_map[key] = (ef.reg.sym, ef.index)
 
-            # Update the permutation map
-            self.permutation_map = updated_perm_map
+                # Add a comment to describe the permutation
+                perm_str = ", ".join([f"{ei} -> {ef}" for ei, ef in zip(elems_i, elems_f)])
+                self._builder.comment(f"; Permutation: {perm_str}")
+
+                # Compose the new permutation with the existing one
+                updated_perm_map = self._compose_permutation_maps(new_perm_map)
+
+                # Update the permutation map
+                self.permutation_map = updated_perm_map
+            
+            # Check if we're dealing with classical bits
+            elif any(hasattr(e, "reg") and isinstance(e.reg, CReg) for e in elems_i):
+                # Create a mapping from input elements to output elements
+                perm_map = {}
+                for i, ei in enumerate(elems_i):
+                    perm_map[str(ei)] = elems_f[i]
+
+                # Find all cycles in the permutation
+                visited = set()
+                cycles = []
+
+                for start_elem in elems_i:
+                    if str(start_elem) in visited:
+                        continue
+
+                    # Start a new cycle
+                    cycle = [start_elem]
+                    visited.add(str(start_elem))
+
+                    # Follow the cycle
+                    next_elem = perm_map[str(start_elem)]
+                    while str(next_elem) != str(start_elem):
+                        for e in elems_i:
+                            if str(e) == str(next_elem):
+                                cycle.append(e)
+                                break
+                        visited.add(str(next_elem))
+                        next_elem = perm_map[str(next_elem)]
+
+                    # Skip cycles of length 1 (elements that map to themselves)
+                    if len(cycle) > 1:
+                        cycles.append(cycle)
+
+                # Create a temporary bit if needed
+                if cycles:
+                    temp_var = "_bit_swap"
+                    if temp_var not in self._creg_dict:
+                        temp_ptr = self._creg_funcs.create_creg_func.create_call(
+                            self._builder,
+                            [ir.Constant(self._types.int_type, 1)],
+                            temp_var,
+                        )
+                        self._creg_dict[temp_var] = (temp_ptr, False)
+                    else:
+                        temp_ptr = self._creg_dict[temp_var][0]
+
+                # Process each cycle
+                for cycle in cycles:
+                    # Use the temporary bit for all cycles
+                    first = cycle[0]
+                    first_ptr = self._creg_dict[first.reg.sym][0]
+
+                    # Save the first element's value to the temporary bit
+                    first_val = self._creg_funcs.get_creg_bit_func.create_call(
+                        self._builder,
+                        [first_ptr, ir.Constant(self._types.int_type, first.index)],
+                        "",
+                    )
+                    self._creg_funcs.set_creg_bit_func.create_call(
+                        self._builder,
+                        [temp_ptr, ir.Constant(self._types.int_type, 0), first_val],
+                        "",
+                    )
+
+                    # Move each element's value to its predecessor in the cycle
+                    for i in range(len(cycle) - 1):
+                        curr = cycle[i]
+                        next_elem = cycle[i + 1]
+                        curr_ptr = self._creg_dict[curr.reg.sym][0]
+                        next_ptr = self._creg_dict[next_elem.reg.sym][0]
+
+                        next_val = self._creg_funcs.get_creg_bit_func.create_call(
+                            self._builder,
+                            [next_ptr, ir.Constant(self._types.int_type, next_elem.index)],
+                            "",
+                        )
+                        self._creg_funcs.set_creg_bit_func.create_call(
+                            self._builder,
+                            [
+                                curr_ptr,
+                                ir.Constant(self._types.int_type, curr.index),
+                                next_val,
+                            ],
+                            "",
+                        )
+
+                    # Assign the temporary bit to the last element
+                    last = cycle[-1]
+                    last_ptr = self._creg_dict[last.reg.sym][0]
+                    temp_val = self._creg_funcs.get_creg_bit_func.create_call(
+                        self._builder,
+                        [temp_ptr, ir.Constant(self._types.int_type, 0)],
+                        "",
+                    )
+                    self._creg_funcs.set_creg_bit_func.create_call(
+                        self._builder,
+                        [last_ptr, ir.Constant(self._types.int_type, last.index), temp_val],
+                        "",
+                    )
+
+                # Add a comment to describe the permutation
+                perm_str = ", ".join([f"{ei} -> {ef}" for ei, ef in zip(elems_i, elems_f)])
+                self._builder.comment(f"; Permutation: {perm_str}")
+
+                # For classical bit permutations, we're physically moving the values,
+                # so we don't need to update the permutation map.
+                # The operations should still refer to the original bits.
 
     def _compose_permutation_maps(self, new_perm_map):
         """Compose a new permutation map with the existing one.
+        
+        This method composes two permutation maps by applying the new map to the results of the existing map.
+        For example, if the existing map maps A to B, and the new map maps B to C, the composed map will map A to C.
 
         Parameters:
             new_perm_map (dict): The new permutation map to compose with the existing one.

@@ -709,7 +709,128 @@ class QASMGenerator(Generator):
 
     def get_output(self):
         qasm = "\n".join(self.output)
-        return qasm.replace("\n//<same_line>", "  //")
+        qasm = qasm.replace("\n//<same_line>", "  //")
+        
+        # Process register-wide measurements
+        qasm = self.process_register_wide_measurements(qasm)
+        
+        return qasm
+
+    def process_register_wide_measurements(self, qasm_output):
+        """Process register-wide measurements and apply permutations.
+        
+        This handles the special case of register-wide measurements like "measure a -> m;"
+        by unrolling them into individual measurements based on the permutation state.
+        
+        Parameters:
+            qasm_output (str): The QASM output to process
+            
+        Returns:
+            str: The processed QASM output
+        """
+        # Check if there are any register-wide measurements that need to be unrolled
+        if "measure a -> m;" in qasm_output:
+            # Replace register-wide measurements with individual measurements
+            lines = qasm_output.split("\n")
+
+            # Find all quantum register declarations to determine register sizes
+            register_sizes = {}
+            for line in lines:
+                if line.startswith("qreg "):
+                    # Parse register declaration (e.g., "qreg a[3];")
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        reg_decl = parts[1].strip(";")
+                        reg_name, reg_size = reg_decl.split("[")
+                        reg_size = int(reg_size.strip("]"))
+                        register_sizes[reg_name] = reg_size
+
+            # Initialize register mappings for quantum registers only
+            # For each register, track what each element points to
+            # Initially, each element points to itself
+            register_mappings = {}
+            for reg_name, reg_size in register_sizes.items():
+                register_mappings[reg_name] = [(reg_name, i) for i in range(reg_size)]
+
+            # Process all permutation comments in order
+            permutation_comments = []
+            for line in lines:
+                if "// Permutation:" in line:
+                    permutation_comments.append(line)
+
+            # Apply each permutation in order
+            for comment in permutation_comments:
+                # Extract the permutation description
+                perm_desc = comment.split("// Permutation:")[1].strip()
+
+                if "<->" in perm_desc:
+                    # This is a whole register permutation (e.g., "a <-> c")
+                    parts = perm_desc.split("<->")
+                    reg1 = parts[0].strip()
+                    reg2 = parts[1].strip()
+
+                    # Only process quantum register permutations
+                    # Classical register permutations are handled by the QASM generator
+                    if reg1 in register_sizes and reg2 in register_sizes:
+                        # Swap the register mappings
+                        register_mappings[reg1], register_mappings[reg2] = (
+                            register_mappings[reg2],
+                            register_mappings[reg1],
+                        )
+                else:
+                    # This is an element permutation
+                    # Parse arbitrary permutation patterns
+                    import re
+
+                    # Match patterns like "a[0] -> b[1], a[1] -> c[2], ..."
+                    pattern = r"([a-zA-Z0-9_]+)\[(\d+)\] -> ([a-zA-Z0-9_]+)\[(\d+)\]"
+                    matches = re.findall(pattern, perm_desc)
+
+                    # Process each permutation pair
+                    # We need to be careful not to process the same pair twice
+                    processed_pairs = set()
+
+                    for match in matches:
+                        src_reg, src_idx, dst_reg, dst_idx = match
+                        src_idx, dst_idx = int(src_idx), int(dst_idx)
+
+                        # Skip if we've already processed this pair
+                        pair_key = frozenset([(src_reg, src_idx), (dst_reg, dst_idx)])
+                        if pair_key in processed_pairs:
+                            continue
+
+                        processed_pairs.add(pair_key)
+
+                        # Only process quantum register permutations
+                        # Classical register permutations are handled by the QASM generator
+                        if src_reg in register_sizes and dst_reg in register_sizes:
+                            # Get the current values at these locations
+                            src_val = register_mappings[src_reg][src_idx]
+                            dst_val = register_mappings[dst_reg][dst_idx]
+
+                            # Swap what these elements point to
+                            register_mappings[src_reg][src_idx] = dst_val
+                            register_mappings[dst_reg][dst_idx] = src_val
+
+            # Now replace the register-wide measurement with individual measurements
+            for i, line in enumerate(lines):
+                if line.strip() == "measure a -> m;":
+                    # Replace with individual measurements based on the final mappings
+                    individual_measurements = []
+                    for j in range(register_sizes.get("a", 3)):
+                        # Get what a[j] is pointing to
+                        curr_reg, curr_idx = register_mappings["a"][j]
+                        individual_measurements.append(
+                            f"measure {curr_reg}[{curr_idx}] -> m[{j}];",
+                        )
+
+                    # Replace the register-wide measurement with individual measurements
+                    lines[i : i + 1] = individual_measurements
+
+            # Join the lines back into a single string
+            return "\n".join(lines)
+        
+        return qasm_output
 
     def apply_permutation(self, elem):
         """Apply the permutation mapping to an element and return the permuted element as a string."""

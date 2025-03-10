@@ -413,11 +413,7 @@ class QASMGenerator(Generator):
 
                     # Apply permutation to the qubit
                     # For quantum registers, we need to find the actual physical qubit after permutations
-                    if (
-                        hasattr(qubit, "reg")
-                        and hasattr(qubit, "index")
-                        and hasattr(qubit.reg, "sym")
-                    ):
+                    if hasattr(qubit, "reg") and hasattr(qubit, "index") and hasattr(qubit.reg, "sym"):
                         key = (qubit.reg.sym, qubit.index)
                         if key in self.permutation_map:
                             new_reg_sym, new_index = self.permutation_map[key]
@@ -438,11 +434,7 @@ class QASMGenerator(Generator):
                 for q, c in zip(op.qargs, op.cout, strict=True):
                     # Apply permutation to the qubit
                     # For quantum registers, we need to find the actual physical qubit after permutations
-                    if (
-                        hasattr(q, "reg")
-                        and hasattr(q, "index")
-                        and hasattr(q.reg, "sym")
-                    ):
+                    if hasattr(q, "reg") and hasattr(q, "index") and hasattr(q.reg, "sym"):
                         key = (q.reg.sym, q.index)
                         if key in self.permutation_map:
                             new_reg_sym, new_index = self.permutation_map[key]
@@ -509,11 +501,7 @@ class QASMGenerator(Generator):
                     for q, c in zip(op.qargs, op.cout, strict=True):
                         # Apply permutation to the qubit
                         # For quantum registers, we need to find the actual physical qubit after permutations
-                        if (
-                            hasattr(q, "reg")
-                            and hasattr(q, "index")
-                            and hasattr(q.reg, "sym")
-                        ):
+                        if hasattr(q, "reg") and hasattr(q, "index") and hasattr(q.reg, "sym"):
                             key = (q.reg.sym, q.index)
                             if key in self.permutation_map:
                                 new_reg_sym, new_index = self.permutation_map[key]
@@ -659,9 +647,7 @@ class QASMGenerator(Generator):
         return "\n".join(str_list)
 
     def process_set(self, op):
-        right_qasm = (
-            op.right.qasm() if hasattr(op.right, "qasm") else self.generate_op(op.right)
-        )
+        right_qasm = op.right.qasm() if hasattr(op.right, "qasm") else self.generate_op(op.right)
         if right_qasm.startswith("(") and right_qasm.endswith(")"):
             right_qasm = right_qasm[1:-1]
 
@@ -672,59 +658,41 @@ class QASMGenerator(Generator):
 
     def process_general_binary_op(self, op):
         # Apply permutation to the left operand if it's a register element
-        if (
-            hasattr(op.left, "reg")
-            and hasattr(op.left, "index")
-            and hasattr(op.left.reg, "sym")
-        ):
+        if hasattr(op.left, "reg") and hasattr(op.left, "index") and hasattr(op.left.reg, "sym"):
             left_qasm = self.apply_permutation(op.left)
         else:
-            left_qasm = (
-                op.left.qasm()
-                if hasattr(op.left, "qasm")
-                else self.generate_op(op.left)
-            )
+            left_qasm = op.left.qasm() if hasattr(op.left, "qasm") else self.generate_op(op.left)
 
         # Apply permutation to the right operand if it's a register element
-        if (
-            hasattr(op.right, "reg")
-            and hasattr(op.right, "index")
-            and hasattr(op.right.reg, "sym")
-        ):
+        if hasattr(op.right, "reg") and hasattr(op.right, "index") and hasattr(op.right.reg, "sym"):
             right_qasm = self.apply_permutation(op.right)
         else:
-            right_qasm = (
-                op.right.qasm()
-                if hasattr(op.right, "qasm")
-                else self.generate_op(op.right)
-            )
+            right_qasm = op.right.qasm() if hasattr(op.right, "qasm") else self.generate_op(op.right)
 
         return f"({left_qasm} {op.symbol} {right_qasm})"
 
     def process_general_unary_op(self, op):
-        right_qasm = (
-            op.value.qasm() if hasattr(op.value, "qasm") else self.generate_op(op.vale)
-        )
+        right_qasm = op.value.qasm() if hasattr(op.value, "qasm") else self.generate_op(op.vale)
         return f"({op.symbol}{right_qasm})"
 
     def get_output(self):
         qasm = "\n".join(self.output)
         qasm = qasm.replace("\n//<same_line>", "  //")
-        
+
         # Process register-wide measurements
         qasm = self.process_register_wide_measurements(qasm)
-        
+
         return qasm
 
     def process_register_wide_measurements(self, qasm_output):
         """Process register-wide measurements and apply permutations.
-        
+
         This handles the special case of register-wide measurements like "measure a -> m;"
         by unrolling them into individual measurements based on the permutation state.
-        
+
         Parameters:
             qasm_output (str): The QASM output to process
-            
+
         Returns:
             str: The processed QASM output
         """
@@ -829,7 +797,7 @@ class QASMGenerator(Generator):
 
             # Join the lines back into a single string
             return "\n".join(lines)
-        
+
         return qasm_output
 
     def apply_permutation(self, elem):

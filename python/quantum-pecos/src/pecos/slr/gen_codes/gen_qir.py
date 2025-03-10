@@ -30,7 +30,7 @@ from pecos.slr.cops import (
 from pecos.slr.gen_codes.generator import Generator
 from pecos.slr.gen_codes.qir_gate_mapping import QIRGateMetadata
 from pecos.slr.misc import Barrier, Comment, Permute
-from pecos.slr.vars import Bit, CReg, QReg, Qubit, Vars
+from pecos.slr.vars import Bit, CReg, QReg, Qubit, Reg, Vars
 
 if TYPE_CHECKING:
     from llvmlite.ir import DoubleType, IntType, PointerType, Type, VoidType
@@ -39,7 +39,6 @@ if TYPE_CHECKING:
     from pecos.slr.cops import (
         CompOp,
     )
-    from pecos.slr.vars import Reg
 
 
 class QIRTypes:
@@ -221,7 +220,7 @@ class QIRGenerator(Generator):
         self._result_cregs: set[str] = set()
         self._gate_declaration_cache: dict[str, QIRGate] = {}
         self._barrier_cache: dict[int, QIRFunc] = {}
-        
+
         # Initialize the permutation map
         self.permutation_map = {}
 
@@ -403,7 +402,6 @@ class QIRGenerator(Generator):
 
     def _convert_cond_to_pred(self, cond: CompOp):
         """Converts an SLR expression into a QIR condition."""
-        from pecos.slr.vars import Bit, Reg
 
         if not isinstance(cond.left, (Reg, Bit)):
             msg = "Left side of condition must be a register"
@@ -452,8 +450,7 @@ class QIRGenerator(Generator):
         return self._builder.icmp_signed(cond.symbol, lhs, rhs)
 
     def _convert_set_op(self, op):
-        """Converts an slr assignment operation to a QIR one"""
-        from pecos.slr.vars import Bit, CReg
+        """Converts an SLR assignment operation to a QIR one"""
 
         if isinstance(op.left, Bit):
             # Apply permutation to the bit
@@ -466,9 +463,7 @@ class QIRGenerator(Generator):
                 if op.right in (0, 1):
                     rhs = ir.Constant(self._types.bool_type, op.right)
                 else:
-                    msg = (
-                        f"SET operation for bit must have rhs of 0 or 1, got {op.right}"
-                    )
+                    msg = f"SET operation for bit must have rhs of 0 or 1, got {op.right}"
                     raise ValueError(msg)
             elif isinstance(op.right, BinOp):
                 rhs = self._convert_binary_op(op.right)
@@ -807,9 +802,7 @@ class QIRGenerator(Generator):
         gate_declaration = self._gate_declaration_cache[gate.sym]
         gate_args = []
         if gate.has_parameters:
-            gate_args = [
-                ir.Constant(self._types.double_type, param) for param in gate.params
-            ]
+            gate_args = [ir.Constant(self._types.double_type, param) for param in gate.params]
         gate_args.extend([self._qarg_to_qubit_ptr(qarg) for qarg in qargs])
 
         # Create the actual invocation on the builder using the args passed in
@@ -842,9 +835,6 @@ class QIRGenerator(Generator):
         # Get the input and output elements
         elems_i = op.elems_i
         elems_f = op.elems_f
-
-        # Import Reg for type checking
-        from pecos.slr.vars import Reg
 
         # Check if we're permuting whole registers or individual elements
         if isinstance(elems_i, QReg) and isinstance(elems_f, QReg):
@@ -965,11 +955,7 @@ class QIRGenerator(Generator):
                 # Create a new permutation map for this permutation
                 new_perm_map = {}
                 for ei, ef in zip(elems_i, elems_f, strict=True):
-                    if (
-                        hasattr(ei.reg, "sym")
-                        and hasattr(ef.reg, "sym")
-                        and isinstance(ei.reg, QReg)
-                    ):
+                    if hasattr(ei.reg, "sym") and hasattr(ef.reg, "sym") and isinstance(ei.reg, QReg):
                         # Create a key from the input element's register sym and index
                         key = (ei.reg.sym, ei.index)
                         # Map it to the output element's register sym and index
@@ -984,7 +970,7 @@ class QIRGenerator(Generator):
 
                 # Update the permutation map
                 self.permutation_map = updated_perm_map
-            
+
             # Check if we're dealing with classical bits
             elif any(hasattr(e, "reg") and isinstance(e.reg, CReg) for e in elems_i):
                 # Create a mapping from input elements to output elements
@@ -1095,7 +1081,7 @@ class QIRGenerator(Generator):
 
     def _compose_permutation_maps(self, new_perm_map):
         """Compose a new permutation map with the existing one.
-        
+
         This method composes two permutation maps by applying the new map to the results of the existing map.
         For example, if the existing map maps A to B, and the new map maps B to C, the composed map will map A to C.
 

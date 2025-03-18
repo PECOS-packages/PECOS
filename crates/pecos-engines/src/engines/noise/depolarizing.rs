@@ -109,7 +109,7 @@ impl DepolarizingNoise {
                 }
                 GateType::RZZ => {
                     if gate.qubits.len() >= 2 {
-                        builder.add_rzz(gate.params[0], &[gate.qubits[1]], &[gate.qubits[2]]);
+                        builder.add_rzz(gate.params[0], &[gate.qubits[0]], &[gate.qubits[1]]);
                     }
                 }
                 GateType::SZZ => {

@@ -664,47 +664,39 @@ impl ByteMessage {
                 GateType::RZ => {
                     if payload.len() >= params_offset + size_of::<f64>() {
                         let theta_bytes = &payload[params_offset..params_offset + size_of::<f64>()];
-                        let theta = f64::from_le_bytes([
-                            theta_bytes[0],
-                            theta_bytes[1],
-                            theta_bytes[2],
-                            theta_bytes[3],
-                            theta_bytes[4],
-                            theta_bytes[5],
-                            theta_bytes[6],
-                            theta_bytes[7],
-                        ]);
+                        let theta = f64::from_le_bytes(theta_bytes[..8].try_into().unwrap());
                         params.push(theta);
+                    }else{
+                        return Err(QueueError::OperationError(
+                            "Quantum gate message payload too small for RZ parameters".into(),
+                        ));
                     }
                 }
                 GateType::R1XY => {
                     if payload.len() >= params_offset + 2 * size_of::<f64>() {
                         let theta_bytes = &payload[params_offset..params_offset + size_of::<f64>()];
-                        let theta = f64::from_le_bytes([
-                            theta_bytes[0],
-                            theta_bytes[1],
-                            theta_bytes[2],
-                            theta_bytes[3],
-                            theta_bytes[4],
-                            theta_bytes[5],
-                            theta_bytes[6],
-                            theta_bytes[7],
-                        ]);
+                        let theta = f64::from_le_bytes(theta_bytes[..8].try_into().unwrap());
                         params.push(theta);
 
                         let phi_offset = params_offset + size_of::<f64>();
                         let phi_bytes = &payload[phi_offset..phi_offset + size_of::<f64>()];
-                        let phi = f64::from_le_bytes([
-                            phi_bytes[0],
-                            phi_bytes[1],
-                            phi_bytes[2],
-                            phi_bytes[3],
-                            phi_bytes[4],
-                            phi_bytes[5],
-                            phi_bytes[6],
-                            phi_bytes[7],
-                        ]);
+                        let phi = f64::from_le_bytes(phi_bytes[..8].try_into().unwrap());
                         params.push(phi);
+                    }else{
+                        return Err(QueueError::OperationError(
+                            "Quantum gate message payload too small for R1XY parameters".into(),
+                        ));
+                    }
+                }
+                GateType::RZZ => {
+                    if payload.len() >= params_offset + size_of::<f64>() {
+                        let theta_bytes = &payload[params_offset..params_offset + size_of::<f64>()];
+                        let theta = f64::from_le_bytes(theta_bytes[..8].try_into().unwrap());
+                        params.push(theta);
+                    }else{
+                        return Err(QueueError::OperationError(
+                            "Quantum gate message payload too small for RZZ parameters".into(),
+                        ));
                     }
                 }
                 GateType::Measure => {
@@ -718,6 +710,10 @@ impl ByteMessage {
                             result_id_bytes[3],
                         ]) as usize;
                         result_id = Some(result_id_value);
+                    }else{
+                        return Err(QueueError::OperationError(
+                            "Quantum gate message payload too small for Measure parameters".into(),
+                        ));
                     }
                 }
                 _ => {}

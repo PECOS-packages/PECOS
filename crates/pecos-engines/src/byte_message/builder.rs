@@ -213,19 +213,9 @@ impl ByteMessageBuilder {
             payload.extend_from_slice(&qubit_u32.to_le_bytes());
         }
 
-        // Add parameters to payload if needed
-        if has_params {
-            match gate.gate_type {
-                GateType::RZ => {
-                    payload.extend_from_slice(&gate.params[0].to_le_bytes());
-                }
-                GateType::R1XY => {
-                    payload.extend_from_slice(&gate.params[0].to_le_bytes()); // phi
-                    payload.extend_from_slice(&gate.params[1].to_le_bytes()); // theta
-                }
-                // Other gate types don't have parameters
-                _ => {}
-            }
+        // Add parameters to payload if any
+        for param in &gate.params {
+            payload.extend_from_slice(&param.to_le_bytes());
         }
 
         // Add the message to the buffer

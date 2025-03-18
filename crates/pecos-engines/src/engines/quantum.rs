@@ -108,7 +108,7 @@ impl Engine for StateVecEngine {
                         cmd.qubits[0], cmd.qubits[1]
                     );
                     self.simulator
-                        .rzz(cmd.params[0], cmd.qubits[1], cmd.qubits[2]);
+                        .rzz(cmd.params[0], cmd.qubits[0], cmd.qubits[1]);
                 }
                 GateType::SZZ => {
                     debug!(

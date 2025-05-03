@@ -33,8 +33,6 @@ class StateVecRs:
     @property
     def vector(self) -> List[complex]:
         raw_vector = self._sim.vector
-        print(f"[DEBUG] Raw vector: {raw_vector}")
-
         # Convert to list of complex numbers
         if isinstance(raw_vector[0], (list, tuple)):
             vector = [complex(r, i) for r, i in raw_vector]

@@ -47,7 +47,7 @@ pub struct BiasedMeasurementNoiseModel {
     /// The probability of flipping a 1 measurement to 0
     prob_flip_from_1: f64,
     /// Random number generator
-    rng: NoiseRng,
+    rng: NoiseRng<ChaCha8Rng>,
 }
 
 impl ProbabilityValidator for BiasedMeasurementNoiseModel {}
@@ -70,7 +70,7 @@ impl BiasedMeasurementNoiseModel {
         Self {
             prob_flip_from_0,
             prob_flip_from_1,
-            rng: NoiseRng::new(),
+            rng: NoiseRng::default(),
         }
     }
 
@@ -122,7 +122,7 @@ impl BiasedMeasurementNoiseModel {
     ///
     /// # Returns
     /// The potentially biased measurement outcome
-    fn apply_bias_to_measurement(&self, result_id: u32, outcome: u32) -> (u32, u32) {
+    fn apply_bias_to_measurement(&mut self, result_id: u32, outcome: u32) -> (u32, u32) {
         // Generate a random number to determine if we should flip
         let should_flip = if outcome == 0 {
             // Flip from 0 to 1 with probability prob_flip_from_0
@@ -151,7 +151,7 @@ impl BiasedMeasurementNoiseModel {
     ///
     /// # Errors
     /// Returns a `QueueError` if applying bias fails
-    fn apply_bias_to_message(&self, message: ByteMessage) -> Result<ByteMessage, QueueError> {
+    fn apply_bias_to_message(&mut self, message: ByteMessage) -> Result<ByteMessage, QueueError> {
         // Parse the message to extract the measurement results
         let measurements = message.parse_measurements()?;
 
@@ -297,17 +297,16 @@ impl RngManageable for BiasedMeasurementNoiseModel {
     type Rng = ChaCha8Rng;
 
     fn set_rng(&mut self, rng: ChaCha8Rng) -> Result<(), Box<dyn std::error::Error>> {
-        self.rng.set_rng(rng)
+        self.rng = NoiseRng::new(rng);
+        Ok(())
     }
 
     fn rng(&self) -> &Self::Rng {
-        // Delegate to the NoiseRng implementation
-        self.rng.rng()
+        self.rng.inner()
     }
 
     fn rng_mut(&mut self) -> &mut Self::Rng {
-        // Delegate to the NoiseRng implementation
-        self.rng.rng_mut()
+        self.rng.inner_mut()
     }
 }
 
@@ -318,19 +317,19 @@ mod tests {
     #[test]
     fn test_builder_pattern() {
         // Create with builder
-        let noise1 = BiasedMeasurementNoiseModel::builder()
+        let mut noise1 = BiasedMeasurementNoiseModel::builder()
             .with_prob_flip_from_0(0.1)
             .with_prob_flip_from_1(0.2)
             .with_seed(42)
             .build();
 
         // Create directly
-        let noise2 = BiasedMeasurementNoiseModel::with_seed(0.1, 0.2, 42);
+        let mut noise2 = BiasedMeasurementNoiseModel::with_seed(0.1, 0.2, 42);
 
         // Verify the builder works by checking they produce the same randomness sequence
         let noise1_ref = noise1
-            .as_any()
-            .downcast_ref::<BiasedMeasurementNoiseModel>()
+            .as_any_mut()
+            .downcast_mut::<BiasedMeasurementNoiseModel>()
             .unwrap();
 
         for _ in 0..10 {

@@ -79,8 +79,9 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::byte_message::{ByteMessage, ByteMessageBuilder, QuantumGate, gate_type::GateType};
+use crate::engines::noise::noise_rng::NoiseRng;
 use crate::engines::noise::utils::NoiseUtils;
-use crate::engines::noise::utils::{NoiseRng, ProbabilityValidator};
+use crate::engines::noise::utils::ProbabilityValidator;
 use crate::engines::noise::weighted_sampler::{
     SingleQubitWeightedSampler, TwoQubitWeightedSampler,
 };
@@ -88,7 +89,6 @@ use crate::engines::noise::{NoiseModel, RngManageable};
 use crate::engines::{ControlEngine, EngineStage};
 use crate::errors::QueueError;
 use log::trace;
-use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
 /// General noise model implementation that includes parameterized error channels for various quantum operations
@@ -253,7 +253,7 @@ pub struct GeneralNoiseModel {
     leaked_qubits: HashSet<usize>,
 
     /// Random number generator for stochastic noise processes
-    rng: NoiseRng,
+    rng: NoiseRng<ChaCha8Rng>,
 
     /// Overall scaling factor for error probabilities
     ///
@@ -439,16 +439,17 @@ impl NoiseModel for GeneralNoiseModel {
 impl RngManageable for GeneralNoiseModel {
     type Rng = ChaCha8Rng;
 
-    fn set_rng(&mut self, rng: ChaCha8Rng) -> Result<(), Box<dyn std::error::Error>> {
-        self.rng.set_rng(rng)
+    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), Box<dyn std::error::Error>> {
+        self.rng = NoiseRng::new(rng);
+        Ok(())
     }
 
     fn rng(&self) -> &Self::Rng {
-        self.rng.rng()
+        self.rng.inner()
     }
 
     fn rng_mut(&mut self) -> &mut Self::Rng {
-        self.rng.rng_mut()
+        self.rng.inner_mut()
     }
 }
 
@@ -557,7 +558,7 @@ impl GeneralNoiseModel {
             przz_d: 1.0,
             przz_power: 1.0,
             leaked_qubits: HashSet::new(),
-            rng: NoiseRng::new(),
+            rng: NoiseRng::default(),
             scale: 1.0,
             memory_scale: 1.0,
             prep_scale: 1.0,
@@ -914,7 +915,7 @@ impl GeneralNoiseModel {
                     } else {
                         add_original_gate = false;
 
-                        let result = self.p1_emission_model.sample_gates(&self.rng, qubit);
+                    let result = self.p1_emission_model.sample_gates(&mut self.rng, qubit);
 
                         if result.has_leakage() {
                             // Handle leakage
@@ -929,7 +930,7 @@ impl GeneralNoiseModel {
                     }
                 } else if !has_leakage {
                     // Pauli noise
-                    let result = self.p1_pauli_model.sample_gates(&self.rng, qubit);
+                    let result = self.p1_pauli_model.sample_gates(&mut self.rng, qubit);
                     if let Some(gate) = result.gate {
                         noise.push(gate);
                         trace!("Applied Pauli error to qubit {}", qubit);
@@ -990,9 +991,9 @@ impl GeneralNoiseModel {
                     // Spontaneous emission noise
                     add_original_gate = false;
 
-                    let result = self
-                        .p2_emission_model
-                        .sample_gates(&self.rng, qubits[0], qubits[1]);
+                    let result =
+                        self.p2_emission_model
+                            .sample_gates(&mut self.rng, qubits[0], qubits[1]);
 
                     if result.has_leakage() {
                         for (qubit, leaked) in qubits.iter().zip(result.has_leakages().iter()) {
@@ -1013,9 +1014,9 @@ impl GeneralNoiseModel {
                     }
                 } else {
                     // Pauli noise
-                    let result = self
-                        .p2_pauli_model
-                        .sample_gates(&self.rng, qubits[0], qubits[1]);
+                    let result =
+                        self.p2_pauli_model
+                            .sample_gates(&mut self.rng, qubits[0], qubits[1]);
                     if let Some(gates) = result.gates {
                         noise.extend(gates);
                         trace!(
@@ -1112,7 +1113,7 @@ impl GeneralNoiseModel {
         // TODO: If qubits are in |1>, leak them again with some probability.
         //       Maybe move L -> |1> + noise to first round of noise...
 
-        // Get the biased measurement results message
+        // Get the biased measurement results
         results_builder.build()
     }
 
@@ -1124,7 +1125,7 @@ impl GeneralNoiseModel {
         if self.leak2depolar {
             // Apply completely depolarizing noise instead of leakage
             trace!("Replaced leakage with Pauli error on qubit {}", qubit);
-            NoiseUtils::random_pauli_or_none(&self.rng, qubit)
+            self.rng.random_pauli_or_none(qubit)
         } else {
             // Mark qubit as leaked
             trace!("Marking qubit {} as leaked", qubit);
@@ -1169,7 +1170,7 @@ impl GeneralNoiseModel {
             noise.push(gate);
         }
 
-        if let Some(gate) = NoiseUtils::random_pauli_or_none(&self.rng, qubit) {
+        if let Some(gate) = self.rng.random_pauli_or_none(qubit) {
             noise.push(gate);
         }
 
@@ -1186,7 +1187,9 @@ impl GeneralNoiseModel {
 
     /// Reset the noise model for a new shot
     fn reset_noise_model(&mut self) {
+        // Clear leaked qubits
         self.leaked_qubits.clear();
+        // RNG state is intentionally not reset to maintain natural randomness
     }
 
     /// Scale error probabilities based on scaling factors
@@ -1893,12 +1896,6 @@ impl GeneralNoiseModel {
         self.p_crosstalk_prep_rescale = scale;
     }
 
-    /// Set the seed for the random number generator
-    pub fn set_seed(&mut self, seed: u64) -> Result<(), Box<dyn std::error::Error>> {
-        let rng = ChaCha8Rng::seed_from_u64(seed);
-        self.set_rng(rng)
-    }
-
     /// Accessor for the p1 Pauli distribution
     #[must_use]
     pub fn p1_pauli_model(&self) -> &SingleQubitWeightedSampler {
@@ -1921,6 +1918,23 @@ impl GeneralNoiseModel {
     #[must_use]
     pub fn p2_emission_model(&self) -> &TwoQubitWeightedSampler {
         &self.p2_emission_model
+    }
+
+    /// Reset the noise model and then set a new seed for the RNG
+    ///
+    /// This is a convenience method that combines calling `reset_noise_model()`
+    /// followed by `set_seed()` in a single call.
+    ///
+    /// # Parameters
+    /// * `seed` - The seed to set for the RNG
+    ///
+    /// # Returns
+    /// Result indicating success or failure
+    pub fn reset_with_seed(&mut self, seed: u64) -> Result<(), Box<dyn std::error::Error>> {
+        // First reset the noise model
+        self.reset_noise_model();
+        // Then set the seed
+        self.set_seed(seed)
     }
 }
 

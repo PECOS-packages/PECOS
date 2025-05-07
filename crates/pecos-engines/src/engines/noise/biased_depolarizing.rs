@@ -68,7 +68,7 @@ pub struct BiasedDepolarizingNoiseModel {
     /// Probability of applying an error after two-qubit gates
     p2: f64,
     /// Random number generator
-    rng: NoiseRng,
+    rng: NoiseRng<ChaCha8Rng>,
 }
 
 impl ProbabilityValidator for BiasedDepolarizingNoiseModel {}
@@ -90,7 +90,7 @@ impl BiasedDepolarizingNoiseModel {
             p_meas_1,
             p1,
             p2,
-            rng: NoiseRng::new(),
+            rng: NoiseRng::default(),
         }
     }
 
@@ -152,7 +152,7 @@ impl BiasedDepolarizingNoiseModel {
     }
 
     /// Apply noise to a list of quantum gates
-    fn apply_noise_to_gates(&self, gates: &[QuantumGate]) -> ByteMessage {
+    fn apply_noise_to_gates(&mut self, gates: &[QuantumGate]) -> ByteMessage {
         let mut builder = NoiseUtils::create_quantum_builder();
 
         for gate in gates {
@@ -198,7 +198,7 @@ impl BiasedDepolarizingNoiseModel {
     ///
     /// # Returns
     /// The potentially biased measurement outcome
-    fn apply_bias_to_measurement(&self, result_id: u32, outcome: u32) -> (u32, u32) {
+    fn apply_bias_to_measurement(&mut self, result_id: u32, outcome: u32) -> (u32, u32) {
         // Generate a random number to determine if we should flip
         let should_flip = if outcome == 0 {
             // Flip from 0 to 1 with probability p_meas_0
@@ -227,7 +227,7 @@ impl BiasedDepolarizingNoiseModel {
     ///
     /// # Errors
     /// Returns a `QueueError` if applying bias fails
-    fn apply_bias_to_message(&self, message: ByteMessage) -> Result<ByteMessage, QueueError> {
+    fn apply_bias_to_message(&mut self, message: ByteMessage) -> Result<ByteMessage, QueueError> {
         // Parse the message to extract the measurement results
         let measurements = message.parse_measurements()?;
 
@@ -252,14 +252,14 @@ impl BiasedDepolarizingNoiseModel {
         ))
     }
 
-    fn apply_prep_faults(&self, builder: &mut ByteMessageBuilder, gate: &QuantumGate) {
+    fn apply_prep_faults(&mut self, builder: &mut ByteMessageBuilder, gate: &QuantumGate) {
         if self.rng.occurs(self.p_prep) {
             trace!("Applying prep fault on qubits {:?}", gate.qubits);
             NoiseUtils::apply_x(builder, gate.qubits[0]);
         }
     }
 
-    fn apply_sq_faults(&self, builder: &mut ByteMessageBuilder, gate: &QuantumGate) {
+    fn apply_sq_faults(&mut self, builder: &mut ByteMessageBuilder, gate: &QuantumGate) {
         if self.rng.occurs(self.p1) {
             let fault_type = self.rng.random_int(0..3);
             let qubit = gate.qubits[0];
@@ -281,7 +281,7 @@ impl BiasedDepolarizingNoiseModel {
         }
     }
 
-    fn apply_tq_faults(&self, builder: &mut ByteMessageBuilder, gate: &QuantumGate) {
+    fn apply_tq_faults(&mut self, builder: &mut ByteMessageBuilder, gate: &QuantumGate) {
         if self.rng.occurs(self.p2) {
             let fault_type = self.rng.random_int(0..15);
             let qubit0 = gate.qubits[0];
@@ -430,15 +430,16 @@ impl RngManageable for BiasedDepolarizingNoiseModel {
     type Rng = ChaCha8Rng;
 
     fn set_rng(&mut self, rng: ChaCha8Rng) -> Result<(), Box<dyn std::error::Error>> {
-        self.rng.set_rng(rng)
+        self.rng = NoiseRng::new(rng);
+        Ok(())
     }
 
     fn rng(&self) -> &Self::Rng {
-        self.rng.rng()
+        self.rng.inner()
     }
 
     fn rng_mut(&mut self) -> &mut Self::Rng {
-        self.rng.rng_mut()
+        self.rng.inner_mut()
     }
 }
 

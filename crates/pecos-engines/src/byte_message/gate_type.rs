@@ -75,7 +75,7 @@ impl fmt::Display for GateType {
 /// This struct is designed to replace `QuantumCommand` with a more FFI-friendly
 /// representation. It contains all the information needed to represent a quantum
 /// gate operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct QuantumGate {
     /// The type of the gate
     pub gate_type: GateType,

@@ -20,6 +20,7 @@ pub mod biased_depolarizing;
 pub mod biased_measurement;
 pub mod depolarizing;
 pub mod general;
+pub mod noise_rng;
 pub mod pass_through;
 pub mod utils;
 pub mod weighted_sampler;
@@ -28,8 +29,9 @@ pub use self::biased_depolarizing::BiasedDepolarizingNoiseModel;
 pub use self::biased_measurement::BiasedMeasurementNoiseModel;
 pub use self::depolarizing::DepolarizingNoiseModel;
 pub use self::general::GeneralNoiseModel;
+pub use self::noise_rng::NoiseRng;
 pub use self::pass_through::PassThroughNoiseModel;
-pub use self::utils::{NoiseRng, NoiseUtils, ProbabilityValidator};
+pub use self::utils::{NoiseUtils, ProbabilityValidator};
 pub use self::weighted_sampler::{
     SingleQubitWeightedSampler, TwoQubitWeightedSampler, WeightedSampler,
 };
@@ -84,7 +86,7 @@ dyn_clone::clone_trait_object!(NoiseModel);
 /// reducing code duplication and improving maintainability.
 pub struct BaseNoiseModel {
     /// The random number generator for the noise model
-    rng: NoiseRng,
+    rng: NoiseRng<ChaCha8Rng>,
 }
 
 impl BaseNoiseModel {
@@ -92,7 +94,7 @@ impl BaseNoiseModel {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            rng: NoiseRng::new(),
+            rng: NoiseRng::default(),
         }
     }
 
@@ -106,8 +108,14 @@ impl BaseNoiseModel {
 
     /// Get a reference to the random number generator
     #[must_use]
-    pub fn rng(&self) -> &NoiseRng {
+    pub fn rng(&self) -> &NoiseRng<ChaCha8Rng> {
         &self.rng
+    }
+
+    /// Get a mutable reference to the random number generator
+    #[must_use]
+    pub fn rng_mut(&mut self) -> &mut NoiseRng<ChaCha8Rng> {
+        &mut self.rng
     }
 
     /// Check if a message contains measurement results
@@ -141,15 +149,16 @@ impl RngManageable for BaseNoiseModel {
     type Rng = ChaCha8Rng;
 
     fn set_rng(&mut self, rng: ChaCha8Rng) -> Result<(), Box<dyn std::error::Error>> {
-        self.rng.set_rng(rng)
+        self.rng = NoiseRng::new(rng);
+        Ok(())
     }
 
     fn rng(&self) -> &Self::Rng {
-        self.rng.rng()
+        self.rng.inner()
     }
 
     fn rng_mut(&mut self) -> &mut Self::Rng {
-        self.rng.rng_mut()
+        self.rng.inner_mut()
     }
 }
 
@@ -182,36 +191,39 @@ impl ControlEngine for Box<dyn NoiseModel> {
 #[cfg(test)]
 mod base_tests {
     use super::*;
-    use crate::byte_message::ByteMessageBuilder;
+    use rand::SeedableRng;
 
     #[test]
     fn test_base_noise_model_construction() {
-        // Create a noise model with default seed
         let model = BaseNoiseModel::new();
-        assert!(model.rng().random_float() >= 0.0);
+        // Verify RNG is initialized, not checking for null since from_ref is never null
+        assert!(
+            model.rng().inner() != &ChaCha8Rng::seed_from_u64(0),
+            "Default RNG should be randomly seeded"
+        );
 
-        // Create a noise model with specific seed
         let model = BaseNoiseModel::with_seed(42);
-        assert!(model.rng().random_float() >= 0.0);
+        // Check the model has a properly seeded RNG
+        assert_eq!(
+            *model.rng().inner(),
+            ChaCha8Rng::seed_from_u64(42),
+            "RNG should be initialized with seed 42"
+        );
     }
 
     #[test]
     fn test_base_noise_model_has_measurements() {
         let model = BaseNoiseModel::new();
 
-        // Create a message with measurements
-        let mut builder = ByteMessageBuilder::new();
-        let _ = builder.for_measurement_results();
-        builder.add_measurement_results(&[0], &[0]);
-        let message = builder.build();
-        assert!(model.has_measurements(&message));
+        // Test with a message that has no measurements
+        let empty_msg = ByteMessage::new(Vec::new());
+        assert!(!model.has_measurements(&empty_msg));
 
-        // Create a message without measurements
-        let mut builder = ByteMessageBuilder::new();
-        let _ = builder.for_quantum_operations();
-        builder.add_x(&[0]);
-        let message = builder.build();
-        assert!(!model.has_measurements(&message));
+        // Test with a message that has measurements
+        let mut builder = ByteMessage::measurement_results_builder();
+        builder.add_measurement_results(&[0], &[0]);
+        let measure_msg = builder.build();
+        assert!(model.has_measurements(&measure_msg));
     }
 }
 

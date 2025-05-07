@@ -19,173 +19,6 @@
 #![allow(clippy::missing_panics_doc)]
 
 use crate::byte_message::{ByteMessage, ByteMessageBuilder, QuantumGate};
-use crate::errors::QueueError;
-use pecos_core::RngManageable;
-use rand::Rng;
-use rand::SeedableRng;
-use rand::distr::weighted::WeightedIndex;
-use rand::prelude::Distribution;
-use rand_chacha::ChaCha8Rng;
-use std::ops::Range;
-use std::sync::{Arc, Mutex, MutexGuard};
-
-/// A thread-safe wrapper for random number generators used in noise models
-///
-/// This struct encapsulates the common pattern of using an Arc<Mutex<ChaCha8Rng>>
-/// for thread-safe access to the random number generator across all noise models.
-///
-/// It provides methods for common RNG operations and implements the `RngManageable` trait.
-#[derive(Clone, Debug)]
-pub struct NoiseRng {
-    rng: Arc<Mutex<ChaCha8Rng>>,
-}
-
-impl NoiseRng {
-    /// Create a new `NoiseRng` with a random seed
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            rng: Arc::new(Mutex::new(ChaCha8Rng::from_os_rng())),
-        }
-    }
-
-    /// Create a new `NoiseRng` with a specific seed
-    #[must_use]
-    pub fn with_seed(seed: u64) -> Self {
-        Self {
-            rng: Arc::new(Mutex::new(ChaCha8Rng::seed_from_u64(seed))),
-        }
-    }
-
-    pub fn get_guard(&self) -> MutexGuard<'_, ChaCha8Rng> {
-        self.rng
-            .lock()
-            .expect("Failed to lock RNG mutex in sample_from_distribution")
-    }
-
-    /// Generate a random float between 0.0 and 1.0
-    ///
-    /// # Returns
-    /// A random f64 value between 0.0 and 1.0
-    ///
-    /// # Panics
-    /// Panics if the mutex is poisoned
-    #[must_use]
-    pub fn random_float(&self) -> f64 {
-        let mut rng = self.rng.lock().unwrap();
-        rng.random::<f64>()
-    }
-
-    /// Check if an event should occur with the given probability
-    ///
-    /// # Arguments
-    /// * `probability` - The probability of the event occurring (between 0.0 and 1.0)
-    ///
-    /// # Returns
-    /// true if the event should occur, false otherwise
-    ///
-    /// # Panics
-    /// Panics if the mutex is poisoned
-    #[must_use]
-    pub fn occurs(&self, probability: f64) -> bool {
-        self.random_float() < probability
-    }
-
-    /// Generate a random integer in the given range
-    ///
-    /// # Arguments
-    /// * `range` - The range of values to choose from (inclusive start, exclusive end)
-    ///
-    /// # Returns
-    /// A random integer in the specified range
-    ///
-    /// # Panics
-    /// Panics if the mutex is poisoned
-    #[must_use]
-    pub fn random_int(&self, range: Range<usize>) -> usize {
-        let mut rng = self.rng.lock().unwrap();
-        rng.random_range(range)
-    }
-
-    /// Sample from a precomputed `WeightedIndex` distribution with f64 weights
-    ///
-    /// # Arguments
-    /// * `distribution` - A precomputed `WeightedIndex` distribution with f64 weights
-    ///
-    /// # Returns
-    /// A random index selected according to the weights
-    ///
-    /// # Panics
-    /// Panics if the mutex is poisoned, with a descriptive error message
-    #[must_use]
-    pub fn sample_from_distribution(&self, distribution: &WeightedIndex<f64>) -> usize {
-        let mut rng = self
-            .rng
-            .lock()
-            .expect("Failed to lock RNG mutex in sample_from_distribution");
-        distribution.sample(&mut *rng)
-    }
-
-    /// Set the seed for the random number generator
-    ///
-    /// This is a convenience method that wraps `RngManageable::set_seed` but returns
-    /// a `QueueError` instead of `Box<dyn Error>` for backward compatibility.
-    ///
-    /// # Arguments
-    /// * `seed` - The seed value
-    ///
-    /// # Returns
-    /// `Ok(())` if successful
-    ///
-    /// # Panics
-    /// Panics if the mutex is poisoned
-    pub fn set_seed(&mut self, seed: u64) -> Result<(), QueueError> {
-        // This implementation directly sets the RNG rather than using RngManageable::set_seed
-        // to avoid unwrapping the Arc<Mutex<>> which would cause thread-safety issues
-        let new_rng = ChaCha8Rng::seed_from_u64(seed);
-        self.rng = Arc::new(Mutex::new(new_rng));
-        Ok(())
-    }
-
-    /// Generate a random u32 in the given range
-    ///
-    /// # Arguments
-    /// * `range` - The range of values to choose from (inclusive start, exclusive end)
-    ///
-    /// # Returns
-    /// A random u32 in the specified range
-    ///
-    /// # Panics
-    /// Panics if the mutex is poisoned
-    #[must_use]
-    pub fn random_u32(&self, range: Range<u32>) -> u32 {
-        let mut rng = self.rng.lock().unwrap();
-        rng.random_range(range)
-    }
-}
-
-impl Default for NoiseRng {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RngManageable for NoiseRng {
-    type Rng = ChaCha8Rng;
-
-    fn set_rng(&mut self, rng: ChaCha8Rng) -> Result<(), Box<dyn std::error::Error>> {
-        self.rng = Arc::new(Mutex::new(rng));
-        Ok(())
-    }
-
-    fn rng(&self) -> &Self::Rng {
-        panic!("NoiseRng uses Arc<Mutex<>> and cannot provide a direct reference")
-    }
-
-    fn rng_mut(&mut self) -> &mut Self::Rng {
-        panic!("NoiseRng uses Arc<Mutex<>> and cannot provide a direct mutable reference")
-    }
-}
 
 /// Helper trait for validating probability values
 pub trait ProbabilityValidator {
@@ -535,104 +368,17 @@ impl NoiseUtils {
         builder.add_prep(&[qubit]);
         builder.add_x(&[qubit]);
     }
-
-    /// Randomly selects a single-qubit Pauli gate (X, Y, Z) or no gate (Identity) with equal probability
-    ///
-    /// # Arguments
-    /// * `rng` - The random number generator to use for sampling
-    /// * `qubit` - The target qubit for the gate
-    ///
-    /// # Returns
-    /// An `Option<QuantumGate>` which may contain a Pauli gate (X, Y, Z) or None (representing identity)
-    ///
-    /// Each of the four outcomes (X, Y, Z, Identity) has a 25% probability.
-    #[must_use]
-    pub fn random_pauli_or_none(rng: &NoiseRng, qubit: usize) -> Option<QuantumGate> {
-        // Generate a random number between 0 and 3
-        let choice = rng.random_int(0..4);
-
-        match choice {
-            0 => Some(QuantumGate::x(qubit)),
-            1 => Some(QuantumGate::y(qubit)),
-            2 => Some(QuantumGate::z(qubit)),
-            _ => None, // Identity: no gate applied
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::byte_message::GateType;
+    use crate::engines::noise::noise_rng::NoiseRng;
     use crate::engines::noise::weighted_sampler::SingleQubitWeightedSampler;
+    use rand_chacha::ChaCha8Rng;
     use std::collections::HashMap;
     use std::panic::{AssertUnwindSafe, catch_unwind};
-
-    // Constants used in multiple tests
-    const SAMPLE_SIZE: usize = 10000;
-
-    #[test]
-    fn test_noise_rng_random_float() {
-        let rng = NoiseRng::with_seed(42);
-        let value = rng.random_float();
-        assert!((0.0..=1.0).contains(&value));
-
-        // Test with multiple calls to ensure we get different values
-        let values: Vec<f64> = (0..10).map(|_| rng.random_float()).collect();
-
-        // Don't use a HashSet for floats, instead check that at least some values are different
-        let mut all_same = true;
-        for i in 1..values.len() {
-            if (values[0] - values[i]).abs() > f64::EPSILON {
-                all_same = false;
-                break;
-            }
-        }
-        assert!(!all_same, "Random values should vary");
-    }
-
-    #[test]
-    fn test_noise_rng_occurs() {
-        let rng = NoiseRng::with_seed(42);
-
-        // With probability 0, should never occur
-        for _ in 0..100 {
-            assert!(!rng.occurs(0.0));
-        }
-
-        // With probability 1, should always occur
-        for _ in 0..100 {
-            assert!(rng.occurs(1.0));
-        }
-
-        // With probability 0.5, should occur roughly half the time
-        let occurs_count = (0..1000).filter(|_| rng.occurs(0.5)).count();
-        assert!(occurs_count > 400 && occurs_count < 600);
-    }
-
-    #[test]
-    fn test_noise_rng_random_int() {
-        let rng = NoiseRng::with_seed(42);
-
-        // Test with a range of 0..3
-        for _ in 0..100 {
-            let value = rng.random_int(0..3);
-            assert!(value < 3);
-        }
-
-        // Check distribution with a larger number of samples
-        let counts = (0..1000)
-            .map(|_| rng.random_int(0..3))
-            .fold([0, 0, 0], |mut acc, val| {
-                acc[val] += 1;
-                acc
-            });
-
-        // Each value should appear roughly 1/3 of the time
-        for count in &counts {
-            assert!(*count > 250 && *count < 400);
-        }
-    }
 
     #[test]
     fn test_noise_utils_create_quantum_builder() {
@@ -700,7 +446,7 @@ mod tests {
 
     #[test]
     fn test_sample_paulis() {
-        let rng = NoiseRng::with_seed(42);
+        let mut rng = NoiseRng::<ChaCha8Rng>::with_seed(42);
 
         // Test with a valid model
         // Note: Weights must sum to exactly 1.0 to pass the strict normalization check
@@ -731,7 +477,7 @@ mod tests {
 
         for _ in 0..1000 {
             // Use the sampler to generate quantum gates based on the weighted probabilities
-            let result = sampler.sample_gates(&rng, 0);
+            let result = sampler.sample_gates(&mut rng, 0);
 
             // Only check gates (no leakage in this test)
             match result.gate {
@@ -783,56 +529,6 @@ mod tests {
     }
 
     #[test]
-    fn test_random_pauli_or_none() {
-        use crate::byte_message::GateType;
-
-        // Define margin for tests
-        let margin = SAMPLE_SIZE / 20; // Allow 5% margin of error
-        let expected = SAMPLE_SIZE / 4; // With equal 25% probability
-
-        let rng = NoiseRng::with_seed(42);
-
-        // Sample many times to check the distribution
-        let mut x_count = 0;
-        let mut y_count = 0;
-        let mut z_count = 0;
-        let mut none_count = 0;
-
-        for _ in 0..SAMPLE_SIZE {
-            match NoiseUtils::random_pauli_or_none(&rng, 0) {
-                Some(gate) => match gate.gate_type {
-                    GateType::X => x_count += 1,
-                    GateType::Y => y_count += 1,
-                    GateType::Z => z_count += 1,
-                    _ => panic!("Unexpected gate type"),
-                },
-                None => none_count += 1,
-            }
-        }
-
-        // Calculate absolute difference without using .abs()
-        assert!(
-            x_count.max(expected) - x_count.min(expected) < margin,
-            "X count {x_count} deviates too much from expected {expected}"
-        );
-        assert!(
-            y_count.max(expected) - y_count.min(expected) < margin,
-            "Y count {y_count} deviates too much from expected {expected}"
-        );
-        assert!(
-            z_count.max(expected) - z_count.min(expected) < margin,
-            "Z count {z_count} deviates too much from expected {expected}"
-        );
-        assert!(
-            none_count.max(expected) - none_count.min(expected) < margin,
-            "None count {none_count} deviates too much from expected {expected}"
-        );
-
-        // Verify the sum is correct
-        assert_eq!(x_count + y_count + z_count + none_count, SAMPLE_SIZE);
-    }
-
-    #[test]
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
@@ -846,7 +542,7 @@ mod tests {
         // Define constants at the beginning
         const SAMPLE_SIZE: usize = 10000;
 
-        let rng = NoiseRng::with_seed(42);
+        let mut rng = NoiseRng::<ChaCha8Rng>::with_seed(42);
 
         // Test with a valid model including leakage
         // Note: Weights must sum to exactly 1.0 to pass the strict normalization check
@@ -879,7 +575,7 @@ mod tests {
 
         for _ in 0..SAMPLE_SIZE {
             // Sample gates and check for both gate operations and leakage
-            let result = sampler.sample_gates(&rng, 0);
+            let result = sampler.sample_gates(&mut rng, 0);
 
             if result.qubit_leaked {
                 leakage_count += 1;

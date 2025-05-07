@@ -95,9 +95,12 @@ fn test_prep_determinism() {
     // Apply noise to model1
     reset_model_with_seed(&mut model1, seed).unwrap();
 
-    // Create a message with multiple prep and H gates
-    let msg =
-        ByteMessage::create_from_commands(&["H 0", "H 0", "H 0", "H 0", "H 0", "H 0"]).unwrap();
+    // Create a message with multiple prep gates
+    let mut builder = ByteMessage::quantum_operations_builder();
+    for _ in 0..6 {
+        builder.add_prep(&[0]);
+    }
+    let msg = builder.build();
 
     // Apply noise to the message
     let noisy1 = apply_noise(&mut model1, &msg);
@@ -141,16 +144,16 @@ fn test_single_qubit_gate_determinism() {
     reset_model_with_seed(&mut model1, seed).unwrap();
 
     // Create a message with multiple single-qubit gates
-    let mut commands = Vec::new();
+    let mut builder = ByteMessage::quantum_operations_builder();
     for _ in 0..10 {
         // Repeat pattern to increase chance of errors
-        commands.push("H 0");
-        commands.push("RZ 0.5 0");
-        commands.push("R1XY 0.5 0.5 0");
-        commands.push("H 1");
-        commands.push("RZ 0.5 1");
+        builder.add_h(&[0]);
+        builder.add_rz(0.5, &[0]);
+        builder.add_r1xy(0.5, 0.5, &[0]);
+        builder.add_h(&[1]);
+        builder.add_rz(0.5, &[1]);
     }
-    let msg = ByteMessage::create_from_commands(&commands).unwrap();
+    let msg = builder.build();
 
     // Apply noise the first time
     info!("Applying noise first time");
@@ -189,15 +192,15 @@ fn test_two_qubit_gate_determinism() {
     reset_model_with_seed(&mut model1, seed).unwrap();
 
     // Create a message with many two-qubit gates to increase chance of errors
-    let mut commands = Vec::new();
+    let mut builder = ByteMessage::quantum_operations_builder();
     for _ in 0..20 {
         // Repeat pattern multiple times
-        commands.push("CX 0 1");
-        commands.push("CX 1 2");
-        commands.push("CX 2 3");
-        commands.push("CX 3 0");
+        builder.add_cx(&[0], &[1]);
+        builder.add_cx(&[1], &[2]);
+        builder.add_cx(&[2], &[3]);
+        builder.add_cx(&[3], &[0]);
     }
-    let msg = ByteMessage::create_from_commands(&commands).unwrap();
+    let msg = builder.build();
 
     // Apply noise to the message
     let noisy1 = apply_noise(&mut model1, &msg);
@@ -233,8 +236,13 @@ fn test_measurement_determinism() {
     reset_model_with_seed(&mut model2, seed).unwrap();
 
     // Create a message with measurements
-    let msg =
-        ByteMessage::create_from_commands(&["H 0", "H 1", "CX 0 1", "M 0 0", "M 1 1"]).unwrap();
+    let mut builder = ByteMessage::quantum_operations_builder();
+    builder.add_h(&[0]);
+    builder.add_h(&[1]);
+    builder.add_cx(&[0], &[1]);
+    builder.add_measurements(&[0], &[0]);
+    builder.add_measurements(&[1], &[1]);
+    let msg = builder.build();
 
     // Apply noise multiple times
     let noisy1 = apply_noise(&mut model1, &msg);
@@ -258,16 +266,16 @@ fn test_different_seeds_produce_different_results() {
     reset_model_with_seed(&mut model2, seed2).unwrap();
 
     // Create a larger circuit to increase the chance of errors
-    let mut commands = Vec::new();
+    let mut builder = ByteMessage::quantum_operations_builder();
     for _ in 0..15 {
         // Repeat pattern to create a longer circuit
-        commands.push("H 0");
-        commands.push("CX 0 1");
-        commands.push("H 1");
-        commands.push("CX 1 2");
-        commands.push("H 2");
+        builder.add_h(&[0]);
+        builder.add_cx(&[0], &[1]);
+        builder.add_h(&[1]);
+        builder.add_cx(&[1], &[2]);
+        builder.add_h(&[2]);
     }
-    let msg = ByteMessage::create_from_commands(&commands).unwrap();
+    let msg = builder.build();
 
     // Apply noise with different seeds
     let noisy1 = apply_noise(&mut model1, &msg);

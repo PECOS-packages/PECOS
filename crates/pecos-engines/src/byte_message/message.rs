@@ -347,6 +347,17 @@ impl ByteMessage {
                     builder.add_measurements(&[qubit], &[result_id]);
                 }
             }
+            Some(&"P") => {
+                if parts.len() >= 2 {
+                    let qubit = parts[1].parse::<usize>().map_err(|_| {
+                        QueueError::OperationError(format!(
+                            "Invalid qubit in P command: {}",
+                            parts[1]
+                        ))
+                    })?;
+                    builder.add_prep(&[qubit]);
+                }
+            }
             _ => {
                 return Err(QueueError::OperationError(format!(
                     "Unknown command type: {}",
@@ -1010,5 +1021,28 @@ mod tests {
             .add_h(&[0])
             .build();
         assert!(!non_empty_message.is_empty().unwrap());
+    }
+
+    #[test]
+    fn test_parse_command_to_builder() {
+        // Test various commands including the new "P" command
+        let commands = [
+            "H 0", "CX 0 1", "RZ 0.5 2", "P 3", // Test the new P command
+            "M 4 0",
+        ];
+
+        let message = ByteMessage::create_from_commands(&commands).unwrap();
+
+        // Parse the quantum operations from the message
+        let operations = message.parse_quantum_operations().unwrap();
+
+        // We should have 5 operations
+        assert_eq!(operations.len(), 5);
+
+        // Check the P command was correctly parsed
+        assert_eq!(operations[3].gate_type, GateType::Prep);
+        assert_eq!(operations[3].qubits, vec![3]);
+        assert!(operations[3].params.is_empty());
+        assert_eq!(operations[3].result_id, None);
     }
 }

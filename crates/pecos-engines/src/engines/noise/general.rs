@@ -218,12 +218,6 @@ pub struct GeneralNoiseModel {
     /// states back to the computational subspace.
     seepage_prob: f64,
 
-    /// Probability that a seepage operation results in |0⟩ state (vs |1⟩)
-    ///
-    /// When a qubit returns from a leaked state to the computational subspace, this parameter
-    /// controls the probability that it ends up in state |0⟩ versus state |1⟩.
-    pop0_prob: f64,
-
     /// Scaling parameters for RZZ gate error rate - coefficient a
     ///
     /// Part of a parameterized model for angle-dependent errors in RZZ gates.
@@ -551,7 +545,6 @@ impl GeneralNoiseModel {
             p2_pauli_model: TwoQubitWeightedSampler::new(&p2_pauli_model),
             p2_emission_model: TwoQubitWeightedSampler::new(&p2_emission_model),
             seepage_prob: 0.5,
-            pop0_prob: 0.5,
             przz_a: 0.0,
             przz_b: 1.0,
             przz_c: 0.0,
@@ -628,12 +621,6 @@ impl GeneralNoiseModel {
     pub fn set_seepage_prob(&mut self, prob: f64) {
         Self::validate_probability(prob);
         self.seepage_prob = prob;
-    }
-
-    /// Set the probability of preparing |0⟩ on seepage
-    pub fn set_pop0_prob(&mut self, prob: f64) {
-        Self::validate_probability(prob);
-        self.pop0_prob = prob;
     }
 
     /// Set RZZ parameter scaling for angle dependent error.
@@ -915,7 +902,7 @@ impl GeneralNoiseModel {
                     } else {
                         add_original_gate = false;
 
-                    let result = self.p1_emission_model.sample_gates(&mut self.rng, qubit);
+                        let result = self.p1_emission_model.sample_gates(&mut self.rng, qubit);
 
                         if result.has_leakage() {
                             // Handle leakage
@@ -1540,36 +1527,6 @@ impl GeneralNoiseModel {
         }
     }
 
-    /// Set crosstalk parameters
-    ///
-    /// # Parameters
-    /// * `p_crosstalk_meas` - Probability of crosstalk during measurement
-    /// * `p_crosstalk_prep` - Probability of crosstalk during initialization
-    /// * `per_gate` - Whether to apply crosstalk for each gate in a sequence
-    ///
-    /// # Panics
-    ///
-    /// Panics if either probability is less than 0.0 or greater than 1.0.
-    pub fn set_crosstalk_parameters(
-        &mut self,
-        p_crosstalk_meas: f64,
-        p_crosstalk_prep: f64,
-        per_gate: bool,
-    ) {
-        assert!(
-            (0.0..=1.0).contains(&p_crosstalk_meas),
-            "p_crosstalk_meas must be between 0 and 1"
-        );
-        assert!(
-            (0.0..=1.0).contains(&p_crosstalk_prep),
-            "p_crosstalk_prep must be between 0 and 1"
-        );
-
-        self.p_crosstalk_meas = p_crosstalk_meas;
-        self.p_crosstalk_prep = p_crosstalk_prep;
-        self.crosstalk_per_gate = per_gate;
-    }
-
     /// Apply idle qubit noise faults
     ///
     /// Models errors that occur during idle periods when qubits are not actively being manipulated:
@@ -1622,186 +1579,23 @@ impl GeneralNoiseModel {
     }
 
     /// Create a new method to handle requesting nearby qubits for crosstalk
-    fn get_nearby_qubits_for_crosstalk(source_qubits: &[usize], num_qubits: usize) -> Vec<usize> {
+    #[allow(dead_code)]
+    fn get_nearby_qubits_for_crosstalk(_source_qubits: &[usize], _num_qubits: usize) -> Vec<usize> {
         // PLACEHOLDER: This will eventually request information from the ClassicalEngine
         // via the EngineSystem to get the nearest qubits based on device topology
-
-        // For now, just simulate some nearby qubits
-        // In the future, this will be replaced with an actual request to the ClassicalEngine
-        let mut nearby = Vec::new();
-
-        // Simple placeholder that just adds nearby indices
-        // (this is just a temporary implementation)
-        for &q in source_qubits {
-            // Add "nearby" qubits that aren't in the source set
-            for offset in 1..=num_qubits {
-                if q > offset {
-                    let candidate = q - offset;
-                    if !source_qubits.contains(&candidate) && !nearby.contains(&candidate) {
-                        nearby.push(candidate);
-                    }
-                }
-
-                let candidate = q + offset;
-                if !source_qubits.contains(&candidate) && !nearby.contains(&candidate) {
-                    nearby.push(candidate);
-                }
-
-                if nearby.len() >= num_qubits {
-                    break;
-                }
-            }
-
-            if nearby.len() >= num_qubits {
-                break;
-            }
-        }
-
-        // Limit to requested number of qubits
-        nearby.truncate(num_qubits);
-        nearby
+        todo!()
     }
 
     // Replace the meas_crosstalk method to use the correct API
-    fn meas_crosstalk(&mut self, locations: &[usize], builder: &mut ByteMessageBuilder) {
-        // Get max qubit index from the set of locations to determine total qubits
-        let num_qubits = locations.iter().max().map_or(0, |&q| q + 1);
-
-        // Get qubits that might be affected by crosstalk
-        let qubits = Self::get_nearby_qubits_for_crosstalk(locations, num_qubits);
-
-        // Use a consistent result ID for temporary measurement results
-        let scratch_result_id = 9999;
-
-        for &qubit in &qubits {
-            // Skip the qubits that are already being measured
-            if self.is_leaked(qubit) {
-                continue;
-            }
-
-            if self.rng.random_float()
-                < self.p_crosstalk_meas * self.p_crosstalk_meas_rescale * self.scale
-            {
-                trace!("Applying measurement crosstalk to qubit {}", qubit);
-
-                if self.is_leaked(qubit) {
-                    // For leaked qubits, there's a chance of unseepage
-                    if self.rng.random_float() < self.seepage_prob * self.leakage_scale * self.scale
-                    {
-                        trace!("Unseepage during measurement crosstalk for qubit {}", qubit);
-                        self.mark_as_unleaked(qubit);
-
-                        // Measure the qubit to get a result
-                        builder.add_measurements(&[qubit], &[scratch_result_id]);
-
-                        // 50% chance of reset
-                        let reset_prob = 0.5;
-                        if self.rng.random_float() < reset_prob {
-                            // Reset to either |0⟩ or |1⟩ with equal probability
-                            if self.rng.random_float() < 0.5 {
-                                // Reset to |0⟩
-                                builder.add_prep(&[qubit]);
-                                trace!("Meas crosstalk: qubit {} resets to |0⟩", qubit);
-                            } else {
-                                // Reset to |1⟩
-                                builder.add_prep(&[qubit]);
-                                builder.add_x(&[qubit]);
-                                trace!("Meas crosstalk: qubit {} resets to |1⟩", qubit);
-                            }
-                        }
-                    }
-                } else if self.rng.random_float()
-                    < self.p_prep_leak_ratio * self.leakage_scale * self.scale
-                {
-                    // Leak the qubit
-                    self.mark_as_leaked(qubit);
-                    trace!("Meas crosstalk caused leakage of qubit {}", qubit);
-                }
-            }
-        }
+    #[allow(clippy::unused_self)]
+    fn meas_crosstalk(&mut self, _locations: &[usize], _builder: &mut ByteMessageBuilder) {
+        // placeholder
     }
 
     // Replace the prep_crosstalk method to use the correct API
-    fn prep_crosstalk(&mut self, locations: &[usize], builder: &mut ByteMessageBuilder) {
-        // Get max qubit index from the set of locations to determine total qubits
-        let num_qubits = locations.iter().max().map_or(0, |&q| q + 1);
-
-        // Get qubits that might be affected by crosstalk
-        let qubits = Self::get_nearby_qubits_for_crosstalk(locations, num_qubits);
-
-        for &qubit in &qubits {
-            // Skip the target qubits themselves
-            if locations.contains(&qubit) {
-                continue;
-            }
-
-            if self.rng.random_float()
-                < self.p_crosstalk_prep * self.p_crosstalk_prep_rescale * self.scale
-            {
-                trace!("Applying initialization crosstalk to qubit {}", qubit);
-
-                if self.is_leaked(qubit) {
-                    // For leaked qubits, there's a chance of unseepage
-                    if self.rng.random_float() < self.seepage_prob * self.leakage_scale * self.scale
-                    {
-                        trace!("Unseepage during prep crosstalk for qubit {}", qubit);
-                        self.mark_as_unleaked(qubit);
-
-                        // After unseepage, the qubit is in |0⟩ with probability pop0_prob
-                        if self.rng.random_float() < self.pop0_prob {
-                            // Reset to |0⟩ using Prep gate
-                            builder.add_prep(&[qubit]);
-                            trace!(
-                                "Prep crosstalk: qubit {} resets to |0⟩ after unseepage",
-                                qubit
-                            );
-                        } else {
-                            // Reset to |1⟩ using Prep followed by X gate
-                            builder.add_prep(&[qubit]);
-                            builder.add_x(&[qubit]);
-                            trace!(
-                                "Prep crosstalk: qubit {} resets to |1⟩ after unseepage",
-                                qubit
-                            );
-                        }
-                    }
-                } else {
-                    // For non-leaked qubits, decide on error type
-                    let error_type = self.rng.random_float();
-
-                    if error_type < 0.3 {
-                        // Reset to |0⟩
-                        builder.add_prep(&[qubit]);
-                        trace!("Prep crosstalk: qubit {} resets to |0⟩", qubit);
-                    } else if error_type < 0.6 {
-                        // Reset to |1⟩
-                        builder.add_prep(&[qubit]);
-                        builder.add_x(&[qubit]);
-                        trace!("Prep crosstalk: qubit {} resets to |1⟩", qubit);
-                    } else if error_type < 0.8 {
-                        // Apply a random Pauli error
-                        let pauli_type = self.rng.random_float();
-                        if pauli_type < 0.33 {
-                            builder.add_x(&[qubit]);
-                            trace!("Prep crosstalk: X error on qubit {}", qubit);
-                        } else if pauli_type < 0.67 {
-                            builder.add_y(&[qubit]);
-                            trace!("Prep crosstalk: Y error on qubit {}", qubit);
-                        } else {
-                            builder.add_z(&[qubit]);
-                            trace!("Prep crosstalk: Z error on qubit {}", qubit);
-                        }
-                    } else if self.rng.random_float()
-                        < self.p_prep_leak_ratio * self.leakage_scale * self.scale
-                    {
-                        // Leak the qubit
-                        self.mark_as_leaked(qubit);
-                        trace!("Prep crosstalk: qubit {} leaks", qubit);
-                    }
-                    // Otherwise, leave the qubit unchanged
-                }
-            }
-        }
+    #[allow(clippy::unused_self)]
+    fn prep_crosstalk(&mut self, _locations: &[usize], _builder: &mut ByteMessageBuilder) {
+        // placeholder
     }
 
     /// Calculate the RZZ gate error rate based on the rotation angle
@@ -1953,7 +1747,6 @@ pub struct GeneralNoiseModelBuilder {
     p2_emission_model: Option<TwoQubitWeightedSampler>,
     p_prep_leak_ratio: Option<f64>,
     seepage_prob: Option<f64>,
-    pop0_prob: Option<f64>,
     seed: Option<u64>,
     scale: Option<f64>,
     memory_scale: Option<f64>,
@@ -2000,7 +1793,6 @@ impl GeneralNoiseModelBuilder {
             p2_emission_model: None,
             p_prep_leak_ratio: None,
             seepage_prob: None,
-            pop0_prob: None,
             seed: None,
             scale: None,
             memory_scale: None,
@@ -2345,21 +2137,6 @@ impl GeneralNoiseModelBuilder {
         self
     }
 
-    /// Set the probability that a seepage operation results in |0⟩ state (vs |1⟩)
-    ///
-    /// # Panics
-    ///
-    /// Panics if the probability is not between 0.0 and 1.0 (inclusive).
-    #[must_use]
-    pub fn with_pop0_prob(mut self, prob: f64) -> Self {
-        assert!(
-            (0.0..=1.0).contains(&prob),
-            "Pop0 probability must be between 0 and 1"
-        );
-        self.pop0_prob = Some(prob);
-        self
-    }
-
     /// Set the probability of crosstalk during measurement operations
     ///
     /// # Panics
@@ -2450,10 +2227,6 @@ impl GeneralNoiseModelBuilder {
             model.set_seepage_prob(prob);
         }
 
-        if let Some(prob) = self.pop0_prob {
-            model.set_pop0_prob(prob);
-        }
-
         if let Some(prob) = self.p_crosstalk_meas {
             // Set crosstalk parameters
             model.p_crosstalk_meas = prob;
@@ -2462,13 +2235,6 @@ impl GeneralNoiseModelBuilder {
         if let Some(prob) = self.p_crosstalk_prep {
             // Set crosstalk parameters
             model.p_crosstalk_prep = prob;
-        }
-
-        if let Some(per_gate) = self.crosstalk_per_gate {
-            // Use existing crosstalk settings if they haven't been specified
-            let meas = self.p_crosstalk_meas.unwrap_or(model.p_crosstalk_meas);
-            let prep = self.p_crosstalk_prep.unwrap_or(model.p_crosstalk_prep);
-            model.set_crosstalk_parameters(meas, prep, per_gate);
         }
 
         if let Some(scale) = self.scale {
@@ -2540,6 +2306,12 @@ impl GeneralNoiseModelBuilder {
 
         if let Some(use_depolar) = self.leak2depolar {
             model.set_leak2depolar(use_depolar);
+        }
+
+        if let Some(has_crosstalk_per_gate) = self.crosstalk_per_gate {
+            model.crosstalk_per_gate = has_crosstalk_per_gate;
+        } else {
+            model.crosstalk_per_gate = false;
         }
 
         model.scale_parameters();

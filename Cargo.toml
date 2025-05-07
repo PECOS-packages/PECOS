@@ -24,6 +24,7 @@ categories = ["science", "simulation"]
 rand = "0.9"
 rand_chacha = "0.9"
 pyo3 = { version = "0.24", features = ["extension-module"] }
+pyo3-build-config = { version = "0.24", features = ["resolve-config"] }
 rayon = "1"
 clap = { version = "4", features = ["derive"] }
 log = "0.4"

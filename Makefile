@@ -74,11 +74,7 @@ lint: fmt clippy
 
 .PHONY: rstest
 rstest:  ## Run Rust tests
-ifeq ($(OS),Windows_NT)
-	cargo test --workspace --exclude pecos-rslib --doc false
-else
-	cargo test
-endif
+	cargo test --workspace
 
 .PHONY: pytest
 pytest:  ## Run tests on the Python package (not including optional dependencies). ASSUMES: previous build command

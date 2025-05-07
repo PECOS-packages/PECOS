@@ -1,3 +1,9 @@
+#![doc(html_root_url = "https://docs.rs/pecos-rslib")]
+// Disable doctests since they don't work with our workspace setup
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![doc(test(no_crate_inject))]
+#![doc(test(attr(deny(warnings))))]
+
 // Copyright 2024 The PECOS Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except

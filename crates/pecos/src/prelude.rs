@@ -23,8 +23,11 @@ pub use pecos_engines::{
 // Re-exporting specific implementations that aren't at the crate root
 pub use pecos_engines::engines::{
     classical::{ProgramType, detect_program_type, get_program_path, setup_engine},
-    quantum::{StateVecEngine, new_quantum_engine_arbitrary_qgate},
+    quantum::{SparseStabEngine, StateVecEngine, new_quantum_engine_arbitrary_qgate},
 };
+
+// Re-exporting byte_message functions
+pub use pecos_engines::byte_message::dump_batch;
 
 // re-exporting pecos-qsim
 pub use pecos_qsim::{

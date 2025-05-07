@@ -1,7 +1,7 @@
 name: Python Artifacts
 
 env:
-  TRIGGER_ON_PR_PUSH: false  # Set to true to enable triggers on PR pushes
+  TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   PYTHON_VERSION: '3.10'
 
 on:

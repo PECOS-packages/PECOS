@@ -12,7 +12,7 @@
 
 use crate::byte_message_bindings::PyByteMessage;
 use crate::engine_bindings::{PyEngineCommon, PyEngineWrapper, PyQuantumEngineWrapper};
-use pecos_engines::engines::quantum::StateVecEngine;
+use pecos::prelude::StateVecEngine;
 use pyo3::prelude::*;
 
 /// Python wrapper for Rust StateVecEngine to execute ByteMessage circuits

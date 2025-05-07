@@ -902,31 +902,33 @@ impl GeneralNoiseModel {
         for &qubit in &gate.qubits {
             if has_leakage {
                 add_original_gate = false;
+            }
 
-                // If qubit has leaked and spontaneous emission has occurred... seep the qubit
-                if self.rng.occurs(self.p1_emission_ratio) {
-                    if let Some(gates) = self.seep(qubit) {
-                        noise.extend(gates);
-                    }
-                }
-            } else if self.rng.occurs(self.p1) {
+            if self.rng.occurs(self.p1) {
                 // Spontaneous emission
                 if self.rng.occurs(self.p1_emission_ratio) {
-                    add_original_gate = false;
+                    // If qubit has leaked and spontaneous emission has occurred... seep the qubit
+                    if has_leakage {
+                        if let Some(gates) = self.seep(qubit) {
+                            noise.extend(gates);
+                        }
+                    } else {
+                        add_original_gate = false;
 
                     let result = self.p1_emission_model.sample_gates(&mut self.rng, qubit);
 
-                    if result.has_leakage() {
-                        // Handle leakage
-                        if let Some(gate) = self.leak(qubit) {
+                        if result.has_leakage() {
+                            // Handle leakage
+                            if let Some(gate) = self.leak(qubit) {
+                                noise.push(gate);
+                            }
+                        } else if let Some(gate) = result.gate {
+                            // Handle Pauli gate
                             noise.push(gate);
+                            trace!("Applied Pauli error to qubit {}", qubit);
                         }
-                    } else if let Some(gate) = result.gate {
-                        // Handle Pauli gate
-                        noise.push(gate);
-                        trace!("Applied Pauli error to qubit {}", qubit);
                     }
-                } else {
+                } else if !has_leakage {
                     // Pauli noise
                     let result = self.p1_pauli_model.sample_gates(&mut self.rng, qubit);
                     if let Some(gate) = result.gate {

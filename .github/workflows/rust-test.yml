@@ -1,8 +1,7 @@
 name: Rust test / linting
 
 env:
-  TRIGGER_ON_PR_PUSH: false  # Set to true to enable triggers on PR pushes
-
+  TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   RUSTFLAGS: -C debuginfo=0
   RUST_BACKTRACE: 1
 

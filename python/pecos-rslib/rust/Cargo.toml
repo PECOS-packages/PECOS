@@ -15,12 +15,19 @@ publish = false
 [lib]
 name = "pecos_rslib"
 crate-type = ["cdylib", "rlib"]
+# Skip doc tests as they won't work properly in this setup
+doctest = false
+# Skip unit tests as well - all testing should be done through Python
+test = false
 
 [dependencies]
-pyo3 = { workspace=true, features = ["extension-module", "abi3-py37"] }
+pyo3 = { workspace=true, features = ["extension-module", "abi3-py310", "generate-import-lib"] }
 pecos = { workspace = true }
-pecos-engines = { workspace = true }
+# Removing pecos-engines dependency, using pecos prelude instead
 parking_lot = { workspace = true}
 
 [lints]
 workspace = true
+
+[build-dependencies]
+pyo3-build-config = { workspace = true }

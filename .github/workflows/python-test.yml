@@ -1,4 +1,11 @@
 name: Python test / linting
+
+env:
+  TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
+  RUSTFLAGS: -C debuginfo=0
+  RUST_BACKTRACE: 1
+  PYTHONUTF8: 1
+
 on:
   push:
     branches: [ "master", "development" ]
@@ -20,11 +27,6 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
-env:
-  RUSTFLAGS: -C debuginfo=0
-  RUST_BACKTRACE: 1
-  PYTHONUTF8: 1
 
 defaults:
   run:

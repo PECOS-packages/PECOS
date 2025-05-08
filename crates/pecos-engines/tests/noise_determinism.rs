@@ -23,17 +23,14 @@ fn reset_model_with_seed(
 
 fn create_noise_model() -> Box<dyn NoiseModel> {
     info!("Creating noise model with moderate error rates");
-    // Create a noise model with moderate error rates
-    let mut model = GeneralNoiseModel::new(0.1, 0.1, 0.1, 0.1, 0.1);
 
+    // Create a noise model with moderate error rates using the builder pattern
     // Set single-qubit error rates with uniform distribution
     let mut single_qubit_weights = HashMap::new();
     single_qubit_weights.insert("X".to_string(), 0.25);
     single_qubit_weights.insert("Y".to_string(), 0.25);
     single_qubit_weights.insert("Z".to_string(), 0.25);
     single_qubit_weights.insert("L".to_string(), 0.25);
-    info!("Setting single-qubit Pauli model");
-    model.set_p1_pauli_model(&single_qubit_weights);
 
     // Set two-qubit error rates with uniform distribution
     let mut two_qubit_weights = HashMap::new();
@@ -42,24 +39,26 @@ fn create_noise_model() -> Box<dyn NoiseModel> {
     two_qubit_weights.insert("ZZ".to_string(), 0.2);
     two_qubit_weights.insert("XL".to_string(), 0.2);
     two_qubit_weights.insert("LX".to_string(), 0.2);
-    info!("Setting two-qubit Pauli model");
-    model.set_p2_pauli_model(&two_qubit_weights);
 
-    // Set emission ratios to ensure errors are introduced
-    info!("Setting emission ratios");
-    model.set_p1_emission_ratio(0.5);
-    model.set_p2_emission_ratio(0.5);
-    model.set_prep_leak_ratio(0.5);
-
-    // Scale parameters before using the model
-    info!("Scaling parameters");
-    model.scale_parameters();
+    // Use builder to construct the model with all parameters set
+    let mut model = GeneralNoiseModel::builder()
+        .with_prep_probability(0.1)
+        .with_meas_0_probability(0.1)
+        .with_meas_1_probability(0.1)
+        .with_p1_probability(0.1)
+        .with_p2_probability(0.1)
+        .with_p1_pauli_model(&single_qubit_weights)
+        .with_p2_pauli_model(&two_qubit_weights)
+        .with_p1_emission_ratio(0.5)
+        .with_p2_emission_ratio(0.5)
+        .with_prep_leak_ratio(0.5)
+        .build();
 
     // Reset the model to ensure clean state
     info!("Resetting model");
     model.reset().unwrap();
 
-    Box::new(model)
+    model
 }
 
 fn apply_noise(model: &mut Box<dyn NoiseModel>, msg: &ByteMessage) -> ByteMessage {

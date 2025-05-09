@@ -29,12 +29,22 @@ struct CompileArgs {
     program: String,
 }
 
+/// Type of quantum noise model to use for simulation
 #[derive(PartialEq, Eq, Clone, Debug, Default)]
 enum NoiseModelType {
     /// Simple depolarizing noise model with uniform error probabilities
+    ///
+    /// This model applies the same error probability to all operations
     #[default]
     Depolarizing,
     /// General noise model with configurable error probabilities
+    ///
+    /// This model allows setting different error probabilities for:
+    /// - state preparation
+    /// - measurement of |0⟩ state
+    /// - measurement of |1⟩ state
+    /// - single-qubit gates
+    /// - two-qubit gates
     General,
 }
 
@@ -82,152 +92,139 @@ struct RunArgs {
     seed: Option<u64>,
 }
 
+/// Parse noise probability specification from command line argument
+///
+/// For a depolarizing model, a single probability is expected: "0.01"
+/// For a general model, five probabilities are expected: "0.01,0.02,0.02,0.05,0.1"
+/// representing [prep, `meas_0`, `meas_1`, `single_qubit`, `two_qubit`]
 fn parse_noise_probability(arg: &str) -> Result<String, String> {
-    // Check if it's a comma-separated list
-    if arg.contains(',') {
-        // Split by comma and parse each value
-        let probs: Result<Vec<f64>, _> = arg
-            .split(',')
-            .map(|s| {
-                s.trim().parse::<f64>().map_err(|_| {
-                    format!(
-                        "Invalid probability value '{s}': must be a valid floating point number"
-                    )
-                })
-            })
-            .collect();
-
-        // Check if all values are valid probabilities
-        let probs = probs?;
-        for prob in &probs {
-            if !(0.0..=1.0).contains(prob) {
-                return Err(format!("Noise probability {prob} must be between 0 and 1"));
-            }
-        }
-
-        // For general noise model, we expect 5 probabilities
-        if probs.len() != 5 && probs.len() != 1 {
-            return Err(format!(
-                "Expected either 1 probability for depolarizing model or 5 probabilities for general model, got {}",
-                probs.len()
-            ));
-        }
-
-        // Return the original string since it's valid
-        Ok(arg.to_string())
+    // Split string into values (either a single value or comma-separated list)
+    let values: Vec<&str> = if arg.contains(',') {
+        arg.split(',').collect()
     } else {
-        // Single probability value
-        let prob: f64 = arg
-            .parse()
-            .map_err(|_| "Must be a valid floating point number")?;
+        vec![arg]
+    };
 
+    // Check number of values
+    if values.len() != 1 && values.len() != 5 {
+        return Err(format!(
+            "Expected 1 or 5 probabilities, got {}",
+            values.len()
+        ));
+    }
+
+    // Validate each probability value
+    for s in &values {
+        // Parse and validate numeric value
+        let prob = s
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| format!("Invalid value '{s}': not a valid number"))?;
+
+        // Check value range
         if !(0.0..=1.0).contains(&prob) {
-            return Err("Noise probability must be between 0 and 1".into());
+            return Err(format!("Probability {prob} must be between 0 and 1"));
         }
+    }
 
-        Ok(arg.to_string())
+    Ok(arg.to_string())
+}
+
+/// Extract probability values from noise specification string
+///
+/// Handles both single value and comma-separated formats, with safe defaults
+fn parse_noise_values(noise_str_opt: Option<&String>) -> Vec<f64> {
+    // Default to 0.0 if no string provided
+    let Some(noise_str) = noise_str_opt else {
+        return vec![0.0];
+    };
+
+    // Parse either comma-separated or single value
+    if noise_str.contains(',') {
+        noise_str
+            .split(',')
+            .map(|s| s.trim().parse::<f64>().unwrap_or(0.0))
+            .collect()
+    } else {
+        vec![noise_str.parse::<f64>().unwrap_or(0.0)]
     }
 }
 
+/// Parse a single probability value for depolarizing noise model
+///
+/// Takes the first probability value if multiple are provided
+fn parse_depolarizing_noise_probability(noise_str_opt: Option<&String>) -> f64 {
+    parse_noise_values(noise_str_opt)[0] // Always has at least one value
+}
+
+/// Parse five probability values for general noise model
+///
+/// Returns a tuple of five probabilities: (prep, `meas_0`, `meas_1`, `single_qubit`, `two_qubit`)
+/// If a single value is provided, it's used for all five parameters
+fn parse_general_noise_probabilities(noise_str_opt: Option<&String>) -> (f64, f64, f64, f64, f64) {
+    let probs = parse_noise_values(noise_str_opt);
+
+    if probs.len() == 5 {
+        (probs[0], probs[1], probs[2], probs[3], probs[4])
+    } else {
+        // Use the first value for all parameters
+        let p = probs[0];
+        (p, p, p, p, p)
+    }
+}
+
+/// Run a quantum program with the specified arguments
+///
+/// This function sets up the appropriate engines and noise models based on
+/// the command line arguments, then runs the specified program and outputs
+/// the results.
 fn run_program(args: &RunArgs) -> Result<(), Box<dyn Error>> {
     let program_path = get_program_path(&args.program)?;
     let classical_engine = setup_engine(&program_path, Some(args.shots.div_ceil(args.workers)))?;
 
-    // Process based on the selected noise model
-    match args.noise_model {
+    // Create the appropriate noise model based on user selection
+    let noise_model: Box<dyn NoiseModel> = match args.noise_model {
         NoiseModelType::Depolarizing => {
-            // Single noise probability for depolarizing model
-            let prob = if let Some(noise_str) = &args.noise_probability {
-                // If it contains commas, take the first value
-                if noise_str.contains(',') {
-                    noise_str
-                        .split(',')
-                        .next()
-                        .unwrap()
-                        .trim()
-                        .parse::<f64>()
-                        .unwrap_or(0.0)
-                } else {
-                    noise_str.parse::<f64>().unwrap_or(0.0)
-                }
-            } else {
-                0.0
-            };
+            // Create a depolarizing noise model with single probability
+            let prob = parse_depolarizing_noise_probability(args.noise_probability.as_ref());
+            let mut model = DepolarizingNoiseModel::new_uniform(prob);
 
-            // Create a depolarizing noise model
-            let mut noise_model = DepolarizingNoiseModel::new_uniform(prob);
-
-            // If a seed is provided, set it on the noise model
+            // Set seed if provided
             if let Some(s) = args.seed {
                 let noise_seed = derive_seed(s, "noise_model");
-                noise_model.set_seed(noise_seed)?;
+                model.set_seed(noise_seed)?;
             }
 
-            // Use the generic approach with noise model
-            let results = MonteCarloEngine::run_with_noise_model(
-                classical_engine,
-                Box::new(noise_model),
-                args.shots,
-                args.workers,
-                args.seed,
-            )?;
-
-            results.print();
+            Box::new(model)
         }
         NoiseModelType::General => {
-            // For general model, we need to parse the comma-separated probabilities
+            // Create a general noise model with five probabilities
             let (prep, meas_0, meas_1, single_qubit, two_qubit) =
-                if let Some(noise_str) = &args.noise_probability {
-                    if noise_str.contains(',') {
-                        // Parse the comma-separated values
-                        let probs: Vec<f64> = noise_str
-                            .split(',')
-                            .map(|s| s.trim().parse::<f64>().unwrap_or(0.0))
-                            .collect();
+                parse_general_noise_probabilities(args.noise_probability.as_ref());
+            let mut model = GeneralNoiseModel::new(prep, meas_0, meas_1, single_qubit, two_qubit);
 
-                        // We should already have validated the length in the parser
-                        if probs.len() == 5 {
-                            (probs[0], probs[1], probs[2], probs[3], probs[4])
-                        } else {
-                            // Use the first value for all if only one value is provided
-                            let p = probs[0];
-                            (p, p, p, p, p)
-                        }
-                    } else {
-                        // Single probability value - use for all parameters
-                        let p = noise_str.parse::<f64>().unwrap_or(0.0);
-                        (p, p, p, p, p)
-                    }
-                } else {
-                    // Default: no noise
-                    (0.0, 0.0, 0.0, 0.0, 0.0)
-                };
-
-            // Create the general noise model
-            let mut noise_model =
-                GeneralNoiseModel::new(prep, meas_0, meas_1, single_qubit, two_qubit);
-
-            // If a seed is provided, set it on the noise model
+            // Set seed if provided
             if let Some(s) = args.seed {
                 let noise_seed = derive_seed(s, "noise_model");
-                // We can now silence the non-deterministic warning since we've fixed that issue
-                noise_model.reset_with_seed(noise_seed).map_err(|e| {
+                model.reset_with_seed(noise_seed).map_err(|e| {
                     Box::<dyn Error>::from(format!("Failed to set noise model seed: {e}"))
                 })?;
             }
 
-            // Use the generic function with the general noise model
-            let results = MonteCarloEngine::run_with_noise_model(
-                classical_engine,
-                Box::new(noise_model),
-                args.shots,
-                args.workers,
-                args.seed,
-            )?;
-
-            results.print();
+            Box::new(model)
         }
-    }
+    };
+
+    // Use the generic approach with the selected noise model
+    let results = MonteCarloEngine::run_with_noise_model(
+        classical_engine,
+        noise_model,
+        args.shots,
+        args.workers,
+        args.seed,
+    )?;
+
+    results.print();
 
     Ok(())
 }

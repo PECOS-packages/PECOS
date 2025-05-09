@@ -93,10 +93,18 @@ fn apply_noise(model: &mut Box<dyn NoiseModel>, msg: &ByteMessage) -> ByteMessag
     }
 }
 
+/// Compare two `ByteMessage`s by parsing their quantum operations
+///
+/// This function extracts and compares the quantum operations from two messages
+/// to determine if they represent the same quantum circuit.
 fn compare_messages(msg1: &ByteMessage, msg2: &ByteMessage) -> bool {
     let ops1 = msg1.parse_quantum_operations().unwrap_or_default();
     let ops2 = msg2.parse_quantum_operations().unwrap_or_default();
+
+    // For determinism tests, we just need to know if they're equal
     ops1 == ops2
+    // Note: If additional debug info is needed when messages don't match,
+    // we could expand this function to return details about the differences
 }
 
 #[test]
@@ -410,7 +418,7 @@ fn test_complete_measurement_determinism() {
 fn test_deterministic_measurement() {
     // This test verifies that using the same seed produces the same measurement results
     let seed = 42;
-    println!("Testing deterministic measurement with seed {seed}");
+    info!("Testing deterministic measurement with seed {seed}");
 
     // Create a noise model with significant measurement error
     let mut model = Box::new(
@@ -429,21 +437,21 @@ fn test_deterministic_measurement() {
     builder.add_measurements(&[0], &[0]); // Measure qubit 0
     let circuit = builder.build();
 
-    println!("Running first measurement with seed {seed}");
+    info!("Running first measurement with seed {seed}");
     reset_model_with_seed(&mut model, seed).unwrap();
     let engine1 = Box::new(StateVecEngine::new(1));
     let result1 = run_complete_simulation(&mut model, engine1, &circuit, seed);
     let value1 = result1.get(&0).copied().unwrap_or(0);
 
-    println!("First measurement result: {value1}");
+    info!("First measurement result: {value1}");
 
-    println!("Running second measurement with same seed {seed}");
+    info!("Running second measurement with same seed {seed}");
     reset_model_with_seed(&mut model, seed).unwrap();
     let engine2 = Box::new(StateVecEngine::new(1));
     let result2 = run_complete_simulation(&mut model, engine2, &circuit, seed);
     let value2 = result2.get(&0).copied().unwrap_or(0);
 
-    println!("Second measurement result: {value2}");
+    info!("Second measurement result: {value2}");
 
     // The results should be identical with the same seed
     assert_eq!(
@@ -453,18 +461,18 @@ fn test_deterministic_measurement() {
 
     // Now try with a different seed
     let different_seed = seed + 1000;
-    println!("Running measurement with different seed {different_seed}");
+    info!("Running measurement with different seed {different_seed}");
     reset_model_with_seed(&mut model, different_seed).unwrap();
     let engine3 = Box::new(StateVecEngine::new(1));
     let result3 = run_complete_simulation(&mut model, engine3, &circuit, different_seed);
     let value3 = result3.get(&0).copied().unwrap_or(0);
 
-    println!("Different seed result: {value3}");
+    info!("Different seed result: {value3}");
 
     // IMPROVEMENT 1: Assert that different seeds produce different results
     // (with a caveat for the small probability that they might be the same by chance)
     if value1 == value3 {
-        println!(
+        info!(
             "NOTE: Same measurement result with different seeds. This can happen with low probability."
         );
 
@@ -477,12 +485,12 @@ fn test_deterministic_measurement() {
 
         // With a second different seed, the probability of getting the same result again is even lower
         if value1 == value4 {
-            println!(
+            info!(
                 "NOTE: Still same measurement result with a third seed. Very unlikely but possible."
             );
         } else {
             // Different results with the new seed, so we can assert determinism
-            println!("Different seed produced different result: {value4}");
+            info!("Different seed produced different result: {value4}");
             assert_ne!(
                 value1, value4,
                 "Different seeds should usually produce different measurement results"
@@ -501,10 +509,11 @@ fn test_deterministic_measurement() {
     let mut ones = 0;
     let num_tests = 20;
 
-    println!("Running {num_tests} measurements with different seeds");
+    info!("Running {num_tests} measurements with different seeds");
     for i in 0..num_tests {
-        // Convert the loop variable to u64 safely (always positive in this context)
-        let test_seed = seed + i as u64; // Safe since i is always non-negative in this loop
+        // Use a different deterministic seed for each test iteration derived from the base seed
+        // Converting i to u64 is safe since we're only using small non-negative loop values
+        let test_seed = seed + i as u64;
         reset_model_with_seed(&mut model, test_seed).unwrap();
         let engine = Box::new(StateVecEngine::new(1));
         let result = run_complete_simulation(&mut model, engine, &circuit, test_seed);
@@ -517,25 +526,25 @@ fn test_deterministic_measurement() {
         }
     }
 
-    println!("Got {zeros} zeros and {ones} ones with different seeds");
+    info!("Got {zeros} zeros and {ones} ones with different seeds");
 
     // With enough different seeds, we should get some variation
     // The probability of getting all zeros or all ones with 20 measurements and a roughly
     // 50/50 chance for each is approximately 2^(-19), which is extremely unlikely
     if zeros == 0 || ones == 0 {
-        println!(
+        info!(
             "NOTE: Got only {} measurements. This is highly unusual but technically possible.",
             if zeros == 0 { "ones" } else { "zeros" }
         );
     } else {
-        println!("Got a mixture of results with different seeds, as expected");
+        info!("Got a mixture of results with different seeds, as expected");
     }
 }
 
 /// IMPROVEMENT 2: Comprehensive end-to-end test combining all noise types
 #[test]
 fn test_comprehensive_noise_determinism() {
-    println!("Testing comprehensive noise determinism (all noise types)");
+    info!("Testing comprehensive noise determinism (all noise types)");
 
     // Create a noise model with all types of noise
     let mut model = Box::new(
@@ -595,7 +604,7 @@ fn test_comprehensive_noise_determinism() {
 
     // Run the circuit with a fixed seed
     let seed = 9876;
-    println!("Running first simulation with seed {seed}");
+    info!("Running first simulation with seed {seed}");
     reset_model_with_seed(&mut model, seed).unwrap();
     let engine1 = Box::new(StateVecEngine::new(3));
     let results1 = run_complete_simulation(&mut model, engine1, &circuit, seed);
@@ -603,10 +612,10 @@ fn test_comprehensive_noise_determinism() {
     // Sort and print results for readability
     let mut results1_vec: Vec<(usize, i32)> = results1.iter().map(|(&k, &v)| (k, v)).collect();
     results1_vec.sort_by_key(|&(k, _)| k);
-    println!("First run results: {results1_vec:?}");
+    info!("First run results: {results1_vec:?}");
 
     // Run again with the same seed - should get identical results
-    println!("Running second simulation with the same seed {seed}");
+    info!("Running second simulation with the same seed {seed}");
     reset_model_with_seed(&mut model, seed).unwrap();
     let engine2 = Box::new(StateVecEngine::new(3));
     let results2 = run_complete_simulation(&mut model, engine2, &circuit, seed);
@@ -614,7 +623,7 @@ fn test_comprehensive_noise_determinism() {
     // Sort and print results for readability
     let mut results2_vec: Vec<(usize, i32)> = results2.iter().map(|(&k, &v)| (k, v)).collect();
     results2_vec.sort_by_key(|&(k, _)| k);
-    println!("Second run results: {results2_vec:?}");
+    info!("Second run results: {results2_vec:?}");
 
     // The results should be identical with the same seed
     assert_eq!(
@@ -624,7 +633,7 @@ fn test_comprehensive_noise_determinism() {
 
     // Run again with a different seed - should get different results
     let different_seed = seed + 1000;
-    println!("Running third simulation with different seed {different_seed}");
+    info!("Running third simulation with different seed {different_seed}");
     reset_model_with_seed(&mut model, different_seed).unwrap();
     let engine3 = Box::new(StateVecEngine::new(3));
     let results3 = run_complete_simulation(&mut model, engine3, &circuit, different_seed);
@@ -632,35 +641,35 @@ fn test_comprehensive_noise_determinism() {
     // Sort and print results for readability
     let mut results3_vec: Vec<(usize, i32)> = results3.iter().map(|(&k, &v)| (k, v)).collect();
     results3_vec.sort_by_key(|&(k, _)| k);
-    println!("Different seed results: {results3_vec:?}");
+    info!("Different seed results: {results3_vec:?}");
 
     // The results should be different (high probability)
     // If they happen to be identical, try yet another seed
     if results1 == results3 {
-        println!(
+        info!(
             "NOTE: Same measurement results with different seeds. This can happen with low probability."
         );
 
         let another_seed = seed + 2000;
-        println!("Trying yet another seed: {another_seed}");
+        info!("Trying yet another seed: {another_seed}");
         reset_model_with_seed(&mut model, another_seed).unwrap();
         let engine4 = Box::new(StateVecEngine::new(3));
         let results4 = run_complete_simulation(&mut model, engine4, &circuit, another_seed);
 
         // The probability of getting identical results again is extremely low
         if results1 == results4 {
-            println!(
+            info!(
                 "NOTE: Still same results with a third seed. Extremely unlikely but technically possible."
             );
         } else {
-            println!("Different seed produced different results as expected");
+            info!("Different seed produced different results as expected");
             assert_ne!(
                 results1, results4,
                 "Different seeds should produce different results in comprehensive test"
             );
         }
     } else {
-        println!("Different seed produced different results as expected");
+        info!("Different seed produced different results as expected");
         assert_ne!(
             results1, results3,
             "Different seeds should produce different results in comprehensive test"
@@ -671,7 +680,7 @@ fn test_comprehensive_noise_determinism() {
 /// IMPROVEMENT 3: Test long-running determinism with a large circuit
 #[test]
 fn test_long_running_determinism() {
-    println!("Testing long-running determinism with many operations");
+    info!("Testing long-running determinism with many operations");
 
     // Create a noise model with moderate error rates
     let mut model = Box::new(
@@ -696,7 +705,7 @@ fn test_long_running_determinism() {
 
     // Now apply a repeated pattern of gates to create a long sequence
     // This gives the RNG many opportunities to diverge if there are issues
-    println!("Building a circuit with 500+ operations...");
+    info!("Building a circuit with 500+ operations...");
     // We're using a small, positive loop count where usize will fit in both u32 and f64 without precision loss
     for i in 0..100 {
         // 100 repetitions of 5+ operations = 500+ operations total
@@ -735,12 +744,12 @@ fn test_long_running_determinism() {
 
     // Run the circuit twice with the same seed
     let seed = 54321;
-    println!("Running first long simulation with seed {seed}");
+    info!("Running first long simulation with seed {seed}");
     reset_model_with_seed(&mut model, seed).unwrap();
     let engine1 = Box::new(StateVecEngine::new(5));
     let results1 = run_complete_simulation(&mut model, engine1, &circuit, seed);
 
-    println!("Running second long simulation with the same seed {seed}");
+    info!("Running second long simulation with the same seed {seed}");
     reset_model_with_seed(&mut model, seed).unwrap();
     let engine2 = Box::new(StateVecEngine::new(5));
     let results2 = run_complete_simulation(&mut model, engine2, &circuit, seed);
@@ -748,11 +757,11 @@ fn test_long_running_determinism() {
     // Sort and print a summary of the results
     let mut results1_vec: Vec<(usize, i32)> = results1.iter().map(|(&k, &v)| (k, v)).collect();
     results1_vec.sort_by_key(|&(k, _)| k);
-    println!("First run results: {results1_vec:?}");
+    info!("First run results: {results1_vec:?}");
 
     let mut results2_vec: Vec<(usize, i32)> = results2.iter().map(|(&k, &v)| (k, v)).collect();
     results2_vec.sort_by_key(|&(k, _)| k);
-    println!("Second run results: {results2_vec:?}");
+    info!("Second run results: {results2_vec:?}");
 
     // Results should be identical despite the long sequence of operations
     assert_eq!(
@@ -762,38 +771,38 @@ fn test_long_running_determinism() {
 
     // Run with a different seed
     let different_seed = seed + 1000;
-    println!("Running with a different seed {different_seed}");
+    info!("Running with a different seed {different_seed}");
     reset_model_with_seed(&mut model, different_seed).unwrap();
     let engine3 = Box::new(StateVecEngine::new(5));
     let results3 = run_complete_simulation(&mut model, engine3, &circuit, different_seed);
 
     // Results should be different (with high probability)
     if results1 == results3 {
-        println!("NOTE: Same results with different seeds. This is very unlikely but possible.");
+        info!("NOTE: Same results with different seeds. This is very unlikely but possible.");
 
         // Try one more seed
         let another_seed = seed + 2000;
-        println!("Trying yet another seed: {another_seed}");
+        info!("Trying yet another seed: {another_seed}");
         reset_model_with_seed(&mut model, another_seed).unwrap();
         let engine4 = Box::new(StateVecEngine::new(5));
         let results4 = run_complete_simulation(&mut model, engine4, &circuit, another_seed);
 
         if results1 == results4 {
-            println!("NOTE: Still same results with a third seed. Extremely unlikely.");
+            info!("NOTE: Still same results with a third seed. Extremely unlikely.");
         } else {
-            println!("Different seed produced different results as expected");
+            info!("Different seed produced different results as expected");
             assert_ne!(
                 results1, results4,
                 "Different seeds should produce different results"
             );
         }
     } else {
-        println!("Different seed produced different results as expected");
+        info!("Different seed produced different results as expected");
         assert_ne!(
             results1, results3,
             "Different seeds should produce different results"
         );
     }
 
-    println!("Long-running determinism test passed successfully!");
+    info!("Long-running determinism test passed successfully!");
 }

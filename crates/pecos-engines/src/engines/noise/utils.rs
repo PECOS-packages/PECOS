@@ -166,11 +166,14 @@ impl NoiseUtils {
     /// * `gate` - The gate to add
     ///
     /// # Panics
-    /// Panics if `gate.result_id` is `None` when processing a measurement gate.
+    /// Panics if:
+    /// - `gate.result_id` is `None` when processing a measurement gate
+    /// - The gate type is invalid or has insufficient parameters/qubits for the operation
     pub fn add_gate_to_builder(builder: &mut ByteMessageBuilder, gate: &QuantumGate) {
         use crate::byte_message::GateType;
 
         match gate.gate_type {
+            // Single-qubit gates that operate directly on qubit lists
             GateType::X => {
                 builder.add_x(&gate.qubits);
             }
@@ -183,52 +186,48 @@ impl NoiseUtils {
             GateType::H => {
                 builder.add_h(&gate.qubits);
             }
-            GateType::CX => {
-                if gate.qubits.len() >= 2 {
-                    builder.add_cx(&[gate.qubits[0]], &[gate.qubits[1]]);
-                }
-            }
-            GateType::RZZ => {
-                if gate.qubits.len() >= 2 && !gate.params.is_empty() {
-                    builder.add_rzz(gate.params[0], &[gate.qubits[0]], &[gate.qubits[1]]);
-                }
-            }
-            GateType::SZZ => {
-                if gate.qubits.len() >= 2 {
-                    builder.add_szz(&[gate.qubits[0]], &[gate.qubits[1]]);
-                }
-            }
-            GateType::SZZdg => {
-                if gate.qubits.len() >= 2 {
-                    builder.add_szzdg(&[gate.qubits[0]], &[gate.qubits[1]]);
-                }
-            }
-            GateType::RZ => {
-                if !gate.params.is_empty() {
-                    builder.add_rz(gate.params[0], &gate.qubits);
-                }
-            }
-            GateType::R1XY => {
-                if gate.params.len() >= 2 {
-                    builder.add_r1xy(gate.params[0], gate.params[1], &gate.qubits);
-                }
-            }
-            GateType::Measure => {
-                if !gate.qubits.is_empty() && gate.result_id.is_some() {
-                    builder.add_measurements(&gate.qubits, &[gate.result_id.unwrap()]);
-                }
-            }
             GateType::Prep => {
                 builder.add_prep(&gate.qubits);
             }
-            GateType::Idle => {
-                // Handle Idle gates
-                let mut idle_qubits = Vec::with_capacity(gate.qubits.len());
-                for &q in &gate.qubits {
-                    idle_qubits.push(q);
-                }
-                builder.add_idle(gate.params[0], &idle_qubits);
+
+            // Two-qubit gates that need qubit validation
+            GateType::CX if gate.qubits.len() >= 2 => {
+                builder.add_cx(&[gate.qubits[0]], &[gate.qubits[1]]);
             }
+            GateType::SZZ if gate.qubits.len() >= 2 => {
+                builder.add_szz(&[gate.qubits[0]], &[gate.qubits[1]]);
+            }
+            GateType::SZZdg if gate.qubits.len() >= 2 => {
+                builder.add_szzdg(&[gate.qubits[0]], &[gate.qubits[1]]);
+            }
+
+            // Gates with parameters that need validation
+            GateType::RZ if !gate.params.is_empty() => {
+                builder.add_rz(gate.params[0], &gate.qubits);
+            }
+            GateType::RZZ if gate.qubits.len() >= 2 && !gate.params.is_empty() => {
+                builder.add_rzz(gate.params[0], &[gate.qubits[0]], &[gate.qubits[1]]);
+            }
+            GateType::R1XY if gate.params.len() >= 2 => {
+                builder.add_r1xy(gate.params[0], gate.params[1], &gate.qubits);
+            }
+
+            // Measurement gates need both qubits and result IDs
+            GateType::Measure if !gate.qubits.is_empty() && gate.result_id.is_some() => {
+                builder.add_measurements(&gate.qubits, &[gate.result_id.unwrap()]);
+            }
+
+            // Idle gates need special handling for qubit lists
+            GateType::Idle if !gate.params.is_empty() => {
+                // Use gate params for idle time
+                builder.add_idle(gate.params[0], &gate.qubits);
+            }
+
+            // Invalid cases (not enough qubits, missing parameters, etc.)
+            _ => panic!(
+                "Invalid gate type {:?} or insufficient parameters/qubits",
+                gate.gate_type
+            ),
         }
     }
 
@@ -241,11 +240,7 @@ impl NoiseUtils {
     /// true if the message contains measurement results, false otherwise
     #[must_use]
     pub fn has_measurements(message: &ByteMessage) -> bool {
-        if let Ok(measurements) = message.parse_measurements() {
-            !measurements.is_empty()
-        } else {
-            false
-        }
+        message.parse_measurements().is_ok_and(|m| !m.is_empty())
     }
 
     /// Creates a new `ByteMessageBuilder` for quantum operations
@@ -269,9 +264,9 @@ impl NoiseUtils {
     #[must_use]
     pub fn create_gate_message(gates: &[QuantumGate]) -> ByteMessage {
         let mut builder = Self::create_quantum_builder();
-        for gate in gates {
-            Self::add_gate_to_builder(&mut builder, gate);
-        }
+        gates
+            .iter()
+            .for_each(|gate| Self::add_gate_to_builder(&mut builder, gate));
         builder.build()
     }
 
@@ -341,7 +336,6 @@ impl NoiseUtils {
     /// # Errors
     /// Returns an error if the pauli string is not one of "X", "Y", or "Z"
     pub fn create_pauli_gate(pauli: &str, qubit: usize) -> Result<QuantumGate, String> {
-        // QuantumGate::try_from_pauli(pauli, qubit)
         match pauli {
             "X" => Ok(QuantumGate::x(qubit)),
             "Y" => Ok(QuantumGate::y(qubit)),

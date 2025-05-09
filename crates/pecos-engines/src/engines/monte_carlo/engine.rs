@@ -17,7 +17,7 @@ use crate::engines::noise::NoiseModel;
 use crate::engines::quantum::{QuantumEngine, StateVecEngine};
 use crate::engines::{ClassicalEngine, ControlEngine, Engine, EngineStage, HybridEngine};
 use crate::errors::QueueError;
-use log::{debug, info};
+use log::debug;
 use pecos_core::rng::RngManageable;
 use pecos_core::rng::rng_manageable::derive_seed;
 use rand::{RngCore, SeedableRng};
@@ -201,13 +201,8 @@ impl MonteCarloEngine {
     /// # Errors
     /// Returns a `QueueError` if setting the seed fails for any component
     pub fn set_seed(&mut self, seed: u64) -> Result<(), QueueError> {
-        // Set the seed for the internal RNG
         self.rng = ChaCha8Rng::seed_from_u64(seed);
-
-        // Set the seed for the hybrid engine template
-        self.hybrid_engine_template.set_seed(seed)?;
-
-        Ok(())
+        self.hybrid_engine_template.set_seed(seed)
     }
 
     /// Run a Monte Carlo simulation with the specified number of shots and worker threads.
@@ -230,40 +225,22 @@ impl MonteCarloEngine {
     /// - If `num_shots` is zero.
     /// - If `num_workers` is zero.
     pub fn run(&mut self, num_shots: usize, num_workers: usize) -> Result<ShotResults, QueueError> {
-        assert!((num_shots != 0), "num_shots cannot be zero");
+        assert!(num_shots > 0, "num_shots cannot be zero");
+        assert!(num_workers > 0, "num_workers cannot be zero");
 
-        assert!((num_workers != 0), "num_workers cannot be zero");
+        debug!("Running Monte Carlo simulation: {num_shots} shots, {num_workers} workers");
 
-        debug!(
-            "Running Monte Carlo simulation with {} shots on {} workers",
-            num_shots, num_workers
-        );
-
-        // Create a vector to hold the results with worker ID and shot index information
-        // (worker_idx, shot_idx, result)
+        // Shared results collection
         let results_vec = Arc::new(Mutex::new(
             Vec::<(usize, usize, ShotResult)>::with_capacity(num_shots),
         ));
 
-        // Calculate work distribution (shots per worker)
+        // Determine shots per worker and generate deterministic seeds
         let shots_per_worker = distribute_shots(num_shots, num_workers);
-
-        // Seed management: derive seeds for each worker deterministically from the base seed
         let base_seed = self.rng.next_u64();
-        let worker_seeds: Vec<u64> = (0..num_workers)
-            .map(|idx| {
-                let context = format!("worker_{idx}");
-                derive_seed(base_seed, &context)
-            })
-            .collect();
 
-        info!(
-            "Distributing {} shots across {} workers",
-            num_shots, num_workers
-        );
-
-        // Run the shots in parallel
-        let _ = (0..num_workers)
+        // Run shots in parallel across workers
+        (0..num_workers)
             .into_par_iter()
             .map(|worker_idx| {
                 let shots_this_worker = shots_per_worker[worker_idx];
@@ -271,47 +248,43 @@ impl MonteCarloEngine {
                     return Ok(());
                 }
 
-                // Create a copy of the template engine and set its seed
+                // Create worker engine with derived seed
                 let mut engine = self.hybrid_engine_template.clone();
-                let worker_seed = worker_seeds[worker_idx];
+                let worker_seed = derive_seed(base_seed, &format!("worker_{worker_idx}"));
 
-                // Set seed for this worker's engine
                 if let Err(e) = engine.set_seed(worker_seed) {
                     return Err(QueueError::OperationError(format!(
                         "Failed to set seed for worker {worker_idx}: {e}"
                     )));
                 }
 
-                // Run assigned shots
+                // Process all shots for this worker
                 debug!(
-                    "Worker {} running {} shots with seed {}",
-                    worker_idx, shots_this_worker, worker_seed
+                    "Worker {worker_idx} running {shots_this_worker} shots with seed {worker_seed}"
                 );
-                for shot_idx in 0..shots_this_worker {
-                    // Reset the engine state before each shot
-                    engine.reset()?;
 
+                for shot_idx in 0..shots_this_worker {
+                    engine.reset()?;
                     let shot_result = engine.run_shot()?;
 
-                    // Store the result with the worker index and shot index for deterministic ordering
-                    let mut results = results_vec.lock().unwrap();
-                    results.push((worker_idx, shot_idx, shot_result));
+                    // Store with worker/shot indices for deterministic ordering
+                    results_vec
+                        .lock()
+                        .unwrap()
+                        .push((worker_idx, shot_idx, shot_result));
                 }
 
                 Ok(())
             })
             .collect::<Result<Vec<()>, QueueError>>()?;
 
-        // Sort the results by worker ID and then by shot index within each worker
-        // This ensures a completely deterministic ordering regardless of execution timing
+        // Ensure deterministic ordering of results
         let mut results = results_vec.lock().unwrap();
         results.sort_by(|(w1, s1, _), (w2, s2, _)| w1.cmp(w2).then(s1.cmp(s2)));
 
-        // Extract just the shot results in the sorted order
+        // Convert to final results format
         let shot_results: Vec<ShotResult> =
             results.iter().map(|(_, _, shot)| shot.clone()).collect();
-
-        // Convert the results to a ShotResults object
         let combined_results = ShotResults::from_measurements(&shot_results);
 
         debug!("Monte Carlo simulation completed successfully");
@@ -379,17 +352,14 @@ impl MonteCarloEngine {
         num_workers: usize,
         seed: Option<u64>,
     ) -> Result<ShotResults, QueueError> {
-        // Create a Monte Carlo engine with the provided hybrid engine
         let mut engine = MonteCarloEngineBuilder::new()
             .with_hybrid_engine(hybrid_engine)
             .build();
 
-        // Set the seed if provided
         if let Some(s) = seed {
             engine.set_seed(s)?;
         }
 
-        // Run the simulation
         engine.run(num_shots, num_workers)
     }
 
@@ -418,18 +388,15 @@ impl MonteCarloEngine {
         num_workers: usize,
         seed: Option<u64>,
     ) -> Result<ShotResults, QueueError> {
-        // Create a quantum engine with the same number of qubits as the classical engine
-        let num_qubits = classical_engine.num_qubits();
-        let quantum_engine = Box::new(StateVecEngine::new(num_qubits));
-
-        // Create a hybrid engine with the provided components
+        // Create a hybrid engine with the state vector quantum engine
+        let quantum_engine = Box::new(StateVecEngine::new(classical_engine.num_qubits()));
         let mut hybrid_engine = HybridEngineBuilder::new()
             .with_classical_engine(classical_engine)
             .with_quantum_engine(quantum_engine)
             .with_noise_model(noise_model)
             .build();
 
-        // If a seed is provided, explicitly set it on the hybrid engine
+        // Set seed if provided
         if let Some(s) = seed {
             hybrid_engine.set_seed(s)?;
         }
@@ -459,25 +426,21 @@ impl MonteCarloEngine {
         num_workers: usize,
         seed: Option<u64>,
     ) -> Result<ShotResults, QueueError> {
-        // Parse the configuration string and create the engine
-        // For now, we'll treat it as a simple noise probability
+        // Parse the configuration string as a noise probability
         let p = config.parse::<f64>().map_err(|e| {
             QueueError::OperationError(format!("Failed to parse config string as float: {e}"))
         })?;
 
-        let classical_engine = Box::new(ExternalClassicalEngine::new());
-
-        // Create a depolarizing noise model with the parsed probability
+        // Create and seed a depolarizing noise model
         let mut noise_model = crate::engines::noise::DepolarizingNoiseModel::new_uniform(p);
 
-        // If a seed is provided, set it on the noise model
         if let Some(s) = seed {
-            let noise_seed = pecos_core::rng::rng_manageable::derive_seed(s, "noise_model");
-            noise_model.set_seed(noise_seed)?;
+            noise_model.set_seed(derive_seed(s, "noise_model"))?;
         }
 
+        // Run simulation with external classical engine
         Self::run_with_noise_model(
-            classical_engine,
+            Box::new(ExternalClassicalEngine::new()),
             Box::new(noise_model),
             num_shots,
             num_workers,
@@ -495,28 +458,24 @@ impl Clone for MonteCarloEngine {
     }
 }
 
-/// Utility function to distribute shots across workers
-///
-/// This function calculates how many shots each worker should execute
-/// based on the total number of shots and workers.
-///
-/// # Arguments
-/// * `num_shots` - The total number of shots to distribute
-/// * `num_workers` - The number of workers available
+/// Distributes shots evenly across workers with any remainder going to initial workers
 ///
 /// # Returns
-/// A vector where each element is the number of shots for a worker
+/// A vector containing the number of shots for each worker
 fn distribute_shots(num_shots: usize, num_workers: usize) -> Vec<usize> {
-    let mut shots_per_worker = vec![num_shots / num_workers; num_workers];
+    let base = num_shots / num_workers;
     let remainder = num_shots % num_workers;
 
-    // Distribute the remainder shots among the first few workers
-    shots_per_worker
+    // Create vector with base shots per worker
+    let mut result = vec![base; num_workers];
+
+    // Add remainder shots to first 'remainder' workers
+    result
         .iter_mut()
         .take(remainder)
         .for_each(|shots| *shots += 1);
 
-    shots_per_worker
+    result
 }
 
 /// An external classical engine implementation used for testing and examples.
@@ -551,27 +510,9 @@ impl Engine for ExternalClassicalEngine {
     type Output = ShotResult;
 
     fn process(&mut self, _input: Self::Input) -> Result<Self::Output, QueueError> {
-        // Generate a ByteMessage with a simple circuit
+        // For this stub implementation, just generate commands and return results
         let _message = self.generate_commands()?;
-
-        // Process it somehow (in a real engine, this would run the quantum simulation)
-        // For this stub, we'll just return the stored results
-        let mut shot_result = ShotResult::default();
-
-        // Convert the HashMap<String, i64> to HashMap<String, u32>
-        let measurements: HashMap<String, u32> = self
-            .results
-            .iter()
-            .map(|(k, v)| {
-                // For a test utility, simply clamp values that are out of bounds
-                let value = u32::try_from(*v).unwrap_or(0);
-                (k.clone(), value)
-            })
-            .collect();
-
-        shot_result.measurements = measurements;
-
-        Ok(shot_result)
+        self.get_results()
     }
 
     fn reset(&mut self) -> Result<(), QueueError> {
@@ -601,21 +542,15 @@ impl ClassicalEngine for ExternalClassicalEngine {
     }
 
     fn get_results(&self) -> Result<ShotResult, QueueError> {
-        // Create a ShotResult with the stored results
-        let mut shot_result = ShotResult::default();
-
-        // Convert the HashMap<String, i64> to HashMap<String, u32>
-        let measurements: HashMap<String, u32> = self
-            .results
-            .iter()
-            .map(|(k, v)| {
-                // For a test utility, simply clamp values that are out of bounds
-                let value = u32::try_from(*v).unwrap_or(0);
-                (k.clone(), value)
-            })
-            .collect();
-
-        shot_result.measurements = measurements;
+        // Create ShotResult with converted measurements
+        let shot_result = ShotResult {
+            measurements: self
+                .results
+                .iter()
+                .map(|(k, v)| (k.clone(), u32::try_from(*v).unwrap_or(0)))
+                .collect(),
+            ..ShotResult::default()
+        };
 
         Ok(shot_result)
     }

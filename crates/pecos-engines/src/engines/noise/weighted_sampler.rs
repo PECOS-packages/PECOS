@@ -97,25 +97,25 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq + Ord> WeightedSampler<K>
             "WeightedSampler: total weight {total_weight} deviates from 1.0 by more than tolerance {tolerance}"
         );
 
-        let normalized_weights = if (total_weight - 1.0).abs() > FLOAT_EPSILON {
-            // Within tolerance but not exactly 1.0 - normalize
+        // Determine if we need to normalize (only normalize if not already very close to 1.0)
+        let needs_normalization = (total_weight - 1.0).abs() > FLOAT_EPSILON;
+
+        // Collect normalized weights for the distribution
+        let normalized_weights: Vec<f64> = if needs_normalization {
             weighted_map.values().map(|&w| w / total_weight).collect()
         } else {
-            // Already exactly 1.0 (within floating point precision)
             weighted_map.values().copied().collect()
         };
 
         // Create normalized BTreeMap
         let mut normalized_map = BTreeMap::new();
         for (key, &value) in weighted_map {
-            normalized_map.insert(
-                key.clone(),
-                if (total_weight - 1.0).abs() < FLOAT_EPSILON {
-                    value
-                } else {
-                    value / total_weight
-                },
-            );
+            let normalized_value = if needs_normalization {
+                value / total_weight
+            } else {
+                value
+            };
+            normalized_map.insert(key.clone(), normalized_value);
         }
 
         (normalized_map, normalized_weights)
@@ -140,6 +140,7 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq + Ord> WeightedSampler<K>
 }
 
 /// Create a Pauli gate based on the Pauli operator character
+/// Returns None for identity ('I') operations
 fn create_pauli_gate(op: char, qubit: usize) -> Option<QuantumGate> {
     match op {
         'X' => Some(QuantumGate::x(qubit)),
@@ -176,14 +177,13 @@ impl SingleQubitWeightedSampler {
     }
 
     fn validate_pauli_leakage_keys(weighted_map: &BTreeMap<String, f64>) {
+        const VALID_KEYS: [&str; 4] = ["X", "Y", "Z", "L"];
+
         for key in weighted_map.keys() {
-            let key_str = key.as_ref();
-            match key_str {
-                "X" | "Y" | "Z" | "L" => {} // Valid keys
-                _ => panic!(
-                    "SingleQubitWeightedSampler: invalid key '{key_str}' - must be one of \"X\", \"Y\", \"Z\", or \"L\""
-                ),
-            }
+            assert!(
+                VALID_KEYS.contains(&key.as_str()),
+                "SingleQubitWeightedSampler: invalid key '{key}' - must be one of X, Y, Z, or L"
+            );
         }
     }
 
@@ -207,26 +207,27 @@ impl SingleQubitWeightedSampler {
     pub fn sample_gates(&self, rng: &mut NoiseRng, qubit: usize) -> SingleQubitNoiseResult {
         let key = self.sample_keys(rng);
 
-        match key.as_str() {
-            "X" => SingleQubitNoiseResult {
-                gate: Some(QuantumGate::x(qubit)),
-                qubit_leaked: false,
-            },
-            "Y" => SingleQubitNoiseResult {
-                gate: Some(QuantumGate::y(qubit)),
-                qubit_leaked: false,
-            },
-            "Z" => SingleQubitNoiseResult {
-                gate: Some(QuantumGate::z(qubit)),
-                qubit_leaked: false,
-            },
-            "L" => SingleQubitNoiseResult {
+        // Check for leakage first
+        if key == "L" {
+            return SingleQubitNoiseResult {
                 gate: None,
                 qubit_leaked: true,
-            },
+            };
+        }
+
+        // For Pauli gates, create appropriate gate
+        let gate = match key.as_str() {
+            "X" => QuantumGate::x(qubit),
+            "Y" => QuantumGate::y(qubit),
+            "Z" => QuantumGate::z(qubit),
             _ => panic!(
                 "SingleQubitWeightedSampler: invalid key '{key}' - must be one of \"X\", \"Y\", \"Z\", or \"L\""
             ),
+        };
+
+        SingleQubitNoiseResult {
+            gate: Some(gate),
+            qubit_leaked: false,
         }
     }
 }
@@ -259,30 +260,28 @@ impl TwoQubitWeightedSampler {
     }
 
     fn validate_two_qubit_keys(weighted_map: &BTreeMap<String, f64>) {
-        for key in weighted_map.keys() {
-            let key_str: &str = key.as_ref();
+        const VALID_CHARS: [char; 5] = ['X', 'Y', 'Z', 'I', 'L'];
 
-            // Key should be exactly 2 characters long
+        for key in weighted_map.keys() {
+            // Key must be exactly 2 characters long
             assert_eq!(
-                key_str.len(),
+                key.len(),
                 2,
-                "TwoQubitWeightedSampler: invalid key '{key_str}' - must be exactly 2 characters"
+                "TwoQubitWeightedSampler: invalid key '{key}' - must be exactly 2 characters"
             );
 
-            // Each character should be one of the valid operators
-            let chars: Vec<char> = key_str.chars().collect();
-            for &c in &chars {
-                match c {
-                    'X' | 'Y' | 'Z' | 'I' | 'L' => {} // Valid characters
-                    _ => panic!(
-                        "TwoQubitWeightedSampler: invalid character '{c}' in key '{key_str}' - each character must be one of \"X\", \"Y\", \"Z\", \"I\", or \"L\""
-                    ),
-                }
+            // Check each character is valid
+            for c in key.chars() {
+                assert!(
+                    VALID_CHARS.contains(&c),
+                    "TwoQubitWeightedSampler: invalid character '{c}' in key '{key}' - must be one of X, Y, Z, I, or L"
+                );
             }
 
-            // Special case: "II" is not allowed (it would represent no operation)
+            // Special case: "II" is not allowed
             assert_ne!(
-                key_str, "II",
+                key.as_str(),
+                "II",
                 "TwoQubitWeightedSampler: key 'II' is not allowed as it represents no operation"
             );
         }
@@ -311,41 +310,40 @@ impl TwoQubitWeightedSampler {
         qubit0: usize,
         qubit1: usize,
     ) -> TwoQubitNoiseResult {
+        // Sample a key and extract the characters
         let key_str = self.sample_keys(rng);
-
-        // Extract the two characters from the key
         let chars: Vec<char> = key_str.chars().collect();
-        let op0 = chars[0];
-        let op1 = chars[1];
 
-        // Check for leakage
-        let qubit0_leaked = op0 == 'L';
-        let qubit1_leaked = op1 == 'L';
+        // Determine leakage status
+        let qubit0_leaked = chars[0] == 'L';
+        let qubit1_leaked = chars[1] == 'L';
 
-        // If both qubits leaked, return early
+        // If both qubits leaked, no gates needed
         if qubit0_leaked && qubit1_leaked {
             return TwoQubitNoiseResult::with_leakage(true, true, None);
         }
 
-        // Build gates based on the operations
+        // Build gates for non-leaked qubits only
         let mut gates = Vec::new();
 
-        // Add gates for non-leaked qubits with non-identity operations
+        // Convert the first operation if not leaked
         if !qubit0_leaked {
-            if let Some(gate) = create_pauli_gate(op0, qubit0) {
+            if let Some(gate) = create_pauli_gate(chars[0], qubit0) {
                 gates.push(gate);
             }
         }
 
+        // Convert the second operation if not leaked
         if !qubit1_leaked {
-            if let Some(gate) = create_pauli_gate(op1, qubit1) {
+            if let Some(gate) = create_pauli_gate(chars[1], qubit1) {
                 gates.push(gate);
             }
         }
 
-        let gates = if gates.is_empty() { None } else { Some(gates) };
+        // Only return gates if we have some
+        let gates_option = if gates.is_empty() { None } else { Some(gates) };
 
-        TwoQubitNoiseResult::with_leakage(qubit0_leaked, qubit1_leaked, gates)
+        TwoQubitNoiseResult::with_leakage(qubit0_leaked, qubit1_leaked, gates_option)
     }
 }
 

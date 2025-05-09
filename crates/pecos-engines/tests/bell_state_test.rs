@@ -1,3 +1,4 @@
+use pecos_core::rng::RngManageable;
 use pecos_engines::engines::MonteCarloEngine;
 use pecos_engines::engines::classical::setup_engine;
 use std::collections::HashMap;
@@ -12,9 +13,15 @@ fn test_bell_state_noiseless() {
 
     // Run the Bell state example with 100 shots and 2 workers
     let classical_engine = setup_engine(&bell_file, None).unwrap();
-    let results = MonteCarloEngine::run_with_classical_engine(
+
+    // Create a noiseless model
+    let noise_model =
+        Box::new(pecos_engines::engines::noise::DepolarizingNoiseModel::new_uniform(0.0));
+
+    // Use the generic approach
+    let results = MonteCarloEngine::run_with_noise_model(
         classical_engine,
-        0.0, // No noise
+        noise_model,
         100,
         2,
         None, // No specific seed
@@ -57,9 +64,18 @@ fn test_bell_state_with_noise() {
 
         // Run the Bell state example with high noise probability for more reliable testing
         let classical_engine = setup_engine(&bell_file, None).unwrap();
-        let results = MonteCarloEngine::run_with_classical_engine(
+
+        // Create a noise model with 30% depolarizing noise
+        let mut noise_model =
+            pecos_engines::engines::noise::DepolarizingNoiseModel::new_uniform(0.3);
+
+        // Set the seed
+        noise_model.set_seed(seed).unwrap();
+
+        // Use the generic approach
+        let results = MonteCarloEngine::run_with_noise_model(
             classical_engine,
-            0.3, // 30% noise - higher to ensure we get some noise effects
+            Box::new(noise_model),
             100, // 100 shots is enough for this simple test
             2,
             Some(seed), // Use the current iteration as seed

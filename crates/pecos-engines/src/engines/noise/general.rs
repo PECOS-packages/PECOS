@@ -75,7 +75,7 @@
 #![allow(clippy::too_many_lines)]
 
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 
 use crate::byte_message::{ByteMessage, ByteMessageBuilder, QuantumGate, gate_type::GateType};
@@ -1537,14 +1537,14 @@ impl GeneralNoiseModelBuilder {
 
     /// Set the Pauli error model for single-qubit gates
     #[must_use]
-    pub fn with_p1_pauli_model(mut self, model: &HashMap<String, f64>) -> Self {
+    pub fn with_p1_pauli_model(mut self, model: &BTreeMap<String, f64>) -> Self {
         self.p1_pauli_model = Some(SingleQubitWeightedSampler::new(model));
         self
     }
 
     /// Set the emission error model for single-qubit gates
     #[must_use]
-    pub fn with_p1_emission_model(mut self, model: &HashMap<String, f64>) -> Self {
+    pub fn with_p1_emission_model(mut self, model: &BTreeMap<String, f64>) -> Self {
         self.p1_emission_model = Some(SingleQubitWeightedSampler::new(model));
         self
     }
@@ -1753,14 +1753,14 @@ impl GeneralNoiseModelBuilder {
 
     /// Set the probability model for two-qubit Pauli errors
     #[must_use]
-    pub fn with_p2_pauli_model(mut self, model: &HashMap<String, f64>) -> Self {
+    pub fn with_p2_pauli_model(mut self, model: &BTreeMap<String, f64>) -> Self {
         self.p2_pauli_model = Some(TwoQubitWeightedSampler::new(model));
         self
     }
 
     /// Set the probability model for two-qubit emission errors
     #[must_use]
-    pub fn with_p2_emission_model(mut self, model: &HashMap<String, f64>) -> Self {
+    pub fn with_p2_emission_model(mut self, model: &BTreeMap<String, f64>) -> Self {
         self.p2_emission_model = Some(TwoQubitWeightedSampler::new(model));
         self
     }
@@ -2076,17 +2076,17 @@ impl Default for GeneralNoiseModel {
     /// ```
     fn default() -> Self {
         // Initialize default models
-        let mut p1_pauli_model = HashMap::new();
+        let mut p1_pauli_model = BTreeMap::new();
         p1_pauli_model.insert("X".to_string(), 1.0 / 3.0);
         p1_pauli_model.insert("Y".to_string(), 1.0 / 3.0);
         p1_pauli_model.insert("Z".to_string(), 1.0 / 3.0);
 
-        let mut p1_emission_model = HashMap::new();
+        let mut p1_emission_model = BTreeMap::new();
         p1_emission_model.insert("X".to_string(), 1.0 / 3.0);
         p1_emission_model.insert("Y".to_string(), 1.0 / 3.0);
         p1_emission_model.insert("Z".to_string(), 1.0 / 3.0);
 
-        let mut p2_pauli_model = HashMap::new();
+        let mut p2_pauli_model = BTreeMap::new();
         p2_pauli_model.insert("XX".to_string(), 1.0 / 15.0);
         p2_pauli_model.insert("XY".to_string(), 1.0 / 15.0);
         p2_pauli_model.insert("XZ".to_string(), 1.0 / 15.0);
@@ -2103,7 +2103,7 @@ impl Default for GeneralNoiseModel {
         p2_pauli_model.insert("YI".to_string(), 1.0 / 15.0);
         p2_pauli_model.insert("ZI".to_string(), 1.0 / 15.0);
 
-        let mut p2_emission_model = HashMap::new();
+        let mut p2_emission_model = BTreeMap::new();
         p2_emission_model.insert("XX".to_string(), 1.0 / 15.0);
         p2_emission_model.insert("XY".to_string(), 1.0 / 15.0);
         p2_emission_model.insert("XZ".to_string(), 1.0 / 15.0);
@@ -2933,26 +2933,26 @@ mod tests {
 
     #[test]
     fn test_pauli_and_emission_model_setters() {
-        use std::collections::HashMap;
+        use std::collections::BTreeMap;
         // Define epsilon for approximate float comparisons
         const EPSILON: f64 = 0.005; // Increased tolerance for sampler discretization
 
         // Create all our custom models first
-        let mut custom_p1_pauli = HashMap::new();
+        let mut custom_p1_pauli = BTreeMap::new();
         custom_p1_pauli.insert("X".to_string(), 0.7);
         custom_p1_pauli.insert("Y".to_string(), 0.2);
         custom_p1_pauli.insert("Z".to_string(), 0.1);
 
-        let mut custom_p1_emission = HashMap::new();
+        let mut custom_p1_emission = BTreeMap::new();
         custom_p1_emission.insert("X".to_string(), 0.4);
         custom_p1_emission.insert("Y".to_string(), 0.6);
 
-        let mut custom_p2_pauli = HashMap::new();
+        let mut custom_p2_pauli = BTreeMap::new();
         custom_p2_pauli.insert("XX".to_string(), 0.5);
         custom_p2_pauli.insert("YY".to_string(), 0.3);
         custom_p2_pauli.insert("ZZ".to_string(), 0.2);
 
-        let mut custom_p2_emission = HashMap::new();
+        let mut custom_p2_emission = BTreeMap::new();
         custom_p2_emission.insert("XX".to_string(), 0.25);
         custom_p2_emission.insert("YY".to_string(), 0.75);
 

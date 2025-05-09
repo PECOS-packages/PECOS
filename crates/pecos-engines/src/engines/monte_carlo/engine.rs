@@ -18,6 +18,7 @@ use crate::engines::quantum::{QuantumEngine, StateVecEngine};
 use crate::engines::{ClassicalEngine, ControlEngine, Engine, EngineStage, HybridEngine};
 use crate::errors::QueueError;
 use log::{debug, info};
+use pecos_core::rng::RngManageable;
 use pecos_core::rng::rng_manageable::derive_seed;
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -392,14 +393,15 @@ impl MonteCarloEngine {
         engine.run(num_shots, num_workers)
     }
 
-    /// Static method to run a simulation with a classical engine and depolarizing noise.
+    /// Static method to run a simulation with a classical engine and any noise model.
     ///
-    /// This is a convenience method that sets up a `MonteCarloEngine` with a state vector
-    /// quantum engine and a depolarizing noise model with the specified probability.
+    /// This is a generic method that sets up a `MonteCarloEngine` with a state vector
+    /// quantum engine and any provided noise model. This is a more flexible approach
+    /// than the specialized methods for specific noise models.
     ///
     /// # Parameters
     /// - `classical_engine`: The classical engine to use.
-    /// - `p`: The probability parameter for the depolarizing noise model.
+    /// - `noise_model`: The noise model to apply during simulation.
     /// - `num_shots`: The total number of circuit executions to perform.
     /// - `num_workers`: The number of worker threads to use for parallel execution.
     /// - `seed`: Optional seed for deterministic behavior.
@@ -409,30 +411,13 @@ impl MonteCarloEngine {
     ///
     /// # Errors
     /// Returns a `QueueError` if any part of the simulation fails.
-    pub fn run_with_classical_engine(
+    pub fn run_with_noise_model(
         classical_engine: Box<dyn ClassicalEngine>,
-        p: f64,
+        noise_model: Box<dyn NoiseModel>,
         num_shots: usize,
         num_workers: usize,
         seed: Option<u64>,
     ) -> Result<ShotResults, QueueError> {
-        use crate::engines::noise::depolarizing::DepolarizingNoiseModelBuilder;
-
-        // Create a noise model with the specified probability
-        let noise_model = if let Some(s) = seed {
-            // If a seed is provided, create a noise model with the seed
-            let noise_seed = derive_seed(s, "noise_model");
-            DepolarizingNoiseModelBuilder::new()
-                .with_uniform_probability(p)
-                .with_seed(noise_seed)
-                .build()
-        } else {
-            // Otherwise, create a noise model without a specific seed
-            Box::new(crate::engines::noise::DepolarizingNoiseModel::new_uniform(
-                p,
-            ))
-        };
-
         // Create a quantum engine with the same number of qubits as the classical engine
         let num_qubits = classical_engine.num_qubits();
         let quantum_engine = Box::new(StateVecEngine::new(num_qubits));
@@ -481,7 +466,23 @@ impl MonteCarloEngine {
         })?;
 
         let classical_engine = Box::new(ExternalClassicalEngine::new());
-        Self::run_with_classical_engine(classical_engine, p, num_shots, num_workers, seed)
+
+        // Create a depolarizing noise model with the parsed probability
+        let mut noise_model = crate::engines::noise::DepolarizingNoiseModel::new_uniform(p);
+
+        // If a seed is provided, set it on the noise model
+        if let Some(s) = seed {
+            let noise_seed = pecos_core::rng::rng_manageable::derive_seed(s, "noise_model");
+            noise_model.set_seed(noise_seed)?;
+        }
+
+        Self::run_with_noise_model(
+            classical_engine,
+            Box::new(noise_model),
+            num_shots,
+            num_workers,
+            seed,
+        )
     }
 }
 

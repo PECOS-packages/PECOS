@@ -8,16 +8,168 @@ use std::process::Command;
 /// This script automatically builds the QIR runtime library that is used by the QIR compiler.
 /// The library is built only when necessary (when source files have changed).
 fn main() {
-    // Tell Cargo to rerun this script if any of these files change
+    // Use a more surgical approach to rebuild triggers
+    // Only track the specific files and environment variables we care about
+
+    // Only track build.rs itself - this is the most critical
+    println!("cargo:rerun-if-changed=build.rs");
+
+    // Track QIR source files
     for file in QIR_SOURCE_FILES {
         println!("cargo:rerun-if-changed={file}");
     }
 
-    // Build the QIR runtime library
-    if let Err(e) = build_qir_runtime() {
-        eprintln!("Warning: Failed to build QIR runtime library: {e}");
-        eprintln!("QIR compilation will be slower as it will build the runtime on-demand.");
+    // Track only pecos-core/Cargo.toml for major version changes
+    println!("cargo:rerun-if-changed=../pecos-core/Cargo.toml");
+
+    // Only track environment variables specifically for LLVM paths
+    // Intentionally NOT tracking PATH as it changes too often
+    println!("cargo:rerun-if-env-changed=PECOS_LLVM_PATH");
+    println!("cargo:rerun-if-env-changed=LLVM_HOME");
+
+    // Check for LLVM dependencies first
+    match check_llvm_dependencies() {
+        Ok(version) => {
+            println!("Found LLVM version {version}");
+            // Build the QIR runtime library
+            if let Err(e) = build_qir_runtime() {
+                eprintln!("Warning: Failed to build QIR runtime library: {e}");
+                eprintln!("QIR compilation will be slower as it will build the runtime on-demand.");
+            }
+        }
+        Err(e) => {
+            println!("cargo:warning=LLVM dependency check failed: {e}");
+            eprintln!("Warning: {e}");
+            eprintln!(
+                "QIR functionality will be unavailable. Install LLVM version 14 (specifically 'llc' tool) to enable QIR support."
+            );
+            eprintln!("QIR tests will be skipped, but other tests will continue to run.");
+        }
     }
+}
+
+/// Check for required LLVM dependencies
+/// Returns the LLVM version if found and meets requirements
+fn check_llvm_dependencies() -> Result<String, String> {
+    // Use a simple caching mechanism to avoid checking repeatedly
+    const CACHE_FILE: &str = "target/qir_runtime_build/llvm_version_cache.txt";
+
+    // First, try to read from the cache
+    if let Ok(cached_version) = fs::read_to_string(CACHE_FILE) {
+        let cached_version = cached_version.trim();
+
+        // Only return the cached version if it's valid (version 14.x)
+        if cached_version.starts_with("14.") || cached_version == "14" {
+            println!("Using cached LLVM version: {cached_version}");
+            return Ok(cached_version.to_string());
+        }
+    }
+
+    // If no cache or invalid version, check normally
+    let tool_path = find_tool_in_path()?;
+    let version = check_llvm_version(&tool_path)?;
+
+    // Cache the result for next time
+    if let Some(parent) = std::path::Path::new(CACHE_FILE).parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(CACHE_FILE, &version);
+
+    Ok(version)
+}
+
+/// Find LLVM tool in the system path
+fn find_tool_in_path() -> Result<PathBuf, String> {
+    // Set the tool name based on platform
+    #[cfg(not(target_os = "windows"))]
+    let tool_name = "llc";
+    #[cfg(target_os = "windows")]
+    let tool_name = "clang";
+
+    // Create executable name with extension if needed
+    let executable_name = if cfg!(windows) {
+        format!("{tool_name}.exe")
+    } else {
+        tool_name.to_string()
+    };
+
+    // Define standard search locations
+    let env_vars = ["PECOS_LLVM_PATH", "LLVM_HOME"];
+
+    // Try environment variables first
+    for env_var in &env_vars {
+        if let Ok(llvm_path) = env::var(env_var) {
+            let tool_path = PathBuf::from(llvm_path).join("bin").join(&executable_name);
+            if tool_path.exists() {
+                return Ok(tool_path);
+            }
+        }
+    }
+
+    // Try to find in PATH directly
+    if let Ok(path_var) = env::var("PATH") {
+        let separator = if cfg!(windows) { ';' } else { ':' };
+        for path_entry in path_var.split(separator) {
+            let full_path = Path::new(path_entry).join(&executable_name);
+            if full_path.exists() {
+                return Ok(full_path);
+            }
+        }
+    }
+
+    // If we get here, the tool wasn't found
+    Err(format!(
+        "Required LLVM tool '{tool_name}' not found. Please install LLVM version 14 to enable QIR functionality."
+    ))
+}
+
+/// Check LLVM version and verify it meets specific version requirements (LLVM 14.x only)
+fn check_llvm_version(tool_path: &Path) -> Result<String, String> {
+    // Get the version output
+    let output = Command::new(tool_path)
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("Failed to check LLVM version: {e}"))?;
+
+    if !output.status.success() {
+        return Err("Failed to get LLVM version. Tool returned non-zero status.".to_string());
+    }
+
+    let version_output = String::from_utf8_lossy(&output.stdout);
+    let first_line = version_output
+        .lines()
+        .next()
+        .ok_or_else(|| "Empty LLVM version output".to_string())?;
+
+    // Extract version number - first look for X.Y.Z format
+    let version = first_line
+        .split_whitespace()
+        .find(|&part| part.contains('.') && part.chars().any(|c| c.is_ascii_digit()))
+        // If no X.Y.Z format found, look for just numbers
+        .or_else(|| {
+            first_line
+                .split_whitespace()
+                .find(|&part| part.chars().all(|c| c.is_ascii_digit()))
+        })
+        .ok_or_else(|| format!("Could not parse version from: {first_line}"))?;
+
+    // Extract major version and check requirements
+    let major_version = version
+        .split('.')
+        .next()
+        .ok_or_else(|| format!("Malformed LLVM version: {version}"))?;
+
+    let major = major_version
+        .parse::<u32>()
+        .map_err(|_| format!("Failed to parse LLVM major version: {major_version}"))?;
+
+    if major != 14 {
+        return Err(format!(
+            "LLVM version {version} is not compatible. PECOS requires LLVM version 14.x specifically for QIR functionality."
+        ));
+    }
+
+    Ok(version.to_string())
 }
 
 // Source files that trigger rebuilds when changed
@@ -275,13 +427,55 @@ fn run_cargo_build(build_dir: &Path) -> Result<bool, String> {
 fn needs_rebuild(manifest_dir: &Path, lib_path: &Path) -> bool {
     // If the library doesn't exist, we need to build it
     if !lib_path.exists() {
+        println!(
+            "QIR runtime library not found at {}, rebuilding",
+            lib_path.display()
+        );
+        return true;
+    }
+
+    // Check library size - if it's suspiciously small, rebuild
+    if let Ok(metadata) = fs::metadata(lib_path) {
+        if metadata.len() < 1000 {
+            // Arbitrary small size check
+            println!(
+                "QIR runtime library at {} appears to be too small ({}b), rebuilding",
+                lib_path.display(),
+                metadata.len()
+            );
+            return true;
+        }
+    } else {
+        println!("Could not read metadata for QIR runtime library, rebuilding");
         return true;
     }
 
     // Get the modification time of the library
     let Ok(lib_modified) = fs::metadata(lib_path).and_then(|m| m.modified()) else {
-        return true; // If we can't get the modification time, rebuild to be safe
+        println!("Could not determine modification time of QIR runtime library, rebuilding");
+        return true;
     };
+
+    // Only check if build.rs has changed - the most critical file
+    if let Ok(metadata) = fs::metadata(manifest_dir.join("build.rs")) {
+        if let Ok(modified) = metadata.modified() {
+            if modified > lib_modified {
+                println!("build.rs is newer than library, rebuilding");
+                return true;
+            }
+        }
+    }
+
+    // Check pecos-core version but only Cargo.toml
+    let core_cargo_path = manifest_dir.parent().unwrap().join("pecos-core/Cargo.toml");
+    if let Ok(metadata) = fs::metadata(&core_cargo_path) {
+        if let Ok(modified) = metadata.modified() {
+            if modified > lib_modified {
+                println!("pecos-core Cargo.toml is newer than library, rebuilding");
+                return true;
+            }
+        }
+    }
 
     // Check if any source files are newer than the library
     for file in QIR_SOURCE_FILES {
@@ -293,6 +487,10 @@ fn needs_rebuild(manifest_dir: &Path, lib_path: &Path) -> bool {
                     return true;
                 }
             }
+        } else {
+            // If a source file is missing, that's a problem and we should rebuild
+            println!("Source file {file_path:?} not found, rebuilding");
+            return true;
         }
     }
 

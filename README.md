@@ -22,6 +22,7 @@ calls to Wasm VMs, conditional branching, and more.
 - Fast Simulation: Leverages a fast stabilizer simulation algorithm.
 - Multi-language extensions: Core functionalities implemented via Rust for performance and safety. Additional add-ons
 and extension support in C/C++ via Cython.
+- QIR Support: Execute Quantum Intermediate Representation programs (requires LLVM version 14 with the 'llc' tool).
 
 ## Getting Started
 
@@ -96,6 +97,17 @@ To use PECOS in your Rust project, add the following to your `Cargo.toml`:
 [dependencies]
 pecos = "0.x.x"  # Replace with the latest version
 ```
+
+#### Optional Dependencies
+
+- **LLVM version 14**: Required for QIR (Quantum Intermediate Representation) support
+  - Linux: `sudo apt install llvm-14`
+  - macOS: `brew install llvm@14`
+  - Windows: Download LLVM 14.x installer from [LLVM releases](https://releases.llvm.org/download.html#14.0.0)
+
+  **Note**: Only LLVM version 14.x is compatible. LLVM 15 or later versions will not work with PECOS's QIR implementation.
+
+  If LLVM 14 is not installed, PECOS will still function normally but QIR-related features will be disabled.
 
 ## Development Setup
 

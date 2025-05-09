@@ -388,6 +388,71 @@ impl QirCompiler {
         None
     }
 
+    /// Check LLVM version and verify it meets specific version requirements (LLVM 14.x only)
+    fn check_llvm_version(tool_path: &Path) -> Result<String, String> {
+        // Get the version output
+        let output = Command::new(tool_path)
+            .arg("--version")
+            .output()
+            .map_err(|e| format!("Failed to check LLVM version: {e}"))?;
+
+        if !output.status.success() {
+            return Err("Failed to get LLVM version. Tool returned non-zero status.".to_string());
+        }
+
+        let version_output = String::from_utf8_lossy(&output.stdout);
+
+        // Parse the version from output
+        let version = if let Some(version_str) = version_output.lines().next() {
+            // Different LLVM tools might have different version output formats
+            // Try to handle both "LLVM version X.Y.Z" and "clang version X.Y.Z" formats
+
+            // Split by whitespace and look for version number pattern
+            let parts: Vec<&str> = version_str.split_whitespace().collect();
+            let mut version_part = None;
+
+            // Try to find something that looks like a version (contains dots and digits)
+            for &part in &parts {
+                if part.contains('.') && part.chars().any(|c| c.is_ascii_digit()) {
+                    version_part = Some(part);
+                    break;
+                }
+            }
+
+            // If we didn't find anything with dots, look for just digits
+            if version_part.is_none() {
+                for &part in &parts {
+                    if part.chars().all(|c| c.is_ascii_digit()) {
+                        version_part = Some(part);
+                        break;
+                    }
+                }
+            }
+
+            version_part.ok_or_else(|| format!("Could not parse version from: {version_str}"))?
+        } else {
+            return Err("Empty LLVM version output".to_string());
+        };
+
+        // Extract major version and check requirements
+        let major_version = version
+            .split('.')
+            .next()
+            .ok_or_else(|| format!("Malformed LLVM version: {version}"))?;
+
+        let major = major_version
+            .parse::<u32>()
+            .map_err(|_| format!("Failed to parse LLVM major version: {major_version}"))?;
+
+        if major != 14 {
+            return Err(format!(
+                "LLVM version {version} is not compatible. PECOS requires LLVM version 14.x specifically for QIR functionality."
+            ));
+        }
+
+        Ok(version.to_string())
+    }
+
     /// Compile QIR file to object file using LLVM tools
     ///
     /// On Windows, this uses clang directly with the dllexport attribute added to the main function.
@@ -411,11 +476,21 @@ impl QirCompiler {
             let clang = Self::find_llvm_tool("clang").ok_or_else(|| {
                 Self::log_error(
                     QirError::CompilationFailed(
-                        "clang not found in system. Please install LLVM tools.".to_string(),
+                        "clang not found in system. LLVM version 14 is required for QIR functionality. \
+                        Please install LLVM version 14 and ensure 'clang' is in your PATH.".to_string(),
                     ),
                     thread_id,
                 )
             })?;
+
+            // Verify LLVM version
+            let version_result = Self::check_llvm_version(&clang);
+            if let Err(version_err) = version_result {
+                return Err(Self::log_error(
+                    QirError::CompilationFailed(version_err),
+                    thread_id,
+                ));
+            }
 
             debug!(
                 "QIR Compiler: [Thread {}] Using clang at {:?} on Windows",
@@ -435,10 +510,23 @@ impl QirCompiler {
         {
             let llc_path = Self::find_llvm_tool("llc").ok_or_else(|| {
                 Self::log_error(
-                    QirError::CompilationFailed("Could not find llc tool".to_string()),
+                    QirError::CompilationFailed(
+                        "Could not find 'llc' tool. LLVM version 14 is required for QIR functionality. \
+                        Please install LLVM version 14 using your package manager (e.g. 'sudo apt install llvm-14' on Ubuntu, \
+                        'brew install llvm@14' on macOS). After installation, ensure 'llc' is in your PATH.".to_string()
+                    ),
                     thread_id,
                 )
             })?;
+
+            // Verify LLVM version
+            let version_result = Self::check_llvm_version(&llc_path);
+            if let Err(version_err) = version_result {
+                return Err(Self::log_error(
+                    QirError::CompilationFailed(version_err),
+                    thread_id,
+                ));
+            }
 
             let result = Command::new(llc_path)
                 .args(["-filetype=obj", "-o"])

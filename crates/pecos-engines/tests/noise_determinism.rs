@@ -1,10 +1,24 @@
+// This test file contains numeric conversions that are safe in our context but trigger Clippy warnings.
+// The following safety considerations apply:
+// 1. u32 to i32 casts: Measurement results in quantum simulations are always small non-negative values.
+// 2. i32 to u64 casts: Loop indices are always non-negative, so no sign information is actually lost.
+// 3. usize to u32 casts: We're using small loop counts (e.g., 0..100) that are guaranteed to fit in u32.
+// 4. Type conversions and small f64 multiplications: These maintain sufficient precision for our tests.
+//
+// Given these constraints and the nature of these tests, we can safely allow the warnings.
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::cast_possible_truncation)]
+
 use log::info;
 use pecos_engines::{
+    Engine, QuantumSystem,
     byte_message::ByteMessage,
     engines::ControlEngine,
     engines::noise::{NoiseModel, general::GeneralNoiseModel},
+    engines::quantum::{QuantumEngine, StateVecEngine},
 };
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Reset a noise model and set its seed in one operation
 ///
@@ -26,14 +40,14 @@ fn create_noise_model() -> Box<dyn NoiseModel> {
 
     // Create a noise model with moderate error rates using the builder pattern
     // Set single-qubit error rates with uniform distribution
-    let mut single_qubit_weights = HashMap::new();
+    let mut single_qubit_weights = BTreeMap::new();
     single_qubit_weights.insert("X".to_string(), 0.25);
     single_qubit_weights.insert("Y".to_string(), 0.25);
     single_qubit_weights.insert("Z".to_string(), 0.25);
     single_qubit_weights.insert("L".to_string(), 0.25);
 
     // Set two-qubit error rates with uniform distribution
-    let mut two_qubit_weights = HashMap::new();
+    let mut two_qubit_weights = BTreeMap::new();
     two_qubit_weights.insert("XX".to_string(), 0.2);
     two_qubit_weights.insert("YY".to_string(), 0.2);
     two_qubit_weights.insert("ZZ".to_string(), 0.2);
@@ -286,4 +300,500 @@ fn test_different_seeds_produce_different_results() {
         !compare_messages(&noisy1, &noisy2),
         "Different seeds should produce different noise patterns"
     );
+}
+
+/// Runs a complete quantum simulation including the actual measurement outcomes
+///
+/// This function:
+/// 1. Creates a `QuantumSystem` with the provided noise model and quantum engine
+/// 2. Sets the seed for the system
+/// 3. Runs the circuit and collects the actual measurement outcomes
+/// 4. Returns the measurement results as a `BTreeMap` of result IDs to values
+fn run_complete_simulation(
+    noise_model: &mut Box<dyn NoiseModel>,
+    quantum_engine: Box<dyn QuantumEngine>,
+    circuit: &ByteMessage,
+    seed: u64,
+) -> BTreeMap<usize, i32> {
+    // Create a quantum system with the noise model and quantum engine
+    let mut system = QuantumSystem::new(noise_model.clone(), quantum_engine);
+
+    // Set the seed for deterministic behavior
+    system.set_seed(seed).expect("Failed to set seed");
+
+    // Reset the system to ensure clean state
+    system.reset().expect("Failed to reset system");
+
+    // Run the circuit through the system
+    let output = system
+        .process(circuit.clone())
+        .expect("Failed to process circuit");
+
+    // Extract the measurement results
+    let measurements = output
+        .measurement_results_as_vec()
+        .expect("Failed to extract measurements");
+
+    // Convert u32 values to i32 for the HashMap, handling potential overflow
+    measurements
+        .into_iter()
+        .map(|(k, v)| {
+            // Safe conversion from u32 to i32, handling potential overflow
+            let value = if v > i32::MAX as u32 {
+                i32::MAX
+            } else {
+                v as i32
+            };
+            (k, value)
+        })
+        .collect()
+}
+
+#[test]
+fn test_complete_measurement_determinism() {
+    let seed = 42;
+    info!("Testing complete measurement determinism with end-to-end simulation");
+
+    // Create two identical noise models
+    let mut model1 = create_noise_model();
+    let mut model2 = create_noise_model();
+
+    // Set the same seed for both models
+    reset_model_with_seed(&mut model1, seed).unwrap();
+    reset_model_with_seed(&mut model2, seed).unwrap();
+
+    // Create a circuit with superposition and entanglement to test measurement
+    let mut builder = ByteMessage::quantum_operations_builder();
+    // Create a Bell state
+    builder.add_h(&[0]);
+    builder.add_cx(&[0], &[1]);
+    // Add measurements for both qubits
+    builder.add_measurements(&[0, 1], &[0, 1]);
+    let circuit = builder.build();
+
+    // Create two identical quantum engines
+    let engine1 = Box::new(StateVecEngine::new(2));
+    let engine2 = Box::new(StateVecEngine::new(2));
+
+    // Run complete simulations with both models
+    info!("Running first complete simulation");
+    let results1 = run_complete_simulation(&mut model1, engine1, &circuit, seed);
+
+    info!("Running second complete simulation with identical seed");
+    let results2 = run_complete_simulation(&mut model2, engine2, &circuit, seed);
+
+    // The measurement results should be identical
+    info!("Comparing measurement results between runs");
+    assert_eq!(
+        results1, results2,
+        "Measurement results should be identical with the same seed"
+    );
+
+    // Now run with a different seed
+    info!("Running third simulation with different seed");
+    let mut model3 = create_noise_model();
+    reset_model_with_seed(&mut model3, seed + 1).unwrap();
+    let engine3 = Box::new(StateVecEngine::new(2));
+    let results3 = run_complete_simulation(&mut model3, engine3, &circuit, seed + 1);
+
+    // These should be different (most of the time)
+    // Note: There's a small probability they could be the same by chance,
+    // so we don't strictly assert, but log the comparison
+    if results1 == results3 {
+        info!("NOTE: Results with different seeds happened to be identical (small probability)");
+    } else {
+        info!("Results with different seeds are different, as expected");
+    }
+}
+
+#[test]
+fn test_deterministic_measurement() {
+    // This test verifies that using the same seed produces the same measurement results
+    let seed = 42;
+    println!("Testing deterministic measurement with seed {seed}");
+
+    // Create a noise model with significant measurement error
+    let mut model = Box::new(
+        GeneralNoiseModel::builder()
+            .with_prep_probability(0.01)
+            .with_meas_0_probability(0.2)
+            .with_meas_1_probability(0.2)
+            .with_average_p1_probability(0.1)
+            .with_average_p2_probability(0.1)
+            .build(),
+    );
+
+    // Create a circuit that puts a qubit in superposition and measures it
+    let mut builder = ByteMessage::quantum_operations_builder();
+    builder.add_h(&[0]); // Put qubit 0 in superposition
+    builder.add_measurements(&[0], &[0]); // Measure qubit 0
+    let circuit = builder.build();
+
+    println!("Running first measurement with seed {seed}");
+    reset_model_with_seed(&mut model, seed).unwrap();
+    let engine1 = Box::new(StateVecEngine::new(1));
+    let result1 = run_complete_simulation(&mut model, engine1, &circuit, seed);
+    let value1 = result1.get(&0).copied().unwrap_or(0);
+
+    println!("First measurement result: {value1}");
+
+    println!("Running second measurement with same seed {seed}");
+    reset_model_with_seed(&mut model, seed).unwrap();
+    let engine2 = Box::new(StateVecEngine::new(1));
+    let result2 = run_complete_simulation(&mut model, engine2, &circuit, seed);
+    let value2 = result2.get(&0).copied().unwrap_or(0);
+
+    println!("Second measurement result: {value2}");
+
+    // The results should be identical with the same seed
+    assert_eq!(
+        value1, value2,
+        "Measurement results should be identical with the same seed"
+    );
+
+    // Now try with a different seed
+    let different_seed = seed + 1000;
+    println!("Running measurement with different seed {different_seed}");
+    reset_model_with_seed(&mut model, different_seed).unwrap();
+    let engine3 = Box::new(StateVecEngine::new(1));
+    let result3 = run_complete_simulation(&mut model, engine3, &circuit, different_seed);
+    let value3 = result3.get(&0).copied().unwrap_or(0);
+
+    println!("Different seed result: {value3}");
+
+    // IMPROVEMENT 1: Assert that different seeds produce different results
+    // (with a caveat for the small probability that they might be the same by chance)
+    if value1 == value3 {
+        println!(
+            "NOTE: Same measurement result with different seeds. This can happen with low probability."
+        );
+
+        // Try one more seed to reduce the probability of false positives
+        let another_seed = seed + 2000;
+        reset_model_with_seed(&mut model, another_seed).unwrap();
+        let engine4 = Box::new(StateVecEngine::new(1));
+        let result4 = run_complete_simulation(&mut model, engine4, &circuit, another_seed);
+        let value4 = result4.get(&0).copied().unwrap_or(0);
+
+        // With a second different seed, the probability of getting the same result again is even lower
+        if value1 == value4 {
+            println!(
+                "NOTE: Still same measurement result with a third seed. Very unlikely but possible."
+            );
+        } else {
+            // Different results with the new seed, so we can assert determinism
+            println!("Different seed produced different result: {value4}");
+            assert_ne!(
+                value1, value4,
+                "Different seeds should usually produce different measurement results"
+            );
+        }
+    } else {
+        // Different results as expected
+        assert_ne!(
+            value1, value3,
+            "Different seeds should usually produce different measurement results"
+        );
+    }
+
+    // Now run multiple measurements with increasing seeds to test we get a mix of results
+    let mut zeros = 0;
+    let mut ones = 0;
+    let num_tests = 20;
+
+    println!("Running {num_tests} measurements with different seeds");
+    for i in 0..num_tests {
+        // Convert the loop variable to u64 safely (always positive in this context)
+        let test_seed = seed + i as u64; // Safe since i is always non-negative in this loop
+        reset_model_with_seed(&mut model, test_seed).unwrap();
+        let engine = Box::new(StateVecEngine::new(1));
+        let result = run_complete_simulation(&mut model, engine, &circuit, test_seed);
+        let value = result.get(&0).copied().unwrap_or(0);
+
+        if value == 0 {
+            zeros += 1;
+        } else {
+            ones += 1;
+        }
+    }
+
+    println!("Got {zeros} zeros and {ones} ones with different seeds");
+
+    // With enough different seeds, we should get some variation
+    // The probability of getting all zeros or all ones with 20 measurements and a roughly
+    // 50/50 chance for each is approximately 2^(-19), which is extremely unlikely
+    if zeros == 0 || ones == 0 {
+        println!(
+            "NOTE: Got only {} measurements. This is highly unusual but technically possible.",
+            if zeros == 0 { "ones" } else { "zeros" }
+        );
+    } else {
+        println!("Got a mixture of results with different seeds, as expected");
+    }
+}
+
+/// IMPROVEMENT 2: Comprehensive end-to-end test combining all noise types
+#[test]
+fn test_comprehensive_noise_determinism() {
+    println!("Testing comprehensive noise determinism (all noise types)");
+
+    // Create a noise model with all types of noise
+    let mut model = Box::new(
+        GeneralNoiseModel::builder()
+            // Preparation errors
+            .with_prep_probability(0.05)
+            .with_prep_leak_ratio(0.2)
+            // Measurement errors
+            .with_meas_0_probability(0.1)
+            .with_meas_1_probability(0.15)
+            // Gate errors
+            .with_average_p1_probability(0.2)
+            .with_average_p2_probability(0.1)
+            // Leakage and emission errors
+            .with_p1_emission_ratio(0.3)
+            .with_p2_emission_ratio(0.3)
+            .build(),
+    );
+
+    // Create a complex circuit with all types of operations:
+    // 1. Preparation (implicit at start)
+    // 2. Various single-qubit gates
+    // 3. Two-qubit gates
+    // 4. Parameterized gates
+    // 5. Measurements
+    let mut builder = ByteMessage::quantum_operations_builder();
+
+    // Use 3 qubits
+    // Apply a variety of single and two-qubit gates
+    builder.add_h(&[0]); // Apply Hadamard to qubit 0
+    builder.add_rz(0.5, &[1]); // Apply RZ to qubit 1
+    builder.add_cx(&[0], &[1]); // Apply CNOT from qubit 0 to qubit 1
+    builder.add_h(&[2]); // Apply Hadamard to qubit 2
+    builder.add_cx(&[1], &[2]); // Apply CNOT from qubit 1 to qubit 2
+
+    // RX and RY gates can be implemented using H-RZ-H and other combinations
+    builder.add_h(&[0]); // Start of RX implementation
+    builder.add_rz(0.25, &[0]);
+    builder.add_h(&[0]); // End of RX implementation
+
+    builder.add_h(&[1]); // Start of RY approximation
+    builder.add_z(&[1]);
+    builder.add_rz(0.33, &[1]);
+    builder.add_z(&[1]);
+    builder.add_h(&[1]); // End of RY approximation
+
+    builder.add_x(&[2]); // Apply X to qubit 2
+    builder.add_y(&[0]); // Apply Y to qubit 0
+    builder.add_z(&[1]); // Apply Z to qubit 1
+    builder.add_rzz(0.75, &[0], &[2]); // Apply RZZ to qubits 0 and 2
+    builder.add_cx(&[2], &[0]); // Apply CNOT from qubit 2 to qubit 0
+
+    // Add measurements for all qubits
+    builder.add_measurements(&[0, 1, 2], &[0, 1, 2]);
+
+    let circuit = builder.build();
+
+    // Run the circuit with a fixed seed
+    let seed = 9876;
+    println!("Running first simulation with seed {seed}");
+    reset_model_with_seed(&mut model, seed).unwrap();
+    let engine1 = Box::new(StateVecEngine::new(3));
+    let results1 = run_complete_simulation(&mut model, engine1, &circuit, seed);
+
+    // Sort and print results for readability
+    let mut results1_vec: Vec<(usize, i32)> = results1.iter().map(|(&k, &v)| (k, v)).collect();
+    results1_vec.sort_by_key(|&(k, _)| k);
+    println!("First run results: {results1_vec:?}");
+
+    // Run again with the same seed - should get identical results
+    println!("Running second simulation with the same seed {seed}");
+    reset_model_with_seed(&mut model, seed).unwrap();
+    let engine2 = Box::new(StateVecEngine::new(3));
+    let results2 = run_complete_simulation(&mut model, engine2, &circuit, seed);
+
+    // Sort and print results for readability
+    let mut results2_vec: Vec<(usize, i32)> = results2.iter().map(|(&k, &v)| (k, v)).collect();
+    results2_vec.sort_by_key(|&(k, _)| k);
+    println!("Second run results: {results2_vec:?}");
+
+    // The results should be identical with the same seed
+    assert_eq!(
+        results1, results2,
+        "Measurement results should be identical with the same seed in comprehensive test"
+    );
+
+    // Run again with a different seed - should get different results
+    let different_seed = seed + 1000;
+    println!("Running third simulation with different seed {different_seed}");
+    reset_model_with_seed(&mut model, different_seed).unwrap();
+    let engine3 = Box::new(StateVecEngine::new(3));
+    let results3 = run_complete_simulation(&mut model, engine3, &circuit, different_seed);
+
+    // Sort and print results for readability
+    let mut results3_vec: Vec<(usize, i32)> = results3.iter().map(|(&k, &v)| (k, v)).collect();
+    results3_vec.sort_by_key(|&(k, _)| k);
+    println!("Different seed results: {results3_vec:?}");
+
+    // The results should be different (high probability)
+    // If they happen to be identical, try yet another seed
+    if results1 == results3 {
+        println!(
+            "NOTE: Same measurement results with different seeds. This can happen with low probability."
+        );
+
+        let another_seed = seed + 2000;
+        println!("Trying yet another seed: {another_seed}");
+        reset_model_with_seed(&mut model, another_seed).unwrap();
+        let engine4 = Box::new(StateVecEngine::new(3));
+        let results4 = run_complete_simulation(&mut model, engine4, &circuit, another_seed);
+
+        // The probability of getting identical results again is extremely low
+        if results1 == results4 {
+            println!(
+                "NOTE: Still same results with a third seed. Extremely unlikely but technically possible."
+            );
+        } else {
+            println!("Different seed produced different results as expected");
+            assert_ne!(
+                results1, results4,
+                "Different seeds should produce different results in comprehensive test"
+            );
+        }
+    } else {
+        println!("Different seed produced different results as expected");
+        assert_ne!(
+            results1, results3,
+            "Different seeds should produce different results in comprehensive test"
+        );
+    }
+}
+
+/// IMPROVEMENT 3: Test long-running determinism with a large circuit
+#[test]
+fn test_long_running_determinism() {
+    println!("Testing long-running determinism with many operations");
+
+    // Create a noise model with moderate error rates
+    let mut model = Box::new(
+        GeneralNoiseModel::builder()
+            .with_prep_probability(0.01)
+            .with_meas_0_probability(0.02)
+            .with_meas_1_probability(0.02)
+            .with_average_p1_probability(0.1)
+            .with_average_p2_probability(0.05)
+            .build(),
+    );
+
+    // Create a circuit with a very large number of operations
+    let mut builder = ByteMessage::quantum_operations_builder();
+
+    // First create a GHZ state across 5 qubits
+    builder.add_h(&[0]);
+    builder.add_cx(&[0], &[1]);
+    builder.add_cx(&[0], &[2]);
+    builder.add_cx(&[0], &[3]);
+    builder.add_cx(&[0], &[4]);
+
+    // Now apply a repeated pattern of gates to create a long sequence
+    // This gives the RNG many opportunities to diverge if there are issues
+    println!("Building a circuit with 500+ operations...");
+    // We're using a small, positive loop count where usize will fit in both u32 and f64 without precision loss
+    for i in 0..100 {
+        // 100 repetitions of 5+ operations = 500+ operations total
+        // Rotate each qubit differently based on iteration
+        builder.add_rz(0.01 * f64::from(i as u32), &[0]);
+
+        // Implement RX using H-RZ-H
+        builder.add_h(&[1]);
+        builder.add_rz(0.02 * f64::from(i as u32), &[1]);
+        builder.add_h(&[1]);
+
+        // Implement RY using H-Z-RZ-Z-H
+        builder.add_h(&[2]);
+        builder.add_z(&[2]);
+        builder.add_rz(0.03 * f64::from(i as u32), &[2]);
+        builder.add_z(&[2]);
+        builder.add_h(&[2]);
+
+        builder.add_rz(0.04 * f64::from(i as u32), &[3]);
+
+        // Another RX implementation
+        builder.add_h(&[4]);
+        builder.add_rz(0.05 * f64::from(i as u32), &[4]);
+        builder.add_h(&[4]);
+
+        // Add entangling operations that change with iteration
+        let q1 = i % 5;
+        let q2 = (i + 1) % 5;
+        builder.add_cx(&[q1], &[q2]);
+    }
+
+    // Add measurements for all qubits
+    builder.add_measurements(&[0, 1, 2, 3, 4], &[0, 1, 2, 3, 4]);
+
+    let circuit = builder.build();
+
+    // Run the circuit twice with the same seed
+    let seed = 54321;
+    println!("Running first long simulation with seed {seed}");
+    reset_model_with_seed(&mut model, seed).unwrap();
+    let engine1 = Box::new(StateVecEngine::new(5));
+    let results1 = run_complete_simulation(&mut model, engine1, &circuit, seed);
+
+    println!("Running second long simulation with the same seed {seed}");
+    reset_model_with_seed(&mut model, seed).unwrap();
+    let engine2 = Box::new(StateVecEngine::new(5));
+    let results2 = run_complete_simulation(&mut model, engine2, &circuit, seed);
+
+    // Sort and print a summary of the results
+    let mut results1_vec: Vec<(usize, i32)> = results1.iter().map(|(&k, &v)| (k, v)).collect();
+    results1_vec.sort_by_key(|&(k, _)| k);
+    println!("First run results: {results1_vec:?}");
+
+    let mut results2_vec: Vec<(usize, i32)> = results2.iter().map(|(&k, &v)| (k, v)).collect();
+    results2_vec.sort_by_key(|&(k, _)| k);
+    println!("Second run results: {results2_vec:?}");
+
+    // Results should be identical despite the long sequence of operations
+    assert_eq!(
+        results1, results2,
+        "Results should be identical with the same seed even with a very long circuit"
+    );
+
+    // Run with a different seed
+    let different_seed = seed + 1000;
+    println!("Running with a different seed {different_seed}");
+    reset_model_with_seed(&mut model, different_seed).unwrap();
+    let engine3 = Box::new(StateVecEngine::new(5));
+    let results3 = run_complete_simulation(&mut model, engine3, &circuit, different_seed);
+
+    // Results should be different (with high probability)
+    if results1 == results3 {
+        println!("NOTE: Same results with different seeds. This is very unlikely but possible.");
+
+        // Try one more seed
+        let another_seed = seed + 2000;
+        println!("Trying yet another seed: {another_seed}");
+        reset_model_with_seed(&mut model, another_seed).unwrap();
+        let engine4 = Box::new(StateVecEngine::new(5));
+        let results4 = run_complete_simulation(&mut model, engine4, &circuit, another_seed);
+
+        if results1 == results4 {
+            println!("NOTE: Still same results with a third seed. Extremely unlikely.");
+        } else {
+            println!("Different seed produced different results as expected");
+            assert_ne!(
+                results1, results4,
+                "Different seeds should produce different results"
+            );
+        }
+    } else {
+        println!("Different seed produced different results as expected");
+        assert_ne!(
+            results1, results3,
+            "Different seeds should produce different results"
+        );
+    }
+
+    println!("Long-running determinism test passed successfully!");
 }

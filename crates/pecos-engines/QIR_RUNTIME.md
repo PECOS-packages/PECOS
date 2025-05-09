@@ -2,14 +2,32 @@
 
 The QIR (Quantum Intermediate Representation) compiler in PECOS uses a Rust runtime library to implement quantum operations. This library is automatically built by the `build.rs` script in the `pecos-engines` crate.
 
+## Requirements
+
+To use QIR functionality, you need:
+
+- **LLVM version 14 specifically**:
+  - On Linux: Install using your package manager (e.g., `sudo apt install llvm-14`)
+  - On macOS: Install using Homebrew (`brew install llvm@14`)
+  - On Windows: Download and install LLVM 14.x from the [LLVM website](https://releases.llvm.org/download.html#14.0.0)
+
+- **Required tools**:
+  - Linux/macOS: The `llc` compiler tool must be in your PATH
+  - Windows: The `clang` compiler must be in your PATH
+
+**Note**: PECOS requires LLVM version 14.x specifically, not newer versions. LLVM 15 or later versions are not compatible with PECOS's QIR implementation.
+
+If LLVM 14 is not installed or the required tools aren't found, QIR functionality will be disabled but the rest of PECOS will continue to work normally.
+
 ## How It Works
 
 The `build.rs` script:
 
 1. Runs automatically when building the `pecos-engines` crate
-2. Checks if the QIR runtime library needs to be rebuilt
-3. Builds the library only if necessary (if source files have changed)
-4. Places the built library in both `target/debug` and `target/release` directories
+2. Checks for LLVM 14+ dependencies
+3. Checks if the QIR runtime library needs to be rebuilt
+4. Builds the library only if necessary (if source files have changed)
+5. Places the built library in both `target/debug` and `target/release` directories
 
 When the QIR compiler runs, it looks for the pre-built library in these locations. If the library is not found, the compiler will attempt to build it by running `cargo build -p pecos-engines` before raising an error.
 

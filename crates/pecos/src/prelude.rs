@@ -20,6 +20,11 @@ pub use pecos_engines::{
     QirEngine, QuantumEngine, QuantumSystem, QueueError, ShotResult, ShotResults,
 };
 
+// Re-exporting noise models
+pub use pecos_core::rng::RngManageable;
+pub use pecos_core::rng::rng_manageable::derive_seed;
+pub use pecos_engines::engines::noise::general::GeneralNoiseModel;
+
 // Re-exporting specific implementations that aren't at the crate root
 pub use pecos_engines::engines::{
     classical::{ProgramType, detect_program_type, get_program_path, setup_engine},

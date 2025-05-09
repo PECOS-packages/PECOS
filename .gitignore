@@ -1,3 +1,5 @@
+**/.*/settings.local.json
+
 # Ignore helper text in root
 *.txt
 

@@ -13,7 +13,7 @@ use pecos_engines::engines::noise::RngManageable;
 use pecos_engines::engines::noise::general::GeneralNoiseModel;
 use pecos_engines::engines::quantum::StateVecEngine;
 use pecos_engines::{Engine, QuantumSystem};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::f64::consts::PI;
 
 // Helper function to count measurement results from multiple shots
@@ -22,12 +22,12 @@ fn count_results(
     circ: &ByteMessage,
     num_shots: usize,
     num_qubits: usize,
-) -> HashMap<String, usize> {
+) -> BTreeMap<String, usize> {
     let quantum = Box::new(StateVecEngine::new(num_qubits));
     let mut system = QuantumSystem::new(Box::new(noise_model.clone()), quantum);
     system.set_seed(42).expect("Failed to set seed");
 
-    let mut counts = HashMap::new();
+    let mut counts = BTreeMap::new();
 
     // Debug info
     println!("*** Start debugging count_results ***");
@@ -948,7 +948,7 @@ fn test_seed_effect() {
     );
 
     // Create a new noise model using the builder pattern
-    let pauli_model: HashMap<String, f64> = [
+    let pauli_model: BTreeMap<String, f64> = [
         ("X".to_string(), 1.0 / 3.0),
         ("Y".to_string(), 1.0 / 3.0),
         ("Z".to_string(), 1.0 / 3.0),
@@ -956,7 +956,7 @@ fn test_seed_effect() {
     .into_iter()
     .collect();
 
-    let emission_model: HashMap<String, f64> = [("X".to_string(), 0.5), ("Y".to_string(), 0.5)]
+    let emission_model: BTreeMap<String, f64> = [("X".to_string(), 0.5), ("Y".to_string(), 0.5)]
         .into_iter()
         .collect();
 
@@ -1040,7 +1040,7 @@ fn test_combined_comparison() {
     println!("\n=== TESTING COMPLEX MODEL ===");
     // Create complex noise model with the builder
     // Define Pauli and emission models
-    let pauli_model: HashMap<String, f64> = [
+    let pauli_model: BTreeMap<String, f64> = [
         ("X".to_string(), 1.0 / 3.0),
         ("Y".to_string(), 1.0 / 3.0),
         ("Z".to_string(), 1.0 / 3.0),
@@ -1048,7 +1048,7 @@ fn test_combined_comparison() {
     .into_iter()
     .collect();
 
-    let emission_model: HashMap<String, f64> = [("X".to_string(), 0.5), ("Y".to_string(), 0.5)]
+    let emission_model: BTreeMap<String, f64> = [("X".to_string(), 0.5), ("Y".to_string(), 0.5)]
         .into_iter()
         .collect();
 
@@ -1155,7 +1155,7 @@ fn test_pauli_model_effect() {
 
     println!("\n=== Test with explicitly set Pauli model ===");
     // Create X-biased model with builder pattern
-    let x_biased_model: HashMap<String, f64> = [
+    let x_biased_model: BTreeMap<String, f64> = [
         ("X".to_string(), 0.8),
         ("Y".to_string(), 0.1),
         ("Z".to_string(), 0.1),
@@ -1163,7 +1163,7 @@ fn test_pauli_model_effect() {
     .into_iter()
     .collect();
 
-    let emission_model: HashMap<String, f64> = [("X".to_string(), 0.5), ("Y".to_string(), 0.5)]
+    let emission_model: BTreeMap<String, f64> = [("X".to_string(), 0.5), ("Y".to_string(), 0.5)]
         .into_iter()
         .collect();
 
@@ -1197,7 +1197,7 @@ fn test_pauli_model_effect() {
 
     println!("\n=== Test with Z-biased Pauli model ===");
     // Create Z-biased model with builder pattern
-    let z_biased_model: HashMap<String, f64> = [
+    let z_biased_model: BTreeMap<String, f64> = [
         ("X".to_string(), 0.1),
         ("Y".to_string(), 0.1),
         ("Z".to_string(), 0.8),
@@ -1272,7 +1272,7 @@ fn test_pauli_model_behavior() {
     println!("  Default model: {default_zero_percent}% |0>, {default_one_percent}% |1>");
 
     // ====== Model 2: X-biased model (mostly X errors) ======
-    let x_biased_model: HashMap<String, f64> = [
+    let x_biased_model: BTreeMap<String, f64> = [
         ("X".to_string(), 0.8),
         ("Y".to_string(), 0.1),
         ("Z".to_string(), 0.1),
@@ -1305,7 +1305,7 @@ fn test_pauli_model_behavior() {
     println!("  X-biased model: {xbiased_zero_percent}% |0>, {xbiased_one_percent}% |1>");
 
     // ====== Model 3: Z-biased model (mostly Z errors) ======
-    let z_biased_model: HashMap<String, f64> = [
+    let z_biased_model: BTreeMap<String, f64> = [
         ("X".to_string(), 0.1),
         ("Y".to_string(), 0.1),
         ("Z".to_string(), 0.8),

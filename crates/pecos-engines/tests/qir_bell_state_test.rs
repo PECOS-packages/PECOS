@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use pecos_core::rng::RngManageable;
 use pecos_engines::engines::MonteCarloEngine;
 use pecos_engines::engines::qir::QirEngine;
 
@@ -11,20 +12,60 @@ fn get_qir_program_path() -> PathBuf {
     workspace_dir.join("examples/qir/bell.ll")
 }
 
+/// Check if LLVM llc tool version 14 is available
+fn is_llc_available() -> bool {
+    if cfg!(windows) {
+        std::env::var("PATH")
+            .map(|paths| {
+                paths
+                    .split(';')
+                    .any(|dir| std::path::Path::new(dir).join("llc.exe").exists())
+            })
+            .unwrap_or(false)
+    } else {
+        std::env::var("PATH")
+            .map(|paths| {
+                paths
+                    .split(':')
+                    .any(|dir| std::path::Path::new(dir).join("llc").exists())
+            })
+            .unwrap_or(false)
+    }
+}
+
+/// Skip the test with appropriate message if LLVM is not available
+fn skip_if_llc_missing(test_name: &str) -> bool {
+    if !is_llc_available() {
+        println!("Skipping {test_name}: LLVM 'llc' tool not found");
+        println!("To enable QIR tests, install LLVM version 14 (e.g., 'sudo apt install llvm-14')");
+        return true;
+    }
+    false
+}
+
 #[test]
 fn test_qir_bell_state_noiseless() {
+    // Skip if LLVM is not available
+    if skip_if_llc_missing("test_qir_bell_state_noiseless") {
+        return;
+    }
+
     // Create a QIR engine directly with the file path
     let qir_engine = QirEngine::new(get_qir_program_path());
 
+    // Create a noiseless model
+    let noise_model =
+        Box::new(pecos_engines::engines::noise::DepolarizingNoiseModel::new_uniform(0.0));
+
     // Run the Bell state example with 100 shots and 2 workers
-    let results = MonteCarloEngine::run_with_classical_engine(
+    let results = MonteCarloEngine::run_with_noise_model(
         Box::new(qir_engine),
-        0.0, // No noise
+        noise_model,
         100,
         2,
         None, // No specific seed
     )
-    .unwrap();
+    .expect("QIR execution should succeed as we already checked for LLVM availability");
 
     // Count occurrences of each result
     let mut counts: HashMap<String, usize> = HashMap::new();
@@ -52,6 +93,11 @@ fn test_qir_bell_state_noiseless() {
 #[allow(clippy::missing_panics_doc)]
 #[allow(clippy::cast_precision_loss)]
 pub fn test_qir_bell_state_with_noise() {
+    // Skip if LLVM is not available
+    if skip_if_llc_missing("test_qir_bell_state_with_noise") {
+        return;
+    }
+
     // Try a few seeds
     for seed in 1..=3 {
         println!("Testing with seed: {seed}");
@@ -62,15 +108,22 @@ pub fn test_qir_bell_state_with_noise() {
         // Create QirEngine
         let qir_engine = QirEngine::new(get_qir_program_path());
 
+        // Create a noise model with the specified probability
+        let mut noise_model =
+            pecos_engines::engines::noise::DepolarizingNoiseModel::new_uniform(noise_probability);
+
+        // Set the seed on the noise model
+        noise_model.set_seed(seed).unwrap();
+
         // Run with the MonteCarloEngine directly, specifying the number of shots
-        let results = MonteCarloEngine::run_with_classical_engine(
+        let results = MonteCarloEngine::run_with_noise_model(
             Box::new(qir_engine),
-            noise_probability,
+            Box::new(noise_model),
             shots,
             2, // Number of workers
             Some(seed),
         )
-        .unwrap();
+        .expect("QIR execution should succeed as we already checked for LLVM availability");
 
         // Count results
         let mut counts: HashMap<String, usize> = HashMap::new();

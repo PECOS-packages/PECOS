@@ -377,7 +377,7 @@ mod tests {
     use crate::engines::noise::noise_rng::NoiseRng;
     use crate::engines::noise::weighted_sampler::SingleQubitWeightedSampler;
     use rand_chacha::ChaCha8Rng;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     #[test]
@@ -450,7 +450,7 @@ mod tests {
 
         // Test with a valid model
         // Note: Weights must sum to exactly 1.0 to pass the strict normalization check
-        let valid_model: HashMap<String, f64> = [
+        let valid_model: BTreeMap<String, f64> = [
             ("X".to_string(), 0.5),
             ("Y".to_string(), 0.3),
             ("Z".to_string(), 0.2),
@@ -510,14 +510,14 @@ mod tests {
         assert!(result.is_err(), "Should panic for invalid Pauli operator");
 
         // Test that empty model causes the sampler constructor to panic
-        let empty_model: HashMap<String, f64> = HashMap::new();
+        let empty_model: BTreeMap<String, f64> = BTreeMap::new();
         let result = catch_unwind(AssertUnwindSafe(|| {
             let _ = SingleQubitWeightedSampler::new(&empty_model);
         }));
         assert!(result.is_err(), "Should panic for empty model");
 
         // Test that model with invalid keys causes the sampler constructor to panic
-        let invalid_keys: HashMap<String, f64> =
+        let invalid_keys: BTreeMap<String, f64> =
             [("X".to_string(), 0.5), ("INVALID".to_string(), 0.5)]
                 .iter()
                 .cloned()
@@ -546,7 +546,7 @@ mod tests {
 
         // Test with a valid model including leakage
         // Note: Weights must sum to exactly 1.0 to pass the strict normalization check
-        let valid_model: HashMap<String, f64> = [
+        let valid_model: BTreeMap<String, f64> = [
             ("X".to_string(), 0.4),
             ("Y".to_string(), 0.3),
             ("Z".to_string(), 0.2),
@@ -618,7 +618,7 @@ mod tests {
         assert_eq!(x_count + y_count + z_count + leakage_count, SAMPLE_SIZE);
 
         // Test error cases with catch_unwind
-        let empty_model: HashMap<String, f64> = HashMap::new();
+        let empty_model: BTreeMap<String, f64> = BTreeMap::new();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             // This should trigger an "empty model" panic
             let _ = SingleQubitWeightedSampler::new(&empty_model);
@@ -626,7 +626,7 @@ mod tests {
         assert!(result.is_err(), "Empty model should cause panic");
 
         // Test invalid operation
-        let invalid_model: HashMap<String, f64> = [
+        let invalid_model: BTreeMap<String, f64> = [
             ("X".to_string(), 0.3),
             ("INVALID".to_string(), 0.7), // Not a valid Pauli or L
         ]

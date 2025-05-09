@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::byte_message::QuantumGate;
 use crate::engines::noise::noise_rng::NoiseRng;
@@ -23,14 +23,17 @@ const NORMALIZATION_TOLERANCE: f64 = 1e-5;
 const FLOAT_EPSILON: f64 = 1e-10;
 
 /// A sampler that selects keys with probability proportional to their weights
+///
+/// Uses `BTreeMap` for deterministic key ordering, ensuring consistent behavior
+/// when using the same seed across multiple runs or threads.
 #[derive(Debug, Clone)]
-pub struct WeightedSampler<K: Clone> {
+pub struct WeightedSampler<K: Clone + Ord> {
     keys: Vec<K>,
     distribution: WeightedIndex<f64>,
-    weighted_map: HashMap<K, f64>,
+    weighted_map: BTreeMap<K, f64>,
 }
 
-impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq> WeightedSampler<K> {
+impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq + Ord> WeightedSampler<K> {
     /// Create a new weighted sampler from a map of keys to weights
     ///
     /// The weights are normalized to sum to 1.0 with a default tolerance of 1e-10
@@ -41,7 +44,7 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq> WeightedSampler<K> {
     /// - If the total weight deviates from 1.0 by more than the tolerance
     /// - If the weighted index distribution cannot be created
     #[must_use]
-    pub fn new(weighted_map: &HashMap<K, f64>) -> Self {
+    pub fn new(weighted_map: &BTreeMap<K, f64>) -> Self {
         Self::new_with_tolerance(weighted_map, NORMALIZATION_TOLERANCE)
     }
 
@@ -52,12 +55,14 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq> WeightedSampler<K> {
     /// - If the total weight is not positive
     /// - If the total weight deviates from 1.0 by more than the tolerance
     #[must_use]
-    pub fn new_with_tolerance(weighted_map: &HashMap<K, f64>, tolerance: f64) -> Self {
+    pub fn new_with_tolerance(weighted_map: &BTreeMap<K, f64>, tolerance: f64) -> Self {
         let (normalized_weighted_map, normalized_weights) =
             Self::validate_and_normalize(weighted_map, tolerance);
 
+        // BTreeMap already provides deterministic ordering of keys
         let keys: Vec<K> = weighted_map.keys().cloned().collect();
 
+        // Create the distribution using deterministically ordered weights
         let distribution = WeightedIndex::new(&normalized_weights)
             .expect("WeightedSampler: failed to create weighted distribution");
 
@@ -69,11 +74,11 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq> WeightedSampler<K> {
     }
 
     /// Validates that the weights are positive and approximately sum to 1.0
-    /// Returns a normalized `HashMap` and a Vec of normalized weights for creating the distribution
+    /// Returns a normalized `BTreeMap` and a Vec of normalized weights for creating the distribution
     fn validate_and_normalize(
-        weighted_map: &HashMap<K, f64>,
+        weighted_map: &BTreeMap<K, f64>,
         tolerance: f64,
-    ) -> (HashMap<K, f64>, Vec<f64>) {
+    ) -> (BTreeMap<K, f64>, Vec<f64>) {
         assert!(
             !weighted_map.is_empty(),
             "WeightedSampler: weighted_map cannot be empty"
@@ -100,8 +105,8 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq> WeightedSampler<K> {
             weighted_map.values().copied().collect()
         };
 
-        // Create normalized HashMap
-        let mut normalized_map = HashMap::with_capacity(weighted_map.len());
+        // Create normalized BTreeMap
+        let mut normalized_map = BTreeMap::new();
         for (key, &value) in weighted_map {
             normalized_map.insert(
                 key.clone(),
@@ -129,7 +134,7 @@ impl<K: Clone + std::fmt::Debug + std::hash::Hash + Eq> WeightedSampler<K> {
 
     /// Get a reference to the normalized weighted map
     #[must_use]
-    pub fn get_weighted_map(&self) -> &HashMap<K, f64> {
+    pub fn get_weighted_map(&self) -> &BTreeMap<K, f64> {
         &self.weighted_map
     }
 }
@@ -162,7 +167,7 @@ impl SingleQubitWeightedSampler {
     /// - If the total weight is not positive
     /// - If the total weight deviates from 1.0 by more than the tolerance
     #[must_use]
-    pub fn new(weighted_map: &HashMap<String, f64>) -> Self {
+    pub fn new(weighted_map: &BTreeMap<String, f64>) -> Self {
         Self::validate_pauli_leakage_keys(weighted_map);
 
         Self {
@@ -170,7 +175,7 @@ impl SingleQubitWeightedSampler {
         }
     }
 
-    fn validate_pauli_leakage_keys(weighted_map: &HashMap<String, f64>) {
+    fn validate_pauli_leakage_keys(weighted_map: &BTreeMap<String, f64>) {
         for key in weighted_map.keys() {
             let key_str = key.as_ref();
             match key_str {
@@ -184,7 +189,7 @@ impl SingleQubitWeightedSampler {
 
     /// Get a reference to the normalized weighted map
     #[must_use]
-    pub fn get_weighted_map(&self) -> &HashMap<String, f64> {
+    pub fn get_weighted_map(&self) -> &BTreeMap<String, f64> {
         self.sampler.get_weighted_map()
     }
 
@@ -245,7 +250,7 @@ impl TwoQubitWeightedSampler {
     /// - If the total weight is not positive
     /// - If the total weight deviates from 1.0 by more than the tolerance
     #[must_use]
-    pub fn new(weighted_map: &HashMap<String, f64>) -> Self {
+    pub fn new(weighted_map: &BTreeMap<String, f64>) -> Self {
         Self::validate_two_qubit_keys(weighted_map);
 
         Self {
@@ -253,7 +258,7 @@ impl TwoQubitWeightedSampler {
         }
     }
 
-    fn validate_two_qubit_keys(weighted_map: &HashMap<String, f64>) {
+    fn validate_two_qubit_keys(weighted_map: &BTreeMap<String, f64>) {
         for key in weighted_map.keys() {
             let key_str: &str = key.as_ref();
 
@@ -285,7 +290,7 @@ impl TwoQubitWeightedSampler {
 
     /// Get a reference to the normalized weighted map
     #[must_use]
-    pub fn get_weighted_map(&self) -> &HashMap<String, f64> {
+    pub fn get_weighted_map(&self) -> &BTreeMap<String, f64> {
         self.sampler.get_weighted_map()
     }
 
@@ -349,14 +354,83 @@ mod tests {
     use super::*;
     use crate::engines::noise::noise_rng::NoiseRng;
     use rand_chacha::ChaCha8Rng;
-    use std::collections::HashMap;
 
     const SAMPLE_SIZE: usize = 100;
 
     #[test]
+    fn test_different_sampler_instances_same_results() {
+        // Create two weighted samplers with the same weights
+        let mut weights1 = BTreeMap::new();
+        weights1.insert("A".to_string(), 0.3);
+        weights1.insert("B".to_string(), 0.7);
+
+        // Make a separate instance with the same data
+        let mut weights2 = BTreeMap::new();
+        weights2.insert("A".to_string(), 0.3);
+        weights2.insert("B".to_string(), 0.7);
+
+        let sampler1 = WeightedSampler::new(&weights1);
+        let sampler2 = WeightedSampler::new(&weights2);
+
+        // Use the same seed for both RNGs
+        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+
+        // Sample from both samplers
+        let results1: Vec<String> = (0..SAMPLE_SIZE)
+            .map(|_| sampler1.sample(&mut rng1))
+            .collect();
+        let results2: Vec<String> = (0..SAMPLE_SIZE)
+            .map(|_| sampler2.sample(&mut rng2))
+            .collect();
+
+        // Results should be identical with same seed
+        assert_eq!(
+            results1, results2,
+            "Different sampler instances with same weights should produce identical results with same seed"
+        );
+    }
+
+    #[test]
+    fn test_deterministic_ordering_with_shuffled_keys() {
+        // Create two weighted samplers with the same weights but different insertion order
+        let mut weights1 = BTreeMap::new();
+        weights1.insert("A".to_string(), 0.3);
+        weights1.insert("B".to_string(), 0.2);
+        weights1.insert("C".to_string(), 0.5);
+
+        // Insert in different order
+        let mut weights2 = BTreeMap::new();
+        weights2.insert("C".to_string(), 0.5);
+        weights2.insert("A".to_string(), 0.3);
+        weights2.insert("B".to_string(), 0.2);
+
+        let sampler1 = WeightedSampler::new(&weights1);
+        let sampler2 = WeightedSampler::new(&weights2);
+
+        // Use the same seed for both RNGs
+        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+
+        // Sample from both samplers
+        let results1: Vec<String> = (0..SAMPLE_SIZE)
+            .map(|_| sampler1.sample(&mut rng1))
+            .collect();
+        let results2: Vec<String> = (0..SAMPLE_SIZE)
+            .map(|_| sampler2.sample(&mut rng2))
+            .collect();
+
+        // Results should be identical despite different insertion order
+        assert_eq!(
+            results1, results2,
+            "Samplers with differently ordered but equivalent maps should produce identical results"
+        );
+    }
+
+    #[test]
     fn test_deterministic_sampling_basic() {
         // Test basic deterministic sampling with same seed
-        let mut weights = HashMap::new();
+        let mut weights = BTreeMap::new();
         weights.insert("A".to_string(), 0.3);
         weights.insert("B".to_string(), 0.7);
 
@@ -384,7 +458,7 @@ mod tests {
     #[test]
     fn test_deterministic_sampling_multiple_seeds() {
         // Test deterministic sampling with multiple different seeds
-        let mut weights = HashMap::new();
+        let mut weights = BTreeMap::new();
         weights.insert("A".to_string(), 0.3);
         weights.insert("B".to_string(), 0.7);
 
@@ -414,7 +488,7 @@ mod tests {
     #[test]
     fn test_deterministic_sampling_different_seeds() {
         // Test that different seeds produce different sequences
-        let mut weights = HashMap::new();
+        let mut weights = BTreeMap::new();
         weights.insert("A".to_string(), 0.3);
         weights.insert("B".to_string(), 0.7);
 
@@ -444,7 +518,7 @@ mod tests {
     #[test]
     fn test_deterministic_sampling_single_qubit() {
         // Test deterministic sampling with single qubit sampler
-        let mut weights = HashMap::new();
+        let mut weights = BTreeMap::new();
         weights.insert("X".to_string(), 0.25);
         weights.insert("Y".to_string(), 0.25);
         weights.insert("Z".to_string(), 0.25);
@@ -484,7 +558,7 @@ mod tests {
     #[test]
     fn test_deterministic_sampling_two_qubit() {
         // Test deterministic sampling with two qubit sampler
-        let mut weights = HashMap::new();
+        let mut weights = BTreeMap::new();
         weights.insert("XX".to_string(), 0.2);
         weights.insert("YY".to_string(), 0.2);
         weights.insert("ZZ".to_string(), 0.2);
@@ -534,7 +608,7 @@ mod tests {
     #[test]
     fn test_deterministic_sampling_reset() {
         // Test that resetting the RNG and using the same seed produces the same sequence
-        let mut weights = HashMap::new();
+        let mut weights = BTreeMap::new();
         weights.insert("A".to_string(), 0.3);
         weights.insert("B".to_string(), 0.7);
 
@@ -559,7 +633,7 @@ mod tests {
     #[test]
     fn test_deterministic_sampling_consecutive() {
         // Test that consecutive samples from the same RNG are deterministic
-        let mut weights = HashMap::new();
+        let mut weights = BTreeMap::new();
         weights.insert("A".to_string(), 0.3);
         weights.insert("B".to_string(), 0.7);
 
@@ -583,11 +657,11 @@ mod tests {
     #[test]
     fn test_deterministic_sampling_interleaved() {
         // Test that interleaved sampling from different samplers is deterministic
-        let mut weights1 = HashMap::new();
+        let mut weights1 = BTreeMap::new();
         weights1.insert("A".to_string(), 0.3);
         weights1.insert("B".to_string(), 0.7);
 
-        let mut weights2 = HashMap::new();
+        let mut weights2 = BTreeMap::new();
         weights2.insert("X".to_string(), 0.4);
         weights2.insert("Y".to_string(), 0.6);
 
@@ -631,7 +705,7 @@ mod tests {
     #[test]
     fn test_deterministic_sampling_edge_cases() {
         // Test edge cases for sampling
-        let mut weights = HashMap::new();
+        let mut weights = BTreeMap::new();
         weights.insert("A".to_string(), 1.0); // Single outcome with probability 1.0
 
         let sampler = WeightedSampler::new(&weights);
@@ -659,7 +733,7 @@ mod tests {
     #[test]
     fn test_deterministic_sampling_single_qubit_edge_cases() {
         // Test edge cases for single qubit sampling
-        let mut weights = HashMap::new();
+        let mut weights = BTreeMap::new();
         weights.insert("L".to_string(), 1.0); // Always leak
 
         let sampler = SingleQubitWeightedSampler::new(&weights);
@@ -687,7 +761,7 @@ mod tests {
     #[test]
     fn test_deterministic_sampling_two_qubit_edge_cases() {
         // Test edge cases for two qubit sampling
-        let mut weights = HashMap::new();
+        let mut weights = BTreeMap::new();
         weights.insert("LL".to_string(), 1.0); // Always leak both qubits
 
         let sampler = TwoQubitWeightedSampler::new(&weights);

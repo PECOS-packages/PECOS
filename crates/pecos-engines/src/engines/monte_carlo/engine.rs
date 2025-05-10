@@ -542,15 +542,17 @@ impl ClassicalEngine for ExternalClassicalEngine {
     }
 
     fn get_results(&self) -> Result<ShotResult, QueueError> {
-        // Create ShotResult with converted measurements
-        let shot_result = ShotResult {
-            measurements: self
-                .results
-                .iter()
-                .map(|(k, v)| (k.clone(), u32::try_from(*v).unwrap_or(0)))
-                .collect(),
-            ..ShotResult::default()
-        };
+        // Create ShotResult with converted results
+        let mut shot_result = ShotResult::default();
+
+        // Add results to registers and registers_u64 fields
+        for (k, v) in &self.results {
+            let value = u32::try_from(*v).unwrap_or(0);
+            shot_result.registers.insert(k.clone(), value);
+            shot_result
+                .registers_u64
+                .insert(k.clone(), u64::from(value));
+        }
 
         Ok(shot_result)
     }

@@ -20,15 +20,17 @@ pub use pecos_engines::{
     QirEngine, QuantumEngine, QuantumSystem, QueueError, ShotResult, ShotResults,
 };
 
+// re-exporting OutputFormat enum
+pub use pecos_engines::core::shot_results::OutputFormat;
+
 // Re-exporting noise models
 pub use pecos_core::rng::RngManageable;
 pub use pecos_core::rng::rng_manageable::derive_seed;
 pub use pecos_engines::engines::noise::general::GeneralNoiseModel;
 
 // Re-exporting specific implementations that aren't at the crate root
-pub use pecos_engines::engines::{
-    classical::{ProgramType, detect_program_type, get_program_path, setup_engine},
-    quantum::{SparseStabEngine, StateVecEngine, new_quantum_engine_arbitrary_qgate},
+pub use pecos_engines::engines::quantum::{
+    SparseStabEngine, StateVecEngine, new_quantum_engine_arbitrary_qgate,
 };
 
 // Re-exporting byte_message functions
@@ -38,3 +40,14 @@ pub use pecos_engines::byte_message::dump_batch;
 pub use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, SparseStab, StateVec,
 };
+
+// re-exporting pecos-qasm
+pub use pecos_qasm::QASMEngine;
+
+// re-exporting program detection and setup
+pub use crate::program::{
+    ProgramType, detect_program_type, get_program_path, setup_engine_for_program,
+};
+
+// re-exporting engine setup functions
+pub use crate::engines::setup_qasm_engine;

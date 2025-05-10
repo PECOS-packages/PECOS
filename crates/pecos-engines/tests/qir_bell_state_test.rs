@@ -70,11 +70,11 @@ fn test_qir_bell_state_noiseless() {
     // Count occurrences of each result
     let mut counts: HashMap<String, usize> = HashMap::new();
 
-    // Process results, handling the case where "result" might not be present
+    // Process results, checking for the "c" register that matches PHIR and QASM naming
     for shot in &results.shots {
-        // If there's no "result" key in the output, just count it as an empty result
+        // We expect a "c" register in the output (matching PHIR and QASM)
         let result_str = shot
-            .get("result")
+            .get("c")
             .map_or_else(String::new, std::clone::Clone::clone);
         *counts.entry(result_str).or_insert(0) += 1;
     }
@@ -87,6 +87,17 @@ fn test_qir_bell_state_noiseless() {
 
     // The test passes if there are no errors in execution
     assert!(!results.shots.is_empty(), "Expected non-empty results");
+
+    // For a Bell state we should only see results "0" (00 in binary) or "3" (11 in binary)
+    // Verify that only these values are present in the counts
+    for result in counts.keys() {
+        if !result.is_empty() {
+            assert!(
+                result == "0" || result == "3",
+                "Expected only '0' or '3' in Bell state measurements, but found '{result}'"
+            );
+        }
+    }
 }
 
 #[test]
@@ -131,10 +142,10 @@ pub fn test_qir_bell_state_with_noise() {
         // For the noisy version, we just ensure it runs without errors
         assert!(!results.shots.is_empty(), "Expected non-empty results");
 
-        // Count all results, handling the case where "result" might not be present
+        // Count all results, checking for the "c" register that matches PHIR and QASM naming
         for shot in &results.shots {
             let result_str = shot
-                .get("result")
+                .get("c")
                 .map_or_else(String::new, std::clone::Clone::clone);
             *counts.entry(result_str).or_insert(0) += 1;
         }

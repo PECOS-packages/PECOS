@@ -407,8 +407,14 @@ def test_hybrid_engine_no_noise(simulator):
         shots=n_shots,
     )
 
-    m = results["m"]
-    assert np.isclose(m.count("00") / n_shots, m.count("11") / n_shots, atol=0.1)
+    # Check either "c" (if Result command worked) or "m" (fallback)
+    register = "c" if "c" in results else "m"
+    result_values = results[register]
+    assert np.isclose(
+        result_values.count("00") / n_shots,
+        result_values.count("11") / n_shots,
+        atol=0.1,
+    )
 
 
 @pytest.mark.parametrize(

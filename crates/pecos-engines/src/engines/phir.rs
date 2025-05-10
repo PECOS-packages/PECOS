@@ -30,21 +30,48 @@ enum Operation {
         #[serde(default)]
         angles: Option<(Vec<f64>, String)>,
         args: Vec<(String, usize)>,
+        #[serde(default)]
+        returns: Vec<(String, usize)>,
     },
     ClassicalOp {
         cop: String,
-        args: Vec<(String, usize)>,
-        returns: Vec<(String, usize)>,
+        #[serde(default)]
+        args: Vec<ArgItem>,
+        #[serde(default)]
+        returns: Vec<ArgItem>,
     },
 }
 
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+enum ArgItem {
+    Indexed((String, usize)),
+    Simple(String),
+}
+
+// Constants for internal register naming
+const MEASUREMENT_PREFIX: &str = "measurement_";
+
 #[derive(Debug)]
 pub struct PHIREngine {
+    /// The loaded PHIR program
     program: Option<PHIRProgram>,
+    /// Current operation index being processed
     current_op: usize,
+    /// All measurement results and internal variable values
+    /// This includes both raw measurements and internal register values
     measurement_results: HashMap<String, u32>,
+    /// Values explicitly exported via the Result operator
+    /// These are the values that will be presented to the user in the final output
+    exported_values: HashMap<String, u32>,
+    /// Mappings from source registers to export names for Result operations
+    /// This allows us to apply the mappings when measurements are available
+    export_mappings: Vec<(String, String)>,
+    /// Mapping of quantum variable names to their sizes
     quantum_variables: HashMap<String, usize>,
+    /// Mapping of classical variable names to their types and sizes
     classical_variables: HashMap<String, (String, usize)>,
+    /// Builder for constructing `ByteMessages`
     message_builder: ByteMessageBuilder,
 }
 
@@ -77,7 +104,37 @@ impl PHIREngine {
     /// ```
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
         let content = std::fs::read_to_string(path)?;
-        let program: PHIRProgram = serde_json::from_str(&content)?;
+        Self::from_json(&content)
+    }
+
+    /// Creates a new instance of `PHIREngine` from a JSON string.
+    ///
+    /// # Parameters
+    /// - `json_str`: A string containing the PHIR program in JSON format.
+    ///
+    /// # Returns
+    /// - `Ok(Self)`: If the PHIR program is successfully parsed and validated.
+    /// - `Err(Box<dyn std::error::Error>)`: If any errors occur during parsing,
+    ///   or if the format/version is not compatible.
+    ///
+    /// # Errors
+    /// - Returns an error if the JSON parsing fails.
+    /// - Returns an error if the format is not "PHIR/JSON".
+    /// - Returns an error if the version is not "0.1.0".
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_engines::engines::phir::PHIREngine;
+    ///
+    /// let json = r#"{"format":"PHIR/JSON","version":"0.1.0","metadata":{},"ops":[]}"#;
+    /// let engine = PHIREngine::from_json(json);
+    /// match engine {
+    ///     Ok(engine) => println!("PHIREngine loaded successfully!"),
+    ///     Err(e) => eprintln!("Error loading PHIREngine: {}", e),
+    /// }
+    /// ```
+    pub fn from_json(json_str: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let program: PHIRProgram = serde_json::from_str(json_str)?;
 
         if program.format != "PHIR/JSON" {
             return Err("Invalid format: expected PHIR/JSON".into());
@@ -87,12 +144,29 @@ impl PHIREngine {
             return Err(format!("Unsupported PHIR version: {}", program.version).into());
         }
 
+        // Validate that at least one Result command exists
+        let has_result_command = program.ops.iter().any(|op| {
+            if let Operation::ClassicalOp { cop, .. } = op {
+                cop == "Result"
+            } else {
+                false
+            }
+        });
+
+        if !has_result_command {
+            return Err(
+                "PHIR program must contain at least one Result command to specify outputs".into(),
+            );
+        }
+
         log::debug!("Loading PHIR program with metadata: {:?}", program.metadata);
 
         Ok(Self {
             program: Some(program),
             current_op: 0,
             measurement_results: HashMap::new(),
+            exported_values: HashMap::new(),
+            export_mappings: Vec::new(),
             quantum_variables: HashMap::new(),
             classical_variables: HashMap::new(),
             message_builder: ByteMessageBuilder::new(),
@@ -110,6 +184,8 @@ impl PHIREngine {
             self.current_op
         );
         self.measurement_results.clear();
+        self.exported_values.clear();
+        self.export_mappings.clear();
         // Reset the message builder to reuse allocated memory
         self.message_builder.reset();
     }
@@ -120,6 +196,8 @@ impl PHIREngine {
             program: None,
             current_op: 0,
             measurement_results: HashMap::new(),
+            exported_values: HashMap::new(),
+            export_mappings: Vec::new(),
             quantum_variables: HashMap::new(),
             classical_variables: HashMap::new(),
             message_builder: ByteMessageBuilder::new(),
@@ -186,62 +264,56 @@ impl PHIREngine {
     fn handle_classical_op(
         &mut self,
         cop: &str,
-        args: &[(String, usize)],
-        returns: &[(String, usize)],
+        args: &[ArgItem],
+        returns: &[ArgItem],
     ) -> Result<bool, QueueError> {
-        // Validate all variable accesses
-        for (var, idx) in args.iter().chain(returns) {
-            self.validate_variable_access(var, *idx)?;
+        // Extract variable name and index from each ArgItem
+        let extract_var_idx = |arg: &ArgItem| -> (String, usize) {
+            match arg {
+                ArgItem::Indexed((name, idx)) => (name.clone(), *idx),
+                ArgItem::Simple(name) => (name.clone(), 0),
+            }
+        };
+
+        // For most operations, validate all variable accesses
+        if cop == "Result" {
+            // For Result operation, only validate the source variables (args)
+            // The return variables are outputs and don't need to be defined
+            for arg in args {
+                let (var, idx) = extract_var_idx(arg);
+                self.validate_variable_access(&var, idx)?;
+            }
+        } else {
+            for arg in args.iter().chain(returns) {
+                let (var, idx) = extract_var_idx(arg);
+                self.validate_variable_access(&var, idx)?;
+            }
         }
 
         if cop == "Result" {
-            let meas_var = &args[0].0;
-            let meas_idx = args[0].1;
-            let return_var = &returns[0].0;
-            let return_idx = returns[0].1;
+            if args.len() == 1 && returns.len() == 1 {
+                // Extract source and export info
+                let (source_register, _) = extract_var_idx(&args[0]);
+                let (export_name, _) = extract_var_idx(&returns[0]);
 
-            log::debug!(
-                "Will store measurement {}[{}] in return location {}[{}]",
-                meas_var,
-                meas_idx,
-                return_var,
-                return_idx
-            );
-
-            // Process the measurement result by copying from measurement_X to result_X
-            let meas_key = format!("measurement_{meas_idx}");
-            if let Some(&value) = self.measurement_results.get(&meas_key) {
-                // Copy the value to the result storage using the return index
-                let result_key = format!("result_{return_idx}");
-                self.measurement_results.insert(result_key, value);
                 log::debug!(
-                    "Copied measurement value {} to result_{}",
-                    value,
-                    return_idx
+                    "Storing export mapping: {} -> {}",
+                    source_register,
+                    export_name
                 );
-            } else {
-                log::debug!("No measurement found for {}", meas_key);
-            }
 
-            // Return true if this is the last Result operation in a sequence
-            if let Some(prog) = &self.program {
-                // Check if the next operation is also a Result
-                let is_next_result = prog.ops.get(self.current_op + 1).is_some_and(|op| {
-                    if let Operation::ClassicalOp { cop, .. } = op {
-                        cop == "Result"
-                    } else {
-                        false
-                    }
-                });
+                // Instead of immediately exporting, store the mapping for later
+                // This allows us to apply the export after all measurements are collected
+                self.export_mappings
+                    .push((source_register.clone(), export_name.clone()));
 
-                // If it's not another Result op, flush the batch
-                Ok(!is_next_result)
-            } else {
-                Ok(true)
+                return Ok(true);
             }
-        } else {
-            Ok(false)
+            log::warn!("Result operation requires exactly one source and one export target");
+            return Ok(true);
         }
+
+        Ok(false)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -289,7 +361,12 @@ impl PHIREngine {
                     );
                     self.handle_variable_definition(data, data_type, variable, *size);
                 }
-                Operation::QuantumOp { qop, angles, args } => {
+                Operation::QuantumOp {
+                    qop,
+                    angles,
+                    args,
+                    returns: _,
+                } => {
                     debug!("Processing quantum operation: {}", qop);
 
                     // Clone the operation parameters to avoid borrow issues
@@ -468,34 +545,6 @@ impl PHIREngine {
             ))),
         }
     }
-
-    // Helper method to build a combined result string from indexed keys
-    fn build_combined_result(&self, prefix: &str) -> String {
-        let mut indexed_values = Vec::new();
-
-        // Find all keys with the given prefix and numeric suffix
-        for (key, &value) in &self.measurement_results {
-            if let Some(suffix) = key.strip_prefix(prefix) {
-                if let Ok(index) = suffix.parse::<usize>() {
-                    indexed_values.push((index, value));
-                }
-            }
-        }
-
-        // If we found any values, sort and combine them
-        if indexed_values.is_empty() {
-            String::new()
-        } else {
-            // Sort by index
-            indexed_values.sort_by_key(|(idx, _)| *idx);
-
-            // Join into a string
-            indexed_values
-                .iter()
-                .map(|(_, value)| value.to_string())
-                .collect()
-        }
-    }
 }
 
 impl Default for PHIREngine {
@@ -517,6 +566,8 @@ impl ControlEngine for PHIREngine {
         );
         self.current_op = 0; // Force reset here too
         self.measurement_results.clear();
+        self.exported_values.clear();
+        self.export_mappings.clear();
 
         let commands = self.generate_commands()?;
         if commands.is_empty().unwrap_or(false) {
@@ -596,7 +647,12 @@ impl ClassicalEngine for PHIREngine {
                     );
                     self.handle_variable_definition(data, data_type, variable, *size);
                 }
-                Operation::QuantumOp { qop, angles, args } => {
+                Operation::QuantumOp {
+                    qop,
+                    angles,
+                    args,
+                    returns: _,
+                } => {
                     debug!("Processing quantum operation: {}", qop);
 
                     // Clone the operation parameters to avoid borrow issues
@@ -735,9 +791,49 @@ impl ClassicalEngine for PHIREngine {
                 result_id, outcome
             );
 
-            // Store the measurement
+            // Store the measurement with the standard prefix and result_id
             self.measurement_results
-                .insert(format!("measurement_{result_id}"), outcome);
+                .insert(format!("{MEASUREMENT_PREFIX}{result_id}"), outcome);
+
+            // Also directly map this to the classical variable bits
+            // For example, if Measure returns [["m", 0]], we should set m_0 = outcome
+            // This lookup would need access to the program, which we have in self.program
+            if let Some(program) = &self.program {
+                for op in &program.ops {
+                    if let Operation::QuantumOp {
+                        qop,
+                        args: _,
+                        returns,
+                        ..
+                    } = op
+                    {
+                        if qop == "Measure" && !returns.is_empty() {
+                            // Get the variable name and index from the returns field
+                            let (var_name, var_idx) = &returns[0];
+
+                            // Check if this is the right measurement result
+                            if *var_idx == result_id as usize {
+                                // Store with the format "variable_index"
+                                let var_key = format!("{var_name}_{var_idx}");
+                                self.measurement_results.insert(var_key.clone(), outcome);
+                                log::debug!(
+                                    "Mapped measurement result_id={} to {}",
+                                    result_id,
+                                    var_key
+                                );
+
+                                // Also update the register value by setting the appropriate bit
+                                let entry = self
+                                    .measurement_results
+                                    .entry(var_name.clone())
+                                    .or_insert(0);
+                                *entry |= outcome << var_idx;
+                                log::debug!("Updated register {} value to {}", var_name, *entry);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -745,43 +841,109 @@ impl ClassicalEngine for PHIREngine {
 
     fn get_results(&self) -> Result<ShotResult, QueueError> {
         let mut results = ShotResult::default();
+        let mut exported_values = HashMap::new();
 
-        debug!(
-            "PHIR: Getting results from {} measurements",
-            self.measurement_results.len()
+        // Process all stored export mappings
+        for (source_register, export_name) in &self.export_mappings {
+            log::debug!(
+                "Processing export mapping: {} -> {}",
+                source_register,
+                export_name
+            );
+
+            // Check for direct register value first
+            if let Some(&value) = self.measurement_results.get(source_register) {
+                log::debug!(
+                    "Found direct register value for {}: {}",
+                    source_register,
+                    value
+                );
+                exported_values.insert(export_name.clone(), value);
+                continue;
+            }
+
+            // Check for indexed values (e.g., m_0, m_1, etc.)
+            let mut register_value = 0u32;
+            let mut found_values = false;
+
+            for i in 0..32 {
+                // Assuming max 32 bits for registers
+                let index_key = format!("{source_register}_{i}");
+                if let Some(&value) = self.measurement_results.get(&index_key) {
+                    register_value |= value << i;
+                    found_values = true;
+                    log::debug!("Found indexed value {}_{} = {}", source_register, i, value);
+                }
+            }
+
+            if found_values {
+                log::debug!(
+                    "Exporting {} = {} (assembled from bits)",
+                    export_name,
+                    register_value
+                );
+                exported_values.insert(export_name.clone(), register_value);
+                continue;
+            }
+
+            // Check raw measurement results as last resort
+            // This handles the case where we didn't capture the measurements in indexed form
+            let mut measurement_values = Vec::new();
+
+            for (key, &value) in &self.measurement_results {
+                if key.starts_with(MEASUREMENT_PREFIX) {
+                    if let Some(idx_str) = key.strip_prefix(MEASUREMENT_PREFIX) {
+                        if let Ok(idx) = idx_str.parse::<usize>() {
+                            measurement_values.push((idx, value));
+                            log::debug!("Found measurement value {} at index {}", value, idx);
+                        }
+                    }
+                }
+            }
+
+            if !measurement_values.is_empty() {
+                // Sort by index to maintain correct order
+                measurement_values.sort_by_key(|(idx, _)| *idx);
+                let combined_value_str: String = measurement_values
+                    .iter()
+                    .map(|(_, value)| value.to_string())
+                    .collect();
+
+                // Convert combined value to a number
+                if let Ok(combined_value) = combined_value_str.parse::<u32>() {
+                    log::debug!(
+                        "Exporting {} = {} (from raw measurements)",
+                        export_name,
+                        combined_value
+                    );
+                    exported_values.insert(export_name.clone(), combined_value);
+                    continue;
+                }
+            }
+
+            log::debug!("No values found to export for {}", source_register);
+        }
+
+        // Add all exported values to the results
+        log::debug!(
+            "PHIR: Adding {} exported values to results",
+            exported_values.len()
         );
 
-        // Add all measurements to the results
-        for (key, &value) in &self.measurement_results {
-            results.measurements.insert(key.clone(), value);
+        for (key, &value) in &exported_values {
+            results.registers.insert(key.clone(), value);
+            results.registers_u64.insert(key.clone(), u64::from(value));
+            log::debug!("PHIR: Adding exported register {} = {}", key, value);
         }
 
-        // Build result string in order of priority:
-        // 1. From result_X keys (from classical ops)
-        // 2. From measurement_X keys (from quantum ops)
-
-        // Try to build from result_X keys first
-        let mut result_digits = self.build_combined_result("result_");
-
-        // If empty, try measurement_X keys
-        if result_digits.is_empty() {
-            result_digits = self.build_combined_result("measurement_");
+        // Sanity check - this should only happen if measurements failed or weren't taken
+        if results.registers.is_empty() && !self.export_mappings.is_empty() {
+            log::warn!(
+                "PHIR: No exported values found despite Result commands being present. Check program execution."
+            );
         }
 
-        debug!("PHIR: Combined result string: {}", result_digits);
-
-        // Always store a combined result, even if empty
-        results.combined_result = Some(result_digits.clone());
-
-        // Add explicit result_X entries for each bit in the combined result
-        // This makes the output consistent with QIR
-        if !result_digits.is_empty() {
-            for (i, c) in result_digits.chars().enumerate() {
-                let value = u32::from(c == '1');
-                results.measurements.insert(format!("result_{i}"), value);
-            }
-        }
-
+        log::debug!("PHIR: Exported {} registers", results.registers.len());
         Ok(results)
     }
 
@@ -813,12 +975,58 @@ impl Clone for PHIREngine {
                 program: Some(program.clone()),
                 current_op: 0, // Reset state in the clone
                 measurement_results: HashMap::new(),
+                exported_values: HashMap::new(),
+                export_mappings: Vec::new(), // Reset export mappings in clone
                 quantum_variables: self.quantum_variables.clone(),
                 classical_variables: self.classical_variables.clone(),
                 message_builder: ByteMessageBuilder::new(),
             },
             None => Self::empty(),
         }
+    }
+}
+
+impl PHIREngine {
+    /// Gets the results in a specific format
+    ///
+    /// # Parameters
+    ///
+    /// * `format` - The output format to use (`PrettyJson`, `CompactJson`, or Tabular)
+    ///
+    /// # Returns
+    ///
+    /// A string containing the results in the specified format
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if there was a problem getting the results
+    pub fn get_formatted_results(
+        &self,
+        format: crate::core::shot_results::OutputFormat,
+    ) -> Result<String, QueueError> {
+        let shot_result = self.get_results()?;
+
+        // Convert single ShotResult to ShotResults for better formatting
+        let mut shot_results = crate::core::shot_results::ShotResults::new();
+
+        // Add each register to the ShotResults
+        for (key, &value) in &shot_result.registers {
+            shot_results.register_shots.insert(key.clone(), vec![value]);
+        }
+
+        for (key, &value) in &shot_result.registers_u64 {
+            shot_results
+                .register_shots_u64
+                .insert(key.clone(), vec![value]);
+        }
+
+        for (key, &value) in &shot_result.registers_i64 {
+            shot_results
+                .register_shots_i64
+                .insert(key.clone(), vec![value]);
+        }
+
+        Ok(shot_results.to_string_with_format(format))
     }
 }
 
@@ -932,23 +1140,37 @@ mod tests {
         // Execute the "Result" classical operation to copy measurement to result
         // Set current_op to position of the Result op
         engine.current_op = 5;
-        let args = vec![("m".to_string(), 0)];
-        let returns = vec![("result".to_string(), 0)];
+
+        // Convert to ArgItem format for handle_classical_op
+        let args = vec![ArgItem::Indexed(("m".to_string(), 0))];
+        let returns = vec![ArgItem::Indexed(("result".to_string(), 0))];
+
         engine.handle_classical_op("Result", &args, &returns)?;
 
         // Verify results
         let results = engine.get_results()?;
 
-        // Verify that the measurement was recorded
-        assert!(results.measurements.contains_key("measurement_0"));
-        assert_eq!(results.measurements["measurement_0"], 1);
+        // With our implementation, the Result operation should make only the exported register
+        // visible in the results. "measurement_0" should no longer be included.
+        assert!(
+            !results.registers.contains_key("measurement_0"),
+            "Internal measurement register should not be in results when using Result instruction"
+        );
 
-        // After the classical op, we should also have a result_0 key
-        assert!(results.measurements.contains_key("result_0"));
-        assert_eq!(results.measurements["result_0"], 1);
-
-        // The combined result should contain "1"
-        assert_eq!(results.combined_result, Some("1".to_string()));
+        // The Result operation maps "m" to "result", so only "result" should be in the output
+        assert!(
+            results.registers.contains_key("result"),
+            "result register should be in results"
+        );
+        assert_eq!(
+            results.registers["result"], 1,
+            "result register should have value 1"
+        );
+        assert_eq!(
+            results.registers.len(),
+            1,
+            "There should be exactly one register in the results"
+        );
 
         Ok(())
     }

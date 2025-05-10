@@ -15,17 +15,10 @@
       "variable": "m",
       "size": 2
     },
-    {
-      "data": "cvar_define",
-      "data_type": "i64",
-      "variable": "result",
-      "size": 2
-    },
     {"qop": "H", "args": [["q", 0]]},
     {"qop": "CX", "args": [["q", 0], ["q", 1]]},
     {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]},
     {"qop": "Measure", "args": [["q", 1]], "returns": [["m", 1]]},
-    {"cop": "Result", "args": [["m", 0]], "returns": [["result", 0]]},
-    {"cop": "Result", "args": [["m", 1]], "returns": [["result", 1]]}
+    {"cop": "Result", "args": ["m"], "returns": ["c"]}
   ]
 }

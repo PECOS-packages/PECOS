@@ -153,9 +153,8 @@ impl HybridEngine {
         match stage {
             EngineStage::Complete(results) => {
                 debug!(
-                    "HybridEngine::run_shot() completed after {} iterations with result: {:?} - Thread {:?}",
+                    "HybridEngine::run_shot() completed after {} iterations - Thread {:?}",
                     iteration_count,
-                    results.combined_result,
                     std::thread::current().id()
                 );
                 Ok(results)

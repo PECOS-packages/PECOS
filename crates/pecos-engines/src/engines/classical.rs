@@ -6,7 +6,7 @@ use dyn_clone::DynClone;
 use log::debug;
 use std::any::Any;
 use std::error::Error;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Classical engine that processes programs and handles measurements
 pub trait ClassicalEngine:
@@ -193,143 +193,49 @@ impl Engine for Box<dyn ClassicalEngine> {
     }
 }
 
-/// Detects the type of program based on its file extension and content.
+/// Sets up a basic QIR engine.
 ///
-/// This function examines the file extension and content to determine if the file
-/// corresponds to a QIR or PHIR program type.
-///
-/// # Parameters
-///
-/// - `path`: A reference to the path of the file to be analyzed.
-///
-/// # Returns
-///
-/// Returns a `ProgramType` indicating the detected type if successful, or a boxed error
-/// if format detection fails.
-///
-/// # Errors
-///
-/// This function may return the following errors:
-/// - `std::io::Error`: If the file cannot be opened or read.
-/// - `serde_json::Error`: If the JSON content cannot be parsed when detecting a PHIR program.
-/// - `Box<dyn std::error::Error>`: If the file does not conform to a supported format
-///   (e.g., invalid JSON format for PHIR or unsupported file extension).
-pub fn detect_program_type(path: &Path) -> Result<ProgramType, Box<dyn Error>> {
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some("json") => {
-            // Read JSON and verify format
-            let content = std::fs::read_to_string(path)?;
-            let json: serde_json::Value = serde_json::from_str(&content)?;
-
-            if let Some("PHIR/JSON") = json.get("format").and_then(|f| f.as_str()) {
-                Ok(ProgramType::PHIR)
-            } else {
-                Err("Invalid JSON format - expected PHIR/JSON".into())
-            }
-        }
-        Some("ll") => Ok(ProgramType::QIR),
-        _ => Err("Unsupported file format. Expected .ll or .json".into()),
-    }
-}
-
-#[allow(clippy::upper_case_acronyms)]
-pub enum ProgramType {
-    QIR,
-    PHIR,
-}
-
-/// Sets up a classical engine based on the type of the provided program file.
-///
-/// This function detects the type of the program (e.g., QIR or PHIR), creates the necessary
-/// build directory, and instantiates the corresponding classical engine.
+/// This function creates a QIR engine from the provided path.
 ///
 /// # Parameters
 ///
-/// - `program_path`: A reference to the path of the program file to be processed.
-/// - `shots`: Optional number of shots to set for the engine. Only used for QIR engines.
+/// - `program_path`: A reference to the path of the QIR program file
+/// - `shots`: Optional number of shots to set for the engine
 ///
 /// # Returns
 ///
-/// Returns a `Box<dyn ClassicalEngine>` containing the constructed engine if successful,
-/// or a boxed error if setup fails.
-///
-/// # Errors
-///
-/// This function may return the following errors:
-/// - `std::io::Error`: If the build directory cannot be created.
-/// - `Box<dyn std::error::Error>`: If the program type cannot be detected, or if there
-///   is an error while initializing the engine (e.g., invalid file format or unsupported version).
-///
-/// # Panics
-///
-/// This function will panic if the `program_path` does not have a parent directory, as it
-/// assumes the existence of a parent directory for creating the build directory.
-pub fn setup_engine(
+/// Returns a `Box<dyn ClassicalEngine>` containing the QIR engine
+pub fn setup_qir_engine(
     program_path: &Path,
     shots: Option<usize>,
 ) -> Result<Box<dyn ClassicalEngine>, Box<dyn Error>> {
-    debug!("Program path: {}", program_path.display());
-    let build_dir = program_path.parent().unwrap().join("build");
-    debug!("Build directory: {}", build_dir.display());
-    std::fs::create_dir_all(&build_dir)?;
+    debug!("Setting up QIR engine for: {}", program_path.display());
+    let mut engine = qir::QirEngine::new(program_path.to_path_buf());
 
-    match detect_program_type(program_path)? {
-        ProgramType::QIR => {
-            debug!("Setting up QIR engine and pre-compiling for efficient cloning");
-            let mut engine = qir::QirEngine::new(program_path.to_path_buf());
-
-            // Set the number of shots assigned to this engine if specified
-            if let Some(num_shots) = shots {
-                engine.set_assigned_shots(num_shots)?;
-            }
-
-            // Pre-compile the QIR library to prepare for efficient cloning
-            engine.pre_compile()?;
-
-            Ok(Box::new(engine))
-        }
-        ProgramType::PHIR => Ok(Box::new(phir::PHIREngine::new(program_path)?)),
+    // Set the number of shots assigned to this engine if specified
+    if let Some(num_shots) = shots {
+        engine.set_assigned_shots(num_shots)?;
     }
+
+    // Pre-compile the QIR library to prepare for efficient cloning
+    engine.pre_compile()?;
+
+    Ok(Box::new(engine))
 }
 
-/// Resolves the absolute path of the provided program.
+/// Sets up a basic PHIR engine.
 ///
-/// This function takes a program path (either absolute or relative),
-/// resolves it to an absolute path, and checks if the file exists.
+/// This function creates a PHIR engine from the provided path.
 ///
 /// # Parameters
 ///
-/// - `program`: A string slice containing the path to the program file.
+/// - `program_path`: A reference to the path of the PHIR program file
 ///
 /// # Returns
 ///
-/// Returns a `PathBuf` containing the canonicalized absolute path if successful,
-/// or an error if the file cannot be found or resolved.
-///
-/// # Errors
-///
-/// This function can return the following errors:
-/// - `std::io::Error`: If the current working directory cannot be obtained.
-/// - `Box<dyn std::error::Error>`: If the program file does not exist, or if the
-///   canonicalization of the file path fails.
-pub fn get_program_path(program: &str) -> Result<PathBuf, Box<dyn Error>> {
-    debug!("Resolving program path");
-
-    // Get the current directory for relative path resolution
-    let current_dir = std::env::current_dir()?;
-    debug!("Current directory: {}", current_dir.display());
-
-    // Resolve the path
-    let path = if Path::new(program).is_absolute() {
-        PathBuf::from(program)
-    } else {
-        current_dir.join(program)
-    };
-
-    // Check if file exists
-    if !path.exists() {
-        return Err(format!("Program file not found: {}", path.display()).into());
-    }
-
-    Ok(path.canonicalize()?)
+/// Returns a `Box<dyn ClassicalEngine>` containing the PHIR engine
+pub fn setup_phir_engine(program_path: &Path) -> Result<Box<dyn ClassicalEngine>, Box<dyn Error>> {
+    debug!("Setting up PHIR engine for: {}", program_path.display());
+    let engine = phir::PHIREngine::new(program_path)?;
+    Ok(Box::new(engine))
 }

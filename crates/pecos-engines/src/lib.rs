@@ -19,3 +19,6 @@ pub use engines::{
     quantum_system::QuantumSystem,
 };
 pub use errors::QueueError;
+
+// Re-export engine setup functions
+pub use engines::classical::{setup_phir_engine, setup_qir_engine};

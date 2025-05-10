@@ -1,0 +1,76 @@
+// OpenQASM 2.0 Grammar, simplified version
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ "\n" }
+
+// Top level program
+program = { SOI ~ oqasm? ~ statement* ~ EOI }
+
+// Version statement
+oqasm = { "OPENQASM" ~ WHITE_SPACE* ~ version_num ~ ";" }
+version_num = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+
+// Any statement in the program
+statement = { include | register_decl | quantum_op | classical_op | if_stmt | gate_def }
+
+// Include statement
+include = { "include" ~ string ~ ";" }
+string = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+
+// Register declarations
+register_decl = { qreg | creg }
+qreg = { "qreg" ~ indexed_id ~ ";" }
+creg = { "creg" ~ indexed_id ~ ";" }
+
+// Quantum operations
+quantum_op = { gate_call | measure | reset | barrier }
+
+// Gates with potentially both parameters and qubits
+gate_call = { identifier ~ param_values? ~ qubit_list ~ ";" }
+param_values = { "(" ~ expr ~ ("," ~ expr)* ~ ")" }
+
+// Simple gates (without parameters)
+qubit_list = { qubit_id ~ ("," ~ qubit_id)* }
+qubit_id = ${ identifier ~ "[" ~ int ~ "]" }
+
+// Measurement
+measure = {
+    "measure" ~ WHITE_SPACE* ~ (
+        // Form 1: measure q[0] -> c[0]
+        (qubit_id ~ WHITE_SPACE* ~ "->" ~ WHITE_SPACE* ~ bit_id) |
+        // Form 2: measure q -> c
+        (identifier ~ WHITE_SPACE* ~ "->" ~ WHITE_SPACE* ~ identifier)
+    ) ~ ";"
+}
+bit_id = ${ identifier ~ "[" ~ int ~ "]" }
+
+// Reset and barrier
+reset = { "reset" ~ qubit_id ~ ";" }
+barrier = { "barrier" ~ qubit_list ~ ";" }
+
+// Conditional statements
+if_stmt = { "if" ~ "(" ~ bit_id ~ condition ~ int ~ ")" ~ quantum_op }
+condition = @{ "==" | "!=" | "<" | ">" | "<=" | ">=" }
+
+// Classical operations
+classical_op = { bit_id ~ "=" ~ expr ~ ";" }
+
+// Gate definition (simplified)
+gate_def = { "gate" ~ identifier ~ param_list? ~ qubit_list ~ "{" ~ statement* ~ "}" }
+param_list = { "(" ~ identifier ~ ("," ~ identifier)* ~ ")" }
+
+// Expression with support for pi constant and arithmetic
+expr = { term ~ (add_op ~ term)* }
+term = { factor ~ (mul_op ~ factor)* }
+factor = { pi_constant | number | bit_id | "(" ~ expr ~ ")" | identifier ~ "(" ~ expr ~ ("," ~ expr)* ~ ")" }
+pi_constant = @{ "pi" }
+add_op = { "+" | "-" }
+mul_op = { "*" | "/" }
+number = @{ int ~ ("." ~ int)? }
+
+// Comparison operators
+bin_op = { "+" | "-" | "*" | "/" | "==" | "!=" | "<" | ">" | "<=" | ">=" }
+
+// Basic tokens
+identifier = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+indexed_id = ${ identifier ~ "[" ~ int ~ "]" }
+int = @{ ASCII_DIGIT+ }

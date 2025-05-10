@@ -1,25 +1,39 @@
 [package]
-name = "pecos"
+name = "pecos-qasm"
 version.workspace = true
 edition.workspace = true
+readme.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-readme = "../../README.md"
-description = "A crate for evaluating and exploring quantum error correction."
+description = "QASM parser and engine for PECOS quantum simulator"
 
 [dependencies]
+# Parser generator
+pest.workspace = true
+pest_derive = "2.7"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+log.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Workspace dependencies
 pecos-core.workspace = true
 pecos-qsim.workspace = true
 pecos-engines.workspace = true
-pecos-qasm.workspace = true
-log.workspace = true
-serde_json.workspace = true
 
 [dev-dependencies]
+# Testing
 tempfile = "3.8"
 
 [lints]

@@ -1,0 +1,10 @@
+// Main program structure
+program = { SOI ~ version ~ (include)* ~ (declaration | operation)* ~ EOI }
+
+// Version declaration
+version = { "OPENQASM"~ WHITE_SPACE ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ ~ ";" }
+
+// Include statement
+include = { "include" ~ WHITE_SPACE ~ string ~ ";" }
+
+// ... existing code ...

@@ -3,6 +3,9 @@ use env_logger::Env;
 use pecos::prelude::*;
 use std::error::Error;
 
+mod engine_setup;
+use engine_setup::setup_cli_engine;
+
 #[derive(Parser)]
 #[command(
     name = "pecos",
@@ -19,13 +22,13 @@ struct Cli {
 enum Commands {
     /// Compile QIR program to native code
     Compile(CompileArgs),
-    /// Run quantum program (supports QIR and PHIR/JSON formats)
+    /// Run quantum program (supports QIR, PHIR/JSON, and QASM formats)
     Run(RunArgs),
 }
 
 #[derive(Args)]
 struct CompileArgs {
-    /// Path to the quantum program (LLVM IR)
+    /// Path to the quantum program (LLVM IR or QASM)
     program: String,
 }
 
@@ -62,9 +65,38 @@ impl std::str::FromStr for NoiseModelType {
     }
 }
 
-#[derive(Args, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+enum OutputFormatType {
+    /// Pretty-printed JSON with indentation
+    Json,
+    /// Compact JSON without extra whitespace
+    CompactJson,
+    /// Compact JSON with each register on a new line
+    #[default]
+    PrettyCompact,
+    /// Format showing frequencies of each outcome
+    Frequency,
+}
+
+impl std::str::FromStr for OutputFormatType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "json" | "pretty" => Ok(OutputFormatType::Json),
+            "compact" => Ok(OutputFormatType::CompactJson),
+            "pretty-compact" | "prettycompact" | "line" => Ok(OutputFormatType::PrettyCompact),
+            "freq" | "frequency" => Ok(OutputFormatType::Frequency),
+            _ => Err(format!(
+                "Unknown output format: {s}. Valid options are 'json', 'compact', 'pretty-compact', or 'frequency'"
+            )),
+        }
+    }
+}
+
+#[derive(Args)]
 struct RunArgs {
-    /// Path to the quantum program (LLVM IR or JSON)
+    /// Path to the quantum program (LLVM IR, JSON, or QASM)
     program: String,
 
     /// Number of shots for parallel execution
@@ -90,6 +122,24 @@ struct RunArgs {
     /// Seed for random number generation (for reproducible results)
     #[arg(short = 'd', long)]
     seed: Option<u64>,
+
+    /// Output format: pretty-compact, json, compact, or frequency
+    /// - pretty-compact: Compact JSON with each register on a new line (default)
+    /// - json: Pretty-printed JSON with full indentation
+    /// - compact: Compact JSON without any whitespace
+    /// - frequency: Format showing frequencies of each outcome
+    #[arg(
+        short = 'f',
+        long = "format",
+        value_parser,
+        default_value = "pretty-compact"
+    )]
+    output_format: OutputFormatType,
+
+    /// Output file path to write results to
+    /// If not specified, results will be printed to stdout
+    #[arg(short = 'o', long = "output")]
+    output_file: Option<String>,
 }
 
 /// Parse noise probability specification from command line argument
@@ -180,7 +230,8 @@ fn parse_general_noise_probabilities(noise_str_opt: Option<&String>) -> (f64, f6
 /// the results.
 fn run_program(args: &RunArgs) -> Result<(), Box<dyn Error>> {
     let program_path = get_program_path(&args.program)?;
-    let classical_engine = setup_engine(&program_path, Some(args.shots.div_ceil(args.workers)))?;
+    let classical_engine =
+        setup_cli_engine(&program_path, Some(args.shots.div_ceil(args.workers)))?;
 
     // Create the appropriate noise model based on user selection
     let noise_model: Box<dyn NoiseModel> = match args.noise_model {
@@ -201,17 +252,20 @@ fn run_program(args: &RunArgs) -> Result<(), Box<dyn Error>> {
             // Create a general noise model with five probabilities
             let (prep, meas_0, meas_1, single_qubit, two_qubit) =
                 parse_general_noise_probabilities(args.noise_probability.as_ref());
-            let mut model = GeneralNoiseModel::new(prep, meas_0, meas_1, single_qubit, two_qubit);
+            let mut builder = GeneralNoiseModel::builder()
+                .with_prep_probability(prep)
+                .with_meas_0_probability(meas_0)
+                .with_meas_1_probability(meas_1)
+                .with_p1_probability(single_qubit)
+                .with_p2_probability(two_qubit);
 
             // Set seed if provided
             if let Some(s) = args.seed {
                 let noise_seed = derive_seed(s, "noise_model");
-                model.reset_with_seed(noise_seed).map_err(|e| {
-                    Box::<dyn Error>::from(format!("Failed to set noise model seed: {e}"))
-                })?;
+                builder = builder.with_seed(noise_seed);
             }
 
-            Box::new(model)
+            builder.build()
         }
     };
 
@@ -224,7 +278,36 @@ fn run_program(args: &RunArgs) -> Result<(), Box<dyn Error>> {
         args.seed,
     )?;
 
-    results.print();
+    // Convert CLI format to engine format
+    let format = match args.output_format {
+        OutputFormatType::Json => OutputFormat::PrettyJson,
+        OutputFormatType::CompactJson => OutputFormat::CompactJson,
+        OutputFormatType::PrettyCompact => OutputFormat::PrettyCompactJson,
+        OutputFormatType::Frequency => OutputFormat::Frequency,
+    };
+
+    // Format the results as a string
+    let results_str = results.to_string_with_format(format);
+
+    // Either write to the specified output file or print to stdout
+    match &args.output_file {
+        Some(file_path) => {
+            // Ensure parent directory exists
+            if let Some(parent) = std::path::Path::new(file_path).parent() {
+                if !parent.exists() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+
+            // Write results to file
+            std::fs::write(file_path, results_str)?;
+            println!("Results written to {file_path}");
+        }
+        None => {
+            // Print results to stdout
+            println!("{results_str}");
+        }
+    }
 
     Ok(())
 }
@@ -240,11 +323,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             let program_path = get_program_path(&args.program)?;
             match detect_program_type(&program_path)? {
                 ProgramType::QIR => {
-                    let engine = setup_engine(&program_path, None)?;
+                    let engine = setup_cli_engine(&program_path, None)?;
                     engine.compile()?;
                 }
                 ProgramType::PHIR => {
                     println!("PHIR/JSON programs don't require compilation");
+                }
+                ProgramType::QASM => {
+                    println!("QASM programs don't require compilation");
                 }
             }
         }
@@ -278,6 +364,8 @@ mod tests {
                 assert_eq!(args.shots, 100);
                 assert_eq!(args.workers, 2);
                 assert_eq!(args.noise_model, NoiseModelType::Depolarizing); // Default
+                assert_eq!(args.output_format, OutputFormatType::PrettyCompact); // Default
+                assert_eq!(args.output_file, None); // Default
             }
             Commands::Compile(_) => panic!("Expected Run command"),
         }
@@ -293,6 +381,8 @@ mod tests {
                 assert_eq!(args.shots, 100);
                 assert_eq!(args.workers, 2);
                 assert_eq!(args.noise_model, NoiseModelType::Depolarizing); // Default
+                assert_eq!(args.output_format, OutputFormatType::PrettyCompact); // Default
+                assert_eq!(args.output_file, None); // Default
             }
             Commands::Compile(_) => panic!("Expected Run command"),
         }
@@ -320,8 +410,82 @@ mod tests {
                     args.noise_probability,
                     Some("0.01,0.02,0.03,0.04,0.05".to_string())
                 );
+                assert_eq!(args.output_format, OutputFormatType::PrettyCompact); // Default
+                assert_eq!(args.output_file, None); // Default
             }
             Commands::Compile(_) => panic!("Expected Run command"),
+        }
+    }
+
+    #[test]
+    fn verify_cli_format_options() {
+        // Test each format option to ensure it parses correctly
+
+        // Pretty Compact (default)
+        let cmd = Cli::parse_from(["pecos", "run", "program.json", "-f", "pretty-compact"]);
+        if let Commands::Run(args) = cmd.command {
+            assert_eq!(args.output_format, OutputFormatType::PrettyCompact);
+        } else {
+            panic!("Expected Run command");
+        }
+
+        // Alternative aliases for Pretty Compact
+        let cmd = Cli::parse_from(["pecos", "run", "program.json", "-f", "line"]);
+        if let Commands::Run(args) = cmd.command {
+            assert_eq!(args.output_format, OutputFormatType::PrettyCompact);
+        } else {
+            panic!("Expected Run command");
+        }
+
+        // JSON
+        let cmd = Cli::parse_from(["pecos", "run", "program.json", "-f", "json"]);
+        if let Commands::Run(args) = cmd.command {
+            assert_eq!(args.output_format, OutputFormatType::Json);
+        } else {
+            panic!("Expected Run command");
+        }
+
+        // Compact JSON
+        let cmd = Cli::parse_from(["pecos", "run", "program.json", "-f", "compact"]);
+        if let Commands::Run(args) = cmd.command {
+            assert_eq!(args.output_format, OutputFormatType::CompactJson);
+        } else {
+            panic!("Expected Run command");
+        }
+
+        // Frequency format
+        let cmd = Cli::parse_from(["pecos", "run", "program.json", "-f", "freq"]);
+        if let Commands::Run(args) = cmd.command {
+            assert_eq!(args.output_format, OutputFormatType::Frequency);
+        } else {
+            panic!("Expected Run command");
+        }
+    }
+
+    #[test]
+    fn verify_cli_output_file_option() {
+        // Test with output file specified using short flag
+        let cmd = Cli::parse_from(["pecos", "run", "program.json", "-o", "results.json"]);
+
+        if let Commands::Run(args) = cmd.command {
+            assert_eq!(args.output_file, Some("results.json".to_string()));
+        } else {
+            panic!("Expected Run command");
+        }
+
+        // Test with output file specified using long flag
+        let cmd = Cli::parse_from([
+            "pecos",
+            "run",
+            "program.json",
+            "--output",
+            "path/to/results.json",
+        ]);
+
+        if let Commands::Run(args) = cmd.command {
+            assert_eq!(args.output_file, Some("path/to/results.json".to_string()));
+        } else {
+            panic!("Expected Run command");
         }
     }
 }

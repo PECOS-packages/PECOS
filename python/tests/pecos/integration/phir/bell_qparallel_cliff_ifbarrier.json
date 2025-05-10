@@ -48,6 +48,7 @@
    "true_branch":  [{"meta":  "barrier", "args": [["q", 0], ["q", 1]]}]
   },
   {"qop": "SYdg", "args": [["q", 1]]},
-  {"qop": "Measure", "args": [["q", 0], ["q", 1]], "returns": [["m", 0], ["m", 1]]}
+  {"qop": "Measure", "args": [["q", 0], ["q", 1]], "returns": [["m", 0], ["m", 1]]},
+  {"cop": "Result", "args": ["m"], "returns": ["c"]}
  ]
 }

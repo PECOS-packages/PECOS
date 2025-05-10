@@ -150,6 +150,9 @@ pub struct QirEngine {
     /// Map of measurement results by `result_id`
     measurement_results: HashMap<usize, u32>,
 
+    /// Map of result IDs to custom names (like "c")
+    result_name_map: measurement::ResultNameMap,
+
     /// Path to the QIR file to execute
     qir_file: PathBuf,
 
@@ -189,6 +192,7 @@ impl QirEngine {
         Self {
             library: None,
             measurement_results: HashMap::new(),
+            result_name_map: measurement::ResultNameMap::new(),
             qir_file,
             library_path: None,
             commands_generated: false,
@@ -216,6 +220,7 @@ impl QirEngine {
         Self {
             library: None,
             measurement_results: HashMap::new(),
+            result_name_map: measurement::ResultNameMap::new(),
             qir_file,
             library_path: None,
             commands_generated: false,
@@ -272,6 +277,9 @@ impl QirEngine {
 
         // Clear measurement results
         self.measurement_results.clear();
+
+        // Reset result name mapping
+        self.result_name_map = measurement::ResultNameMap::new();
 
         // Reset commands_generated flag
         self.commands_generated = false;
@@ -407,8 +415,8 @@ impl QirEngine {
     ///
     /// * `ShotResult` - The results of the quantum computation
     fn get_results(&self) -> ShotResult {
-        // Use the measurement module to get results
-        measurement::get_results(&self.measurement_results)
+        // Use the measurement module to get results with custom result names
+        measurement::get_results_with_names(&self.measurement_results, &self.result_name_map)
     }
 
     /// Compile the QIR program
@@ -570,6 +578,11 @@ impl QirEngine {
         if let Some(library) = &self.library {
             // Run the QIR program and get the commands
             let runtime_commands = self.run_qir_program(library)?;
+
+            // Process the QIR commands to extract result name information
+            for cmd in &runtime_commands {
+                self.result_name_map.process_command(cmd);
+            }
 
             // Convert binary commands directly to QuantumCommand objects
             // This avoids the string conversion step
@@ -851,6 +864,7 @@ impl Clone for QirEngine {
         let cloned = Self {
             library: None,                       // Start with no library, will be loaded on demand
             measurement_results: HashMap::new(), // Start with empty measurements
+            result_name_map: measurement::ResultNameMap::new(), // Start with empty result name mapping
             qir_file: self.qir_file.clone(),
             library_path: self.library_path.clone(),
             commands_generated: false,   // Reset commands_generated flag

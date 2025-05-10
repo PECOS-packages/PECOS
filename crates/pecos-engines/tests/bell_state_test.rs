@@ -1,6 +1,6 @@
 use pecos_core::rng::RngManageable;
 use pecos_engines::engines::MonteCarloEngine;
-use pecos_engines::engines::classical::setup_engine;
+use pecos_engines::setup_phir_engine;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -12,7 +12,7 @@ fn test_bell_state_noiseless() {
     let bell_file = workspace_dir.join("examples/phir/bell.json");
 
     // Run the Bell state example with 100 shots and 2 workers
-    let classical_engine = setup_engine(&bell_file, None).unwrap();
+    let classical_engine = setup_phir_engine(&bell_file).unwrap();
 
     // Create a noiseless model
     let noise_model =
@@ -63,7 +63,7 @@ fn test_bell_state_with_noise() {
         println!("Attempting test with seed {seed}");
 
         // Run the Bell state example with high noise probability for more reliable testing
-        let classical_engine = setup_engine(&bell_file, None).unwrap();
+        let classical_engine = setup_phir_engine(&bell_file).unwrap();
 
         // Create a noise model with 30% depolarizing noise
         let mut noise_model =

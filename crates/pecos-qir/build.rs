@@ -9,11 +9,11 @@ use std::process::Command;
 
 // Source files that trigger rebuilds when changed
 const QIR_SOURCE_FILES: [&str; 5] = [
-    "src/engines/qir/runtime.rs",
-    "src/engines/qir/common.rs",
-    "src/engines/qir/state.rs",
-    "src/core/result_id.rs",
-    "src/byte_message/quantum_cmd.rs",
+    "src/runtime.rs",
+    "src/common.rs",
+    "src/state.rs",
+    "../pecos-engines/src/core/result_id.rs",
+    "../pecos-engines/src/byte_message/quantum_cmd.rs",
 ];
 
 // LLVM version required by PECOS
@@ -25,7 +25,7 @@ const LLVM_CACHE_FILE: &str = "target/qir_runtime_build/llvm_version_cache.txt";
 // Environment variables to check for LLVM path
 const LLVM_ENV_VARS: [&str; 2] = ["PECOS_LLVM_PATH", "LLVM_HOME"];
 
-/// Build script for the pecos-engines crate
+/// Build script for the pecos-qir crate
 ///
 /// This script automatically builds the QIR runtime library that is used by the QIR compiler.
 /// The library is built only when necessary (when source files have changed or the build
@@ -320,25 +320,28 @@ fn build_qir_runtime() -> Result<(), String> {
 /// # Returns
 /// A `FilePaths` struct with all required paths
 fn setup_file_paths(manifest_dir: &Path, build_dir: &Path) -> FilePaths {
+    // Define paths for pecos-engines source files
+    let pecos_engines_dir = manifest_dir.parent().unwrap().join("pecos-engines");
+
     FilePaths {
         common: (
-            manifest_dir.join("src/engines/qir/common.rs"),
+            manifest_dir.join("src/common.rs"),
             build_dir.join("src/common.rs"),
         ),
         state: (
-            manifest_dir.join("src/engines/qir/state.rs"),
+            manifest_dir.join("src/state.rs"),
             build_dir.join("src/state.rs"),
         ),
         result_id: (
-            manifest_dir.join("src/core/result_id.rs"),
+            pecos_engines_dir.join("src/core/result_id.rs"),
             build_dir.join("src/result_id.rs"),
         ),
         quantum_cmd: (
-            manifest_dir.join("src/byte_message/quantum_cmd.rs"),
+            pecos_engines_dir.join("src/byte_message/quantum_cmd.rs"),
             build_dir.join("src/byte_message/quantum_cmd.rs"),
         ),
         runtime: (
-            manifest_dir.join("src/engines/qir/runtime.rs"),
+            manifest_dir.join("src/runtime.rs"),
             build_dir.join("src/lib.rs"),
         ),
         byte_message: build_dir.join("src/byte_message.rs"),
@@ -371,8 +374,7 @@ name = "qir_runtime"
 crate-type = ["staticlib"]
 
 [dependencies]
-once_cell = "1.8.0"
-pecos-core = {{ version = "=0.1.1", path = "{}" }}
+pecos-core = {{ path = "{}" }}
 
 [workspace]
 resolver = "2"
@@ -393,12 +395,10 @@ members = ["."]
     fs::copy(&paths.result_id.0, &paths.result_id.1)
         .map_err(|e| format!("Failed to copy result_id.rs: {e}"))?;
 
-    // 3. Modify state.rs: update imports
+    // 3. Copy state.rs (no need to modify imports)
     let state_content =
         fs::read_to_string(&paths.state.0).map_err(|e| format!("Failed to read state.rs: {e}"))?;
-    let modified_state =
-        state_content.replace("use crate::engines::qir::common::", "use crate::common::");
-    fs::write(&paths.state.1, modified_state)
+    fs::write(&paths.state.1, state_content)
         .map_err(|e| format!("Failed to write state.rs: {e}"))?;
 
     // 4. Modify quantum_cmd.rs: update imports
@@ -424,13 +424,14 @@ members = ["."]
 
     // Update imports
     let modified_runtime = runtime_content
-        .replace("use crate::engines::qir::common::", "use crate::common::")
-        .replace("use crate::engines::qir::state::", "use crate::state::")
         .replace(
-            "use crate::byte_message::quantum_cmd::",
+            "use pecos_engines::byte_message::",
             "use crate::byte_message::",
         )
-        .replace("use crate::core::result_id::", "use crate::result_id::");
+        .replace(
+            "use pecos_engines::core::result_id::",
+            "use crate::result_id::",
+        );
 
     // Add module declarations
     let module_declarations =

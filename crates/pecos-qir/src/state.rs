@@ -1,4 +1,4 @@
-use crate::engines::qir::common::{get_thread_id, should_print_commands};
+use crate::common::{get_thread_id, should_print_commands};
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::Mutex;

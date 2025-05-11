@@ -3,7 +3,8 @@ use std::path::PathBuf;
 
 use pecos_core::rng::RngManageable;
 use pecos_engines::engines::MonteCarloEngine;
-use pecos_engines::engines::qir::QirEngine;
+use pecos_engines::engines::noise::DepolarizingNoiseModel;
+use pecos_qir::QirEngine;
 
 /// Get the path to the QIR Bell state example
 fn get_qir_program_path() -> PathBuf {
@@ -58,8 +59,7 @@ fn test_qir_bell_state_noiseless() {
     let qir_engine = QirEngine::new(get_qir_program_path());
 
     // Create a noiseless model
-    let noise_model =
-        Box::new(pecos_engines::engines::noise::DepolarizingNoiseModel::new_uniform(0.0));
+    let noise_model = Box::new(DepolarizingNoiseModel::new_uniform(0.0));
 
     // Run the Bell state example with 100 shots and 2 workers
     let results = MonteCarloEngine::run_with_noise_model(
@@ -124,8 +124,7 @@ pub fn test_qir_bell_state_with_noise() {
         let qir_engine = QirEngine::new(get_qir_program_path());
 
         // Create a noise model with the specified probability
-        let mut noise_model =
-            pecos_engines::engines::noise::DepolarizingNoiseModel::new_uniform(noise_probability);
+        let mut noise_model = DepolarizingNoiseModel::new_uniform(noise_probability);
 
         // Set the seed on the noise model
         noise_model

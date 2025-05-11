@@ -145,11 +145,11 @@ pub fn setup_engine_for_program(
     debug!(
         "Setting up engine for {:?} program: {}",
         program_type,
-        program_path.display()
+        program_path.display(),
     );
 
     match program_type {
-        ProgramType::QIR => pecos_engines::setup_qir_engine(program_path, None),
+        ProgramType::QIR => crate::engines::setup_qir_engine(program_path, None),
         ProgramType::PHIR => pecos_engines::setup_phir_engine(program_path),
         ProgramType::QASM => crate::engines::setup_qasm_engine(program_path, seed),
     }

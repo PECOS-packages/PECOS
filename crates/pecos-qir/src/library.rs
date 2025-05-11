@@ -1,8 +1,8 @@
-use crate::byte_message::QuantumCmd;
-use crate::engines::qir::common::get_thread_id;
+use crate::common::get_thread_id;
 use libloading::{Library, Symbol};
 use log::{debug, trace, warn};
 use pecos_core::errors::PecosError;
+use pecos_engines::byte_message::QuantumCmd;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -29,7 +29,7 @@ use std::time::Duration;
 /// # Examples
 ///
 /// ```no_run
-/// use pecos_engines::engines::qir::library::QirLibrary;
+/// use pecos_qir::library::QirLibrary;
 /// use std::path::Path;
 ///
 /// // Load a QIR library from a file

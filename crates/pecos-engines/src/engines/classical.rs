@@ -1,6 +1,6 @@
 use crate::byte_message::ByteMessage;
 use crate::core::shot_results::ShotResult;
-use crate::engines::{ControlEngine, Engine, EngineStage, phir, qir};
+use crate::engines::{ControlEngine, Engine, EngineStage, phir};
 use dyn_clone::DynClone;
 use log::debug;
 use pecos_core::errors::PecosError;
@@ -186,36 +186,6 @@ impl Engine for Box<dyn ClassicalEngine> {
         // Use fully qualified path to disambiguate
         ClassicalEngine::reset(&mut **self)
     }
-}
-
-/// Sets up a basic QIR engine.
-///
-/// This function creates a QIR engine from the provided path.
-///
-/// # Parameters
-///
-/// - `program_path`: A reference to the path of the QIR program file
-/// - `shots`: Optional number of shots to set for the engine
-///
-/// # Returns
-///
-/// Returns a `Box<dyn ClassicalEngine>` containing the QIR engine
-pub fn setup_qir_engine(
-    program_path: &Path,
-    shots: Option<usize>,
-) -> Result<Box<dyn ClassicalEngine>, PecosError> {
-    debug!("Setting up QIR engine for: {}", program_path.display());
-    let mut engine = qir::QirEngine::new(program_path.to_path_buf());
-
-    // Set the number of shots assigned to this engine if specified
-    if let Some(num_shots) = shots {
-        engine.set_assigned_shots(num_shots)?;
-    }
-
-    // Pre-compile the QIR library to prepare for efficient cloning
-    engine.pre_compile()?;
-
-    Ok(Box::new(engine))
 }
 
 /// Sets up a basic PHIR engine.

@@ -22,7 +22,7 @@ calls to Wasm VMs, conditional branching, and more.
 - Fast Simulation: Leverages a fast stabilizer simulation algorithm.
 - Multi-language extensions: Core functionalities implemented via Rust for performance and safety. Additional add-ons
 and extension support in C/C++ via Cython.
-- QIR Support: Execute Quantum Intermediate Representation programs (requires LLVM version 14 with the 'llc' tool).
+- QIR Support: Execute Quantum Intermediate Representation programs (requires LLVM version 14 with the 'llc' tool). PECOS now includes a dedicated `pecos-qir` crate with an improved QIR implementation.
 
 ## Getting Started
 
@@ -40,6 +40,10 @@ PECOS now consists of multiple interconnected components:
   - `/crates/pecos-core/`: Core Rust functionalities
   - `/crates/pecos-qsims/`: A collection of quantum simulators
   - `/crates/pecos-qec/`: Rust code for analyzing and exploring quantum error correction (QEC)
+  - `/crates/pecos-qasm/`: Implementation of QASM parsing and execution
+  - `/crates/pecos-qir/`: Implementation of QIR (Quantum Intermediate Representation) execution
+  - `/crates/pecos-engines/`: Quantum and classical engines for simulations
+  - `/crates/pecos-cli/`: Command-line interface for PECOS
   - `/crates/pecos-python/`: Rust code for Python extensions
   - `/crates/benchmarks/`: A collection of benchmarks to test the performance of the crates
 

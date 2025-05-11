@@ -1,5 +1,6 @@
 use clap::{Args, Parser, Subcommand};
 use env_logger::Env;
+use log::debug;
 use pecos::prelude::*;
 
 mod engine_setup;
@@ -93,7 +94,7 @@ impl std::str::FromStr for OutputFormatType {
     }
 }
 
-#[derive(Args)]
+#[derive(Args, Clone)]
 struct RunArgs {
     /// Path to the quantum program (LLVM IR, JSON, or QASM)
     program: String,
@@ -227,15 +228,15 @@ fn parse_general_noise_probabilities(noise_str_opt: Option<&String>) -> (f64, f6
     }
 }
 
-/// Run a quantum program with the specified arguments
-///
-/// This function sets up the appropriate engines and noise models based on
-/// the command line arguments, then runs the specified program and outputs
-/// the results.
 fn run_program(args: &RunArgs) -> Result<(), PecosError> {
     // get_program_path now includes proper context in its errors
     let program_path = get_program_path(&args.program)?;
 
+    // Detect the program type (for informational purposes)
+    let program_type = detect_program_type(&program_path)?;
+    debug!("Detected program type: {:?}", program_type);
+
+    // Set up the engine
     let classical_engine =
         setup_cli_engine(&program_path, Some(args.shots.div_ceil(args.workers)))?;
 

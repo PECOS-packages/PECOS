@@ -1,6 +1,5 @@
 //! Windows-specific implementations for QIR compilation
 
-// No longer need the error module
 use log::{debug, warn};
 use pecos_core::errors::PecosError;
 use std::fs;

@@ -1,6 +1,6 @@
-use crate::byte_message::QuantumCmd;
-use crate::core::result_id::ResultId;
 use pecos_core::QubitId;
+use pecos_engines::byte_message::QuantumCmd;
+use pecos_engines::core::result_id::ResultId;
 use std::collections::HashMap;
 use std::env;
 use std::ffi::{CStr, c_char};
@@ -18,14 +18,12 @@ use std::thread;
 /// # QIR Runtime Library
 ///
 /// This file is a key component of the QIR runtime library, which is built by the
-/// `build.rs` script in the pecos-engines crate. The library is pre-built and placed
+/// `build.rs` script in the pecos-qir crate. The library is pre-built and placed
 /// in the target directory to speed up QIR compilation.
 ///
 /// When the QIR compiler runs, it first checks for a pre-built library. If found,
 /// it uses that library directly. If not, it falls back to building the runtime
 /// on-demand using this file and related files.
-///
-/// See `QIR_RUNTIME.md` for more details on the QIR runtime library build process.
 ///
 /// # Implementation Details
 ///
@@ -281,8 +279,11 @@ pub unsafe extern "C" fn __quantum__qis__rzz__body(theta: f64, qubit1: usize, qu
 /// are valid and have been properly allocated. Calling with invalid IDs may lead to
 /// undefined behavior.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__m__body(qubit: usize, result: usize) {
+pub unsafe extern "C" fn __quantum__qis__m__body(qubit: usize, result: usize) -> u32 {
     store_command(&QuantumCmd::Measure(QubitId(qubit), ResultId(result)));
+    // In the real QIR runtime, this would return the actual measurement result
+    // For this implementation, we just return 0
+    0
 }
 
 /// Prepares a qubit in the |0⟩ state.

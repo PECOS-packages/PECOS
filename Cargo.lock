@@ -641,6 +641,7 @@ dependencies = [
  "pecos-core",
  "pecos-engines",
  "pecos-qasm",
+ "pecos-qir",
  "pecos-qsim",
  "serde_json",
  "tempfile",
@@ -679,14 +680,12 @@ dependencies = [
  "bitflags",
  "bytemuck",
  "dyn-clone",
- "libloading",
  "log",
  "pecos-core",
  "pecos-qsim",
  "rand",
  "rand_chacha",
  "rayon",
- "regex",
  "serde",
  "serde_json",
  "tempfile",
@@ -712,6 +711,17 @@ dependencies = [
 [[package]]
 name = "pecos-qec"
 version = "0.1.1"
+
+[[package]]
+name = "pecos-qir"
+version = "0.1.1"
+dependencies = [
+ "libloading",
+ "log",
+ "pecos-core",
+ "pecos-engines",
+ "regex",
+]
 
 [[package]]
 name = "pecos-qsim"

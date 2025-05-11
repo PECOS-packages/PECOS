@@ -11,7 +11,6 @@ keywords.workspace = true
 categories.workspace = true
 description = "Provides simulator engines for PECOS simulations."
 
-
 [lib]
 crate-type = ["cdylib", "rlib"]
 
@@ -25,8 +24,6 @@ rand_chacha.workspace = true
 bytemuck.workspace = true
 bitflags.workspace = true
 dyn-clone.workspace = true
-libloading.workspace = true
-regex.workspace = true
 
 pecos-core.workspace = true
 pecos-qsim.workspace = true

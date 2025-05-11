@@ -145,9 +145,9 @@ fn main() {
             result0,
             result1,
             if result0 == result1 {
-                "MATCHED ✓"
+                "MATCHED"
             } else {
-                "DIFFERENT ✗"
+                "DIFFERENT"
             }
         );
     }
@@ -168,11 +168,7 @@ fn main() {
             exp.seed,
             replay_result0,
             replay_result1,
-            if matches {
-                "REPLICATED ✓"
-            } else {
-                "DIFFERENT ✗"
-            }
+            if matches { "REPLICATED" } else { "DIFFERENT" }
         );
     }
 

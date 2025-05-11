@@ -1,11 +1,11 @@
-use crate::byte_message::ByteMessage;
-use crate::byte_message::QuantumCmd;
-use crate::byte_message::QuantumCommand;
-use crate::byte_message::message_data::MessageData;
-use crate::core::record_data::RecordData;
-use crate::engines::qir::common::get_thread_id;
+use crate::common::get_thread_id;
 use log::debug;
 use pecos_core::errors::PecosError;
+use pecos_engines::byte_message::ByteMessage;
+use pecos_engines::byte_message::QuantumCmd;
+use pecos_engines::byte_message::QuantumCommand;
+use pecos_engines::byte_message::message_data::MessageData;
+use pecos_engines::core::record_data::RecordData;
 
 /// Parses binary commands from the QIR runtime into `QuantumCommand` objects
 ///

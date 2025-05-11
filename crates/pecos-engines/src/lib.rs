@@ -13,11 +13,10 @@ pub use engines::{
     monte_carlo::MonteCarloEngine,
     noise::{DepolarizingNoiseModel, NoiseModel, PassThroughNoiseModel},
     phir::PHIREngine,
-    qir::QirEngine,
     quantum::QuantumEngine,
     quantum_system::QuantumSystem,
 };
 pub use pecos_core::errors::PecosError;
 
 // Re-export engine setup functions
-pub use engines::classical::{setup_phir_engine, setup_qir_engine};
+pub use engines::classical::setup_phir_engine;

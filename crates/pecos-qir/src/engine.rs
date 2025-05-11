@@ -1,15 +1,14 @@
-use crate::byte_message::{ByteMessage, QuantumCmd, QuantumCommand};
-use crate::core::shot_results::ShotResult;
-use crate::engines::Engine;
-use crate::engines::classical::ClassicalEngine;
-use crate::engines::qir::command_generation;
-use crate::engines::qir::common::get_thread_id;
-use crate::engines::qir::compiler::QirCompiler;
-// No longer need the error module
-use crate::engines::qir::library::QirLibrary;
-use crate::engines::qir::measurement;
+use crate::command_generation;
+use crate::common::get_thread_id;
+use crate::compiler::QirCompiler;
+use crate::library::QirLibrary;
+use crate::measurement;
 use log::{debug, trace, warn};
 use pecos_core::errors::PecosError;
+use pecos_engines::byte_message::{ByteMessage, QuantumCmd, QuantumCommand};
+use pecos_engines::core::shot_results::ShotResult;
+use pecos_engines::engines::ClassicalEngine;
+use pecos_engines::engines::Engine;
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
@@ -26,7 +25,7 @@ use std::time::Duration;
 /// # Examples
 ///
 /// ```
-/// use pecos_engines::engines::qir::engine::{QirEngineConfig, QirEngine};
+/// use pecos_qir::engine::{QirEngineConfig, QirEngine};
 /// use std::path::PathBuf;
 ///
 /// let config = QirEngineConfig::new()
@@ -130,7 +129,7 @@ impl QirEngineConfig {
 /// # Examples
 ///
 /// ```
-/// use pecos_engines::engines::qir::engine::{QirEngine, QirEngineConfig};
+/// use pecos_qir::engine::{QirEngine, QirEngineConfig};
 /// use std::path::PathBuf;
 ///
 /// // Create a QIR engine with default configuration

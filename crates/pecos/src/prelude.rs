@@ -17,7 +17,7 @@ pub use pecos_core::{IndexableElement, Set, VecSet, errors::PecosError};
 pub use pecos_engines::{
     ByteMessage, ByteMessageBuilder, ClassicalEngine, ControlEngine, DepolarizingNoiseModel,
     Engine, EngineStage, EngineSystem, HybridEngine, MonteCarloEngine, NoiseModel, PHIREngine,
-    QirEngine, QuantumEngine, QuantumSystem, ShotResult, ShotResults,
+    QuantumEngine, QuantumSystem, ShotResult, ShotResults,
 };
 
 // re-exporting OutputFormat enum
@@ -44,10 +44,13 @@ pub use pecos_qsim::{
 // re-exporting pecos-qasm
 pub use pecos_qasm::QASMEngine;
 
+// re-exporting pecos-qir
+pub use pecos_qir::QirEngine;
+
 // re-exporting program detection and setup
 pub use crate::program::{
     ProgramType, detect_program_type, get_program_path, setup_engine_for_program,
 };
 
 // re-exporting engine setup functions
-pub use crate::engines::setup_qasm_engine;
+pub use crate::engines::{setup_qasm_engine, setup_qir_engine};

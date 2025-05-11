@@ -1,9 +1,9 @@
-use crate::byte_message::ByteMessage;
-use crate::byte_message::QuantumCmd;
-use crate::core::shot_results::ShotResult;
-use crate::engines::qir::common::get_thread_id;
+use crate::common::get_thread_id;
 use log::{debug, trace, warn};
 use pecos_core::errors::PecosError;
+use pecos_engines::byte_message::ByteMessage;
+use pecos_engines::byte_message::QuantumCmd;
+use pecos_engines::core::shot_results::ShotResult;
 use std::collections::HashMap;
 
 /// Processes measurement results from a `ByteMessage`

@@ -1,11 +1,9 @@
 use crate::byte_message::ByteMessage;
 use crate::core::shot_results::ShotResult;
-use crate::engines::{ControlEngine, Engine, EngineStage, phir};
+use crate::engines::{ControlEngine, Engine, EngineStage};
 use dyn_clone::DynClone;
-use log::debug;
 use pecos_core::errors::PecosError;
 use std::any::Any;
-use std::path::Path;
 
 /// Classical engine that processes programs and handles measurements
 pub trait ClassicalEngine:
@@ -186,21 +184,4 @@ impl Engine for Box<dyn ClassicalEngine> {
         // Use fully qualified path to disambiguate
         ClassicalEngine::reset(&mut **self)
     }
-}
-
-/// Sets up a basic PHIR engine.
-///
-/// This function creates a PHIR engine from the provided path.
-///
-/// # Parameters
-///
-/// - `program_path`: A reference to the path of the PHIR program file
-///
-/// # Returns
-///
-/// Returns a `Box<dyn ClassicalEngine>` containing the PHIR engine
-pub fn setup_phir_engine(program_path: &Path) -> Result<Box<dyn ClassicalEngine>, PecosError> {
-    debug!("Setting up PHIR engine for: {}", program_path.display());
-    let engine = phir::PHIREngine::new(program_path)?;
-    Ok(Box::new(engine))
 }

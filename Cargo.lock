@@ -640,6 +640,7 @@ dependencies = [
  "log",
  "pecos-core",
  "pecos-engines",
+ "pecos-phir",
  "pecos-qasm",
  "pecos-qir",
  "pecos-qsim",
@@ -686,6 +687,18 @@ dependencies = [
  "rand",
  "rand_chacha",
  "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "pecos-phir"
+version = "0.1.1"
+dependencies = [
+ "log",
+ "pecos-core",
+ "pecos-engines",
  "serde",
  "serde_json",
  "tempfile",

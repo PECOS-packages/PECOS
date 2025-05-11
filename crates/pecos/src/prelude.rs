@@ -16,9 +16,12 @@ pub use pecos_core::{IndexableElement, Set, VecSet, errors::PecosError};
 // re-exporting pecos-engines
 pub use pecos_engines::{
     ByteMessage, ByteMessageBuilder, ClassicalEngine, ControlEngine, DepolarizingNoiseModel,
-    Engine, EngineStage, EngineSystem, HybridEngine, MonteCarloEngine, NoiseModel, PHIREngine,
-    QuantumEngine, QuantumSystem, ShotResult, ShotResults,
+    Engine, EngineStage, EngineSystem, HybridEngine, MonteCarloEngine, NoiseModel, QuantumEngine,
+    QuantumSystem, ShotResult, ShotResults,
 };
+
+// re-exporting pecos-phir
+pub use pecos_phir::PHIREngine;
 
 // re-exporting OutputFormat enum
 pub use pecos_engines::core::shot_results::OutputFormat;
@@ -54,3 +57,6 @@ pub use crate::program::{
 
 // re-exporting engine setup functions
 pub use crate::engines::{setup_qasm_engine, setup_qir_engine};
+
+// re-exporting pecos-phir setup function
+pub use pecos_phir::setup_phir_engine;

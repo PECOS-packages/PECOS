@@ -46,6 +46,7 @@ pest = "2.7"
 pecos-core = { version = "0.1.1", path = "crates/pecos-core" }
 pecos-qsim = { version = "0.1.1", path = "crates/pecos-qsim" }
 pecos-qasm = { version = "0.1.1", path = "crates/pecos-qasm" }
+pecos-phir = { version = "0.1.1", path = "crates/pecos-phir" }
 pecos-engines = { version = "0.1.1", path = "crates/pecos-engines" }
 pecos-qir = { version = "0.1.1", path = "crates/pecos-qir" }
 pecos-qec = { version = "0.1.1", path = "crates/pecos-qec" }

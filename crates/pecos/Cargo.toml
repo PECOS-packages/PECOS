@@ -16,6 +16,7 @@ pecos-core.workspace = true
 pecos-qsim.workspace = true
 pecos-engines.workspace = true
 pecos-qasm.workspace = true
+pecos-phir.workspace = true
 pecos-qir.workspace = true
 log.workspace = true
 serde_json.workspace = true

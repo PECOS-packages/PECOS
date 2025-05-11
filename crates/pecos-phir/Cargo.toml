@@ -1,0 +1,31 @@
+[package]
+name = "pecos-phir"
+version.workspace = true
+edition.workspace = true
+readme.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "PHIR (PECOS High-level Intermediate Representation) specification and execution capabilities for PECOS"
+
+[features]
+default = ["v0_1"]
+v0_1 = []
+all-versions = ["v0_1"]
+
+[dependencies]
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+pecos-core.workspace = true
+pecos-engines.workspace = true
+
+[dev-dependencies]
+# Testing
+tempfile = "3"
+
+[lints]
+workspace = true

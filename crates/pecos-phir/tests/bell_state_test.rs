@@ -1,6 +1,6 @@
 use pecos_core::rng::RngManageable;
 use pecos_engines::engines::MonteCarloEngine;
-use pecos_engines::setup_phir_engine;
+use pecos_phir::setup_phir_engine;
 use std::collections::HashMap;
 use std::path::PathBuf;
 

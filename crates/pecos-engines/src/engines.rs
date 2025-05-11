@@ -2,7 +2,6 @@ pub mod classical;
 pub mod hybrid;
 pub mod monte_carlo;
 pub mod noise;
-pub mod phir;
 pub mod quantum;
 pub mod quantum_system;
 

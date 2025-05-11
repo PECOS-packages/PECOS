@@ -34,8 +34,7 @@ pub fn setup_cli_engine(
         }
         ProgramType::PHIR => {
             debug!("Setting up PHIR engine");
-            let engine = PHIREngine::new(program_path)?;
-            Ok(Box::new(engine))
+            setup_phir_engine(program_path)
         }
         ProgramType::QASM => {
             debug!("Setting up QASM engine");

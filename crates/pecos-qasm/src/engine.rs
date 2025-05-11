@@ -1,8 +1,7 @@
 use log::debug;
+use pecos_core::errors::PecosError;
 use pecos_engines::byte_message::ByteMessageBuilder;
-use pecos_engines::{
-    ByteMessage, ClassicalEngine, ControlEngine, Engine, EngineStage, QueueError, ShotResult,
-};
+use pecos_engines::{ByteMessage, ClassicalEngine, ControlEngine, Engine, EngineStage, ShotResult};
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -41,7 +40,7 @@ pub struct QASMEngine {
 
 impl QASMEngine {
     /// Create a new QASM Engine
-    pub fn new() -> Result<Self, QueueError> {
+    pub fn new() -> Result<Self, PecosError> {
         debug!("Creating new QASMEngine");
 
         Ok(Self {
@@ -58,13 +57,13 @@ impl QASMEngine {
     }
 
     /// Create a new `QASMEngine` and load a QASM program from a file
-    pub fn with_file(qasm_path: impl AsRef<std::path::Path>) -> Result<Self, QueueError> {
+    pub fn with_file(qasm_path: impl AsRef<std::path::Path>) -> Result<Self, PecosError> {
         // Create a new engine
         let mut engine = Self::new()?;
 
         // Parse the QASM file
         let qasm = std::fs::read_to_string(qasm_path)
-            .map_err(|e| QueueError::OperationError(format!("Failed to read QASM file: {e}")))?;
+            .map_err(|e| PecosError::Resource(format!("Failed to read QASM file: {e}")))?;
 
         // Parse and load the program
         engine.from_str(&qasm)?;
@@ -83,7 +82,7 @@ impl QASMEngine {
     }
 
     /// Load a QASM program into the engine
-    pub fn load_program(&mut self, program: Program) -> Result<(), QueueError> {
+    pub fn load_program(&mut self, program: Program) -> Result<(), PecosError> {
         debug!(
             "Loading QASM program with {} quantum registers and {} operations",
             program.quantum_registers.len(),
@@ -108,9 +107,9 @@ impl QASMEngine {
     }
 
     /// Parse a QASM program from a string and load it
-    pub fn from_str(&mut self, qasm: &str) -> Result<(), QueueError> {
+    pub fn from_str(&mut self, qasm: &str) -> Result<(), PecosError> {
         let program = QASMParser::parse_str(qasm)
-            .map_err(|e| QueueError::OperationError(format!("Failed to parse QASM: {e:?}")))?;
+            .map_err(|e| PecosError::Input(format!("Failed to parse QASM: {e:?}")))?;
 
         self.load_program(program)
     }
@@ -227,7 +226,7 @@ impl QASMEngine {
         &mut self,
         name: &str,
         arguments: &[usize],
-    ) -> Result<bool, QueueError> {
+    ) -> Result<bool, PecosError> {
         // Define gate requirements and handlers using a more structured approach
         // Each entry contains: (required_args, handler_fn)
         struct GateHandler {
@@ -321,7 +320,7 @@ impl QASMEngine {
         if let Some((_, handler)) = gates.iter().find(|(gate_name, _)| *gate_name == name) {
             // Validate argument count
             if arguments.len() != handler.required_args {
-                return Err(QueueError::OperationError(format!(
+                return Err(PecosError::Input(format!(
                     "{} gate requires {} qubit{}, got {}",
                     handler.name,
                     handler.required_args,
@@ -335,9 +334,7 @@ impl QASMEngine {
             Ok(true)
         } else {
             // Gate not supported
-            Err(QueueError::OperationError(format!(
-                "Unsupported gate: {name}"
-            )))
+            Err(PecosError::Gate(format!("Unsupported gate: {name}")))
         }
     }
 
@@ -410,16 +407,16 @@ impl QASMEngine {
         c_reg: &str,
         program: &Program,
         current_operation_count: usize,
-    ) -> Result<Option<usize>, QueueError> {
+    ) -> Result<Option<usize>, PecosError> {
         // Get the sizes of both registers
         let Some(&q_size) = program.quantum_registers.get(q_reg) else {
-            return Err(QueueError::OperationError(format!(
+            return Err(PecosError::Input(format!(
                 "Quantum register {q_reg} not found"
             )));
         };
 
         let Some(&c_size) = program.classical_registers.get(c_reg) else {
-            return Err(QueueError::OperationError(format!(
+            return Err(PecosError::Input(format!(
                 "Classical register {c_reg} not found"
             )));
         };
@@ -468,7 +465,7 @@ impl QASMEngine {
     // This helps avoid creating excessively large messages
     const MAX_BATCH_SIZE: usize = 100;
 
-    fn process_program(&mut self) -> Result<ByteMessage, QueueError> {
+    fn process_program(&mut self) -> Result<ByteMessage, PecosError> {
         // CRITICAL: Reset and configure the reusable message builder for quantum operations
         self.message_builder.reset();
         let _ = self.message_builder.for_quantum_operations();
@@ -477,7 +474,7 @@ impl QASMEngine {
         let program = self
             .program
             .as_ref()
-            .ok_or_else(|| QueueError::OperationError("No QASM program loaded".into()))?
+            .ok_or_else(|| PecosError::Input("No QASM program loaded".to_string()))?
             .clone();
 
         // Get total operations count for the loaded program
@@ -554,7 +551,7 @@ impl QASMEngine {
     pub fn with_seed(
         qasm_path: impl AsRef<std::path::Path>,
         seed: u64,
-    ) -> Result<Self, QueueError> {
+    ) -> Result<Self, PecosError> {
         debug!(
             "Creating QASMEngine with seed {} (for passthrough to quantum simulator)",
             seed
@@ -583,7 +580,7 @@ impl ClassicalEngine for QASMEngine {
         }
     }
 
-    fn generate_commands(&mut self) -> Result<ByteMessage, QueueError> {
+    fn generate_commands(&mut self) -> Result<ByteMessage, PecosError> {
         debug!("QASMEngine::generate_commands() called");
 
         if self.program.is_none() {
@@ -624,10 +621,12 @@ impl ClassicalEngine for QASMEngine {
         debug!("Processing program from operation {}", self.current_op);
         let result = self.process_program();
         debug!("Program processing complete");
-        result
+        result.map_err(|e| {
+            PecosError::Processing(format!("QASM engine failed to process program: {e}"))
+        })
     }
 
-    fn handle_measurements(&mut self, message: ByteMessage) -> Result<(), QueueError> {
+    fn handle_measurements(&mut self, message: ByteMessage) -> Result<(), PecosError> {
         debug!("Handling measurements from ByteMessage");
 
         match message.measurement_results_as_vec() {
@@ -668,12 +667,14 @@ impl ClassicalEngine for QASMEngine {
             }
             Err(e) => {
                 debug!("Error parsing measurement results: {:?}", e);
-                Err(e)
+                Err(PecosError::Input(format!(
+                    "Error parsing measurement results: {e}"
+                )))
             }
         }
     }
 
-    fn get_results(&self) -> Result<ShotResult, QueueError> {
+    fn get_results(&self) -> Result<ShotResult, PecosError> {
         let mut result = ShotResult::default();
 
         // Sort register names for consistent ordering
@@ -702,7 +703,7 @@ impl ClassicalEngine for QASMEngine {
         Ok(result)
     }
 
-    fn compile(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn compile(&self) -> Result<(), PecosError> {
         Ok(())
     }
 
@@ -715,7 +716,7 @@ impl ClassicalEngine for QASMEngine {
     }
 
     // CRITICAL: Explicitly override ClassicalEngine::reset method
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // All reset operations are consolidated in reset_state()
         self.reset_state();
         Ok(())
@@ -769,7 +770,7 @@ impl ControlEngine for QASMEngine {
     type EngineInput = ByteMessage;
     type EngineOutput = ByteMessage;
 
-    fn start(&mut self, _input: ()) -> Result<EngineStage<ByteMessage, ShotResult>, QueueError> {
+    fn start(&mut self, _input: ()) -> Result<EngineStage<ByteMessage, ShotResult>, PecosError> {
         debug!("QASMEngine::start() called");
 
         // Reset internal state - this will handle all necessary state reset
@@ -796,7 +797,7 @@ impl ControlEngine for QASMEngine {
     fn continue_processing(
         &mut self,
         measurements: ByteMessage,
-    ) -> Result<EngineStage<ByteMessage, ShotResult>, QueueError> {
+    ) -> Result<EngineStage<ByteMessage, ShotResult>, PecosError> {
         debug!("QASMEngine::continue_processing() called");
 
         let measurement_count = measurements
@@ -824,7 +825,7 @@ impl ControlEngine for QASMEngine {
         }
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // Delegate to ClassicalEngine implementation to maintain single source of truth
         <Self as ClassicalEngine>::reset(self)
     }
@@ -835,7 +836,7 @@ impl Engine for QASMEngine {
     type Input = ();
     type Output = ShotResult;
 
-    fn process(&mut self, input: Self::Input) -> Result<Self::Output, QueueError> {
+    fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
         debug!("QASMEngine::process() called");
 
         // Reset state via the trait-specific reset method
@@ -843,7 +844,9 @@ impl Engine for QASMEngine {
 
         // Start the engine to produce commands
         debug!("Starting engine to produce commands");
-        let stage = self.start(input)?;
+        let stage = self
+            .start(input)
+            .map_err(|e| PecosError::Processing(format!("Failed to start QASMEngine: {e}")))?;
 
         // Process based on stage
         match stage {
@@ -856,10 +859,12 @@ impl Engine for QASMEngine {
                 debug!("Processing commands from start()");
 
                 // Check if the commands are a flush message
-                if cmds.is_empty()? {
+                if cmds.is_empty().map_err(|e| {
+                    PecosError::Processing(format!("Failed to check if commands are empty: {e}"))
+                })? {
                     debug!("Received empty commands, treating as completion");
                     // If we got empty commands, we're done
-                    self.get_results()
+                    Ok(self.get_results()?)
                 } else {
                     // In this standalone implementation, we can't process quantum operations
                     // directly. In normal operation with MonteCarloEngine, these commands
@@ -867,13 +872,13 @@ impl Engine for QASMEngine {
                     debug!("QASMEngine cannot process quantum operations directly");
 
                     // Return results with empty measurements
-                    self.get_results()
+                    Ok(self.get_results()?)
                 }
             }
         }
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // Delegate to ControlEngine implementation to maintain single source of truth
         <Self as ControlEngine>::reset(self)
     }

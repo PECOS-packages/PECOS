@@ -15,6 +15,7 @@ rand.workspace = true
 rand_chacha.workspace = true
 num-traits.workspace = true
 num-complex.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

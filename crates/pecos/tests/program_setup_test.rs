@@ -1,11 +1,11 @@
 use pecos::prelude::*;
-use std::error::Error;
 use std::fs;
 
 #[test]
-fn test_setup_engine_for_program() -> Result<(), Box<dyn Error>> {
+fn test_setup_engine_for_program() -> Result<(), PecosError> {
     // Create temporary directories for our files
-    let temp_dir = tempfile::tempdir()?;
+    let temp_dir = tempfile::tempdir()
+        .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
 
     // Create QASM file with proper extension
     let qasm_path = temp_dir.path().join("test_program.qasm");
@@ -20,7 +20,8 @@ fn test_setup_engine_for_program() -> Result<(), Box<dyn Error>> {
         cx q[0],q[1];
         measure q -> c;
     "#,
-    )?;
+    )
+    .map_err(PecosError::IO)?;
 
     // Create JSON/PHIR file with proper extension
     let phir_path = temp_dir.path().join("test_program.json");
@@ -52,7 +53,8 @@ fn test_setup_engine_for_program() -> Result<(), Box<dyn Error>> {
             }
         ]
     }"#,
-    )?;
+    )
+    .map_err(PecosError::IO)?;
 
     // Detect program types
     let qasm_type = detect_program_type(&qasm_path)?;

@@ -11,13 +11,13 @@
 // the License.
 
 // re-exporting pecos-core
-pub use pecos_core::{IndexableElement, Set, VecSet};
+pub use pecos_core::{IndexableElement, Set, VecSet, errors::PecosError};
 
 // re-exporting pecos-engines
 pub use pecos_engines::{
     ByteMessage, ByteMessageBuilder, ClassicalEngine, ControlEngine, DepolarizingNoiseModel,
     Engine, EngineStage, EngineSystem, HybridEngine, MonteCarloEngine, NoiseModel, PHIREngine,
-    QirEngine, QuantumEngine, QuantumSystem, QueueError, ShotResult, ShotResults,
+    QirEngine, QuantumEngine, QuantumSystem, ShotResult, ShotResults,
 };
 
 // re-exporting OutputFormat enum

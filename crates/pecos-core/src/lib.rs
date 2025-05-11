@@ -12,6 +12,7 @@
 
 pub mod angle;
 pub mod element;
+pub mod errors;
 pub mod gate;
 pub mod pauli;
 pub mod phase;

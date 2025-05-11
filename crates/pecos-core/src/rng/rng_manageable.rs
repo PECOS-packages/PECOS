@@ -10,6 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+use crate::errors::PecosError;
 use rand::RngCore;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -85,7 +86,7 @@ pub trait RngManageable {
     ///
     /// # Errors
     /// Returns an error if setting the RNG fails
-    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), Box<dyn std::error::Error>>;
+    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), PecosError>;
 
     /// Replace the random number generator with a new one created from a seed
     ///
@@ -108,7 +109,7 @@ pub trait RngManageable {
     /// The default implementation creates a new RNG using `SeedableRng::seed_from_u64`
     /// and sets it using `set_rng()`. Implementers typically only need to implement
     /// `set_rng()` unless they need custom seed handling.
-    fn set_seed(&mut self, seed: u64) -> Result<(), Box<dyn std::error::Error>>
+    fn set_seed(&mut self, seed: u64) -> Result<(), PecosError>
     where
         Self::Rng: SeedableRng,
     {

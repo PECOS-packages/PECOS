@@ -4,9 +4,9 @@ use crate::byte_message::protocol::{MessageFlags, MessageType};
 use crate::byte_message::{ByteMessage, ByteMessageBuilder};
 use crate::core::record_data::RecordData;
 use crate::core::result_id::ResultId;
-use crate::errors::QueueError;
 use log::debug;
 use pecos_core::QubitId;
+use pecos_core::errors::PecosError;
 use std::fmt;
 
 /// Command type for unknown commands
@@ -144,7 +144,7 @@ impl QuantumCommand {
     }
 
     /// Add this command directly to a `ByteMessageBuilder`
-    pub fn add_to_builder(&self, builder: &mut ByteMessageBuilder) -> Result<(), QueueError> {
+    pub fn add_to_builder(&self, builder: &mut ByteMessageBuilder) -> Result<(), PecosError> {
         match self {
             QuantumCommand::H(qubit) => {
                 builder.add_h(&[qubit.0]);
@@ -248,7 +248,7 @@ impl QuantumCommand {
 
     /// Convert the command to a `ByteMessage`
     /// This is more efficient than string-based serialization for gate operations
-    pub fn to_byte_message(&self) -> Result<ByteMessage, QueueError> {
+    pub fn to_byte_message(&self) -> Result<ByteMessage, PecosError> {
         let mut builder = ByteMessage::quantum_operations_builder();
         self.add_to_builder(&mut builder)?;
         Ok(builder.build())
@@ -256,7 +256,7 @@ impl QuantumCommand {
 
     /// Convert a list of `QuantumCommands` to a `ByteMessage`
     /// This handles all command types, including gate operations, records, and messages
-    pub fn commands_to_byte_message(commands: &[Self]) -> Result<ByteMessage, QueueError> {
+    pub fn commands_to_byte_message(commands: &[Self]) -> Result<ByteMessage, PecosError> {
         let mut builder = ByteMessage::quantum_operations_builder();
 
         for cmd in commands {

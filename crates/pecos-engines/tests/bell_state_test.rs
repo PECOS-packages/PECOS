@@ -8,11 +8,16 @@ use std::path::PathBuf;
 fn test_bell_state_noiseless() {
     // Get the path to the Bell state example
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace_dir = manifest_dir.parent().unwrap().parent().unwrap();
+    let workspace_dir = manifest_dir
+        .parent()
+        .expect("CARGO_MANIFEST_DIR should have a parent")
+        .parent()
+        .expect("Expected to find workspace directory as parent of crates/");
     let bell_file = workspace_dir.join("examples/phir/bell.json");
 
     // Run the Bell state example with 100 shots and 2 workers
-    let classical_engine = setup_phir_engine(&bell_file).unwrap();
+    let classical_engine =
+        setup_phir_engine(&bell_file).expect("Failed to set up PHIR engine from bell.json file");
 
     // Create a noiseless model
     let noise_model =
@@ -26,7 +31,7 @@ fn test_bell_state_noiseless() {
         2,
         None, // No specific seed
     )
-    .unwrap();
+    .expect("Failed to run Monte Carlo engine with noise model");
 
     // Count occurrences of each result
     let mut counts: HashMap<String, usize> = HashMap::new();
@@ -55,7 +60,11 @@ fn test_bell_state_noiseless() {
 fn test_bell_state_with_noise() {
     // Get the path to the Bell state example
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace_dir = manifest_dir.parent().unwrap().parent().unwrap();
+    let workspace_dir = manifest_dir
+        .parent()
+        .expect("CARGO_MANIFEST_DIR should have a parent")
+        .parent()
+        .expect("Expected to find workspace directory as parent of crates/");
     let bell_file = workspace_dir.join("examples/phir/bell.json");
 
     // Try multiple runs with different seeds
@@ -63,14 +72,17 @@ fn test_bell_state_with_noise() {
         println!("Attempting test with seed {seed}");
 
         // Run the Bell state example with high noise probability for more reliable testing
-        let classical_engine = setup_phir_engine(&bell_file).unwrap();
+        let classical_engine = setup_phir_engine(&bell_file)
+            .expect("Failed to set up PHIR engine from bell.json file");
 
         // Create a noise model with 30% depolarizing noise
         let mut noise_model =
             pecos_engines::engines::noise::DepolarizingNoiseModel::new_uniform(0.3);
 
         // Set the seed
-        noise_model.set_seed(seed).unwrap();
+        noise_model
+            .set_seed(seed)
+            .expect("Failed to set seed for noise model");
 
         // Use the generic approach
         let results = MonteCarloEngine::run_with_noise_model(
@@ -80,7 +92,7 @@ fn test_bell_state_with_noise() {
             2,
             Some(seed), // Use the current iteration as seed
         )
-        .unwrap();
+        .expect("Failed to run Monte Carlo engine with noise model");
 
         // Count occurrences of each result
         let mut counts: HashMap<String, usize> = HashMap::new();

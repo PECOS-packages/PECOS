@@ -1,8 +1,7 @@
 //! macOS-specific implementations for QIR compilation
 
-use crate::engines::qir::error::QirError;
-use crate::errors::QueueError;
 use log::{debug, warn};
+use pecos_core::errors::PecosError;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -11,10 +10,9 @@ pub struct MacOSCompiler;
 
 impl MacOSCompiler {
     /// Log an error with thread ID
-    pub fn log_error<E: Into<QirError>>(error: E, thread_id: &str) -> QueueError {
-        let error = error.into();
+    pub fn log_error(error: PecosError, thread_id: &str) -> PecosError {
         warn!("QIR Compiler: [Thread {}] {}", thread_id, error);
-        error.into()
+        error
     }
 
     /// Get standard LLVM installation paths for macOS
@@ -43,9 +41,9 @@ impl MacOSCompiler {
             std::io::Result<std::process::Output>,
             &str,
             &str,
-        ) -> Result<std::process::Output, QueueError>,
-        handle_command_status: impl Fn(&std::process::Output, &str, &str) -> Result<(), QueueError>,
-    ) -> Result<(), QueueError> {
+        ) -> Result<std::process::Output, PecosError>,
+        handle_command_status: impl Fn(&std::process::Output, &str, &str) -> Result<(), PecosError>,
+    ) -> Result<(), PecosError> {
         debug!(
             "QIR Compiler: [Thread {}] Linking with macOS-specific logic",
             thread_id

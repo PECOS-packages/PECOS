@@ -1,8 +1,8 @@
 use crate::byte_message::QuantumCmd;
 use crate::engines::qir::common::get_thread_id;
-use crate::errors::QueueError;
 use libloading::{Library, Symbol};
 use log::{debug, trace, warn};
+use pecos_core::errors::PecosError;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -92,20 +92,19 @@ impl QirLibrary {
     ///
     /// # Returns
     ///
-    /// * `Result<Self, QueueError>` - The loaded library if successful
+    /// * `Result<Self, PecosError>` - The loaded library if successful
     ///
     /// # Errors
     ///
     /// This method can return the following errors:
-    /// * `QirError::FileNotFound` - If the library file does not exist
-    /// * `QirError::LibraryLoadFailed` - If the library cannot be loaded
+    /// * `PecosError::ResourceError` - If the library file does not exist or cannot be loaded
     ///
     /// # Thread Safety
     ///
     /// This method implements retry logic for handling "Text file busy" errors
     /// that can occur when multiple threads try to load the same library file
     /// simultaneously.
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, QueueError> {
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, PecosError> {
         let path = path.as_ref();
         let thread_id = get_thread_id();
 
@@ -152,12 +151,12 @@ impl QirLibrary {
     ///
     /// # Returns
     ///
-    /// * `Result<Self, QueueError>` - The loaded library if successful
+    /// * `Result<Self, PecosError>` - The loaded library if successful
     fn load_library_with_retries(
         path: &Path,
         max_retries: usize,
         thread_id: &str,
-    ) -> Result<Self, QueueError> {
+    ) -> Result<Self, PecosError> {
         let mut retry_count = 0;
 
         while retry_count < max_retries {
@@ -211,19 +210,17 @@ impl QirLibrary {
     ///
     /// # Returns
     ///
-    /// * `Result<i32, QueueError>` - The return value of the function if successful
+    /// * `Result<i32, PecosError>` - The return value of the function if successful
     ///
     /// # Errors
     ///
     /// This method can return the following errors:
-    /// * `QirError::LibraryNotLoaded` - If the library is not loaded
-    /// * `QirError::FunctionNotFound` - If the function is not found in the library
-    /// * `QirError::FunctionCallFailed` - If the function call fails
+    /// * `PecosError::Resource` - If the function is not found in the library or the call fails
     ///
     /// # Panics
     ///
     /// This function will panic if the internal mutex is poisoned.
-    pub fn call_function(&self, name: &[u8]) -> Result<i32, QueueError> {
+    pub fn call_function(&self, name: &[u8]) -> Result<i32, PecosError> {
         let thread_id = get_thread_id();
         debug!(
             "QIR Library: [Thread {}] Calling function {:?}",
@@ -254,19 +251,17 @@ impl QirLibrary {
     ///
     /// # Returns
     ///
-    /// * `Result<(), QueueError>` - Success or error
+    /// * `Result<(), PecosError>` - Success or error
     ///
     /// # Errors
     ///
     /// This method can return the following errors:
-    /// * `QirError::LibraryNotLoaded` - If the library is not loaded
-    /// * `QirError::FunctionNotFound` - If the reset function is not found in the library
-    /// * `QirError::FunctionCallFailed` - If the reset function call fails
+    /// * `PecosError::Resource` - If the reset function is not found in the library or the call fails
     ///
     /// # Panics
     ///
     /// This function will panic if the internal mutex is poisoned.
-    pub fn reset(&self) -> Result<(), QueueError> {
+    pub fn reset(&self) -> Result<(), PecosError> {
         let thread_id = get_thread_id();
         debug!("QIR Library: [Thread {}] Resetting QIR runtime", thread_id);
 
@@ -295,19 +290,17 @@ impl QirLibrary {
     ///
     /// # Returns
     ///
-    /// * `Result<Vec<QuantumCmd>, QueueError>` - The binary commands if successful
+    /// * `Result<Vec<QuantumCmd>, PecosError>` - The binary commands if successful
     ///
     /// # Errors
     ///
     /// This method can return the following errors:
-    /// * `QirError::LibraryNotLoaded` - If the library is not loaded
-    /// * `QirError::FunctionNotFound` - If the function is not found in the library
-    /// * `QirError::FunctionCallFailed` - If the function call fails
+    /// * `PecosError::LibraryError` - If the function is not found in the library or the call fails
     ///
     /// # Panics
     ///
     /// This function will panic if the internal mutex is poisoned.
-    pub fn get_binary_commands(&self) -> Result<Vec<QuantumCmd>, QueueError> {
+    pub fn get_binary_commands(&self) -> Result<Vec<QuantumCmd>, PecosError> {
         let thread_id = get_thread_id();
 
         debug!(
@@ -362,10 +355,10 @@ impl QirLibrary {
     }
 
     /// Helper function to log errors with thread ID context
-    fn log_error<E: std::fmt::Display>(context: &str, error: E, thread_id: &str) -> QueueError {
+    fn log_error<E: std::fmt::Display>(context: &str, error: E, thread_id: &str) -> PecosError {
         let error_msg = format!("{context}: {error}");
         warn!("QIR Library: [Thread {}] {}", thread_id, error_msg);
-        QueueError::OperationError(error_msg)
+        PecosError::Resource(error_msg.to_string())
     }
 }
 

@@ -199,11 +199,11 @@ impl PyByteMessage {
     fn parse_quantum_operations(&self, py: Python<'_>) -> PyResult<Vec<PyObject>> {
         let mut results = Vec::new();
 
-        for op in self
-            .inner
-            .parse_quantum_operations()
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
-        {
+        for op in self.inner.parse_quantum_operations().map_err(|e| {
+            PyRuntimeError::new_err(format!(
+                "Failed to parse quantum operations in Python bindings: {e}"
+            ))
+        })? {
             let dict = PyDict::new(py);
 
             // Convert gate_type to a string
@@ -234,10 +234,11 @@ impl PyByteMessage {
     /// Get measurement results as a list of (result_id, outcome) tuples
     #[pyo3(text_signature = "($self)")]
     pub fn measurement_results(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let results = self
-            .inner
-            .measurement_results_as_vec()
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let results = self.inner.measurement_results_as_vec().map_err(|e| {
+            PyRuntimeError::new_err(format!(
+                "Failed to extract measurement results in Python bindings: {e}"
+            ))
+        })?;
 
         // Create a list of lists, where each inner list has two elements
         let result_list = PyList::empty(py);

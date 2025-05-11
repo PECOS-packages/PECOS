@@ -13,8 +13,8 @@
 use super::NoiseModel;
 use crate::byte_message::ByteMessage;
 use crate::engines::{ControlEngine, EngineStage};
-use crate::errors::QueueError;
 use pecos_core::RngManageable;
+use pecos_core::errors::PecosError;
 use rand_chacha::ChaCha8Rng;
 use std::any::Any;
 
@@ -38,7 +38,7 @@ impl NoiseModel for PassThroughNoiseModel {
 impl RngManageable for PassThroughNoiseModel {
     type Rng = ChaCha8Rng;
 
-    fn set_rng(&mut self, _rng: Self::Rng) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_rng(&mut self, _rng: Self::Rng) -> Result<(), PecosError> {
         // PassThroughNoise doesn't use randomness, so just ignore the RNG
         Ok(())
     }
@@ -63,7 +63,7 @@ impl ControlEngine for PassThroughNoiseModel {
     fn start(
         &mut self,
         input: Self::Input,
-    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, QueueError> {
+    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         // Simply pass through the input message unchanged
         Ok(EngineStage::NeedsProcessing(input))
     }
@@ -71,12 +71,12 @@ impl ControlEngine for PassThroughNoiseModel {
     fn continue_processing(
         &mut self,
         result: Self::EngineOutput,
-    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, QueueError> {
+    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         // Simply pass through the result message unchanged
         Ok(EngineStage::Complete(result))
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // No state to reset
         Ok(())
     }

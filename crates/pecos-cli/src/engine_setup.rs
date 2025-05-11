@@ -1,6 +1,5 @@
 use log::debug;
 use pecos::prelude::*;
-use std::error::Error;
 use std::path::Path;
 
 /// Sets up a classical engine for the CLI based on the program type
@@ -9,15 +8,26 @@ use std::path::Path;
 pub fn setup_cli_engine(
     program_path: &Path,
     shots: Option<usize>,
-) -> Result<Box<dyn ClassicalEngine>, Box<dyn Error>> {
+) -> Result<Box<dyn ClassicalEngine>, PecosError> {
     debug!("Setting up engine for path: {}", program_path.display());
 
     // Create build directory for engine outputs
-    let build_dir = program_path.parent().unwrap().join("build");
+    let build_dir = program_path
+        .parent()
+        .ok_or_else(|| {
+            PecosError::Input(format!(
+                "Cannot determine parent directory for path: {}",
+                program_path.display()
+            ))
+        })?
+        .join("build");
     debug!("Build directory: {}", build_dir.display());
-    std::fs::create_dir_all(&build_dir)?;
+    std::fs::create_dir_all(&build_dir).map_err(PecosError::IO)?;
 
-    match detect_program_type(program_path)? {
+    // The detect_program_type function now includes proper context in errors
+    let program_type = detect_program_type(program_path)?;
+
+    match program_type {
         ProgramType::QIR => {
             debug!("Setting up QIR engine");
             let mut engine = QirEngine::new(program_path.to_path_buf());

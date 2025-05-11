@@ -1,11 +1,10 @@
 use crate::byte_message::ByteMessage;
 use crate::core::shot_results::ShotResult;
 use crate::engines::{ControlEngine, Engine, EngineStage, phir, qir};
-use crate::errors::QueueError;
 use dyn_clone::DynClone;
 use log::debug;
+use pecos_core::errors::PecosError;
 use std::any::Any;
-use std::error::Error;
 use std::path::Path;
 
 /// Classical engine that processes programs and handles measurements
@@ -24,9 +23,9 @@ pub trait ClassicalEngine:
     /// # Errors
     ///
     /// This function may return the following errors:
-    /// - `QueueError::OperationError`: If the program processing fails or encounters unsupported operations.
-    /// - `QueueError::LockError`: If a lock cannot be acquired during the execution process.
-    fn generate_commands(&mut self) -> Result<ByteMessage, QueueError>;
+    /// - Operation error: If the program processing fails or encounters unsupported operations.
+    /// - Lock error: If a lock cannot be acquired during the execution process.
+    fn generate_commands(&mut self) -> Result<ByteMessage, PecosError>;
 
     /// Handles a `ByteMessage` containing measurements from the quantum engine
     ///
@@ -37,9 +36,9 @@ pub trait ClassicalEngine:
     /// # Errors
     ///
     /// This function may return the following errors:
-    /// - `QueueError::OperationError`: If the measurement processing fails.
-    /// - `QueueError::LockError`: If a lock cannot be acquired during the measurement handling process.
-    fn handle_measurements(&mut self, message: ByteMessage) -> Result<(), QueueError>;
+    /// - Operation error: If the measurement processing fails.
+    /// - Lock error: If a lock cannot be acquired during the measurement handling process.
+    fn handle_measurements(&mut self, message: ByteMessage) -> Result<(), PecosError>;
 
     /// Retrieves the results of the execution process after all measurements are handled.
     ///
@@ -51,9 +50,9 @@ pub trait ClassicalEngine:
     /// # Errors
     ///
     /// This function may return the following errors:
-    /// - `QueueError::OperationError`: If result retrieval fails or is unsupported.
-    /// - `QueueError::LockError`: If a lock cannot be acquired to access required resources.
-    fn get_results(&self) -> Result<ShotResult, QueueError>;
+    /// - Operation error: If result retrieval fails or is unsupported.
+    /// - Lock error: If a lock cannot be acquired to access required resources.
+    fn get_results(&self) -> Result<ShotResult, PecosError>;
 
     /// Sets a specific seed for the classical engine
     ///
@@ -64,8 +63,8 @@ pub trait ClassicalEngine:
     /// Result indicating success or failure
     ///
     /// # Errors
-    /// Returns a `QueueError` if setting the seed fails
-    fn set_seed(&mut self, _seed: u64) -> Result<(), QueueError> {
+    /// Returns a `PecosError` if setting the seed fails
+    fn set_seed(&mut self, _seed: u64) -> Result<(), PecosError> {
         // Default implementation just succeeds without doing anything
         Ok(())
     }
@@ -83,7 +82,7 @@ pub trait ClassicalEngine:
     /// This function may return the following errors:
     /// - `Box<dyn std::error::Error>`: If there is a compilation error due to syntax issues,
     ///   unsupported features, or internal errors in the engine's implementation.
-    fn compile(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn compile(&self) -> Result<(), PecosError>;
 
     /// Resets the state of the classical engine to its initial configuration.
     ///
@@ -94,9 +93,9 @@ pub trait ClassicalEngine:
     /// # Errors
     ///
     /// This function may return the following errors:
-    /// - `QueueError::OperationError`: If the reset operation encounters unsupported actions or fails.
-    /// - `QueueError::LockError`: If a lock cannot be acquired during the reset process.
-    fn reset(&mut self) -> Result<(), QueueError> {
+    /// - Operation error: If the reset operation encounters unsupported actions or fails.
+    /// - Lock error: If a lock cannot be acquired during the reset process.
+    fn reset(&mut self) -> Result<(), PecosError> {
         Ok(())
     }
 
@@ -122,17 +121,15 @@ impl ControlEngine for Box<dyn ClassicalEngine> {
     type EngineInput = ByteMessage;
     type EngineOutput = ByteMessage;
 
-    fn start(&mut self, _input: ()) -> Result<EngineStage<ByteMessage, ShotResult>, QueueError> {
+    fn start(&mut self, _input: ()) -> Result<EngineStage<ByteMessage, ShotResult>, PecosError> {
         // Build up first batch of commands until measurement needed
         let commands = self.generate_commands()?;
 
         // Check if we have an empty message (no more commands)
-        if let Ok(is_empty) = commands.is_empty() {
-            if is_empty {
-                // No more commands, return results
-                let results = self.get_results()?;
-                return Ok(EngineStage::Complete(results));
-            }
+        if commands.is_empty()? {
+            // No more commands, return results
+            let results = self.get_results()?;
+            return Ok(EngineStage::Complete(results));
         }
 
         // Need to process these commands
@@ -142,7 +139,7 @@ impl ControlEngine for Box<dyn ClassicalEngine> {
     fn continue_processing(
         &mut self,
         measurements: ByteMessage,
-    ) -> Result<EngineStage<ByteMessage, ShotResult>, QueueError> {
+    ) -> Result<EngineStage<ByteMessage, ShotResult>, PecosError> {
         // Handle measurements from quantum engine
         self.handle_measurements(measurements)?;
 
@@ -150,18 +147,16 @@ impl ControlEngine for Box<dyn ClassicalEngine> {
         let commands = self.generate_commands()?;
 
         // Check if we have an empty message (no more commands)
-        if let Ok(is_empty) = commands.is_empty() {
-            if is_empty {
-                // No more commands, return results
-                let results = self.get_results()?;
-                return Ok(EngineStage::Complete(results));
-            }
+        if commands.is_empty()? {
+            // No more commands, return results
+            let results = self.get_results()?;
+            return Ok(EngineStage::Complete(results));
         }
 
         Ok(EngineStage::NeedsProcessing(commands))
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // Use fully qualified path to disambiguate
         ClassicalEngine::reset(&mut **self)
     }
@@ -171,7 +166,7 @@ impl Engine for Box<dyn ClassicalEngine> {
     type Input = ();
     type Output = ShotResult;
 
-    fn process(&mut self, input: Self::Input) -> Result<Self::Output, QueueError> {
+    fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
         let mut stage = self.start(input)?;
 
         loop {
@@ -187,7 +182,7 @@ impl Engine for Box<dyn ClassicalEngine> {
         }
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // Use fully qualified path to disambiguate
         ClassicalEngine::reset(&mut **self)
     }
@@ -208,7 +203,7 @@ impl Engine for Box<dyn ClassicalEngine> {
 pub fn setup_qir_engine(
     program_path: &Path,
     shots: Option<usize>,
-) -> Result<Box<dyn ClassicalEngine>, Box<dyn Error>> {
+) -> Result<Box<dyn ClassicalEngine>, PecosError> {
     debug!("Setting up QIR engine for: {}", program_path.display());
     let mut engine = qir::QirEngine::new(program_path.to_path_buf());
 
@@ -234,7 +229,7 @@ pub fn setup_qir_engine(
 /// # Returns
 ///
 /// Returns a `Box<dyn ClassicalEngine>` containing the PHIR engine
-pub fn setup_phir_engine(program_path: &Path) -> Result<Box<dyn ClassicalEngine>, Box<dyn Error>> {
+pub fn setup_phir_engine(program_path: &Path) -> Result<Box<dyn ClassicalEngine>, PecosError> {
     debug!("Setting up PHIR engine for: {}", program_path.display());
     let engine = phir::PHIREngine::new(program_path)?;
     Ok(Box::new(engine))

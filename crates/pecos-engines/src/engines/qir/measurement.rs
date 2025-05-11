@@ -2,8 +2,8 @@ use crate::byte_message::ByteMessage;
 use crate::byte_message::QuantumCmd;
 use crate::core::shot_results::ShotResult;
 use crate::engines::qir::common::get_thread_id;
-use crate::errors::QueueError;
 use log::{debug, trace, warn};
+use pecos_core::errors::PecosError;
 use std::collections::HashMap;
 
 /// Processes measurement results from a `ByteMessage`
@@ -19,12 +19,12 @@ use std::collections::HashMap;
 ///
 /// # Returns
 ///
-/// * `Result<(), QueueError>` - Ok if successful, or an error if the operation fails
+/// * `Result<(), PecosError>` - Ok if successful, or an error if the operation fails
 pub fn process_measurements<S: ::std::hash::BuildHasher>(
     message: &ByteMessage,
     measurement_results: &mut HashMap<usize, u32, S>,
     shot_count: usize,
-) -> Result<(), QueueError> {
+) -> Result<(), PecosError> {
     // Get the current thread ID for logging
     let thread_id = get_thread_id();
 
@@ -40,7 +40,9 @@ pub fn process_measurements<S: ::std::hash::BuildHasher>(
             "QIR: [Thread {}] Failed to extract measurements from ByteMessage: {}",
             thread_id, e
         );
-        e
+        PecosError::Input(format!(
+            "Failed to extract measurements from ByteMessage: {e}"
+        ))
     })?;
 
     if measurements.is_empty() {

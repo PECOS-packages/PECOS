@@ -14,7 +14,7 @@ use super::engine::HybridEngine;
 use crate::engines::noise::{DepolarizingNoiseModel, NoiseModel, PassThroughNoiseModel};
 use crate::engines::quantum_system::QuantumSystem;
 use crate::engines::{ClassicalEngine, QuantumEngine};
-use crate::errors::QueueError;
+use pecos_core::errors::PecosError;
 
 /// Builder for creating a `HybridEngine` with customizable configuration
 ///
@@ -232,7 +232,7 @@ impl HybridEngineBuilder {
     /// A new `HybridEngine` configured according to the builder settings with the seed set
     ///
     /// # Errors
-    /// Returns a `QueueError` if setting the seed fails
+    /// Returns a `PecosError` if setting the seed fails
     ///
     /// # Panics
     ///
@@ -240,7 +240,7 @@ impl HybridEngineBuilder {
     /// - No classical engine has been set
     /// - Neither a quantum system nor a quantum engine has been set
     /// - No seed has been set
-    pub fn build_with_seed(self) -> Result<HybridEngine, QueueError> {
+    pub fn build_with_seed(self) -> Result<HybridEngine, PecosError> {
         // Get the seed or panic if not set
         let seed = self.seed.expect(
             "Seed is required for build_with_seed(). Use with_seed() to set one or use build() instead.",

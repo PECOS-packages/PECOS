@@ -4,9 +4,9 @@ use crate::byte_message::protocol::{
     BatchHeader, MeasurementHeader, MeasurementResultHeader, MessageHeader, MessageType,
     QuantumGateHeader, calc_padding,
 };
-use crate::errors::QueueError;
 use bytemuck::from_bytes;
 use log::trace;
+use pecos_core::errors::PecosError;
 use std::mem::size_of;
 
 /// A message encoded using the PECOS byte protocol
@@ -96,11 +96,11 @@ impl ByteMessage {
     ///
     /// # Returns
     ///
-    /// A Result containing a `ByteMessage` with the circuit if successful, or a `QueueError` if there was an error.
+    /// A Result containing a `ByteMessage` with the circuit if successful, or a `PecosError` if there was an error.
     ///
     /// # Errors
     ///
-    /// This function may return a `QueueError` if:
+    /// This function may return a `PecosError` if:
     /// - There is an error adding the gates to the builder
     /// - There is an error building the message
     ///
@@ -118,7 +118,7 @@ impl ByteMessage {
     ///
     /// let message = ByteMessage::create_circuit_from_quantum_gates(&gates).unwrap();
     /// ```
-    pub fn create_circuit_from_quantum_gates(gates: &[QuantumGate]) -> Result<Self, QueueError> {
+    pub fn create_circuit_from_quantum_gates(gates: &[QuantumGate]) -> Result<Self, PecosError> {
         let mut builder = Self::quantum_operations_builder();
         builder.add_quantum_gates(gates);
         Ok(builder.build())
@@ -135,16 +135,16 @@ impl ByteMessage {
     ///
     /// # Returns
     ///
-    /// A Result containing a `ByteMessage` with the commands if successful, or a `QueueError` if there was an error.
+    /// A Result containing a `ByteMessage` with the commands if successful, or a `PecosError` if there was an error.
     ///
     /// # Errors
     ///
-    /// This function may return a `QueueError` if:
+    /// This function may return a `PecosError` if:
     /// - A command string has an invalid format
     /// - A command string contains an unknown gate type
     /// - A command string contains invalid parameters (e.g., non-numeric values for angles)
     /// - A command string contains invalid qubit indices
-    pub fn create_from_commands(commands: &[&str]) -> Result<Self, QueueError> {
+    pub fn create_from_commands(commands: &[&str]) -> Result<Self, PecosError> {
         let mut builder = Self::quantum_operations_builder();
         for cmd in commands {
             Self::parse_command_to_builder(&mut builder, cmd)?;
@@ -225,11 +225,11 @@ impl ByteMessage {
     /// # Returns
     ///
     /// Returns `Ok(())` if the command was successfully parsed and added to the builder,
-    /// or a `QueueError` if there was an error.
+    /// or a `PecosError` if there was an error.
     ///
     /// # Errors
     ///
-    /// This function may return a `QueueError::OperationError` if:
+    /// This function may return a `PecosError::InvalidInput` if:
     /// - The command string has an invalid format
     /// - The command string contains an unknown gate type
     /// - The command string contains invalid parameters (e.g., non-numeric values for angles)
@@ -238,7 +238,7 @@ impl ByteMessage {
     pub fn parse_command_to_builder(
         builder: &mut ByteMessageBuilder,
         cmd: &str,
-    ) -> Result<(), QueueError> {
+    ) -> Result<(), PecosError> {
         let parts: Vec<&str> = cmd.split_whitespace().collect();
         if parts.is_empty() {
             return Ok(());
@@ -248,16 +248,10 @@ impl ByteMessage {
             Some(&"RZ") => {
                 if parts.len() >= 3 {
                     let theta = parts[1].parse::<f64>().map_err(|_| {
-                        QueueError::OperationError(format!(
-                            "Invalid angle in RZ command: {}",
-                            parts[1]
-                        ))
+                        PecosError::Input(format!("Invalid angle in RZ command: {}", parts[1]))
                     })?;
                     let qubit = parts[2].parse::<usize>().map_err(|_| {
-                        QueueError::OperationError(format!(
-                            "Invalid qubit in RZ command: {}",
-                            parts[2]
-                        ))
+                        PecosError::Input(format!("Invalid qubit in RZ command: {}", parts[2]))
                     })?;
                     builder.add_rz(theta, &[qubit]);
                 }
@@ -265,22 +259,19 @@ impl ByteMessage {
             Some(&"R1XY") => {
                 if parts.len() >= 4 {
                     let theta = parts[1].parse::<f64>().map_err(|_| {
-                        QueueError::OperationError(format!(
+                        PecosError::Input(format!(
                             "Invalid theta angle in R1XY command: {}",
                             parts[1]
                         ))
                     })?;
                     let phi = parts[2].parse::<f64>().map_err(|_| {
-                        QueueError::OperationError(format!(
+                        PecosError::Input(format!(
                             "Invalid phi angle in R1XY command: {}",
                             parts[2]
                         ))
                     })?;
                     let qubit = parts[3].parse::<usize>().map_err(|_| {
-                        QueueError::OperationError(format!(
-                            "Invalid qubit in R1XY command: {}",
-                            parts[3]
-                        ))
+                        PecosError::Input(format!("Invalid qubit in R1XY command: {}", parts[3]))
                     })?;
                     builder.add_r1xy(theta, phi, &[qubit]);
                 }
@@ -288,16 +279,10 @@ impl ByteMessage {
             Some(&"SZZ") => {
                 if parts.len() >= 3 {
                     let qubit1 = parts[1].parse::<usize>().map_err(|_| {
-                        QueueError::OperationError(format!(
-                            "Invalid qubit1 in SZZ command: {}",
-                            parts[1]
-                        ))
+                        PecosError::Input(format!("Invalid qubit1 in SZZ command: {}", parts[1]))
                     })?;
                     let qubit2 = parts[2].parse::<usize>().map_err(|_| {
-                        QueueError::OperationError(format!(
-                            "Invalid qubit2 in SZZ command: {}",
-                            parts[2]
-                        ))
+                        PecosError::Input(format!("Invalid qubit2 in SZZ command: {}", parts[2]))
                     })?;
                     builder.add_szz(&[qubit1], &[qubit2]);
                 }
@@ -305,10 +290,7 @@ impl ByteMessage {
             Some(&"H") => {
                 if parts.len() >= 2 {
                     let qubit = parts[1].parse::<usize>().map_err(|_| {
-                        QueueError::OperationError(format!(
-                            "Invalid qubit in H command: {}",
-                            parts[1]
-                        ))
+                        PecosError::Input(format!("Invalid qubit in H command: {}", parts[1]))
                     })?;
                     builder.add_h(&[qubit]);
                 }
@@ -316,13 +298,13 @@ impl ByteMessage {
             Some(&"CX") => {
                 if parts.len() >= 3 {
                     let control = parts[1].parse::<usize>().map_err(|_| {
-                        QueueError::OperationError(format!(
+                        PecosError::Input(format!(
                             "Invalid control qubit in CX command: {}",
                             parts[1]
                         ))
                     })?;
                     let target = parts[2].parse::<usize>().map_err(|_| {
-                        QueueError::OperationError(format!(
+                        PecosError::Input(format!(
                             "Invalid target qubit in CX command: {}",
                             parts[2]
                         ))
@@ -333,16 +315,10 @@ impl ByteMessage {
             Some(&"M") => {
                 if parts.len() >= 3 {
                     let qubit = parts[1].parse::<usize>().map_err(|_| {
-                        QueueError::OperationError(format!(
-                            "Invalid qubit in M command: {}",
-                            parts[1]
-                        ))
+                        PecosError::Input(format!("Invalid qubit in M command: {}", parts[1]))
                     })?;
                     let result_id = parts[2].parse::<usize>().map_err(|_| {
-                        QueueError::OperationError(format!(
-                            "Invalid result_id in M command: {}",
-                            parts[2]
-                        ))
+                        PecosError::Input(format!("Invalid result_id in M command: {}", parts[2]))
                     })?;
                     builder.add_measurements(&[qubit], &[result_id]);
                 }
@@ -350,16 +326,13 @@ impl ByteMessage {
             Some(&"P") => {
                 if parts.len() >= 2 {
                     let qubit = parts[1].parse::<usize>().map_err(|_| {
-                        QueueError::OperationError(format!(
-                            "Invalid qubit in P command: {}",
-                            parts[1]
-                        ))
+                        PecosError::Input(format!("Invalid qubit in P command: {}", parts[1]))
                     })?;
                     builder.add_prep(&[qubit]);
                 }
             }
             _ => {
-                return Err(QueueError::OperationError(format!(
+                return Err(PecosError::Input(format!(
                     "Unknown command type: {}",
                     parts[0]
                 )));
@@ -375,41 +348,39 @@ impl ByteMessage {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the `MessageType` if successful, or a `QueueError` if there was an error.
+    /// Returns a `Result` containing the `MessageType` if successful, or a `PecosError` if there was an error.
     ///
     /// # Errors
     ///
-    /// This function may return a `QueueError::OperationError` if:
+    /// This function may return a `PecosError::InvalidInput` if:
     /// - The message is too small to contain a batch header
     /// - The batch header is invalid
     /// - The batch contains no messages
     /// - The message is too small to contain a message header
     /// - The message header contains an invalid message type
-    pub fn message_type(&self) -> Result<MessageType, QueueError> {
+    pub fn message_type(&self) -> Result<MessageType, PecosError> {
         if self.bytes.len() < size_of::<BatchHeader>() {
-            return Err(QueueError::OperationError(
-                "Message too small for batch header".into(),
+            return Err(PecosError::Input(
+                "Message too small for batch header".to_string(),
             ));
         }
 
         // Parse batch header
         let batch_header = *from_bytes::<BatchHeader>(&self.bytes[0..size_of::<BatchHeader>()]);
         if !batch_header.is_valid() {
-            return Err(QueueError::OperationError("Invalid batch header".into()));
+            return Err(PecosError::Input("Invalid batch header".to_string()));
         }
 
         // Need at least one message to determine type
         if batch_header.msg_count == 0 {
-            return Err(QueueError::OperationError(
-                "Batch contains no messages".into(),
-            ));
+            return Err(PecosError::Input("Batch contains no messages".to_string()));
         }
 
         // Skip to first message header (after batch header)
         let msg_offset = size_of::<BatchHeader>();
         if self.bytes.len() < msg_offset + size_of::<MessageHeader>() {
-            return Err(QueueError::OperationError(
-                "Message too small for message header".into(),
+            return Err(PecosError::Input(
+                "Message too small for message header".to_string(),
             ));
         }
 
@@ -419,7 +390,7 @@ impl ByteMessage {
         );
         msg_header
             .get_type()
-            .map_err(|e| QueueError::OperationError(e.to_string()))
+            .map_err(|e| PecosError::Input(format!("Failed to determine message type: {e}")))
     }
 
     /// Check if this message is empty (contains no operations)
@@ -430,14 +401,14 @@ impl ByteMessage {
     /// # Returns
     ///
     /// Returns a `Result` containing a boolean indicating whether the message is empty if successful,
-    /// or a `QueueError` if there was an error.
+    /// or a `PecosError` if there was an error.
     ///
     /// # Errors
     ///
-    /// This function may return a `QueueError` if:
+    /// This function may return a `PecosError` if:
     /// - There is an error determining the message type
     /// - There is an error parsing the quantum operations in the message
-    pub fn is_empty(&self) -> Result<bool, QueueError> {
+    pub fn is_empty(&self) -> Result<bool, PecosError> {
         match self.message_type()? {
             MessageType::Flush => Ok(true),
             MessageType::BeginBatch => {
@@ -450,17 +421,17 @@ impl ByteMessage {
     }
 
     /// Parse quantum operations from this message
-    pub fn parse_quantum_operations(&self) -> Result<Vec<QuantumGate>, QueueError> {
+    pub fn parse_quantum_operations(&self) -> Result<Vec<QuantumGate>, PecosError> {
         if self.bytes.len() < size_of::<BatchHeader>() {
-            return Err(QueueError::OperationError(
-                "Message too small for batch header".into(),
+            return Err(PecosError::Input(
+                "Message too small for batch header".to_string(),
             ));
         }
 
         // Parse batch header
         let batch_header = *from_bytes::<BatchHeader>(&self.bytes[0..size_of::<BatchHeader>()]);
         if !batch_header.is_valid() {
-            return Err(QueueError::OperationError("Invalid batch header".into()));
+            return Err(PecosError::Input("Invalid batch header".to_string()));
         }
 
         let mut commands = Vec::new();
@@ -538,17 +509,17 @@ impl ByteMessage {
     }
 
     /// Parse measurements from this message
-    pub fn parse_measurements(&self) -> Result<Vec<(u32, u32)>, QueueError> {
+    pub fn parse_measurements(&self) -> Result<Vec<(u32, u32)>, PecosError> {
         if self.bytes.len() < size_of::<BatchHeader>() {
-            return Err(QueueError::OperationError(
-                "Message too small for batch header".into(),
+            return Err(PecosError::Input(
+                "Message too small for batch header".to_string(),
             ));
         }
 
         // Parse batch header
         let batch_header = *from_bytes::<BatchHeader>(&self.bytes[0..size_of::<BatchHeader>()]);
         if !batch_header.is_valid() {
-            return Err(QueueError::OperationError("Invalid batch header".into()));
+            return Err(PecosError::Input("Invalid batch header".to_string()));
         }
 
         let mut measurements = Vec::new();
@@ -568,13 +539,13 @@ impl ByteMessage {
 
             let msg_type = msg_header
                 .get_type()
-                .map_err(|e| QueueError::OperationError(e.to_string()))?;
+                .map_err(|e| PecosError::Input(e.to_string()))?;
 
             let payload_size = msg_header.payload_size as usize;
             let payload_end = offset + payload_size;
 
             if payload_end > self.bytes.len() {
-                return Err(QueueError::OperationError(format!(
+                return Err(PecosError::Input(format!(
                     "Message payload extends beyond message bounds: offset={}, size={}, total_len={}",
                     offset,
                     payload_size,
@@ -614,8 +585,8 @@ impl ByteMessage {
     /// # Returns
     ///
     /// A Result containing a vector of (`result_id`, measurement) pairs if successful,
-    /// or a `QueueError` if there was an error parsing the message.
-    pub fn measurement_results_as_vec(&self) -> Result<Vec<(usize, u32)>, QueueError> {
+    /// or a `PecosError` if there was an error parsing the message.
+    pub fn measurement_results_as_vec(&self) -> Result<Vec<(usize, u32)>, PecosError> {
         let measurements = self.parse_measurements()?;
 
         // Convert result_ids from u32 to usize
@@ -628,30 +599,62 @@ impl ByteMessage {
     }
 
     /// Parse a quantum gate message payload
-    fn parse_quantum_gate(payload: &[u8]) -> Result<QuantumGate, QueueError> {
-        if payload.len() < size_of::<QuantumGateHeader>() {
-            return Err(QueueError::OperationError(
-                "Quantum gate message payload too small".into(),
-            ));
-        }
+    fn parse_quantum_gate(payload: &[u8]) -> Result<QuantumGate, PecosError> {
+        Self::validate_gate_payload_size(payload)?;
 
         let header = *from_bytes::<QuantumGateHeader>(&payload[0..size_of::<QuantumGateHeader>()]);
         let num_qubits = header.num_qubits as usize;
         let has_params = header.has_params != 0;
+        let gate_type = GateType::from(header.gate_type);
 
-        // Calculate and validate sizes
+        // Calculate sizes
         let qubits_size = num_qubits * size_of::<u32>();
-        let minimum_size = size_of::<QuantumGateHeader>() + qubits_size;
+        let qubits_offset = size_of::<QuantumGateHeader>();
 
-        if payload.len() < minimum_size {
-            return Err(QueueError::OperationError(
-                "Quantum gate message payload too small for qubit indices".into(),
-            ));
-        }
+        Self::validate_qubit_indices_size(payload, qubits_offset, qubits_size)?;
 
         // Parse qubit indices
+        let qubits = Self::parse_qubit_indices(payload, qubits_offset, num_qubits);
+
+        // Parse parameters if present
+        let (params, result_id) = if has_params {
+            let params_offset = qubits_offset + qubits_size;
+            Self::parse_gate_parameters(payload, params_offset, gate_type)?
+        } else {
+            (Vec::new(), None)
+        };
+
+        Ok(QuantumGate::new(gate_type, qubits, params, result_id))
+    }
+
+    /// Validate if the payload has enough bytes for the gate header
+    fn validate_gate_payload_size(payload: &[u8]) -> Result<(), PecosError> {
+        if payload.len() < size_of::<QuantumGateHeader>() {
+            return Err(PecosError::Input(
+                "Quantum gate message payload too small".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Validate if the payload has enough bytes for qubit indices
+    fn validate_qubit_indices_size(
+        payload: &[u8],
+        qubits_offset: usize,
+        qubits_size: usize,
+    ) -> Result<(), PecosError> {
+        let minimum_size = qubits_offset + qubits_size;
+        if payload.len() < minimum_size {
+            return Err(PecosError::Input(
+                "Quantum gate message payload too small for qubit indices".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Parse qubit indices from the payload
+    fn parse_qubit_indices(payload: &[u8], qubits_offset: usize, num_qubits: usize) -> Vec<usize> {
         let mut qubits = Vec::with_capacity(num_qubits);
-        let qubits_offset = size_of::<QuantumGateHeader>();
         for i in 0..num_qubits {
             let qubit_offset = qubits_offset + i * size_of::<u32>();
             let qubit = u32::from_le_bytes([
@@ -662,83 +665,110 @@ impl ByteMessage {
             ]) as usize;
             qubits.push(qubit);
         }
+        qubits
+    }
 
-        // Parse parameters if present
+    /// Parse gate parameters based on gate type
+    fn parse_gate_parameters(
+        payload: &[u8],
+        params_offset: usize,
+        gate_type: GateType,
+    ) -> Result<(Vec<f64>, Option<usize>), PecosError> {
         let mut params = Vec::new();
         let mut result_id = None;
 
-        let gate_type = GateType::from(header.gate_type);
+        match gate_type {
+            GateType::RZ => {
+                Self::validate_params_size(
+                    payload,
+                    params_offset,
+                    size_of::<f64>(),
+                    "RZ parameters",
+                )?;
 
-        if has_params {
-            let params_offset = qubits_offset + qubits_size;
-            match gate_type {
-                GateType::RZ => {
-                    if payload.len() >= params_offset + size_of::<f64>() {
-                        let theta_bytes = &payload[params_offset..params_offset + size_of::<f64>()];
-                        let theta = f64::from_le_bytes(theta_bytes[..8].try_into().unwrap());
-                        params.push(theta);
-                    } else {
-                        return Err(QueueError::OperationError(
-                            "Quantum gate message payload too small for RZ parameters".into(),
-                        ));
-                    }
-                }
-                GateType::R1XY => {
-                    if payload.len() >= params_offset + 2 * size_of::<f64>() {
-                        let theta_bytes = &payload[params_offset..params_offset + size_of::<f64>()];
-                        let theta = f64::from_le_bytes(theta_bytes[..8].try_into().unwrap());
-                        params.push(theta);
-
-                        let phi_offset = params_offset + size_of::<f64>();
-                        let phi_bytes = &payload[phi_offset..phi_offset + size_of::<f64>()];
-                        let phi = f64::from_le_bytes(phi_bytes[..8].try_into().unwrap());
-                        params.push(phi);
-                    } else {
-                        return Err(QueueError::OperationError(
-                            "Quantum gate message payload too small for R1XY parameters".into(),
-                        ));
-                    }
-                }
-                GateType::RZZ => {
-                    if payload.len() >= params_offset + size_of::<f64>() {
-                        let theta_bytes = &payload[params_offset..params_offset + size_of::<f64>()];
-                        let theta = f64::from_le_bytes(theta_bytes[..8].try_into().unwrap());
-                        params.push(theta);
-                    } else {
-                        return Err(QueueError::OperationError(
-                            "Quantum gate message payload too small for RZZ parameters".into(),
-                        ));
-                    }
-                }
-                GateType::Measure => {
-                    if payload.len() >= params_offset + size_of::<u32>() {
-                        let result_id_bytes =
-                            &payload[params_offset..params_offset + size_of::<u32>()];
-                        let result_id_value = u32::from_le_bytes([
-                            result_id_bytes[0],
-                            result_id_bytes[1],
-                            result_id_bytes[2],
-                            result_id_bytes[3],
-                        ]) as usize;
-                        result_id = Some(result_id_value);
-                    } else {
-                        return Err(QueueError::OperationError(
-                            "Quantum gate message payload too small for Measure parameters".into(),
-                        ));
-                    }
-                }
-                _ => {}
+                let theta = Self::parse_f64_param(payload, params_offset);
+                params.push(theta);
             }
+            GateType::R1XY => {
+                Self::validate_params_size(
+                    payload,
+                    params_offset,
+                    2 * size_of::<f64>(),
+                    "R1XY parameters",
+                )?;
+
+                let theta = Self::parse_f64_param(payload, params_offset);
+                params.push(theta);
+
+                let phi = Self::parse_f64_param(payload, params_offset + size_of::<f64>());
+                params.push(phi);
+            }
+            GateType::RZZ => {
+                Self::validate_params_size(
+                    payload,
+                    params_offset,
+                    size_of::<f64>(),
+                    "RZZ parameters",
+                )?;
+
+                let theta = Self::parse_f64_param(payload, params_offset);
+                params.push(theta);
+            }
+            GateType::Measure => {
+                Self::validate_params_size(
+                    payload,
+                    params_offset,
+                    size_of::<u32>(),
+                    "Measure parameters",
+                )?;
+
+                let result_id_bytes = &payload[params_offset..params_offset + size_of::<u32>()];
+                let result_id_value = u32::from_le_bytes([
+                    result_id_bytes[0],
+                    result_id_bytes[1],
+                    result_id_bytes[2],
+                    result_id_bytes[3],
+                ]) as usize;
+                result_id = Some(result_id_value);
+            }
+            _ => {}
         }
 
-        Ok(QuantumGate::new(gate_type, qubits, params, result_id))
+        Ok((params, result_id))
+    }
+
+    /// Validate if the payload has enough bytes for parameters
+    fn validate_params_size(
+        payload: &[u8],
+        params_offset: usize,
+        required_size: usize,
+        gate_name: &str,
+    ) -> Result<(), PecosError> {
+        if payload.len() < params_offset + required_size {
+            return Err(PecosError::Input(format!(
+                "Quantum gate message payload too small for {gate_name}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Parse an f64 parameter from the payload
+    fn parse_f64_param(payload: &[u8], offset: usize) -> f64 {
+        let param_bytes = &payload[offset..offset + size_of::<f64>()];
+        // Performance critical path during simulation - slice to array conversion should never fail
+        // when we already verified the buffer size (8 bytes for f64)
+        f64::from_le_bytes(
+            param_bytes[..8]
+                .try_into()
+                .expect("Byte buffer has incorrect length for f64 conversion"),
+        )
     }
 
     /// Parse a measurement message payload
-    fn parse_measurement(payload: &[u8]) -> Result<QuantumGate, QueueError> {
+    fn parse_measurement(payload: &[u8]) -> Result<QuantumGate, PecosError> {
         if payload.len() < size_of::<MeasurementHeader>() {
-            return Err(QueueError::OperationError(
-                "Measurement message payload too small".into(),
+            return Err(PecosError::Input(
+                "Measurement message payload too small".to_string(),
             ));
         }
 
@@ -818,8 +848,8 @@ impl ByteMessage {
     /// # Returns
     ///
     /// A Result containing a vector of qubit indices if successful,
-    /// or a `QueueError` if there was an error parsing the message.
-    pub fn parse_measured_qubits(&self) -> Result<Vec<u32>, QueueError> {
+    /// or a `PecosError` if there was an error parsing the message.
+    pub fn parse_measured_qubits(&self) -> Result<Vec<u32>, PecosError> {
         if self.bytes.is_empty() {
             return Ok(Vec::new());
         }

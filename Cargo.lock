@@ -669,6 +669,7 @@ dependencies = [
  "num-traits",
  "rand",
  "rand_chacha",
+ "thiserror 2.0.12",
 ]
 
 [[package]]

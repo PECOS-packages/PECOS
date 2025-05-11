@@ -1,16 +1,21 @@
 use crate::byte_message::ByteMessage;
 use crate::byte_message::GateType;
 use crate::engines::Engine;
-use crate::errors::QueueError;
 use dyn_clone::DynClone;
 use log::debug;
 use pecos_core::RngManageable;
+use pecos_core::errors::PecosError;
 use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVec, StdSparseStab,
 };
 use rand::SeedableRng;
 use std::any::Any;
 use std::fmt::Debug;
+
+/// Helper function to create quantum engine errors
+fn quantum_error<S: Into<String>>(msg: S) -> PecosError {
+    PecosError::Processing(msg.into())
+}
 
 /// Trait for quantum engines that can process quantum operations
 pub trait QuantumEngine:
@@ -25,8 +30,8 @@ pub trait QuantumEngine:
     /// Result indicating success or failure
     ///
     /// # Errors
-    /// Returns a `QueueError` if setting the seed fails
-    fn set_seed(&mut self, seed: u64) -> Result<(), QueueError>;
+    /// Returns an error if setting the seed fails
+    fn set_seed(&mut self, seed: u64) -> Result<(), PecosError>;
 
     /// Returns a reference to this object as Any, for downcasting
     fn as_any(&self) -> &dyn Any;
@@ -43,12 +48,12 @@ impl Engine for Box<dyn QuantumEngine> {
     type Input = ByteMessage;
     type Output = ByteMessage;
 
-    fn process(&mut self, input: Self::Input) -> Result<Self::Output, QueueError> {
+    fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
         // Delegate to the underlying QuantumEngine
         (**self).process(input)
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // Delegate to the underlying QuantumEngine
         (**self).reset()
     }
@@ -86,7 +91,7 @@ impl Engine for StateVecEngine {
     type Input = ByteMessage;
     type Output = ByteMessage;
 
-    fn process(&mut self, message: Self::Input) -> Result<Self::Output, QueueError> {
+    fn process(&mut self, message: Self::Input) -> Result<Self::Output, PecosError> {
         // Parse commands from the message
         let batch = message.parse_quantum_operations()?;
         let mut measurements = Vec::new();
@@ -184,7 +189,7 @@ impl Engine for StateVecEngine {
         Ok(result_message)
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         self.simulator.reset();
         Ok(())
     }
@@ -193,7 +198,7 @@ impl Engine for StateVecEngine {
 impl RngManageable for StateVecEngine {
     type Rng = <StateVec as RngManageable>::Rng;
 
-    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), PecosError> {
         self.simulator.set_rng(rng)
     }
 
@@ -219,14 +224,14 @@ impl RngManageable for StateVecEngine {
 }
 
 impl QuantumEngine for StateVecEngine {
-    fn set_seed(&mut self, seed: u64) -> Result<(), QueueError> {
+    fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
         // Create a new RNG with the given seed
         let rng = <StateVec as RngManageable>::Rng::seed_from_u64(seed);
 
         // Set the simulator's RNG
         self.simulator
             .set_rng(rng)
-            .map_err(|e| QueueError::OperationError(format!("Failed to set seed: {e}")))
+            .map_err(|e| quantum_error(format!("Failed to set seed: {e}")))
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -270,7 +275,7 @@ impl Engine for SparseStabEngine {
     type Input = ByteMessage;
     type Output = ByteMessage;
 
-    fn process(&mut self, message: Self::Input) -> Result<Self::Output, QueueError> {
+    fn process(&mut self, message: Self::Input) -> Result<Self::Output, PecosError> {
         // Parse commands from the message
         let batch = message.parse_quantum_operations()?;
         let mut measurements = Vec::new();
@@ -345,7 +350,7 @@ impl Engine for SparseStabEngine {
         Ok(result_message)
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         self.simulator.reset();
         Ok(())
     }
@@ -354,7 +359,7 @@ impl Engine for SparseStabEngine {
 impl RngManageable for SparseStabEngine {
     type Rng = <StdSparseStab as RngManageable>::Rng;
 
-    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), PecosError> {
         self.simulator.set_rng(rng)
     }
 
@@ -380,14 +385,14 @@ impl RngManageable for SparseStabEngine {
 }
 
 impl QuantumEngine for SparseStabEngine {
-    fn set_seed(&mut self, seed: u64) -> Result<(), QueueError> {
+    fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
         // Create a new RNG with the given seed
         let rng = <StdSparseStab as RngManageable>::Rng::seed_from_u64(seed);
 
         // Set the simulator's RNG
         self.simulator
             .set_rng(rng)
-            .map_err(|e| QueueError::OperationError(format!("Failed to set seed: {e}")))
+            .map_err(|e| quantum_error(format!("Failed to set seed: {e}")))
     }
 
     fn as_any(&self) -> &dyn Any {

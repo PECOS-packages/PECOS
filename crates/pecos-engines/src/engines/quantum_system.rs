@@ -2,7 +2,7 @@ use crate::byte_message::ByteMessage;
 use crate::engines::noise::{NoiseModel, PassThroughNoiseModel};
 use crate::engines::quantum::QuantumEngine;
 use crate::engines::{Engine, EngineSystem};
-use crate::errors::QueueError;
+use pecos_core::errors::PecosError;
 use std::fmt::Debug;
 
 /// A system that coordinates quantum simulation with noise application
@@ -80,12 +80,12 @@ impl QuantumSystem {
     /// Result indicating success or failure
     ///
     /// # Errors
-    /// Returns a `QueueError` if setting the seed fails for either component
+    /// Returns a `PecosError` if setting the seed fails for either component
     ///
     /// # Panics
     /// This function will panic if the engine type changes between the check for engine type
     /// and the attempt to get a mutable reference to it, which should never happen in practice.
-    pub fn set_seed(&mut self, seed: u64) -> Result<(), QueueError> {
+    pub fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
         // Derive a different seed for the noise model using the standard protocol
         let noise_seed = pecos_core::rng::rng_manageable::derive_seed(seed, "noise_model");
 
@@ -93,10 +93,10 @@ impl QuantumSystem {
         let engine_seed = pecos_core::rng::rng_manageable::derive_seed(seed, "quantum_engine");
 
         // Set the seed for the noise model using RngManageable::set_seed
-        // Convert the error type from Box<dyn Error> to QueueError
-        self.noise_model.set_seed(noise_seed).map_err(|e| {
-            QueueError::ExecutionError(format!("Failed to set noise model seed: {e}"))
-        })?;
+        // Convert the error type to PecosError
+        self.noise_model
+            .set_seed(noise_seed)
+            .map_err(|e| PecosError::Processing(format!("Failed to set noise model seed: {e}")))?;
 
         // Directly set the seed for the quantum engine using the trait method
         self.quantum_engine.set_seed(engine_seed)?;
@@ -141,12 +141,12 @@ impl Engine for QuantumSystem {
     type Input = ByteMessage;
     type Output = ByteMessage;
 
-    fn process(&mut self, input: Self::Input) -> Result<Self::Output, QueueError> {
+    fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
         // Delegate to process_as_system for the standard implementation
         self.process_as_system(input)
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // Reset the noise model using the ControlEngine trait
         self.noise_model.reset()?;
 

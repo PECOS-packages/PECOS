@@ -1,3 +1,4 @@
+use pecos_core::errors::PecosError;
 use pecos_engines::{ClassicalEngine, Engine, ShotResult};
 use pecos_qasm::QASMEngine;
 
@@ -36,7 +37,7 @@ fn get_bit_value(result: &ShotResult, register_name: &str, bit_index: usize) -> 
 }
 
 #[test]
-fn test_engine_execution() -> Result<(), Box<dyn std::error::Error>> {
+fn test_engine_execution() -> Result<(), PecosError> {
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -48,14 +49,18 @@ fn test_engine_execution() -> Result<(), Box<dyn std::error::Error>> {
         measure q[1] -> c[1];
     "#;
 
-    let mut file = tempfile::NamedTempFile::new()?;
-    std::io::Write::write_all(&mut file, qasm.as_bytes())?;
+    let mut file = tempfile::NamedTempFile::new()
+        .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     // Use a fixed seed for deterministic test results
-    let mut engine = QASMEngine::with_seed(file.path(), 42)?;
+    let mut engine = QASMEngine::with_seed(file.path(), 42)
+        .map_err(|e| PecosError::Processing(format!("Failed to create engine: {e}")))?;
 
     // Process the program
-    let results = engine.process(())?;
+    let results = engine
+        .process(())
+        .map_err(|e| PecosError::Processing(format!("Failed to process program: {e}")))?;
 
     // Verify results - check that the register exists
     assert!(results.registers.contains_key("c"));
@@ -71,7 +76,7 @@ fn test_engine_execution() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_deterministic_bell_state() -> Result<(), Box<dyn std::error::Error>> {
+fn test_deterministic_bell_state() -> Result<(), PecosError> {
     // Bell state preparation and measurement with fixed results
     let qasm = r#"
         OPENQASM 2.0;
@@ -88,14 +93,18 @@ fn test_deterministic_bell_state() -> Result<(), Box<dyn std::error::Error>> {
         measure q[1] -> c[1];
     "#;
 
-    let mut file = tempfile::NamedTempFile::new()?;
-    std::io::Write::write_all(&mut file, qasm.as_bytes())?;
+    let mut file = tempfile::NamedTempFile::new()
+        .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     // Use a fixed seed for deterministic test results
-    let mut engine = QASMEngine::with_seed(file.path(), 42)?;
+    let mut engine = QASMEngine::with_seed(file.path(), 42)
+        .map_err(|e| PecosError::Processing(format!("Failed to create engine: {e}")))?;
 
     // Process the program
-    let results = engine.process(())?;
+    let results = engine
+        .process(())
+        .map_err(|e| PecosError::Processing(format!("Failed to process program: {e}")))?;
 
     // Check that the register exists
     assert!(results.registers.contains_key("c"));
@@ -114,7 +123,7 @@ fn test_deterministic_bell_state() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_deterministic_3qubit_circuit() -> Result<(), Box<dyn std::error::Error>> {
+fn test_deterministic_3qubit_circuit() -> Result<(), PecosError> {
     // 3-qubit GHZ state preparation and measurement
     let qasm = r#"
         OPENQASM 2.0;
@@ -133,15 +142,23 @@ fn test_deterministic_3qubit_circuit() -> Result<(), Box<dyn std::error::Error>>
         measure q[2] -> c[2];
     "#;
 
-    let mut file = tempfile::NamedTempFile::new()?;
-    std::io::Write::write_all(&mut file, qasm.as_bytes())?;
+    let mut file = tempfile::NamedTempFile::new()
+        .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
-    let mut engine = QASMEngine::new()?;
-    engine.from_str(&std::fs::read_to_string(file.path())?)?;
+    let mut engine = QASMEngine::new()
+        .map_err(|e| PecosError::Processing(format!("Failed to create engine: {e}")))?;
+    engine
+        .from_str(&std::fs::read_to_string(file.path()).map_err(PecosError::IO)?)
+        .map_err(|e| PecosError::Processing(format!("Failed to parse QASM: {e}")))?;
 
     // Generate commands to verify the operations
-    let command_message = engine.generate_commands()?;
-    let operations = command_message.parse_quantum_operations()?;
+    let command_message = engine
+        .generate_commands()
+        .map_err(|e| PecosError::Processing(format!("Failed to generate commands: {e}")))?;
+    let operations = command_message
+        .parse_quantum_operations()
+        .map_err(|e| PecosError::Processing(format!("Failed to parse quantum operations: {e}")))?;
 
     // h, 2 cx, 3 measurements (total 6 operations)
     assert_eq!(operations.len(), 6);
@@ -153,10 +170,14 @@ fn test_deterministic_3qubit_circuit() -> Result<(), Box<dyn std::error::Error>>
         .add_measurement_results(&[1, 1, 1], &[0, 1, 2])
         .build();
 
-    engine.handle_measurements(message)?;
+    engine
+        .handle_measurements(message)
+        .map_err(|e| PecosError::Processing(format!("Failed to handle measurements: {e}")))?;
 
     // Get results and verify
-    let results = engine.get_results()?;
+    let results = engine
+        .get_results()
+        .map_err(|e| PecosError::Processing(format!("Failed to get results: {e}")))?;
 
     // Extract individual bit values
     let bit0 = get_bit_value(&results, "c", 0).expect("Bit 0 should be accessible");
@@ -178,7 +199,7 @@ fn test_deterministic_3qubit_circuit() -> Result<(), Box<dyn std::error::Error>>
 }
 
 #[test]
-fn test_multi_register_operation() -> Result<(), Box<dyn std::error::Error>> {
+fn test_multi_register_operation() -> Result<(), PecosError> {
     // Test with multiple quantum and classical registers
     let qasm = r#"
         OPENQASM 2.0;
@@ -200,14 +221,18 @@ fn test_multi_register_operation() -> Result<(), Box<dyn std::error::Error>> {
         measure r[0] -> c2[0];
     "#;
 
-    let mut file = tempfile::NamedTempFile::new()?;
-    std::io::Write::write_all(&mut file, qasm.as_bytes())?;
+    let mut file = tempfile::NamedTempFile::new()
+        .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     // Use a fixed seed for deterministic test results
-    let mut engine = QASMEngine::with_seed(file.path(), 42)?;
+    let mut engine = QASMEngine::with_seed(file.path(), 42)
+        .map_err(|e| PecosError::Processing(format!("Failed to create engine with seed: {e}")))?;
 
     // Process the program with deterministic randomness
-    let results = engine.process(())?;
+    let results = engine
+        .process(())
+        .map_err(|e| PecosError::Processing(format!("Failed to process program: {e}")))?;
 
     // Print all register values for debugging
     println!("Available register keys:");
@@ -250,7 +275,7 @@ fn test_multi_register_operation() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_engine_conditional() -> Result<(), Box<dyn std::error::Error>> {
+fn test_engine_conditional() -> Result<(), PecosError> {
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -261,14 +286,20 @@ fn test_engine_conditional() -> Result<(), Box<dyn std::error::Error>> {
         if(c[0]==1) x q[0];
     "#;
 
-    let mut file = tempfile::NamedTempFile::new()?;
-    std::io::Write::write_all(&mut file, qasm.as_bytes())?;
+    let mut file = tempfile::NamedTempFile::new()
+        .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
-    let mut engine = QASMEngine::new()?;
-    engine.from_str(&std::fs::read_to_string(file.path())?)?;
+    let mut engine = QASMEngine::new()
+        .map_err(|e| PecosError::Processing(format!("Failed to create engine: {e}")))?;
+    engine
+        .from_str(&std::fs::read_to_string(file.path()).map_err(PecosError::IO)?)
+        .map_err(|e| PecosError::Processing(format!("Failed to parse QASM: {e}")))?;
 
     // Process the program
-    let results = engine.process(())?;
+    let results = engine
+        .process(())
+        .map_err(|e| PecosError::Processing(format!("Failed to process program: {e}")))?;
 
     // Verify results - check that register exists
     assert!(results.registers.contains_key("c"));
@@ -282,7 +313,8 @@ fn test_engine_conditional() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_multiple_measurement_operations() -> Result<(), Box<dyn std::error::Error>> {
+#[allow(clippy::too_many_lines)]
+fn test_multiple_measurement_operations() -> Result<(), PecosError> {
     // Test measuring the same qubit multiple times
     let qasm = r#"
         OPENQASM 2.0;
@@ -305,12 +337,16 @@ fn test_multiple_measurement_operations() -> Result<(), Box<dyn std::error::Erro
         measure q[0] -> c2[0];
     "#;
 
-    let mut file = tempfile::NamedTempFile::new()?;
-    std::io::Write::write_all(&mut file, qasm.as_bytes())?;
+    let mut file = tempfile::NamedTempFile::new()
+        .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     println!("Parsing QASM program...");
-    let mut engine = QASMEngine::new()?;
-    engine.from_str(&std::fs::read_to_string(file.path())?)?;
+    let mut engine = QASMEngine::new()
+        .map_err(|e| PecosError::Processing(format!("Failed to create engine: {e}")))?;
+    engine
+        .from_str(&std::fs::read_to_string(file.path()).map_err(PecosError::IO)?)
+        .map_err(|e| PecosError::Processing(format!("Failed to parse QASM: {e}")))?;
 
     // IMPORTANT: The QASMEngine itself doesn't simulate quantum operations.
     // In real usage, the commands would be sent to a quantum engine.
@@ -318,10 +354,14 @@ fn test_multiple_measurement_operations() -> Result<(), Box<dyn std::error::Erro
 
     println!("Generating first batch of commands...");
     // Generate the first batch of commands (X gate + measurement)
-    let command_message1 = engine.generate_commands()?;
+    let command_message1 = engine
+        .generate_commands()
+        .map_err(|e| PecosError::Processing(format!("Failed to generate commands: {e}")))?;
 
     // Verify the first batch has the expected operations
-    let operations1 = command_message1.parse_quantum_operations()?;
+    let operations1 = command_message1
+        .parse_quantum_operations()
+        .map_err(|e| PecosError::Processing(format!("Failed to parse quantum operations: {e}")))?;
     println!("First batch operations: {operations1:?}");
     assert!(
         !operations1.is_empty(),
@@ -335,13 +375,24 @@ fn test_multiple_measurement_operations() -> Result<(), Box<dyn std::error::Erro
         .build();
 
     // Handle the first measurement results
-    engine.handle_measurements(measurement1)?;
+    engine
+        .handle_measurements(measurement1)
+        .map_err(|e| PecosError::Processing(format!("Failed to handle measurements: {e}")))?;
 
     println!("Generating second batch of commands...");
     // Generate the second batch of commands (two X gates + measurement)
-    let command_message2 = engine.generate_commands()?;
+    let command_message2 = engine
+        .generate_commands()
+        .map_err(|e| PecosError::Processing(format!("Failed to generate commands: {e}")))?;
 
-    println!("Is second batch empty? {}", command_message2.is_empty()?);
+    println!(
+        "Is second batch empty? {}",
+        command_message2
+            .is_empty()
+            .map_err(|e| PecosError::Processing(format!(
+                "Failed to check if message is empty: {e}"
+            )))?
+    );
 
     // Verify the second batch has the expected operations
     let operations2 = match command_message2.parse_quantum_operations() {
@@ -351,7 +402,9 @@ fn test_multiple_measurement_operations() -> Result<(), Box<dyn std::error::Erro
         }
         Err(e) => {
             println!("Error parsing second batch: {e:?}");
-            return Err(Box::new(e));
+            return Err(PecosError::Processing(format!(
+                "Failed to parse quantum operations: {e}"
+            )));
         }
     };
 
@@ -361,11 +414,16 @@ fn test_multiple_measurement_operations() -> Result<(), Box<dyn std::error::Erro
         println!("Let's modify our test to manually set both measurements at once.");
 
         // Reset the engine
-        engine = QASMEngine::new()?;
-        engine.from_str(&std::fs::read_to_string(file.path())?)?;
+        engine = QASMEngine::new()
+            .map_err(|e| PecosError::Processing(format!("Failed to create engine: {e}")))?;
+        engine
+            .from_str(&std::fs::read_to_string(file.path()).map_err(PecosError::IO)?)
+            .map_err(|e| PecosError::Processing(format!("Failed to parse QASM: {e}")))?;
 
         // Get all commands in one batch
-        let _commands = engine.generate_commands()?;
+        let _commands = engine
+            .generate_commands()
+            .map_err(|e| PecosError::Processing(format!("Failed to generate commands: {e}")))?;
 
         // Create measurement results for both measurements at once
         // Using result IDs 0 and 1 which will map to c1[0] and c2[0]
@@ -374,17 +432,27 @@ fn test_multiple_measurement_operations() -> Result<(), Box<dyn std::error::Erro
             .build();
 
         // Handle the measurements
-        engine.handle_measurements(all_measurements)?;
+        engine
+            .handle_measurements(all_measurements)
+            .map_err(|e| PecosError::Processing(format!("Failed to handle measurements: {e}")))?;
 
         // Verify that we're done processing
-        let final_commands = engine.generate_commands()?;
+        let final_commands = engine
+            .generate_commands()
+            .map_err(|e| PecosError::Processing(format!("Failed to generate commands: {e}")))?;
         assert!(
-            final_commands.is_empty()?,
+            final_commands
+                .is_empty()
+                .map_err(|e| PecosError::Processing(format!(
+                    "Failed to check if message is empty: {e}"
+                )))?,
             "Should be done with all operations"
         );
 
         // Get final results
-        let results = engine.get_results()?;
+        let results = engine
+            .get_results()
+            .map_err(|e| PecosError::Processing(format!("Failed to get results: {e}")))?;
 
         // Verify results
         println!("Available register keys:");
@@ -415,15 +483,28 @@ fn test_multiple_measurement_operations() -> Result<(), Box<dyn std::error::Erro
         .build();
 
     // Handle the second measurement results
-    engine.handle_measurements(measurement2)?;
+    engine
+        .handle_measurements(measurement2)
+        .map_err(|e| PecosError::Processing(format!("Failed to handle measurements: {e}")))?;
 
     println!("Generating final batch...");
     // Generate the final batch (should be empty/flush)
-    let command_message3 = engine.generate_commands()?;
-    assert!(command_message3.is_empty()?, "Final batch should be empty");
+    let command_message3 = engine
+        .generate_commands()
+        .map_err(|e| PecosError::Processing(format!("Failed to generate commands: {e}")))?;
+    assert!(
+        command_message3
+            .is_empty()
+            .map_err(|e| PecosError::Processing(format!(
+                "Failed to check if message is empty: {e}"
+            )))?,
+        "Final batch should be empty"
+    );
 
     // Get results and verify
-    let results = engine.get_results()?;
+    let results = engine
+        .get_results()
+        .map_err(|e| PecosError::Processing(format!("Failed to get results: {e}")))?;
 
     // Print all registers for debugging
     println!("Available register keys:");

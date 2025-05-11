@@ -4,8 +4,8 @@ use crate::byte_message::QuantumCommand;
 use crate::byte_message::message_data::MessageData;
 use crate::core::record_data::RecordData;
 use crate::engines::qir::common::get_thread_id;
-use crate::errors::QueueError;
 use log::debug;
+use pecos_core::errors::PecosError;
 
 /// Parses binary commands from the QIR runtime into `QuantumCommand` objects
 ///
@@ -176,8 +176,8 @@ pub fn identify_circuit_boundaries(commands: &[QuantumCommand]) -> Vec<QuantumCo
 ///
 /// # Returns
 ///
-/// * `Result<ByteMessage, QueueError>` - The `ByteMessage` if successful, or an error if the operation fails
-pub fn commands_to_byte_message(commands: &[QuantumCommand]) -> Result<ByteMessage, QueueError> {
+/// * `Result<ByteMessage, PecosError>` - The `ByteMessage` if successful, or an error if the operation fails
+pub fn commands_to_byte_message(commands: &[QuantumCommand]) -> Result<ByteMessage, PecosError> {
     // Get the current thread ID for logging
     let thread_id = get_thread_id();
 
@@ -188,5 +188,7 @@ pub fn commands_to_byte_message(commands: &[QuantumCommand]) -> Result<ByteMessa
     );
 
     // Use the QuantumCommand's built-in method to convert to ByteMessage
-    QuantumCommand::commands_to_byte_message(commands)
+    QuantumCommand::commands_to_byte_message(commands).map_err(|e| {
+        PecosError::Processing(format!("Failed to convert commands to ByteMessage: {e}"))
+    })
 }

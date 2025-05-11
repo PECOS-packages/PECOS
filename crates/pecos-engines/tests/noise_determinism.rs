@@ -31,8 +31,10 @@ fn reset_model_with_seed(
     let general_noise = model
         .as_any_mut()
         .downcast_mut::<GeneralNoiseModel>()
-        .unwrap();
-    general_noise.reset_with_seed(seed)
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
+    general_noise
+        .reset_with_seed(seed)
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
 }
 
 fn create_noise_model() -> Box<dyn NoiseModel> {
@@ -70,17 +72,23 @@ fn create_noise_model() -> Box<dyn NoiseModel> {
 
     // Reset the model to ensure clean state
     info!("Resetting model");
-    model.reset().unwrap();
+    model.reset().expect("Failed to reset noise model");
 
     model
 }
 
 fn apply_noise(model: &mut Box<dyn NoiseModel>, msg: &ByteMessage) -> ByteMessage {
     info!("Applying noise to message");
-    match model.start(msg.clone()).unwrap() {
+    match model
+        .start(msg.clone())
+        .expect("Failed to start noise model processing")
+    {
         pecos_engines::engines::EngineStage::NeedsProcessing(noisy_msg) => {
             info!("Processing noisy message");
-            match model.continue_processing(noisy_msg).unwrap() {
+            match model
+                .continue_processing(noisy_msg)
+                .expect("Failed to continue processing with noise model")
+            {
                 pecos_engines::engines::EngineStage::Complete(result) => result,
                 pecos_engines::engines::EngineStage::NeedsProcessing(_) => {
                     panic!("Expected Complete stage")
@@ -114,7 +122,7 @@ fn test_prep_determinism() {
     let mut model1 = create_noise_model();
 
     // Apply noise to model1
-    reset_model_with_seed(&mut model1, seed).unwrap();
+    reset_model_with_seed(&mut model1, seed).expect("Failed to reset model with seed");
 
     // Create a message with multiple prep gates
     let mut builder = ByteMessage::quantum_operations_builder();
@@ -127,7 +135,7 @@ fn test_prep_determinism() {
     let noisy1 = apply_noise(&mut model1, &msg);
 
     // Reset model1 with the same seed for deterministic behavior
-    reset_model_with_seed(&mut model1, seed).unwrap();
+    reset_model_with_seed(&mut model1, seed).expect("Failed to reset model with seed");
 
     // Apply noise again to the message
     let noisy2 = apply_noise(&mut model1, &msg);
@@ -142,7 +150,8 @@ fn test_prep_determinism() {
     // Now create a completely different model to verify we see different noise
     info!("Creating a model with a different seed");
     let mut model3 = create_noise_model();
-    reset_model_with_seed(&mut model3, seed + 1).unwrap(); // different seed
+    reset_model_with_seed(&mut model3, seed + 1)
+        .expect("Failed to reset model3 with different seed"); // different seed
 
     // Apply noise with different model
     let noisy3 = apply_noise(&mut model3, &msg);
@@ -162,7 +171,7 @@ fn test_single_qubit_gate_determinism() {
     let mut model1 = create_noise_model();
 
     // Apply noise to model1
-    reset_model_with_seed(&mut model1, seed).unwrap();
+    reset_model_with_seed(&mut model1, seed).expect("Failed to reset model with seed");
 
     // Create a message with multiple single-qubit gates
     let mut builder = ByteMessage::quantum_operations_builder();
@@ -182,7 +191,7 @@ fn test_single_qubit_gate_determinism() {
 
     // Reset model with the same seed for deterministic behavior
     info!("Resetting model with same seed");
-    reset_model_with_seed(&mut model1, seed).unwrap();
+    reset_model_with_seed(&mut model1, seed).expect("Failed to reset model with seed");
 
     // Apply noise again with the same model
     info!("Applying noise second time");
@@ -210,7 +219,7 @@ fn test_two_qubit_gate_determinism() {
     let mut model1 = create_noise_model();
 
     // Apply noise to model1
-    reset_model_with_seed(&mut model1, seed).unwrap();
+    reset_model_with_seed(&mut model1, seed).expect("Failed to reset model with seed");
 
     // Create a message with many two-qubit gates to increase chance of errors
     let mut builder = ByteMessage::quantum_operations_builder();
@@ -227,7 +236,7 @@ fn test_two_qubit_gate_determinism() {
     let noisy1 = apply_noise(&mut model1, &msg);
 
     // Reset model1 with the same seed for deterministic behavior
-    reset_model_with_seed(&mut model1, seed).unwrap();
+    reset_model_with_seed(&mut model1, seed).expect("Failed to reset model with seed");
 
     // Apply noise again to the message
     let noisy2 = apply_noise(&mut model1, &msg);
@@ -253,8 +262,8 @@ fn test_measurement_determinism() {
     let mut model1 = create_noise_model();
     let mut model2 = create_noise_model();
 
-    reset_model_with_seed(&mut model1, seed).unwrap();
-    reset_model_with_seed(&mut model2, seed).unwrap();
+    reset_model_with_seed(&mut model1, seed).expect("Failed to reset model with seed");
+    reset_model_with_seed(&mut model2, seed).expect("Failed to reset model with seed");
 
     // Create a message with measurements
     let mut builder = ByteMessage::quantum_operations_builder();
@@ -268,7 +277,7 @@ fn test_measurement_determinism() {
     // Apply noise multiple times
     let noisy1 = apply_noise(&mut model1, &msg);
 
-    reset_model_with_seed(&mut model1, seed).unwrap();
+    reset_model_with_seed(&mut model1, seed).expect("Failed to reset model with seed");
 
     let noisy2 = apply_noise(&mut model2, &msg);
 
@@ -283,8 +292,8 @@ fn test_different_seeds_produce_different_results() {
     let mut model1 = create_noise_model();
     let mut model2 = create_noise_model();
 
-    reset_model_with_seed(&mut model1, seed1).unwrap();
-    reset_model_with_seed(&mut model2, seed2).unwrap();
+    reset_model_with_seed(&mut model1, seed1).expect("Failed to reset model with seed");
+    reset_model_with_seed(&mut model2, seed2).expect("Failed to reset model with seed");
 
     // Create a larger circuit to increase the chance of errors
     let mut builder = ByteMessage::quantum_operations_builder();
@@ -367,8 +376,8 @@ fn test_complete_measurement_determinism() {
     let mut model2 = create_noise_model();
 
     // Set the same seed for both models
-    reset_model_with_seed(&mut model1, seed).unwrap();
-    reset_model_with_seed(&mut model2, seed).unwrap();
+    reset_model_with_seed(&mut model1, seed).expect("Failed to reset model with seed");
+    reset_model_with_seed(&mut model2, seed).expect("Failed to reset model with seed");
 
     // Create a circuit with superposition and entanglement to test measurement
     let mut builder = ByteMessage::quantum_operations_builder();
@@ -400,7 +409,7 @@ fn test_complete_measurement_determinism() {
     // Now run with a different seed
     info!("Running third simulation with different seed");
     let mut model3 = create_noise_model();
-    reset_model_with_seed(&mut model3, seed + 1).unwrap();
+    reset_model_with_seed(&mut model3, seed + 1).expect("Failed to reset model with seed");
     let engine3 = Box::new(StateVecEngine::new(2));
     let results3 = run_complete_simulation(&mut model3, engine3, &circuit, seed + 1);
 
@@ -438,7 +447,7 @@ fn test_deterministic_measurement() {
     let circuit = builder.build();
 
     info!("Running first measurement with seed {seed}");
-    reset_model_with_seed(&mut model, seed).unwrap();
+    reset_model_with_seed(&mut model, seed).expect("Failed to reset model with seed");
     let engine1 = Box::new(StateVecEngine::new(1));
     let result1 = run_complete_simulation(&mut model, engine1, &circuit, seed);
     let value1 = result1.get(&0).copied().unwrap_or(0);
@@ -446,7 +455,7 @@ fn test_deterministic_measurement() {
     info!("First measurement result: {value1}");
 
     info!("Running second measurement with same seed {seed}");
-    reset_model_with_seed(&mut model, seed).unwrap();
+    reset_model_with_seed(&mut model, seed).expect("Failed to reset model with seed");
     let engine2 = Box::new(StateVecEngine::new(1));
     let result2 = run_complete_simulation(&mut model, engine2, &circuit, seed);
     let value2 = result2.get(&0).copied().unwrap_or(0);
@@ -462,7 +471,7 @@ fn test_deterministic_measurement() {
     // Now try with a different seed
     let different_seed = seed + 1000;
     info!("Running measurement with different seed {different_seed}");
-    reset_model_with_seed(&mut model, different_seed).unwrap();
+    reset_model_with_seed(&mut model, different_seed).expect("Failed to reset model with seed");
     let engine3 = Box::new(StateVecEngine::new(1));
     let result3 = run_complete_simulation(&mut model, engine3, &circuit, different_seed);
     let value3 = result3.get(&0).copied().unwrap_or(0);
@@ -478,7 +487,7 @@ fn test_deterministic_measurement() {
 
         // Try one more seed to reduce the probability of false positives
         let another_seed = seed + 2000;
-        reset_model_with_seed(&mut model, another_seed).unwrap();
+        reset_model_with_seed(&mut model, another_seed).expect("Failed to reset model with seed");
         let engine4 = Box::new(StateVecEngine::new(1));
         let result4 = run_complete_simulation(&mut model, engine4, &circuit, another_seed);
         let value4 = result4.get(&0).copied().unwrap_or(0);
@@ -514,7 +523,7 @@ fn test_deterministic_measurement() {
         // Use a different deterministic seed for each test iteration derived from the base seed
         // Converting i to u64 is safe since we're only using small non-negative loop values
         let test_seed = seed + i as u64;
-        reset_model_with_seed(&mut model, test_seed).unwrap();
+        reset_model_with_seed(&mut model, test_seed).expect("Failed to reset model with seed");
         let engine = Box::new(StateVecEngine::new(1));
         let result = run_complete_simulation(&mut model, engine, &circuit, test_seed);
         let value = result.get(&0).copied().unwrap_or(0);
@@ -605,7 +614,7 @@ fn test_comprehensive_noise_determinism() {
     // Run the circuit with a fixed seed
     let seed = 9876;
     info!("Running first simulation with seed {seed}");
-    reset_model_with_seed(&mut model, seed).unwrap();
+    reset_model_with_seed(&mut model, seed).expect("Failed to reset model with seed");
     let engine1 = Box::new(StateVecEngine::new(3));
     let results1 = run_complete_simulation(&mut model, engine1, &circuit, seed);
 
@@ -616,7 +625,7 @@ fn test_comprehensive_noise_determinism() {
 
     // Run again with the same seed - should get identical results
     info!("Running second simulation with the same seed {seed}");
-    reset_model_with_seed(&mut model, seed).unwrap();
+    reset_model_with_seed(&mut model, seed).expect("Failed to reset model with seed");
     let engine2 = Box::new(StateVecEngine::new(3));
     let results2 = run_complete_simulation(&mut model, engine2, &circuit, seed);
 
@@ -634,7 +643,7 @@ fn test_comprehensive_noise_determinism() {
     // Run again with a different seed - should get different results
     let different_seed = seed + 1000;
     info!("Running third simulation with different seed {different_seed}");
-    reset_model_with_seed(&mut model, different_seed).unwrap();
+    reset_model_with_seed(&mut model, different_seed).expect("Failed to reset model with seed");
     let engine3 = Box::new(StateVecEngine::new(3));
     let results3 = run_complete_simulation(&mut model, engine3, &circuit, different_seed);
 
@@ -652,7 +661,7 @@ fn test_comprehensive_noise_determinism() {
 
         let another_seed = seed + 2000;
         info!("Trying yet another seed: {another_seed}");
-        reset_model_with_seed(&mut model, another_seed).unwrap();
+        reset_model_with_seed(&mut model, another_seed).expect("Failed to reset model with seed");
         let engine4 = Box::new(StateVecEngine::new(3));
         let results4 = run_complete_simulation(&mut model, engine4, &circuit, another_seed);
 
@@ -745,12 +754,12 @@ fn test_long_running_determinism() {
     // Run the circuit twice with the same seed
     let seed = 54321;
     info!("Running first long simulation with seed {seed}");
-    reset_model_with_seed(&mut model, seed).unwrap();
+    reset_model_with_seed(&mut model, seed).expect("Failed to reset model with seed");
     let engine1 = Box::new(StateVecEngine::new(5));
     let results1 = run_complete_simulation(&mut model, engine1, &circuit, seed);
 
     info!("Running second long simulation with the same seed {seed}");
-    reset_model_with_seed(&mut model, seed).unwrap();
+    reset_model_with_seed(&mut model, seed).expect("Failed to reset model with seed");
     let engine2 = Box::new(StateVecEngine::new(5));
     let results2 = run_complete_simulation(&mut model, engine2, &circuit, seed);
 
@@ -772,7 +781,7 @@ fn test_long_running_determinism() {
     // Run with a different seed
     let different_seed = seed + 1000;
     info!("Running with a different seed {different_seed}");
-    reset_model_with_seed(&mut model, different_seed).unwrap();
+    reset_model_with_seed(&mut model, different_seed).expect("Failed to reset model with seed");
     let engine3 = Box::new(StateVecEngine::new(5));
     let results3 = run_complete_simulation(&mut model, engine3, &circuit, different_seed);
 
@@ -783,7 +792,7 @@ fn test_long_running_determinism() {
         // Try one more seed
         let another_seed = seed + 2000;
         info!("Trying yet another seed: {another_seed}");
-        reset_model_with_seed(&mut model, another_seed).unwrap();
+        reset_model_with_seed(&mut model, another_seed).expect("Failed to reset model with seed");
         let engine4 = Box::new(StateVecEngine::new(5));
         let results4 = run_complete_simulation(&mut model, engine4, &circuit, another_seed);
 

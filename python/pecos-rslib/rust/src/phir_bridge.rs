@@ -2,9 +2,8 @@ use parking_lot::Mutex;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 use std::collections::HashMap;
-use std::error::Error;
 
-use pecos::prelude::{ByteMessage, ClassicalEngine, ControlEngine, Engine, QueueError, ShotResult};
+use pecos::prelude::{ByteMessage, ClassicalEngine, ControlEngine, Engine, PecosError, ShotResult};
 
 #[pyclass(module = "_pecos_rslib")]
 #[derive(Debug)]
@@ -720,51 +719,51 @@ fn convert_to_py_commands(py: Python<'_>, commands: &PyObject) -> PyResult<Vec<P
 }
 
 // Helper function for error conversion
-fn to_queue_error<E: std::fmt::Display>(err: E) -> QueueError {
-    QueueError::ExecutionError(err.to_string())
+fn to_pecos_error<E: std::fmt::Display>(err: E) -> PecosError {
+    PecosError::Processing(err.to_string())
 }
 
 // Break out part of the generate_commands functionality to reduce function length
-fn process_py_command(py_cmd: &Bound<PyAny>) -> Result<(String, Vec<usize>, Vec<f64>), QueueError> {
+fn process_py_command(py_cmd: &Bound<PyAny>) -> Result<(String, Vec<usize>, Vec<f64>), PecosError> {
     // Get command name
     let name = match py_cmd.getattr("name") {
         Ok(n) => match n.extract::<String>() {
             Ok(s) => s,
-            Err(e) => return Err(to_queue_error(e)),
+            Err(e) => return Err(to_pecos_error(e)),
         },
-        Err(e) => return Err(to_queue_error(e)),
+        Err(e) => return Err(to_pecos_error(e)),
     };
 
     // Get qubits
     let args = match py_cmd.getattr("args") {
         Ok(a) => a,
-        Err(e) => return Err(to_queue_error(e)),
+        Err(e) => return Err(to_pecos_error(e)),
     };
 
     let iter = match args.try_iter() {
         Ok(i) => i,
-        Err(e) => return Err(to_queue_error(e)),
+        Err(e) => return Err(to_pecos_error(e)),
     };
 
     let mut qubits = Vec::new();
     for item_result in iter {
         let item = match item_result {
             Ok(i) => i,
-            Err(e) => return Err(to_queue_error(e)),
+            Err(e) => return Err(to_pecos_error(e)),
         };
 
         let qubit_idx = if item.is_instance_of::<PyList>() {
             match item.get_item(1) {
                 Ok(idx) => match idx.extract::<usize>() {
                     Ok(i) => i,
-                    Err(e) => return Err(to_queue_error(e)),
+                    Err(e) => return Err(to_pecos_error(e)),
                 },
-                Err(e) => return Err(to_queue_error(e)),
+                Err(e) => return Err(to_pecos_error(e)),
             }
         } else {
             match item.extract::<usize>() {
                 Ok(i) => i,
-                Err(e) => return Err(to_queue_error(e)),
+                Err(e) => return Err(to_pecos_error(e)),
             }
         };
 
@@ -778,30 +777,30 @@ fn process_py_command(py_cmd: &Bound<PyAny>) -> Result<(String, Vec<usize>, Vec<
         let angles = match py_cmd.getattr("angles") {
             Ok(a) => match a.extract::<Vec<f64>>() {
                 Ok(v) => v,
-                Err(e) => return Err(to_queue_error(e)),
+                Err(e) => return Err(to_pecos_error(e)),
             },
-            Err(e) => return Err(to_queue_error(e)),
+            Err(e) => return Err(to_pecos_error(e)),
         };
 
         params.extend_from_slice(&angles);
     } else if name == "Measure" {
         let returns = match py_cmd.getattr("returns") {
             Ok(r) => r,
-            Err(e) => return Err(to_queue_error(e)),
+            Err(e) => return Err(to_pecos_error(e)),
         };
 
         let return_item = match returns.get_item(0) {
             Ok(i) => i,
-            Err(e) => return Err(to_queue_error(e)),
+            Err(e) => return Err(to_pecos_error(e)),
         };
 
         let result_id_usize = match return_item.get_item(1) {
             Ok(id) => match id.extract::<usize>() {
                 // Extract as usize first
                 Ok(i) => i,
-                Err(e) => return Err(to_queue_error(e)),
+                Err(e) => return Err(to_pecos_error(e)),
             },
-            Err(e) => return Err(to_queue_error(e)),
+            Err(e) => return Err(to_pecos_error(e)),
         };
 
         // Convert usize to u32 using try_from to avoid truncation warnings
@@ -845,16 +844,16 @@ impl ClassicalEngine for PHIREngine {
         })
     }
 
-    fn generate_commands(&mut self) -> Result<ByteMessage, QueueError> {
+    fn generate_commands(&mut self) -> Result<ByteMessage, PecosError> {
         // Create a ByteMessageBuilder directly
         let mut builder = ByteMessage::quantum_operations_builder();
 
         // Fill it with commands from Python
-        Python::with_gil(|py| -> Result<(), QueueError> {
+        Python::with_gil(|py| -> Result<(), PecosError> {
             // Get Python commands
             let raw_commands = match self.get_raw_commands_from_python(py) {
                 Ok(cmds) => cmds,
-                Err(e) => return Err(to_queue_error(e)),
+                Err(e) => return Err(to_pecos_error(e)),
             };
 
             // Check if empty
@@ -865,7 +864,7 @@ impl ClassicalEngine for PHIREngine {
             // Convert to list
             let py_list = match raw_commands.downcast_bound::<PyList>(py) {
                 Ok(list) => list,
-                Err(e) => return Err(to_queue_error(e)),
+                Err(e) => return Err(to_pecos_error(e)),
             };
 
             // Process each command
@@ -936,7 +935,7 @@ impl ClassicalEngine for PHIREngine {
                         }
                     }
                     _ => {
-                        return Err(QueueError::OperationError(format!(
+                        return Err(PecosError::Processing(format!(
                             "Unsupported gate type: {gate_name}"
                         )));
                     }
@@ -950,10 +949,10 @@ impl ClassicalEngine for PHIREngine {
         Ok(builder.build())
     }
 
-    fn handle_measurements(&mut self, message: ByteMessage) -> Result<(), QueueError> {
+    fn handle_measurements(&mut self, message: ByteMessage) -> Result<(), PecosError> {
         let measurements = message.parse_measurements()?;
 
-        Python::with_gil(|py| -> Result<(), QueueError> {
+        Python::with_gil(|py| -> Result<(), PecosError> {
             for (result_id, outcome) in measurements {
                 // Create a dictionary with just the outcome (no result_id)
                 let measurement = PyDict::new(py);
@@ -1002,23 +1001,23 @@ impl ClassicalEngine for PHIREngine {
 
                 // Create a tuple (register_name, index) as the key
                 let register_tuple = PyTuple::new(py, [register_name.clone(), index.to_string()])
-                    .map_err(to_queue_error)?;
+                    .map_err(to_pecos_error)?;
 
                 // Set the item in the measurement dictionary using the register tuple as the key
                 measurement
                     .set_item(register_tuple, adjusted_outcome)
-                    .map_err(to_queue_error)?;
+                    .map_err(to_pecos_error)?;
 
                 // Create a list with a single measurement dictionary
-                let measurements_list = PyList::new(py, [measurement]).map_err(to_queue_error)?;
+                let measurements_list = PyList::new(py, [measurement]).map_err(to_pecos_error)?;
 
                 // Get the interpreter and call the receive_results method
                 let interpreter = self.interpreter.lock();
                 let py_obj = interpreter.bind(py);
-                let receive_results = py_obj.getattr("receive_results").map_err(to_queue_error)?;
+                let receive_results = py_obj.getattr("receive_results").map_err(to_pecos_error)?;
                 receive_results
                     .call1((measurements_list,))
-                    .map_err(to_queue_error)?;
+                    .map_err(to_pecos_error)?;
 
                 // Store the result in our local results map
                 let mut results = self.results.lock();
@@ -1028,17 +1027,17 @@ impl ClassicalEngine for PHIREngine {
         })
     }
 
-    fn get_results(&self) -> Result<ShotResult, QueueError> {
+    fn get_results(&self) -> Result<ShotResult, PecosError> {
         Python::with_gil(|py| {
             let interpreter = self.interpreter.lock();
 
             // Get the results from the Python interpreter
             let py_results = interpreter
                 .call_method0(py, "results")
-                .map_err(to_queue_error)?;
+                .map_err(to_pecos_error)?;
 
             let internal_registers: HashMap<String, u32> =
-                py_results.extract(py).map_err(to_queue_error)?;
+                py_results.extract(py).map_err(to_pecos_error)?;
 
             // Update our local results cache
             (*self.results.lock()).clone_from(&internal_registers);
@@ -1084,11 +1083,11 @@ impl ClassicalEngine for PHIREngine {
         })
     }
 
-    fn compile(&self) -> Result<(), Box<dyn Error>> {
+    fn compile(&self) -> Result<(), PecosError> {
         Ok(())
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         Python::with_gil(|py| {
             let interpreter = self.interpreter.lock();
             match interpreter.call_method0(py, "reset") {
@@ -1096,7 +1095,7 @@ impl ClassicalEngine for PHIREngine {
                     (*self.results.lock()).clear();
                     Ok(())
                 }
-                Err(e) => Err(to_queue_error(e)),
+                Err(e) => Err(to_pecos_error(e)),
             }
         })
     }
@@ -1116,14 +1115,14 @@ impl ControlEngine for PHIREngine {
     type EngineInput = ByteMessage;
     type EngineOutput = ByteMessage;
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         ClassicalEngine::reset(self)
     }
 
     fn start(
         &mut self,
         _input: (),
-    ) -> Result<pecos::prelude::EngineStage<ByteMessage, ShotResult>, QueueError> {
+    ) -> Result<pecos::prelude::EngineStage<ByteMessage, ShotResult>, PecosError> {
         // Reset state to ensure clean start
         ClassicalEngine::reset(self)?;
 
@@ -1147,7 +1146,7 @@ impl ControlEngine for PHIREngine {
     fn continue_processing(
         &mut self,
         measurements: ByteMessage,
-    ) -> Result<pecos::prelude::EngineStage<ByteMessage, ShotResult>, QueueError> {
+    ) -> Result<pecos::prelude::EngineStage<ByteMessage, ShotResult>, PecosError> {
         // Handle received measurements
         self.handle_measurements(measurements)?;
 
@@ -1173,7 +1172,7 @@ impl Engine for PHIREngine {
     type Input = ();
     type Output = ShotResult;
 
-    fn process(&mut self, _input: Self::Input) -> Result<Self::Output, QueueError> {
+    fn process(&mut self, _input: Self::Input) -> Result<Self::Output, PecosError> {
         // Reset the engine state using the Engine trait's reset method explicitly
         <Self as Engine>::reset(self)?;
 
@@ -1217,20 +1216,20 @@ impl Engine for PHIREngine {
                             // If we still need more processing, that's unexpected
                             // In a real scenario, we'd continue the loop
                             // For now, return the current state
-                            ClassicalEngine::get_results(self)
+                            Ok(ClassicalEngine::get_results(self)?)
                         }
                         pecos::prelude::EngineStage::Complete(result) => Ok(result),
                     }
                 } else {
                     // No measurements to process, get results
-                    ClassicalEngine::get_results(self)
+                    Ok(ClassicalEngine::get_results(self)?)
                 }
             }
             pecos::prelude::EngineStage::Complete(result) => Ok(result),
         }
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // Call the ControlEngine's reset method to avoid ambiguity
         <PHIREngine as pecos::prelude::ControlEngine>::reset(self)
     }

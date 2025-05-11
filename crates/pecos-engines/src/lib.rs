@@ -1,7 +1,6 @@
 pub mod byte_message;
 pub mod core;
 pub mod engines;
-pub mod errors;
 
 // Re-exports for commonly used types
 pub use byte_message::{ByteMessage, ByteMessageBuilder, GateType, QuantumGate};
@@ -18,7 +17,7 @@ pub use engines::{
     quantum::QuantumEngine,
     quantum_system::QuantumSystem,
 };
-pub use errors::QueueError;
+pub use pecos_core::errors::PecosError;
 
 // Re-export engine setup functions
 pub use engines::classical::{setup_phir_engine, setup_qir_engine};

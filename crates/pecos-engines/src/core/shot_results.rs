@@ -17,7 +17,7 @@
 // the License.
 
 use crate::byte_message::ByteMessage;
-use crate::errors::QueueError;
+use pecos_core::errors::PecosError;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -73,7 +73,7 @@ impl ShotResult {
     pub fn from_byte_message(
         message: &ByteMessage,
         result_id_to_name: &HashMap<usize, String>,
-    ) -> Result<Self, QueueError> {
+    ) -> Result<Self, PecosError> {
         // Extract the measurement results from the ByteMessage
         let measurements = message.measurement_results_as_vec()?;
 
@@ -330,8 +330,10 @@ impl ShotResults {
             output.push_str(" shots):\n");
 
             for (reg_name, stats) in &register_stats {
+                // A formatting error here should never happen with a simple string, but handle it safely
                 use std::fmt::Write;
-                write!(output, "  {reg_name}: ").unwrap();
+                // Ignoring the error as this write to a String cannot fail in practice
+                let _ = write!(output, "  {reg_name}: ");
 
                 let mut stat_entries: Vec<_> = stats.iter().collect();
                 // Sort stats by value for consistent ordering
@@ -405,8 +407,10 @@ impl ShotResults {
         output.push_str(" shots):\n");
 
         for (reg_name, counts) in &register_results {
+            // A formatting error here should never happen with a simple string, but handle it safely
             use std::fmt::Write;
-            write!(output, "  {reg_name}: ").unwrap();
+            // Ignoring the error as this write to a String cannot fail in practice
+            let _ = write!(output, "  {reg_name}: ");
 
             let entries: Vec<_> = counts
                 .iter()
@@ -514,7 +518,8 @@ impl ShotResults {
                 result.push_str("\n  ");
 
                 // Add the key with quotes
-                write!(result, "\"{key}\":").unwrap();
+                // Ignoring the error as this write to a String cannot fail in practice
+                let _ = write!(result, "\"{key}\":");
 
                 // Add the value (compact format)
                 if let Some(value) = obj.get(*key) {
@@ -628,9 +633,9 @@ impl ShotResults {
     ///
     /// # Errors
     ///
-    /// Returns a `QueueError` if the measurements cannot be extracted from the `ByteMessage`
+    /// Returns a `PecosError` if the measurements cannot be extracted from the `ByteMessage`
     /// or if there are issues with creating the `ShotResults` instance.
-    pub fn from_byte_message(message: &ByteMessage) -> Result<Self, QueueError> {
+    pub fn from_byte_message(message: &ByteMessage) -> Result<Self, PecosError> {
         // Extract the measurement results from the ByteMessage
         let measurements = message.measurement_results_as_vec()?;
 

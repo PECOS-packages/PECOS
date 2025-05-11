@@ -13,7 +13,7 @@
 use crate::byte_message::ByteMessage;
 use crate::engines::noise::{NoiseModel, NoiseRng, ProbabilityValidator, RngManageable};
 use crate::engines::{ControlEngine, EngineStage};
-use crate::errors::QueueError;
+use pecos_core::errors::PecosError;
 use rand_chacha::ChaCha8Rng;
 use std::any::Any;
 
@@ -150,8 +150,8 @@ impl BiasedMeasurementNoiseModel {
     /// A new `ByteMessage` with biased measurement results
     ///
     /// # Errors
-    /// Returns a `QueueError` if applying bias fails
-    fn apply_bias_to_message(&mut self, message: ByteMessage) -> Result<ByteMessage, QueueError> {
+    /// Returns a `PecosError` if applying bias fails
+    fn apply_bias_to_message(&mut self, message: ByteMessage) -> Result<ByteMessage, PecosError> {
         // Parse the message to extract the measurement results
         let measurements = message.parse_measurements()?;
 
@@ -263,7 +263,7 @@ impl ControlEngine for BiasedMeasurementNoiseModel {
     fn start(
         &mut self,
         input: Self::Input,
-    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, QueueError> {
+    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         // Quantum operations pass through unchanged
         Ok(EngineStage::NeedsProcessing(input))
     }
@@ -271,13 +271,13 @@ impl ControlEngine for BiasedMeasurementNoiseModel {
     fn continue_processing(
         &mut self,
         result: Self::EngineOutput,
-    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, QueueError> {
+    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         // Apply bias to measurement results
         let biased_result = self.apply_bias_to_message(result)?;
         Ok(EngineStage::Complete(biased_result))
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // Nothing to reset
         Ok(())
     }
@@ -296,7 +296,7 @@ impl NoiseModel for BiasedMeasurementNoiseModel {
 impl RngManageable for BiasedMeasurementNoiseModel {
     type Rng = ChaCha8Rng;
 
-    fn set_rng(&mut self, rng: ChaCha8Rng) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_rng(&mut self, rng: ChaCha8Rng) -> Result<(), PecosError> {
         self.rng = NoiseRng::new(rng);
         Ok(())
     }

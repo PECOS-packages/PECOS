@@ -14,6 +14,7 @@ use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
 use pecos_core::RngManageable;
+use pecos_core::errors::PecosError;
 use rand_chacha::ChaCha8Rng;
 
 use core::fmt::Debug;
@@ -1220,7 +1221,7 @@ where
     /// # Returns
     /// Result indicating success or failure
     #[inline]
-    fn set_rng(&mut self, rng: R) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_rng(&mut self, rng: R) -> Result<(), PecosError> {
         self.rng = rng;
         Ok(())
     }

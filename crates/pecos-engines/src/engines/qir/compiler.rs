@@ -1,12 +1,11 @@
 use crate::engines::qir::common::get_thread_id;
-use crate::engines::qir::error::QirError;
 #[cfg(target_os = "macos")]
 use crate::engines::qir::platform::macos::MacOSCompiler;
 #[cfg(target_os = "windows")]
 use crate::engines::qir::platform::windows::WindowsCompiler;
 use crate::engines::qir::platform::{executable_name, standard_llvm_paths};
-use crate::errors::QueueError;
 use log::{debug, info, warn};
+use pecos_core::errors::PecosError;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,11 +29,10 @@ use std::process::Command;
 pub struct QirCompiler;
 
 impl QirCompiler {
-    /// Helper function to log an error and convert it to `QueueError`
-    fn log_error<E: Into<QirError>>(error: E, thread_id: &str) -> QueueError {
-        let error = error.into();
+    /// Helper function to log an error and return it
+    fn log_error(error: PecosError, thread_id: &str) -> PecosError {
         warn!("QIR Compiler: [Thread {}] {}", thread_id, error);
-        error.into()
+        error
     }
 
     /// Helper function to handle command execution errors
@@ -42,10 +40,10 @@ impl QirCompiler {
         result: std::io::Result<T>,
         error_msg: &str,
         thread_id: &str,
-    ) -> Result<T, QueueError> {
+    ) -> Result<T, PecosError> {
         result.map_err(|e| {
             Self::log_error(
-                QirError::CompilationFailed(format!("{error_msg}: {e}")),
+                PecosError::Compilation(format!("QIR compilation failed: {error_msg}: {e}")),
                 thread_id,
             )
         })
@@ -56,12 +54,12 @@ impl QirCompiler {
         output: &std::process::Output,
         command_name: &str,
         thread_id: &str,
-    ) -> Result<(), QueueError> {
+    ) -> Result<(), PecosError> {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(Self::log_error(
-                QirError::CompilationFailed(format!(
-                    "{command_name} failed with status: {} and error: {stderr}",
+                PecosError::Compilation(format!(
+                    "QIR compilation failed: {command_name} failed with status: {} and error: {stderr}",
                     output.status
                 )),
                 thread_id,
@@ -71,11 +69,13 @@ impl QirCompiler {
     }
 
     /// Helper function to prepare a directory and ensure it exists
-    fn ensure_directory_exists(dir_path: &Path, thread_id: &str) -> Result<(), QueueError> {
+    fn ensure_directory_exists(dir_path: &Path, thread_id: &str) -> Result<(), PecosError> {
         if !dir_path.exists() {
             fs::create_dir_all(dir_path).map_err(|e| {
                 Self::log_error(
-                    QirError::CompilationFailed(format!("Failed to create directory: {e}")),
+                    PecosError::Compilation(format!(
+                        "QIR compilation failed: Failed to create directory: {e}"
+                    )),
                     thread_id,
                 )
             })?;
@@ -84,7 +84,7 @@ impl QirCompiler {
     }
 
     /// Helper function to ensure a path's parent directory exists
-    fn ensure_parent_dir_exists(path: &Path, thread_id: &str) -> Result<(), QueueError> {
+    fn ensure_parent_dir_exists(path: &Path, thread_id: &str) -> Result<(), PecosError> {
         path.parent().map_or(Ok(()), |parent| {
             Self::ensure_directory_exists(parent, thread_id)
         })
@@ -102,16 +102,15 @@ impl QirCompiler {
     ///
     /// # Returns
     ///
-    /// * `Result<PathBuf, QueueError>` - Path to the compiled library if successful
+    /// * `Result<PathBuf, PecosError>` - Path to the compiled library if successful
     ///
     /// # Errors
     ///
     /// This method can return the following errors:
-    /// * `QirError::FileNotFound` - If the QIR file does not exist
-    /// * `QirError::EmptyFile` - If the QIR file is empty
-    /// * `QirError::FileReadError` - If the QIR file cannot be read
-    /// * `QirError::CompilationFailed` - If the compilation process fails
-    /// * `QirError::TempDirCreationFailed` - If the temporary directory cannot be created
+    /// * `PecosError::ResourceError` - If the QIR file does not exist or is empty
+    /// * `PecosError::IO` - If the QIR file cannot be read
+    /// * `PecosError::CompilationError` - If the compilation process fails
+    /// * `PecosError::IO` - If the temporary directory cannot be created
     ///
     /// # Compilation Process
     ///
@@ -124,7 +123,7 @@ impl QirCompiler {
     pub fn compile<P: AsRef<Path>>(
         qir_file: P,
         output_dir: Option<P>,
-    ) -> Result<PathBuf, QueueError> {
+    ) -> Result<PathBuf, PecosError> {
         let qir_file = qir_file.as_ref();
         let thread_id = get_thread_id();
 
@@ -167,29 +166,25 @@ impl QirCompiler {
     }
 
     /// Validate that the QIR file exists and is not empty
-    fn validate_qir_file(qir_file: &Path, thread_id: &str) -> Result<(), QueueError> {
+    fn validate_qir_file(qir_file: &Path, thread_id: &str) -> Result<(), PecosError> {
         // Check if the file exists
         if !qir_file.exists() {
             return Err(Self::log_error(
-                QirError::FileNotFound(qir_file.to_path_buf()),
+                // Using direct ResourceError instead of the helper function
+                PecosError::Resource(format!("QIR file not found: {}", qir_file.display())),
                 thread_id,
             ));
         }
 
         // Check if the file is empty
-        let metadata = fs::metadata(qir_file).map_err(|e| {
-            Self::log_error(
-                QirError::FileReadError {
-                    path: qir_file.to_path_buf(),
-                    error: e,
-                },
-                thread_id,
-            )
-        })?;
+        // Using IO error directly for file system errors
+        let metadata =
+            fs::metadata(qir_file).map_err(|e| Self::log_error(PecosError::IO(e), thread_id))?;
 
         if metadata.len() == 0 {
             return Err(Self::log_error(
-                QirError::EmptyFile(qir_file.to_path_buf()),
+                // Using direct ResourceError for empty file
+                PecosError::Resource(format!("QIR file is empty: {}", qir_file.display())),
                 thread_id,
             ));
         }
@@ -209,7 +204,7 @@ impl QirCompiler {
         qir_file: &Path,
         output_dir: Option<P>,
         thread_id: &str,
-    ) -> Result<PathBuf, QueueError> {
+    ) -> Result<PathBuf, PecosError> {
         // Determine output directory
         let output_dir = if let Some(dir) = output_dir {
             dir.as_ref().to_path_buf()
@@ -225,7 +220,7 @@ impl QirCompiler {
                 thread_id, output_dir
             );
             fs::create_dir_all(&output_dir)
-                .map_err(|e| Self::log_error(QirError::TempDirCreationFailed(e), thread_id))?;
+                .map_err(|e| Self::log_error(PecosError::IO(e), thread_id))?;
         }
 
         Ok(output_dir)
@@ -434,7 +429,7 @@ impl QirCompiler {
         qir_file: &Path,
         object_file: &Path,
         thread_id: &str,
-    ) -> Result<(), QueueError> {
+    ) -> Result<(), PecosError> {
         debug!(
             "QIR Compiler: [Thread {}] Compiling from {:?} to {:?}",
             thread_id, qir_file, object_file
@@ -448,9 +443,9 @@ impl QirCompiler {
             // Try to find clang first - always needed for linking on Windows
             let clang = Self::find_llvm_tool("clang").ok_or_else(|| {
                 Self::log_error(
-                    QirError::CompilationFailed(
-                        "clang not found in system. LLVM version 14 is required for QIR functionality. \
-                        Please install LLVM version 14 and ensure 'clang' is in your PATH.".to_string(),
+                    PecosError::Compilation(
+                        "QIR compilation failed: clang not found in system. LLVM version 14 is required for QIR functionality. \
+                        Please install LLVM version 14 and ensure 'clang' is in your PATH.".to_string()
                     ),
                     thread_id,
                 )
@@ -460,7 +455,7 @@ impl QirCompiler {
             let version_result = Self::check_llvm_version(&clang);
             if let Err(version_err) = version_result {
                 return Err(Self::log_error(
-                    QirError::CompilationFailed(version_err),
+                    PecosError::Compilation(version_err),
                     thread_id,
                 ));
             }
@@ -483,8 +478,8 @@ impl QirCompiler {
         {
             let llc_path = Self::find_llvm_tool("llc").ok_or_else(|| {
                 Self::log_error(
-                    QirError::CompilationFailed(
-                        "Could not find 'llc' tool. LLVM version 14 is required for QIR functionality. \
+                    PecosError::Compilation(
+                        "QIR compilation failed: Could not find 'llc' tool. LLVM version 14 is required for QIR functionality. \
                         Please install LLVM version 14 using your package manager (e.g. 'sudo apt install llvm-14' on Ubuntu, \
                         'brew install llvm@14' on macOS). After installation, ensure 'llc' is in your PATH.".to_string()
                     ),
@@ -496,7 +491,7 @@ impl QirCompiler {
             let version_result = Self::check_llvm_version(&llc_path);
             if let Err(version_err) = version_result {
                 return Err(Self::log_error(
-                    QirError::CompilationFailed(version_err),
+                    PecosError::Compilation(version_err),
                     thread_id,
                 ));
             }
@@ -530,7 +525,7 @@ impl QirCompiler {
         rust_runtime_lib: &Path,
         library_file: &Path,
         thread_id: &str,
-    ) -> Result<(), QueueError> {
+    ) -> Result<(), PecosError> {
         debug!(
             "QIR Compiler: [Thread {}] Linking object file and runtime library...",
             thread_id
@@ -546,7 +541,7 @@ impl QirCompiler {
         ] {
             if !file.exists() {
                 return Err(Self::log_error(
-                    QirError::CompilationFailed(format!("{desc} not found: {file:?}")),
+                    PecosError::Compilation(format!("{desc} not found: {file:?}")),
                     thread_id,
                 ));
             }
@@ -556,8 +551,8 @@ impl QirCompiler {
         {
             let clang = Self::find_llvm_tool("clang").ok_or_else(|| {
                 Self::log_error(
-                    QirError::CompilationFailed(
-                        "clang not found in system. Please install LLVM tools.".to_string(),
+                    PecosError::Compilation(
+                        "clang not found in system. Please install LLVM tools.",
                     ),
                     thread_id,
                 )
@@ -763,14 +758,14 @@ impl QirCompiler {
     ///
     /// # Returns
     ///
-    /// * `Result<PathBuf, QueueError>` - Path to the pre-built static library if successful
+    /// * `Result<PathBuf, PecosError>` - Path to the pre-built static library if successful
     ///
     /// # Errors
     ///
     /// This method can return the following errors:
-    /// * `QirError::CompilationFailed` - If the pre-built library cannot be found or built
+    /// * `PecosError::CompilationError` - If the pre-built library cannot be found or built
     #[allow(clippy::too_many_lines)]
-    fn build_rust_runtime(_output_dir: &Path) -> Result<PathBuf, QueueError> {
+    fn build_rust_runtime(_output_dir: &Path) -> Result<PathBuf, PecosError> {
         let thread_id = get_thread_id();
         debug!(
             "QIR Compiler: [Thread {}] Looking for pre-built QIR runtime library",
@@ -852,7 +847,7 @@ impl QirCompiler {
                         thread_id, e
                     );
                     return Err(Self::log_error(
-                        QirError::CompilationFailed(format!("Failed to execute cargo: {e}")),
+                        PecosError::Compilation(format!("Failed to execute cargo: {e}")),
                         &thread_id,
                     ));
                 }
@@ -1093,7 +1088,7 @@ __declspec(dllexport) void __quantum__rt__result_record_output(int result) {}
         // If still not found, return an error
         let error_msg = "Failed to find or build QIR runtime library. The library should be automatically built by the build.rs script. See QIR_RUNTIME.md for more details.".to_string();
         Err(Self::log_error(
-            QirError::CompilationFailed(error_msg.clone()),
+            PecosError::Compilation(format!("QIR compilation failed: {error_msg}")),
             &thread_id,
         ))
     }

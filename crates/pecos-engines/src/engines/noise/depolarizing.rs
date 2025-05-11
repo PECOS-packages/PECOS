@@ -14,8 +14,9 @@ use crate::byte_message::{ByteMessage, ByteMessageBuilder, GateType, QuantumGate
 use crate::engines::noise::{
     NoiseModel, NoiseRng, NoiseUtils, ProbabilityValidator, RngManageable,
 };
-use crate::errors::QueueError;
+use crate::engines::{ControlEngine, EngineStage};
 use log::trace;
+use pecos_core::errors::PecosError;
 use rand_chacha::ChaCha8Rng;
 use std::any::Any;
 
@@ -306,7 +307,7 @@ impl NoiseModel for DepolarizingNoiseModel {
 impl RngManageable for DepolarizingNoiseModel {
     type Rng = ChaCha8Rng;
 
-    fn set_rng(&mut self, rng: ChaCha8Rng) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_rng(&mut self, rng: ChaCha8Rng) -> Result<(), PecosError> {
         self.rng = NoiseRng::new(rng);
         Ok(())
     }
@@ -441,7 +442,7 @@ impl DepolarizingNoiseModelBuilder {
     }
 }
 
-impl crate::engines::ControlEngine for DepolarizingNoiseModel {
+impl ControlEngine for DepolarizingNoiseModel {
     type Input = ByteMessage;
     type Output = ByteMessage;
     type EngineInput = ByteMessage;
@@ -450,30 +451,32 @@ impl crate::engines::ControlEngine for DepolarizingNoiseModel {
     fn start(
         &mut self,
         input: Self::Input,
-    ) -> Result<crate::engines::EngineStage<Self::EngineInput, Self::Output>, QueueError> {
+    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         // For quantum operations, apply gate noise
         trace!("DepolarizingNoise::start - applying noise to quantum operations");
 
         // Parse the input as quantum operations
-        let gates: Vec<crate::byte_message::QuantumGate> = input.parse_quantum_operations()?;
+        let gates: Vec<crate::byte_message::QuantumGate> = input
+            .parse_quantum_operations()
+            .map_err(|e| PecosError::Input(format!("Failed to parse quantum operations: {e}")))?;
 
         // Apply noise to the gates
         let noisy_gates = self.apply_noise_to_gates(&gates);
 
         // Return the noisy operations
-        Ok(crate::engines::EngineStage::NeedsProcessing(noisy_gates))
+        Ok(EngineStage::NeedsProcessing(noisy_gates))
     }
 
     fn continue_processing(
         &mut self,
         result: Self::EngineOutput,
-    ) -> Result<crate::engines::EngineStage<Self::EngineInput, Self::Output>, QueueError> {
+    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         // This noise model doesn't directly modify measurement results, just pass through
         trace!("DepolarizingNoise::continue_processing - passing through measurement results");
-        Ok(crate::engines::EngineStage::Complete(result))
+        Ok(EngineStage::Complete(result))
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // No state to reset
         Ok(())
     }

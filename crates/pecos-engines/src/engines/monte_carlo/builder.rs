@@ -16,7 +16,7 @@ use crate::engines::noise::{DepolarizingNoiseModel, NoiseModel};
 use crate::engines::quantum::QuantumEngine;
 use crate::engines::quantum_system::QuantumSystem;
 use crate::engines::{ClassicalEngine, HybridEngine};
-use crate::errors::QueueError;
+use pecos_core::errors::PecosError;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -378,14 +378,14 @@ impl MonteCarloEngineBuilder {
     /// A new `MonteCarloEngine` configured according to the builder settings with the seed set
     ///
     /// # Errors
-    /// Returns a `QueueError` if setting the seed fails
+    /// Returns a `PecosError` if setting the seed fails
     ///
     /// # Panics
     ///
     /// This function will panic if:
     /// - No hybrid engine has been configured
     /// - Required components like classical engine are missing
-    pub fn build_with_seed(self) -> Result<MonteCarloEngine, QueueError> {
+    pub fn build_with_seed(self) -> Result<MonteCarloEngine, PecosError> {
         // Get the seed or panic if not set
         let seed = self.seed.expect(
             "Seed is required for build_with_seed(). Use with_seed() to set one or use build() instead.",

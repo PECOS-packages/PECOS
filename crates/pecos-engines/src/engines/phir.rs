@@ -1,8 +1,8 @@
 use crate::byte_message::{ByteMessage, builder::ByteMessageBuilder};
 use crate::core::shot_results::ShotResult;
 use crate::engines::{ControlEngine, Engine, EngineStage, classical::ClassicalEngine};
-use crate::errors::QueueError;
 use log::debug;
+use pecos_core::errors::PecosError;
 use serde::Deserialize;
 use std::any::Any;
 use std::collections::HashMap;
@@ -83,7 +83,7 @@ impl PHIREngine {
     ///
     /// # Returns
     /// - `Ok(Self)`: If the PHIR program file is successfully loaded and validated.
-    /// - `Err(Box<dyn impl PHIREngine {std::error::Error>)`: If any errors occur during file reading,
+    /// - `Err(PecosError)`: If any errors occur during file reading,
     ///   parsing, or if the format/version is not compatible.
     ///
     /// # Errors
@@ -102,8 +102,8 @@ impl PHIREngine {
     ///     Err(e) => eprintln!("Error loading PHIREngine: {}", e),
     /// }
     /// ```
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
-        let content = std::fs::read_to_string(path)?;
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, PecosError> {
+        let content = std::fs::read_to_string(path).map_err(PecosError::IO)?;
         Self::from_json(&content)
     }
 
@@ -114,7 +114,7 @@ impl PHIREngine {
     ///
     /// # Returns
     /// - `Ok(Self)`: If the PHIR program is successfully parsed and validated.
-    /// - `Err(Box<dyn std::error::Error>)`: If any errors occur during parsing,
+    /// - `Err(PecosError)`: If any errors occur during parsing,
     ///   or if the format/version is not compatible.
     ///
     /// # Errors
@@ -133,15 +133,25 @@ impl PHIREngine {
     ///     Err(e) => eprintln!("Error loading PHIREngine: {}", e),
     /// }
     /// ```
-    pub fn from_json(json_str: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let program: PHIRProgram = serde_json::from_str(json_str)?;
+    pub fn from_json(json_str: &str) -> Result<Self, PecosError> {
+        let program: PHIRProgram = serde_json::from_str(json_str).map_err(|e| {
+            PecosError::Input(format!(
+                "Failed to parse PHIR program: Invalid JSON format: {e}"
+            ))
+        })?;
 
         if program.format != "PHIR/JSON" {
-            return Err("Invalid format: expected PHIR/JSON".into());
+            return Err(PecosError::Input(format!(
+                "Invalid PHIR program format: found '{}', expected 'PHIR/JSON'",
+                program.format
+            )));
         }
 
         if program.version != "0.1.0" {
-            return Err(format!("Unsupported PHIR version: {}", program.version).into());
+            return Err(PecosError::Input(format!(
+                "Unsupported PHIR version: found '{}', only version '0.1.0' is supported",
+                program.version
+            )));
         }
 
         // Validate that at least one Result command exists
@@ -154,9 +164,10 @@ impl PHIREngine {
         });
 
         if !has_result_command {
-            return Err(
-                "PHIR program must contain at least one Result command to specify outputs".into(),
-            );
+            return Err(PecosError::Input(
+                "Invalid PHIR program structure: Program must contain at least one Result command to specify outputs"
+                    .to_string(),
+            ));
         }
 
         log::debug!("Loading PHIR program with metadata: {:?}", program.metadata);
@@ -235,12 +246,12 @@ impl PHIREngine {
         }
     }
 
-    fn validate_variable_access(&self, var: &str, idx: usize) -> Result<(), QueueError> {
+    fn validate_variable_access(&self, var: &str, idx: usize) -> Result<(), PecosError> {
         // Check quantum variables
         if let Some(&size) = self.quantum_variables.get(var) {
             if idx >= size {
-                return Err(QueueError::OperationError(format!(
-                    "Index {idx} out of bounds for quantum variable {var} of size {size}"
+                return Err(PecosError::Input(format!(
+                    "Variable access validation failed: Index {idx} out of bounds for quantum variable '{var}' of size {size}"
                 )));
             }
             return Ok(());
@@ -249,15 +260,15 @@ impl PHIREngine {
         // Check classical variables
         if let Some((_, size)) = self.classical_variables.get(var) {
             if idx >= *size {
-                return Err(QueueError::OperationError(format!(
-                    "Index {idx} out of bounds for classical variable {var} of size {size}"
+                return Err(PecosError::Input(format!(
+                    "Variable access validation failed: Index {idx} out of bounds for classical variable '{var}' of size {size}"
                 )));
             }
             return Ok(());
         }
 
-        Err(QueueError::OperationError(format!(
-            "Undefined variable: {var}"
+        Err(PecosError::Input(format!(
+            "Variable access validation failed: Variable '{var}' is not defined in the program"
         )))
     }
 
@@ -266,7 +277,7 @@ impl PHIREngine {
         cop: &str,
         args: &[ArgItem],
         returns: &[ArgItem],
-    ) -> Result<bool, QueueError> {
+    ) -> Result<bool, PecosError> {
         // Extract variable name and index from each ArgItem
         let extract_var_idx = |arg: &ArgItem| -> (String, usize) {
             match arg {
@@ -318,7 +329,7 @@ impl PHIREngine {
 
     #[allow(clippy::too_many_lines)]
     #[allow(clippy::items_after_statements)]
-    fn generate_commands(&mut self) -> Result<ByteMessage, QueueError> {
+    fn generate_commands(&mut self) -> Result<ByteMessage, PecosError> {
         // Define a maximum batch size for better performance
         // This helps avoid creating excessively large messages
         const MAX_BATCH_SIZE: usize = 100;
@@ -330,10 +341,9 @@ impl PHIREngine {
         );
 
         // Get program reference and clone ops to avoid borrow issues
-        let prog = self
-            .program
-            .as_ref()
-            .ok_or_else(|| QueueError::OperationError("No program loaded".into()))?;
+        let prog = self.program.as_ref().ok_or_else(|| {
+            PecosError::Resource("Cannot generate commands: No PHIR program loaded".to_string())
+        })?;
         let ops = prog.ops.clone();
 
         // If we've processed all ops, return empty batch to signal completion
@@ -415,8 +425,8 @@ impl PHIREngine {
                                         .add_measurements(&[qubit_args[0]], &[qubit_args[0]]);
                                 }
                                 _ => {
-                                    return Err(QueueError::OperationError(format!(
-                                        "Unsupported quantum operation: {gate_type}"
+                                    return Err(PecosError::Gate(format!(
+                                        "Unsupported quantum gate operation: Gate type '{gate_type}' is not implemented"
                                     )));
                                 }
                             }
@@ -472,7 +482,7 @@ impl PHIREngine {
         qop: &str,
         angles: Option<&(Vec<f64>, String)>,
         args: &[(String, usize)],
-    ) -> Result<(String, Vec<usize>, Vec<f64>), QueueError> {
+    ) -> Result<(String, Vec<usize>, Vec<f64>), PecosError> {
         // First validate all variables
         for (var, idx) in args {
             self.validate_variable_access(var, *idx)?;
@@ -480,8 +490,8 @@ impl PHIREngine {
 
         // Validate that we have at least one qubit argument
         if args.is_empty() {
-            return Err(QueueError::OperationError(format!(
-                "Operation {qop} requires at least one qubit argument"
+            return Err(PecosError::Input(format!(
+                "Invalid quantum operation: Operation '{qop}' requires at least one qubit argument"
             )));
         }
 
@@ -499,21 +509,25 @@ impl PHIREngine {
                     .as_ref()
                     .map(|(angles, _)| angles[0])
                     .ok_or_else(|| {
-                        QueueError::OperationError(format!("Missing angle for {qop} gate"))
+                        PecosError::Gate(format!(
+                            "Invalid gate parameters: Missing rotation angle for '{qop}' gate"
+                        ))
                     })?;
                 Ok((qop.to_string(), qubit_args, vec![theta]))
             }
             "R1XY" => {
                 if angles.as_ref().map_or(0, |(angles, _)| angles.len()) < 2 {
-                    return Err(QueueError::OperationError(format!(
-                        "{qop} gate requires two angles (phi, theta)"
+                    return Err(PecosError::Gate(format!(
+                        "Invalid gate parameters: '{qop}' gate requires two angles (phi, theta)"
                     )));
                 }
                 let (phi, theta) = angles
                     .as_ref()
                     .map(|(angles, _)| (angles[0], angles[1]))
                     .ok_or_else(|| {
-                        QueueError::OperationError(format!("Missing angles for {qop} gate"))
+                        PecosError::Gate(format!(
+                            "Invalid gate parameters: Missing rotation angles for '{qop}' gate"
+                        ))
                     })?;
                 Ok((qop.to_string(), qubit_args, vec![phi, theta]))
             }
@@ -521,16 +535,16 @@ impl PHIREngine {
             // Two-qubit gates
             "SZZ" | "ZZ" => {
                 if args.len() < 2 {
-                    return Err(QueueError::OperationError(format!(
-                        "{qop} gate requires two qubits"
+                    return Err(PecosError::Gate(format!(
+                        "Invalid gate parameters: '{qop}' gate requires exactly two qubits"
                     )));
                 }
                 Ok(("SZZ".to_string(), qubit_args, vec![]))
             }
             "CX" | "CNOT" => {
                 if args.len() < 2 {
-                    return Err(QueueError::OperationError(format!(
-                        "{qop} gate requires control and target qubits"
+                    return Err(PecosError::Gate(format!(
+                        "Invalid gate parameters: '{qop}' gate requires control and target qubits (2 qubits total)"
                     )));
                 }
                 Ok(("CX".to_string(), qubit_args, vec![]))
@@ -540,8 +554,8 @@ impl PHIREngine {
             // Single-qubit Clifford gates and Measurement
             "H" | "X" | "Y" | "Z" | "Measure" => Ok((qop.to_string(), qubit_args, vec![])),
 
-            _ => Err(QueueError::OperationError(format!(
-                "Unsupported quantum operation: {qop}"
+            _ => Err(PecosError::Gate(format!(
+                "Unsupported quantum gate operation: Gate type '{qop}' is not implemented"
             ))),
         }
     }
@@ -559,7 +573,7 @@ impl ControlEngine for PHIREngine {
     type EngineInput = ByteMessage;
     type EngineOutput = ByteMessage;
 
-    fn start(&mut self, _input: ()) -> Result<EngineStage<ByteMessage, ShotResult>, QueueError> {
+    fn start(&mut self, _input: ()) -> Result<EngineStage<ByteMessage, ShotResult>, PecosError> {
         debug!(
             "PHIR: start() called with current_op={}, beginning new shot",
             self.current_op
@@ -582,7 +596,7 @@ impl ControlEngine for PHIREngine {
     fn continue_processing(
         &mut self,
         measurements: ByteMessage,
-    ) -> Result<EngineStage<ByteMessage, ShotResult>, QueueError> {
+    ) -> Result<EngineStage<ByteMessage, ShotResult>, PecosError> {
         // Handle received measurements
         self.handle_measurements(measurements)?;
 
@@ -595,7 +609,7 @@ impl ControlEngine for PHIREngine {
         }
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         debug!("PHIREngine::reset() implementation for ControlEngine being called!");
         self.reset_state();
         Ok(())
@@ -604,7 +618,7 @@ impl ControlEngine for PHIREngine {
 
 impl ClassicalEngine for PHIREngine {
     #[allow(clippy::too_many_lines)]
-    fn generate_commands(&mut self) -> Result<ByteMessage, QueueError> {
+    fn generate_commands(&mut self) -> Result<ByteMessage, PecosError> {
         // Define a maximum batch size for better performance
         // This helps avoid creating excessively large messages
         const MAX_BATCH_SIZE: usize = 100;
@@ -616,10 +630,9 @@ impl ClassicalEngine for PHIREngine {
         );
 
         // Get program reference and clone ops to avoid borrow issues
-        let prog = self
-            .program
-            .as_ref()
-            .ok_or_else(|| QueueError::OperationError("No program loaded".into()))?;
+        let prog = self.program.as_ref().ok_or_else(|| {
+            PecosError::Resource("Cannot generate commands: No PHIR program loaded".to_string())
+        })?;
         let ops = prog.ops.clone();
 
         // If we've processed all ops, return empty batch to signal completion
@@ -701,8 +714,8 @@ impl ClassicalEngine for PHIREngine {
                                         .add_measurements(&[qubit_args[0]], &[qubit_args[0]]);
                                 }
                                 _ => {
-                                    return Err(QueueError::OperationError(format!(
-                                        "Unsupported quantum operation: {gate_type}"
+                                    return Err(PecosError::Gate(format!(
+                                        "Unsupported quantum gate operation: Gate type '{gate_type}' is not implemented"
                                     )));
                                 }
                             }
@@ -781,7 +794,7 @@ impl ClassicalEngine for PHIREngine {
         0 // If no program is loaded, return 0
     }
 
-    fn handle_measurements(&mut self, message: ByteMessage) -> Result<(), QueueError> {
+    fn handle_measurements(&mut self, message: ByteMessage) -> Result<(), PecosError> {
         // Parse measurements using ByteMessage helper
         let measurements = message.parse_measurements()?;
 
@@ -839,7 +852,7 @@ impl ClassicalEngine for PHIREngine {
         Ok(())
     }
 
-    fn get_results(&self) -> Result<ShotResult, QueueError> {
+    fn get_results(&self) -> Result<ShotResult, PecosError> {
         let mut results = ShotResult::default();
         let mut exported_values = HashMap::new();
 
@@ -947,12 +960,12 @@ impl ClassicalEngine for PHIREngine {
         Ok(results)
     }
 
-    fn compile(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn compile(&self) -> Result<(), PecosError> {
         // No compilation needed for PHIR/JSON
         Ok(())
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         debug!("PHIREngine::reset() implementation for ClassicalEngine being called!");
         self.reset_state();
         Ok(())
@@ -1003,7 +1016,7 @@ impl PHIREngine {
     pub fn get_formatted_results(
         &self,
         format: crate::core::shot_results::OutputFormat,
-    ) -> Result<String, QueueError> {
+    ) -> Result<String, PecosError> {
         let shot_result = self.get_results()?;
 
         // Convert single ShotResult to ShotResults for better formatting
@@ -1034,7 +1047,7 @@ impl Engine for PHIREngine {
     type Input = ();
     type Output = ShotResult;
 
-    fn process(&mut self, _input: Self::Input) -> Result<Self::Output, QueueError> {
+    fn process(&mut self, _input: Self::Input) -> Result<Self::Output, PecosError> {
         // Process operations until we need more input or we're done
         let mut stage = self.start(())?;
 
@@ -1055,12 +1068,12 @@ impl Engine for PHIREngine {
         }
 
         // If we get here, something went wrong
-        Err(QueueError::OperationError(
-            "Failed to complete processing".into(),
+        Err(PecosError::Processing(
+            "Failed to complete processing".to_string(),
         ))
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // Call our internal reset method
         self.reset_state();
         Ok(())
@@ -1075,8 +1088,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_phir_engine_basic() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = tempdir()?;
+    fn test_phir_engine_basic() -> Result<(), PecosError> {
+        let dir = tempdir().map_err(PecosError::IO)?;
         let program_path = dir.path().join("test.json");
 
         // Create a test program
@@ -1117,8 +1130,8 @@ mod tests {
     ]
 }"#;
 
-        let mut file = File::create(&program_path)?;
-        file.write_all(program.as_bytes())?;
+        let mut file = File::create(&program_path).map_err(PecosError::IO)?;
+        file.write_all(program.as_bytes()).map_err(PecosError::IO)?;
 
         let mut engine = PHIREngine::new(&program_path)?;
 
@@ -1126,7 +1139,11 @@ mod tests {
         let command_message = engine.generate_commands()?;
 
         // Parse the message back to confirm it has the correct operations
-        let parsed_commands = command_message.parse_quantum_operations()?;
+        let parsed_commands = command_message.parse_quantum_operations().map_err(|e| {
+            PecosError::Input(format!(
+                "PHIR test failed: Unable to validate generated quantum operations: {e}"
+            ))
+        })?;
         assert_eq!(parsed_commands.len(), 2);
 
         // Create a measurement message and test handling

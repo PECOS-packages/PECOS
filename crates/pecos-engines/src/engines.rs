@@ -7,13 +7,13 @@ pub mod qir;
 pub mod quantum;
 pub mod quantum_system;
 
-use crate::errors::QueueError;
 pub use classical::ClassicalEngine;
 use dyn_clone::DynClone;
 pub use hybrid::HybridEngine;
 pub use hybrid::HybridEngineBuilder;
 pub use monte_carlo::MonteCarloEngine;
 pub use monte_carlo::MonteCarloEngineBuilder;
+use pecos_core::errors::PecosError;
 pub use quantum::QuantumEngine;
 pub use quantum_system::QuantumSystem;
 
@@ -25,10 +25,10 @@ pub trait Engine: DynClone + Send + Sync {
     /// Process a single input
     ///
     /// # Errors
-    /// This function returns a `QueueError` if:
+    /// This function may return an error if:
     /// - There is an error during processing.
     /// - The input cannot be processed due to a serialization or execution issue.
-    fn process(&mut self, input: Self::Input) -> Result<Self::Output, QueueError>;
+    fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError>;
 
     /// Reset engine state for reuse
     ///
@@ -36,9 +36,9 @@ pub trait Engine: DynClone + Send + Sync {
     /// by resetting any internal state to initial conditions.
     ///
     /// # Errors
-    /// This function returns a `QueueError` if:
+    /// This function may return an error if:
     /// - There is an error during resetting the engine state.
-    fn reset(&mut self) -> Result<(), QueueError>;
+    fn reset(&mut self) -> Result<(), PecosError>;
 }
 
 /// A control engine that orchestrates execution flow with another engine
@@ -70,14 +70,14 @@ pub trait ControlEngine: DynClone + Send + Sync {
     /// * `Complete(output)` if processing finished
     ///
     /// # Errors
-    /// This function returns a `QueueError` if:
+    /// This function may return an error if:
     /// - There is an error during the start of processing.
     /// - The input cannot be serialized or deserialized.
     /// - An operation fails during initialization.
     fn start(
         &mut self,
         input: Self::Input,
-    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, QueueError>;
+    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError>;
 
     /// Continue processing with result from controlled engine
     ///
@@ -89,14 +89,14 @@ pub trait ControlEngine: DynClone + Send + Sync {
     /// * `Complete(output)` if processing finished
     ///
     /// # Errors
-    /// This function returns a `QueueError` if:
+    /// This function may return an error if:
     /// - The result cannot be deserialized or processed.
     /// - There is an error during the continuation of processing.
     /// - Any operation fails while handling the result.
     fn continue_processing(
         &mut self,
         result: Self::EngineOutput,
-    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, QueueError>;
+    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError>;
 
     /// Reset engine state for reuse
     ///
@@ -104,9 +104,9 @@ pub trait ControlEngine: DynClone + Send + Sync {
     /// by resetting any internal state to initial conditions.
     ///
     /// # Errors
-    /// This function returns a `QueueError` if:
+    /// This function may return an error if:
     /// - There is an error during resetting the engine state.
-    fn reset(&mut self) -> Result<(), QueueError>;
+    fn reset(&mut self) -> Result<(), PecosError>;
 }
 
 /// Represents the stage of processing in a control engine
@@ -161,22 +161,28 @@ pub trait EngineSystem: Engine {
     /// Get a mutable reference to the controlled engine component
     fn engine_mut(&mut self) -> &mut Self::ControlledEngine;
 
-    /// Process input using the standard engine system pattern
+    /// Process an input using the system's controller and engine components
     ///
-    /// This method provides a default implementation for processing input
-    /// through the controller and engine components. Implementations of
-    /// `EngineSystem` can delegate their `Engine::process` method to this.
+    /// This method implements the complete execution flow:
+    /// 1. Start processing with the controller
+    /// 2. In a loop:
+    ///    a. If more processing is needed, send input to the controlled engine
+    ///    b. Pass the engine's output back to the controller
+    ///    c. Continue until the controller indicates processing is complete
     ///
     /// # Parameters
     /// * `input` - The input to process
     ///
     /// # Returns
-    /// * The processed output if successful
+    /// * The final output of processing
     ///
     /// # Errors
-    /// This function returns a `QueueError` if:
-    /// - The controller or engine encounters an error during processing
-    fn process_as_system(&mut self, input: Self::Input) -> Result<Self::Output, QueueError> {
+    /// This function may return an error if:
+    /// - Resetting the quantum or classical engine fails.
+    /// - Generating commands through the classical engine fails.
+    /// - Processing commands through the quantum engine fails.
+    /// - Handling measurements through the classical engine fails.
+    fn process_as_system(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
         let mut stage = self.controller_mut().start(input)?;
 
         loop {
@@ -203,11 +209,11 @@ impl<I, O> Engine for Box<dyn Engine<Input = I, Output = O>> {
     type Input = I;
     type Output = O;
 
-    fn process(&mut self, input: Self::Input) -> Result<Self::Output, QueueError> {
+    fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
         (**self).process(input)
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         (**self).reset()
     }
 }
@@ -225,7 +231,7 @@ impl<I, O, EI, EO> ControlEngine
     fn start(
         &mut self,
         input: Self::Input,
-    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, QueueError> {
+    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         // Delegate to the underlying ControlEngine
         (**self).start(input)
     }
@@ -233,12 +239,12 @@ impl<I, O, EI, EO> ControlEngine
     fn continue_processing(
         &mut self,
         result: Self::EngineOutput,
-    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, QueueError> {
+    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         // Delegate to the underlying ControlEngine
         (**self).continue_processing(result)
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // Delegate to the underlying ControlEngine
         (**self).reset()
     }
@@ -268,12 +274,12 @@ mod tests {
         type Input = u32;
         type Output = u32;
 
-        fn process(&mut self, input: Self::Input) -> Result<Self::Output, QueueError> {
+        fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(input)
         }
 
-        fn reset(&mut self) -> Result<(), QueueError> {
+        fn reset(&mut self) -> Result<(), PecosError> {
             self.calls.store(0, Ordering::SeqCst);
             Ok(())
         }
@@ -306,7 +312,7 @@ mod tests {
         fn start(
             &mut self,
             input: Self::Input,
-        ) -> Result<EngineStage<Self::EngineInput, Self::Output>, QueueError> {
+        ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
             // Reset counters on start
             self.current_iteration = 0;
             self.calls.fetch_add(1, Ordering::SeqCst);
@@ -318,7 +324,7 @@ mod tests {
         fn continue_processing(
             &mut self,
             result: Self::EngineOutput,
-        ) -> Result<EngineStage<Self::EngineInput, Self::Output>, QueueError> {
+        ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
             self.current_iteration += 1;
             self.calls.fetch_add(1, Ordering::SeqCst);
 
@@ -331,7 +337,7 @@ mod tests {
             }
         }
 
-        fn reset(&mut self) -> Result<(), QueueError> {
+        fn reset(&mut self) -> Result<(), PecosError> {
             self.current_iteration = 0;
             self.calls.store(0, Ordering::SeqCst);
             Ok(())
@@ -358,11 +364,11 @@ mod tests {
         type Input = u32;
         type Output = u32;
 
-        fn process(&mut self, input: Self::Input) -> Result<Self::Output, QueueError> {
+        fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
             self.process_as_system(input)
         }
 
-        fn reset(&mut self) -> Result<(), QueueError> {
+        fn reset(&mut self) -> Result<(), PecosError> {
             self.controller.reset()?;
             self.engine.reset()
         }

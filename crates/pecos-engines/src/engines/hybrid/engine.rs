@@ -14,9 +14,9 @@ use crate::byte_message::ByteMessage;
 use crate::core::shot_results::ShotResult;
 use crate::engines::quantum_system::QuantumSystem;
 use crate::engines::{ClassicalEngine, ControlEngine, Engine, EngineStage, EngineSystem};
-use crate::errors::QueueError;
 use dyn_clone;
 use log::debug;
+use pecos_core::errors::PecosError;
 use pecos_core::rng::rng_manageable::derive_seed;
 
 /// Coordinates between classical control and quantum simulation components
@@ -86,8 +86,8 @@ impl HybridEngine {
     /// Result indicating success or failure
     ///
     /// # Errors
-    /// Returns a `QueueError` if setting the seed fails for any component
-    pub fn set_seed(&mut self, seed: u64) -> Result<(), QueueError> {
+    /// Returns a `PecosError` if setting the seed fails for any component
+    pub fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
         // Derive seeds for each component
         let classical_seed = derive_seed(seed, "classical_engine");
         let quantum_seed = derive_seed(seed, "quantum_system");
@@ -107,10 +107,10 @@ impl HybridEngine {
     /// allowing for reuse in subsequent operations.
     ///
     /// # Errors
-    /// Returns a `QueueError` if:
+    /// Returns a `PecosError` if:
     /// - Resetting the classical engine fails.
     /// - Resetting the engine fails.
-    pub fn reset(&mut self) -> Result<(), QueueError> {
+    pub fn reset(&mut self) -> Result<(), PecosError> {
         debug!("HybridEngine::reset() being called!");
         // Use the fully qualified path to disambiguate which reset to call
         ClassicalEngine::reset(&mut *self.classical_engine)?;
@@ -120,12 +120,12 @@ impl HybridEngine {
     /// Executes a single quantum circuit shot and returns the result.
     ///
     /// # Errors
-    /// This function returns a `QueueError` if:
+    /// This function returns a `PecosError` if:
     /// - Resetting the quantum or classical engine fails.
     /// - Generating commands through the classical engine fails.
     /// - Processing commands through the quantum engine fails.
     /// - Handling measurements through the classical engine fails.
-    pub fn run_shot(&mut self) -> Result<ShotResult, QueueError> {
+    pub fn run_shot(&mut self) -> Result<ShotResult, PecosError> {
         debug!(
             "HybridEngine::run_shot() starting - Thread {:?}",
             std::thread::current().id()
@@ -168,12 +168,12 @@ impl Engine for HybridEngine {
     type Input = ();
     type Output = ShotResult;
 
-    fn process(&mut self, input: Self::Input) -> Result<Self::Output, QueueError> {
+    fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
         // Delegate to process_as_system for standard implementation
         self.process_as_system(input)
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // Reset both controller and engine components by using fully qualified path
         ClassicalEngine::reset(&mut *self.classical_engine)?;
         self.quantum_system.reset()

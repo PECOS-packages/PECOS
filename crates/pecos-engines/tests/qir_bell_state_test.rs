@@ -8,7 +8,11 @@ use pecos_engines::engines::qir::QirEngine;
 /// Get the path to the QIR Bell state example
 fn get_qir_program_path() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace_dir = manifest_dir.parent().unwrap().parent().unwrap();
+    let workspace_dir = manifest_dir
+        .parent()
+        .expect("CARGO_MANIFEST_DIR should have a parent")
+        .parent()
+        .expect("Expected to find workspace directory as parent of crates/");
     workspace_dir.join("examples/qir/bell.ll")
 }
 
@@ -124,7 +128,9 @@ pub fn test_qir_bell_state_with_noise() {
             pecos_engines::engines::noise::DepolarizingNoiseModel::new_uniform(noise_probability);
 
         // Set the seed on the noise model
-        noise_model.set_seed(seed).unwrap();
+        noise_model
+            .set_seed(seed)
+            .expect("Failed to set seed for noise model");
 
         // Run with the MonteCarloEngine directly, specifying the number of shots
         let results = MonteCarloEngine::run_with_noise_model(

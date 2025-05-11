@@ -13,6 +13,7 @@
 use crate::{CliffordGateable, Gens, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
 use core::mem;
+use pecos_core::errors::PecosError;
 use pecos_core::{IndexableElement, RngManageable, Set, VecSet};
 use rand::{Rng, RngCore, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -741,7 +742,7 @@ where
 {
     type Rng = R;
 
-    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), PecosError> {
         self.rng = rng;
         Ok(())
     }

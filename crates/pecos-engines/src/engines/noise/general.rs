@@ -74,10 +74,6 @@
 
 #![allow(clippy::too_many_lines)]
 
-use std::any::Any;
-use std::collections::BTreeMap;
-use std::collections::HashSet;
-
 use crate::byte_message::{ByteMessage, ByteMessageBuilder, QuantumGate, gate_type::GateType};
 use crate::engines::noise::noise_rng::NoiseRng;
 use crate::engines::noise::utils::NoiseUtils;
@@ -87,9 +83,12 @@ use crate::engines::noise::weighted_sampler::{
 };
 use crate::engines::noise::{NoiseModel, RngManageable};
 use crate::engines::{ControlEngine, EngineStage};
-use crate::errors::QueueError;
 use log::trace;
+use pecos_core::errors::PecosError;
 use rand_chacha::ChaCha8Rng;
+use std::any::Any;
+use std::collections::BTreeMap;
+use std::collections::HashSet;
 
 /// General noise model implementation that includes parameterized error channels for various quantum operations
 ///
@@ -316,12 +315,12 @@ impl ControlEngine for GeneralNoiseModel {
     fn start(
         &mut self,
         input: Self::Input,
-    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, QueueError> {
+    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         // Apply noise to the gates
         let noisy_gates = match self.apply_noise_on_start(&input) {
             Ok(gates) => gates,
             Err(e) => {
-                return Err(QueueError::OperationError(format!(
+                return Err(PecosError::Processing(format!(
                     "Noise application error: {e}"
                 )));
             }
@@ -336,17 +335,19 @@ impl ControlEngine for GeneralNoiseModel {
     fn continue_processing(
         &mut self,
         msg: Self::EngineOutput,
-    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, QueueError> {
+    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         // Apply biased measurement to measurement results
         trace!("GeneralNoise::continue_processing - applying biased measurement");
-        let results = self.apply_noise_on_continue_processing(msg)?;
+        let results = self
+            .apply_noise_on_continue_processing(msg)
+            .map_err(|e| PecosError::Processing(format!("Error processing noise: {e}")))?;
 
         // Calling Complete to signal that the NoiseModel is returning its msg back to the
         // QuantumSystem.
         Ok(EngineStage::Complete(results))
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // Reset the noise model state
         self.reset_noise_model();
         Ok(())
@@ -366,7 +367,7 @@ impl NoiseModel for GeneralNoiseModel {
 impl RngManageable for GeneralNoiseModel {
     type Rng = ChaCha8Rng;
 
-    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), PecosError> {
         self.rng = NoiseRng::new(rng);
         Ok(())
     }
@@ -533,7 +534,7 @@ impl GeneralNoiseModel {
     pub fn apply_noise_on_continue_processing(
         &mut self,
         message: ByteMessage,
-    ) -> Result<ByteMessage, QueueError> {
+    ) -> Result<ByteMessage, PecosError> {
         // If there are no measurement results, return the message unchanged
         if !NoiseUtils::has_measurements(&message) {
             return Ok(message);
@@ -1331,7 +1332,7 @@ impl GeneralNoiseModel {
     ///
     /// # Returns
     /// Result indicating success or failure
-    pub fn reset_with_seed(&mut self, seed: u64) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn reset_with_seed(&mut self, seed: u64) -> Result<(), PecosError> {
         // First reset the noise model
         self.reset_noise_model();
         // Then set the seed

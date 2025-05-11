@@ -38,8 +38,8 @@ pub use self::weighted_sampler::{
 
 use crate::byte_message::ByteMessage;
 use crate::engines::{ControlEngine, EngineStage};
-use crate::errors::QueueError;
 use dyn_clone::DynClone;
+use pecos_core::errors::PecosError;
 use rand_chacha::ChaCha8Rng;
 use std::any::Any;
 
@@ -148,7 +148,7 @@ impl Clone for BaseNoiseModel {
 impl RngManageable for BaseNoiseModel {
     type Rng = ChaCha8Rng;
 
-    fn set_rng(&mut self, rng: ChaCha8Rng) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_rng(&mut self, rng: ChaCha8Rng) -> Result<(), PecosError> {
         self.rng = NoiseRng::new(rng);
         Ok(())
     }
@@ -171,18 +171,18 @@ impl ControlEngine for Box<dyn NoiseModel> {
     fn start(
         &mut self,
         input: Self::Input,
-    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, QueueError> {
+    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         (**self).start(input)
     }
 
     fn continue_processing(
         &mut self,
         result: Self::EngineOutput,
-    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, QueueError> {
+    ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         (**self).continue_processing(result)
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         (**self).reset()
     }
 }

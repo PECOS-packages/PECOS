@@ -1,8 +1,8 @@
 //! Windows-specific implementations for QIR compilation
 
-use crate::engines::qir::error::QirError;
-use crate::errors::QueueError;
+// No longer need the error module
 use log::{debug, warn};
+use pecos_core::errors::PecosError;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -12,10 +12,9 @@ pub struct WindowsCompiler;
 
 impl WindowsCompiler {
     /// Log an error with thread ID
-    pub fn log_error<E: Into<QirError>>(error: E, thread_id: &str) -> QueueError {
-        let error = error.into();
+    pub fn log_error(error: PecosError, thread_id: &str) -> PecosError {
         warn!("QIR Compiler: [Thread {}] {}", thread_id, error);
-        error.into()
+        error
     }
 
     /// Compile QIR file to object file using clang
@@ -31,24 +30,17 @@ impl WindowsCompiler {
             std::io::Result<std::process::Output>,
             &str,
             &str,
-        ) -> Result<std::process::Output, QueueError>,
-        handle_command_status: impl Fn(&std::process::Output, &str, &str) -> Result<(), QueueError>,
-    ) -> Result<(), QueueError> {
+        ) -> Result<std::process::Output, PecosError>,
+        handle_command_status: impl Fn(&std::process::Output, &str, &str) -> Result<(), PecosError>,
+    ) -> Result<(), PecosError> {
         debug!(
             "QIR Compiler: [Thread {}] Compiling QIR to object file with Windows-specific logic",
             thread_id
         );
 
         // Read and modify QIR content to add Windows export attribute
-        let mut qir_content = fs::read_to_string(qir_file).map_err(|e| {
-            Self::log_error(
-                QirError::FileReadError {
-                    path: qir_file.to_path_buf(),
-                    error: e,
-                },
-                thread_id,
-            )
-        })?;
+        let mut qir_content = fs::read_to_string(qir_file)
+            .map_err(|e| Self::log_error(PecosError::IO(e), thread_id))?;
 
         // Add dllexport attribute to main function
         qir_content = qir_content.replace(
@@ -60,15 +52,8 @@ impl WindowsCompiler {
         let parent_dir = object_file.parent().unwrap_or(Path::new("."));
         let temp_qir_file = parent_dir.join("temp_qir.ll");
 
-        fs::write(&temp_qir_file, qir_content).map_err(|e| {
-            Self::log_error(
-                QirError::FileReadError {
-                    path: temp_qir_file.clone(),
-                    error: e,
-                },
-                thread_id,
-            )
-        })?;
+        fs::write(&temp_qir_file, qir_content)
+            .map_err(|e| Self::log_error(PecosError::IO(e), thread_id))?;
 
         debug!(
             "QIR Compiler: [Thread {}] Using clang at {:?} to compile LLVM IR directly",
@@ -93,8 +78,8 @@ impl WindowsCompiler {
         // Verify output file exists
         if !object_file.exists() {
             return Err(Self::log_error(
-                QirError::CompilationFailed(format!(
-                    "Object file was not created at the expected path: {object_file:?}"
+                PecosError::Compilation(format!(
+                    "QIR compilation failed: Object file was not created at the expected path: {object_file:?}"
                 )),
                 thread_id,
             ));
@@ -120,9 +105,9 @@ impl WindowsCompiler {
             std::io::Result<std::process::Output>,
             &str,
             &str,
-        ) -> Result<std::process::Output, QueueError>,
-        handle_command_status: impl Fn(&std::process::Output, &str, &str) -> Result<(), QueueError>,
-    ) -> Result<(), QueueError> {
+        ) -> Result<std::process::Output, PecosError>,
+        handle_command_status: impl Fn(&std::process::Output, &str, &str) -> Result<(), PecosError>,
+    ) -> Result<(), PecosError> {
         debug!(
             "QIR Compiler: [Thread {}] Linking with Windows-specific logic",
             thread_id
@@ -161,7 +146,9 @@ impl WindowsCompiler {
 
         fs::write(&def_file_path, def_file_content).map_err(|e| {
             Self::log_error(
-                QirError::CompilationFailed(format!("Failed to write DEF file: {e}")),
+                PecosError::Compilation(format!(
+                    "QIR compilation failed: Failed to write DEF file: {e}"
+                )),
                 thread_id,
             )
         })?;
@@ -230,7 +217,9 @@ __declspec(dllexport) void __quantum__rt__result_record_output(int result) {}
 
         fs::write(&stub_c_path, stub_c_content).map_err(|e| {
             Self::log_error(
-                QirError::CompilationFailed(format!("Failed to write stub .c file: {e}")),
+                PecosError::Compilation(format!(
+                    "QIR compilation failed: Failed to write stub .c file: {e}"
+                )),
                 thread_id,
             )
         })?;
@@ -292,8 +281,8 @@ __declspec(dllexport) void __quantum__rt__result_record_output(int result) {}
         // Verify the library exists
         if !library_file.exists() {
             return Err(Self::log_error(
-                QirError::CompilationFailed(format!(
-                    "Library file was not created at the expected path: {library_file:?}"
+                PecosError::Compilation(format!(
+                    "QIR compilation failed: Library file was not created at the expected path: {library_file:?}"
                 )),
                 thread_id,
             ));

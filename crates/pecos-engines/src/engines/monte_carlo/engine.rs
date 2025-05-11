@@ -16,8 +16,8 @@ use crate::engines::hybrid::HybridEngineBuilder;
 use crate::engines::noise::NoiseModel;
 use crate::engines::quantum::{QuantumEngine, StateVecEngine};
 use crate::engines::{ClassicalEngine, ControlEngine, Engine, EngineStage, HybridEngine};
-use crate::errors::QueueError;
 use log::debug;
+use pecos_core::errors::PecosError;
 use pecos_core::rng::RngManageable;
 use pecos_core::rng::rng_manageable::derive_seed;
 use rand::{RngCore, SeedableRng};
@@ -199,8 +199,8 @@ impl MonteCarloEngine {
     /// Result indicating success or failure
     ///
     /// # Errors
-    /// Returns a `QueueError` if setting the seed fails for any component
-    pub fn set_seed(&mut self, seed: u64) -> Result<(), QueueError> {
+    /// Returns a `PecosError` if setting the seed fails for any component
+    pub fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
         self.rng = ChaCha8Rng::seed_from_u64(seed);
         self.hybrid_engine_template.set_seed(seed)
     }
@@ -219,12 +219,12 @@ impl MonteCarloEngine {
     /// Aggregated results from all shots.
     ///
     /// # Errors
-    /// Returns a `QueueError` if any part of the simulation fails.
+    /// Returns a `PecosError` if any part of the simulation fails.
     ///
     /// # Panics
     /// - If `num_shots` is zero.
     /// - If `num_workers` is zero.
-    pub fn run(&mut self, num_shots: usize, num_workers: usize) -> Result<ShotResults, QueueError> {
+    pub fn run(&mut self, num_shots: usize, num_workers: usize) -> Result<ShotResults, PecosError> {
         assert!(num_shots > 0, "num_shots cannot be zero");
         assert!(num_workers > 0, "num_workers cannot be zero");
 
@@ -253,7 +253,7 @@ impl MonteCarloEngine {
                 let worker_seed = derive_seed(base_seed, &format!("worker_{worker_idx}"));
 
                 if let Err(e) = engine.set_seed(worker_seed) {
-                    return Err(QueueError::OperationError(format!(
+                    return Err(PecosError::Processing(format!(
                         "Failed to set seed for worker {worker_idx}: {e}"
                     )));
                 }
@@ -276,7 +276,7 @@ impl MonteCarloEngine {
 
                 Ok(())
             })
-            .collect::<Result<Vec<()>, QueueError>>()?;
+            .collect::<Result<Vec<()>, PecosError>>()?;
 
         // Ensure deterministic ordering of results
         let mut results = results_vec.lock().unwrap();
@@ -306,10 +306,10 @@ impl MonteCarloEngine {
     ///
     /// # Returns
     /// - `Ok(ShotResults)`: The results from the simulation.
-    /// - `Err(QueueError)`: If an error occurs during the configuration or simulation.
+    /// - `Err(PecosError)`: If an error occurs during the configuration or simulation.
     ///
     /// # Errors
-    /// This function will return a `QueueError` if:
+    /// This function will return a `PecosError` if:
     /// - There is an error during the execution of the simulation.
     pub fn run_with_engines(
         classical_engine: Box<dyn ClassicalEngine>,
@@ -318,7 +318,7 @@ impl MonteCarloEngine {
         num_shots: usize,
         num_workers: usize,
         seed: Option<u64>,
-    ) -> Result<ShotResults, QueueError> {
+    ) -> Result<ShotResults, PecosError> {
         // Create a HybridEngine from the components
         let hybrid_engine = HybridEngineBuilder::new()
             .with_classical_engine(classical_engine)
@@ -345,13 +345,13 @@ impl MonteCarloEngine {
     /// Aggregated results from all shots.
     ///
     /// # Errors
-    /// Returns a `QueueError` if any part of the simulation fails.
+    /// Returns a `PecosError` if any part of the simulation fails.
     pub fn run_with_hybrid_engine(
         hybrid_engine: HybridEngine,
         num_shots: usize,
         num_workers: usize,
         seed: Option<u64>,
-    ) -> Result<ShotResults, QueueError> {
+    ) -> Result<ShotResults, PecosError> {
         let mut engine = MonteCarloEngineBuilder::new()
             .with_hybrid_engine(hybrid_engine)
             .build();
@@ -380,14 +380,14 @@ impl MonteCarloEngine {
     /// Aggregated results from all shots.
     ///
     /// # Errors
-    /// Returns a `QueueError` if any part of the simulation fails.
+    /// Returns a `PecosError` if any part of the simulation fails.
     pub fn run_with_noise_model(
         classical_engine: Box<dyn ClassicalEngine>,
         noise_model: Box<dyn NoiseModel>,
         num_shots: usize,
         num_workers: usize,
         seed: Option<u64>,
-    ) -> Result<ShotResults, QueueError> {
+    ) -> Result<ShotResults, PecosError> {
         // Create a hybrid engine with the state vector quantum engine
         let quantum_engine = Box::new(StateVecEngine::new(classical_engine.num_qubits()));
         let mut hybrid_engine = HybridEngineBuilder::new()
@@ -419,23 +419,25 @@ impl MonteCarloEngine {
     /// Aggregated results from all shots.
     ///
     /// # Errors
-    /// Returns a `QueueError` if any part of the simulation fails.
+    /// Returns a `PecosError` if any part of the simulation fails.
     pub fn run_with_config(
         config: &str,
         num_shots: usize,
         num_workers: usize,
         seed: Option<u64>,
-    ) -> Result<ShotResults, QueueError> {
+    ) -> Result<ShotResults, PecosError> {
         // Parse the configuration string as a noise probability
         let p = config.parse::<f64>().map_err(|e| {
-            QueueError::OperationError(format!("Failed to parse config string as float: {e}"))
+            PecosError::Input(format!("Failed to parse config string as float: {e}"))
         })?;
 
         // Create and seed a depolarizing noise model
         let mut noise_model = crate::engines::noise::DepolarizingNoiseModel::new_uniform(p);
 
         if let Some(s) = seed {
-            noise_model.set_seed(derive_seed(s, "noise_model"))?;
+            noise_model
+                .set_seed(derive_seed(s, "noise_model"))
+                .map_err(|e| PecosError::Processing(format!("Failed to set seed: {e}")))?;
         }
 
         // Run simulation with external classical engine
@@ -509,13 +511,13 @@ impl Engine for ExternalClassicalEngine {
     type Input = ();
     type Output = ShotResult;
 
-    fn process(&mut self, _input: Self::Input) -> Result<Self::Output, QueueError> {
+    fn process(&mut self, _input: Self::Input) -> Result<Self::Output, PecosError> {
         // For this stub implementation, just generate commands and return results
         let _message = self.generate_commands()?;
         self.get_results()
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // Reset all results to 0
         for value in self.results.values_mut() {
             *value = 0;
@@ -531,17 +533,17 @@ impl ClassicalEngine for ExternalClassicalEngine {
         2
     }
 
-    fn generate_commands(&mut self) -> Result<ByteMessage, QueueError> {
+    fn generate_commands(&mut self) -> Result<ByteMessage, PecosError> {
         // Create a simple command that prepares and measures a qubit
         Ok(ByteMessage::builder().build())
     }
 
-    fn handle_measurements(&mut self, _: ByteMessage) -> Result<(), QueueError> {
+    fn handle_measurements(&mut self, _: ByteMessage) -> Result<(), PecosError> {
         // Store a random result
         Ok(())
     }
 
-    fn get_results(&self) -> Result<ShotResult, QueueError> {
+    fn get_results(&self) -> Result<ShotResult, PecosError> {
         // Create ShotResult with converted results
         let mut shot_result = ShotResult::default();
 
@@ -557,7 +559,7 @@ impl ClassicalEngine for ExternalClassicalEngine {
         Ok(shot_result)
     }
 
-    fn compile(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn compile(&self) -> Result<(), PecosError> {
         // Nothing to compile for this stub
         Ok(())
     }
@@ -577,7 +579,7 @@ impl ControlEngine for ExternalClassicalEngine {
     type EngineInput = ByteMessage;
     type EngineOutput = ByteMessage;
 
-    fn start(&mut self, (): ()) -> Result<EngineStage<ByteMessage, ShotResult>, QueueError> {
+    fn start(&mut self, (): ()) -> Result<EngineStage<ByteMessage, ShotResult>, PecosError> {
         // Generate commands and return NeedsProcessing
         let commands = self.generate_commands()?;
         Ok(EngineStage::NeedsProcessing(commands))
@@ -586,14 +588,14 @@ impl ControlEngine for ExternalClassicalEngine {
     fn continue_processing(
         &mut self,
         results: ByteMessage,
-    ) -> Result<EngineStage<ByteMessage, ShotResult>, QueueError> {
+    ) -> Result<EngineStage<ByteMessage, ShotResult>, PecosError> {
         // Process the results and return Complete
         self.handle_measurements(results)?;
         let shot_result = self.get_results()?;
         Ok(EngineStage::Complete(shot_result))
     }
 
-    fn reset(&mut self) -> Result<(), QueueError> {
+    fn reset(&mut self) -> Result<(), PecosError> {
         Engine::reset(self)
     }
 }

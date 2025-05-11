@@ -103,7 +103,7 @@ fn test_single_qubit_gate_noise_distributions() {
     let noise_model = noise_model
         .as_any()
         .downcast_ref::<GeneralNoiseModel>()
-        .unwrap();
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     // Print p1 and emission ratio after scaling (the builder applies scaling)
     println!(
@@ -190,7 +190,7 @@ fn test_rotation_gate_with_different_angles() {
     let noise_model = noise_model
         .as_any()
         .downcast_ref::<GeneralNoiseModel>()
-        .unwrap();
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     // Test rotation gates with different angles
     let angles_to_test = [
@@ -336,7 +336,7 @@ fn test_two_qubit_gate_noise_distributions() {
     let noise_model = noise_model
         .as_any()
         .downcast_ref::<GeneralNoiseModel>()
-        .unwrap();
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     // Test CNOT gate with different input states
 
@@ -481,7 +481,7 @@ fn test_rzz_angle_dependent_error_model() {
     let noise_model = noise_model
         .as_any()
         .downcast_ref::<GeneralNoiseModel>()
-        .unwrap();
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     // Test RZZ gates with different rotation angles
     let angles_to_test = [
@@ -571,7 +571,7 @@ fn test_leakage_model() {
     let noise_model = noise_model
         .as_any()
         .downcast_ref::<GeneralNoiseModel>()
-        .unwrap();
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     // Test leaked qubit behavior with measurement
     let mut builder = ByteMessageBuilder::new();
@@ -619,7 +619,7 @@ fn test_software_gates_not_affected_by_noise() {
     let noise_model = noise_model
         .as_any()
         .downcast_ref::<GeneralNoiseModel>()
-        .unwrap();
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     // Create two similar circuits: one with RZ (software gate) and one with hardware gate
 
@@ -681,7 +681,7 @@ fn test_coherent_vs_incoherent_dephasing() {
     let coherent_model = coherent_model
         .as_any()
         .downcast_ref::<GeneralNoiseModel>()
-        .unwrap();
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     let incoherent_model = GeneralNoiseModel::builder()
         .with_prep_probability(0.01)
@@ -698,7 +698,7 @@ fn test_coherent_vs_incoherent_dephasing() {
     let incoherent_model = incoherent_model
         .as_any()
         .downcast_ref::<GeneralNoiseModel>()
-        .unwrap();
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     // Create a dephasing test circuit:
     // 1. Prepare |+⟩ state with H
@@ -770,7 +770,7 @@ fn test_parameter_scaling_impact() {
         let noise_model = noise_model
             .as_any()
             .downcast_ref::<GeneralNoiseModel>()
-            .unwrap();
+            .expect("Failed to downcast noise model to GeneralNoiseModel");
 
         // Run with this noise model
         let counts = count_results(noise_model, &circ, NUM_SHOTS, 1);
@@ -827,7 +827,7 @@ fn test_debug_x_gate_noise() {
     let noise_model = noise_model
         .as_any()
         .downcast_ref::<GeneralNoiseModel>()
-        .unwrap();
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     println!(
         "Debug test: p1 after scaling = {}",
@@ -887,7 +887,7 @@ fn test_seed_effect() {
     let noise_model = noise_model
         .as_any()
         .downcast_ref::<GeneralNoiseModel>()
-        .unwrap();
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     println!("Model p1 = {}", noise_model.probabilities().3);
 
@@ -976,7 +976,7 @@ fn test_seed_effect() {
     let complex_model = complex_model
         .as_any()
         .downcast_ref::<GeneralNoiseModel>()
-        .unwrap();
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     // Run the circuit
     let complex_counts = count_results(complex_model, &circ, NUM_SHOTS, 1);
@@ -1010,7 +1010,7 @@ fn test_combined_comparison() {
     let simple_noise_model = simple_noise_model
         .as_any()
         .downcast_ref::<GeneralNoiseModel>()
-        .unwrap();
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     println!(
         "Simple model: p1 after scaling = {}",
@@ -1069,7 +1069,7 @@ fn test_combined_comparison() {
     let complex_noise_model = complex_noise_model
         .as_any()
         .downcast_ref::<GeneralNoiseModel>()
-        .unwrap();
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     // Print p1 and emission ratio
     println!(
@@ -1134,7 +1134,7 @@ fn test_pauli_model_effect() {
     let noise_model1 = noise_model1
         .as_any()
         .downcast_ref::<GeneralNoiseModel>()
-        .unwrap();
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     // Create a circuit with just an X gate and measurement
     let mut builder = ByteMessageBuilder::new();
@@ -1183,7 +1183,7 @@ fn test_pauli_model_effect() {
     let noise_model2 = noise_model2
         .as_any()
         .downcast_ref::<GeneralNoiseModel>()
-        .unwrap();
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     let counts2 = count_results(noise_model2, &circ, NUM_SHOTS, 1);
 
@@ -1221,7 +1221,7 @@ fn test_pauli_model_effect() {
     let noise_model3 = noise_model3
         .as_any()
         .downcast_ref::<GeneralNoiseModel>()
-        .unwrap();
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     let counts3 = count_results(noise_model3, &circ, NUM_SHOTS, 1);
 
@@ -1258,7 +1258,10 @@ fn test_pauli_model_behavior() {
         .with_seed(42)
         .build();
 
-    let model1 = model1.as_any().downcast_ref::<GeneralNoiseModel>().unwrap();
+    let model1 = model1
+        .as_any()
+        .downcast_ref::<GeneralNoiseModel>()
+        .expect("Failed to downcast noise model to GeneralNoiseModel");
 
     println!("Running with default Pauli model (uniform distribution)");
     let default_counts = count_results(model1, &circ, NUM_SHOTS, 1);
@@ -1291,7 +1294,10 @@ fn test_pauli_model_behavior() {
         .with_seed(42)
         .build();
 
-    let model2 = model2.as_any().downcast_ref::<GeneralNoiseModel>().unwrap();
+    let model2 = model2
+        .as_any()
+        .downcast_ref::<GeneralNoiseModel>()
+        .expect("Failed to downcast model2 to GeneralNoiseModel");
 
     println!("Running with X-biased Pauli model (80% X, 10% Y, 10% Z)");
     let xbiased_counts = count_results(model2, &circ, NUM_SHOTS, 1);
@@ -1324,7 +1330,10 @@ fn test_pauli_model_behavior() {
         .with_seed(42)
         .build();
 
-    let model3 = model3.as_any().downcast_ref::<GeneralNoiseModel>().unwrap();
+    let model3 = model3
+        .as_any()
+        .downcast_ref::<GeneralNoiseModel>()
+        .expect("Failed to downcast model3 to GeneralNoiseModel");
 
     println!("Running with Z-biased Pauli model (10% X, 10% Y, 80% Z)");
     let zbiased_counts = count_results(model3, &circ, NUM_SHOTS, 1);

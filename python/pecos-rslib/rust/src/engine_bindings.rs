@@ -49,9 +49,9 @@ where
 {
     /// Set a specific seed for reproducible randomness
     fn py_set_seed(&mut self, seed: u64) -> PyResult<()> {
-        self.inner_mut()
-            .set_seed(seed)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        self.inner_mut().set_seed(seed).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to set engine seed in Python bindings: {e}"))
+        })
     }
 }
 
@@ -61,9 +61,9 @@ where
 pub trait PyEngineCommon: PyEngineWrapper {
     /// Reset the engine state
     fn py_reset(&mut self) -> PyResult<()> {
-        self.inner_mut()
-            .reset()
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        self.inner_mut().reset().map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to reset engine in Python bindings: {e}"))
+        })
     }
 
     /// Process a `ByteMessage` and return the result
@@ -71,7 +71,11 @@ pub trait PyEngineCommon: PyEngineWrapper {
         let result = self
             .inner_mut()
             .process(message.clone_inner())
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!(
+                    "Failed to process message in Python bindings: {e}"
+                ))
+            })?;
 
         Ok(PyByteMessage::from_byte_message(result))
     }

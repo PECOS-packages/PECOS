@@ -21,6 +21,7 @@ keywords = ["scientific", "quantum", "QEC"]
 categories = ["science", "simulation"]
 
 [workspace.dependencies]
+thiserror = "2"
 rand = "0.9"
 rand_chacha = "0.9"
 pyo3 = { version = "0.24", features = ["extension-module"] }

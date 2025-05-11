@@ -1,7 +1,6 @@
 use clap::{Args, Parser, Subcommand};
 use env_logger::Env;
 use pecos::prelude::*;
-use std::error::Error;
 
 mod engine_setup;
 use engine_setup::setup_cli_engine;
@@ -228,8 +227,10 @@ fn parse_general_noise_probabilities(noise_str_opt: Option<&String>) -> (f64, f6
 /// This function sets up the appropriate engines and noise models based on
 /// the command line arguments, then runs the specified program and outputs
 /// the results.
-fn run_program(args: &RunArgs) -> Result<(), Box<dyn Error>> {
+fn run_program(args: &RunArgs) -> Result<(), PecosError> {
+    // get_program_path now includes proper context in its errors
     let program_path = get_program_path(&args.program)?;
+
     let classical_engine =
         setup_cli_engine(&program_path, Some(args.shots.div_ceil(args.workers)))?;
 
@@ -295,12 +296,15 @@ fn run_program(args: &RunArgs) -> Result<(), Box<dyn Error>> {
             // Ensure parent directory exists
             if let Some(parent) = std::path::Path::new(file_path).parent() {
                 if !parent.exists() {
-                    std::fs::create_dir_all(parent)?;
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        PecosError::Resource(format!("Failed to create directory: {e}"))
+                    })?;
                 }
             }
 
             // Write results to file
-            std::fs::write(file_path, results_str)?;
+            std::fs::write(file_path, results_str)
+                .map_err(|e| PecosError::Resource(format!("Failed to write output file: {e}")))?;
             println!("Results written to {file_path}");
         }
         None => {
@@ -312,7 +316,7 @@ fn run_program(args: &RunArgs) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<(), PecosError> {
     // Initialize logger with default "info" level if not specified
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
@@ -320,10 +324,15 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     match &cli.command {
         Commands::Compile(args) => {
+            // get_program_path and detect_program_type now include proper error context
             let program_path = get_program_path(&args.program)?;
-            match detect_program_type(&program_path)? {
+
+            let program_type = detect_program_type(&program_path)?;
+
+            match program_type {
                 ProgramType::QIR => {
                     let engine = setup_cli_engine(&program_path, None)?;
+                    // The compile method should already return a properly formatted PecosError::Compilation
                     engine.compile()?;
                 }
                 ProgramType::PHIR => {

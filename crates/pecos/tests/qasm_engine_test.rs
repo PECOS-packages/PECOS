@@ -1,10 +1,10 @@
 use pecos::prelude::*;
-use std::error::Error;
 
 #[test]
-fn test_setup_qasm_engine() -> Result<(), Box<dyn Error>> {
+fn test_setup_qasm_engine() -> Result<(), PecosError> {
     // Create a temporary file with a simple QASM program
-    let mut file = tempfile::NamedTempFile::new()?;
+    let mut file = tempfile::NamedTempFile::new()
+        .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
     let qasm_content = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -13,7 +13,7 @@ fn test_setup_qasm_engine() -> Result<(), Box<dyn Error>> {
         h q[0];
         measure q[0] -> c[0];
     "#;
-    std::io::Write::write_all(&mut file, qasm_content.as_bytes())?;
+    std::io::Write::write_all(&mut file, qasm_content.as_bytes()).map_err(PecosError::IO)?;
 
     // Set up the QASM engine without a seed
     let engine = setup_qasm_engine(file.path(), None)?;

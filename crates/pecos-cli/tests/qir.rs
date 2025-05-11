@@ -5,17 +5,9 @@
 
 // #[test]
 // fn test_pecos_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
-//     // Requires: LLVM 13, GCC toolchain
+//     // Requires: LLVM tools and GCC toolchain
 //     // For Flatpak: Set PATH to include /usr/bin and GCC paths
-//     // Enable SDK extensions: llvm13, toolchain-x86_64
-//     if Command::new("llvm-as-13")
-//         .env("PATH", "/usr/local/bin:/usr/bin:/bin")
-//         .output()
-//         .is_err()
-//     {
-//         eprintln!("Skipping test - llvm-as-13 not found");
-//         return Ok(());
-//     }
+//     // Attempt to run the test and gracefully handle any errors from the QIR engine
 //
 //     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 //     let test_file = manifest_dir.join("../../examples/qir/qprog.ll");

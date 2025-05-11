@@ -107,7 +107,12 @@ struct RunArgs {
     workers: usize,
 
     /// Type of noise model to use (depolarizing or general)
-    #[arg(long = "model", value_parser, default_value = "depolarizing")]
+    #[arg(
+        short = 'm',
+        long = "model",
+        value_parser,
+        default_value = "depolarizing"
+    )]
     noise_model: NoiseModelType,
 
     /// Noise probability (between 0 and 1)
@@ -399,6 +404,7 @@ mod tests {
 
     #[test]
     fn verify_cli_general_noise_model() {
+        // Test with long option
         let cmd = Cli::parse_from([
             "pecos",
             "run",
@@ -421,6 +427,31 @@ mod tests {
                 );
                 assert_eq!(args.output_format, OutputFormatType::PrettyCompact); // Default
                 assert_eq!(args.output_file, None); // Default
+            }
+            Commands::Compile(_) => panic!("Expected Run command"),
+        }
+
+        // Test with short option
+        let cmd = Cli::parse_from([
+            "pecos",
+            "run",
+            "program.json",
+            "-m",
+            "general",
+            "-p",
+            "0.01,0.02,0.03,0.04,0.05",
+            "-d",
+            "42",
+        ]);
+
+        match cmd.command {
+            Commands::Run(args) => {
+                assert_eq!(args.seed, Some(42));
+                assert_eq!(args.noise_model, NoiseModelType::General);
+                assert_eq!(
+                    args.noise_probability,
+                    Some("0.01,0.02,0.03,0.04,0.05".to_string())
+                );
             }
             Commands::Compile(_) => panic!("Expected Run command"),
         }

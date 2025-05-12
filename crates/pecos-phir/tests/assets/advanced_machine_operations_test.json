@@ -14,7 +14,7 @@
     {"mop": "Delay", "args": [["q", 0]], "duration": [2.0, "us"]},
     {"mop": "Transport", "args": [["q", 1]], "duration": [1.0, "ms"], "metadata": {"from_position": [0, 0], "to_position": [1, 0]}},
     {"mop": "Timing", "args": [["q", 0], ["q", 1]], "metadata": {"timing_type": "sync", "label": "sync_point_1"}},
-    {"mop": "Init", "args": [["q", 0]], "metadata": {"duration": [0.5, "us"]}},
+    {"qop": "Init", "args": [["q", 0]]},
     {"qop": "CX", "args": [["q", 0], ["q", 1]]},
     {"qop": "Measure", "args": [["q", 0]], "returns": [["m0", 0]]},
     {"qop": "Measure", "args": [["q", 1]], "returns": [["m1", 0]]},

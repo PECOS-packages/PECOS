@@ -3,13 +3,12 @@ mod common;
 #[cfg(test)]
 mod tests {
     use pecos_core::errors::PecosError;
+    use pecos_engines::Engine;
     use pecos_phir::v0_1::operations::{MachineOperationResult, OperationProcessor};
     use std::collections::HashMap;
-    
-    // Import helpers from common module
-    use crate::common::phir_test_utils::{
-        get_phir_results, assert_shotresult_value
-    };
+
+    // We still need get_phir_results for the simple test
+    use crate::common::phir_test_utils::get_phir_results;
 
     // Test direct machine operation processing
     #[test]
@@ -59,28 +58,42 @@ mod tests {
             panic!("Expected Timing result but got: {result:?}");
         }
 
-        // Test Reset operation
-        let result =
-            processor.process_machine_op("Reset", None, Some(&(1.0, "us".to_string())), None);
+        // Note: Reset machine operation has been replaced with Init quantum operation
+        // We'll test the Skip machine operation instead (which is part of the spec)
+        let result = processor.process_machine_op("Skip", None, None, None);
         assert!(result.is_ok());
-        if let Ok(MachineOperationResult::Reset { duration_ns, .. }) = result {
-            assert_eq!(duration_ns, 1_000); // 1us = 1,000ns
+        if let Ok(MachineOperationResult::Skip) = result {
+            // Skip operation has no parameters to check
         } else {
-            panic!("Expected Reset result but got: {result:?}");
+            panic!("Expected Skip result but got: {result:?}");
         }
     }
 
     // Test running a PHIR program with machine operations - Complex version
     #[test]
-    #[ignore = "Needs further work to handle bit operations properly"]
     fn test_phir_with_machine_operations() -> Result<(), PecosError> {
-        let result = get_phir_results("tests/assets/advanced_machine_operations_test.json")?;
-        
+        // We need direct access to the engine to check machine operation processing
+        let phir_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/assets/advanced_machine_operations_test.json");
+
+        // Create and run the engine directly
+        let mut engine = pecos_phir::v0_1::engine::PHIREngine::new(phir_path)?;
+        let result = engine.process(())?;
+
         // Print all information about the result for debugging
-        println!("ShotResult: {:?}", result);
+        println!("ShotResult: {result:?}");
         println!("Registers: {:?}", result.registers);
-        
-        // TODO: Fix test to properly handle measurement results and bit operations
+
+        // Verify the final result exists
+        assert!(
+            result.registers.contains_key("output"),
+            "Expected 'output' register to be present"
+        );
+        assert_eq!(
+            result.registers["output"], 1,
+            "Expected output value to be 1 (m0 + m1 = 1 + 0 = 1)"
+        );
+
         Ok(())
     }
 
@@ -88,14 +101,20 @@ mod tests {
     #[test]
     fn test_simple_machine_operations() -> Result<(), PecosError> {
         let result = get_phir_results("tests/assets/simple_machine_operations_test.json")?;
-        
+
         // Print all information about the result for debugging
-        println!("ShotResult: {:?}", result);
+        println!("ShotResult: {result:?}");
         println!("Registers: {:?}", result.registers);
-        
+
         // Verify that the program executed successfully with machine operations
-        assert!(result.registers.contains_key("output"), "Expected 'output' register to be present");
-        assert_eq!(result.registers["output"], 42, "Expected output value to be 42");
+        assert!(
+            result.registers.contains_key("output"),
+            "Expected 'output' register to be present"
+        );
+        assert_eq!(
+            result.registers["output"], 42,
+            "Expected output value to be 42"
+        );
 
         Ok(())
     }

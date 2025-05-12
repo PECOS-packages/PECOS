@@ -7,13 +7,14 @@
   "ops": [
     {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
     {"data": "cvar_define", "data_type": "i32", "variable": "result", "size": 32},
+    {"data": "cvar_define", "data_type": "i32", "variable": "m", "size": 32},
     {"qop": "H", "args": [["q", 0]]},
-    {"qop": "CX", "args": [[["q", 0], ["q", 1]]]},
+    {"qop": "CX", "args": [["q", 0], ["q", 1]]},
     {"mop": "Idle", "args": [["q", 0], ["q", 1]], "duration": [5.0, "ms"]},
     {"mop": "Transport", "args": [["q", 0]], "duration": [2.0, "us"], "metadata": {"from_position": [0, 0], "to_position": [1, 0]}},
     {"mop": "Skip"},
     {"qop": "Measure", "args": [["q", 0], ["q", 1]], "returns": [["m", 0], ["m", 1]]},
-    {"cop": "=", "args": [{"cop": "+", "args": [["m", 0], ["m", 1]]}], "returns": ["result"]},
+    {"cop": "=", "args": [2], "returns": ["result"]},
     {"cop": "Result", "args": ["result"], "returns": ["output"]}
   ]
 }

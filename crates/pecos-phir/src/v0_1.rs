@@ -95,5 +95,8 @@ pub fn setup_phir_v0_1_engine_with_wasm(
     _program_path: &Path,
     _wasm_path: &Path,
 ) -> Result<Box<dyn ClassicalEngine>, PecosError> {
-    Err(PecosError::Feature("WebAssembly support is not enabled. Rebuild with the 'wasm' feature to enable it.".to_string()))
+    Err(PecosError::Feature(
+        "WebAssembly support is not enabled. Rebuild with the 'wasm' feature to enable it."
+            .to_string(),
+    ))
 }

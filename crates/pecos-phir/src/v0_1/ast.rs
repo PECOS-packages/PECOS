@@ -1,5 +1,6 @@
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
+use std::f64::consts::PI;
 
 /// Program structure for PHIR (PECOS High-level Intermediate Representation)
 #[derive(Debug, Deserialize, Clone)]
@@ -25,7 +26,8 @@ pub enum Operation {
     QuantumOp {
         qop: String,
         #[serde(default)]
-        angles: Option<(Vec<f64>, String)>,
+        #[serde(deserialize_with = "deserialize_angles_to_radians")]
+        angles: Option<Vec<f64>>, // Now just Vec<f64> in radians, no unit string
         args: Vec<QubitArg>,
         #[serde(default)]
         returns: Vec<(String, usize)>,
@@ -115,11 +117,32 @@ pub enum Expression {
     Operation { cop: String, args: Vec<ArgItem> },
     /// Variable reference
     Variable(String),
-    /// Bit reference
-    BitIndex((String, usize)),
     /// Integer literal
     Integer(i64),
 }
 
 // Constants for internal register naming
 pub const MEASUREMENT_PREFIX: &str = "measurement_";
+
+/// Custom deserializer to convert angles to radians
+fn deserialize_angles_to_radians<'de, D>(deserializer: D) -> Result<Option<Vec<f64>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    // First, deserialize as Option<(Vec<f64>, String)>
+    Option::<(Vec<f64>, String)>::deserialize(deserializer)?.map_or(Ok(None), |(values, unit)| {
+        // Convert to radians based on unit
+        let converted_values = match unit.as_str() {
+            "rad" => values, // Already in radians
+            "deg" => values.into_iter().map(|v| v * PI / 180.0).collect(),
+            "pi" => values.into_iter().map(|v| v * PI).collect(),
+            _ => {
+                return Err(serde::de::Error::custom(format!(
+                    "Unsupported angle unit: {unit}"
+                )));
+            }
+        };
+
+        Ok(Some(converted_values))
+    })
+}

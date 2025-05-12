@@ -39,22 +39,21 @@ mod tests {
             .measurement_results
             .insert("test_var".to_string(), 15);
 
-        // Try to access a bit that's out of bounds
-        let expr = Expression::BitIndex(("test_var".to_string(), 5));
+        // Direct test of validate_variable_access with an out-of-bounds index
+        let result = processor.validate_variable_access("test_var", 5); // Size is 4, so index 5 is out of bounds
 
-        // Evaluate the expression and check the error
-        let result = processor.evaluate_expression(&expr);
         assert!(result.is_err());
 
-        // Verify the error type and message
+        // Check the error message
         match result {
-            Err(PecosError::Computation(msg)) => {
-                assert!(msg.contains("out of bounds"));
-                assert!(msg.contains("test_var"));
-                assert!(msg.contains('5'));
-                assert!(msg.contains('4')); // Size is 4
+            Err(e) => {
+                let error_msg = e.to_string();
+                assert!(error_msg.contains("out of bounds"));
+                assert!(error_msg.contains("test_var"));
+                assert!(error_msg.contains('5'));
+                assert!(error_msg.contains('4')); // Size is 4
             }
-            _ => panic!("Expected Computation error but got: {result:?}"),
+            _ => panic!("Expected error but got success: {result:?}"),
         }
     }
 

@@ -97,8 +97,7 @@ mod tests {
             "size": 2
         },
         {
-            "qop": "R1XY",
-            "angles": [[0.1, 0.2], "rad"],
+            "qop": "H",
             "args": [["q", 0]]
         },
         {

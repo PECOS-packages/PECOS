@@ -2,13 +2,13 @@ mod common;
 
 use pecos_core::rng::RngManageable;
 use pecos_engines::engines::MonteCarloEngine;
-use pecos_engines::{PassThroughNoiseModel, DepolarizingNoiseModel};
+use pecos_engines::{DepolarizingNoiseModel, PassThroughNoiseModel};
 use pecos_phir::setup_phir_engine;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 // Import helpers from common module
-use crate::common::phir_test_utils::{get_phir_results, assert_shotresult_value};
+use crate::common::phir_test_utils::get_phir_results;
 
 #[test]
 fn test_bell_state_noiseless() {
@@ -55,12 +55,11 @@ fn test_bell_state_noiseless() {
 
     // The test passes if there are no errors in the execution
     assert!(!results.shots.is_empty(), "Expected non-empty results");
-    
-    println!("Results: {:?}", results);
+
+    println!("Results: {results:?}");
 }
 
 #[test]
-#[ignore = "Direct execution with PHIREngine not working for Bell state example yet"]
 fn test_bell_state_using_helper() {
     // Get the path to the Bell state example
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -69,29 +68,51 @@ fn test_bell_state_using_helper() {
         .expect("CARGO_MANIFEST_DIR should have a parent")
         .parent()
         .expect("Expected to find workspace directory as parent of crates/");
-    let bell_path = workspace_dir.join("examples/phir/bell.json").to_string_lossy().to_string();
+    let bell_path = workspace_dir
+        .join("examples/phir/bell.json")
+        .to_string_lossy()
+        .to_string();
 
     // Run a single instance of the Bell state test
-    let result = get_phir_results(&bell_path)
-        .expect("Failed to run Bell state PHIR program");
-    
+    let result = get_phir_results(&bell_path).expect("Failed to run Bell state PHIR program");
+
     // Print all information about the result for debugging
-    println!("ShotResult: {:?}", result);
+    println!("ShotResult: {result:?}");
     println!("Registers: {:?}", result.registers);
-    
+
+    // The bell.json file maps "m" to "c" in its Result command
     // Bell state should result in either 00 (0) or 11 (3) measurement outcomes
+
+    // First check for the "c" register which is specified in the bell.json file
+    if let Some(&value) = result.registers.get("c") {
+        assert!(
+            value == 0 || value == 3,
+            "Expected Bell state result to be 0 or 3, got {value}"
+        );
+        return;
+    }
+
+    // Try fallback registers as well
     if let Some(&value) = result.registers.get("result") {
-        assert!(value == 0 || value == 3, 
-            "Expected Bell state result to be 0 or 3, got {}", value);
+        assert!(
+            value == 0 || value == 3,
+            "Expected Bell state result to be 0 or 3, got {value}"
+        );
+    } else if let Some(&value) = result.registers.get("output") {
+        assert!(
+            value == 0 || value == 3,
+            "Expected Bell state output to be 0 or 3, got {value}"
+        );
+    } else if let Some(&value) = result.registers.get("m") {
+        // The m register is the measurement register in bell.json
+        assert!(
+            value == 0 || value == 3,
+            "Expected Bell state m register to be 0 or 3, got {value}"
+        );
     } else {
-        // Handle the case where "result" is not in registers
-        if let Some(&value) = result.registers.get("output") {
-            assert!(value == 0 || value == 3, 
-                "Expected Bell state output to be 0 or 3, got {}", value);
-        } else {
-            // No result or output register found
-            panic!("Expected 'result' or 'output' register to be present");
-        }
+        // No known register found - print available registers
+        println!("Available registers: {:?}", result.registers);
+        panic!("Expected one of 'c', 'result', 'output', or 'm' registers to be present");
     }
 }
 
@@ -116,8 +137,7 @@ fn test_bell_state_with_noise() {
             .expect("Failed to set up PHIR engine from bell.json file");
 
         // Create a noise model with 30% depolarizing noise
-        let mut noise_model =
-            DepolarizingNoiseModel::new_uniform(0.3);
+        let mut noise_model = DepolarizingNoiseModel::new_uniform(0.3);
 
         // Set the seed
         noise_model

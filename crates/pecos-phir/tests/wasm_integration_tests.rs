@@ -1,4 +1,4 @@
-#[cfg(test)]
+#[cfg(all(test, feature = "wasm"))]
 mod tests {
     use pecos_core::errors::PecosError;
     use pecos_engines::Engine;

@@ -1,31 +1,27 @@
+mod common;
+
 #[cfg(test)]
 mod tests {
     use pecos_core::errors::PecosError;
-    use pecos_engines::Engine;
-    use pecos_phir::v0_1::engine::PHIREngine;
-    use std::path::Path;
+    
+    // Import helpers from common module
+    use crate::common::phir_test_utils::{
+        get_phir_results, assert_shotresult_value, assert_shotresult_values
+    };
 
-    // Test 1: Basic arithmetic expressions
+    // Test 1: Basic arithmetic expressions 
     #[test]
     fn test_arithmetic_expressions() -> Result<(), PecosError> {
-        // Path to our test file
-        let phir_path =
-            Path::new("crates/pecos-phir/tests/assets/arithmetic_expressions_test.json");
-
-        // Skip the test if the file doesn't exist
-        if !phir_path.exists() {
-            println!("Skipping test_arithmetic_expressions: test file not found");
-            return Ok(());
-        }
-
-        // Create a PHIR engine from the program file
-        let mut engine = PHIREngine::new(phir_path)?;
-
-        // Execute the program
-        let result = engine.process(())?;
-
+        let result = get_phir_results("tests/assets/arithmetic_expressions_test.json")?;
+        
+        // Print all information about the result for debugging
+        println!("ShotResult: {:?}", result);
+        println!("Registers: {:?}", result.registers);
+        println!("Registers_u64: {:?}", result.registers_u64);
+        println!("Registers_i64: {:?}", result.registers_i64);
+        
         // Verify the result - we expect output = (10 * 5) - (10 + 5) = 50 - 15 = 35
-        assert_eq!(result.registers.get("output"), Some(&35));
+        assert_shotresult_value(&result, "output", 35);
 
         Ok(())
     }
@@ -33,27 +29,15 @@ mod tests {
     // Test 2: Comparison expressions and logical operators
     #[test]
     fn test_comparison_expressions() -> Result<(), PecosError> {
-        // Path to our test file
-        let phir_path =
-            Path::new("crates/pecos-phir/tests/assets/comparison_expressions_test.json");
-
-        // Skip the test if the file doesn't exist
-        if !phir_path.exists() {
-            println!("Skipping test_comparison_expressions: test file not found");
-            return Ok(());
-        }
-
-        // Create a PHIR engine from the program file
-        let mut engine = PHIREngine::new(phir_path)?;
-
-        // Execute the program
-        let result = engine.process(())?;
+        let result = get_phir_results("tests/assets/comparison_expressions_test.json")?;
 
         // Verify results
-        assert_eq!(result.registers.get("less_than_result"), Some(&1)); // 5 < 10, so true (1)
-        assert_eq!(result.registers.get("equal_result"), Some(&1)); // 10 == 10, so true (1)
-        assert_eq!(result.registers.get("greater_than_result"), Some(&1)); // 10 > 5, so true (1)
-        assert_eq!(result.registers.get("combined_result"), Some(&1)); // 1 & 1, so true (1)
+        assert_shotresult_values(&result, &[
+            ("less_than_result", 1),      // 5 < 10, so true (1)
+            ("equal_result", 1),          // 10 == 10, so true (1)
+            ("greater_than_result", 1),   // 10 > 5, so true (1)
+            ("combined_result", 1),       // 1 & 1, so true (1)
+        ]);
 
         Ok(())
     }
@@ -61,26 +45,15 @@ mod tests {
     // Test 3: Bit manipulation operations
     #[test]
     fn test_bit_operations() -> Result<(), PecosError> {
-        // Path to our test file
-        let phir_path = Path::new("crates/pecos-phir/tests/assets/bit_operations_test.json");
-
-        // Skip the test if the file doesn't exist
-        if !phir_path.exists() {
-            println!("Skipping test_bit_operations: test file not found");
-            return Ok(());
-        }
-
-        // Create a PHIR engine from the program file
-        let mut engine = PHIREngine::new(phir_path)?;
-
-        // Execute the program
-        let result = engine.process(())?;
+        let result = get_phir_results("tests/assets/bit_operations_test.json")?;
 
         // Verify results
-        assert_eq!(result.registers.get("bit_and_result"), Some(&1)); // 3 & 5 = 1
-        assert_eq!(result.registers.get("bit_or_result"), Some(&7)); // 3 | 5 = 7
-        assert_eq!(result.registers.get("bit_xor_result"), Some(&6)); // 3 ^ 5 = 6
-        assert_eq!(result.registers.get("bit_shift_result"), Some(&12)); // 3 << 2 = 12
+        assert_shotresult_values(&result, &[
+            ("bit_and_result", 1),       // 3 & 5 = 1
+            ("bit_or_result", 7),        // 3 | 5 = 7
+            ("bit_xor_result", 6),       // 3 ^ 5 = 6
+            ("bit_shift_result", 12),    // 3 << 2 = 12
+        ]);
 
         Ok(())
     }
@@ -88,23 +61,10 @@ mod tests {
     // Test 4: Nested expressions
     #[test]
     fn test_nested_expressions() -> Result<(), PecosError> {
-        // Path to our test file
-        let phir_path = Path::new("crates/pecos-phir/tests/assets/nested_expressions_test.json");
-
-        // Skip the test if the file doesn't exist
-        if !phir_path.exists() {
-            println!("Skipping test_nested_expressions: test file not found");
-            return Ok(());
-        }
-
-        // Create a PHIR engine from the program file
-        let mut engine = PHIREngine::new(phir_path)?;
-
-        // Execute the program
-        let result = engine.process(())?;
+        let result = get_phir_results("tests/assets/nested_expressions_test.json")?;
 
         // Verify result - we expect output = (5 * 10) + (15 - 5) = 50 + 10 = 60
-        assert_eq!(result.registers.get("output"), Some(&60));
+        assert_shotresult_value(&result, "output", 60);
 
         Ok(())
     }
@@ -112,30 +72,16 @@ mod tests {
     // Test 5: Variable bit access
     #[test]
     fn test_variable_bit_access() -> Result<(), PecosError> {
-        // Path to our test file
-        let phir_path = Path::new("crates/pecos-phir/tests/assets/variable_bit_access_test.json");
-
-        // Skip the test if the file doesn't exist
-        if !phir_path.exists() {
-            println!("Skipping test_variable_bit_access: test file not found");
-            return Ok(());
-        }
-
-        // Create a PHIR engine from the program file
-        let mut engine = PHIREngine::new(phir_path)?;
-
-        // Execute the program
-        let result = engine.process(())?;
+        let result = get_phir_results("tests/assets/variable_bit_access_test.json")?;
 
         // Verify results
         // Initial value is 5 (binary 101), so bits 0 and 2 are 1, bit 1 is 0
-        assert_eq!(result.registers.get("bit0_result"), Some(&1));
-        assert_eq!(result.registers.get("bit1_result"), Some(&0));
-        assert_eq!(result.registers.get("bit2_result"), Some(&1));
-
-        // After bit modifications (setting bit 0 to 1, bit 1 to 0, bit 2 to 1),
-        // value should be binary 101 = decimal 5 (unchanged in this case)
-        assert_eq!(result.registers.get("value_result"), Some(&5));
+        assert_shotresult_values(&result, &[
+            ("bit0_result", 1),   // bit 0 of 5 (101) is 1
+            ("bit1_result", 0),   // bit 1 of 5 (101) is 0
+            ("bit2_result", 1),   // bit 2 of 5 (101) is 1
+            ("value_result", 5),  // Final value after bit ops
+        ]);
 
         Ok(())
     }

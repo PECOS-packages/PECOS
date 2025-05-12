@@ -1,18 +1,31 @@
+#[cfg(feature = "wasm")]
 use crate::v0_1::foreign_objects::ForeignObject;
+#[cfg(feature = "wasm")]
 use log::{debug, warn};
+#[cfg(feature = "wasm")]
 use parking_lot::{Mutex, RwLock};
+#[cfg(feature = "wasm")]
 use pecos_core::errors::PecosError;
+#[cfg(feature = "wasm")]
 use std::any::Any;
+#[cfg(feature = "wasm")]
 use std::path::Path;
+#[cfg(feature = "wasm")]
 use std::sync::Arc;
+#[cfg(feature = "wasm")]
 use std::thread;
+#[cfg(feature = "wasm")]
 use std::time::Duration;
+#[cfg(feature = "wasm")]
 use wasmtime::{Config, Engine, Func, Instance, Module, Store, Trap, Val};
 
+#[cfg(feature = "wasm")]
 const WASM_EXECUTION_MAX_TICKS: u64 = 10_000;
+#[cfg(feature = "wasm")]
 const WASM_EXECUTION_TICK_LENGTH_MS: u64 = 10;
 
 /// WebAssembly foreign object implementation for executing WebAssembly functions
+#[cfg(feature = "wasm")]
 #[derive(Debug)]
 pub struct WasmtimeForeignObject {
     /// WebAssembly binary
@@ -35,6 +48,7 @@ pub struct WasmtimeForeignObject {
     last_results: Vec<Val>,
 }
 
+#[cfg(feature = "wasm")]
 impl WasmtimeForeignObject {
     /// Create a new WebAssembly foreign object from a file
     ///
@@ -146,6 +160,7 @@ impl WasmtimeForeignObject {
     }
 }
 
+#[cfg(feature = "wasm")]
 impl ForeignObject for WasmtimeForeignObject {
     fn init(&mut self) -> Result<(), PecosError> {
         // Create a new instance
@@ -304,6 +319,7 @@ impl ForeignObject for WasmtimeForeignObject {
     }
 }
 
+#[cfg(feature = "wasm")]
 impl Drop for WasmtimeForeignObject {
     fn drop(&mut self) {
         // Set the stop flag to stop the epoch increment thread

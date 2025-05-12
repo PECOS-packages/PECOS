@@ -2,32 +2,22 @@
   "format": "PHIR/JSON",
   "version": "0.1.0",
   "metadata": {
-    "num_qubits": 2,
-    "source_program_type": ["Test", ["PECOS", "0.5.dev1"]]
+    "num_qubits": 2
   },
   "ops": [
     {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
     {"data": "cvar_define", "data_type": "i32", "variable": "m0", "size": 32},
     {"data": "cvar_define", "data_type": "i32", "variable": "m1", "size": 32},
     {"data": "cvar_define", "data_type": "i32", "variable": "result", "size": 32},
-
     {"qop": "H", "args": [["q", 0]]},
-
     {"mop": "Idle", "args": [["q", 0], ["q", 1]], "duration": [5.0, "ms"]},
-
     {"mop": "Delay", "args": [["q", 0]], "duration": [2.0, "us"]},
-
     {"mop": "Transport", "args": [["q", 1]], "duration": [1.0, "ms"], "metadata": {"from_position": [0, 0], "to_position": [1, 0]}},
-
     {"mop": "Timing", "args": [["q", 0], ["q", 1]], "metadata": {"timing_type": "sync", "label": "sync_point_1"}},
-
-    {"mop": "Reset", "args": [["q", 0]], "duration": [0.5, "us"]},
-
+    {"mop": "Init", "args": [["q", 0]], "metadata": {"duration": [0.5, "us"]}},
     {"qop": "CX", "args": [["q", 0], ["q", 1]]},
-
     {"qop": "Measure", "args": [["q", 0]], "returns": [["m0", 0]]},
     {"qop": "Measure", "args": [["q", 1]], "returns": [["m1", 0]]},
-
     {"cop": "=", "args": [1], "returns": ["m0"]},
     {"cop": "=", "args": [0], "returns": ["m1"]},
     {"cop": "=", "args": [{"cop": "+", "args": ["m0", "m1"]}], "returns": ["result"]},

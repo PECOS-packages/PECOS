@@ -15,6 +15,7 @@ description = "PHIR (PECOS High-level Intermediate Representation) specification
 default = ["v0_1"]
 v0_1 = []
 all-versions = ["v0_1"]
+wasm = ["wasmtime", "parking_lot"]
 
 [dependencies]
 log.workspace = true
@@ -22,8 +23,8 @@ serde.workspace = true
 serde_json.workspace = true
 pecos-core.workspace = true
 pecos-engines.workspace = true
-wasmtime = "32.0.0"
-parking_lot = "0.12.1"
+wasmtime = { version = "32.0.0", optional = true }
+parking_lot = { version = "0.12.1", optional = true }
 
 [dev-dependencies]
 # Testing

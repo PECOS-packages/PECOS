@@ -1,4 +1,4 @@
-#[cfg(test)]
+#[cfg(all(test, feature = "wasm"))]
 mod tests {
     use pecos_phir::v0_1::foreign_objects::ForeignObject;
     use pecos_phir::v0_1::wasm_foreign_object::WasmtimeForeignObject;

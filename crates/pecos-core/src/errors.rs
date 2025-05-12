@@ -61,6 +61,10 @@ pub enum PecosError {
     /// This covers arithmetic errors, variable access, and general expression evaluation
     #[error("Computation error: {0}")]
     Computation(String),
+
+    /// Error related to missing or disabled features
+    #[error("Feature error: {0}")]
+    Feature(String),
 }
 
 impl PecosError {

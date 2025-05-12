@@ -67,6 +67,7 @@ pub fn setup_phir_v0_1_engine(program_path: &Path) -> Result<Box<dyn ClassicalEn
 }
 
 /// Shorthand function to set up a v0.1 PHIR engine from a file path with WebAssembly support
+#[cfg(feature = "wasm")]
 pub fn setup_phir_v0_1_engine_with_wasm(
     program_path: &Path,
     wasm_path: &Path,
@@ -87,4 +88,12 @@ pub fn setup_phir_v0_1_engine_with_wasm(
     engine.set_foreign_object(foreign_object);
 
     Ok(Box::new(engine))
+}
+
+#[cfg(not(feature = "wasm"))]
+pub fn setup_phir_v0_1_engine_with_wasm(
+    _program_path: &Path,
+    _wasm_path: &Path,
+) -> Result<Box<dyn ClassicalEngine>, PecosError> {
+    Err(PecosError::Feature("WebAssembly support is not enabled. Rebuild with the 'wasm' feature to enable it.".to_string()))
 }

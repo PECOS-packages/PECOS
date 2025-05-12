@@ -1,11 +1,15 @@
+mod common;
+
 #[cfg(test)]
 mod tests {
     use pecos_core::errors::PecosError;
-    use pecos_engines::Engine;
-    use pecos_phir::v0_1::engine::PHIREngine;
     use pecos_phir::v0_1::operations::{MachineOperationResult, OperationProcessor};
     use std::collections::HashMap;
-    use std::path::Path;
+    
+    // Import helpers from common module
+    use crate::common::phir_test_utils::{
+        get_phir_results, assert_shotresult_value
+    };
 
     // Test direct machine operation processing
     #[test]
@@ -70,51 +74,28 @@ mod tests {
     #[test]
     #[ignore = "Needs further work to handle bit operations properly"]
     fn test_phir_with_machine_operations() -> Result<(), PecosError> {
-        // Path to our test file
-        let phir_path = Path::new(
-            "/home/ciaranra/Repos/PECOS/crates/pecos-phir/tests/assets/advanced_machine_operations_test.json",
-        );
-
-        // Skip the test if the file doesn't exist
-        if !phir_path.exists() {
-            println!("Skipping test_phir_with_machine_operations: test file not found");
-            return Ok(());
-        }
-
-        // Create a PHIR engine from the program file
-        let _engine = PHIREngine::new(phir_path)?;
-
-        // Just verify that we can parse and construct a valid engine from a file with machine operations
-        // The test_simple_machine_operations test covers actually executing a program with machine operations
-
+        let result = get_phir_results("tests/assets/advanced_machine_operations_test.json")?;
+        
+        // Print all information about the result for debugging
+        println!("ShotResult: {:?}", result);
+        println!("Registers: {:?}", result.registers);
+        
         // TODO: Fix test to properly handle measurement results and bit operations
-
         Ok(())
     }
 
     // Test running a simplified PHIR program with machine operations
     #[test]
     fn test_simple_machine_operations() -> Result<(), PecosError> {
-        // Path to our test file
-        let phir_path = Path::new(
-            "/home/ciaranra/Repos/PECOS/crates/pecos-phir/tests/assets/simple_machine_operations_test.json",
-        );
-
-        // Skip the test if the file doesn't exist
-        if !phir_path.exists() {
-            println!("Skipping test_simple_machine_operations: test file not found");
-            return Ok(());
-        }
-
-        // Create a PHIR engine from the program file
-        let mut engine = PHIREngine::new(phir_path)?;
-
-        // Execute the program
-        let result = engine.process(())?;
-
+        let result = get_phir_results("tests/assets/simple_machine_operations_test.json")?;
+        
+        // Print all information about the result for debugging
+        println!("ShotResult: {:?}", result);
+        println!("Registers: {:?}", result.registers);
+        
         // Verify that the program executed successfully with machine operations
-        assert!(result.registers.contains_key("output"));
-        assert_eq!(result.registers["output"], 42);
+        assert!(result.registers.contains_key("output"), "Expected 'output' register to be present");
+        assert_eq!(result.registers["output"], 42, "Expected output value to be 42");
 
         Ok(())
     }

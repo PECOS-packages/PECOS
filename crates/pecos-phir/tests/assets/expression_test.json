@@ -2,8 +2,7 @@
   "format": "PHIR/JSON",
   "version": "0.1.0",
   "metadata": {
-    "num_qubits": 0,
-    "source_program_type": ["PECOS.QuantumCircuit", ["PECOS", "0.5.dev1"]]
+    "num_qubits": 0
   },
   "ops": [
     {"data": "cvar_define", "data_type": "i32", "variable": "a", "size": 32},

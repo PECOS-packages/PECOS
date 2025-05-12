@@ -56,6 +56,11 @@ pub enum PecosError {
     /// Error related to an unsupported or invalid quantum gate
     #[error("Gate error: {0}")]
     Gate(String),
+
+    /// Error related to expression evaluation or computation
+    /// This covers arithmetic errors, variable access, and general expression evaluation
+    #[error("Computation error: {0}")]
+    Computation(String),
 }
 
 impl PecosError {

@@ -1,0 +1,26 @@
+{
+  "format": "PHIR/JSON",
+  "version": "0.1.0",
+  "metadata": {
+    "num_qubits": 0,
+    "source_program_type": ["Test", ["PECOS", "0.5.dev1"]]
+  },
+  "ops": [
+    {"data": "cvar_define", "data_type": "i32", "variable": "a", "size": 32},
+    {"data": "cvar_define", "data_type": "i32", "variable": "b", "size": 32},
+    {"data": "cvar_define", "data_type": "i32", "variable": "less_than", "size": 32},
+    {"data": "cvar_define", "data_type": "i32", "variable": "equal", "size": 32},
+    {"data": "cvar_define", "data_type": "i32", "variable": "greater_than", "size": 32},
+    {"data": "cvar_define", "data_type": "i32", "variable": "combined", "size": 32},
+    {"cop": "=", "args": [10], "returns": ["a"]},
+    {"cop": "=", "args": [5], "returns": ["b"]},
+    {"cop": "=", "args": [{"cop": "<", "args": ["b", "a"]}], "returns": ["less_than"]},
+    {"cop": "=", "args": [{"cop": "==", "args": ["a", 10]}], "returns": ["equal"]},
+    {"cop": "=", "args": [{"cop": ">", "args": ["a", "b"]}], "returns": ["greater_than"]},
+    {"cop": "=", "args": [{"cop": "&", "args": ["less_than", "equal"]}], "returns": ["combined"]},
+    {"cop": "Result", "args": ["less_than"], "returns": ["less_than_result"]},
+    {"cop": "Result", "args": ["equal"], "returns": ["equal_result"]},
+    {"cop": "Result", "args": ["greater_than"], "returns": ["greater_than_result"]},
+    {"cop": "Result", "args": ["combined"], "returns": ["combined_result"]}
+  ]
+}

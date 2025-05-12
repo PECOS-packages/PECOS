@@ -1,0 +1,21 @@
+{
+  "format": "PHIR/JSON",
+  "version": "0.1.0",
+  "metadata": {
+    "num_qubits": 0,
+    "source_program_type": ["Test", ["PECOS", "0.5.dev1"]]
+  },
+  "ops": [
+    {"data": "cvar_define", "data_type": "i32", "variable": "a", "size": 32},
+    {"data": "cvar_define", "data_type": "i32", "variable": "b", "size": 32},
+    {"data": "cvar_define", "data_type": "i32", "variable": "c", "size": 32},
+    {"data": "cvar_define", "data_type": "i32", "variable": "d", "size": 32},
+    {"data": "cvar_define", "data_type": "i32", "variable": "result", "size": 32},
+    {"cop": "=", "args": [10], "returns": ["a"]},
+    {"cop": "=", "args": [5], "returns": ["b"]},
+    {"cop": "=", "args": [{"cop": "+", "args": ["a", "b"]}], "returns": ["c"]},
+    {"cop": "=", "args": [{"cop": "*", "args": ["a", "b"]}], "returns": ["d"]},
+    {"cop": "=", "args": [{"cop": "-", "args": ["d", "c"]}], "returns": ["result"]},
+    {"cop": "Result", "args": ["result"], "returns": ["output"]}
+  ]
+}

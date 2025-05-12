@@ -24,6 +24,27 @@ This document tracks changes and additions to the PHIR v0.1.x specification seri
   This flexible approach follows the general pattern of other PHIR commands and allows for concise expression of which
   values should be included in program outputs.
 
+- **Enhanced Machine Operations (MOPs)**: Expanded and fully specified the machine operations for better hardware control
+  ```json
+  {
+    "mop": "Operation_Type",
+    "args": [...],           // Qubits affected by the operation
+    "duration": [5.0, "ms"], // Time duration with unit
+    "metadata": {...}        // Additional operation-specific data
+  }
+  ```
+
+  Added detailed specifications and implementations for:
+  - **Idle**: Specifies qubits to idle for a specific duration
+  - **Delay**: Inserts intentional delays for specific qubits
+  - **Transport**: Represents qubit movement between physical locations
+  - **Timing**: Provides synchronization points in the program
+  - **Reset**: Resets qubits to |0⟩ state using hardware mechanisms
+  - **Skip**: No-op placeholder for operations with no effect
+
+  These operations provide fine-grained control over the physical aspects of quantum computation,
+  enabling more realistic hardware simulation and better timing control in quantum programs.
+
 ## v0.1.0
 
 Initial release of the PHIR specification with:

@@ -1,6 +1,8 @@
 pub mod ast;
 pub mod engine;
+pub mod foreign_objects;
 pub mod operations;
+pub mod wasm_foreign_object;
 
 use crate::version_traits::PHIRImplementation;
 use pecos_core::errors::PecosError;
@@ -62,4 +64,27 @@ impl PHIRImplementation for V0_1 {
 /// Shorthand function to set up a v0.1 PHIR engine from a file path
 pub fn setup_phir_v0_1_engine(program_path: &Path) -> Result<Box<dyn ClassicalEngine>, PecosError> {
     V0_1::setup_engine(program_path)
+}
+
+/// Shorthand function to set up a v0.1 PHIR engine from a file path with WebAssembly support
+pub fn setup_phir_v0_1_engine_with_wasm(
+    program_path: &Path,
+    wasm_path: &Path,
+) -> Result<Box<dyn ClassicalEngine>, PecosError> {
+    use crate::v0_1::wasm_foreign_object::WasmtimeForeignObject;
+    use std::sync::Arc;
+
+    // Create WebAssembly foreign object
+    let foreign_object = WasmtimeForeignObject::new(wasm_path)?;
+    let foreign_object = Arc::new(foreign_object);
+
+    // Create engine
+    let content = std::fs::read_to_string(program_path).map_err(PecosError::IO)?;
+    let program = V0_1::parse_program(&content)?;
+    let mut engine = V0_1::create_engine(program);
+
+    // Set foreign object
+    engine.set_foreign_object(foreign_object);
+
+    Ok(Box::new(engine))
 }

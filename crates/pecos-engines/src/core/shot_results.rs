@@ -1,9 +1,3 @@
-#![allow(clippy::similar_names)]
-// For percentage calculations below with large usize values converted to f64,
-// we accept the potential precision loss since the values are used only for display
-// with a single decimal place, and the precision loss would only be observable
-// with extremely large shot counts (> 2^53).
-#![allow(clippy::cast_precision_loss)]
 // Copyright 2025 The PECOS Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -15,6 +9,13 @@
 // is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
+
+#![allow(clippy::similar_names)]
+// For percentage calculations below with large usize values converted to f64,
+// we accept the potential precision loss since the values are used only for display
+// with a single decimal place, and the precision loss would only be observable
+// with extremely large shot counts (> 2^53).
+#![allow(clippy::cast_precision_loss)]
 
 use crate::byte_message::ByteMessage;
 use pecos_core::errors::PecosError;

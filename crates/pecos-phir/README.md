@@ -127,7 +127,21 @@ For alternative validation, the [Python Pydantic PHIR validator](https://github.
 
 ### Classical Operations
 
-- `Result`: Used to export measurement results
+- Variable operations: `=` (assignment), arithmetic (+, -, *, /, etc.), comparisons (==, !=, <, >, etc.)
+- Control flow: Conditional execution with `if` blocks
+- Foreign function calls: `ffcall` for calling WebAssembly functions
+- Export: `Result` for exporting measurement results
+
+### Machine Operations
+
+- `Idle`: Specify qubits to idle for a specific duration
+- `Delay`: Insert a specific delay for qubits
+- `Transport`: Move qubits from one location to another
+- `Timing`: Synchronize operations in time
+- `Reset`: Reset qubits to |0⟩ state
+- `Skip`: No-op placeholder
+
+See [Machine Operations Documentation](src/v0_1/README.md) for more details.
 
 ## Versioning
 

@@ -20,16 +20,16 @@ fn test_variable_environment() {
     env.set("i32_var", 12345).unwrap();
     
     // Verify values
-    assert_eq!(env.get("i8_var"), Some(100));
-    assert_eq!(env.get("u8_var"), Some(200));
-    assert_eq!(env.get("i32_var"), Some(12345));
+    assert_eq!(env.get("i8_var").map(|v| v.as_i64()), Some(100));
+    assert_eq!(env.get("u8_var").map(|v| v.as_u64()), Some(200));
+    assert_eq!(env.get("i32_var").map(|v| v.as_i64()), Some(12345));
     
     // Test type constraints
     env.set("i8_var", 130).unwrap(); // Should wrap around due to i8 constraints
-    assert_eq!(env.get("i8_var"), Some(0xFFFFFFFFFFFFFF82)); // -126 as u64
+    assert_eq!(env.get("i8_var").map(|v| v.as_u64()), Some(0xFFFFFFFFFFFFFF82)); // -126 as u64
     
     env.set("u8_var", 300).unwrap(); // Should be masked to 44 (300 % 256)
-    assert_eq!(env.get("u8_var"), Some(44));
+    assert_eq!(env.get("u8_var").map(|v| v.as_u64()), Some(44));
     
     // Test bit operations
     env.add_variable("bits", DataType::U8, 8).unwrap();
@@ -39,19 +39,19 @@ fn test_variable_environment() {
     env.set_bit("bits", 2, 1).unwrap(); // Set bit 2
     env.set_bit("bits", 4, 1).unwrap(); // Set bit 4
     
-    assert_eq!(env.get("bits"), Some(0b00010101)); // Binary 21
+    assert_eq!(env.get("bits").map(|v| v.as_u64()), Some(0b00010101)); // Binary 21
     
     // Test getting individual bits
-    assert_eq!(env.get_bit("bits", 0).unwrap(), 1);
-    assert_eq!(env.get_bit("bits", 1).unwrap(), 0);
-    assert_eq!(env.get_bit("bits", 2).unwrap(), 1);
+    assert!(env.get_bit("bits", 0).unwrap().0);
+    assert!(!env.get_bit("bits", 1).unwrap().0);
+    assert!(env.get_bit("bits", 2).unwrap().0);
     
     // Test reset_values
     env.reset_values();
-    assert_eq!(env.get("i8_var"), Some(0));
-    assert_eq!(env.get("u8_var"), Some(0));
-    assert_eq!(env.get("i32_var"), Some(0));
-    assert_eq!(env.get("bits"), Some(0));
+    assert_eq!(env.get("i8_var").map(|v| v.as_u64()), Some(0));
+    assert_eq!(env.get("u8_var").map(|v| v.as_u64()), Some(0));
+    assert_eq!(env.get("i32_var").map(|v| v.as_u64()), Some(0));
+    assert_eq!(env.get("bits").map(|v| v.as_u64()), Some(0));
     
     // Make sure variables still exist after reset
     assert!(env.has_variable("i8_var"));
@@ -72,7 +72,7 @@ fn test_expression_evaluation() {
     env.set("b", 5).unwrap();
     env.set("c", 2).unwrap();
     
-    let evaluator = ExpressionEvaluator::new(&env);
+    let mut evaluator = ExpressionEvaluator::new(&env);
     
     // Test basic expression types
     let expr_int = Expression::Integer(42);

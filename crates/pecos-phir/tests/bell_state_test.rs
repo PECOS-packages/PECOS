@@ -32,7 +32,7 @@ fn test_bell_state_noiseless() -> Result<(), PecosError> {
         {"qop": "CX", "args": [["q", 0], ["q", 1]]},
         {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]},
         {"qop": "Measure", "args": [["q", 1]], "returns": [["m", 1]]},
-        {"cop": "Result", "args": ["m"], "returns": ["c"]}
+        {"cop": "Result", "args": ["m"], "returns": ["v"]}
       ]
     }"#;
 
@@ -53,7 +53,7 @@ fn test_bell_state_noiseless() -> Result<(), PecosError> {
     for shot in &results.shots {
         // If there's no "c" key in the output, just count it as an empty result
         let result_str = shot
-            .get("c")
+            .get("v")
             .map_or_else(String::new, std::clone::Clone::clone);
         *counts.entry(result_str).or_insert(0) += 1;
     }

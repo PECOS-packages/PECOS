@@ -35,6 +35,11 @@ pecos-engines.workspace = true
 [dev-dependencies]
 # Testing
 tempfile = "3.8"
+# Required for doctests
+pest = { workspace = true }
+pecos-core = { workspace = true }
+pecos-engines = { workspace = true }
+pecos-qsim = { workspace = true }
 
 [lints]
 workspace = true

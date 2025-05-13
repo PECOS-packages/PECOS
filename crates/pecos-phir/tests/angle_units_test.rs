@@ -19,7 +19,7 @@ mod tests {
           },
           "ops": [
             {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 3},
-            {"data": "cvar_define", "data_type": "i32", "variable": "m", "size": 3},
+            {"data": "cvar_define", "data_type": "i32", "variable": "c", "size": 3},
 
             {"qop": "RZ", "angles": [[1.5707963267948966], "rad"], "args": [["q", 0]], "returns": []},
             {"qop": "RZ", "angles": [[90.0], "deg"], "args": [["q", 1]], "returns": []},
@@ -29,11 +29,11 @@ mod tests {
             {"qop": "R1XY", "angles": [[0.0, 180.0], "deg"], "args": [["q", 1]], "returns": []},
             {"qop": "R1XY", "angles": [[0.0, 1.0], "pi"], "args": [["q", 2]], "returns": []},
 
-            {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]},
-            {"qop": "Measure", "args": [["q", 1]], "returns": [["m", 1]]},
-            {"qop": "Measure", "args": [["q", 2]], "returns": [["m", 2]]},
+            {"qop": "Measure", "args": [["q", 0]], "returns": [["c", 0]]},
+            {"qop": "Measure", "args": [["q", 1]], "returns": [["c", 1]]},
+            {"qop": "Measure", "args": [["q", 2]], "returns": [["c", 2]]},
 
-            {"cop": "Result", "args": ["m"], "returns": ["output"]}
+            {"cop": "Result", "args": ["c"], "returns": ["ret"]}
           ]
         }"#;
 
@@ -50,7 +50,7 @@ mod tests {
         // but we just want to ensure the program runs without errors
         let shot = &results.shots[0];
         assert!(
-            shot.contains_key("output"),
+            shot.contains_key("ret"),
             "Expected 'output' register to be present"
         );
 

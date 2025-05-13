@@ -182,69 +182,31 @@ impl PHIREngine {
     }
 
     /// Resets the engine state
+    /// 
+    /// Simplified reset that treats the environment as the single source of truth.
+    /// This no longer preserves and restores variable values during reset, as they
+    /// should be recomputed during program execution.
     fn reset_state(&mut self) {
-        debug!(
-            "INTERNAL RESET: PHIREngine reset before current_op={}",
-            self.current_op
-        );
+        debug!("INTERNAL RESET: PHIREngine reset, current_op={}", self.current_op);
 
-        // Store the existing measurement results and export mappings
-        let had_measurements = !self.processor.measurement_results.is_empty();
-        let had_exports = !self.processor.export_mappings.is_empty();
-
-        let measurement_results = if had_measurements {
-            debug!("Preserving existing measurement results during reset");
-            self.processor.measurement_results.clone()
-        } else {
-            HashMap::new()
-        };
-
-        let export_mappings = if had_exports {
-            debug!("Preserving existing export mappings during reset");
-            self.processor.export_mappings.clone()
-        } else {
-            Vec::new()
-        };
-
-        let exported_values = self.processor.exported_values.clone();
-
-        // Reset the operation index
+        // Reset the operation index to start from the beginning
         self.current_op = 0;
-        debug!(
-            "INTERNAL RESET: PHIREngine reset after current_op={}",
-            self.current_op
-        );
-
-        // Print out all operations for debugging
-        if let Some(program) = &self.program {
-            for (i, op) in program.ops.iter().enumerate() {
-                debug!("Operation {}: {:?}", i, op);
-            }
+        
+        // Log operations for debugging if needed
+        if log::log_enabled!(log::Level::Debug) && self.program.is_some() {
+            let program = self.program.as_ref().unwrap();
+            debug!("Operations to process after reset: {}", program.ops.len());
         }
 
-        // Reset the processor state (this preserves the foreign object)
+        // Reset the processor state (maintains variable definitions but clears values)
+        // This is now a clean reset without preserving values, since the environment 
+        // is the single source of truth and values should be recomputed as needed
         self.processor.reset();
-
-        // Restore the measurement results and export mappings if they existed
-        if had_measurements {
-            debug!(
-                "Restoring measurement results after reset: {:?}",
-                measurement_results
-            );
-            self.processor.measurement_results = measurement_results;
-        }
-
-        if had_exports {
-            debug!(
-                "Restoring export mappings after reset: {:?}",
-                export_mappings
-            );
-            self.processor.export_mappings = export_mappings;
-            self.processor.exported_values = exported_values;
-        }
 
         // Reset the message builder to reuse allocated memory
         self.message_builder.reset();
+        
+        debug!("PHIREngine reset complete, ready for next execution");
     }
 
     // Create an empty engine without any program
@@ -856,13 +818,14 @@ impl ClassicalEngine for PHIREngine {
         // First process all export mappings to get properly processed values
         let mut exported_values = self.processor.process_export_mappings();
 
-        // Determine which registers to include in the results based on export mappings
-        if !self.processor.export_mappings.is_empty() {
-            log::info!("PHIR: Using export mappings to determine which registers to include");
+        // Determine which registers to include in the results based on environment mappings
+        let mappings = self.processor.environment.get_mappings();
+        if !mappings.is_empty() {
+            log::info!("PHIR: Using environment mappings to determine which registers to include");
 
             // Keep only the registers that are explicitly mapped as destinations
             // This provides a general approach that works for all tests including Bell state tests
-            let destination_registers: HashSet<String> = self.processor.export_mappings
+            let destination_registers: HashSet<String> = mappings
                 .iter()
                 .map(|(_, dest)| dest.clone())
                 .collect();
@@ -890,7 +853,7 @@ impl ClassicalEngine for PHIREngine {
                 if let Some(value) = self.processor.environment.get(&info.name) {
                     // Add to exported_values if not already there
                     exported_values.entry(info.name.clone())
-                        .or_insert(value as u32);
+                        .or_insert(value.as_u32());
 
                     log::info!("PHIR: Added direct variable from environment {} = {}", info.name, value);
 
@@ -908,7 +871,7 @@ impl ClassicalEngine for PHIREngine {
 
         for (key, value) in &exported_values {
             results.registers.insert(key.clone(), *value);
-            results.registers_u64.insert(key.clone(), u64::from(*value));
+            results.registers_u64.insert(key.clone(), *value as u64);
             results.registers_i64.insert(key.clone(), *value as i64);
             log::info!("PHIR: Adding mapped register {} = {}", key, value);
         }
@@ -922,85 +885,69 @@ impl ClassicalEngine for PHIREngine {
             for info in self.processor.environment.get_all_variables() {
                 if let Some(value) = self.processor.environment.get(&info.name) {
                     log::info!("PHIR: Adding variable {} = {} to results", info.name, value);
-                    results.registers.insert(info.name.clone(), value as u32);
-                    results.registers_u64.insert(info.name.clone(), u64::from(value));
-                    results.registers_i64.insert(info.name.clone(), value as i64);
+                    results.registers.insert(info.name.clone(), value.as_u32());
+                    results.registers_u64.insert(info.name.clone(), value.as_u64());
+                    results.registers_i64.insert(info.name.clone(), value.as_i64());
                 }
             }
 
-            // Include legacy values (both if environment is empty and if specific variables exist)
-            #[allow(deprecated)]
-            {
-                // Process all export mappings
-                for (source, dest) in &self.processor.export_mappings {
-                    // Try to get the value from the environment first
-                    let mut found = false;
+            // Process all mappings from environment for any variables not previously handled
+            for (source, dest) in self.processor.environment.get_mappings() {
+                // Skip if this destination is already in the results
+                if results.registers.contains_key(dest) {
+                    continue;
+                }
+                
+                // Try to get the value from the environment
+                if let Some(value) = self.processor.environment.get(source) {
+                    log::info!("PHIR: Exporting {} -> {} = {}", source, dest, value);
+                    results.registers.insert(dest.clone(), value.as_u32());
+                    results.registers_u64.insert(dest.clone(), value.as_u64());
+                    results.registers_i64.insert(dest.clone(), value.as_i64());
+                } else {
+                    // If not found in environment, try the exported_values directly
+                    // Try to get the value directly from environment if not already found
                     if let Some(value) = self.processor.environment.get(source) {
-                        log::info!("PHIR: Exporting {} -> {} = {}", source, dest, value);
-                        results.registers.insert(dest.clone(), value as u32);
-                        results.registers_u64.insert(dest.clone(), u64::from(value));
-                        results.registers_i64.insert(dest.clone(), value as i64);
-                        found = true;
+                        log::info!("PHIR: Exporting from environment {} -> {} = {}", source, dest, value);
+                        results.registers.insert(dest.clone(), value.as_u32());
+                        results.registers_u64.insert(dest.clone(), value.as_u64());
+                        results.registers_i64.insert(dest.clone(), value.as_i64());
                     }
-
-                    // If not found in environment, try legacy storage for backward compatibility
-                    #[allow(deprecated)]
-                    if !found && self.processor.measurement_results.contains_key(source) {
-                        let value = self.processor.measurement_results[source];
-                        log::info!("PHIR: Exporting (legacy) {} -> {} = {}", source, dest, value);
-                        results.registers.insert(dest.clone(), value);
-                        results.registers_u64.insert(dest.clone(), u64::from(value));
-                        results.registers_i64.insert(dest.clone(), value as i64);
+                    // Note: We no longer fall back to measurement_results as primary source
+                }
+            }
+            
+            // If there are no registers in the results, add all variables from environment
+            if results.registers.is_empty() {
+                for info in self.processor.environment.get_all_variables() {
+                    if let Some(value) = self.processor.environment.get(&info.name) {
+                        log::info!("PHIR: Adding all variables: {} = {}", info.name, value);
+                        results.registers.insert(info.name.clone(), value.as_u32());
+                        results.registers_u64.insert(info.name.clone(), value.as_u64());
+                        results.registers_i64.insert(info.name.clone(), value.as_i64());
                     }
                 }
+            }
 
-                // Also include all legacy values if environment is empty
-                if results.registers.is_empty() {
-                    for (name, &value) in &self.processor.measurement_results {
-                        log::info!("PHIR: Adding legacy variable {} = {} to results", name, value);
-                        results.registers.insert(name.clone(), value);
-                        results.registers_u64.insert(name.clone(), u64::from(value));
-                        results.registers_i64.insert(name.clone(), value as i64);
-                    }
-                }
+            // No legacy fallback needed anymore since the environment is the single source of truth
+            if results.registers.is_empty() {
+                log::info!("PHIR: No register values found in environment, returning empty results");
             }
         }
 
-        // General rule for bit integrity - ensure bit-indexed variables are properly synchronized
-        // with their composite representation
-        for key in results.registers.keys().cloned().collect::<Vec<_>>() {
-            let value = results.registers[&key];
-
-            // Check for inconsistency between bit variables and composite variable
-            #[allow(deprecated)]
-            {
-                // First check if we have any bit-indexed variables
-                let mut bit_variables = false;
-                let mut reconstructed_value = 0u32;
-
-                // Look for bit variables like "key_0", "key_1", etc. and reconstruct value
-                for i in 0..32 {
-                    let bit_key = format!("{}_{}", key, i);
-                    if self.processor.measurement_results.contains_key(&bit_key) {
-                        bit_variables = true;
-                        let bit_val = self.processor.measurement_results[&bit_key] & 1;
-                        if bit_val != 0 {
-                            reconstructed_value |= 1 << i;
-                        }
-                    }
-                }
-
-                // If we have bit variables and they don't match the composite value,
-                // update to maintain consistency (general rule, not special case)
-                if bit_variables && reconstructed_value != value {
-                    log::info!("PHIR: Maintaining bit integrity - fixing composite {} value: {} -> {}",
-                             key, value, reconstructed_value);
-
-                    results.registers.insert(key.clone(), reconstructed_value);
-                    results.registers_u64.insert(key.clone(), reconstructed_value as u64);
-                    results.registers_i64.insert(key.clone(), reconstructed_value as i64);
-                }
-            }
+        // Since the environment is now the single source of truth for all variable data,
+        // we don't need to maintain consistency between bit-indexed variables and composite variables.
+        // All variables should already have the correct values directly from the environment.
+        //
+        // We're removing the complex bit variable reconstruction code since:
+        // 1. We no longer create or manage separate bit-indexed variables
+        // 2. All bit values are stored directly in integer variables
+        // 3. The environment handles all bit operations transparently
+        
+        // Just log the final state of the registers for debugging
+        log::info!("PHIR: Final register values from environment - no reconstruction needed");
+        for (key, value) in &results.registers {
+            log::debug!("PHIR: Register {} = {}", key, value);
         }
 
         log::info!("PHIR: Exported {} registers", results.registers.len());
@@ -1110,9 +1057,9 @@ impl Engine for PHIREngine {
 
                         // Log state after each classical operation
                         log::info!(
-                            "After classical operation {}, measurement_results: {:?}",
+                            "After classical operation {}, environment: {:?}",
                             i,
-                            self.processor.measurement_results
+                            self.processor.environment.get_all_variables()
                         );
                     }
                     Operation::QuantumOp {
@@ -1362,8 +1309,8 @@ impl Engine for PHIREngine {
             }
 
             log::info!(
-                "After processing all operations, measurement_results: {:?}",
-                self.processor.measurement_results
+                "After processing all operations, environment: {:?}",
+                self.processor.environment.get_all_variables()
             );
 
             // Extra pass to specifically handle all Result commands again just to be sure
@@ -1418,17 +1365,7 @@ impl Engine for PHIREngine {
             log::info!("Adding exported register {} = {}", key, value);
         }
 
-        // Add direct exports from processor too
-        for (key, value) in &self.processor.exported_values {
-            if !result.registers.contains_key(key) {
-                // Don't overwrite if already exists
-                result.registers.insert(key.clone(), *value);
-                result.registers_u64.insert(key.clone(), u64::from(*value));
-                // Also add to i64 registers
-                result.registers_i64.insert(key.clone(), *value as i64);
-                log::info!("Adding direct export {} = {}", key, value);
-            }
-        }
+        // All exports come from environment and export_mappings now
 
         // If there are no registers in the results or registers are missing, add all variables
         // from the environment to ensure we have a comprehensive result
@@ -1439,9 +1376,9 @@ impl Engine for PHIREngine {
             for info in self.processor.environment.get_all_variables() {
                 if let Some(value) = self.processor.environment.get(&info.name) {
                     log::info!("Adding variable {} = {} to results", info.name, value);
-                    result.registers.insert(info.name.clone(), value as u32);
-                    result.registers_u64.insert(info.name.clone(), u64::from(value));
-                    result.registers_i64.insert(info.name.clone(), value as i64);
+                    result.registers.insert(info.name.clone(), value.as_u32());
+                    result.registers_u64.insert(info.name.clone(), value.as_u64());
+                    result.registers_i64.insert(info.name.clone(), value.as_i64());
                 }
             }
         }

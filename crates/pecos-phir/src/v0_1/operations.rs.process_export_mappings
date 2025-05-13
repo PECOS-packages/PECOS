@@ -1,0 +1,77 @@
+    /// Process variable mappings and prepare final results
+    ///
+    /// This method creates a map of variable names to their values by:
+    /// 1. Using mappings defined in the environment
+    /// 2. Extracting values directly from variables
+    /// 3. Adding potential result variables when no explicit mappings exist
+    ///
+    /// The environment is the single source of truth for all variable data.
+    #[must_use]
+    pub fn process_export_mappings(&self) -> HashMap<String, u32> {
+        let mut exported_values = HashMap::new();
+
+        // Process all mappings from environment
+        let mappings = self.environment.get_mappings();
+        if !mappings.is_empty() {
+            log::info!("Processing {} mappings", mappings.len());
+
+            for (source_register, export_name) in mappings {
+                // Skip if we already have this export (in case of duplicates)
+                if exported_values.contains_key(export_name) {
+                    log::debug!("Skipping already processed export: {}", export_name);
+                    continue;
+                }
+
+                log::info!("Processing export mapping: {} -> {}", source_register, export_name);
+
+                // Strategy 1: Direct lookup in environment
+                if self.environment.has_variable(source_register) {
+                    if let Some(value) = self.environment.get(source_register) {
+                        let value_u32 = value as u32;
+                        log::info!("Found variable value in environment: {} = {}",
+                                  source_register, value_u32);
+                        exported_values.insert(export_name.clone(), value_u32);
+                        continue;
+                    }
+                }
+
+                // Strategy 2: Try to get value using our helper method
+                match self.get_variable_value(&source_register, None) {
+                    Ok(value) => {
+                        log::info!("Found value using get_variable_value: {} = {}", source_register, value);
+                        exported_values.insert(export_name.clone(), value);
+                    },
+                    Err(_) => {
+                        log::warn!("No value found for export mapping: {} -> {}", source_register, export_name);
+                    }
+                }
+            }
+        }
+
+        // Add potential result variables when no explicit mappings exist
+        if mappings.is_empty() || exported_values.is_empty() {
+            log::info!("Adding potential result variables");
+
+            // Find variables that might contain results
+            for var_info in self.environment.get_all_variables() {
+                // Skip variables we've already exported
+                if exported_values.contains_key(&var_info.name) {
+                    continue;
+                }
+
+                // If the variable has a value, it's a potential result
+                if let Some(val) = self.environment.get(&var_info.name) {
+                    log::info!("Found potential result variable: {} = {}", var_info.name, val);
+                    exported_values.insert(var_info.name.clone(), val as u32);
+                }
+            }
+        }
+
+        // Log summary
+        log::info!("Exporting {} values:", exported_values.len());
+        for (name, value) in &exported_values {
+            log::info!("  {} = {}", name, value);
+        }
+
+        exported_values
+    }

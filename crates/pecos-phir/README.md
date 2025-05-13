@@ -112,6 +112,51 @@ This crate provides:
 
 For alternative validation, the [Python Pydantic PHIR validator](https://github.com/CQCL/phir) is also available.
 
+### Testing with Inline JSON
+
+For testing PHIR programs, you can use the `run_phir_simulation_from_json` helper function to run a simulation directly from a JSON string:
+
+```rust
+use pecos_core::errors::PecosError;
+use pecos_engines::PassThroughNoiseModel;
+
+// Import helpers from common module
+use crate::common::phir_test_utils::run_phir_simulation_from_json;
+
+#[test]
+fn test_bell_state_with_inline_json() -> Result<(), PecosError> {
+    // Define the Bell state PHIR program directly in the test
+    let phir_json = r#"{
+      "format": "PHIR/JSON",
+      "version": "0.1.0",
+      "metadata": {"description": "Bell state preparation"},
+      "ops": [
+        {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
+        {"data": "cvar_define", "data_type": "i32", "variable": "m", "size": 2},
+        {"qop": "H", "args": [["q", 0]]},
+        {"qop": "CX", "args": [["q", 0], ["q", 1]]},
+        {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]},
+        {"qop": "Measure", "args": [["q", 1]], "returns": [["m", 1]]},
+        {"cop": "Result", "args": ["m"], "returns": ["output"]}
+      ]
+    }"#;
+
+    // Run with a single shot and no noise using the full simulation pipeline
+    let results = run_phir_simulation_from_json(
+        phir_json,
+        1,  // shots
+        1,  // workers
+        None,  // No specific seed
+        None::<PassThroughNoiseModel>,  // No noise model
+    )?;
+
+    // Process the results...
+    Ok(())
+}
+```
+
+This approach makes tests more readable and maintainable by keeping the test data and verification code together in one place.
+
 > **Note**: Work is currently in progress to extend the PHIREngine to support the full PHIR specification. Some
 > advanced features may not be fully implemented yet. The specification itself is also evolving - the "Result"
 > command for exporting measurement results is being added as part of a v0.1.1 specification update.

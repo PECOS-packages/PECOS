@@ -96,7 +96,7 @@ pub enum QubitArg {
 }
 
 /// Represents an argument to a classical operation
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum ArgItem {
     /// Indexed argument (var, idx)
@@ -110,7 +110,7 @@ pub enum ArgItem {
 }
 
 /// Represents a classical expression
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum Expression {
     /// Operation with operator and arguments

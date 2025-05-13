@@ -13,13 +13,13 @@ pub trait PHIRImplementation {
     fn parse_program(json: &str) -> Result<Self::Program, PecosError>;
 
     /// Create a new engine from a program
-    fn create_engine(program: Self::Program) -> Self::Engine;
+    fn create_engine(program: Self::Program) -> Result<Self::Engine, PecosError>;
 
     /// Load a PHIR program from a file and create an engine
     fn setup_engine(path: &Path) -> Result<Box<dyn ClassicalEngine>, PecosError> {
         let content = std::fs::read_to_string(path).map_err(PecosError::IO)?;
         let program = Self::parse_program(&content)?;
-        let engine = Self::create_engine(program);
+        let engine = Self::create_engine(program)?;
         Ok(Box::new(engine))
     }
 }

@@ -162,6 +162,18 @@ impl WasmtimeForeignObject {
 
 #[cfg(feature = "wasm")]
 impl ForeignObject for WasmtimeForeignObject {
+    fn clone_box(&self) -> Box<dyn ForeignObject> {
+        // Create a new instance from the same bytes
+        let mut result = Self::from_bytes(&self.wasm_bytes).expect("Failed to clone WasmtimeForeignObject");
+
+        // Initialize it the same way
+        if self.instance.read().is_some() {
+            let _ = result.new_instance();
+        }
+
+        Box::new(result)
+    }
+
     fn init(&mut self) -> Result<(), PecosError> {
         // Create a new instance
         self.new_instance()?;

@@ -4,6 +4,18 @@ pub mod foreign_objects;
 pub mod operations;
 pub mod wasm_foreign_object;
 
+// Our improved implementations
+pub mod environment;
+pub mod expression;
+
+// The following modules are kept for maintaining existing tests
+// but their functionality has been integrated into operations.rs and engine.rs
+pub mod block_executor;
+pub mod result_handler;
+
+// These modules have been removed as we've integrated their functionality
+// into the main engine.rs and operations.rs implementations
+
 use crate::version_traits::PHIRImplementation;
 use pecos_core::errors::PecosError;
 use pecos_engines::ClassicalEngine;
@@ -56,14 +68,74 @@ impl PHIRImplementation for V0_1 {
         Ok(program)
     }
 
-    fn create_engine(program: Self::Program) -> Self::Engine {
+    fn create_engine(program: Self::Program) -> Result<Self::Engine, PecosError> {
         Self::Engine::from_program(program)
+    }
+}
+
+/// Enhanced implementation of PHIR v0.1 that uses our improved components
+/// Note: We've now integrated the enhancements directly into the regular PHIREngine,
+/// so this is now just an alias for V0_1 to maintain backward compatibility.
+pub struct EnhancedV0_1;
+
+impl PHIRImplementation for EnhancedV0_1 {
+    type Program = ast::PHIRProgram;
+    type Engine = engine::PHIREngine;  // Using the regular PHIREngine now that it's been enhanced
+
+    fn parse_program(json: &str) -> Result<Self::Program, PecosError> {
+        // Use the same parsing logic as V0_1
+        V0_1::parse_program(json)
+    }
+
+    fn create_engine(program: Self::Program) -> Result<Self::Engine, PecosError> {
+        // Create engine using the regular PHIREngine which now has our enhancements
+        engine::PHIREngine::from_program(program)
     }
 }
 
 /// Shorthand function to set up a v0.1 PHIR engine from a file path
 pub fn setup_phir_v0_1_engine(program_path: &Path) -> Result<Box<dyn ClassicalEngine>, PecosError> {
     V0_1::setup_engine(program_path)
+}
+
+/// Shorthand function to set up an enhanced v0.1 PHIR engine from a file path
+pub fn setup_enhanced_phir_v0_1_engine(program_path: &Path) -> Result<Box<dyn ClassicalEngine>, PecosError> {
+    EnhancedV0_1::setup_engine(program_path)
+}
+
+/// Shorthand function to set up an enhanced v0.1 PHIR engine from a file path with WebAssembly support
+#[cfg(feature = "wasm")]
+pub fn setup_enhanced_phir_v0_1_engine_with_wasm(
+    program_path: &Path,
+    wasm_path: &Path,
+) -> Result<Box<dyn ClassicalEngine>, PecosError> {
+    use crate::v0_1::wasm_foreign_object::WasmtimeForeignObject;
+
+    // Create WebAssembly foreign object
+    let foreign_object = WasmtimeForeignObject::new(wasm_path)?;
+    let foreign_object = Box::new(foreign_object);
+
+    // Create engine
+    let content = std::fs::read_to_string(program_path).map_err(PecosError::IO)?;
+    let program = EnhancedV0_1::parse_program(&content)?;
+    let mut engine = EnhancedV0_1::create_engine(program)?;
+
+    // Set foreign object
+    engine.set_foreign_object(foreign_object);
+
+    Ok(Box::new(engine))
+}
+
+/// Fallback function when WebAssembly support is disabled
+#[cfg(not(feature = "wasm"))]
+pub fn setup_enhanced_phir_v0_1_engine_with_wasm(
+    _program_path: &Path,
+    _wasm_path: &Path,
+) -> Result<Box<dyn ClassicalEngine>, PecosError> {
+    Err(PecosError::Feature(
+        "WebAssembly support is not enabled. Rebuild with the 'wasm' feature to enable it."
+            .to_string(),
+    ))
 }
 
 /// Shorthand function to set up a v0.1 PHIR engine from a file path with WebAssembly support
@@ -73,16 +145,15 @@ pub fn setup_phir_v0_1_engine_with_wasm(
     wasm_path: &Path,
 ) -> Result<Box<dyn ClassicalEngine>, PecosError> {
     use crate::v0_1::wasm_foreign_object::WasmtimeForeignObject;
-    use std::sync::Arc;
 
     // Create WebAssembly foreign object
     let foreign_object = WasmtimeForeignObject::new(wasm_path)?;
-    let foreign_object = Arc::new(foreign_object);
+    let foreign_object = Box::new(foreign_object);
 
     // Create engine
     let content = std::fs::read_to_string(program_path).map_err(PecosError::IO)?;
     let program = V0_1::parse_program(&content)?;
-    let mut engine = V0_1::create_engine(program);
+    let mut engine = V0_1::create_engine(program)?;
 
     // Set foreign object
     engine.set_foreign_object(foreign_object);

@@ -4,6 +4,8 @@ use std::fmt::Debug;
 
 /// Trait for foreign object implementations
 pub trait ForeignObject: Debug + Send + Sync {
+    /// Clone the foreign object
+    fn clone_box(&self) -> Box<dyn ForeignObject>;
     /// Initialize object before running a series of simulations
     fn init(&mut self) -> Result<(), PecosError>;
 
@@ -27,7 +29,7 @@ pub trait ForeignObject: Debug + Send + Sync {
 }
 
 /// Dummy foreign object for when no foreign object is needed
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DummyForeignObject {}
 
 impl DummyForeignObject {
@@ -45,6 +47,10 @@ impl Default for DummyForeignObject {
 }
 
 impl ForeignObject for DummyForeignObject {
+    fn clone_box(&self) -> Box<dyn ForeignObject> {
+        Box::new(Self::default())
+    }
+
     fn init(&mut self) -> Result<(), PecosError> {
         Ok(())
     }

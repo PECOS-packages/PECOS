@@ -117,11 +117,12 @@ jobs:
       - name: Install LLVM Tools (macOS)
         if: matrix.os == 'macos-latest'
         run: |
-          brew install llvm
-          echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+          brew install llvm@14
+          echo "$(brew --prefix llvm@14)/bin" >> $GITHUB_PATH
           # Make sure it's available in the current step too
-          export PATH="$(brew --prefix llvm)/bin:$PATH"
+          export PATH="$(brew --prefix llvm@14)/bin:$PATH"
           which llc
+          llc --version
 
       - name: Install LLVM Tools (Windows)
         if: matrix.os == 'windows-latest'

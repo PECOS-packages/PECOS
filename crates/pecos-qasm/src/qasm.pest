@@ -125,7 +125,12 @@ primary_expr = {
 // Function calls (sin, cos, etc.)
 function_call = { identifier ~ "(" ~ expr ~ ("," ~ expr)* ~ ")" }
 pi_constant = @{ "pi" }
-number = @{ int ~ ("." ~ int)? }
+number = @{ real | int }
+
+real = @{
+    ((int ~ "." ~ int?) | ("." ~ int)) ~ (("e" | "E") ~ ("+" | "-")? ~ int)? |
+    int ~ ("e" | "E") ~ ("+" | "-")? ~ int
+}
 
 // Basic tokens
 identifier = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }

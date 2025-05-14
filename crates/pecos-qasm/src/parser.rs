@@ -932,7 +932,8 @@ impl QASMParser {
 
             Rule::number => {
                 let num_str = pair.as_str();
-                if num_str.contains('.') {
+                // Check if it's a float (has decimal point or scientific notation)
+                if num_str.contains('.') || num_str.contains('e') || num_str.contains('E') {
                     Ok(Expression::Float(num_str.parse().map_err(|_| {
                         PecosError::ParseInvalidNumber(num_str.to_string())
                     })?))
@@ -1501,6 +1502,49 @@ impl QASMParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_scientific_notation() -> Result<(), Box<dyn std::error::Error>> {
+        let qasm = r#"
+            OPENQASM 2.0;
+            qreg q[1];
+
+            // Test various scientific notation formats
+            rx(1.23e-4) q[0];
+            ry(2.5E+3) q[0];
+            rz(3e2) q[0];
+            u3(1.0e-10, 2E5, .5e-1) q[0];
+
+            // Test regular floats alongside scientific notation
+            u1(3.14159) q[0];
+            u2(0.5, 1e-3) q[0];
+        "#;
+
+        let program = QASMParser::parse_str(qasm)?;
+
+        // Verify gates were parsed correctly
+        assert_eq!(program.operations.len(), 6);
+
+        // Check that all operations are gates
+        for op in &program.operations {
+            match op {
+                Operation::Gate { .. } => {},
+                _ => panic!("Expected only gates"),
+            }
+        }
+
+        // Test expression evaluation
+        let expr1 = Expression::Float(1.23e-4);
+        assert_eq!(expr1.evaluate()?, 1.23e-4);
+
+        let expr2 = Expression::Float(2.5E+3);
+        assert_eq!(expr2.evaluate()?, 2500.0);
+
+        let expr3 = Expression::Float(3e2);
+        assert_eq!(expr3.evaluate()?, 300.0);
+
+        Ok(())
+    }
 
     #[test]
     fn test_parse_bell_state() -> Result<(), Box<dyn std::error::Error>> {

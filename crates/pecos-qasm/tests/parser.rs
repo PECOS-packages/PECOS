@@ -56,7 +56,7 @@ fn test_parse_conditional_program() -> Result<(), Box<dyn std::error::Error>> {
     // Check if the operations are correct
     match &program.operations[0] {
         pecos_qasm::parser::Operation::Gate { name, .. } => {
-            assert_eq!(name, "h");
+            assert_eq!(name, "H");
         }
         _ => panic!("First operation should be a gate"),
     }

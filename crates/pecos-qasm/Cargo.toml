@@ -35,6 +35,7 @@ pecos-engines.workspace = true
 [dev-dependencies]
 # Testing
 tempfile = "3.8"
+env_logger = "0.11"
 
 [lints]
 workspace = true

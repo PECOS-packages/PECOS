@@ -14,6 +14,49 @@ pub struct QASMProgram {
     pub classical_registers: HashMap<String, usize>,
     /// List of operations in the program
     pub operations: Vec<Operation>,
+    /// Gate definitions from included files
+    pub gate_definitions: HashMap<String, GateDefinition>,
+}
+
+/// Represents a gate definition
+#[derive(Debug, Clone)]
+pub struct GateDefinition {
+    /// Name of the gate
+    pub name: String,
+    /// Parameter names (if any)
+    pub params: Vec<String>,
+    /// Qubit argument names
+    pub qargs: Vec<String>,
+    /// Gate body (list of operations)
+    pub body: Vec<GateOperation>,
+}
+
+/// Represents an operation within a gate definition
+#[derive(Debug, Clone)]
+pub enum GateOperation {
+    /// A gate call within the definition
+    GateCall {
+        name: String,
+        params: Vec<GateExpression>,
+        qargs: Vec<String>,
+    },
+}
+
+/// Represents an expression within a gate definition
+#[derive(Debug, Clone)]
+pub enum GateExpression {
+    /// A parameter reference
+    Parameter(String),
+    /// A constant value
+    Constant(f64),
+    /// A binary operation
+    BinaryOp {
+        op: String,
+        left: Box<GateExpression>,
+        right: Box<GateExpression>,
+    },
+    /// Pi constant
+    Pi,
 }
 
 /// Represents different types of operations in a QASM program
@@ -112,6 +155,7 @@ impl QASMProgram {
             quantum_registers: HashMap::new(),
             classical_registers: HashMap::new(),
             operations: Vec::new(),
+            gate_definitions: HashMap::new(),
         }
     }
 

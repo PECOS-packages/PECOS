@@ -1186,6 +1186,7 @@ name = "pecos-qasm"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "env_logger",
  "log",
  "pecos-core",
  "pecos-engines",

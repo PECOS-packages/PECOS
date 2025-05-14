@@ -29,7 +29,7 @@ fn main() {
 
             // This is how you would initialize a simulator with the qubit count
             // Here we're using the QASMEngine directly, but you could use any simulator
-            let engine_result = QASMEngine::with_seed(path, 42);
+            let engine_result = QASMEngine::with_file(path);
 
             match engine_result {
                 Ok(mut engine) => {

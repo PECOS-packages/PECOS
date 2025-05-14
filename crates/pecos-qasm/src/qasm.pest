@@ -1,4 +1,4 @@
-// OpenQASM 2.0 Grammar, simplified version
+// OpenQASM 2.0 Grammar, supporting classical operations
 WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
 COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ "\n" }
 
@@ -26,6 +26,9 @@ quantum_op = { gate_call | measure | reset | barrier }
 
 // Gates with potentially both parameters and qubits
 gate_call = { identifier ~ param_values? ~ qubit_list ~ ";" }
+
+// Gate call inside a gate definition (uses simple identifiers)
+gate_def_call = { identifier ~ param_values? ~ identifier_list ~ ";" }
 param_values = { "(" ~ expr ~ ("," ~ expr)* ~ ")" }
 
 // Simple gates (without parameters)
@@ -47,28 +50,77 @@ bit_id = ${ identifier ~ "[" ~ int ~ "]" }
 reset = { "reset" ~ qubit_id ~ ";" }
 barrier = { "barrier" ~ qubit_list ~ ";" }
 
-// Conditional statements
-if_stmt = { "if" ~ "(" ~ bit_id ~ condition ~ int ~ ")" ~ quantum_op }
-condition = @{ "==" | "!=" | "<" | ">" | "<=" | ">=" }
+// Conditional statements - OpenQASM 2.0 spec plus extensions
+if_stmt = {
+    "if" ~ "(" ~ condition_expr ~ ")" ~ (quantum_op | classical_op)
+}
 
-// Classical operations
-classical_op = { bit_id ~ "=" ~ expr ~ ";" }
+// Conditional expression - parses as general expression and engine validates
+condition_expr = { expr }
+condition = @{ "==" | "!=" | "<=" | ">=" | "<" | ">" }
+
+// Classical operations - updated to support more operation types
+classical_op = {
+    (bit_id ~ "=" ~ expr ~ ";") |
+    (identifier ~ "=" ~ expr ~ ";")  // Support for register-wide assignments
+}
 
 // Gate definition (simplified)
-gate_def = { "gate" ~ identifier ~ param_list? ~ qubit_list ~ "{" ~ statement* ~ "}" }
+gate_def = { "gate" ~ identifier ~ param_list? ~ identifier_list ~ "{" ~ gate_def_statement* ~ "}" }
+gate_def_statement = { gate_def_call }
 param_list = { "(" ~ identifier ~ ("," ~ identifier)* ~ ")" }
+identifier_list = { identifier ~ ("," ~ identifier)* }
 
-// Expression with support for pi constant and arithmetic
-expr = { term ~ (add_op ~ term)* }
-term = { factor ~ (mul_op ~ factor)* }
-factor = { pi_constant | number | bit_id | "(" ~ expr ~ ")" | identifier ~ "(" ~ expr ~ ("," ~ expr)* ~ ")" }
-pi_constant = @{ "pi" }
+// Expression with improved support for arithmetic operations
+expr = { b_or_expr }
+
+// Bitwise OR
+b_or_expr = { b_xor_expr ~ ("|" ~ b_xor_expr)* }
+
+// Bitwise XOR
+b_xor_expr = { b_and_expr ~ ("^" ~ b_and_expr)* }
+
+// Bitwise AND
+b_and_expr = { equality_expr ~ ("&" ~ equality_expr)* }
+
+// Equality operations
+equality_expr = { relational_expr ~ (equality_op ~ relational_expr)* }
+equality_op = { "==" | "!=" }
+
+// Relational operations
+relational_expr = { shift_expr ~ (relational_op ~ shift_expr)* }
+relational_op = { "<=" | ">=" | "<" | ">" }
+
+// Bit shifting operations
+shift_expr = { additive_expr ~ (shift_op ~ additive_expr)* }
+shift_op = { "<<" | ">>" }
+
+// Addition and subtraction
+additive_expr = { multiplicative_expr ~ (add_op ~ multiplicative_expr)* }
 add_op = { "+" | "-" }
-mul_op = { "*" | "/" }
-number = @{ int ~ ("." ~ int)? }
 
-// Comparison operators
-bin_op = { "+" | "-" | "*" | "/" | "==" | "!=" | "<" | ">" | "<=" | ">=" }
+// Multiplication and division
+multiplicative_expr = { unary_expr ~ (mul_op ~ unary_expr)* }
+mul_op = { "*" | "/" }
+
+// Unary operations (negation, bitwise not)
+unary_expr = { unary_op* ~ primary_expr }
+unary_op = { "-" | "~" }
+
+// Primary expressions (atoms)
+primary_expr = {
+    pi_constant |
+    number |
+    bit_id |
+    identifier |  // Added support for register identifiers in expressions
+    "(" ~ expr ~ ")" |
+    function_call
+}
+
+// Function calls (sin, cos, etc.)
+function_call = { identifier ~ "(" ~ expr ~ ("," ~ expr)* ~ ")" }
+pi_constant = @{ "pi" }
+number = @{ int ~ ("." ~ int)? }
 
 // Basic tokens
 identifier = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }

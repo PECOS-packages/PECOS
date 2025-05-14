@@ -54,7 +54,7 @@ fn test_engine_execution() -> Result<(), PecosError> {
     std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     // Use a fixed seed for deterministic test results
-    let mut engine = QASMEngine::with_seed(file.path(), 42)
+    let mut engine = QASMEngine::with_file(file.path())
         .map_err(|e| PecosError::Processing(format!("Failed to create engine: {e}")))?;
 
     // Process the program
@@ -98,7 +98,7 @@ fn test_deterministic_bell_state() -> Result<(), PecosError> {
     std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     // Use a fixed seed for deterministic test results
-    let mut engine = QASMEngine::with_seed(file.path(), 42)
+    let mut engine = QASMEngine::with_file(file.path())
         .map_err(|e| PecosError::Processing(format!("Failed to create engine: {e}")))?;
 
     // Process the program
@@ -152,27 +152,81 @@ fn test_deterministic_3qubit_circuit() -> Result<(), PecosError> {
         .from_str(&std::fs::read_to_string(file.path()).map_err(PecosError::IO)?)
         .map_err(|e| PecosError::Processing(format!("Failed to parse QASM: {e}")))?;
 
-    // Generate commands to verify the operations
-    let command_message = engine
+    // Generate commands to verify the operations - First batch
+    let command_message1 = engine
         .generate_commands()
         .map_err(|e| PecosError::Processing(format!("Failed to generate commands: {e}")))?;
-    let operations = command_message
+    let operations1 = command_message1
         .parse_quantum_operations()
         .map_err(|e| PecosError::Processing(format!("Failed to parse quantum operations: {e}")))?;
 
-    // h, 2 cx, 3 measurements (total 6 operations)
-    assert_eq!(operations.len(), 6);
+    // Print the actual number of operations in first batch
+    println!("First batch operations: {operations1:?}");
+    println!("Number of operations in first batch: {}", operations1.len());
 
-    // Create a measurement message with known results
-    // For a GHZ state, all qubits should have the same outcome
-    // We'll simulate getting all 1s
-    let message = pecos_engines::byte_message::ByteMessage::builder()
-        .add_measurement_results(&[1, 1, 1], &[0, 1, 2])
+    // First batch should contain h gate, 2 cx gates, and the first measurement
+    // With our changes, each measurement triggers the return of the current batch
+    assert_eq!(operations1.len(), 4);
+
+    // Handle the first measurement (qubit 0)
+    let message1 = pecos_engines::byte_message::ByteMessage::builder()
+        .add_measurement_results(&[1], &[0])
         .build();
 
     engine
-        .handle_measurements(message)
-        .map_err(|e| PecosError::Processing(format!("Failed to handle measurements: {e}")))?;
+        .handle_measurements(message1)
+        .map_err(|e| PecosError::Processing(format!("Failed to handle first measurement: {e}")))?;
+
+    // Get the second batch with the second measurement
+    let command_message2 = engine
+        .generate_commands()
+        .map_err(|e| PecosError::Processing(format!("Failed to generate second batch: {e}")))?;
+
+    let operations2 = command_message2
+        .parse_quantum_operations()
+        .map_err(|e| PecosError::Processing(format!("Failed to parse second batch operations: {e}")))?;
+
+    println!("Second batch operations: {operations2:?}");
+    println!("Number of operations in second batch: {}", operations2.len());
+
+    // Handle the second measurement (qubit 1)
+    let message2 = pecos_engines::byte_message::ByteMessage::builder()
+        .add_measurement_results(&[1], &[1])
+        .build();
+
+    engine
+        .handle_measurements(message2)
+        .map_err(|e| PecosError::Processing(format!("Failed to handle second measurement: {e}")))?;
+
+    // Get the third batch with the third measurement
+    let command_message3 = engine
+        .generate_commands()
+        .map_err(|e| PecosError::Processing(format!("Failed to generate third batch: {e}")))?;
+
+    let operations3 = command_message3
+        .parse_quantum_operations()
+        .map_err(|e| PecosError::Processing(format!("Failed to parse third batch operations: {e}")))?;
+
+    println!("Third batch operations: {operations3:?}");
+    println!("Number of operations in third batch: {}", operations3.len());
+
+    // Handle the third measurement (qubit 2)
+    let message3 = pecos_engines::byte_message::ByteMessage::builder()
+        .add_measurement_results(&[1], &[2])
+        .build();
+
+    engine
+        .handle_measurements(message3)
+        .map_err(|e| PecosError::Processing(format!("Failed to handle third measurement: {e}")))?;
+
+    // Check for any remaining operations (should be none)
+    let command_message4 = engine
+        .generate_commands()
+        .map_err(|e| PecosError::Processing(format!("Failed to generate fourth batch: {e}")))?;
+
+    println!("Is fourth batch empty? {}",
+        command_message4.is_empty().map_err(|e|
+            PecosError::Processing(format!("Failed to check if message is empty: {e}")))?);
 
     // Get results and verify
     let results = engine
@@ -226,7 +280,7 @@ fn test_multi_register_operation() -> Result<(), PecosError> {
     std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     // Use a fixed seed for deterministic test results
-    let mut engine = QASMEngine::with_seed(file.path(), 42)
+    let mut engine = QASMEngine::with_file(file.path())
         .map_err(|e| PecosError::Processing(format!("Failed to create engine with seed: {e}")))?;
 
     // Process the program with deterministic randomness

@@ -74,11 +74,11 @@ fn test_currently_unsupported_features() {
         OPENQASM 2.0;
         creg c[4];
         creg a[2];
-        c = a**2;  // Exponentiation
+        c = a**2;  // Exponentiation (now supported)
     "#;
-    
+
     let result2 = QASMParser::parse_str(qasm2);
-    assert!(result2.is_err(), "Exponentiation operator should fail");
+    assert!(result2.is_ok(), "Exponentiation operator should now work");
     
     println!("Unsupported features correctly identified");
 }

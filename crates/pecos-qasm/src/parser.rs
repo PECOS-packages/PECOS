@@ -89,6 +89,7 @@ impl Expression {
                     "-" => Ok(left_val - right_val),
                     "*" => Ok(left_val * right_val),
                     "/" => Ok(left_val / right_val),
+                    "**" => Ok(left_val.powf(right_val)),
                     // Add more binary operators
                     "&" => Ok((left_val as i64 & right_val as i64) as f64),
                     "|" => Ok((left_val as i64 | right_val as i64) as f64),
@@ -865,7 +866,7 @@ impl QASMParser {
 
             // Check if this is an operator token (for equality, relational, etc.)
             let (actual_op, right_expr) = match next_pair.as_rule() {
-                Rule::equality_op | Rule::relational_op | Rule::shift_op | Rule::add_op | Rule::mul_op => {
+                Rule::equality_op | Rule::relational_op | Rule::shift_op | Rule::add_op | Rule::mul_op | Rule::pow_op => {
                     // This is an explicit operator, next pair should be the operand
                     if i + 1 < inner_pairs.len() {
                         let op_str = next_pair.as_str();
@@ -920,6 +921,7 @@ impl QASMParser {
             Rule::shift_expr => Self::parse_binary_expr(pair, "<<"),
             Rule::additive_expr => Self::parse_binary_expr(pair, "+"),
             Rule::multiplicative_expr => Self::parse_binary_expr(pair, "*"),
+            Rule::power_expr => Self::parse_binary_expr(pair, "**"),
 
             // Unary operations
             Rule::unary_expr => {
@@ -1204,7 +1206,7 @@ impl QASMParser {
                 let args: Result<Vec<_>, _> = inner.map(|arg| Self::parse_param_expr(arg)).collect();
                 Ok(ParameterExpression::FunctionCall { name: func_name, args: args? })
             }
-            Rule::additive_expr | Rule::multiplicative_expr | Rule::b_or_expr | Rule::b_xor_expr | Rule::b_and_expr => {
+            Rule::additive_expr | Rule::multiplicative_expr | Rule::power_expr | Rule::b_or_expr | Rule::b_xor_expr | Rule::b_and_expr => {
                 Self::parse_binary_param_expr(pair)
             }
             Rule::unary_expr => {
@@ -1505,6 +1507,7 @@ impl QASMParser {
                     "-" => Ok(left_val - right_val),
                     "*" => Ok(left_val * right_val),
                     "/" => Ok(left_val / right_val),
+                    "**" => Ok(left_val.powf(right_val)),
                     _ => Err(PecosError::ParseInvalidExpression(format!("Invalid operator: {}", op))),
                 }
             }

@@ -147,15 +147,15 @@ fn test_complex_quantum_expressions() {
 fn test_unsupported_syntax() {
     // Document what's NOT supported
     
-    // Exponentiation
+    // Exponentiation (now supported)
     let qasm_exp = r#"
         OPENQASM 2.0;
         creg a[2];
         creg b[3];
         creg c[4];
-        c = b**a;  // This should fail
+        c = b**a;  // This is now supported
     "#;
-    assert!(QASMParser::parse_str(qasm_exp).is_err(), "Exponentiation is not supported");
+    assert!(QASMParser::parse_str(qasm_exp).is_ok(), "Exponentiation is now supported");
     
     // Document comparison operators in conditionals
     let qasm_comp = r#"

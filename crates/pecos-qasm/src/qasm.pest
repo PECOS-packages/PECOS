@@ -105,8 +105,12 @@ additive_expr = { multiplicative_expr ~ (add_op ~ multiplicative_expr)* }
 add_op = { "+" | "-" }
 
 // Multiplication and division
-multiplicative_expr = { unary_expr ~ (mul_op ~ unary_expr)* }
+multiplicative_expr = { power_expr ~ (mul_op ~ power_expr)* }
 mul_op = { "*" | "/" }
+
+// Power (exponentiation)
+power_expr = { unary_expr ~ (pow_op ~ unary_expr)* }
+pow_op = { "**" }
 
 // Unary operations (negation, bitwise not)
 unary_expr = { unary_op* ~ primary_expr }

@@ -59,16 +59,16 @@ fn test_supported_classical_operations() {
 fn test_unsupported_classical_operations() {
     // Test for operations that are NOT supported
     
-    // 1. Exponentiation
+    // 1. Exponentiation - now supported
     let qasm_exp = r#"
         OPENQASM 2.0;
         creg c[4];
         creg b[3];
-        c = b**2;  // Exponentiation is not supported
+        c = b**2;  // Exponentiation is now supported
     "#;
-    
-    assert!(QASMParser::parse_str(qasm_exp).is_err(), 
-            "Exponentiation (**) should not be supported");
+
+    assert!(QASMParser::parse_str(qasm_exp).is_ok(),
+            "Exponentiation (**) should now be supported");
     
     // 2. Complex conditionals may have issues
     let qasm_complex_if = r#"

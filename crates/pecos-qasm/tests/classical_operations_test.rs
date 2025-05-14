@@ -203,17 +203,17 @@ fn test_complex_expression_in_quantum_gate() {
 
 #[test]
 fn test_unsupported_operations() {
-    // Test that exponentiation is not supported
+    // Test that exponentiation is now supported
     let qasm_exp = r#"
         OPENQASM 2.0;
         creg a[2];
         creg b[3];
         creg c[4];
-        c = b**a;  // This should fail
+        c = b**a;  // This is now supported
     "#;
-    
+
     let result = QASMParser::parse_str(qasm_exp);
-    assert!(result.is_err(), "Exponentiation should not be supported");
+    assert!(result.is_ok(), "Exponentiation should now be supported");
     
     // Test that comparison operators in if statements need specific format
     let qasm_comp = r#"

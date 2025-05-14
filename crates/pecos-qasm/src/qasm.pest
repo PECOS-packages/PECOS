@@ -21,8 +21,8 @@ register_decl = { qreg | creg }
 qreg = { "qreg" ~ indexed_id ~ ";" }
 creg = { "creg" ~ indexed_id ~ ";" }
 
-// Quantum operations
-quantum_op = { gate_call | measure | reset | barrier }
+// Quantum operations - barrier should be checked before gate_call
+quantum_op = { barrier | measure | reset | gate_call }
 
 // Gates with potentially both parameters and qubits
 gate_call = { identifier ~ param_values? ~ qubit_list ~ ";" }
@@ -48,7 +48,9 @@ bit_id = ${ identifier ~ "[" ~ int ~ "]" }
 
 // Reset and barrier
 reset = { "reset" ~ qubit_id ~ ";" }
-barrier = { "barrier" ~ qubit_list ~ ";" }
+barrier = { "barrier" ~ any_list ~ ";" }
+any_list = { any_item ~ ("," ~ any_item)* }
+any_item = { qubit_id | identifier }
 
 // Conditional statements - OpenQASM 2.0 spec plus extensions
 if_stmt = {

@@ -612,8 +612,51 @@ impl QASMParser {
         pair: pest::iterators::Pair<Rule>,
         program: &Program,
     ) -> Result<Option<Operation>, ParseError> {
-        let qubit_list = pair.into_inner().next().unwrap();
-        let qubits = Self::parse_qubit_list(qubit_list, program)?;
+        let any_list = pair.into_inner().next().unwrap();
+        let mut qubits = Vec::new();
+
+        // Parse the any_list which contains any_items
+        for item in any_list.into_inner() {
+            if item.as_rule() == Rule::any_item {
+                let inner = item.into_inner().next().unwrap();
+                match inner.as_rule() {
+                    Rule::identifier => {
+                        // This is a register name - add all qubits from the register
+                        let reg_name = inner.as_str();
+                        if let Some(qubit_ids) = program.quantum_registers.get(reg_name) {
+                            qubits.extend(qubit_ids.iter());
+                        } else {
+                            return Err(ParseError::InvalidOperation(format!(
+                                "Unknown quantum register '{}' in barrier",
+                                reg_name
+                            )));
+                        }
+                    }
+                    Rule::qubit_id => {
+                        // This is an individual qubit - parse and add it
+                        let (reg_name, idx) = Self::parse_id_with_index(&inner)?;
+                        if let Some(qubit_ids) = program.quantum_registers.get(&reg_name) {
+                            if idx < qubit_ids.len() {
+                                qubits.push(qubit_ids[idx]);
+                            } else {
+                                return Err(ParseError::InvalidOperation(format!(
+                                    "Qubit index {} out of bounds for register '{}'",
+                                    idx, reg_name
+                                )));
+                            }
+                        } else {
+                            return Err(ParseError::InvalidOperation(format!(
+                                "Unknown quantum register '{}'",
+                                reg_name
+                            )));
+                        }
+                    }
+                    _ => {
+                        // Skip unexpected rules
+                    }
+                }
+            }
+        }
 
         Ok(Some(Operation::Barrier { qubits }))
     }
@@ -753,37 +796,6 @@ impl QASMParser {
         Err(ParseError::InvalidOperation("Invalid classical operation".into()))
     }
 
-    fn parse_qubit_list(
-        pair: pest::iterators::Pair<Rule>,
-        program: &Program,
-    ) -> Result<Vec<usize>, ParseError> {
-        let mut qubits = Vec::new();
-
-        for qubit_id in pair.into_inner() {
-            if qubit_id.as_rule() == Rule::qubit_id {
-                let (reg_name, idx) = Self::parse_id_with_index(&qubit_id)?;
-
-                // Look up global qubit ID
-                if let Some(qubit_ids) = program.quantum_registers.get(&reg_name) {
-                    if idx < qubit_ids.len() {
-                        qubits.push(qubit_ids[idx]);
-                    } else {
-                        return Err(ParseError::InvalidOperation(format!(
-                            "Qubit index {} out of bounds for register '{}'",
-                            idx, reg_name
-                        )));
-                    }
-                } else {
-                    return Err(ParseError::InvalidOperation(format!(
-                        "Unknown quantum register '{}'",
-                        reg_name
-                    )));
-                }
-            }
-        }
-
-        Ok(qubits)
-    }
 
     fn parse_indexed_id(pair: &pest::iterators::Pair<Rule>) -> Result<(String, usize), ParseError> {
         let content = pair.as_str();

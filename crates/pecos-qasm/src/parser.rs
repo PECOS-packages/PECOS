@@ -46,6 +46,11 @@ pub enum ParseError {
     InvalidOperator(String),
     InvalidNumber,
     InvalidConstant(String),
+    CircularDependency(String),
+    CircularDependencyWithContext {
+        chain: Vec<String>,
+        snippet: String,
+    },
 }
 
 impl fmt::Display for ParseError {
@@ -65,6 +70,15 @@ impl fmt::Display for ParseError {
             ParseError::InvalidOperator(op) => write!(f, "Invalid operator: {op}"),
             ParseError::InvalidNumber => write!(f, "Invalid number"),
             ParseError::InvalidConstant(msg) => write!(f, "Invalid constant: {msg}"),
+            ParseError::CircularDependency(msg) => write!(f, "Circular dependency: {msg}"),
+            ParseError::CircularDependencyWithContext { chain, snippet } => {
+                write!(f, "Circular dependency detected:\n")?;
+                write!(f, "  Cycle: {}\n", chain.join(" -> "))?;
+                if !snippet.is_empty() {
+                    write!(f, "\n{}", snippet)?;
+                }
+                Ok(())
+            },
         }
     }
 }
@@ -1382,6 +1396,22 @@ impl QASMParser {
         qubits: &[usize],
         all_definitions: &HashMap<String, GateDefinition>,
     ) -> Result<Vec<Operation>, ParseError> {
+        Self::expand_gate_call_with_stack(
+            gate_def,
+            parameters,
+            qubits,
+            all_definitions,
+            &mut vec![gate_def.name.clone()],
+        )
+    }
+
+    fn expand_gate_call_with_stack(
+        gate_def: &GateDefinition,
+        parameters: &[f64],
+        qubits: &[usize],
+        all_definitions: &HashMap<String, GateDefinition>,
+        expansion_stack: &mut Vec<String>,
+    ) -> Result<Vec<Operation>, ParseError> {
         let mut expanded = Vec::new();
 
         // Create parameter mapping
@@ -1428,13 +1458,46 @@ impl QASMParser {
 
             // Check if this gate has a definition - if it does, expand it
             if let Some(nested_def) = all_definitions.get(&mapped_name) {
+                // Check for circular dependency
+                if expansion_stack.contains(&mapped_name) {
+                    let mut cycle_info = String::new();
+                    cycle_info.push_str(&format!("Circular dependency detected: {} -> {}\n\n",
+                        expansion_stack.join(" -> "), mapped_name));
+
+                    // Add helpful context
+                    cycle_info.push_str("To fix this error:\n");
+                    cycle_info.push_str("1. Check the gate definitions for circular references\n");
+                    cycle_info.push_str("2. Ensure no gate directly or indirectly calls itself\n");
+                    cycle_info.push_str("3. Consider breaking the cycle by refactoring your gate hierarchy\n\n");
+
+                    cycle_info.push_str("The cycle involves these gates:\n");
+                    for (i, gate) in expansion_stack.iter().enumerate() {
+                        cycle_info.push_str(&format!("  {}. '{}' calls ", i + 1, gate));
+                        if i + 1 < expansion_stack.len() {
+                            cycle_info.push_str(&format!("'{}'\n", expansion_stack[i + 1]));
+                        } else {
+                            cycle_info.push_str(&format!("'{}' (completes the cycle)\n", mapped_name));
+                        }
+                    }
+
+                    return Err(ParseError::CircularDependency(cycle_info));
+                }
+
+                // Add to stack for recursion
+                expansion_stack.push(mapped_name.clone());
+
                 // Recursively expand non-native gates
-                let nested_expanded = Self::expand_gate_call(
+                let nested_expanded = Self::expand_gate_call_with_stack(
                     nested_def,
                     &new_params,
                     &new_qubits,
                     all_definitions,
+                    expansion_stack,
                 )?;
+
+                // Remove from stack after recursion
+                expansion_stack.pop();
+
                 expanded.extend(nested_expanded);
             } else {
                 // No definition found - keep as is

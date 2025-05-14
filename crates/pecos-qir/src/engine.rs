@@ -432,7 +432,7 @@ impl QirEngine {
                     self.qir_file.display(),
                     e
                 );
-                Err(PecosError::Compilation(err_str))
+                Err(PecosError::Processing(err_str))
             }
         }
     }
@@ -458,7 +458,7 @@ impl QirEngine {
 
         // Compile the QIR program to a library
         let library_path = QirCompiler::compile(&self.qir_file, None)
-            .map_err(|e| PecosError::Compilation(format!("Failed to compile QIR program: {e}")))?;
+            .map_err(|e| PecosError::Processing(format!("Failed to compile QIR program: {e}")))?;
 
         // Store the library path
         self.library_path = Some(library_path.clone());
@@ -760,7 +760,7 @@ impl QirEngine {
 
         let output_dir_path = output_dir.to_path_buf();
         QirCompiler::compile(&self.qir_file, Some(&output_dir_path))
-            .map_err(|e| PecosError::Compilation(format!("Failed to compile QIR program: {e}")))
+            .map_err(|e| PecosError::Processing(format!("Failed to compile QIR program: {e}")))
     }
 }
 
@@ -861,7 +861,7 @@ impl ClassicalEngine for QirEngine {
                     self.qir_file.display(),
                     e
                 );
-                Err(PecosError::Compilation(err_str))
+                Err(PecosError::Processing(err_str))
             }
         }
     }

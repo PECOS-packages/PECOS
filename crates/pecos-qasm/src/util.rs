@@ -1,4 +1,5 @@
-use crate::parser::{ParseError, QASMParser};
+use crate::parser::QASMParser;
+use pecos_core::errors::PecosError;
 use std::path::Path;
 
 /// Quickly parse a QASM file to extract just the number of qubits.
@@ -9,8 +10,8 @@ use std::path::Path;
 ///
 /// # Returns
 ///
-/// * `Result<usize, ParseError>` - The total number of qubits on success, or a parsing error
-pub fn count_qubits_in_file<P: AsRef<Path>>(path: P) -> Result<usize, ParseError> {
+/// * `Result<usize, PecosError>` - The total number of qubits on success, or a parsing error
+pub fn count_qubits_in_file<P: AsRef<Path>>(path: P) -> Result<usize, PecosError> {
     // Parse the file using the existing parser
     let program = QASMParser::parse_file(path)?;
 
@@ -26,8 +27,8 @@ pub fn count_qubits_in_file<P: AsRef<Path>>(path: P) -> Result<usize, ParseError
 ///
 /// # Returns
 ///
-/// * `Result<usize, ParseError>` - The total number of qubits on success, or a parsing error
-pub fn count_qubits_in_str(qasm: &str) -> Result<usize, ParseError> {
+/// * `Result<usize, PecosError>` - The total number of qubits on success, or a parsing error
+pub fn count_qubits_in_str(qasm: &str) -> Result<usize, PecosError> {
     // Parse the string using the existing parser
     let program = QASMParser::parse_str(qasm)?;
 

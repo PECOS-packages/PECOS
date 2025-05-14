@@ -122,8 +122,7 @@ impl QASMEngine {
 
     /// Parse a QASM program from a string and load it
     pub fn from_str(&mut self, qasm: &str) -> Result<(), PecosError> {
-        let program = QASMParser::parse_str(qasm)
-            .map_err(|e| PecosError::Input(format!("Failed to parse QASM: {e:?}")))?;
+        let program = QASMParser::parse_str(qasm)?;
 
         self.load_program(program)
     }
@@ -620,7 +619,7 @@ impl QASMEngine {
             Ok(true)
         } else {
             // Gate not supported
-            Err(PecosError::Gate(format!("Unsupported gate: {name}")))
+            Err(PecosError::Processing(format!("Unsupported gate: {name}")))
         }
     }
 

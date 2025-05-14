@@ -49,22 +49,73 @@ pub enum PecosError {
     #[error("Resource error: {0}")]
     Resource(String),
 
-    /// Error related to the compilation process
-    #[error("Compilation error: {0}")]
-    Compilation(String),
-
-    /// Error related to an unsupported or invalid quantum gate
-    #[error("Gate error: {0}")]
-    Gate(String),
-
-    /// Error related to expression evaluation or computation
-    /// This covers arithmetic errors, variable access, and general expression evaluation
-    #[error("Computation error: {0}")]
-    Computation(String),
-
     /// Error related to missing or disabled features
     #[error("Feature error: {0}")]
     Feature(String),
+
+    // Parse errors
+    /// Language syntax error
+    #[error("{language} syntax error: {message}")]
+    ParseSyntax { language: String, message: String },
+
+    /// Invalid version for a language
+    #[error("Invalid version for {language}: {version}")]
+    ParseInvalidVersion { language: String, version: String },
+
+    /// Invalid number format
+    #[error("Invalid number: {0}")]
+    ParseInvalidNumber(String),
+
+    /// Invalid identifier
+    #[error("Invalid identifier: {0}")]
+    ParseInvalidIdentifier(String),
+
+    /// Invalid expression
+    #[error("Invalid expression: {0}")]
+    ParseInvalidExpression(String),
+
+    // Compilation errors
+    /// Invalid operation during compilation
+    #[error("Invalid {operation}: {reason}")]
+    CompileInvalidOperation { operation: String, reason: String },
+
+    /// Circular dependency detected
+    #[error("Circular dependency: {0}")]
+    CompileCircularDependency(String),
+
+    /// Undefined reference
+    #[error("Undefined {kind} '{name}'")]
+    CompileUndefinedReference { kind: String, name: String },
+
+    /// Invalid register size
+    #[error("Invalid register size: {0}")]
+    CompileInvalidRegisterSize(String),
+
+    // Runtime errors
+    /// Division by zero
+    #[error("Division by zero")]
+    RuntimeDivisionByZero,
+
+    /// Stack overflow
+    #[error("Stack overflow")]
+    RuntimeStackOverflow,
+
+    /// Index out of bounds
+    #[error("Index out of bounds: {index} not in 0..{length}")]
+    RuntimeIndexOutOfBounds { index: usize, length: usize },
+
+    // Validation errors
+    /// Invalid circuit structure
+    #[error("Invalid circuit structure: {0}")]
+    ValidationInvalidCircuitStructure(String),
+
+    /// Invalid gate parameters
+    #[error("Invalid gate parameters: {0}")]
+    ValidationInvalidGateParameters(String),
+
+    /// Invalid qubit reference
+    #[error("Invalid qubit reference: {0}")]
+    ValidationInvalidQubitReference(String),
 }
 
 impl PecosError {

@@ -77,7 +77,7 @@ impl WindowsCompiler {
         // Verify output file exists
         if !object_file.exists() {
             return Err(Self::log_error(
-                PecosError::Compilation(format!(
+                PecosError::Processing(format!(
                     "QIR compilation failed: Object file was not created at the expected path: {object_file:?}"
                 )),
                 thread_id,
@@ -145,7 +145,7 @@ impl WindowsCompiler {
 
         fs::write(&def_file_path, def_file_content).map_err(|e| {
             Self::log_error(
-                PecosError::Compilation(format!(
+                PecosError::Processing(format!(
                     "QIR compilation failed: Failed to write DEF file: {e}"
                 )),
                 thread_id,
@@ -216,7 +216,7 @@ __declspec(dllexport) void __quantum__rt__result_record_output(int result) {}
 
         fs::write(&stub_c_path, stub_c_content).map_err(|e| {
             Self::log_error(
-                PecosError::Compilation(format!(
+                PecosError::Processing(format!(
                     "QIR compilation failed: Failed to write stub .c file: {e}"
                 )),
                 thread_id,
@@ -280,7 +280,7 @@ __declspec(dllexport) void __quantum__rt__result_record_output(int result) {}
         // Verify the library exists
         if !library_file.exists() {
             return Err(Self::log_error(
-                PecosError::Compilation(format!(
+                PecosError::Processing(format!(
                     "QIR compilation failed: Library file was not created at the expected path: {library_file:?}"
                 )),
                 thread_id,

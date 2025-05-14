@@ -43,7 +43,7 @@ impl QirCompiler {
     ) -> Result<T, PecosError> {
         result.map_err(|e| {
             Self::log_error(
-                PecosError::Compilation(format!("QIR compilation failed: {error_msg}: {e}")),
+                PecosError::Processing(format!("QIR compilation failed: {error_msg}: {e}")),
                 thread_id,
             )
         })
@@ -58,7 +58,7 @@ impl QirCompiler {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(Self::log_error(
-                PecosError::Compilation(format!(
+                PecosError::Processing(format!(
                     "QIR compilation failed: {command_name} failed with status: {} and error: {stderr}",
                     output.status
                 )),
@@ -73,7 +73,7 @@ impl QirCompiler {
         if !dir_path.exists() {
             fs::create_dir_all(dir_path).map_err(|e| {
                 Self::log_error(
-                    PecosError::Compilation(format!(
+                    PecosError::Processing(format!(
                         "QIR compilation failed: Failed to create directory: {e}"
                     )),
                     thread_id,
@@ -455,7 +455,7 @@ impl QirCompiler {
             let version_result = Self::check_llvm_version(&clang);
             if let Err(version_err) = version_result {
                 return Err(Self::log_error(
-                    PecosError::Compilation(version_err),
+                    PecosError::Processing(version_err),
                     thread_id,
                 ));
             }
@@ -478,7 +478,7 @@ impl QirCompiler {
         {
             let llc_path = Self::find_llvm_tool("llc").ok_or_else(|| {
                 Self::log_error(
-                    PecosError::Compilation(
+                    PecosError::Processing(
                         "QIR compilation failed: Could not find 'llc' tool. LLVM version 14 is required for QIR functionality. \
                         Please install LLVM version 14 using your package manager (e.g. 'sudo apt install llvm-14' on Ubuntu, \
                         'brew install llvm@14' on macOS). After installation, ensure 'llc' is in your PATH.".to_string()
@@ -491,7 +491,7 @@ impl QirCompiler {
             let version_result = Self::check_llvm_version(&llc_path);
             if let Err(version_err) = version_result {
                 return Err(Self::log_error(
-                    PecosError::Compilation(version_err),
+                    PecosError::Processing(version_err),
                     thread_id,
                 ));
             }
@@ -541,7 +541,7 @@ impl QirCompiler {
         ] {
             if !file.exists() {
                 return Err(Self::log_error(
-                    PecosError::Compilation(format!("{desc} not found: {file:?}")),
+                    PecosError::Processing(format!("{desc} not found: {file:?}")),
                     thread_id,
                 ));
             }
@@ -1090,7 +1090,7 @@ __declspec(dllexport) void __quantum__rt__result_record_output(int result) {}
         // If still not found, return an error
         let error_msg = "Failed to find or build QIR runtime library. The library should be automatically built by the build.rs script.".to_string();
         Err(Self::log_error(
-            PecosError::Compilation(format!("QIR compilation failed: {error_msg}")),
+            PecosError::Processing(format!("QIR compilation failed: {error_msg}")),
             &thread_id,
         ))
     }

@@ -1391,8 +1391,8 @@ impl OperationProcessor {
                     .as_ref()
                     .and_then(|angles| angles.first().copied())
                     .ok_or_else(|| {
-                        PecosError::Gate(format!(
-                            "Invalid gate parameters: Missing rotation angle for '{qop}' gate"
+                        PecosError::ValidationInvalidGateParameters(format!(
+                            "Missing rotation angle for '{qop}' gate"
                         ))
                     })?;
                 Ok((qop.to_string(), qubit_args, vec![theta]))
@@ -1400,14 +1400,14 @@ impl OperationProcessor {
             "R1XY" => {
                 // Get angles safely
                 let angles_ref = angles.as_ref().ok_or_else(|| {
-                    PecosError::Gate(format!(
-                        "Invalid gate parameters: '{qop}' gate requires two angles (phi, theta)"
+                    PecosError::ValidationInvalidGateParameters(format!(
+                        "'{qop}' gate requires two angles (phi, theta)"
                     ))
                 })?;
 
                 if angles_ref.len() < 2 {
-                    return Err(PecosError::Gate(format!(
-                        "Invalid gate parameters: '{qop}' gate requires two angles (phi, theta), but only {} provided",
+                    return Err(PecosError::ValidationInvalidGateParameters(format!(
+                        "'{qop}' gate requires two angles (phi, theta), but only {} provided",
                         angles_ref.len()
                     )));
                 }
@@ -1421,8 +1421,8 @@ impl OperationProcessor {
             "SZZ" | "ZZ" => {
                 // Verify we have exactly 2 qubits
                 if qubit_args.len() < 2 {
-                    return Err(PecosError::Gate(format!(
-                        "Invalid gate parameters: '{qop}' gate requires exactly two qubits, but found {}",
+                    return Err(PecosError::ValidationInvalidGateParameters(format!(
+                        "'{qop}' gate requires exactly two qubits, but found {}",
                         qubit_args.len()
                     )));
                 }
@@ -1432,8 +1432,8 @@ impl OperationProcessor {
             "CX" | "CNOT" => {
                 // Verify we have exactly 2 qubits
                 if qubit_args.len() < 2 {
-                    return Err(PecosError::Gate(format!(
-                        "Invalid gate parameters: '{qop}' gate requires control and target qubits (2 qubits total), but found {}",
+                    return Err(PecosError::ValidationInvalidGateParameters(format!(
+                        "'{qop}' gate requires control and target qubits (2 qubits total), but found {}",
                         qubit_args.len()
                     )));
                 }
@@ -1444,7 +1444,7 @@ impl OperationProcessor {
             // Single-qubit Clifford gates, Initialization, and Measurement
             "H" | "X" | "Y" | "Z" | "Measure" | "Init" => Ok((qop.to_string(), qubit_args, vec![])),
 
-            _ => Err(PecosError::Gate(format!(
+            _ => Err(PecosError::Processing(format!(
                 "Unsupported quantum gate operation: Gate type '{qop}' is not implemented"
             ))),
         }
@@ -1494,7 +1494,7 @@ impl OperationProcessor {
                 }
             }
             _ => {
-                return Err(PecosError::Gate(format!(
+                return Err(PecosError::Processing(format!(
                     "Unsupported quantum gate operation: Gate type '{gate_type}' is not implemented"
                 )));
             }

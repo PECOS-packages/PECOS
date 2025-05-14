@@ -82,13 +82,13 @@ impl<'a> ExpressionEvaluator<'a> {
             "*" => Ok(lhs_val.wrapping_mul(rhs_val)),
             "/" => {
                 if rhs_val == 0 {
-                    return Err(PecosError::Computation("Division by zero".into()));
+                    return Err(PecosError::RuntimeDivisionByZero);
                 }
                 Ok(lhs_val.wrapping_div(rhs_val))
             },
             "%" => {
                 if rhs_val == 0 {
-                    return Err(PecosError::Computation("Modulo by zero".into()));
+                    return Err(PecosError::RuntimeDivisionByZero);
                 }
                 Ok(lhs_val.wrapping_rem(rhs_val))
             },

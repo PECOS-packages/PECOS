@@ -18,6 +18,10 @@ pub enum ParameterExpression {
         left: Box<ParameterExpression>,
         right: Box<ParameterExpression>,
     },
+    FunctionCall {
+        name: String,
+        args: Vec<ParameterExpression>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -115,8 +119,42 @@ impl Expression {
                 Err(PecosError::ParseInvalidExpression("Cannot evaluate bit_id directly".to_string()))
             },
             Expression::Variable(_) => Err(PecosError::ParseInvalidExpression("Cannot evaluate variable directly".to_string())),
-            Expression::FunctionCall { name, args: _ } => {
-                Err(PecosError::ParseInvalidExpression(format!("Function calls not implemented yet: {name}")))
+            Expression::FunctionCall { name, args } => {
+                if args.len() != 1 {
+                    return Err(PecosError::ParseInvalidExpression(
+                        format!("Function {} expects exactly 1 argument, got {}", name, args.len())
+                    ));
+                }
+
+                let arg_val = args[0].evaluate()?;
+
+                match name.as_str() {
+                    "sin" => Ok(arg_val.sin()),
+                    "cos" => Ok(arg_val.cos()),
+                    "tan" => Ok(arg_val.tan()),
+                    "exp" => Ok(arg_val.exp()),
+                    "ln" => {
+                        if arg_val <= 0.0 {
+                            Err(PecosError::ParseInvalidExpression(
+                                format!("ln({}) is undefined for non-positive values", arg_val)
+                            ))
+                        } else {
+                            Ok(arg_val.ln())
+                        }
+                    },
+                    "sqrt" => {
+                        if arg_val < 0.0 {
+                            Err(PecosError::ParseInvalidExpression(
+                                format!("sqrt({}) is undefined for negative values", arg_val)
+                            ))
+                        } else {
+                            Ok(arg_val.sqrt())
+                        }
+                    },
+                    _ => Err(PecosError::ParseInvalidExpression(
+                        format!("Unknown function: {}", name)
+                    ))
+                }
             },
         }
     }
@@ -1160,6 +1198,12 @@ impl QASMParser {
             Rule::pi_constant => {
                 Ok(ParameterExpression::Pi)
             }
+            Rule::function_call => {
+                let mut inner = pair.into_inner();
+                let func_name = inner.next().unwrap().as_str().to_string();
+                let args: Result<Vec<_>, _> = inner.map(|arg| Self::parse_param_expr(arg)).collect();
+                Ok(ParameterExpression::FunctionCall { name: func_name, args: args? })
+            }
             Rule::additive_expr | Rule::multiplicative_expr | Rule::b_or_expr | Rule::b_xor_expr | Rule::b_and_expr => {
                 Self::parse_binary_param_expr(pair)
             }
@@ -1462,6 +1506,43 @@ impl QASMParser {
                     "*" => Ok(left_val * right_val),
                     "/" => Ok(left_val / right_val),
                     _ => Err(PecosError::ParseInvalidExpression(format!("Invalid operator: {}", op))),
+                }
+            }
+            ParameterExpression::FunctionCall { name, args } => {
+                if args.len() != 1 {
+                    return Err(PecosError::ParseInvalidExpression(
+                        format!("Function {} expects exactly 1 argument, got {}", name, args.len())
+                    ));
+                }
+
+                let arg_val = Self::evaluate_param_expr(&args[0], param_map)?;
+
+                match name.as_str() {
+                    "sin" => Ok(arg_val.sin()),
+                    "cos" => Ok(arg_val.cos()),
+                    "tan" => Ok(arg_val.tan()),
+                    "exp" => Ok(arg_val.exp()),
+                    "ln" => {
+                        if arg_val <= 0.0 {
+                            Err(PecosError::ParseInvalidExpression(
+                                format!("ln({}) is undefined for non-positive values", arg_val)
+                            ))
+                        } else {
+                            Ok(arg_val.ln())
+                        }
+                    },
+                    "sqrt" => {
+                        if arg_val < 0.0 {
+                            Err(PecosError::ParseInvalidExpression(
+                                format!("sqrt({}) is undefined for negative values", arg_val)
+                            ))
+                        } else {
+                            Ok(arg_val.sqrt())
+                        }
+                    },
+                    _ => Err(PecosError::ParseInvalidExpression(
+                        format!("Unknown function: {}", name)
+                    ))
                 }
             }
         }

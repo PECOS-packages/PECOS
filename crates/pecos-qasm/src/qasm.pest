@@ -117,13 +117,14 @@ primary_expr = {
     pi_constant |
     number |
     bit_id |
-    identifier |  // Added support for register identifiers in expressions
-    "(" ~ expr ~ ")" |
-    function_call
+    function_call |  // Check function_call before identifier
+    identifier |
+    "(" ~ expr ~ ")"
 }
 
 // Function calls (sin, cos, etc.)
-function_call = { identifier ~ "(" ~ expr ~ ("," ~ expr)* ~ ")" }
+function_call = { function_name ~ "(" ~ expr ~ ("," ~ expr)* ~ ")" }
+function_name = @{ "sin" | "cos" | "tan" | "exp" | "ln" | "sqrt" }
 pi_constant = @{ "pi" }
 number = @{ real | int }
 

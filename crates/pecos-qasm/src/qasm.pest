@@ -10,7 +10,7 @@ oqasm = { "OPENQASM" ~ WHITE_SPACE* ~ version_num ~ ";" }
 version_num = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
 
 // Any statement in the program
-statement = { include | register_decl | quantum_op | classical_op | if_stmt | gate_def }
+statement = { include | register_decl | quantum_op | classical_op | if_stmt | gate_def | opaque_def }
 
 // Include statement
 include = { "include" ~ string ~ ";" }
@@ -72,6 +72,9 @@ gate_def = { "gate" ~ identifier ~ param_list? ~ identifier_list ~ "{" ~ gate_de
 gate_def_statement = { gate_def_call }
 param_list = { "(" ~ identifier ~ ("," ~ identifier)* ~ ")" }
 identifier_list = { identifier ~ ("," ~ identifier)* }
+
+// Opaque gate declaration
+opaque_def = { "opaque" ~ identifier ~ param_list? ~ identifier_list ~ ";" }
 
 // Expression with improved support for arithmetic operations
 expr = { b_or_expr }

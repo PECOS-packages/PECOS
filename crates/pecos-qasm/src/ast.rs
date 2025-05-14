@@ -16,6 +16,8 @@ pub struct QASMProgram {
     pub operations: Vec<Operation>,
     /// Gate definitions from included files
     pub gate_definitions: HashMap<String, GateDefinition>,
+    /// Opaque gate declarations
+    pub opaque_gates: HashMap<String, OpaqueGateDefinition>,
 }
 
 /// Represents a gate definition
@@ -29,6 +31,17 @@ pub struct GateDefinition {
     pub qargs: Vec<String>,
     /// Gate body (list of operations)
     pub body: Vec<GateOperation>,
+}
+
+/// Represents an opaque gate declaration
+#[derive(Debug, Clone)]
+pub struct OpaqueGateDefinition {
+    /// Name of the gate
+    pub name: String,
+    /// Parameter names (if any)
+    pub params: Vec<String>,
+    /// Qubit argument names
+    pub qargs: Vec<String>,
 }
 
 /// Represents an operation within a gate definition
@@ -156,6 +169,7 @@ impl QASMProgram {
             classical_registers: HashMap::new(),
             operations: Vec::new(),
             gate_definitions: HashMap::new(),
+            opaque_gates: HashMap::new(),
         }
     }
 
@@ -172,6 +186,12 @@ impl QASMProgram {
     /// Adds an operation to the program
     pub fn add_operation(&mut self, operation: Operation) {
         self.operations.push(operation);
+    }
+
+    /// Adds an opaque gate declaration
+    pub fn add_opaque_gate(&mut self, name: String, params: Vec<String>, qargs: Vec<String>) {
+        let opaque_gate = OpaqueGateDefinition { name: name.clone(), params, qargs };
+        self.opaque_gates.insert(name, opaque_gate);
     }
 }
 

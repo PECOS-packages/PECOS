@@ -239,6 +239,11 @@ pub enum Operation {
         index: Option<usize>,  // Index if it's a bit_id
         expression: Expression,
     },
+    OpaqueGate {
+        name: String,
+        params: Vec<String>,
+        qargs: Vec<String>,
+    },
 }
 
 impl fmt::Display for Operation {
@@ -300,6 +305,27 @@ impl fmt::Display for Operation {
                 } else {
                     write!(f, "{} = {}", target, expression)
                 }
+            }
+            Operation::OpaqueGate { name, params, qargs } => {
+                write!(f, "opaque {}", name)?;
+                if !params.is_empty() {
+                    write!(f, "(")?;
+                    for (i, param) in params.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}", param)?;
+                    }
+                    write!(f, ")")?;
+                }
+                write!(f, " ")?;
+                for (i, qarg) in qargs.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", qarg)?;
+                }
+                Ok(())
             }
         }
     }
@@ -371,6 +397,9 @@ impl QASMParser {
         // After parsing, expand all gates using their definitions
         Self::expand_gates(&mut program)?;
 
+        // Validate that no opaque gates are being used before they're implemented
+        Self::validate_no_opaque_gate_usage(&program)?;
+
         Ok(program)
     }
 
@@ -403,6 +432,11 @@ impl QASMParser {
                 }
                 Rule::include => {
                     Self::parse_include(inner_pair, program)?;
+                }
+                Rule::opaque_def => {
+                    if let Some(op) = Self::parse_opaque_def(inner_pair)? {
+                        program.operations.push(op);
+                    }
                 }
                 // Rules that are recognized but not yet implemented
                 _ => {
@@ -1067,6 +1101,48 @@ impl QASMParser {
         Ok(())
     }
 
+    fn parse_opaque_def(
+        pair: pest::iterators::Pair<Rule>,
+    ) -> Result<Option<Operation>, ParseError> {
+        let mut inner = pair.into_inner();
+
+        // Get the gate name
+        let name = inner.next()
+            .ok_or_else(|| ParseError::InvalidOperation("Missing gate name".into()))?
+            .as_str()
+            .to_string();
+
+        let mut params = Vec::new();
+        let mut qargs = Vec::new();
+
+        // Parse the rest of the declaration
+        for part in inner {
+            match part.as_rule() {
+                Rule::param_list => {
+                    for param in part.into_inner() {
+                        if param.as_rule() == Rule::identifier {
+                            params.push(param.as_str().to_string());
+                        }
+                    }
+                }
+                Rule::identifier_list => {
+                    for qarg in part.into_inner() {
+                        if qarg.as_rule() == Rule::identifier {
+                            qargs.push(qarg.as_str().to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(Some(Operation::OpaqueGate {
+            name,
+            params,
+            qargs,
+        }))
+    }
+
     fn parse_gate_def_statement(
         pair: pest::iterators::Pair<Rule>,
     ) -> Result<Option<GateDefOperation>, ParseError> {
@@ -1388,6 +1464,37 @@ impl QASMParser {
                 }
             }
         }
+    }
+
+    fn validate_no_opaque_gate_usage(program: &Program) -> Result<(), ParseError> {
+        // Collect all declared opaque gates
+        let mut opaque_gates = HashSet::new();
+        let mut gate_usages = Vec::new();
+
+        for operation in &program.operations {
+            match operation {
+                Operation::OpaqueGate { name, .. } => {
+                    opaque_gates.insert(name.clone());
+                }
+                Operation::Gate { name, .. } => {
+                    gate_usages.push(name.clone());
+                }
+                _ => {}
+            }
+        }
+
+        // Check if any gate usage corresponds to an opaque gate
+        for gate_name in gate_usages {
+            if opaque_gates.contains(&gate_name) {
+                return Err(ParseError::InvalidOperation(format!(
+                    "Opaque gate '{}' is used but opaque gates are not yet implemented in PECOS. \
+                    The gate is declared as opaque but cannot be executed.",
+                    gate_name
+                )));
+            }
+        }
+
+        Ok(())
     }
 }
 

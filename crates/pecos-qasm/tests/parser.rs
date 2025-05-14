@@ -17,7 +17,7 @@ fn test_parse_simple_program() -> Result<(), Box<dyn std::error::Error>> {
     let program = QASMParser::parse_str(qasm)?;
 
     assert_eq!(program.version, "2.0");
-    assert_eq!(program.quantum_registers.get("q"), Some(&2));
+    assert_eq!(program.quantum_registers.get("q").map(|v| v.len()), Some(2));
     assert_eq!(program.classical_registers.get("c"), Some(&2));
     assert_eq!(program.operations.len(), 4);
 

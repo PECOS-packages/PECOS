@@ -14,10 +14,8 @@ pub fn count_qubits_in_file<P: AsRef<Path>>(path: P) -> Result<usize, ParseError
     // Parse the file using the existing parser
     let program = QASMParser::parse_file(path)?;
 
-    // Sum up the sizes of all quantum registers
-    let total_qubits = program.quantum_registers.values().sum();
-
-    Ok(total_qubits)
+    // Use the total_qubits from the program
+    Ok(program.total_qubits)
 }
 
 /// Quickly parse a QASM string to extract just the number of qubits.
@@ -33,10 +31,8 @@ pub fn count_qubits_in_str(qasm: &str) -> Result<usize, ParseError> {
     // Parse the string using the existing parser
     let program = QASMParser::parse_str(qasm)?;
 
-    // Sum up the sizes of all quantum registers
-    let total_qubits = program.quantum_registers.values().sum();
-
-    Ok(total_qubits)
+    // Use the total_qubits from the program
+    Ok(program.total_qubits)
 }
 
 #[cfg(test)]

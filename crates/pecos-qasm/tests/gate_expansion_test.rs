@@ -16,19 +16,17 @@ fn test_gate_expansion_rx() {
     assert_eq!(program.operations.len(), 3);
     
     // Check first operation is h
-    if let Operation::Gate { name, arguments, registers, .. } = &program.operations[0] {
+    if let Operation::Gate { name, qubits, .. } = &program.operations[0] {
         assert_eq!(name, "H");
-        assert_eq!(arguments, &[0]);
-        assert_eq!(registers, &["q"]);
+        assert_eq!(qubits, &[0]);
     } else {
         panic!("Expected h gate");
     }
     
     // Check second operation is rz
-    if let Operation::Gate { name, arguments, registers, parameters } = &program.operations[1] {
+    if let Operation::Gate { name, qubits, parameters, .. } = &program.operations[1] {
         assert_eq!(name, "RZ");
-        assert_eq!(arguments, &[0]);
-        assert_eq!(registers, &["q"]);
+        assert_eq!(qubits, &[0]);
         assert_eq!(parameters.len(), 1);
         assert!((parameters[0] - 1.5708).abs() < 0.0001);
     } else {
@@ -36,10 +34,9 @@ fn test_gate_expansion_rx() {
     }
     
     // Check third operation is h
-    if let Operation::Gate { name, arguments, registers, .. } = &program.operations[2] {
+    if let Operation::Gate { name, qubits, .. } = &program.operations[2] {
         assert_eq!(name, "H");
-        assert_eq!(arguments, &[0]);
-        assert_eq!(registers, &["q"]);
+        assert_eq!(qubits, &[0]);
     } else {
         panic!("Expected h gate");
     }
@@ -60,28 +57,25 @@ fn test_gate_expansion_cz() {
     assert_eq!(program.operations.len(), 3);
     
     // Check first operation is h on second qubit
-    if let Operation::Gate { name, arguments, registers, .. } = &program.operations[0] {
+    if let Operation::Gate { name, qubits, .. } = &program.operations[0] {
         assert_eq!(name, "H");
-        assert_eq!(arguments, &[1]);
-        assert_eq!(registers, &["q"]);
+        assert_eq!(qubits, &[1]);
     } else {
         panic!("Expected h gate");
     }
-    
+
     // Check second operation is cx
-    if let Operation::Gate { name, arguments, registers, .. } = &program.operations[1] {
+    if let Operation::Gate { name, qubits, .. } = &program.operations[1] {
         assert_eq!(name, "CX");
-        assert_eq!(arguments, &[0, 1]);
-        assert_eq!(registers, &["q", "q"]);
+        assert_eq!(qubits, &[0, 1]);
     } else {
         panic!("Expected cx gate");
     }
-    
+
     // Check third operation is h on second qubit
-    if let Operation::Gate { name, arguments, registers, .. } = &program.operations[2] {
+    if let Operation::Gate { name, qubits, .. } = &program.operations[2] {
         assert_eq!(name, "H");
-        assert_eq!(arguments, &[1]);
-        assert_eq!(registers, &["q"]);
+        assert_eq!(qubits, &[1]);
     } else {
         panic!("Expected h gate");
     }

@@ -212,31 +212,27 @@ pub enum Operation {
     Gate {
         name: String,
         parameters: Vec<f64>,
-        arguments: Vec<usize>,
-        // Add register name for each qubit
-        registers: Vec<String>,
+        qubits: Vec<usize>,  // Global qubit IDs
     },
     Measure {
-        qubit: usize,
-        q_reg: String,
-        bit: usize,
-        c_reg: String,
+        qubit: usize,        // Global qubit ID
+        c_reg: String,       // Classical register name
+        c_index: usize,      // Bit index within the register
     },
     If {
         condition: Expression,
         operation: Box<Operation>,
     },
     Reset {
-        qubit: usize,
+        qubit: usize,        // Global qubit ID
     },
     Barrier {
-        qubits: Vec<usize>,
+        qubits: Vec<usize>,  // Global qubit IDs
     },
     RegMeasure {
-        q_reg: String,
+        q_reg: String,       // Still need register names for full register operations
         c_reg: String,
     },
-    // Added to support classical operations
     ClassicalAssignment {
         target: String,        // Register name or bit
         is_indexed: bool,      // Is this a bit_id or just register
@@ -251,8 +247,7 @@ impl fmt::Display for Operation {
             Operation::Gate {
                 name,
                 parameters,
-                arguments,
-                registers,
+                qubits,
             } => {
                 write!(f, "{name}(")?;
                 for (i, param) in parameters.iter().enumerate() {
@@ -263,24 +258,13 @@ impl fmt::Display for Operation {
                 }
                 write!(f, ")")?;
 
-                // Use actual register names if available
-                for (i, arg) in arguments.iter().enumerate() {
-                    let reg_name = if i < registers.len() {
-                        &registers[i]
-                    } else {
-                        "q" // Fallback to "q" if register name isn't available
-                    };
-                    write!(f, " {reg_name}[{arg}]")?;
+                for qubit in qubits {
+                    write!(f, " q{qubit}")?;
                 }
                 Ok(())
             }
-            Operation::Measure {
-                qubit,
-                q_reg: _,
-                bit,
-                c_reg: _,
-            } => {
-                write!(f, "measure q[{qubit}] -> c[{bit}]")
+            Operation::Measure { qubit, c_reg, c_index } => {
+                write!(f, "measure q{qubit} -> {c_reg}[{c_index}]")
             }
             Operation::If {
                 condition,
@@ -289,12 +273,12 @@ impl fmt::Display for Operation {
                 write!(f, "if ({condition}) {operation}")
             }
             Operation::Reset { qubit } => {
-                write!(f, "reset q[{qubit}]")
+                write!(f, "reset q{qubit}")
             }
             Operation::Barrier { qubits } => {
                 write!(f, "barrier")?;
                 for qubit in qubits {
-                    write!(f, " q[{qubit}]")?;
+                    write!(f, " q{qubit}")?;
                 }
                 Ok(())
             }
@@ -332,10 +316,20 @@ pub struct GateDefinition {
 #[derive(Debug, Clone, Default)]
 pub struct Program {
     pub version: String,
-    pub quantum_registers: HashMap<String, usize>,
-    pub classical_registers: HashMap<String, usize>,
     pub operations: Vec<Operation>,
     pub gate_definitions: HashMap<String, GateDefinition>,
+
+    // Quantum register mapping to global qubit IDs
+    pub quantum_registers: HashMap<String, Vec<usize>>,  // register_name -> vec of global qubit IDs
+
+    // Classical registers stay as they were (just sizes)
+    pub classical_registers: HashMap<String, usize>,  // register_name -> size
+
+    // Total count
+    pub total_qubits: usize,
+
+    // Reverse mapping for debugging/error messages
+    pub qubit_map: HashMap<usize, (String, usize)>,  // global_id -> (register_name, index)
 }
 
 impl QASMParser {
@@ -390,7 +384,7 @@ impl QASMParser {
                 // Explicitly handle specific rules
                 Rule::register_decl => Self::parse_register(inner_pair, program)?,
                 Rule::quantum_op => {
-                    if let Some(op) = Self::parse_quantum_op(inner_pair)? {
+                    if let Some(op) = Self::parse_quantum_op(inner_pair, program)? {
                         program.operations.push(op);
                     }
                 }
@@ -400,7 +394,7 @@ impl QASMParser {
                     }
                 }
                 Rule::if_stmt => {
-                    if let Some(op) = Self::parse_if_statement(inner_pair)? {
+                    if let Some(op) = Self::parse_if_statement(inner_pair, program)? {
                         program.operations.push(op);
                     }
                 }
@@ -430,7 +424,20 @@ impl QASMParser {
             Rule::qreg => {
                 let indexed_id = inner.into_inner().next().unwrap();
                 let (name, size) = Self::parse_indexed_id(&indexed_id)?;
-                program.quantum_registers.insert(name, size);
+
+                // Assign global qubit IDs
+                let mut qubit_ids = Vec::new();
+                for i in 0..size {
+                    let global_id = program.total_qubits;
+                    qubit_ids.push(global_id);
+
+                    // Store reverse mapping for debugging
+                    program.qubit_map.insert(global_id, (name.clone(), i));
+
+                    program.total_qubits += 1;
+                }
+
+                program.quantum_registers.insert(name, qubit_ids);
             }
             Rule::creg => {
                 let indexed_id = inner.into_inner().next().unwrap();
@@ -450,6 +457,7 @@ impl QASMParser {
 
     fn parse_quantum_op(
         pair: pest::iterators::Pair<Rule>,
+        program: &Program,
     ) -> Result<Option<Operation>, ParseError> {
         let inner = pair.into_inner().next().unwrap();
 
@@ -460,8 +468,7 @@ impl QASMParser {
                 let gate_name = inner_pairs.next().unwrap().as_str();
 
                 let mut params = Vec::new();
-                let mut arguments = Vec::new();
-                let mut registers = Vec::new();
+                let mut global_qubit_ids = Vec::new();
 
                 for pair in inner_pairs {
                     match pair.as_rule() {
@@ -477,13 +484,28 @@ impl QASMParser {
                                 }
                             }
                         }
-                        // Handle qubit lists - add arguments from qubit IDs
+                        // Handle qubit lists - convert to global IDs
                         Rule::qubit_list => {
                             for qubit_id in pair.into_inner() {
                                 if qubit_id.as_rule() == Rule::qubit_id {
                                     let (reg_name, idx) = Self::parse_id_with_index(&qubit_id)?;
-                                    arguments.push(idx);
-                                    registers.push(reg_name);
+
+                                    // Look up the global ID
+                                    if let Some(qubit_ids) = program.quantum_registers.get(&reg_name) {
+                                        if idx < qubit_ids.len() {
+                                            global_qubit_ids.push(qubit_ids[idx]);
+                                        } else {
+                                            return Err(ParseError::InvalidOperation(format!(
+                                                "Qubit index {} out of bounds for register '{}'",
+                                                idx, reg_name
+                                            )));
+                                        }
+                                    } else {
+                                        return Err(ParseError::InvalidOperation(format!(
+                                            "Unknown quantum register '{}'",
+                                            reg_name
+                                        )));
+                                    }
                                 }
                             }
                         }
@@ -497,18 +519,20 @@ impl QASMParser {
                 Ok(Some(Operation::Gate {
                     name: gate_name.to_string(),
                     parameters: params,
-                    arguments,
-                    registers,
+                    qubits: global_qubit_ids,
                 }))
             }
-            Rule::measure => Self::parse_measure(inner),
-            Rule::reset => Self::parse_reset(inner),
-            Rule::barrier => Self::parse_barrier(inner),
+            Rule::measure => Self::parse_measure(inner, program),
+            Rule::reset => Self::parse_reset(inner, program),
+            Rule::barrier => Self::parse_barrier(inner, program),
             _ => Ok(None),
         }
     }
 
-    fn parse_measure(pair: pest::iterators::Pair<Rule>) -> Result<Option<Operation>, ParseError> {
+    fn parse_measure(
+        pair: pest::iterators::Pair<Rule>,
+        program: &Program,
+    ) -> Result<Option<Operation>, ParseError> {
         let inner_parts: Vec<_> = pair.into_inner().collect();
 
         if inner_parts.len() == 2 {
@@ -516,15 +540,31 @@ impl QASMParser {
             let dst = &inner_parts[1];
 
             if src.as_rule() == Rule::qubit_id && dst.as_rule() == Rule::bit_id {
-                let (q_reg, qubit) = Self::parse_id_with_index(&src.clone())?;
-                let (c_reg, bit) = Self::parse_id_with_index(&dst.clone())?;
+                let (q_reg, q_idx) = Self::parse_id_with_index(&src.clone())?;
+                let (c_reg, c_idx) = Self::parse_id_with_index(&dst.clone())?;
 
-                Ok(Some(Operation::Measure {
-                    qubit,
-                    q_reg,
-                    bit,
-                    c_reg,
-                }))
+                // Look up global qubit ID
+                if let Some(qubit_ids) = program.quantum_registers.get(&q_reg) {
+                    if q_idx < qubit_ids.len() {
+                        let global_qubit_id = qubit_ids[q_idx];
+
+                        Ok(Some(Operation::Measure {
+                            qubit: global_qubit_id,
+                            c_reg,
+                            c_index: c_idx,
+                        }))
+                    } else {
+                        Err(ParseError::InvalidOperation(format!(
+                            "Qubit index {} out of bounds for register '{}'",
+                            q_idx, q_reg
+                        )))
+                    }
+                } else {
+                    Err(ParseError::InvalidOperation(format!(
+                        "Unknown quantum register '{}'",
+                        q_reg
+                    )))
+                }
             } else if src.as_rule() == Rule::identifier && dst.as_rule() == Rule::identifier {
                 Ok(Some(Operation::RegMeasure {
                     q_reg: src.as_str().to_string(),
@@ -542,22 +582,47 @@ impl QASMParser {
         }
     }
 
-    fn parse_reset(pair: pest::iterators::Pair<Rule>) -> Result<Option<Operation>, ParseError> {
+    fn parse_reset(
+        pair: pest::iterators::Pair<Rule>,
+        program: &Program,
+    ) -> Result<Option<Operation>, ParseError> {
         let qubit_id = pair.into_inner().next().unwrap();
-        let (_, qubit) = Self::parse_id_with_index(&qubit_id)?;
+        let (reg_name, idx) = Self::parse_id_with_index(&qubit_id)?;
 
-        Ok(Some(Operation::Reset { qubit }))
+        // Look up global qubit ID
+        if let Some(qubit_ids) = program.quantum_registers.get(&reg_name) {
+            if idx < qubit_ids.len() {
+                let global_qubit_id = qubit_ids[idx];
+                Ok(Some(Operation::Reset { qubit: global_qubit_id }))
+            } else {
+                Err(ParseError::InvalidOperation(format!(
+                    "Qubit index {} out of bounds for register '{}'",
+                    idx, reg_name
+                )))
+            }
+        } else {
+            Err(ParseError::InvalidOperation(format!(
+                "Unknown quantum register '{}'",
+                reg_name
+            )))
+        }
     }
 
-    fn parse_barrier(pair: pest::iterators::Pair<Rule>) -> Result<Option<Operation>, ParseError> {
+    fn parse_barrier(
+        pair: pest::iterators::Pair<Rule>,
+        program: &Program,
+    ) -> Result<Option<Operation>, ParseError> {
         let qubit_list = pair.into_inner().next().unwrap();
-        let qubits = Self::parse_qubit_list(qubit_list)?;
+        let qubits = Self::parse_qubit_list(qubit_list, program)?;
 
         Ok(Some(Operation::Barrier { qubits }))
     }
 
     // Parse if statement with condition (expression) and operation
-    fn parse_if_statement(pair: pest::iterators::Pair<Rule>) -> Result<Option<Operation>, ParseError> {
+    fn parse_if_statement(
+        pair: pest::iterators::Pair<Rule>,
+        program: &Program,
+    ) -> Result<Option<Operation>, ParseError> {
         // For debugging
         debug!("Parsing if statement: '{}'", pair.as_str());
 
@@ -593,7 +658,7 @@ impl QASMParser {
         // Parse the operation to be conditionally executed
         let operation = match operation_pair.as_rule() {
                 Rule::quantum_op => {
-                    if let Some(op) = Self::parse_quantum_op(operation_pair.clone())? {
+                    if let Some(op) = Self::parse_quantum_op(operation_pair.clone(), program)? {
                         op
                     } else {
                         return Err(ParseError::InvalidOperation(
@@ -688,13 +753,32 @@ impl QASMParser {
         Err(ParseError::InvalidOperation("Invalid classical operation".into()))
     }
 
-    fn parse_qubit_list(pair: pest::iterators::Pair<Rule>) -> Result<Vec<usize>, ParseError> {
+    fn parse_qubit_list(
+        pair: pest::iterators::Pair<Rule>,
+        program: &Program,
+    ) -> Result<Vec<usize>, ParseError> {
         let mut qubits = Vec::new();
 
         for qubit_id in pair.into_inner() {
             if qubit_id.as_rule() == Rule::qubit_id {
-                let (_, index) = Self::parse_id_with_index(&qubit_id)?;
-                qubits.push(index);
+                let (reg_name, idx) = Self::parse_id_with_index(&qubit_id)?;
+
+                // Look up global qubit ID
+                if let Some(qubit_ids) = program.quantum_registers.get(&reg_name) {
+                    if idx < qubit_ids.len() {
+                        qubits.push(qubit_ids[idx]);
+                    } else {
+                        return Err(ParseError::InvalidOperation(format!(
+                            "Qubit index {} out of bounds for register '{}'",
+                            idx, reg_name
+                        )));
+                    }
+                } else {
+                    return Err(ParseError::InvalidOperation(format!(
+                        "Unknown quantum register '{}'",
+                        reg_name
+                    )));
+                }
             }
         }
 
@@ -1175,7 +1259,7 @@ impl QASMParser {
 
         for operation in &program.operations {
             match operation {
-                Operation::Gate { name, parameters, arguments, registers } => {
+                Operation::Gate { name, parameters, qubits } => {
                     // Check if this is a native gate - don't expand native gates
                     if native_gates.contains(name.as_str()) {
                         expanded_operations.push(operation.clone());
@@ -1186,8 +1270,7 @@ impl QASMParser {
                         let expanded = Self::expand_gate_call(
                             gate_def,
                             parameters,
-                            arguments,
-                            registers,
+                            qubits,
                             &program.gate_definitions,
                         )?;
                         expanded_operations.extend(expanded);
@@ -1208,8 +1291,7 @@ impl QASMParser {
     fn expand_gate_call(
         gate_def: &GateDefinition,
         parameters: &[f64],
-        arguments: &[usize],
-        registers: &[String],
+        qubits: &[usize],
         all_definitions: &HashMap<String, GateDefinition>,
     ) -> Result<Vec<Operation>, ParseError> {
         let mut expanded = Vec::new();
@@ -1222,11 +1304,11 @@ impl QASMParser {
             }
         }
 
-        // Create qubit mapping
+        // Create qubit mapping from argument names to global IDs
         let mut qubit_map = HashMap::new();
         for (i, qarg_name) in gate_def.qargs.iter().enumerate() {
-            if i < arguments.len() && i < registers.len() {
-                qubit_map.insert(qarg_name.clone(), (arguments[i], registers[i].clone()));
+            if i < qubits.len() {
+                qubit_map.insert(qarg_name.clone(), qubits[i]);
             }
         }
 
@@ -1242,22 +1324,18 @@ impl QASMParser {
                 new_params.push(value);
             }
 
-            // Substitute qubits
-            let mut new_args = Vec::new();
-            let mut new_regs = Vec::new();
-
+            // Substitute qubits with global IDs
+            let mut new_qubits = Vec::new();
             for arg_name in &body_op.arguments {
-                if let Some((mapped_arg, mapped_reg)) = qubit_map.get(arg_name) {
-                    new_args.push(*mapped_arg);
-                    new_regs.push(mapped_reg.clone());
+                if let Some(&mapped_qubit) = qubit_map.get(arg_name) {
+                    new_qubits.push(mapped_qubit);
                 }
             }
 
             let new_op = Operation::Gate {
                 name: mapped_name.clone(),
                 parameters: new_params.clone(),
-                arguments: new_args.clone(),
-                registers: new_regs.clone(),
+                qubits: new_qubits.clone(),
             };
 
             // Check if this gate has a definition - if it does, expand it
@@ -1266,8 +1344,7 @@ impl QASMParser {
                 let nested_expanded = Self::expand_gate_call(
                     nested_def,
                     &new_params,
-                    &new_args,
-                    &new_regs,
+                    &new_qubits,
                     all_definitions,
                 )?;
                 expanded.extend(nested_expanded);
@@ -1322,7 +1399,13 @@ mod tests {
         let program = QASMParser::parse_str(qasm)?;
 
         assert_eq!(program.version, "2.0");
-        assert_eq!(program.quantum_registers.get("q"), Some(&2));
+
+        // Check register mappings
+        assert!(program.quantum_registers.contains_key("q"));
+        let q_ids = program.quantum_registers.get("q").unwrap();
+        assert_eq!(q_ids.len(), 2);
+        assert_eq!(q_ids, &vec![0, 1]);  // Global IDs for q[0] and q[1]
+
         assert_eq!(program.classical_registers.get("c"), Some(&2));
         assert_eq!(program.operations.len(), 4); // 2 gates + 2 measurements
 
@@ -1330,14 +1413,12 @@ mod tests {
         if let Operation::Gate {
             name,
             parameters,
-            arguments,
-            registers,
+            qubits,
         } = &program.operations[0]
         {
             assert_eq!(name, "H");
             assert!(parameters.is_empty());
-            assert_eq!(arguments, &[0]);
-            assert_eq!(registers, &["q".to_string()]);
+            assert_eq!(qubits, &[0]);  // Global ID for q[0]
         } else {
             panic!("Expected gate operation");
         }
@@ -1345,14 +1426,12 @@ mod tests {
         if let Operation::Gate {
             name,
             parameters,
-            arguments,
-            registers,
+            qubits,
         } = &program.operations[1]
         {
             assert_eq!(name, "cx");
             assert!(parameters.is_empty());
-            assert_eq!(arguments, &[0, 1]);
-            assert_eq!(registers, &["q".to_string(), "q".to_string()]);
+            assert_eq!(qubits, &[0, 1]);  // Global IDs for q[0] and q[1]
         } else {
             panic!("Expected gate operation");
         }
@@ -1360,30 +1439,26 @@ mod tests {
         // Verify the measure operations
         if let Operation::Measure {
             qubit,
-            q_reg,
-            bit,
             c_reg,
+            c_index,
         } = &program.operations[2]
         {
-            assert_eq!(*qubit, 0);
-            assert_eq!(*q_reg, "q");
-            assert_eq!(*bit, 0);
-            assert_eq!(*c_reg, "c");
+            assert_eq!(*qubit, 0);  // Global ID for q[0]
+            assert_eq!(c_reg, "c");
+            assert_eq!(*c_index, 0);
         } else {
             panic!("Expected measure operation");
         }
 
         if let Operation::Measure {
             qubit,
-            q_reg,
-            bit,
             c_reg,
+            c_index,
         } = &program.operations[3]
         {
-            assert_eq!(*qubit, 1);
-            assert_eq!(*q_reg, "q");
-            assert_eq!(*bit, 1);
-            assert_eq!(*c_reg, "c");
+            assert_eq!(*qubit, 1);  // Global ID for q[1]
+            assert_eq!(c_reg, "c");
+            assert_eq!(*c_index, 1);
         } else {
             panic!("Expected measure operation");
         }
@@ -1406,7 +1481,7 @@ mod tests {
         let program = QASMParser::parse_str(qasm)?;
 
         assert_eq!(program.version, "2.0");
-        assert_eq!(program.quantum_registers.get("q"), Some(&1));
+        assert_eq!(program.quantum_registers.get("q").map(|v| v.len()), Some(1));
         assert_eq!(program.classical_registers.get("c"), Some(&1));
         assert_eq!(program.operations.len(), 3); // h gate + measure + if statement
 
@@ -1436,10 +1511,9 @@ mod tests {
             }
 
             // Verify the operation is x q[0]
-            if let Operation::Gate { name, arguments, registers, .. } = &**operation {
+            if let Operation::Gate { name, qubits, .. } = &**operation {
                 assert_eq!(name, "x");
-                assert_eq!(arguments, &[0]);
-                assert_eq!(registers, &["q".to_string()]);
+                assert_eq!(qubits, &[0]);
             } else {
                 panic!("Expected Gate operation in if statement");
             }
@@ -1465,7 +1539,7 @@ mod tests {
         let program = QASMParser::parse_str(qasm)?;
 
         assert_eq!(program.version, "2.0");
-        assert_eq!(program.quantum_registers.get("q"), Some(&1));
+        assert_eq!(program.quantum_registers.get("q").map(|v| v.len()), Some(1));
         assert_eq!(program.classical_registers.get("c"), Some(&1));
         assert_eq!(program.operations.len(), 3); // h gate + measure + if statement
 

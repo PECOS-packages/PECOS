@@ -9,7 +9,7 @@ fn test_circular_dependency_detection() {
         gate g1 q { g1 q; }
         g1 q[0];
     "#;
-    
+
     match QASMParser::parse_str(qasm_direct) {
         Err(e) => {
             assert!(e.to_string().contains("Circular dependency"));
@@ -29,14 +29,14 @@ fn test_indirect_circular_dependency_detection() {
         gate g2 q { g1 q; }
         g1 q[0];
     "#;
-    
+
     match QASMParser::parse_str(qasm_indirect) {
         Err(e) => {
             assert!(e.to_string().contains("Circular dependency"));
             // Either g1 -> g2 -> g1 or g2 -> g1 -> g2 is valid depending on which gets expanded first
             assert!(
-                e.to_string().contains("g1 -> g2 -> g1") || 
-                e.to_string().contains("g2 -> g1 -> g2")
+                e.to_string().contains("g1 -> g2 -> g1")
+                    || e.to_string().contains("g2 -> g1 -> g2")
             );
         }
         Ok(_) => panic!("Expected error due to circular dependency"),
@@ -54,7 +54,7 @@ fn test_complex_circular_dependency_detection() {
         gate g3 q { g1 q; }
         g1 q[0];
     "#;
-    
+
     match QASMParser::parse_str(qasm_complex) {
         Err(e) => {
             assert!(e.to_string().contains("Circular dependency"));
@@ -77,7 +77,7 @@ fn test_valid_deep_nesting() {
         gate g5 q { g4 q; }
         g5 q[0];
     "#;
-    
+
     match QASMParser::parse_str(qasm_valid) {
         Ok(_) => { /* Success */ }
         Err(e) => panic!("Valid deep nesting failed with error: {}", e),
@@ -93,7 +93,7 @@ fn test_circular_dependency_with_parameters() {
         gate rot(theta) q { rot(theta) q; }
         rot(pi/2) q[0];
     "#;
-    
+
     match QASMParser::parse_str(qasm_param) {
         Err(e) => {
             assert!(e.to_string().contains("Circular dependency"));
@@ -113,7 +113,7 @@ fn test_circular_dependency_without_usage() {
         gate g2 q { g1 q; }
         CX q[0], q[1];  // Use a different gate
     "#;
-    
+
     // This should succeed since we never actually use the circular gates
     assert!(QASMParser::parse_str(qasm_unused).is_ok());
 }

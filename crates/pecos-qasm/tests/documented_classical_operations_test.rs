@@ -48,17 +48,20 @@ fn test_supported_classical_operations() {
         // - Comparison operators in conditionals (>=, <=, !=, >, <) - Limited support
         // - if statements with complex expressions - Limited support
     "#;
-    
+
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    assert!(!program.operations.is_empty(), "Program should have operations");
-    
+    assert!(
+        !program.operations.is_empty(),
+        "Program should have operations"
+    );
+
     println!("Supported classical operations documented and tested");
 }
 
 #[test]
 fn test_unsupported_classical_operations() {
     // Test for operations that are NOT supported
-    
+
     // 1. Exponentiation - now supported
     let qasm_exp = r#"
         OPENQASM 2.0;
@@ -67,9 +70,11 @@ fn test_unsupported_classical_operations() {
         c = b**2;  // Exponentiation is now supported
     "#;
 
-    assert!(QASMParser::parse_str(qasm_exp).is_ok(),
-            "Exponentiation (**) should now be supported");
-    
+    assert!(
+        QASMParser::parse_str(qasm_exp).is_ok(),
+        "Exponentiation (**) should now be supported"
+    );
+
     // 2. Complex conditionals may have issues
     let qasm_complex_if = r#"
         OPENQASM 2.0;
@@ -78,13 +83,13 @@ fn test_unsupported_classical_operations() {
         creg c[4];
         if (c >= 2) h q[0];  // >= operator may not be fully supported
     "#;
-    
+
     // This parses but may have runtime issues
     let result = QASMParser::parse_str(qasm_complex_if);
     if result.is_err() {
         println!("Complex conditionals with >= operator not supported");
     }
-    
+
     println!("Unsupported operations documented");
 }
 
@@ -119,9 +124,12 @@ fn test_modified_example_without_unsupported_features() {
         if (c == 2) h q[0];
         if (d == 1) rx((0.5+0.5)*pi) q[0];
     "#;
-    
+
     let program = QASMParser::parse_str(qasm).expect("Failed to parse modified QASM");
-    assert!(!program.operations.is_empty(), "Program should have operations");
-    
+    assert!(
+        !program.operations.is_empty(),
+        "Program should have operations"
+    );
+
     println!("Modified example without unsupported features works");
 }

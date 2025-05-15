@@ -39,26 +39,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         measure q[0] -> c[0];
         measure q[1] -> c[1];
     "#;
-    
+
     // Parse the QASM
     let program = QASMParser::parse_str(qasm)?;
-    
+
     println!("Parsed QASM program with opaque gates:");
     println!("Version: {}", program.version);
     println!("\nQuantum registers:");
     for (name, qubits) in &program.quantum_registers {
         println!("  {} -> {:?}", name, qubits);
     }
-    
+
     println!("\nOperations:");
     for (i, op) in program.operations.iter().enumerate() {
         println!("  {}: {:?}", i, op);
     }
-    
+
     // Count opaque gate declarations vs usage
     let mut opaque_declarations = 0;
     let mut gate_usages = 0;
-    
+
     for op in &program.operations {
         match op {
             pecos_qasm::parser::Operation::OpaqueGate { .. } => opaque_declarations += 1,
@@ -66,9 +66,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => {}
         }
     }
-    
+
     println!("\nOpaque gate declarations: {}", opaque_declarations);
     println!("Gate usages: {}", gate_usages);
-    
+
     Ok(())
 }

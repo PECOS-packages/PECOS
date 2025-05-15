@@ -1,3 +1,7 @@
+#![allow(clippy::too_many_lines, clippy::bool_to_int_with_if)]
+
+use log::debug;
+use pecos_core::errors::PecosError;
 use pest::Parser;
 use pest::iterators::Pair;
 use pest_derive::Parser;
@@ -5,8 +9,6 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::path::Path;
-use log::debug;
-use pecos_core::errors::PecosError;
 
 #[derive(Debug, Clone)]
 pub enum ParameterExpression {
@@ -37,9 +39,6 @@ pub struct QASMParser;
 
 // Conversion functions for PecosError
 
-
-
-
 #[derive(Debug, Clone)]
 pub enum Expression {
     Integer(i64),
@@ -49,10 +48,7 @@ pub enum Expression {
     UnaryOp(String, Box<Expression>),
     BitId(String, i64),
     Variable(String),
-    FunctionCall {
-        name: String,
-        args: Vec<Expression>,
-    },
+    FunctionCall { name: String, args: Vec<Expression> },
 }
 
 impl Expression {
@@ -102,7 +98,9 @@ impl Expression {
                     ">=" => Ok(if left_val >= right_val { 1.0 } else { 0.0 }),
                     "<<" => Ok(((left_val as i64) << (right_val as i64)) as f64),
                     ">>" => Ok(((left_val as i64) >> (right_val as i64)) as f64),
-                    _ => Err(PecosError::ParseInvalidExpression(format!("Unsupported binary operation: {op}"))),
+                    _ => Err(PecosError::ParseInvalidExpression(format!(
+                        "Unsupported binary operation: {op}"
+                    ))),
                 }
             }
             Expression::UnaryOp(op, expr) => {
@@ -110,21 +108,32 @@ impl Expression {
                 match op.as_str() {
                     "-" => Ok(-val),
                     "~" => Ok((!(val as i64)) as f64),
-                    _ => Err(PecosError::ParseInvalidExpression(format!("Unsupported unary operation: {op}"))),
+                    _ => Err(PecosError::ParseInvalidExpression(format!(
+                        "Unsupported unary operation: {op}"
+                    ))),
                 }
             }
             Expression::BitId(reg_name, idx) => {
                 // We can't evaluate BitId directly because it requires register state
                 // This is used in if conditions, so add debugging
-                debug!("Cannot evaluate BitId({}, {}) directly - the engine needs to handle this", reg_name, idx);
-                Err(PecosError::ParseInvalidExpression("Cannot evaluate bit_id directly".to_string()))
-            },
-            Expression::Variable(_) => Err(PecosError::ParseInvalidExpression("Cannot evaluate variable directly".to_string())),
+                debug!(
+                    "Cannot evaluate BitId({}, {}) directly - the engine needs to handle this",
+                    reg_name, idx
+                );
+                Err(PecosError::ParseInvalidExpression(
+                    "Cannot evaluate bit_id directly".to_string(),
+                ))
+            }
+            Expression::Variable(_) => Err(PecosError::ParseInvalidExpression(
+                "Cannot evaluate variable directly".to_string(),
+            )),
             Expression::FunctionCall { name, args } => {
                 if args.len() != 1 {
-                    return Err(PecosError::ParseInvalidExpression(
-                        format!("Function {} expects exactly 1 argument, got {}", name, args.len())
-                    ));
+                    return Err(PecosError::ParseInvalidExpression(format!(
+                        "Function {} expects exactly 1 argument, got {}",
+                        name,
+                        args.len()
+                    )));
                 }
 
                 let arg_val = args[0].evaluate()?;
@@ -136,27 +145,30 @@ impl Expression {
                     "exp" => Ok(arg_val.exp()),
                     "ln" => {
                         if arg_val <= 0.0 {
-                            Err(PecosError::ParseInvalidExpression(
-                                format!("ln({}) is undefined for non-positive values", arg_val)
-                            ))
+                            Err(PecosError::ParseInvalidExpression(format!(
+                                "ln({}) is undefined for non-positive values",
+                                arg_val
+                            )))
                         } else {
                             Ok(arg_val.ln())
                         }
-                    },
+                    }
                     "sqrt" => {
                         if arg_val < 0.0 {
-                            Err(PecosError::ParseInvalidExpression(
-                                format!("sqrt({}) is undefined for negative values", arg_val)
-                            ))
+                            Err(PecosError::ParseInvalidExpression(format!(
+                                "sqrt({}) is undefined for negative values",
+                                arg_val
+                            )))
                         } else {
                             Ok(arg_val.sqrt())
                         }
-                    },
-                    _ => Err(PecosError::ParseInvalidExpression(
-                        format!("Unknown function: {}", name)
-                    ))
+                    }
+                    _ => Err(PecosError::ParseInvalidExpression(format!(
+                        "Unknown function: {}",
+                        name
+                    ))),
                 }
-            },
+            }
         }
     }
 }
@@ -190,31 +202,31 @@ pub enum Operation {
     Gate {
         name: String,
         parameters: Vec<f64>,
-        qubits: Vec<usize>,  // Global qubit IDs
+        qubits: Vec<usize>, // Global qubit IDs
     },
     Measure {
-        qubit: usize,        // Global qubit ID
-        c_reg: String,       // Classical register name
-        c_index: usize,      // Bit index within the register
+        qubit: usize,   // Global qubit ID
+        c_reg: String,  // Classical register name
+        c_index: usize, // Bit index within the register
     },
     If {
         condition: Expression,
         operation: Box<Operation>,
     },
     Reset {
-        qubit: usize,        // Global qubit ID
+        qubit: usize, // Global qubit ID
     },
     Barrier {
-        qubits: Vec<usize>,  // Global qubit IDs
+        qubits: Vec<usize>, // Global qubit IDs
     },
     RegMeasure {
-        q_reg: String,       // Still need register names for full register operations
+        q_reg: String, // Still need register names for full register operations
         c_reg: String,
     },
     ClassicalAssignment {
-        target: String,        // Register name or bit
-        is_indexed: bool,      // Is this a bit_id or just register
-        index: Option<usize>,  // Index if it's a bit_id
+        target: String,       // Register name or bit
+        is_indexed: bool,     // Is this a bit_id or just register
+        index: Option<usize>, // Index if it's a bit_id
         expression: Expression,
     },
     OpaqueGate {
@@ -246,7 +258,11 @@ impl fmt::Display for Operation {
                 }
                 Ok(())
             }
-            Operation::Measure { qubit, c_reg, c_index } => {
+            Operation::Measure {
+                qubit,
+                c_reg,
+                c_index,
+            } => {
                 write!(f, "measure q{qubit} -> {c_reg}[{c_index}]")
             }
             Operation::If {
@@ -284,7 +300,11 @@ impl fmt::Display for Operation {
                     write!(f, "{} = {}", target, expression)
                 }
             }
-            Operation::OpaqueGate { name, params, qargs } => {
+            Operation::OpaqueGate {
+                name,
+                params,
+                qargs,
+            } => {
                 write!(f, "opaque {}", name)?;
                 if !params.is_empty() {
                     write!(f, "(")?;
@@ -324,16 +344,16 @@ pub struct Program {
     pub gate_definitions: HashMap<String, GateDefinition>,
 
     // Quantum register mapping to global qubit IDs
-    pub quantum_registers: HashMap<String, Vec<usize>>,  // register_name -> vec of global qubit IDs
+    pub quantum_registers: HashMap<String, Vec<usize>>, // register_name -> vec of global qubit IDs
 
     // Classical registers stay as they were (just sizes)
-    pub classical_registers: HashMap<String, usize>,  // register_name -> size
+    pub classical_registers: HashMap<String, usize>, // register_name -> size
 
     // Total count
     pub total_qubits: usize,
 
     // Reverse mapping for debugging/error messages
-    pub qubit_map: HashMap<usize, (String, usize)>,  // global_id -> (register_name, index)
+    pub qubit_map: HashMap<usize, (String, usize)>, // global_id -> (register_name, index)
 }
 
 impl QASMParser {
@@ -344,13 +364,17 @@ impl QASMParser {
 
     pub fn parse_str(source: &str) -> Result<Program, PecosError> {
         let mut program = Program::default();
-        let mut pairs = Self::parse(Rule::program, source).map_err(|e| PecosError::ParseSyntax {
-            language: "QASM".to_string(),
-            message: e.to_string(),
-        })?;
+        let mut pairs =
+            Self::parse(Rule::program, source).map_err(|e| PecosError::ParseSyntax {
+                language: "QASM".to_string(),
+                message: e.to_string(),
+            })?;
         let program_pair = pairs
             .next()
-            .ok_or_else(|| PecosError::CompileInvalidOperation { operation: "QASM operation".to_string(), reason: "Empty program".to_string() })?;
+            .ok_or_else(|| PecosError::CompileInvalidOperation {
+                operation: "QASM operation".to_string(),
+                reason: "Empty program".to_string(),
+            })?;
 
         for pair in program_pair.into_inner() {
             match pair.as_rule() {
@@ -361,7 +385,7 @@ impl QASMParser {
                             if version != "2.0" {
                                 return Err(PecosError::ParseInvalidVersion {
                                     language: "QASM".to_string(),
-                                    version: format!("Unsupported version: {version}")
+                                    version: format!("Unsupported version: {version}"),
                                 });
                             }
                             program.version = version.to_string();
@@ -463,7 +487,7 @@ impl QASMParser {
             _ => {
                 return Err(PecosError::CompileInvalidOperation {
                     operation: "QASM operation".to_string(),
-                    reason: format!("Unexpected register type: {:?}", inner.as_rule())
+                    reason: format!("Unexpected register type: {:?}", inner.as_rule()),
                 });
             }
         }
@@ -494,8 +518,12 @@ impl QASMParser {
                                 if param_expr.as_rule() == Rule::expr {
                                     let expr = Self::parse_expr(param_expr)?;
                                     // Evaluate the expression to a float
-                                    let value = expr.evaluate()
-                                        .map_err(|e| PecosError::ParseInvalidExpression(format!("Failed to evaluate parameter: {}", e)))?;
+                                    let value = expr.evaluate().map_err(|e| {
+                                        PecosError::ParseInvalidExpression(format!(
+                                            "Failed to evaluate parameter: {}",
+                                            e
+                                        ))
+                                    })?;
                                     params.push(value);
                                 }
                             }
@@ -507,19 +535,27 @@ impl QASMParser {
                                     let (reg_name, idx) = Self::parse_id_with_index(&qubit_id)?;
 
                                     // Look up the global ID
-                                    if let Some(qubit_ids) = program.quantum_registers.get(&reg_name) {
+                                    if let Some(qubit_ids) =
+                                        program.quantum_registers.get(&reg_name)
+                                    {
                                         if idx < qubit_ids.len() {
                                             global_qubit_ids.push(qubit_ids[idx]);
                                         } else {
                                             return Err(PecosError::CompileInvalidOperation {
                                                 operation: "QASM operation".to_string(),
-                                                reason: format!("Qubit index {} out of bounds for register '{}'", idx, reg_name)
+                                                reason: format!(
+                                                    "Qubit index {} out of bounds for register '{}'",
+                                                    idx, reg_name
+                                                ),
                                             });
                                         }
                                     } else {
                                         return Err(PecosError::CompileInvalidOperation {
                                             operation: "QASM operation".to_string(),
-                                            reason: format!("Unknown quantum register '{}'", reg_name)
+                                            reason: format!(
+                                                "Unknown quantum register '{}'",
+                                                reg_name
+                                            ),
                                         });
                                     }
                                 }
@@ -572,13 +608,16 @@ impl QASMParser {
                     } else {
                         Err(PecosError::CompileInvalidOperation {
                             operation: "QASM operation".to_string(),
-                            reason: format!("Qubit index {} out of bounds for register '{}'", q_idx, q_reg)
+                            reason: format!(
+                                "Qubit index {} out of bounds for register '{}'",
+                                q_idx, q_reg
+                            ),
                         })
                     }
                 } else {
                     Err(PecosError::CompileInvalidOperation {
                         operation: "QASM operation".to_string(),
-                        reason: format!("Unknown quantum register '{}'", q_reg)
+                        reason: format!("Unknown quantum register '{}'", q_reg),
                     })
                 }
             } else if src.as_rule() == Rule::identifier && dst.as_rule() == Rule::identifier {
@@ -589,13 +628,13 @@ impl QASMParser {
             } else {
                 Err(PecosError::CompileInvalidOperation {
                     operation: "QASM operation".to_string(),
-                    reason: "Invalid measurement format".to_string()
+                    reason: "Invalid measurement format".to_string(),
                 })
             }
         } else {
             Err(PecosError::CompileInvalidOperation {
                 operation: "QASM operation".to_string(),
-                reason: "Invalid measurement syntax".to_string()
+                reason: "Invalid measurement syntax".to_string(),
             })
         }
     }
@@ -611,17 +650,22 @@ impl QASMParser {
         if let Some(qubit_ids) = program.quantum_registers.get(&reg_name) {
             if idx < qubit_ids.len() {
                 let global_qubit_id = qubit_ids[idx];
-                Ok(Some(Operation::Reset { qubit: global_qubit_id }))
+                Ok(Some(Operation::Reset {
+                    qubit: global_qubit_id,
+                }))
             } else {
                 Err(PecosError::CompileInvalidOperation {
                     operation: "QASM operation".to_string(),
-                    reason: format!("Qubit index {} out of bounds for register '{}'", idx, reg_name)
+                    reason: format!(
+                        "Qubit index {} out of bounds for register '{}'",
+                        idx, reg_name
+                    ),
                 })
             }
         } else {
             Err(PecosError::CompileInvalidOperation {
                 operation: "QASM operation".to_string(),
-                reason: format!("Unknown quantum register '{}'", reg_name)
+                reason: format!("Unknown quantum register '{}'", reg_name),
             })
         }
     }
@@ -646,7 +690,10 @@ impl QASMParser {
                         } else {
                             return Err(PecosError::CompileInvalidOperation {
                                 operation: "QASM operation".to_string(),
-                                reason: format!("Unknown quantum register '{}' in barrier", reg_name)
+                                reason: format!(
+                                    "Unknown quantum register '{}' in barrier",
+                                    reg_name
+                                ),
                             });
                         }
                     }
@@ -659,13 +706,16 @@ impl QASMParser {
                             } else {
                                 return Err(PecosError::CompileInvalidOperation {
                                     operation: "QASM operation".to_string(),
-                                    reason: format!("Qubit index {} out of bounds for register '{}'", idx, reg_name)
+                                    reason: format!(
+                                        "Qubit index {} out of bounds for register '{}'",
+                                        idx, reg_name
+                                    ),
                                 });
                             }
                         } else {
                             return Err(PecosError::CompileInvalidOperation {
                                 operation: "QASM operation".to_string(),
-                                reason: format!("Unknown quantum register '{}'", reg_name)
+                                reason: format!("Unknown quantum register '{}'", reg_name),
                             });
                         }
                     }
@@ -693,7 +743,10 @@ impl QASMParser {
         if parts.len() < 2 {
             return Err(PecosError::CompileInvalidOperation {
                 operation: "QASM operation".to_string(),
-                reason: format!("Invalid if statement: expected at least 2 parts, got {}", parts.len())
+                reason: format!(
+                    "Invalid if statement: expected at least 2 parts, got {}",
+                    parts.len()
+                ),
             });
         }
 
@@ -705,49 +758,59 @@ impl QASMParser {
         let condition = match condition_expr_pair.as_rule() {
             Rule::condition_expr => {
                 // Get the expression inside condition_expr
-                let expr_pair = condition_expr_pair.clone().into_inner().next()
-                    .ok_or_else(|| PecosError::CompileInvalidOperation {
-                        operation: "QASM operation".to_string(),
-                        reason: "Empty condition expression".to_string()
-                    })?;
+                let expr_pair =
+                    condition_expr_pair
+                        .clone()
+                        .into_inner()
+                        .next()
+                        .ok_or_else(|| PecosError::CompileInvalidOperation {
+                            operation: "QASM operation".to_string(),
+                            reason: "Empty condition expression".to_string(),
+                        })?;
                 Self::parse_expr(expr_pair)?
-            },
+            }
             _ => {
                 return Err(PecosError::CompileInvalidOperation {
                     operation: "QASM operation".to_string(),
-                    reason: format!("Invalid rule in if statement, expected condition_expr, got: {:?}", condition_expr_pair.as_rule())
+                    reason: format!(
+                        "Invalid rule in if statement, expected condition_expr, got: {:?}",
+                        condition_expr_pair.as_rule()
+                    ),
                 });
             }
         };
 
         // Parse the operation to be conditionally executed
         let operation = match operation_pair.as_rule() {
-                Rule::quantum_op => {
-                    if let Some(op) = Self::parse_quantum_op(operation_pair.clone(), program)? {
-                        op
-                    } else {
-                        return Err(PecosError::CompileInvalidOperation {
-                            operation: "QASM operation".to_string(),
-                            reason: "Invalid quantum operation in if statement".to_string()
-                        });
-                    }
-                },
-                Rule::classical_op => {
-                    if let Some(op) = Self::parse_classical_operation(operation_pair.clone())? {
-                        op
-                    } else {
-                        return Err(PecosError::CompileInvalidOperation {
-                            operation: "QASM operation".to_string(),
-                            reason: "Invalid classical operation in if statement".to_string()
-                        });
-                    }
-                },
-                _ => {
+            Rule::quantum_op => {
+                if let Some(op) = Self::parse_quantum_op(operation_pair.clone(), program)? {
+                    op
+                } else {
                     return Err(PecosError::CompileInvalidOperation {
                         operation: "QASM operation".to_string(),
-                        reason: format!("Unsupported operation type in if statement: {:?}", operation_pair.as_rule())
+                        reason: "Invalid quantum operation in if statement".to_string(),
                     });
                 }
+            }
+            Rule::classical_op => {
+                if let Some(op) = Self::parse_classical_operation(operation_pair.clone())? {
+                    op
+                } else {
+                    return Err(PecosError::CompileInvalidOperation {
+                        operation: "QASM operation".to_string(),
+                        reason: "Invalid classical operation in if statement".to_string(),
+                    });
+                }
+            }
+            _ => {
+                return Err(PecosError::CompileInvalidOperation {
+                    operation: "QASM operation".to_string(),
+                    reason: format!(
+                        "Unsupported operation type in if statement: {:?}",
+                        operation_pair.as_rule()
+                    ),
+                });
+            }
         };
 
         // Create and return the If operation
@@ -769,7 +832,12 @@ impl QASMParser {
 
         // Debug print all inner parts
         for (i, part) in inner_parts.iter().enumerate() {
-            eprintln!("  Part {}: rule={:?}, text='{}'", i, part.as_rule(), part.as_str());
+            eprintln!(
+                "  Part {}: rule={:?}, text='{}'",
+                i,
+                part.as_rule(),
+                part.as_str()
+            );
         }
 
         if inner_parts.len() >= 2 {
@@ -796,7 +864,10 @@ impl QASMParser {
                 _ => {
                     return Err(PecosError::CompileInvalidOperation {
                         operation: "QASM operation".to_string(),
-                        reason: format!("Invalid classical assignment target: {:?}", target_pair.as_rule())
+                        reason: format!(
+                            "Invalid classical assignment target: {:?}",
+                            target_pair.as_rule()
+                        ),
                     });
                 }
             }
@@ -817,9 +888,11 @@ impl QASMParser {
             }));
         }
 
-        Err(PecosError::CompileInvalidOperation { operation: "QASM operation".to_string(), reason: "Invalid classical operation".to_string() })
+        Err(PecosError::CompileInvalidOperation {
+            operation: "QASM operation".to_string(),
+            reason: "Invalid classical operation".to_string(),
+        })
     }
-
 
     fn parse_indexed_id(pair: &pest::iterators::Pair<Rule>) -> Result<(String, usize), PecosError> {
         let content = pair.as_str();
@@ -827,7 +900,9 @@ impl QASMParser {
         if let Some(bracket_pos) = content.find('[') {
             let name = content[0..bracket_pos].to_string();
             let size_str = &content[bracket_pos + 1..content.len() - 1];
-            let size = size_str.parse::<usize>().map_err(|e| PecosError::CompileInvalidRegisterSize(e.to_string()))?;
+            let size = size_str
+                .parse::<usize>()
+                .map_err(|e| PecosError::CompileInvalidRegisterSize(e.to_string()))?;
             Ok((name, size))
         } else {
             Err(PecosError::ParseInvalidExpression(format!(
@@ -847,7 +922,11 @@ impl QASMParser {
     fn parse_binary_expr(pair: Pair<Rule>, default_op: &str) -> Result<Expression, PecosError> {
         // Debug the input pair
         let rule = pair.as_rule();
-        eprintln!("parse_binary_expr for rule {:?} with text '{}'", rule, pair.as_str());
+        eprintln!(
+            "parse_binary_expr for rule {:?} with text '{}'",
+            rule,
+            pair.as_str()
+        );
 
         let inner_pairs: Vec<Pair<Rule>> = pair.into_inner().collect();
 
@@ -866,7 +945,12 @@ impl QASMParser {
 
             // Check if this is an operator token (for equality, relational, etc.)
             let (actual_op, right_expr) = match next_pair.as_rule() {
-                Rule::equality_op | Rule::relational_op | Rule::shift_op | Rule::add_op | Rule::mul_op | Rule::pow_op => {
+                Rule::equality_op
+                | Rule::relational_op
+                | Rule::shift_op
+                | Rule::add_op
+                | Rule::mul_op
+                | Rule::pow_op => {
                     // This is an explicit operator, next pair should be the operand
                     if i + 1 < inner_pairs.len() {
                         let op_str = next_pair.as_str();
@@ -874,7 +958,9 @@ impl QASMParser {
                         i += 2; // Skip both operator and operand
                         (op_str, right)
                     } else {
-                        return Err(PecosError::ParseInvalidExpression("Missing right operand for binary operation".to_string()));
+                        return Err(PecosError::ParseInvalidExpression(
+                            "Missing right operand for binary operation".to_string(),
+                        ));
                     }
                 }
                 _ => {
@@ -892,7 +978,11 @@ impl QASMParser {
                 }
             };
 
-            result = Expression::BinaryOp(Box::new(result), actual_op.to_string(), Box::new(right_expr));
+            result = Expression::BinaryOp(
+                Box::new(result),
+                actual_op.to_string(),
+                Box::new(right_expr),
+            );
         }
 
         Ok(result)
@@ -900,17 +990,22 @@ impl QASMParser {
 
     fn parse_expr(pair: Pair<Rule>) -> Result<Expression, PecosError> {
         // Debug the input pair
-        eprintln!("parse_expr: Rule {:?}, Text: '{}'", pair.as_rule(), pair.as_str());
-        
+        eprintln!(
+            "parse_expr: Rule {:?}, Text: '{}'",
+            pair.as_rule(),
+            pair.as_str()
+        );
+
         match pair.as_rule() {
             // Handle all expression types based on our updated grammar
 
             // Top-level expression rule
             Rule::expr => {
-                let inner = pair.into_inner().next().ok_or_else(||
-                    PecosError::ParseInvalidExpression("Empty expression".to_string()))?;
+                let inner = pair.into_inner().next().ok_or_else(|| {
+                    PecosError::ParseInvalidExpression("Empty expression".to_string())
+                })?;
                 Self::parse_expr(inner)
-            },
+            }
 
             // Binary operations - explicitly map each rule to parse_binary_expr
             Rule::b_or_expr => Self::parse_binary_expr(pair, "|"),
@@ -957,7 +1052,9 @@ impl QASMParser {
 
                     Ok(expr)
                 } else {
-                    Err(PecosError::ParseInvalidExpression("Missing operand for unary operation".to_string()))
+                    Err(PecosError::ParseInvalidExpression(
+                        "Missing operand for unary operation".to_string(),
+                    ))
                 }
             }
 
@@ -1099,8 +1196,12 @@ impl QASMParser {
         let mut inner = pair.into_inner();
 
         // Get the gate name
-        let name = inner.next()
-            .ok_or_else(|| PecosError::CompileInvalidOperation { operation: "QASM operation".to_string(), reason: "Missing gate name".to_string() })?
+        let name = inner
+            .next()
+            .ok_or_else(|| PecosError::CompileInvalidOperation {
+                operation: "QASM operation".to_string(),
+                reason: "Missing gate name".to_string(),
+            })?
             .as_str()
             .to_string();
 
@@ -1179,7 +1280,9 @@ impl QASMParser {
         }
     }
 
-    fn parse_param_expr(pair: pest::iterators::Pair<Rule>) -> Result<ParameterExpression, PecosError> {
+    fn parse_param_expr(
+        pair: pest::iterators::Pair<Rule>,
+    ) -> Result<ParameterExpression, PecosError> {
         match pair.as_rule() {
             Rule::expr => {
                 // Parse the expression recursively
@@ -1190,25 +1293,31 @@ impl QASMParser {
                 let inner = pair.into_inner().next().unwrap();
                 Self::parse_param_expr(inner)
             }
-            Rule::identifier => {
-                Ok(ParameterExpression::Identifier(pair.as_str().to_string()))
-            }
+            Rule::identifier => Ok(ParameterExpression::Identifier(pair.as_str().to_string())),
             Rule::number => {
-                let value = pair.as_str().parse().map_err(|_| PecosError::ParseInvalidNumber("Invalid number".to_string()))?;
+                let value = pair
+                    .as_str()
+                    .parse()
+                    .map_err(|_| PecosError::ParseInvalidNumber("Invalid number".to_string()))?;
                 Ok(ParameterExpression::Constant(value))
             }
-            Rule::pi_constant => {
-                Ok(ParameterExpression::Pi)
-            }
+            Rule::pi_constant => Ok(ParameterExpression::Pi),
             Rule::function_call => {
                 let mut inner = pair.into_inner();
                 let func_name = inner.next().unwrap().as_str().to_string();
-                let args: Result<Vec<_>, _> = inner.map(|arg| Self::parse_param_expr(arg)).collect();
-                Ok(ParameterExpression::FunctionCall { name: func_name, args: args? })
+                let args: Result<Vec<_>, _> =
+                    inner.map(|arg| Self::parse_param_expr(arg)).collect();
+                Ok(ParameterExpression::FunctionCall {
+                    name: func_name,
+                    args: args?,
+                })
             }
-            Rule::additive_expr | Rule::multiplicative_expr | Rule::power_expr | Rule::b_or_expr | Rule::b_xor_expr | Rule::b_and_expr => {
-                Self::parse_binary_param_expr(pair)
-            }
+            Rule::additive_expr
+            | Rule::multiplicative_expr
+            | Rule::power_expr
+            | Rule::b_or_expr
+            | Rule::b_xor_expr
+            | Rule::b_and_expr => Self::parse_binary_param_expr(pair),
             Rule::unary_expr => {
                 // Handle unary expressions (like negation)
                 let mut inner = pair.into_inner();
@@ -1241,7 +1350,9 @@ impl QASMParser {
 
                     Ok(expr)
                 } else {
-                    Err(PecosError::ParseInvalidExpression("Expected expression after unary operator".to_string()))
+                    Err(PecosError::ParseInvalidExpression(
+                        "Expected expression after unary operator".to_string(),
+                    ))
                 }
             }
             _ => {
@@ -1254,24 +1365,36 @@ impl QASMParser {
                     Self::parse_param_expr(child)
                 } else {
                     // Unknown node type, default to constant 0
-                    debug!("Unknown node type in parse_param_expr: {:?}", pair.as_rule());
+                    debug!(
+                        "Unknown node type in parse_param_expr: {:?}",
+                        pair.as_rule()
+                    );
                     Ok(ParameterExpression::Constant(0.0))
                 }
             }
         }
     }
 
-    fn parse_binary_param_expr(pair: pest::iterators::Pair<Rule>) -> Result<ParameterExpression, PecosError> {
+    fn parse_binary_param_expr(
+        pair: pest::iterators::Pair<Rule>,
+    ) -> Result<ParameterExpression, PecosError> {
         let mut inner = pair.into_inner();
-        let left_pair = inner.next().ok_or_else(|| PecosError::ParseInvalidExpression("Expected left operand".to_string()))?;
+        let left_pair = inner.next().ok_or_else(|| {
+            PecosError::ParseInvalidExpression("Expected left operand".to_string())
+        })?;
         let mut left = Self::parse_param_expr(left_pair)?;
 
         while let Some(op_pair) = inner.next() {
             let op = op_pair.as_str().to_string();
             if inner.peek().is_none() {
-                debug!("parse_binary_param_expr: No right operand found after operator {}", op);
+                debug!(
+                    "parse_binary_param_expr: No right operand found after operator {}",
+                    op
+                );
             }
-            let right_pair = inner.next().ok_or_else(|| PecosError::ParseInvalidExpression("Expected right operand".to_string()))?;
+            let right_pair = inner.next().ok_or_else(|| {
+                PecosError::ParseInvalidExpression("Expected right operand".to_string())
+            })?;
             let right = Self::parse_param_expr(right_pair)?;
             left = ParameterExpression::BinaryOp {
                 op,
@@ -1345,7 +1468,11 @@ impl QASMParser {
 
         for operation in &program.operations {
             match operation {
-                Operation::Gate { name, parameters, qubits } => {
+                Operation::Gate {
+                    name,
+                    parameters,
+                    qubits,
+                } => {
                     // Check if this is a native gate - don't expand native gates
                     if native_gates.contains(name.as_str()) {
                         expanded_operations.push(operation.clone());
@@ -1445,14 +1572,19 @@ impl QASMParser {
                 // Check for circular dependency
                 if expansion_stack.contains(&mapped_name) {
                     let mut cycle_info = String::new();
-                    cycle_info.push_str(&format!("Circular dependency detected: {} -> {}\n\n",
-                        expansion_stack.join(" -> "), mapped_name));
+                    cycle_info.push_str(&format!(
+                        "Circular dependency detected: {} -> {}\n\n",
+                        expansion_stack.join(" -> "),
+                        mapped_name
+                    ));
 
                     // Add helpful context
                     cycle_info.push_str("To fix this error:\n");
                     cycle_info.push_str("1. Check the gate definitions for circular references\n");
                     cycle_info.push_str("2. Ensure no gate directly or indirectly calls itself\n");
-                    cycle_info.push_str("3. Consider breaking the cycle by refactoring your gate hierarchy\n\n");
+                    cycle_info.push_str(
+                        "3. Consider breaking the cycle by refactoring your gate hierarchy\n\n",
+                    );
 
                     cycle_info.push_str("The cycle involves these gates:\n");
                     for (i, gate) in expansion_stack.iter().enumerate() {
@@ -1460,7 +1592,8 @@ impl QASMParser {
                         if i + 1 < expansion_stack.len() {
                             cycle_info.push_str(&format!("'{}'\n", expansion_stack[i + 1]));
                         } else {
-                            cycle_info.push_str(&format!("'{}' (completes the cycle)\n", mapped_name));
+                            cycle_info
+                                .push_str(&format!("'{}' (completes the cycle)\n", mapped_name));
                         }
                     }
 
@@ -1492,13 +1625,17 @@ impl QASMParser {
         Ok(expanded)
     }
 
-    fn evaluate_param_expr(expr: &ParameterExpression, param_map: &HashMap<String, f64>) -> Result<f64, PecosError> {
+    fn evaluate_param_expr(
+        expr: &ParameterExpression,
+        param_map: &HashMap<String, f64>,
+    ) -> Result<f64, PecosError> {
         match expr {
             ParameterExpression::Constant(value) => Ok(*value),
             ParameterExpression::Pi => Ok(std::f64::consts::PI),
-            ParameterExpression::Identifier(name) => {
-                param_map.get(name).copied().ok_or_else(|| PecosError::ParseInvalidIdentifier(name.clone()))
-            }
+            ParameterExpression::Identifier(name) => param_map
+                .get(name)
+                .copied()
+                .ok_or_else(|| PecosError::ParseInvalidIdentifier(name.clone())),
             ParameterExpression::BinaryOp { op, left, right } => {
                 let left_val = Self::evaluate_param_expr(left, param_map)?;
                 let right_val = Self::evaluate_param_expr(right, param_map)?;
@@ -1508,14 +1645,19 @@ impl QASMParser {
                     "*" => Ok(left_val * right_val),
                     "/" => Ok(left_val / right_val),
                     "**" => Ok(left_val.powf(right_val)),
-                    _ => Err(PecosError::ParseInvalidExpression(format!("Invalid operator: {}", op))),
+                    _ => Err(PecosError::ParseInvalidExpression(format!(
+                        "Invalid operator: {}",
+                        op
+                    ))),
                 }
             }
             ParameterExpression::FunctionCall { name, args } => {
                 if args.len() != 1 {
-                    return Err(PecosError::ParseInvalidExpression(
-                        format!("Function {} expects exactly 1 argument, got {}", name, args.len())
-                    ));
+                    return Err(PecosError::ParseInvalidExpression(format!(
+                        "Function {} expects exactly 1 argument, got {}",
+                        name,
+                        args.len()
+                    )));
                 }
 
                 let arg_val = Self::evaluate_param_expr(&args[0], param_map)?;
@@ -1527,25 +1669,28 @@ impl QASMParser {
                     "exp" => Ok(arg_val.exp()),
                     "ln" => {
                         if arg_val <= 0.0 {
-                            Err(PecosError::ParseInvalidExpression(
-                                format!("ln({}) is undefined for non-positive values", arg_val)
-                            ))
+                            Err(PecosError::ParseInvalidExpression(format!(
+                                "ln({}) is undefined for non-positive values",
+                                arg_val
+                            )))
                         } else {
                             Ok(arg_val.ln())
                         }
-                    },
+                    }
                     "sqrt" => {
                         if arg_val < 0.0 {
-                            Err(PecosError::ParseInvalidExpression(
-                                format!("sqrt({}) is undefined for negative values", arg_val)
-                            ))
+                            Err(PecosError::ParseInvalidExpression(format!(
+                                "sqrt({}) is undefined for negative values",
+                                arg_val
+                            )))
                         } else {
                             Ok(arg_val.sqrt())
                         }
-                    },
-                    _ => Err(PecosError::ParseInvalidExpression(
-                        format!("Unknown function: {}", name)
-                    ))
+                    }
+                    _ => Err(PecosError::ParseInvalidExpression(format!(
+                        "Unknown function: {}",
+                        name
+                    ))),
                 }
             }
         }
@@ -1571,11 +1716,14 @@ impl QASMParser {
         // Check if any gate usage corresponds to an opaque gate
         for gate_name in gate_usages {
             if opaque_gates.contains(&gate_name) {
-                return Err(PecosError::CompileInvalidOperation { operation: "QASM operation".to_string(), reason: format!(
-                    "Opaque gate '{}' is used but opaque gates are not yet implemented in PECOS. \
+                return Err(PecosError::CompileInvalidOperation {
+                    operation: "QASM operation".to_string(),
+                    reason: format!(
+                        "Opaque gate '{}' is used but opaque gates are not yet implemented in PECOS. \
                     The gate is declared as opaque but cannot be executed.",
-                    gate_name
-                ) });
+                        gate_name
+                    ),
+                });
             }
         }
 
@@ -1612,7 +1760,7 @@ mod tests {
         // Check that all operations are gates
         for op in &program.operations {
             match op {
-                Operation::Gate { .. } => {},
+                Operation::Gate { .. } => {}
                 _ => panic!("Expected only gates"),
             }
         }
@@ -1651,7 +1799,7 @@ mod tests {
         assert!(program.quantum_registers.contains_key("q"));
         let q_ids = program.quantum_registers.get("q").unwrap();
         assert_eq!(q_ids.len(), 2);
-        assert_eq!(q_ids, &vec![0, 1]);  // Global IDs for q[0] and q[1]
+        assert_eq!(q_ids, &vec![0, 1]); // Global IDs for q[0] and q[1]
 
         assert_eq!(program.classical_registers.get("c"), Some(&2));
         assert_eq!(program.operations.len(), 4); // 2 gates + 2 measurements
@@ -1665,7 +1813,7 @@ mod tests {
         {
             assert_eq!(name, "H");
             assert!(parameters.is_empty());
-            assert_eq!(qubits, &[0]);  // Global ID for q[0]
+            assert_eq!(qubits, &[0]); // Global ID for q[0]
         } else {
             panic!("Expected gate operation");
         }
@@ -1678,7 +1826,7 @@ mod tests {
         {
             assert_eq!(name, "cx");
             assert!(parameters.is_empty());
-            assert_eq!(qubits, &[0, 1]);  // Global IDs for q[0] and q[1]
+            assert_eq!(qubits, &[0, 1]); // Global IDs for q[0] and q[1]
         } else {
             panic!("Expected gate operation");
         }
@@ -1690,7 +1838,7 @@ mod tests {
             c_index,
         } = &program.operations[2]
         {
-            assert_eq!(*qubit, 0);  // Global ID for q[0]
+            assert_eq!(*qubit, 0); // Global ID for q[0]
             assert_eq!(c_reg, "c");
             assert_eq!(*c_index, 0);
         } else {
@@ -1703,7 +1851,7 @@ mod tests {
             c_index,
         } = &program.operations[3]
         {
-            assert_eq!(*qubit, 1);  // Global ID for q[1]
+            assert_eq!(*qubit, 1); // Global ID for q[1]
             assert_eq!(c_reg, "c");
             assert_eq!(*c_index, 1);
         } else {
@@ -1733,7 +1881,11 @@ mod tests {
         assert_eq!(program.operations.len(), 3); // h gate + measure + if statement
 
         // Verify the if statement was parsed
-        if let Operation::If { condition, operation } = &program.operations[2] {
+        if let Operation::If {
+            condition,
+            operation,
+        } = &program.operations[2]
+        {
             // Verify the condition (c[0] == 1)
             if let Expression::BinaryOp(left, op, right) = condition {
                 // Check left side is c[0]
@@ -1791,8 +1943,18 @@ mod tests {
         assert_eq!(program.operations.len(), 3); // h gate + measure + if statement
 
         // Verify the if statement contains a classical assignment
-        if let Operation::If { condition: _, operation } = &program.operations[2] {
-            if let Operation::ClassicalAssignment { target, is_indexed, index, expression } = &**operation {
+        if let Operation::If {
+            condition: _,
+            operation,
+        } = &program.operations[2]
+        {
+            if let Operation::ClassicalAssignment {
+                target,
+                is_indexed,
+                index,
+                expression,
+            } = &**operation
+            {
                 assert_eq!(target, "c");
                 assert!(is_indexed);
                 assert_eq!(*index, Some(0));
@@ -1811,7 +1973,7 @@ mod tests {
 
         Ok(())
     }
-    
+
     #[test]
     fn test_binary_operators() -> Result<(), Box<dyn std::error::Error>> {
         let qasm = r#"
@@ -1830,13 +1992,13 @@ mod tests {
             c = b | a;  // OR operation: 2 | 1 = 3
             c = b & a;  // AND operation: 2 & 1 = 0
         "#;
-        
+
         let program = QASMParser::parse_str(qasm)?;
-        
+
         // Just check that parsing succeeded
         assert_eq!(program.classical_registers.len(), 3);
         assert_eq!(program.operations.len(), 5); // 3 assignments
-        
+
         Ok(())
     }
 }

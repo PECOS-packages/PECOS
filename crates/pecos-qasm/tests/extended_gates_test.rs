@@ -1,7 +1,6 @@
-
 // Test extended gate support in PECOS QASM
-use pecos_qasm::QASMEngine;
 use pecos_engines::engines::classical::ClassicalEngine;
+use pecos_qasm::QASMEngine;
 
 #[test]
 fn test_basic_rotation_gates() {
@@ -22,7 +21,7 @@ fn test_basic_rotation_gates() {
 
     let mut engine = QASMEngine::new().unwrap();
     let result = engine.from_str(qasm);
-    
+
     assert!(result.is_ok(), "Should successfully parse rotation gates");
 }
 
@@ -42,8 +41,11 @@ fn test_two_qubit_rotations() {
 
     let mut engine = QASMEngine::new().unwrap();
     let result = engine.from_str(qasm);
-    
-    assert!(result.is_ok(), "Should successfully parse two-qubit rotation gates");
+
+    assert!(
+        result.is_ok(),
+        "Should successfully parse two-qubit rotation gates"
+    );
 }
 
 #[test]
@@ -61,7 +63,7 @@ fn test_decomposed_gates() {
 
     let mut engine = QASMEngine::new().unwrap();
     let result = engine.from_str(qasm);
-    
+
     assert!(result.is_ok(), "Should successfully parse decomposed gates");
 }
 
@@ -80,8 +82,11 @@ fn test_parameterized_gates() {
 
     let mut engine = QASMEngine::new().unwrap();
     let result = engine.from_str(qasm);
-    
-    assert!(result.is_ok(), "Should successfully parse parameterized gates");
+
+    assert!(
+        result.is_ok(),
+        "Should successfully parse parameterized gates"
+    );
 }
 
 #[test]
@@ -97,17 +102,20 @@ fn test_unsupported_gate_error() {
 
     let mut engine = QASMEngine::new().unwrap();
     let result = engine.from_str(qasm);
-    
+
     // The gate should be parsed but fail during execution
     assert!(result.is_ok(), "Should parse unsupported gates");
-    
+
     // But execution should fail
     match engine.generate_commands() {
         Ok(_) => panic!("Should fail on unsupported gate"),
         Err(e) => {
             let error_msg = format!("{:?}", e);
-            assert!(error_msg.contains("Unsupported") || error_msg.contains("ccx"),
-                    "Error should mention unsupported gate: {}", error_msg);
+            assert!(
+                error_msg.contains("Unsupported") || error_msg.contains("ccx"),
+                "Error should mention unsupported gate: {}",
+                error_msg
+            );
         }
     }
 }

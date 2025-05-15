@@ -18,7 +18,7 @@ fn main() {
         
         measure q -> c;
     "#;
-    
+
     // Parse the QASM
     match QASMParser::parse_str(qasm) {
         Ok(_) => {
@@ -27,7 +27,9 @@ fn main() {
         Err(e) => {
             println!("Expected error occurred:");
             println!("{}", e);
-            println!("\nThis error is expected because opaque gates are not yet implemented in PECOS.");
+            println!(
+                "\nThis error is expected because opaque gates are not yet implemented in PECOS."
+            );
             println!("You can declare opaque gates, but cannot use them in circuits.");
         }
     }

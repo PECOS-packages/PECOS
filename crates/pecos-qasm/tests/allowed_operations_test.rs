@@ -41,9 +41,12 @@ fn test_allowed_top_level_operations() {
         // Using defined gates
         mygate q[0];
     "#;
-    
+
     let result = QASMParser::parse_str(qasm);
-    assert!(result.is_ok(), "All these operations should be allowed at top level");
+    assert!(
+        result.is_ok(),
+        "All these operations should be allowed at top level"
+    );
 }
 
 /// Test operations that should NOT be allowed at the top level
@@ -58,10 +61,10 @@ fn test_disallowed_top_level_operations() {
             gate bad a { h a; }  // Can't define gates inside if
         }
     "#;
-    
+
     let result1 = QASMParser::parse_str(qasm1);
     assert!(result1.is_err(), "Gate definitions inside if should fail");
-    
+
     // Test 2: Invalid measurement syntax
     let qasm2 = r#"
         OPENQASM 2.0;
@@ -109,9 +112,12 @@ fn test_allowed_gate_body_operations() {
         
         allowed_ops q[0], q[1], q[2];
     "#;
-    
+
     let result = QASMParser::parse_str(qasm);
-    assert!(result.is_ok(), "These operations are currently allowed in gate bodies");
+    assert!(
+        result.is_ok(),
+        "These operations are currently allowed in gate bodies"
+    );
 }
 
 /// Test operations that should NOT be allowed in gate definitions
@@ -127,10 +133,10 @@ fn test_disallowed_gate_body_operations() {
             measure a -> c[0];  // Measurements not allowed
         }
     "#;
-    
+
     let result1 = QASMParser::parse_str(qasm1);
     assert!(result1.is_err(), "Measurements in gate body should fail");
-    
+
     // Test 2: Classical operations in gate body
     let qasm2 = r#"
         OPENQASM 2.0;
@@ -141,10 +147,13 @@ fn test_disallowed_gate_body_operations() {
             c[0] = 1;  // Classical ops not allowed
         }
     "#;
-    
+
     let result2 = QASMParser::parse_str(qasm2);
-    assert!(result2.is_err(), "Classical operations in gate body should fail");
-    
+    assert!(
+        result2.is_err(),
+        "Classical operations in gate body should fail"
+    );
+
     // Test 3: If statements in gate body
     let qasm3 = r#"
         OPENQASM 2.0;
@@ -155,10 +164,10 @@ fn test_disallowed_gate_body_operations() {
             if (c[0] == 1) h a;  // Conditionals not allowed
         }
     "#;
-    
+
     let result3 = QASMParser::parse_str(qasm3);
     assert!(result3.is_err(), "If statements in gate body should fail");
-    
+
     // Test 4: Nested gate definitions
     let qasm4 = r#"
         OPENQASM 2.0;
@@ -168,7 +177,7 @@ fn test_disallowed_gate_body_operations() {
             gate inner b { h b; }  // Can't define gates inside gates
         }
     "#;
-    
+
     let result4 = QASMParser::parse_str(qasm4);
     assert!(result4.is_err(), "Nested gate definitions should fail");
 }
@@ -190,9 +199,12 @@ fn test_allowed_if_body_operations() {
         
         // QASM doesn't support block if statements, only single operations
     "#;
-    
+
     let result = QASMParser::parse_str(qasm);
-    assert!(result.is_ok(), "These operations should be allowed in if statements");
+    assert!(
+        result.is_ok(),
+        "These operations should be allowed in if statements"
+    );
 }
 
 /// Test operations that are context-dependent
@@ -209,10 +221,10 @@ fn test_context_dependent_operations() {
             barrier a, b;    // Currently allowed (but maybe shouldn't be)
         }
     "#;
-    
+
     let result1 = QASMParser::parse_str(qasm1);
     assert!(result1.is_ok());
-    
+
     // Reset: similar to barriers
     let qasm2 = r#"
         OPENQASM 2.0;
@@ -224,7 +236,7 @@ fn test_context_dependent_operations() {
             reset a;     // Currently allowed (but shouldn't be)
         }
     "#;
-    
+
     let result2 = QASMParser::parse_str(qasm2);
     assert!(result2.is_ok());
 }

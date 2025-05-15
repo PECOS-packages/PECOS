@@ -1,4 +1,4 @@
-use pecos_qasm::parser::{QASMParser, Operation};
+use pecos_qasm::parser::{Operation, QASMParser};
 
 #[test]
 fn test_barrier_parsing() -> Result<(), Box<dyn std::error::Error>> {
@@ -32,13 +32,15 @@ fn test_barrier_parsing() -> Result<(), Box<dyn std::error::Error>> {
     let program = QASMParser::parse_str(qasm)?;
 
     // Count barrier operations
-    let barrier_count = program.operations.iter().filter(|op| {
-        matches!(op, Operation::Barrier { .. })
-    }).count();
+    let barrier_count = program
+        .operations
+        .iter()
+        .filter(|op| matches!(op, Operation::Barrier { .. }))
+        .count();
 
     // We expect 4 regular barriers + 1 conditional containing a barrier
     println!("Found {} barrier operations", barrier_count);
-    
+
     // Check the first barrier
     if let Operation::Barrier { qubits } = &program.operations[0] {
         println!("First barrier qubits: {:?}", qubits);
@@ -49,7 +51,7 @@ fn test_barrier_parsing() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         panic!("Expected first operation to be a barrier");
     }
-    
+
     // Check the expanded register barrier
     if let Operation::Barrier { qubits } = &program.operations[1] {
         println!("Register barrier qubits: {:?}", qubits);
@@ -63,7 +65,7 @@ fn test_barrier_parsing() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         panic!("Expected second operation to be a barrier");
     }
-    
+
     // Check the mixed barrier
     if let Operation::Barrier { qubits } = &program.operations[2] {
         println!("Mixed barrier qubits: {:?}", qubits);
@@ -82,7 +84,7 @@ fn test_barrier_parsing() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         panic!("Expected third operation to be a barrier");
     }
-    
+
     // Check the conditional barrier
     let has_conditional_barrier = program.operations.iter().any(|op| {
         if let Operation::If { operation, .. } = op {
@@ -91,9 +93,9 @@ fn test_barrier_parsing() -> Result<(), Box<dyn std::error::Error>> {
             false
         }
     });
-    
+
     assert!(has_conditional_barrier, "Should have a conditional barrier");
-    
+
     Ok(())
 }
 
@@ -129,7 +131,7 @@ fn test_mixed_barrier_with_order() -> Result<(), Box<dyn std::error::Error>> {
     "#;
 
     let program = QASMParser::parse_str(qasm)?;
-    
+
     if let Operation::Barrier { qubits } = &program.operations[0] {
         assert_eq!(qubits.len(), 4);
         // r[1] -> global ID 3, q[0] -> 0, q[1] -> 1, r[0] -> 2
@@ -137,6 +139,6 @@ fn test_mixed_barrier_with_order() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         panic!("Expected a barrier operation");
     }
-    
+
     Ok(())
 }

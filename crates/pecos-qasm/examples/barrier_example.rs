@@ -1,6 +1,6 @@
-use pecos_qasm::QASMEngine;
-use pecos_engines::Engine;
 use pecos_core::errors::PecosError;
+use pecos_engines::Engine;
+use pecos_qasm::QASMEngine;
 
 fn main() -> Result<(), PecosError> {
     let qasm = r#"
@@ -40,12 +40,12 @@ fn main() -> Result<(), PecosError> {
 
     let mut engine = QASMEngine::new()?;
     engine.from_str(qasm)?;
-    
+
     // Run the circuit
     let result = engine.process(())?;
-    
+
     println!("Circuit executed successfully!");
     println!("Measurement results: {:?}", result.registers);
-    
+
     Ok(())
 }

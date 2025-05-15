@@ -38,10 +38,10 @@ fn test_scientific_notation_formats() {
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    
+
     // Should have parsed all the rx gates
     assert_eq!(program.operations.len(), 18);
-    
+
     // All operations should be gate calls
     for op in &program.operations {
         match op {

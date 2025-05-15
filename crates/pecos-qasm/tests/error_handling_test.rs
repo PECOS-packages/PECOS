@@ -28,9 +28,9 @@ fn test_qubit_index_out_of_bounds() {
                 println!("Execution error: {}", error_msg);
                 // Verify it's the right kind of error
                 assert!(
-                    error_msg.contains("out of bounds") ||
-                    error_msg.contains("index") ||
-                    error_msg.contains("4"),
+                    error_msg.contains("out of bounds")
+                        || error_msg.contains("index")
+                        || error_msg.contains("4"),
                     "Error should mention out-of-bounds index: {}",
                     error_msg
                 );
@@ -41,9 +41,9 @@ fn test_qubit_index_out_of_bounds() {
         let error_msg = format!("{:?}", e);
         println!("Parse error: {}", error_msg);
         assert!(
-            error_msg.contains("out of bounds") ||
-            error_msg.contains("index") ||
-            error_msg.contains("4"),
+            error_msg.contains("out of bounds")
+                || error_msg.contains("index")
+                || error_msg.contains("4"),
             "Error should mention out-of-bounds index: {}",
             error_msg
         );
@@ -64,7 +64,7 @@ fn test_valid_qubit_indices() {
 
     let mut engine = QASMEngine::new().unwrap();
     let result = engine.from_str(qasm);
-    
+
     assert!(result.is_ok(), "Should succeed with valid qubit indices");
 }
 
@@ -94,9 +94,9 @@ fn test_classical_register_out_of_bounds() {
                 println!("Execution error: {}", error_msg);
                 // Verify it's the right kind of error
                 assert!(
-                    error_msg.contains("out of bounds") ||
-                    error_msg.contains("index") ||
-                    error_msg.contains("2"),
+                    error_msg.contains("out of bounds")
+                        || error_msg.contains("index")
+                        || error_msg.contains("2"),
                     "Error should mention out-of-bounds index: {}",
                     error_msg
                 );
@@ -106,9 +106,9 @@ fn test_classical_register_out_of_bounds() {
         let error_msg = format!("{:?}", e);
         println!("Parse error: {}", error_msg);
         assert!(
-            error_msg.contains("out of bounds") ||
-            error_msg.contains("index") ||
-            error_msg.contains("2"),
+            error_msg.contains("out of bounds")
+                || error_msg.contains("index")
+                || error_msg.contains("2"),
             "Error should mention out-of-bounds index: {}",
             error_msg
         );
@@ -141,9 +141,9 @@ fn test_measure_to_out_of_bounds_classical() {
                 println!("Execution error: {}", error_msg);
                 // Verify it's the right kind of error
                 assert!(
-                    error_msg.contains("out of bounds") ||
-                    error_msg.contains("index") ||
-                    error_msg.contains("2"),
+                    error_msg.contains("out of bounds")
+                        || error_msg.contains("index")
+                        || error_msg.contains("2"),
                     "Error should mention out-of-bounds index: {}",
                     error_msg
                 );
@@ -153,9 +153,9 @@ fn test_measure_to_out_of_bounds_classical() {
         let error_msg = format!("{:?}", e);
         println!("Parse error: {}", error_msg);
         assert!(
-            error_msg.contains("out of bounds") ||
-            error_msg.contains("index") ||
-            error_msg.contains("2"),
+            error_msg.contains("out of bounds")
+                || error_msg.contains("index")
+                || error_msg.contains("2"),
             "Error should mention out-of-bounds index: {}",
             error_msg
         );
@@ -172,7 +172,7 @@ fn test_negative_register_size() {
 
     let mut engine = QASMEngine::new().unwrap();
     let result = engine.from_str(qasm);
-    
+
     assert!(result.is_err(), "Expected error for negative register size");
 }
 
@@ -201,9 +201,9 @@ fn test_gate_on_nonexistent_register() {
                 println!("Execution error: {}", error_msg);
                 // Verify it's the right kind of error
                 assert!(
-                    error_msg.contains("not found") ||
-                    error_msg.contains("register") ||
-                    error_msg.contains("p"),
+                    error_msg.contains("not found")
+                        || error_msg.contains("register")
+                        || error_msg.contains("p"),
                     "Error should mention non-existent register: {}",
                     error_msg
                 );
@@ -213,9 +213,9 @@ fn test_gate_on_nonexistent_register() {
         let error_msg = format!("{:?}", e);
         println!("Parse error: {}", error_msg);
         assert!(
-            error_msg.contains("not found") ||
-            error_msg.contains("register") ||
-            error_msg.contains("p"),
+            error_msg.contains("not found")
+                || error_msg.contains("register")
+                || error_msg.contains("p"),
             "Error should mention non-existent register: {}",
             error_msg
         );

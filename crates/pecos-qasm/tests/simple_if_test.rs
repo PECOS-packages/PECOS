@@ -4,20 +4,23 @@ use pecos_engines::{MonteCarloEngine, PassThroughNoiseModel};
 use pecos_qasm::QASMEngine;
 use std::collections::HashMap;
 
-fn run_qasm_sim(qasm: &str,
-                shots: usize,
-                seed: Option<u64>,) -> Result<HashMap<String, Vec<u32>>, PecosError> {
+fn run_qasm_sim(
+    qasm: &str,
+    shots: usize,
+    seed: Option<u64>,
+) -> Result<HashMap<String, Vec<u32>>, PecosError> {
     let mut engine = QASMEngine::new()?;
     engine.from_str(qasm)?;
-    
+
     let results = MonteCarloEngine::run_with_noise_model(
         Box::new(engine),
         Box::new(PassThroughNoiseModel),
         shots,
         1,
         seed,
-    )?.register_shots;
-    
+    )?
+    .register_shots;
+
     Ok(results)
 }
 
@@ -35,9 +38,9 @@ fn test_simple_if() {
     "#;
 
     let results = run_qasm_sim(qasm, 1, Some(42)).unwrap();
-    
+
     println!("Simple if test results: {:?}", results);
-    
+
     assert!(results.contains_key("c"));
     assert_eq!(results["c"], vec![1]);
 }

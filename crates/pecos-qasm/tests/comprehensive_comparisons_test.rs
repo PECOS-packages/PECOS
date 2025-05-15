@@ -1,6 +1,6 @@
-use pecos_qasm::parser::QASMParser;
-use pecos_qasm::engine::QASMEngine;
 use pecos_engines::engines::classical::ClassicalEngine;
+use pecos_qasm::engine::QASMEngine;
+use pecos_qasm::parser::QASMParser;
 
 #[test]
 fn test_all_comparison_operators() {
@@ -27,17 +27,21 @@ fn test_all_comparison_operators() {
         if (c != 2) h q[0];
         if (d == 1) h q[0]; // Changed rx to h for now
     "#;
-    
+
     // Parse the QASM program
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    
+
     // Create and load the engine
     let mut engine = QASMEngine::new().expect("Failed to create engine");
-    engine.load_program(program).expect("Failed to load program");
-    
+    engine
+        .load_program(program)
+        .expect("Failed to load program");
+
     // Generate commands - this verifies that all operations are supported
-    let _messages = engine.generate_commands().expect("Failed to generate commands");
-    
+    let _messages = engine
+        .generate_commands()
+        .expect("Failed to generate commands");
+
     println!("All comparison operators test passed");
 }
 
@@ -59,12 +63,16 @@ fn test_bit_indexing_in_conditionals() {
         d[0] = 1;
         if (d[0] == 1) h q[0];  // Should execute
     "#;
-    
+
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
-    engine.load_program(program).expect("Failed to load program");
-    let _messages = engine.generate_commands().expect("Failed to generate commands");
-    
+    engine
+        .load_program(program)
+        .expect("Failed to load program");
+    let _messages = engine
+        .generate_commands()
+        .expect("Failed to generate commands");
+
     println!("Bit indexing in conditionals test passed");
 }
 
@@ -89,12 +97,16 @@ fn test_complex_conditional_expressions() {
         if (c < 3) x q[0];   // Should not execute
         if (c != 0) h q[0];  // Should execute
     "#;
-    
+
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
-    engine.load_program(program).expect("Failed to load program");
-    let _messages = engine.generate_commands().expect("Failed to generate commands");
-    
+    engine
+        .load_program(program)
+        .expect("Failed to load program");
+    let _messages = engine
+        .generate_commands()
+        .expect("Failed to generate commands");
+
     println!("Complex conditional expressions test passed");
 }
 
@@ -109,20 +121,28 @@ fn test_comparison_operators_syntax() {
         ("if (c <= 2) h q[0];", "less than or equal"),
         ("if (c >= 2) h q[0];", "greater than or equal"),
     ];
-    
+
     for (qasm_snippet, desc) in test_cases {
-        let qasm = format!(r#"
+        let qasm = format!(
+            r#"
             OPENQASM 2.0;
             include "qelib1.inc";
             qreg q[1];
             creg c[4];
             {}
-        "#, qasm_snippet);
-        
-        let program = QASMParser::parse_str(&qasm).expect(&format!("Failed to parse {} operator", desc));
-        assert!(!program.operations.is_empty(), "{} operator should create an operation", desc);
+        "#,
+            qasm_snippet
+        );
+
+        let program =
+            QASMParser::parse_str(&qasm).expect(&format!("Failed to parse {} operator", desc));
+        assert!(
+            !program.operations.is_empty(),
+            "{} operator should create an operation",
+            desc
+        );
     }
-    
+
     println!("All comparison operators syntax test passed");
 }
 
@@ -159,7 +179,7 @@ fn test_mixed_operations_with_conditionals() {
     "#;
 
     let _program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    
+
     // Just check parsing for now
     println!("Mixed operations with conditionals test passed");
 }

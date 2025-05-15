@@ -1,9 +1,9 @@
-use pecos_qasm::QASMEngine;
 use pecos_engines::ClassicalEngine;
+use pecos_qasm::QASMEngine;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== PECOS QASM Gate Support ===\n");
-    
+
     // Gates that ACTUALLY work
     let supported_qasm = r#"
         OPENQASM 2.0;
@@ -42,50 +42,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         measure q[2] -> c[2];
         measure q[3] -> c[3];
     "#;
-    
+
     let mut engine = QASMEngine::new()?;
     engine.from_str(supported_qasm)?;
     println!("[OK] Actually supported gates compiled successfully!");
-    
+
     let _commands = engine.generate_commands()?;
-    
+
     // Gates defined in qelib1.inc but NOT working
     println!("\n=== Gates in qelib1.inc but NOT working ===\n");
-    
+
     let test_cases = vec![
         ("rx(0.1) q[0];", "rx - X-axis rotation (decomposed)"),
         ("crz(0.1) q[0],q[1];", "crz - Controlled RZ (decomposed)"),
-        ("cphase(0.1) q[0],q[1];", "cphase - Controlled phase (decomposed)"),
+        (
+            "cphase(0.1) q[0],q[1];",
+            "cphase - Controlled phase (decomposed)",
+        ),
         ("sx q[0];", "sx - Square root of X (decomposed)"),
         ("sxdg q[0];", "sxdg - Inverse square root of X (decomposed)"),
     ];
-    
+
     for (gate, description) in test_cases {
-        let test_qasm = format!(r#"
+        let test_qasm = format!(
+            r#"
             OPENQASM 2.0;
             include "qelib1.inc";
             qreg q[2];
             {}
-        "#, gate);
-        
+        "#,
+            gate
+        );
+
         let mut engine = QASMEngine::new()?;
         match engine.from_str(&test_qasm) {
-            Ok(_) => {
-                match engine.generate_commands() {
-                    Ok(_) => println!("[OK] {} - Unexpectedly works!", description),
-                    Err(_) => println!("[FAIL] {} - Defined but not supported", description),
-                }
-            }
+            Ok(_) => match engine.generate_commands() {
+                Ok(_) => println!("[OK] {} - Unexpectedly works!", description),
+                Err(_) => println!("[FAIL] {} - Defined but not supported", description),
+            },
             Err(_) => println!("[FAIL] {} - Parse error", description),
         }
     }
-    
+
     println!("\n=== Summary ===");
     println!("The engine only supports gates with explicit implementations.");
     println!("Gates defined via decomposition in qelib1.inc are NOT automatically expanded.");
     println!("\nTo use the full qelib1.inc, the engine would need to:");
     println!("1. Parse and apply gate decompositions, OR");
     println!("2. Add explicit implementations for these gates");
-    
+
     Ok(())
 }

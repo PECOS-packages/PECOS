@@ -225,12 +225,15 @@ fn test_deterministic_3qubit_circuit() -> Result<(), PecosError> {
         .generate_commands()
         .map_err(|e| PecosError::Processing(format!("Failed to generate second batch: {e}")))?;
 
-    let operations2 = command_message2
-        .parse_quantum_operations()
-        .map_err(|e| PecosError::Processing(format!("Failed to parse second batch operations: {e}")))?;
+    let operations2 = command_message2.parse_quantum_operations().map_err(|e| {
+        PecosError::Processing(format!("Failed to parse second batch operations: {e}"))
+    })?;
 
     println!("Second batch operations: {operations2:?}");
-    println!("Number of operations in second batch: {}", operations2.len());
+    println!(
+        "Number of operations in second batch: {}",
+        operations2.len()
+    );
 
     // Handle the second measurement (qubit 1)
     let message2 = pecos_engines::byte_message::ByteMessage::builder()
@@ -246,9 +249,9 @@ fn test_deterministic_3qubit_circuit() -> Result<(), PecosError> {
         .generate_commands()
         .map_err(|e| PecosError::Processing(format!("Failed to generate third batch: {e}")))?;
 
-    let operations3 = command_message3
-        .parse_quantum_operations()
-        .map_err(|e| PecosError::Processing(format!("Failed to parse third batch operations: {e}")))?;
+    let operations3 = command_message3.parse_quantum_operations().map_err(|e| {
+        PecosError::Processing(format!("Failed to parse third batch operations: {e}"))
+    })?;
 
     println!("Third batch operations: {operations3:?}");
     println!("Number of operations in third batch: {}", operations3.len());
@@ -267,9 +270,14 @@ fn test_deterministic_3qubit_circuit() -> Result<(), PecosError> {
         .generate_commands()
         .map_err(|e| PecosError::Processing(format!("Failed to generate fourth batch: {e}")))?;
 
-    println!("Is fourth batch empty? {}",
-        command_message4.is_empty().map_err(|e|
-            PecosError::Processing(format!("Failed to check if message is empty: {e}")))?);
+    println!(
+        "Is fourth batch empty? {}",
+        command_message4
+            .is_empty()
+            .map_err(|e| PecosError::Processing(format!(
+                "Failed to check if message is empty: {e}"
+            )))?
+    );
 
     // Get results and verify
     let results = engine

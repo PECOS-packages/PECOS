@@ -18,7 +18,7 @@ fn test_qasm_spec_example_1() {
         
         cz q[0], q[1];
     "#;
-    
+
     let result = QASMParser::parse_str(qasm);
     assert!(result.is_ok());
 }
@@ -50,7 +50,7 @@ fn test_qasm_spec_example_2() {
         
         ccx q[0], q[1], q[2];
     "#;
-    
+
     let result = QASMParser::parse_str(qasm);
     assert!(result.is_ok());
 }
@@ -71,7 +71,7 @@ fn test_qasm_spec_example_3() {
         
         rx(pi/2) q[0];
     "#;
-    
+
     let result = QASMParser::parse_str(qasm);
     assert!(result.is_ok());
 }
@@ -92,7 +92,7 @@ fn test_qasm_spec_example_4() {
         
         cx_from_cz q[0], q[1];
     "#;
-    
+
     let result = QASMParser::parse_str(qasm);
     assert!(result.is_ok());
 }
@@ -137,7 +137,7 @@ fn test_qasm_spec_syntax_variations() {
         swap q[2], q[3];
         mygate(pi/4) q[0];
     "#;
-    
+
     let result = QASMParser::parse_str(qasm);
     assert!(result.is_ok());
 }
@@ -145,21 +145,21 @@ fn test_qasm_spec_syntax_variations() {
 #[test]
 fn test_qasm_spec_invalid_syntax() {
     // Test invalid gate definitions according to spec
-    
+
     // Missing curly braces
     let invalid1 = r#"
         OPENQASM 2.0;
         gate bad a h a;
     "#;
     assert!(QASMParser::parse_str(invalid1).is_err());
-    
+
     // Invalid parameter syntax (missing parentheses)
     let invalid2 = r#"
         OPENQASM 2.0;
         gate bad theta a { rz(theta) a; }
     "#;
     assert!(QASMParser::parse_str(invalid2).is_err());
-    
+
     // Empty parameter list
     let valid_empty_params = r#"
         OPENQASM 2.0;

@@ -8,10 +8,13 @@ fn test_qelib1_include_parsing() {
         include "qelib1.inc";
         qreg q[1];
     "#;
-    
+
     match QASMParser::parse_str(qasm) {
         Ok(program) => {
-            println!("Successfully parsed with {} gate definitions", program.gate_definitions.len());
+            println!(
+                "Successfully parsed with {} gate definitions",
+                program.gate_definitions.len()
+            );
             for (name, _) in &program.gate_definitions {
                 println!("  - {}", name);
             }
@@ -33,10 +36,13 @@ fn test_inline_gate_def() {
         qreg q[1];
         h q[0];
     "#;
-    
+
     match QASMParser::parse_str(qasm) {
         Ok(program) => {
-            println!("Successfully parsed {} operations", program.operations.len());
+            println!(
+                "Successfully parsed {} operations",
+                program.operations.len()
+            );
         }
         Err(e) => {
             println!("Parse error: {:?}", e);

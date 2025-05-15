@@ -1,6 +1,6 @@
-use pecos_qasm::parser::QASMParser;
-use pecos_qasm::engine::QASMEngine;
 use pecos_engines::engines::classical::ClassicalEngine;
+use pecos_qasm::engine::QASMEngine;
+use pecos_qasm::parser::QASMParser;
 
 #[test]
 fn test_basic_classical_operations() {
@@ -22,17 +22,21 @@ fn test_basic_classical_operations() {
         // Simple quantum gate
         h q[0];
     "#;
-    
+
     // Parse the QASM program
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    
+
     // Create and load the engine
     let mut engine = QASMEngine::new().expect("Failed to create engine");
-    engine.load_program(program).expect("Failed to load program");
-    
+    engine
+        .load_program(program)
+        .expect("Failed to load program");
+
     // Generate commands - this verifies that basic operations are supported
-    let _messages = engine.generate_commands().expect("Failed to generate commands");
-    
+    let _messages = engine
+        .generate_commands()
+        .expect("Failed to generate commands");
+
     println!("Basic classical operations test passed");
 }
 
@@ -51,9 +55,9 @@ fn test_bitwise_operations() {
         c[1] = b[1] & a[1] | a[0];   // Bitwise AND and OR
         d[0] = a[0] ^ 1;             // Bitwise XOR
     "#;
-    
+
     let program = QASMParser::parse_str(qasm);
-    
+
     // Check that bitwise operations at least parse
     // Note: This may fail if 'd' is not declared
     assert!(program.is_ok() || program.is_err()); // Just document the behavior
@@ -74,7 +78,7 @@ fn test_conditional_operations() {
     "#;
 
     let _program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    
+
     // Check that conditional operations are parsed correctly
     println!("Conditional operations test passed");
 }
@@ -97,7 +101,7 @@ fn test_arithmetic_operations() {
     "#;
 
     let _program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    
+
     // Note: These may cause runtime errors due to overflow or division by zero
     println!("Arithmetic operations parse correctly");
 }
@@ -117,7 +121,7 @@ fn test_shift_operations() {
     "#;
 
     let _program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    
+
     println!("Shift operations parse correctly");
 }
 
@@ -134,19 +138,22 @@ fn test_complex_quantum_expressions() {
         rz(pi/2) q[0];
         ry(2*pi) q[0];
     "#;
-    
+
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    
+
     // Check that complex expressions in quantum gates parse correctly
-    assert!(program.operations.len() >= 3, "Should have at least 3 operations");
-    
+    assert!(
+        program.operations.len() >= 3,
+        "Should have at least 3 operations"
+    );
+
     println!("Complex quantum expressions test passed");
 }
 
 #[test]
 fn test_unsupported_syntax() {
     // Document what's NOT supported
-    
+
     // Exponentiation (now supported)
     let qasm_exp = r#"
         OPENQASM 2.0;
@@ -155,8 +162,11 @@ fn test_unsupported_syntax() {
         creg c[4];
         c = b**a;  // This is now supported
     "#;
-    assert!(QASMParser::parse_str(qasm_exp).is_ok(), "Exponentiation is now supported");
-    
+    assert!(
+        QASMParser::parse_str(qasm_exp).is_ok(),
+        "Exponentiation is now supported"
+    );
+
     // Document comparison operators in conditionals
     let qasm_comp = r#"
         OPENQASM 2.0;
@@ -165,7 +175,7 @@ fn test_unsupported_syntax() {
         creg c[4];
         if (c >= 2) h q[0];  // This syntax might not be supported
     "#;
-    
+
     // This might parse but may not execute correctly
     let result = QASMParser::parse_str(qasm_comp);
     if result.is_err() {
@@ -176,7 +186,7 @@ fn test_unsupported_syntax() {
 #[test]
 fn test_classical_operations_summary() {
     // This test documents what the QASM parser supports:
-    
+
     // SUPPORTED:
     // - Basic assignments (c = 2, c = a, c[0] = 1)
     // - Bitwise operations (&, |, ^, ~)
@@ -184,15 +194,15 @@ fn test_classical_operations_summary() {
     // - Bit shifting (<<, >>)
     // - Conditionals with == operator
     // - Complex expressions in quantum gates
-    
+
     // NOT SUPPORTED:
     // - Exponentiation (**)
     // - Comparison operators in conditionals (>=, <= might not work)
-    
+
     // RUNTIME ISSUES:
     // - Arithmetic operations may overflow
     // - Division by zero may cause errors
     // - Register size mismatches may cause errors
-    
+
     println!("Classical operations support summary documented");
 }

@@ -40,9 +40,9 @@ fn test_opaque_gate_syntax() {
         // Measure
         measure q -> c;
     "#;
-    
+
     let result = QASMParser::parse_str(qasm);
-    
+
     match result {
         Ok(_) => {
             panic!("Expected error for opaque gate usage, but parsing succeeded");
@@ -50,7 +50,10 @@ fn test_opaque_gate_syntax() {
         Err(e) => {
             // Should get an error about opaque gates not being implemented
             println!("Got expected error: {}", e);
-            assert!(e.to_string().contains("opaque gates are not yet implemented"));
+            assert!(
+                e.to_string()
+                    .contains("opaque gates are not yet implemented")
+            );
         }
     }
 }
@@ -88,9 +91,9 @@ fn test_opaque_and_regular_gates() {
         
         measure q -> c;
     "#;
-    
+
     let result = QASMParser::parse_str(qasm);
-    
+
     match result {
         Ok(ast) => {
             println!("Mixed opaque/regular gates AST:");
@@ -131,7 +134,9 @@ fn test_opaque_gate_declaration_only() {
         Ok(program) => {
             println!("Successfully parsed program with opaque declarations (no usage)");
             // Count opaque declarations
-            let opaque_count = program.operations.iter()
+            let opaque_count = program
+                .operations
+                .iter()
                 .filter(|op| matches!(op, pecos_qasm::parser::Operation::OpaqueGate { .. }))
                 .count();
             assert_eq!(opaque_count, 3);
@@ -155,10 +160,10 @@ fn test_opaque_gate_errors() {
             h a;
         }
     "#;
-    
+
     let result1 = QASMParser::parse_str(invalid_qasm1);
     assert!(result1.is_err(), "Opaque gate with body should be an error");
-    
+
     // Test 2: Using undefined opaque gate
     let invalid_qasm2 = r#"
         OPENQASM 2.0;
@@ -167,7 +172,7 @@ fn test_opaque_gate_errors() {
         // Using a gate that wasn't declared
         undefined_gate q[0];
     "#;
-    
+
     let result2 = QASMParser::parse_str(invalid_qasm2);
     // This might already fail as undefined gate
     println!("Undefined gate error: {:?}", result2);

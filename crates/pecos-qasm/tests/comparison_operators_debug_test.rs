@@ -10,7 +10,7 @@ fn test_equals_operator() {
         c = 2;
         if (c == 2) h q[0];
     "#;
-    
+
     let program = QASMParser::parse_str(qasm).expect("Failed to parse == operator");
     assert!(!program.operations.is_empty());
     println!("Equals operator test passed");
@@ -26,7 +26,7 @@ fn test_not_equals_operator() {
         c = 2;
         if (c != 2) h q[0];
     "#;
-    
+
     let program = QASMParser::parse_str(qasm).expect("Failed to parse != operator");
     assert!(!program.operations.is_empty());
     println!("Not equals operator test passed");
@@ -42,7 +42,7 @@ fn test_less_than_operator() {
         c = 2;
         if (c < 3) h q[0];
     "#;
-    
+
     let program = QASMParser::parse_str(qasm).expect("Failed to parse < operator");
     assert!(!program.operations.is_empty());
     println!("Less than operator test passed");
@@ -58,7 +58,7 @@ fn test_greater_than_operator() {
         c = 2;
         if (c > 1) h q[0];
     "#;
-    
+
     let program = QASMParser::parse_str(qasm).expect("Failed to parse > operator");
     assert!(!program.operations.is_empty());
     println!("Greater than operator test passed");
@@ -74,7 +74,7 @@ fn test_less_than_equals_operator() {
         c = 2;
         if (c <= 2) h q[0];
     "#;
-    
+
     let program = QASMParser::parse_str(qasm);
     if let Err(e) = program {
         println!("Failed to parse <= operator: {:?}", e);
@@ -94,7 +94,7 @@ fn test_greater_than_equals_operator() {
         c = 2;
         if (c >= 2) h q[0];
     "#;
-    
+
     let program = QASMParser::parse_str(qasm);
     if let Err(e) = program {
         println!("Failed to parse >= operator: {:?}", e);
@@ -114,7 +114,7 @@ fn test_bit_indexing_in_if() {
         c[0] = 1;
         if (c[0] == 1) h q[0];
     "#;
-    
+
     let program = QASMParser::parse_str(qasm).expect("Failed to parse bit indexing in if");
     assert!(!program.operations.is_empty());
     println!("Bit indexing in if test passed");
@@ -132,7 +132,7 @@ fn test_expression_in_if() {
         b = 1;
         if ((a[0] | b[0]) != 0) h q[0];
     "#;
-    
+
     // This test expects to fail with current implementation
     let program = QASMParser::parse_str(qasm);
     if let Err(e) = program {

@@ -1,6 +1,6 @@
-use pecos_qasm::QASMEngine;
-use pecos_engines::Engine;
 use pecos_core::errors::PecosError;
+use pecos_engines::Engine;
+use pecos_qasm::QASMEngine;
 
 fn main() -> Result<(), PecosError> {
     let qasm = r#"
@@ -23,7 +23,7 @@ fn main() -> Result<(), PecosError> {
 
     let mut engine = QASMEngine::new()?;
     engine.from_str(qasm)?;
-    
+
     // Test the get_qubit_id method
     println!("Testing get_qubit_id:");
     println!("q1[0] -> {:?}", engine.get_qubit_id("q1", 0));
@@ -33,12 +33,15 @@ fn main() -> Result<(), PecosError> {
     println!("q2[2] -> {:?}", engine.get_qubit_id("q2", 2));
     println!("q3[0] -> {:?}", engine.get_qubit_id("q3", 0)); // Should be None
     println!();
-    
+
     // Run the circuit
     let result = engine.process(())?;
-    
+
     println!("Circuit executed successfully!");
-    println!("Classical register 'c' value: {:?}", result.registers.get("c"));
-    
+    println!(
+        "Classical register 'c' value: {:?}",
+        result.registers.get("c")
+    );
+
     Ok(())
 }

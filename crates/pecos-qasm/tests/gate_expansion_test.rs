@@ -1,5 +1,5 @@
-use pecos_qasm::parser::QASMParser;
 use pecos_qasm::parser::Operation;
+use pecos_qasm::parser::QASMParser;
 
 #[test]
 fn test_gate_expansion_rx() {
@@ -9,12 +9,12 @@ fn test_gate_expansion_rx() {
         qreg q[1];
         rx(1.5708) q[0];
     "#;
-    
+
     let program = QASMParser::parse_str(qasm).unwrap();
-    
+
     // The rx gate should be expanded to h; rz; h
     assert_eq!(program.operations.len(), 3);
-    
+
     // Check first operation is h
     if let Operation::Gate { name, qubits, .. } = &program.operations[0] {
         assert_eq!(name, "H");
@@ -22,9 +22,15 @@ fn test_gate_expansion_rx() {
     } else {
         panic!("Expected h gate");
     }
-    
+
     // Check second operation is rz
-    if let Operation::Gate { name, qubits, parameters, .. } = &program.operations[1] {
+    if let Operation::Gate {
+        name,
+        qubits,
+        parameters,
+        ..
+    } = &program.operations[1]
+    {
         assert_eq!(name, "RZ");
         assert_eq!(qubits, &[0]);
         assert_eq!(parameters.len(), 1);
@@ -32,7 +38,7 @@ fn test_gate_expansion_rx() {
     } else {
         panic!("Expected rz gate");
     }
-    
+
     // Check third operation is h
     if let Operation::Gate { name, qubits, .. } = &program.operations[2] {
         assert_eq!(name, "H");
@@ -50,12 +56,12 @@ fn test_gate_expansion_cz() {
         qreg q[2];
         cz q[0], q[1];
     "#;
-    
+
     let program = QASMParser::parse_str(qasm).unwrap();
-    
+
     // The cz gate should be expanded to h; cx; h
     assert_eq!(program.operations.len(), 3);
-    
+
     // Check first operation is h on second qubit
     if let Operation::Gate { name, qubits, .. } = &program.operations[0] {
         assert_eq!(name, "H");
@@ -90,19 +96,19 @@ fn test_gate_remains_native() {
         h q[0];
         cx q[0], q[1];
     "#;
-    
+
     let program = QASMParser::parse_str(qasm).unwrap();
-    
+
     // Native gates should not be expanded
     assert_eq!(program.operations.len(), 2);
-    
+
     // Check operations remain as-is
     if let Operation::Gate { name, .. } = &program.operations[0] {
         assert_eq!(name, "H");
     } else {
         panic!("Expected h gate");
     }
-    
+
     if let Operation::Gate { name, .. } = &program.operations[1] {
         assert_eq!(name, "cx");
     } else {
@@ -117,15 +123,15 @@ fn test_gate_definitions_loaded() {
         include "qelib1.inc";
         qreg q[1];
     "#;
-    
+
     let program = QASMParser::parse_str(qasm).unwrap();
-    
+
     // Check that common gates are defined
     assert!(program.gate_definitions.contains_key("rx"));
     assert!(program.gate_definitions.contains_key("cz"));
     assert!(program.gate_definitions.contains_key("s"));
     assert!(program.gate_definitions.contains_key("t"));
-    
+
     // Check a gate definition structure
     let rx_def = &program.gate_definitions["rx"];
     assert_eq!(rx_def.name, "rx");

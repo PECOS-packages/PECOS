@@ -22,21 +22,25 @@ gate rotate_z(theta) q {
 // This will trigger the circular dependency
 rotate_x(pi/2) q[0];
 "#;
-    
+
     match QASMParser::parse_str(qasm) {
         Ok(_) => println!("Unexpected success!"),
         Err(e) => {
             println!("Error detected: {}\n", e);
-            
+
             // Show the problematic code with context
             let lines: Vec<&str> = qasm.lines().collect();
-            
+
             // Find the cycle in the code
             println!("The circular dependency exists in these gate definitions:");
             println!();
-            
+
             // Show rotate_x definition
-            if let Some((idx, _)) = lines.iter().enumerate().find(|(_, line)| line.contains("gate rotate_x")) {
+            if let Some((idx, _)) = lines
+                .iter()
+                .enumerate()
+                .find(|(_, line)| line.contains("gate rotate_x"))
+            {
                 println!("{}:  {}", idx + 1, lines[idx]);
                 if idx + 1 < lines.len() {
                     println!("{}:  {}", idx + 2, lines[idx + 1]);
@@ -44,9 +48,13 @@ rotate_x(pi/2) q[0];
                 }
             }
             println!();
-            
+
             // Show rotate_y definition
-            if let Some((idx, _)) = lines.iter().enumerate().find(|(_, line)| line.contains("gate rotate_y")) {
+            if let Some((idx, _)) = lines
+                .iter()
+                .enumerate()
+                .find(|(_, line)| line.contains("gate rotate_y"))
+            {
                 println!("{}:  {}", idx + 1, lines[idx]);
                 if idx + 1 < lines.len() {
                     println!("{}:  {}", idx + 2, lines[idx + 1]);
@@ -54,9 +62,13 @@ rotate_x(pi/2) q[0];
                 }
             }
             println!();
-            
+
             // Show rotate_z definition
-            if let Some((idx, _)) = lines.iter().enumerate().find(|(_, line)| line.contains("gate rotate_z")) {
+            if let Some((idx, _)) = lines
+                .iter()
+                .enumerate()
+                .find(|(_, line)| line.contains("gate rotate_z"))
+            {
                 println!("{}:  {}", idx + 1, lines[idx]);
                 if idx + 1 < lines.len() {
                     println!("{}:  {}", idx + 2, lines[idx + 1]);

@@ -14,12 +14,12 @@ fn main() {
         // Attempt to use the recursive gate
         recursive q[0];
     "#;
-    
+
     match QASMParser::parse_str(qasm_with_cycle) {
         Ok(_) => println!("Unexpected success!"),
         Err(e) => println!("Caught circular dependency: {}", e),
     }
-    
+
     // Example 2: Indirect circular dependency
     let qasm_indirect_cycle = r#"
         OPENQASM 2.0;
@@ -32,12 +32,12 @@ fn main() {
         // This will trigger the cycle detection
         a q[0];
     "#;
-    
+
     match QASMParser::parse_str(qasm_indirect_cycle) {
         Ok(_) => println!("Unexpected success!"),
         Err(e) => println!("Caught circular dependency: {}", e),
     }
-    
+
     // Example 3: Valid deep nesting (no cycle)
     let qasm_valid = r#"
         OPENQASM 2.0;
@@ -50,7 +50,7 @@ fn main() {
         
         level0 q[0];
     "#;
-    
+
     match QASMParser::parse_str(qasm_valid) {
         Ok(_) => println!("Valid deep nesting works correctly!"),
         Err(e) => println!("Unexpected error: {}", e),

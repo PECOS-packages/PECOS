@@ -52,12 +52,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Measure all qubits
         measure q -> c;
     "#;
-    
+
     let program = QASMParser::parse_str(qasm)?;
-    
+
     println!("Gate Composition Example");
     println!("=======================\n");
-    
+
     // Show gate definitions
     println!("Custom gate definitions:");
     for (name, _) in &program.gate_definitions {
@@ -66,16 +66,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  - {}", name);
         }
     }
-    
+
     println!("\nExpanded operations:");
     for (i, op) in program.operations.iter().enumerate() {
         match op {
-            pecos_qasm::parser::Operation::Gate { name, qubits, parameters } => {
+            pecos_qasm::parser::Operation::Gate {
+                name,
+                qubits,
+                parameters,
+            } => {
                 print!("  {}: {} ", i, name);
                 if !parameters.is_empty() {
                     print!("(");
                     for (j, p) in parameters.iter().enumerate() {
-                        if j > 0 { print!(", "); }
+                        if j > 0 {
+                            print!(", ");
+                        }
                         print!("{:.4}", p);
                     }
                     print!(") ");
@@ -89,11 +95,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => {}
         }
     }
-    
-    println!("\nThe teleport_prep gate was expanded into {} basic operations", 
-             program.operations.iter()
-                 .filter(|op| matches!(op, pecos_qasm::parser::Operation::Gate { .. }))
-                 .count());
-    
+
+    println!(
+        "\nThe teleport_prep gate was expanded into {} basic operations",
+        program
+            .operations
+            .iter()
+            .filter(|op| matches!(op, pecos_qasm::parser::Operation::Gate { .. }))
+            .count()
+    );
+
     Ok(())
 }

@@ -1,23 +1,26 @@
-// Test to verify exact issue with if statement processing  
+// Test to verify exact issue with if statement processing
 use pecos_core::errors::PecosError;
 use pecos_engines::{MonteCarloEngine, PassThroughNoiseModel};
 use pecos_qasm::QASMEngine;
 use std::collections::HashMap;
 
-fn run_qasm_sim(qasm: &str,
-                shots: usize,
-                seed: Option<u64>,) -> Result<HashMap<String, Vec<u32>>, PecosError> {
+fn run_qasm_sim(
+    qasm: &str,
+    shots: usize,
+    seed: Option<u64>,
+) -> Result<HashMap<String, Vec<u32>>, PecosError> {
     let mut engine = QASMEngine::new()?;
     engine.from_str(qasm)?;
-    
+
     let results = MonteCarloEngine::run_with_noise_model(
         Box::new(engine),
         Box::new(PassThroughNoiseModel),
         shots,
         1,
         seed,
-    )?.register_shots;
-    
+    )?
+    .register_shots;
+
     Ok(results)
 }
 
@@ -42,19 +45,22 @@ fn test_exact_issue() {
         one_0[0] = 0;             // Reset to 0
     "#;
 
-    // Run just once 
+    // Run just once
     let results = run_qasm_sim(qasm, 1, Some(42)).unwrap();
-    
+
     println!("Test results: {:?}", results);
-    
+
     // The expected result is one_0 = "10" (binary) = 2 (decimal)
     assert!(results.contains_key("one_0"));
-    
+
     // For testing, let's understand what's happening
     println!("Full result: {:?}", results["one_0"][0]);
-    
+
     // The bits should be: [0, 1] which equals 2 in decimal
-    assert_eq!(results["one_0"][0], 2, "Expected result to be 2 (binary 10)");
+    assert_eq!(
+        results["one_0"][0], 2,
+        "Expected result to be 2 (binary 10)"
+    );
 }
 
 #[test]
@@ -81,9 +87,9 @@ fn test_if_with_zero() {
     "#;
 
     let results = run_qasm_sim(qasm, 1, Some(42)).unwrap();
-    
+
     println!("If with zero test results: {:?}", results);
-    
+
     assert!(results.contains_key("c"));
     assert_eq!(results["c"][0], 2, "Expected result to be 2 (binary 10)");
 }
@@ -112,9 +118,9 @@ fn test_if_with_one() {
     "#;
 
     let results = run_qasm_sim(qasm, 1, Some(42)).unwrap();
-    
+
     println!("If with one test results: {:?}", results);
-    
+
     assert!(results.contains_key("c"));
     assert_eq!(results["c"][0], 0, "Expected result to be 0 (binary 00)");
 }

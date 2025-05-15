@@ -190,7 +190,11 @@ impl QASMProgram {
 
     /// Adds an opaque gate declaration
     pub fn add_opaque_gate(&mut self, name: String, params: Vec<String>, qargs: Vec<String>) {
-        let opaque_gate = OpaqueGateDefinition { name: name.clone(), params, qargs };
+        let opaque_gate = OpaqueGateDefinition {
+            name: name.clone(),
+            params,
+            qargs,
+        };
         self.opaque_gates.insert(name, opaque_gate);
     }
 }

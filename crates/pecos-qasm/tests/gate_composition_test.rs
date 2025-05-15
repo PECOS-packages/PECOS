@@ -33,25 +33,31 @@ fn test_gate_composition() {
         
         measure q -> c;
     "#;
-    
+
     let result = QASMParser::parse_str(qasm);
-    
+
     match result {
         Ok(program) => {
             println!("Successfully parsed program with composed gates");
-            
+
             // The operations should be fully expanded
             for (i, op) in program.operations.iter().enumerate() {
                 println!("Operation {}: {:?}", i, op);
             }
-            
+
             // Count the expanded operations
-            let gate_count = program.operations.iter()
+            let gate_count = program
+                .operations
+                .iter()
                 .filter(|op| matches!(op, pecos_qasm::parser::Operation::Gate { .. }))
                 .count();
-            
+
             // bell_swap should expand to many basic gates
-            assert!(gate_count > 5, "Expected many gates after expansion, got {}", gate_count);
+            assert!(
+                gate_count > 5,
+                "Expected many gates after expansion, got {}",
+                gate_count
+            );
         }
         Err(e) => {
             panic!("Failed to parse gate composition: {}", e);
@@ -75,22 +81,24 @@ fn test_undefined_gate_in_definition() {
         
         mygate q[0];
     "#;
-    
+
     let result = QASMParser::parse_str(qasm);
-    
+
     match result {
         Ok(program) => {
             // The undefined gate should remain in the expanded operations
-            let has_undefined = program.operations.iter()
-                .any(|op| {
-                    if let pecos_qasm::parser::Operation::Gate { name, .. } = op {
-                        name == "undefined_gate"
-                    } else {
-                        false
-                    }
-                });
-            
-            assert!(has_undefined, "Expected undefined_gate to remain in operations");
+            let has_undefined = program.operations.iter().any(|op| {
+                if let pecos_qasm::parser::Operation::Gate { name, .. } = op {
+                    name == "undefined_gate"
+                } else {
+                    false
+                }
+            });
+
+            assert!(
+                has_undefined,
+                "Expected undefined_gate to remain in operations"
+            );
         }
         Err(e) => {
             println!("Got error: {}", e);

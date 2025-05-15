@@ -1,5 +1,5 @@
-use pecos_qasm::QASMEngine;
 use pecos_engines::ClassicalEngine;
+use pecos_qasm::QASMEngine;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let qasm_code = r#"
@@ -32,23 +32,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         measure q[1] -> c[1];
         measure q[2] -> c[2];
     "#;
-    
+
     // Create engine and parse QASM
     let mut engine = QASMEngine::new()?;
     engine.from_str(qasm_code)?;
-    
+
     // Print the parsed program structure
     println!("Program parsed successfully!");
-    
+
     // Check program structure (just the public interface)
     // Since program.operations is private, we just verify parsing works
-    
+
     // Generate commands to verify the circuit compiles
     let _commands = engine.generate_commands()?;
     println!("Circuit compiled successfully!");
-    
+
     // Note: To actually run the circuit, you would need to use
     // a suitable simulation backend from pecos-engines
-    
+
     Ok(())
 }

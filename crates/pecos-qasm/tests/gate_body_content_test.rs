@@ -16,7 +16,7 @@ fn test_gate_with_barrier_attempt() {
         bell_with_barrier q[0], q[1];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_raw(qasm);
     println!("Gate with barrier result: {:?}", result.is_ok());
 
     // This will likely fail with current grammar
@@ -41,7 +41,7 @@ fn test_gate_with_measurement_attempt() {
         measure_gate q[0];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_raw(qasm);
     println!("Gate with measurement result: {:?}", result.is_ok());
 
     // This should definitely fail
@@ -65,7 +65,7 @@ fn test_gate_with_reset_attempt() {
         reset_gate q[0];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_raw(qasm);
     println!("Gate with reset result: {:?}", result.is_ok());
 
     if let Err(e) = result {
@@ -88,7 +88,7 @@ fn test_gate_with_if_statement() {
         conditional_gate q[0];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_raw(qasm);
     println!("Gate with if statement result: {:?}", result.is_ok());
 
     if let Err(e) = result {
@@ -114,6 +114,6 @@ fn test_proper_gate_content() {
         good_gate q[0], q[1], q[2];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_raw(qasm);
     println!("Proper gate content result: {:?}", result.is_ok());
 }

@@ -15,7 +15,7 @@ fn test_basic_gate_definition() {
         mygate q[0];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_raw(qasm);
     assert!(result.is_ok());
 
     let program = result.unwrap();
@@ -37,7 +37,7 @@ fn test_gate_with_single_parameter() {
         phase_gate(pi/4) q[0];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_raw(qasm);
     assert!(result.is_ok());
 
     let program = result.unwrap();
@@ -52,18 +52,22 @@ fn test_gate_with_single_parameter() {
 fn test_gate_with_multiple_parameters() {
     let qasm = r#"
         OPENQASM 2.0;
+        include "qelib1.inc";
         qreg q[1];
-        
+
         gate u3(theta, phi, lambda) q {
             rz(phi) q;
             rx(theta) q;
             rz(lambda) q;
         }
-        
+
         u3(pi/2, pi/4, pi/8) q[0];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_with_includes(qasm);
+    if let Err(e) = &result {
+        eprintln!("Error in test_gate_with_multiple_parameters: {}", e);
+    }
     assert!(result.is_ok());
 
     let program = result.unwrap();
@@ -89,7 +93,7 @@ fn test_gate_with_multiple_qubits() {
         three_way q[0], q[1], q[2];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_raw(qasm);
     assert!(result.is_ok());
 
     let program = result.unwrap();
@@ -104,19 +108,23 @@ fn test_gate_with_multiple_qubits() {
 fn test_parameter_expressions_in_gate_body() {
     let qasm = r#"
         OPENQASM 2.0;
+        include "qelib1.inc";
         qreg q[1];
-        
+
         gate complex_gate(theta) q {
             rz(theta/2) q;
             rx(theta*2) q;
             ry(theta + pi/4) q;
             rz(theta - pi/2) q;
         }
-        
+
         complex_gate(pi) q[0];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_with_includes(qasm);
+    if let Err(e) = &result {
+        eprintln!("Error in test_gate_with_multiple_parameters: {}", e);
+    }
     assert!(result.is_ok());
 }
 
@@ -141,7 +149,7 @@ fn test_nested_gate_calls() {
         outer(pi/3) q[0], q[1];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_raw(qasm);
     assert!(result.is_ok());
 }
 
@@ -158,7 +166,7 @@ fn test_empty_gate_body() {
         do_nothing q[0];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_raw(qasm);
     assert!(result.is_ok());
 }
 
@@ -167,18 +175,23 @@ fn test_gate_name_conflicts() {
     // Test that we can redefine gates from the standard library
     let qasm = r#"
         OPENQASM 2.0;
+        include "qelib1.inc";
         qreg q[1];
-        
-        // Redefine the h gate
+
+        // Redefine the h gate with a simple implementation
         gate h a {
-            ry(pi/2) a;
+            rz(pi/2) a;
             x a;
+            rz(pi/2) a;
         }
-        
+
         h q[0];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_with_includes(qasm);
+    if let Err(e) = &result {
+        eprintln!("Error in test_gate_with_multiple_parameters: {}", e);
+    }
     assert!(result.is_ok());
 
     let program = result.unwrap();
@@ -194,7 +207,7 @@ fn test_invalid_gate_syntax() {
         gate bad a h a;
     "#;
 
-    let result1 = QASMParser::parse_str(qasm1);
+    let result1 = QASMParser::parse_str_raw(qasm1);
     assert!(result1.is_err());
 
     // Missing parameter list parentheses
@@ -203,6 +216,6 @@ fn test_invalid_gate_syntax() {
         gate bad theta a { rz(theta) a; }
     "#;
 
-    let result2 = QASMParser::parse_str(qasm2);
+    let result2 = QASMParser::parse_str_raw(qasm2);
     assert!(result2.is_err());
 }

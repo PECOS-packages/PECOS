@@ -14,7 +14,7 @@ fn test_phase_zero_gate() {
     "#;
 
     // Parse the QASM program
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
 
     // Create and run the engine
     let mut engine = QASMEngine::new().expect("Failed to create engine");
@@ -51,7 +51,7 @@ fn test_u_gate_identity() {
     "#;
 
     // Parse the QASM program
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
 
     // Create and run the engine
     let mut engine = QASMEngine::new().expect("Failed to create engine");
@@ -89,7 +89,7 @@ fn test_combined_phase_and_u() {
     "#;
 
     // Parse the QASM program
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
 
     // Create and run the engine
     let mut engine = QASMEngine::new().expect("Failed to create engine");
@@ -123,7 +123,7 @@ fn test_phase_expansion() {
         qreg q[1];
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
 
     // Check if p gate is defined
     if program.gate_definitions.contains_key("p") {

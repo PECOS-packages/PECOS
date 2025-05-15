@@ -10,7 +10,7 @@ fn test_circular_dependency_detection() {
         g1 q[0];
     "#;
 
-    match QASMParser::parse_str(qasm_direct) {
+    match QASMParser::parse_str_raw(qasm_direct) {
         Err(e) => {
             assert!(e.to_string().contains("Circular dependency"));
             assert!(e.to_string().contains("g1 -> g1"));
@@ -30,7 +30,7 @@ fn test_indirect_circular_dependency_detection() {
         g1 q[0];
     "#;
 
-    match QASMParser::parse_str(qasm_indirect) {
+    match QASMParser::parse_str_raw(qasm_indirect) {
         Err(e) => {
             assert!(e.to_string().contains("Circular dependency"));
             // Either g1 -> g2 -> g1 or g2 -> g1 -> g2 is valid depending on which gets expanded first
@@ -55,7 +55,7 @@ fn test_complex_circular_dependency_detection() {
         g1 q[0];
     "#;
 
-    match QASMParser::parse_str(qasm_complex) {
+    match QASMParser::parse_str_raw(qasm_complex) {
         Err(e) => {
             assert!(e.to_string().contains("Circular dependency"));
             assert!(e.to_string().contains("g1 -> g2 -> g3 -> g1"));
@@ -78,7 +78,7 @@ fn test_valid_deep_nesting() {
         g5 q[0];
     "#;
 
-    match QASMParser::parse_str(qasm_valid) {
+    match QASMParser::parse_str_raw(qasm_valid) {
         Ok(_) => { /* Success */ }
         Err(e) => panic!("Valid deep nesting failed with error: {}", e),
     }
@@ -94,7 +94,7 @@ fn test_circular_dependency_with_parameters() {
         rot(pi/2) q[0];
     "#;
 
-    match QASMParser::parse_str(qasm_param) {
+    match QASMParser::parse_str_raw(qasm_param) {
         Err(e) => {
             assert!(e.to_string().contains("Circular dependency"));
             assert!(e.to_string().contains("rot -> rot"));
@@ -115,5 +115,5 @@ fn test_circular_dependency_without_usage() {
     "#;
 
     // This should succeed since we never actually use the circular gates
-    assert!(QASMParser::parse_str(qasm_unused).is_ok());
+    assert!(QASMParser::parse_str_raw(qasm_unused).is_ok());
 }

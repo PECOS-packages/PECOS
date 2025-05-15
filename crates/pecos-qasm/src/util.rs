@@ -30,7 +30,12 @@ pub fn count_qubits_in_file<P: AsRef<Path>>(path: P) -> Result<usize, PecosError
 /// * `Result<usize, PecosError>` - The total number of qubits on success, or a parsing error
 pub fn count_qubits_in_str(qasm: &str) -> Result<usize, PecosError> {
     // Parse the string using the existing parser
-    let program = QASMParser::parse_str(qasm)?;
+    // Use the no-expansion version since we only need to count qubits
+    let program = if qasm.contains("include") {
+        QASMParser::parse_str_with_includes_no_expansion(qasm)?
+    } else {
+        QASMParser::parse_str_raw(qasm)?
+    };
 
     // Use the total_qubits from the program
     Ok(program.total_qubits)

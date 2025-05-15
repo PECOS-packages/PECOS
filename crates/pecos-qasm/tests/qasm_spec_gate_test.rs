@@ -19,7 +19,7 @@ fn test_qasm_spec_example_1() {
         cz q[0], q[1];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_with_includes(qasm);
     assert!(result.is_ok());
 }
 
@@ -28,8 +28,9 @@ fn test_qasm_spec_example_2() {
     // Example from the spec: Toffoli gate
     let qasm = r#"
         OPENQASM 2.0;
+        include "qelib1.inc";
         qreg q[3];
-        
+
         gate ccx a,b,c {
             h c;
             cx b,c;
@@ -51,7 +52,7 @@ fn test_qasm_spec_example_2() {
         ccx q[0], q[1], q[2];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_with_includes(qasm);
     assert!(result.is_ok());
 }
 
@@ -72,7 +73,7 @@ fn test_qasm_spec_example_3() {
         rx(pi/2) q[0];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_with_includes(qasm);
     assert!(result.is_ok());
 }
 
@@ -81,8 +82,9 @@ fn test_qasm_spec_example_4() {
     // Example of gate using other gates
     let qasm = r#"
         OPENQASM 2.0;
+        include "qelib1.inc";
         qreg q[2];
-        
+
         // Define a CNOT using CZ and Hadamards
         gate cx_from_cz c,t {
             h t;
@@ -93,7 +95,7 @@ fn test_qasm_spec_example_4() {
         cx_from_cz q[0], q[1];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_with_includes(qasm);
     assert!(result.is_ok());
 }
 
@@ -102,8 +104,9 @@ fn test_qasm_spec_syntax_variations() {
     // Test various syntactic forms from the spec
     let qasm = r#"
         OPENQASM 2.0;
+        include "qelib1.inc";
         qreg q[4];
-        
+
         // No parameters, single qubit
         gate x180 a {
             x a;
@@ -138,7 +141,7 @@ fn test_qasm_spec_syntax_variations() {
         mygate(pi/4) q[0];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_with_includes(qasm);
     assert!(result.is_ok());
 }
 
@@ -151,14 +154,14 @@ fn test_qasm_spec_invalid_syntax() {
         OPENQASM 2.0;
         gate bad a h a;
     "#;
-    assert!(QASMParser::parse_str(invalid1).is_err());
+    assert!(QASMParser::parse_str_raw(invalid1).is_err());
 
     // Invalid parameter syntax (missing parentheses)
     let invalid2 = r#"
         OPENQASM 2.0;
         gate bad theta a { rz(theta) a; }
     "#;
-    assert!(QASMParser::parse_str(invalid2).is_err());
+    assert!(QASMParser::parse_str_raw(invalid2).is_err());
 
     // Empty parameter list
     let valid_empty_params = r#"
@@ -166,6 +169,6 @@ fn test_qasm_spec_invalid_syntax() {
         gate good() a { h a; }
     "#;
     // This might be valid or invalid depending on spec interpretation
-    let result = QASMParser::parse_str(valid_empty_params);
+    let result = QASMParser::parse_str_raw(valid_empty_params);
     println!("Empty params result: {:?}", result.is_ok());
 }

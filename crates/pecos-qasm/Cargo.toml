@@ -16,6 +16,9 @@ description = "QASM parser and engine for PECOS quantum simulator"
 pest.workspace = true
 pest_derive = "2.7"
 
+# Text processing
+regex = "1.10"
+
 # Error handling
 thiserror = "1.0"
 anyhow = "1.0"

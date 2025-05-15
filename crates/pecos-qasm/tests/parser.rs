@@ -14,7 +14,7 @@ fn test_parse_simple_program() -> Result<(), Box<dyn std::error::Error>> {
         measure q[1] -> c[1];
     "#;
 
-    let program = QASMParser::parse_str(qasm)?;
+    let program = QASMParser::parse_str_with_includes(qasm)?;
 
     assert_eq!(program.version, "2.0");
     assert_eq!(program.quantum_registers.get("q").map(|v| v.len()), Some(2));

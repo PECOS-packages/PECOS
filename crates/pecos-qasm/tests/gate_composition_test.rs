@@ -34,7 +34,7 @@ fn test_gate_composition() {
         measure q -> c;
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_raw(qasm);
 
     match result {
         Ok(program) => {
@@ -82,7 +82,7 @@ fn test_undefined_gate_in_definition() {
         mygate q[0];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_raw(qasm);
 
     match result {
         Ok(program) => {

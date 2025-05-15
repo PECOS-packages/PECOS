@@ -65,12 +65,11 @@ impl QASMEngine {
         // Create a new engine
         let mut engine = Self::new()?;
 
-        // Parse the QASM file
-        let qasm = std::fs::read_to_string(qasm_path)
-            .map_err(|e| PecosError::Resource(format!("Failed to read QASM file: {e}")))?;
+        // Parse the QASM file using the parser's file method which handles preprocessing
+        let program = QASMParser::parse_file(qasm_path)?;
 
-        // Parse and load the program
-        engine.from_str(&qasm)?;
+        // Load the program
+        engine.load_program(program)?;
 
         // Log information about the loaded program
         if let Some(program) = &engine.program {
@@ -84,6 +83,7 @@ impl QASMEngine {
 
         Ok(engine)
     }
+
 
     /// Load a QASM program into the engine
     pub fn load_program(&mut self, program: Program) -> Result<(), PecosError> {
@@ -115,8 +115,56 @@ impl QASMEngine {
 
     /// Parse a QASM program from a string and load it
     pub fn from_str(&mut self, qasm: &str) -> Result<(), PecosError> {
-        let program = QASMParser::parse_str(qasm)?;
+        // Use parse_str_with_includes if the string contains includes
+        let program = if qasm.contains("include") {
+            QASMParser::parse_str_with_includes(qasm)?
+        } else {
+            QASMParser::parse_str_raw(qasm)?
+        };
 
+        self.load_program(program)
+    }
+
+    /// Parse a QASM program from a string with virtual includes and load it
+    pub fn from_str_with_includes(
+        &mut self,
+        qasm: &str,
+        virtual_includes: impl IntoIterator<Item = (String, String)>,
+    ) -> Result<(), PecosError> {
+        let program = QASMParser::parse_str_with_virtual_includes(qasm, virtual_includes)?;
+        self.load_program(program)
+    }
+
+    /// Parse a QASM program from a string with custom include paths and load it
+    pub fn from_str_with_include_paths<I, P>(
+        &mut self,
+        qasm: &str,
+        include_paths: I,
+    ) -> Result<(), PecosError>
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<std::path::PathBuf>,
+    {
+        let program = QASMParser::parse_str_with_include_paths(qasm, include_paths)?;
+        self.load_program(program)
+    }
+
+    /// Parse a QASM program from a string with both custom include paths and virtual includes
+    pub fn from_str_with_include_paths_and_virtual<I, P>(
+        &mut self,
+        qasm: &str,
+        include_paths: I,
+        virtual_includes: impl IntoIterator<Item = (String, String)>,
+    ) -> Result<(), PecosError>
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<std::path::PathBuf>,
+    {
+        let program = QASMParser::parse_str_with_include_paths_and_virtual(
+            qasm,
+            include_paths,
+            virtual_includes,
+        )?;
         self.load_program(program)
     }
 
@@ -129,6 +177,14 @@ impl QASMEngine {
     #[must_use]
     pub fn allow_complex_conditionals(&self) -> bool {
         self.config.allow_complex_conditionals
+    }
+
+    /// Get access to the gate definitions from the loaded program
+    #[must_use]
+    pub fn gate_definitions(
+        &self,
+    ) -> Option<&std::collections::BTreeMap<String, crate::parser::GateDefinition>> {
+        self.program.as_ref().map(|p| &p.gate_definitions)
     }
 
     /// Get the physical qubit ID for a given quantum register and index
@@ -1066,29 +1122,6 @@ impl QASMEngine {
 
         // Build and return the message
         Ok(self.message_builder.build())
-    }
-
-    /// Create a new `QASMEngine` with a specific random seed and load a QASM file
-    ///
-    /// Note: `QASMEngine` itself does not use randomness. The seed is passed through
-    /// to the underlying quantum simulation layer when the commands are executed.
-    pub fn with_seed(
-        qasm_path: impl AsRef<std::path::Path>,
-        seed: u64,
-    ) -> Result<Self, PecosError> {
-        debug!(
-            "Creating QASMEngine with seed {} (for passthrough to quantum simulator)",
-            seed
-        );
-
-        // Create a new engine and load the QASM file
-        let engine = Self::with_file(qasm_path)?;
-
-        // QASMEngine does not use randomness directly.
-        // The seed will be used by the quantum simulation layer that processes the commands.
-        debug!("Seed {} will be used by the quantum simulation layer", seed);
-
-        Ok(engine)
     }
 
     /// Evaluate an expression with access to register values

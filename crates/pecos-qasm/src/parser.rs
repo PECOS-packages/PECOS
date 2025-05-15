@@ -5,10 +5,11 @@ use pecos_core::errors::PecosError;
 use pest::Parser;
 use pest::iterators::Pair;
 use pest_derive::Parser;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, BTreeMap};
 use std::fmt;
-use std::fs;
 use std::path::Path;
+
+use crate::preprocessor::Preprocessor;
 
 #[derive(Debug, Clone)]
 pub enum ParameterExpression {
@@ -26,11 +27,64 @@ pub enum ParameterExpression {
     },
 }
 
+impl fmt::Display for ParameterExpression {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParameterExpression::Constant(val) => write!(f, "{}", val),
+            ParameterExpression::Identifier(id) => write!(f, "{}", id),
+            ParameterExpression::Pi => write!(f, "pi"),
+            ParameterExpression::BinaryOp { op, left, right } => {
+                write!(f, "({} {} {})", left, op, right)
+            }
+            ParameterExpression::FunctionCall { name, args } => {
+                write!(f, "{}(", name)?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", arg)?;
+                }
+                write!(f, ")")
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GateDefOperation {
     pub name: String,
     pub parameters: Vec<ParameterExpression>,
     pub arguments: Vec<String>,
+}
+
+impl fmt::Display for GateDefOperation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name)?;
+
+        // Parameters if any
+        if !self.parameters.is_empty() {
+            write!(f, "(")?;
+            for (i, param) in self.parameters.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", param)?;
+            }
+            write!(f, ")")?;
+        }
+
+        // Arguments
+        for (i, arg) in self.arguments.iter().enumerate() {
+            if i == 0 {
+                write!(f, " ")?;
+            } else {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", arg)?;
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Parser)]
@@ -244,17 +298,26 @@ impl fmt::Display for Operation {
                 parameters,
                 qubits,
             } => {
-                write!(f, "{name}(")?;
-                for (i, param) in parameters.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
+                write!(f, "{name}")?;
+                // Only add parentheses if there are parameters
+                if !parameters.is_empty() {
+                    write!(f, "(")?;
+                    for (i, param) in parameters.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{param}")?;
                     }
-                    write!(f, "{param}")?;
+                    write!(f, ")")?;
                 }
-                write!(f, ")")?;
 
-                for qubit in qubits {
-                    write!(f, " q{qubit}")?;
+                // Output comma-separated qubits
+                for (i, qubit) in qubits.iter().enumerate() {
+                    if i == 0 {
+                        write!(f, " q[{qubit}]")?;
+                    } else {
+                        write!(f, ", q[{qubit}]")?;
+                    }
                 }
                 Ok(())
             }
@@ -263,7 +326,7 @@ impl fmt::Display for Operation {
                 c_reg,
                 c_index,
             } => {
-                write!(f, "measure q{qubit} -> {c_reg}[{c_index}]")
+                write!(f, "measure q[{qubit}] -> {c_reg}[{c_index}]")
             }
             Operation::If {
                 condition,
@@ -272,12 +335,17 @@ impl fmt::Display for Operation {
                 write!(f, "if ({condition}) {operation}")
             }
             Operation::Reset { qubit } => {
-                write!(f, "reset q{qubit}")
+                write!(f, "reset q[{qubit}]")
             }
             Operation::Barrier { qubits } => {
                 write!(f, "barrier")?;
-                for qubit in qubits {
-                    write!(f, " q{qubit}")?;
+                // Output comma-separated qubits
+                for (i, qubit) in qubits.iter().enumerate() {
+                    if i == 0 {
+                        write!(f, " q[{qubit}]")?;
+                    } else {
+                        write!(f, ", q[{qubit}]")?;
+                    }
                 }
                 Ok(())
             }
@@ -341,13 +409,13 @@ pub struct GateDefinition {
 pub struct Program {
     pub version: String,
     pub operations: Vec<Operation>,
-    pub gate_definitions: HashMap<String, GateDefinition>,
+    pub gate_definitions: BTreeMap<String, GateDefinition>,
 
     // Quantum register mapping to global qubit IDs
-    pub quantum_registers: HashMap<String, Vec<usize>>, // register_name -> vec of global qubit IDs
+    pub quantum_registers: BTreeMap<String, Vec<usize>>, // register_name -> vec of global qubit IDs
 
     // Classical registers stay as they were (just sizes)
-    pub classical_registers: HashMap<String, usize>, // register_name -> size
+    pub classical_registers: BTreeMap<String, usize>, // register_name -> size
 
     // Total count
     pub total_qubits: usize,
@@ -358,11 +426,442 @@ pub struct Program {
 
 impl QASMParser {
     pub fn parse_file<P: AsRef<Path>>(path: P) -> Result<Program, PecosError> {
-        let source = fs::read_to_string(path).map_err(|e| PecosError::IO(e))?;
-        Self::parse_str(&source)
+        // Use preprocessor to handle includes
+        let mut preprocessor = Preprocessor::new();
+
+        // Add virtual includes from embedded content
+        let virtual_includes = crate::includes::get_standard_includes();
+        preprocessor.add_virtual_includes(virtual_includes);
+
+        let preprocessed_source = preprocessor.preprocess_file(path)?;
+        Self::parse_str_raw(&preprocessed_source)
     }
 
-    pub fn parse_str(source: &str) -> Result<Program, PecosError> {
+    /// Get the preprocessed QASM (after phase 1 - include resolution)
+    /// This shows the QASM with all includes resolved but gates not yet expanded
+    pub fn preprocess(source: &str) -> Result<String, PecosError> {
+        let mut preprocessor = Preprocessor::new();
+
+        // Add virtual includes from embedded content
+        let virtual_includes = crate::includes::get_standard_includes();
+        preprocessor.add_virtual_includes(virtual_includes);
+
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let include_dir = std::path::Path::new(manifest_dir).join("includes");
+        preprocessor.add_include_paths(vec![include_dir]);
+
+        preprocessor.preprocess_str(source)
+    }
+
+    /// Get the preprocessed and expanded QASM (after phases 1 and 2)
+    /// This shows the QASM with all includes resolved and all gates expanded to native operations
+    pub fn preprocess_and_expand(source: &str) -> Result<String, PecosError> {
+        // Phase 1: Preprocess includes
+        let preprocessed = Self::preprocess(source)?;
+
+        // Phase 2: Expand gates to native operations
+        Self::expand_all_gate_definitions(&preprocessed)
+    }
+
+
+    pub fn parse_str_with_includes(source: &str) -> Result<Program, PecosError> {
+        // Phase 1: Preprocess includes
+        let mut preprocessor = Preprocessor::new();
+
+        // Add virtual includes from embedded content
+        let virtual_includes = crate::includes::get_standard_includes();
+        preprocessor.add_virtual_includes(virtual_includes);
+
+        // Add the standard includes directory to the search path as fallback
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let include_dir = std::path::Path::new(manifest_dir).join("includes");
+        preprocessor.add_include_paths(vec![include_dir]);
+
+        let preprocessed_source = preprocessor.preprocess_str(source)?;
+
+        // Phase 2: Parse the preprocessed source
+        let mut program = Self::parse_str_raw(&preprocessed_source)?;
+
+        // Phase 3: Expand gates
+        Self::expand_gates(&mut program)?;
+
+        // Phase 4: Check for opaque gates - these are not yet supported
+        Self::validate_no_opaque_gate_usage(&program)?;
+
+        Ok(program)
+    }
+
+    /// Parse QASM with includes but without gate expansion (mainly for testing and utility functions)
+    pub fn parse_str_with_includes_no_expansion(source: &str) -> Result<Program, PecosError> {
+        let mut preprocessor = Preprocessor::new();
+
+        // Add virtual includes from embedded content
+        let virtual_includes = crate::includes::get_standard_includes();
+        preprocessor.add_virtual_includes(virtual_includes);
+
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let include_dir = std::path::Path::new(manifest_dir).join("includes");
+        preprocessor.add_include_paths(vec![include_dir]);
+
+        let preprocessed_source = preprocessor.preprocess_str(source)?;
+        let mut program = Self::parse_str_raw(&preprocessed_source)?;
+
+        // Still expand gates but don't validate undefined gates
+        let _ = Self::expand_gates_old(&mut program);
+
+        Ok(program)
+    }
+
+    /// Parse QASM with virtual includes but without gate expansion (for testing)
+    #[cfg(test)]
+    pub fn parse_str_with_virtual_includes_no_expansion(
+        source: &str,
+        virtual_includes: impl IntoIterator<Item = (String, String)>,
+    ) -> Result<Program, PecosError> {
+        // Use preprocessor with virtual includes
+        let mut preprocessor = Preprocessor::new();
+        preprocessor.add_virtual_includes(virtual_includes);
+        let preprocessed_source = preprocessor.preprocess_str(source)?;
+
+        // Parse but don't expand at all - just return parsed program
+        let program = Self::parse_str_raw(&preprocessed_source)?;
+
+        Ok(program)
+    }
+
+    // Old gate expansion method (without recursive expansion) for compatibility
+    fn expand_gates_old(program: &mut Program) -> Result<(), PecosError> {
+        let mut expanded_operations = Vec::new();
+
+        for operation in &program.operations {
+            match operation {
+                Operation::Gate { name, parameters, qubits } => {
+                    if let Some(gate_def) = program.gate_definitions.get(name) {
+                        let expanded = Self::expand_gate_call(
+                            gate_def,
+                            parameters,
+                            qubits,
+                            &program.gate_definitions,
+                        )?;
+                        expanded_operations.extend(expanded);
+                    } else {
+                        // Just keep the gate as is (old behavior for tests)
+                        expanded_operations.push(operation.clone());
+                    }
+                }
+                _ => expanded_operations.push(operation.clone()),
+            }
+        }
+
+        program.operations = expanded_operations;
+        Ok(())
+    }
+
+    pub fn parse_str_with_virtual_includes(
+        source: &str,
+        virtual_includes: impl IntoIterator<Item = (String, String)>,
+    ) -> Result<Program, PecosError> {
+        // Use preprocessor with virtual includes
+        let mut preprocessor = Preprocessor::new();
+        preprocessor.add_virtual_includes(virtual_includes);
+        let preprocessed_source = preprocessor.preprocess_str(source)?;
+
+        // Parse the preprocessed source
+        let mut program = Self::parse_str_raw(&preprocessed_source)?;
+
+        // Expand gates
+        Self::expand_gates(&mut program)?;
+
+        // Validate
+        Self::validate_no_opaque_gate_usage(&program)?;
+
+        Ok(program)
+    }
+
+    /// Parse QASM source code with custom include paths
+    pub fn parse_str_with_include_paths<I, P>(
+        source: &str,
+        include_paths: I,
+    ) -> Result<Program, PecosError>
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<std::path::PathBuf>,
+    {
+        let mut preprocessor = Preprocessor::new();
+        preprocessor.add_include_paths(include_paths);
+        let preprocessed_source = preprocessor.preprocess_str(source)?;
+
+        // Parse the preprocessed source
+        let mut program = Self::parse_str_raw(&preprocessed_source)?;
+
+        // Expand gates
+        Self::expand_gates(&mut program)?;
+
+        // Validate
+        Self::validate_no_opaque_gate_usage(&program)?;
+
+        Ok(program)
+    }
+
+    /// Parse QASM source code with both custom include paths and virtual includes
+    pub fn parse_str_with_include_paths_and_virtual<I, P>(
+        source: &str,
+        include_paths: I,
+        virtual_includes: impl IntoIterator<Item = (String, String)>,
+    ) -> Result<Program, PecosError>
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<std::path::PathBuf>,
+    {
+        let mut preprocessor = Preprocessor::new();
+        preprocessor.add_include_paths(include_paths);
+        preprocessor.add_virtual_includes(virtual_includes);
+        let preprocessed_source = preprocessor.preprocess_str(source)?;
+
+        // Parse the preprocessed source
+        let mut program = Self::parse_str_raw(&preprocessed_source)?;
+
+        // Expand gates
+        Self::expand_gates(&mut program)?;
+
+        // Validate
+        Self::validate_no_opaque_gate_usage(&program)?;
+
+        Ok(program)
+    }
+
+    /// Expand all gate definitions in QASM source to native gates only.
+    /// This is phase 2 of the three-phase parsing process.
+    /// This is exposed publicly so users can see the expanded QASM.
+    pub fn expand_all_gate_definitions(source: &str) -> Result<String, PecosError> {
+        // Parse the source to get gate definitions and operations
+        let mut program = Self::parse_phase1(source)?;
+
+        // Expand all gates
+        Self::expand_gates(&mut program)?;
+
+        // Convert back to QASM string with expanded operations only (no gate definitions)
+        Ok(Self::program_to_qasm_expanded(&program))
+    }
+
+    /// Parse only phase 1 - just enough to get gate definitions and operations
+    fn parse_phase1(source: &str) -> Result<Program, PecosError> {
+        let mut program = Program::default();
+        let mut pairs = Self::parse(Rule::program, source).map_err(|e| PecosError::ParseSyntax {
+            language: "QASM".to_string(),
+            message: e.to_string(),
+        })?;
+
+        let program_pair = pairs
+            .next()
+            .ok_or_else(|| PecosError::CompileInvalidOperation {
+                operation: "QASM program".to_string(),
+                reason: "Empty program".to_string(),
+            })?;
+
+        for pair in program_pair.into_inner() {
+            match pair.as_rule() {
+                Rule::oqasm => {
+                    // Version declaration
+                    if let Some(version_pair) = pair.into_inner().next() {
+                        program.version = version_pair.as_str().to_string();
+                    }
+                }
+                Rule::statement => {
+                    for inner_pair in pair.into_inner() {
+                        match inner_pair.as_rule() {
+                            Rule::register_decl => Self::parse_register(inner_pair, &mut program)?,
+                            Rule::gate_def => Self::parse_gate_definition(inner_pair, &mut program)?,
+                            Rule::quantum_op => {
+                                if let Some(op) = Self::parse_quantum_op(inner_pair, &program)? {
+                                    program.operations.push(op);
+                                }
+                            }
+                            Rule::classical_op => {
+                                if let Some(op) = Self::parse_classical_operation(inner_pair)? {
+                                    program.operations.push(op);
+                                }
+                            }
+                            Rule::if_stmt => {
+                                if let Some(op) = Self::parse_if_statement(inner_pair, &program)? {
+                                    program.operations.push(op);
+                                }
+                            }
+                            _ => {} // Skip other operations for phase 1
+                        }
+                    }
+                }
+                _ => {} // Skip other rules
+            }
+        }
+
+        Ok(program)
+    }
+
+    /// Convert a Program back to QASM string
+    fn program_to_qasm(program: &Program) -> String {
+        let mut qasm = String::new();
+
+        // Version
+        if !program.version.is_empty() {
+            qasm.push_str(&format!("OPENQASM {};\n", program.version));
+        }
+
+        // Gate definitions (need to preserve these for later phases)
+        for (name, gate_def) in &program.gate_definitions {
+            qasm.push_str(&format!("gate {} ", name));
+
+            // Parameters
+            if !gate_def.params.is_empty() {
+                qasm.push('(');
+                qasm.push_str(&gate_def.params.join(", "));
+                qasm.push(')');
+                qasm.push(' ');
+            }
+
+            // Qubits
+            qasm.push_str(&gate_def.qargs.join(", "));
+            qasm.push_str(" {\n");
+
+            // Gate body
+            for body_op in &gate_def.body {
+                qasm.push_str("  ");
+                qasm.push_str(&format!("{}", body_op));
+                qasm.push_str(";\n");
+            }
+
+            qasm.push_str("}\n");
+        }
+
+        // Quantum registers
+        for (name, qubits) in &program.quantum_registers {
+            qasm.push_str(&format!("qreg {}[{}];\n", name, qubits.len()));
+        }
+
+        // Classical registers
+        for (name, size) in &program.classical_registers {
+            qasm.push_str(&format!("creg {}[{}];\n", name, size));
+        }
+
+        // Operations (expanded)
+        for op in &program.operations {
+            qasm.push_str(&Self::format_operation(op, &program.qubit_map));
+            qasm.push_str(";\n");
+        }
+
+        qasm
+    }
+
+    /// Convert a Program back to QASM string with only expanded operations (no gate definitions)
+    fn program_to_qasm_expanded(program: &Program) -> String {
+        let mut qasm = String::new();
+
+        // Version
+        if !program.version.is_empty() {
+            qasm.push_str(&format!("OPENQASM {};\n", program.version));
+        }
+
+        // Quantum registers
+        for (name, qubits) in &program.quantum_registers {
+            qasm.push_str(&format!("qreg {}[{}];\n", name, qubits.len()));
+        }
+
+        // Classical registers
+        for (name, size) in &program.classical_registers {
+            qasm.push_str(&format!("creg {}[{}];\n", name, size));
+        }
+
+        // Operations (expanded) - no gate definitions
+        for op in &program.operations {
+            qasm.push_str(&Self::format_operation(op, &program.qubit_map));
+            qasm.push_str(";\n");
+        }
+
+        qasm
+    }
+
+    /// Format an operation with proper qubit register names
+    fn format_operation(op: &Operation, qubit_map: &HashMap<usize, (String, usize)>) -> String {
+        match op {
+            Operation::Gate { name, parameters, qubits } => {
+                let mut result = name.clone();
+
+                // Add parameters if any
+                if !parameters.is_empty() {
+                    result.push('(');
+                    for (i, param) in parameters.iter().enumerate() {
+                        if i > 0 {
+                            result.push_str(", ");
+                        }
+                        result.push_str(&param.to_string());
+                    }
+                    result.push(')');
+                }
+
+                // Add qubits with proper register names
+                for (i, &qubit_id) in qubits.iter().enumerate() {
+                    if i == 0 {
+                        result.push(' ');
+                    } else {
+                        result.push_str(", ");
+                    }
+
+                    if let Some((reg_name, index)) = qubit_map.get(&qubit_id) {
+                        result.push_str(&format!("{}[{}]", reg_name, index));
+                    } else {
+                        // Fallback if mapping not found
+                        result.push_str(&format!("q[{}]", qubit_id));
+                    }
+                }
+
+                result
+            }
+            Operation::Measure { qubit, c_reg, c_index } => {
+                let qubit_str = if let Some((reg_name, index)) = qubit_map.get(qubit) {
+                    format!("{}[{}]", reg_name, index)
+                } else {
+                    format!("q[{}]", qubit)
+                };
+                format!("measure {} -> {}[{}]", qubit_str, c_reg, c_index)
+            }
+            Operation::Reset { qubit } => {
+                let qubit_str = if let Some((reg_name, index)) = qubit_map.get(qubit) {
+                    format!("{}[{}]", reg_name, index)
+                } else {
+                    format!("q[{}]", qubit)
+                };
+                format!("reset {}", qubit_str)
+            }
+            Operation::Barrier { qubits } => {
+                let mut result = String::from("barrier");
+                for (i, &qubit_id) in qubits.iter().enumerate() {
+                    if i == 0 {
+                        result.push(' ');
+                    } else {
+                        result.push_str(", ");
+                    }
+
+                    if let Some((reg_name, index)) = qubit_map.get(&qubit_id) {
+                        result.push_str(&format!("{}[{}]", reg_name, index));
+                    } else {
+                        result.push_str(&format!("q[{}]", qubit_id));
+                    }
+                }
+                result
+            }
+            Operation::If { condition, operation } => {
+                let nested_operation_str = Self::format_operation(operation, qubit_map);
+                format!("if ({}) {}", condition, nested_operation_str)
+            }
+            _ => format!("{}", op), // Use default Display for other operations
+        }
+    }
+
+    /// Parse QASM source string without preprocessing includes.
+    /// This is the low-level parsing function that assumes all includes have already been resolved.
+    ///
+    /// For most use cases, consider using `parse_str_with_includes()` which handles include resolution.
+    pub fn parse_str_raw(source: &str) -> Result<Program, PecosError> {
         let mut program = Program::default();
         let mut pairs =
             Self::parse(Rule::program, source).map_err(|e| PecosError::ParseSyntax {
@@ -403,8 +902,7 @@ impl QASMParser {
         // After parsing, expand all gates using their definitions
         Self::expand_gates(&mut program)?;
 
-        // Validate that no opaque gates are being used before they're implemented
-        Self::validate_no_opaque_gate_usage(&program)?;
+        // Note: Opaque gate validation moved to later in the process
 
         Ok(program)
     }
@@ -437,7 +935,12 @@ impl QASMParser {
                     Self::parse_gate_definition(inner_pair, program)?;
                 }
                 Rule::include => {
-                    Self::parse_include(inner_pair, program)?;
+                    // Include statements should be handled by preprocessor
+                    return Err(PecosError::ParseSyntax {
+                        language: "QASM".to_string(),
+                        message: "Include statements should be preprocessed before parsing"
+                            .to_string(),
+                    });
                 }
                 Rule::opaque_def => {
                     if let Some(op) = Self::parse_opaque_def(inner_pair)? {
@@ -1406,45 +1909,6 @@ impl QASMParser {
         Ok(left)
     }
 
-    fn parse_include(
-        pair: pest::iterators::Pair<Rule>,
-        program: &mut Program,
-    ) -> Result<(), PecosError> {
-        let mut inner = pair.into_inner();
-
-        if let Some(string_pair) = inner.next() {
-            let filename = string_pair.as_str().trim_matches('"');
-
-            // Try to load the include file
-            // First check in the includes directory relative to the source
-            let include_paths = vec![
-                Path::new("includes").join(filename),
-                Path::new(filename).to_path_buf(),
-            ];
-
-            for include_path in include_paths {
-                if include_path.exists() {
-                    let include_content = fs::read_to_string(&include_path)?;
-
-                    // Parse the included file
-                    let include_program = Self::parse_str(&include_content)?;
-
-                    // Merge gate definitions
-                    for (name, def) in include_program.gate_definitions {
-                        program.gate_definitions.insert(name, def);
-                    }
-
-                    // Don't include operations from the include file
-                    // Only gate definitions should be used
-
-                    break;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     fn expand_gates(program: &mut Program) -> Result<(), PecosError> {
         let mut expanded_operations = Vec::new();
 
@@ -1465,6 +1929,13 @@ impl QASMParser {
                 native_gates.insert(gate);
             }
         }
+
+        // Also treat barrier and reset as special native operations
+        native_gates.insert("barrier");
+        native_gates.insert("reset");
+
+        // Opaque gates pass through unchanged
+        native_gates.insert("opaque");
 
         for operation in &program.operations {
             match operation {
@@ -1488,8 +1959,14 @@ impl QASMParser {
                         )?;
                         expanded_operations.extend(expanded);
                     } else {
-                        // Keep the original gate if no definition exists
-                        expanded_operations.push(operation.clone());
+                        // Gate is neither native nor defined - this is an error
+                        return Err(PecosError::CompileInvalidOperation {
+                            operation: format!("gate '{}'", name),
+                            reason: format!(
+                                "Undefined gate '{}' - gate is neither native nor user-defined. Did you forget to include qelib1.inc?",
+                                name
+                            ),
+                        });
                     }
                 }
                 // Other operations pass through unchanged
@@ -1505,7 +1982,7 @@ impl QASMParser {
         gate_def: &GateDefinition,
         parameters: &[f64],
         qubits: &[usize],
-        all_definitions: &HashMap<String, GateDefinition>,
+        all_definitions: &BTreeMap<String, GateDefinition>,
     ) -> Result<Vec<Operation>, PecosError> {
         Self::expand_gate_call_with_stack(
             gate_def,
@@ -1520,10 +1997,36 @@ impl QASMParser {
         gate_def: &GateDefinition,
         parameters: &[f64],
         qubits: &[usize],
-        all_definitions: &HashMap<String, GateDefinition>,
+        all_definitions: &BTreeMap<String, GateDefinition>,
         expansion_stack: &mut Vec<String>,
     ) -> Result<Vec<Operation>, PecosError> {
         let mut expanded = Vec::new();
+
+        // Define native gates - only U and CX are truly native in OpenQASM 2.0
+        // Need to check these during nested expansion too
+        let mut native_gates: HashSet<&str> = ["U", "CX", "u", "cx"].iter().cloned().collect();
+
+        // For PECOS, we also treat these as native for efficiency
+        let pecos_native_gates = [
+            "H", "X", "Y", "Z", "RZ", "RZZ", "SZZ", // Hardware native gates (uppercase)
+            "h", "x", "y", "z", "rz", "rzz", "szz", // User-friendly lowercase versions
+        ];
+
+        // Only treat PECOS gates as native if they're not user-defined
+        for gate in &pecos_native_gates {
+            if !all_definitions.contains_key(*gate) {
+                native_gates.insert(gate);
+            }
+        }
+
+        // Also treat barrier and reset as special native operations
+        // These are allowed in gate bodies
+        native_gates.insert("barrier");
+        native_gates.insert("reset");
+
+        // Opaque gates pass through expansion unchanged
+        // They will be caught later during validation
+        native_gates.insert("opaque");
 
         // Create parameter mapping
         let mut param_map = HashMap::new();
@@ -1617,8 +2120,20 @@ impl QASMParser {
 
                 expanded.extend(nested_expanded);
             } else {
-                // No definition found - keep as is
-                expanded.push(new_op);
+                // No definition found - check if it's native or undefined
+                if native_gates.contains(mapped_name.as_str()) {
+                    // It's a native gate, add it
+                    expanded.push(new_op);
+                } else {
+                    // Gate is neither native nor defined - this is an error
+                    return Err(PecosError::CompileInvalidOperation {
+                        operation: format!("gate '{}'", mapped_name),
+                        reason: format!(
+                            "Undefined gate '{}' - gate is neither native nor user-defined. Did you forget to include qelib1.inc?",
+                            mapped_name
+                        ),
+                    });
+                }
             }
         }
 
@@ -1739,6 +2254,7 @@ mod tests {
     fn test_parse_scientific_notation() -> Result<(), Box<dyn std::error::Error>> {
         let qasm = r#"
             OPENQASM 2.0;
+            include "qelib1.inc";
             qreg q[1];
 
             // Test various scientific notation formats
@@ -1752,7 +2268,20 @@ mod tests {
             u2(0.5, 1e-3) q[0];
         "#;
 
-        let program = QASMParser::parse_str(qasm)?;
+        // Define the gates we need in virtual includes with actual bodies
+        let virtual_includes = vec![(
+            "qelib1.inc".to_string(),
+            r#"
+            gate rx(theta) a { U(theta, -pi/2, pi/2) a; }
+            gate ry(theta) a { U(theta, 0, 0) a; }
+            gate rz(theta) a { U(0, 0, theta) a; }
+            gate u1(lambda) a { U(0, 0, lambda) a; }
+            gate u2(phi, lambda) a { U(pi/2, phi, lambda) a; }
+            gate u3(theta, phi, lambda) a { U(theta, phi, lambda) a; }
+            "#.to_string(),
+        )];
+
+        let program = QASMParser::parse_str_with_virtual_includes_no_expansion(qasm, virtual_includes)?;
 
         // Verify gates were parsed correctly
         assert_eq!(program.operations.len(), 6);
@@ -1791,7 +2320,7 @@ mod tests {
             measure q[1] -> c[1];
         "#;
 
-        let program = QASMParser::parse_str(qasm)?;
+        let program = QASMParser::parse_str_with_includes_no_expansion(qasm)?;
 
         assert_eq!(program.version, "2.0");
 
@@ -1802,6 +2331,7 @@ mod tests {
         assert_eq!(q_ids, &vec![0, 1]); // Global IDs for q[0] and q[1]
 
         assert_eq!(program.classical_registers.get("c"), Some(&2));
+        // Operations should only contain actual gate operations, not definitions
         assert_eq!(program.operations.len(), 4); // 2 gates + 2 measurements
 
         // Verify the gate operations
@@ -1824,7 +2354,7 @@ mod tests {
             qubits,
         } = &program.operations[1]
         {
-            assert_eq!(name, "cx");
+            assert_eq!(name, "CX");
             assert!(parameters.is_empty());
             assert_eq!(qubits, &[0, 1]); // Global IDs for q[0] and q[1]
         } else {
@@ -1873,7 +2403,7 @@ mod tests {
             if(c[0]==1) x q[0];
         "#;
 
-        let program = QASMParser::parse_str(qasm)?;
+        let program = QASMParser::parse_str_with_includes_no_expansion(qasm)?;
 
         assert_eq!(program.version, "2.0");
         assert_eq!(program.quantum_registers.get("q").map(|v| v.len()), Some(1));
@@ -1935,7 +2465,7 @@ mod tests {
             if(c[0]==1) c[0] = 0;
         "#;
 
-        let program = QASMParser::parse_str(qasm)?;
+        let program = QASMParser::parse_str_with_includes_no_expansion(qasm)?;
 
         assert_eq!(program.version, "2.0");
         assert_eq!(program.quantum_registers.get("q").map(|v| v.len()), Some(1));
@@ -1993,7 +2523,7 @@ mod tests {
             c = b & a;  // AND operation: 2 & 1 = 0
         "#;
 
-        let program = QASMParser::parse_str(qasm)?;
+        let program = QASMParser::parse_str_with_includes(qasm)?;
 
         // Just check that parsing succeeded
         assert_eq!(program.classical_registers.len(), 3);

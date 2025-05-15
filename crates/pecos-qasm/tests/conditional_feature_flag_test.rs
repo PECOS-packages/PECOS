@@ -22,7 +22,7 @@ fn test_standard_conditionals_always_work() {
         if (c <= 3) x q[0];
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
 
     // Don't enable complex conditionals
@@ -55,7 +55,7 @@ fn test_complex_conditionals_fail_by_default() {
         if (a[0] & b[0] == 1) h q[0];
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
 
     // Don't enable complex conditionals (should be false by default)
@@ -97,7 +97,7 @@ fn test_complex_conditionals_work_with_flag() {
         if ((a[0] & b[0]) == 1) h q[0];
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
 
     // Enable complex conditionals
@@ -131,7 +131,7 @@ fn test_register_to_register_comparison_fails() {
         if (a < b) h q[0];
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
 
     engine
@@ -168,7 +168,7 @@ fn test_expression_to_expression_fails() {
         if ((a + 1) == 3) h q[0];
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
 
     engine
@@ -205,8 +205,8 @@ fn test_toggle_feature_flag() {
         if ((a + 1) == 3) h q[0];
     "#;
 
-    let program1 = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    let program2 = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program1 = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program2 = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
 
     // Test with flag disabled
     let mut engine1 = QASMEngine::new().expect("Failed to create engine");

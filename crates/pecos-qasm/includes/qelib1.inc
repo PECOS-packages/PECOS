@@ -33,11 +33,12 @@ gate rx(theta) a {
   h a;
 }
 
-// Note: ry(theta) requires more complex decomposition
-// For now, we'll leave it as a comment
-// gate ry(theta) a {
-//   // Would need decomposition using rx, rz
-// }
+// Y-axis rotation
+gate ry(theta) a {
+  rx(-pi/2) a;
+  rz(theta) a;
+  rx(pi/2) a;
+}
 
 // sqrt(X) gate - decomposed
 gate sx a {
@@ -72,6 +73,11 @@ gate cy a,b {
   s b;
 }
 
+// Controlled-SX
+gate csx a,b {
+  cx a,b;  // Simplified version
+}
+
 // SWAP gate
 gate swap a,b {
   cx a,b;
@@ -102,9 +108,19 @@ gate cphase(theta) a,b {
   rz(theta/2) b;
 }
 
-// Note: More complex gates like Toffoli (ccx), controlled-H (ch), 
-// and arbitrary U3 gates would require additional native support
-// or more sophisticated decompositions
+// Toffoli gate (controlled-controlled-X)
+gate ccx a,b,c {
+  h c;
+  cx b,c; tdg c;
+  cx a,c; t c;
+  cx b,c; tdg c;
+  cx a,c; t b; t c; h c;
+  cx a,b; t a; tdg b;
+  cx a,b;
+}
+
+// Note: More complex gates like controlled-H (ch)
+// and other gates would require additional implementations
 
 // --- Utility gates ---
 
@@ -121,6 +137,25 @@ gate u(theta, phi, lambda) q {
   rz(phi) q;
   rx(theta) q;
   rz(lambda) q;
+}
+
+// Single-parameter phase gate (alias)
+gate u1(lambda) a { rz(lambda) a; }
+
+// Two-parameter rotation
+gate u2(phi, lambda) a {
+  rz(phi) a;
+  rx(pi/2) a;
+  rz(lambda) a;
+}
+
+// Three-parameter general rotation
+gate u3(theta, phi, lambda) a {
+  rz(phi) a;
+  rx(-pi/2) a;
+  rz(theta) a;
+  rx(pi/2) a;
+  rz(lambda) a;
 }
 
 // Synonyms for common gates

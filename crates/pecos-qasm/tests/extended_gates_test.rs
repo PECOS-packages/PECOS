@@ -1,5 +1,4 @@
 // Test extended gate support in PECOS QASM
-use pecos_engines::engines::classical::ClassicalEngine;
 use pecos_qasm::QASMEngine;
 
 #[test]
@@ -93,29 +92,24 @@ fn test_parameterized_gates() {
 fn test_unsupported_gate_error() {
     let qasm = r#"
         OPENQASM 2.0;
-        include "qelib1.inc";
         qreg q[3];
-        
-        // This should fail - Toffoli is not supported
+
+        // This should fail during parsing - Toffoli is not defined
         ccx q[0], q[1], q[2];
     "#;
 
     let mut engine = QASMEngine::new().unwrap();
     let result = engine.from_str(qasm);
 
-    // The gate should be parsed but fail during execution
-    assert!(result.is_ok(), "Should parse unsupported gates");
+    // With stricter parsing, this should now fail at parse time
+    assert!(result.is_err(), "Should fail on undefined gate");
 
-    // But execution should fail
-    match engine.generate_commands() {
-        Ok(_) => panic!("Should fail on unsupported gate"),
-        Err(e) => {
-            let error_msg = format!("{:?}", e);
-            assert!(
-                error_msg.contains("Unsupported") || error_msg.contains("ccx"),
-                "Error should mention unsupported gate: {}",
-                error_msg
-            );
-        }
+    if let Err(e) = result {
+        let error_msg = e.to_string();
+        assert!(
+            error_msg.contains("Undefined") && error_msg.contains("ccx"),
+            "Error should mention undefined gate ccx: {}",
+            error_msg
+        );
     }
 }

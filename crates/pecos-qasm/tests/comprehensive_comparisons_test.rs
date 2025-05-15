@@ -29,7 +29,7 @@ fn test_all_comparison_operators() {
     "#;
 
     // Parse the QASM program
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
 
     // Create and load the engine
     let mut engine = QASMEngine::new().expect("Failed to create engine");
@@ -64,7 +64,7 @@ fn test_bit_indexing_in_conditionals() {
         if (d[0] == 1) h q[0];  // Should execute
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
     engine
         .load_program(program)
@@ -98,7 +98,7 @@ fn test_complex_conditional_expressions() {
         if (c != 0) h q[0];  // Should execute
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
     engine
         .load_program(program)
@@ -135,7 +135,7 @@ fn test_comparison_operators_syntax() {
         );
 
         let program =
-            QASMParser::parse_str(&qasm).expect(&format!("Failed to parse {} operator", desc));
+            QASMParser::parse_str_with_includes(&qasm).expect(&format!("Failed to parse {} operator", desc));
         assert!(
             !program.operations.is_empty(),
             "{} operator should create an operation",
@@ -178,7 +178,7 @@ fn test_mixed_operations_with_conditionals() {
         // if ((a[0] | b[0]) != 0) h q[0];  // Would execute
     "#;
 
-    let _program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let _program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
 
     // Just check parsing for now
     println!("Mixed operations with conditionals test passed");

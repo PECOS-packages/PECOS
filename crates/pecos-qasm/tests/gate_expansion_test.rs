@@ -10,7 +10,7 @@ fn test_gate_expansion_rx() {
         rx(1.5708) q[0];
     "#;
 
-    let program = QASMParser::parse_str(qasm).unwrap();
+    let program = QASMParser::parse_str_with_includes(qasm).unwrap();
 
     // The rx gate should be expanded to h; rz; h
     assert_eq!(program.operations.len(), 3);
@@ -57,7 +57,7 @@ fn test_gate_expansion_cz() {
         cz q[0], q[1];
     "#;
 
-    let program = QASMParser::parse_str(qasm).unwrap();
+    let program = QASMParser::parse_str_with_includes(qasm).unwrap();
 
     // The cz gate should be expanded to h; cx; h
     assert_eq!(program.operations.len(), 3);
@@ -97,7 +97,7 @@ fn test_gate_remains_native() {
         cx q[0], q[1];
     "#;
 
-    let program = QASMParser::parse_str(qasm).unwrap();
+    let program = QASMParser::parse_str_with_includes(qasm).unwrap();
 
     // Native gates should not be expanded
     assert_eq!(program.operations.len(), 2);
@@ -124,7 +124,7 @@ fn test_gate_definitions_loaded() {
         qreg q[1];
     "#;
 
-    let program = QASMParser::parse_str(qasm).unwrap();
+    let program = QASMParser::parse_str_with_includes(qasm).unwrap();
 
     // Check that common gates are defined
     assert!(program.gate_definitions.contains_key("rx"));

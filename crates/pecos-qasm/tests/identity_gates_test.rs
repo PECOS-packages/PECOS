@@ -14,7 +14,7 @@ fn test_p_zero_gate_compiles() {
     "#;
 
     // Parse and compile
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
     engine
         .load_program(program)
@@ -38,7 +38,7 @@ fn test_u_identity_gate_expansion() {
     "#;
 
     // Parse the program
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
 
     // The u gate should be expanded to its constituent gates
     // For u(0,0,0), it should expand to: rz(0), rx(0), rz(0)
@@ -67,7 +67,7 @@ fn test_gate_definitions_updated() {
         qreg q[1];
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
 
     // Check that p and u gates are now defined
     assert!(
@@ -117,7 +117,7 @@ fn test_p_gate_expansion() {
         p(1.5707963267948966) q[0];  // pi/2
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
 
     // The operations should be expanded
     assert_eq!(
@@ -154,7 +154,7 @@ fn test_identity_operations() {
         p(0) q[0];      // Phase(0) is identity
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
 
     // Both operations should expand/compile correctly
     assert!(

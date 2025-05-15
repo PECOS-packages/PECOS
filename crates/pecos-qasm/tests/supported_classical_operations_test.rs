@@ -24,7 +24,7 @@ fn test_basic_classical_operations() {
     "#;
 
     // Parse the QASM program
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
 
     // Create and load the engine
     let mut engine = QASMEngine::new().expect("Failed to create engine");
@@ -56,7 +56,7 @@ fn test_bitwise_operations() {
         d[0] = a[0] ^ 1;             // Bitwise XOR
     "#;
 
-    let program = QASMParser::parse_str(qasm);
+    let program = QASMParser::parse_str_with_includes(qasm);
 
     // Check that bitwise operations at least parse
     // Note: This may fail if 'd' is not declared
@@ -77,7 +77,7 @@ fn test_conditional_operations() {
         if (c == 1) x q[0];
     "#;
 
-    let _program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let _program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
 
     // Check that conditional operations are parsed correctly
     println!("Conditional operations test passed");
@@ -100,7 +100,7 @@ fn test_arithmetic_operations() {
         c = a / b;           // Division
     "#;
 
-    let _program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let _program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
 
     // Note: These may cause runtime errors due to overflow or division by zero
     println!("Arithmetic operations parse correctly");
@@ -120,7 +120,7 @@ fn test_shift_operations() {
         d = c >> 2;          // Right shift
     "#;
 
-    let _program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let _program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
 
     println!("Shift operations parse correctly");
 }
@@ -139,7 +139,7 @@ fn test_complex_quantum_expressions() {
         ry(2*pi) q[0];
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
 
     // Check that complex expressions in quantum gates parse correctly
     assert!(
@@ -163,7 +163,7 @@ fn test_unsupported_syntax() {
         c = b**a;  // This is now supported
     "#;
     assert!(
-        QASMParser::parse_str(qasm_exp).is_ok(),
+        QASMParser::parse_str_with_includes(qasm_exp).is_ok(),
         "Exponentiation is now supported"
     );
 
@@ -177,7 +177,7 @@ fn test_unsupported_syntax() {
     "#;
 
     // This might parse but may not execute correctly
-    let result = QASMParser::parse_str(qasm_comp);
+    let result = QASMParser::parse_str_with_includes(qasm_comp);
     if result.is_err() {
         println!("Comparison operators like >= may not be supported in conditionals");
     }

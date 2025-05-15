@@ -12,7 +12,7 @@ fn test_simple_gate_definition() {
         mygate q[0];
     "#;
 
-    let program = QASMParser::parse_str(qasm).unwrap();
+    let program = QASMParser::parse_str_raw(qasm).unwrap();
 
     // Gate definition should be loaded
     assert!(program.gate_definitions.contains_key("mygate"));
@@ -38,7 +38,7 @@ fn test_native_gate_parsing() {
         h q[0];
     "#;
 
-    let program = QASMParser::parse_str(qasm).unwrap();
+    let program = QASMParser::parse_str_raw(qasm).unwrap();
 
     // h gate definition should be loaded
     assert!(program.gate_definitions.contains_key("h"));

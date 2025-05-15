@@ -1193,6 +1193,7 @@ dependencies = [
  "pecos-qsim",
  "pest",
  "pest_derive",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

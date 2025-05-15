@@ -42,7 +42,24 @@ fn test_allowed_top_level_operations() {
         mygate q[0];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_with_includes(qasm);
+    if let Err(ref e) = result {
+        eprintln!("Error during parsing: {}", e);
+
+        // Try just phase 1
+        if let Ok(preprocessed) = QASMParser::preprocess(qasm) {
+            eprintln!("Phase 1 (preprocessed) succeeded");
+
+            // Try phase 2
+            match QASMParser::expand_all_gate_definitions(&preprocessed) {
+                Ok(expanded) => {
+                    eprintln!("Phase 2 (expanded) succeeded:");
+                    eprintln!("Expanded QASM:\n{}", expanded);
+                },
+                Err(e) => eprintln!("Phase 2 (expansion) failed: {}", e),
+            }
+        }
+    }
     assert!(
         result.is_ok(),
         "All these operations should be allowed at top level"
@@ -62,7 +79,7 @@ fn test_disallowed_top_level_operations() {
         }
     "#;
 
-    let result1 = QASMParser::parse_str(qasm1);
+    let result1 = QASMParser::parse_str_raw(qasm1);
     assert!(result1.is_err(), "Gate definitions inside if should fail");
 
     // Test 2: Invalid measurement syntax
@@ -74,7 +91,7 @@ fn test_disallowed_top_level_operations() {
         measure q[0] c[0];  // Missing arrow
     "#;
 
-    let result2 = QASMParser::parse_str(qasm2);
+    let result2 = QASMParser::parse_str_raw(qasm2);
     assert!(result2.is_err(), "Measurement without arrow should fail");
 }
 
@@ -104,20 +121,61 @@ fn test_allowed_gate_body_operations() {
             
             // Composite gates (defined elsewhere)
             ccx a, b, c;
-            
-            // Currently also accepts (but shouldn't):
-            barrier a, b;  // This works but shouldn't
-            reset a;       // This works but shouldn't
+
+            // Special operations now allowed in gate bodies
+            barrier a, b;
+            reset a;
         }
         
         allowed_ops q[0], q[1], q[2];
     "#;
 
-    let result = QASMParser::parse_str(qasm);
-    assert!(
-        result.is_ok(),
-        "These operations are currently allowed in gate bodies"
-    );
+    let result = QASMParser::parse_str_with_includes(qasm);
+    match result {
+        Ok(_) => (),
+        Err(e) => {
+            eprintln!("Original QASM:\n{}", qasm);
+            panic!("Failed to parse: {}", e)
+        },
+    }
+}
+
+/// Test that barrier and reset are now allowed in gate bodies
+#[test]
+fn test_barrier_reset_in_gate_body() {
+    // Test 1: Barrier in gate body should now succeed
+    let qasm_barrier = r#"
+        OPENQASM 2.0;
+        qreg q[2];
+
+        gate valid_gate a, b {
+            h a;
+            barrier a, b;  // This is now allowed
+            x b;
+        }
+
+        valid_gate q[0], q[1];
+    "#;
+
+    let result = QASMParser::parse_str_with_includes(qasm_barrier);
+    assert!(result.is_ok(), "Barrier should be allowed in gate bodies");
+
+    // Test 2: Reset in gate body should now succeed
+    let qasm_reset = r#"
+        OPENQASM 2.0;
+        qreg q[1];
+
+        gate valid_gate a {
+            h a;
+            reset a;  // This is now allowed
+            x a;
+        }
+
+        valid_gate q[0];
+    "#;
+
+    let result = QASMParser::parse_str_with_includes(qasm_reset);
+    assert!(result.is_ok(), "Reset should be allowed in gate bodies");
 }
 
 /// Test operations that should NOT be allowed in gate definitions
@@ -134,7 +192,7 @@ fn test_disallowed_gate_body_operations() {
         }
     "#;
 
-    let result1 = QASMParser::parse_str(qasm1);
+    let result1 = QASMParser::parse_str_raw(qasm1);
     assert!(result1.is_err(), "Measurements in gate body should fail");
 
     // Test 2: Classical operations in gate body
@@ -148,7 +206,7 @@ fn test_disallowed_gate_body_operations() {
         }
     "#;
 
-    let result2 = QASMParser::parse_str(qasm2);
+    let result2 = QASMParser::parse_str_raw(qasm2);
     assert!(
         result2.is_err(),
         "Classical operations in gate body should fail"
@@ -165,7 +223,7 @@ fn test_disallowed_gate_body_operations() {
         }
     "#;
 
-    let result3 = QASMParser::parse_str(qasm3);
+    let result3 = QASMParser::parse_str_raw(qasm3);
     assert!(result3.is_err(), "If statements in gate body should fail");
 
     // Test 4: Nested gate definitions
@@ -178,7 +236,7 @@ fn test_disallowed_gate_body_operations() {
         }
     "#;
 
-    let result4 = QASMParser::parse_str(qasm4);
+    let result4 = QASMParser::parse_str_raw(qasm4);
     assert!(result4.is_err(), "Nested gate definitions should fail");
 }
 
@@ -200,7 +258,7 @@ fn test_allowed_if_body_operations() {
         // QASM doesn't support block if statements, only single operations
     "#;
 
-    let result = QASMParser::parse_str(qasm);
+    let result = QASMParser::parse_str_with_includes(qasm);
     assert!(
         result.is_ok(),
         "These operations should be allowed in if statements"
@@ -222,7 +280,7 @@ fn test_context_dependent_operations() {
         }
     "#;
 
-    let result1 = QASMParser::parse_str(qasm1);
+    let result1 = QASMParser::parse_str_raw(qasm1);
     assert!(result1.is_ok());
 
     // Reset: similar to barriers
@@ -237,6 +295,6 @@ fn test_context_dependent_operations() {
         }
     "#;
 
-    let result2 = QASMParser::parse_str(qasm2);
+    let result2 = QASMParser::parse_str_raw(qasm2);
     assert!(result2.is_ok());
 }

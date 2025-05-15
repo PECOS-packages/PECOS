@@ -45,7 +45,7 @@ fn test_openqasm_standard_vs_extended() {
     "#;
 
     // Standard QASM should work without any flags
-    let program1 = QASMParser::parse_str(standard_qasm).expect("Standard QASM should parse");
+    let program1 = QASMParser::parse_str_with_includes(standard_qasm).expect("Standard QASM should parse");
     let mut engine1 = QASMEngine::new().expect("Failed to create engine");
     assert!(
         !engine1.allow_complex_conditionals(),
@@ -59,7 +59,7 @@ fn test_openqasm_standard_vs_extended() {
         .expect("Standard QASM should execute without extended features");
 
     // Extended QASM should fail without the flag
-    let program2 = QASMParser::parse_str(extended_qasm).expect("Extended QASM should parse");
+    let program2 = QASMParser::parse_str_with_includes(extended_qasm).expect("Extended QASM should parse");
     let mut engine2 = QASMEngine::new().expect("Failed to create engine");
     engine2
         .load_program(program2.clone())
@@ -100,7 +100,7 @@ fn test_error_messages_are_helpful() {
         if (a < b) h q[0];  // Should fail without flag
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Should parse");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Should parse");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
     engine
         .load_program(program)
@@ -142,7 +142,7 @@ fn test_mixed_conditionals() {
         if (a != b) h q[0];
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Should parse");
+    let program = QASMParser::parse_str_with_includes(qasm).expect("Should parse");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
     engine
         .load_program(program)
@@ -153,7 +153,7 @@ fn test_mixed_conditionals() {
     assert!(result.is_err(), "Should fail on extended conditional");
 
     // Now enable the flag and try again
-    let program2 = QASMParser::parse_str(qasm).expect("Should parse");
+    let program2 = QASMParser::parse_str_with_includes(qasm).expect("Should parse");
     let mut engine2 = QASMEngine::new().expect("Failed to create engine");
     engine2.set_allow_complex_conditionals(true);
     engine2

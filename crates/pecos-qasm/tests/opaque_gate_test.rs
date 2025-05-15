@@ -41,7 +41,7 @@ fn test_opaque_gate_syntax() {
         measure q -> c;
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm);
+    let result = QASMParser::parse_str(qasm);
 
     match result {
         Ok(_) => {
@@ -92,7 +92,7 @@ fn test_opaque_and_regular_gates() {
         measure q -> c;
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm);
+    let result = QASMParser::parse_str(qasm);
 
     match result {
         Ok(ast) => {
@@ -127,7 +127,7 @@ fn test_opaque_gate_declaration_only() {
         measure q -> c;
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm);
+    let result = QASMParser::parse_str(qasm);
 
     // This should succeed because we're not using the opaque gates
     match result {
@@ -161,7 +161,7 @@ fn test_opaque_gate_errors() {
         }
     "#;
 
-    let result1 = QASMParser::parse_str_with_includes(invalid_qasm1);
+    let result1 = QASMParser::parse_str(invalid_qasm1);
     assert!(result1.is_err(), "Opaque gate with body should be an error");
 
     // Test 2: Using undefined opaque gate
@@ -173,7 +173,7 @@ fn test_opaque_gate_errors() {
         undefined_gate q[0];
     "#;
 
-    let result2 = QASMParser::parse_str_with_includes(invalid_qasm2);
+    let result2 = QASMParser::parse_str(invalid_qasm2);
     // This might already fail as undefined gate
     println!("Undefined gate error: {:?}", result2);
 }

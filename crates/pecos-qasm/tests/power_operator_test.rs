@@ -13,7 +13,7 @@ fn test_power_operator_basic() {
         rz(10**0) q[0];   // 10^0 = 1
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     // After expansion, we'll have more than 3 operations
     assert!(program.operations.len() > 0);
 }
@@ -31,7 +31,7 @@ fn test_power_operator_with_floats() {
         rz(2.718281828**1) q[0]; // e^1 = e
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     assert!(program.operations.len() > 0);
 }
 
@@ -48,7 +48,7 @@ fn test_power_operator_precedence() {
         rz(2+3**2) q[0];     // 2+(3^2) = 2+9 = 11
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     assert!(program.operations.len() > 0);
 }
 
@@ -65,7 +65,7 @@ fn test_power_with_pi() {
         rz(pi**(1/2)) q[0];  // sqrt(pi)
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     assert!(program.operations.len() > 0);
 }
 
@@ -82,7 +82,7 @@ fn test_power_negative_base() {
         rz((-3)**2) q[0];    // (-3)^2 = 9
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     assert!(program.operations.len() > 0);
 }
 
@@ -102,7 +102,7 @@ fn test_power_in_gate_definitions() {
         powgate(2, 3) q[0];
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     assert!(program.gate_definitions.contains_key("powgate"));
 }
 

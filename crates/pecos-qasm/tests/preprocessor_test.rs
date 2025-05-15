@@ -120,8 +120,9 @@ fn test_preprocessor_direct() {
         include_path.display()
     );
 
-    // Preprocess
+    // Preprocess with the temp directory in include path
     let mut preprocessor = Preprocessor::new();
+    preprocessor.add_include_path(temp_dir.path());
     let preprocessed = preprocessor.preprocess_str(&qasm).unwrap();
 
     // Check that include was replaced
@@ -141,7 +142,7 @@ fn test_qelib1_include() {
     "#;
 
     // Parse with preprocessing
-    let program = QASMParser::parse_str_with_includes(qasm).unwrap();
+    let program = QASMParser::parse_str(qasm).unwrap();
 
     // Check that gate definitions from qelib1 were loaded
     assert!(program.gate_definitions.contains_key("h"));
@@ -169,7 +170,7 @@ fn test_circular_include_detection() {
     );
 
     // This should fail with circular dependency error
-    let result = QASMParser::parse_str_with_includes(&qasm);
+    let result = QASMParser::parse_str(&qasm);
     assert!(result.is_err());
     if let Err(e) = result {
         assert!(e.to_string().contains("Circular dependency"));

@@ -2,6 +2,86 @@ use std::collections::HashMap;
 use std::fmt;
 use pecos_core::errors::PecosError;
 
+/// Helper trait for formatting common QASM patterns
+pub trait QASMFormat {
+    /// Format a list with a separator
+    fn format_list<T: fmt::Display>(
+        f: &mut fmt::Formatter<'_>,
+        items: &[T],
+        separator: &str,
+        prefix: &str,
+        suffix: &str,
+    ) -> fmt::Result {
+        if !items.is_empty() {
+            write!(f, "{}", prefix)?;
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    write!(f, "{}", separator)?;
+                }
+                write!(f, "{}", item)?;
+            }
+            write!(f, "{}", suffix)?;
+        }
+        Ok(())
+    }
+
+    /// Format parameters with parentheses
+    fn format_params<T: fmt::Display>(
+        f: &mut fmt::Formatter<'_>,
+        params: &[T],
+    ) -> fmt::Result {
+        Self::format_list(f, params, ", ", "(", ")")
+    }
+
+    /// Format a list of qubits with common formatting
+    fn format_qubits(
+        f: &mut fmt::Formatter<'_>,
+        qubits: &[String],
+        first_separator: &str,
+    ) -> fmt::Result {
+        for (i, qubit) in qubits.iter().enumerate() {
+            if i == 0 {
+                write!(f, "{}{}", first_separator, qubit)?;
+            } else {
+                write!(f, ", {}", qubit)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Trait for providing context to expression evaluation
+pub trait EvaluationContext {
+    /// Evaluate an expression and return a floating-point result
+    fn evaluate_float(&self, expr: &Expression) -> Result<f64, PecosError>;
+
+    /// Evaluate an expression and return an integer result
+    fn evaluate_int(&self, expr: &Expression) -> Result<i64, PecosError> {
+        // Default implementation converts float to int
+        self.evaluate_float(expr).map(|f| f as i64)
+    }
+}
+
+/// Basic evaluation context with no variables
+pub struct BasicContext;
+
+impl EvaluationContext for BasicContext {
+    fn evaluate_float(&self, expr: &Expression) -> Result<f64, PecosError> {
+        expr.evaluate_basic()
+    }
+}
+
+/// Parameter evaluation context that provides named parameter values
+pub struct ParameterContext<'a> {
+    pub params: &'a HashMap<String, f64>,
+}
+
+impl<'a> EvaluationContext for ParameterContext<'a> {
+    fn evaluate_float(&self, expr: &Expression) -> Result<f64, PecosError> {
+        expr.evaluate_with_params(self.params)
+    }
+}
+
 /// Represents a complete QASM program
 #[derive(Debug, Clone)]
 pub struct QASMProgram {
@@ -91,6 +171,11 @@ pub enum Operation {
     },
 }
 
+/// Dummy struct to implement QASMFormat methods
+pub struct QASMFormatter;
+
+impl QASMFormat for QASMFormatter {}
+
 /// Represents expressions in classical operations
 #[derive(Debug, Clone)]
 pub enum Expression {
@@ -154,7 +239,13 @@ impl fmt::Display for Expression {
 }
 
 impl Expression {
+    /// Evaluate expression with no variables (backward compatibility)
     pub fn evaluate(&self) -> Result<f64, PecosError> {
+        self.evaluate_basic()
+    }
+
+    /// Evaluate expression without any context (only literals and constants)
+    pub fn evaluate_basic(&self) -> Result<f64, PecosError> {
         match self {
             #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
             Expression::Integer(i) => {
@@ -180,8 +271,8 @@ impl Expression {
             Expression::Float(f) => Ok(*f),
             Expression::Pi => Ok(std::f64::consts::PI),
             Expression::BinaryOp { op, left, right } => {
-                let left_val = left.evaluate()?;
-                let right_val = right.evaluate()?;
+                let left_val = left.evaluate_basic()?;
+                let right_val = right.evaluate_basic()?;
                 match op.as_str() {
                     "+" => Ok(left_val + right_val),
                     "-" => Ok(left_val - right_val),
@@ -207,7 +298,7 @@ impl Expression {
                 }
             }
             Expression::UnaryOp { op, expr } => {
-                let val = expr.evaluate()?;
+                let val = expr.evaluate_basic()?;
                 match op.as_str() {
                     "-" => Ok(-val),
                     "~" => Ok((!(val as i64)) as f64),
@@ -237,7 +328,7 @@ impl Expression {
                     )));
                 }
 
-                let arg_val = args[0].evaluate()?;
+                let arg_val = args[0].evaluate_basic()?;
 
                 match name.as_str() {
                     "sin" => Ok(arg_val.sin()),
@@ -270,6 +361,95 @@ impl Expression {
                     ))),
                 }
             }
+        }
+    }
+
+    /// Evaluate expression with parameter mapping
+    pub fn evaluate_with_params(&self, params: &HashMap<String, f64>) -> Result<f64, PecosError> {
+        match self {
+            Expression::Variable(name) => params
+                .get(name)
+                .copied()
+                .ok_or_else(|| PecosError::ParseInvalidIdentifier(name.clone())),
+            Expression::BinaryOp { op, left, right } => {
+                let left_val = left.evaluate_with_params(params)?;
+                let right_val = right.evaluate_with_params(params)?;
+                match op.as_str() {
+                    "+" => Ok(left_val + right_val),
+                    "-" => Ok(left_val - right_val),
+                    "*" => Ok(left_val * right_val),
+                    "/" => Ok(left_val / right_val),
+                    "**" => Ok(left_val.powf(right_val)),
+                    "&" => Ok((left_val as i64 & right_val as i64) as f64),
+                    "|" => Ok((left_val as i64 | right_val as i64) as f64),
+                    "^" => Ok((left_val as i64 ^ right_val as i64) as f64),
+                    "==" => Ok(if left_val == right_val { 1.0 } else { 0.0 }),
+                    "!=" => Ok(if left_val != right_val { 1.0 } else { 0.0 }),
+                    "<" => Ok(if left_val < right_val { 1.0 } else { 0.0 }),
+                    ">" => Ok(if left_val > right_val { 1.0 } else { 0.0 }),
+                    "<=" => Ok(if left_val <= right_val { 1.0 } else { 0.0 }),
+                    ">=" => Ok(if left_val >= right_val { 1.0 } else { 0.0 }),
+                    "<<" => Ok(((left_val as i64) << (right_val as i64)) as f64),
+                    ">>" => Ok(((left_val as i64) >> (right_val as i64)) as f64),
+                    _ => Err(PecosError::ParseInvalidExpression(format!(
+                        "Unsupported binary operation: {}",
+                        op
+                    ))),
+                }
+            }
+            Expression::UnaryOp { op, expr } => {
+                let val = expr.evaluate_with_params(params)?;
+                match op.as_str() {
+                    "-" => Ok(-val),
+                    "~" => Ok((!(val as i64)) as f64),
+                    _ => Err(PecosError::ParseInvalidExpression(format!(
+                        "Unsupported unary operation: {}",
+                        op
+                    ))),
+                }
+            }
+            Expression::FunctionCall { name, args } => {
+                if args.len() != 1 {
+                    return Err(PecosError::ParseInvalidExpression(format!(
+                        "Function {} expects exactly 1 argument, got {}",
+                        name,
+                        args.len()
+                    )));
+                }
+                let arg_val = args[0].evaluate_with_params(params)?;
+                match name.as_str() {
+                    "sin" => Ok(arg_val.sin()),
+                    "cos" => Ok(arg_val.cos()),
+                    "tan" => Ok(arg_val.tan()),
+                    "exp" => Ok(arg_val.exp()),
+                    "ln" => {
+                        if arg_val <= 0.0 {
+                            Err(PecosError::ParseInvalidExpression(format!(
+                                "ln({}) is undefined for non-positive values",
+                                arg_val
+                            )))
+                        } else {
+                            Ok(arg_val.ln())
+                        }
+                    }
+                    "sqrt" => {
+                        if arg_val < 0.0 {
+                            Err(PecosError::ParseInvalidExpression(format!(
+                                "sqrt({}) is undefined for negative values",
+                                arg_val
+                            )))
+                        } else {
+                            Ok(arg_val.sqrt())
+                        }
+                    }
+                    _ => Err(PecosError::ParseInvalidExpression(format!(
+                        "Unknown function: {}",
+                        name
+                    ))),
+                }
+            }
+            // For literals, just use the basic evaluation
+            _ => self.evaluate_basic(),
         }
     }
 }
@@ -329,24 +509,9 @@ impl fmt::Display for Operation {
                 params,
                 qubits,
             } => {
-                write!(f, "{name}")?;
-                if !params.is_empty() {
-                    write!(f, "(")?;
-                    for (i, param) in params.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{param}")?;
-                    }
-                    write!(f, ")")?;
-                }
-                write!(f, " ")?;
-                for (i, qubit) in qubits.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{qubit}")?;
-                }
+                write!(f, "{}", name)?;
+                QASMFormatter::format_params(f, params)?;
+                QASMFormatter::format_qubits(f, qubits, " ")?;
                 Ok(())
             }
             Operation::Measure { qubit, classical } => {

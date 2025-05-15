@@ -40,7 +40,7 @@ fn test_qasm_comparison_operators_showcase() {
         if (c > 0) x q[1];
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
     engine
         .load_program(program)
@@ -67,7 +67,7 @@ fn test_currently_unsupported_features() {
     "#;
 
     // Complex expressions now parse successfully, but fail at engine level without flag
-    let program1 = QASMParser::parse_str_with_includes(qasm1).expect("Complex expressions should parse");
+    let program1 = QASMParser::parse_str(qasm1).expect("Complex expressions should parse");
     let mut engine1 = QASMEngine::new().expect("Failed to create engine");
     engine1
         .load_program(program1)
@@ -130,7 +130,7 @@ fn test_supported_classical_operators() {
         rx(pi/2) q[0];  // Complex expressions with bit indexing not yet supported in gate params
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
     engine
         .load_program(program)
@@ -168,7 +168,7 @@ fn test_negative_values_and_signed_arithmetic() {
         rx(pi * -0.5) q[0]; // Negative expression
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
     engine
         .load_program(program)

@@ -14,7 +14,7 @@ fn test_sx_gates_expansion() {
         csx q[0],q[1];
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).unwrap();
+    let program = QASMParser::parse_str(qasm).unwrap();
 
     // After all expansions, we'll have a specific set of native operations
     // sx -> RZ(-pi/2), H, RZ(-pi/2)
@@ -39,7 +39,7 @@ fn test_sx_gate_parameters() {
         sx q[0];
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).unwrap();
+    let program = QASMParser::parse_str(qasm).unwrap();
 
     // sx expands to: sdg, h, sdg
     assert_eq!(program.operations.len(), 3);
@@ -83,7 +83,7 @@ fn test_sxdg_gate_parameters() {
         sxdg q[0];
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).unwrap();
+    let program = QASMParser::parse_str(qasm).unwrap();
 
     // sxdg expands to: s, h, s
     assert_eq!(program.operations.len(), 3);

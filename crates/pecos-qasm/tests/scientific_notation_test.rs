@@ -38,7 +38,7 @@ fn test_scientific_notation_formats() {
         rx(789.) q[0];
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
 
     // After expansion, we'll have more operations than just the original gates
     assert!(program.operations.len() > 0);
@@ -68,7 +68,7 @@ fn test_scientific_notation_in_expressions() {
         rx(-2.5e-2) q[0];
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     assert!(program.operations.len() > 0);
 }
 
@@ -90,7 +90,7 @@ fn test_scientific_notation_edge_cases() {
         rx(0.0e0) q[0];
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     assert!(program.operations.len() > 0);
 }
 
@@ -107,7 +107,7 @@ fn test_scientific_notation_with_pi() {
         rx(pi / 1.5e1) q[0];
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     assert!(program.operations.len() > 0);
 }
 
@@ -126,7 +126,7 @@ fn test_scientific_notation_in_gate_definitions() {
         mygate(3.14, 1.5e-1) q[0];
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
 
     // Should have our custom gate definition
     assert!(program.gate_definitions.contains_key("mygate"));

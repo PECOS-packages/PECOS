@@ -14,7 +14,7 @@
 //! # Example: Using Custom Include Paths
 //!
 //! ```no_run
-//! use pecos_qasm::{QASMParser, QASMEngine};
+//! use pecos_qasm::{ParseConfig, QASMParser, QASMEngine};
 //! use std::path::PathBuf;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -31,7 +31,9 @@
 //!     PathBuf::from("./local/qasm")
 //! ];
 //!
-//! let program = QASMParser::parse_str_with_include_paths(qasm, include_paths)?;
+//! let mut config = ParseConfig::default();
+//! config.search_paths = include_paths;
+//! let program = QASMParser::parse_with_config(qasm, config)?;
 //!
 //! // Or use with the engine
 //! let mut engine = QASMEngine::new()?;
@@ -49,6 +51,6 @@ pub mod includes;
 
 pub use ast::{Expression, Operation};
 pub use engine::QASMEngine;
-pub use parser::QASMParser;
+pub use parser::{QASMParser, ParseConfig};
 pub use preprocessor::Preprocessor;
 pub use util::{count_qubits_in_file, count_qubits_in_str};

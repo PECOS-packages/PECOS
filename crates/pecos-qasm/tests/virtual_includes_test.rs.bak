@@ -1,4 +1,4 @@
-use pecos_qasm::parser::{ParseConfig, QASMParser};
+use pecos_qasm::parser::QASMParser;
 use pecos_qasm::{Preprocessor, QASMEngine};
 
 #[test]
@@ -23,7 +23,7 @@ fn test_virtual_include_single() {
     "#;
 
     // Parse with virtual includes
-    let program = { let mut config = ParseConfig::default(); config.includes = virtual_includes.into_iter().collect(); QASMParser::parse_with_config(qasm, config) }.unwrap();
+    let program = QASMParser::parse_str_with_virtual_includes(qasm, virtual_includes).unwrap();
 
     // Verify the gate was loaded
     assert!(program.gate_definitions.contains_key("my_h"));
@@ -66,7 +66,7 @@ fn test_virtual_include_multiple() {
     "#;
 
     // Parse with virtual includes
-    let program = { let mut config = ParseConfig::default(); config.includes = virtual_includes.into_iter().collect(); QASMParser::parse_with_config(qasm, config) }.unwrap();
+    let program = QASMParser::parse_str_with_virtual_includes(qasm, virtual_includes).unwrap();
 
     // Verify both gates were loaded
     assert!(program.gate_definitions.contains_key("prep"));
@@ -108,7 +108,7 @@ fn test_virtual_include_nested() {
     "#;
 
     // Parse with virtual includes
-    let program = { let mut config = ParseConfig::default(); config.includes = virtual_includes.into_iter().collect(); QASMParser::parse_with_config(qasm, config) }.unwrap();
+    let program = QASMParser::parse_str_with_virtual_includes(qasm, virtual_includes).unwrap();
 
     // Verify both gates were loaded from nested includes
     assert!(program.gate_definitions.contains_key("u2"));
@@ -130,7 +130,7 @@ fn test_virtual_include_circular_dependency() {
     "#;
 
     // This should fail with circular dependency error
-    let result = { let mut config = ParseConfig::default(); config.includes = virtual_includes.into_iter().collect(); QASMParser::parse_with_config(qasm, config) };
+    let result = QASMParser::parse_str_with_virtual_includes(qasm, virtual_includes);
     assert!(result.is_err());
     if let Err(e) = result {
         assert!(e.to_string().contains("Circular dependency"));
@@ -187,7 +187,7 @@ fn test_virtual_include_overrides_file() {
     "#;
 
     // Parse with virtual includes
-    let program = { let mut config = ParseConfig::default(); config.includes = virtual_includes.into_iter().collect(); QASMParser::parse_with_config(qasm, config) }.unwrap();
+    let program = QASMParser::parse_str_with_virtual_includes(qasm, virtual_includes).unwrap();
 
     // Should use our custom h gate, not the standard one
     assert!(program.gate_definitions.contains_key("h"));
@@ -246,9 +246,7 @@ fn test_mixed_virtual_and_file_includes() {
     );
 
     // Parse with virtual includes
-    let mut config = ParseConfig::default();
-    config.includes = virtual_includes.into_iter().collect();
-    let program = QASMParser::parse_with_config(&qasm, config).unwrap();
+    let program = QASMParser::parse_str_with_virtual_includes(&qasm, virtual_includes).unwrap();
 
     // Both gates should be loaded
     assert!(program.gate_definitions.contains_key("from_virtual"));

@@ -9,7 +9,7 @@ fn test_qelib1_include_parsing() {
         qreg q[1];
     "#;
 
-    match QASMParser::parse_str_with_includes(qasm) {
+    match QASMParser::parse_str(qasm) {
         Ok(program) => {
             println!(
                 "Successfully parsed with {} gate definitions",

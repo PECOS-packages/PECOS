@@ -15,7 +15,7 @@ fn test_trig_functions() {
         rz(tan(pi/4)) q[0];  // tan(pi/4) = 1
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     // Just verify the program compiles successfully
     assert!(program.operations.len() > 0);
 }
@@ -33,7 +33,7 @@ fn test_exp_ln_functions() {
         rz(exp(ln(2))) q[0]; // exp(ln(2)) = 2
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     assert!(program.operations.len() > 0);
 }
 
@@ -50,7 +50,7 @@ fn test_sqrt_function() {
         rz(sqrt(9)) q[0];    // sqrt(9) = 3
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
 
     // After includes, the high-level gates are expanded into native gates
     // rx, ry, and rz are all expanded, so we expect more than 3 operations
@@ -77,7 +77,7 @@ fn test_nested_functions() {
         rz(cos(sin(pi/2))) q[0];     // cos(sin(pi/2)) = cos(1)
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     assert!(program.operations.len() > 0);
 }
 
@@ -94,7 +94,7 @@ fn test_functions_with_expressions() {
         rz(sqrt(2*2 + 3*3)) q[0];     // sqrt(13)
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     assert!(program.operations.len() > 0);
 }
 
@@ -145,7 +145,7 @@ fn test_functions_in_gate_definitions() {
         mygate(pi/4) q[0];
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     assert!(program.gate_definitions.contains_key("mygate"));
 }
 
@@ -165,7 +165,7 @@ fn test_all_math_functions() {
         rx(sqrt(2)) q[0];
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     assert!(program.operations.len() > 0);
 }
 
@@ -335,7 +335,7 @@ fn test_trig_identity_exact_value() {
         rx(sin(pi/3)**2 + cos(pi/3)**2) q[0];
     "#;
 
-    let _program = QASMParser::parse_str_with_includes(qasm).unwrap();
+    let _program = QASMParser::parse_str(qasm).unwrap();
 
     // For direct evaluation, let's create an Expression manually
 
@@ -390,31 +390,7 @@ fn test_trig_identity_exact_value() {
 
 // Helper function to evaluate an Expression
 fn evaluate_param_expr(expr: &Expression) -> f64 {
-    match expr {
-        Expression::Integer(val) => *val as f64,
-        Expression::Float(val) => *val,
-        Expression::Pi => std::f64::consts::PI,
-        Expression::BinaryOp { op, left, right } => {
-            let left_val = evaluate_param_expr(left);
-            let right_val = evaluate_param_expr(right);
-
-            match op.as_str() {
-                "+" => left_val + right_val,
-                "-" => left_val - right_val,
-                "*" => left_val * right_val,
-                "/" => left_val / right_val,
-                "**" => left_val.powf(right_val),
-                _ => panic!("Unsupported operation: {}", op),
-            }
-        }
-        Expression::FunctionCall { name, args } => {
-            let arg_val = evaluate_param_expr(&args[0]);
-            match name.as_str() {
-                "sin" => arg_val.sin(),
-                "cos" => arg_val.cos(),
-                _ => panic!("Unsupported function: {}", name),
-            }
-        }
-        _ => panic!("Unsupported expression type"),
-    }
+    // Since this is a test helper and we don't have parameters,
+    // use evaluate() which handles basic evaluation
+    expr.evaluate().expect("Failed to evaluate expression")
 }

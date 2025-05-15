@@ -5,8 +5,8 @@ use pecos_engines::{ByteMessage, ClassicalEngine, ControlEngine, Engine, EngineS
 use std::any::Any;
 use std::collections::HashMap;
 
-use crate::ast::Expression;
-use crate::parser::{Operation, Program, QASMParser};
+use crate::ast::{Expression, EvaluationContext};
+use crate::parser::{Operation, ParseConfig, Program, QASMParser};
 
 /// Configuration flags for the `QASMEngine`
 #[derive(Debug, Clone, Default)]
@@ -116,12 +116,8 @@ impl QASMEngine {
 
     /// Parse a QASM program from a string and load it
     pub fn from_str(&mut self, qasm: &str) -> Result<(), PecosError> {
-        // Use parse_str_with_includes if the string contains includes
-        let program = if qasm.contains("include") {
-            QASMParser::parse_str_with_includes(qasm)?
-        } else {
-            QASMParser::parse_str_raw(qasm)?
-        };
+        // Parse the QASM program
+        let program = QASMParser::parse_str(qasm)?;
 
         self.load_program(program)
     }
@@ -132,7 +128,9 @@ impl QASMEngine {
         qasm: &str,
         virtual_includes: impl IntoIterator<Item = (String, String)>,
     ) -> Result<(), PecosError> {
-        let program = QASMParser::parse_str_with_virtual_includes(qasm, virtual_includes)?;
+        let mut config = ParseConfig::default();
+        config.includes = virtual_includes.into_iter().collect();
+        let program = QASMParser::parse_with_config(qasm, config)?;
         self.load_program(program)
     }
 
@@ -146,7 +144,9 @@ impl QASMEngine {
         I: IntoIterator<Item = P>,
         P: Into<std::path::PathBuf>,
     {
-        let program = QASMParser::parse_str_with_include_paths(qasm, include_paths)?;
+        let mut config = ParseConfig::default();
+        config.search_paths = include_paths.into_iter().map(|p| p.into()).collect();
+        let program = QASMParser::parse_with_config(qasm, config)?;
         self.load_program(program)
     }
 
@@ -161,11 +161,10 @@ impl QASMEngine {
         I: IntoIterator<Item = P>,
         P: Into<std::path::PathBuf>,
     {
-        let program = QASMParser::parse_str_with_include_paths_and_virtual(
-            qasm,
-            include_paths,
-            virtual_includes,
-        )?;
+        let mut config = ParseConfig::default();
+        config.search_paths = include_paths.into_iter().map(|p| p.into()).collect();
+        config.includes = virtual_includes.into_iter().collect();
+        let program = QASMParser::parse_with_config(qasm, config)?;
         self.load_program(program)
     }
 
@@ -1519,5 +1518,16 @@ impl Engine for QASMEngine {
     fn reset(&mut self) -> Result<(), PecosError> {
         // Delegate to ControlEngine implementation to maintain single source of truth
         <Self as ControlEngine>::reset(self)
+    }
+}
+
+impl EvaluationContext for QASMEngine {
+    fn evaluate_float(&self, expr: &Expression) -> Result<f64, PecosError> {
+        // Use the existing evaluation method and convert to float
+        self.evaluate_expression_with_context(expr).map(|i| i as f64)
+    }
+
+    fn evaluate_int(&self, expr: &Expression) -> Result<i64, PecosError> {
+        self.evaluate_expression_with_context(expr)
     }
 }

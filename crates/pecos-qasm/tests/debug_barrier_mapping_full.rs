@@ -53,7 +53,7 @@ fn test_barrier_mapping_full() -> Result<(), Box<dyn std::error::Error>> {
     println!("c[2] -> 20");
 
     // Parse and see the operations
-    let program = QASMParser::parse_str_with_includes(qasm)?;
+    let program = QASMParser::parse_str(qasm)?;
     
     // Print actual operations
     println!("\n=== Parsed Operations: ===");

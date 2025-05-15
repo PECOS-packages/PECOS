@@ -42,7 +42,7 @@ fn test_allowed_top_level_operations() {
         mygate q[0];
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm);
+    let result = QASMParser::parse_str(qasm);
     if let Err(ref e) = result {
         eprintln!("Error during parsing: {}", e);
 
@@ -130,7 +130,7 @@ fn test_allowed_gate_body_operations() {
         allowed_ops q[0], q[1], q[2];
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm);
+    let result = QASMParser::parse_str(qasm);
     match result {
         Ok(_) => (),
         Err(e) => {
@@ -157,7 +157,7 @@ fn test_barrier_reset_in_gate_body() {
         valid_gate q[0], q[1];
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm_barrier);
+    let result = QASMParser::parse_str(qasm_barrier);
     assert!(result.is_ok(), "Barrier should be allowed in gate bodies");
 
     // Test 2: Reset in gate body should now succeed
@@ -174,7 +174,7 @@ fn test_barrier_reset_in_gate_body() {
         valid_gate q[0];
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm_reset);
+    let result = QASMParser::parse_str(qasm_reset);
     assert!(result.is_ok(), "Reset should be allowed in gate bodies");
 }
 
@@ -258,7 +258,7 @@ fn test_allowed_if_body_operations() {
         // QASM doesn't support block if statements, only single operations
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm);
+    let result = QASMParser::parse_str(qasm);
     assert!(
         result.is_ok(),
         "These operations should be allowed in if statements"

@@ -1,217 +1,189 @@
+use std::path::{Path, PathBuf};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
 
 use pecos_core::errors::PecosError;
 
-/// Preprocessor for QASM files that handles include statements
-/// before parsing. This simplifies the parser by removing the need
-/// to handle file I/O during parsing.
-///
-/// The preprocessor supports:
-/// - Standard file system includes
-/// - Custom include search paths
-/// - Virtual includes (in-memory content)
-/// - Circular dependency detection
-///
-/// Include files are searched in the following order:
-/// 1. Custom include paths (if specified)
-/// 2. Directory relative to the including file
-/// 3. Current working directory
-/// 4. Standard locations (./includes, etc.)
+/// Simple preprocessor with unified includes
 pub struct Preprocessor {
-    /// Track included files to detect circular dependencies
-    included_files: HashSet<PathBuf>,
-    /// Virtual includes - map of filename to content
-    virtual_includes: HashMap<String, String>,
-    /// Custom include paths to search for include files
-    custom_include_paths: Vec<PathBuf>,
+    /// All includes - just name to content
+    content: HashMap<String, String>,
+    
+    /// Paths to search for missing includes
+    search_paths: Vec<PathBuf>,
+    
+    /// Track included files (circular dependency detection)
+    included: HashSet<String>,
 }
 
 impl Preprocessor {
+    /// Create a new preprocessor with system includes
     pub fn new() -> Self {
-        Self {
-            included_files: HashSet::new(),
-            virtual_includes: HashMap::new(),
-            custom_include_paths: Vec::new(),
+        let mut preprocessor = Self {
+            content: HashMap::new(),
+            search_paths: vec![],
+            included: HashSet::new(),
+        };
+        
+        // Add system includes
+        for (name, content) in crate::includes::get_standard_includes() {
+            preprocessor.content.insert(name, content);
         }
+        
+        preprocessor
     }
 
-    /// Add a virtual include file (name + content)
-    pub fn add_virtual_include(&mut self, name: &str, content: &str) {
-        self.virtual_includes
-            .insert(name.to_string(), content.to_string());
+    /// Add or override an include
+    pub fn add_include(&mut self, name: &str, content: &str) {
+        self.content.insert(name.to_string(), content.to_string());
     }
 
-    /// Add multiple virtual includes at once
-    pub fn add_virtual_includes(&mut self, includes: impl IntoIterator<Item = (String, String)>) {
+    /// Add multiple includes at once
+    pub fn add_includes<I>(&mut self, includes: I)
+    where
+        I: IntoIterator<Item = (String, String)>,
+    {
         for (name, content) in includes {
-            self.virtual_includes.insert(name, content);
+            self.add_include(&name, &content);
         }
     }
 
-    /// Add a custom include path to search for include files
-    pub fn add_include_path<P: Into<PathBuf>>(&mut self, path: P) {
-        self.custom_include_paths.push(path.into());
+    /// Add a search path
+    pub fn add_path<P: Into<PathBuf>>(&mut self, path: P) {
+        self.search_paths.push(path.into());
     }
 
-    /// Add multiple custom include paths at once
-    pub fn add_include_paths<I, P>(&mut self, paths: I)
+    /// Add multiple search paths
+    pub fn add_paths<I, P>(&mut self, paths: I)
     where
         I: IntoIterator<Item = P>,
         P: Into<PathBuf>,
     {
         for path in paths {
-            self.custom_include_paths.push(path.into());
+            self.add_path(path);
         }
     }
 
-    /// Preprocess a QASM string, resolving all include statements
-    pub fn preprocess_str(&mut self, source: &str) -> Result<String, PecosError> {
-        self.preprocess_with_base(source, None)
+    /// Process QASM source
+    pub fn preprocess(&mut self, source: &str) -> Result<String, PecosError> {
+        self.included.clear();
+        self.preprocess_internal(source, None)
     }
 
-    /// Preprocess a QASM file, resolving all include statements
-    pub fn preprocess_file<P: AsRef<Path>>(&mut self, path: P) -> Result<String, PecosError> {
-        let path = path.as_ref();
-        let canonical_path = path.canonicalize().map_err(|e| {
-            PecosError::IO(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to canonicalize path {}: {}", path.display(), e),
-            ))
-        })?;
-
-        // Check for circular dependencies
-        if !self.included_files.insert(canonical_path.clone()) {
+    /// Get include content (from memory or filesystem)
+    fn get_include(&mut self, name: &str, base_dir: Option<&Path>) -> Result<String, PecosError> {
+        // Check circular dependency
+        if !self.included.insert(name.to_string()) {
             return Err(PecosError::ParseSyntax {
                 language: "QASM".to_string(),
-                message: format!(
-                    "Circular dependency detected: {} was already included",
-                    path.display()
-                ),
+                message: format!("Circular dependency: '{}' already included", name),
             });
         }
-
-        let source = fs::read_to_string(path).map_err(|e| PecosError::IO(e))?;
-        let base_dir = path.parent();
-
-        self.preprocess_with_base(&source, base_dir)
+        
+        // Already have it?
+        if let Some(content) = self.content.get(name) {
+            return Ok(content.clone());
+        }
+        
+        // Try filesystem
+        let content = self.load_from_file(name, base_dir)?;
+        self.content.insert(name.to_string(), content.clone());
+        Ok(content)
     }
 
-    /// Preprocess QASM source with an optional base directory for resolving includes
-    fn preprocess_with_base(
-        &mut self,
-        source: &str,
-        base_dir: Option<&Path>,
-    ) -> Result<String, PecosError> {
-        // Use a simple regex-based approach to find include statements
-        let include_pattern = regex::Regex::new(r#"include\s+"([^"]+)"\s*;"#).unwrap();
+    /// Load from filesystem
+    fn load_from_file(&self, name: &str, base_dir: Option<&Path>) -> Result<String, PecosError> {
+        // Try relative to current file first
+        if let Some(base) = base_dir {
+            let path = base.join(name);
+            if path.exists() {
+                return fs::read_to_string(&path)
+                    .map_err(|e| PecosError::ParseSyntax {
+                        language: "QASM".to_string(),
+                        message: format!("Cannot read '{}': {}", path.display(), e),
+                    });
+            }
+        }
+        
+        // Try search paths
+        for search_path in &self.search_paths {
+            let path = search_path.join(name);
+            if path.exists() {
+                return fs::read_to_string(&path)
+                    .map_err(|e| PecosError::ParseSyntax {
+                        language: "QASM".to_string(),
+                        message: format!("Cannot read '{}': {}", path.display(), e),
+                    });
+            }
+        }
+        
+        Err(PecosError::ParseSyntax {
+            language: "QASM".to_string(),
+            message: format!("Include file '{}' not found", name),
+        })
+    }
 
+    /// Internal processing
+    fn preprocess_internal(&mut self, source: &str, base_dir: Option<&Path>) -> Result<String, PecosError> {
+        let include_pattern = regex::Regex::new(r#"include\s+"([^"]+)"\s*;"#).unwrap();
         let mut result = source.to_string();
 
-        // Keep replacing includes until there are none left
         while let Some(captures) = include_pattern.captures(&result) {
             let full_match = captures.get(0).unwrap();
             let filename = captures.get(1).unwrap().as_str();
 
-            // Resolve the include and get its content
-            let included_content = self.resolve_include(filename, base_dir)?;
+            let content = self.get_include(filename, base_dir)?;
 
-            // Replace the include statement with the content
-            result = result.replace(full_match.as_str(), &included_content);
+            // Process recursively
+            let processed = if filename.ends_with(".inc") {
+                let new_base = if let Some(base) = base_dir {
+                    base.join(filename).parent().map(|p| p.to_path_buf())
+                } else {
+                    Path::new(filename).parent().map(|p| p.to_path_buf())
+                };
+                self.preprocess_internal(&content, new_base.as_deref())?
+            } else {
+                content
+            };
+
+            result = result.replace(full_match.as_str(), &processed);
         }
 
         Ok(result)
     }
 
-    /// Resolve an include file, trying virtual includes first, then standard locations
-    fn resolve_include(
-        &mut self,
-        filename: &str,
-        base_dir: Option<&Path>,
-    ) -> Result<String, PecosError> {
-        // First check virtual includes
-        if let Some(content) = self.virtual_includes.get(filename) {
-            // Clone the content to avoid borrowing issues
-            let content = content.clone();
-
-            // For virtual includes, we need to check for circular dependencies differently
-            let virtual_path = PathBuf::from(format!("virtual://{}", filename));
-            if !self.included_files.insert(virtual_path.clone()) {
-                return Err(PecosError::ParseSyntax {
-                    language: "QASM".to_string(),
-                    message: format!(
-                        "Circular dependency detected: virtual include '{}' was already included",
-                        filename
-                    ),
-                });
-            }
-
-            // Recursively preprocess the virtual include content
-            return self.preprocess_with_base(&content, None);
-        }
-
-        // Then try file system paths
-        let paths_to_try = self.get_include_paths(filename, base_dir);
-
-        for path in paths_to_try {
-            if path.exists() {
-                return self.preprocess_file(path);
-            }
-        }
-
-        Err(PecosError::IO(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("Include file '{}' not found", filename),
-        )))
+    // For compatibility while transitioning
+    pub fn preprocess_str(&mut self, source: &str) -> Result<String, PecosError> {
+        self.preprocess(source)
     }
 
-    /// Get the list of paths to try for an include file
-    fn get_include_paths(&self, filename: &str, base_dir: Option<&Path>) -> Vec<PathBuf> {
-        let mut paths = Vec::new();
-
-        // First, try custom include paths
-        for custom_path in &self.custom_include_paths {
-            paths.push(custom_path.join(filename));
-        }
-
-        // Then, try relative to the base directory (if provided)
-        if let Some(base) = base_dir {
-            paths.push(base.join(filename));
-            paths.push(base.join("includes").join(filename));
-        }
-
-        // Then try relative to current directory
-        paths.push(PathBuf::from(filename));
-        paths.push(PathBuf::from("includes").join(filename));
-
-        // Finally, try some standard locations
-        if let Ok(cwd) = std::env::current_dir() {
-            paths.push(cwd.join("includes").join(filename));
-
-            // If we're in a crate subdirectory, try the crate root
-            if cwd.ends_with("src") || cwd.ends_with("tests") {
-                if let Some(parent) = cwd.parent() {
-                    paths.push(parent.join("includes").join(filename));
-                }
-            }
-        }
-
-        paths
+    pub fn add_include_path<P: Into<PathBuf>>(&mut self, path: P) {
+        self.add_path(path);
     }
-}
 
-impl Default for Preprocessor {
-    fn default() -> Self {
-        Self::new()
+    pub fn add_include_paths<I, P>(&mut self, paths: I)
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<PathBuf>,
+    {
+        self.add_paths(paths);
+    }
+
+    pub fn add_virtual_include(&mut self, filename: &str, content: &str) {
+        self.add_include(filename, content);
+    }
+
+    pub fn add_virtual_includes<I>(&mut self, includes: I)
+    where
+        I: IntoIterator<Item = (String, String)>,
+    {
+        self.add_includes(includes);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use tempfile::TempDir;
 
     #[test]
     fn test_preprocess_simple() {
@@ -222,59 +194,44 @@ mod tests {
             h q[0];
         "#;
 
-        let result = preprocessor.preprocess_str(source).unwrap();
-        assert_eq!(result.trim(), source.trim());
+        let result = preprocessor.preprocess(source).unwrap();
+        assert_eq!(result, source);
     }
 
     #[test]
     fn test_preprocess_with_include() {
-        let temp_dir = TempDir::new().unwrap();
-        let include_path = temp_dir.path().join("test.inc");
-
-        fs::write(&include_path, "gate h a { u2(0,pi) a; }").unwrap();
-
-        let source = format!(
-            r#"
-            OPENQASM 2.0;
-            include "{}";
-            qreg q[2];
-            h q[0];
-            "#,
-            include_path.display()
-        );
-
         let mut preprocessor = Preprocessor::new();
-        let result = preprocessor.preprocess_str(&source).unwrap();
+        preprocessor.add_include("test.inc", r#"
+            gate bell a,b {
+                h a;
+                cx a,b;
+            }
+        "#);
 
-        assert!(result.contains("gate h a { u2(0,pi) a; }"));
-        assert!(result.contains("qreg q[2];"));
+        let source = r#"
+            OPENQASM 2.0;
+            include "test.inc";
+            qreg q[2];
+            bell q[0],q[1];
+        "#;
+
+        let result = preprocessor.preprocess(source).unwrap();
+        assert!(result.contains("gate bell a,b"));
         assert!(!result.contains("include"));
     }
 
     #[test]
     fn test_circular_dependency_detection() {
-        let temp_dir = TempDir::new().unwrap();
-        let file1_path = temp_dir.path().join("file1.qasm");
-        let file2_path = temp_dir.path().join("file2.qasm");
-
-        // Create circular dependency
-        fs::write(
-            &file1_path,
-            format!(r#"include "{}";"#, file2_path.display()),
-        )
-        .unwrap();
-        fs::write(
-            &file2_path,
-            format!(r#"include "{}";"#, file1_path.display()),
-        )
-        .unwrap();
-
         let mut preprocessor = Preprocessor::new();
-        let result = preprocessor.preprocess_file(&file1_path);
 
+        // Create circular includes
+        preprocessor.add_include("a.inc", r#"include "b.inc";"#);
+        preprocessor.add_include("b.inc", r#"include "a.inc";"#);
+
+        let source = r#"include "a.inc";"#;
+
+        let result = preprocessor.preprocess(source);
         assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(e.to_string().contains("Circular dependency"));
-        }
+        assert!(result.unwrap_err().to_string().contains("Circular dependency"));
     }
 }

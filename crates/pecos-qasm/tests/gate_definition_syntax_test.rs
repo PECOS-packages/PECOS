@@ -64,7 +64,7 @@ fn test_gate_with_multiple_parameters() {
         u3(pi/2, pi/4, pi/8) q[0];
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm);
+    let result = QASMParser::parse_str(qasm);
     if let Err(e) = &result {
         eprintln!("Error in test_gate_with_multiple_parameters: {}", e);
     }
@@ -121,7 +121,7 @@ fn test_parameter_expressions_in_gate_body() {
         complex_gate(pi) q[0];
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm);
+    let result = QASMParser::parse_str(qasm);
     if let Err(e) = &result {
         eprintln!("Error in test_gate_with_multiple_parameters: {}", e);
     }
@@ -188,7 +188,7 @@ fn test_gate_name_conflicts() {
         h q[0];
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm);
+    let result = QASMParser::parse_str(qasm);
     if let Err(e) = &result {
         eprintln!("Error in test_gate_with_multiple_parameters: {}", e);
     }

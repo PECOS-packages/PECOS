@@ -49,7 +49,7 @@ fn test_supported_classical_operations() {
         // - if statements with complex expressions - Limited support
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     assert!(
         !program.operations.is_empty(),
         "Program should have operations"
@@ -71,7 +71,7 @@ fn test_unsupported_classical_operations() {
     "#;
 
     assert!(
-        QASMParser::parse_str_with_includes(qasm_exp).is_ok(),
+        QASMParser::parse_str(qasm_exp).is_ok(),
         "Exponentiation (**) should now be supported"
     );
 
@@ -85,7 +85,7 @@ fn test_unsupported_classical_operations() {
     "#;
 
     // This parses but may have runtime issues
-    let result = QASMParser::parse_str_with_includes(qasm_complex_if);
+    let result = QASMParser::parse_str(qasm_complex_if);
     if result.is_err() {
         println!("Complex conditionals with >= operator not supported");
     }
@@ -125,7 +125,7 @@ fn test_modified_example_without_unsupported_features() {
         if (d == 1) rx((0.5+0.5)*pi) q[0];
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse modified QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse modified QASM");
     assert!(
         !program.operations.is_empty(),
         "Program should have operations"

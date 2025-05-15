@@ -27,7 +27,7 @@ fn test_barrier_mapping_debug() -> Result<(), Box<dyn std::error::Error>> {
 
     // Finally parse and see what happens
     println!("\n=== Attempting full parse: ===");
-    match QASMParser::parse_str_with_includes(qasm) {
+    match QASMParser::parse_str(qasm) {
         Ok(program) => {
             println!("Parse succeeded!");
             println!("Operations: {:?}", program.operations);

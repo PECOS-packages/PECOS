@@ -31,7 +31,7 @@ fn test_comprehensive_classical_operations() {
     "#;
 
     // Parse the QASM program
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
 
     // Create and load the engine
     let mut engine = QASMEngine::new().expect("Failed to create engine");
@@ -62,7 +62,7 @@ fn test_classical_assignment_operations() {
         c[0] = 1;        // Single bit assignment
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
     engine
         .load_program(program)
@@ -91,7 +91,7 @@ fn test_classical_conditional_operations() {
         if (c == 1) x q[0];
     "#;
 
-    let _program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let _program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
 
     // Check that the conditional operations are parsed correctly
     println!("Classical conditional operations test passed");
@@ -114,7 +114,7 @@ fn test_classical_bitwise_operations() {
         d[0] = a[0] ^ 1;             // Bitwise XOR
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
     engine
         .load_program(program)
@@ -141,7 +141,7 @@ fn test_classical_arithmetic_operations() {
         b = a * c / b;       // Multiplication and division
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
     engine
         .load_program(program)
@@ -167,7 +167,7 @@ fn test_classical_shift_operations() {
         d = c >> 2;          // Right shift
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     let mut engine = QASMEngine::new().expect("Failed to create engine");
     engine
         .load_program(program)
@@ -195,7 +195,7 @@ fn test_quantum_gates_with_classical_conditions() {
         if (d == 1) rx((0.5+0.5)*pi) q[0];
     "#;
 
-    let _program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let _program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
 
     // Check that quantum gates with classical conditions are parsed correctly
     println!("Quantum gates with classical conditions test passed");
@@ -213,7 +213,7 @@ fn test_complex_expression_in_quantum_gate() {
         rx((0.5+0.5)*pi) q[0];
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm).expect("Failed to parse QASM");
+    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
 
     // Check that the expression (0.5+0.5)*pi is properly parsed
     assert!(
@@ -247,7 +247,7 @@ fn test_unsupported_operations() {
         if (c >= 2) h q[0];  // This might need different syntax
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm_comp);
+    let result = QASMParser::parse_str(qasm_comp);
     // This may or may not work depending on how conditionals are implemented
     if result.is_err() {
         println!("Comparison operator syntax may need adjustment");

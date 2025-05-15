@@ -29,7 +29,7 @@ fn test_barrier_parsing() -> Result<(), Box<dyn std::error::Error>> {
         if(a>=5) barrier w[1], w[7];
     "#;
 
-    let program = QASMParser::parse_str_with_includes(qasm)?;
+    let program = QASMParser::parse_str(qasm)?;
 
     // Count barrier operations
     let barrier_count = program

@@ -1,4 +1,4 @@
-use pecos_qasm::{QASMEngine, QASMParser};
+use pecos_qasm::{ParseConfig, QASMEngine, QASMParser};
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -39,7 +39,9 @@ fn test_custom_include_paths() {
         temp_dir3.path().to_path_buf(),
     ];
 
-    let program = QASMParser::parse_str_with_include_paths(qasm, custom_paths).unwrap();
+    let mut config = ParseConfig::default();
+    config.search_paths = custom_paths.into_iter().map(|p| p.into()).collect();
+    let program = QASMParser::parse_with_config(qasm, config).unwrap();
 
     // Verify the program parsed successfully and has gate definitions
     assert!(program.gate_definitions.contains_key("g1"));
@@ -67,19 +69,23 @@ fn test_include_path_priority() {
     "#;
 
     // Test with first directory in path - should get priority1
-    let program1 = QASMParser::parse_str_with_include_paths(qasm, vec![temp_dir1.path()]).unwrap();
+    let mut config = ParseConfig::default();
+    config.search_paths = vec![temp_dir1.path().into()];
+    let program1 = QASMParser::parse_with_config(qasm, config).unwrap();
     assert!(program1.gate_definitions.contains_key("priority1"));
     assert!(!program1.gate_definitions.contains_key("priority2"));
 
     // Test with second directory in path - should get priority2
-    let program2 = QASMParser::parse_str_with_include_paths(qasm, vec![temp_dir2.path()]).unwrap();
+    let mut config = ParseConfig::default();
+    config.search_paths = vec![temp_dir2.path().into()];
+    let program2 = QASMParser::parse_with_config(qasm, config).unwrap();
     assert!(!program2.gate_definitions.contains_key("priority1"));
     assert!(program2.gate_definitions.contains_key("priority2"));
 
     // Test with both paths - first should take priority
-    let program3 =
-        QASMParser::parse_str_with_include_paths(qasm, vec![temp_dir1.path(), temp_dir2.path()])
-            .unwrap();
+    let mut config = ParseConfig::default();
+    config.search_paths = vec![temp_dir1.path().into(), temp_dir2.path().into()];
+    let program3 = QASMParser::parse_with_config(qasm, config).unwrap();
     assert!(program3.gate_definitions.contains_key("priority1"));
     assert!(!program3.gate_definitions.contains_key("priority2"));
 }
@@ -129,12 +135,10 @@ fn test_paths_with_virtual_includes() {
         "gate virtual_gate a { s a; }".to_string(),
     )];
 
-    let program = QASMParser::parse_str_with_include_paths_and_virtual(
-        qasm,
-        vec![temp_dir.path()],
-        virtual_includes,
-    )
-    .unwrap();
+    let mut config = ParseConfig::default();
+    config.search_paths = vec![temp_dir.path().into()];
+    config.includes = virtual_includes.into_iter().collect();
+    let program = QASMParser::parse_with_config(qasm, config).unwrap();
 
     // Both gates should be available
     assert!(program.gate_definitions.contains_key("file_gate"));
@@ -151,7 +155,9 @@ fn test_include_not_found_with_custom_paths() {
     "#;
 
     // Even with custom paths, missing file should error
-    let result = QASMParser::parse_str_with_include_paths(qasm, vec![temp_dir.path()]);
+    let mut config = ParseConfig::default();
+    config.search_paths = vec![temp_dir.path().into()];
+    let result = QASMParser::parse_with_config(qasm, config);
 
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not found"));
@@ -171,17 +177,24 @@ fn test_path_collection_types() {
     "#;
 
     // Test with Vec
-    let _program1 = QASMParser::parse_str_with_include_paths(qasm, vec![temp_dir.path()]).unwrap();
+    let mut config = ParseConfig::default();
+    config.search_paths = vec![temp_dir.path().into()];
+    let _program1 = QASMParser::parse_with_config(qasm, config).unwrap();
 
     // Test with slice
-    let paths = [temp_dir.path()];
-    let _program2 = QASMParser::parse_str_with_include_paths(qasm, &paths[..]).unwrap();
+    let paths = [temp_dir.path().into()];
+    let mut config = ParseConfig::default();
+    config.search_paths = paths.to_vec();
+    let _program2 = QASMParser::parse_with_config(qasm, config).unwrap();
 
     // Test with iterator
-    let _program3 =
-        QASMParser::parse_str_with_include_paths(qasm, std::iter::once(temp_dir.path())).unwrap();
+    let mut config = ParseConfig::default();
+    config.search_paths = std::iter::once(temp_dir.path().into()).collect();
+    let _program3 = QASMParser::parse_with_config(qasm, config).unwrap();
 
     // Test with PathBuf vector
     let path_vec: Vec<PathBuf> = vec![temp_dir.path().to_path_buf()];
-    let _program4 = QASMParser::parse_str_with_include_paths(qasm, path_vec).unwrap();
+    let mut config = ParseConfig::default();
+    config.search_paths = path_vec.into_iter().map(|p| p.into()).collect();
+    let _program4 = QASMParser::parse_with_config(qasm, config).unwrap();
 }

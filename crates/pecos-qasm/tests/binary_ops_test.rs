@@ -50,7 +50,7 @@ fn test_binary_operators() {
         c = b + a;  // Addition instead of XOR as a test
     "#;
 
-    let program = match QASMParser::parse_str_with_includes(qasm) {
+    let program = match QASMParser::parse_str(qasm) {
         Ok(prog) => prog,
         Err(e) => {
             panic!("Failed to parse: {:?}", e);

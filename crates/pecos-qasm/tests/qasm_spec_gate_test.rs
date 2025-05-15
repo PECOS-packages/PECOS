@@ -19,7 +19,7 @@ fn test_qasm_spec_example_1() {
         cz q[0], q[1];
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm);
+    let result = QASMParser::parse_str(qasm);
     assert!(result.is_ok());
 }
 
@@ -52,7 +52,7 @@ fn test_qasm_spec_example_2() {
         ccx q[0], q[1], q[2];
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm);
+    let result = QASMParser::parse_str(qasm);
     assert!(result.is_ok());
 }
 
@@ -73,7 +73,7 @@ fn test_qasm_spec_example_3() {
         rx(pi/2) q[0];
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm);
+    let result = QASMParser::parse_str(qasm);
     assert!(result.is_ok());
 }
 
@@ -95,7 +95,7 @@ fn test_qasm_spec_example_4() {
         cx_from_cz q[0], q[1];
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm);
+    let result = QASMParser::parse_str(qasm);
     assert!(result.is_ok());
 }
 
@@ -141,7 +141,7 @@ fn test_qasm_spec_syntax_variations() {
         mygate(pi/4) q[0];
     "#;
 
-    let result = QASMParser::parse_str_with_includes(qasm);
+    let result = QASMParser::parse_str(qasm);
     assert!(result.is_ok());
 }
 

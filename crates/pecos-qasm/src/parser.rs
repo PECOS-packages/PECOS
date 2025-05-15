@@ -10,50 +10,20 @@ use std::fmt;
 use std::path::Path;
 
 use crate::preprocessor::Preprocessor;
+use crate::ast::Expression;
 
-#[derive(Debug, Clone)]
-pub enum ParameterExpression {
-    Constant(f64),
-    Identifier(String),
-    Pi,
-    BinaryOp {
-        op: String,
-        left: Box<ParameterExpression>,
-        right: Box<ParameterExpression>,
-    },
-    FunctionCall {
-        name: String,
-        args: Vec<ParameterExpression>,
-    },
-}
-
-impl fmt::Display for ParameterExpression {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ParameterExpression::Constant(val) => write!(f, "{}", val),
-            ParameterExpression::Identifier(id) => write!(f, "{}", id),
-            ParameterExpression::Pi => write!(f, "pi"),
-            ParameterExpression::BinaryOp { op, left, right } => {
-                write!(f, "({} {} {})", left, op, right)
-            }
-            ParameterExpression::FunctionCall { name, args } => {
-                write!(f, "{}(", name)?;
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", arg)?;
-                }
-                write!(f, ")")
-            }
-        }
-    }
-}
+// Expression is now replaced by the unified Expression type
+// Use Expression with the following mappings:
+// - Expression::Constant(f) -> Expression::Float(f)
+// - Expression::Identifier(s) -> Expression::Variable(s)
+// - Expression::Pi -> Expression::Pi
+// - Expression::BinaryOp { op, left, right } -> Expression::BinaryOp { op, left, right }
+// - Expression::FunctionCall { name, args } -> Expression::FunctionCall { name, args }
 
 #[derive(Debug, Clone)]
 pub struct GateDefOperation {
     pub name: String,
-    pub parameters: Vec<ParameterExpression>,
+    pub parameters: Vec<Expression>,
     pub arguments: Vec<String>,
 }
 
@@ -91,165 +61,7 @@ impl fmt::Display for GateDefOperation {
 #[grammar = "qasm.pest"]
 pub struct QASMParser;
 
-// Conversion functions for PecosError
-
-#[derive(Debug, Clone)]
-pub enum Expression {
-    Integer(i64),
-    Float(f64),
-    Pi,
-    BinaryOp(Box<Expression>, String, Box<Expression>),
-    UnaryOp(String, Box<Expression>),
-    BitId(String, i64),
-    Variable(String),
-    FunctionCall { name: String, args: Vec<Expression> },
-}
-
-impl Expression {
-    pub fn evaluate(&self) -> Result<f64, PecosError> {
-        match self {
-            #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
-            Expression::Integer(i) => {
-                // i64 to f64 conversion can lose precision for values > 2^53
-                // For QASM integer literals, this is an acceptable tradeoff as such large
-                // integers are unlikely in quantum circuit descriptions
-
-                // Perform the conversion and check if precision was lost
-                let value = *i as f64;
-
-                // Check if the roundtrip conversion preserves the value
-                if *i != (value as i64) {
-                    // This warning is important for debugging but doesn't affect correctness
-                    // QASM rarely uses integers large enough to cause precision loss
-                    eprintln!(
-                        "Warning: Precision loss in converting integer {} to float {}",
-                        *i, value
-                    );
-                }
-
-                Ok(value)
-            }
-            Expression::Float(f) => Ok(*f),
-            Expression::Pi => Ok(std::f64::consts::PI),
-            Expression::BinaryOp(left, op, right) => {
-                let left_val = left.evaluate()?;
-                let right_val = right.evaluate()?;
-                match op.as_str() {
-                    "+" => Ok(left_val + right_val),
-                    "-" => Ok(left_val - right_val),
-                    "*" => Ok(left_val * right_val),
-                    "/" => Ok(left_val / right_val),
-                    "**" => Ok(left_val.powf(right_val)),
-                    // Add more binary operators
-                    "&" => Ok((left_val as i64 & right_val as i64) as f64),
-                    "|" => Ok((left_val as i64 | right_val as i64) as f64),
-                    "^" => Ok((left_val as i64 ^ right_val as i64) as f64),
-                    "==" => Ok(if left_val == right_val { 1.0 } else { 0.0 }),
-                    "!=" => Ok(if left_val != right_val { 1.0 } else { 0.0 }),
-                    "<" => Ok(if left_val < right_val { 1.0 } else { 0.0 }),
-                    ">" => Ok(if left_val > right_val { 1.0 } else { 0.0 }),
-                    "<=" => Ok(if left_val <= right_val { 1.0 } else { 0.0 }),
-                    ">=" => Ok(if left_val >= right_val { 1.0 } else { 0.0 }),
-                    "<<" => Ok(((left_val as i64) << (right_val as i64)) as f64),
-                    ">>" => Ok(((left_val as i64) >> (right_val as i64)) as f64),
-                    _ => Err(PecosError::ParseInvalidExpression(format!(
-                        "Unsupported binary operation: {op}"
-                    ))),
-                }
-            }
-            Expression::UnaryOp(op, expr) => {
-                let val = expr.evaluate()?;
-                match op.as_str() {
-                    "-" => Ok(-val),
-                    "~" => Ok((!(val as i64)) as f64),
-                    _ => Err(PecosError::ParseInvalidExpression(format!(
-                        "Unsupported unary operation: {op}"
-                    ))),
-                }
-            }
-            Expression::BitId(reg_name, idx) => {
-                // We can't evaluate BitId directly because it requires register state
-                // This is used in if conditions, so add debugging
-                debug!(
-                    "Cannot evaluate BitId({}, {}) directly - the engine needs to handle this",
-                    reg_name, idx
-                );
-                Err(PecosError::ParseInvalidExpression(
-                    "Cannot evaluate bit_id directly".to_string(),
-                ))
-            }
-            Expression::Variable(_) => Err(PecosError::ParseInvalidExpression(
-                "Cannot evaluate variable directly".to_string(),
-            )),
-            Expression::FunctionCall { name, args } => {
-                if args.len() != 1 {
-                    return Err(PecosError::ParseInvalidExpression(format!(
-                        "Function {} expects exactly 1 argument, got {}",
-                        name,
-                        args.len()
-                    )));
-                }
-
-                let arg_val = args[0].evaluate()?;
-
-                match name.as_str() {
-                    "sin" => Ok(arg_val.sin()),
-                    "cos" => Ok(arg_val.cos()),
-                    "tan" => Ok(arg_val.tan()),
-                    "exp" => Ok(arg_val.exp()),
-                    "ln" => {
-                        if arg_val <= 0.0 {
-                            Err(PecosError::ParseInvalidExpression(format!(
-                                "ln({}) is undefined for non-positive values",
-                                arg_val
-                            )))
-                        } else {
-                            Ok(arg_val.ln())
-                        }
-                    }
-                    "sqrt" => {
-                        if arg_val < 0.0 {
-                            Err(PecosError::ParseInvalidExpression(format!(
-                                "sqrt({}) is undefined for negative values",
-                                arg_val
-                            )))
-                        } else {
-                            Ok(arg_val.sqrt())
-                        }
-                    }
-                    _ => Err(PecosError::ParseInvalidExpression(format!(
-                        "Unknown function: {}",
-                        name
-                    ))),
-                }
-            }
-        }
-    }
-}
-
-impl fmt::Display for Expression {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Expression::Integer(i) => write!(f, "{i}"),
-            Expression::Float(float_val) => write!(f, "{float_val}"),
-            Expression::Pi => write!(f, "pi"),
-            Expression::BinaryOp(left, op, right) => write!(f, "({left} {op} {right})"),
-            Expression::UnaryOp(op, expr) => write!(f, "({op}{expr})"),
-            Expression::BitId(name, idx) => write!(f, "{name}[{idx}]"),
-            Expression::Variable(name) => write!(f, "{name}"),
-            Expression::FunctionCall { name, args } => {
-                write!(f, "{name}(")?;
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{arg}")?;
-                }
-                write!(f, ")")
-            }
-        }
-    }
-}
+// Expression is now imported from ast module
 
 #[derive(Debug, Clone)]
 pub enum Operation {
@@ -1481,11 +1293,11 @@ impl QASMParser {
                 }
             };
 
-            result = Expression::BinaryOp(
-                Box::new(result),
-                actual_op.to_string(),
-                Box::new(right_expr),
-            );
+            result = Expression::BinaryOp {
+                op: actual_op.to_string(),
+                left: Box::new(result),
+                right: Box::new(right_expr),
+            };
         }
 
         Ok(result)
@@ -1546,10 +1358,10 @@ impl QASMParser {
                             if let Expression::Integer(value) = expr {
                                 expr = Expression::Integer(-value);
                             } else {
-                                expr = Expression::UnaryOp(op.clone(), Box::new(expr));
+                                expr = Expression::UnaryOp { op: op.clone(), expr: Box::new(expr) };
                             }
                         } else {
-                            expr = Expression::UnaryOp(op.clone(), Box::new(expr));
+                            expr = Expression::UnaryOp { op: op.clone(), expr: Box::new(expr) };
                         }
                     }
 
@@ -1785,7 +1597,7 @@ impl QASMParser {
 
     fn parse_param_expr(
         pair: pest::iterators::Pair<Rule>,
-    ) -> Result<ParameterExpression, PecosError> {
+    ) -> Result<Expression, PecosError> {
         match pair.as_rule() {
             Rule::expr => {
                 // Parse the expression recursively
@@ -1796,21 +1608,21 @@ impl QASMParser {
                 let inner = pair.into_inner().next().unwrap();
                 Self::parse_param_expr(inner)
             }
-            Rule::identifier => Ok(ParameterExpression::Identifier(pair.as_str().to_string())),
+            Rule::identifier => Ok(Expression::Variable(pair.as_str().to_string())),
             Rule::number => {
                 let value = pair
                     .as_str()
                     .parse()
                     .map_err(|_| PecosError::ParseInvalidNumber("Invalid number".to_string()))?;
-                Ok(ParameterExpression::Constant(value))
+                Ok(Expression::Float(value))
             }
-            Rule::pi_constant => Ok(ParameterExpression::Pi),
+            Rule::pi_constant => Ok(Expression::Pi),
             Rule::function_call => {
                 let mut inner = pair.into_inner();
                 let func_name = inner.next().unwrap().as_str().to_string();
                 let args: Result<Vec<_>, _> =
                     inner.map(|arg| Self::parse_param_expr(arg)).collect();
-                Ok(ParameterExpression::FunctionCall {
+                Ok(Expression::FunctionCall {
                     name: func_name,
                     args: args?,
                 })
@@ -1844,9 +1656,9 @@ impl QASMParser {
 
                     // Apply negation if needed
                     if negate {
-                        expr = ParameterExpression::BinaryOp {
+                        expr = Expression::BinaryOp {
                             op: "-".to_string(),
-                            left: Box::new(ParameterExpression::Constant(0.0)),
+                            left: Box::new(Expression::Float(0.0)),
                             right: Box::new(expr),
                         };
                     }
@@ -1872,7 +1684,7 @@ impl QASMParser {
                         "Unknown node type in parse_param_expr: {:?}",
                         pair.as_rule()
                     );
-                    Ok(ParameterExpression::Constant(0.0))
+                    Ok(Expression::Float(0.0))
                 }
             }
         }
@@ -1880,7 +1692,7 @@ impl QASMParser {
 
     fn parse_binary_param_expr(
         pair: pest::iterators::Pair<Rule>,
-    ) -> Result<ParameterExpression, PecosError> {
+    ) -> Result<Expression, PecosError> {
         let mut inner = pair.into_inner();
         let left_pair = inner.next().ok_or_else(|| {
             PecosError::ParseInvalidExpression("Expected left operand".to_string())
@@ -1899,7 +1711,7 @@ impl QASMParser {
                 PecosError::ParseInvalidExpression("Expected right operand".to_string())
             })?;
             let right = Self::parse_param_expr(right_pair)?;
-            left = ParameterExpression::BinaryOp {
+            left = Expression::BinaryOp {
                 op,
                 left: Box::new(left),
                 right: Box::new(right),
@@ -2141,17 +1953,24 @@ impl QASMParser {
     }
 
     fn evaluate_param_expr(
-        expr: &ParameterExpression,
+        expr: &Expression,
         param_map: &HashMap<String, f64>,
     ) -> Result<f64, PecosError> {
         match expr {
-            ParameterExpression::Constant(value) => Ok(*value),
-            ParameterExpression::Pi => Ok(std::f64::consts::PI),
-            ParameterExpression::Identifier(name) => param_map
+            Expression::Integer(value) => Ok(*value as f64),
+            Expression::Float(value) => Ok(*value),
+            Expression::Pi => Ok(std::f64::consts::PI),
+            Expression::Variable(name) => param_map
                 .get(name)
                 .copied()
                 .ok_or_else(|| PecosError::ParseInvalidIdentifier(name.clone())),
-            ParameterExpression::BinaryOp { op, left, right } => {
+            Expression::BitId(_name, _idx) => {
+                // BitId cannot be evaluated in parameter context
+                Err(PecosError::ParseInvalidExpression(
+                    "Cannot evaluate bit_id in parameter expression".to_string(),
+                ))
+            }
+            Expression::BinaryOp { op, left, right } => {
                 let left_val = Self::evaluate_param_expr(left, param_map)?;
                 let right_val = Self::evaluate_param_expr(right, param_map)?;
                 match op.as_str() {
@@ -2166,7 +1985,7 @@ impl QASMParser {
                     ))),
                 }
             }
-            ParameterExpression::FunctionCall { name, args } => {
+            Expression::FunctionCall { name, args } => {
                 if args.len() != 1 {
                     return Err(PecosError::ParseInvalidExpression(format!(
                         "Function {} expects exactly 1 argument, got {}",
@@ -2205,6 +2024,17 @@ impl QASMParser {
                     _ => Err(PecosError::ParseInvalidExpression(format!(
                         "Unknown function: {}",
                         name
+                    ))),
+                }
+            }
+            Expression::UnaryOp { op, expr } => {
+                let val = Self::evaluate_param_expr(expr, param_map)?;
+                match op.as_str() {
+                    "-" => Ok(-val),
+                    "~" => Ok((!(val as i64)) as f64),
+                    _ => Err(PecosError::ParseInvalidExpression(format!(
+                        "Unknown unary operator: {}",
+                        op
                     ))),
                 }
             }
@@ -2417,7 +2247,7 @@ mod tests {
         } = &program.operations[2]
         {
             // Verify the condition (c[0] == 1)
-            if let Expression::BinaryOp(left, op, right) = condition {
+            if let Expression::BinaryOp { op, left, right } = condition {
                 // Check left side is c[0]
                 if let Expression::BitId(reg, idx) = &**left {
                     assert_eq!(reg, "c");

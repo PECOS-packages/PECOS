@@ -108,29 +108,29 @@ fn test_power_in_gate_definitions() {
 
 #[test]
 fn test_power_evaluation_accuracy() {
-    use pecos_qasm::parser::Expression;
+    use pecos_qasm::Expression;
 
     // Test 2^3
-    let expr = Expression::BinaryOp(
-        Box::new(Expression::Float(2.0)),
-        "**".to_string(),
-        Box::new(Expression::Float(3.0)),
-    );
+    let expr = Expression::BinaryOp {
+        op: "**".to_string(),
+        left: Box::new(Expression::Float(2.0)),
+        right: Box::new(Expression::Float(3.0)),
+    };
     assert!((expr.evaluate().unwrap() - 8.0).abs() < 1e-10);
 
     // Test 4^0.5 (square root)
-    let expr = Expression::BinaryOp(
-        Box::new(Expression::Float(4.0)),
-        "**".to_string(),
-        Box::new(Expression::Float(0.5)),
-    );
+    let expr = Expression::BinaryOp {
+        op: "**".to_string(),
+        left: Box::new(Expression::Float(4.0)),
+        right: Box::new(Expression::Float(0.5)),
+    };
     assert!((expr.evaluate().unwrap() - 2.0).abs() < 1e-10);
 
     // Test 10^0
-    let expr = Expression::BinaryOp(
-        Box::new(Expression::Float(10.0)),
-        "**".to_string(),
-        Box::new(Expression::Float(0.0)),
-    );
+    let expr = Expression::BinaryOp {
+        op: "**".to_string(),
+        left: Box::new(Expression::Float(10.0)),
+        right: Box::new(Expression::Float(0.0)),
+    };
     assert!((expr.evaluate().unwrap() - 1.0).abs() < 1e-10);
 }

@@ -5,7 +5,8 @@ use pecos_engines::{ByteMessage, ClassicalEngine, ControlEngine, Engine, EngineS
 use std::any::Any;
 use std::collections::HashMap;
 
-use crate::parser::{Expression, Operation, Program, QASMParser};
+use crate::ast::Expression;
+use crate::parser::{Operation, Program, QASMParser};
 
 /// Configuration flags for the `QASMEngine`
 #[derive(Debug, Clone, Default)]
@@ -961,7 +962,7 @@ impl QASMEngine {
                     // Check if the condition is allowed based on config
                     if !self.config.allow_complex_conditionals {
                         // Validate that the condition is a simple comparison
-                        if let Expression::BinaryOp(left, _op, right) = condition {
+                        if let Expression::BinaryOp { op: _, left, right } = condition {
                             // Check that left is a register/bit and right is a constant
                             let is_valid = match (left.as_ref(), right.as_ref()) {
                                 (Expression::Variable(_), Expression::Integer(_)) => true,
@@ -1157,7 +1158,7 @@ impl QASMEngine {
                 debug!("Evaluating bit {}.{} = {}", reg_name, idx, bit_value);
                 Ok(bit_value as i64)
             }
-            Expression::BinaryOp(left, op, right) => {
+            Expression::BinaryOp { op, left, right } => {
                 let left_val = self.evaluate_expression_with_context(left)?;
                 let right_val = self.evaluate_expression_with_context(right)?;
                 debug!("Binary op: {} {} {} = ?", left_val, op, right_val);
@@ -1194,8 +1195,8 @@ impl QASMEngine {
                     }
                 }
             }
-            Expression::UnaryOp(op, inner) => {
-                let val = self.evaluate_expression_with_context(inner)?;
+            Expression::UnaryOp { op, expr } => {
+                let val = self.evaluate_expression_with_context(expr)?;
                 match op.as_str() {
                     "-" => Ok(-val), // Simple negation for i64
                     "~" => Ok(!val),

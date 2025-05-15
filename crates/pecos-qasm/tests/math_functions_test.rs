@@ -1,4 +1,5 @@
-use pecos_qasm::parser::{Operation, ParameterExpression, QASMParser};
+use pecos_qasm::parser::{Operation, QASMParser};
+use pecos_qasm::Expression;
 use std::f64::consts::PI;
 
 #[test]
@@ -170,7 +171,7 @@ fn test_all_math_functions() {
 
 #[test]
 fn test_evaluation_accuracy() {
-    use pecos_qasm::parser::Expression;
+    // Expression is already imported at the top of the file
 
     // Test sin
     let expr = Expression::FunctionCall {
@@ -336,40 +337,40 @@ fn test_trig_identity_exact_value() {
 
     let _program = QASMParser::parse_str_with_includes(qasm).unwrap();
 
-    // For direct evaluation, let's create a ParameterExpression manually
+    // For direct evaluation, let's create an Expression manually
 
     // Create the trigonometric identity expression: sin²(π/3) + cos²(π/3)
-    let sin_expr = ParameterExpression::FunctionCall {
+    let sin_expr = Expression::FunctionCall {
         name: "sin".to_string(),
-        args: vec![ParameterExpression::BinaryOp {
+        args: vec![Expression::BinaryOp {
             op: "/".to_string(),
-            left: Box::new(ParameterExpression::Pi),
-            right: Box::new(ParameterExpression::Constant(3.0)),
+            left: Box::new(Expression::Pi),
+            right: Box::new(Expression::Float(3.0)),
         }],
     };
 
-    let sin_squared = ParameterExpression::BinaryOp {
+    let sin_squared = Expression::BinaryOp {
         op: "**".to_string(),
         left: Box::new(sin_expr),
-        right: Box::new(ParameterExpression::Constant(2.0)),
+        right: Box::new(Expression::Float(2.0)),
     };
 
-    let cos_expr = ParameterExpression::FunctionCall {
+    let cos_expr = Expression::FunctionCall {
         name: "cos".to_string(),
-        args: vec![ParameterExpression::BinaryOp {
+        args: vec![Expression::BinaryOp {
             op: "/".to_string(),
-            left: Box::new(ParameterExpression::Pi),
-            right: Box::new(ParameterExpression::Constant(3.0)),
+            left: Box::new(Expression::Pi),
+            right: Box::new(Expression::Float(3.0)),
         }],
     };
 
-    let cos_squared = ParameterExpression::BinaryOp {
+    let cos_squared = Expression::BinaryOp {
         op: "**".to_string(),
         left: Box::new(cos_expr),
-        right: Box::new(ParameterExpression::Constant(2.0)),
+        right: Box::new(Expression::Float(2.0)),
     };
 
-    let trig_identity = ParameterExpression::BinaryOp {
+    let trig_identity = Expression::BinaryOp {
         op: "+".to_string(),
         left: Box::new(sin_squared),
         right: Box::new(cos_squared),
@@ -387,12 +388,13 @@ fn test_trig_identity_exact_value() {
     println!("Exact evaluation: sin²(π/3) + cos²(π/3) = {}", value);
 }
 
-// Helper function to evaluate a ParameterExpression
-fn evaluate_param_expr(expr: &ParameterExpression) -> f64 {
+// Helper function to evaluate an Expression
+fn evaluate_param_expr(expr: &Expression) -> f64 {
     match expr {
-        ParameterExpression::Constant(val) => *val,
-        ParameterExpression::Pi => std::f64::consts::PI,
-        ParameterExpression::BinaryOp { op, left, right } => {
+        Expression::Integer(val) => *val as f64,
+        Expression::Float(val) => *val,
+        Expression::Pi => std::f64::consts::PI,
+        Expression::BinaryOp { op, left, right } => {
             let left_val = evaluate_param_expr(left);
             let right_val = evaluate_param_expr(right);
 
@@ -405,7 +407,7 @@ fn evaluate_param_expr(expr: &ParameterExpression) -> f64 {
                 _ => panic!("Unsupported operation: {}", op),
             }
         }
-        ParameterExpression::FunctionCall { name, args } => {
+        Expression::FunctionCall { name, args } => {
             let arg_val = evaluate_param_expr(&args[0]);
             match name.as_str() {
                 "sin" => arg_val.sin(),

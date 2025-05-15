@@ -1,5 +1,5 @@
 use crate::v0_1::ast::{ArgItem, Expression, MEASUREMENT_PREFIX, Operation, QubitArg};
-use crate::v0_1::environment::{DataType, Environment};
+use crate::v0_1::environment::{DataType, Environment, TypedValue};
 use crate::v0_1::expression::ExpressionEvaluator;
 use crate::v0_1::foreign_objects::ForeignObject;
 use log::debug;
@@ -132,28 +132,12 @@ pub enum MachineOperationResult {
 /// Handles processing of variable definitions, quantum and classical operations
 #[derive(Debug)]
 pub struct OperationProcessor {
-    /// Environment for variable storage and access - the primary storage for all variables
+    /// Environment for variable storage and access - the single source of truth for all variables, values, and mappings
     pub environment: Environment,
-    /// Values explicitly exported via the Result operator
-    pub exported_values: HashMap<String, u32>,
-    /// Mappings from source registers to export names for Result operations
-    pub export_mappings: Vec<(String, String)>,
     /// Foreign object for executing foreign function calls
     pub foreign_object: Option<Box<dyn ForeignObject>>,
     /// Current operation index being processed
     current_op: usize,
-
-    // Deprecated fields - to be removed in future versions
-    // These fields duplicate functionality provided by the Environment
-    #[deprecated(since = "0.1.1", note = "Use environment instead. This field will be removed in a future version.")]
-    /// Mapping of quantum variable names to their sizes (DEPRECATED - use environment.get_variables_of_type())
-    pub quantum_variables: HashMap<String, usize>,
-    #[deprecated(since = "0.1.1", note = "Use environment instead. This field will be removed in a future version.")]
-    /// Mapping of classical variable names to their types and sizes (DEPRECATED - use environment API)
-    pub classical_variables: HashMap<String, (String, usize)>,
-    #[deprecated(since = "0.1.1", note = "Use environment instead. This field will be removed in a future version.")]
-    /// Measurement results storage (DEPRECATED - use environment.get() and environment.set())
-    pub measurement_results: HashMap<String, u32>,
 }
 
 impl Default for OperationProcessor {
@@ -164,34 +148,13 @@ impl Default for OperationProcessor {
 
 impl Clone for OperationProcessor {
     fn clone(&self) -> Self {
-        // Create a new processor with the cloned data
-        #[allow(deprecated)]
-        let mut cloned = Self {
+        // Create a new processor with all fields cloned
+        Self {
             environment: self.environment.clone(),
-            exported_values: self.exported_values.clone(),
-            export_mappings: self.export_mappings.clone(),
             foreign_object: self.foreign_object.as_ref().map(|fo| fo.clone_box()),
             current_op: self.current_op,
-
-            // Clone legacy fields for backward compatibility
-            quantum_variables: self.quantum_variables.clone(),
-            classical_variables: self.classical_variables.clone(),
-            measurement_results: self.measurement_results.clone(),
-        };
-
-        // Process export mappings directly during cloning
-        // If any variables are being exported, make sure they're included
-        if !self.export_mappings.is_empty() {
-            // Get newly processed values but don't overwrite existing ones
-            for (name, value) in self.process_export_mappings() {
-                // Only insert if not already present
-                if !cloned.exported_values.contains_key(&name) {
-                    cloned.exported_values.insert(name, value);
-                }
-            }
         }
-
-        cloned
+        // All data including mappings is now in the environment
     }
 }
 
@@ -201,33 +164,71 @@ impl OperationProcessor {
     pub fn new() -> Self {
         Self {
             environment: Environment::new(),
-            exported_values: HashMap::new(),
-            export_mappings: Vec::new(),
             foreign_object: None,
             current_op: 0,
-
-            // Initialize deprecated fields
-            quantum_variables: HashMap::new(),
-            classical_variables: HashMap::new(),
-            measurement_results: HashMap::new(),
         }
+    }
+
+    /// Get the variables of type "qubits"
+    /// Returns a map of quantum variable names to their sizes 
+    /// This is a helper method that accesses the environment directly
+    pub fn get_quantum_variables(&self) -> HashMap<String, usize> {
+        // Use the environment to get all variables of type Qubits
+        let qubits_variables = self.environment.get_variables_of_type(DataType::Qubits);
+        
+        // Convert to a HashMap with variable name -> size
+        qubits_variables.into_iter()
+            .map(|info| (info.name.clone(), info.size))
+            .collect()
+    }
+
+    /// Get the classical variables
+    /// Returns a map of classical variable names to their types and sizes
+    /// This is a helper method that accesses the environment directly
+    pub fn get_classical_variables(&self) -> HashMap<String, (String, usize)> {
+        // Get all variables except qubits
+        let classical_vars = self.environment.get_all_variables().into_iter()
+            .filter(|info| info.data_type != DataType::Qubits)
+            .map(|info| {
+                let type_name = info.data_type.to_string();
+                (info.name.clone(), (type_name, info.size))
+            })
+            .collect();
+        
+        classical_vars
+    }
+
+    /// Get all measurement results from the environment
+    ///
+    /// Returns a map of variable names to their u32 values by extracting:
+    /// 1. All measurement variables from the environment (m_*, measurement_*, m)
+    /// 2. All explicitly mapped variables (from environment mappings)
+    /// 
+    /// This delegates directly to the environment which is the single source of truth.
+    pub fn get_measurement_results(&self) -> HashMap<String, u32> {
+        // Get all measurement-related variables from the environment
+        let mut results = HashMap::new();
+        let all_results = self.environment.get_measurement_results();
+        
+        // Convert TypedValue to u32
+        for (name, value) in all_results {
+            results.insert(name, value.as_u32());
+        }
+        
+        // If no results were found, fall back to mapped results
+        if results.is_empty() {
+            return self.environment.get_mapped_results();
+        }
+        
+        results
     }
 
     /// Creates a new operation processor with a foreign object
     #[must_use]
     pub fn with_foreign_object(foreign_object: Box<dyn ForeignObject>) -> Self {
-        Self {
-            environment: Environment::new(),
-            exported_values: HashMap::new(),
-            export_mappings: Vec::new(),
-            foreign_object: Some(foreign_object),
-            current_op: 0,
-
-            // Initialize deprecated fields
-            quantum_variables: HashMap::new(),
-            classical_variables: HashMap::new(),
-            measurement_results: HashMap::new(),
-        }
+        let mut processor = Self::new();
+        processor.foreign_object = Some(foreign_object);
+        processor
     }
 
     /// Resets the operation processor state
@@ -235,14 +236,31 @@ impl OperationProcessor {
     pub fn reset(&mut self) {
         // Clear state but keep variable definitions
         self.environment.reset_values();
-        self.exported_values.clear();
-        self.export_mappings.clear();
+        // Environment reset_values now also clears mappings
 
-        // Reset deprecated field
-        self.measurement_results.clear();
-
-        // We deliberately don't clear quantum_variables, classical_variables, or foreign_object
+        // We deliberately don't clear variable definitions or foreign_object
         // so that we preserve the structure of the program while resetting state
+    }
+    
+    /// Set a variable value in the environment
+    /// Environment is the single source of truth for all variables
+    pub fn set_variable_value(&mut self, name: &str, value: u64) -> Result<(), PecosError> {
+        // Create the variable if it doesn't exist
+        if !self.environment.has_variable(name) {
+            // Add but allow failure if it already exists
+            match self.environment.add_variable(name, DataType::I32, 32) {
+                Ok(_) => log::debug!("Created new variable: {} in environment", name),
+                Err(e) => log::warn!("Could not create variable in environment: {}. Will try to update anyway: {}", name, e),
+            }
+        }
+        
+        // Set the value in the environment
+        match self.environment.set(name, value) {
+            Ok(_) => log::debug!("Set variable {} = {} in environment", name, value),
+            Err(e) => log::warn!("Could not set variable value in environment: {}. Error: {}", name, e),
+        }
+        
+        Ok(())
     }
 
     /// Sets the foreign object for this processor
@@ -255,11 +273,11 @@ impl OperationProcessor {
         log::info!("Evaluating expression: {:?}", expr);
 
         // Create an expression evaluator using our environment
-        let evaluator = ExpressionEvaluator::new(&self.environment);
+        let mut evaluator = ExpressionEvaluator::new(&self.environment);
 
         // Evaluate the expression and return as i64
         let result = evaluator.eval_expr(expr)?;
-        Ok(result as i64)
+        Ok(result.as_i64())
     }
 
     /// Evaluates an argument item (variable, literal, etc.)
@@ -267,11 +285,11 @@ impl OperationProcessor {
         log::info!("Evaluating argument item: {:?}", arg);
 
         // Create an expression evaluator using our environment as the primary variable source
-        let evaluator = ExpressionEvaluator::new(&self.environment);
+        let mut evaluator = ExpressionEvaluator::new(&self.environment);
 
         // Evaluate the argument using the environment and return as i64
         let result = evaluator.eval_arg(arg)?;
-        Ok(result as i64)
+        Ok(result.as_i64())
     }
 
     // Removed get_variable_value method as it's no longer needed
@@ -383,7 +401,7 @@ impl OperationProcessor {
         log::debug!("Evaluating condition for conditional block: {:?}", condition);
 
         // Create expression evaluator with our environment
-        let evaluator = ExpressionEvaluator::new(&self.environment);
+        let mut evaluator = ExpressionEvaluator::new(&self.environment);
 
         // Evaluate the condition - convert u64 result to i64 for compatibility
         let condition_value = evaluator.eval_expr(condition)?;
@@ -726,6 +744,47 @@ impl OperationProcessor {
         Ok(())
     }
 
+    /// Add a quantum variable to the environment
+    /// Uses the environment as the single source of truth
+    pub fn add_quantum_variable(&mut self, variable: &str, size: usize) -> Result<(), PecosError> {
+        // Store in the environment (single source of truth)
+        self.environment.add_variable(variable, DataType::Qubits, size)?;
+        log::debug!("Defined quantum variable {} of size {}", variable, size);
+        Ok(())
+    }
+
+    /// Add a classical variable to the environment
+    /// Uses the environment as the single source of truth
+    pub fn add_classical_variable(&mut self, variable: &str, data_type: &str, size: usize) -> Result<(), PecosError> {
+        // Convert string data type to DataType enum
+        let dt = DataType::from_str(data_type)?;
+
+        // Only add to environment if it doesn't already exist
+        // This is important for compatibility with test programs that might redefine variables
+        if !self.environment.has_variable(variable) {
+            match self.environment.add_variable(variable, dt, size) {
+                Ok(_) => log::debug!(
+                    "Added classical variable {} of type {} and size {}",
+                    variable,
+                    data_type,
+                    size
+                ),
+                Err(e) => log::warn!(
+                    "Could not add variable '{}' to environment: {}. Will continue with existing variable.",
+                    variable,
+                    e
+                ),
+            }
+        } else {
+            log::debug!(
+                "Variable '{}' already exists in environment, skipping creation",
+                variable
+            );
+        }
+
+        Ok(())
+    }
+
     /// Handle variable definition operations
     pub fn handle_variable_definition(
         &mut self,
@@ -736,31 +795,10 @@ impl OperationProcessor {
     ) -> Result<(), PecosError> {
         match data {
             "qvar_define" if data_type == "qubits" => {
-                // Primary storage: Add to environment
-                self.environment.add_variable(variable, DataType::Qubits, size)?;
-
-                // Also add to legacy quantum_variables for compatibility
-                #[allow(deprecated)]
-                self.quantum_variables.insert(variable.to_string(), size);
-                log::debug!("Defined quantum variable {} of size {}", variable, size);
+                self.add_quantum_variable(variable, size)?;
             }
             "cvar_define" => {
-                // Convert string data type to DataType enum
-                let dt = DataType::from_str(data_type)?;
-
-                // Primary storage: Add to environment
-                self.environment.add_variable(variable, dt, size)?;
-
-                // Also add to legacy classical_variables for compatibility
-                #[allow(deprecated)]
-                self.classical_variables
-                    .insert(variable.to_string(), (data_type.to_string(), size));
-                log::debug!(
-                    "Defined classical variable {} of type {} and size {}",
-                    variable,
-                    data_type,
-                    size
-                );
+                self.add_classical_variable(variable, data_type, size)?;
             }
             _ => {
                 log::warn!(
@@ -779,9 +817,13 @@ impl OperationProcessor {
         Ok(())
     }
 
-    /// Validate variable access with option to create missing variables
+    /// Validate variable access to ensure it exists in the environment
+    /// 
+    /// This method ensures the variable exists and the index is within bounds.
+    /// It no longer auto-creates missing variables as that's inconsistent with
+    /// using the environment as a single source of truth.
     pub fn validate_variable_access(&self, var: &str, idx: usize) -> Result<(), PecosError> {
-        // Primary check: Look in environment
+        // Check in environment (single source of truth)
         if self.environment.has_variable(var) {
             // Get variable info to check size
             let var_info = self.environment.get_variable_info(var)?;
@@ -794,78 +836,18 @@ impl OperationProcessor {
             return Ok(());
         }
 
-        // Legacy: Check quantum variables for backward compatibility
-        #[allow(deprecated)]
-        if let Some(&size) = self.quantum_variables.get(var) {
-            if idx >= size {
-                return Err(PecosError::Input(format!(
-                    "Variable access validation failed: Index {idx} out of bounds for quantum variable '{var}' of size {size}"
-                )));
-            }
-            return Ok(());
-        }
-
-        // Legacy: Check classical variables for backward compatibility
-        #[allow(deprecated)]
-        if let Some((_, size)) = self.classical_variables.get(var) {
-            if idx >= *size {
-                return Err(PecosError::Input(format!(
-                    "Variable access validation failed: Index {idx} out of bounds for classical variable '{var}' of size {size}"
-                )));
-            }
-            return Ok(());
-        }
-
-        // Auto-creation for missing variables
-        debug!("Auto-creating variable '{}'", var);
-
-        // Create a classical variable with default 32-bit size
-        let self_mut = self as *const Self as *mut Self;
-        unsafe {
-            // Add to environment first
-            let _ = (*self_mut).environment.add_variable(var, DataType::I32, 32);
-
-            // Also add to legacy variables
-            #[allow(deprecated)]
-            {
-                (*self_mut)
-                    .classical_variables
-                    .insert(var.to_string(), ("i32".to_string(), 32));
-            }
-        }
-        Ok(())
+        // Variable doesn't exist, return error
+        Err(PecosError::Input(format!(
+            "Variable '{}' not found in environment", var
+        )))
     }
 
-    /// Ensure environment variables are kept up-to-date with changes
-    /// This performs a general synchronization of variables for operations like expressions
+    /// Ensure all variables in the environment have consistent values
+    /// This method is now much simpler since the environment is the single source of truth.
+    /// It's primarily kept for compatibility with code that expects this method to exist.
     pub fn update_expression_results(&mut self) -> Result<(), PecosError> {
-        log::debug!("Ensuring variable consistency in environment after expression evaluation");
-
-        // Identify all variable dependencies and update their values using expression evaluation
-        let variables = self.environment.get_all_variables();
-        let var_names: Vec<String> = variables.iter().map(|info| info.name.clone()).collect();
-
-        // First pass: Sync all values to legacy storage for backwards compatibility
-        #[allow(deprecated)]
-        {
-            // Keep environment and legacy storage in sync for all variables
-            for name in &var_names {
-                if let Some(value) = self.environment.get(name) {
-                    log::debug!("Synchronizing variable {} = {} to legacy storage", name, value);
-                    self.measurement_results.insert(name.clone(), value as u32);
-                }
-            }
-        }
-
-        // Second pass: Add all variables to exported values for maximum compatibility
-        for name in &var_names {
-            if let Some(value) = self.environment.get(name) {
-                // Add all variables to exported values
-                log::debug!("Adding variable to exported values: {} = {}", name, value);
-                self.exported_values.insert(name.clone(), value as u32);
-            }
-        }
-
+        log::debug!("Variables from environment are already the single source of truth");
+        // No need to do anything - the environment already has all the values
         Ok(())
     }
 
@@ -880,9 +862,8 @@ impl OperationProcessor {
     ) -> Result<bool, PecosError> {
         // Store the current operation index for later use
         self.current_op = current_op;
-
-        // Ensure all variables are synchronized
-        let _ = self.update_expression_results();
+        
+        // No synchronization needed - environment is the single source of truth
         // Extract variable name and index from each ArgItem
         let extract_var_idx = |arg: &ArgItem| -> Result<(String, usize), PecosError> {
             match arg {
@@ -945,22 +926,23 @@ impl OperationProcessor {
                         log::info!("Set bit {}[{}] = {} in environment", var, idx, bit_value);
                     }
 
-                    // For backward compatibility, also update measurement_results
-                    // Get the current value or use 0 if it doesn't exist
-                    let current_value = self.measurement_results.get(&var).copied().unwrap_or(0);
+                    // Calculate the new value and update exported_values
+                    // Get the current value from environment or use 0 if it doesn't exist
+                    let env_value = self.environment.get(&var).unwrap_or(TypedValue::U32(0));
+                    let current_value = env_value.as_u32();
 
                     // Clear the bit and set it to the new value
                     let mask = !(1 << idx);
                     let new_value = (current_value & mask) | ((bit_value as u32) << idx);
 
-                    // Store the new value in legacy field
-                    self.measurement_results.insert(var.clone(), new_value);
-
-                    // Also add to exported_values directly so tests can find it
-                    self.exported_values.insert(var.clone(), new_value);
-                    log::info!("Added bit-level value to exported_values: {} = {}", var, new_value);
+                    // Make sure the composite variable is updated in the environment as well
+                    match self.environment.set(&var, new_value as u64) {
+                        Ok(_) => log::debug!("Updated composite variable: {} = {}", var, new_value),
+                        Err(e) => log::warn!("Could not update composite variable: {}. Error: {}", var, e),
+                    }
+                    log::info!("Added bit-level value to environment: {} = {}", var, new_value);
                 } else {
-                    // For whole variable assignment, store in environment and measurement_results
+                    // For whole variable assignment, store in environment
                     log::info!("Storing assignment value {} in variable {}", value, var);
 
                     // Make sure variable exists in environment and update it
@@ -970,17 +952,8 @@ impl OperationProcessor {
                     self.environment.set(&var, value as u64)?;
                     log::info!("Updated variable {} = {} in environment", var, value);
 
-                    // For backward compatibility, also update measurement_results
-                    #[allow(deprecated)]
-                    {
-                        self.measurement_results.insert(var.clone(), value as u32);
-                        log::info!("Updated measurement_results: {} = {}", var, value);
-
-                        // CRITICAL: Also add to exported_values directly
-                        // This ensures values are available for expression evaluation tests
-                        self.exported_values.insert(var.clone(), value as u32);
-                        log::info!("Added to exported_values: {} = {}", var, value);
-                    }
+                    // Values are stored in the environment and will be available for expression evaluation
+                    log::info!("Variable is now available in environment: {} = {}", var, value);
                 }
 
                 // Return true to indicate we've handled this operation
@@ -1095,27 +1068,29 @@ impl OperationProcessor {
                                                                     ArgItem::Simple(var) => {
                                                                         // Assign to a variable
                                                                         let result_value = result[i] as u32;
-                                                                        self.measurement_results.insert(var.clone(), result_value);
-
-                                                                        // Update environment if variable exists
-                                                                        if self.environment.has_variable(var) {
-                                                                            let _ = self.environment.set(var, result_value as u64);
+                                                                        
+                                                                        // Update primary storage in environment
+                                                                        if !self.environment.has_variable(var) {
+                                                                            let _ = self.environment.add_variable(var, DataType::I32, 32);
                                                                         }
+                                                                        let _ = self.environment.set(var, result_value as u64);
+                                                                        
+                                                                        // All values stored in environment
                                                                     },
                                                                     ArgItem::Indexed((var, idx)) => {
                                                                         // Assign to a bit
                                                                         let bit_value = (result[i] & 1) as u32;
 
-                                                                        // Update measurement_results
-                                                                        let current_value = self.measurement_results.get(var).copied().unwrap_or(0);
-                                                                        let mask = !(1 << idx);
-                                                                        let new_value = (current_value & mask) | (bit_value << idx);
-                                                                        self.measurement_results.insert(var.clone(), new_value);
-
-                                                                        // Update environment if variable exists
-                                                                        if self.environment.has_variable(var) {
-                                                                            let _ = self.environment.set_bit(var, *idx, bit_value as u64);
+                                                                        // Update primary storage in environment
+                                                                        if !self.environment.has_variable(var) {
+                                                                            let _ = self.environment.add_variable(var, DataType::I32, 32);
                                                                         }
+                                                                        
+                                                                        // Set the bit in environment
+                                                                        let _ = self.environment.set_bit(var, *idx, bit_value as u64);
+                                                                        
+                                                                        // Environment is the single source of truth - no need for additional storage
+
                                                                     },
                                                                     _ => {
                                                                         return Err(PecosError::Input(
@@ -1164,27 +1139,29 @@ impl OperationProcessor {
                                                                         ArgItem::Simple(var) => {
                                                                             // Assign to a variable
                                                                             let result_value = result[i] as u32;
-                                                                            self.measurement_results.insert(var.clone(), result_value);
-
-                                                                            // Update environment if variable exists
-                                                                            if self.environment.has_variable(var) {
-                                                                                let _ = self.environment.set(var, result_value as u64);
+                                                                            
+                                                                            // Update primary storage in environment
+                                                                            if !self.environment.has_variable(var) {
+                                                                                let _ = self.environment.add_variable(var, DataType::I32, 32);
                                                                             }
+                                                                            let _ = self.environment.set(var, result_value as u64);
+                                                                            
+                                                                            // Environment is the single source of truth for all variable data
                                                                         },
                                                                         ArgItem::Indexed((var, idx)) => {
                                                                             // Assign to a bit
                                                                             let bit_value = (result[i] & 1) as u32;
 
-                                                                            // Update measurement_results
-                                                                            let current_value = self.measurement_results.get(var).copied().unwrap_or(0);
-                                                                            let mask = !(1 << idx);
-                                                                            let new_value = (current_value & mask) | (bit_value << idx);
-                                                                            self.measurement_results.insert(var.clone(), new_value);
-
-                                                                            // Update environment if variable exists
-                                                                            if self.environment.has_variable(var) {
-                                                                                let _ = self.environment.set_bit(var, *idx, bit_value as u64);
+                                                                            // Update primary storage in environment
+                                                                            if !self.environment.has_variable(var) {
+                                                                                let _ = self.environment.add_variable(var, DataType::I32, 32);
                                                                             }
+                                                                            
+                                                                            // Set the bit in environment
+                                                                            let _ = self.environment.set_bit(var, *idx, bit_value as u64);
+                                                                            
+                                                                            // Environment is the single source of truth for all variable data
+
                                                                         },
                                                                         _ => {
                                                                             return Err(PecosError::Input(
@@ -1215,46 +1192,14 @@ impl OperationProcessor {
 
                 debug!("Executing foreign function call: {}", function_name);
 
-                // Convert arguments to i64 values
+                // Convert arguments to i64 values using consistent evaluation approach
+                // Since the environment is the single source of truth, we can use the standard 
+                // evaluation method for all argument types
                 let mut call_args = Vec::new();
                 for arg in args {
-                    let value = match arg {
-                        // Handle variable references using our helper method
-                        ArgItem::Simple(var) => {
-                            // Try to get the value using our helper method
-                            match self.get_variable_value(var, None) {
-                                Ok(val) => {
-                                    log::debug!("Got value for variable {}: {}", var, val);
-                                    val as i64
-                                },
-                                Err(e) => {
-                                    // Log the error but continue with a default value
-                                    log::error!("Failed to get value for variable {}: {}", var, e);
-                                    log::error!("All measurement_results: {:?}", self.measurement_results);
-                                    log::error!("All classical_variables: {:?}", self.classical_variables);
-                                    // Default to 0
-                                    0 // Default for variables that don't have a value yet
-                                }
-                            }
-                        },
-                        ArgItem::Indexed((var, idx)) => {
-                            // Try to get the bit value using our helper method
-                            match self.get_variable_value(var, Some(*idx)) {
-                                Ok(val) => {
-                                    log::debug!("Got bit value for variable {}[{}]: {}", var, idx, val);
-                                    val as i64
-                                },
-                                Err(e) => {
-                                    // Log the error but continue with a default value
-                                    log::error!("Failed to get bit value for variable {}[{}]: {}", var, idx, e);
-                                    // Default to 0
-                                    0
-                                }
-                            }
-                        },
-                        // For other cases (literals, expressions) use the standard evaluation
-                        _ => self.evaluate_arg_item(arg)?,
-                    };
+                    // For all argument types, use the evaluate_arg_item method which uses the environment
+                    // as the primary source of data
+                    let value = self.evaluate_arg_item(arg)?;
                     debug!("FFI arg value: {}", value);
                     call_args.push(value);
                 }
@@ -1280,49 +1225,32 @@ impl OperationProcessor {
                         if i < result.len() {
                             match ret {
                                 ArgItem::Simple(var) => {
-                                    // Assign to a variable
-                                    // Update both measurement_results and environment
-                                    let result_value = result[i] as u32;
-                                    self.measurement_results.insert(var.clone(), result_value);
-
-                                    // Update in environment if the variable exists there
-                                    if self.environment.has_variable(var) {
-                                        // Need to cast to u64 for environment
-                                        let _ = self.environment.set(var, result_value as u64);
+                                    // Store whole variable value in environment
+                                    let result_value = result[i] as u64;
+                                    
+                                    // Make sure the variable exists
+                                    if !self.environment.has_variable(var) {
+                                        // Create if needed
+                                        self.environment.add_variable(var, DataType::I32, 32)?;
                                     }
-
-                                    debug!(
-                                        "Assigned foreign function result {} to {}",
-                                        result[i], var
-                                    );
+                                    
+                                    // Set value in environment (single source of truth)
+                                    self.environment.set(var, result_value)?;
+                                    debug!("Set variable {} = {}", var, result_value);
                                 }
                                 ArgItem::Indexed((var, idx)) => {
-                                    // Assign to a bit
-                                    let bit_value = (result[i] & 1) as u32;
-
-                                    // Update measurement_results
-                                    let current_value =
-                                        self.measurement_results.get(var).copied().unwrap_or(0);
-                                    let mask = !(1 << idx);
-                                    let new_value = (current_value & mask) | (bit_value << idx);
-                                    self.measurement_results.insert(var.clone(), new_value);
-
-                                    // Update in environment if the variable exists there
-                                    if self.environment.has_variable(var) {
-                                        // Set the specific bit in the environment
-                                        let _ = self.environment.set_bit(var, *idx, bit_value as u64);
-
-                                        // Also update the full variable with the new bit set
-                                        let env_current = self.environment.get(var).unwrap_or(0);
-                                        let env_mask = !(1u64 << idx);
-                                        let env_new_value = (env_current & env_mask) | ((bit_value as u64) << idx);
-                                        let _ = self.environment.set(var, env_new_value);
+                                    // Set specific bit in variable
+                                    let bit_value = result[i] & 1;
+                                    
+                                    // Make sure the variable exists
+                                    if !self.environment.has_variable(var) {
+                                        // Create if needed
+                                        self.environment.add_variable(var, DataType::I32, 32)?;
                                     }
-
-                                    debug!(
-                                        "Assigned foreign function bit result {} to {}[{}]",
-                                        bit_value, var, idx
-                                    );
+                                    
+                                    // Set bit in environment (single source of truth)
+                                    self.environment.set_bit(var, *idx, bit_value as u64)?;
+                                    debug!("Set bit {}[{}] = {}", var, idx, bit_value);
                                 }
                                 _ => {
                                     return Err(PecosError::Input(
@@ -1502,7 +1430,12 @@ impl OperationProcessor {
         Ok(())
     }
 
-    /// Helper method to store a measurement result in both environment and legacy storage
+    /// Store a measurement result in the environment
+    /// 
+    /// This method stores a measurement outcome by updating a specific bit
+    /// in the integer variable (e.g., "m") in the environment.
+    /// 
+    /// The environment is the single source of truth for all variables.
     fn store_measurement_result(
         &mut self,
         var_name: &str,
@@ -1511,76 +1444,35 @@ impl OperationProcessor {
     ) -> Result<(), PecosError> {
         log::info!("PHIR: Storing measurement result {}[{}] = {}", var_name, var_idx, outcome);
 
-        // Set the bit-indexed variable name (e.g., "m_0")
-        let bit_key = format!("{}_{}", var_name, var_idx);
-
-        // Store individual bit result in environment
-        if !self.environment.has_variable(&bit_key) {
-            self.environment.add_variable(&bit_key, DataType::I32, 32)?;
-        }
-        self.environment.set(&bit_key, outcome as u64)?;
-        log::debug!("Stored individual bit measurement {} = {} in environment", bit_key, outcome);
-
-        // Make sure the main variable exists in the environment and update it
+        // Step 1: Ensure the main variable exists in the environment with appropriate size
         if !self.environment.has_variable(var_name) {
-            // Get expected size from classical_variables if available
-            #[allow(deprecated)]
-            let size = self.classical_variables
-                .get(var_name)
-                .map(|(_, s)| *s)
-                .unwrap_or(32);
-
-            // Create the full variable if it doesn't exist
-            self.environment.add_variable(var_name, DataType::I32, size)?;
-            log::debug!("Created main variable {} with size {}", var_name, size);
-        }
-
-        // Update the bit in the full variable
-        self.environment.set_bit(var_name, var_idx, outcome as u64)?;
-        log::debug!("Updated bit {}[{}] = {} in environment", var_name, var_idx, outcome);
-
-        // Get current value and update it with the new bit
-        let current_value = self.environment.get(var_name).unwrap_or(0);
-        let mask = 1u64 << var_idx;
-        let new_value = if outcome != 0 {
-            current_value | mask  // Set the bit
-        } else {
-            current_value & !mask  // Clear the bit
-        };
-
-        // Update the full variable value
-        self.environment.set(var_name, new_value)?;
-        log::debug!("Updated full variable {} = {} in environment", var_name, new_value);
-
-        // Also update directly in the result map - important for tests
-        self.exported_values.insert(var_name.to_string(), new_value as u32);
-        log::debug!("Added to exported_values: {} = {}", var_name, new_value);
-
-        // Also store in legacy measurement_results for backward compatibility
-        #[allow(deprecated)]
-        {
-            // Store the bit-indexed variable
-            self.measurement_results.insert(bit_key.clone(), outcome);
-
-            // Update the full variable
-            let entry = self.measurement_results.entry(var_name.to_string()).or_insert(0);
-            if outcome != 0 {
-                *entry |= 1 << var_idx;  // Set the bit
-            } else {
-                *entry &= !(1 << var_idx);  // Clear the bit
+            // Determine appropriate size (at least large enough to hold this bit)
+            let var_size = std::cmp::max(var_idx + 1, 32);
+            
+            // Create the variable
+            match self.environment.add_variable(var_name, DataType::I32, var_size) {
+                Ok(_) => log::debug!("Created variable {} with size {}", var_name, var_size),
+                Err(e) => log::warn!("Could not create variable: {}. Will try to update anyway: {}", var_name, e),
             }
-
-            // Keep both stores in sync
-            self.exported_values.insert(bit_key, outcome);
-
-            log::debug!("Updated legacy measurement_results: {}[{}] = {}, full {} = {}",
-                       var_name, var_idx, outcome, var_name, *entry);
+        }
+        
+        // Step 2: Update the specific bit directly using the environment's bit setting functionality
+        let bit_value = if outcome != 0 { 1 } else { 0 };
+        if let Err(e) = self.environment.set_bit(var_name, var_idx, bit_value) {
+            log::warn!("Could not set bit {}[{}] = {}. Error: {}", var_name, var_idx, bit_value, e);
+        } else {
+            log::debug!("Set bit {}[{}] = {} in environment", var_name, var_idx, bit_value);
         }
 
         Ok(())
     }
 
-    /// Handle measurements and update measurement results
+    /// Handle incoming measurements from quantum operations and store results
+    /// 
+    /// This method processes measurement results and stores them in:
+    /// 1. The environment (single source of truth for all variables)
+    /// 2. Standard measurement variables (e.g., "measurement_0")
+    /// 3. Named variables from the program (e.g., "m")
     pub fn handle_measurements(
         &mut self,
         measurements: &[(u32, u32)],
@@ -1594,25 +1486,25 @@ impl OperationProcessor {
                 result_id, outcome
             );
 
-            // Store the measurement with the standard prefix and result_id in both legacy and modern storage
+            // Create the standard measurement variable name (e.g., "measurement_0")
             let prefixed_name = format!("{MEASUREMENT_PREFIX}{result_id}");
 
-            // Store in environment
+            // Store in the standard measurement variable
+            // Create the variable if it doesn't exist
             if !self.environment.has_variable(&prefixed_name) {
-                self.environment.add_variable(&prefixed_name, DataType::I32, 32)?;
+                if let Err(e) = self.environment.add_variable(&prefixed_name, DataType::I32, 32) {
+                    log::warn!("Could not create measurement variable: {}. Error: {}", prefixed_name, e);
+                }
             }
-            self.environment.set(&prefixed_name, *outcome as u64)?;
-
-            // Also store in legacy storage and exported values
-            #[allow(deprecated)]
-            {
-                self.measurement_results.insert(prefixed_name.clone(), *outcome);
-                // Add to exported values directly for backward compatibility
-                self.exported_values.insert(prefixed_name, *outcome);
+            
+            // Set the measurement value
+            if let Err(e) = self.environment.set(&prefixed_name, *outcome as u64) {
+                log::warn!("Could not set measurement variable {}. Error: {}", prefixed_name, e);
+            } else {
+                log::debug!("Stored measurement result: {} = {}", prefixed_name, outcome);
             }
 
-            // Also directly map this to the classical variable bits
-            // For example, if Measure returns [["m", 0]], we should set m_0 = outcome
+            // Also map to specific variable based on the Measure operation
             let mut found_mapping = false;
             for op in ops {
                 if let Operation::QuantumOp {
@@ -1628,7 +1520,7 @@ impl OperationProcessor {
 
                         // Check if this is the right measurement result
                         if *var_idx == *result_id as usize {
-                            // Use our helper method to centralize the storage logic
+                            // Store the result in the specific bit of the variable
                             self.store_measurement_result(var_name, *var_idx, *outcome)?;
                             found_mapping = true;
                         }
@@ -1637,40 +1529,23 @@ impl OperationProcessor {
             }
 
             // If we didn't find a mapping in the operations, add a default mapping to variable "m"
-            // This helps with tests and backward compatibility
-            if !found_mapping {
-                // For Bell tests - make sure we store the results in the "m" variable
-                if self.environment.has_variable("m") {
-                    // Store in main "m" variable
-                    let idx = *result_id as usize;
-                    self.store_measurement_result("m", idx, *outcome)?;
-                    log::info!("PHIR: Auto-mapped result {} to m[{}] = {}", result_id, idx, outcome);
-                }
+            // This helps with tests and interoperability, particularly Bell state tests
+            if !found_mapping && self.environment.has_variable("m") {
+                // Store in main "m" variable for test compatibility
+                let idx = *result_id as usize;
+                self.store_measurement_result("m", idx, *outcome)?;
+                log::info!("PHIR: Auto-mapped measurement result {} to m[{}] = {}", result_id, idx, outcome);
             }
         }
 
-        // Process any export mappings to ensure mapped values are properly populated
-        // This enables programs to map any source variable to any destination register
-        if !self.export_mappings.is_empty() {
-            for (source, dest) in &self.export_mappings {
-                // For every mapping, try to get the value of the source from the environment
-                if self.environment.has_variable(source) {
-                    if let Some(source_value) = self.environment.get(source) {
-                        // Add the mapping to exported_values
-                        self.exported_values.insert(dest.clone(), source_value as u32);
-                        log::info!("PHIR: Setup Result mapping {} -> {} with value {}",
-                                  source, dest, source_value);
-                    }
-                } else {
-                    // Try getting it from legacy storage - important for tests that don't use Environment
-                    #[allow(deprecated)]
-                    if let Some(&source_value) = self.measurement_results.get(source) {
-                        // Add to exported values
-                        self.exported_values.insert(dest.clone(), source_value);
-                        log::info!("PHIR: Setup Result mapping {} -> {} with value {} (from legacy store)",
-                                 source, dest, source_value);
-                    }
-                }
+        // Log mappings for debugging purposes
+        // The environment automatically manages and uses these mappings
+        // when generating results, so no additional processing is needed
+        let mappings = self.environment.get_mappings();
+        if !mappings.is_empty() {
+            log::debug!("PHIR: {} mappings registered in environment", mappings.len());
+            for (source, dest) in mappings {
+                log::debug!("PHIR: Mapping {} -> {}", source, dest);
             }
         }
 
@@ -1688,181 +1563,61 @@ impl OperationProcessor {
         }
     }
 
-    /// Helper method to get a variable value from various sources
-    /// This centralizes the variable access logic to make the code cleaner and more robust
+    /// Get a variable value from the environment
+    /// 
+    /// This simplified implementation treats the environment as the single source of truth
+    /// for retrieving variable values.
     fn get_variable_value(&self, var_name: &str, index: Option<usize>) -> Result<u32, PecosError> {
         log::debug!("Getting variable value for {}[{:?}]", var_name, index);
 
-        // Strategy 1: If a bit index was provided, prioritize handling that specifically
+        // Ensure the variable exists in the environment
+        if !self.environment.has_variable(var_name) {
+            return Err(PecosError::Input(format!(
+                "Variable not found in environment: {}[{:?}]", var_name, index
+            )));
+        }
+
+        // Handle bit access if an index is provided
         if let Some(idx) = index {
-            // Try environment bit access first (primary source of truth)
-            if self.environment.has_variable(var_name) {
-                match self.environment.get_bit(var_name, idx) {
-                    Ok(bit_value) => {
-                        log::debug!("Found bit value in environment: {}[{}] = {}", var_name, idx, bit_value);
-                        return Ok(bit_value as u32);
-                    }
-                    Err(e) => {
-                        log::debug!("Failed to get bit from environment: {}", e);
-                        // Continue to try other approaches
-                    }
+            // Try to get the specific bit using the environment's bit accessor
+            match self.environment.get_bit(var_name, idx) {
+                Ok(bit_value) => {
+                    log::debug!("Found bit value in environment: {}[{}] = {}", var_name, idx, bit_value);
+                    return Ok(if bit_value.0 { 1 } else { 0 });
                 }
-            }
-
-            // Try indexed bit variable (like "m_0" format)
-            let bit_key = format!("{}_{}", var_name, idx);
-            if self.environment.has_variable(&bit_key) {
-                if let Some(value) = self.environment.get(&bit_key) {
-                    log::debug!("Found bit via named variable in environment: {} = {}", bit_key, value);
-                    return Ok((value & 1) as u32); // Ensure it's treated as a single bit
-                }
-            }
-
-            // Fall back to legacy measurement_results
-            #[allow(deprecated)]
-            {
-                // Try direct bit-indexed key in measurement_results (like "m_0")
-                let bit_key = format!("{}_{}", var_name, idx);
-                if let Some(&bit_val) = self.measurement_results.get(&bit_key) {
-                    log::debug!("Found bit in legacy bit-indexed variable: {} = {}", bit_key, bit_val);
-                    return Ok(bit_val & 1); // Ensure it's treated as a single bit
-                }
-
-                // Try extracting the bit from the full variable in measurement_results
-                if let Some(&full_value) = self.measurement_results.get(var_name) {
-                    let bit_value = (full_value >> idx) & 1;
-                    log::debug!("Extracted bit from legacy full variable: {}[{}] = {} (from {})",
-                              var_name, idx, bit_value, full_value);
-                    return Ok(bit_value);
-                }
-            }
-
-            // If we get here, we couldn't find the bit
-            return Err(PecosError::Input(format!("Could not find bit: {}[{}]", var_name, idx)));
-        }
-
-        // Strategy 2: For full variable access (no bit index)
-        // First prioritize direct lookup in primary storage (environment)
-        if self.environment.has_variable(var_name) {
-            if let Some(val) = self.environment.get(var_name) {
-                let val_u32 = val as u32;
-                log::debug!("Got full value from environment: {} = {}", var_name, val_u32);
-                return Ok(val_u32);
-            }
-        }
-
-        // Strategy 3: Check for bit pattern variables (common for quantum measurements)
-        // This handles multi-bit variables where each bit is stored separately
-
-        // First check for the bit0 key, which indicates we may have a multi-bit variable
-        let bit0_key = format!("{}_0", var_name);
-
-        // For both common 2-bit cases (Bell state and similar) and multi-bit, try environment first
-        let mut env_bits_found = false;
-        let mut assembled_value = 0u32;
-
-        if self.environment.has_variable(&bit0_key) {
-            // We have at least the 0th bit, so try assembling all bits
-            let var_size = if let Ok(info) = self.environment.get_variable_info(var_name) {
-                info.size
-            } else {
-                // Default to looking for up to 32 bits
-                32
-            };
-
-            for bit in 0..var_size {
-                let bit_key = format!("{}_{}", var_name, bit);
-                if self.environment.has_variable(&bit_key) {
-                    if let Some(bit_value) = self.environment.get(&bit_key) {
-                        if bit_value > 0 {
-                            assembled_value |= 1u32 << bit;
-                        }
-                        env_bits_found = true;
-                    }
-                }
-            }
-
-            if env_bits_found {
-                log::debug!("Assembled multi-bit value from environment bits: {} = {}", var_name, assembled_value);
-                return Ok(assembled_value);
-            }
-        }
-
-        // Strategy 4: Try legacy measurement_results
-        #[allow(deprecated)]
-        {
-            // Try direct lookup in measurement_results
-            if let Some(&val) = self.measurement_results.get(var_name) {
-                log::debug!("Found value in legacy measurement_results: {} = {}", var_name, val);
-                return Ok(val);
-            }
-
-            // Try to assemble from bit variables in legacy storage
-            let mut legacy_bits_found = false;
-            let mut legacy_assembled_value = 0u32;
-
-            // Try to find how many bits we should check
-            let var_size = if let Ok(info) = self.environment.get_variable_info(var_name) {
-                info.size
-            } else {
-                // Default to 32 bits for legacy
-                32
-            };
-
-            for bit in 0..var_size {
-                let bit_key = format!("{}_{}", var_name, bit);
-                if let Some(&bit_val) = self.measurement_results.get(&bit_key) {
-                    if bit_val > 0 {
-                        legacy_assembled_value |= 1u32 << bit;
-                    }
-                    legacy_bits_found = true;
-                }
-            }
-
-            if legacy_bits_found {
-                log::debug!("Assembled value for {} from bits in legacy measurement_results: {}",
-                           var_name, legacy_assembled_value);
-                return Ok(legacy_assembled_value);
-            }
-        }
-
-        // Strategy 5: Check common PHIR variable names with standard prefixes
-        // PHIR has standard naming conventions for measurement results
-        if var_name.starts_with(MEASUREMENT_PREFIX) {
-            // For measurement results with standard prefix, try more variants
-            let meas_id = var_name.trim_start_matches(MEASUREMENT_PREFIX);
-            if let Ok(id) = meas_id.parse::<usize>() {
-                // Try checking the environment for a variable named "m" with this bit index
-                if self.environment.has_variable("m") {
-                    if let Ok(bit_value) = self.environment.get_bit("m", id) {
-                        log::debug!("Found measurement {} as bit m[{}] = {}", var_name, id, bit_value);
+                Err(_) => {
+                    // Fall back to extracting bit from full value
+                    if let Some(full_val) = self.environment.get(var_name) {
+                        let bit_value = (full_val >> idx) & 1;
+                        log::debug!("Extracted bit from variable: {}[{}] = {}", var_name, idx, bit_value);
                         return Ok(bit_value as u32);
                     }
                 }
-
-                // Try checking for a bit variable m_id
-                let m_bit_key = format!("m_{}", id);
-                if self.environment.has_variable(&m_bit_key) {
-                    if let Some(bit_value) = self.environment.get(&m_bit_key) {
-                        log::debug!("Found measurement {} as variable {} = {}", var_name, m_bit_key, bit_value);
-                        return Ok(bit_value as u32);
-                    }
-                }
-
-                // Legacy fallback for bit variable
-                #[allow(deprecated)]
-                if let Some(&bit_val) = self.measurement_results.get(&m_bit_key) {
-                    log::debug!("Found measurement {} as legacy variable {} = {}", var_name, m_bit_key, bit_val);
-                    return Ok(bit_val);
-                }
             }
+            // If we couldn't get the bit, return an error
+            return Err(PecosError::Input(format!(
+                "Could not access bit {}[{}] in environment", var_name, idx
+            )));
+        } 
+        
+        // Handle whole variable access
+        if let Some(val) = self.environment.get(var_name) {
+            log::debug!("Got value from environment: {} = {}", var_name, val);
+            return Ok(val.as_u32());
         }
-
-        // If we get here, we couldn't find the variable
-        Err(PecosError::Input(format!("Could not find variable: {}[{:?}]", var_name, index)))
-    }
-
-    /// Process a Result operation with improved handling
+        
+        // If we get here, the variable exists but has no value
+        Err(PecosError::Input(format!(
+            "Variable exists in environment but has no value: {}", var_name
+        )))
+    }    
+    
+    /// Process a Result operation which maps source variables to destination variables
+    ///
+    /// This method:
+    /// 1. Creates mappings between source and destination variables in the environment
+    /// 2. Gets values from the source variables
+    /// 3. Stores values in the destination variables, handling both whole variables and bit access
     fn process_result_op(
         &mut self,
         args: &[ArgItem],
@@ -1880,89 +1635,72 @@ impl OperationProcessor {
                 let (dst_name, dst_index) = self.extract_arg_info(dst)?;
 
                 log::debug!("Result mapping: {}[{:?}] -> {}[{:?}]",
-                           src_name, src_index, dst_name, dst_index);
+                          src_name, src_index, dst_name, dst_index);
 
-                // Store mapping for future reference
-                self.export_mappings.push((src_name.clone(), dst_name.clone()));
+                // Store mapping in the environment
+                let _ = self.environment.add_mapping(&src_name, &dst_name);
 
-                // Get the source value using our helper method (handles all the different cases)
-                let result = self.get_variable_value(&src_name, src_index);
-
-                // Get the value from environment or legacy storage
-                let value = match result {
-                    Ok(val) => val,
-                    Err(e) => {
-                        // Check legacy storage when not found in environment
-                        #[allow(deprecated)]
-                        if let Some(&result_value) = self.measurement_results.get(&src_name) {
-                            log::info!("Using legacy value for {}: {}", src_name, result_value);
-                            result_value
-                        } else {
-                            return Err(e);
-                        }
-                    }
-                };
+                // Get the source value directly from the environment
+                // No special handling or fallbacks - environment is the single source of truth
+                let value = self.get_variable_value(&src_name, src_index)?;
 
                 log::debug!("Got value for {}: {}", src_name, value);
 
-                // We have the value, now set it in the destination
-
-                // Always make sure the destination exists in the environment
+                // Create destination variable if needed
                 if !self.environment.has_variable(&dst_name) {
-                    // Create a new variable in the environment
-                    self.environment.add_variable(&dst_name, DataType::I32, 32)?;
-                    log::debug!("Created new variable in environment: {}", dst_name);
-                }
-
-                // Set the value in environment (primary storage)
-                match dst_index {
-                    Some(idx) => self.environment.set_bit(&dst_name, idx, value as u64)?,
-                    None => self.environment.set(&dst_name, value as u64)?,
-                }
-                log::debug!("Set value in environment: {}[{:?}] = {}", dst_name, dst_index, value);
-
-                // Also set in legacy measurement_results for compatibility
-                #[allow(deprecated)]
-                {
-                    if let Some(idx) = dst_index {
-                        // For bit assignments, we need to update the bit in the existing value
-                        let entry = self.measurement_results.entry(dst_name.clone()).or_insert(0);
-                        let mask = !(1 << idx);
-                        *entry = (*entry & mask) | ((value & 1) << idx);
+                    // Size depends on whether we're doing bit access
+                    let var_size = if let Some(idx) = dst_index {
+                        std::cmp::max(idx + 1, 32)
                     } else {
-                        // For whole variable assignment
-                        self.measurement_results.insert(dst_name.clone(), value);
+                        32
+                    };
+                    
+                    // Create the variable, but don't fail if it already exists
+                    if let Err(e) = self.environment.add_variable(&dst_name, DataType::I32, var_size) {
+                        log::warn!("Could not create variable: {}. Will try to update existing: {}", dst_name, e);
                     }
-                    log::debug!("Set value in measurement_results: {} = {}", dst_name, value);
                 }
 
-                // Always add to exported values
-                self.exported_values.insert(dst_name.clone(), value);
-                log::debug!("Added to exported_values: {} = {}", dst_name, value);
+                // Store the value in the destination
+                if let Some(idx) = dst_index {
+                    // Bit access - set specific bit in the variable
+                    let bit_value = value & 1;
+                    if let Err(e) = self.environment.set_bit(&dst_name, idx, bit_value as u64) {
+                        log::warn!("Could not set bit {}[{}] = {}: {}", dst_name, idx, bit_value, e);
+                    } else {
+                        log::debug!("Set bit {}[{}] = {}", dst_name, idx, bit_value);
+                    }
+                } else {
+                    // Whole variable assignment
+                    if let Err(e) = self.environment.set(&dst_name, value as u64) {
+                        log::warn!("Could not set variable {} = {}: {}", dst_name, value, e);
+                    } else {
+                        log::debug!("Set variable {} = {}", dst_name, value);
+                    }
+                }
             }
         }
 
         Ok(())
     }
-
-    /// Process export mappings and prepare final results
-    #[must_use]
+    
+    /// Process export mappings to determine values to return from simulations
+    /// 
+    /// This simplified method treats the environment as the single source of truth
+    /// and provides a clean, simple approach to gathering exported values.
     pub fn process_export_mappings(&self) -> HashMap<String, u32> {
         let mut exported_values = HashMap::new();
+        log::info!("Processing export mappings using environment as source of truth");
 
-        // First, add all explicitly exported values from previous processing
-        log::info!("Using {} explicitly exported values", self.exported_values.len());
-        for (name, &value) in &self.exported_values {
-            exported_values.insert(name.clone(), value);
-            log::debug!("Added explicit export: {} = {}", name, value);
-        }
+        // Get all mappings from the environment
+        let mappings = self.environment.get_mappings();
+        
+        if !mappings.is_empty() {
+            log::info!("Processing {} explicit mappings from environment", mappings.len());
 
-        // Then process any remaining export mappings
-        if !self.export_mappings.is_empty() {
-            log::info!("Processing {} export mappings", self.export_mappings.len());
-
-            for (source_register, export_name) in &self.export_mappings {
-                // Skip if we already have this export
+            // Process all explicit mappings first
+            for (source_register, export_name) in mappings {
+                // Skip if we already have this export (in case of duplicates)
                 if exported_values.contains_key(export_name) {
                     log::debug!("Skipping already processed export: {}", export_name);
                     continue;
@@ -1970,158 +1708,42 @@ impl OperationProcessor {
 
                 log::info!("Processing export mapping: {} -> {}", source_register, export_name);
 
-                // Strategy 1: Direct lookup in environment (most reliable for quantum measurements)
+                // Primary approach: Direct lookup in environment
                 if self.environment.has_variable(source_register) {
                     if let Some(value) = self.environment.get(source_register) {
-                        let value_u32 = value as u32;
-                        log::info!("Found direct variable value in environment: {} = {}",
-                                  source_register, value_u32);
-                        exported_values.insert(export_name.clone(), value_u32);
-                        continue;
+                        log::info!("Using value from environment: {} = {}", source_register, value);
+                        exported_values.insert(export_name.clone(), value.as_u32());
                     } else {
                         log::debug!("Variable {} exists in environment but has no value", source_register);
                     }
-                }
-
-                // Strategy 2: Check for measurement bit pairing (Bell state pattern)
-                // Bell state measurements typically use pairs of bits (m_0, m_1)
-                // This is a generalized check for any variable with _0, _1 bit patterns
-                let bit0_key = format!("{}_0", source_register);
-                let bit1_key = format!("{}_1", source_register);
-
-                if self.environment.has_variable(&bit0_key) && self.environment.has_variable(&bit1_key) {
-                    let bit0 = self.environment.get(&bit0_key).unwrap_or(0);
-                    let bit1 = self.environment.get(&bit1_key).unwrap_or(0);
-
-                    // Combine bits into a single value (common in Bell state case)
-                    let combined_value = (bit0 & 1) | ((bit1 & 1) << 1);
-
-                    log::info!("Found bit pair in environment: {}_0={}, {}_1={}, combined={}",
-                              source_register, bit0, source_register, bit1, combined_value);
-                    exported_values.insert(export_name.clone(), combined_value as u32);
-                    continue;
-                }
-
-                // Strategy 3: Assemble from all available bit variables in environment
-                let var_size = if let Ok(info) = self.environment.get_variable_info(source_register) {
-                    info.size
                 } else {
-                    // Default to looking for up to 32 bits if size not known
-                    32
-                };
-
-                // Check if individual bit variables exist (_0, _1, etc.) and construct a composite value
-                let mut assembled_value = 0u32;
-                let mut env_bits_found = false;
-
-                for bit in 0..var_size {
-                    let bit_key = format!("{}_{}", source_register, bit);
-                    if self.environment.has_variable(&bit_key) {
-                        if let Some(bit_value) = self.environment.get(&bit_key) {
-                            if bit_value > 0 {
-                                assembled_value |= 1u32 << bit;
-                            }
-                            env_bits_found = true;
-                        }
-                    }
-                }
-
-                if env_bits_found {
-                    log::info!("Assembled multi-bit value from environment bits: {} = {}",
-                              source_register, assembled_value);
-                    exported_values.insert(export_name.clone(), assembled_value);
-                    continue;
-                }
-
-                // Strategy 4: Use the generic variable getter which tries multiple sources
-                match self.get_variable_value(source_register, None) {
-                    Ok(value) => {
-                        log::info!("Found value using get_variable_value: {} = {}", source_register, value);
-                        exported_values.insert(export_name.clone(), value);
-                        continue;
-                    },
-                    Err(e) => {
-                        log::debug!("get_variable_value failed for {}: {}", source_register, e);
-                    }
-                }
-
-                // Strategy 5: Legacy fallback using measurement_results directly
-                #[allow(deprecated)]
-                {
-                    // Check for direct value in legacy storage
-                    if let Some(&value) = self.measurement_results.get(source_register) {
-                        log::info!("Found value in legacy measurement_results: {} = {}", source_register, value);
-                        exported_values.insert(export_name.clone(), value);
-                        continue;
-                    }
-
-                    // Check for bit pair pattern in legacy storage (Bell state common case)
-                    let bit0_key = format!("{}_0", source_register);
-                    let bit1_key = format!("{}_1", source_register);
-
-                    if self.measurement_results.contains_key(&bit0_key) &&
-                       self.measurement_results.contains_key(&bit1_key) {
-                        let bit0 = self.measurement_results[&bit0_key];
-                        let bit1 = self.measurement_results[&bit1_key];
-
-                        let combined_value = (bit0 & 1) | ((bit1 & 1) << 1);
-
-                        log::info!("Found bit pair in legacy storage: {}_0={}, {}_1={}, combined={}",
-                                  source_register, bit0, source_register, bit1, combined_value);
-                        exported_values.insert(export_name.clone(), combined_value);
-                        continue;
-                    }
-
-                    // Try assembling from all bit variables in legacy storage
-                    let mut legacy_assembled_value = 0u32;
-                    let mut legacy_bits_found = false;
-
-                    for bit in 0..var_size {
-                        let bit_key = format!("{}_{}", source_register, bit);
-                        if let Some(&bit_val) = self.measurement_results.get(&bit_key) {
-                            if bit_val > 0 {
-                                legacy_assembled_value |= 1u32 << bit;
-                            }
-                            legacy_bits_found = true;
-                        }
-                    }
-
-                    if legacy_bits_found {
-                        log::info!("Assembled multi-bit value from legacy bits: {} = {}",
-                                  source_register, legacy_assembled_value);
-                        exported_values.insert(export_name.clone(), legacy_assembled_value);
-                    } else {
-                        log::warn!("No value found for export mapping: {} -> {}",
-                                  source_register, export_name);
-                    }
+                    // If the source doesn't exist, log but don't use fallbacks since environment
+                    // is the single source of truth
+                    log::warn!("Source variable '{}' for export '{}' not found in environment", 
+                              source_register, export_name);
                 }
             }
         }
 
-        // Make sure any return values from Result operations are properly mapped
-        // This is a generalized approach that doesn't depend on specific variable names
-        if self.export_mappings.is_empty() || exported_values.is_empty() {
-            log::info!("Adding automatic mappings for program outputs");
+        // If no explicit mappings or we didn't find any values, include all variables with values
+        if mappings.is_empty() || exported_values.is_empty() {
+            log::info!("Adding automatic mappings for all variables with values");
 
-            // Find all variables that are likely results based on Result operation patterns
             for var_info in self.environment.get_all_variables() {
                 // Skip variables we've already exported
                 if exported_values.contains_key(&var_info.name) {
                     continue;
                 }
 
-                // If the variable has a value, it's a potential result
+                // Include any variable that has a value
                 if let Some(val) = self.environment.get(&var_info.name) {
-                    log::info!("Found potential result variable: {} = {}", var_info.name, val);
-                    exported_values.insert(var_info.name.clone(), val as u32);
+                    log::info!("Adding variable: {} = {}", var_info.name, val);
+                    exported_values.insert(var_info.name.clone(), val.as_u32());
                 }
             }
         }
 
-        // We no longer need a separate pass for common variable names
-        // The previous code block handles all variables in a general way
-
-        // Log summary
+        // Log summary of what we're exporting
         log::info!("Exporting {} values:", exported_values.len());
         for (name, value) in &exported_values {
             log::info!("  {} = {}", name, value);

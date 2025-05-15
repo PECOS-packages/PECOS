@@ -61,17 +61,19 @@ pub fn run_phir_simulation_from_json<T: NoiseModel + 'static, P: AsRef<std::path
         .map_err(|e| PecosError::Input(format!("Failed to parse PHIR program: {e}")))?;
 
     // Create a PHIR engine from the program (clone it to keep the original)
+    #[allow(unused_mut)]
     let mut engine = PHIREngine::from_program(program.clone())?;
 
     // If WebAssembly path is provided, set up the WebAssembly foreign object
-    if let Some(wasm_file_path) = wasm_path {
-        #[cfg(not(feature = "wasm"))]
+    #[cfg(not(feature = "wasm"))]
+    if let Some(_wasm_file_path) = wasm_path {
         return Err(PecosError::Input(
             "WebAssembly support requires the 'wasm' feature to be enabled".to_string(),
         ));
+    }
 
-        #[cfg(feature = "wasm")]
-        {
+    #[cfg(feature = "wasm")]
+    if let Some(wasm_file_path) = wasm_path {
             // Box is sufficient since we don't need shared ownership
             use pecos_phir::v0_1::foreign_objects::ForeignObject;
             use pecos_phir::v0_1::wasm_foreign_object::WasmtimeForeignObject;
@@ -83,7 +85,6 @@ pub fn run_phir_simulation_from_json<T: NoiseModel + 'static, P: AsRef<std::path
 
             // Set the foreign object in the engine (only once!)
             engine.set_foreign_object(foreign_object);
-        }
     }
 
     // Use the provided noise model or default to PassThroughNoiseModel

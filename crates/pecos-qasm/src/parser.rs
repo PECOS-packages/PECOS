@@ -511,6 +511,7 @@ impl QASMParser {
     }
 
     /// Convert a Program back to QASM string
+    #[allow(dead_code)]
     fn program_to_qasm(program: &Program) -> String {
         let mut qasm = String::new();
 

@@ -61,11 +61,7 @@ mod tests {
         );
 
         // Check that the value is 2 (from the assignment in the JSON)
-        assert!(
-            shot.get("output").unwrap() == "2",
-            "Expected output to be 2, got {}",
-            shot.get("output").unwrap()
-        );
+        assert_eq!(shot.get("output").unwrap(), "2", "Expected output to be 2, got {}", shot.get("output").unwrap());
 
         Ok(())
     }
@@ -122,11 +118,7 @@ mod tests {
         );
 
         // Check that the value is 42 (from the assignment in the JSON file)
-        assert!(
-            shot.get("output").unwrap() == "42",
-            "Expected output to be 42, got {}",
-            shot.get("output").unwrap()
-        );
+        assert_eq!(shot.get("output").unwrap(), "42", "Expected output to be 42, got {}", shot.get("output").unwrap());
 
         Ok(())
     }

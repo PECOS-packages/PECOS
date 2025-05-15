@@ -7,14 +7,12 @@ pub mod wasm_foreign_object;
 // Our improved implementations
 pub mod environment;
 pub mod expression;
-
-// The following modules are kept for maintaining existing tests
-// but their functionality has been integrated into operations.rs and engine.rs
 pub mod block_executor;
-pub mod result_handler;
+pub mod block_iterative_executor;
+pub mod enhanced_results;
 
-// These modules have been removed as we've integrated their functionality
-// into the main engine.rs and operations.rs implementations
+// The following modules have been removed as their functionality
+// has been integrated into operations.rs and engine.rs
 
 use crate::version_traits::PHIRImplementation;
 use pecos_core::errors::PecosError;

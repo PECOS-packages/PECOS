@@ -23,6 +23,12 @@ serde_json.workspace = true
 
 [dev-dependencies]
 tempfile = "3.8"
+# Required for doctests
+pecos-core.workspace = true
+pecos-engines.workspace = true
+pecos-qir.workspace = true
+pecos-phir.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

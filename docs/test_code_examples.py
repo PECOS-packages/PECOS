@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""
+Test script for validating code examples in PECOS documentation.
+
+This script extracts code blocks from Markdown files and tests them
+to ensure they run correctly. It supports both Python and Rust code examples.
+"""
+
+import os
+import re
+import sys
+import glob
+import subprocess
+import tempfile
+from pathlib import Path
+
+# Directory containing the Markdown files to test
+DOCS_DIR = Path('source')
+
+def find_markdown_files():
+    """Find all Markdown files in the documentation directory."""
+    return glob.glob(str(DOCS_DIR / '**' / '*.md'), recursive=True)
+
+def extract_code_blocks(file_path, language='python'):
+    """Extract code blocks of a specific language from a Markdown file."""
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # Find all code blocks with the specified language
+    pattern = rf'```(?:{language}|exec-{language}|hidden-{language})(.*?)```'
+    blocks = re.findall(pattern, content, re.DOTALL)
+    
+    # Clean up the blocks (remove leading/trailing whitespace)
+    blocks = [block.strip() for block in blocks]
+    
+    return blocks
+
+def test_python_block(code_block, block_number, file_path):
+    """Test a Python code block by executing it and checking for errors."""
+    print(f"Testing Python block #{block_number} from {file_path}...")
+    
+    try:
+        # Execute the code block and capture output
+        result = subprocess.run(
+            [sys.executable, '-c', code_block],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if result.returncode != 0:
+            print(f"FAIL: Error in Python block #{block_number} from {file_path}:")
+            print(result.stderr)
+            return False
+        else:
+            print(f"PASS: Python block #{block_number} from {file_path}")
+            return True
+    except subprocess.TimeoutExpired:
+        print(f"FAIL: Timeout in Python block #{block_number} from {file_path}")
+        return False
+    except Exception as e:
+        print(f"FAIL: Exception testing Python block #{block_number} from {file_path}: {e}")
+        return False
+
+def test_rust_block(code_block, block_number, file_path):
+    """Test a Rust code block by compiling and running it."""
+    print(f"Testing Rust block #{block_number} from {file_path}...")
+    
+    # Create a temporary directory for the Rust project
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # If the code doesn't contain a main function, add one
+        if "fn main" not in code_block:
+            code_block = f"fn main() {{\n{code_block}\n}}"
+        
+        # Write the code to a temporary file
+        temp_file = Path(tmpdir) / "main.rs"
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            f.write(code_block)
+        
+        try:
+            # Compile and run the Rust code
+            compile_result = subprocess.run(
+                ['rustc', str(temp_file), '-o', str(Path(tmpdir) / "rust_test")],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if compile_result.returncode != 0:
+                print(f"FAIL: Compilation error in Rust block #{block_number} from {file_path}:")
+                print(compile_result.stderr)
+                return False
+            
+            # Run the compiled program
+            run_result = subprocess.run(
+                [str(Path(tmpdir) / "rust_test")],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if run_result.returncode != 0:
+                print(f"FAIL: Runtime error in Rust block #{block_number} from {file_path}:")
+                print(run_result.stderr)
+                return False
+            else:
+                print(f"PASS: Rust block #{block_number} from {file_path}")
+                return True
+        except subprocess.TimeoutExpired:
+            print(f"FAIL: Timeout in Rust block #{block_number} from {file_path}")
+            return False
+        except Exception as e:
+            print(f"FAIL: Exception testing Rust block #{block_number} from {file_path}: {e}")
+            return False
+
+def main():
+    """Main function to test all code examples in documentation."""
+    print("Testing PECOS documentation code examples...")
+    
+    markdown_files = find_markdown_files()
+    print(f"Found {len(markdown_files)} Markdown files to test")
+    
+    python_results = []
+    rust_results = []
+    
+    # Test Python code blocks
+    for file_path in markdown_files:
+        python_blocks = extract_code_blocks(file_path, 'python')
+        for i, block in enumerate(python_blocks, 1):
+            result = test_python_block(block, i, file_path)
+            python_results.append((file_path, i, result))
+    
+    # Test Rust code blocks
+    for file_path in markdown_files:
+        rust_blocks = extract_code_blocks(file_path, 'rust')
+        for i, block in enumerate(rust_blocks, 1):
+            result = test_rust_block(block, i, file_path)
+            rust_results.append((file_path, i, result))
+    
+    # Print summary
+    python_passed = sum(1 for _, _, result in python_results if result)
+    python_total = len(python_results)
+    rust_passed = sum(1 for _, _, result in rust_results if result)
+    rust_total = len(rust_results)
+    
+    print("\n===== SUMMARY =====")
+    python_success_rate = f"{python_passed/python_total*100:.1f}%" if python_total > 0 else "N/A"
+    print(f"Python: {python_passed}/{python_total} blocks passed ({python_success_rate} success rate)")
+    rust_success_rate = f"{rust_passed/rust_total*100:.1f}%" if rust_total > 0 else "N/A"
+    print(f"Rust: {rust_passed}/{rust_total} blocks passed ({rust_success_rate} success rate)")
+    
+    # Print failed tests
+    if python_passed < python_total or rust_passed < rust_total:
+        print("\nFailed tests:")
+        
+        for file_path, block_num, result in python_results:
+            if not result:
+                print(f"- Python block #{block_num} in {file_path}")
+        
+        for file_path, block_num, result in rust_results:
+            if not result:
+                print(f"- Rust block #{block_num} in {file_path}")
+    
+    # Return non-zero exit code if any tests failed
+    if python_passed < python_total or rust_passed < rust_total:
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

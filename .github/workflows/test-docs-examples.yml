@@ -1,0 +1,79 @@
+name: Documentation Tests & Build
+
+on:
+  push:
+    branches: [ master, development ]
+    paths:
+      - 'docs/**'
+  pull_request:
+    branches: [ master, development ]
+    paths:
+      - 'docs/**'
+  workflow_dispatch:
+
+env:
+  RUSTFLAGS: -C debuginfo=0
+  RUST_BACKTRACE: 1
+  PYTHONUTF8: 1
+
+jobs:
+  docs-ci:
+    name: Test and build documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      
+      - name: Set up Rust
+        run: rustup show
+      
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: python/pecos-rslib
+      
+      - name: Generate lockfile and install dependencies
+        run: |
+          uv lock --project .
+          uv sync --project .
+      
+      - name: Install pecos-rslib with maturin
+        run: |
+          cd python/pecos-rslib
+          uv run maturin develop --uv
+      
+      - name: Install quantum-pecos from local source
+        run: |
+          cd python/quantum-pecos
+          uv pip install -e .
+      
+      - name: Install documentation dependencies
+        run: |
+          cd docs
+          make install-deps
+      
+      - name: Test working documentation examples
+        run: |
+          cd docs
+          make test-working
+          
+      - name: Check documentation for issues
+        if: success()
+        run: |
+          cd docs
+          make lint
+          
+      - name: Build documentation
+        if: success()
+        run: |
+          cd docs
+          make build

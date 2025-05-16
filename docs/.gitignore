@@ -1,0 +1,26 @@
+# MkDocs build output
+/site/
+
+# Python cache files in the docs directory
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test outputs and temporary files
+*.log
+*.tmp
+.pytest_cache/
+
+# Environment
+.venv/
+.env/
+
+# IDE files specific to documentation
+.vscode/
+.idea/
+
+# Temporary files that might be created during document editing
+*~
+.DS_Store
+*.swp
+*.swo

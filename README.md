@@ -1,4 +1,4 @@
-# ![PECOS](branding/logo/pecos_logo_v2.svg)
+# ![PECOS](abranding/logo/pecos_logo.svg)
 
 [![PyPI version](https://badge.fury.io/py/quantum-pecos.svg)](https://badge.fury.io/py/quantum-pecos)
 [![Documentation Status](https://readthedocs.org/projects/quantum-pecos/badge/?version=latest)](https://quantum-pecos.readthedocs.io/en/latest/?badge=latest)
@@ -7,7 +7,7 @@
 
 **Performance Estimator of Codes On Surfaces (PECOS)** is a library/framework dedicated to the study, development, and
 evaluation of quantum error-correction protocols. It also offers tools for the study and evaluation of hybrid
-quantum/classical compute execution models for NISQ algorithms and beyond.
+quantum/classical compute execution models.
 
 Initially conceived and developed in 2014 to verify lattice-surgery procedures presented in
 [arXiv:1407.5103](https://arxiv.org/abs/1407.5103) and released publicly in 2018, PECOS filled the gap in

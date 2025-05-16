@@ -1,0 +1,110 @@
+# Getting Started
+
+This guide will help you get up and running with PECOS quickly, whether you're using the Python package, the Rust crates, or both.
+
+## Installation
+
+### Python Package
+
+To install the main Python package for general usage:
+
+```bash
+pip install quantum-pecos
+```
+
+This will install both `quantum-pecos` and its dependency `pecos-rslib`.
+
+For optional dependencies:
+
+```bash
+pip install quantum-pecos[all]
+```
+
+!!! note "Import Name"
+    The `quantum-pecos` package is imported as `import pecos` and not `import quantum_pecos`.
+
+To install pre-releases (the latest development code) from PyPI:
+
+```bash
+pip install quantum-pecos==X.Y.Z.devN  # Replace with actual version number
+```
+
+### Rust Crates
+
+To use PECOS in your Rust project, add the following to your `Cargo.toml`:
+
+```toml
+[dependencies]
+pecos = "0.x.x"  # Replace with the latest version
+```
+
+## Optional Dependencies
+
+### LLVM for QIR Support
+
+LLVM version 14 is required for QIR (Quantum Intermediate Representation) support:
+
+=== "Linux"
+    ```bash
+    sudo apt install llvm-14
+    ```
+
+=== "macOS"
+    ```bash
+    brew install llvm@14
+    ```
+
+=== "Windows"
+    Download LLVM 14.x installer from [LLVM releases](https://releases.llvm.org/download.html#14.0.0)
+
+!!! warning
+    Only LLVM version 14.x is compatible. LLVM 15 or later versions will not work with PECOS's QIR implementation.
+
+If LLVM 14 is not installed, PECOS will still function normally but QIR-related features will be disabled.
+
+## Simulators with Special Requirements
+
+Some simulators from `pecos.simulators` require external packages:
+
+- **QuEST**: Installed with the Python package `pyquest` via `pip install .[all]`. For 32-bit float point precision, follow the installation instructions [here](https://github.com/rrmeister/pyQuEST/tree/develop).
+
+- **CuStateVec**: Requires a Linux machine with an NVIDIA GPU. Installation via conda is recommended, as discussed [here](https://docs.nvidia.com/cuda/cuquantum/latest/getting_started/getting_started.html#installing-cuquantum).
+
+- **MPS**: Uses `pytket-cutensornet` and can be installed via `pip install .[cuda]`. These simulators use NVIDIA GPUs and cuQuantum. Follow the instructions for `CuStateVec` above to install cuQuantum.
+
+## Verification
+
+### Python
+
+Verify your Python installation:
+
+```python
+import pecos
+print(pecos.__version__)
+```
+
+### Rust
+
+Create a simple Rust program to verify your installation:
+
+```rust
+use pecos::prelude::*;
+
+fn main() {
+    println!("PECOS Rust crate loaded successfully!");
+}
+```
+
+## Next Steps
+
+Now that you have PECOS installed, you can:
+
+- Explore the [User Guide](../index.md) to learn core concepts
+- Check out the [Python API](https://quantum-pecos.readthedocs.io/en/latest/) or [Rust API](https://docs.rs/pecos/latest/pecos/) reference
+- Try the examples in each language:
+  - Python examples: `/python/quantum-pecos/examples/`
+  - Rust examples: `/crates/*/examples/`
+
+## Development Setup
+
+For contributing to PECOS or developing with the source code, see the [Development Guide](../development/development.md).

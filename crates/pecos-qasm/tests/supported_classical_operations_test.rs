@@ -20,16 +20,11 @@ fn test_basic_classical_operations() {
         c[0] = 1;
         
         // Simple quantum gate
-        h q[0];
+        H q[0];
     "#;
 
-    // Parse the QASM program
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-
     // Create and load the engine
-    let mut engine = QASMEngine::new().expect("Failed to create engine");
-    engine
-        .load_program(program)
+    let mut engine = QASMEngine::from_str(qasm)
         .expect("Failed to load program");
 
     // Generate commands - this verifies that basic operations are supported
@@ -73,8 +68,8 @@ fn test_conditional_operations() {
         creg c[4];
 
         c = 2;
-        if (c == 2) h q[0];
-        if (c == 1) x q[0];
+        if (c == 2) H q[0];
+        if (c == 1) X q[0];
     "#;
 
     let _program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
@@ -135,7 +130,7 @@ fn test_complex_quantum_expressions() {
 
         // Complex expressions in quantum gates
         rx((0.5+0.5)*pi) q[0];
-        rz(pi/2) q[0];
+        RZ(pi/2) q[0];
         ry(2*pi) q[0];
     "#;
 
@@ -155,13 +150,13 @@ fn test_unsupported_syntax() {
     // Document what's NOT supported
 
     // Exponentiation (now supported)
-    let qasm_exp = r#"
+    let qasm_exp = r"
         OPENQASM 2.0;
         creg a[2];
         creg b[3];
         creg c[4];
         c = b**a;  // This is now supported
-    "#;
+    ";
     assert!(
         QASMParser::parse_str(qasm_exp).is_ok(),
         "Exponentiation is now supported"
@@ -173,7 +168,7 @@ fn test_unsupported_syntax() {
         include "qelib1.inc";
         qreg q[1];
         creg c[4];
-        if (c >= 2) h q[0];  // This syntax might not be supported
+        if (c >= 2) H q[0];  // This syntax might not be supported
     "#;
 
     // This might parse but may not execute correctly

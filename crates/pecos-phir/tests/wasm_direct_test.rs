@@ -3,11 +3,11 @@ mod common;
 #[cfg(all(test, feature = "wasm"))]
 mod tests {
     use pecos_core::errors::PecosError;
-    use std::path::PathBuf;
     use std::boxed::Box;
+    use std::path::PathBuf;
 
-    use pecos_engines::core::shot_results::{ShotResult, ShotResults};
     use pecos_engines::Engine;
+    use pecos_engines::core::shot_results::{ShotResult, ShotResults};
     use pecos_phir::v0_1::ast::PHIRProgram;
     use pecos_phir::v0_1::engine::PHIREngine;
     use pecos_phir::v0_1::foreign_objects::ForeignObject;
@@ -67,15 +67,14 @@ mod tests {
         );
 
         assert_eq!(
-            result.registers["output"],
-            10,
+            result.registers["output"], 10,
             "Expected output value to be 10 (7 + 3), got {}",
             result.registers["output"]
         );
 
         Ok(())
     }
-    
+
     /// Run multiple shots of a PHIR program with a WebAssembly foreign object,
     /// without using the Monte Carlo engine - this version uses direct assignments without quantum operations
     #[test]

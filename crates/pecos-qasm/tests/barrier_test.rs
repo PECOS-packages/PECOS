@@ -1,4 +1,4 @@
-use pecos_qasm::parser::{Operation, QASMParser};
+use pecos_qasm::{Operation, QASMParser};
 
 #[test]
 fn test_barrier_parsing() -> Result<(), Box<dyn std::error::Error>> {
@@ -45,9 +45,9 @@ fn test_barrier_parsing() -> Result<(), Box<dyn std::error::Error>> {
     // With BTreeMap's alphabetical ordering: q -> [0, 1, 2, 3]
     if let Operation::Barrier { qubits } = &program.operations[0] {
         assert_eq!(qubits.len(), 3);
-        assert!(qubits.contains(&0));  // q[0]
-        assert!(qubits.contains(&3));  // q[3]
-        assert!(qubits.contains(&2));  // q[2]
+        assert!(qubits.contains(&0)); // q[0]
+        assert!(qubits.contains(&3)); // q[3]
+        assert!(qubits.contains(&2)); // q[2]
     } else {
         panic!("Expected first operation to be a barrier");
     }
@@ -105,11 +105,11 @@ fn test_barrier_parsing() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_barrier_register_expansion() -> Result<(), Box<dyn std::error::Error>> {
     // Test that register barriers expand to all qubits in the register
-    let qasm = r#"
+    let qasm = r"
         OPENQASM 2.0;
         qreg q[4];
         barrier q;
-    "#;
+    ";
 
     let program = QASMParser::parse_str_raw(qasm)?;
 
@@ -126,12 +126,12 @@ fn test_barrier_register_expansion() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_mixed_barrier_with_order() -> Result<(), Box<dyn std::error::Error>> {
     // Test that qubit ordering in barriers is preserved
-    let qasm = r#"
+    let qasm = r"
         OPENQASM 2.0;
         qreg q[2];
         qreg r[2];
         barrier r[1], q[0], q[1], r[0];
-    "#;
+    ";
 
     let program = QASMParser::parse_str_raw(qasm)?;
 

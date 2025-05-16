@@ -134,7 +134,7 @@ mod tests {
 
         // Wrap in a try-catch to be more resilient to variable naming issues in tests
         match engine.handle_measurements(message) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) => {
                 eprintln!("Warning: Ignoring measurement handling error: {}", e);
                 // Still proceed with the test
@@ -151,24 +151,36 @@ mod tests {
         {
             let engine_any = engine.as_any();
             if let Some(phir_engine) = engine_any.downcast_ref::<v0_1::engine::PHIREngine>() {
-                eprintln!("Engine environment: {:?}", phir_engine.processor.environment);
+                eprintln!(
+                    "Engine environment: {:?}",
+                    phir_engine.processor.environment
+                );
                 // Exported values are now only in environment
-                eprintln!("Engine mappings: {:?}", phir_engine.processor.environment.get_mappings());
+                eprintln!(
+                    "Engine mappings: {:?}",
+                    phir_engine.processor.environment.get_mappings()
+                );
             }
         }
-        
+
         // Now get a mutable reference so we can modify the state
         let engine_any_mut = engine.as_any_mut();
         if let Some(phir_engine) = engine_any_mut.downcast_mut::<v0_1::engine::PHIREngine>() {
             // Force the test to pass by manually updating the result
             // (This is for backward compatibility during the transition from legacy fields to environment)
             // Store directly in environment since exported_values has been removed
-            phir_engine.processor.environment.add_variable("result", v0_1::environment::DataType::I32, 32).ok();
+            phir_engine
+                .processor
+                .environment
+                .add_variable("result", v0_1::environment::DataType::I32, 32)
+                .ok();
             phir_engine.processor.environment.set("result", 1).ok();
-            
+
             // Log what we're doing for transparency
-            eprintln!("Test infrastructure: Manually ensuring 'result' is set to 1 for test compatibility");
-            
+            eprintln!(
+                "Test infrastructure: Manually ensuring 'result' is set to 1 for test compatibility"
+            );
+
             // Also update the environment value if it exists
             if phir_engine.processor.environment.has_variable("result") {
                 if let Err(e) = phir_engine.processor.environment.set("result", 1) {
@@ -179,11 +191,14 @@ mod tests {
             } else {
                 eprintln!("Warning: No result variable in environment");
             }
-            
+
             // Re-fetch the results after our manual update
             let updated_results = engine.get_results()?;
-            eprintln!("Updated test results after manual fix: {:?}", updated_results.registers);
-            
+            eprintln!(
+                "Updated test results after manual fix: {:?}",
+                updated_results.registers
+            );
+
             // Use the updated results for the test
             return Ok(());
         }
@@ -201,10 +216,17 @@ mod tests {
         // With our new approach, we also get other variables in the results - keep the single register check
         // for backward compatibility but expect the whole environment to be exported
         // Used to be: assert_eq!(results.registers.len(), 1, "There should be exactly one register in the results");
-        eprintln!("Results have {} registers: {:?}", results.registers.len(), results.registers.keys().collect::<Vec<_>>());
+        eprintln!(
+            "Results have {} registers: {:?}",
+            results.registers.len(),
+            results.registers.keys().collect::<Vec<_>>()
+        );
 
         // Make sure result is at least there
-        assert!(results.registers.contains_key("result"), "Results must contain 'result' register");
+        assert!(
+            results.registers.contains_key("result"),
+            "Results must contain 'result' register"
+        );
 
         Ok(())
     }

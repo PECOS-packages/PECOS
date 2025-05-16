@@ -42,7 +42,7 @@ mod tests {
             1,
             None,
             None::<PassThroughNoiseModel>,
-            None::<&std::path::Path>
+            None::<&std::path::Path>,
         );
 
         // Print the simulation result for debugging
@@ -79,13 +79,19 @@ mod tests {
         };
 
         // Make sure we have results
-        assert!(!results.shots.is_empty(), "Expected at least one shot result");
+        assert!(
+            !results.shots.is_empty(),
+            "Expected at least one shot result"
+        );
 
         // Since we're using manually crafted results, the test should always pass
         let shot = &results.shots[0];
         println!("Output found: {}", shot.get("output").unwrap());
         let value = shot.get("output").unwrap();
-        assert_eq!(value, "2", "Expected output value to be 2 (1 + 1), got {value}");
+        assert_eq!(
+            value, "2",
+            "Expected output value to be 2 (1 + 1), got {value}"
+        );
 
         Ok(())
     }

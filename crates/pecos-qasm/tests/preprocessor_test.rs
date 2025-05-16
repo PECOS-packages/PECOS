@@ -53,11 +53,14 @@ fn test_nested_includes() {
     // Write the base include file
     fs::write(
         &base_inc,
-        r#"
+        r"
         gate u2(phi,lambda) q {
-            U(pi/2,phi,lambda) q;
+            H q;
+            RZ(lambda) q;
+            H q;
+            RZ(phi) q;
         }
-    "#,
+    ",
     )
     .unwrap();
 
@@ -101,11 +104,11 @@ fn test_preprocessor_direct() {
     // Write the include file
     fs::write(
         &include_path,
-        r#"
-        gate h a {
+        r"
+        gate H a {
             u2(0,pi) a;
         }
-    "#,
+    ",
     )
     .unwrap();
 
@@ -115,19 +118,23 @@ fn test_preprocessor_direct() {
         OPENQASM 2.0;
         include "{}";
         qreg q[1];
-        h q[0];
+        H q[0];
     "#,
         include_path.display()
     );
 
     // Preprocess with the temp directory in include path
     let mut preprocessor = Preprocessor::new();
-    preprocessor.add_include_path(temp_dir.path());
+    if let Some(path_str) = temp_dir.path().to_str() {
+        preprocessor.add_path(path_str);
+    } else {
+        panic!("Invalid path");
+    }
     let preprocessed = preprocessor.preprocess_str(&qasm).unwrap();
 
     // Check that include was replaced
     assert!(!preprocessed.contains("include"));
-    assert!(preprocessed.contains("gate h a"));
+    assert!(preprocessed.contains("gate H a"));
     assert!(preprocessed.contains("qreg q[1]"));
 }
 
@@ -138,7 +145,7 @@ fn test_qelib1_include() {
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[1];
-        h q[0];
+        H q[0];
     "#;
 
     // Parse with preprocessing
@@ -189,11 +196,11 @@ fn test_include_relative_paths() {
     // Write the include file in includes directory
     fs::write(
         &gates_inc,
-        r#"
+        r"
         gate my_gate a {
-            x a;
+            X a;
         }
-    "#,
+    ",
     )
     .unwrap();
 

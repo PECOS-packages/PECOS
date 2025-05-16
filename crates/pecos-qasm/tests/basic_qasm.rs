@@ -10,8 +10,8 @@ fn test_bell_qasm() {
         creg c[2];
 
         // Bell state
-        h q[0];
-        cx q[0],q[1];
+        H q[0];
+        CX q[0],q[1];
         measure q[0] -> c[0];
         measure q[1] -> c[1];
     "#;
@@ -27,11 +27,10 @@ fn test_bell_qasm() {
     let mut has_three = false;
 
     for &value in &results["c"] {
-        println!("Checking value: {}", value);
+        println!("Checking value: {value}");
         assert!(
             value == 0 || value == 3,
-            "Expected value to be 0 or 3, but got {}",
-            value
+            "Expected value to be 0 or 3, but got {value}"
         );
 
         // Track if we've seen both expected values
@@ -60,7 +59,7 @@ fn test_x_qasm() {
         qreg w[1];
         creg d[1];
 
-        x w[0];
+        X w[0];
         measure w[0] -> d[0];
     "#;
 
@@ -91,15 +90,15 @@ fn test_arbitrary_register_names() {
         creg result[2];
 
         // Bell state with arbitrary register names
-        h alice[0];
-        cx alice[0],bob[0];
+        H alice[0];
+        CX alice[0],bob[0];
         measure alice[0] -> result[0];
         measure bob[0] -> result[1];
     "#;
 
     let results = run_qasm_sim(qasm, 10, Some(42)).unwrap();
 
-    println!("Arbitrary register test results: {:?}", results);
+    println!("Arbitrary register test results: {results:?}");
 
     // Assert that arbitrary register name exists in results
     assert!(
@@ -119,8 +118,7 @@ fn test_arbitrary_register_names() {
     for &value in &results["result"] {
         assert!(
             value == 0 || value == 3,
-            "Expected value to be 0 or 3, but got {}",
-            value
+            "Expected value to be 0 or 3, but got {value}"
         );
     }
 }
@@ -137,10 +135,10 @@ fn test_flips_multi_reg_qasm() {
         creg c[3];
         creg d[3];
 
-        x a[0];
-        x a[1];
+        X a[0];
+        X a[1];
         
-        x b[2];
+        X b[2];
         
         measure a -> c;
         measure b -> d;
@@ -191,7 +189,7 @@ fn test_basic_arthmetic_qasm() {
 
     let results = run_qasm_sim(qasm, 10, Some(42)).unwrap();
 
-    println!("Arithmetic test results: {:?}", results);
+    println!("Arithmetic test results: {results:?}");
 
     assert!(
         results.contains_key("a"),
@@ -245,7 +243,7 @@ fn test_defaults_qasm() {
 
     let results = run_qasm_sim(qasm, 5, Some(42)).unwrap();
 
-    println!("Default test results: {:?}", results);
+    println!("Default test results: {results:?}");
 
     assert!(
         results.contains_key("a"),
@@ -286,7 +284,7 @@ fn test_basic_if_creg_statements_qasm() {
 
     let results = run_qasm_sim(qasm, 10, Some(42)).unwrap();
 
-    println!("If creg test results: {:?}", results);
+    println!("If creg test results: {results:?}");
 
     assert!(
         results.contains_key("a"),
@@ -334,7 +332,7 @@ fn test_basic_if_qreg_statements_qasm() {
         creg a[2];
         creg b[3];
 
-        if(b==0) x q[0];
+        if(b==0) X q[0];
 
         // Let's measure both qubits so we can verify the conditional operation
         measure q[0] -> a[1];
@@ -342,7 +340,7 @@ fn test_basic_if_qreg_statements_qasm() {
 
     let results = run_qasm_sim(qasm, 10, Some(42)).unwrap();
 
-    println!("If creg test results: {:?}", results);
+    println!("If creg test results: {results:?}");
 
     assert!(
         results.contains_key("a"),
@@ -380,12 +378,12 @@ fn test_cond_bell() {
         creg one_0[2];
 
         // Bell state
-        h q[0];
-        cx q[0],q[1];
+        H q[0];
+        CX q[0],q[1];
         measure q[0] -> one_0[0]; // collapses to 00 or 11
         
         // use the measurement of the other qubit to flip deterministically to |1>
-        if(one_0[0]==0) x q[1]; 
+        if(one_0[0]==0) X q[1]; 
         
         // one_0[1] should always be 1
         measure q[1] -> one_0[1];
@@ -395,7 +393,7 @@ fn test_cond_bell() {
 
     let results = run_qasm_sim(qasm, 10, Some(42)).unwrap();
 
-    println!("Conditional test results: {:?}", results);
+    println!("Conditional test results: {results:?}");
 
     assert!(results.contains_key("one_0"));
     let expected_b = vec![2u32; 10];
@@ -415,7 +413,7 @@ fn test_classical_statement() {
         
         b = 2;
 
-        x q[0];
+        X q[0];
         measure q[0] -> m[0];
         // m = 1;
         
@@ -435,7 +433,7 @@ fn test_classical_statement() {
 
     let results = run_qasm_sim(qasm, 10, Some(42)).unwrap();
 
-    println!("Conditional test results: {:?}", results);
+    println!("Conditional test results: {results:?}");
 
     assert!(results.contains_key("c"));
     let expected = vec![2u32; 10];

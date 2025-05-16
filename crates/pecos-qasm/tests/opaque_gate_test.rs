@@ -1,7 +1,7 @@
 use pecos_qasm::QASMParser;
 
 /// Test for opaque gate declarations
-/// According to OpenQASM 2.0 spec, opaque gates are used to define
+/// According to `OpenQASM` 2.0 spec, opaque gates are used to define
 /// gates that are implemented at a lower level (hardware or external library)
 /// without specifying their decomposition in terms of other gates.
 #[test]
@@ -50,10 +50,8 @@ fn test_opaque_gate_syntax() {
         Err(e) => {
             // With stricter parsing, we now get undefined gate error
             // since opaque gates don't create actual definitions
-            println!("Got expected error: {}", e);
-            assert!(
-                e.to_string().contains("Undefined gate") && e.to_string().contains("mygate1")
-            );
+            println!("Got expected error: {e}");
+            assert!(e.to_string().contains("Undefined gate") && e.to_string().contains("mygate1"));
         }
     }
 }
@@ -70,8 +68,8 @@ fn test_opaque_and_regular_gates() {
         
         // Regular gate definition
         gate bell a, b {
-            h a;
-            cx a, b;
+            H a;
+            CX a, b;
         }
         
         // Opaque gate declaration - no body
@@ -97,10 +95,10 @@ fn test_opaque_and_regular_gates() {
     match result {
         Ok(ast) => {
             println!("Mixed opaque/regular gates AST:");
-            println!("{:#?}", ast);
+            println!("{ast:#?}");
         }
         Err(e) => {
-            println!("Expected error: {}", e);
+            println!("Expected error: {e}");
         }
     }
 }
@@ -121,8 +119,8 @@ fn test_opaque_gate_declaration_only() {
         opaque mygate3 a, b;
 
         // Regular gate usage is still allowed
-        h q[0];
-        cx q[0], q[1];
+        H q[0];
+        CX q[0], q[1];
 
         measure q -> c;
     "#;
@@ -137,12 +135,12 @@ fn test_opaque_gate_declaration_only() {
             let opaque_count = program
                 .operations
                 .iter()
-                .filter(|op| matches!(op, pecos_qasm::parser::Operation::OpaqueGate { .. }))
+                .filter(|op| matches!(op, pecos_qasm::Operation::OpaqueGate { .. }))
                 .count();
             assert_eq!(opaque_count, 3);
         }
         Err(e) => {
-            panic!("Should have succeeded, but got error: {}", e);
+            panic!("Should have succeeded, but got error: {e}");
         }
     }
 }
@@ -151,29 +149,29 @@ fn test_opaque_gate_declaration_only() {
 #[test]
 fn test_opaque_gate_errors() {
     // Test 1: Opaque gate with a body (should be an error)
-    let invalid_qasm1 = r#"
+    let invalid_qasm1 = r"
         OPENQASM 2.0;
         qreg q[2];
         
         // This should be an error - opaque gates can't have bodies
         opaque mygate a {
-            h a;
+            H a;
         }
-    "#;
+    ";
 
     let result1 = QASMParser::parse_str(invalid_qasm1);
     assert!(result1.is_err(), "Opaque gate with body should be an error");
 
     // Test 2: Using undefined opaque gate
-    let invalid_qasm2 = r#"
+    let invalid_qasm2 = r"
         OPENQASM 2.0;
         qreg q[2];
         
         // Using a gate that wasn't declared
         undefined_gate q[0];
-    "#;
+    ";
 
     let result2 = QASMParser::parse_str(invalid_qasm2);
     // This might already fail as undefined gate
-    println!("Undefined gate error: {:?}", result2);
+    println!("Undefined gate error: {result2:?}");
 }

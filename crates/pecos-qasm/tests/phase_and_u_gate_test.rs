@@ -13,13 +13,8 @@ fn test_phase_zero_gate() {
         measure q[0] -> c[0];
     "#;
 
-    // Parse the QASM program
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-
     // Create and run the engine
-    let mut engine = QASMEngine::new().expect("Failed to create engine");
-    engine
-        .load_program(program)
+    let mut engine = QASMEngine::from_str(qasm)
         .expect("Failed to load program");
 
     // The phase gate p(0) should not affect the |0⟩ state
@@ -31,9 +26,8 @@ fn test_phase_zero_gate() {
         Err(e) => {
             // If p gate is not directly supported, check if it's in the error
             assert!(
-                e.to_string().contains("p") || e.to_string().contains("phase"),
-                "Unexpected error: {}",
-                e
+                e.to_string().contains('p') || e.to_string().contains("phase"),
+                "Unexpected error: {e}"
             );
         }
     }
@@ -50,27 +44,21 @@ fn test_u_gate_identity() {
         measure q[0] -> c[0];
     "#;
 
-    // Parse the QASM program
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-
     // Create and run the engine
-    let mut engine = QASMEngine::new().expect("Failed to create engine");
-    engine
-        .load_program(program)
+    let mut engine = QASMEngine::from_str(qasm)
         .expect("Failed to load program");
 
-    // The u(0,0,0) gate should be the identity operation
+    // The U(0,0,0) gate should be the identity operation
     // We expect this might fail since u gate might not be supported
     match engine.generate_commands() {
         Ok(_) => {
-            println!("U gate u(0,0,0) compiled successfully");
+            println!("U gate U(0,0,0) compiled successfully");
         }
         Err(e) => {
             // Check that the error mentions the u gate
             assert!(
-                e.to_string().contains("u") || e.to_string().contains("unitary"),
-                "Unexpected error: {}",
-                e
+                e.to_string().contains('u') || e.to_string().contains("unitary"),
+                "Unexpected error: {e}"
             );
         }
     }
@@ -88,27 +76,21 @@ fn test_combined_phase_and_u() {
         measure q[0] -> c[0];
     "#;
 
-    // Parse the QASM program
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-
     // Create and run the engine
-    let mut engine = QASMEngine::new().expect("Failed to create engine");
-    engine
-        .load_program(program)
+    let mut engine = QASMEngine::from_str(qasm)
         .expect("Failed to load program");
 
-    // Test the combination of p(0) and u(0,0,0)
+    // Test the combination of p(0) and U(0,0,0)
     match engine.generate_commands() {
         Ok(_) => {
-            println!("Combined p(0) and u(0,0,0) compiled successfully");
+            println!("Combined p(0) and U(0,0,0) compiled successfully");
         }
         Err(e) => {
-            println!("Expected error for unsupported gates: {}", e);
+            println!("Expected error for unsupported gates: {e}");
             // Make sure the error is about unsupported gates
             assert!(
                 e.to_string().contains("gate") || e.to_string().contains("supported"),
-                "Unexpected error type: {}",
-                e
+                "Unexpected error type: {e}"
             );
         }
     }
@@ -148,7 +130,7 @@ fn test_phase_expansion() {
     // Check if u1, u2, u3 are defined
     for gate in &["u1", "u2", "u3"] {
         if program.gate_definitions.contains_key(*gate) {
-            println!("{} gate is defined in qelib1.inc", gate);
+            println!("{gate} gate is defined in qelib1.inc");
         }
     }
 }

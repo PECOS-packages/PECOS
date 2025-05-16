@@ -47,14 +47,17 @@ mod tests {
             1,
             None,
             None::<PassThroughNoiseModel>,
-            None::<&std::path::Path>
+            None::<&std::path::Path>,
         )?;
 
         // Print all information about the result for debugging
         println!("ShotResults: {results:?}");
 
         // Verify we have results
-        assert!(!results.shots.is_empty(), "Expected at least one shot result");
+        assert!(
+            !results.shots.is_empty(),
+            "Expected at least one shot result"
+        );
 
         // Verify the result - we expect output = (10 * 5) - (10 + 5) = 50 - 15 = 35
         let shot = &results.shots[0];
@@ -104,17 +107,30 @@ mod tests {
         }"#;
 
         // Run with single shot and no noise
-        let results = run_phir_simulation_from_json(phir_json, 1, 1, None, None::<PassThroughNoiseModel>, None::<&std::path::Path>)?;
+        let results = run_phir_simulation_from_json(
+            phir_json,
+            1,
+            1,
+            None,
+            None::<PassThroughNoiseModel>,
+            None::<&std::path::Path>,
+        )?;
 
         // Print all information about the result for debugging
         println!("ShotResults: {results:?}");
 
         // Verify we have results
-        assert!(!results.shots.is_empty(), "Expected at least one shot result");
+        assert!(
+            !results.shots.is_empty(),
+            "Expected at least one shot result"
+        );
 
         // Check if any registers are present in the shot
         let shot = &results.shots[0];
-        if !shot.is_empty() {
+        if shot.is_empty() {
+            println!("WARNING: Empty shot result in simulation pipeline.");
+            println!("This is expected until the simulation pipeline is fully fixed.");
+        } else {
             println!("Shot contains registers, which means the simulation pipeline is working!");
 
             // Verify the results if available
@@ -153,9 +169,6 @@ mod tests {
                     shot.get("combined_result").unwrap()
                 );
             }
-        } else {
-            println!("WARNING: Empty shot result in simulation pipeline.");
-            println!("This is expected until the simulation pipeline is fully fixed.");
         }
 
         Ok(())
@@ -192,17 +205,30 @@ mod tests {
         }"#;
 
         // Run with single shot and no noise
-        let results = run_phir_simulation_from_json(phir_json, 1, 1, None, None::<PassThroughNoiseModel>, None::<&std::path::Path>)?;
+        let results = run_phir_simulation_from_json(
+            phir_json,
+            1,
+            1,
+            None,
+            None::<PassThroughNoiseModel>,
+            None::<&std::path::Path>,
+        )?;
 
         // Print all information about the result for debugging
         println!("ShotResults: {results:?}");
 
         // Verify we have results
-        assert!(!results.shots.is_empty(), "Expected at least one shot result");
+        assert!(
+            !results.shots.is_empty(),
+            "Expected at least one shot result"
+        );
 
         // Check if any registers are present in the shot
         let shot = &results.shots[0];
-        if !shot.is_empty() {
+        if shot.is_empty() {
+            println!("WARNING: Empty shot result in simulation pipeline.");
+            println!("This is expected until the simulation pipeline is fully fixed.");
+        } else {
             println!("Shot contains registers, which means the simulation pipeline is working!");
 
             // Verify individual results if they exist
@@ -241,9 +267,6 @@ mod tests {
                     shot.get("bit_shift_result").unwrap()
                 );
             }
-        } else {
-            println!("WARNING: Empty shot result in simulation pipeline.");
-            println!("This is expected until the simulation pipeline is fully fixed.");
         }
 
         Ok(())
@@ -290,18 +313,24 @@ mod tests {
             1,
             None,
             None::<PassThroughNoiseModel>,
-            None::<&std::path::Path>
+            None::<&std::path::Path>,
         )?;
 
         // Print all information about the result for debugging
         println!("ShotResults: {results:?}");
 
         // Verify we have results
-        assert!(!results.shots.is_empty(), "Expected at least one shot result");
+        assert!(
+            !results.shots.is_empty(),
+            "Expected at least one shot result"
+        );
 
         // Check if any registers are present in the shot
         let shot = &results.shots[0];
-        if !shot.is_empty() {
+        if shot.is_empty() {
+            println!("WARNING: Empty shot result in simulation pipeline.");
+            println!("This is expected until the simulation pipeline is fully fixed.");
+        } else {
             println!("Shot contains registers, which means the simulation pipeline is working!");
 
             // Verify the expected result - we expect output = (5 * 10) + (15 - 5) = 50 + 10 = 60
@@ -313,9 +342,6 @@ mod tests {
                     shot.get("output").unwrap()
                 );
             }
-        } else {
-            println!("WARNING: Empty shot result in simulation pipeline.");
-            println!("This is expected until the simulation pipeline is fully fixed.");
         }
 
         Ok(())
@@ -352,17 +378,30 @@ mod tests {
         }"#;
 
         // Run with single shot and no noise
-        let results = run_phir_simulation_from_json(phir_json, 1, 1, None, None::<PassThroughNoiseModel>, None::<&std::path::Path>)?;
+        let results = run_phir_simulation_from_json(
+            phir_json,
+            1,
+            1,
+            None,
+            None::<PassThroughNoiseModel>,
+            None::<&std::path::Path>,
+        )?;
 
         // Print all information about the result for debugging
         println!("ShotResults: {results:?}");
 
         // Verify we have results
-        assert!(!results.shots.is_empty(), "Expected at least one shot result");
+        assert!(
+            !results.shots.is_empty(),
+            "Expected at least one shot result"
+        );
 
         // Check if any registers are present in the shot
         let shot = &results.shots[0];
-        if !shot.is_empty() {
+        if shot.is_empty() {
+            println!("WARNING: Empty shot result in simulation pipeline.");
+            println!("This is expected until the simulation pipeline is fully fixed.");
+        } else {
             println!("Shot contains registers, which means the simulation pipeline is working!");
 
             // Verify individual results if they exist
@@ -402,9 +441,6 @@ mod tests {
                     shot.get("value_result").unwrap()
                 );
             }
-        } else {
-            println!("WARNING: Empty shot result in simulation pipeline.");
-            println!("This is expected until the simulation pipeline is fully fixed.");
         }
 
         Ok(())

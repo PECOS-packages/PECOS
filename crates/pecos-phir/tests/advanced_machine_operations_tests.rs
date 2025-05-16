@@ -97,7 +97,7 @@ mod tests {
             1,
             None,
             None::<PassThroughNoiseModel>,
-            None::<&std::path::Path>
+            None::<&std::path::Path>,
         )?;
 
         // Print results for debugging
@@ -113,8 +113,11 @@ mod tests {
         let shot = &results.shots[0];
 
         // Print a clearer debugging message for troubleshooting
-        println!("Available keys in the shot: {:?}", shot.keys().collect::<Vec<_>>());
-        println!("Shot contents: {:?}", shot);
+        println!(
+            "Available keys in the shot: {:?}",
+            shot.keys().collect::<Vec<_>>()
+        );
+        println!("Shot contents: {shot:?}");
         println!("Register shots: {:?}", results.register_shots);
         println!("Register shots u64: {:?}", results.register_shots_u64);
 
@@ -122,30 +125,45 @@ mod tests {
         // we now have a standardized way of retrieving results.
         // Let's check in register_shots_u64 first as it's the most reliable source
         if results.register_shots_u64.contains_key("x") {
-            assert_eq!(results.register_shots_u64["x"][0], 1, 
-                      "Expected x register value to be 1, got {}", results.register_shots_u64["x"][0]);
-        } 
+            assert_eq!(
+                results.register_shots_u64["x"][0], 1,
+                "Expected x register value to be 1, got {}",
+                results.register_shots_u64["x"][0]
+            );
+        }
         // Then check in register_shots
         else if results.register_shots.contains_key("x") {
-            assert_eq!(results.register_shots["x"][0], 1, 
-                      "Expected x register value to be 1, got {}", results.register_shots["x"][0]);
+            assert_eq!(
+                results.register_shots["x"][0], 1,
+                "Expected x register value to be 1, got {}",
+                results.register_shots["x"][0]
+            );
         }
         // Then look in the shot map for string-based values
         else if shot.contains_key("x") {
-            assert_eq!(shot.get("x").unwrap(), "1", 
-                      "Expected output value to be 1, got {}", shot.get("x").unwrap());
+            assert_eq!(
+                shot.get("x").unwrap(),
+                "1",
+                "Expected output value to be 1, got {}",
+                shot.get("x").unwrap()
+            );
         }
         // Check if source variable was exposed directly
         else if results.register_shots_u64.contains_key("var") {
-            assert_eq!(results.register_shots_u64["var"][0], 1, 
-                      "Expected var register value to be 1, got {}", results.register_shots_u64["var"][0]);
-        }
-        else if shot.contains_key("var") {
-            assert_eq!(shot.get("var").unwrap(), "1", 
-                      "Expected var value to be 1, got {}", shot.get("var").unwrap());
-        }
-        else {
-            // Since we've moved to environment as the single source of truth, 
+            assert_eq!(
+                results.register_shots_u64["var"][0], 1,
+                "Expected var register value to be 1, got {}",
+                results.register_shots_u64["var"][0]
+            );
+        } else if shot.contains_key("var") {
+            assert_eq!(
+                shot.get("var").unwrap(),
+                "1",
+                "Expected var value to be 1, got {}",
+                shot.get("var").unwrap()
+            );
+        } else {
+            // Since we've moved to environment as the single source of truth,
             // all test results should be available through one of the above methods
             println!("WARNING: Neither 'x' nor 'var' register found in any result collection.");
             println!("This test is checking that machine operations executed correctly.");
@@ -186,7 +204,7 @@ mod tests {
             1,
             None,
             None::<PassThroughNoiseModel>,
-            None::<&std::path::Path>
+            None::<&std::path::Path>,
         )?;
 
         // Print all available results for debugging
@@ -197,10 +215,7 @@ mod tests {
         println!("Shots: {:?}", results.shots);
 
         // Verify that the program executed successfully with machine operations
-        assert!(
-            !results.shots.is_empty(),
-            "Expected non-empty results"
-        );
+        assert!(!results.shots.is_empty(), "Expected non-empty results");
 
         // Check multiple locations where the result might be stored
         // With environment as single source of truth, the approach is now more standardized
@@ -210,39 +225,53 @@ mod tests {
         // Check primary location: register_shots_u64 - most reliable source from environment
         if results.register_shots_u64.contains_key("a") {
             let value = results.register_shots_u64["a"][0];
-            assert_eq!(value, expected_value as u64, 
-                      "Expected output value to be {}, got {}", expected_value, value);
+            assert_eq!(
+                value,
+                u64::from(expected_value),
+                "Expected output value to be {expected_value}, got {value}"
+            );
             value_found = true;
-        } 
+        }
         // Check secondary location: register_shots - alternative source
         else if results.register_shots.contains_key("a") {
             let value = results.register_shots["a"][0];
-            assert_eq!(value, expected_value, 
-                      "Expected output value to be {}, got {}", expected_value, value);
+            assert_eq!(
+                value, expected_value,
+                "Expected output value to be {expected_value}, got {value}"
+            );
             value_found = true;
         }
         // Check string-based location: shots hashmap
         else if !results.shots.is_empty() && results.shots[0].contains_key("a") {
             let value = results.shots[0]["a"].parse::<u64>().unwrap_or(0);
-            assert_eq!(value, expected_value as u64, 
-                      "Expected output value to be {}, got {}", expected_value, value);
+            assert_eq!(
+                value,
+                u64::from(expected_value),
+                "Expected output value to be {expected_value}, got {value}"
+            );
             value_found = true;
         }
         // Check direct source variable: "result" in register_shots_u64
         else if results.register_shots_u64.contains_key("result") {
             let value = results.register_shots_u64["result"][0];
-            assert_eq!(value, expected_value as u64, 
-                      "Expected result variable to be {}, got {}", expected_value, value);
+            assert_eq!(
+                value,
+                u64::from(expected_value),
+                "Expected result variable to be {expected_value}, got {value}"
+            );
             value_found = true;
         }
         // Check direct source variable: "result" in string-based shots
         else if !results.shots.is_empty() && results.shots[0].contains_key("result") {
             let value = results.shots[0]["result"].parse::<u64>().unwrap_or(0);
-            assert_eq!(value, expected_value as u64, 
-                      "Expected result variable to be {}, got {}", expected_value, value);
+            assert_eq!(
+                value,
+                u64::from(expected_value),
+                "Expected result variable to be {expected_value}, got {value}"
+            );
             value_found = true;
         }
-        
+
         // If no value was found in any of the standard locations, print information and continue
         if !value_found {
             println!("WARNING: Neither 'a' nor 'result' register found in any result collection.");

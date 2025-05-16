@@ -20,21 +20,16 @@ fn test_all_comparison_operators() {
         c = b & a | d;
 
         d[0] = a[0] ^ 1;
-        if (c >= 2) h q[0];
-        if (c <= 2) h q[0];
-        if (c < 2) h q[0];
-        if (c > 2) h q[0];
-        if (c != 2) h q[0];
-        if (d == 1) h q[0]; // Changed rx to h for now
+        if (c >= 2) H q[0];
+        if (c <= 2) H q[0];
+        if (c < 2) H q[0];
+        if (c > 2) H q[0];
+        if (c != 2) H q[0];
+        if (d == 1) H q[0]; // Changed rx to h for now
     "#;
 
-    // Parse the QASM program
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-
     // Create and load the engine
-    let mut engine = QASMEngine::new().expect("Failed to create engine");
-    engine
-        .load_program(program)
+    let mut engine = QASMEngine::from_str(qasm)
         .expect("Failed to load program");
 
     // Generate commands - this verifies that all operations are supported
@@ -57,17 +52,14 @@ fn test_bit_indexing_in_conditionals() {
 
         c[0] = 1;
         c[1] = 0;
-        if (c[0] == 1) h q[0];  // Should execute
-        if (c[1] != 0) x q[1];  // Should not execute
-        
+        if (c[0] == 1) H q[0];  // Should execute
+        if (c[1] != 0) X q[1];  // Should not execute
+
         d[0] = 1;
-        if (d[0] == 1) h q[0];  // Should execute
+        if (d[0] == 1) H q[0];  // Should execute
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    let mut engine = QASMEngine::new().expect("Failed to create engine");
-    engine
-        .load_program(program)
+    let mut engine = QASMEngine::from_str(qasm)
         .expect("Failed to load program");
     let _messages = engine
         .generate_commands()
@@ -90,18 +82,15 @@ fn test_complex_conditional_expressions() {
         a = 1;
         b = 2;
         c = a + b;  // c = 3
-        
-        if (c >= 3) h q[0];   // Should execute
-        if (c > 3) x q[0];    // Should not execute
-        if (c <= 3) h q[0];  // Should execute
-        if (c < 3) x q[0];   // Should not execute
-        if (c != 0) h q[0];  // Should execute
+
+        if (c >= 3) H q[0];   // Should execute
+        if (c > 3) X q[0];    // Should not execute
+        if (c <= 3) H q[0];  // Should execute
+        if (c < 3) X q[0];   // Should not execute
+        if (c != 0) H q[0];  // Should execute
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    let mut engine = QASMEngine::new().expect("Failed to create engine");
-    engine
-        .load_program(program)
+    let mut engine = QASMEngine::from_str(qasm)
         .expect("Failed to load program");
     let _messages = engine
         .generate_commands()
@@ -114,12 +103,12 @@ fn test_complex_conditional_expressions() {
 fn test_comparison_operators_syntax() {
     // Test that all comparison operators are parsed correctly
     let test_cases = vec![
-        ("if (c == 2) h q[0];", "equals"),
-        ("if (c != 2) h q[0];", "not equals"),
-        ("if (c < 2) h q[0];", "less than"),
-        ("if (c > 2) h q[0];", "greater than"),
-        ("if (c <= 2) h q[0];", "less than or equal"),
-        ("if (c >= 2) h q[0];", "greater than or equal"),
+        ("if (c == 2) H q[0];", "equals"),
+        ("if (c != 2) H q[0];", "not equals"),
+        ("if (c < 2) H q[0];", "less than"),
+        ("if (c > 2) H q[0];", "greater than"),
+        ("if (c <= 2) H q[0];", "less than or equal"),
+        ("if (c >= 2) H q[0];", "greater than or equal"),
     ];
 
     for (qasm_snippet, desc) in test_cases {
@@ -129,17 +118,15 @@ fn test_comparison_operators_syntax() {
             include "qelib1.inc";
             qreg q[1];
             creg c[4];
-            {}
-        "#,
-            qasm_snippet
+            {qasm_snippet}
+        "#
         );
 
-        let program =
-            QASMParser::parse_str(&qasm).expect(&format!("Failed to parse {} operator", desc));
+        let program = QASMParser::parse_str(&qasm)
+            .unwrap_or_else(|_| panic!("Failed to parse {desc} operator"));
         assert!(
             !program.operations.is_empty(),
-            "{} operator should create an operation",
-            desc
+            "{desc} operator should create an operation"
         );
     }
 
@@ -167,15 +154,15 @@ fn test_mixed_operations_with_conditionals() {
         c = b & a | d;  // c = (2 & 1) | 1 = 1 | 1 = 1
 
         // Conditional with bit indexing
-        if (d[0] == 1) h q[0];  // Should execute
+        if (d[0] == 1) H q[0];  // Should execute
 
         // Bitwise operation followed by conditional
         d[0] = a[0] ^ 1;  // d[0] = 1 ^ 1 = 0
-        if (d[0] == 0) x q[1];  // Should execute
+        if (d[0] == 0) X q[1];  // Should execute
 
         // Complex expression in conditional
         // Complex expressions in conditionals not yet supported
-        // if ((a[0] | b[0]) != 0) h q[0];  // Would execute
+        // if ((a[0] | b[0]) != 0) H q[0];  // Would execute
     "#;
 
     let _program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");

@@ -1,4 +1,4 @@
-use crate::v0_1::ast::{Operation, Expression, QubitArg};
+use crate::v0_1::ast::{Expression, Operation, QubitArg};
 use crate::v0_1::environment::Environment;
 use crate::v0_1::expression::ExpressionEvaluator;
 use crate::v0_1::foreign_objects::ForeignObject;
@@ -60,7 +60,7 @@ impl BlockExecutor {
     pub fn get_environment_mut(&mut self) -> &mut Environment {
         &mut self.processor.environment
     }
-    
+
     /// Gets the operation processor for direct access
     pub fn get_processor(&self) -> &OperationProcessor {
         &self.processor
@@ -77,8 +77,14 @@ impl BlockExecutor {
     }
 
     /// Add a classical variable to the processor
-    pub fn add_classical_variable(&mut self, variable: &str, data_type: &str, size: usize) -> Result<(), PecosError> {
-        self.processor.add_classical_variable(variable, data_type, size)
+    pub fn add_classical_variable(
+        &mut self,
+        variable: &str,
+        data_type: &str,
+        size: usize,
+    ) -> Result<(), PecosError> {
+        self.processor
+            .add_classical_variable(variable, data_type, size)
     }
 
     /// Sets the byte message builder
@@ -102,7 +108,8 @@ impl BlockExecutor {
         variable: &str,
         size: usize,
     ) -> Result<(), PecosError> {
-        self.processor.handle_variable_definition(data, data_type, variable, size)
+        self.processor
+            .handle_variable_definition(data, data_type, variable, size)
     }
 
     /// Processes a single operation
@@ -115,32 +122,39 @@ impl BlockExecutor {
                 size,
             } => {
                 debug!("Processing variable definition: {} {}", data_type, variable);
-                self.processor.handle_variable_definition(data, data_type, variable, *size)?;
+                self.processor
+                    .handle_variable_definition(data, data_type, variable, *size)?;
             }
             Operation::QuantumOp {
-                qop,
-                angles,
-                args,
-                ..
+                qop, angles, args, ..
             } => {
                 debug!("Processing quantum operation: {}", qop);
-                let (gate_type, qubit_args, angle_args) = self.processor.process_quantum_op(qop, angles.as_ref(), args)?;
+                let (gate_type, qubit_args, angle_args) =
+                    self.processor
+                        .process_quantum_op(qop, angles.as_ref(), args)?;
 
                 // Add to byte message builder if we have one
                 if let Some(builder) = &mut self.builder {
-                    self.processor.add_quantum_operation_to_builder(builder, &gate_type, &qubit_args, &angle_args)?;
+                    self.processor.add_quantum_operation_to_builder(
+                        builder,
+                        &gate_type,
+                        &qubit_args,
+                        &angle_args,
+                    )?;
                 }
             }
             Operation::ClassicalOp {
-                cop,
-                args,
-                returns,
-                ..
+                cop, args, returns, ..
             } => {
                 debug!("Processing classical operation: {}", cop);
-                let result = self.processor.handle_classical_op(cop, args, returns, &[op.clone()], 0)?;
+                let result =
+                    self.processor
+                        .handle_classical_op(cop, args, returns, &[op.clone()], 0)?;
                 if !result {
-                    debug!("Classical operation handled as expression or skipped: {}", cop);
+                    debug!(
+                        "Classical operation handled as expression or skipped: {}",
+                        cop
+                    );
                 }
             }
             Operation::MachineOp {
@@ -151,24 +165,27 @@ impl BlockExecutor {
                 ..
             } => {
                 debug!("Processing machine operation: {}", mop);
-                let mop_result = self.processor.process_machine_op(mop, args.as_ref(), duration.as_ref(), metadata.as_ref())?;
+                let mop_result = self.processor.process_machine_op(
+                    mop,
+                    args.as_ref(),
+                    duration.as_ref(),
+                    metadata.as_ref(),
+                )?;
 
                 // Add to byte message builder if we have one
                 if let Some(builder) = &mut self.builder {
-                    self.processor.add_machine_operation_to_builder(builder, &mop_result)?;
+                    self.processor
+                        .add_machine_operation_to_builder(builder, &mop_result)?;
                 }
             }
-            Operation::MetaInstruction {
-                meta,
-                args,
-                ..
-            } => {
+            Operation::MetaInstruction { meta, args, .. } => {
                 debug!("Processing meta instruction: {}", meta);
                 let meta_result = self.processor.process_meta_instruction(meta, args)?;
 
                 // Add to byte message builder if we have one
                 if let Some(builder) = &mut self.builder {
-                    self.processor.add_meta_instruction_to_builder(builder, &meta_result)?;
+                    self.processor
+                        .add_meta_instruction_to_builder(builder, &meta_result)?;
                 }
             }
             Operation::Block { .. } => {
@@ -186,12 +203,15 @@ impl BlockExecutor {
 
     /// Executes a block of operations in sequence (previously execute_block)
     pub fn execute_sequence(&mut self, operations: &[Operation]) -> Result<(), PecosError> {
-        debug!("Executing sequence block with {} operations", operations.len());
-        
+        debug!(
+            "Executing sequence block with {} operations",
+            operations.len()
+        );
+
         for op in operations {
             self.process_operation(op)?;
         }
-        
+
         Ok(())
     }
 
@@ -224,7 +244,10 @@ impl BlockExecutor {
 
         if condition_result {
             // Execute the true branch
-            debug!("Executing true branch with {} operations", true_branch.len());
+            debug!(
+                "Executing true branch with {} operations",
+                true_branch.len()
+            );
             self.execute_sequence(true_branch)?;
         } else if let Some(branch) = false_branch {
             // Execute the false branch
@@ -239,17 +262,21 @@ impl BlockExecutor {
 
     /// Executes a quantum parallel block
     pub fn execute_qparallel(&mut self, operations: &[Operation]) -> Result<(), PecosError> {
-        debug!("Executing quantum parallel block with {} operations", operations.len());
+        debug!(
+            "Executing quantum parallel block with {} operations",
+            operations.len()
+        );
 
         // Verify all operations are quantum operations or meta instructions
         for op in operations {
             match op {
                 Operation::QuantumOp { .. } | Operation::MetaInstruction { .. } => {
                     // These are allowed in qparallel
-                },
+                }
                 _ => {
                     return Err(PecosError::Input(format!(
-                        "Invalid operation in qparallel block: {:?}", op
+                        "Invalid operation in qparallel block: {:?}",
+                        op
                     )));
                 }
             }
@@ -257,7 +284,7 @@ impl BlockExecutor {
 
         // Verify no qubit is used more than once
         let mut used_qubits = HashSet::new();
-        
+
         for op in operations {
             if let Operation::QuantumOp { args, .. } = op {
                 for qubit_arg in args {
@@ -266,16 +293,18 @@ impl BlockExecutor {
                             let qubit_id = format!("{}_{}", var, idx);
                             if !used_qubits.insert(qubit_id) {
                                 return Err(PecosError::Input(format!(
-                                    "Qubit {}[{}] used more than once in qparallel block", var, idx
+                                    "Qubit {}[{}] used more than once in qparallel block",
+                                    var, idx
                                 )));
                             }
-                        },
+                        }
                         QubitArg::MultipleQubits(qubits) => {
                             for (var, idx) in qubits {
                                 let qubit_id = format!("{}_{}", var, idx);
                                 if !used_qubits.insert(qubit_id) {
                                     return Err(PecosError::Input(format!(
-                                        "Qubit {}[{}] used more than once in qparallel block", var, idx
+                                        "Qubit {}[{}] used more than once in qparallel block",
+                                        var, idx
                                     )));
                                 }
                             }
@@ -334,9 +363,7 @@ impl BlockExecutor {
                 }
             }
         } else {
-            return Err(PecosError::Input(
-                "Expected block operation".to_string(),
-            ));
+            return Err(PecosError::Input("Expected block operation".to_string()));
         }
 
         Ok(())
@@ -362,14 +389,19 @@ impl BlockExecutor {
                 if let Some(condition) = condition {
                     self.execute_conditional(condition, true_branch.unwrap_or(&[]), false_branch)?;
                 } else {
-                    return Err(PecosError::Input("Conditional block missing condition".to_string()));
+                    return Err(PecosError::Input(
+                        "Conditional block missing condition".to_string(),
+                    ));
                 }
             }
             _ => {
-                return Err(PecosError::Input(format!("Unknown block type: {}", block_type)));
+                return Err(PecosError::Input(format!(
+                    "Unknown block type: {}",
+                    block_type
+                )));
             }
         }
-        
+
         Ok(())
     }
 
@@ -391,14 +423,17 @@ impl BlockExecutor {
     pub fn process_export_mappings(&self) -> HashMap<String, u32> {
         self.processor.process_export_mappings()
     }
-    
+
     /// Get mapped results for output (alias for process_export_mappings)
     pub fn get_mapped_results(&self) -> HashMap<String, u32> {
         self.processor.process_export_mappings()
     }
 
     /// Execute a complete PHIR program
-    pub fn execute_program(&mut self, program: &[Operation]) -> Result<HashMap<String, u32>, PecosError> {
+    pub fn execute_program(
+        &mut self,
+        program: &[Operation],
+    ) -> Result<HashMap<String, u32>, PecosError> {
         debug!("Executing PHIR program with {} operations", program.len());
 
         // Reset state before execution
@@ -431,11 +466,11 @@ mod tests {
     #[test]
     fn test_block_executor_basic() {
         let mut executor = BlockExecutor::new();
-        
+
         // Add variables for testing
         executor.add_quantum_variable("q", 2).unwrap();
         executor.add_classical_variable("c", "i32", 32).unwrap();
-        
+
         // Execute a simple assignment operation
         let op = Operation::ClassicalOp {
             cop: "=".to_string(),
@@ -444,10 +479,10 @@ mod tests {
             function: None,
             metadata: None,
         };
-        
+
         let result = executor.process_operation(&op);
         assert!(result.is_ok());
-        
+
         // Verify the value was set
         let env = executor.get_environment();
         assert_eq!(env.get_raw("c"), Some(42));
@@ -456,60 +491,53 @@ mod tests {
     #[test]
     fn test_execute_conditional() {
         let mut executor = BlockExecutor::new();
-        
+
         // Add variables for testing
         executor.add_classical_variable("x", "i32", 32).unwrap();
         executor.add_classical_variable("y", "i32", 32).unwrap();
-        
+
         // Set initial values
         executor.get_environment_mut().set_raw("x", 10).unwrap();
-        
+
         // Create a condition: x > 5
         let condition = Expression::Operation {
             cop: ">".to_string(),
-            args: vec![
-                ArgItem::Simple("x".to_string()),
-                ArgItem::Integer(5),
-            ],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(5)],
         };
-        
+
         // Create true branch: y = 20
-        let true_branch = vec![
-            Operation::ClassicalOp {
-                cop: "=".to_string(),
-                args: vec![ArgItem::Integer(20)],
-                returns: vec![ArgItem::Simple("y".to_string())],
-                function: None,
-                metadata: None,
-            },
-        ];
-        
+        let true_branch = vec![Operation::ClassicalOp {
+            cop: "=".to_string(),
+            args: vec![ArgItem::Integer(20)],
+            returns: vec![ArgItem::Simple("y".to_string())],
+            function: None,
+            metadata: None,
+        }];
+
         // Create false branch: y = 30
-        let false_branch = vec![
-            Operation::ClassicalOp {
-                cop: "=".to_string(),
-                args: vec![ArgItem::Integer(30)],
-                returns: vec![ArgItem::Simple("y".to_string())],
-                function: None,
-                metadata: None,
-            },
-        ];
-        
+        let false_branch = vec![Operation::ClassicalOp {
+            cop: "=".to_string(),
+            args: vec![ArgItem::Integer(30)],
+            returns: vec![ArgItem::Simple("y".to_string())],
+            function: None,
+            metadata: None,
+        }];
+
         // Execute conditional with the branches
         let result = executor.execute_conditional(&condition, &true_branch, Some(&false_branch));
         assert!(result.is_ok());
-        
+
         // Since x = 10, which is > 5, the true branch should have executed
         let env = executor.get_environment();
         assert_eq!(env.get_raw("y").map(|v| v as u64), Some(20));
-        
+
         // Change x to make the condition false
         executor.get_environment_mut().set_raw("x", 2).unwrap();
-        
+
         // Execute again
         let result = executor.execute_conditional(&condition, &true_branch, Some(&false_branch));
         assert!(result.is_ok());
-        
+
         // Now the false branch should have executed
         let env = executor.get_environment();
         assert_eq!(env.get_raw("y").map(|v| v as u64), Some(30));
@@ -518,11 +546,11 @@ mod tests {
     #[test]
     fn test_execute_sequence() {
         let mut executor = BlockExecutor::new();
-        
+
         // Add variables for testing
         executor.add_classical_variable("a", "i32", 32).unwrap();
         executor.add_classical_variable("b", "i32", 32).unwrap();
-        
+
         // Create a sequence of operations
         let operations = vec![
             Operation::ClassicalOp {
@@ -540,11 +568,11 @@ mod tests {
                 metadata: None,
             },
         ];
-        
+
         // Execute the block
         let result = executor.execute_sequence(&operations);
         assert!(result.is_ok());
-        
+
         // Verify both operations executed correctly
         let env = executor.get_environment();
         assert_eq!(env.get_raw("a").map(|v| v as u64), Some(10));
@@ -554,10 +582,10 @@ mod tests {
     #[test]
     fn test_execute_qparallel() {
         let mut executor = BlockExecutor::new();
-        
+
         // Add variables for testing
         executor.add_quantum_variable("q", 2).unwrap();
-        
+
         // Create a parallel block of quantum operations
         let operations = vec![
             Operation::QuantumOp {
@@ -575,11 +603,11 @@ mod tests {
                 metadata: None,
             },
         ];
-        
+
         // Execute the parallel block
         let result = executor.execute_qparallel(&operations);
         assert!(result.is_ok());
-        
+
         // Test that invalid parallel blocks are rejected
         let invalid_operations = vec![
             // Same qubit used twice
@@ -598,11 +626,11 @@ mod tests {
                 metadata: None,
             },
         ];
-        
+
         // This should fail because the same qubit is used twice
         let result = executor.execute_qparallel(&invalid_operations);
         assert!(result.is_err());
-        
+
         // Test that non-quantum operations are rejected
         let invalid_operations = vec![
             Operation::QuantumOp {
@@ -620,7 +648,7 @@ mod tests {
                 metadata: None,
             },
         ];
-        
+
         // This should fail because a classical op is included in a qparallel block
         let result = executor.execute_qparallel(&invalid_operations);
         assert!(result.is_err());
@@ -629,100 +657,95 @@ mod tests {
     #[test]
     fn test_process_block() {
         let mut executor = BlockExecutor::new();
-        
+
         // Add variables for testing
         executor.add_classical_variable("x", "i32", 32).unwrap();
         executor.add_classical_variable("y", "i32", 32).unwrap();
-        
+
         // Set initial value
         executor.get_environment_mut().set_raw("x", 10).unwrap();
-        
+
         // Test sequence block
-        let operations = vec![
-            Operation::ClassicalOp {
-                cop: "=".to_string(),
-                args: vec![ArgItem::Integer(20)],
-                returns: vec![ArgItem::Simple("y".to_string())],
-                function: None,
-                metadata: None,
-            },
-        ];
-        
+        let operations = vec![Operation::ClassicalOp {
+            cop: "=".to_string(),
+            args: vec![ArgItem::Integer(20)],
+            returns: vec![ArgItem::Simple("y".to_string())],
+            function: None,
+            metadata: None,
+        }];
+
         let result = executor.process_block("sequence", &operations, None, None, None);
         assert!(result.is_ok());
-        assert_eq!(executor.get_environment().get_raw("y").map(|v| v as u64), Some(20));
-        
+        assert_eq!(
+            executor.get_environment().get_raw("y").map(|v| v as u64),
+            Some(20)
+        );
+
         // Test conditional block
         let condition = Expression::Operation {
             cop: "<".to_string(),
-            args: vec![
-                ArgItem::Simple("x".to_string()),
-                ArgItem::Integer(15),
-            ],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(15)],
         };
-        
-        let true_branch = vec![
-            Operation::ClassicalOp {
-                cop: "=".to_string(),
-                args: vec![ArgItem::Integer(30)],
-                returns: vec![ArgItem::Simple("y".to_string())],
-                function: None,
-                metadata: None,
-            },
-        ];
-        
-        let false_branch = vec![
-            Operation::ClassicalOp {
-                cop: "=".to_string(),
-                args: vec![ArgItem::Integer(40)],
-                returns: vec![ArgItem::Simple("y".to_string())],
-                function: None,
-                metadata: None,
-            },
-        ];
-        
+
+        let true_branch = vec![Operation::ClassicalOp {
+            cop: "=".to_string(),
+            args: vec![ArgItem::Integer(30)],
+            returns: vec![ArgItem::Simple("y".to_string())],
+            function: None,
+            metadata: None,
+        }];
+
+        let false_branch = vec![Operation::ClassicalOp {
+            cop: "=".to_string(),
+            args: vec![ArgItem::Integer(40)],
+            returns: vec![ArgItem::Simple("y".to_string())],
+            function: None,
+            metadata: None,
+        }];
+
         let result = executor.process_block(
-            "if", 
-            &[], 
-            Some(&condition), 
-            Some(&true_branch), 
-            Some(&false_branch)
+            "if",
+            &[],
+            Some(&condition),
+            Some(&true_branch),
+            Some(&false_branch),
         );
         assert!(result.is_ok());
-        
+
         // x = 10, which is < 15, so true branch should have executed
-        assert_eq!(executor.get_environment().get_raw("y").map(|v| v as u64), Some(30));
+        assert_eq!(
+            executor.get_environment().get_raw("y").map(|v| v as u64),
+            Some(30)
+        );
     }
 
     #[test]
     fn test_handle_measurements() {
         let mut executor = BlockExecutor::new();
-        
+
         // Add variables for testing
         executor.add_quantum_variable("q", 2).unwrap();
         executor.add_classical_variable("m", "i32", 32).unwrap();
-        
+
         // Create measurement operations for testing
-        let operations = vec![
-            Operation::QuantumOp {
-                qop: "Measure".to_string(),
-                args: vec![QubitArg::SingleQubit(("q".to_string(), 0))],
-                returns: vec![("m".to_string(), 0)],
-                angles: None,
-                metadata: None,
-            },
-        ];
-        
+        let operations = vec![Operation::QuantumOp {
+            qop: "Measure".to_string(),
+            args: vec![QubitArg::SingleQubit(("q".to_string(), 0))],
+            returns: vec![("m".to_string(), 0)],
+            angles: None,
+            metadata: None,
+        }];
+
         // Define measurement results
         let measurements = vec![(0, 1)]; // Result ID 0, value 1
-        
+
         // Handle measurements
         let result = executor.handle_measurements(&measurements, &operations);
         assert!(result.is_ok());
-        
+
         // Verify the measurement was stored
         let env = executor.get_environment();
-        
+
         // The bit should be set in the m variable
         assert_eq!(env.get_bit("m", 0).unwrap(), true);
     }
@@ -730,29 +753,32 @@ mod tests {
     #[test]
     fn test_get_mapped_results() {
         let mut executor = BlockExecutor::new();
-        
+
         // Add variables for testing
         executor.add_classical_variable("a", "i32", 32).unwrap();
         executor.add_classical_variable("b", "i32", 32).unwrap();
-        
+
         // Set values
         executor.get_environment_mut().set_raw("a", 10).unwrap();
         executor.get_environment_mut().set_raw("b", 20).unwrap();
-        
+
         // Add a mapping
-        executor.get_environment_mut().add_mapping("a", "result_a").unwrap();
-        
+        executor
+            .get_environment_mut()
+            .add_mapping("a", "result_a")
+            .unwrap();
+
         // Get mapped results
         let results = executor.get_mapped_results();
-        
+
         // Verify the mapped value is present
         assert_eq!(results.get("result_a"), Some(&10));
     }
-    
+
     #[test]
     fn test_execute_program() {
         let mut executor = BlockExecutor::new();
-        
+
         // Create a simple program
         let program = vec![
             Operation::VariableDefinition {
@@ -769,10 +795,10 @@ mod tests {
                 metadata: None,
             },
         ];
-        
+
         // Execute the program
         let results = executor.execute_program(&program).unwrap();
-        
+
         // Verify the results
         assert_eq!(results.get("x"), Some(&42));
     }

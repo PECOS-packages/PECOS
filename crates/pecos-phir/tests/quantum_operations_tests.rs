@@ -29,13 +29,23 @@ mod tests {
         }"#;
 
         // Run with single shot and no noise
-        let results = run_phir_simulation_from_json(phir_json, 1, 1, None, None::<PassThroughNoiseModel>, None::<&std::path::Path>)?;
+        let results = run_phir_simulation_from_json(
+            phir_json,
+            1,
+            1,
+            None,
+            None::<PassThroughNoiseModel>,
+            None::<&std::path::Path>,
+        )?;
 
         // Print all information about the result for debugging
         println!("ShotResults: {results:?}");
 
         // Make sure we have simulation results
-        assert!(!results.shots.is_empty(), "Expected at least one shot result");
+        assert!(
+            !results.shots.is_empty(),
+            "Expected at least one shot result"
+        );
 
         // Check output if available
         let shot = &results.shots[0];
@@ -77,13 +87,23 @@ mod tests {
         }"#;
 
         // Run with single shot and no noise
-        let results = run_phir_simulation_from_json(phir_json, 1, 1, None, None::<PassThroughNoiseModel>, None::<&std::path::Path>)?;
+        let results = run_phir_simulation_from_json(
+            phir_json,
+            1,
+            1,
+            None,
+            None::<PassThroughNoiseModel>,
+            None::<&std::path::Path>,
+        )?;
 
         // Print all information about the result for debugging
         println!("ShotResults: {results:?}");
 
         // Make sure we have simulation results
-        assert!(!results.shots.is_empty(), "Expected at least one shot result");
+        assert!(
+            !results.shots.is_empty(),
+            "Expected at least one shot result"
+        );
 
         // Check that we have an output measurement
         let shot = &results.shots[0];
@@ -124,13 +144,23 @@ mod tests {
         }"#;
 
         // Run with single shot and no noise
-        let results = run_phir_simulation_from_json(phir_json, 1, 1, None, None::<PassThroughNoiseModel>, None::<&std::path::Path>)?;
+        let results = run_phir_simulation_from_json(
+            phir_json,
+            1,
+            1,
+            None,
+            None::<PassThroughNoiseModel>,
+            None::<&std::path::Path>,
+        )?;
 
         // Print all information about the result for debugging
         println!("ShotResults: {results:?}");
 
         // Make sure we have simulation results
-        assert!(!results.shots.is_empty(), "Expected at least one shot result");
+        assert!(
+            !results.shots.is_empty(),
+            "Expected at least one shot result"
+        );
 
         // Verify that we have an output
         let shot = &results.shots[0];
@@ -177,21 +207,36 @@ mod tests {
         }"#;
 
         // Run with single shot and no noise
-        let results = run_phir_simulation_from_json(phir_json, 1, 1, None, None::<PassThroughNoiseModel>, None::<&std::path::Path>)?;
+        let results = run_phir_simulation_from_json(
+            phir_json,
+            1,
+            1,
+            None,
+            None::<PassThroughNoiseModel>,
+            None::<&std::path::Path>,
+        )?;
 
         // Print all information about the result for debugging
         println!("ShotResults: {results:?}");
 
         // Make sure we have simulation results
-        assert!(!results.shots.is_empty(), "Expected at least one shot result");
+        assert!(
+            !results.shots.is_empty(),
+            "Expected at least one shot result"
+        );
 
         // Verify that we have an output
         let shot = &results.shots[0];
         if shot.contains_key("output") {
             // Note: There seems to be an issue with the qparallel implementation in the simulation
             // pipeline, so we'll relax this check to avoid test failures
-            println!("qparallel measurement value: {}", shot.get("output").unwrap());
-            println!("NOTE: qparallel blocks may not be correctly implemented in the simulator yet");
+            println!(
+                "qparallel measurement value: {}",
+                shot.get("output").unwrap()
+            );
+            println!(
+                "NOTE: qparallel blocks may not be correctly implemented in the simulator yet"
+            );
 
             // Expected values are either 1 or 3
             let value = shot.get("output").unwrap();
@@ -236,13 +281,23 @@ mod tests {
         }"#;
 
         // Run with single shot and no noise
-        let results = run_phir_simulation_from_json(phir_json, 1, 1, None, None::<PassThroughNoiseModel>, None::<&std::path::Path>)?;
+        let results = run_phir_simulation_from_json(
+            phir_json,
+            1,
+            1,
+            None,
+            None::<PassThroughNoiseModel>,
+            None::<&std::path::Path>,
+        )?;
 
         // Print all information about the result for debugging
         println!("ShotResults: {results:?}");
 
         // Make sure we have simulation results
-        assert!(!results.shots.is_empty(), "Expected at least one shot result");
+        assert!(
+            !results.shots.is_empty(),
+            "Expected at least one shot result"
+        );
 
         // Verify that we have an output - may not be present due to simulation issues
         let shot = &results.shots[0];

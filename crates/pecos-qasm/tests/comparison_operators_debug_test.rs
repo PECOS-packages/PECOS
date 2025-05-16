@@ -8,7 +8,7 @@ fn test_equals_operator() {
         qreg q[1];
         creg c[4];
         c = 2;
-        if (c == 2) h q[0];
+        if (c == 2) H q[0];
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse == operator");
@@ -24,7 +24,7 @@ fn test_not_equals_operator() {
         qreg q[1];
         creg c[4];
         c = 2;
-        if (c != 2) h q[0];
+        if (c != 2) H q[0];
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse != operator");
@@ -40,7 +40,7 @@ fn test_less_than_operator() {
         qreg q[1];
         creg c[4];
         c = 2;
-        if (c < 3) h q[0];
+        if (c < 3) H q[0];
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse < operator");
@@ -56,7 +56,7 @@ fn test_greater_than_operator() {
         qreg q[1];
         creg c[4];
         c = 2;
-        if (c > 1) h q[0];
+        if (c > 1) H q[0];
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse > operator");
@@ -72,12 +72,12 @@ fn test_less_than_equals_operator() {
         qreg q[1];
         creg c[4];
         c = 2;
-        if (c <= 2) h q[0];
+        if (c <= 2) H q[0];
     "#;
 
     let program = QASMParser::parse_str(qasm);
     if let Err(e) = program {
-        println!("Failed to parse <= operator: {:?}", e);
+        println!("Failed to parse <= operator: {e:?}");
         // For now, this test might fail due to parsing issues
     } else {
         println!("Less than equals operator test passed");
@@ -92,12 +92,12 @@ fn test_greater_than_equals_operator() {
         qreg q[1];
         creg c[4];
         c = 2;
-        if (c >= 2) h q[0];
+        if (c >= 2) H q[0];
     "#;
 
     let program = QASMParser::parse_str(qasm);
     if let Err(e) = program {
-        println!("Failed to parse >= operator: {:?}", e);
+        println!("Failed to parse >= operator: {e:?}");
         // For now, this test might fail due to parsing issues
     } else {
         println!("Greater than equals operator test passed");
@@ -112,7 +112,7 @@ fn test_bit_indexing_in_if() {
         qreg q[1];
         creg c[4];
         c[0] = 1;
-        if (c[0] == 1) h q[0];
+        if (c[0] == 1) H q[0];
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse bit indexing in if");
@@ -130,13 +130,13 @@ fn test_expression_in_if() {
         creg b[2];
         a = 1;
         b = 1;
-        if ((a[0] | b[0]) != 0) h q[0];
+        if ((a[0] | b[0]) != 0) H q[0];
     "#;
 
     // This test expects to fail with current implementation
     let program = QASMParser::parse_str(qasm);
     if let Err(e) = program {
-        println!("Expected failure for complex expression in if: {:?}", e);
+        println!("Expected failure for complex expression in if: {e:?}");
     } else {
         println!("Complex expression in if test passed!");
     }

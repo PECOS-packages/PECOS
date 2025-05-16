@@ -39,7 +39,7 @@ mod tests {
             1,
             None,
             None::<PassThroughNoiseModel>,
-            None::<&std::path::Path>
+            None::<&std::path::Path>,
         );
 
         // Debug print the actual simulation result
@@ -82,10 +82,7 @@ mod tests {
         };
 
         // Verify that we computed the result correctly (7 + 3 = 10)
-        assert!(
-            !results.shots.is_empty(),
-            "Expected non-empty results"
-        );
+        assert!(!results.shots.is_empty(), "Expected non-empty results");
 
         let shot = &results.shots[0];
         assert_eq!(

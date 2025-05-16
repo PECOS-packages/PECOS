@@ -1,5 +1,5 @@
-use pecos_qasm::parser::{Operation, QASMParser};
 use pecos_qasm::Expression;
+use pecos_qasm::{Operation, QASMParser};
 use std::f64::consts::PI;
 
 #[test]
@@ -12,12 +12,12 @@ fn test_trig_functions() {
         // Test trigonometric functions
         rx(sin(pi/2)) q[0];  // sin(pi/2) = 1
         ry(cos(0)) q[0];     // cos(0) = 1
-        rz(tan(pi/4)) q[0];  // tan(pi/4) = 1
+        RZ(tan(pi/4)) q[0];  // tan(pi/4) = 1
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
     // Just verify the program compiles successfully
-    assert!(program.operations.len() > 0);
+    assert!(!program.operations.is_empty());
 }
 
 #[test]
@@ -30,11 +30,11 @@ fn test_exp_ln_functions() {
         // Test exponential and logarithm
         rx(exp(0)) q[0];     // exp(0) = 1
         ry(ln(1)) q[0];      // ln(1) = 0
-        rz(exp(ln(2))) q[0]; // exp(ln(2)) = 2
+        RZ(exp(ln(2))) q[0]; // exp(ln(2)) = 2
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    assert!(program.operations.len() > 0);
+    assert!(!program.operations.is_empty());
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn test_sqrt_function() {
         // Test square root
         rx(sqrt(4)) q[0];    // sqrt(4) = 2
         ry(sqrt(0.25)) q[0]; // sqrt(0.25) = 0.5
-        rz(sqrt(9)) q[0];    // sqrt(9) = 3
+        RZ(sqrt(9)) q[0];    // sqrt(9) = 3
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
@@ -56,7 +56,7 @@ fn test_sqrt_function() {
     // rx, ry, and rz are all expanded, so we expect more than 3 operations
     // We should just verify that the program compiles correctly
 
-    assert!(program.operations.len() > 0);
+    assert!(!program.operations.is_empty());
 
     // Verify all operations are gates
     for op in &program.operations {
@@ -74,11 +74,11 @@ fn test_nested_functions() {
         // Test nested mathematical functions
         rx(sin(cos(0))) q[0];        // sin(cos(0)) = sin(1)
         ry(sqrt(exp(ln(4)))) q[0];   // sqrt(exp(ln(4))) = sqrt(4) = 2
-        rz(cos(sin(pi/2))) q[0];     // cos(sin(pi/2)) = cos(1)
+        RZ(cos(sin(pi/2))) q[0];     // cos(sin(pi/2)) = cos(1)
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    assert!(program.operations.len() > 0);
+    assert!(!program.operations.is_empty());
 }
 
 #[test]
@@ -91,21 +91,21 @@ fn test_functions_with_expressions() {
         // Test functions with complex expressions
         rx(sin(pi/6 + pi/3)) q[0];    // sin(pi/2) = 1
         ry(cos(2*pi - pi)) q[0];      // cos(pi) = -1
-        rz(sqrt(2*2 + 3*3)) q[0];     // sqrt(13)
+        RZ(sqrt(2*2 + 3*3)) q[0];     // sqrt(13)
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    assert!(program.operations.len() > 0);
+    assert!(!program.operations.is_empty());
 }
 
 #[test]
 fn test_error_cases() {
     // Test ln of negative number - parsing should succeed
-    let qasm = r#"
+    let qasm = r"
         OPENQASM 2.0;
         qreg q[1];
         rx(ln(-1)) q[0];
-    "#;
+    ";
 
     let result = QASMParser::parse_str_raw(qasm);
     // The parsing should fail because ln(-1) is evaluated during parsing for gate parameters
@@ -115,11 +115,11 @@ fn test_error_cases() {
     }
 
     // Test sqrt of negative number
-    let qasm = r#"
+    let qasm = r"
         OPENQASM 2.0;
         qreg q[1];
         rx(sqrt(-4)) q[0];
-    "#;
+    ";
 
     let result = QASMParser::parse_str_raw(qasm);
     // The parsing should fail because sqrt(-4) is evaluated during parsing for gate parameters
@@ -139,7 +139,7 @@ fn test_functions_in_gate_definitions() {
         gate mygate(theta) q {
             rx(sin(theta)) q;
             ry(cos(theta)) q;
-            rz(sqrt(theta)) q;
+            RZ(sqrt(theta)) q;
         }
 
         mygate(pi/4) q[0];
@@ -166,7 +166,7 @@ fn test_all_math_functions() {
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    assert!(program.operations.len() > 0);
+    assert!(!program.operations.is_empty());
 }
 
 #[test]
@@ -178,42 +178,42 @@ fn test_evaluation_accuracy() {
         name: "sin".to_string(),
         args: vec![Expression::Float(PI / 2.0)],
     };
-    assert!((expr.evaluate().unwrap() - 1.0).abs() < 1e-10);
+    assert!((expr.evaluate_with_context(None).unwrap() - 1.0).abs() < 1e-10);
 
     // Test cos
     let expr = Expression::FunctionCall {
         name: "cos".to_string(),
         args: vec![Expression::Float(0.0)],
     };
-    assert!((expr.evaluate().unwrap() - 1.0).abs() < 1e-10);
+    assert!((expr.evaluate_with_context(None).unwrap() - 1.0).abs() < 1e-10);
 
     // Test tan
     let expr = Expression::FunctionCall {
         name: "tan".to_string(),
         args: vec![Expression::Float(PI / 4.0)],
     };
-    assert!((expr.evaluate().unwrap() - 1.0).abs() < 1e-10);
+    assert!((expr.evaluate_with_context(None).unwrap() - 1.0).abs() < 1e-10);
 
     // Test exp
     let expr = Expression::FunctionCall {
         name: "exp".to_string(),
         args: vec![Expression::Float(0.0)],
     };
-    assert!((expr.evaluate().unwrap() - 1.0).abs() < 1e-10);
+    assert!((expr.evaluate_with_context(None).unwrap() - 1.0).abs() < 1e-10);
 
     // Test ln
     let expr = Expression::FunctionCall {
         name: "ln".to_string(),
         args: vec![Expression::Float(std::f64::consts::E)],
     };
-    assert!((expr.evaluate().unwrap() - 1.0).abs() < 1e-10);
+    assert!((expr.evaluate_with_context(None).unwrap() - 1.0).abs() < 1e-10);
 
     // Test sqrt
     let expr = Expression::FunctionCall {
         name: "sqrt".to_string(),
         args: vec![Expression::Float(4.0)],
     };
-    assert!((expr.evaluate().unwrap() - 2.0).abs() < 1e-10);
+    assert!((expr.evaluate_with_context(None).unwrap() - 2.0).abs() < 1e-10);
 }
 
 #[test]
@@ -237,8 +237,7 @@ fn test_trig_identity_with_measurement() {
     "#;
 
     // Run the simulation with multiple shots
-    let mut engine = QASMEngine::new().unwrap();
-    engine.from_str(qasm).unwrap();
+    let engine = QASMEngine::from_str(qasm).unwrap();
 
     let results = MonteCarloEngine::run_with_noise_model(
         Box::new(engine),
@@ -279,18 +278,16 @@ fn test_trig_identity_various_angles() {
             qreg q[1];
             creg c[1];
 
-            // sin²({}) + cos²({}) should = 1.0
-            rx((sin({})**2 + cos({})**2) * pi) q[0];
+            // sin²({angle}) + cos²({angle}) should = 1.0
+            rx((sin({angle})**2 + cos({angle})**2) * pi) q[0];
 
             // Measure the qubit (after π rotation, should see state |1⟩)
             measure q[0] -> c[0];
-        "#,
-            angle, angle, angle, angle
+        "#
         );
 
         // Run the simulation
-        let mut engine = QASMEngine::new().unwrap();
-        engine.from_str(&qasm).unwrap();
+        let engine = QASMEngine::from_str(&qasm).unwrap();
 
         let results = MonteCarloEngine::run_with_noise_model(
             Box::new(engine),
@@ -310,15 +307,11 @@ fn test_trig_identity_various_angles() {
         for &value in &results["c"] {
             assert_eq!(
                 value, 1,
-                "Expected all measurements to be 1 for angle {} after rx(π)",
-                angle
+                "Expected all measurements to be 1 for angle {angle} after rx(π)"
             );
         }
 
-        println!(
-            "Trigonometric identity verified for angle {}: all measurements are 1",
-            angle
-        );
+        println!("Trigonometric identity verified for angle {angle}: all measurements are 1");
     }
 }
 
@@ -382,15 +375,15 @@ fn test_trig_identity_exact_value() {
     // Should be exactly 1.0 (within floating point precision)
     assert!(
         (value - 1.0).abs() < 1e-10,
-        "sin²(π/3) + cos²(π/3) should equal 1.0, got {}",
-        value
+        "sin²(π/3) + cos²(π/3) should equal 1.0, got {value}"
     );
-    println!("Exact evaluation: sin²(π/3) + cos²(π/3) = {}", value);
+    println!("Exact evaluation: sin²(π/3) + cos²(π/3) = {value}");
 }
 
 // Helper function to evaluate an Expression
 fn evaluate_param_expr(expr: &Expression) -> f64 {
     // Since this is a test helper and we don't have parameters,
-    // use evaluate() which handles basic evaluation
-    expr.evaluate().expect("Failed to evaluate expression")
+    // use evaluate_with_context() which handles basic evaluation
+    expr.evaluate_with_context(None)
+        .expect("Failed to evaluate expression")
 }

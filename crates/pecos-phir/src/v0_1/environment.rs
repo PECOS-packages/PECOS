@@ -59,7 +59,10 @@ impl DataType {
 
     /// Checks if the data type is signed
     pub fn is_signed(&self) -> bool {
-        matches!(self, DataType::I8 | DataType::I16 | DataType::I32 | DataType::I64)
+        matches!(
+            self,
+            DataType::I8 | DataType::I16 | DataType::I32 | DataType::I64
+        )
     }
 
     /// Returns the maximum value for this data type
@@ -155,7 +158,7 @@ impl TypedValue {
             DataType::Qubits => TypedValue::U64(value), // Qubits are stored as U64 for now
         }
     }
-    
+
     /// Creates a typed value from a raw u64, inferring the type as i32
     /// This is for backward compatibility with code that uses raw values
     pub fn from_raw(value: u64) -> Self {
@@ -173,7 +176,13 @@ impl TypedValue {
             TypedValue::U16(val) => *val as u64,
             TypedValue::U32(val) => *val as u64,
             TypedValue::U64(val) => *val,
-            TypedValue::Bool(val) => if *val { 1 } else { 0 },
+            TypedValue::Bool(val) => {
+                if *val {
+                    1
+                } else {
+                    0
+                }
+            }
         }
     }
 
@@ -188,7 +197,13 @@ impl TypedValue {
             TypedValue::U16(val) => *val as i64,
             TypedValue::U32(val) => *val as i64,
             TypedValue::U64(val) => *val as i64,
-            TypedValue::Bool(val) => if *val { 1 } else { 0 },
+            TypedValue::Bool(val) => {
+                if *val {
+                    1
+                } else {
+                    0
+                }
+            }
         }
     }
 
@@ -206,7 +221,7 @@ impl TypedValue {
             TypedValue::Bool(val) => *val,
         }
     }
-    
+
     /// Gets the value as a u32
     pub fn as_u32(&self) -> u32 {
         self.as_u64() as u32
@@ -351,7 +366,7 @@ impl PartialEq<u32> for BoolBit {
 // Implement bit shifting for TypedValue
 impl std::ops::Shr<usize> for TypedValue {
     type Output = u64;
-    
+
     fn shr(self, rhs: usize) -> Self::Output {
         self.as_u64() >> rhs
     }
@@ -359,7 +374,7 @@ impl std::ops::Shr<usize> for TypedValue {
 
 impl std::ops::Shr<usize> for &TypedValue {
     type Output = u64;
-    
+
     fn shr(self, rhs: usize) -> Self::Output {
         self.as_u64() >> rhs
     }
@@ -540,9 +555,9 @@ impl Environment {
 
     /// Adds a new variable to the environment
     pub fn add_variable(
-        &mut self, 
-        name: &str, 
-        data_type: DataType, 
+        &mut self,
+        name: &str,
+        data_type: DataType,
         size: usize,
     ) -> Result<(), PecosError> {
         self.add_variable_with_metadata(name, data_type, size, None)
@@ -550,24 +565,25 @@ impl Environment {
 
     /// Adds a new variable to the environment with metadata
     pub fn add_variable_with_metadata(
-        &mut self, 
-        name: &str, 
-        data_type: DataType, 
+        &mut self,
+        name: &str,
+        data_type: DataType,
         size: usize,
-        metadata: Option<HashMap<String, serde_json::Value>>
+        metadata: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<(), PecosError> {
         if self.name_to_index.contains_key(name) {
             return Err(PecosError::Input(format!(
-                "Variable '{}' already exists", name
+                "Variable '{}' already exists",
+                name
             )));
         }
 
         let index = self.values.len();
         self.name_to_index.insert(name.to_string(), index);
-        
+
         // Initialize with zero value of appropriate type
         self.values.push(TypedValue::new(&data_type, 0));
-        
+
         self.metadata.push(VariableInfo {
             name: name.to_string(),
             data_type,
@@ -594,26 +610,24 @@ impl Environment {
     }
 
     /// Sets the value of a variable with type checking
-    /// 
+    ///
     /// Accepts any type that can be converted to TypedValue
     pub fn set<T: Into<TypedValue>>(&mut self, name: &str, value: T) -> Result<(), PecosError> {
         let typed_value = value.into();
         if let Some(&idx) = self.name_to_index.get(name) {
             // Get the data type of the variable
             let expected_type = &self.metadata[idx].data_type;
-            
+
             // For now, we'll be lenient with type checking for backward compatibility
             // Just apply constraints to ensure the value fits within the data type
             let raw_value = typed_value.as_u64();
             let constrained_value = expected_type.constrain_value(raw_value);
-            
+
             // Create a new typed value with the correct type and set it
             self.values[idx] = TypedValue::new(expected_type, constrained_value);
             Ok(())
         } else {
-            Err(PecosError::Input(format!(
-                "Variable '{}' not found", name
-            )))
+            Err(PecosError::Input(format!("Variable '{}' not found", name)))
         }
     }
 
@@ -623,14 +637,12 @@ impl Environment {
             // Apply constraints based on data type
             let data_type = &self.metadata[idx].data_type;
             let constrained_value = data_type.constrain_value(value);
-            
+
             // Create a typed value and set it
             self.values[idx] = TypedValue::new(data_type, constrained_value);
             Ok(())
         } else {
-            Err(PecosError::Input(format!(
-                "Variable '{}' not found", name
-            )))
+            Err(PecosError::Input(format!("Variable '{}' not found", name)))
         }
     }
 
@@ -639,9 +651,7 @@ impl Environment {
         if let Some(&idx) = self.name_to_index.get(name) {
             Ok(&self.metadata[idx])
         } else {
-            Err(PecosError::Input(format!(
-                "Variable '{}' not found", name
-            )))
+            Err(PecosError::Input(format!("Variable '{}' not found", name)))
         }
     }
 
@@ -656,43 +666,50 @@ impl Environment {
             // Check bit index is in range
             if bit_index >= self.metadata[idx].size {
                 return Err(PecosError::Input(format!(
-                    "Bit index {} out of range for variable '{}' with size {}", 
+                    "Bit index {} out of range for variable '{}' with size {}",
                     bit_index, var_name, self.metadata[idx].size
                 )));
             }
-            
+
             // Extract the bit using the TypedValue method
             self.values[idx].get_bit(bit_index).map(BoolBit)
         } else {
             Err(PecosError::Input(format!(
-                "Variable '{}' not found", var_name
+                "Variable '{}' not found",
+                var_name
             )))
         }
     }
-    
+
     /// Sets a specific bit in a variable
-    pub fn set_bit<T: Into<BoolBit>>(&mut self, var_name: &str, bit_index: usize, bit_value: T) -> Result<(), PecosError> {
+    pub fn set_bit<T: Into<BoolBit>>(
+        &mut self,
+        var_name: &str,
+        bit_index: usize,
+        bit_value: T,
+    ) -> Result<(), PecosError> {
         let bool_bit = bit_value.into();
         let bool_value = bool_bit.0;
-        
+
         if let Some(&idx) = self.name_to_index.get(var_name) {
             // Check bit index is in range
             if bit_index >= self.metadata[idx].size {
                 return Err(PecosError::Input(format!(
-                    "Bit index {} out of range for variable '{}' with size {}", 
+                    "Bit index {} out of range for variable '{}' with size {}",
                     bit_index, var_name, self.metadata[idx].size
                 )));
             }
-            
+
             // Create a new value with the bit set
             let new_value = self.values[idx].with_bit_set(bit_index, bool_value)?;
-            
+
             // Set the new value
             self.values[idx] = new_value;
             Ok(())
         } else {
             Err(PecosError::Input(format!(
-                "Variable '{}' not found", var_name
+                "Variable '{}' not found",
+                var_name
             )))
         }
     }
@@ -704,7 +721,8 @@ impl Environment {
 
     /// Gets all variables of a specific type
     pub fn get_variables_of_type(&self, data_type: DataType) -> Vec<&VariableInfo> {
-        self.metadata.iter()
+        self.metadata
+            .iter()
             .filter(|info| info.data_type == data_type)
             .collect()
     }
@@ -723,7 +741,7 @@ impl Environment {
                 results.insert(info.name.clone(), self.values[i]);
             }
         }
-        
+
         // If no measurement variables were found, add all mapped variables
         if results.is_empty() && !self.mappings.is_empty() {
             for (source, dest) in &self.mappings {
@@ -732,7 +750,7 @@ impl Environment {
                 }
             }
         }
-        
+
         results
     }
 
@@ -753,46 +771,48 @@ impl Environment {
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
-    
+
     /// Adds a mapping from source variable to destination name
     /// This is used for tracking variable mappings for program outputs
     pub fn add_mapping(&mut self, source: &str, destination: &str) -> Result<(), PecosError> {
         // Check if source variable exists
         if !self.has_variable(source) {
             return Err(PecosError::Input(format!(
-                "Cannot map nonexistent variable '{}' to '{}'", source, destination
+                "Cannot map nonexistent variable '{}' to '{}'",
+                source, destination
             )));
         }
-        
+
         // Add the mapping
-        self.mappings.push((source.to_string(), destination.to_string()));
+        self.mappings
+            .push((source.to_string(), destination.to_string()));
         Ok(())
     }
-    
+
     /// Gets all variable mappings
     pub fn get_mappings(&self) -> &[(String, String)] {
         &self.mappings
     }
-    
+
     /// Clears all mappings
     pub fn clear_mappings(&mut self) {
         self.mappings.clear();
     }
-    
+
     /// Gets mapped results from the environment
-    /// 
+    ///
     /// This method returns mapped results from defined mappings or falls back to all variables
     /// if no mappings are defined or no mapped variables have values.
     pub fn get_mapped_results(&self) -> HashMap<String, u32> {
         let mut results = HashMap::new();
-        
+
         // Apply all mappings from source to destination
         for (source, dest) in &self.mappings {
             if let Some(value) = self.get(source) {
                 results.insert(dest.clone(), value.as_u32());
             }
         }
-        
+
         // If no mappings exist or no values were found, return all variables that have values
         if results.is_empty() {
             for (i, info) in self.metadata.iter().enumerate() {
@@ -800,7 +820,7 @@ impl Environment {
                 results.insert(info.name.clone(), value.as_u32());
             }
         }
-        
+
         results
     }
 
@@ -811,16 +831,12 @@ impl Environment {
         if let Some(src_idx) = self.name_to_index.get(src_name) {
             let src_value = self.values[*src_idx];
             let src_info = &self.metadata[*src_idx];
-            
+
             // If destination doesn't exist, create it
             if !self.has_variable(dst_name) {
-                self.add_variable(
-                    dst_name, 
-                    src_info.data_type.clone(), 
-                    src_info.size,
-                )?;
+                self.add_variable(dst_name, src_info.data_type.clone(), src_info.size)?;
             }
-            
+
             // Set the destination value
             if let Some(dst_idx) = self.name_to_index.get(dst_name) {
                 self.values[*dst_idx] = src_value;
@@ -854,19 +870,19 @@ mod tests {
     #[test]
     fn test_environment_basic_operations() {
         let mut env = Environment::new();
-        
+
         // Add variables
         env.add_variable("x", DataType::I32, 32).unwrap();
         env.add_variable("y", DataType::U8, 8).unwrap();
-        
+
         // Set values
         env.set_raw("x", 42).unwrap();
         env.set_raw("y", 255).unwrap();
-        
+
         // Get values
         assert_eq!(env.get_raw("x"), Some(42));
         assert_eq!(env.get_raw("y"), Some(255));
-        
+
         // Check variable existence
         assert!(env.has_variable("x"));
         assert!(!env.has_variable("z"));
@@ -875,22 +891,22 @@ mod tests {
     #[test]
     fn test_environment_type_constraints() {
         let mut env = Environment::new();
-        
+
         // Add variables with different types
         env.add_variable("i8_var", DataType::I8, 8).unwrap();
         env.add_variable("u8_var", DataType::U8, 8).unwrap();
-        
+
         // Test i8 constraints (-128 to 127)
         env.set_raw("i8_var", 127).unwrap();
         assert_eq!(env.get_raw("i8_var"), Some(127));
-        
+
         env.set_raw("i8_var", 128).unwrap(); // Should wrap to -128
         assert_eq!(env.get_raw("i8_var"), Some(0xFFFFFFFFFFFFFF80)); // -128 as u64
-        
+
         // Test u8 constraints (0 to 255)
         env.set_raw("u8_var", 255).unwrap();
         assert_eq!(env.get_raw("u8_var"), Some(255));
-        
+
         env.set_raw("u8_var", 256).unwrap(); // Should be masked to 0
         assert_eq!(env.get_raw("u8_var"), Some(0));
     }
@@ -898,45 +914,45 @@ mod tests {
     #[test]
     fn test_environment_bit_operations() {
         let mut env = Environment::new();
-        
+
         // Add variable
         env.add_variable("bits", DataType::U8, 8).unwrap();
         env.set_raw("bits", 0).unwrap();
-        
+
         // Set bits
         env.set_bit("bits", 0, true).unwrap(); // Set bit 0
         env.set_bit("bits", 2, true).unwrap(); // Set bit 2
-        
+
         // Should have value 0b101 = 5
         assert_eq!(env.get_raw("bits"), Some(5));
-        
+
         // Get bits
         assert_eq!(env.get_bit("bits", 0).unwrap(), true);
         assert_eq!(env.get_bit("bits", 1).unwrap(), false);
         assert_eq!(env.get_bit("bits", 2).unwrap(), true);
-        
+
         // Clear a bit
         env.set_bit("bits", 0, false).unwrap();
-        
+
         // Should have value 0b100 = 4
         assert_eq!(env.get_raw("bits"), Some(4));
     }
-    
+
     #[test]
     fn test_environment_variable_copying() {
         let mut env = Environment::new();
-        
+
         // Add source variable
         env.add_variable("source", DataType::I32, 32).unwrap();
         env.set_raw("source", 42).unwrap();
-        
+
         // Copy to destination (creates new variable)
         env.copy_variable("source", "dest").unwrap();
-        
+
         // Check that destination exists and has same value
         assert!(env.has_variable("dest"));
         assert_eq!(env.get_raw("dest"), Some(42));
-        
+
         // Modify source and verify destination is unchanged
         env.set_raw("source", 99).unwrap();
         assert_eq!(env.get_raw("source"), Some(99));

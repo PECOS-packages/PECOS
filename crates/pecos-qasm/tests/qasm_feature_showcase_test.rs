@@ -18,32 +18,29 @@ fn test_qasm_comparison_operators_showcase() {
         b = 2;
         
         // All comparison operators work in conditionals
-        if (a == 1) h q[0];  // Equals
-        if (b != 1) x q[1];  // Not equals
-        if (a < 2) h q[2];   // Less than
-        if (b > 1) x q[3];   // Greater than
-        if (a <= 1) h q[0];  // Less than or equal
-        if (b >= 2) x q[1];  // Greater than or equal
+        if (a == 1) H q[0];  // Equals
+        if (b != 1) X q[1];  // Not equals
+        if (a < 2) H q[2];   // Less than
+        if (b > 1) X q[3];   // Greater than
+        if (a <= 1) H q[0];  // Less than or equal
+        if (b >= 2) X q[1];  // Greater than or equal
         
         // Bit indexing works in conditionals
         c[0] = 1;
         c[1] = 0;
-        if (c[0] == 1) h q[2];  // Test specific bit
-        if (c[1] != 1) x q[3];  // Test another bit
+        if (c[0] == 1) H q[2];  // Test specific bit
+        if (c[1] != 1) X q[3];  // Test another bit
         
         // Mixed arithmetic and conditionals
         c = a + b;  // c = 3
-        if (c == 3) h q[0];
+        if (c == 3) H q[0];
         
         // Bitwise operations with conditionals
         c = a | b;  // c = 3
-        if (c > 0) x q[1];
+        if (c > 0) X q[1];
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    let mut engine = QASMEngine::new().expect("Failed to create engine");
-    engine
-        .load_program(program)
+    let mut engine = QASMEngine::from_str(qasm)
         .expect("Failed to load program");
     let _messages = engine
         .generate_commands()
@@ -63,14 +60,11 @@ fn test_currently_unsupported_features() {
         qreg q[1];
         creg a[2];
         creg b[2];
-        if ((a[0] | b[0]) != 0) h q[0];  // Complex expression
+        if ((a[0] | b[0]) != 0) H q[0];  // Complex expression
     "#;
 
     // Complex expressions now parse successfully, but fail at engine level without flag
-    let program1 = QASMParser::parse_str(qasm1).expect("Complex expressions should parse");
-    let mut engine1 = QASMEngine::new().expect("Failed to create engine");
-    engine1
-        .load_program(program1)
+    let mut engine1 = QASMEngine::from_str(qasm1)
         .expect("Failed to load program");
     let result1 = engine1.generate_commands();
     assert!(
@@ -79,12 +73,12 @@ fn test_currently_unsupported_features() {
     );
 
     // 2. Exponentiation operator
-    let qasm2 = r#"
+    let qasm2 = r"
         OPENQASM 2.0;
         creg c[4];
         creg a[2];
         c = a**2;  // Exponentiation (now supported)
-    "#;
+    ";
 
     let result2 = QASMParser::parse_str_raw(qasm2);
     assert!(result2.is_ok(), "Exponentiation operator should now work");
@@ -126,14 +120,11 @@ fn test_supported_classical_operators() {
         c = (a + b) & 7;      // Combined arithmetic and bitwise
         
         // In quantum gates
-        if (c != 0) h q[0];
+        if (c != 0) H q[0];
         rx(pi/2) q[0];  // Complex expressions with bit indexing not yet supported in gate params
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    let mut engine = QASMEngine::new().expect("Failed to create engine");
-    engine
-        .load_program(program)
+    let mut engine = QASMEngine::from_str(qasm)
         .expect("Failed to load program");
     let _messages = engine
         .generate_commands()
@@ -164,14 +155,11 @@ fn test_negative_values_and_signed_arithmetic() {
         // c = a - b;  // Would underflow in unsigned arithmetic!
         
         // Using signed values in gate parameters
-        rz(-pi/2) q[0];    // Negative parameter
+        RZ(-pi/2) q[0];    // Negative parameter
         rx(pi * -0.5) q[0]; // Negative expression
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    let mut engine = QASMEngine::new().expect("Failed to create engine");
-    engine
-        .load_program(program)
+    let mut engine = QASMEngine::from_str(qasm)
         .expect("Failed to load program");
     let _messages = engine
         .generate_commands()

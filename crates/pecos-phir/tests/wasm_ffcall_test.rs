@@ -5,9 +5,7 @@ mod tests {
     use pecos_core::errors::PecosError;
     use std::path::PathBuf;
 
-    use crate::common::phir_test_utils::{
-        assert_register_value, run_phir_simulation_from_json,
-    };
+    use crate::common::phir_test_utils::{assert_register_value, run_phir_simulation_from_json};
     use pecos_engines::PassThroughNoiseModel;
 
     #[test]
@@ -35,11 +33,11 @@ mod tests {
         // Run the simulation with WebAssembly integration
         let results = run_phir_simulation_from_json(
             phir_json,
-            1,                      // Just one shot
-            1,                      // Single worker
-            Some(42),               // Seed for reproducibility
-            None::<PassThroughNoiseModel>,  // No noise model (pass-through)
-            Some(wasm_path.clone()), // WebAssembly file path
+            1,                             // Just one shot
+            1,                             // Single worker
+            Some(42),                      // Seed for reproducibility
+            None::<PassThroughNoiseModel>, // No noise model (pass-through)
+            Some(wasm_path.clone()),       // WebAssembly file path
         )?;
 
         // Verify the results using our helper function
@@ -75,11 +73,11 @@ mod tests {
         // Run the simulation with WebAssembly integration
         let results = run_phir_simulation_from_json(
             phir_json,
-            1,                      // Just one shot
-            1,                      // Single worker
-            Some(42),               // Seed for reproducibility
-            None::<PassThroughNoiseModel>,  // No noise model (pass-through)
-            Some(wasm_path.clone()), // WebAssembly file path
+            1,                             // Just one shot
+            1,                             // Single worker
+            Some(42),                      // Seed for reproducibility
+            None::<PassThroughNoiseModel>, // No noise model (pass-through)
+            Some(wasm_path.clone()),       // WebAssembly file path
         )?;
 
         // Verify the results - we expect output=20 (5+15)
@@ -114,22 +112,30 @@ mod tests {
         // Run with multiple shots
         let results = run_phir_simulation_from_json(
             phir_json,
-            5,                      // Run 5 shots
-            2,                      // Use 2 workers for parallelism
-            Some(42),               // Seed for reproducibility
-            None::<PassThroughNoiseModel>,  // No noise model
-            Some(wasm_path.clone()), // WebAssembly file path
+            5,                             // Run 5 shots
+            2,                             // Use 2 workers for parallelism
+            Some(42),                      // Seed for reproducibility
+            None::<PassThroughNoiseModel>, // No noise model
+            Some(wasm_path.clone()),       // WebAssembly file path
         )?;
 
         // Following our refactoring, we need to check either "output" or "result"
         // First try "output" (the expected register from the original test)
         if let Some(output_values) = results.register_shots_i64.get("output") {
             // Should have exactly 5 shots
-            assert_eq!(output_values.len(), 5, "Expected 5 shots for 'output' register");
+            assert_eq!(
+                output_values.len(),
+                5,
+                "Expected 5 shots for 'output' register"
+            );
 
             // All shots should have the value 15
             for (i, &value) in output_values.iter().enumerate() {
-                assert_eq!(value, 15, "Shot {} of 'output' register has incorrect value", i);
+                assert_eq!(
+                    value, 15,
+                    "Shot {} of 'output' register has incorrect value",
+                    i
+                );
             }
         }
         // If "output" is not found, fall back to "result" which should have the same value
@@ -137,11 +143,19 @@ mod tests {
             println!("NOTICE: 'output' register not found, using 'result' register instead");
 
             // Should have exactly 5 shots
-            assert_eq!(result_values.len(), 5, "Expected 5 shots for 'result' register");
+            assert_eq!(
+                result_values.len(),
+                5,
+                "Expected 5 shots for 'result' register"
+            );
 
             // All shots should have the value 15
             for (i, &value) in result_values.iter().enumerate() {
-                assert_eq!(value, 15, "Shot {} of 'result' register has incorrect value", i);
+                assert_eq!(
+                    value, 15,
+                    "Shot {} of 'result' register has incorrect value",
+                    i
+                );
             }
         }
         // If neither are found, fail the test

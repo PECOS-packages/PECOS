@@ -1,6 +1,6 @@
 use pecos_engines::engines::classical::ClassicalEngine;
 use pecos_qasm::engine::QASMEngine;
-use pecos_qasm::parser::{Operation, QASMParser};
+use pecos_qasm::{Operation, QASMParser};
 
 #[test]
 fn test_p_zero_gate_compiles() {
@@ -14,10 +14,7 @@ fn test_p_zero_gate_compiles() {
     "#;
 
     // Parse and compile
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    let mut engine = QASMEngine::new().expect("Failed to create engine");
-    engine
-        .load_program(program)
+    let mut engine = QASMEngine::from_str(qasm)
         .expect("Failed to load program");
 
     // This should now compile successfully with the updated qelib1.inc
@@ -41,7 +38,7 @@ fn test_u_identity_gate_expansion() {
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
 
     // The u gate should be expanded to its constituent gates
-    // For u(0,0,0), it should expand to: rz(0), rx(0), rz(0)
+    // For U(0,0,0), it should expand to: RZ(0), rx(0), RZ(0)
     // which effectively is the identity
     println!("Operations count: {}", program.operations.len());
 
@@ -51,7 +48,7 @@ fn test_u_identity_gate_expansion() {
         if let Some(op) = program.operations.first() {
             match op {
                 Operation::Gate { name, .. } => {
-                    assert_eq!(name, "u", "Gate should be 'u'");
+                    assert_eq!(name, "U", "Gate should be 'U'");
                 }
                 _ => panic!("Expected a gate operation"),
             }
@@ -88,7 +85,7 @@ fn test_gate_definitions_updated() {
             p_def.body.len()
         );
 
-        // Check that p(0) is equivalent to rz(0)
+        // Check that p(0) is equivalent to RZ(0)
         if let Some(first_op) = p_def.body.first() {
             assert_eq!(first_op.name, "rz", "p gate should use rz internally");
         }
@@ -103,7 +100,7 @@ fn test_gate_definitions_updated() {
             u_def.body.len()
         );
 
-        // u(0,0,0) should simplify to identity (rz(0), rx(0), rz(0))
+        // U(0,0,0) should simplify to identity (RZ(0), rx(0), RZ(0))
         assert_eq!(u_def.body.len(), 3, "u gate should have 3 operations");
     }
 }

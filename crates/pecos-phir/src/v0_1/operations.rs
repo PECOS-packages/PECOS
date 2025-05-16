@@ -170,14 +170,15 @@ impl OperationProcessor {
     }
 
     /// Get the variables of type "qubits"
-    /// Returns a map of quantum variable names to their sizes 
+    /// Returns a map of quantum variable names to their sizes
     /// This is a helper method that accesses the environment directly
     pub fn get_quantum_variables(&self) -> HashMap<String, usize> {
         // Use the environment to get all variables of type Qubits
         let qubits_variables = self.environment.get_variables_of_type(DataType::Qubits);
-        
+
         // Convert to a HashMap with variable name -> size
-        qubits_variables.into_iter()
+        qubits_variables
+            .into_iter()
             .map(|info| (info.name.clone(), info.size))
             .collect()
     }
@@ -187,14 +188,17 @@ impl OperationProcessor {
     /// This is a helper method that accesses the environment directly
     pub fn get_classical_variables(&self) -> HashMap<String, (String, usize)> {
         // Get all variables except qubits
-        let classical_vars = self.environment.get_all_variables().into_iter()
+        let classical_vars = self
+            .environment
+            .get_all_variables()
+            .into_iter()
             .filter(|info| info.data_type != DataType::Qubits)
             .map(|info| {
                 let type_name = info.data_type.to_string();
                 (info.name.clone(), (type_name, info.size))
             })
             .collect();
-        
+
         classical_vars
     }
 
@@ -203,23 +207,23 @@ impl OperationProcessor {
     /// Returns a map of variable names to their u32 values by extracting:
     /// 1. All measurement variables from the environment (m_*, measurement_*, m)
     /// 2. All explicitly mapped variables (from environment mappings)
-    /// 
+    ///
     /// This delegates directly to the environment which is the single source of truth.
     pub fn get_measurement_results(&self) -> HashMap<String, u32> {
         // Get all measurement-related variables from the environment
         let mut results = HashMap::new();
         let all_results = self.environment.get_measurement_results();
-        
+
         // Convert TypedValue to u32
         for (name, value) in all_results {
             results.insert(name, value.as_u32());
         }
-        
+
         // If no results were found, fall back to mapped results
         if results.is_empty() {
             return self.environment.get_mapped_results();
         }
-        
+
         results
     }
 
@@ -241,7 +245,7 @@ impl OperationProcessor {
         // We deliberately don't clear variable definitions or foreign_object
         // so that we preserve the structure of the program while resetting state
     }
-    
+
     /// Set a variable value in the environment
     /// Environment is the single source of truth for all variables
     pub fn set_variable_value(&mut self, name: &str, value: u64) -> Result<(), PecosError> {
@@ -250,16 +254,24 @@ impl OperationProcessor {
             // Add but allow failure if it already exists
             match self.environment.add_variable(name, DataType::I32, 32) {
                 Ok(_) => log::debug!("Created new variable: {} in environment", name),
-                Err(e) => log::warn!("Could not create variable in environment: {}. Will try to update anyway: {}", name, e),
+                Err(e) => log::warn!(
+                    "Could not create variable in environment: {}. Will try to update anyway: {}",
+                    name,
+                    e
+                ),
             }
         }
-        
+
         // Set the value in the environment
         match self.environment.set(name, value) {
             Ok(_) => log::debug!("Set variable {} = {} in environment", name, value),
-            Err(e) => log::warn!("Could not set variable value in environment: {}. Error: {}", name, e),
+            Err(e) => log::warn!(
+                "Could not set variable value in environment: {}. Error: {}",
+                name,
+                e
+            ),
         }
-        
+
         Ok(())
     }
 
@@ -304,12 +316,18 @@ impl OperationProcessor {
             "sequence" => {
                 // Sequence blocks are just a sequence of operations, return as-is
                 // No additional validation needed since any sequence is valid
-                log::debug!("Processing sequence block with {} operations", operations.len());
+                log::debug!(
+                    "Processing sequence block with {} operations",
+                    operations.len()
+                );
                 Ok(operations.to_vec())
             }
             "qparallel" => {
                 // Process qparallel block with enhanced validation
-                log::debug!("Processing qparallel block with {} operations", operations.len());
+                log::debug!(
+                    "Processing qparallel block with {} operations",
+                    operations.len()
+                );
                 self.process_qparallel_block(operations)
             }
             "if" => {
@@ -339,10 +357,10 @@ impl OperationProcessor {
             match op {
                 Operation::QuantumOp { .. } => {
                     // Quantum operations are allowed
-                },
+                }
                 Operation::MetaInstruction { .. } => {
                     // Meta instructions like barrier are also allowed
-                },
+                }
                 _ => {
                     log::error!("Non-quantum operation in qparallel block: {:?}", op);
                     return Err(PecosError::Input(format!(
@@ -362,7 +380,10 @@ impl OperationProcessor {
                     match qubit_arg {
                         QubitArg::SingleQubit(qubit) => {
                             if !all_qubits.insert(qubit.clone()) {
-                                log::error!("Qubit {:?} used more than once in qparallel block", qubit);
+                                log::error!(
+                                    "Qubit {:?} used more than once in qparallel block",
+                                    qubit
+                                );
                                 return Err(PecosError::Input(format!(
                                     "Invalid qparallel block: qubit {:?} used more than once",
                                     qubit
@@ -372,7 +393,10 @@ impl OperationProcessor {
                         QubitArg::MultipleQubits(qubits) => {
                             for qubit in qubits {
                                 if !all_qubits.insert(qubit.clone()) {
-                                    log::error!("Qubit {:?} used more than once in qparallel block", qubit);
+                                    log::error!(
+                                        "Qubit {:?} used more than once in qparallel block",
+                                        qubit
+                                    );
                                     return Err(PecosError::Input(format!(
                                         "Invalid qparallel block: qubit {:?} used more than once",
                                         qubit
@@ -386,7 +410,10 @@ impl OperationProcessor {
         }
 
         // If we get here, all qubits are used only once, so the block is valid
-        log::debug!("Qparallel block validated successfully with {} operations", operations.len());
+        log::debug!(
+            "Qparallel block validated successfully with {} operations",
+            operations.len()
+        );
         Ok(operations.to_vec())
     }
 
@@ -398,7 +425,10 @@ impl OperationProcessor {
         false_branch: Option<&[Operation]>,
     ) -> Result<Vec<Operation>, PecosError> {
         // Evaluate the condition using our improved ExpressionEvaluator
-        log::debug!("Evaluating condition for conditional block: {:?}", condition);
+        log::debug!(
+            "Evaluating condition for conditional block: {:?}",
+            condition
+        );
 
         // Create expression evaluator with our environment
         let mut evaluator = ExpressionEvaluator::new(&self.environment);
@@ -410,13 +440,17 @@ impl OperationProcessor {
         // Execute the appropriate branch
         if condition_value != 0 {
             // Condition is true, return the true branch operations
-            log::debug!("Condition is true, executing true branch with {} operations",
-                       true_branch.len());
+            log::debug!(
+                "Condition is true, executing true branch with {} operations",
+                true_branch.len()
+            );
             Ok(true_branch.to_vec())
         } else if let Some(branch) = false_branch {
             // Condition is false and there's a false branch, return its operations
-            log::debug!("Condition is false, executing false branch with {} operations",
-                       branch.len());
+            log::debug!(
+                "Condition is false, executing false branch with {} operations",
+                branch.len()
+            );
             Ok(branch.to_vec())
         } else {
             // Condition is false and there's no false branch, return empty list
@@ -748,14 +782,20 @@ impl OperationProcessor {
     /// Uses the environment as the single source of truth
     pub fn add_quantum_variable(&mut self, variable: &str, size: usize) -> Result<(), PecosError> {
         // Store in the environment (single source of truth)
-        self.environment.add_variable(variable, DataType::Qubits, size)?;
+        self.environment
+            .add_variable(variable, DataType::Qubits, size)?;
         log::debug!("Defined quantum variable {} of size {}", variable, size);
         Ok(())
     }
 
     /// Add a classical variable to the environment
     /// Uses the environment as the single source of truth
-    pub fn add_classical_variable(&mut self, variable: &str, data_type: &str, size: usize) -> Result<(), PecosError> {
+    pub fn add_classical_variable(
+        &mut self,
+        variable: &str,
+        data_type: &str,
+        size: usize,
+    ) -> Result<(), PecosError> {
         // Convert string data type to DataType enum
         let dt = DataType::from_str(data_type)?;
 
@@ -818,7 +858,7 @@ impl OperationProcessor {
     }
 
     /// Validate variable access to ensure it exists in the environment
-    /// 
+    ///
     /// This method ensures the variable exists and the index is within bounds.
     /// It no longer auto-creates missing variables as that's inconsistent with
     /// using the environment as a single source of truth.
@@ -829,8 +869,8 @@ impl OperationProcessor {
             let var_info = self.environment.get_variable_info(var)?;
             if idx >= var_info.size {
                 return Err(PecosError::Input(format!(
-                    "Variable access validation failed: Index {idx} out of bounds for variable '{var}' of size {}"
-                    , var_info.size
+                    "Variable access validation failed: Index {idx} out of bounds for variable '{var}' of size {}",
+                    var_info.size
                 )));
             }
             return Ok(());
@@ -838,7 +878,8 @@ impl OperationProcessor {
 
         // Variable doesn't exist, return error
         Err(PecosError::Input(format!(
-            "Variable '{}' not found in environment", var
+            "Variable '{}' not found in environment",
+            var
         )))
     }
 
@@ -862,7 +903,7 @@ impl OperationProcessor {
     ) -> Result<bool, PecosError> {
         // Store the current operation index for later use
         self.current_op = current_op;
-        
+
         // No synchronization needed - environment is the single source of truth
         // Extract variable name and index from each ArgItem
         let extract_var_idx = |arg: &ArgItem| -> Result<(String, usize), PecosError> {
@@ -938,9 +979,15 @@ impl OperationProcessor {
                     // Make sure the composite variable is updated in the environment as well
                     match self.environment.set(&var, new_value as u64) {
                         Ok(_) => log::debug!("Updated composite variable: {} = {}", var, new_value),
-                        Err(e) => log::warn!("Could not update composite variable: {}. Error: {}", var, e),
+                        Err(e) => {
+                            log::warn!("Could not update composite variable: {}. Error: {}", var, e)
+                        }
                     }
-                    log::info!("Added bit-level value to environment: {} = {}", var, new_value);
+                    log::info!(
+                        "Added bit-level value to environment: {} = {}",
+                        var,
+                        new_value
+                    );
                 } else {
                     // For whole variable assignment, store in environment
                     log::info!("Storing assignment value {} in variable {}", value, var);
@@ -953,7 +1000,11 @@ impl OperationProcessor {
                     log::info!("Updated variable {} = {} in environment", var, value);
 
                     // Values are stored in the environment and will be available for expression evaluation
-                    log::info!("Variable is now available in environment: {} = {}", var, value);
+                    log::info!(
+                        "Variable is now available in environment: {} = {}",
+                        var,
+                        value
+                    );
                 }
 
                 // Return true to indicate we've handled this operation
@@ -984,8 +1035,11 @@ impl OperationProcessor {
 
         if cop == "Result" {
             // Process Result operation with our improved implementation
-            log::info!("Processing Result operation with {} sources and {} destinations",
-                     args.len(), returns.len());
+            log::info!(
+                "Processing Result operation with {} sources and {} destinations",
+                args.len(),
+                returns.len()
+            );
 
             // Use our improved method that handles bit indexing and uses the environment
             self.process_result_op(args, returns)?;
@@ -1026,7 +1080,10 @@ impl OperationProcessor {
                                 false
                             }
                         }) {
-                            Some(Operation::ClassicalOp { function: Some(name), .. }) => name,
+                            Some(Operation::ClassicalOp {
+                                function: Some(name),
+                                ..
+                            }) => name,
                             // If still not found, try one more approach - look for a matching operation
                             // from all BlockOperation possibilities
                             _ => {
@@ -1047,7 +1104,10 @@ impl OperationProcessor {
                                                 ..
                                             } = branch_op
                                             {
-                                                if op_cop == "ffcall" && op_args == args && op_returns == returns {
+                                                if op_cop == "ffcall"
+                                                    && op_args == args
+                                                    && op_returns == returns
+                                                {
                                                     // Execute the function directly
                                                     let mut fo_clone = foreign_obj.clone_box();
 
@@ -1067,31 +1127,63 @@ impl OperationProcessor {
                                                                 match ret {
                                                                     ArgItem::Simple(var) => {
                                                                         // Assign to a variable
-                                                                        let result_value = result[i] as u32;
-                                                                        
+                                                                        let result_value =
+                                                                            result[i] as u32;
+
                                                                         // Update primary storage in environment
-                                                                        if !self.environment.has_variable(var) {
-                                                                            let _ = self.environment.add_variable(var, DataType::I32, 32);
+                                                                        if !self
+                                                                            .environment
+                                                                            .has_variable(var)
+                                                                        {
+                                                                            let _ = self
+                                                                                .environment
+                                                                                .add_variable(
+                                                                                    var,
+                                                                                    DataType::I32,
+                                                                                    32,
+                                                                                );
                                                                         }
-                                                                        let _ = self.environment.set(var, result_value as u64);
-                                                                        
+                                                                        let _ =
+                                                                            self.environment.set(
+                                                                                var,
+                                                                                result_value as u64,
+                                                                            );
+
                                                                         // All values stored in environment
-                                                                    },
-                                                                    ArgItem::Indexed((var, idx)) => {
+                                                                    }
+                                                                    ArgItem::Indexed((
+                                                                        var,
+                                                                        idx,
+                                                                    )) => {
                                                                         // Assign to a bit
-                                                                        let bit_value = (result[i] & 1) as u32;
+                                                                        let bit_value =
+                                                                            (result[i] & 1) as u32;
 
                                                                         // Update primary storage in environment
-                                                                        if !self.environment.has_variable(var) {
-                                                                            let _ = self.environment.add_variable(var, DataType::I32, 32);
+                                                                        if !self
+                                                                            .environment
+                                                                            .has_variable(var)
+                                                                        {
+                                                                            let _ = self
+                                                                                .environment
+                                                                                .add_variable(
+                                                                                    var,
+                                                                                    DataType::I32,
+                                                                                    32,
+                                                                                );
                                                                         }
-                                                                        
-                                                                        // Set the bit in environment
-                                                                        let _ = self.environment.set_bit(var, *idx, bit_value as u64);
-                                                                        
-                                                                        // Environment is the single source of truth - no need for additional storage
 
-                                                                    },
+                                                                        // Set the bit in environment
+                                                                        let _ = self
+                                                                            .environment
+                                                                            .set_bit(
+                                                                                var,
+                                                                                *idx,
+                                                                                bit_value as u64,
+                                                                            );
+
+                                                                        // Environment is the single source of truth - no need for additional storage
+                                                                    }
                                                                     _ => {
                                                                         return Err(PecosError::Input(
                                                                             "Invalid return type for foreign function call".to_string(),
@@ -1118,51 +1210,82 @@ impl OperationProcessor {
                                                     ..
                                                 } = branch_op
                                                 {
-                                                    if op_cop == "ffcall" && op_args == args && op_returns == returns {
+                                                    if op_cop == "ffcall"
+                                                        && op_args == args
+                                                        && op_returns == returns
+                                                    {
                                                         // Execute the function directly
                                                         let mut fo_clone = foreign_obj.clone_box();
 
                                                         // Convert arguments to i64 values
                                                         let mut call_args = Vec::new();
                                                         for arg in args {
-                                                            let value = self.evaluate_arg_item(arg)?;
+                                                            let value =
+                                                                self.evaluate_arg_item(arg)?;
                                                             call_args.push(value);
                                                         }
 
-                                                        let result = fo_clone.exec(name, &call_args)?;
+                                                        let result =
+                                                            fo_clone.exec(name, &call_args)?;
 
                                                         // Handle return values
                                                         if !returns.is_empty() {
-                                                            for (i, ret) in returns.iter().enumerate() {
+                                                            for (i, ret) in
+                                                                returns.iter().enumerate()
+                                                            {
                                                                 if i < result.len() {
                                                                     match ret {
                                                                         ArgItem::Simple(var) => {
                                                                             // Assign to a variable
-                                                                            let result_value = result[i] as u32;
-                                                                            
+                                                                            let result_value =
+                                                                                result[i] as u32;
+
                                                                             // Update primary storage in environment
-                                                                            if !self.environment.has_variable(var) {
+                                                                            if !self
+                                                                                .environment
+                                                                                .has_variable(var)
+                                                                            {
                                                                                 let _ = self.environment.add_variable(var, DataType::I32, 32);
                                                                             }
-                                                                            let _ = self.environment.set(var, result_value as u64);
-                                                                            
+                                                                            let _ = self
+                                                                                .environment
+                                                                                .set(
+                                                                                    var,
+                                                                                    result_value
+                                                                                        as u64,
+                                                                                );
+
                                                                             // Environment is the single source of truth for all variable data
-                                                                        },
-                                                                        ArgItem::Indexed((var, idx)) => {
+                                                                        }
+                                                                        ArgItem::Indexed((
+                                                                            var,
+                                                                            idx,
+                                                                        )) => {
                                                                             // Assign to a bit
-                                                                            let bit_value = (result[i] & 1) as u32;
+                                                                            let bit_value =
+                                                                                (result[i] & 1)
+                                                                                    as u32;
 
                                                                             // Update primary storage in environment
-                                                                            if !self.environment.has_variable(var) {
+                                                                            if !self
+                                                                                .environment
+                                                                                .has_variable(var)
+                                                                            {
                                                                                 let _ = self.environment.add_variable(var, DataType::I32, 32);
                                                                             }
-                                                                            
-                                                                            // Set the bit in environment
-                                                                            let _ = self.environment.set_bit(var, *idx, bit_value as u64);
-                                                                            
-                                                                            // Environment is the single source of truth for all variable data
 
-                                                                        },
+                                                                            // Set the bit in environment
+                                                                            let _ = self
+                                                                                .environment
+                                                                                .set_bit(
+                                                                                    var,
+                                                                                    *idx,
+                                                                                    bit_value
+                                                                                        as u64,
+                                                                                );
+
+                                                                            // Environment is the single source of truth for all variable data
+                                                                        }
                                                                         _ => {
                                                                             return Err(PecosError::Input(
                                                                                 "Invalid return type for foreign function call".to_string(),
@@ -1193,7 +1316,7 @@ impl OperationProcessor {
                 debug!("Executing foreign function call: {}", function_name);
 
                 // Convert arguments to i64 values using consistent evaluation approach
-                // Since the environment is the single source of truth, we can use the standard 
+                // Since the environment is the single source of truth, we can use the standard
                 // evaluation method for all argument types
                 let mut call_args = Vec::new();
                 for arg in args {
@@ -1227,13 +1350,13 @@ impl OperationProcessor {
                                 ArgItem::Simple(var) => {
                                     // Store whole variable value in environment
                                     let result_value = result[i] as u64;
-                                    
+
                                     // Make sure the variable exists
                                     if !self.environment.has_variable(var) {
                                         // Create if needed
                                         self.environment.add_variable(var, DataType::I32, 32)?;
                                     }
-                                    
+
                                     // Set value in environment (single source of truth)
                                     self.environment.set(var, result_value)?;
                                     debug!("Set variable {} = {}", var, result_value);
@@ -1241,13 +1364,13 @@ impl OperationProcessor {
                                 ArgItem::Indexed((var, idx)) => {
                                     // Set specific bit in variable
                                     let bit_value = result[i] & 1;
-                                    
+
                                     // Make sure the variable exists
                                     if !self.environment.has_variable(var) {
                                         // Create if needed
                                         self.environment.add_variable(var, DataType::I32, 32)?;
                                     }
-                                    
+
                                     // Set bit in environment (single source of truth)
                                     self.environment.set_bit(var, *idx, bit_value as u64)?;
                                     debug!("Set bit {}[{}] = {}", var, idx, bit_value);
@@ -1266,8 +1389,7 @@ impl OperationProcessor {
             }
             // No foreign object available
             return Err(PecosError::Processing(
-                "Foreign function call attempted but no foreign object is available"
-                    .to_string(),
+                "Foreign function call attempted but no foreign object is available".to_string(),
             ));
         }
         // For other operators (arithmetic, comparison, bitwise),
@@ -1431,10 +1553,10 @@ impl OperationProcessor {
     }
 
     /// Store a measurement result in the environment
-    /// 
+    ///
     /// This method stores a measurement outcome by updating a specific bit
     /// in the integer variable (e.g., "m") in the environment.
-    /// 
+    ///
     /// The environment is the single source of truth for all variables.
     fn store_measurement_result(
         &mut self,
@@ -1442,33 +1564,56 @@ impl OperationProcessor {
         var_idx: usize,
         outcome: u32,
     ) -> Result<(), PecosError> {
-        log::info!("PHIR: Storing measurement result {}[{}] = {}", var_name, var_idx, outcome);
+        log::info!(
+            "PHIR: Storing measurement result {}[{}] = {}",
+            var_name,
+            var_idx,
+            outcome
+        );
 
         // Step 1: Ensure the main variable exists in the environment with appropriate size
         if !self.environment.has_variable(var_name) {
             // Determine appropriate size (at least large enough to hold this bit)
             let var_size = std::cmp::max(var_idx + 1, 32);
-            
+
             // Create the variable
-            match self.environment.add_variable(var_name, DataType::I32, var_size) {
+            match self
+                .environment
+                .add_variable(var_name, DataType::I32, var_size)
+            {
                 Ok(_) => log::debug!("Created variable {} with size {}", var_name, var_size),
-                Err(e) => log::warn!("Could not create variable: {}. Will try to update anyway: {}", var_name, e),
+                Err(e) => log::warn!(
+                    "Could not create variable: {}. Will try to update anyway: {}",
+                    var_name,
+                    e
+                ),
             }
         }
-        
+
         // Step 2: Update the specific bit directly using the environment's bit setting functionality
         let bit_value = if outcome != 0 { 1 } else { 0 };
         if let Err(e) = self.environment.set_bit(var_name, var_idx, bit_value) {
-            log::warn!("Could not set bit {}[{}] = {}. Error: {}", var_name, var_idx, bit_value, e);
+            log::warn!(
+                "Could not set bit {}[{}] = {}. Error: {}",
+                var_name,
+                var_idx,
+                bit_value,
+                e
+            );
         } else {
-            log::debug!("Set bit {}[{}] = {} in environment", var_name, var_idx, bit_value);
+            log::debug!(
+                "Set bit {}[{}] = {} in environment",
+                var_name,
+                var_idx,
+                bit_value
+            );
         }
 
         Ok(())
     }
 
     /// Handle incoming measurements from quantum operations and store results
-    /// 
+    ///
     /// This method processes measurement results and stores them in:
     /// 1. The environment (single source of truth for all variables)
     /// 2. Standard measurement variables (e.g., "measurement_0")
@@ -1483,7 +1628,8 @@ impl OperationProcessor {
         for (result_id, outcome) in measurements {
             log::info!(
                 "PHIR: Received measurement result_id={}, outcome={}",
-                result_id, outcome
+                result_id,
+                outcome
             );
 
             // Create the standard measurement variable name (e.g., "measurement_0")
@@ -1492,14 +1638,25 @@ impl OperationProcessor {
             // Store in the standard measurement variable
             // Create the variable if it doesn't exist
             if !self.environment.has_variable(&prefixed_name) {
-                if let Err(e) = self.environment.add_variable(&prefixed_name, DataType::I32, 32) {
-                    log::warn!("Could not create measurement variable: {}. Error: {}", prefixed_name, e);
+                if let Err(e) = self
+                    .environment
+                    .add_variable(&prefixed_name, DataType::I32, 32)
+                {
+                    log::warn!(
+                        "Could not create measurement variable: {}. Error: {}",
+                        prefixed_name,
+                        e
+                    );
                 }
             }
-            
+
             // Set the measurement value
             if let Err(e) = self.environment.set(&prefixed_name, *outcome as u64) {
-                log::warn!("Could not set measurement variable {}. Error: {}", prefixed_name, e);
+                log::warn!(
+                    "Could not set measurement variable {}. Error: {}",
+                    prefixed_name,
+                    e
+                );
             } else {
                 log::debug!("Stored measurement result: {} = {}", prefixed_name, outcome);
             }
@@ -1534,7 +1691,12 @@ impl OperationProcessor {
                 // Store in main "m" variable for test compatibility
                 let idx = *result_id as usize;
                 self.store_measurement_result("m", idx, *outcome)?;
-                log::info!("PHIR: Auto-mapped measurement result {} to m[{}] = {}", result_id, idx, outcome);
+                log::info!(
+                    "PHIR: Auto-mapped measurement result {} to m[{}] = {}",
+                    result_id,
+                    idx,
+                    outcome
+                );
             }
         }
 
@@ -1543,7 +1705,10 @@ impl OperationProcessor {
         // when generating results, so no additional processing is needed
         let mappings = self.environment.get_mappings();
         if !mappings.is_empty() {
-            log::debug!("PHIR: {} mappings registered in environment", mappings.len());
+            log::debug!(
+                "PHIR: {} mappings registered in environment",
+                mappings.len()
+            );
             for (source, dest) in mappings {
                 log::debug!("PHIR: Mapping {} -> {}", source, dest);
             }
@@ -1558,13 +1723,14 @@ impl OperationProcessor {
             ArgItem::Simple(name) => Ok((name.clone(), None)),
             ArgItem::Indexed((name, idx)) => Ok((name.clone(), Some(*idx))),
             _ => Err(PecosError::Input(format!(
-                "Invalid argument for Result operation: {:?}", arg
+                "Invalid argument for Result operation: {:?}",
+                arg
             ))),
         }
     }
 
     /// Get a variable value from the environment
-    /// 
+    ///
     /// This simplified implementation treats the environment as the single source of truth
     /// for retrieving variable values.
     fn get_variable_value(&self, var_name: &str, index: Option<usize>) -> Result<u32, PecosError> {
@@ -1573,7 +1739,8 @@ impl OperationProcessor {
         // Ensure the variable exists in the environment
         if !self.environment.has_variable(var_name) {
             return Err(PecosError::Input(format!(
-                "Variable not found in environment: {}[{:?}]", var_name, index
+                "Variable not found in environment: {}[{:?}]",
+                var_name, index
             )));
         }
 
@@ -1582,36 +1749,48 @@ impl OperationProcessor {
             // Try to get the specific bit using the environment's bit accessor
             match self.environment.get_bit(var_name, idx) {
                 Ok(bit_value) => {
-                    log::debug!("Found bit value in environment: {}[{}] = {}", var_name, idx, bit_value);
+                    log::debug!(
+                        "Found bit value in environment: {}[{}] = {}",
+                        var_name,
+                        idx,
+                        bit_value
+                    );
                     return Ok(if bit_value.0 { 1 } else { 0 });
                 }
                 Err(_) => {
                     // Fall back to extracting bit from full value
                     if let Some(full_val) = self.environment.get(var_name) {
                         let bit_value = (full_val >> idx) & 1;
-                        log::debug!("Extracted bit from variable: {}[{}] = {}", var_name, idx, bit_value);
+                        log::debug!(
+                            "Extracted bit from variable: {}[{}] = {}",
+                            var_name,
+                            idx,
+                            bit_value
+                        );
                         return Ok(bit_value as u32);
                     }
                 }
             }
             // If we couldn't get the bit, return an error
             return Err(PecosError::Input(format!(
-                "Could not access bit {}[{}] in environment", var_name, idx
+                "Could not access bit {}[{}] in environment",
+                var_name, idx
             )));
-        } 
-        
+        }
+
         // Handle whole variable access
         if let Some(val) = self.environment.get(var_name) {
             log::debug!("Got value from environment: {} = {}", var_name, val);
             return Ok(val.as_u32());
         }
-        
+
         // If we get here, the variable exists but has no value
         Err(PecosError::Input(format!(
-            "Variable exists in environment but has no value: {}", var_name
+            "Variable exists in environment but has no value: {}",
+            var_name
         )))
-    }    
-    
+    }
+
     /// Process a Result operation which maps source variables to destination variables
     ///
     /// This method:
@@ -1623,7 +1802,11 @@ impl OperationProcessor {
         args: &[ArgItem],
         returns: &[ArgItem],
     ) -> Result<(), PecosError> {
-        log::debug!("Processing Result operation with {} args and {} returns", args.len(), returns.len());
+        log::debug!(
+            "Processing Result operation with {} args and {} returns",
+            args.len(),
+            returns.len()
+        );
 
         // Process each source -> destination mapping
         for (i, src) in args.iter().enumerate() {
@@ -1634,8 +1817,13 @@ impl OperationProcessor {
                 let (src_name, src_index) = self.extract_arg_info(src)?;
                 let (dst_name, dst_index) = self.extract_arg_info(dst)?;
 
-                log::debug!("Result mapping: {}[{:?}] -> {}[{:?}]",
-                          src_name, src_index, dst_name, dst_index);
+                log::debug!(
+                    "Result mapping: {}[{:?}] -> {}[{:?}]",
+                    src_name,
+                    src_index,
+                    dst_name,
+                    dst_index
+                );
 
                 // Store mapping in the environment
                 let _ = self.environment.add_mapping(&src_name, &dst_name);
@@ -1654,10 +1842,17 @@ impl OperationProcessor {
                     } else {
                         32
                     };
-                    
+
                     // Create the variable, but don't fail if it already exists
-                    if let Err(e) = self.environment.add_variable(&dst_name, DataType::I32, var_size) {
-                        log::warn!("Could not create variable: {}. Will try to update existing: {}", dst_name, e);
+                    if let Err(e) =
+                        self.environment
+                            .add_variable(&dst_name, DataType::I32, var_size)
+                    {
+                        log::warn!(
+                            "Could not create variable: {}. Will try to update existing: {}",
+                            dst_name,
+                            e
+                        );
                     }
                 }
 
@@ -1666,7 +1861,13 @@ impl OperationProcessor {
                     // Bit access - set specific bit in the variable
                     let bit_value = value & 1;
                     if let Err(e) = self.environment.set_bit(&dst_name, idx, bit_value as u64) {
-                        log::warn!("Could not set bit {}[{}] = {}: {}", dst_name, idx, bit_value, e);
+                        log::warn!(
+                            "Could not set bit {}[{}] = {}: {}",
+                            dst_name,
+                            idx,
+                            bit_value,
+                            e
+                        );
                     } else {
                         log::debug!("Set bit {}[{}] = {}", dst_name, idx, bit_value);
                     }
@@ -1683,9 +1884,9 @@ impl OperationProcessor {
 
         Ok(())
     }
-    
+
     /// Process export mappings to determine values to return from simulations
-    /// 
+    ///
     /// This simplified method treats the environment as the single source of truth
     /// and provides a clean, simple approach to gathering exported values.
     pub fn process_export_mappings(&self) -> HashMap<String, u32> {
@@ -1694,9 +1895,12 @@ impl OperationProcessor {
 
         // Get all mappings from the environment
         let mappings = self.environment.get_mappings();
-        
+
         if !mappings.is_empty() {
-            log::info!("Processing {} explicit mappings from environment", mappings.len());
+            log::info!(
+                "Processing {} explicit mappings from environment",
+                mappings.len()
+            );
 
             // Process all explicit mappings first
             for (source_register, export_name) in mappings {
@@ -1706,21 +1910,35 @@ impl OperationProcessor {
                     continue;
                 }
 
-                log::info!("Processing export mapping: {} -> {}", source_register, export_name);
+                log::info!(
+                    "Processing export mapping: {} -> {}",
+                    source_register,
+                    export_name
+                );
 
                 // Primary approach: Direct lookup in environment
                 if self.environment.has_variable(source_register) {
                     if let Some(value) = self.environment.get(source_register) {
-                        log::info!("Using value from environment: {} = {}", source_register, value);
+                        log::info!(
+                            "Using value from environment: {} = {}",
+                            source_register,
+                            value
+                        );
                         exported_values.insert(export_name.clone(), value.as_u32());
                     } else {
-                        log::debug!("Variable {} exists in environment but has no value", source_register);
+                        log::debug!(
+                            "Variable {} exists in environment but has no value",
+                            source_register
+                        );
                     }
                 } else {
                     // If the source doesn't exist, log but don't use fallbacks since environment
                     // is the single source of truth
-                    log::warn!("Source variable '{}' for export '{}' not found in environment", 
-                              source_register, export_name);
+                    log::warn!(
+                        "Source variable '{}' for export '{}' not found in environment",
+                        source_register,
+                        export_name
+                    );
                 }
             }
         }
@@ -1763,7 +1981,10 @@ mod tests {
         let mut processor = OperationProcessor::new();
 
         // Add a test variable to the environment
-        processor.environment.add_variable("test_var", DataType::I32, 32).unwrap();
+        processor
+            .environment
+            .add_variable("test_var", DataType::I32, 32)
+            .unwrap();
         processor.environment.set("test_var", 42).unwrap();
 
         // Test integer literal

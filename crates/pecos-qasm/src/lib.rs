@@ -11,46 +11,47 @@
 //!   - Virtual includes (in-memory content)
 //!   - Circular dependency detection
 //!
-//! # Example: Using Custom Include Paths
+//! # Example: Using the Simplified API
 //!
 //! ```no_run
-//! use pecos_qasm::{ParseConfig, QASMParser, QASMEngine};
-//! use std::path::PathBuf;
+//! use pecos_qasm::QASMEngine;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Parse with custom include paths
+//! // Simple case - parse from string or file
 //! let qasm = r#"
 //!     OPENQASM 2.0;
-//!     include "custom_gates.inc";
-//!     qreg q[1];
-//!     my_gate q[0];
+//!     include "qelib1.inc";
+//!     qreg q[2];
+//!     h q[0];
 //! "#;
 //!
-//! let include_paths = vec![
-//!     PathBuf::from("/custom/includes"),
-//!     PathBuf::from("./local/qasm")
-//! ];
+//! // From string
+//! let engine1 = QASMEngine::from_str(qasm)?;
 //!
-//! let mut config = ParseConfig::default();
-//! config.search_paths = include_paths;
-//! let program = QASMParser::parse_with_config(qasm, config)?;
+//! // From file
+//! let engine2 = QASMEngine::from_file("circuit.qasm")?;
 //!
-//! // Or use with the engine
-//! let mut engine = QASMEngine::new()?;
-//! engine.from_str_with_include_paths(qasm, vec!["/custom/includes"])?;
+//! // Complex case - use builder for virtual includes and custom paths
+//! let engine3 = QASMEngine::builder()
+//!     .with_virtual_include("custom.inc", "gate my_gate a { h a; }")
+//!     .with_include_path("/custom/includes")
+//!     .allow_complex_conditionals(true)
+//!     .build_from_str(qasm)?;
 //! # Ok(())
 //! # }
 //! ```
 
 pub mod ast;
 pub mod engine;
+pub mod engine_builder;
+pub mod includes;
 pub mod parser;
 pub mod preprocessor;
 pub mod util;
-pub mod includes;
 
-pub use ast::{Expression, Operation};
+pub use ast::{Expression, GateOperation, Operation, OperationDisplay};
 pub use engine::QASMEngine;
-pub use parser::{QASMParser, ParseConfig};
+pub use engine_builder::QASMEngineBuilder;
+pub use parser::{ParseConfig, QASMParser};
 pub use preprocessor::Preprocessor;
 pub use util::{count_qubits_in_file, count_qubits_in_str};

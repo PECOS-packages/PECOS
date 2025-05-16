@@ -36,12 +36,12 @@ fn test_supported_classical_operations() {
         d = c >> 2;         // Right shift
         
         // 5. Conditional statements (limited syntax)
-        if (c == 2) h q[0]; // Only == comparison operator is reliably supported
-        if (c == 1) x q[0];
+        if (c == 2) H q[0]; // Only == comparison operator is reliably supported
+        if (c == 1) X q[0];
         
         // 6. Complex expressions in quantum gates
         rx((0.5+0.5)*pi) q[0];
-        rz(pi/2) q[0];
+        RZ(pi/2) q[0];
         
         // UNSUPPORTED OPERATIONS:
         // - Exponentiation (**) - Not implemented in grammar
@@ -63,12 +63,12 @@ fn test_unsupported_classical_operations() {
     // Test for operations that are NOT supported
 
     // 1. Exponentiation - now supported
-    let qasm_exp = r#"
+    let qasm_exp = r"
         OPENQASM 2.0;
         creg c[4];
         creg b[3];
         c = b**2;  // Exponentiation is now supported
-    "#;
+    ";
 
     assert!(
         QASMParser::parse_str(qasm_exp).is_ok(),
@@ -81,7 +81,7 @@ fn test_unsupported_classical_operations() {
         include "qelib1.inc";
         qreg q[1];
         creg c[4];
-        if (c >= 2) h q[0];  // >= operator may not be fully supported
+        if (c >= 2) H q[0];  // >= operator may not be fully supported
     "#;
 
     // This parses but may have runtime issues
@@ -121,7 +121,7 @@ fn test_modified_example_without_unsupported_features() {
         b = a * c / b;
         d[0] = a[0] ^ 1;
         // Remove unsupported if(c>=2)
-        if (c == 2) h q[0];
+        if (c == 2) H q[0];
         if (d == 1) rx((0.5+0.5)*pi) q[0];
     "#;
 

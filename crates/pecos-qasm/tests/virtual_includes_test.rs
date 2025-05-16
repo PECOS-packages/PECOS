@@ -23,7 +23,14 @@ fn test_virtual_include_single() {
     "#;
 
     // Parse with virtual includes
-    let program = { let mut config = ParseConfig::default(); config.includes = virtual_includes.into_iter().collect(); QASMParser::parse_with_config(qasm, config) }.unwrap();
+    let program = {
+        let config = ParseConfig {
+            includes: virtual_includes,
+            ..Default::default()
+        };
+        QASMParser::parse_with_config(qasm, config)
+    }
+    .unwrap();
 
     // Verify the gate was loaded
     assert!(program.gate_definitions.contains_key("my_h"));
@@ -37,21 +44,21 @@ fn test_virtual_include_multiple() {
     let virtual_includes = vec![
         (
             "basics.inc".to_string(),
-            r#"
+            r"
             gate prep q {
-                h q;
+                H q;
             }
-        "#
+        "
             .to_string(),
         ),
         (
             "advanced.inc".to_string(),
-            r#"
+            r"
             gate bell a,b {
-                h a;
-                cx a,b;
+                H a;
+                CX a,b;
             }
-        "#
+        "
             .to_string(),
         ),
     ];
@@ -66,12 +73,19 @@ fn test_virtual_include_multiple() {
     "#;
 
     // Parse with virtual includes
-    let program = { let mut config = ParseConfig::default(); config.includes = virtual_includes.into_iter().collect(); QASMParser::parse_with_config(qasm, config) }.unwrap();
+    let program = {
+        let config = ParseConfig {
+            includes: virtual_includes,
+            ..Default::default()
+        };
+        QASMParser::parse_with_config(qasm, config)
+    }
+    .unwrap();
 
     // Verify both gates were loaded
     assert!(program.gate_definitions.contains_key("prep"));
     assert!(program.gate_definitions.contains_key("bell"));
-    // After gate expansion, we have 3 operations: h (from prep), h and cx (from bell)
+    // After gate expansion, we have 3 operations: h (from prep), H and cx (from bell)
     assert_eq!(program.operations.len(), 3);
 }
 
@@ -81,11 +95,11 @@ fn test_virtual_include_nested() {
     let virtual_includes = vec![
         (
             "base.inc".to_string(),
-            r#"
+            r"
             gate u2(phi,lambda) q {
-                U(pi/2,phi,lambda) q;
+                RZ(phi+lambda) q;
             }
-        "#
+        "
             .to_string(),
         ),
         (
@@ -93,7 +107,7 @@ fn test_virtual_include_nested() {
             r#"
             include "base.inc";
             gate h q {
-                u2(0,pi) q;
+                H q;
             }
         "#
             .to_string(),
@@ -108,7 +122,14 @@ fn test_virtual_include_nested() {
     "#;
 
     // Parse with virtual includes
-    let program = { let mut config = ParseConfig::default(); config.includes = virtual_includes.into_iter().collect(); QASMParser::parse_with_config(qasm, config) }.unwrap();
+    let program = {
+        let config = ParseConfig {
+            includes: virtual_includes,
+            ..Default::default()
+        };
+        QASMParser::parse_with_config(qasm, config)
+    }
+    .unwrap();
 
     // Verify both gates were loaded from nested includes
     assert!(program.gate_definitions.contains_key("u2"));
@@ -130,7 +151,13 @@ fn test_virtual_include_circular_dependency() {
     "#;
 
     // This should fail with circular dependency error
-    let result = { let mut config = ParseConfig::default(); config.includes = virtual_includes.into_iter().collect(); QASMParser::parse_with_config(qasm, config) };
+    let result = {
+        let config = ParseConfig {
+            includes: virtual_includes,
+            ..Default::default()
+        };
+        QASMParser::parse_with_config(qasm, config)
+    };
     assert!(result.is_err());
     if let Err(e) = result {
         assert!(e.to_string().contains("Circular dependency"));
@@ -140,7 +167,7 @@ fn test_virtual_include_circular_dependency() {
 #[test]
 fn test_virtual_include_with_engine() {
     // Test using virtual includes with the engine
-    let virtual_includes = vec![(
+    let _virtual_includes = vec![(
         "custom.inc".to_string(),
         r#"
             include "qelib1.inc";
@@ -159,9 +186,14 @@ fn test_virtual_include_with_engine() {
     "#;
 
     // Create engine and load with virtual includes
-    let mut engine = QASMEngine::new().unwrap();
-    engine
-        .from_str_with_includes(qasm, virtual_includes)
+    let _engine = QASMEngine::builder()
+        .with_virtual_include("custom.inc", r#"
+            include "qelib1.inc";
+            gate sqrt_x a {
+                sx a;
+            }
+        "#)
+        .build_from_str(qasm)
         .unwrap();
 }
 
@@ -170,12 +202,12 @@ fn test_virtual_include_overrides_file() {
     // Virtual includes should take precedence over file system includes
     let virtual_includes = vec![(
         "qelib1.inc".to_string(),
-        r#"
+        r"
             gate h a {
                 // Custom implementation with native gates only
-                U(pi/2, 0, pi) a;
+                H a;
             }
-        "#
+        "
         .to_string(),
     )];
 
@@ -187,7 +219,14 @@ fn test_virtual_include_overrides_file() {
     "#;
 
     // Parse with virtual includes
-    let program = { let mut config = ParseConfig::default(); config.includes = virtual_includes.into_iter().collect(); QASMParser::parse_with_config(qasm, config) }.unwrap();
+    let program = {
+        let config = ParseConfig {
+            includes: virtual_includes,
+            ..Default::default()
+        };
+        QASMParser::parse_with_config(qasm, config)
+    }
+    .unwrap();
 
     // Should use our custom h gate, not the standard one
     assert!(program.gate_definitions.contains_key("h"));
@@ -200,7 +239,7 @@ fn test_virtual_include_overrides_file() {
 fn test_preprocessor_direct_usage() {
     // Test using the preprocessor directly
     let mut preprocessor = Preprocessor::new();
-    preprocessor.add_virtual_include("test.inc", "gate id a { U(0,0,0) a; }");
+    preprocessor.add_include("test.inc", "gate id a { U(0,0,0) a; }");
 
     let qasm = r#"
         OPENQASM 2.0;
@@ -225,12 +264,12 @@ fn test_mixed_virtual_and_file_includes() {
     let file_inc = temp_dir.path().join("file.inc");
 
     // Create a file include
-    fs::write(&file_inc, "gate from_file a { x a; }").unwrap();
+    fs::write(&file_inc, "gate from_file a { X a; }").unwrap();
 
     // Create a virtual include
     let virtual_includes = vec![(
         "virtual.inc".to_string(),
-        "gate from_virtual a { y a; }".to_string(),
+        "gate from_virtual a { Y a; }".to_string(),
     )];
 
     let qasm = format!(
@@ -246,8 +285,10 @@ fn test_mixed_virtual_and_file_includes() {
     );
 
     // Parse with virtual includes
-    let mut config = ParseConfig::default();
-    config.includes = virtual_includes.into_iter().collect();
+    let config = ParseConfig {
+        includes: virtual_includes,
+        ..Default::default()
+    };
     let program = QASMParser::parse_with_config(&qasm, config).unwrap();
 
     // Both gates should be loaded

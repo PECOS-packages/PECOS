@@ -41,12 +41,12 @@ fn test_scientific_notation_formats() {
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
 
     // After expansion, we'll have more operations than just the original gates
-    assert!(program.operations.len() > 0);
+    assert!(!program.operations.is_empty());
 
     // All operations should be gate calls
     for op in &program.operations {
         match op {
-            pecos_qasm::parser::Operation::Gate { .. } => {
+            pecos_qasm::Operation::Gate { .. } => {
                 // Gate expanded into native operations
             }
             _ => panic!("Expected only gate calls"),
@@ -69,7 +69,7 @@ fn test_scientific_notation_in_expressions() {
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    assert!(program.operations.len() > 0);
+    assert!(!program.operations.is_empty());
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn test_scientific_notation_edge_cases() {
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    assert!(program.operations.len() > 0);
+    assert!(!program.operations.is_empty());
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn test_scientific_notation_with_pi() {
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    assert!(program.operations.len() > 0);
+    assert!(!program.operations.is_empty());
 }
 
 #[test]

@@ -36,7 +36,7 @@ pub fn setup_qasm_engine(
     let _ = seed;
 
     // Use the QASMEngine from the pecos-qasm crate
-    let engine = pecos_qasm::QASMEngine::with_file(program_path).map_err(|e| {
+    let engine = pecos_qasm::QASMEngine::from_file(program_path).map_err(|e| {
         PecosError::Processing(format!(
             "QASM engine setup failed: Could not create engine: {e}"
         ))

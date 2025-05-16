@@ -2,7 +2,7 @@ use pecos_qasm::QASMParser;
 use pest::Parser;
 use pest::iterators::Pair;
 
-fn debug_pairs(pair: Pair<pecos_qasm::parser::Rule>, depth: usize) {
+fn debug_pairs(pair: &Pair<pecos_qasm::parser::Rule>, depth: usize) {
     let indent = "  ".repeat(depth);
     println!(
         "{}Rule: {:?}, Text: '{}'",
@@ -13,7 +13,7 @@ fn debug_pairs(pair: Pair<pecos_qasm::parser::Rule>, depth: usize) {
 
     let pairs = pair.clone().into_inner();
     for inner_pair in pairs {
-        debug_pairs(inner_pair, depth + 1);
+        debug_pairs(&inner_pair, depth + 1);
     }
 }
 
@@ -26,11 +26,11 @@ fn test_pest_expr_parsing() {
         Ok(mut pairs) => {
             println!("Successfully parsed expression");
             let pair = pairs.next().unwrap();
-            debug_pairs(pair, 0);
+            debug_pairs(&pair, 0);
         }
         Err(e) => {
             println!("Failed to parse expression:");
-            println!("{}", e);
+            println!("{e}");
         }
     }
 }
@@ -53,7 +53,7 @@ fn test_binary_operators() {
     let program = match QASMParser::parse_str(qasm) {
         Ok(prog) => prog,
         Err(e) => {
-            panic!("Failed to parse: {:?}", e);
+            panic!("Failed to parse: {e:?}");
         }
     };
 

@@ -270,23 +270,19 @@ fn test_cross_implementation_validation() -> Result<(), Box<dyn std::error::Erro
     let (phir_00_count, phir_11_count) = count_bell_states(&phir_values);
     let (qasm_00_count, qasm_11_count) = count_bell_states(&qasm_values);
 
-    println!("PHIR Bell state distribution: {}% |00⟩, {}% |11⟩",
-        phir_00_count, phir_11_count);
-    println!("QASM Bell state distribution: {}% |00⟩, {}% |11⟩",
-        qasm_00_count, qasm_11_count);
+    println!("PHIR Bell state distribution: {phir_00_count}% |00⟩, {phir_11_count}% |11⟩");
+    println!("QASM Bell state distribution: {qasm_00_count}% |00⟩, {qasm_11_count}% |11⟩");
 
     // Verify PHIR implementation has balanced distribution
     assert!(
         (40..=60).contains(&phir_00_count),
-        "PHIR implementation should have between 40% and 60% |00⟩ states, but got {}%",
-        phir_00_count
+        "PHIR implementation should have between 40% and 60% |00⟩ states, but got {phir_00_count}%"
     );
 
     // Verify QASM implementation has balanced distribution
     assert!(
         (40..=60).contains(&qasm_00_count),
-        "QASM implementation should have between 40% and 60% |00⟩ states, but got {}%",
-        qasm_00_count
+        "QASM implementation should have between 40% and 60% |00⟩ states, but got {qasm_00_count}%"
     );
 
     println!("PHIR and QASM Bell state implementations produce identical results");

@@ -15,12 +15,12 @@ fn test_qelib1_include_parsing() {
                 "Successfully parsed with {} gate definitions",
                 program.gate_definitions.len()
             );
-            for (name, _) in &program.gate_definitions {
-                println!("  - {}", name);
+            for name in program.gate_definitions.keys() {
+                println!("  - {name}");
             }
         }
         Err(e) => {
-            println!("Parse error: {:?}", e);
+            println!("Parse error: {e:?}");
             panic!("Failed to parse qelib1.inc");
         }
     }
@@ -29,13 +29,13 @@ fn test_qelib1_include_parsing() {
 #[test]
 fn test_inline_gate_def() {
     // Test parsing gate definitions inline
-    let qasm = r#"
+    let qasm = r"
         OPENQASM 2.0;
-        gate h a { id a; }
-        gate id a { rz(0) a; }
+        gate H a { id a; }
+        gate id a { RZ(0) a; }
         qreg q[1];
-        h q[0];
-    "#;
+        H q[0];
+    ";
 
     match QASMParser::parse_str_raw(qasm) {
         Ok(program) => {
@@ -45,7 +45,7 @@ fn test_inline_gate_def() {
             );
         }
         Err(e) => {
-            println!("Parse error: {:?}", e);
+            println!("Parse error: {e:?}");
             panic!("Failed to parse inline gates");
         }
     }

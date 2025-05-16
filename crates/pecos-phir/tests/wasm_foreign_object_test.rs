@@ -24,8 +24,7 @@ mod tests {
         assert!(funcs.contains(&"add".to_string()));
 
         // Execute add function
-        let result = foreign_object.exec("add", &[3, 4])
-            .unwrap();
+        let result = foreign_object.exec("add", &[3, 4]).unwrap();
         assert_eq!(result[0], 7);
     }
 }

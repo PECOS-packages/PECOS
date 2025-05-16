@@ -116,7 +116,7 @@ fn test_bell_state_using_helper() -> Result<(), PecosError> {
     // Bell state should result in either 00 (0) or 11 (3) measurement outcomes
     // The bell.json file maps "m" to "c" in its Result command
     let shot = &results.shots[0];
-    
+
     // First check for the "c" register which is specified in the Bell state JSON
     if let Some(value) = shot.get("c") {
         assert!(
@@ -145,7 +145,10 @@ fn test_bell_state_using_helper() -> Result<(), PecosError> {
         );
     } else {
         // No known register found - print available registers
-        println!("Available registers in shot: {:?}", shot.keys().collect::<Vec<_>>());
+        println!(
+            "Available registers in shot: {:?}",
+            shot.keys().collect::<Vec<_>>()
+        );
         panic!("Expected one of 'c', 'result', 'output', or 'm' registers to be present");
     }
 

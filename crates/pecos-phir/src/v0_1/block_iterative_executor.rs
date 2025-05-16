@@ -49,7 +49,8 @@ impl<'a> BlockIterativeExecutor<'a> {
     pub fn with_operations(mut self, operations: &'a [Operation]) -> Self {
         // Add operations in reverse order to the stack
         for op in operations.iter().rev() {
-            self.operation_stack.push_front(FlattenedOperation::Operation(op));
+            self.operation_stack
+                .push_front(FlattenedOperation::Operation(op));
         }
         self
     }
@@ -76,7 +77,10 @@ impl<'a> BlockIterativeExecutor<'a> {
 
         // Process any remaining operations in the buffer
         if !self.buffer.is_empty() {
-            debug!("Processing remaining buffer with {} operations", self.buffer.len());
+            debug!(
+                "Processing remaining buffer with {} operations",
+                self.buffer.len()
+            );
             for op in self.buffer.drain(..) {
                 self.executor.process_operation(op)?;
             }
@@ -89,32 +93,42 @@ impl<'a> BlockIterativeExecutor<'a> {
     fn process_operation(&mut self, op: &'a Operation) -> Result<(), PecosError> {
         println!("Processing operation: {:?}", op);
         match op {
-            Operation::Block { block, ops, condition, true_branch, false_branch, .. } => {
+            Operation::Block {
+                block,
+                ops,
+                condition,
+                true_branch,
+                false_branch,
+                ..
+            } => {
                 match block.as_str() {
                     "sequence" => {
                         debug!("Flattening sequence block with {} operations", ops.len());
                         // Add end block marker
-                        self.operation_stack.push_front(FlattenedOperation::EndBlock);
-                        
+                        self.operation_stack
+                            .push_front(FlattenedOperation::EndBlock);
+
                         // Add all operations in reverse order
                         for op in ops.iter().rev() {
-                            self.operation_stack.push_front(FlattenedOperation::Operation(op));
+                            self.operation_stack
+                                .push_front(FlattenedOperation::Operation(op));
                         }
                     }
                     "qparallel" => {
                         debug!("Processing qparallel block with {} operations", ops.len());
                         // For quantum parallel blocks, we validate and add as a buffer
                         // to ensure they're processed as a unit
-                        
+
                         // Verify all operations are quantum operations or meta instructions
                         for op in ops.iter() {
                             match op {
                                 Operation::QuantumOp { .. } | Operation::MetaInstruction { .. } => {
                                     // These are allowed in qparallel
-                                },
+                                }
                                 _ => {
                                     return Err(PecosError::Input(format!(
-                                        "Invalid operation in qparallel block: {:?}", op
+                                        "Invalid operation in qparallel block: {:?}",
+                                        op
                                     )));
                                 }
                             }
@@ -122,7 +136,7 @@ impl<'a> BlockIterativeExecutor<'a> {
 
                         // Verify no qubit is used more than once
                         let mut used_qubits = std::collections::HashSet::new();
-                        
+
                         for op in ops.iter() {
                             if let Operation::QuantumOp { args, .. } = op {
                                 for qubit_arg in args {
@@ -131,16 +145,18 @@ impl<'a> BlockIterativeExecutor<'a> {
                                             let qubit_id = format!("{}_{}", var, idx);
                                             if !used_qubits.insert(qubit_id) {
                                                 return Err(PecosError::Input(format!(
-                                                    "Qubit {}[{}] used more than once in qparallel block", var, idx
+                                                    "Qubit {}[{}] used more than once in qparallel block",
+                                                    var, idx
                                                 )));
                                             }
-                                        },
+                                        }
                                         QubitArg::MultipleQubits(qubits) => {
                                             for (var, idx) in qubits {
                                                 let qubit_id = format!("{}_{}", var, idx);
                                                 if !used_qubits.insert(qubit_id) {
                                                     return Err(PecosError::Input(format!(
-                                                        "Qubit {}[{}] used more than once in qparallel block", var, idx
+                                                        "Qubit {}[{}] used more than once in qparallel block",
+                                                        var, idx
                                                     )));
                                                 }
                                             }
@@ -152,7 +168,8 @@ impl<'a> BlockIterativeExecutor<'a> {
 
                         // Add as a buffer to ensure atomic processing
                         let ops_refs: Vec<&'a Operation> = ops.iter().collect();
-                        self.operation_stack.push_front(FlattenedOperation::Buffer(ops_refs));
+                        self.operation_stack
+                            .push_front(FlattenedOperation::Buffer(ops_refs));
                     }
                     "if" => {
                         debug!("Processing conditional block");
@@ -166,21 +183,24 @@ impl<'a> BlockIterativeExecutor<'a> {
                                     self.executor.process_operation(buffered_op)?;
                                 }
                             }
-                            
+
                             // Evaluate the condition
-                            let mut evaluator = ExpressionEvaluator::new(&self.executor.get_environment());
+                            let mut evaluator =
+                                ExpressionEvaluator::new(&self.executor.get_environment());
                             let condition_result = evaluator.eval_expr(cond)?.as_bool();
-                            
+
                             debug!("Condition evaluated to: {}", condition_result);
-                            
+
                             // Add end block marker
-                            self.operation_stack.push_front(FlattenedOperation::EndBlock);
-                            
+                            self.operation_stack
+                                .push_front(FlattenedOperation::EndBlock);
+
                             // Add operations from the appropriate branch in reverse order
                             if condition_result {
                                 if let Some(branch) = true_branch {
                                     for op in branch.iter().rev() {
-                                        self.operation_stack.push_front(FlattenedOperation::Operation(op));
+                                        self.operation_stack
+                                            .push_front(FlattenedOperation::Operation(op));
                                     }
                                 } else {
                                     return Err(PecosError::Input(
@@ -189,7 +209,8 @@ impl<'a> BlockIterativeExecutor<'a> {
                                 }
                             } else if let Some(branch) = false_branch {
                                 for op in branch.iter().rev() {
-                                    self.operation_stack.push_front(FlattenedOperation::Operation(op));
+                                    self.operation_stack
+                                        .push_front(FlattenedOperation::Operation(op));
                                 }
                             }
                         } else {
@@ -207,10 +228,13 @@ impl<'a> BlockIterativeExecutor<'a> {
                 if self.enable_buffering {
                     // Add to buffer
                     self.buffer.push(op);
-                    
+
                     // If this is a measurement operation, process the buffer
                     if qop.contains("Measure") {
-                        debug!("Processing buffer around measurement with {} operations", self.buffer.len());
+                        debug!(
+                            "Processing buffer around measurement with {} operations",
+                            self.buffer.len()
+                        );
                         for op in self.buffer.drain(..) {
                             self.executor.process_operation(op)?;
                         }
@@ -223,38 +247,47 @@ impl<'a> BlockIterativeExecutor<'a> {
             Operation::ClassicalOp { .. } => {
                 // For non-quantum operations, process any buffered operations first
                 if !self.buffer.is_empty() && self.enable_buffering {
-                    debug!("Processing buffer before classical op with {} operations", self.buffer.len());
+                    debug!(
+                        "Processing buffer before classical op with {} operations",
+                        self.buffer.len()
+                    );
                     for buffered_op in self.buffer.drain(..) {
                         self.executor.process_operation(buffered_op)?;
                     }
                 }
-                
+
                 // Process this classical operation
                 println!("Processing classical operation");
                 let result = self.executor.process_operation(op);
-                
+
                 // Debug: check the environment after processing
-                println!("After processing classical op - Environment: {:?}", self.executor.get_environment());
-                
+                println!(
+                    "After processing classical op - Environment: {:?}",
+                    self.executor.get_environment()
+                );
+
                 result?;
             }
             _ => {
                 // For other operations, process any buffered operations first
                 if !self.buffer.is_empty() && self.enable_buffering {
-                    debug!("Processing buffer before non-quantum op with {} operations", self.buffer.len());
+                    debug!(
+                        "Processing buffer before non-quantum op with {} operations",
+                        self.buffer.len()
+                    );
                     for buffered_op in self.buffer.drain(..) {
                         self.executor.process_operation(buffered_op)?;
                     }
                 }
-                
+
                 // Then process this operation
                 self.executor.process_operation(op)?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Iterator interface for stepping through operations
     pub fn step(&mut self) -> Option<Result<&'a Operation, PecosError>> {
         if let Some(flattened_op) = self.operation_stack.pop_front() {
@@ -277,7 +310,8 @@ impl<'a> BlockIterativeExecutor<'a> {
                     if !ops.is_empty() {
                         let first = ops[0];
                         for op in ops.into_iter().rev().skip(1) {
-                            self.operation_stack.push_front(FlattenedOperation::Operation(op));
+                            self.operation_stack
+                                .push_front(FlattenedOperation::Operation(op));
                         }
                         Some(Ok(first))
                     } else {
@@ -293,12 +327,12 @@ impl<'a> BlockIterativeExecutor<'a> {
             None
         }
     }
-    
+
     /// Get a reference to the underlying block executor
     pub fn get_executor(&self) -> &BlockExecutor {
         self.executor
     }
-    
+
     /// Get a mutable reference to the underlying block executor
     pub fn get_executor_mut(&mut self) -> &mut BlockExecutor {
         self.executor
@@ -308,7 +342,7 @@ impl<'a> BlockIterativeExecutor<'a> {
 /// Iterator implementation for BlockIterativeExecutor
 impl<'a> Iterator for BlockIterativeExecutor<'a> {
     type Item = Result<&'a Operation, PecosError>;
-    
+
     fn next(&mut self) -> Option<Self::Item> {
         self.step()
     }
@@ -318,15 +352,15 @@ impl<'a> Iterator for BlockIterativeExecutor<'a> {
 mod tests {
     use super::*;
     use crate::v0_1::ast::{ArgItem, Expression, Operation};
-    
+
     #[test]
     fn test_simple_sequence() {
         // Create a block executor
         let mut executor = BlockExecutor::new();
-        
+
         // Add a variable for testing
         executor.add_classical_variable("x", "i32", 32).unwrap();
-        
+
         // Create a sequence of operations
         let operations = vec![
             Operation::ClassicalOp {
@@ -344,63 +378,56 @@ mod tests {
                 metadata: None,
             },
         ];
-        
+
         // Create an iterative executor
-        let mut iterative_executor = BlockIterativeExecutor::new(&mut executor)
-            .with_operations(&operations);
-        
+        let mut iterative_executor =
+            BlockIterativeExecutor::new(&mut executor).with_operations(&operations);
+
         // Process operations
         let result = iterative_executor.process();
         assert!(result.is_ok());
-        
+
         // Verify the final value
         let env = executor.get_environment();
         assert_eq!(env.get_raw("x").map(|v| v as u64), Some(20));
     }
-    
+
     #[test]
     fn test_conditional_blocks() {
         // Create a block executor
         let mut executor = BlockExecutor::new();
-        
+
         // Add variables for testing
         executor.add_classical_variable("x", "i32", 32).unwrap();
         executor.add_classical_variable("y", "i32", 32).unwrap();
-        
+
         // Set initial value
         executor.get_environment_mut().set_raw("x", 10).unwrap();
-        
+
         // Create an if block with condition x > 5
         let condition = Expression::Operation {
             cop: ">".to_string(),
-            args: vec![
-                ArgItem::Simple("x".to_string()),
-                ArgItem::Integer(5),
-            ],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(5)],
         };
-        
+
         // True branch: y = 20
-        let true_branch = vec![
-            Operation::ClassicalOp {
-                cop: "=".to_string(),
-                args: vec![ArgItem::Integer(20)],
-                returns: vec![ArgItem::Simple("y".to_string())],
-                function: None,
-                metadata: None,
-            },
-        ];
-        
+        let true_branch = vec![Operation::ClassicalOp {
+            cop: "=".to_string(),
+            args: vec![ArgItem::Integer(20)],
+            returns: vec![ArgItem::Simple("y".to_string())],
+            function: None,
+            metadata: None,
+        }];
+
         // False branch: y = 30
-        let false_branch = vec![
-            Operation::ClassicalOp {
-                cop: "=".to_string(),
-                args: vec![ArgItem::Integer(30)],
-                returns: vec![ArgItem::Simple("y".to_string())],
-                function: None,
-                metadata: None,
-            },
-        ];
-        
+        let false_branch = vec![Operation::ClassicalOp {
+            cop: "=".to_string(),
+            args: vec![ArgItem::Integer(30)],
+            returns: vec![ArgItem::Simple("y".to_string())],
+            function: None,
+            metadata: None,
+        }];
+
         // Create the if block operation
         let if_operation = Operation::Block {
             block: "if".to_string(),
@@ -410,74 +437,67 @@ mod tests {
             false_branch: Some(false_branch),
             metadata: None,
         };
-        
+
         // Create an iterative executor with the if block
         let operations = vec![if_operation];
-        let mut iterative_executor = BlockIterativeExecutor::new(&mut executor)
-            .with_operations(&operations);
-        
+        let mut iterative_executor =
+            BlockIterativeExecutor::new(&mut executor).with_operations(&operations);
+
         // Process operations
         let result = iterative_executor.process();
         assert!(result.is_ok());
-        
+
         // Verify the true branch was executed (x = 10 > 5)
         let env = executor.get_environment();
         assert_eq!(env.get_raw("y").map(|v| v as u64), Some(20));
     }
-    
+
     #[test]
     fn test_nested_blocks() {
         // Create a block executor
         let mut executor = BlockExecutor::new();
-        
+
         // Add variables for testing
         executor.add_classical_variable("x", "i32", 32).unwrap();
         executor.add_classical_variable("y", "i32", 32).unwrap();
         executor.add_classical_variable("z", "i32", 32).unwrap();
-        
+
         // Set initial values
         executor.get_environment_mut().set_raw("x", 10).unwrap();
         // For testing purposes, we'll set y directly to 15 (as if x + 5 was already calculated)
         executor.get_environment_mut().set_raw("y", 15).unwrap();
-        
+
         // Create a nested structure:
         // sequence
         //   if y > 10
         //     z = 100
         //   else
         //     z = 200
-        
+
         // Inner condition: y > 10
         let inner_condition = Expression::Operation {
             cop: ">".to_string(),
-            args: vec![
-                ArgItem::Simple("y".to_string()),
-                ArgItem::Integer(10),
-            ],
+            args: vec![ArgItem::Simple("y".to_string()), ArgItem::Integer(10)],
         };
-        
+
         // Inner true branch: z = 100
-        let inner_true_branch = vec![
-            Operation::ClassicalOp {
-                cop: "=".to_string(),
-                args: vec![ArgItem::Integer(100)],
-                returns: vec![ArgItem::Simple("z".to_string())],
-                function: None,
-                metadata: None,
-            },
-        ];
-        
+        let inner_true_branch = vec![Operation::ClassicalOp {
+            cop: "=".to_string(),
+            args: vec![ArgItem::Integer(100)],
+            returns: vec![ArgItem::Simple("z".to_string())],
+            function: None,
+            metadata: None,
+        }];
+
         // Inner false branch: z = 200
-        let inner_false_branch = vec![
-            Operation::ClassicalOp {
-                cop: "=".to_string(),
-                args: vec![ArgItem::Integer(200)],
-                returns: vec![ArgItem::Simple("z".to_string())],
-                function: None,
-                metadata: None,
-            },
-        ];
-        
+        let inner_false_branch = vec![Operation::ClassicalOp {
+            cop: "=".to_string(),
+            args: vec![ArgItem::Integer(200)],
+            returns: vec![ArgItem::Simple("z".to_string())],
+            function: None,
+            metadata: None,
+        }];
+
         // Inner if block
         let inner_if_block = Operation::Block {
             block: "if".to_string(),
@@ -487,42 +507,42 @@ mod tests {
             false_branch: Some(inner_false_branch),
             metadata: None,
         };
-        
+
         // Create operations array with just the if block
         let operations = vec![inner_if_block];
-        
+
         // Create an iterative executor
-        let mut iterative_executor = BlockIterativeExecutor::new(&mut executor)
-            .with_operations(&operations);
-        
+        let mut iterative_executor =
+            BlockIterativeExecutor::new(&mut executor).with_operations(&operations);
+
         // Process operations
         let result = iterative_executor.process();
         assert!(result.is_ok());
-        
+
         // Verify results:
         // 1. y should be x + 5 = 15
         // 2. z should be 100 (from true branch since y > 10)
         let env = executor.get_environment();
-        
+
         // In y = x + 5 where x = 10, y should be 15
         let y_value = env.get_raw("y").map(|v| v as u64);
         println!("y value: {:?}", y_value);
         assert_eq!(y_value, Some(15));
-        
+
         let z_value = env.get_raw("z").map(|v| v as u64);
         println!("z value: {:?}", z_value);
         assert_eq!(z_value, Some(100));
     }
-    
+
     #[test]
     fn test_buffering() {
         // Create a block executor
         let mut executor = BlockExecutor::new();
-        
+
         // Add variables for testing
         executor.add_quantum_variable("q", 2).unwrap();
         executor.add_classical_variable("m", "i32", 32).unwrap();
-        
+
         // Create operations with measurements
         let operations = vec![
             // Quantum op (should be buffered)
@@ -550,28 +570,28 @@ mod tests {
                 metadata: None,
             },
         ];
-        
+
         // Create an iterative executor with buffering enabled
-        let mut iterative_executor = BlockIterativeExecutor::new(&mut executor)
-            .with_operations(&operations);
-        
+        let mut iterative_executor =
+            BlockIterativeExecutor::new(&mut executor).with_operations(&operations);
+
         // Process operations
         let result = iterative_executor.process();
         assert!(result.is_ok());
-        
+
         // Verify the final state
         let env = executor.get_environment();
         assert_eq!(env.get_raw("m").map(|v| v as u64), Some(42));
     }
-    
+
     #[test]
     fn test_iterator_interface() {
         // Create a block executor
         let mut executor = BlockExecutor::new();
-        
+
         // Add a variable for testing
         executor.add_classical_variable("x", "i32", 32).unwrap();
-        
+
         // Create a sequence of operations
         let operations = vec![
             Operation::ClassicalOp {
@@ -589,16 +609,14 @@ mod tests {
                 metadata: None,
             },
         ];
-        
+
         // Create an iterative executor
-        let iterative_executor = BlockIterativeExecutor::new(&mut executor)
-            .with_operations(&operations);
+        let iterative_executor =
+            BlockIterativeExecutor::new(&mut executor).with_operations(&operations);
 
         // Collect operations using the iterator interface
-        let collected_ops: Vec<_> = iterative_executor
-            .filter_map(Result::ok)
-            .collect();
-        
+        let collected_ops: Vec<_> = iterative_executor.filter_map(Result::ok).collect();
+
         // There should be 2 operations
         assert_eq!(collected_ops.len(), 2);
     }

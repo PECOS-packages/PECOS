@@ -1,4 +1,4 @@
-use pecos_qasm::parser::Operation;
+use pecos_qasm::Operation;
 use pecos_qasm::parser::QASMParser;
 
 #[test]
@@ -34,7 +34,7 @@ fn test_gate_expansion_rx() {
         assert_eq!(name, "RZ");
         assert_eq!(qubits, &[0]);
         assert_eq!(parameters.len(), 1);
-        assert!((parameters[0] - 1.5708).abs() < 0.0001);
+        assert!((parameters[0] - std::f64::consts::FRAC_PI_2).abs() < 0.0001);
     } else {
         panic!("Expected rz gate");
     }
@@ -93,8 +93,8 @@ fn test_gate_remains_native() {
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[2];
-        h q[0];
-        cx q[0], q[1];
+        H q[0];
+        CX q[0], q[1];
     "#;
 
     let program = QASMParser::parse_str(qasm).unwrap();
@@ -106,13 +106,13 @@ fn test_gate_remains_native() {
     if let Operation::Gate { name, .. } = &program.operations[0] {
         assert_eq!(name, "H");
     } else {
-        panic!("Expected h gate");
+        panic!("Expected H gate");
     }
 
     if let Operation::Gate { name, .. } = &program.operations[1] {
-        assert_eq!(name, "cx");
+        assert_eq!(name, "CX");
     } else {
-        panic!("Expected cx gate");
+        panic!("Expected CX gate");
     }
 }
 

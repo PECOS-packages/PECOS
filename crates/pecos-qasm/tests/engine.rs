@@ -44,11 +44,11 @@ fn test_multiple_qubit_registers() -> Result<(), PecosError> {
         qreg q1[2];
         qreg q2[3];
         creg c[5];
-        h q1[0];
-        cx q1[0],q2[0];
-        h q1[1];
-        cx q1[1],q2[1];
-        h q2[2];
+        H q1[0];
+        CX q1[0],q2[0];
+        H q1[1];
+        CX q1[1],q2[1];
+        H q2[2];
         measure q1[0] -> c[0];
         measure q1[1] -> c[1];
         measure q2[0] -> c[2];
@@ -56,19 +56,18 @@ fn test_multiple_qubit_registers() -> Result<(), PecosError> {
         measure q2[2] -> c[4];
     "#;
 
-    let mut engine = QASMEngine::new()?;
-    engine.from_str(qasm)?;
+    let mut engine = QASMEngine::from_str(qasm)?;
 
     // Test the new get_qubit_id method
-    assert_eq!(engine.get_qubit_id("q1", 0), Some(0));
-    assert_eq!(engine.get_qubit_id("q1", 1), Some(1));
-    assert_eq!(engine.get_qubit_id("q2", 0), Some(2));
-    assert_eq!(engine.get_qubit_id("q2", 1), Some(3));
-    assert_eq!(engine.get_qubit_id("q2", 2), Some(4));
+    assert_eq!(engine.qubit_id("q1", 0), Some(0));
+    assert_eq!(engine.qubit_id("q1", 1), Some(1));
+    assert_eq!(engine.qubit_id("q2", 0), Some(2));
+    assert_eq!(engine.qubit_id("q2", 1), Some(3));
+    assert_eq!(engine.qubit_id("q2", 2), Some(4));
 
     // Test non-existent register/index
-    assert_eq!(engine.get_qubit_id("q3", 0), None);
-    assert_eq!(engine.get_qubit_id("q1", 5), None);
+    assert_eq!(engine.qubit_id("q3", 0), None);
+    assert_eq!(engine.qubit_id("q1", 5), None);
 
     // Run the circuit using the Engine trait process method
     let result = engine.process(())?;
@@ -86,8 +85,8 @@ fn test_engine_execution() -> Result<(), PecosError> {
         include "qelib1.inc";
         qreg q[2];
         creg c[2];
-        h q[0];
-        cx q[0],q[1];
+        H q[0];
+        CX q[0],q[1];
         measure q[0] -> c[0];
         measure q[1] -> c[1];
     "#;
@@ -97,7 +96,7 @@ fn test_engine_execution() -> Result<(), PecosError> {
     std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     // Use a fixed seed for deterministic test results
-    let mut engine = QASMEngine::with_file(file.path())
+    let mut engine = QASMEngine::from_file(file.path())
         .map_err(|e| PecosError::Processing(format!("Failed to create engine: {e}")))?;
 
     // Process the program
@@ -128,8 +127,8 @@ fn test_deterministic_bell_state() -> Result<(), PecosError> {
         creg c[2];
 
         // Create Bell state |00⟩ + |11⟩
-        h q[0];
-        cx q[0],q[1];
+        H q[0];
+        CX q[0],q[1];
 
         // Measure both qubits
         measure q[0] -> c[0];
@@ -141,7 +140,7 @@ fn test_deterministic_bell_state() -> Result<(), PecosError> {
     std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     // Use a fixed seed for deterministic test results
-    let mut engine = QASMEngine::with_file(file.path())
+    let mut engine = QASMEngine::from_file(file.path())
         .map_err(|e| PecosError::Processing(format!("Failed to create engine: {e}")))?;
 
     // Process the program
@@ -175,9 +174,9 @@ fn test_deterministic_3qubit_circuit() -> Result<(), PecosError> {
         creg c[3];
 
         // Create GHZ state |000⟩ + |111⟩
-        h q[0];
-        cx q[0],q[1];
-        cx q[1],q[2];
+        H q[0];
+        CX q[0],q[1];
+        CX q[1],q[2];
 
         // Measure all qubits
         measure q[0] -> c[0];
@@ -189,11 +188,8 @@ fn test_deterministic_3qubit_circuit() -> Result<(), PecosError> {
         .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
     std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
-    let mut engine = QASMEngine::new()
+    let mut engine = QASMEngine::from_file(file.path())
         .map_err(|e| PecosError::Processing(format!("Failed to create engine: {e}")))?;
-    engine
-        .from_str(&std::fs::read_to_string(file.path()).map_err(PecosError::IO)?)
-        .map_err(|e| PecosError::Processing(format!("Failed to parse QASM: {e}")))?;
 
     // Generate commands to verify the operations - First batch
     let command_message1 = engine
@@ -316,9 +312,9 @@ fn test_multi_register_operation() -> Result<(), PecosError> {
 
         // Prepare states - force a known state
         // Make sure to explicitly qualify each register
-        x q[0];  // Set q[0] to |1> deterministically
-        x q[1];  // Set q[1] to |1> deterministically
-        x r[0];  // Set r[0] to |1> deterministically - this is key
+        X q[0];  // Set q[0] to |1> deterministically
+        X q[1];  // Set q[1] to |1> deterministically
+        X r[0];  // Set r[0] to |1> deterministically - this is key
 
         // Measure to different registers
         measure q[0] -> c1[0];
@@ -331,7 +327,7 @@ fn test_multi_register_operation() -> Result<(), PecosError> {
     std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     // Use a fixed seed for deterministic test results
-    let mut engine = QASMEngine::with_file(file.path())
+    let mut engine = QASMEngine::from_file(file.path())
         .map_err(|e| PecosError::Processing(format!("Failed to create engine with seed: {e}")))?;
 
     // Process the program with deterministic randomness
@@ -386,20 +382,17 @@ fn test_engine_conditional() -> Result<(), PecosError> {
         include "qelib1.inc";
         qreg q[1];
         creg c[1];
-        h q[0];
+        H q[0];
         measure q[0] -> c[0];
-        if(c[0]==1) x q[0];
+        if(c[0]==1) X q[0];
     "#;
 
     let mut file = tempfile::NamedTempFile::new()
         .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
     std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
-    let mut engine = QASMEngine::new()
+    let mut engine = QASMEngine::from_file(file.path())
         .map_err(|e| PecosError::Processing(format!("Failed to create engine: {e}")))?;
-    engine
-        .from_str(&std::fs::read_to_string(file.path()).map_err(PecosError::IO)?)
-        .map_err(|e| PecosError::Processing(format!("Failed to parse QASM: {e}")))?;
 
     // Process the program
     let results = engine
@@ -429,14 +422,14 @@ fn test_multiple_measurement_operations() -> Result<(), PecosError> {
         creg c2[1];
 
         // Initialize to a known state instead of superposition
-        x q[0];  // Set q[0] to |1> deterministically
+        X q[0];  // Set q[0] to |1> deterministically
 
         // First measurement
         measure q[0] -> c1[0];
 
         // Apply X again to flip back to |0> then flip to |1>
-        x q[0];  // Flip to |0>
-        x q[0];  // Flip back to |1>
+        X q[0];  // Flip to |0>
+        X q[0];  // Flip back to |1>
 
         // Second measurement
         measure q[0] -> c2[0];
@@ -447,11 +440,8 @@ fn test_multiple_measurement_operations() -> Result<(), PecosError> {
     std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     println!("Parsing QASM program...");
-    let mut engine = QASMEngine::new()
+    let mut engine = QASMEngine::from_file(file.path())
         .map_err(|e| PecosError::Processing(format!("Failed to create engine: {e}")))?;
-    engine
-        .from_str(&std::fs::read_to_string(file.path()).map_err(PecosError::IO)?)
-        .map_err(|e| PecosError::Processing(format!("Failed to parse QASM: {e}")))?;
 
     // IMPORTANT: The QASMEngine itself doesn't simulate quantum operations.
     // In real usage, the commands would be sent to a quantum engine.
@@ -519,11 +509,8 @@ fn test_multiple_measurement_operations() -> Result<(), PecosError> {
         println!("Let's modify our test to manually set both measurements at once.");
 
         // Reset the engine
-        engine = QASMEngine::new()
+        engine = QASMEngine::from_file(file.path())
             .map_err(|e| PecosError::Processing(format!("Failed to create engine: {e}")))?;
-        engine
-            .from_str(&std::fs::read_to_string(file.path()).map_err(PecosError::IO)?)
-            .map_err(|e| PecosError::Processing(format!("Failed to parse QASM: {e}")))?;
 
         // Get all commands in one batch
         let _commands = engine

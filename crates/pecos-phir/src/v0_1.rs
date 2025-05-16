@@ -5,11 +5,11 @@ pub mod operations;
 pub mod wasm_foreign_object;
 
 // Our improved implementations
-pub mod environment;
-pub mod expression;
 pub mod block_executor;
 pub mod block_iterative_executor;
 pub mod enhanced_results;
+pub mod environment;
+pub mod expression;
 
 // The following modules have been removed as their functionality
 // has been integrated into operations.rs and engine.rs
@@ -78,7 +78,7 @@ pub struct EnhancedV0_1;
 
 impl PHIRImplementation for EnhancedV0_1 {
     type Program = ast::PHIRProgram;
-    type Engine = engine::PHIREngine;  // Using the regular PHIREngine now that it's been enhanced
+    type Engine = engine::PHIREngine; // Using the regular PHIREngine now that it's been enhanced
 
     fn parse_program(json: &str) -> Result<Self::Program, PecosError> {
         // Use the same parsing logic as V0_1
@@ -97,7 +97,9 @@ pub fn setup_phir_v0_1_engine(program_path: &Path) -> Result<Box<dyn ClassicalEn
 }
 
 /// Shorthand function to set up an enhanced v0.1 PHIR engine from a file path
-pub fn setup_enhanced_phir_v0_1_engine(program_path: &Path) -> Result<Box<dyn ClassicalEngine>, PecosError> {
+pub fn setup_enhanced_phir_v0_1_engine(
+    program_path: &Path,
+) -> Result<Box<dyn ClassicalEngine>, PecosError> {
     EnhancedV0_1::setup_engine(program_path)
 }
 

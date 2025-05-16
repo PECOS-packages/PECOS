@@ -18,12 +18,11 @@ fn test_qelib1_inc_available_from_external_crate() -> Result<(), PecosError> {
     "#;
 
     // Create engine and load QASM with qelib1.inc
-    let mut engine = QASMEngine::new()?;
-    engine.from_str(qasm)?;
-    
+    let engine = QASMEngine::from_str(qasm)?;
+
     // Verify the engine loaded successfully with 2 qubits
     assert_eq!(engine.num_qubits(), 2);
-    
+
     Ok(())
 }
 
@@ -43,11 +42,10 @@ fn test_custom_includes_with_embedded_standard() -> Result<(), PecosError> {
         measure q -> c;
     "#;
 
-    let mut engine = QASMEngine::new()?;
-    engine.from_str(qasm)?;
-    
+    let engine = QASMEngine::from_str(qasm)?;
+
     assert_eq!(engine.num_qubits(), 2);
-    
+
     Ok(())
 }
 
@@ -66,10 +64,9 @@ fn test_pecos_inc_available() -> Result<(), PecosError> {
         measure q -> c;
     "#;
 
-    let mut engine = QASMEngine::new()?;
-    engine.from_str(qasm)?;
-    
+    let engine = QASMEngine::from_str(qasm)?;
+
     assert_eq!(engine.num_qubits(), 2);
-    
+
     Ok(())
 }

@@ -38,13 +38,23 @@ mod tests {
         }"#;
 
         // Run the test using our helper function - using single shot with no noise
-        let results = run_phir_simulation_from_json(phir_json, 1, 1, None, None::<pecos_engines::PassThroughNoiseModel>, None::<&std::path::Path>)?;
+        let results = run_phir_simulation_from_json(
+            phir_json,
+            1,
+            1,
+            None,
+            None::<pecos_engines::PassThroughNoiseModel>,
+            None::<&std::path::Path>,
+        )?;
 
         // Print all information about the result for debugging
         println!("ShotResults: {results:?}");
 
         // Make sure we have results
-        assert!(!results.shots.is_empty(), "Expected at least one shot result");
+        assert!(
+            !results.shots.is_empty(),
+            "Expected at least one shot result"
+        );
 
         // We can't assert exact values since it's a probabilistic simulation,
         // but we just want to ensure the program runs without errors

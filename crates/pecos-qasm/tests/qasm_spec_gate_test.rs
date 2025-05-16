@@ -5,19 +5,19 @@ use pecos_qasm::QASMParser;
 #[test]
 fn test_qasm_spec_example_1() {
     // Example from the spec: controlled-sqrt-Z gate
-    let qasm = r#"
+    let qasm = r"
         OPENQASM 2.0;
         qreg q[2];
         
         // Controlled sqrt(Z) gate
         gate cz a,b {
-            h b;
-            cx a,b;
-            h b;
+            H b;
+            CX a,b;
+            H b;
         }
         
         cz q[0], q[1];
-    "#;
+    ";
 
     let result = QASMParser::parse_str(qasm);
     assert!(result.is_ok());
@@ -33,20 +33,20 @@ fn test_qasm_spec_example_2() {
 
         gate ccx a,b,c {
             h c;
-            cx b,c;
+            CX b,c;
             tdg c;
-            cx a,c;
+            CX a,c;
             t c;
-            cx b,c;
+            CX b,c;
             tdg c;
-            cx a,c;
+            CX a,c;
             t b;
             t c;
             h c;
-            cx a,b;
+            CX a,b;
             t a;
             tdg b;
-            cx a,b;
+            CX a,b;
         }
         
         ccx q[0], q[1], q[2];
@@ -59,19 +59,19 @@ fn test_qasm_spec_example_2() {
 #[test]
 fn test_qasm_spec_example_3() {
     // Example with parameters
-    let qasm = r#"
+    let qasm = r"
         OPENQASM 2.0;
         qreg q[1];
         
         // Rotation about X-axis
         gate rx(theta) a {
-            h a;
-            rz(theta) a;
-            h a;
+            H a;
+            RZ(theta) a;
+            H a;
         }
         
         rx(pi/2) q[0];
-    "#;
+    ";
 
     let result = QASMParser::parse_str(qasm);
     assert!(result.is_ok());
@@ -109,27 +109,27 @@ fn test_qasm_spec_syntax_variations() {
 
         // No parameters, single qubit
         gate x180 a {
-            x a;
-            x a;
+            X a;
+            X a;
         }
         
         // Multiple parameters, single qubit  
         gate u3(theta,phi,lambda) q {
-            rz(phi) q;
+            RZ(phi) q;
             ry(theta) q;
-            rz(lambda) q;
+            RZ(lambda) q;
         }
         
         // No parameters, multiple qubits
         gate swap a,b {
-            cx a,b;
-            cx b,a;
-            cx a,b;
+            CX a,b;
+            CX b,a;
+            CX a,b;
         }
         
         // Parameters with expressions
         gate mygate(alpha) q {
-            rz(alpha/2) q;
+            RZ(alpha/2) q;
             rx(alpha*2) q;
             ry(alpha+pi) q;
         }
@@ -150,24 +150,24 @@ fn test_qasm_spec_invalid_syntax() {
     // Test invalid gate definitions according to spec
 
     // Missing curly braces
-    let invalid1 = r#"
+    let invalid1 = r"
         OPENQASM 2.0;
-        gate bad a h a;
-    "#;
+        gate bad a H a;
+    ";
     assert!(QASMParser::parse_str_raw(invalid1).is_err());
 
     // Invalid parameter syntax (missing parentheses)
-    let invalid2 = r#"
+    let invalid2 = r"
         OPENQASM 2.0;
-        gate bad theta a { rz(theta) a; }
-    "#;
+        gate bad theta a { RZ(theta) a; }
+    ";
     assert!(QASMParser::parse_str_raw(invalid2).is_err());
 
     // Empty parameter list
-    let valid_empty_params = r#"
+    let valid_empty_params = r"
         OPENQASM 2.0;
-        gate good() a { h a; }
-    "#;
+        gate good() a { H a; }
+    ";
     // This might be valid or invalid depending on spec interpretation
     let result = QASMParser::parse_str_raw(valid_empty_params);
     println!("Empty params result: {:?}", result.is_ok());

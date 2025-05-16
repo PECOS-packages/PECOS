@@ -70,7 +70,7 @@ classical_op = {
 // Gate definition (simplified)
 gate_def = { "gate" ~ identifier ~ param_list? ~ identifier_list ~ "{" ~ gate_def_statement* ~ "}" }
 gate_def_statement = { gate_def_call }
-param_list = { "(" ~ identifier ~ ("," ~ identifier)* ~ ")" }
+param_list = { "(" ~ (identifier ~ ("," ~ identifier)*)? ~ ")" }
 identifier_list = { identifier ~ ("," ~ identifier)* }
 
 // Opaque gate declaration

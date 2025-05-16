@@ -164,7 +164,8 @@ impl WasmtimeForeignObject {
 impl ForeignObject for WasmtimeForeignObject {
     fn clone_box(&self) -> Box<dyn ForeignObject> {
         // Create a new instance from the same bytes
-        let mut result = Self::from_bytes(&self.wasm_bytes).expect("Failed to clone WasmtimeForeignObject");
+        let mut result =
+            Self::from_bytes(&self.wasm_bytes).expect("Failed to clone WasmtimeForeignObject");
 
         // Initialize it the same way
         if self.instance.read().is_some() {

@@ -14,21 +14,20 @@ fn test_conditional_execution() -> Result<(), Box<dyn Error>> {
         creg c[2];
         
         // Initialize qubit 0 in superposition
-        h q[0];
+        H q[0];
         
         // Measure qubit 0 to c[0]
         measure q[0] -> c[0];
         
         // Conditional quantum operation: if c[0]==1, apply X to q[1]
-        if(c[0]==1) x q[1];
+        if(c[0]==1) X q[1];
         
         // Measure q[1] to c[1]
         measure q[1] -> c[1];
     "#;
 
     // Create and initialize the engine
-    let mut engine = QASMEngine::new()?;
-    engine.from_str(qasm)?;
+    let mut engine = QASMEngine::from_str(qasm)?;
 
     // Run multiple shots to see different outcomes
     let total_shots = 10;
@@ -43,7 +42,7 @@ fn test_conditional_execution() -> Result<(), Box<dyn Error>> {
             // The c register should have the measurement results
             // If c[0] == 1, then c[1] should also be 1 due to the conditional
             // If c[0] == 0, then c[1] should be 0 (no X applied)
-            println!("Shot result: c = {:#04b}", c_value);
+            println!("Shot result: c = {c_value:#04b}");
 
             // Count shots where we got a 1 on the first qubit
             if c_value & 1 == 1 {
@@ -63,10 +62,7 @@ fn test_conditional_execution() -> Result<(), Box<dyn Error>> {
 
     // Since h creates a 50/50 superposition, we expect approximately half
     // the shots to have c[0]=1, but allow some statistical variation
-    println!(
-        "Got {} shots with c[0]=1 out of {}",
-        ones_count, total_shots
-    );
+    println!("Got {ones_count} shots with c[0]=1 out of {total_shots}");
 
     // In all cases, the conditional logic should be correct
     Ok(())
@@ -84,7 +80,7 @@ fn test_conditional_classical_assignment() -> Result<(), Box<dyn Error>> {
         creg c[2];
         
         // Initialize qubit in superposition
-        h q[0];
+        H q[0];
         
         // Measure qubit to c[0]
         measure q[0] -> c[0];
@@ -97,8 +93,7 @@ fn test_conditional_classical_assignment() -> Result<(), Box<dyn Error>> {
     "#;
 
     // Create and initialize the engine
-    let mut engine = QASMEngine::new()?;
-    engine.from_str(qasm)?;
+    let mut engine = QASMEngine::from_str(qasm)?;
 
     // Run multiple shots
     let total_shots = 10;
@@ -112,7 +107,7 @@ fn test_conditional_classical_assignment() -> Result<(), Box<dyn Error>> {
             let c0 = c_value & 1;
             let c1 = (c_value >> 1) & 1;
 
-            println!("Shot result: c[0]={}, c[1]={}", c0, c1);
+            println!("Shot result: c[0]={c0}, c[1]={c1}");
 
             // c[1] should equal c[0] due to the conditional assignments
             assert_eq!(

@@ -74,17 +74,17 @@ pub fn run_phir_simulation_from_json<T: NoiseModel + 'static, P: AsRef<std::path
 
     #[cfg(feature = "wasm")]
     if let Some(wasm_file_path) = wasm_path {
-            // Box is sufficient since we don't need shared ownership
-            use pecos_phir::v0_1::foreign_objects::ForeignObject;
-            use pecos_phir::v0_1::wasm_foreign_object::WasmtimeForeignObject;
+        // Box is sufficient since we don't need shared ownership
+        use pecos_phir::v0_1::foreign_objects::ForeignObject;
+        use pecos_phir::v0_1::wasm_foreign_object::WasmtimeForeignObject;
 
-            // Create and initialize the WebAssembly foreign object
-            let mut foreign_object = WasmtimeForeignObject::new(wasm_file_path.as_ref())?;
-            foreign_object.init()?;
-            let foreign_object: Box<dyn ForeignObject> = Box::new(foreign_object);
+        // Create and initialize the WebAssembly foreign object
+        let mut foreign_object = WasmtimeForeignObject::new(wasm_file_path.as_ref())?;
+        foreign_object.init()?;
+        let foreign_object: Box<dyn ForeignObject> = Box::new(foreign_object);
 
-            // Set the foreign object in the engine (only once!)
-            engine.set_foreign_object(foreign_object);
+        // Set the foreign object in the engine (only once!)
+        engine.set_foreign_object(foreign_object);
     }
 
     // Use the provided noise model or default to PassThroughNoiseModel
@@ -92,9 +92,9 @@ pub fn run_phir_simulation_from_json<T: NoiseModel + 'static, P: AsRef<std::path
         Some(model) => Box::new(model),
         None => Box::new(PassThroughNoiseModel),
     };
-    
+
     // Debug: Print the engine state before running
-    println!("Debug - Starting simulation with engine: {:?}", engine);
+    println!("Debug - Starting simulation with engine: {engine:?}");
 
     // Run the Monte Carlo engine
     let results = MonteCarloEngine::run_with_noise_model(
@@ -109,7 +109,7 @@ pub fn run_phir_simulation_from_json<T: NoiseModel + 'static, P: AsRef<std::path
     })?;
 
     // Debug: Print register information from results
-    println!("Debug - Results received: {:?}", results);
+    println!("Debug - Results received: {results:?}");
     println!("Debug - Registers (u32): {:?}", results.register_shots);
     println!("Debug - Registers (u64): {:?}", results.register_shots_u64);
     println!("Debug - Registers (i64): {:?}", results.register_shots_i64);

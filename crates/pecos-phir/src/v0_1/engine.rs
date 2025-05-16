@@ -182,16 +182,19 @@ impl PHIREngine {
     }
 
     /// Resets the engine state
-    /// 
+    ///
     /// Simplified reset that treats the environment as the single source of truth.
     /// This no longer preserves and restores variable values during reset, as they
     /// should be recomputed during program execution.
     fn reset_state(&mut self) {
-        debug!("INTERNAL RESET: PHIREngine reset, current_op={}", self.current_op);
+        debug!(
+            "INTERNAL RESET: PHIREngine reset, current_op={}",
+            self.current_op
+        );
 
         // Reset the operation index to start from the beginning
         self.current_op = 0;
-        
+
         // Log operations for debugging if needed
         if log::log_enabled!(log::Level::Debug) && self.program.is_some() {
             let program = self.program.as_ref().unwrap();
@@ -199,13 +202,13 @@ impl PHIREngine {
         }
 
         // Reset the processor state (maintains variable definitions but clears values)
-        // This is now a clean reset without preserving values, since the environment 
+        // This is now a clean reset without preserving values, since the environment
         // is the single source of truth and values should be recomputed as needed
         self.processor.reset();
 
         // Reset the message builder to reuse allocated memory
         self.message_builder.reset();
-        
+
         debug!("PHIREngine reset complete, ready for next execution");
     }
 
@@ -270,7 +273,8 @@ impl PHIREngine {
                         "Processing variable definition: {} {} {}",
                         data, data_type, variable
                     );
-                    let _ = self.processor
+                    let _ = self
+                        .processor
                         .handle_variable_definition(data, data_type, variable, *size);
                     self.current_op += 1;
                     return self.generate_commands();
@@ -705,7 +709,10 @@ impl ControlEngine for PHIREngine {
 
         // Handle received measurements
         let measurement_results = measurements.parse_measurements()?;
-        log::info!("PHIREngine: Measurement results received: {:?}", measurement_results);
+        log::info!(
+            "PHIREngine: Measurement results received: {:?}",
+            measurement_results
+        );
 
         // For Bell state debugging - check if we have 2 qubits and get result patterns
         if let Some(prog) = &self.program {
@@ -716,7 +723,10 @@ impl ControlEngine for PHIREngine {
                     false
                 }
             }) {
-                log::info!("Bell state program detected - measurement results: {:?}", measurement_results);
+                log::info!(
+                    "Bell state program detected - measurement results: {:?}",
+                    measurement_results
+                );
             }
         }
 
@@ -825,10 +835,8 @@ impl ClassicalEngine for PHIREngine {
 
             // Keep only the registers that are explicitly mapped as destinations
             // This provides a general approach that works for all tests including Bell state tests
-            let destination_registers: HashSet<String> = mappings
-                .iter()
-                .map(|(_, dest)| dest.clone())
-                .collect();
+            let destination_registers: HashSet<String> =
+                mappings.iter().map(|(_, dest)| dest.clone()).collect();
 
             // Keep only the explicitly mapped destination registers if we have any
             if !destination_registers.is_empty() {
@@ -837,7 +845,11 @@ impl ClassicalEngine for PHIREngine {
                 for dest in destination_registers {
                     if exported_values.contains_key(&dest) {
                         let value = exported_values[&dest];
-                        log::info!("PHIR: Keeping explicitly mapped register: {} = {}", dest, value);
+                        log::info!(
+                            "PHIR: Keeping explicitly mapped register: {} = {}",
+                            dest,
+                            value
+                        );
                         filtered_values.insert(dest, value);
                     }
                 }
@@ -852,10 +864,15 @@ impl ClassicalEngine for PHIREngine {
             for info in self.processor.environment.get_all_variables() {
                 if let Some(value) = self.processor.environment.get(&info.name) {
                     // Add to exported_values if not already there
-                    exported_values.entry(info.name.clone())
+                    exported_values
+                        .entry(info.name.clone())
                         .or_insert(value.as_u32());
 
-                    log::info!("PHIR: Added direct variable from environment {} = {}", info.name, value);
+                    log::info!(
+                        "PHIR: Added direct variable from environment {} = {}",
+                        info.name,
+                        value
+                    );
 
                     // Simply add all variables from environment without any special transformations
                     // No assumptions about variable naming conventions
@@ -886,8 +903,12 @@ impl ClassicalEngine for PHIREngine {
                 if let Some(value) = self.processor.environment.get(&info.name) {
                     log::info!("PHIR: Adding variable {} = {} to results", info.name, value);
                     results.registers.insert(info.name.clone(), value.as_u32());
-                    results.registers_u64.insert(info.name.clone(), value.as_u64());
-                    results.registers_i64.insert(info.name.clone(), value.as_i64());
+                    results
+                        .registers_u64
+                        .insert(info.name.clone(), value.as_u64());
+                    results
+                        .registers_i64
+                        .insert(info.name.clone(), value.as_i64());
                 }
             }
 
@@ -897,7 +918,7 @@ impl ClassicalEngine for PHIREngine {
                 if results.registers.contains_key(dest) {
                     continue;
                 }
-                
+
                 // Try to get the value from the environment
                 if let Some(value) = self.processor.environment.get(source) {
                     log::info!("PHIR: Exporting {} -> {} = {}", source, dest, value);
@@ -908,7 +929,12 @@ impl ClassicalEngine for PHIREngine {
                     // If not found in environment, try the exported_values directly
                     // Try to get the value directly from environment if not already found
                     if let Some(value) = self.processor.environment.get(source) {
-                        log::info!("PHIR: Exporting from environment {} -> {} = {}", source, dest, value);
+                        log::info!(
+                            "PHIR: Exporting from environment {} -> {} = {}",
+                            source,
+                            dest,
+                            value
+                        );
                         results.registers.insert(dest.clone(), value.as_u32());
                         results.registers_u64.insert(dest.clone(), value.as_u64());
                         results.registers_i64.insert(dest.clone(), value.as_i64());
@@ -916,22 +942,28 @@ impl ClassicalEngine for PHIREngine {
                     // Note: We no longer fall back to measurement_results as primary source
                 }
             }
-            
+
             // If there are no registers in the results, add all variables from environment
             if results.registers.is_empty() {
                 for info in self.processor.environment.get_all_variables() {
                     if let Some(value) = self.processor.environment.get(&info.name) {
                         log::info!("PHIR: Adding all variables: {} = {}", info.name, value);
                         results.registers.insert(info.name.clone(), value.as_u32());
-                        results.registers_u64.insert(info.name.clone(), value.as_u64());
-                        results.registers_i64.insert(info.name.clone(), value.as_i64());
+                        results
+                            .registers_u64
+                            .insert(info.name.clone(), value.as_u64());
+                        results
+                            .registers_i64
+                            .insert(info.name.clone(), value.as_i64());
                     }
                 }
             }
 
             // No legacy fallback needed anymore since the environment is the single source of truth
             if results.registers.is_empty() {
-                log::info!("PHIR: No register values found in environment, returning empty results");
+                log::info!(
+                    "PHIR: No register values found in environment, returning empty results"
+                );
             }
         }
 
@@ -943,7 +975,7 @@ impl ClassicalEngine for PHIREngine {
         // 1. We no longer create or manage separate bit-indexed variables
         // 2. All bit values are stored directly in integer variables
         // 3. The environment handles all bit operations transparently
-        
+
         // Just log the final state of the registers for debugging
         log::info!("PHIR: Final register values from environment - no reconstruction needed");
         for (key, value) in &results.registers {
@@ -986,11 +1018,11 @@ impl Clone for PHIREngine {
 
                 Self {
                     program: Some(program.clone()),
-                    current_op: self.current_op,     // Preserve the current operation position
-                    processor,                       // Use the fully cloned processor with preserved state
+                    current_op: self.current_op, // Preserve the current operation position
+                    processor, // Use the fully cloned processor with preserved state
                     message_builder: ByteMessageBuilder::new(),
                 }
-            },
+            }
             None => Self::empty(),
         }
     }
@@ -1036,7 +1068,8 @@ impl Engine for PHIREngine {
                         size,
                     } => {
                         log::info!("Processing variable definition: {} {}", data_type, variable);
-                        let _ = self.processor
+                        let _ = self
+                            .processor
                             .handle_variable_definition(data, data_type, variable, *size);
                     }
                     Operation::ClassicalOp {
@@ -1098,7 +1131,8 @@ impl Engine for PHIREngine {
                                 if let Some(cond) = condition {
                                     if let (Some(tb), fb) = (true_branch, false_branch) {
                                         // Actually evaluate the condition using ExpressionEvaluator
-                                        let condition_value = self.processor.evaluate_expression(cond)? != 0;
+                                        let condition_value =
+                                            self.processor.evaluate_expression(cond)? != 0;
 
                                         // Select branch based on condition
                                         let branch_ops = if condition_value {
@@ -1377,8 +1411,12 @@ impl Engine for PHIREngine {
                 if let Some(value) = self.processor.environment.get(&info.name) {
                     log::info!("Adding variable {} = {} to results", info.name, value);
                     result.registers.insert(info.name.clone(), value.as_u32());
-                    result.registers_u64.insert(info.name.clone(), value.as_u64());
-                    result.registers_i64.insert(info.name.clone(), value.as_i64());
+                    result
+                        .registers_u64
+                        .insert(info.name.clone(), value.as_u64());
+                    result
+                        .registers_i64
+                        .insert(info.name.clone(), value.as_i64());
                 }
             }
         }

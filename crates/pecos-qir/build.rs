@@ -263,14 +263,17 @@ fn build_qir_runtime() -> Result<(), String> {
     let release_lib_path = workspace_dir.join(format!("target/release/{lib_filename}"));
 
     // Check for potentially corrupted libraries
-    let debug_corrupted = debug_lib_path.exists() && 
-        fs::metadata(&debug_lib_path).map(|m| m.len()).unwrap_or(0) < 1000;
-    let release_corrupted = release_lib_path.exists() && 
-        fs::metadata(&release_lib_path).map(|m| m.len()).unwrap_or(0) < 1000;
-    
+    let debug_corrupted = debug_lib_path.exists()
+        && fs::metadata(&debug_lib_path).map(|m| m.len()).unwrap_or(0) < 1000;
+    let release_corrupted = release_lib_path.exists()
+        && fs::metadata(&release_lib_path)
+            .map(|m| m.len())
+            .unwrap_or(0)
+            < 1000;
+
     if debug_corrupted || release_corrupted {
         println!("Detected potentially corrupted QIR runtime library, forcing rebuild");
-    } 
+    }
     // Skip build if libraries exist and are up-to-date
     else if !needs_rebuild(&manifest_dir, &debug_lib_path)
         && !needs_rebuild(&manifest_dir, &release_lib_path)
@@ -311,10 +314,14 @@ fn build_qir_runtime() -> Result<(), String> {
             .map_err(|e| format!("Failed to create target directory: {e}"))?;
         fs::copy(&built_lib_path, &target_path)
             .map_err(|e| format!("Failed to copy library to {}: {e}", target_path.display()))?;
-        
+
         // Verify that the library was copied correctly
-        if !target_path.exists() || fs::metadata(&target_path).map(|m| m.len()).unwrap_or(0) < 1000 {
-            return Err(format!("Library copy verification failed at {}", target_path.display()));
+        if !target_path.exists() || fs::metadata(&target_path).map(|m| m.len()).unwrap_or(0) < 1000
+        {
+            return Err(format!(
+                "Library copy verification failed at {}",
+                target_path.display()
+            ));
         }
     }
 

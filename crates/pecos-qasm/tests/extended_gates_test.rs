@@ -9,7 +9,7 @@ fn test_basic_rotation_gates() {
         qreg q[1];
         
         // Test RZ gate
-        rz(pi/2) q[0];
+        RZ(pi/2) q[0];
         
         // Test S and T gates 
         s q[0];
@@ -18,8 +18,7 @@ fn test_basic_rotation_gates() {
         tdg q[0];
     "#;
 
-    let mut engine = QASMEngine::new().unwrap();
-    let result = engine.from_str(qasm);
+    let result = QASMEngine::from_str(qasm);
 
     assert!(result.is_ok(), "Should successfully parse rotation gates");
 }
@@ -32,14 +31,13 @@ fn test_two_qubit_rotations() {
         qreg q[2];
         
         // Test RZZ gate with parameter
-        rzz(pi/4) q[0], q[1];
+        RZZ(pi/4) q[0], q[1];
         
         // Test SZZ gate
-        szz q[0], q[1];
+        SZZ q[0], q[1];
     "#;
 
-    let mut engine = QASMEngine::new().unwrap();
-    let result = engine.from_str(qasm);
+    let result = QASMEngine::from_str(qasm);
 
     assert!(
         result.is_ok(),
@@ -60,8 +58,7 @@ fn test_decomposed_gates() {
         swap q[0], q[1];
     "#;
 
-    let mut engine = QASMEngine::new().unwrap();
-    let result = engine.from_str(qasm);
+    let result = QASMEngine::from_str(qasm);
 
     assert!(result.is_ok(), "Should successfully parse decomposed gates");
 }
@@ -74,13 +71,12 @@ fn test_parameterized_gates() {
         qreg q[1];
         
         // Test parameterized gates
-        rz(pi) q[0];
-        rz(pi/2) q[0];
-        rz(0.7854) q[0];  // pi/4 in decimal
+        RZ(pi) q[0];
+        RZ(pi/2) q[0];
+        RZ(0.7854) q[0];  // pi/4 in decimal
     "#;
 
-    let mut engine = QASMEngine::new().unwrap();
-    let result = engine.from_str(qasm);
+    let result = QASMEngine::from_str(qasm);
 
     assert!(
         result.is_ok(),
@@ -90,16 +86,15 @@ fn test_parameterized_gates() {
 
 #[test]
 fn test_unsupported_gate_error() {
-    let qasm = r#"
+    let qasm = r"
         OPENQASM 2.0;
         qreg q[3];
 
         // This should fail during parsing - Toffoli is not defined
         ccx q[0], q[1], q[2];
-    "#;
+    ";
 
-    let mut engine = QASMEngine::new().unwrap();
-    let result = engine.from_str(qasm);
+    let result = QASMEngine::from_str(qasm);
 
     // With stricter parsing, this should now fail at parse time
     assert!(result.is_err(), "Should fail on undefined gate");
@@ -108,8 +103,7 @@ fn test_unsupported_gate_error() {
         let error_msg = e.to_string();
         assert!(
             error_msg.contains("Undefined") && error_msg.contains("ccx"),
-            "Error should mention undefined gate ccx: {}",
-            error_msg
+            "Error should mention undefined gate ccx: {error_msg}"
         );
     }
 }

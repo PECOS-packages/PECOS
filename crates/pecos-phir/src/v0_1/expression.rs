@@ -1,8 +1,8 @@
+use crate::v0_1::ast::{ArgItem, Expression};
+use crate::v0_1::environment::{DataType, Environment, TypedValue};
 use pecos_core::errors::PecosError;
 use std::collections::HashMap;
 use std::fmt;
-use crate::v0_1::ast::{ArgItem, Expression};
-use crate::v0_1::environment::{DataType, Environment, TypedValue};
 
 /// Expression value with type information
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -21,7 +21,13 @@ impl ExprValue {
         match self {
             ExprValue::Integer(val) => *val,
             ExprValue::UInteger(val) => *val as i64,
-            ExprValue::Boolean(val) => if *val { 1 } else { 0 },
+            ExprValue::Boolean(val) => {
+                if *val {
+                    1
+                } else {
+                    0
+                }
+            }
         }
     }
 
@@ -30,7 +36,13 @@ impl ExprValue {
         match self {
             ExprValue::Integer(val) => *val as u64,
             ExprValue::UInteger(val) => *val,
-            ExprValue::Boolean(val) => if *val { 1 } else { 0 },
+            ExprValue::Boolean(val) => {
+                if *val {
+                    1
+                } else {
+                    0
+                }
+            }
         }
     }
 
@@ -94,21 +106,25 @@ impl<'a> ExpressionEvaluator<'a> {
             expr_cache: HashMap::new(),
         }
     }
-    
+
     /// Creates a new expression evaluator with pre-allocated cache sizes
-    pub fn with_capacity(environment: &'a Environment, var_capacity: usize, expr_capacity: usize) -> Self {
+    pub fn with_capacity(
+        environment: &'a Environment,
+        var_capacity: usize,
+        expr_capacity: usize,
+    ) -> Self {
         Self {
             environment,
             var_cache: HashMap::with_capacity(var_capacity),
             expr_cache: HashMap::with_capacity(expr_capacity),
         }
     }
-    
+
     /// Clears the expression cache but keeps variable cache
     pub fn clear_expr_cache(&mut self) {
         self.expr_cache.clear();
     }
-    
+
     /// Clears all caches
     pub fn clear_caches(&mut self) {
         self.var_cache.clear();
@@ -125,16 +141,20 @@ impl<'a> ExpressionEvaluator<'a> {
                 for arg in args {
                     match arg {
                         ArgItem::Simple(name) => key.push_str(&format!(",simple:{}", name)),
-                        ArgItem::Indexed((name, idx)) => key.push_str(&format!(",indexed:{}[{}]", name, idx)),
+                        ArgItem::Indexed((name, idx)) => {
+                            key.push_str(&format!(",indexed:{}[{}]", name, idx))
+                        }
                         ArgItem::Integer(val) => key.push_str(&format!(",int:{}", val)),
-                        ArgItem::Expression(expr) => key.push_str(&format!(",expr:{}", self.expr_to_cache_key(expr))),
+                        ArgItem::Expression(expr) => {
+                            key.push_str(&format!(",expr:{}", self.expr_to_cache_key(expr)))
+                        }
                     }
                 }
                 key
             }
         }
     }
-    
+
     /// Evaluates an expression to an ExprValue with caching
     pub fn eval_expr(&mut self, expr: &Expression) -> Result<ExprValue, PecosError> {
         // For simple expressions, don't bother with caching
@@ -166,13 +186,13 @@ impl<'a> ExpressionEvaluator<'a> {
             }
             _ => {}
         }
-        
+
         // For complex expressions, use caching
         let cache_key = self.expr_to_cache_key(expr);
         if let Some(cached_value) = self.expr_cache.get(&cache_key) {
             return Ok(*cached_value);
         }
-        
+
         // If not in cache, evaluate and store result
         let result = match expr {
             Expression::Operation { cop, args } => {
@@ -182,7 +202,8 @@ impl<'a> ExpressionEvaluator<'a> {
                     "~" | "!" => {
                         if args.len() != 1 {
                             return Err(PecosError::Input(format!(
-                                "Unary operation '{}' requires exactly 1 argument", cop
+                                "Unary operation '{}' requires exactly 1 argument",
+                                cop
                             )));
                         }
                         self.eval_unary_op(cop, &args[0])
@@ -220,7 +241,8 @@ impl<'a> ExpressionEvaluator<'a> {
                     _ => {
                         if args.len() != 2 {
                             return Err(PecosError::Input(format!(
-                                "Binary operation '{}' requires exactly 2 arguments", cop
+                                "Binary operation '{}' requires exactly 2 arguments",
+                                cop
                             )));
                         }
                         self.eval_binary_op(cop, &args[0], &args[1])
@@ -230,28 +252,35 @@ impl<'a> ExpressionEvaluator<'a> {
             // These cases are handled above
             Expression::Integer(_) | Expression::Variable(_) => unreachable!(),
         }?;
-        
+
         // Cache the result
         self.expr_cache.insert(cache_key, result);
         Ok(result)
     }
-    
+
     /// Converts an ExprValue to a bit string of the specified width
     pub fn to_bit_string(&self, value: &ExprValue, width: usize) -> String {
         let bits = match value {
             ExprValue::Integer(val) => format!("{:b}", *val as u64),
             ExprValue::UInteger(val) => format!("{:b}", val),
-            ExprValue::Boolean(val) => if *val { "1".to_string() } else { "0".to_string() },
+            ExprValue::Boolean(val) => {
+                if *val {
+                    "1".to_string()
+                } else {
+                    "0".to_string()
+                }
+            }
         };
-        
+
         // Pad with zeros to the requested width
         format!("{:0>width$}", bits, width = width)
     }
-    
+
     /// Extract bits from a value as a vector of booleans
     pub fn extract_bits(&self, value: &ExprValue, indices: &[usize]) -> Vec<bool> {
         let value_u64 = value.as_u64();
-        indices.iter()
+        indices
+            .iter()
             .map(|&idx| ((value_u64 >> idx) & 1) != 0)
             .collect()
     }
@@ -282,7 +311,8 @@ impl<'a> ExpressionEvaluator<'a> {
                     Ok(ExprValue::Boolean(bit.0))
                 } else {
                     Err(PecosError::Input(format!(
-                        "Failed to access bit {}[{}]", name, idx
+                        "Failed to access bit {}[{}]",
+                        name, idx
                     )))
                 }
             }
@@ -305,7 +335,7 @@ impl<'a> ExpressionEvaluator<'a> {
     /// Evaluates a unary operation
     fn eval_unary_op(&mut self, op: &str, arg: &ArgItem) -> Result<ExprValue, PecosError> {
         let val = self.eval_arg(arg)?;
-        
+
         match op {
             "~" => {
                 // Bitwise NOT
@@ -319,44 +349,64 @@ impl<'a> ExpressionEvaluator<'a> {
                 // Logical NOT
                 Ok(ExprValue::Boolean(!val.as_bool()))
             }
-            _ => Err(PecosError::Input(format!("Unsupported unary operation: {}", op)))
+            _ => Err(PecosError::Input(format!(
+                "Unsupported unary operation: {}",
+                op
+            ))),
         }
     }
 
     /// Evaluates a binary operation with proper type handling
-    fn eval_binary_op(&mut self, op: &str, lhs: &ArgItem, rhs: &ArgItem) -> Result<ExprValue, PecosError> {
+    fn eval_binary_op(
+        &mut self,
+        op: &str,
+        lhs: &ArgItem,
+        rhs: &ArgItem,
+    ) -> Result<ExprValue, PecosError> {
         let lhs_val = self.eval_arg(lhs)?;
         let rhs_val = self.eval_arg(rhs)?;
-        
+
         // Promote types based on Python's promotion rules
         // If both operands are signed, result is signed
         // If any operand is unsigned, result is unsigned if it fits, otherwise signed
         let lhs_signed = matches!(lhs_val, ExprValue::Integer(_));
         let rhs_signed = matches!(rhs_val, ExprValue::Integer(_));
-        
+
         let result_signed = lhs_signed && rhs_signed;
-        
+
         match op {
             // Arithmetic operations
             "+" => {
                 if result_signed {
-                    Ok(ExprValue::Integer(lhs_val.as_i64().wrapping_add(rhs_val.as_i64())))
+                    Ok(ExprValue::Integer(
+                        lhs_val.as_i64().wrapping_add(rhs_val.as_i64()),
+                    ))
                 } else {
-                    Ok(ExprValue::UInteger(lhs_val.as_u64().wrapping_add(rhs_val.as_u64())))
+                    Ok(ExprValue::UInteger(
+                        lhs_val.as_u64().wrapping_add(rhs_val.as_u64()),
+                    ))
                 }
             }
             "-" => {
                 if result_signed {
-                    Ok(ExprValue::Integer(lhs_val.as_i64().wrapping_sub(rhs_val.as_i64())))
+                    Ok(ExprValue::Integer(
+                        lhs_val.as_i64().wrapping_sub(rhs_val.as_i64()),
+                    ))
                 } else {
-                    Ok(ExprValue::UInteger(lhs_val.as_u64().wrapping_sub(rhs_val.as_u64())))
+                    Ok(ExprValue::UInteger(
+                        lhs_val.as_u64().wrapping_sub(rhs_val.as_u64()),
+                    ))
                 }
             }
             "*" => {
                 if result_signed {
-                    Ok(ExprValue::Integer(lhs_val.as_i64().wrapping_mul(rhs_val.as_i64())))
+                    Ok(ExprValue::Integer(
+                        lhs_val.as_i64().wrapping_mul(rhs_val.as_i64()),
+                    ))
                 } else {
-                    Ok(ExprValue::UInteger(lhs_val.as_u64().wrapping_mul(rhs_val.as_u64())))
+                    Ok(ExprValue::UInteger(
+                        lhs_val.as_u64().wrapping_mul(rhs_val.as_u64()),
+                    ))
                 }
             }
             "/" => {
@@ -379,7 +429,7 @@ impl<'a> ExpressionEvaluator<'a> {
                     Ok(ExprValue::UInteger(lhs_val.as_u64() % rhs_val.as_u64()))
                 }
             }
-            
+
             // Bitwise operations
             "&" => {
                 if result_signed {
@@ -409,13 +459,17 @@ impl<'a> ExpressionEvaluator<'a> {
                     if shift < 0 || shift >= 64 {
                         return Err(PecosError::Input("Invalid shift amount".to_string()));
                     }
-                    Ok(ExprValue::Integer(lhs_val.as_i64().wrapping_shl(shift as u32)))
+                    Ok(ExprValue::Integer(
+                        lhs_val.as_i64().wrapping_shl(shift as u32),
+                    ))
                 } else {
                     let shift = rhs_val.as_u64();
                     if shift >= 64 {
                         return Err(PecosError::Input("Invalid shift amount".to_string()));
                     }
-                    Ok(ExprValue::UInteger(lhs_val.as_u64().wrapping_shl(shift as u32)))
+                    Ok(ExprValue::UInteger(
+                        lhs_val.as_u64().wrapping_shl(shift as u32),
+                    ))
                 }
             }
             ">>" => {
@@ -425,65 +479,60 @@ impl<'a> ExpressionEvaluator<'a> {
                     if shift < 0 || shift >= 64 {
                         return Err(PecosError::Input("Invalid shift amount".to_string()));
                     }
-                    Ok(ExprValue::Integer(lhs_val.as_i64().wrapping_shr(shift as u32)))
+                    Ok(ExprValue::Integer(
+                        lhs_val.as_i64().wrapping_shr(shift as u32),
+                    ))
                 } else {
                     let shift = rhs_val.as_u64();
                     if shift >= 64 {
                         return Err(PecosError::Input("Invalid shift amount".to_string()));
                     }
-                    Ok(ExprValue::UInteger(lhs_val.as_u64().wrapping_shr(shift as u32)))
+                    Ok(ExprValue::UInteger(
+                        lhs_val.as_u64().wrapping_shr(shift as u32),
+                    ))
                 }
             }
-            
+
             // Comparison operations (always return boolean)
-            "==" => Ok(ExprValue::Boolean(
-                if result_signed {
-                    lhs_val.as_i64() == rhs_val.as_i64()
-                } else {
-                    lhs_val.as_u64() == rhs_val.as_u64()
-                }
-            )),
-            "!=" => Ok(ExprValue::Boolean(
-                if result_signed {
-                    lhs_val.as_i64() != rhs_val.as_i64()
-                } else {
-                    lhs_val.as_u64() != rhs_val.as_u64()
-                }
-            )),
-            "<" => Ok(ExprValue::Boolean(
-                if result_signed {
-                    lhs_val.as_i64() < rhs_val.as_i64()
-                } else {
-                    lhs_val.as_u64() < rhs_val.as_u64()
-                }
-            )),
-            "<=" => Ok(ExprValue::Boolean(
-                if result_signed {
-                    lhs_val.as_i64() <= rhs_val.as_i64()
-                } else {
-                    lhs_val.as_u64() <= rhs_val.as_u64()
-                }
-            )),
-            ">" => Ok(ExprValue::Boolean(
-                if result_signed {
-                    lhs_val.as_i64() > rhs_val.as_i64()
-                } else {
-                    lhs_val.as_u64() > rhs_val.as_u64()
-                }
-            )),
-            ">=" => Ok(ExprValue::Boolean(
-                if result_signed {
-                    lhs_val.as_i64() >= rhs_val.as_i64()
-                } else {
-                    lhs_val.as_u64() >= rhs_val.as_u64()
-                }
-            )),
-            
+            "==" => Ok(ExprValue::Boolean(if result_signed {
+                lhs_val.as_i64() == rhs_val.as_i64()
+            } else {
+                lhs_val.as_u64() == rhs_val.as_u64()
+            })),
+            "!=" => Ok(ExprValue::Boolean(if result_signed {
+                lhs_val.as_i64() != rhs_val.as_i64()
+            } else {
+                lhs_val.as_u64() != rhs_val.as_u64()
+            })),
+            "<" => Ok(ExprValue::Boolean(if result_signed {
+                lhs_val.as_i64() < rhs_val.as_i64()
+            } else {
+                lhs_val.as_u64() < rhs_val.as_u64()
+            })),
+            "<=" => Ok(ExprValue::Boolean(if result_signed {
+                lhs_val.as_i64() <= rhs_val.as_i64()
+            } else {
+                lhs_val.as_u64() <= rhs_val.as_u64()
+            })),
+            ">" => Ok(ExprValue::Boolean(if result_signed {
+                lhs_val.as_i64() > rhs_val.as_i64()
+            } else {
+                lhs_val.as_u64() > rhs_val.as_u64()
+            })),
+            ">=" => Ok(ExprValue::Boolean(if result_signed {
+                lhs_val.as_i64() >= rhs_val.as_i64()
+            } else {
+                lhs_val.as_u64() >= rhs_val.as_u64()
+            })),
+
             // Logical operations (always return boolean)
             "&&" => Ok(ExprValue::Boolean(lhs_val.as_bool() && rhs_val.as_bool())),
             "||" => Ok(ExprValue::Boolean(lhs_val.as_bool() || rhs_val.as_bool())),
-            
-            _ => Err(PecosError::Input(format!("Unsupported binary operation: {}", op)))
+
+            _ => Err(PecosError::Input(format!(
+                "Unsupported binary operation: {}",
+                op
+            ))),
         }
     }
 }
@@ -554,17 +603,17 @@ mod tests {
 
     fn setup_environment() -> Environment {
         let mut env = Environment::new();
-        
+
         // Add variables
         env.add_variable("x", DataType::I32, 32).unwrap();
         env.add_variable("y", DataType::U8, 8).unwrap();
         env.add_variable("z", DataType::Bool, 1).unwrap();
-        
+
         // Set values
         env.set_raw("x", 42).unwrap();
         env.set_raw("y", 255).unwrap();
         env.set_raw("z", 1).unwrap();
-        
+
         env
     }
 
@@ -572,17 +621,17 @@ mod tests {
     fn test_simple_expressions() {
         let env = setup_environment();
         let mut evaluator = ExpressionEvaluator::new(&env);
-        
+
         // Test integer literal
         let expr = Expression::Integer(123);
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_i64(), 123);
-        
+
         // Test variable reference
         let expr = Expression::Variable("x".to_string());
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_i64(), 42);
-        
+
         // Test bit access
         let arg = ArgItem::Indexed(("y".to_string(), 0));
         let result = evaluator.eval_arg(&arg).unwrap();
@@ -593,47 +642,35 @@ mod tests {
     fn test_arithmetic_operations() {
         let env = setup_environment();
         let mut evaluator = ExpressionEvaluator::new(&env);
-        
+
         // Test addition
         let expr = Expression::Operation {
             cop: "+".to_string(),
-            args: vec![
-                ArgItem::Simple("x".to_string()),
-                ArgItem::Integer(10),
-            ],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(10)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_i64(), 52); // 42 + 10
-        
+
         // Test subtraction
         let expr = Expression::Operation {
             cop: "-".to_string(),
-            args: vec![
-                ArgItem::Simple("x".to_string()),
-                ArgItem::Integer(10),
-            ],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(10)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_i64(), 32); // 42 - 10
-        
+
         // Test multiplication
         let expr = Expression::Operation {
             cop: "*".to_string(),
-            args: vec![
-                ArgItem::Simple("x".to_string()),
-                ArgItem::Integer(2),
-            ],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(2)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_i64(), 84); // 42 * 2
-        
+
         // Test division
         let expr = Expression::Operation {
             cop: "/".to_string(),
-            args: vec![
-                ArgItem::Simple("x".to_string()),
-                ArgItem::Integer(2),
-            ],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(2)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_i64(), 21); // 42 / 2
@@ -643,46 +680,35 @@ mod tests {
     fn test_bitwise_operations() {
         let env = setup_environment();
         let mut evaluator = ExpressionEvaluator::new(&env);
-        
+
         // Test bitwise AND
         let expr = Expression::Operation {
             cop: "&".to_string(),
-            args: vec![
-                ArgItem::Simple("x".to_string()),
-                ArgItem::Integer(15),
-            ],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(15)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_i64(), 10); // 42 & 15 = 0b101010 & 0b1111 = 0b1010 = 10
-        
+
         // Test bitwise OR
         let expr = Expression::Operation {
             cop: "|".to_string(),
-            args: vec![
-                ArgItem::Simple("x".to_string()),
-                ArgItem::Integer(15),
-            ],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(15)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_i64(), 47); // 42 | 15 = 0b101010 | 0b1111 = 0b101111 = 47
-        
+
         // Test bitwise XOR
         let expr = Expression::Operation {
             cop: "^".to_string(),
-            args: vec![
-                ArgItem::Simple("x".to_string()),
-                ArgItem::Integer(15),
-            ],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(15)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_i64(), 37); // 42 ^ 15 = 0b101010 ^ 0b1111 = 0b100101 = 37
-        
+
         // Test bitwise NOT
         let expr = Expression::Operation {
             cop: "~".to_string(),
-            args: vec![
-                ArgItem::Simple("z".to_string()),
-            ],
+            args: vec![ArgItem::Simple("z".to_string())],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_bool(), false); // ~true = false
@@ -692,47 +718,35 @@ mod tests {
     fn test_comparison_operations() {
         let env = setup_environment();
         let mut evaluator = ExpressionEvaluator::new(&env);
-        
+
         // Test equality
         let expr = Expression::Operation {
             cop: "==".to_string(),
-            args: vec![
-                ArgItem::Simple("x".to_string()),
-                ArgItem::Integer(42),
-            ],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(42)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_bool(), true); // 42 == 42
-        
+
         // Test inequality
         let expr = Expression::Operation {
             cop: "!=".to_string(),
-            args: vec![
-                ArgItem::Simple("x".to_string()),
-                ArgItem::Integer(41),
-            ],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(41)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_bool(), true); // 42 != 41
-        
+
         // Test less than
         let expr = Expression::Operation {
             cop: "<".to_string(),
-            args: vec![
-                ArgItem::Simple("x".to_string()),
-                ArgItem::Integer(50),
-            ],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(50)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_bool(), true); // 42 < 50
-        
+
         // Test greater than
         let expr = Expression::Operation {
             cop: ">".to_string(),
-            args: vec![
-                ArgItem::Simple("x".to_string()),
-                ArgItem::Integer(10),
-            ],
+            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(10)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_bool(), true); // 42 > 10
@@ -742,7 +756,7 @@ mod tests {
     fn test_logical_operations() {
         let env = setup_environment();
         let mut evaluator = ExpressionEvaluator::new(&env);
-        
+
         // Test logical AND
         let expr = Expression::Operation {
             cop: "&&".to_string(),
@@ -753,24 +767,19 @@ mod tests {
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_bool(), true); // true && true
-        
+
         // Test logical OR
         let expr = Expression::Operation {
             cop: "||".to_string(),
-            args: vec![
-                ArgItem::Simple("z".to_string()),
-                ArgItem::Integer(0),
-            ],
+            args: vec![ArgItem::Simple("z".to_string()), ArgItem::Integer(0)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_bool(), true); // true || false
-        
+
         // Test logical NOT
         let expr = Expression::Operation {
             cop: "!".to_string(),
-            args: vec![
-                ArgItem::Integer(0),
-            ],
+            args: vec![ArgItem::Integer(0)],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_bool(), true); // !false
@@ -780,24 +789,21 @@ mod tests {
     fn test_complex_expressions() {
         let env = setup_environment();
         let mut evaluator = ExpressionEvaluator::new(&env);
-        
+
         // Test nested expression: (x + 5) * 2
         let expr = Expression::Operation {
             cop: "*".to_string(),
             args: vec![
                 ArgItem::Expression(Box::new(Expression::Operation {
                     cop: "+".to_string(),
-                    args: vec![
-                        ArgItem::Simple("x".to_string()),
-                        ArgItem::Integer(5),
-                    ],
+                    args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(5)],
                 })),
                 ArgItem::Integer(2),
             ],
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_i64(), 94); // (42 + 5) * 2 = 94
-        
+
         // Test complex expression: (x > 40 && y < 10) || z
         let expr = Expression::Operation {
             cop: "||".to_string(),
@@ -807,17 +813,11 @@ mod tests {
                     args: vec![
                         ArgItem::Expression(Box::new(Expression::Operation {
                             cop: ">".to_string(),
-                            args: vec![
-                                ArgItem::Simple("x".to_string()),
-                                ArgItem::Integer(40),
-                            ],
+                            args: vec![ArgItem::Simple("x".to_string()), ArgItem::Integer(40)],
                         })),
                         ArgItem::Expression(Box::new(Expression::Operation {
                             cop: "<".to_string(),
-                            args: vec![
-                                ArgItem::Simple("y".to_string()),
-                                ArgItem::Integer(10),
-                            ],
+                            args: vec![ArgItem::Simple("y".to_string()), ArgItem::Integer(10)],
                         })),
                     ],
                 })),
@@ -832,7 +832,7 @@ mod tests {
     fn test_short_circuit_evaluation() {
         let env = setup_environment();
         let mut evaluator = ExpressionEvaluator::new(&env);
-        
+
         // Test short-circuit AND with false first operand
         let expr = Expression::Operation {
             cop: "&&".to_string(),
@@ -849,7 +849,7 @@ mod tests {
         };
         let result = evaluator.eval_expr(&expr).unwrap();
         assert_eq!(result.as_bool(), false); // false && (anything) short-circuits to false
-        
+
         // Test short-circuit OR with true first operand
         let expr = Expression::Operation {
             cop: "||".to_string(),

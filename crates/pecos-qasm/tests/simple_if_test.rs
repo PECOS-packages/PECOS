@@ -9,8 +9,7 @@ fn run_qasm_sim(
     shots: usize,
     seed: Option<u64>,
 ) -> Result<HashMap<String, Vec<u32>>, PecosError> {
-    let mut engine = QASMEngine::new()?;
-    engine.from_str(qasm)?;
+    let engine = QASMEngine::from_str(qasm)?;
 
     let results = MonteCarloEngine::run_with_noise_model(
         Box::new(engine),
@@ -33,13 +32,13 @@ fn test_simple_if() {
         creg c[1];
         
         c[0] = 0;
-        if(c[0]==0) x q[0];
+        if(c[0]==0) X q[0];
         measure q[0] -> c[0];
     "#;
 
     let results = run_qasm_sim(qasm, 1, Some(42)).unwrap();
 
-    println!("Simple if test results: {:?}", results);
+    println!("Simple if test results: {results:?}");
 
     assert!(results.contains_key("c"));
     assert_eq!(results["c"], vec![1]);

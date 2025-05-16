@@ -40,7 +40,7 @@ mod tests {
             1,
             None,
             None::<PassThroughNoiseModel>,
-            None::<&std::path::Path>
+            None::<&std::path::Path>,
         )?;
 
         // Print results information for debugging
@@ -49,11 +49,8 @@ mod tests {
         // The actual result value will depend on the quantum simulation,
         // but we just need to verify that the engine successfully processes
         // machine operations without errors and exports the result value
-        assert!(
-            !results.shots.is_empty(),
-            "Expected non-empty results"
-        );
-        
+        assert!(!results.shots.is_empty(), "Expected non-empty results");
+
         let shot = &results.shots[0];
         assert!(
             shot.contains_key("output"),
@@ -61,7 +58,12 @@ mod tests {
         );
 
         // Check that the value is 2 (from the assignment in the JSON)
-        assert_eq!(shot.get("output").unwrap(), "2", "Expected output to be 2, got {}", shot.get("output").unwrap());
+        assert_eq!(
+            shot.get("output").unwrap(),
+            "2",
+            "Expected output to be 2, got {}",
+            shot.get("output").unwrap()
+        );
 
         Ok(())
     }
@@ -97,7 +99,7 @@ mod tests {
             1,
             None,
             None::<PassThroughNoiseModel>,
-            None::<&std::path::Path>
+            None::<&std::path::Path>,
         )?;
 
         // Print results information for debugging
@@ -106,11 +108,8 @@ mod tests {
         // The actual result value will depend on the quantum simulation,
         // but we just need to verify that the engine successfully processes
         // simple machine operations without errors
-        assert!(
-            !results.shots.is_empty(),
-            "Expected non-empty results"
-        );
-        
+        assert!(!results.shots.is_empty(), "Expected non-empty results");
+
         let shot = &results.shots[0];
         assert!(
             shot.contains_key("output"),
@@ -118,7 +117,12 @@ mod tests {
         );
 
         // Check that the value is 42 (from the assignment in the JSON file)
-        assert_eq!(shot.get("output").unwrap(), "42", "Expected output to be 42, got {}", shot.get("output").unwrap());
+        assert_eq!(
+            shot.get("output").unwrap(),
+            "42",
+            "Expected output to be 42, got {}",
+            shot.get("output").unwrap()
+        );
 
         Ok(())
     }

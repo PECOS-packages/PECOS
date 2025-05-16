@@ -8,8 +8,7 @@ pub fn run_qasm_sim(
     shots: usize,
     seed: Option<u64>,
 ) -> Result<HashMap<String, Vec<u32>>, PecosError> {
-    let mut engine = QASMEngine::new()?;
-    engine.from_str(qasm)?;
+    let engine = QASMEngine::from_str(qasm)?;
 
     let results = MonteCarloEngine::run_with_noise_model(
         Box::new(engine),

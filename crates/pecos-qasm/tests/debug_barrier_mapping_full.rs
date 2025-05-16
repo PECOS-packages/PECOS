@@ -3,7 +3,7 @@ use pecos_qasm::parser::QASMParser;
 #[test]
 fn test_barrier_mapping_full() -> Result<(), Box<dyn std::error::Error>> {
     // Test the complete barrier example from the test
-    let qasm = r#"
+    let qasm = r"
         OPENQASM 2.0;
         qreg q[4];
         qreg w[8]; 
@@ -26,12 +26,12 @@ fn test_barrier_mapping_full() -> Result<(), Box<dyn std::error::Error>> {
         
         // Inside a conditional
         if(a>=5) barrier w[1], w[7];
-    "#;
+    ";
 
     // Let's print the expected mapping
     println!("\n=== Expected Qubit Mappings: ===");
     println!("q[0] -> 0");
-    println!("q[1] -> 1"); 
+    println!("q[1] -> 1");
     println!("q[2] -> 2");
     println!("q[3] -> 3");
     println!("w[0] -> 4");
@@ -54,11 +54,11 @@ fn test_barrier_mapping_full() -> Result<(), Box<dyn std::error::Error>> {
 
     // Parse and see the operations
     let program = QASMParser::parse_str(qasm)?;
-    
+
     // Print actual operations
     println!("\n=== Parsed Operations: ===");
     for (i, op) in program.operations.iter().enumerate() {
-        println!("Op {}: {:?}", i, op);
+        println!("Op {i}: {op:?}");
     }
 
     Ok(())

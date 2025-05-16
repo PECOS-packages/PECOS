@@ -41,7 +41,7 @@ pub fn setup_cli_engine(
 
             // Create a new QASMEngine from the path
             // Let MonteCarloEngine handle all seeding and randomness
-            let engine = QASMEngine::with_file(program_path)?;
+            let engine = QASMEngine::from_file(program_path)?;
 
             Ok(Box::new(engine))
         }

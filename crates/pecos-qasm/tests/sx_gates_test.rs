@@ -1,4 +1,4 @@
-use pecos_qasm::parser::Operation;
+use pecos_qasm::Operation;
 use pecos_qasm::parser::QASMParser;
 
 #[test]
@@ -9,7 +9,7 @@ fn test_sx_gates_expansion() {
         //test SX, SXdg, CSX gates
         qreg q[2];
         sx q[0];
-        x q[1];
+        X q[1];
         sxdg q[1];
         csx q[0],q[1];
     "#;
@@ -22,7 +22,7 @@ fn test_sx_gates_expansion() {
     // sxdg -> RZ(pi/2), H, RZ(pi/2)
     // csx -> CX (in our simplified implementation)
     // Total operations will be the expanded native gates
-    assert!(program.operations.len() > 0);
+    assert!(!program.operations.is_empty());
 
     // Verify all operations are valid gates
     for op in &program.operations {

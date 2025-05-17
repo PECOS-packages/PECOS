@@ -1,6 +1,17 @@
 #!/bin/bash
 set -e
 
+# Determine the root directory of the project
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "$SCRIPT_DIR" == */scripts ]]; then
+    PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+else
+    PROJECT_ROOT="$SCRIPT_DIR"
+fi
+
+# Change to project root for all operations
+cd "$PROJECT_ROOT"
+
 make clean build test
 
 cargo run --bin pecos run examples/phir/bell.json -s 10 -w 2 -p 0.2

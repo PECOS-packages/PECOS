@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 # Directory containing the Markdown files to test
-DOCS_DIR = Path('source')
+DOCS_DIR = Path('docs')
 
 def find_markdown_files():
     """Find all Markdown files in the documentation directory."""

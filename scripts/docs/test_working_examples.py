@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-# Files to test (relative to the docs/source directory)
+# Files to test (relative to the docs directory)
 TEST_FILES = [
     'user-guide/resources/working-examples.md',
     'user-guide/resources/code-testing-examples.md',
@@ -21,7 +21,7 @@ TEST_FILES = [
 ]
 
 # Base directory for markdown files
-DOCS_DIR = Path('source')
+DOCS_DIR = Path('docs')
 
 def extract_code_blocks(file_path, language='python'):
     """Extract code blocks of a specific language from a Markdown file."""

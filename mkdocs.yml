@@ -1,5 +1,5 @@
 site_name: PECOS user guide
-docs_dir: source
+docs_dir: docs
 site_dir: site
 use_directory_urls: false
 site_url: https://pecos-packages.github.io/PECOS/
@@ -54,6 +54,7 @@ nav:
 - API:
   - api/api-reference.md
 - Development:
+  - development/DEVELOPMENT.md
   - development/development.md
   - development/building.md
 - Releases:

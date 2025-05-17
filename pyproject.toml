@@ -15,6 +15,10 @@ dev = [
     "pre-commit",           # Git hooks
     "black",               # Code formatting
     "ruff",               # Fast Python linting
+    "mkdocs",              # Documentation framework
+    "mkdocs-material",     # Material theme for MkDocs
+    "mkdocstrings[python]", # Code documentation extraction
+    "markdown-exec[ansi]",  # Executable markdown blocks
 ]
 test = [ # pinning testing environment
     "pytest==8.3.3", # 8.3.4 seems to be causing errors

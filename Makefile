@@ -48,15 +48,19 @@ build-native: installreqs ## Build a faster version of binaries with native CPU 
 
 .PHONY: docs-build
 docs-build:  ## Clean, install deps, and build documentation
-	@cd docs && $(MAKE) clean install-deps build
+	@uv run mkdocs build --clean
 
 .PHONY: docs-serve
-docs-serve:  ## Serve documentation (assumes docs are built, port 9000)
-	@cd docs && $(MAKE) serve
+docs-serve:  ## Serve documentation (for  other ports add... -dev-addr=127.0.0.1:9000)
+	@uv run mkdocs serve
 
-.PHONY: docs-serve-default
-docs-serve-default:  ## Serve documentation on default port (assumes docs are built, port 8000)
-	@cd docs && $(MAKE) serve-default
+.PHONY: docs-test
+docs-test:  ## Test all code examples in documentation
+	@uv run python scripts/docs/test_code_examples.py
+
+.PHONY: docs-test-working
+docs-test-working:  ## Test only working code examples in documentation
+	@uv run python scripts/docs/test_working_examples.py
 
 # Linting / formatting
 # --------------------
@@ -122,7 +126,7 @@ clean-unix:
 	@rm -rf dist
 	@find . -type d -name "build" -exec rm -rf {} +
 	@rm -rf python/docs/_build
-	@if [ -f docs/Makefile ]; then cd docs && $(MAKE) clean 2>/dev/null || true; else rm -rf docs/site; fi
+	@rm -rf site
 	@find . -type d -name ".pytest_cache" -exec rm -rf {} +
 	@find . -type d -name ".ipynb_checkpoints" -exec rm -rf {} +
 	@rm -rf .ruff_cache/
@@ -138,7 +142,7 @@ clean-windows-ps:
 	@powershell -Command "if (Test-Path 'dist') { Remove-Item -Recurse -Force dist }"
 	@powershell -Command "Get-ChildItem -Path . -Recurse -Directory -Filter 'build' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
 	@powershell -Command "if (Test-Path 'python\docs\_build') { Remove-Item -Recurse -Force python\docs\_build }"
-	@powershell -Command "if (Test-Path 'docs\Makefile') { cd docs; $(MAKE) clean 2>$null } else { if (Test-Path 'docs\site') { Remove-Item -Recurse -Force docs\site } }"
+	@powershell -Command "if (Test-Path 'site') { Remove-Item -Recurse -Force site }"
 	@powershell -Command "Get-ChildItem -Path . -Recurse -Directory -Filter '.pytest_cache' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
 	@powershell -Command "Get-ChildItem -Path . -Recurse -Directory -Filter '.ipynb_checkpoints' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
 	@powershell -Command "if (Test-Path '.ruff_cache') { Remove-Item -Recurse -Force .ruff_cache }"
@@ -152,7 +156,7 @@ clean-windows-cmd:
 	-@if exist *.egg-info rd /s /q *.egg-info
 	-@if exist dist rd /s /q dist
 	-@if exist python\docs\_build rd /s /q python\docs\_build
-	-@if exist docs\Makefile (cd docs && $(MAKE) clean 2>nul) else if exist docs\site rd /s /q docs\site
+	-@if exist site rd /s /q site
 	-@if exist .ruff_cache rd /s /q .ruff_cache
 	-@for /f "delims=" %%d in ('dir /s /b /ad build 2^>nul') do @rd /s /q "%%d" 2>nul
 	-@for /f "delims=" %%d in ('dir /s /b /ad .pytest_cache 2^>nul') do @rd /s /q "%%d" 2>nul

@@ -1,4 +1,4 @@
-# ![PECOS](abranding/logo/pecos_logo.svg)
+# ![PECOS](images/pecos_logo.svg)
 
 [![PyPI version](https://badge.fury.io/py/quantum-pecos.svg)](https://badge.fury.io/py/quantum-pecos)
 [![Documentation Status](https://readthedocs.org/projects/quantum-pecos/badge/?version=latest)](https://quantum-pecos.readthedocs.io/en/latest/?badge=latest)

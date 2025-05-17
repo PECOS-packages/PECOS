@@ -3,8 +3,8 @@ use pecos::prelude::*;
 #[test]
 fn test_setup_qasm_engine() -> Result<(), PecosError> {
     // Create a temporary file with a simple QASM program
-    let mut file = tempfile::NamedTempFile::new()
-        .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let mut file =
+        tempfile::NamedTempFile::new().map_err(|e| PecosError::IO(std::io::Error::other(e)))?;
     let qasm_content = r#"
         OPENQASM 2.0;
         include "qelib1.inc";

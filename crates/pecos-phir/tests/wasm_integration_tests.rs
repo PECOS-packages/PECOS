@@ -31,10 +31,9 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let wasm_path = temp_dir.join(format!("add_test_{timestamp}.wat"));
         std::fs::write(&wasm_path, wat_content).map_err(|e| {
-            PecosError::IO(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to write temporary WAT file: {e}"),
-            ))
+            PecosError::IO(std::io::Error::other(format!(
+                "Failed to write temporary WAT file: {e}"
+            )))
         })?;
 
         // Create a WebAssembly foreign object

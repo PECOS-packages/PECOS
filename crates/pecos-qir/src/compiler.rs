@@ -541,7 +541,7 @@ impl QirCompiler {
         ] {
             if !file.exists() {
                 return Err(Self::log_error(
-                    PecosError::Processing(format!("{desc} not found: {file:?}")),
+                    PecosError::Processing(format!("{desc} not found: {}", file.display())),
                     thread_id,
                 ));
             }

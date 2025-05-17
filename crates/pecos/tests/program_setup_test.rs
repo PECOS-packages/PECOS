@@ -4,8 +4,7 @@ use std::fs;
 #[test]
 fn test_setup_engine_for_program() -> Result<(), PecosError> {
     // Create temporary directories for our files
-    let temp_dir = tempfile::tempdir()
-        .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let temp_dir = tempfile::tempdir().map_err(|e| PecosError::IO(std::io::Error::other(e)))?;
 
     // Create QASM file with proper extension
     let qasm_path = temp_dir.path().join("test_program.qasm");

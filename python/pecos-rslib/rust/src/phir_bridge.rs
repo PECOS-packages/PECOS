@@ -668,9 +668,10 @@ fn convert_to_py_commands(py: Python<'_>, commands: &PyObject) -> PyResult<Vec<P
                         // Convert usize to u32 using try_from to avoid truncation
                         // This is safe for our expected use cases as result_id
                         // is typically a small integer (<1000)
-                        Ok(i) => match u32::try_from(i) {
-                            Ok(id32) => id32, // Successfully converted to u32
-                            Err(_) => {
+                        Ok(i) => {
+                            if let Ok(id32) = u32::try_from(i) {
+                                id32 // Successfully converted to u32
+                            } else {
                                 // Handle extremely large values (unlikely in practice)
                                 // by using the largest u32 value as a fallback
                                 eprintln!(
@@ -678,7 +679,7 @@ fn convert_to_py_commands(py: Python<'_>, commands: &PyObject) -> PyResult<Vec<P
                                 );
                                 u32::MAX
                             }
-                        },
+                        }
                         Err(e) => {
                             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                                 "Error extracting result_id: {e}"

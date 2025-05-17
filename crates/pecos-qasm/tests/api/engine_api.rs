@@ -92,8 +92,8 @@ fn test_engine_execution() -> Result<(), PecosError> {
         measure q[1] -> c[1];
     "#;
 
-    let mut file = tempfile::NamedTempFile::new()
-        .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let mut file =
+        tempfile::NamedTempFile::new().map_err(|e| PecosError::IO(std::io::Error::other(e)))?;
     std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     // Use a fixed seed for deterministic test results
@@ -136,8 +136,8 @@ fn test_deterministic_bell_state() -> Result<(), PecosError> {
         measure q[1] -> c[1];
     "#;
 
-    let mut file = tempfile::NamedTempFile::new()
-        .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let mut file =
+        tempfile::NamedTempFile::new().map_err(|e| PecosError::IO(std::io::Error::other(e)))?;
     std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     // Use a fixed seed for deterministic test results
@@ -185,8 +185,8 @@ fn test_deterministic_3qubit_circuit() -> Result<(), PecosError> {
         measure q[2] -> c[2];
     "#;
 
-    let mut file = tempfile::NamedTempFile::new()
-        .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let mut file =
+        tempfile::NamedTempFile::new().map_err(|e| PecosError::IO(std::io::Error::other(e)))?;
     std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     let mut engine = QASMEngine::from_file(file.path())
@@ -323,8 +323,8 @@ fn test_multi_register_operation() -> Result<(), PecosError> {
         measure r[0] -> c2[0];
     "#;
 
-    let mut file = tempfile::NamedTempFile::new()
-        .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let mut file =
+        tempfile::NamedTempFile::new().map_err(|e| PecosError::IO(std::io::Error::other(e)))?;
     std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     // Use a fixed seed for deterministic test results
@@ -388,8 +388,8 @@ fn test_engine_conditional() -> Result<(), PecosError> {
         if(c[0]==1) X q[0];
     "#;
 
-    let mut file = tempfile::NamedTempFile::new()
-        .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let mut file =
+        tempfile::NamedTempFile::new().map_err(|e| PecosError::IO(std::io::Error::other(e)))?;
     std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     let mut engine = QASMEngine::from_file(file.path())
@@ -436,8 +436,8 @@ fn test_multiple_measurement_operations() -> Result<(), PecosError> {
         measure q[0] -> c2[0];
     "#;
 
-    let mut file = tempfile::NamedTempFile::new()
-        .map_err(|e| PecosError::IO(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let mut file =
+        tempfile::NamedTempFile::new().map_err(|e| PecosError::IO(std::io::Error::other(e)))?;
     std::io::Write::write_all(&mut file, qasm.as_bytes()).map_err(PecosError::IO)?;
 
     println!("Parsing QASM program...");

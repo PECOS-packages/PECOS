@@ -192,7 +192,7 @@ fn test_asymmetric_measurements() {
     let mut general_system = QuantumSystem::new(general_noise, Box::new(quantum.clone()));
 
     // For comparison, a depolarizing model with symmetric errors
-    let p_depolarizing = (p_meas_0 + p_meas_1) / 2.0; // Average of the asymmetric errors
+    let p_depolarizing = f64::midpoint(p_meas_0, p_meas_1); // Average of the asymmetric errors
     let depolarizing_noise = DepolarizingNoiseModel::builder()
         .with_prep_probability(p_prep)
         .with_meas_probability(p_depolarizing)

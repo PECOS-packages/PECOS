@@ -22,7 +22,7 @@ calls to Wasm VMs, conditional branching, and more.
 - Fast Simulation: Leverages a fast stabilizer simulation algorithm.
 - Multi-language extensions: Core functionalities implemented via Rust for performance and safety. Additional add-ons
 and extension support in C/C++ via Cython.
-- QIR Support: Execute Quantum Intermediate Representation programs (requires LLVM version 14 with the 'llc' tool). PECOS now includes a dedicated `pecos-qir` crate with an improved QIR implementation.
+- QIR Support: Execute Quantum Intermediate Representation programs (requires LLVM version 14 with the 'llc' tool).
 
 ## Getting Started
 

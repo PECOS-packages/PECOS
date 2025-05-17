@@ -110,18 +110,28 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y llvm clang
+          # Add LLVM 14 repository
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          sudo add-apt-repository "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-14 main"
+          sudo apt-get update
+          # Install LLVM 14 specifically
+          sudo apt-get install -y llvm-14 clang-14
+          # Create symlinks for llc and clang
+          sudo update-alternatives --install /usr/bin/llc llc /usr/bin/llc-14 100
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-14 100
+          # Verify installation
           which llc
           llc --version
 
       - name: Install LLVM Tools (macOS)
         if: matrix.os == 'macos-latest'
         run: |
-          brew install llvm
-          echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+          brew install llvm@14
+          echo "$(brew --prefix llvm@14)/bin" >> $GITHUB_PATH
           # Make sure it's available in the current step too
-          export PATH="$(brew --prefix llvm)/bin:$PATH"
+          export PATH="$(brew --prefix llvm@14)/bin:$PATH"
           which llc
+          llc --version
 
       - name: Install LLVM Tools (Windows)
         if: matrix.os == 'windows-latest'

@@ -1,5 +1,9 @@
 use pecos_qasm::{Operation, parser::QASMParser};
 
+#[path = "../helper.rs"]
+mod helper;
+use helper::run_qasm_sim;
+
 #[test]
 fn test_x_gate_and_measure() {
     let qasm = r#"
@@ -12,11 +16,12 @@ fn test_x_gate_and_measure() {
         measure q[10] -> c[10];
     "#;
 
+    // First test parsing
     let program = QASMParser::parse_str(qasm).expect("Failed to parse X gate and measure");
-    
+
     // Count operations
     let mut operation_types = Vec::new();
-    
+
     for op in &program.operations {
         match op {
             Operation::Gate { name, qubits, .. } => {
@@ -28,24 +33,37 @@ fn test_x_gate_and_measure() {
             _ => {}
         }
     }
-    
+
     // We should have at least 2 operations (X gate might be expanded)
     assert!(operation_types.len() >= 2, "Should have at least 2 operations");
-    
+
     // Check for X gate (or its expansion)
     let has_x = operation_types.iter().any(|(_, name, _)| name == "X" || name == "x");
     assert!(has_x, "Should have X gate");
-    
+
     // Check for measurement
     let has_measure = operation_types.iter().any(|(op_type, _, _)| op_type == &"measure");
     assert!(has_measure, "Should have measure operation");
-    
+
     // Verify the measurement is from q[10] to c[10]
     for (op_type, target, qubits) in &operation_types {
         if op_type == &"measure" {
             assert_eq!(qubits, &vec![10], "Measurement should be on qubit 10");
             assert_eq!(target, "c[10]", "Measurement should be to classical bit c[10]");
         }
+    }
+
+    // Now test actual simulation - X gate should flip the qubit from |0⟩ to |1⟩
+    let results = run_qasm_sim(qasm, 100, Some(42)).expect("Failed to run simulation");
+
+    // Verify that qubit 10 is always measured as 1 (since X flips it)
+    let c_values = results.get("c").expect("Should have c register results");
+    assert_eq!(c_values.len(), 100, "Should have 100 shots");
+
+    for shot in c_values {
+        // Extract bit 10 from the result
+        let bit_10 = (shot >> 10) & 1;
+        assert_eq!(bit_10, 1, "Bit 10 should always be 1 after X gate");
     }
 }
 

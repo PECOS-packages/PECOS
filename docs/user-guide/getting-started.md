@@ -4,39 +4,39 @@ This guide will help you get up and running with PECOS quickly, whether you're u
 
 ## Installation
 
-### Python Package
+=== "Python"
 
-To install the main Python package for general usage:
+    To install the main Python package for general usage:
+    
+    ```bash
+    pip install quantum-pecos
+    ```
+    
+    This will install both `quantum-pecos` and its dependency `pecos-rslib`.
+    
+    For optional dependencies:
+    
+    ```bash
+    pip install quantum-pecos[all]
+    ```
+    
+    !!! note "Import Name"
+        The `quantum-pecos` package is imported as `import pecos` and not `import quantum_pecos`.
+    
+    To install pre-releases (the latest development code) from PyPI:
+    
+    ```bash
+    pip install quantum-pecos==X.Y.Z.devN  # Replace with actual version number
+    ```
 
-```bash
-pip install quantum-pecos
-```
+=== "Rust"
 
-This will install both `quantum-pecos` and its dependency `pecos-rslib`.
-
-For optional dependencies:
-
-```bash
-pip install quantum-pecos[all]
-```
-
-!!! note "Import Name"
-    The `quantum-pecos` package is imported as `import pecos` and not `import quantum_pecos`.
-
-To install pre-releases (the latest development code) from PyPI:
-
-```bash
-pip install quantum-pecos==X.Y.Z.devN  # Replace with actual version number
-```
-
-### Rust Crates
-
-To use PECOS in your Rust project, add the following to your `Cargo.toml`:
-
-```toml
-[dependencies]
-pecos = "0.x.x"  # Replace with the latest version
-```
+    To use PECOS in your Rust project, run `cargo add pecos` or add the following to your `Cargo.toml`:
+    
+    ```toml
+    [dependencies]
+    pecos = "0.x.x"  # Replace with the latest version
+    ```
 
 ## Optional Dependencies
 
@@ -62,7 +62,7 @@ LLVM version 14 is required for QIR (Quantum Intermediate Representation) suppor
 
 If LLVM 14 is not installed, PECOS will still function normally but QIR-related features will be disabled.
 
-## Simulators with Special Requirements
+### Simulators with Special Requirements
 
 Some simulators from `pecos.simulators` require external packages:
 
@@ -74,26 +74,24 @@ Some simulators from `pecos.simulators` require external packages:
 
 ## Verification
 
-### Python
+Verify your installation:
 
-Verify your Python installation:
+=== "Python"
+    ```python
+    import pecos
+    print(pecos.__version__)
+    ```
 
-```python
-import pecos
-print(pecos.__version__)
-```
-
-### Rust
-
-Create a simple Rust program to verify your installation:
-
-```rust
-use pecos::prelude::*;
-
-fn main() {
-    println!("PECOS Rust crate loaded successfully!");
-}
-```
+=== "Rust"
+    Create a simple Rust program and run:
+    
+    ```rust
+    use pecos::prelude::*;
+    
+    fn main() {
+        println!("PECOS Rust crate loaded successfully!");
+    }
+    ```
 
 ## Next Steps
 
@@ -104,7 +102,4 @@ Now that you have PECOS installed, you can:
 - Try the examples in each language:
   - Python examples: `/python/quantum-pecos/examples/`
   - Rust examples: `/crates/*/examples/`
-
-## Development Setup
-
-For contributing to PECOS or developing with the source code, see the [Development Guide](../development/development.md).
+- For contributing to PECOS or developing with the source code, see the [Development Guide](../development/DEVELOPMENT.md).

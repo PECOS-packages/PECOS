@@ -1,4 +1,4 @@
-site_name: PECOS user guide
+site_name: PECOS User Guide
 docs_dir: docs
 site_dir: site
 use_directory_urls: false
@@ -47,16 +47,13 @@ theme:
   - search.suggest
   - search.share
 nav:
-- User guide:
+- User Guide:
   - Introduction: README.md
   - user-guide/getting-started.md
-  - user-guide/installation.md
 - API:
   - api/api-reference.md
 - Development:
   - development/DEVELOPMENT.md
-  - development/development.md
-  - development/building.md
 - Releases:
   - releases/changelog.md
 markdown_extensions:

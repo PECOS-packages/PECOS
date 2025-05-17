@@ -27,12 +27,11 @@ PECOS is available in multiple languages:
 
 This documentation is organized to help you get the most out of PECOS:
 
-- **[Getting Started](user-guide/getting-started.md)**: Quick installation and first steps
-- **[User Guide](user-guide/index.md)**: Concepts and tutorials for using PECOS
+- **[User Guide](user-guide/getting-started.md)**: Concepts and tutorials for using PECOS
 - **API Reference**: Detailed API documentation
   - [Python API](https://quantum-pecos.readthedocs.io/en/latest/)
   - [Rust API](https://docs.rs/pecos/latest/pecos/)
-- **[Development](development/development.md)**: Contributing to PECOS
+- **[Development](development/DEVELOPMENT.md)**: Contributing to PECOS
 - **[Releases](releases/changelog.md)**: Version history and changes
 
 ## Project History

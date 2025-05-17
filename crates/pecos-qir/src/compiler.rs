@@ -443,7 +443,7 @@ impl QirCompiler {
             // Try to find clang first - always needed for linking on Windows
             let clang = Self::find_llvm_tool("clang").ok_or_else(|| {
                 Self::log_error(
-                    PecosError::Compilation(
+                    PecosError::Processing(
                         "QIR compilation failed: clang not found in system. LLVM version 14 is required for QIR functionality. \
                         Please install LLVM version 14 and ensure 'clang' is in your PATH.".to_string()
                     ),
@@ -551,8 +551,8 @@ impl QirCompiler {
         {
             let clang = Self::find_llvm_tool("clang").ok_or_else(|| {
                 Self::log_error(
-                    PecosError::Compilation(
-                        "clang not found in system. Please install LLVM tools.",
+                    PecosError::Processing(
+                        "clang not found in system. Please install LLVM tools.".to_string(),
                     ),
                     thread_id,
                 )
@@ -849,7 +849,7 @@ impl QirCompiler {
                         thread_id, e
                     );
                     return Err(Self::log_error(
-                        PecosError::Compilation(format!("Failed to execute cargo: {e}")),
+                        PecosError::Processing(format!("Failed to execute cargo: {e}")),
                         &thread_id,
                     ));
                 }

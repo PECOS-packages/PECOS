@@ -190,7 +190,7 @@ impl OperationProcessor {
     #[must_use]
     pub fn get_classical_variables(&self) -> HashMap<String, (String, usize)> {
         // Get all variables except qubits
-        let classical_vars = self
+        self
             .environment
             .get_all_variables()
             .iter()
@@ -199,9 +199,7 @@ impl OperationProcessor {
                 let type_name = info.data_type.to_string();
                 (info.name.clone(), (type_name, info.size))
             })
-            .collect();
-
-        classical_vars
+            .collect()
     }
 
     /// Get all measurement results from the environment
@@ -1105,7 +1103,10 @@ impl OperationProcessor {
                         // Check if we have a 'function' parameter passed to this function
                         // Look for it in the operation that called this function by searching
                         // through all operations for an ffcall that matches our parameters
-                        match ops.iter().find(|op| {
+                        if let Some(Operation::ClassicalOp {
+                            function: Some(name),
+                            ..
+                        }) = ops.iter().find(|op| {
                             if let Operation::ClassicalOp {
                                 cop: op_cop,
                                 args: op_args,
@@ -1120,13 +1121,8 @@ impl OperationProcessor {
                                 false
                             }
                         }) {
-                            Some(Operation::ClassicalOp {
-                                function: Some(name),
-                                ..
-                            }) => name,
-                            // If still not found, try one more approach - look for a matching operation
-                            // from all BlockOperation possibilities
-                            _ => {
+                            name
+                        } else {
                                 for op in ops {
                                     if let Operation::Block {
                                         true_branch: Some(tb),
@@ -1363,7 +1359,6 @@ impl OperationProcessor {
                                 return Err(PecosError::Input(
                                     "Foreign function call missing function name".to_string(),
                                 ));
-                            }
                         }
                     }
                 };

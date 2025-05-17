@@ -1188,17 +1188,13 @@ impl Engine for PHIREngine {
                             "qparallel" => {
                                 // For parallel blocks, process all operations
                                 for parallel_op in block_ops {
-                                    match parallel_op {
-                                        Operation::QuantumOp {
-                                            qop, args: _, returns, .. // Marking args as unused since we don't use it here
-                                        } => {
-                                            if qop == "Measure" && !returns.is_empty() {
-                                                // Quantum operations including measurements are handled by the quantum simulator
-                                                log::info!("Processing quantum operation in qparallel block: {}", qop);
-                                            }
+                                    if let Operation::QuantumOp {
+                                        qop, args: _, returns, .. // Marking args as unused since we don't use it here
+                                    } = parallel_op {
+                                        if qop == "Measure" && !returns.is_empty() {
+                                            // Quantum operations including measurements are handled by the quantum simulator
+                                            log::info!("Processing quantum operation in qparallel block: {}", qop);
                                         }
-                                        // Handle other operations if needed
-                                        _ => {}
                                     }
                                 }
                             }

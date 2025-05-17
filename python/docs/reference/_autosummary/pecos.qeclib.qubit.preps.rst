@@ -1,7 +1,7 @@
-pecos.slr.slr
-=============
+pecos.qeclib.qubit.preps
+========================
 
-.. automodule:: pecos.slr.slr
+.. automodule:: pecos.qeclib.qubit.preps
 
    
    
@@ -17,8 +17,7 @@ pecos.slr.slr
 
    .. autosummary::
    
-      CFunc
-      Main
+      Prep
    
    
 

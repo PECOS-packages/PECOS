@@ -1,4 +1,4 @@
-pecos.slr
+﻿pecos.slr
 =========
 
 .. automodule:: pecos.slr
@@ -31,9 +31,9 @@ pecos.slr
    pecos.slr.cond_block
    pecos.slr.cops
    pecos.slr.fund
+   pecos.slr.gen_codes
+   pecos.slr.main
    pecos.slr.misc
-   pecos.slr.slr
-   pecos.slr.std
    pecos.slr.util
    pecos.slr.vars
 

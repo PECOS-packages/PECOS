@@ -1,4 +1,4 @@
-pecos.slr.misc
+﻿pecos.slr.misc
 ==============
 
 .. automodule:: pecos.slr.misc
@@ -20,7 +20,6 @@ pecos.slr.misc
       Barrier
       Comment
       Permute
-      QASM
    
    
 

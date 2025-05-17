@@ -1,7 +1,7 @@
-pecos.slr.std
-=============
+﻿pecos.slr.gen\_codes
+====================
 
-.. automodule:: pecos.slr.std
+.. automodule:: pecos.slr.gen_codes
 
    
    
@@ -27,5 +27,5 @@ pecos.slr.std
    :toctree:
    :recursive:
 
-   pecos.slr.std.phys
+   pecos.slr.gen_codes.gen_qasm
 

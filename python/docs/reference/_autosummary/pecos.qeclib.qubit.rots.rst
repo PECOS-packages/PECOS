@@ -1,7 +1,7 @@
-pecos.slr.std.phys.rots
+pecos.qeclib.qubit.rots
 =======================
 
-.. automodule:: pecos.slr.std.phys.rots
+.. automodule:: pecos.qeclib.qubit.rots
 
    
    

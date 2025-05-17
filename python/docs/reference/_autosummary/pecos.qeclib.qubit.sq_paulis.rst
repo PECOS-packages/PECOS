@@ -1,7 +1,7 @@
-pecos.slr.std.phys.face\_rots
+pecos.qeclib.qubit.sq\_paulis
 =============================
 
-.. automodule:: pecos.slr.std.phys.face_rots
+.. automodule:: pecos.qeclib.qubit.sq_paulis
 
    
    
@@ -17,10 +17,9 @@ pecos.slr.std.phys.face\_rots
 
    .. autosummary::
    
-      F4Gate
-      F4dgGate
-      FGate
-      FdgGate
+      X
+      Y
+      Z
    
    
 

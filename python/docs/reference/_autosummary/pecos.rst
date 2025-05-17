@@ -37,9 +37,12 @@
    pecos.foreign_objects
    pecos.machines
    pecos.misc
+   pecos.noise_models
    pecos.op_processors
    pecos.qeccs
+   pecos.qeclib
    pecos.reps
+   pecos.rslib
    pecos.simulators
    pecos.slr
    pecos.tools

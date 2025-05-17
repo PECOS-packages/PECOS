@@ -1,4 +1,4 @@
-pecos.circuits
+﻿pecos.circuits
 ==============
 
 .. automodule:: pecos.circuits

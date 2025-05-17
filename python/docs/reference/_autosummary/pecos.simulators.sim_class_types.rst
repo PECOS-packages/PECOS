@@ -21,6 +21,7 @@ pecos.simulators.sim\_class\_types
       PauliPropagation
       ProcessMatrix
       Stabilizer
+      StateTN
       StateVector
    
    

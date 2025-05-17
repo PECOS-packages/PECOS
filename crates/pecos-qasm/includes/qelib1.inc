@@ -158,6 +158,45 @@ gate u3(theta, phi, lambda) a {
   rz(lambda) a;
 }
 
+// Controlled gates
+gate cu1(lambda) a,b {
+  u1(lambda/2) a;
+  cx a,b;
+  u1(-lambda/2) b;
+  cx a,b;
+  u1(lambda/2) b;
+}
+
+// Two-qubit XX rotation
+gate rxx(theta) a,b {
+  h a;
+  h b;
+  cx a,b;
+  rz(theta) b;
+  cx a,b;
+  h a;
+  h b;
+}
+
+// Three-qubit Toffoli gate
+gate ccx a,b,c {
+  h c;
+  cx b,c;
+  tdg c;
+  cx a,c;
+  t c;
+  cx b,c;
+  tdg c;
+  cx a,c;
+  t b;
+  t c;
+  h c;
+  cx a,b;
+  t a;
+  tdg b;
+  cx a,b;
+}
+
 // Synonyms for common gates
 gate cnot a,b { cx a,b; }
 gate cphase90 a,b { cphase(pi/2) a,b; }

@@ -15,19 +15,6 @@
 //! This crate serves as the main entry point for the PECOS ecosystem, re-exporting
 //! the primary functionality from the various specialized crates.
 
-#[cfg(doctest)]
-extern crate pecos_core;
-#[cfg(doctest)]
-extern crate pecos_engines;
-#[cfg(doctest)]
-extern crate pecos_phir;
-#[cfg(doctest)]
-extern crate pecos_qasm;
-#[cfg(doctest)]
-extern crate pecos_qir;
-#[cfg(doctest)]
-extern crate pecos_qsim;
-
 pub mod engines;
 pub mod prelude;
 pub mod program;

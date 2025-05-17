@@ -48,7 +48,7 @@ theme:
   - search.share
 nav:
 - User guide:
-  - Introduction: index.md
+  - Introduction: README.md
   - user-guide/getting-started.md
   - user-guide/installation.md
 - API:

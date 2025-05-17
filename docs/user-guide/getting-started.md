@@ -99,7 +99,7 @@ fn main() {
 
 Now that you have PECOS installed, you can:
 
-- Explore the [User Guide](../index.md) to learn core concepts
+- Explore the [User Guide](../README.md) to learn core concepts
 - Check out the [Python API](https://quantum-pecos.readthedocs.io/en/latest/) or [Rust API](https://docs.rs/pecos/latest/pecos/) reference
 - Try the examples in each language:
   - Python examples: `/python/quantum-pecos/examples/`

@@ -1,4 +1,4 @@
-pecos.slr.cops
+﻿pecos.slr.cops
 ==============
 
 .. automodule:: pecos.slr.cops
@@ -18,21 +18,27 @@ pecos.slr.cops
    .. autosummary::
    
       AND
-      Assign
+      AssignmentOp
       BinOp
       COp
       CompOp
+      DIV
       EQUIV
       GE
       GT
       LE
+      LSHIFT
       LT
       MINUS
+      MUL
+      NEG
       NEQUIV
       NOT
       OR
       PLUS
       PyCOp
+      RSHIFT
+      SET
       UnaryOp
       XOR
    

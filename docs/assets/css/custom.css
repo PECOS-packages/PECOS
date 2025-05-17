@@ -1,0 +1,387 @@
+/* Custom styles for PECOS documentation */
+
+/* We're using built-in Material teal theme now */
+:root {
+
+  /* Make navigation text lighter */
+  --md-default-fg-color:         rgba(0, 0, 0, 0.7);
+  --md-default-fg-color--light:  rgba(0, 0, 0, 0.54);
+  --md-default-fg-color--lighter: rgba(0, 0, 0, 0.32);
+  --md-default-fg-color--lightest: rgba(0, 0, 0, 0.12);
+
+  /* Custom navigation colors */
+  --nav-text-color: #455a64;
+  --nav-title-color: #263238;
+  --nav-section-color: #37474f;
+  --toc-text-color: #455a64;
+  --toc-title-color: #263238;
+}
+
+/* Dark mode overrides */
+[data-md-color-scheme="slate"] {
+  --nav-text-color: #78909c;
+  --nav-title-color: #607d8b;
+  --nav-section-color: #607d8b;
+  --toc-text-color: #78909c;
+  --toc-title-color: #607d8b;
+}
+
+/* Ensure dark mode headings match navigation */
+[data-md-color-scheme="slate"] .md-typeset h1,
+[data-md-color-scheme="slate"] .md-typeset h2,
+[data-md-color-scheme="slate"] .md-typeset h3,
+[data-md-color-scheme="slate"] .md-typeset h4 {
+  color: #607d8b;
+}
+
+/* Adjust active navigation for dark mode */
+[data-md-color-scheme="slate"] .md-nav__item .md-nav__link--active {
+  color: #e65100;
+}
+
+/* Adjust hover colors for dark mode */
+[data-md-color-scheme="slate"] .md-nav__link:hover {
+  color: #e65100;
+}
+
+
+/* Code block styling */
+.md-typeset code {
+  font-size: 0.85em;
+}
+
+/* Admonition styling */
+.md-typeset .admonition,
+.md-typeset details {
+  font-size: 0.85rem;
+}
+
+/* Image styling */
+.md-typeset img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* API reference styling */
+.doc-contents .field-list dt {
+  font-weight: bold;
+}
+
+/* Math formula styling */
+.md-typeset .arithmatex {
+  overflow-x: auto;
+}
+
+/* Mobile responsiveness improvements */
+@media screen and (max-width: 76.1875em) {
+  .md-nav--primary .md-nav__title {
+    line-height: 2.4rem;
+  }
+}
+
+/* Custom styling for tables */
+.md-typeset__table {
+  width: 100%;
+}
+
+.md-typeset table:not([class]) {
+  font-size: 0.85rem;
+}
+
+/* Navigation sidebar width */
+.md-sidebar--primary {
+  width: 16rem;
+}
+
+@media screen and (min-width: 76.25em) {
+  .md-sidebar--primary {
+    width: 16rem;
+  }
+
+  .md-content__inner {
+    margin-left: 0.8rem;
+  }
+}
+
+/* Section titles in navigation */
+.md-nav__item--section > .md-nav__link,
+.md-nav__item--nested > .md-nav__link {
+  font-weight: bold;
+  color: var(--nav-section-color);
+  font-size: 0.8rem;
+}
+
+/* Style the navigation links and hide default toggles */
+.md-nav__toggle {
+  display: none !important;
+}
+
+.md-nav__item .md-nav__link--active {
+  color: var(--md-accent-fg-color);
+  font-weight: 600;
+}
+
+/* Remove the default Material chevrons or icons */
+.md-nav__icon {
+  display: none !important;
+}
+
+/* Add our own chevron only to nested items */
+.md-nav__item--nested > .md-nav__link:before {
+  content: "›";
+  display: inline-block;
+  margin-right: 0.4rem;
+  transition: transform 0.25s;
+  font-weight: bold;
+  color: var(--md-accent-fg-color);
+  font-size: 1rem;
+}
+
+/* Adjust chevron for dark mode */
+[data-md-color-scheme="slate"] .md-nav__item--nested > .md-nav__link:before {
+  color: #e65100;
+}
+
+/* Make TOC chevrons slightly smaller */
+.md-nav--secondary .md-nav__item--nested > .md-nav__link:before {
+  font-size: 0.9rem;
+  margin-right: 0.3rem;
+}
+
+/* Adjust TOC chevron for dark mode */
+[data-md-color-scheme="slate"] .md-nav--secondary .md-nav__item--nested > .md-nav__link:before {
+  color: #e65100;
+}
+
+/* Rotate the chevron when the section is expanded */
+.md-nav__item--nested > input:checked ~ .md-nav__link:before {
+  transform: rotate(90deg);
+}
+
+/* Make navigation collapsed by default */
+.md-nav__item--nested > .md-nav {
+  display: none;
+}
+
+.md-nav__item--nested > input:checked ~ .md-nav {
+  display: block;
+}
+
+/* Make md-nav__container show properly */
+.md-nav__container {
+  display: block !important;
+}
+
+/* Fix top-level nav items ("PECOS User Guide" level) */
+.md-nav--primary > .md-nav__list > .md-nav__item > .md-nav__link {
+  color: var(--nav-title-color) !important;
+  font-weight: bold;
+  font-size: 0.8rem;
+}
+
+/* Apply specific fixes for section nav titles that might be too dark */
+.md-nav--primary .md-nav__title {
+  color: var(--nav-title-color) !important;
+  font-size: 0.85rem;
+  padding-bottom: 0.2rem;
+  margin-bottom: 0.1rem;
+  background: none !important;
+  box-shadow: none !important;
+}
+
+/* Hide navigation title */
+.md-nav--primary > .md-nav__title {
+  display: none !important;
+}
+
+/* TOC title styling */
+.md-nav--secondary .md-nav__title {
+  color: var(--toc-title-color) !important;
+  font-size: 0.8rem;
+  padding-bottom: 0.2rem;
+  margin-bottom: 0.1rem;
+  background: none !important;
+  box-shadow: none !important;
+  font-weight: 600;
+}
+
+/* Improve spacing in navigation */
+.md-nav__list .md-nav__list {
+  margin-left: 0.6rem;
+}
+
+.md-nav__list .md-nav__list .md-nav__list {
+  margin-left: 1rem;
+}
+
+/* More compact spacing in TOC */
+.md-nav--secondary .md-nav__list .md-nav__list {
+  margin-left: 0.5rem;
+}
+
+.md-nav--secondary .md-nav__list .md-nav__list .md-nav__list {
+  margin-left: 0.7rem;
+}
+
+/* Enhance navigation link styling */
+.md-nav__link {
+  color: var(--nav-text-color);
+  transition: color 0.2s;
+  font-size: 0.75rem;
+  margin-top: 0.05rem;
+  margin-bottom: 0.05rem;
+  padding-top: 0.05rem;
+  padding-bottom: 0.15rem;
+  line-height: 1.25;
+}
+
+/* Make second-level navigation slightly bolder */
+.md-nav__list .md-nav__list > .md-nav__item > .md-nav__link {
+  font-weight: 525;
+}
+
+.md-nav__link:hover {
+  color: var(--md-accent-fg-color);
+}
+
+/* Custom quantum-styled tabs */
+.md-typeset .tabbed-content > label {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.md-typeset .tabbed-set > label {
+  background-color: rgba(0, 0, 0, 0.05);
+  border-radius: 4px 4px 0 0;
+}
+
+/* Hide custom checkboxes that appear in the nav on some browsers */
+.md-nav--primary .md-nav__item input[type="checkbox"] {
+  display: none !important;
+}
+
+/* Homepage specific styles */
+.md-typeset h1 {
+  font-weight: 600;
+  margin-bottom: 1em;
+  color: #607d8b;
+  font-size: 2.4em;
+}
+
+/* Simple homepage styling */
+body.index-page .md-content__inner > h1:first-of-type {
+  text-align: left;
+}
+
+body.index-page .md-content__inner > p:nth-of-type(1) img {
+  max-width: 400px;
+  margin: 1rem auto 2rem;
+  display: block;
+}
+
+/* Simple margin for intro paragraph */
+body.index-page .md-content__inner > p:nth-of-type(2) {
+  margin: 1rem 0 2rem;
+  text-align: left;
+}
+
+/* Custom header/banner styling */
+.md-header {
+  background-color: #2f3542;
+  box-shadow: 0 2px 4px rgba(0,0,0,.2);
+}
+
+/* Make the header a bit taller and more substantial */
+.md-header__inner {
+  padding: 0.45rem 0.8rem;
+}
+
+/* Style the logo container */
+.md-header__button.md-logo {
+  padding: 0.2rem 0.1rem 0.2rem 0.2rem;
+  margin-right: 0.4rem;
+}
+
+/* Make logo image bigger */
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: 2.7rem;
+  width: auto;
+}
+
+/* Custom footer styling */
+.md-footer {
+  /* Using the default theme color */
+}
+
+/* Add a subtle border to the navigation */
+.md-tabs {
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+/* Make tabs more readable */
+.md-tabs__link {
+  opacity: 0.9;
+  font-size: 0.75rem;
+}
+
+.md-tabs__item--active .md-tabs__link {
+  color: var(--md-accent-fg-color);
+  opacity: 1;
+}
+
+/* Update the navigation item hover states */
+.md-tabs__link:hover {
+  color: white;
+}
+
+/* Adjust tab active colors for dark mode */
+[data-md-color-scheme="slate"] .md-tabs__item--active .md-tabs__link {
+  color: #e65100;
+}
+
+/* Page titles styling */
+.md-typeset h1, .md-typeset h2, .md-typeset h3, .md-typeset h4 {
+  color: #607d8b;
+  font-weight: 600;
+}
+
+.md-typeset h2 {
+  font-weight: 400;
+  border-bottom: 1px solid rgba(0,0,0,0.07);
+  padding-bottom: 0.2rem;
+}
+
+/* Table of Contents styling */
+.md-nav--secondary .md-nav__link {
+  font-size: 0.7rem;
+  margin-top: 0.03rem;
+  margin-bottom: 0.03rem;
+  padding-top: 0.04rem;
+  padding-bottom: 0.04rem;
+  color: var(--toc-text-color);
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+/* Custom styling for links */
+.md-content a:not(.md-button) {
+  color: var(--md-accent-fg-color--dark);
+  text-decoration: none;
+  border-bottom: 1px dotted rgba(255, 160, 0, 0.4);
+}
+
+.md-content a:hover:not(.md-button) {
+  color: var(--md-accent-fg-color);
+  border-bottom: 1px solid var(--md-accent-fg-color);
+}
+
+/* Dark mode link styling */
+[data-md-color-scheme="slate"] .md-content a:not(.md-button) {
+  color: #fb8c00;
+  border-bottom: 1px dotted rgba(251, 140, 0, 0.4);
+}
+
+[data-md-color-scheme="slate"] .md-content a:hover:not(.md-button) {
+  color: #e65100;
+  border-bottom: 1px solid #e65100;
+}

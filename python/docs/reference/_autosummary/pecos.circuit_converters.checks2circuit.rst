@@ -1,4 +1,4 @@
-pecos.circuit\_converters.checks2circuit
+﻿pecos.circuit\_converters.checks2circuit
 ========================================
 
 .. automodule:: pecos.circuit_converters.checks2circuit

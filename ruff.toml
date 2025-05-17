@@ -125,6 +125,7 @@ ignore = [
     "INP001",                       # File is part of an implicit namespace package. Add an `__init__.py` (6)
     "S101",                         # Use of `assert` detected (78)
     ]
+"python/quantum-pecos/src/pecos/engines/hybrid_engine_multiprocessing.py" = ["BLE001"]  # Must catch all exceptions in worker process
 # TODO: comment to work on better typing
 "python/pecos/src/pecos/circuit_converters/**/*.py" = ["ANN"]
 "python/pecos/src/pecos/circuits/**/*.py" = ["ANN"]

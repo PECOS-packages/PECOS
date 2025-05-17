@@ -1,4 +1,4 @@
-pecos.slr.fund
+﻿pecos.slr.fund
 ==============
 
 .. automodule:: pecos.slr.fund
@@ -18,6 +18,8 @@ pecos.slr.fund
    .. autosummary::
    
       Expression
+      Node
+      Operation
       Statement
    
    

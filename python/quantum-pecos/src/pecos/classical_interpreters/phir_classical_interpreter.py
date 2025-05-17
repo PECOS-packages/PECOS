@@ -93,8 +93,12 @@ class PHIRClassicalInterpreter(ClassicalInterpreter):
             PHIRModel.model_validate(self.program)
 
         if isinstance(self.program, dict):
-            assert self.program["format"] in ["PHIR/JSON", "PHIR"]  # noqa: S101
-            assert version2tuple(self.program["version"]) < (0, 2, 0)  # noqa: S101
+            if self.program["format"] not in ["PHIR/JSON", "PHIR"]:
+                msg = f"Unsupported PHIR format: {self.program['format']}"
+                raise ValueError(msg)
+            if version2tuple(self.program["version"]) >= (0, 2, 0):
+                msg = f"PHIR version {self.program['version']} not supported; only versions < 0.2.0 are supported"
+                raise ValueError(msg)
 
         # convert to a format that will, hopefully, run faster in simulation
         if not isinstance(self.program, PyPMIR):

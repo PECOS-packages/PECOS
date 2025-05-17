@@ -28,7 +28,7 @@ import sys
 from importlib import metadata
 from pathlib import Path
 
-sys.path.insert(0, str(Path("../python").resolve()))
+sys.path.insert(0, str(Path("../quantum-pecos/src").resolve()))
 
 # -- Project information -----------------------------------------------------
 
@@ -40,7 +40,11 @@ copyright = (
 author = "The PECOS Developers"
 
 # The full version, including alpha/beta/rc tags
-release = metadata.version("quantum-pecos")
+try:
+    release = metadata.version("quantum-pecos")
+except metadata.PackageNotFoundError:
+    # If the package isn't installed, fall back to hardcoded version
+    release = "0.6.0.dev8"
 # The short version
 version = ".".join(release.split(".")[:3])
 
@@ -237,3 +241,18 @@ todo_link_only = True
 # -- Options for autosummary extension ----------------------------------------------
 # Generate subpages for reference docs automatically
 autosummary_generate = True
+
+# -- Options for autodoc extension ----------------------------------------------
+# Mock modules that are not available during doc build
+autodoc_mock_imports = ["wasmer", "wasmtime", "cupy", "pecos.slr.std", "pecos.slr.slr"]
+
+# Skip problematic modules
+autosummary_mock_imports = [
+    "pecos.slr.std",
+    "pecos.slr.slr",
+    "pecos.simulators.cuquantum_old",
+    "pecos.simulators.custatevec",
+    "pecos.simulators.cysparsesim",
+    "pecos.simulators.cysparsesim_col",
+    "pecos.simulators.cysparsesim_row",
+]

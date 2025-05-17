@@ -46,7 +46,6 @@ To get started, check out the following:
    development/index
    change_log
    bibliography
-   todo_list
 
 Indices and tables
 ==================

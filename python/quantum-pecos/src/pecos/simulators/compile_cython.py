@@ -12,6 +12,7 @@
 # specific language governing permissions and limitations under the License.
 
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -28,9 +29,8 @@ def main():
     for d in cython_dirs:
         path = Path(current_location / d)
 
-        p = subprocess.Popen(  # noqa: S602
-            "python setup.py build_ext --inplace",  # noqa: S607
-            shell=True,
+        p = subprocess.Popen(  # noqa: S603 - Running trusted setup.py for Cython compilation
+            [sys.executable, "setup.py", "build_ext", "--inplace"],
             cwd=path,
             stderr=subprocess.PIPE,
         )

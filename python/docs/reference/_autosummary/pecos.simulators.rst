@@ -1,4 +1,4 @@
-pecos.simulators
+﻿pecos.simulators
 ================
 
 .. automodule:: pecos.simulators
@@ -27,18 +27,17 @@ pecos.simulators
    :toctree:
    :recursive:
 
+   pecos.simulators.basic_sv
    pecos.simulators.cointoss
    pecos.simulators.compile_cython
-   pecos.simulators.cuquantum_old
-   pecos.simulators.custatevec
-   pecos.simulators.cysparsesim
-   pecos.simulators.cysparsesim_col
-   pecos.simulators.cysparsesim_row
    pecos.simulators.gate_syms
+   pecos.simulators.mps_pytket
    pecos.simulators.parent_sim_classes
    pecos.simulators.paulifaultprop
    pecos.simulators.projectq
    pecos.simulators.quantum_simulator
+   pecos.simulators.quest
+   pecos.simulators.qulacs
    pecos.simulators.sim_class_types
    pecos.simulators.sparsesim
 

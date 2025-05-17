@@ -22,12 +22,16 @@ from pecos.errors import MissingCCOPError
 
 
 def read_pickle(picklefile):
-    """Read in either a file path or byte object meant to be a pickled class used to define the ccop."""
+    """Read in either a file path or byte object meant to be a pickled class used to define the ccop.
+
+    Warning: This function loads pickled data which can be a security risk if the data
+    comes from untrusted sources. Only use with trusted circuit metadata.
+    """
     if isinstance(picklefile, str):  # filename
         with Path.open(picklefile, "rb") as f:
-            return pickle.load(f)  # noqa: S301
+            return pickle.load(f)  # noqa: S301 - Loading trusted circuit metadata
     else:
-        return pickle.loads(picklefile)  # byte object  # noqa: S301
+        return pickle.loads(picklefile)  # noqa: S301 - Loading trusted circuit metadata
 
 
 def get_ccop(circuit):

@@ -151,8 +151,10 @@ def worker_wrapper(args) -> tuple[dict, dict]:
     results = {}
     try:
         results = run(**pkwargs)
-    except Exception as e:  # noqa: BLE001
-        queue.put((pid, "error", str(e)))
+    except (ValueError, TypeError, RuntimeError, KeyError, AttributeError) as e:
+        queue.put((pid, "error", f"{type(e).__name__}: {e}"))
+    except Exception as e:
+        queue.put((pid, "error", f"Unexpected error: {type(e).__name__}: {e}"))
 
     return results, run_info
 

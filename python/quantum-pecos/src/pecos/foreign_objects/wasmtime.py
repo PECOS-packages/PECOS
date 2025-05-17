@@ -110,7 +110,6 @@ class WasmtimeObj(ForeignObject):
             self.store.engine.increment_epoch()
             self.store.set_epoch_deadline(WASM_EXECUTION_MAX_TICKS)
             output = func(self.store, *args)
-            return output  # noqa: TRY300
         except Trap as t:
             if t.trap_code is TrapCode.INTERRUPT:
                 message = (
@@ -130,6 +129,8 @@ class WasmtimeObj(ForeignObject):
                 f"Error during execution of function '{func_name}' with args {args}"
             )
             raise WasmRuntimeError(message) from e
+
+        return output
 
     def teardown(self) -> None:
         self.stop_flag.set()

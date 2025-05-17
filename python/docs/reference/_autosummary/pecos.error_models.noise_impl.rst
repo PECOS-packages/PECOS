@@ -1,4 +1,4 @@
-pecos.error\_models.noise\_impl
+﻿pecos.error\_models.noise\_impl
 ===============================
 
 .. automodule:: pecos.error_models.noise_impl
@@ -27,6 +27,7 @@ pecos.error\_models.noise\_impl
    :toctree:
    :recursive:
 
+   pecos.error_models.noise_impl.gate_groups
    pecos.error_models.noise_impl.noise_initz_bitflip
    pecos.error_models.noise_impl.noise_initz_bitflip_leakage
    pecos.error_models.noise_impl.noise_meas_bitflip

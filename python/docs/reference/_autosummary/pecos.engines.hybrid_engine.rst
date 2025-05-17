@@ -1,4 +1,4 @@
-pecos.engines.hybrid\_engine
+﻿pecos.engines.hybrid\_engine
 ============================
 
 .. automodule:: pecos.engines.hybrid_engine
@@ -18,6 +18,7 @@ pecos.engines.hybrid\_engine
    .. autosummary::
    
       HybridEngine
+      MeasData
    
    
 

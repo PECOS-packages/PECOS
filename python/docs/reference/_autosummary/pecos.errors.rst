@@ -1,4 +1,4 @@
-pecos.errors
+﻿pecos.errors
 ============
 
 .. automodule:: pecos.errors
@@ -24,6 +24,8 @@ pecos.errors
       MissingCCOPError
       NotSupportedGateError
       PECOSError
+      WasmError
+      WasmRuntimeError
    
    
 

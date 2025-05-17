@@ -12,7 +12,6 @@ pub enum QuarterPhase {
 }
 
 impl Phase for QuarterPhase {
-    #[must_use]
     fn to_complex(&self) -> Complex {
         use QuarterPhase::{MinusI, MinusOne, PlusI, PlusOne};
         match self {
@@ -23,7 +22,6 @@ impl Phase for QuarterPhase {
         }
     }
 
-    #[must_use]
     fn conjugate(&self) -> Self {
         use QuarterPhase::{MinusI, MinusOne, PlusI, PlusOne};
         match self {
@@ -33,7 +31,6 @@ impl Phase for QuarterPhase {
         }
     }
 
-    #[must_use]
     fn multiply(&self, other: &QuarterPhase) -> QuarterPhase {
         let lhs = *self as u8;
         let rhs = *other as u8;

@@ -25,7 +25,6 @@ impl<'a, E: Element + 'a> Set<'a> for VecSet<E> {
     type Union = Union<'a, E>;
 
     #[inline]
-    #[must_use]
     fn new() -> Self {
         Self::new()
     }
@@ -154,7 +153,6 @@ impl<'a, E: Element + 'a> Set<'a> for VecSet<E> {
     }
 
     #[inline]
-    #[must_use]
     fn with_capacity(capacity: usize) -> Self {
         Self {
             elements: Vec::with_capacity(capacity),

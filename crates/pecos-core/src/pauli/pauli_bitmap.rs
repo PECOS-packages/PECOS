@@ -134,7 +134,6 @@ impl PauliOperator for PauliBitmap {
         (0..64).filter(|&i| (self.z_bits & (1 << i)) != 0).collect()
     }
 
-    #[must_use]
     #[inline]
     fn multiply(&self, other: &Self) -> Self {
         let mut phase = self.phase.multiply(&other.phase);

@@ -150,7 +150,6 @@ where
     /// # Returns
     /// A new `SetPauli` operator representing the product.
     #[inline]
-    #[must_use]
     fn multiply(&self, other: &Self) -> Self {
         let mut phase = self.phase.multiply(&other.phase);
 

@@ -24,7 +24,6 @@ impl Phase for Sign {
     }
 
     /// Multiplies two `Sign` values using XOR (superfast).
-    #[must_use]
     fn multiply(&self, other: &Self) -> Self {
         unsafe { std::mem::transmute((*self as u8) ^ (*other as u8)) }
     }

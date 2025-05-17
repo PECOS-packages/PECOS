@@ -56,24 +56,15 @@ jobs:
           cd python/quantum-pecos
           uv pip install -e .
 
-      - name: Install documentation dependencies
-        run: |
-          cd docs
-          make install-deps
-
       - name: Test working documentation examples
         run: |
-          cd docs
-          make test-working
+          uv run python scripts/docs/test_working_examples.py
 
-      - name: Check documentation for issues
-        if: success()
+      - name: Test all code examples
         run: |
-          cd docs
-          make lint
+          uv run python scripts/docs/test_code_examples.py
 
       - name: Build documentation
         if: success()
         run: |
-          cd docs
-          make build
+          uv run mkdocs build

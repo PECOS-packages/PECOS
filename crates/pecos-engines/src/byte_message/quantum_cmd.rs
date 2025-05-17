@@ -76,6 +76,9 @@ pub enum QuantumCmd {
 
     /// R1XY gate with theta, phi angles (in radians) and qubit
     R1XY(f64, f64, QubitId),
+
+    /// U gate with theta, phi, lambda angles (in radians) and qubit
+    U(f64, f64, f64, QubitId),
 }
 
 impl fmt::Display for QuantumCmd {
@@ -94,6 +97,7 @@ impl fmt::Display for QuantumCmd {
             QuantumCmd::Record(cmd) | QuantumCmd::Message(cmd) => write!(f, "{cmd}"),
             QuantumCmd::RecordResult(result, name) => write!(f, "RecordResult {result} {name}"),
             QuantumCmd::R1XY(theta, phi, qubit) => write!(f, "R1XY {theta} {phi} {qubit}"),
+            QuantumCmd::U(theta, phi, lambda, qubit) => write!(f, "U {theta} {phi} {lambda} {qubit}"),
         }
     }
 }

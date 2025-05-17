@@ -181,6 +181,16 @@ impl Engine for StateVecEngine {
                     // For idle gates, just let the system naturally evolve for the specified duration
                     // No active operation needed in the simulator
                 }
+                GateType::U => {
+                    if cmd.params.len() >= 3 {
+                        debug!(
+                            "Processing U gate with angles theta={:?}, phi={:?}, lambda={:?} on qubit {:?}",
+                            cmd.params[0], cmd.params[1], cmd.params[2], cmd.qubits[0]
+                        );
+                        self.simulator
+                            .u(cmd.params[0], cmd.params[1], cmd.params[2], cmd.qubits[0]);
+                    }
+                }
             }
         }
 

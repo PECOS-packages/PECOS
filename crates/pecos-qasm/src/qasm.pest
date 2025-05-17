@@ -25,7 +25,7 @@ creg = { "creg" ~ indexed_id ~ ";" }
 quantum_op = { barrier | measure | reset | gate_call }
 
 // Gates with potentially both parameters and qubits
-gate_call = { identifier ~ param_values? ~ qubit_list ~ ";" }
+gate_call = { identifier ~ param_values? ~ any_list ~ ";" }
 
 // Gate call inside a gate definition (uses simple identifiers)
 gate_def_call = { identifier ~ param_values? ~ identifier_list ~ ";" }

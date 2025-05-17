@@ -21,6 +21,7 @@ pub enum GateType {
     RZZ = 11,
     SZZdg = 12,
     Idle = 13,
+    U = 14,
 }
 
 impl From<u8> for GateType {
@@ -39,6 +40,7 @@ impl From<u8> for GateType {
             11 => GateType::RZZ,
             12 => GateType::SZZdg,
             13 => GateType::Idle,
+            14 => GateType::U,
             _ => panic!("Invalid gate type ID: {value}"),
         }
     }
@@ -66,6 +68,7 @@ impl fmt::Display for GateType {
             GateType::RZZ => write!(f, "RZZ"),
             GateType::SZZdg => write!(f, "SZZdg"),
             GateType::Idle => write!(f, "Idle"),
+            GateType::U => write!(f, "U"),
         }
     }
 }
@@ -166,6 +169,12 @@ impl QuantumGate {
     #[must_use]
     pub fn r1xy(theta: f64, phi: f64, qubit: usize) -> Self {
         Self::new(GateType::R1XY, vec![qubit], vec![theta, phi], None)
+    }
+
+    /// Create a new U gate
+    #[must_use]
+    pub fn u(theta: f64, phi: f64, lambda: f64, qubit: usize) -> Self {
+        Self::new(GateType::U, vec![qubit], vec![theta, phi, lambda], None)
     }
 
     /// Create a new Measure gate

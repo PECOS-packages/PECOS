@@ -100,8 +100,13 @@ fn test_gate_definitions_updated() {
             u_def.body.len()
         );
 
-        // U(0,0,0) should simplify to identity (RZ(0), rx(0), RZ(0))
-        assert_eq!(u_def.body.len(), 3, "u gate should have 3 operations");
+        // U gate now maps directly to native U operation
+        assert_eq!(u_def.body.len(), 1, "u gate should have 1 operation (native U)");
+
+        // Check that u gate uses U operation internally
+        if let Some(first_op) = u_def.body.first() {
+            assert_eq!(first_op.name, "U", "u gate should use native U internally");
+        }
     }
 }
 

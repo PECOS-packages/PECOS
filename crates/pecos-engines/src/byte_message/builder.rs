@@ -394,6 +394,14 @@ impl ByteMessageBuilder {
         self
     }
 
+    /// Add a U gate
+    pub fn add_u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: &[usize]) -> &mut Self {
+        for &qubit in qubits {
+            self.add_quantum_gate(&QuantumGate::u(theta, phi, lambda, qubit));
+        }
+        self
+    }
+
     /// Add measurement operations for multiple qubits
     ///
     /// # Panics

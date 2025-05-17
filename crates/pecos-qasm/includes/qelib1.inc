@@ -99,6 +99,23 @@ gate crz(theta) a,b {
   cx a,b;
 }
 
+// Controlled RX
+gate crx(theta) a,b {
+  ry(pi/2) b;
+  cx a,b;
+  ry(theta) b;
+  cx a,b;
+  ry(-pi/2) b;
+}
+
+// Controlled RY
+gate cry(theta) a,b {
+  ry(theta/2) b;
+  cx a,b;
+  ry(-theta/2) b;
+  cx a,b;
+}
+
 // Controlled phase
 gate cphase(theta) a,b {
   rz(theta/2) a;
@@ -133,11 +150,8 @@ gate p(lambda) q { rz(lambda) q; }
 // Universal single-qubit gate (simplified version using rz gates)
 // u(theta, phi, lambda) = rz(phi) * rx(theta) * rz(lambda)
 // For the identity case u(0,0,0), this simplifies to doing nothing
-gate u(theta, phi, lambda) q {
-  rz(phi) q;
-  rx(theta) q;
-  rz(lambda) q;
-}
+// PECOS native U gate (arbitrary single-qubit rotation)
+gate u(theta, phi, lambda) q { U(theta, phi, lambda) q; }
 
 // Single-parameter phase gate (alias)
 gate u1(lambda) a { rz(lambda) a; }

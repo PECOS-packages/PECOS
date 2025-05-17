@@ -29,6 +29,7 @@ pub fn parse_binary_commands(commands: &[QuantumCmd]) -> Vec<QuantumCommand> {
         QuantumCmd::CX(control, target) => QuantumCommand::CX(*control, *target),
         QuantumCmd::RZ(angle, qubit) => QuantumCommand::RZ(*angle, *qubit),
         QuantumCmd::R1XY(theta, phi, qubit) => QuantumCommand::R1XY(*theta, *phi, *qubit),
+        QuantumCmd::U(theta, phi, lambda, qubit) => QuantumCommand::U(*theta, *phi, *lambda, *qubit),
         QuantumCmd::SZZ(qubit1, qubit2) => QuantumCommand::SZZ(*qubit1, *qubit2),
         QuantumCmd::RZZ(angle, qubit1, qubit2) => QuantumCommand::RZZ(*angle, *qubit1, *qubit2),
         QuantumCmd::Measure(qubit, result_id) => QuantumCommand::Measure(*qubit, *result_id),

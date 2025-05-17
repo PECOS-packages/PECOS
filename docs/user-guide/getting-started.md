@@ -14,7 +14,7 @@ This guide will help you get up and running with PECOS quickly, whether you're u
     
     This will install both `quantum-pecos` and its dependency `pecos-rslib`.
     
-    For optional dependencies:
+    For optional dependencies that should work on all systems:
     
     ```bash
     pip install quantum-pecos[all]
@@ -58,7 +58,7 @@ LLVM version 14 is required for QIR (Quantum Intermediate Representation) suppor
     Download LLVM 14.x installer from [LLVM releases](https://releases.llvm.org/download.html#14.0.0)
 
 !!! warning
-    Only LLVM version 14.x is compatible. LLVM 15 or later versions will not work with PECOS's QIR implementation.
+    PECOS's QIR implementation is currently only compatible with LLVM version 14.x.
 
 If LLVM 14 is not installed, PECOS will still function normally but QIR-related features will be disabled.
 
@@ -92,14 +92,3 @@ Verify your installation:
         println!("PECOS Rust crate loaded successfully!");
     }
     ```
-
-## Next Steps
-
-Now that you have PECOS installed, you can:
-
-- Explore the [User Guide](../README.md) to learn core concepts
-- Check out the [Python API](https://quantum-pecos.readthedocs.io/en/latest/) or [Rust API](https://docs.rs/pecos/latest/pecos/) reference
-- Try the examples in each language:
-  - Python examples: `/python/quantum-pecos/examples/`
-  - Rust examples: `/crates/*/examples/`
-- For contributing to PECOS or developing with the source code, see the [Development Guide](../development/DEVELOPMENT.md).

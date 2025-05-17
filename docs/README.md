@@ -14,7 +14,7 @@ quantum/classical compute execution models.
 - **Fast Simulation**: Leverages a fast stabilizer simulation algorithm.
 - **Multi-language extensions**: Core functionalities implemented via Rust for performance and safety. Additional 
   add-ons and extension support in C/C++ via Cython.
-- **QIR Support**: Execute Quantum Intermediate Representation programs (requires LLVM version 14 with the 'llc' tool).
+- **QIR Support**: Execute Quantum Intermediate Representation programs (requires LLVM version 14).
 
 ## Available Implementations
 
@@ -29,8 +29,8 @@ This documentation is organized to help you get the most out of PECOS:
 
 - **[User Guide](user-guide/getting-started.md)**: Concepts and tutorials for using PECOS
 - **API Reference**: Detailed API documentation
-  - [Python API](https://quantum-pecos.readthedocs.io/en/latest/)
-  - [Rust API](https://docs.rs/pecos/latest/pecos/)
+    - [Python API](https://quantum-pecos.readthedocs.io/en/latest/)
+    - [Rust API](https://docs.rs/pecos/latest/pecos/)
 - **[Development](development/DEVELOPMENT.md)**: Contributing to PECOS
 - **[Releases](releases/changelog.md)**: Version history and changes
 

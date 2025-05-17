@@ -189,6 +189,11 @@
   box-shadow: none !important;
 }
 
+/* Hide navigation title */
+.md-nav--primary > .md-nav__title {
+  display: none !important;
+}
+
 /* TOC title styling */
 .md-nav--secondary .md-nav__title {
   color: var(--toc-title-color) !important;

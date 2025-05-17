@@ -12,22 +12,21 @@ For developers who want to contribute or modify PECOS:
 
 3. [Install `uv` for your system](https://docs.astral.sh/uv/getting-started/installation/).
    And run the following at the root of the project to create a development environment, which will be stored in `.venv/`:
-
    ```sh
    uv sync
    ```
 
 4. You may wish to explicitly activate the environment for development. To do so:
 
-    On Linux/Mac:
-    ```sh
-    source .venv/bin/activate
-    ```
+    === "Linux/Mac"
+        ```sh
+        source .venv/bin/activate
+        ```
 
-    On Windows:
-    ```sh
-    .\.venv\Scripts\activate
-    ```
+    === "Windows"
+        ```sh
+        .\.venv\Scripts\activate
+        ```
 
 5. Build the project in editable mode
     ```sh

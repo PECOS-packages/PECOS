@@ -71,15 +71,14 @@ impl EnhancedResultHandling for Environment {
 
             if let Some(width) = width {
                 // Pad with zeros to the specified width
-                Ok(format!("{:0>width$}", bits, width = width))
+                Ok(format!("{bits:0>width$}"))
             } else {
                 // Return as is
                 Ok(bits)
             }
         } else {
             Err(PecosError::Input(format!(
-                "Variable '{}' not found",
-                var_name
+                "Variable '{var_name}' not found"
             )))
         }
     }
@@ -87,11 +86,10 @@ impl EnhancedResultHandling for Environment {
     fn get_result_as_binary_string(&self, var_name: &str) -> Result<String, PecosError> {
         if let Some(value) = self.get(var_name) {
             let bits = format!("{:b}", value.as_u64());
-            Ok(format!("0b{}", bits))
+            Ok(format!("0b{bits}"))
         } else {
             Err(PecosError::Input(format!(
-                "Variable '{}' not found",
-                var_name
+                "Variable '{var_name}' not found"
             )))
         }
     }
@@ -159,6 +157,7 @@ pub struct ResultUtils;
 
 impl ResultUtils {
     /// Combines bits into a single integer
+    #[must_use]
     pub fn bits_to_int(bits: &[BoolBit]) -> u64 {
         let mut result = 0u64;
 
@@ -172,6 +171,7 @@ impl ResultUtils {
     }
 
     /// Combines bits into a single integer using the specified indices
+    #[must_use]
     pub fn bits_to_int_with_indices(bits: &[BoolBit], indices: &[usize]) -> u64 {
         let mut result = 0u64;
 
@@ -185,6 +185,7 @@ impl ResultUtils {
     }
 
     /// Combines named result bits into a map of variable values
+    #[must_use]
     pub fn named_bits_to_map(bit_map: &HashMap<String, Vec<BoolBit>>) -> HashMap<String, u64> {
         let mut result = HashMap::new();
 
@@ -228,26 +229,26 @@ mod tests {
         let bit3 = env.get_result_bit("register", 3).unwrap();
         let bit4 = env.get_result_bit("register", 4).unwrap();
 
-        assert_eq!(bit0.0, true); // LSB
-        assert_eq!(bit1.0, false);
-        assert_eq!(bit2.0, true);
-        assert_eq!(bit3.0, false);
-        assert_eq!(bit4.0, true);
+        assert!(bit0.0); // LSB
+        assert!(!bit1.0);
+        assert!(bit2.0);
+        assert!(!bit3.0);
+        assert!(bit4.0);
 
         // Get multiple bits at once
         let indices = [0, 2, 4];
-        let bits = env.get_result_bits("register", &indices).unwrap();
-        assert_eq!(bits.len(), 3);
-        assert_eq!(bits[0].0, true);
-        assert_eq!(bits[1].0, true);
-        assert_eq!(bits[2].0, true);
+        let multi_bits = env.get_result_bits("register", &indices).unwrap();
+        assert_eq!(multi_bits.len(), 3);
+        assert!(multi_bits[0].0);
+        assert!(multi_bits[1].0);
+        assert!(multi_bits[2].0);
 
         // Combine bits into an integer using standard method (positions only)
-        let value = ResultUtils::bits_to_int(&bits);
+        let value = ResultUtils::bits_to_int(&multi_bits);
         assert_eq!(value, 0b111);
 
         // Combine bits into an integer with indices preserved
-        let value = ResultUtils::bits_to_int_with_indices(&bits, &indices);
+        let value = ResultUtils::bits_to_int_with_indices(&multi_bits, &indices);
         assert_eq!(value, 0b10101);
     }
 
@@ -279,8 +280,11 @@ mod tests {
         assert_eq!(hex_results.get("output"), Some(&"0x5".to_string()));
 
         // Get bit string results with padding
-        let bit_results = env.get_formatted_results(ResultFormat::BitString(8));
-        assert_eq!(bit_results.get("output"), Some(&"00000101".to_string()));
+        let bit_string_results = env.get_formatted_results(ResultFormat::BitString(8));
+        assert_eq!(
+            bit_string_results.get("output"),
+            Some(&"00000101".to_string())
+        );
     }
 
     #[test]

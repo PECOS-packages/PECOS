@@ -95,7 +95,7 @@ pub enum MachineOperationResult {
     ///
     /// The timing operation provides synchronization points in the program. It can be used
     /// to mark the beginning or end of a timing region, or to synchronize operations across
-    /// different qubits. The exact semantics depend on the timing_type field.
+    /// different qubits. The exact semantics depend on the `timing_type` field.
     ///
     /// # Example JSON representation
     /// ```json
@@ -172,9 +172,10 @@ impl OperationProcessor {
     /// Get the variables of type "qubits"
     /// Returns a map of quantum variable names to their sizes
     /// This is a helper method that accesses the environment directly
+    #[must_use]
     pub fn get_quantum_variables(&self) -> HashMap<String, usize> {
         // Use the environment to get all variables of type Qubits
-        let qubits_variables = self.environment.get_variables_of_type(DataType::Qubits);
+        let qubits_variables = self.environment.get_variables_of_type(&DataType::Qubits);
 
         // Convert to a HashMap with variable name -> size
         qubits_variables
@@ -186,12 +187,13 @@ impl OperationProcessor {
     /// Get the classical variables
     /// Returns a map of classical variable names to their types and sizes
     /// This is a helper method that accesses the environment directly
+    #[must_use]
     pub fn get_classical_variables(&self) -> HashMap<String, (String, usize)> {
         // Get all variables except qubits
         let classical_vars = self
             .environment
             .get_all_variables()
-            .into_iter()
+            .iter()
             .filter(|info| info.data_type != DataType::Qubits)
             .map(|info| {
                 let type_name = info.data_type.to_string();
@@ -209,6 +211,7 @@ impl OperationProcessor {
     /// 2. All explicitly mapped variables (from environment mappings)
     ///
     /// This delegates directly to the environment which is the single source of truth.
+    #[must_use]
     pub fn get_measurement_results(&self) -> HashMap<String, u32> {
         // Get all measurement-related variables from the environment
         let mut results = HashMap::new();
@@ -253,7 +256,7 @@ impl OperationProcessor {
         if !self.environment.has_variable(name) {
             // Add but allow failure if it already exists
             match self.environment.add_variable(name, DataType::I32, 32) {
-                Ok(_) => log::debug!("Created new variable: {} in environment", name),
+                Ok(()) => log::debug!("Created new variable: {} in environment", name),
                 Err(e) => log::warn!(
                     "Could not create variable in environment: {}. Will try to update anyway: {}",
                     name,
@@ -264,7 +267,7 @@ impl OperationProcessor {
 
         // Set the value in the environment
         match self.environment.set(name, value) {
-            Ok(_) => log::debug!("Set variable {} = {} in environment", name, value),
+            Ok(()) => log::debug!("Set variable {} = {} in environment", name, value),
             Err(e) => log::warn!(
                 "Could not set variable value in environment: {}. Error: {}",
                 name,
@@ -328,7 +331,7 @@ impl OperationProcessor {
                     "Processing qparallel block with {} operations",
                     operations.len()
                 );
-                self.process_qparallel_block(operations)
+                Self::process_qparallel_block(operations)
             }
             "if" => {
                 // If blocks are handled separately by process_conditional_block
@@ -340,32 +343,24 @@ impl OperationProcessor {
             _ => {
                 log::error!("Unknown block type: {}", block_type);
                 Err(PecosError::Input(format!(
-                    "Unknown block type: {}",
-                    block_type
+                    "Unknown block type: {block_type}"
                 )))
             }
         }
     }
 
     /// Process a qparallel block with improved validation
-    fn process_qparallel_block(
-        &self,
-        operations: &[Operation],
-    ) -> Result<Vec<Operation>, PecosError> {
+    fn process_qparallel_block(operations: &[Operation]) -> Result<Vec<Operation>, PecosError> {
         // First validate that all operations are quantum operations
         for op in operations {
             match op {
-                Operation::QuantumOp { .. } => {
-                    // Quantum operations are allowed
-                }
-                Operation::MetaInstruction { .. } => {
-                    // Meta instructions like barrier are also allowed
+                Operation::QuantumOp { .. } | Operation::MetaInstruction { .. } => {
+                    // Quantum operations and meta instructions are allowed
                 }
                 _ => {
                     log::error!("Non-quantum operation in qparallel block: {:?}", op);
                     return Err(PecosError::Input(format!(
-                        "Invalid qparallel block: only quantum operations and meta instructions are allowed, found: {:?}",
-                        op
+                        "Invalid qparallel block: only quantum operations and meta instructions are allowed, found: {op:?}"
                     )));
                 }
             }
@@ -385,8 +380,7 @@ impl OperationProcessor {
                                     qubit
                                 );
                                 return Err(PecosError::Input(format!(
-                                    "Invalid qparallel block: qubit {:?} used more than once",
-                                    qubit
+                                    "Invalid qparallel block: qubit {qubit:?} used more than once"
                                 )));
                             }
                         }
@@ -398,8 +392,7 @@ impl OperationProcessor {
                                         qubit
                                     );
                                     return Err(PecosError::Input(format!(
-                                        "Invalid qparallel block: qubit {:?} used more than once",
-                                        qubit
+                                        "Invalid qparallel block: qubit {qubit:?} used more than once"
                                     )));
                                 }
                             }
@@ -482,8 +475,7 @@ impl OperationProcessor {
                 })
             }
             _ => Err(PecosError::Input(format!(
-                "Unsupported meta instruction: {}",
-                meta_type
+                "Unsupported meta instruction: {meta_type}"
             ))),
         }
     }
@@ -541,6 +533,7 @@ impl OperationProcessor {
     ///     None
     /// );
     /// ```
+    #[allow(clippy::too_many_lines)]
     pub fn process_machine_op(
         &self,
         mop_type: &str,
@@ -548,20 +541,41 @@ impl OperationProcessor {
         duration: Option<&(f64, String)>,
         metadata: Option<&HashMap<String, serde_json::Value>>,
     ) -> Result<MachineOperationResult, PecosError> {
+        // Define constants at the beginning of the function
+        const MAX_SAFE_F64_TO_U64: f64 = 18_446_744_073_709_549_568.0; // 2^64 - 2048
+
         // Convert the duration to nanoseconds for consistent handling
         let duration_ns = if let Some((value, unit)) = duration {
-            match unit.as_str() {
-                "s" => (*value * 1_000_000_000.0) as u64,
-                "ms" => (*value * 1_000_000.0) as u64,
-                "us" => (*value * 1_000.0) as u64,
-                "ns" => *value as u64,
-                _ => {
-                    return Err(PecosError::Input(format!(
-                        "Unsupported time unit: {}",
-                        unit
-                    )));
-                }
+            // Validate that the value is non-negative
+            if *value < 0.0 {
+                return Err(PecosError::Input(format!(
+                    "Duration must be non-negative, got: {value}"
+                )));
             }
+
+            // Convert to nanoseconds with overflow checking
+            let ns_value = match unit.as_str() {
+                "s" => *value * 1_000_000_000.0,
+                "ms" => *value * 1_000_000.0,
+                "us" => *value * 1_000.0,
+                "ns" => *value,
+                _ => {
+                    return Err(PecosError::Input(format!("Unsupported time unit: {unit}")));
+                }
+            };
+
+            // Check for overflow before casting
+            if ns_value > MAX_SAFE_F64_TO_U64 {
+                return Err(PecosError::Input(format!(
+                    "Duration too large: {value} {unit}"
+                )));
+            }
+
+            // Safe cast after validation
+            // We've already validated the value is non-negative and not too large
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let casted_value = ns_value as u64;
+            casted_value
         } else {
             0 // No duration specified
         };
@@ -653,13 +667,12 @@ impl OperationProcessor {
                 Ok(MachineOperationResult::Skip)
             }
             _ => Err(PecosError::Input(format!(
-                "Unsupported machine operation: {}",
-                mop_type
+                "Unsupported machine operation: {mop_type}"
             ))),
         }
     }
 
-    /// Helper method to extract all qubits from a list of QubitArg values
+    /// Helper method to extract all qubits from a list of `QubitArg` values
     fn extract_all_qubits(
         &self,
         qubit_args: &[QubitArg],
@@ -724,7 +737,11 @@ impl OperationProcessor {
 
                 // Add idle operation to the builder
                 if !qubit_indices.is_empty() {
-                    builder.add_idle(*duration_ns as f64 / 1_000_000_000.0, &qubit_indices);
+                    // Convert nanoseconds to seconds as f64
+                    // This conversion may lose precision for very large durations (>52 bits)
+                    #[allow(clippy::cast_precision_loss)]
+                    let duration_seconds = *duration_ns as f64 / 1_000_000_000.0;
+                    builder.add_idle(duration_seconds, &qubit_indices);
                 }
             }
             MachineOperationResult::Transport {
@@ -738,7 +755,11 @@ impl OperationProcessor {
                 // Add transport operation to the builder if supported
                 // For now, we'll treat it as an idle operation
                 if !qubit_indices.is_empty() {
-                    builder.add_idle(*duration_ns as f64 / 1_000_000_000.0, &qubit_indices);
+                    // Convert nanoseconds to seconds as f64
+                    // This conversion may lose precision for very large durations (>52 bits)
+                    #[allow(clippy::cast_precision_loss)]
+                    let duration_seconds = *duration_ns as f64 / 1_000_000_000.0;
+                    builder.add_idle(duration_seconds, &qubit_indices);
                 }
             }
             MachineOperationResult::Delay {
@@ -752,7 +773,11 @@ impl OperationProcessor {
                 // Add delay operation to the builder if supported
                 // For now, we'll treat it as an idle operation
                 if !qubit_indices.is_empty() {
-                    builder.add_idle(*duration_ns as f64 / 1_000_000_000.0, &qubit_indices);
+                    // Convert nanoseconds to seconds as f64
+                    // This conversion may lose precision for very large durations (>52 bits)
+                    #[allow(clippy::cast_precision_loss)]
+                    let duration_seconds = *duration_ns as f64 / 1_000_000_000.0;
+                    builder.add_idle(duration_seconds, &qubit_indices);
                 }
             }
             MachineOperationResult::Timing {
@@ -801,9 +826,14 @@ impl OperationProcessor {
 
         // Only add to environment if it doesn't already exist
         // This is important for compatibility with test programs that might redefine variables
-        if !self.environment.has_variable(variable) {
+        if self.environment.has_variable(variable) {
+            log::debug!(
+                "Variable '{}' already exists in environment, skipping creation",
+                variable
+            );
+        } else {
             match self.environment.add_variable(variable, dt, size) {
-                Ok(_) => log::debug!(
+                Ok(()) => log::debug!(
                     "Added classical variable {} of type {} and size {}",
                     variable,
                     data_type,
@@ -815,11 +845,6 @@ impl OperationProcessor {
                     e
                 ),
             }
-        } else {
-            log::debug!(
-                "Variable '{}' already exists in environment, skipping creation",
-                variable
-            );
         }
 
         Ok(())
@@ -848,8 +873,7 @@ impl OperationProcessor {
                     variable
                 );
                 return Err(PecosError::Input(format!(
-                    "Unknown variable definition: {} {} {}",
-                    data, data_type, variable
+                    "Unknown variable definition: {data} {data_type} {variable}"
                 )));
             }
         }
@@ -878,8 +902,7 @@ impl OperationProcessor {
 
         // Variable doesn't exist, return error
         Err(PecosError::Input(format!(
-            "Variable '{}' not found in environment",
-            var
+            "Variable '{var}' not found in environment"
         )))
     }
 
@@ -893,6 +916,7 @@ impl OperationProcessor {
     }
 
     /// Handle classical operations
+    #[allow(clippy::too_many_lines)]
     pub fn handle_classical_op(
         &mut self,
         cop: &str,
@@ -963,7 +987,12 @@ impl OperationProcessor {
                     // Update in environment if the variable exists there
                     if self.environment.has_variable(&var) {
                         // Set the bit in environment
-                        self.environment.set_bit(&var, idx, bit_value as u64)?;
+                        // bit_value is already masked with & 1, so it's guaranteed to be 0 or 1
+                        self.environment.set_bit(
+                            &var,
+                            idx,
+                            u64::try_from(bit_value).unwrap_or(0),
+                        )?;
                         log::info!("Set bit {}[{}] = {} in environment", var, idx, bit_value);
                     }
 
@@ -974,13 +1003,21 @@ impl OperationProcessor {
 
                     // Clear the bit and set it to the new value
                     let mask = !(1 << idx);
-                    let new_value = (current_value & mask) | ((bit_value as u32) << idx);
+                    // bit_value is already masked with & 1, so it's guaranteed to be 0 or 1
+                    let bit_u32 = u32::try_from(bit_value).unwrap_or(0);
+                    let new_value = (current_value & mask) | (bit_u32 << idx);
 
                     // Make sure the composite variable is updated in the environment as well
-                    match self.environment.set(&var, new_value as u64) {
-                        Ok(_) => log::debug!("Updated composite variable: {} = {}", var, new_value),
+                    match self.environment.set(&var, u64::from(new_value)) {
+                        Ok(()) => {
+                            log::debug!("Updated composite variable: {} = {}", var, new_value);
+                        }
                         Err(e) => {
-                            log::warn!("Could not update composite variable: {}. Error: {}", var, e)
+                            log::warn!(
+                                "Could not update composite variable: {}. Error: {}",
+                                var,
+                                e
+                            );
                         }
                     }
                     log::info!(
@@ -996,7 +1033,10 @@ impl OperationProcessor {
                     if !self.environment.has_variable(&var) {
                         self.environment.add_variable(&var, DataType::I32, 32)?;
                     }
-                    self.environment.set(&var, value as u64)?;
+                    // Convert to u64 safely - we're working with raw bit patterns
+                    #[allow(clippy::cast_sign_loss)]
+                    let value_u64 = u64::from_ne_bytes((value as u64).to_ne_bytes());
+                    self.environment.set(&var, value_u64)?;
                     log::info!("Updated variable {} = {} in environment", var, value);
 
                     // Values are stored in the environment and will be available for expression evaluation
@@ -1128,7 +1168,10 @@ impl OperationProcessor {
                                                                     ArgItem::Simple(var) => {
                                                                         // Assign to a variable
                                                                         let result_value =
-                                                                            result[i] as u32;
+                                                                            u32::try_from(
+                                                                                result[i],
+                                                                            )
+                                                                            .unwrap_or(0);
 
                                                                         // Update primary storage in environment
                                                                         if !self
@@ -1146,7 +1189,9 @@ impl OperationProcessor {
                                                                         let _ =
                                                                             self.environment.set(
                                                                                 var,
-                                                                                result_value as u64,
+                                                                                u64::from(
+                                                                                    result_value,
+                                                                                ),
                                                                             );
 
                                                                         // All values stored in environment
@@ -1157,7 +1202,10 @@ impl OperationProcessor {
                                                                     )) => {
                                                                         // Assign to a bit
                                                                         let bit_value =
-                                                                            (result[i] & 1) as u32;
+                                                                            u32::try_from(
+                                                                                result[i] & 1,
+                                                                            )
+                                                                            .unwrap_or(0);
 
                                                                         // Update primary storage in environment
                                                                         if !self
@@ -1179,7 +1227,9 @@ impl OperationProcessor {
                                                                             .set_bit(
                                                                                 var,
                                                                                 *idx,
-                                                                                bit_value as u64,
+                                                                                u64::from(
+                                                                                    bit_value,
+                                                                                ),
                                                                             );
 
                                                                         // Environment is the single source of truth - no need for additional storage
@@ -1238,7 +1288,10 @@ impl OperationProcessor {
                                                                         ArgItem::Simple(var) => {
                                                                             // Assign to a variable
                                                                             let result_value =
-                                                                                result[i] as u32;
+                                                                                u32::try_from(
+                                                                                    result[i],
+                                                                                )
+                                                                                .unwrap_or(0);
 
                                                                             // Update primary storage in environment
                                                                             if !self
@@ -1251,8 +1304,7 @@ impl OperationProcessor {
                                                                                 .environment
                                                                                 .set(
                                                                                     var,
-                                                                                    result_value
-                                                                                        as u64,
+                                                                                    u64::from(result_value),
                                                                                 );
 
                                                                             // Environment is the single source of truth for all variable data
@@ -1263,8 +1315,10 @@ impl OperationProcessor {
                                                                         )) => {
                                                                             // Assign to a bit
                                                                             let bit_value =
-                                                                                (result[i] & 1)
-                                                                                    as u32;
+                                                                                u32::try_from(
+                                                                                    result[i] & 1,
+                                                                                )
+                                                                                .unwrap_or(0);
 
                                                                             // Update primary storage in environment
                                                                             if !self
@@ -1280,8 +1334,9 @@ impl OperationProcessor {
                                                                                 .set_bit(
                                                                                     var,
                                                                                     *idx,
-                                                                                    bit_value
-                                                                                        as u64,
+                                                                                    u64::from(
+                                                                                        bit_value,
+                                                                                    ),
                                                                                 );
 
                                                                             // Environment is the single source of truth for all variable data
@@ -1349,7 +1404,7 @@ impl OperationProcessor {
                             match ret {
                                 ArgItem::Simple(var) => {
                                     // Store whole variable value in environment
-                                    let result_value = result[i] as u64;
+                                    let result_value = u64::try_from(result[i]).unwrap_or(0);
 
                                     // Make sure the variable exists
                                     if !self.environment.has_variable(var) {
@@ -1372,7 +1427,11 @@ impl OperationProcessor {
                                     }
 
                                     // Set bit in environment (single source of truth)
-                                    self.environment.set_bit(var, *idx, bit_value as u64)?;
+                                    self.environment.set_bit(
+                                        var,
+                                        *idx,
+                                        u64::try_from(bit_value).unwrap_or(0),
+                                    )?;
                                     debug!("Set bit {}[{}] = {}", var, idx, bit_value);
                                 }
                                 _ => {
@@ -1558,12 +1617,7 @@ impl OperationProcessor {
     /// in the integer variable (e.g., "m") in the environment.
     ///
     /// The environment is the single source of truth for all variables.
-    fn store_measurement_result(
-        &mut self,
-        var_name: &str,
-        var_idx: usize,
-        outcome: u32,
-    ) -> Result<(), PecosError> {
+    fn store_measurement_result(&mut self, var_name: &str, var_idx: usize, outcome: u32) {
         log::info!(
             "PHIR: Storing measurement result {}[{}] = {}",
             var_name,
@@ -1581,7 +1635,7 @@ impl OperationProcessor {
                 .environment
                 .add_variable(var_name, DataType::I32, var_size)
             {
-                Ok(_) => log::debug!("Created variable {} with size {}", var_name, var_size),
+                Ok(()) => log::debug!("Created variable {} with size {}", var_name, var_size),
                 Err(e) => log::warn!(
                     "Could not create variable: {}. Will try to update anyway: {}",
                     var_name,
@@ -1591,7 +1645,7 @@ impl OperationProcessor {
         }
 
         // Step 2: Update the specific bit directly using the environment's bit setting functionality
-        let bit_value = if outcome != 0 { 1 } else { 0 };
+        let bit_value = u64::from(outcome != 0);
         if let Err(e) = self.environment.set_bit(var_name, var_idx, bit_value) {
             log::warn!(
                 "Could not set bit {}[{}] = {}. Error: {}",
@@ -1608,15 +1662,13 @@ impl OperationProcessor {
                 bit_value
             );
         }
-
-        Ok(())
     }
 
     /// Handle incoming measurements from quantum operations and store results
     ///
     /// This method processes measurement results and stores them in:
     /// 1. The environment (single source of truth for all variables)
-    /// 2. Standard measurement variables (e.g., "measurement_0")
+    /// 2. Standard measurement variables (e.g., "`measurement_0`")
     /// 3. Named variables from the program (e.g., "m")
     pub fn handle_measurements(
         &mut self,
@@ -1651,7 +1703,7 @@ impl OperationProcessor {
             }
 
             // Set the measurement value
-            if let Err(e) = self.environment.set(&prefixed_name, *outcome as u64) {
+            if let Err(e) = self.environment.set(&prefixed_name, u64::from(*outcome)) {
                 log::warn!(
                     "Could not set measurement variable {}. Error: {}",
                     prefixed_name,
@@ -1678,7 +1730,7 @@ impl OperationProcessor {
                         // Check if this is the right measurement result
                         if *var_idx == *result_id as usize {
                             // Store the result in the specific bit of the variable
-                            self.store_measurement_result(var_name, *var_idx, *outcome)?;
+                            self.store_measurement_result(var_name, *var_idx, *outcome);
                             found_mapping = true;
                         }
                     }
@@ -1690,7 +1742,7 @@ impl OperationProcessor {
             if !found_mapping && self.environment.has_variable("m") {
                 // Store in main "m" variable for test compatibility
                 let idx = *result_id as usize;
-                self.store_measurement_result("m", idx, *outcome)?;
+                self.store_measurement_result("m", idx, *outcome);
                 log::info!(
                     "PHIR: Auto-mapped measurement result {} to m[{}] = {}",
                     result_id,
@@ -1718,13 +1770,12 @@ impl OperationProcessor {
     }
 
     /// Helper method to extract variable name and optional index from an argument
-    fn extract_arg_info(&self, arg: &ArgItem) -> Result<(String, Option<usize>), PecosError> {
+    fn extract_arg_info(arg: &ArgItem) -> Result<(String, Option<usize>), PecosError> {
         match arg {
             ArgItem::Simple(name) => Ok((name.clone(), None)),
             ArgItem::Indexed((name, idx)) => Ok((name.clone(), Some(*idx))),
             _ => Err(PecosError::Input(format!(
-                "Invalid argument for Result operation: {:?}",
-                arg
+                "Invalid argument for Result operation: {arg:?}"
             ))),
         }
     }
@@ -1739,8 +1790,7 @@ impl OperationProcessor {
         // Ensure the variable exists in the environment
         if !self.environment.has_variable(var_name) {
             return Err(PecosError::Input(format!(
-                "Variable not found in environment: {}[{:?}]",
-                var_name, index
+                "Variable not found in environment: {var_name}[{index:?}]"
             )));
         }
 
@@ -1755,7 +1805,7 @@ impl OperationProcessor {
                         idx,
                         bit_value
                     );
-                    return Ok(if bit_value.0 { 1 } else { 0 });
+                    return Ok(u32::from(bit_value.0));
                 }
                 Err(_) => {
                     // Fall back to extracting bit from full value
@@ -1773,8 +1823,7 @@ impl OperationProcessor {
             }
             // If we couldn't get the bit, return an error
             return Err(PecosError::Input(format!(
-                "Could not access bit {}[{}] in environment",
-                var_name, idx
+                "Could not access bit {var_name}[{idx}] in environment"
             )));
         }
 
@@ -1786,8 +1835,7 @@ impl OperationProcessor {
 
         // If we get here, the variable exists but has no value
         Err(PecosError::Input(format!(
-            "Variable exists in environment but has no value: {}",
-            var_name
+            "Variable exists in environment but has no value: {var_name}"
         )))
     }
 
@@ -1814,8 +1862,8 @@ impl OperationProcessor {
                 let dst = &returns[i];
 
                 // Extract source and destination information
-                let (src_name, src_index) = self.extract_arg_info(src)?;
-                let (dst_name, dst_index) = self.extract_arg_info(dst)?;
+                let (src_name, src_index) = Self::extract_arg_info(src)?;
+                let (dst_name, dst_index) = Self::extract_arg_info(dst)?;
 
                 log::debug!(
                     "Result mapping: {}[{:?}] -> {}[{:?}]",
@@ -1860,7 +1908,10 @@ impl OperationProcessor {
                 if let Some(idx) = dst_index {
                     // Bit access - set specific bit in the variable
                     let bit_value = value & 1;
-                    if let Err(e) = self.environment.set_bit(&dst_name, idx, bit_value as u64) {
+                    if let Err(e) = self
+                        .environment
+                        .set_bit(&dst_name, idx, u64::from(bit_value))
+                    {
                         log::warn!(
                             "Could not set bit {}[{}] = {}: {}",
                             dst_name,
@@ -1873,7 +1924,7 @@ impl OperationProcessor {
                     }
                 } else {
                     // Whole variable assignment
-                    if let Err(e) = self.environment.set(&dst_name, value as u64) {
+                    if let Err(e) = self.environment.set(&dst_name, u64::from(value)) {
                         log::warn!("Could not set variable {} = {}: {}", dst_name, value, e);
                     } else {
                         log::debug!("Set variable {} = {}", dst_name, value);
@@ -1889,6 +1940,7 @@ impl OperationProcessor {
     ///
     /// This simplified method treats the environment as the single source of truth
     /// and provides a clean, simple approach to gathering exported values.
+    #[must_use]
     pub fn process_export_mappings(&self) -> HashMap<String, u32> {
         let mut exported_values = HashMap::new();
         log::info!("Processing export mappings using environment as source of truth");

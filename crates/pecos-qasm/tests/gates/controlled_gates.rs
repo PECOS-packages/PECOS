@@ -8,14 +8,14 @@ fn test_qasm_spec_example_1() {
     let qasm = r"
         OPENQASM 2.0;
         qreg q[2];
-        
+
         // Controlled sqrt(Z) gate
         gate cz a,b {
             H b;
             CX a,b;
             H b;
         }
-        
+
         cz q[0], q[1];
     ";
 
@@ -48,7 +48,7 @@ fn test_qasm_spec_example_2() {
             tdg b;
             CX a,b;
         }
-        
+
         ccx q[0], q[1], q[2];
     "#;
 
@@ -62,14 +62,14 @@ fn test_qasm_spec_example_3() {
     let qasm = r"
         OPENQASM 2.0;
         qreg q[1];
-        
+
         // Rotation about X-axis
         gate rx(theta) a {
             H a;
             RZ(theta) a;
             H a;
         }
-        
+
         rx(pi/2) q[0];
     ";
 
@@ -91,7 +91,7 @@ fn test_qasm_spec_example_4() {
             cz c,t;
             h t;
         }
-        
+
         cx_from_cz q[0], q[1];
     "#;
 
@@ -112,28 +112,28 @@ fn test_qasm_spec_syntax_variations() {
             X a;
             X a;
         }
-        
-        // Multiple parameters, single qubit  
+
+        // Multiple parameters, single qubit
         gate u3(theta,phi,lambda) q {
             RZ(phi) q;
             ry(theta) q;
             RZ(lambda) q;
         }
-        
+
         // No parameters, multiple qubits
         gate swap a,b {
             CX a,b;
             CX b,a;
             CX a,b;
         }
-        
+
         // Parameters with expressions
         gate mygate(alpha) q {
             RZ(alpha/2) q;
             rx(alpha*2) q;
             ry(alpha+pi) q;
         }
-        
+
         // Using the gates
         x180 q[0];
         u3(pi/2, 0, pi) q[1];

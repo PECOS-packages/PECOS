@@ -97,7 +97,9 @@ impl fmt::Display for QuantumCmd {
             QuantumCmd::Record(cmd) | QuantumCmd::Message(cmd) => write!(f, "{cmd}"),
             QuantumCmd::RecordResult(result, name) => write!(f, "RecordResult {result} {name}"),
             QuantumCmd::R1XY(theta, phi, qubit) => write!(f, "R1XY {theta} {phi} {qubit}"),
-            QuantumCmd::U(theta, phi, lambda, qubit) => write!(f, "U {theta} {phi} {lambda} {qubit}"),
+            QuantumCmd::U(theta, phi, lambda, qubit) => {
+                write!(f, "U {theta} {phi} {lambda} {qubit}")
+            }
         }
     }
 }

@@ -9,7 +9,7 @@ use pecos_engines::byte_message::builder::ByteMessageBuilder;
 use std::collections::{HashMap, HashSet};
 
 /// Block executor for processing and executing blocks of operations in PHIR programs.
-/// The BlockExecutor manages:
+/// The `BlockExecutor` manages:
 /// 1. Execution flow through different block types (sequence, conditional, parallel)
 /// 2. Operation processing and execution
 /// 3. Quantum and classical operation handling
@@ -23,6 +23,7 @@ pub struct BlockExecutor {
 
 impl BlockExecutor {
     /// Creates a new block executor
+    #[must_use]
     pub fn new() -> Self {
         Self {
             processor: OperationProcessor::new(),
@@ -31,6 +32,7 @@ impl BlockExecutor {
     }
 
     /// Creates a new block executor with a foreign object
+    #[must_use]
     pub fn with_foreign_object(foreign_object: Box<dyn ForeignObject>) -> Self {
         Self {
             processor: OperationProcessor::with_foreign_object(foreign_object),
@@ -52,6 +54,7 @@ impl BlockExecutor {
     }
 
     /// Gets a reference to the environment from the processor
+    #[must_use]
     pub fn get_environment(&self) -> &Environment {
         &self.processor.environment
     }
@@ -62,6 +65,7 @@ impl BlockExecutor {
     }
 
     /// Gets the operation processor for direct access
+    #[must_use]
     pub fn get_processor(&self) -> &OperationProcessor {
         &self.processor
     }
@@ -93,6 +97,12 @@ impl BlockExecutor {
     }
 
     /// Gets the current byte message builder or creates a new one
+    ///
+    /// # Panics
+    ///
+    /// This function will not panic under normal circumstances as it creates a builder
+    /// if none exists. However, it could theoretically panic if memory allocation fails
+    /// when creating a new builder.
     pub fn get_builder(&mut self) -> &mut ByteMessageBuilder {
         if self.builder.is_none() {
             self.builder = Some(ByteMessageBuilder::new());
@@ -201,7 +211,7 @@ impl BlockExecutor {
         Ok(())
     }
 
-    /// Executes a block of operations in sequence (previously execute_block)
+    /// Executes a block of operations in sequence (previously `execute_block`)
     pub fn execute_sequence(&mut self, operations: &[Operation]) -> Result<(), PecosError> {
         debug!(
             "Executing sequence block with {} operations",
@@ -275,8 +285,7 @@ impl BlockExecutor {
                 }
                 _ => {
                     return Err(PecosError::Input(format!(
-                        "Invalid operation in qparallel block: {:?}",
-                        op
+                        "Invalid operation in qparallel block: {op:?}"
                     )));
                 }
             }
@@ -290,21 +299,19 @@ impl BlockExecutor {
                 for qubit_arg in args {
                     match qubit_arg {
                         QubitArg::SingleQubit((var, idx)) => {
-                            let qubit_id = format!("{}_{}", var, idx);
+                            let qubit_id = format!("{var}_{idx}");
                             if !used_qubits.insert(qubit_id) {
                                 return Err(PecosError::Input(format!(
-                                    "Qubit {}[{}] used more than once in qparallel block",
-                                    var, idx
+                                    "Qubit {var}[{idx}] used more than once in qparallel block"
                                 )));
                             }
                         }
                         QubitArg::MultipleQubits(qubits) => {
                             for (var, idx) in qubits {
-                                let qubit_id = format!("{}_{}", var, idx);
+                                let qubit_id = format!("{var}_{idx}");
                                 if !used_qubits.insert(qubit_id) {
                                     return Err(PecosError::Input(format!(
-                                        "Qubit {}[{}] used more than once in qparallel block",
-                                        var, idx
+                                        "Qubit {var}[{idx}] used more than once in qparallel block"
                                     )));
                                 }
                             }
@@ -359,7 +366,7 @@ impl BlockExecutor {
                     }
                 }
                 _ => {
-                    return Err(PecosError::Input(format!("Unknown block type: {}", block)));
+                    return Err(PecosError::Input(format!("Unknown block type: {block}")));
                 }
             }
         } else {
@@ -369,7 +376,7 @@ impl BlockExecutor {
         Ok(())
     }
 
-    /// Process a block with the appropriate handler (wraps process_block_operation)
+    /// Process a block with the appropriate handler (wraps `process_block_operation`)
     pub fn process_block(
         &mut self,
         block_type: &str,
@@ -396,8 +403,7 @@ impl BlockExecutor {
             }
             _ => {
                 return Err(PecosError::Input(format!(
-                    "Unknown block type: {}",
-                    block_type
+                    "Unknown block type: {block_type}"
                 )));
             }
         }
@@ -415,16 +421,19 @@ impl BlockExecutor {
     }
 
     /// Gets the measurement results from the processor
+    #[must_use]
     pub fn get_measurement_results(&self) -> HashMap<String, u32> {
         self.processor.get_measurement_results()
     }
 
     /// Process export mappings to determine values to return from simulations
+    #[must_use]
     pub fn process_export_mappings(&self) -> HashMap<String, u32> {
         self.processor.process_export_mappings()
     }
 
-    /// Get mapped results for output (alias for process_export_mappings)
+    /// Get mapped results for output (alias for `process_export_mappings`)
+    #[must_use]
     pub fn get_mapped_results(&self) -> HashMap<String, u32> {
         self.processor.process_export_mappings()
     }
@@ -529,7 +538,7 @@ mod tests {
 
         // Since x = 10, which is > 5, the true branch should have executed
         let env = executor.get_environment();
-        assert_eq!(env.get_raw("y").map(|v| v as u64), Some(20));
+        assert_eq!(env.get_raw("y"), Some(20));
 
         // Change x to make the condition false
         executor.get_environment_mut().set_raw("x", 2).unwrap();
@@ -540,7 +549,7 @@ mod tests {
 
         // Now the false branch should have executed
         let env = executor.get_environment();
-        assert_eq!(env.get_raw("y").map(|v| v as u64), Some(30));
+        assert_eq!(env.get_raw("y"), Some(30));
     }
 
     #[test]
@@ -575,8 +584,8 @@ mod tests {
 
         // Verify both operations executed correctly
         let env = executor.get_environment();
-        assert_eq!(env.get_raw("a").map(|v| v as u64), Some(10));
-        assert_eq!(env.get_raw("b").map(|v| v as u64), Some(20));
+        assert_eq!(env.get_raw("a"), Some(10));
+        assert_eq!(env.get_raw("b"), Some(20));
     }
 
     #[test]
@@ -676,10 +685,7 @@ mod tests {
 
         let result = executor.process_block("sequence", &operations, None, None, None);
         assert!(result.is_ok());
-        assert_eq!(
-            executor.get_environment().get_raw("y").map(|v| v as u64),
-            Some(20)
-        );
+        assert_eq!(executor.get_environment().get_raw("y"), Some(20));
 
         // Test conditional block
         let condition = Expression::Operation {
@@ -713,10 +719,7 @@ mod tests {
         assert!(result.is_ok());
 
         // x = 10, which is < 15, so true branch should have executed
-        assert_eq!(
-            executor.get_environment().get_raw("y").map(|v| v as u64),
-            Some(30)
-        );
+        assert_eq!(executor.get_environment().get_raw("y"), Some(30));
     }
 
     #[test]

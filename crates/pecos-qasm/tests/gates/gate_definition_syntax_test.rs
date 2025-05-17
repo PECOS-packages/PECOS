@@ -5,13 +5,13 @@ fn test_basic_gate_definition() {
     let qasm = r"
         OPENQASM 2.0;
         qreg q[2];
-        
+
         // Basic gate with no parameters
         gate mygate a {
             H a;
             X a;
         }
-        
+
         mygate q[0];
     ";
 
@@ -29,11 +29,11 @@ fn test_gate_with_single_parameter() {
     let qasm = r"
         OPENQASM 2.0;
         qreg q[1];
-        
+
         gate phase_gate(lambda) q {
             RZ(lambda) q;
         }
-        
+
         phase_gate(pi/4) q[0];
     ";
 
@@ -83,13 +83,13 @@ fn test_gate_with_multiple_qubits() {
     let qasm = r"
         OPENQASM 2.0;
         qreg q[3];
-        
+
         gate three_way a, b, c {
             CX a, b;
             CX b, c;
             CX a, c;
         }
-        
+
         three_way q[0], q[1], q[2];
     ";
 
@@ -133,7 +133,7 @@ fn test_nested_gate_calls() {
     let qasm = r"
         OPENQASM 2.0;
         qreg q[2];
-        
+
         gate inner a {
             H a;
             X a;
@@ -145,7 +145,7 @@ fn test_nested_gate_calls() {
             inner b;
             CX a, b;
         }
-        
+
         outer(pi/3) q[0], q[1];
     ";
 
@@ -158,11 +158,11 @@ fn test_empty_gate_body() {
     let qasm = r"
         OPENQASM 2.0;
         qreg q[1];
-        
+
         gate do_nothing a {
             // Empty body - should be valid
         }
-        
+
         do_nothing q[0];
     ";
 

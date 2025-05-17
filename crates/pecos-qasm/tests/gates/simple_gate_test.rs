@@ -1,4 +1,4 @@
-use pecos_qasm::{QASMParser, Operation};
+use pecos_qasm::{Operation, QASMParser};
 
 #[test]
 fn test_simple_gates() {
@@ -14,35 +14,50 @@ fn test_simple_gates() {
     "#;
 
     let result = QASMParser::parse_str(qasm);
-    
+
     match result {
         Ok(program) => {
             println!("Operations:");
             for (i, op) in program.operations.iter().enumerate() {
-                match op {
-                    Operation::Gate { name, qubits, parameters } => {
-                        println!("  [{}] Gate: {} on qubits {:?} with params {:?}", i, name, qubits, parameters);
-                    }
-                    _ => {}
+                if let Operation::Gate {
+                    name,
+                    qubits,
+                    parameters,
+                } = op
+                {
+                    println!(
+                        "  [{i}] Gate: {name} on qubits {qubits:?} with params {parameters:?}"
+                    );
                 }
             }
-            
-            let cx_count = program.operations.iter()
-                .filter(|op| matches!(op, Operation::Gate { name, .. } if name == "cx" || name == "CX"))
+
+            let cx_count = program
+                .operations
+                .iter()
+                .filter(
+                    |op| matches!(op, Operation::Gate { name, .. } if name == "cx" || name == "CX"),
+                )
                 .count();
-            
-            let u_count = program.operations.iter()
-                .filter(|op| matches!(op, Operation::Gate { name, .. } if name == "u" || name == "U"))
+
+            let u_count = program
+                .operations
+                .iter()
+                .filter(
+                    |op| matches!(op, Operation::Gate { name, .. } if name == "u" || name == "U"),
+                )
                 .count();
-            
-            println!("CX count: {}, U count: {}", cx_count, u_count);
-            
+
+            println!("CX count: {cx_count}, U count: {u_count}");
+
             // We expect 2 cx (1 original + 1 from cz expansion) and 1 u gate
-            assert_eq!(cx_count, 2, "Expected 2 CX gates (1 original + 1 from cz expansion)");
+            assert_eq!(
+                cx_count, 2,
+                "Expected 2 CX gates (1 original + 1 from cz expansion)"
+            );
             assert_eq!(u_count, 1, "Expected 1 U gate");
         }
         Err(e) => {
-            panic!("Failed to parse circuit: {}", e);
+            panic!("Failed to parse circuit: {e}");
         }
     }
 }

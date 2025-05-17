@@ -28,7 +28,7 @@ fn test_virtual_include_single() {
             includes: virtual_includes,
             ..Default::default()
         };
-        QASMParser::parse_with_config(qasm, config)
+        QASMParser::parse_with_config(qasm, &config)
     }
     .unwrap();
 
@@ -78,7 +78,7 @@ fn test_virtual_include_multiple() {
             includes: virtual_includes,
             ..Default::default()
         };
-        QASMParser::parse_with_config(qasm, config)
+        QASMParser::parse_with_config(qasm, &config)
     }
     .unwrap();
 
@@ -127,7 +127,7 @@ fn test_virtual_include_nested() {
             includes: virtual_includes,
             ..Default::default()
         };
-        QASMParser::parse_with_config(qasm, config)
+        QASMParser::parse_with_config(qasm, &config)
     }
     .unwrap();
 
@@ -156,7 +156,7 @@ fn test_virtual_include_circular_dependency() {
             includes: virtual_includes,
             ..Default::default()
         };
-        QASMParser::parse_with_config(qasm, config)
+        QASMParser::parse_with_config(qasm, &config)
     };
     assert!(result.is_err());
     if let Err(e) = result {
@@ -167,7 +167,7 @@ fn test_virtual_include_circular_dependency() {
 #[test]
 fn test_virtual_include_with_engine() {
     // Test using virtual includes with the engine
-    let _virtual_includes = vec![(
+    let _virtual_includes = [(
         "custom.inc".to_string(),
         r#"
             include "qelib1.inc";
@@ -187,12 +187,15 @@ fn test_virtual_include_with_engine() {
 
     // Create engine and load with virtual includes
     let _engine = QASMEngine::builder()
-        .with_virtual_include("custom.inc", r#"
+        .with_virtual_include(
+            "custom.inc",
+            r#"
             include "qelib1.inc";
             gate sqrt_x a {
                 sx a;
             }
-        "#)
+        "#,
+        )
         .build_from_str(qasm)
         .unwrap();
 }
@@ -224,7 +227,7 @@ fn test_virtual_include_overrides_file() {
             includes: virtual_includes,
             ..Default::default()
         };
-        QASMParser::parse_with_config(qasm, config)
+        QASMParser::parse_with_config(qasm, &config)
     }
     .unwrap();
 
@@ -289,7 +292,7 @@ fn test_mixed_virtual_and_file_includes() {
         includes: virtual_includes,
         ..Default::default()
     };
-    let program = QASMParser::parse_with_config(&qasm, config).unwrap();
+    let program = QASMParser::parse_with_config(&qasm, &config).unwrap();
 
     // Both gates should be loaded
     assert!(program.gate_definitions.contains_key("from_virtual"));

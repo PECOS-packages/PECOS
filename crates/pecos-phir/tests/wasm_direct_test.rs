@@ -111,10 +111,10 @@ mod tests {
             .map_err(|e| PecosError::Input(format!("Failed to parse PHIR program: {e}")))?;
 
         // Run 10 shots manually
-        const NUM_SHOTS: usize = 10;
-        let mut all_results = Vec::<ShotResult>::with_capacity(NUM_SHOTS);
+        let num_shots = 10usize;
+        let mut all_results = Vec::<ShotResult>::with_capacity(num_shots);
 
-        for _ in 0..NUM_SHOTS {
+        for _ in 0..num_shots {
             // Create a fresh engine and foreign object for each shot
             let mut foreign_object = WasmtimeForeignObject::new(&wasm_path)?;
             foreign_object.init()?;
@@ -147,7 +147,7 @@ mod tests {
         if let Some(values) = shot_results.register_shots.get("output") {
             assert_eq!(
                 values.len(),
-                NUM_SHOTS,
+                num_shots,
                 "Expected 10 values in the 'output' register"
             );
 
@@ -155,14 +155,13 @@ mod tests {
             for &value in values {
                 assert_eq!(
                     value, 11,
-                    "Expected output value to be 11 (1 + 10), got {}",
-                    value
+                    "Expected output value to be 11 (1 + 10), got {value}"
                 );
             }
         } else if let Some(values) = shot_results.register_shots_u64.get("output") {
             assert_eq!(
                 values.len(),
-                NUM_SHOTS,
+                num_shots,
                 "Expected 10 values in the 'output' register"
             );
 
@@ -170,14 +169,13 @@ mod tests {
             for &value in values {
                 assert_eq!(
                     value, 11u64,
-                    "Expected output value to be 11 (1 + 10), got {}",
-                    value
+                    "Expected output value to be 11 (1 + 10), got {value}"
                 );
             }
         } else if let Some(values) = shot_results.register_shots_i64.get("output") {
             assert_eq!(
                 values.len(),
-                NUM_SHOTS,
+                num_shots,
                 "Expected 10 values in the 'output' register"
             );
 
@@ -185,8 +183,7 @@ mod tests {
             for &value in values {
                 assert_eq!(
                     value, 11i64,
-                    "Expected output value to be 11 (1 + 10), got {}",
-                    value
+                    "Expected output value to be 11 (1 + 10), got {value}"
                 );
             }
         } else {

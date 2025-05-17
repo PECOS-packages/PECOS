@@ -156,7 +156,6 @@ impl PHIREngine {
     ///
     /// # Returns
     /// - Returns a new `PHIREngine` initialized with the provided program.
-    #[must_use]
     pub fn from_program(program: PHIRProgram) -> Result<Self, PecosError> {
         let mut processor = OperationProcessor::new();
 
@@ -499,7 +498,7 @@ impl PHIREngine {
                                             cop,
                                             args,
                                             returns,
-                                            &ops,
+                                            ops,
                                             self.current_op,
                                         )? {
                                             debug!(
@@ -541,10 +540,7 @@ impl PHIREngine {
                             }
                         }
                         _ => {
-                            return Err(PecosError::Input(format!(
-                                "Unknown block type: {}",
-                                block
-                            )));
+                            return Err(PecosError::Input(format!("Unknown block type: {block}")));
                         }
                     }
                 }
@@ -822,6 +818,7 @@ impl ClassicalEngine for PHIREngine {
         self.processor.handle_measurements(&measurements, &ops)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn get_results(&self) -> Result<ShotResult, PecosError> {
         let mut results = ShotResult::default();
 
@@ -830,7 +827,28 @@ impl ClassicalEngine for PHIREngine {
 
         // Determine which registers to include in the results based on environment mappings
         let mappings = self.processor.environment.get_mappings();
-        if !mappings.is_empty() {
+        if mappings.is_empty() {
+            // No explicit export mappings - include all environment variables
+            log::info!("PHIR: No explicit export mappings - adding all variables from environment");
+
+            for info in self.processor.environment.get_all_variables() {
+                if let Some(value) = self.processor.environment.get(&info.name) {
+                    // Add to exported_values if not already there
+                    exported_values
+                        .entry(info.name.clone())
+                        .or_insert(value.as_u32());
+
+                    log::info!(
+                        "PHIR: Added direct variable from environment {} = {}",
+                        info.name,
+                        value
+                    );
+
+                    // Simply add all variables from environment without any special transformations
+                    // No assumptions about variable naming conventions
+                }
+            }
+        } else {
             log::info!("PHIR: Using environment mappings to determine which registers to include");
 
             // Keep only the registers that are explicitly mapped as destinations
@@ -857,27 +875,6 @@ impl ClassicalEngine for PHIREngine {
                 // Replace with filtered values
                 exported_values = filtered_values;
             }
-        } else {
-            // No explicit export mappings - include all environment variables
-            log::info!("PHIR: No explicit export mappings - adding all variables from environment");
-
-            for info in self.processor.environment.get_all_variables() {
-                if let Some(value) = self.processor.environment.get(&info.name) {
-                    // Add to exported_values if not already there
-                    exported_values
-                        .entry(info.name.clone())
-                        .or_insert(value.as_u32());
-
-                    log::info!(
-                        "PHIR: Added direct variable from environment {} = {}",
-                        info.name,
-                        value
-                    );
-
-                    // Simply add all variables from environment without any special transformations
-                    // No assumptions about variable naming conventions
-                }
-            }
         }
 
         // Add the processed values to the results
@@ -888,8 +885,8 @@ impl ClassicalEngine for PHIREngine {
 
         for (key, value) in &exported_values {
             results.registers.insert(key.clone(), *value);
-            results.registers_u64.insert(key.clone(), *value as u64);
-            results.registers_i64.insert(key.clone(), *value as i64);
+            results.registers_u64.insert(key.clone(), u64::from(*value));
+            results.registers_i64.insert(key.clone(), i64::from(*value));
             log::info!("PHIR: Adding mapped register {} = {}", key, value);
         }
 
@@ -1032,6 +1029,7 @@ impl Engine for PHIREngine {
     type Input = ();
     type Output = ShotResult;
 
+    #[allow(clippy::too_many_lines)]
     fn process(&mut self, _input: Self::Input) -> Result<Self::Output, PecosError> {
         // Print out operations for debugging
         if let Some(program) = &self.program {
@@ -1367,12 +1365,8 @@ impl Engine for PHIREngine {
             log::info!("Found {} Result commands to process", result_ops.len());
             for (i, args, returns) in result_ops {
                 log::info!("Re-processing Result operation at index {}", i);
-                if let Err(e) =
-                    self.processor
-                        .handle_classical_op("Result", &args, &returns, &program.ops, i)
-                {
-                    return Err(e);
-                }
+                self.processor
+                    .handle_classical_op("Result", &args, &returns, &program.ops, i)?;
             }
 
             // We no longer need special fallback mapping
@@ -1395,7 +1389,7 @@ impl Engine for PHIREngine {
             result.registers.insert(key.clone(), *value);
             result.registers_u64.insert(key.clone(), u64::from(*value));
             // Also add to i64 registers
-            result.registers_i64.insert(key.clone(), *value as i64);
+            result.registers_i64.insert(key.clone(), i64::from(*value));
             log::info!("Adding exported register {} = {}", key, value);
         }
 

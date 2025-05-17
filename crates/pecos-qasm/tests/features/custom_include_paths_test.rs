@@ -43,7 +43,7 @@ fn test_custom_include_paths() {
         search_paths: custom_paths,
         ..Default::default()
     };
-    let program = QASMParser::parse_with_config(qasm, config).unwrap();
+    let program = QASMParser::parse_with_config(qasm, &config).unwrap();
 
     // Verify the program parsed successfully and has gate definitions
     assert!(program.gate_definitions.contains_key("g1"));
@@ -75,7 +75,7 @@ fn test_include_path_priority() {
         search_paths: vec![temp_dir1.path().into()],
         ..Default::default()
     };
-    let program1 = QASMParser::parse_with_config(qasm, config).unwrap();
+    let program1 = QASMParser::parse_with_config(qasm, &config).unwrap();
     assert!(program1.gate_definitions.contains_key("priority1"));
     assert!(!program1.gate_definitions.contains_key("priority2"));
 
@@ -84,7 +84,7 @@ fn test_include_path_priority() {
         search_paths: vec![temp_dir2.path().into()],
         ..Default::default()
     };
-    let program2 = QASMParser::parse_with_config(qasm, config).unwrap();
+    let program2 = QASMParser::parse_with_config(qasm, &config).unwrap();
     assert!(!program2.gate_definitions.contains_key("priority1"));
     assert!(program2.gate_definitions.contains_key("priority2"));
 
@@ -93,7 +93,7 @@ fn test_include_path_priority() {
         search_paths: vec![temp_dir1.path().into(), temp_dir2.path().into()],
         ..Default::default()
     };
-    let program3 = QASMParser::parse_with_config(qasm, config).unwrap();
+    let program3 = QASMParser::parse_with_config(qasm, &config).unwrap();
     assert!(program3.gate_definitions.contains_key("priority1"));
     assert!(!program3.gate_definitions.contains_key("priority2"));
 }
@@ -148,7 +148,7 @@ fn test_paths_with_virtual_includes() {
         includes: virtual_includes.into_iter().collect(),
         ..Default::default()
     };
-    let program = QASMParser::parse_with_config(qasm, config).unwrap();
+    let program = QASMParser::parse_with_config(qasm, &config).unwrap();
 
     // Both gates should be available
     assert!(program.gate_definitions.contains_key("file_gate"));
@@ -169,7 +169,7 @@ fn test_include_not_found_with_custom_paths() {
         search_paths: vec![temp_dir.path().into()],
         ..Default::default()
     };
-    let result = QASMParser::parse_with_config(qasm, config);
+    let result = QASMParser::parse_with_config(qasm, &config);
 
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not found"));
@@ -193,7 +193,7 @@ fn test_path_collection_types() {
         search_paths: vec![temp_dir.path().into()],
         ..Default::default()
     };
-    let _program1 = QASMParser::parse_with_config(qasm, config).unwrap();
+    let _program1 = QASMParser::parse_with_config(qasm, &config).unwrap();
 
     // Test with slice
     let paths = [temp_dir.path().into()];
@@ -201,14 +201,14 @@ fn test_path_collection_types() {
         search_paths: paths.to_vec(),
         ..Default::default()
     };
-    let _program2 = QASMParser::parse_with_config(qasm, config).unwrap();
+    let _program2 = QASMParser::parse_with_config(qasm, &config).unwrap();
 
     // Test with iterator
     let config = ParseConfig {
         search_paths: std::iter::once(temp_dir.path().into()).collect(),
         ..Default::default()
     };
-    let _program3 = QASMParser::parse_with_config(qasm, config).unwrap();
+    let _program3 = QASMParser::parse_with_config(qasm, &config).unwrap();
 
     // Test with PathBuf vector
     let path_vec: Vec<PathBuf> = vec![temp_dir.path().to_path_buf()];
@@ -216,5 +216,5 @@ fn test_path_collection_types() {
         search_paths: path_vec.into_iter().collect(),
         ..Default::default()
     };
-    let _program4 = QASMParser::parse_with_config(qasm, config).unwrap();
+    let _program4 = QASMParser::parse_with_config(qasm, &config).unwrap();
 }

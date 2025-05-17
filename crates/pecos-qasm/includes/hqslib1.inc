@@ -46,7 +46,7 @@ gate sdg() a {
   RZ(-pi/2) a;
 }
 
-// T gate (sqrt(S))  
+// T gate (sqrt(S))
 gate t() a {
   RZ(pi/4) a;
 }
@@ -87,7 +87,7 @@ gate cy() a,b {
   s b;
 }
 
-// Controlled-Z gate 
+// Controlled-Z gate
 gate cz() a,b {
   H b;
   CX a,b;

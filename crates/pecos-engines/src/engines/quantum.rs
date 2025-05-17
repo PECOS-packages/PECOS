@@ -91,6 +91,7 @@ impl Engine for StateVecEngine {
     type Input = ByteMessage;
     type Output = ByteMessage;
 
+    #[allow(clippy::too_many_lines)]
     fn process(&mut self, message: Self::Input) -> Result<Self::Output, PecosError> {
         // Parse commands from the message
         let batch = message.parse_quantum_operations()?;
@@ -187,8 +188,12 @@ impl Engine for StateVecEngine {
                             "Processing U gate with angles theta={:?}, phi={:?}, lambda={:?} on qubit {:?}",
                             cmd.params[0], cmd.params[1], cmd.params[2], cmd.qubits[0]
                         );
-                        self.simulator
-                            .u(cmd.params[0], cmd.params[1], cmd.params[2], cmd.qubits[0]);
+                        self.simulator.u(
+                            cmd.params[0],
+                            cmd.params[1],
+                            cmd.params[2],
+                            cmd.qubits[0],
+                        );
                     }
                 }
             }

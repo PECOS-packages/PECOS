@@ -74,10 +74,6 @@
 
 #![allow(clippy::too_many_lines)]
 
-use std::any::Any;
-use std::collections::BTreeMap;
-use std::collections::HashSet;
-
 use crate::byte_message::{ByteMessage, ByteMessageBuilder, QuantumGate, gate_type::GateType};
 use crate::engines::noise::noise_rng::NoiseRng;
 use crate::engines::noise::utils::NoiseUtils;
@@ -489,7 +485,8 @@ impl GeneralNoiseModel {
                 | GateType::H
                 | GateType::X
                 | GateType::Y
-                | GateType::Z => {
+                | GateType::Z
+                | GateType::U => {
                     self.apply_sq_faults(&gate, &mut builder);
                 }
                 GateType::RZZ | GateType::SZZ | GateType::SZZdg | GateType::CX => {

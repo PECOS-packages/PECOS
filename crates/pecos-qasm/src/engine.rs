@@ -12,7 +12,6 @@ use std::str::FromStr;
 use crate::ast::{EvaluationContext, Expression, Operation};
 use crate::parser::{Program, QASMParser};
 
-
 /// Gate handler function type
 type GateHandler = fn(&mut QASMEngine, &[usize], &[f64]) -> Result<(), PecosError>;
 
@@ -56,26 +55,17 @@ impl QASMEngine {
     // Maximum batch size for quantum operations
     const MAX_BATCH_SIZE: usize = 100;
 
-
     /// Create a builder for more complex configurations
     #[must_use]
     pub fn builder() -> crate::engine_builder::QASMEngineBuilder {
         crate::engine_builder::QASMEngineBuilder::new()
     }
 
-    /// Create a new `QASMEngine` from a QASM string
-    pub fn from_str(qasm: &str) -> Result<Self, PecosError> {
-        let mut engine = Self::default();
-        let program = QASMParser::parse_str(qasm)?;
-        engine.load_program(program)?;
-        Ok(engine)
-    }
-
     /// Create a new `QASMEngine` and load a QASM program from a file
     pub fn from_file(qasm_path: impl AsRef<Path>) -> Result<Self, PecosError> {
         let mut engine = Self::default();
         let program = QASMParser::parse_file(qasm_path)?;
-        engine.load_program(program)?;
+        engine.load_program(program);
 
         if let Some(program) = &engine.program {
             let total_qubits = program.total_qubits;
@@ -90,7 +80,7 @@ impl QASMEngine {
     }
 
     /// Load a QASM program into the engine
-    pub(crate) fn load_program(&mut self, program: Program) -> Result<(), PecosError> {
+    pub(crate) fn load_program(&mut self, program: Program) {
         debug!(
             "Loading QASM program with {} quantum registers and {} operations",
             program.quantum_registers.len(),
@@ -110,11 +100,7 @@ impl QASMEngine {
 
         self.program = Some(program);
         self.reset_state();
-
-        Ok(())
     }
-
-
 
     /// Enable or disable complex conditionals (general expressions in if statements)
     pub fn allow_complex_conditionals(&mut self, allow: bool) -> &mut Self {
@@ -223,6 +209,7 @@ impl QASMEngine {
     }
 
     /// Gate handler functions
+    #[allow(clippy::unnecessary_wraps)]
     fn handle_h(
         engine: &mut QASMEngine,
         qubits: &[usize],
@@ -232,6 +219,7 @@ impl QASMEngine {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn handle_x(
         engine: &mut QASMEngine,
         qubits: &[usize],
@@ -241,6 +229,7 @@ impl QASMEngine {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn handle_y(
         engine: &mut QASMEngine,
         qubits: &[usize],
@@ -250,6 +239,7 @@ impl QASMEngine {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn handle_z(
         engine: &mut QASMEngine,
         qubits: &[usize],
@@ -259,6 +249,7 @@ impl QASMEngine {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn handle_s(
         engine: &mut QASMEngine,
         qubits: &[usize],
@@ -270,6 +261,7 @@ impl QASMEngine {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn handle_sdg(
         engine: &mut QASMEngine,
         qubits: &[usize],
@@ -281,6 +273,7 @@ impl QASMEngine {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn handle_t(
         engine: &mut QASMEngine,
         qubits: &[usize],
@@ -292,6 +285,7 @@ impl QASMEngine {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn handle_tdg(
         engine: &mut QASMEngine,
         qubits: &[usize],
@@ -303,6 +297,7 @@ impl QASMEngine {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn handle_rz(
         engine: &mut QASMEngine,
         qubits: &[usize],
@@ -312,6 +307,7 @@ impl QASMEngine {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn handle_r1xy(
         engine: &mut QASMEngine,
         qubits: &[usize],
@@ -323,6 +319,7 @@ impl QASMEngine {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn handle_cx(
         engine: &mut QASMEngine,
         qubits: &[usize],
@@ -332,6 +329,7 @@ impl QASMEngine {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn handle_cy(
         engine: &mut QASMEngine,
         qubits: &[usize],
@@ -348,6 +346,7 @@ impl QASMEngine {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn handle_cz(
         engine: &mut QASMEngine,
         qubits: &[usize],
@@ -360,6 +359,7 @@ impl QASMEngine {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn handle_rzz(
         engine: &mut QASMEngine,
         qubits: &[usize],
@@ -371,6 +371,7 @@ impl QASMEngine {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn handle_szz(
         engine: &mut QASMEngine,
         qubits: &[usize],
@@ -380,6 +381,7 @@ impl QASMEngine {
         Ok(())
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn handle_swap(
         engine: &mut QASMEngine,
         qubits: &[usize],
@@ -1217,14 +1219,6 @@ impl Default for QASMEngine {
     }
 }
 
-impl FromStr for QASMEngine {
-    type Err = PecosError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::from_str(s)
-    }
-}
-
 impl EvaluationContext for QASMEngine {
     #[allow(clippy::cast_precision_loss)]
     fn evaluate_float(&self, expr: &Expression) -> Result<f64, PecosError> {
@@ -1234,5 +1228,16 @@ impl EvaluationContext for QASMEngine {
 
     fn evaluate_int(&self, expr: &Expression) -> Result<i64, PecosError> {
         self.evaluate_expression_with_context(expr)
+    }
+}
+
+impl FromStr for QASMEngine {
+    type Err = PecosError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut engine = Self::default();
+        let program = QASMParser::parse_str(s)?;
+        engine.load_program(program);
+        Ok(engine)
     }
 }

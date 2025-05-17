@@ -1,8 +1,8 @@
 //! Comprehensive tests for barrier operations in QASM
 //! Consolidates all barrier-related tests including parsing, expansion, and edge cases
 
-use pecos_qasm::{Operation, QASMParser};
 use pecos_qasm::preprocessor::Preprocessor;
+use pecos_qasm::{Operation, QASMParser};
 
 #[test]
 fn test_barrier_parsing() -> Result<(), Box<dyn std::error::Error>> {
@@ -160,26 +160,26 @@ fn test_multi_register_barriers() {
         qreg q[3];
         qreg r[2];
         qreg s[4];
-        
+
         // Barrier with multiple full registers
         barrier q, r;
-        
+
         // Barrier with register and individual qubits
         barrier s, q[1];
-        
+
         // Complex mix
         barrier r[0], s, q[2], r[1];
     ";
-    
+
     let program = QASMParser::parse_str_raw(qasm).expect("Failed to parse multi-register barriers");
-    
+
     // Check first barrier (q, r) should expand to all 5 qubits
     if let Operation::Barrier { qubits } = &program.operations[0] {
         assert_eq!(qubits.len(), 5);
         // q -> [0, 1, 2], r -> [3, 4]
         assert_eq!(*qubits, vec![0, 1, 2, 3, 4]);
     }
-    
+
     // Check second barrier (s, q[1])
     if let Operation::Barrier { qubits } = &program.operations[1] {
         assert_eq!(qubits.len(), 5);
@@ -195,35 +195,40 @@ fn test_multi_register_barriers() {
 #[test]
 fn test_barrier_in_gate_definition() {
     // Test that barriers work inside gate definitions
-    let qasm = r#"
+    let qasm = r"
         OPENQASM 2.0;
         qreg q[2];
-        
+
         gate mygate a, b {
             H a;
             barrier a, b;
             CX a, b;
         }
-        
+
         mygate q[0], q[1];
-    "#;
-    
+    ";
+
     let program = QASMParser::parse_str(qasm).expect("Failed to parse barrier in gate definition");
-    
+
     // Check the actual operations after expansion
-    let operation_types: Vec<_> = program.operations.iter()
+    let operation_types: Vec<_> = program
+        .operations
+        .iter()
         .map(|op| match op {
-            Operation::Gate { name, .. } => format!("Gate({})", name),
+            Operation::Gate { name, .. } => format!("Gate({name})"),
             Operation::Barrier { .. } => "Barrier".to_string(),
-            _ => "Other".to_string()
+            _ => "Other".to_string(),
         })
         .collect();
 
-    println!("Operations after expansion: {:?}", operation_types);
+    println!("Operations after expansion: {operation_types:?}");
 
     // Barriers might be optimized away during gate expansion
     // Let's just verify that the gate expanded to some operations
-    assert!(!program.operations.is_empty(), "Gate expansion should produce operations");
+    assert!(
+        !program.operations.is_empty(),
+        "Gate expansion should produce operations"
+    );
 }
 
 #[test]
@@ -257,7 +262,7 @@ fn test_barrier_debug_phases() -> Result<(), Box<dyn std::error::Error>> {
             println!("Parse successful!");
             println!("Number of operations: {}", program.operations.len());
             for (i, op) in program.operations.iter().enumerate() {
-                println!("Operation {}: {:?}", i, op);
+                println!("Operation {i}: {op:?}");
             }
         }
         Err(e) => {
@@ -280,14 +285,22 @@ fn test_empty_barrier() {
     ";
 
     let result = QASMParser::parse_str_raw(qasm);
-    assert!(result.is_ok(), "Single qubit barrier should parse successfully");
-    
+    assert!(
+        result.is_ok(),
+        "Single qubit barrier should parse successfully"
+    );
+
     if let Ok(program) = result {
         // Should have both barrier and H gate
-        let barrier_count = program.operations.iter()
+        let barrier_count = program
+            .operations
+            .iter()
             .filter(|op| matches!(op, Operation::Barrier { .. }))
             .count();
-        assert_eq!(barrier_count, 1, "Single qubit barrier should create an operation");
+        assert_eq!(
+            barrier_count, 1,
+            "Single qubit barrier should create an operation"
+        );
     }
 }
 
@@ -297,12 +310,12 @@ fn test_large_barrier() {
     let qasm = r"
         OPENQASM 2.0;
         qreg q[50];
-        
+
         barrier q;  // Barrier on all 50 qubits
     ";
-    
+
     let program = QASMParser::parse_str_raw(qasm).expect("Failed to parse large barrier");
-    
+
     if let Operation::Barrier { qubits } = &program.operations[0] {
         assert_eq!(qubits.len(), 50);
         // Check first and last qubits

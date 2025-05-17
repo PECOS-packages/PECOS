@@ -1,6 +1,7 @@
 use pecos_engines::engines::classical::ClassicalEngine;
 use pecos_qasm::engine::QASMEngine;
 use pecos_qasm::parser::QASMParser;
+use std::str::FromStr;
 
 #[test]
 fn test_all_comparison_operators() {
@@ -29,8 +30,7 @@ fn test_all_comparison_operators() {
     "#;
 
     // Create and load the engine
-    let mut engine = QASMEngine::from_str(qasm)
-        .expect("Failed to load program");
+    let mut engine = QASMEngine::from_str(qasm).expect("Failed to load program");
 
     // Generate commands - this verifies that all operations are supported
     let _messages = engine
@@ -59,8 +59,7 @@ fn test_bit_indexing_in_conditionals() {
         if (d[0] == 1) H q[0];  // Should execute
     "#;
 
-    let mut engine = QASMEngine::from_str(qasm)
-        .expect("Failed to load program");
+    let mut engine = QASMEngine::from_str(qasm).expect("Failed to load program");
     let _messages = engine
         .generate_commands()
         .expect("Failed to generate commands");
@@ -90,8 +89,7 @@ fn test_complex_conditional_expressions() {
         if (c != 0) H q[0];  // Should execute
     "#;
 
-    let mut engine = QASMEngine::from_str(qasm)
-        .expect("Failed to load program");
+    let mut engine = QASMEngine::from_str(qasm).expect("Failed to load program");
     let _messages = engine
         .generate_commands()
         .expect("Failed to generate commands");

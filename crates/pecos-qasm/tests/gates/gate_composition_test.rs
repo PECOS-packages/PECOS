@@ -6,7 +6,7 @@ fn test_gate_composition() {
         OPENQASM 2.0;
         qreg q[3];
         creg c[3];
-        
+
         // Define a bell pair gate using basic gates
         gate bell a, b {
             H a;
@@ -27,10 +27,10 @@ fn test_gate_composition() {
             CX c1, c2;
             H target;
         }
-        
+
         // Use the composed gates
         bell_swap q[0], q[1], q[2];
-        
+
         measure q -> c;
     ";
 
@@ -72,12 +72,12 @@ fn test_undefined_gate_in_definition() {
     let qasm = r"
         OPENQASM 2.0;
         qreg q[2];
-        
+
         // Define a gate using an undefined gate
         gate mygate a {
             undefined_gate a;
         }
-        
+
         mygate q[0];
     ";
 

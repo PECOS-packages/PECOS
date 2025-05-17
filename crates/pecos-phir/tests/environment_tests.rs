@@ -28,7 +28,7 @@ fn test_variable_environment() {
     env.set("i8_var", 130).unwrap(); // Should wrap around due to i8 constraints
     assert_eq!(
         env.get("i8_var").map(|v| v.as_u64()),
-        Some(0xFFFFFFFFFFFFFF82)
+        Some(0xFFFF_FFFF_FFFF_FF82)
     ); // -126 as u64
 
     env.set("u8_var", 300).unwrap(); // Should be masked to 44 (300 % 256)
@@ -42,7 +42,7 @@ fn test_variable_environment() {
     env.set_bit("bits", 2, 1).unwrap(); // Set bit 2
     env.set_bit("bits", 4, 1).unwrap(); // Set bit 4
 
-    assert_eq!(env.get("bits").map(|v| v.as_u64()), Some(0b00010101)); // Binary 21
+    assert_eq!(env.get("bits").map(|v| v.as_u64()), Some(0b0001_0101)); // Binary 21
 
     // Test getting individual bits
     assert!(env.get_bit("bits", 0).unwrap().0);
@@ -122,32 +122,32 @@ fn test_expression_evaluation() {
     assert_eq!(evaluator.eval_expr(&expr_div).unwrap(), 2);
 
     // Test bit operations
-    let expr_and = Expression::Operation {
+    let bitwise_and = Expression::Operation {
         cop: "&".to_string(),
         args: vec![
             ArgItem::Simple("a".to_string()),
             ArgItem::Simple("b".to_string()),
         ],
     };
-    assert_eq!(evaluator.eval_expr(&expr_and).unwrap(), 0); // 10 & 5 = 0
+    assert_eq!(evaluator.eval_expr(&bitwise_and).unwrap(), 0); // 10 & 5 = 0
 
-    let expr_or = Expression::Operation {
+    let bitwise_or = Expression::Operation {
         cop: "|".to_string(),
         args: vec![
             ArgItem::Simple("a".to_string()),
             ArgItem::Simple("b".to_string()),
         ],
     };
-    assert_eq!(evaluator.eval_expr(&expr_or).unwrap(), 15); // 10 | 5 = 15
+    assert_eq!(evaluator.eval_expr(&bitwise_or).unwrap(), 15); // 10 | 5 = 15
 
-    let expr_xor = Expression::Operation {
+    let xor_expr = Expression::Operation {
         cop: "^".to_string(),
         args: vec![
             ArgItem::Simple("a".to_string()),
             ArgItem::Simple("b".to_string()),
         ],
     };
-    assert_eq!(evaluator.eval_expr(&expr_xor).unwrap(), 15); // 10 ^ 5 = 15
+    assert_eq!(evaluator.eval_expr(&xor_expr).unwrap(), 15); // 10 ^ 5 = 15
 
     // Test nested expressions
     let nested_expr = Expression::Operation {

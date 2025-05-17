@@ -1,6 +1,7 @@
 use pecos_qasm::{Operation, parser::QASMParser};
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn test_nine_qubit_quantum_circuit() {
     let qasm = r#"
         OPENQASM 2.0;
@@ -442,10 +443,10 @@ fn test_nine_qubit_quantum_circuit() {
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse nine-qubit circuit");
-    
+
     // Count the types of gates after expansion
     let mut h_count = 0;
-    let mut cx_count = 0;  // CZ expands to H-CX-H
+    let mut cx_count = 0; // CZ expands to H-CX-H
     let mut total_operations = 0;
 
     for op in &program.operations {
@@ -458,22 +459,34 @@ fn test_nine_qubit_quantum_circuit() {
             }
         }
     }
-    
+
     // With gate expansions, we expect more operations
-    assert!(total_operations > 500, "Should have more than 500 operations, got {}", total_operations);
-    
+    assert!(
+        total_operations > 500,
+        "Should have more than 500 operations, got {total_operations}"
+    );
+
     // Each CZ expands to 3 gates (H-CX-H)
-    assert!(h_count > 160, "Should have more than 160 H gates, got {}", h_count);
-    assert!(cx_count > 80, "Should have more than 80 CX gates, got {}", cx_count);
-    
+    assert!(
+        h_count > 160,
+        "Should have more than 160 H gates, got {h_count}"
+    );
+    assert!(
+        cx_count > 80,
+        "Should have more than 80 CX gates, got {cx_count}"
+    );
+
     // RX gates may also be expanded
-    assert!(total_operations - h_count - cx_count > 100, "Should have many other operations");
-    
+    assert!(
+        total_operations - h_count - cx_count > 100,
+        "Should have many other operations"
+    );
+
     // Check that all operations are on valid qubits
     for op in &program.operations {
         if let Operation::Gate { qubits, .. } = op {
             for &qubit in qubits {
-                assert!(qubit < 9, "Qubit index {} is out of range", qubit);
+                assert!(qubit < 9, "Qubit index {qubit} is out of range");
             }
         }
     }
@@ -498,10 +511,10 @@ fn test_cz_gate_connectivity() {
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse CZ connectivity");
-    
+
     // CZ expands to H-CX-H, so we track CX gates to find the connectivity
     let mut cx_pairs = Vec::new();
-    
+
     for op in &program.operations {
         if let Operation::Gate { name, qubits, .. } = op {
             if name == "CX" {
@@ -510,10 +523,10 @@ fn test_cz_gate_connectivity() {
             }
         }
     }
-    
+
     // We expect 9 CX gates (one for each CZ)
     assert_eq!(cx_pairs.len(), 9);
-    
+
     // Check some specific connections
     assert!(cx_pairs.contains(&(1, 3)));
     assert!(cx_pairs.contains(&(7, 4)));
@@ -541,12 +554,12 @@ fn test_rx_half_pi_gates() {
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse RX gates");
-    
+
     // RX expands to H-RZ-H, so we look for the pattern
     let mut total_ops = 0;
     let mut h_count = 0;
     let mut rz_count = 0;
-    
+
     for op in &program.operations {
         total_ops += 1;
         if let Operation::Gate { name, .. } = op {
@@ -557,7 +570,7 @@ fn test_rx_half_pi_gates() {
             }
         }
     }
-    
+
     // Each RX expands to 3 gates (H-RZ-H)
     // We have 5 RX gates, so expect 15 total operations
     assert_eq!(total_ops, 15, "Should have 15 operations after expansion");

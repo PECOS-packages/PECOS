@@ -34,7 +34,9 @@ impl Preprocessor {
 
         // Add system includes
         for (name, content) in crate::includes::get_standard_includes() {
-            preprocessor.content.insert(name.to_string(), content.to_string());
+            preprocessor
+                .content
+                .insert(name.to_string(), content.to_string());
         }
 
         preprocessor
@@ -152,7 +154,6 @@ impl Preprocessor {
     pub fn preprocess_str(&mut self, source: &str) -> Result<String, PecosError> {
         self.preprocess(source)
     }
-
 }
 
 #[cfg(test)]

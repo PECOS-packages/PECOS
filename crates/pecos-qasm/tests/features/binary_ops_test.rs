@@ -44,7 +44,7 @@ fn test_binary_operators() {
         creg a[2];
         creg b[2];
         creg c[2];
-        
+
         b = 2;
         a = 1;
         c = b + a;  // Addition instead of XOR as a test

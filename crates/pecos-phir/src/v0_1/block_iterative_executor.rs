@@ -16,8 +16,8 @@ pub enum FlattenedOperation<'a> {
 }
 
 /// Struct for iteratively executing blocks of operations
-/// This is an alternative to the recursive approach in BlockExecutor
-/// It provides a more flexible way to process blocks, similar to Python's _flatten_blocks
+/// This is an alternative to the recursive approach in `BlockExecutor`
+/// It provides a more flexible way to process blocks, similar to Python's _`flatten_blocks`
 pub struct BlockIterativeExecutor<'a> {
     /// Reference to the block executor for processing operations
     executor: &'a mut BlockExecutor,
@@ -46,6 +46,7 @@ impl<'a> BlockIterativeExecutor<'a> {
     }
 
     /// Initialize with a block of operations
+    #[must_use]
     pub fn with_operations(mut self, operations: &'a [Operation]) -> Self {
         // Add operations in reverse order to the stack
         for op in operations.iter().rev() {
@@ -90,8 +91,9 @@ impl<'a> BlockIterativeExecutor<'a> {
     }
 
     /// Process a single operation, handling blocks and buffering
+    #[allow(clippy::too_many_lines)]
     fn process_operation(&mut self, op: &'a Operation) -> Result<(), PecosError> {
-        println!("Processing operation: {:?}", op);
+        println!("Processing operation: {op:?}");
         match op {
             Operation::Block {
                 block,
@@ -120,15 +122,14 @@ impl<'a> BlockIterativeExecutor<'a> {
                         // to ensure they're processed as a unit
 
                         // Verify all operations are quantum operations or meta instructions
-                        for op in ops.iter() {
+                        for op in ops {
                             match op {
                                 Operation::QuantumOp { .. } | Operation::MetaInstruction { .. } => {
                                     // These are allowed in qparallel
                                 }
                                 _ => {
                                     return Err(PecosError::Input(format!(
-                                        "Invalid operation in qparallel block: {:?}",
-                                        op
+                                        "Invalid operation in qparallel block: {op:?}"
                                     )));
                                 }
                             }
@@ -137,26 +138,24 @@ impl<'a> BlockIterativeExecutor<'a> {
                         // Verify no qubit is used more than once
                         let mut used_qubits = std::collections::HashSet::new();
 
-                        for op in ops.iter() {
+                        for op in ops {
                             if let Operation::QuantumOp { args, .. } = op {
                                 for qubit_arg in args {
                                     match qubit_arg {
                                         QubitArg::SingleQubit((var, idx)) => {
-                                            let qubit_id = format!("{}_{}", var, idx);
+                                            let qubit_id = format!("{var}_{idx}");
                                             if !used_qubits.insert(qubit_id) {
                                                 return Err(PecosError::Input(format!(
-                                                    "Qubit {}[{}] used more than once in qparallel block",
-                                                    var, idx
+                                                    "Qubit {var}[{idx}] used more than once in qparallel block"
                                                 )));
                                             }
                                         }
                                         QubitArg::MultipleQubits(qubits) => {
                                             for (var, idx) in qubits {
-                                                let qubit_id = format!("{}_{}", var, idx);
+                                                let qubit_id = format!("{var}_{idx}");
                                                 if !used_qubits.insert(qubit_id) {
                                                     return Err(PecosError::Input(format!(
-                                                        "Qubit {}[{}] used more than once in qparallel block",
-                                                        var, idx
+                                                        "Qubit {var}[{idx}] used more than once in qparallel block"
                                                     )));
                                                 }
                                             }
@@ -186,7 +185,7 @@ impl<'a> BlockIterativeExecutor<'a> {
 
                             // Evaluate the condition
                             let mut evaluator =
-                                ExpressionEvaluator::new(&self.executor.get_environment());
+                                ExpressionEvaluator::new(self.executor.get_environment());
                             let condition_result = evaluator.eval_expr(cond)?.as_bool();
 
                             debug!("Condition evaluated to: {}", condition_result);
@@ -220,7 +219,7 @@ impl<'a> BlockIterativeExecutor<'a> {
                         }
                     }
                     _ => {
-                        return Err(PecosError::Input(format!("Unknown block type: {}", block)));
+                        return Err(PecosError::Input(format!("Unknown block type: {block}")));
                     }
                 }
             }
@@ -307,15 +306,15 @@ impl<'a> BlockIterativeExecutor<'a> {
                 FlattenedOperation::Buffer(ops) => {
                     // For buffers, add all operations back to the stack
                     // and return the first one
-                    if !ops.is_empty() {
+                    if ops.is_empty() {
+                        self.step()
+                    } else {
                         let first = ops[0];
                         for op in ops.into_iter().rev().skip(1) {
                             self.operation_stack
                                 .push_front(FlattenedOperation::Operation(op));
                         }
                         Some(Ok(first))
-                    } else {
-                        self.step()
                     }
                 }
                 FlattenedOperation::EndBlock => {
@@ -329,6 +328,7 @@ impl<'a> BlockIterativeExecutor<'a> {
     }
 
     /// Get a reference to the underlying block executor
+    #[must_use]
     pub fn get_executor(&self) -> &BlockExecutor {
         self.executor
     }
@@ -339,7 +339,7 @@ impl<'a> BlockIterativeExecutor<'a> {
     }
 }
 
-/// Iterator implementation for BlockIterativeExecutor
+/// Iterator implementation for `BlockIterativeExecutor`
 impl<'a> Iterator for BlockIterativeExecutor<'a> {
     type Item = Result<&'a Operation, PecosError>;
 
@@ -389,7 +389,7 @@ mod tests {
 
         // Verify the final value
         let env = executor.get_environment();
-        assert_eq!(env.get_raw("x").map(|v| v as u64), Some(20));
+        assert_eq!(env.get_raw("x"), Some(20));
     }
 
     #[test]
@@ -449,7 +449,7 @@ mod tests {
 
         // Verify the true branch was executed (x = 10 > 5)
         let env = executor.get_environment();
-        assert_eq!(env.get_raw("y").map(|v| v as u64), Some(20));
+        assert_eq!(env.get_raw("y"), Some(20));
     }
 
     #[test]
@@ -525,12 +525,12 @@ mod tests {
         let env = executor.get_environment();
 
         // In y = x + 5 where x = 10, y should be 15
-        let y_value = env.get_raw("y").map(|v| v as u64);
-        println!("y value: {:?}", y_value);
+        let y_value = env.get_raw("y");
+        println!("y value: {y_value:?}");
         assert_eq!(y_value, Some(15));
 
-        let z_value = env.get_raw("z").map(|v| v as u64);
-        println!("z value: {:?}", z_value);
+        let z_value = env.get_raw("z");
+        println!("z value: {z_value:?}");
         assert_eq!(z_value, Some(100));
     }
 
@@ -581,7 +581,7 @@ mod tests {
 
         // Verify the final state
         let env = executor.get_environment();
-        assert_eq!(env.get_raw("m").map(|v| v as u64), Some(42));
+        assert_eq!(env.get_raw("m"), Some(42));
     }
 
     #[test]

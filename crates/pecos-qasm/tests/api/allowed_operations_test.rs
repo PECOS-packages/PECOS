@@ -6,11 +6,11 @@ fn test_allowed_top_level_operations() {
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
-        
+
         // Register declarations
         qreg q[4];
         creg c[4];
-        
+
         // Quantum operations
         H q[0];                    // Gate call
         CX q[0], q[1];            // Two-qubit gate
@@ -19,25 +19,25 @@ fn test_allowed_top_level_operations() {
         reset q[3];               // Reset
         measure q[0] -> c[0];     // Measurement
         measure q -> c;           // Full register measurement
-        
+
         // Classical operations
         c[1] = 1;                 // Bit assignment
         c = 5;                    // Register assignment
         c[2] = c[0] & c[1];      // Expression
-        
+
         // Conditional operations
         if (c[0] == 1) H q[1];    // Conditional gate
         if (c > 3) X q[2];        // Conditional with comparison
-        
+
         // Gate definitions
         gate mygate a {
             H a;
             X a;
         }
-        
+
         // Opaque gate declarations
         opaque oracle(theta) a, b;
-        
+
         // Using defined gates
         mygate q[0];
     "#;
@@ -73,7 +73,7 @@ fn test_disallowed_top_level_operations() {
     let qasm1 = r"
         OPENQASM 2.0;
         qreg q[1];
-        
+
         if (1) {
             gate bad a { H a; }  // Can't define gates inside if
         }
@@ -102,23 +102,23 @@ fn test_allowed_gate_body_operations() {
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[3];
-        
+
         gate allowed_ops a, b, c {
             // Basic gates
             H a;
             X b;
             y c;
             Z a;
-            
+
             // Two-qubit gates
             CX a, b;
             cz b, c;
-            
+
             // Parameterized gates
             rx(pi/4) a;
             ry(pi/2) b;
             RZ(pi) c;
-            
+
             // Composite gates (defined elsewhere)
             ccx a, b, c;
 
@@ -126,7 +126,7 @@ fn test_allowed_gate_body_operations() {
             barrier a, b;
             reset a;
         }
-        
+
         allowed_ops q[0], q[1], q[2];
     "#;
 
@@ -186,7 +186,7 @@ fn test_disallowed_gate_body_operations() {
         OPENQASM 2.0;
         qreg q[1];
         creg c[1];
-        
+
         gate bad_gate a {
             measure a -> c[0];  // Measurements not allowed
         }
@@ -200,7 +200,7 @@ fn test_disallowed_gate_body_operations() {
         OPENQASM 2.0;
         qreg q[1];
         creg c[1];
-        
+
         gate bad_gate a {
             c[0] = 1;  // Classical ops not allowed
         }
@@ -217,7 +217,7 @@ fn test_disallowed_gate_body_operations() {
         OPENQASM 2.0;
         qreg q[1];
         creg c[1];
-        
+
         gate bad_gate a {
             if (c[0] == 1) H a;  // Conditionals not allowed
         }
@@ -230,7 +230,7 @@ fn test_disallowed_gate_body_operations() {
     let qasm4 = r"
         OPENQASM 2.0;
         qreg q[1];
-        
+
         gate outer a {
             gate inner b { H b; }  // Can't define gates inside gates
         }
@@ -248,13 +248,13 @@ fn test_allowed_if_body_operations() {
         include "qelib1.inc";
         qreg q[2];
         creg c[2];
-        
+
         // Single quantum operation
         if (c[0] == 1) H q[0];
-        
-        // Single classical operation  
+
+        // Single classical operation
         if (c[0] == 0) c[1] = 1;
-        
+
         // QASM doesn't support block if statements, only single operations
     "#;
 
@@ -272,9 +272,9 @@ fn test_context_dependent_operations() {
     let qasm1 = r"
         OPENQASM 2.0;
         qreg q[2];
-        
+
         barrier q[0], q[1];  // OK at top level
-        
+
         gate with_barrier a, b {
             barrier a, b;    // Currently allowed (but maybe shouldn't be)
         }
@@ -287,9 +287,9 @@ fn test_context_dependent_operations() {
     let qasm2 = r"
         OPENQASM 2.0;
         qreg q[1];
-        
+
         reset q[0];  // OK at top level
-        
+
         gate with_reset a {
             reset a;     // Currently allowed (but shouldn't be)
         }

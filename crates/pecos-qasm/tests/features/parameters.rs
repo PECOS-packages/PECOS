@@ -220,6 +220,7 @@ fn test_evaluation_accuracy() {
 fn test_trig_identity_with_measurement() {
     use pecos_engines::{MonteCarloEngine, PassThroughNoiseModel};
     use pecos_qasm::QASMEngine;
+    use std::str::FromStr;
 
     // Test that sin²(π/6) + cos²(π/6) = 1 through quantum measurement
     let qasm = r#"
@@ -266,6 +267,7 @@ fn test_trig_identity_with_measurement() {
 fn test_trig_identity_various_angles() {
     use pecos_engines::{MonteCarloEngine, PassThroughNoiseModel};
     use pecos_qasm::QASMEngine;
+    use std::str::FromStr;
 
     // Test multiple angles to verify sin²(x) + cos²(x) = 1 always holds
     let test_angles = ["pi/4", "pi/3", "2*pi/3", "3*pi/4"];

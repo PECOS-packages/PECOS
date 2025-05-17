@@ -1,6 +1,7 @@
 use pecos_core::errors::PecosError;
 use pecos_engines::{ClassicalEngine, Engine, ShotResult};
 use pecos_qasm::QASMEngine;
+use std::str::FromStr;
 
 /// Helper function to extract a bit value from a register value
 ///

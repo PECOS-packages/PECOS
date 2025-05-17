@@ -28,7 +28,8 @@ pub enum DataType {
 }
 
 impl DataType {
-    /// Creates a DataType from a string representation
+    /// Creates a `DataType` from a string representation
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self, PecosError> {
         match s {
             "i8" => Ok(DataType::I8),
@@ -41,11 +42,12 @@ impl DataType {
             "u64" => Ok(DataType::U64),
             "bool" => Ok(DataType::Bool),
             "qubits" => Ok(DataType::Qubits),
-            _ => Err(PecosError::Input(format!("Unsupported data type: {}", s))),
+            _ => Err(PecosError::Input(format!("Unsupported data type: {s}"))),
         }
     }
 
     /// Returns the bit width of the data type
+    #[must_use]
     pub fn bit_width(&self) -> usize {
         match self {
             DataType::I8 | DataType::U8 => 8,
@@ -58,6 +60,7 @@ impl DataType {
     }
 
     /// Checks if the data type is signed
+    #[must_use]
     pub fn is_signed(&self) -> bool {
         matches!(
             self,
@@ -66,15 +69,16 @@ impl DataType {
     }
 
     /// Returns the maximum value for this data type
+    #[must_use]
     pub fn max_value(&self) -> u64 {
         match self {
             DataType::I8 => i8::MAX as u64,
             DataType::I16 => i16::MAX as u64,
             DataType::I32 => i32::MAX as u64,
             DataType::I64 => i64::MAX as u64,
-            DataType::U8 => u8::MAX as u64,
-            DataType::U16 => u16::MAX as u64,
-            DataType::U32 => u32::MAX as u64,
+            DataType::U8 => u64::from(u8::MAX),
+            DataType::U16 => u64::from(u16::MAX),
+            DataType::U32 => u64::from(u32::MAX),
             DataType::U64 => u64::MAX,
             DataType::Bool => 1,
             DataType::Qubits => 0,
@@ -82,18 +86,29 @@ impl DataType {
     }
 
     /// Returns the minimum value for this data type
+    #[must_use]
     pub fn min_value(&self) -> i64 {
         match self {
-            DataType::I8 => i8::MIN as i64,
-            DataType::I16 => i16::MIN as i64,
-            DataType::I32 => i32::MIN as i64,
+            DataType::I8 => i64::from(i8::MIN),
+            DataType::I16 => i64::from(i16::MIN),
+            DataType::I32 => i64::from(i32::MIN),
             DataType::I64 => i64::MIN,
-            DataType::U8 | DataType::U16 | DataType::U32 | DataType::U64 | DataType::Bool => 0,
-            DataType::Qubits => 0,
+            DataType::U8
+            | DataType::U16
+            | DataType::U32
+            | DataType::U64
+            | DataType::Bool
+            | DataType::Qubits => 0,
         }
     }
 
     /// Applies type constraints to a value based on the bit width and signedness
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap
+    )]
     pub fn constrain_value(&self, value: u64) -> u64 {
         match self {
             DataType::I8 => (value as i8) as u64,
@@ -102,10 +117,9 @@ impl DataType {
             DataType::I64 => (value as i64) as u64,
             DataType::U8 => value & 0xFF,
             DataType::U16 => value & 0xFFFF,
-            DataType::U32 => value & 0xFFFFFFFF,
-            DataType::U64 => value,
+            DataType::U32 => value & 0xFFFF_FFFF,
+            DataType::U64 | DataType::Qubits => value, // Full 64-bit range for these types
             DataType::Bool => value & 1,
-            DataType::Qubits => value, // Qubits don't have a fixed bit width
         }
     }
 }
@@ -143,7 +157,13 @@ pub enum TypedValue {
 }
 
 impl TypedValue {
-    /// Creates a new TypedValue with the specified data type and value
+    /// Creates a new `TypedValue` with the specified data type and value
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap
+    )]
     pub fn new(data_type: &DataType, value: u64) -> Self {
         match data_type {
             DataType::I8 => TypedValue::I8(value as i8),
@@ -153,61 +173,55 @@ impl TypedValue {
             DataType::U8 => TypedValue::U8(value as u8),
             DataType::U16 => TypedValue::U16(value as u16),
             DataType::U32 => TypedValue::U32(value as u32),
-            DataType::U64 => TypedValue::U64(value),
+            DataType::U64 | DataType::Qubits => TypedValue::U64(value), // U64 and Qubits both use U64
             DataType::Bool => TypedValue::Bool(value != 0),
-            DataType::Qubits => TypedValue::U64(value), // Qubits are stored as U64 for now
         }
     }
 
     /// Creates a typed value from a raw u64, inferring the type as i32
     /// This is for backward compatibility with code that uses raw values
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     pub fn from_raw(value: u64) -> Self {
         TypedValue::I32(value as i32)
     }
 
     /// Gets the value as a u64 (for uniform storage)
+    #[must_use]
+    #[allow(clippy::cast_sign_loss)]
     pub fn as_u64(&self) -> u64 {
         match self {
             TypedValue::I8(val) => *val as u64,
             TypedValue::I16(val) => *val as u64,
             TypedValue::I32(val) => *val as u64,
             TypedValue::I64(val) => *val as u64,
-            TypedValue::U8(val) => *val as u64,
-            TypedValue::U16(val) => *val as u64,
-            TypedValue::U32(val) => *val as u64,
+            TypedValue::U8(val) => u64::from(*val),
+            TypedValue::U16(val) => u64::from(*val),
+            TypedValue::U32(val) => u64::from(*val),
             TypedValue::U64(val) => *val,
-            TypedValue::Bool(val) => {
-                if *val {
-                    1
-                } else {
-                    0
-                }
-            }
+            TypedValue::Bool(val) => u64::from(*val),
         }
     }
 
     /// Gets the value as an i64 (for expressions)
+    #[must_use]
+    #[allow(clippy::cast_possible_wrap)]
     pub fn as_i64(&self) -> i64 {
         match self {
-            TypedValue::I8(val) => *val as i64,
-            TypedValue::I16(val) => *val as i64,
-            TypedValue::I32(val) => *val as i64,
+            TypedValue::I8(val) => i64::from(*val),
+            TypedValue::I16(val) => i64::from(*val),
+            TypedValue::I32(val) => i64::from(*val),
             TypedValue::I64(val) => *val,
-            TypedValue::U8(val) => *val as i64,
-            TypedValue::U16(val) => *val as i64,
-            TypedValue::U32(val) => *val as i64,
+            TypedValue::U8(val) => i64::from(*val),
+            TypedValue::U16(val) => i64::from(*val),
+            TypedValue::U32(val) => i64::from(*val),
             TypedValue::U64(val) => *val as i64,
-            TypedValue::Bool(val) => {
-                if *val {
-                    1
-                } else {
-                    0
-                }
-            }
+            TypedValue::Bool(val) => i64::from(*val),
         }
     }
 
     /// Gets the value as a boolean
+    #[must_use]
     pub fn as_bool(&self) -> bool {
         match self {
             TypedValue::I8(val) => *val != 0,
@@ -223,6 +237,8 @@ impl TypedValue {
     }
 
     /// Gets the value as a u32
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
     pub fn as_u32(&self) -> u32 {
         self.as_u64() as u32
     }
@@ -232,15 +248,15 @@ impl TypedValue {
 impl fmt::Display for TypedValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TypedValue::I8(val) => write!(f, "{}", val),
-            TypedValue::I16(val) => write!(f, "{}", val),
-            TypedValue::I32(val) => write!(f, "{}", val),
-            TypedValue::I64(val) => write!(f, "{}", val),
-            TypedValue::U8(val) => write!(f, "{}", val),
-            TypedValue::U16(val) => write!(f, "{}", val),
-            TypedValue::U32(val) => write!(f, "{}", val),
-            TypedValue::U64(val) => write!(f, "{}", val),
-            TypedValue::Bool(val) => write!(f, "{}", val),
+            TypedValue::I8(val) => write!(f, "{val}"),
+            TypedValue::I16(val) => write!(f, "{val}"),
+            TypedValue::I32(val) => write!(f, "{val}"),
+            TypedValue::I64(val) => write!(f, "{val}"),
+            TypedValue::U8(val) => write!(f, "{val}"),
+            TypedValue::U16(val) => write!(f, "{val}"),
+            TypedValue::U32(val) => write!(f, "{val}"),
+            TypedValue::U64(val) => write!(f, "{val}"),
+            TypedValue::Bool(val) => write!(f, "{val}"),
         }
     }
 }
@@ -282,6 +298,7 @@ impl From<bool> for TypedValue {
 
 // From implementation for TypedValue to u32
 impl From<TypedValue> for u32 {
+    #[allow(clippy::cast_possible_truncation)]
     fn from(value: TypedValue) -> Self {
         value.as_u64() as u32
     }
@@ -322,7 +339,7 @@ impl PartialEq<u32> for TypedValue {
 
 impl PartialEq<i32> for TypedValue {
     fn eq(&self, other: &i32) -> bool {
-        self.as_i64() == *other as i64
+        self.as_i64() == i64::from(*other)
     }
 }
 
@@ -346,7 +363,7 @@ impl PartialEq<TypedValue> for u32 {
 
 impl PartialEq<TypedValue> for i32 {
     fn eq(&self, other: &TypedValue) -> bool {
-        (*self as i64) == other.as_i64()
+        i64::from(*self) == other.as_i64()
     }
 }
 
@@ -381,7 +398,7 @@ impl std::ops::Shr<usize> for &TypedValue {
 }
 
 /// Wrapper for boolean bit values to solve trait implementation issues
-/// with convert_into
+/// with `convert_into`
 #[derive(Debug, Clone, Copy)]
 pub struct BoolBit(pub bool);
 
@@ -441,18 +458,19 @@ impl From<i32> for BoolBit {
 
 impl From<BoolBit> for u32 {
     fn from(bit: BoolBit) -> Self {
-        if bit.0 { 1 } else { 0 }
+        u32::from(bit.0)
     }
 }
 
 impl From<BoolBit> for i32 {
     fn from(bit: BoolBit) -> Self {
-        if bit.0 { 1 } else { 0 }
+        i32::from(bit.0)
     }
 }
 
 impl TypedValue {
     /// Gets the data type of this value
+    #[must_use]
     pub fn get_type(&self) -> DataType {
         match self {
             TypedValue::I8(_) => DataType::I8,
@@ -473,8 +491,7 @@ impl TypedValue {
         let bit_width = self.get_type().bit_width();
         if idx >= bit_width {
             return Err(PecosError::Input(format!(
-                "Bit index {} out of range for type with bit width {}",
-                idx, bit_width
+                "Bit index {idx} out of range for type with bit width {bit_width}"
             )));
         }
 
@@ -489,8 +506,7 @@ impl TypedValue {
         let bit_width = self.get_type().bit_width();
         if idx >= bit_width {
             return Err(PecosError::Input(format!(
-                "Bit index {} out of range for type with bit width {}",
-                idx, bit_width
+                "Bit index {idx} out of range for type with bit width {bit_width}"
             )));
         }
 
@@ -535,6 +551,7 @@ pub struct Environment {
 
 impl Environment {
     /// Creates a new empty environment
+    #[must_use]
     pub fn new() -> Self {
         Self {
             values: Vec::new(),
@@ -573,8 +590,7 @@ impl Environment {
     ) -> Result<(), PecosError> {
         if self.name_to_index.contains_key(name) {
             return Err(PecosError::Input(format!(
-                "Variable '{}' already exists",
-                name
+                "Variable '{name}' already exists"
             )));
         }
 
@@ -595,23 +611,26 @@ impl Environment {
     }
 
     /// Checks if a variable exists in the environment
+    #[must_use]
     pub fn has_variable(&self, name: &str) -> bool {
         self.name_to_index.contains_key(name)
     }
 
     /// Gets the typed value of a variable
+    #[must_use]
     pub fn get(&self, name: &str) -> Option<TypedValue> {
         self.name_to_index.get(name).map(|&idx| self.values[idx])
     }
 
     /// Gets the raw u64 value of a variable (for backward compatibility)
+    #[must_use]
     pub fn get_raw(&self, name: &str) -> Option<u64> {
         self.get(name).map(|v| v.as_u64())
     }
 
     /// Sets the value of a variable with type checking
     ///
-    /// Accepts any type that can be converted to TypedValue
+    /// Accepts any type that can be converted to `TypedValue`
     pub fn set<T: Into<TypedValue>>(&mut self, name: &str, value: T) -> Result<(), PecosError> {
         let typed_value = value.into();
         if let Some(&idx) = self.name_to_index.get(name) {
@@ -627,7 +646,7 @@ impl Environment {
             self.values[idx] = TypedValue::new(expected_type, constrained_value);
             Ok(())
         } else {
-            Err(PecosError::Input(format!("Variable '{}' not found", name)))
+            Err(PecosError::Input(format!("Variable '{name}' not found")))
         }
     }
 
@@ -642,7 +661,7 @@ impl Environment {
             self.values[idx] = TypedValue::new(data_type, constrained_value);
             Ok(())
         } else {
-            Err(PecosError::Input(format!("Variable '{}' not found", name)))
+            Err(PecosError::Input(format!("Variable '{name}' not found")))
         }
     }
 
@@ -651,11 +670,12 @@ impl Environment {
         if let Some(&idx) = self.name_to_index.get(name) {
             Ok(&self.metadata[idx])
         } else {
-            Err(PecosError::Input(format!("Variable '{}' not found", name)))
+            Err(PecosError::Input(format!("Variable '{name}' not found")))
         }
     }
 
     /// Gets metadata for a variable as Option
+    #[must_use]
     pub fn get_variable_info_opt(&self, name: &str) -> Option<&VariableInfo> {
         self.name_to_index.get(name).map(|&idx| &self.metadata[idx])
     }
@@ -675,8 +695,7 @@ impl Environment {
             self.values[idx].get_bit(bit_index).map(BoolBit)
         } else {
             Err(PecosError::Input(format!(
-                "Variable '{}' not found",
-                var_name
+                "Variable '{var_name}' not found"
             )))
         }
     }
@@ -708,31 +727,34 @@ impl Environment {
             Ok(())
         } else {
             Err(PecosError::Input(format!(
-                "Variable '{}' not found",
-                var_name
+                "Variable '{var_name}' not found"
             )))
         }
     }
 
     /// Gets all variable names in the environment
+    #[must_use]
     pub fn get_variable_names(&self) -> Vec<String> {
         self.metadata.iter().map(|info| info.name.clone()).collect()
     }
 
     /// Gets all variables of a specific type
-    pub fn get_variables_of_type(&self, data_type: DataType) -> Vec<&VariableInfo> {
+    #[must_use]
+    pub fn get_variables_of_type(&self, data_type: &DataType) -> Vec<&VariableInfo> {
         self.metadata
             .iter()
-            .filter(|info| info.data_type == data_type)
+            .filter(|info| &info.data_type == data_type)
             .collect()
     }
 
     /// Gets all variables in the environment
+    #[must_use]
     pub fn get_all_variables(&self) -> &[VariableInfo] {
         &self.metadata
     }
 
     /// Gets all measurement result variables and their values
+    #[must_use]
     pub fn get_measurement_results(&self) -> HashMap<String, TypedValue> {
         let mut results = HashMap::new();
         for (i, info) in self.metadata.iter().enumerate() {
@@ -755,19 +777,22 @@ impl Environment {
     }
 
     /// Gets the total number of qubits in the environment
+    #[must_use]
     pub fn count_qubits(&self) -> usize {
-        self.get_variables_of_type(DataType::Qubits)
+        self.get_variables_of_type(&DataType::Qubits)
             .iter()
             .map(|info| info.size)
             .sum()
     }
 
     /// Returns the total number of variables in the environment
+    #[must_use]
     pub fn len(&self) -> usize {
         self.values.len()
     }
 
     /// Checks if the environment is empty
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
@@ -778,8 +803,7 @@ impl Environment {
         // Check if source variable exists
         if !self.has_variable(source) {
             return Err(PecosError::Input(format!(
-                "Cannot map nonexistent variable '{}' to '{}'",
-                source, destination
+                "Cannot map nonexistent variable '{source}' to '{destination}'"
             )));
         }
 
@@ -790,6 +814,7 @@ impl Environment {
     }
 
     /// Gets all variable mappings
+    #[must_use]
     pub fn get_mappings(&self) -> &[(String, String)] {
         &self.mappings
     }
@@ -803,6 +828,7 @@ impl Environment {
     ///
     /// This method returns mapped results from defined mappings or falls back to all variables
     /// if no mappings are defined or no mapped variables have values.
+    #[must_use]
     pub fn get_mapped_results(&self) -> HashMap<String, u32> {
         let mut results = HashMap::new();
 
@@ -844,14 +870,12 @@ impl Environment {
             } else {
                 // This should never happen as we just created the variable if it didn't exist
                 Err(PecosError::Input(format!(
-                    "Failed to copy '{}' to '{}': destination not found after creation",
-                    src_name, dst_name
+                    "Failed to copy '{src_name}' to '{dst_name}': destination not found after creation"
                 )))
             }
         } else {
             Err(PecosError::Input(format!(
-                "Failed to copy '{}' to '{}': source not found",
-                src_name, dst_name
+                "Failed to copy '{src_name}' to '{dst_name}': source not found"
             )))
         }
     }
@@ -901,7 +925,7 @@ mod tests {
         assert_eq!(env.get_raw("i8_var"), Some(127));
 
         env.set_raw("i8_var", 128).unwrap(); // Should wrap to -128
-        assert_eq!(env.get_raw("i8_var"), Some(0xFFFFFFFFFFFFFF80)); // -128 as u64
+        assert_eq!(env.get_raw("i8_var"), Some(0xFFFF_FFFF_FFFF_FF80)); // -128 as u64
 
         // Test u8 constraints (0 to 255)
         env.set_raw("u8_var", 255).unwrap();

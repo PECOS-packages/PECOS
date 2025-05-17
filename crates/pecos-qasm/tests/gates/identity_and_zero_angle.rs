@@ -1,6 +1,7 @@
 use pecos_engines::engines::classical::ClassicalEngine;
 use pecos_qasm::engine::QASMEngine;
 use pecos_qasm::{Operation, QASMParser};
+use std::str::FromStr;
 
 #[test]
 fn test_p_zero_gate_compiles() {
@@ -14,8 +15,7 @@ fn test_p_zero_gate_compiles() {
     "#;
 
     // Parse and compile
-    let mut engine = QASMEngine::from_str(qasm)
-        .expect("Failed to load program");
+    let mut engine = QASMEngine::from_str(qasm).expect("Failed to load program");
 
     // This should now compile successfully with the updated qelib1.inc
     let _messages = engine
@@ -48,7 +48,7 @@ fn test_u_identity_gate_expansion() {
         if let Some(op) = program.operations.first() {
             match op {
                 Operation::Gate { name, .. } => {
-                    println!("Gate after expansion: {}", name);
+                    println!("Gate after expansion: {name}");
                     // u(0,0,0) might remain as U or be expanded
                     // depending on implementation
                 }
@@ -57,7 +57,10 @@ fn test_u_identity_gate_expansion() {
         }
     } else {
         // If expanded, check we have the expected operations
-        println!("Gate was expanded into {} operations", program.operations.len());
+        println!(
+            "Gate was expanded into {} operations",
+            program.operations.len()
+        );
     }
 }
 
@@ -71,14 +74,20 @@ fn test_p_gate_expansion() {
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse phase gate");
-    
+
     // p(0) expands to rz(0)
     assert_eq!(program.operations.len(), 1);
-    
-    if let Operation::Gate { name, parameters, .. } = &program.operations[0] {
+
+    if let Operation::Gate {
+        name, parameters, ..
+    } = &program.operations[0]
+    {
         assert_eq!(name, "RZ");
         assert_eq!(parameters.len(), 1);
-        assert_eq!(parameters[0], 0.0, "RZ angle should be 0");
+        assert!(
+            (parameters[0] - 0.0).abs() < f64::EPSILON,
+            "RZ angle should be 0"
+        );
     } else {
         panic!("Expected RZ gate");
     }
@@ -94,16 +103,28 @@ fn test_u_gate_expansion() {
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse u gate");
-    
-    // u(0,0,0) now maps directly to native U gate  
+
+    // u(0,0,0) now maps directly to native U gate
     assert_eq!(program.operations.len(), 1);
-    
-    if let Operation::Gate { name, parameters, .. } = &program.operations[0] {
+
+    if let Operation::Gate {
+        name, parameters, ..
+    } = &program.operations[0]
+    {
         assert_eq!(name, "U");
         assert_eq!(parameters.len(), 3);
-        assert_eq!(parameters[0], 0.0, "U theta parameter should be 0");
-        assert_eq!(parameters[1], 0.0, "U phi parameter should be 0");
-        assert_eq!(parameters[2], 0.0, "U lambda parameter should be 0");
+        assert!(
+            (parameters[0] - 0.0).abs() < f64::EPSILON,
+            "U theta parameter should be 0"
+        );
+        assert!(
+            (parameters[1] - 0.0).abs() < f64::EPSILON,
+            "U phi parameter should be 0"
+        );
+        assert!(
+            (parameters[2] - 0.0).abs() < f64::EPSILON,
+            "U lambda parameter should be 0"
+        );
     } else {
         panic!("Expected U gate");
     }
@@ -120,28 +141,28 @@ fn test_identity_operations() {
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse identity operations");
-    
+
     println!("Identity operations parsed: {}", program.operations.len());
-    
+
     // Both operations are identity operations
     for op in &program.operations {
-        match op {
-            Operation::Gate { name, parameters, .. } => {
-                match name.as_str() {
-                    "U" => {
-                        assert_eq!(parameters.len(), 3);
-                        assert_eq!(parameters[0], 0.0);
-                        assert_eq!(parameters[1], 0.0);
-                        assert_eq!(parameters[2], 0.0);
-                    }
-                    "RZ" => {
-                        assert_eq!(parameters.len(), 1);
-                        assert_eq!(parameters[0], 0.0);
-                    }
-                    _ => {}
+        if let Operation::Gate {
+            name, parameters, ..
+        } = op
+        {
+            match name.as_str() {
+                "U" => {
+                    assert_eq!(parameters.len(), 3);
+                    assert!((parameters[0] - 0.0).abs() < f64::EPSILON);
+                    assert!((parameters[1] - 0.0).abs() < f64::EPSILON);
+                    assert!((parameters[2] - 0.0).abs() < f64::EPSILON);
                 }
+                "RZ" => {
+                    assert_eq!(parameters.len(), 1);
+                    assert!((parameters[0] - 0.0).abs() < f64::EPSILON);
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 }
@@ -156,12 +177,18 @@ fn test_gate_definitions_updated() {
 
     // Parse to load gate definitions
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    
+
     // Check that p gate is defined
-    assert!(program.gate_definitions.contains_key("p"), "p gate should be defined");
-    
+    assert!(
+        program.gate_definitions.contains_key("p"),
+        "p gate should be defined"
+    );
+
     // Check u gate is defined
-    assert!(program.gate_definitions.contains_key("u"), "u gate should be defined");
+    assert!(
+        program.gate_definitions.contains_key("u"),
+        "u gate should be defined"
+    );
 }
 
 #[test]
@@ -175,24 +202,40 @@ fn test_zero_angle_gates() {
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse zero angle gates");
-    
+
     // p(0) expands to rz(0)
     // u(0,0,0) now maps directly to native U gate
     // So total: rz(0), U(0,0,0)
     assert_eq!(program.operations.len(), 2);
-    
+
     // Check that we have the expected gates
     for (i, op) in program.operations.iter().enumerate() {
         match op {
-            Operation::Gate { name, parameters, .. } if name == "RZ" => {
+            Operation::Gate {
+                name, parameters, ..
+            } if name == "RZ" => {
                 assert_eq!(parameters.len(), 1);
-                assert_eq!(parameters[0], 0.0, "RZ angle at operation {} should be 0", i);
+                assert!(
+                    (parameters[0] - 0.0).abs() < f64::EPSILON,
+                    "RZ angle at operation {i} should be 0"
+                );
             }
-            Operation::Gate { name, parameters, .. } if name == "U" => {
+            Operation::Gate {
+                name, parameters, ..
+            } if name == "U" => {
                 assert_eq!(parameters.len(), 3);
-                assert_eq!(parameters[0], 0.0, "U theta parameter should be 0");
-                assert_eq!(parameters[1], 0.0, "U phi parameter should be 0");
-                assert_eq!(parameters[2], 0.0, "U lambda parameter should be 0");
+                assert!(
+                    (parameters[0] - 0.0).abs() < f64::EPSILON,
+                    "U theta parameter should be 0"
+                );
+                assert!(
+                    (parameters[1] - 0.0).abs() < f64::EPSILON,
+                    "U phi parameter should be 0"
+                );
+                assert!(
+                    (parameters[2] - 0.0).abs() < f64::EPSILON,
+                    "U lambda parameter should be 0"
+                );
             }
             _ => {}
         }
@@ -209,10 +252,10 @@ fn test_u_gate_is_native() {
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM");
-    
+
     // U gate should remain as U (not expanded) since it's native
     assert_eq!(program.operations.len(), 1);
-    
+
     if let Operation::Gate { name, .. } = &program.operations[0] {
         assert_eq!(name, "U");
     } else {

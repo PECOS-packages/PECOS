@@ -6,9 +6,9 @@ fn test_gate_expansion_basic() {
     let qasm = r"
         OPENQASM 2.0;
         qreg q[1];
-        
+
         gate mygate a { H a; }
-        
+
         mygate q[0];
     ";
 
@@ -29,11 +29,11 @@ fn test_gate_expansion_basic() {
 
 #[test]
 fn test_gate_expansion_native_gate() {
-    let qasm = r#"
+    let qasm = r"
         OPENQASM 2.0;
         qreg q[1];
         H q[0];
-    "#;
+    ";
 
     let program = QASMParser::parse_str_raw(qasm).unwrap();
 
@@ -53,7 +53,7 @@ fn test_gate_expansion_rx() {
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[1];
-        rx(1.5708) q[0];
+        rx(pi/2) q[0];
     "#;
 
     let program = QASMParser::parse_str(qasm).unwrap();
@@ -81,8 +81,8 @@ fn test_gate_expansion_rx() {
         assert_eq!(qubits, &[0]);
         assert_eq!(parameters.len(), 1);
         assert!(
-            (parameters[0] - 1.5708).abs() < 1e-6,
-            "Expected parameter 1.5708, got {}",
+            (parameters[0] - std::f64::consts::FRAC_PI_2).abs() < 1e-6,
+            "Expected parameter PI/2, got {}",
             parameters[0]
         );
     } else {

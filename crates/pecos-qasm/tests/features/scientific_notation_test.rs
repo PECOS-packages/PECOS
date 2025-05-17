@@ -30,7 +30,7 @@ fn test_scientific_notation_formats() {
         // With no integer part
         rx(.5e2) q[0];
         rx(.5E2) q[0];
-        
+
         // Regular decimal numbers still work
         rx(3.14159) q[0];
         rx(0.123) q[0];

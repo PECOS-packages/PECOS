@@ -42,7 +42,6 @@ fn format_qubits(
     Ok(())
 }
 
-
 /// Represents a gate definition
 #[derive(Debug, Clone)]
 pub struct GateDefinition {
@@ -501,16 +500,15 @@ impl Expression {
         &self,
         context: Option<&dyn crate::ast::EvaluationContext>,
     ) -> Result<f64, PecosError> {
-        if let Some(_ctx) = context {
+        if let Some(ctx) = context {
             // Use the trait's evaluate_float method
-            _ctx.evaluate_float(self)
+            ctx.evaluate_float(self)
         } else {
             // Evaluate without context
             self.evaluate(None)
         }
     }
 }
-
 
 // For compatibility with existing code, we keep the trait
 pub trait EvaluationContext {

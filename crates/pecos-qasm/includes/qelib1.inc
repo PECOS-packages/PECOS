@@ -215,4 +215,3 @@ gate ccx a,b,c {
 gate cnot a,b { cx a,b; }
 gate cphase90 a,b { cphase(pi/2) a,b; }
 gate cphase180 a,b { cz a,b; }
-

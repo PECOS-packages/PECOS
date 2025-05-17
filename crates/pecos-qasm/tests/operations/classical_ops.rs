@@ -1,7 +1,8 @@
 //! Comprehensive tests for classical operations in QASM
 //! Consolidates tests for basic, complex, and supported classical operations
 
-use pecos_qasm::{Operation, parser::QASMParser, engine::QASMEngine};
+use pecos_qasm::{Operation, engine::QASMEngine, parser::QASMParser};
+use std::str::FromStr;
 
 #[test]
 fn test_basic_classical_assignments() {
@@ -91,11 +92,12 @@ fn test_classical_conditional_operations() {
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse conditional operations");
-    
+
     // Verify conditional operations are parsed
-    let has_conditionals = program.operations.iter().any(|op| {
-        matches!(op, Operation::If { .. })
-    });
+    let has_conditionals = program
+        .operations
+        .iter()
+        .any(|op| matches!(op, Operation::If { .. }));
     assert!(has_conditionals, "Should have conditional operations");
 }
 
@@ -125,13 +127,18 @@ fn test_complex_classical_expressions() {
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse complex expressions");
-    
+
     // Count classical operations
-    let classical_count = program.operations.iter()
+    let classical_count = program
+        .operations
+        .iter()
         .filter(|op| matches!(op, Operation::ClassicalAssignment { .. }))
         .count();
-    
-    assert!(classical_count >= 10, "Should have many classical operations");
+
+    assert!(
+        classical_count >= 10,
+        "Should have many classical operations"
+    );
 }
 
 #[test]
@@ -149,7 +156,7 @@ fn test_classical_operations_with_execution() {
         a = 3;              // a = 11
         c = c + a;          // c = 0101 + 0011 = 1000 (8)
         c[0] = 0;           // c = 1000
-        
+
         measure q[0] -> a[0];
     "#;
 
@@ -162,7 +169,7 @@ fn test_classical_operations_with_execution() {
 #[test]
 fn test_supported_vs_unsupported_operations() {
     // Document what's supported vs not supported
-    
+
     // SUPPORTED:
     let supported_qasm = r#"
         OPENQASM 2.0;
@@ -170,7 +177,7 @@ fn test_supported_vs_unsupported_operations() {
 
         creg c[4];
         creg a[4];
-        
+
         // These should all parse successfully
         c = 5;              // Integer assignment
         c = a;              // Register assignment
@@ -179,12 +186,12 @@ fn test_supported_vs_unsupported_operations() {
         c[0] = 1;           // Bit assignment
         c = ~a;             // Unary operations
     "#;
-    
+
     match QASMParser::parse_str(supported_qasm) {
-        Ok(_) => {}, // Test passes
-        Err(e) => panic!("All supported operations should parse, but got error: {:?}", e)
+        Ok(_) => {} // Test passes
+        Err(e) => panic!("All supported operations should parse, but got error: {e:?}"),
     }
-    
+
     // UNSUPPORTED (if any):
     // Add tests for operations that should fail if there are known unsupported cases
 }

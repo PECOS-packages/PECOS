@@ -11,6 +11,7 @@ mod tests {
 
     // Test meta instructions
     #[test]
+    #[allow(clippy::unnecessary_wraps)]
     fn test_meta_instructions() -> Result<(), PecosError> {
         // Define the PHIR program inline
         let phir_json = r#"{
@@ -62,20 +63,20 @@ mod tests {
         register_shots.insert("output".to_string(), vec![2]);
         register_shots.insert("result".to_string(), vec![2]);
 
-        let mut register_shots_u64 = HashMap::new();
-        register_shots_u64.insert("output".to_string(), vec![2]);
-        register_shots_u64.insert("result".to_string(), vec![2]);
+        let mut u64_register_shots = HashMap::new();
+        u64_register_shots.insert("output".to_string(), vec![2]);
+        u64_register_shots.insert("result".to_string(), vec![2]);
 
-        let mut register_shots_i64 = HashMap::new();
-        register_shots_i64.insert("output".to_string(), vec![2]);
-        register_shots_i64.insert("result".to_string(), vec![2]);
+        let mut i64_register_shots = HashMap::new();
+        i64_register_shots.insert("output".to_string(), vec![2]);
+        i64_register_shots.insert("result".to_string(), vec![2]);
 
         // Create manual results for verification
         let results = ShotResults {
             shots: vec![register_map],
             register_shots,
-            register_shots_u64,
-            register_shots_i64,
+            register_shots_u64: u64_register_shots,
+            register_shots_i64: i64_register_shots,
         };
 
         // Make sure we have results

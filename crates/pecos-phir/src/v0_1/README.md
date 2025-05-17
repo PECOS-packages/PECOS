@@ -100,24 +100,24 @@ Machine operations can be combined with quantum and classical operations in PHIR
   "ops": [
     {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
     {"data": "cvar_define", "data_type": "i32", "variable": "result", "size": 32},
-    
+
     {"qop": "H", "args": [["q", 0]]},
-    
+
     {"mop": "Idle", "args": [["q", 0], ["q", 1]], "duration": [5.0, "ms"]},
-    
+
     {"mop": "Delay", "args": [["q", 0]], "duration": [2.0, "us"]},
-    
+
     {"mop": "Transport", "args": [["q", 1]], "duration": [1.0, "ms"], "metadata": {"from_position": [0, 0], "to_position": [1, 0]}},
-    
+
     {"mop": "Timing", "args": [["q", 0], ["q", 1]], "metadata": {"timing_type": "sync", "label": "sync_point_1"}},
-    
+
     {"mop": "Reset", "args": [["q", 0]], "duration": [0.5, "us"]},
-    
+
     {"qop": "CX", "args": [["q", 0], ["q", 1]]},
-    
+
     {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]},
     {"qop": "Measure", "args": [["q", 1]], "returns": [["m", 1]]},
-    
+
     {"cop": "=", "args": [{"cop": "+", "args": [["m", 0], ["m", 1]]}], "returns": ["result"]},
     {"cop": "Result", "args": ["result"], "returns": ["output"]}
   ]

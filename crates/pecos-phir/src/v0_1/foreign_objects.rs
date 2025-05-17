@@ -65,8 +65,7 @@ impl ForeignObject for DummyForeignObject {
 
     fn exec(&mut self, func_name: &str, _args: &[i64]) -> Result<Vec<i64>, PecosError> {
         Err(PecosError::Input(format!(
-            "Dummy foreign object cannot execute function: {}",
-            func_name
+            "Dummy foreign object cannot execute function: {func_name}"
         )))
     }
 

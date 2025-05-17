@@ -27,29 +27,43 @@ fn test_x_gate_and_measure() {
             Operation::Gate { name, qubits, .. } => {
                 operation_types.push(("gate", name.clone(), qubits.clone()));
             }
-            Operation::Measure { qubit, c_reg, c_index } => {
-                operation_types.push(("measure", format!("{}[{}]", c_reg, c_index), vec![*qubit]));
+            Operation::Measure {
+                qubit,
+                c_reg,
+                c_index,
+            } => {
+                operation_types.push(("measure", format!("{c_reg}[{c_index}]"), vec![*qubit]));
             }
             _ => {}
         }
     }
 
     // We should have at least 2 operations (X gate might be expanded)
-    assert!(operation_types.len() >= 2, "Should have at least 2 operations");
+    assert!(
+        operation_types.len() >= 2,
+        "Should have at least 2 operations"
+    );
 
     // Check for X gate (or its expansion)
-    let has_x = operation_types.iter().any(|(_, name, _)| name == "X" || name == "x");
+    let has_x = operation_types
+        .iter()
+        .any(|(_, name, _)| name == "X" || name == "x");
     assert!(has_x, "Should have X gate");
 
     // Check for measurement
-    let has_measure = operation_types.iter().any(|(op_type, _, _)| op_type == &"measure");
+    let has_measure = operation_types
+        .iter()
+        .any(|(op_type, _, _)| op_type == &"measure");
     assert!(has_measure, "Should have measure operation");
 
     // Verify the measurement is from q[10] to c[10]
     for (op_type, target, qubits) in &operation_types {
         if op_type == &"measure" {
             assert_eq!(qubits, &vec![10], "Measurement should be on qubit 10");
-            assert_eq!(target, "c[10]", "Measurement should be to classical bit c[10]");
+            assert_eq!(
+                target, "c[10]",
+                "Measurement should be to classical bit c[10]"
+            );
         }
     }
 
@@ -79,7 +93,7 @@ fn test_multiple_measurements() {
         x q[1];
         y q[2];
         z q[3];
-        
+
         measure q[0] -> c[0];
         measure q[1] -> c[1];
         measure q[2] -> c[2];
@@ -87,18 +101,23 @@ fn test_multiple_measurements() {
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse multiple measurements");
-    
+
     // Count measurements
     let mut measurements = Vec::new();
-    
+
     for op in &program.operations {
-        if let Operation::Measure { qubit, c_reg, c_index } = op {
+        if let Operation::Measure {
+            qubit,
+            c_reg,
+            c_index,
+        } = op
+        {
             measurements.push((*qubit, c_reg.clone(), *c_index));
         }
     }
-    
+
     assert_eq!(measurements.len(), 4, "Should have 4 measurements");
-    
+
     // Check each measurement
     assert!(measurements.contains(&(0, "c".to_string(), 0)));
     assert!(measurements.contains(&(1, "c".to_string(), 1)));
@@ -117,20 +136,25 @@ fn test_measure_syntax_variations() {
 
         // Standard measurement
         measure q[0] -> c[0];
-        
+
         // Measurement to different register
         measure q[1] -> d[0];
-        
+
         // Measurement with different indices
         measure q[2] -> c[1];
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse measure syntax variations");
-    
+
     let mut measurements = Vec::new();
-    
+
     for op in &program.operations {
-        if let Operation::Measure { qubit, c_reg, c_index } = op {
+        if let Operation::Measure {
+            qubit,
+            c_reg,
+            c_index,
+        } = op
+        {
             measurements.push((*qubit, c_reg.clone(), *c_index));
         }
     }
@@ -138,9 +162,21 @@ fn test_measure_syntax_variations() {
     assert_eq!(measurements.len(), 3, "Should have 3 measurements");
 
     // Verify each measurement
-    assert!(measurements.iter().any(|(q, reg, idx)| *q == 0 && reg == "c" && *idx == 0));
-    assert!(measurements.iter().any(|(q, reg, idx)| *q == 1 && reg == "d" && *idx == 0));
-    assert!(measurements.iter().any(|(q, reg, idx)| *q == 2 && reg == "c" && *idx == 1));
+    assert!(
+        measurements
+            .iter()
+            .any(|(q, reg, idx)| *q == 0 && reg == "c" && *idx == 0)
+    );
+    assert!(
+        measurements
+            .iter()
+            .any(|(q, reg, idx)| *q == 1 && reg == "d" && *idx == 0)
+    );
+    assert!(
+        measurements
+            .iter()
+            .any(|(q, reg, idx)| *q == 2 && reg == "c" && *idx == 1)
+    );
 }
 
 #[test]
@@ -157,32 +193,37 @@ fn test_measure_after_gates() {
         measure q[1] -> c[1];
     "#;
 
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse gates followed by measurements");
-    
+    let program =
+        QASMParser::parse_str(qasm).expect("Failed to parse gates followed by measurements");
+
     // Track the order of operations
     let mut operation_sequence = Vec::new();
-    
+
     for op in &program.operations {
         match op {
             Operation::Gate { name, .. } => {
-                operation_sequence.push(format!("gate:{}", name));
+                operation_sequence.push(format!("gate:{name}"));
             }
             Operation::Measure { qubit, .. } => {
-                operation_sequence.push(format!("measure:q[{}]", qubit));
+                operation_sequence.push(format!("measure:q[{qubit}]"));
             }
             _ => {}
         }
     }
-    
+
     // Verify that measurements come after gates
-    let measure_indices: Vec<_> = operation_sequence.iter()
+    let measure_indices: Vec<_> = operation_sequence
+        .iter()
         .enumerate()
         .filter(|(_, op)| op.starts_with("measure:"))
         .map(|(i, _)| i)
         .collect();
-    
+
     assert_eq!(measure_indices.len(), 2, "Should have 2 measurements");
-    
+
     // Both measurements should be at the end
-    assert!(measure_indices[0] > 0, "First measurement should not be at the beginning");
+    assert!(
+        measure_indices[0] > 0,
+        "First measurement should not be at the beginning"
+    );
 }

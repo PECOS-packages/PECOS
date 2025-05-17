@@ -66,7 +66,7 @@ impl WasmtimeForeignObject {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, PecosError> {
         // Read the WebAssembly file
         let wasm_bytes = std::fs::read(path)
-            .map_err(|e| PecosError::Input(format!("Failed to read WebAssembly file: {}", e)))?;
+            .map_err(|e| PecosError::Input(format!("Failed to read WebAssembly file: {e}")))?;
 
         Self::from_bytes(&wasm_bytes)
     }
@@ -89,7 +89,7 @@ impl WasmtimeForeignObject {
         let mut config = Config::new();
         config.epoch_interruption(true);
         let engine = Engine::new(&config).map_err(|e| {
-            PecosError::Processing(format!("Failed to create WebAssembly engine: {}", e))
+            PecosError::Processing(format!("Failed to create WebAssembly engine: {e}"))
         })?;
 
         // Create a new store
@@ -97,7 +97,7 @@ impl WasmtimeForeignObject {
 
         // Compile the WebAssembly module
         let module = Module::new(&engine, wasm_bytes).map_err(|e| {
-            PecosError::Processing(format!("Failed to compile WebAssembly module: {}", e))
+            PecosError::Processing(format!("Failed to compile WebAssembly module: {e}"))
         })?;
 
         let stop_flag = Arc::new(RwLock::new(false));
@@ -153,7 +153,7 @@ impl WasmtimeForeignObject {
         // Get the function
         let mut store = self.store.write();
         let func = instance.get_func(&mut *store, func_name).ok_or_else(|| {
-            PecosError::Resource(format!("WebAssembly function '{}' not found", func_name))
+            PecosError::Resource(format!("WebAssembly function '{func_name}' not found"))
         })?;
 
         Ok(func)
@@ -198,7 +198,7 @@ impl ForeignObject for WasmtimeForeignObject {
 
         // Create a new instance
         let instance = Instance::new(&mut *store, &self.module, &[]).map_err(|e| {
-            PecosError::Processing(format!("Failed to create WebAssembly instance: {}", e))
+            PecosError::Processing(format!("Failed to create WebAssembly instance: {e}"))
         })?;
 
         // Store the instance
@@ -228,16 +228,29 @@ impl ForeignObject for WasmtimeForeignObject {
     }
 
     fn exec(&mut self, func_name: &str, args: &[i64]) -> Result<Vec<i64>, PecosError> {
-        debug!(
-            "Executing WebAssembly function '{}' with args {:?}",
-            func_name, args
-        );
+        debug!("Executing WebAssembly function '{func_name}' with args {args:?}");
 
         // Get the function
         let func = self.get_function(func_name)?;
 
         // Convert the arguments
-        let wasm_args: Vec<_> = args.iter().map(|a| wasmtime::Val::I32(*a as i32)).collect();
+        let wasm_args: Vec<_> = args
+            .iter()
+            .map(|a| {
+                // Try to convert i64 to i32 with proper bounds checking
+                let value = if *a > i64::from(i32::MAX) {
+                    warn!("Argument value {a} exceeds i32::MAX, clamping to i32::MAX");
+                    i32::MAX
+                } else if *a < i64::from(i32::MIN) {
+                    warn!("Argument value {a} is less than i32::MIN, clamping to i32::MIN");
+                    i32::MIN
+                } else {
+                    // Safe: we've verified the value is in range
+                    i32::try_from(*a).expect("Value should be in range after bounds check")
+                };
+                wasmtime::Val::I32(value)
+            })
+            .collect();
 
         // Execute the function
         let mut store = self.store.write();
@@ -255,14 +268,13 @@ impl ForeignObject for WasmtimeForeignObject {
             // Function returns something, create an appropriate buffer
             let mut results_buffer = vec![Val::I32(0); results_len];
             debug!(
-                "Calling WebAssembly function '{}' with args {:?}, expecting {} results",
-                func_name, wasm_args, results_len
+                "Calling WebAssembly function '{func_name}' with args {wasm_args:?}, expecting {results_len} results"
             );
             let res = func.call(&mut *store, &wasm_args, &mut results_buffer);
 
             // Store the results if successful
             if res.is_ok() {
-                debug!("WebAssembly function returned {:?}", results_buffer);
+                debug!("WebAssembly function returned {results_buffer:?}");
                 self.last_results = results_buffer;
             }
 
@@ -302,17 +314,15 @@ impl ForeignObject for WasmtimeForeignObject {
                 // Check if the error is a timeout
                 if let Some(trap) = e.downcast_ref::<Trap>() {
                     if trap.to_string().contains("interrupt") {
+                        let timeout_ms = WASM_EXECUTION_MAX_TICKS * WASM_EXECUTION_TICK_LENGTH_MS;
                         return Err(PecosError::Processing(format!(
-                            "WebAssembly function '{}' timed out after {}ms",
-                            func_name,
-                            WASM_EXECUTION_MAX_TICKS * WASM_EXECUTION_TICK_LENGTH_MS
+                            "WebAssembly function '{func_name}' timed out after {timeout_ms}ms"
                         )));
                     }
                 }
 
                 Err(PecosError::Processing(format!(
-                    "WebAssembly function '{}' failed with error: {}",
-                    func_name, e
+                    "WebAssembly function '{func_name}' failed with error: {e}"
                 )))
             }
         }

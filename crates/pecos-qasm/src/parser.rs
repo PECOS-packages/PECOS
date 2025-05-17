@@ -11,9 +11,10 @@ use crate::preprocessor::Preprocessor;
 
 #[derive(Parser)]
 #[grammar = "qasm.pest"]
+#[allow(clippy::too_many_lines)] // Generated code from pest
 pub struct QASMParser;
 
-/// Native gates that PECOS can execute directly through ByteMessage
+/// Native gates that PECOS can execute directly through `ByteMessage`
 /// These gates don't need to be expanded and can be handled by the quantum engine
 const PECOS_NATIVE_GATES: &[&str] = &[
     // Quantum gates from ByteMessage::GateType
@@ -112,11 +113,11 @@ impl QASMParser {
 
     /// Parse QASM source with default configuration
     pub fn parse_str(source: &str) -> Result<Program, PecosError> {
-        Self::parse_with_config(source, ParseConfig::default())
+        Self::parse_with_config(source, &ParseConfig::default())
     }
 
     /// Main parsing method using configuration
-    pub fn parse_with_config(source: &str, config: ParseConfig) -> Result<Program, PecosError> {
+    pub fn parse_with_config(source: &str, config: &ParseConfig) -> Result<Program, PecosError> {
         // Create preprocessor
         let mut preprocessor = Preprocessor::new();
         for (name, content) in &config.includes {
@@ -165,7 +166,7 @@ impl QASMParser {
             }
         }
 
-        Self::parse_with_config(&content, config)
+        Self::parse_with_config(&content, &config)
     }
 
     /// Get the preprocessed QASM (after phase 1 - include resolution)
@@ -302,7 +303,7 @@ impl QASMParser {
             ..Default::default()
         };
 
-        Self::parse_with_config(source, config)
+        Self::parse_with_config(source, &config)
     }
 
     /// Parse QASM source string without preprocessing includes
@@ -628,6 +629,7 @@ impl QASMParser {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn parse_quantum_op(
         pair: pest::iterators::Pair<Rule>,
         program: &Program,
@@ -665,18 +667,30 @@ impl QASMParser {
                                         Rule::identifier => {
                                             // Handle register name - expand to all qubits in register
                                             let reg_name = inner.as_str();
-                                            if let Some(qubit_ids) = program.quantum_registers.get(reg_name) {
-                                                register_or_qubits.push((reg_name.to_string(), qubit_ids.clone()));
+                                            if let Some(qubit_ids) =
+                                                program.quantum_registers.get(reg_name)
+                                            {
+                                                register_or_qubits.push((
+                                                    reg_name.to_string(),
+                                                    qubit_ids.clone(),
+                                                ));
                                             } else {
-                                                return Err(Self::unknown_register_error("quantum", reg_name));
+                                                return Err(Self::unknown_register_error(
+                                                    "quantum", reg_name,
+                                                ));
                                             }
                                         }
                                         Rule::qubit_id => {
                                             // Handle individual qubit
                                             let (reg_name, idx) = Self::parse_indexed_id(&inner)?;
-                                            if let Some(qubit_ids) = program.quantum_registers.get(&reg_name) {
+                                            if let Some(qubit_ids) =
+                                                program.quantum_registers.get(&reg_name)
+                                            {
                                                 if idx < qubit_ids.len() {
-                                                    register_or_qubits.push((format!("{}[{}]", reg_name, idx), vec![qubit_ids[idx]]));
+                                                    register_or_qubits.push((
+                                                        format!("{reg_name}[{idx}]"),
+                                                        vec![qubit_ids[idx]],
+                                                    ));
                                                 } else {
                                                     return Err(Self::register_index_error(
                                                         &reg_name,
@@ -685,7 +699,9 @@ impl QASMParser {
                                                     ));
                                                 }
                                             } else {
-                                                return Err(Self::unknown_register_error("quantum", &reg_name));
+                                                return Err(Self::unknown_register_error(
+                                                    "quantum", &reg_name,
+                                                ));
                                             }
                                         }
                                         _ => {}
@@ -701,7 +717,9 @@ impl QASMParser {
                 let num_operands = register_or_qubits.len();
 
                 // Check if any of the operands are actually full registers
-                let has_register = register_or_qubits.iter().any(|(_, qubits)| qubits.len() > 1);
+                let has_register = register_or_qubits
+                    .iter()
+                    .any(|(_, qubits)| qubits.len() > 1);
 
                 if !has_register {
                     // All operands are individual qubits, no expansion needed
@@ -759,7 +777,9 @@ impl QASMParser {
                             operation: Self::QASM_OPERATION.to_string(),
                             reason: format!(
                                 "Register size mismatch for gate {}: first operand has {} qubits, second has {}",
-                                gate_name, qubits1.len(), qubits2.len()
+                                gate_name,
+                                qubits1.len(),
+                                qubits2.len()
                             ),
                         });
                     }
@@ -1168,6 +1188,7 @@ impl QASMParser {
     }
 
     // Simplified gate expansion
+    #[allow(clippy::too_many_lines)]
     fn expand_gates(program: &mut Program) -> Result<(), PecosError> {
         let mut expanded_operations = Vec::new();
 
@@ -1194,26 +1215,10 @@ impl QASMParser {
                     // Check if this is a register-level gate operation that needs expansion
                     // Only handle PECOS native gates
                     let needs_register_expansion = match uppercase_name.as_str() {
-                        // Single-qubit native gates that can be applied to registers
-                        "H" | "X" | "Y" | "Z" => {
-                            qubits.len() > 1
-                        }
-                        // Parameterized single-qubit native gates
-                        "RZ" | "U" => {
-                            qubits.len() > 1
-                        }
-                        // Two-qubit native gates need pairwise expansion
-                        "CX" => {
-                            qubits.len() > 2
-                        }
-                        // R1XY is a single-qubit gate in PECOS
-                        "R1XY" => {
-                            qubits.len() > 1
-                        }
-                        // SZZ, RZZ, SZZdg are two-qubit gates
-                        "SZZ" | "RZZ" | "SZZDG" => {
-                            qubits.len() > 2
-                        }
+                        // Single-qubit gates that can be applied to registers
+                        "H" | "X" | "Y" | "Z" | "RZ" | "U" | "R1XY" => qubits.len() > 1,
+                        // Two-qubit gates need pairwise expansion
+                        "CX" | "SZZ" | "RZZ" | "SZZDG" => qubits.len() > 2,
                         _ => false,
                     };
 
@@ -1224,7 +1229,7 @@ impl QASMParser {
                             "H" | "X" | "Y" | "Z" | "RZ" | "R1XY" | "U" => {
                                 for &qubit in qubits {
                                     expanded_operations.push(Operation::Gate {
-                                        name: name.clone(),  // Keep original name casing
+                                        name: name.clone(), // Keep original name casing
                                         parameters: parameters.clone(),
                                         qubits: vec![qubit],
                                     });
@@ -1237,7 +1242,8 @@ impl QASMParser {
                                         operation: format!("gate '{name}'"),
                                         reason: format!(
                                             "Two-qubit gate '{}' applied to {} qubits (must be even number)",
-                                            name, qubits.len()
+                                            name,
+                                            qubits.len()
                                         ),
                                     });
                                 }
@@ -1279,24 +1285,27 @@ impl QASMParser {
                     // Expand register-level measurement to individual measurements
                     let q_qubits = program.quantum_registers.get(q_reg).ok_or_else(|| {
                         PecosError::CompileInvalidOperation {
-                            operation: format!("measure {} -> {}", q_reg, c_reg),
-                            reason: format!("Unknown quantum register: {}", q_reg),
+                            operation: format!("measure {q_reg} -> {c_reg}"),
+                            reason: format!("Unknown quantum register: {q_reg}"),
                         }
                     })?;
 
                     let c_size = program.classical_registers.get(c_reg).ok_or_else(|| {
                         PecosError::CompileInvalidOperation {
-                            operation: format!("measure {} -> {}", q_reg, c_reg),
-                            reason: format!("Unknown classical register: {}", c_reg),
+                            operation: format!("measure {q_reg} -> {c_reg}"),
+                            reason: format!("Unknown classical register: {c_reg}"),
                         }
                     })?;
 
                     if q_qubits.len() != *c_size {
                         return Err(PecosError::CompileInvalidOperation {
-                            operation: format!("measure {} -> {}", q_reg, c_reg),
+                            operation: format!("measure {q_reg} -> {c_reg}"),
                             reason: format!(
                                 "Register size mismatch: quantum register {} has {} qubits, classical register {} has {} bits",
-                                q_reg, q_qubits.len(), c_reg, c_size
+                                q_reg,
+                                q_qubits.len(),
+                                c_reg,
+                                c_size
                             ),
                         });
                     }

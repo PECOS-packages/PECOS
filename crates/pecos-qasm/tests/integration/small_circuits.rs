@@ -29,7 +29,7 @@ fn test_simple_unified_includes() {
         .to_string(),
     ));
 
-    let program2 = QASMParser::parse_with_config(qasm, config).unwrap();
+    let program2 = QASMParser::parse_with_config(qasm, &config).unwrap();
     assert!(program2.gate_definitions.contains_key("h"));
     assert!(!program2.gate_definitions.contains_key("cx")); // User version only has h
 
@@ -50,7 +50,7 @@ fn test_simple_unified_includes() {
     ));
     // Don't override qelib1 - let system version be used
 
-    let program3 = QASMParser::parse_with_config(qasm_mixed, config).unwrap();
+    let program3 = QASMParser::parse_with_config(qasm_mixed, &config).unwrap();
     assert!(program3.gate_definitions.contains_key("my_gate")); // From user custom.inc
     assert!(program3.gate_definitions.contains_key("h")); // From system qelib1
     assert!(program3.gate_definitions.contains_key("cx")); // System qelib1 has cx

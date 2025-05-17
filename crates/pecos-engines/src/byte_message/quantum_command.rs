@@ -285,7 +285,9 @@ impl fmt::Display for QuantumCommand {
             QuantumCommand::CX(control, target) => write!(f, "CX {control} {target}"),
             QuantumCommand::RZ(angle, qubit) => write!(f, "RZ {angle} {qubit}"),
             QuantumCommand::R1XY(theta, phi, qubit) => write!(f, "R1XY {theta} {phi} {qubit}"),
-            QuantumCommand::U(theta, phi, lambda, qubit) => write!(f, "U {theta} {phi} {lambda} {qubit}"),
+            QuantumCommand::U(theta, phi, lambda, qubit) => {
+                write!(f, "U {theta} {phi} {lambda} {qubit}")
+            }
             QuantumCommand::SZZ(qubit1, qubit2) => write!(f, "SZZ {qubit1} {qubit2}"),
             QuantumCommand::RZZ(angle, qubit1, qubit2) => {
                 write!(f, "RZZ {angle} {qubit1} {qubit2}")

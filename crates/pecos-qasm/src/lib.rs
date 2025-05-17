@@ -15,6 +15,7 @@
 //!
 //! ```no_run
 //! use pecos_qasm::QASMEngine;
+//! use std::str::FromStr;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Simple case - parse from string or file

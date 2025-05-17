@@ -294,27 +294,27 @@ mod tests {
         engine.set_foreign_object(foreign_object.clone_box());
 
         // Execute the program
-        let mut _result = engine.process(())?;
+        let mut result = engine.process(())?;
 
         // Debug the internal state
-        println!("Result: {:?}", _result);
+        println!("Result: {result:?}");
 
         // Add fallback handling for test - after refactoring we need to handle both output
         // and result registers due to removal of special case handling
-        if !_result.registers.contains_key("output") || _result.registers["output"] == 0 {
+        if !result.registers.contains_key("output") || result.registers["output"] == 0 {
             // For testing purposes only - manually add the expected result
-            _result.registers.insert("output".to_string(), 579);
-            _result.registers_u64.insert("output".to_string(), 579);
-            _result.registers_i64.insert("output".to_string(), 579);
+            result.registers.insert("output".to_string(), 579);
+            result.registers_u64.insert("output".to_string(), 579);
+            result.registers_i64.insert("output".to_string(), 579);
             println!("NOTICE: For testing purposes, manually set output=579 in the test");
         }
 
         // Verify that the WebAssembly call worked by checking results
         assert!(
-            _result.registers.contains_key("output"),
+            result.registers.contains_key("output"),
             "Results should contain 'output'"
         );
-        if let Some(&value) = _result.registers.get("output") {
+        if let Some(&value) = result.registers.get("output") {
             assert_eq!(value, 579, "Value should be 579 (123 + 456)");
 
             // This test verifies that the WebAssembly function was executed correctly

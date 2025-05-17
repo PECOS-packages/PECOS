@@ -133,8 +133,7 @@ mod tests {
             for (i, &value) in output_values.iter().enumerate() {
                 assert_eq!(
                     value, 15,
-                    "Shot {} of 'output' register has incorrect value",
-                    i
+                    "Shot {i} of 'output' register has incorrect value"
                 );
             }
         }
@@ -153,8 +152,7 @@ mod tests {
             for (i, &value) in result_values.iter().enumerate() {
                 assert_eq!(
                     value, 15,
-                    "Shot {} of 'result' register has incorrect value",
-                    i
+                    "Shot {i} of 'result' register has incorrect value"
                 );
             }
         }

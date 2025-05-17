@@ -1,11 +1,12 @@
 use pecos_qasm::QASMParser;
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn test_large_23_qubit_circuit() {
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
-        
+
         qreg q[23];
         creg c[23];
         rz(0.0*pi) q[0];
@@ -284,21 +285,44 @@ fn test_large_23_qubit_circuit() {
         measure q[21] -> c[21];
         measure q[22] -> c[22];
     "#;
-    
+
     let program = QASMParser::parse_str(qasm).expect("Failed to parse large quantum circuit");
-    
+
     // Verify the circuit parsed correctly
-    assert!(!program.operations.is_empty(), "Should have many operations");
-    assert_eq!(program.quantum_registers.len(), 1, "Should have one quantum register");
-    assert_eq!(program.classical_registers.len(), 1, "Should have one classical register");
-    assert_eq!(program.quantum_registers["q"].len(), 23, "Should have 23 qubits");
-    assert_eq!(program.classical_registers["c"], 23, "Should have 23 classical bits");
-    
+    assert!(
+        !program.operations.is_empty(),
+        "Should have many operations"
+    );
+    assert_eq!(
+        program.quantum_registers.len(),
+        1,
+        "Should have one quantum register"
+    );
+    assert_eq!(
+        program.classical_registers.len(),
+        1,
+        "Should have one classical register"
+    );
+    assert_eq!(
+        program.quantum_registers["q"].len(),
+        23,
+        "Should have 23 qubits"
+    );
+    assert_eq!(
+        program.classical_registers["c"], 23,
+        "Should have 23 classical bits"
+    );
+
     // Verify we have measurements
-    let measurement_count = program.operations.iter()
+    let measurement_count = program
+        .operations
+        .iter()
         .filter(|op| matches!(op, pecos_qasm::Operation::Measure { .. }))
         .count();
-    assert_eq!(measurement_count, 23, "Should have 23 measurement operations");
+    assert_eq!(
+        measurement_count, 23,
+        "Should have 23 measurement operations"
+    );
 }
 
 #[test]
@@ -306,27 +330,31 @@ fn test_high_precision_decimal_values() {
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
-        
+
         qreg q[3];
-        
+
         // Test very precise decimal values
         rz(3.476807861242427*pi) q[0];
         rz(3.5008046949519622*pi) q[1];
         rz(2.9962230500357503*pi) q[2];
-        
+
         // Test values very close to common angles
         rz(3.000944375976313*pi) q[0];  // Very close to 3π
         rz(2.99995790244453*pi) q[1];   // Very close to 3π
-        
+
         // Test edge cases
         rz(0.0*pi) q[0];  // Zero rotation
         rz(1.0*pi) q[1];  // Exactly π
     "#;
-    
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM with high precision decimals");
-    
+
+    let program =
+        QASMParser::parse_str(qasm).expect("Failed to parse QASM with high precision decimals");
+
     // Verify parsing succeeded with high precision values
-    assert!(!program.operations.is_empty(), "Should have operations with precise decimals");
+    assert!(
+        !program.operations.is_empty(),
+        "Should have operations with precise decimals"
+    );
 }
 
 #[test]
@@ -334,34 +362,38 @@ fn test_repetitive_gate_patterns() {
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
-        
+
         qreg q[5];
-        
+
         // Apply same gate to multiple qubits
         sx q[0];
         sx q[1];
         sx q[2];
         sx q[3];
         sx q[4];
-        
+
         // Apply different rotations to each qubit
         rz(1.0*pi) q[0];
         rz(1.0*pi) q[1];
         rz(1.0*pi) q[2];
         rz(1.0*pi) q[3];
         rz(1.0*pi) q[4];
-        
+
         // Entangling pattern
         cx q[0],q[1];
         cx q[2],q[3];
-        
+
         // Chain of CNOTs
         cx q[1],q[2];
         cx q[3],q[4];
     "#;
-    
-    let program = QASMParser::parse_str(qasm).expect("Failed to parse QASM with repetitive patterns");
-    
+
+    let program =
+        QASMParser::parse_str(qasm).expect("Failed to parse QASM with repetitive patterns");
+
     // Just verify it parses correctly
-    assert!(!program.operations.is_empty(), "Should have operations in repetitive pattern");
+    assert!(
+        !program.operations.is_empty(),
+        "Should have operations in repetitive pattern"
+    );
 }

@@ -11,6 +11,7 @@ mod tests {
 
     // Test simple arithmetic operations with the simulation pipeline
     #[test]
+    #[allow(clippy::unnecessary_wraps)]
     fn test_simple_arithmetic() -> Result<(), PecosError> {
         // PHIR program as a JSON string
         let phir_json = r#"{
@@ -61,24 +62,24 @@ mod tests {
         register_shots.insert("a".to_string(), vec![7]);
         register_shots.insert("b".to_string(), vec![3]);
 
-        let mut register_shots_u64 = HashMap::new();
-        register_shots_u64.insert("output".to_string(), vec![10]);
-        register_shots_u64.insert("result".to_string(), vec![10]);
-        register_shots_u64.insert("a".to_string(), vec![7]);
-        register_shots_u64.insert("b".to_string(), vec![3]);
+        let mut u64_register_shots = HashMap::new();
+        u64_register_shots.insert("output".to_string(), vec![10]);
+        u64_register_shots.insert("result".to_string(), vec![10]);
+        u64_register_shots.insert("a".to_string(), vec![7]);
+        u64_register_shots.insert("b".to_string(), vec![3]);
 
-        let mut register_shots_i64 = HashMap::new();
-        register_shots_i64.insert("output".to_string(), vec![10]);
-        register_shots_i64.insert("result".to_string(), vec![10]);
-        register_shots_i64.insert("a".to_string(), vec![7]);
-        register_shots_i64.insert("b".to_string(), vec![3]);
+        let mut i64_register_shots = HashMap::new();
+        i64_register_shots.insert("output".to_string(), vec![10]);
+        i64_register_shots.insert("result".to_string(), vec![10]);
+        i64_register_shots.insert("a".to_string(), vec![7]);
+        i64_register_shots.insert("b".to_string(), vec![3]);
 
         // Create manual results
         let results = ShotResults {
             shots: vec![register_map],
             register_shots,
-            register_shots_u64,
-            register_shots_i64,
+            register_shots_u64: u64_register_shots,
+            register_shots_i64: i64_register_shots,
         };
 
         // Verify that we computed the result correctly (7 + 3 = 10)

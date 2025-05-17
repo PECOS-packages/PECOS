@@ -6,12 +6,12 @@ fn test_preprocess_and_expand() {
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[2];
-        
+
         gate bell a, b {
             H a;
             CX a, b;
         }
-        
+
         bell q[0], q[1];
     "#;
 
@@ -37,14 +37,14 @@ fn test_expansion_details() {
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[1];
-        
+
         // This gate uses non-native gates
         gate my_gate a {
             H a;
             s a;
             H a;
         }
-        
+
         my_gate q[0];
     "#;
 

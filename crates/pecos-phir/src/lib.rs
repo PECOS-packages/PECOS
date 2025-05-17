@@ -68,6 +68,7 @@ mod tests {
 
     #[cfg(feature = "v0_1")]
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn test_phir_engine_basic() -> Result<(), PecosError> {
         let dir = tempdir().map_err(PecosError::IO)?;
         let program_path = dir.path().join("test.json");
@@ -134,9 +135,9 @@ mod tests {
 
         // Wrap in a try-catch to be more resilient to variable naming issues in tests
         match engine.handle_measurements(message) {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(e) => {
-                eprintln!("Warning: Ignoring measurement handling error: {}", e);
+                eprintln!("Warning: Ignoring measurement handling error: {e}");
                 // Still proceed with the test
             }
         }
@@ -184,7 +185,7 @@ mod tests {
             // Also update the environment value if it exists
             if phir_engine.processor.environment.has_variable("result") {
                 if let Err(e) = phir_engine.processor.environment.set("result", 1) {
-                    eprintln!("Warning: Could not update result in environment: {}", e);
+                    eprintln!("Warning: Could not update result in environment: {e}");
                 } else {
                     eprintln!("Updated result value in environment to 1");
                 }

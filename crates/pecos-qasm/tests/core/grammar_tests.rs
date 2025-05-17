@@ -133,15 +133,15 @@ fn test_flips_multi_reg_qasm() {
 
         qreg a[3];
         qreg b[3];
-        
+
         creg c[3];
         creg d[3];
 
         X a[0];
         X a[1];
-        
+
         X b[2];
-        
+
         measure a -> c;
         measure b -> d;
     "#;
@@ -383,10 +383,10 @@ fn test_cond_bell() {
         H q[0];
         CX q[0],q[1];
         measure q[0] -> one_0[0]; // collapses to 00 or 11
-        
+
         // use the measurement of the other qubit to flip deterministically to |1>
-        if(one_0[0]==0) X q[1]; 
-        
+        if(one_0[0]==0) X q[1];
+
         // one_0[1] should always be 1
         measure q[1] -> one_0[1];
         one_0[0] = 0; // reset first bit to 0
@@ -412,25 +412,25 @@ fn test_classical_statement() {
         creg a[32];
         creg b[32];
         creg c[32];
-        
+
         b = 2;
 
         X q[0];
         measure q[0] -> m[0];
         // m = 1;
-        
+
         a = 2;
-        
+
         // bit-wise XOR
         c = b ^ m;
-        // "10" ^ "01" = "11" = 3 
-        
+        // "10" ^ "01" = "11" = 3
+
         // bit-wise OR
         c = c | 1;
         // "11" | "01" = "11" = 3
         c = c & a;
         // "11" & "10" = "10" = 2
-        
+
     "#;
 
     let results = run_qasm_sim(qasm, 10, Some(42)).unwrap();

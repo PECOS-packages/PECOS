@@ -72,8 +72,8 @@ impl PHIRImplementation for V0_1 {
 }
 
 /// Enhanced implementation of PHIR v0.1 that uses our improved components
-/// Note: We've now integrated the enhancements directly into the regular PHIREngine,
-/// so this is now just an alias for V0_1 to maintain backward compatibility.
+/// Note: We've now integrated the enhancements directly into the regular `PHIREngine`,
+/// so this is now just an alias for `V0_1` to maintain backward compatibility.
 pub struct EnhancedV0_1;
 
 impl PHIRImplementation for EnhancedV0_1 {

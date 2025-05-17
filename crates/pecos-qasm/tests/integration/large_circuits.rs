@@ -1,6 +1,7 @@
-use pecos_qasm::{QASMParser, Operation};
+use pecos_qasm::{Operation, QASMParser};
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn test_complex_nine_qubit_circuit() {
     // Test a complex 9-qubit quantum circuit with many CX and U gates
     let qasm = r#"
@@ -482,7 +483,7 @@ fn test_complex_nine_qubit_circuit() {
     "#;
 
     let result = QASMParser::parse_str(qasm);
-    
+
     match result {
         Ok(program) => {
             // Debug: print operations
@@ -491,31 +492,27 @@ fn test_complex_nine_qubit_circuit() {
             let mut other_count = 0;
 
             for op in &program.operations {
-                match op {
-                    Operation::Gate { name, .. } => {
-                        if name == "cx" || name == "CX" {
-                            cx_count += 1;
-                        } else if name == "u" || name == "U" {
-                            u_count += 1;
-                        } else {
-                            println!("Found gate: {}", name);
-                            other_count += 1;
-                        }
+                if let Operation::Gate { name, .. } = op {
+                    if name == "cx" || name == "CX" {
+                        cx_count += 1;
+                    } else if name == "u" || name == "U" {
+                        u_count += 1;
+                    } else {
+                        println!("Found gate: {name}");
+                        other_count += 1;
                     }
-                    _ => {}
                 }
             }
 
-            println!("Complex circuit parsed with {} CX gates, {} U gates, and {} other gates", cx_count, u_count, other_count);
+            println!(
+                "Complex circuit parsed with {cx_count} CX gates, {u_count} U gates, and {other_count} other gates"
+            );
 
             // Debug: print first few operations
             println!("First 10 operations:");
             for (i, op) in program.operations.iter().take(10).enumerate() {
-                match op {
-                    Operation::Gate { name, qubits, .. } => {
-                        println!("  [{}] Gate: {} on qubits {:?}", i, name, qubits);
-                    }
-                    _ => {}
+                if let Operation::Gate { name, qubits, .. } = op {
+                    println!("  [{i}] Gate: {name} on qubits {qubits:?}");
                 }
             }
 
@@ -528,7 +525,7 @@ fn test_complex_nine_qubit_circuit() {
             // assert_eq!(u_count, 53, "Expected 53 U gates in the circuit");
         }
         Err(e) => {
-            panic!("Failed to parse complex quantum circuit: {}", e);
+            panic!("Failed to parse complex quantum circuit: {e}");
         }
     }
 }

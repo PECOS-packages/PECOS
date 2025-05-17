@@ -1,5 +1,6 @@
 use pecos::prelude::*;
 use pecos_qasm::QASMEngine;
+use std::str::FromStr;
 
 #[test]
 fn test_qelib1_inc_available_from_external_crate() -> Result<(), PecosError> {

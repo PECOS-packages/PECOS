@@ -24,7 +24,7 @@ fn debug_include_behavior() {
         .to_string(),
     ));
 
-    let program = QASMParser::parse_with_config(qasm, config).unwrap();
+    let program = QASMParser::parse_with_config(qasm, &config).unwrap();
 
     // Debug: print what gates we have
     println!("Gates after parsing with custom qelib1:");

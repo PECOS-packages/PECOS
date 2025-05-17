@@ -1,6 +1,7 @@
 // Test cases for error handling in QASM parsing and execution
 use pecos_engines::engines::classical::ClassicalEngine;
 use pecos_qasm::{QASMEngine, QASMParser};
+use std::str::FromStr;
 
 #[test]
 fn test_qubit_index_out_of_bounds() {
@@ -225,14 +226,14 @@ fn test_undefined_gate_error() {
 
     if let Err(e) = result {
         let error_message = e.to_string();
-        println!("Error message: {}", error_message);
+        println!("Error message: {error_message}");
 
         // The error should mention the undefined gate
         assert!(
-            error_message.contains("gatedoesntexist") ||
-            error_message.contains("undefined") ||
-            error_message.contains("not defined") ||
-            error_message.contains("unknown"),
+            error_message.contains("gatedoesntexist")
+                || error_message.contains("undefined")
+                || error_message.contains("not defined")
+                || error_message.contains("unknown"),
             "Error should mention the undefined gate"
         );
     }
@@ -266,7 +267,7 @@ fn test_gate_with_wrong_arity() {
     // The parser might accept this syntactically but fail during execution
     match result {
         Ok(_) => println!("Parser accepts syntactically valid but semantically incorrect arity"),
-        Err(e) => println!("Parser rejects wrong arity: {}", e),
+        Err(e) => println!("Parser rejects wrong arity: {e}"),
     }
 }
 
@@ -284,7 +285,7 @@ fn test_gate_with_too_many_parameters() {
     // The parser might accept extra parameters syntactically
     match result {
         Ok(_) => println!("Parser accepts extra parameters syntactically"),
-        Err(e) => println!("Parser rejects extra parameters: {}", e),
+        Err(e) => println!("Parser rejects extra parameters: {e}"),
     }
 }
 

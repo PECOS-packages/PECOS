@@ -9,34 +9,34 @@ fn test_opaque_gate_syntax() {
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
-        
+
         // Declare quantum registers
         qreg q[4];
         creg c[4];
-        
+
         // Opaque gate declarations - these define gates without implementation
         // Single-qubit opaque gate without parameters
         opaque mygate1 a;
-        
+
         // Single-qubit opaque gate with parameters
         opaque mygate2(theta, phi) a;
-        
+
         // Two-qubit opaque gate
         opaque mygate3 a, b;
-        
+
         // Two-qubit opaque gate with parameters
         opaque mygate4(alpha) a, b;
-        
+
         // Three-qubit opaque gate
         opaque mygate5 a, b, c;
-        
+
         // Use the opaque gates
         mygate1 q[0];
         mygate2(pi/2, pi/4) q[1];
         mygate3 q[0], q[1];
         mygate4(0.5) q[2], q[3];
         mygate5 q[0], q[1], q[2];
-        
+
         // Measure
         measure q -> c;
     "#;
@@ -62,31 +62,31 @@ fn test_opaque_and_regular_gates() {
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
-        
+
         qreg q[3];
         creg c[3];
-        
+
         // Regular gate definition
         gate bell a, b {
             H a;
             CX a, b;
         }
-        
+
         // Opaque gate declaration - no body
         opaque oracle(theta) a, b;
-        
+
         // Another regular gate using the opaque gate
         gate algorithm q1, q2 {
             bell q1, q2;
             oracle(pi/4) q1, q2;
             bell q1, q2;
         }
-        
+
         // Use both types
         bell q[0], q[1];
         oracle(pi/2) q[1], q[2];
         algorithm q[0], q[2];
-        
+
         measure q -> c;
     "#;
 
@@ -152,7 +152,7 @@ fn test_opaque_gate_errors() {
     let invalid_qasm1 = r"
         OPENQASM 2.0;
         qreg q[2];
-        
+
         // This should be an error - opaque gates can't have bodies
         opaque mygate a {
             H a;
@@ -166,7 +166,7 @@ fn test_opaque_gate_errors() {
     let invalid_qasm2 = r"
         OPENQASM 2.0;
         qreg q[2];
-        
+
         // Using a gate that wasn't declared
         undefined_gate q[0];
     ";

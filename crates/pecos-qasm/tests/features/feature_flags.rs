@@ -1,5 +1,6 @@
 use pecos_engines::engines::classical::ClassicalEngine;
 use pecos_qasm::engine::QASMEngine;
+use std::str::FromStr;
 
 #[test]
 fn test_openqasm_standard_vs_extended() {
@@ -17,7 +18,7 @@ fn test_openqasm_standard_vs_extended() {
         if (c == 2) H q[0];      // Register compared to int
         if (c != 0) X q[1];      // Register compared to int
         if (c > 1) H q[0];       // Register compared to int
-        
+
         d[0] = 1;
         if (d[0] == 1) X q[1];   // Bit compared to int
         if (c <= 3) H q[0];      // Register compared to int
@@ -35,7 +36,7 @@ fn test_openqasm_standard_vs_extended() {
 
         a = 2;
         b = 3;
-        
+
         // These require the extended feature flag
         if (a < b) H q[0];                  // Register compared to register
         if ((a + b) == 5) X q[1];          // Expression compared to int
@@ -44,8 +45,7 @@ fn test_openqasm_standard_vs_extended() {
     "#;
 
     // Standard QASM should work without any flags
-    let mut engine1 = QASMEngine::from_str(standard_qasm)
-        .expect("Failed to load program");
+    let mut engine1 = QASMEngine::from_str(standard_qasm).expect("Failed to load program");
     assert!(
         !engine1.complex_conditionals_enabled(),
         "Complex conditionals should be disabled by default"
@@ -55,8 +55,7 @@ fn test_openqasm_standard_vs_extended() {
         .expect("Standard QASM should execute without extended features");
 
     // Extended QASM should fail without the flag
-    let mut engine2 = QASMEngine::from_str(extended_qasm)
-        .expect("Failed to load program");
+    let mut engine2 = QASMEngine::from_str(extended_qasm).expect("Failed to load program");
     let result = engine2.generate_commands();
     assert!(result.is_err(), "Extended QASM should fail without flag");
 
@@ -92,8 +91,7 @@ fn test_error_messages_are_helpful() {
         if (a < b) H q[0];  // Should fail without flag
     "#;
 
-    let mut engine = QASMEngine::from_str(qasm)
-        .expect("Failed to load program");
+    let mut engine = QASMEngine::from_str(qasm).expect("Failed to load program");
 
     let result = engine.generate_commands();
     assert!(result.is_err());
@@ -131,8 +129,7 @@ fn test_mixed_conditionals() {
         if (a != b) H q[0];
     "#;
 
-    let mut engine = QASMEngine::from_str(qasm)
-        .expect("Failed to load program");
+    let mut engine = QASMEngine::from_str(qasm).expect("Failed to load program");
 
     // Should fail on the extended conditional
     let result = engine.generate_commands();

@@ -40,9 +40,11 @@ fn test_conditional_execution() -> Result<(), Box<dyn Error>> {
     let mut both_zeros = 0;
 
     for &value in c_values {
-        if value == 3 {  // Both bits are 1
+        if value == 3 {
+            // Both bits are 1
             both_ones += 1;
-        } else if value == 0 {  // Both bits are 0
+        } else if value == 0 {
+            // Both bits are 0
             both_zeros += 1;
         }
     }
@@ -59,10 +61,10 @@ fn test_simple_if() {
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
-        
+
         qreg q[2];
         creg c[2];
-        
+
         // Test simple if statement
         x q[0];
         measure q[0] -> c[0];
@@ -72,11 +74,11 @@ fn test_simple_if() {
 
         measure q[1] -> c[1];
     "#;
-    
+
     let results = run_qasm_sim(qasm, 100, Some(42)).expect("Failed to run simulation");
-    
+
     let c_values = results.get("c").expect("Should have c register results");
-    
+
     // Should always get c = 11 (binary) = 3 (decimal)
     for &value in c_values {
         assert_eq!(value, 3, "Both qubits should be measured as 1");
@@ -104,11 +106,14 @@ fn test_exact_issue() {
         // Try to reproduce the conditional
         if (c[0] == 0) X q[1];
     "#;
-    
+
     let results = run_qasm_sim(qasm, 100, Some(42)).expect("Failed to run simulation");
-    
+
     // Verify we get results
-    assert!(results.contains_key("c"), "Should have classical register c");
+    assert!(
+        results.contains_key("c"),
+        "Should have classical register c"
+    );
 }
 
 #[test]
@@ -123,19 +128,19 @@ fn test_conditional_classical_operations() {
 
         // Set some initial values
         a = 1;
-        
+
         // Conditional classical operation
         if (a == 1) c = 5;
 
         // Complex conditional
         if (c > 4) x q[0];
-        
+
         measure q[0] -> c[0];
     "#;
-    
+
     let results = run_qasm_sim(qasm, 100, Some(42)).expect("Failed to run simulation");
     let c_values = results.get("c").expect("Should have c register results");
-    
+
     // c[0] should always be 1 (from x q[0])
     for &value in c_values {
         let bit_0 = value & 1;
@@ -154,18 +159,18 @@ fn test_conditional_comparison_operators() {
 
         // Test different comparison operators
         c = 3;
-        
+
         if (c == 3) x q[0];   // Should execute
         if (c != 3) x q[1];   // Should not execute
         if (c < 4) x q[2];    // Should execute
         if (c > 4) x q[3];    // Should not execute
-        
+
         measure q -> c;
     "#;
-    
+
     let results = run_qasm_sim(qasm, 100, Some(42)).expect("Failed to run simulation");
     let c_values = results.get("c").expect("Should have c register results");
-    
+
     // Only q[0] and q[2] should be flipped
     for &value in c_values {
         assert_eq!(value, 0b0101, "Only q[0] and q[2] should be 1");
@@ -180,17 +185,17 @@ fn test_nested_conditionals() {
 
         qreg q[2];
         creg c[2];
-        
+
         c = 1;
-        
+
         if (c > 0) x q[0];  // Since c[0] == 1 was set above
-        
+
         measure q -> c;
     "#;
-    
+
     let results = run_qasm_sim(qasm, 100, Some(42)).expect("Failed to run simulation");
     let c_values = results.get("c").expect("Should have c register results");
-    
+
     // q[0] should be flipped
     for &value in c_values {
         let bit_0 = value & 1;
@@ -206,23 +211,23 @@ fn test_conditional_with_barriers() {
 
         qreg q[2];
         creg c[2];
-        
+
         H q[0];
         measure q[0] -> c[0];
-        
+
         if (c[0] == 1) X q[1];  // Simplified without barrier for now
-        
+
         measure q[1] -> c[1];
     "#;
-    
+
     let results = run_qasm_sim(qasm, 100, Some(42)).expect("Failed to run simulation");
     let c_values = results.get("c").expect("Should have c register results");
-    
+
     // When c[0] is 1, c[1] should also be 1
     for &value in c_values {
         let bit_0 = value & 1;
         let bit_1 = (value >> 1) & 1;
-        
+
         if bit_0 == 1 {
             assert_eq!(bit_1, 1, "When c[0] is 1, c[1] should also be 1");
         } else {
@@ -240,18 +245,21 @@ fn test_conditional_feature_flags() {
 
         qreg q[2];
         creg c[2];
-        
+
         // Conditionals are a standard QASM feature
         x q[0];
         measure q[0] -> c[0];
-        
+
         if (c[0] == 1) h q[1];
-        
+
         measure q[1] -> c[1];
     "#;
-    
+
     let results = run_qasm_sim(qasm, 100, Some(42)).expect("Failed to run simulation");
-    assert!(results.contains_key("c"), "Should have classical register c");
+    assert!(
+        results.contains_key("c"),
+        "Should have classical register c"
+    );
 }
 
 #[test]
@@ -262,19 +270,19 @@ fn test_if_with_multiple_statements() {
 
         qreg q[3];
         creg c[3];
-        
+
         x q[0];
         measure q[0] -> c[0];
-        
+
         if (c[0] == 1) x q[1];  // Simplified to single operation
-        
+
         measure q[1] -> c[1];
         measure q[2] -> c[2];
     "#;
-    
+
     let results = run_qasm_sim(qasm, 100, Some(42)).expect("Failed to run simulation");
     let c_values = results.get("c").expect("Should have c register results");
-    
+
     // c[0] and c[1] should always be 1
     for &value in c_values {
         let bit_0 = value & 1;

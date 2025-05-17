@@ -39,7 +39,6 @@ theme:
   - navigation.instant
   - navigation.footer
   - navigation.top
-  - navigation.expand
   - toc.follow
   - toc.integrate
   - content.code.copy

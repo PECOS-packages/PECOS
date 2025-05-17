@@ -158,6 +158,15 @@
   transform: rotate(90deg);
 }
 
+/* Make navigation collapsed by default */
+.md-nav__item--nested > .md-nav {
+  display: none;
+}
+
+.md-nav__item--nested > input:checked ~ .md-nav {
+  display: block;
+}
+
 /* Make md-nav__container show properly */
 .md-nav__container {
   display: block !important;

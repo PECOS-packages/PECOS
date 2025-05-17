@@ -31,11 +31,14 @@ This guide will help you get up and running with PECOS quickly, whether you're u
 
 === "Rust"
 
-    To use PECOS in your Rust project, run `cargo add pecos` or add the following to your `Cargo.toml`:
+    To use PECOS in your Rust project, add the following to your `Cargo.toml`:
 
     ```toml
     [dependencies]
-    pecos = "0.x.x"  # Replace with the latest version
+    pecos-core = "0.1.x"  # Replace with the latest version
+    # Add other PECOS crates as needed:
+    # pecos-engines = "0.1.x"
+    # pecos-qsim = "0.1.x"
     ```
 
 ## Optional Dependencies
@@ -86,9 +89,11 @@ Verify your installation:
     Create a simple Rust program and run:
 
     ```rust
-    use pecos::prelude::*;
+    // This example assumes you have added pecos-core to your Cargo.toml
+    // use pecos_core;
 
     fn main() {
-        println!("PECOS Rust crate loaded successfully!");
+        println!("PECOS Rust crates would be loaded here!");
+        // Once loaded, you can use PECOS functionality
     }
     ```

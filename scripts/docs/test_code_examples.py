@@ -31,10 +31,32 @@ def extract_code_blocks(file_path, language="python"):
     pattern = rf"```(?:{language}|exec-{language}|hidden-{language})(.*?)```"
     blocks = re.findall(pattern, content, re.DOTALL)
 
-    # Clean up the blocks (remove leading/trailing whitespace)
-    blocks = [block.strip() for block in blocks]
+    # Clean up the blocks and normalize indentation
+    cleaned_blocks = []
+    for block in blocks:
+        # Remove leading/trailing empty lines
+        lines = block.strip("\n").split("\n")
 
-    return blocks
+        # Find minimum indentation (ignoring empty lines)
+        min_indent = float("inf")
+        for line in lines:
+            if line.strip():  # Skip empty lines
+                indent = len(line) - len(line.lstrip())
+                min_indent = min(min_indent, indent)
+
+        # Remove minimum indentation from all lines
+        if min_indent != float("inf"):
+            dedented_lines = []
+            for line in lines:
+                if line.strip():  # Non-empty line
+                    dedented_lines.append(line[min_indent:])
+                else:  # Empty line
+                    dedented_lines.append(line)
+            cleaned_blocks.append("\n".join(dedented_lines))
+        else:
+            cleaned_blocks.append(block.strip())
+
+    return cleaned_blocks
 
 
 def test_python_block(code_block, block_number, file_path):

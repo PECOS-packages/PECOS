@@ -78,7 +78,7 @@ fmt: ## Run autoformatting for cargo
 	cargo fmt --all -- --check
 
 .PHONY: lint  ## Run all quality checks / linting / reformatting
-lint: fmt clippy
+lint: check fmt clippy
 	uv run pre-commit run --all-files
 
 # Testing

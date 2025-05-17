@@ -223,9 +223,15 @@ jobs:
 
       - name: Run tests (Windows)
         if: matrix.os == 'windows-latest'
-        env:
-          CARGO_NET_OFFLINE: true
         run: |
-          # Run all tests with our trait re-export fix
-          # Use --offline to prevent network access issues during doctests
-          cargo test --workspace --exclude pecos-rslib --offline
+          # Run all non-doctest tests
+          cargo test --workspace --exclude pecos-rslib --lib --bins --tests --examples
+
+          # For Windows, we need to run doctests for the pecos crate specially
+          # to ensure they run from the crate directory
+          cd crates/pecos
+          cargo test --doc
+          cd ../..
+
+          # Run doctests for other crates normally
+          cargo test --workspace --exclude pecos-rslib --exclude pecos --doc

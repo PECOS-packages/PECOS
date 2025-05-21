@@ -885,11 +885,11 @@ impl GeneralNoiseModel {
                         val = 0;
                     }
                 } else {
-                    trace!(
-                        "Flipped measurement outcome 1->0 for result_id {}",
-                        result_id
-                    );
                     if self.rng.occurs(self.p_meas_0) {
+                        trace!(
+                            "Flipped measurement outcome 1->0 for result_id {}",
+                            result_id
+                        );
                         val = 1;
                     }
                 }

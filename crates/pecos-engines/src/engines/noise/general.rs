@@ -337,8 +337,7 @@ impl ControlEngine for GeneralNoiseModel {
         &mut self,
         msg: Self::EngineOutput,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, QueueError> {
-        // Apply biased measurement to measurement results
-        trace!("GeneralNoise::continue_processing - applying biased measurement");
+        trace!("GeneralNoise::continue_processing");
         let results = self.apply_noise_on_continue_processing(msg)?;
 
         // Calling Complete to signal that the NoiseModel is returning its msg back to the

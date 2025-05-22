@@ -878,7 +878,7 @@ impl GeneralNoiseModel {
                 if val == 1 {
                     if self.rng.occurs(self.p_meas_1) {
                         trace!(
-                            "Flipped measurement outcome 0->1 for result_id {}",
+                            "Flipped measurement outcome 1->0 for result_id {}",
                             result_id
                         );
                         val = 0;
@@ -886,7 +886,7 @@ impl GeneralNoiseModel {
                 } else {
                     if self.rng.occurs(self.p_meas_0) {
                         trace!(
-                            "Flipped measurement outcome 1->0 for result_id {}",
+                            "Flipped measurement outcome 0->1 for result_id {}",
                             result_id
                         );
                         val = 1;

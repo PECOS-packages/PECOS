@@ -104,6 +104,7 @@ class HybridEngine:
         self,
         state: SimulatorProtocol,
         circuit: QuantumCircuit,
+        shot_id: int,
         error_gen: ParentErrorModel | None = None,
         error_params: dict[str, float | dict[str, float]] | None = None,
         error_circuits: dict[int, dict[str, QuantumCircuit | set[int]]] | None = None,
@@ -142,6 +143,7 @@ class HybridEngine:
         self.generate_errors = True
         error_circuits = error_gen.start(circuit, error_params)
         self.rng_model.count = 0
+        self.rng_model.shot_id = shot_id
         
         # run through the circuits...
         # ---------------------------

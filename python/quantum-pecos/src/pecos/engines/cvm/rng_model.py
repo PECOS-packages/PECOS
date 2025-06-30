@@ -3,7 +3,8 @@ from typing import Optional
 from pecos.engines.cvm.binarray import BinArray
 
 class RNGModel:
-    def __init__(self, seed:int=0, current_bound: Optional[int]=0) -> None:
+    def __init__(self, shot_id: int, seed:int=0, current_bound: Optional[int]=0) -> None:
+        self.shot_id = shot_id
         self.current_bound = current_bound
         self.count = 0
         self.last_rand = 0
@@ -44,8 +45,11 @@ class RNGModel:
             idx = int(idx_creg[-1][:-1])
             val = int(creg[idx])
         else:
-            reg = output[param]
-            val = int(reg)
+            if param == 'JOB_shotnum':
+                val = self.shot_id
+            else:
+                reg = output[param]
+                val = int(reg)
         return val
 
     def eval_func(self, params, output):

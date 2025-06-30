@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from pecos.engines.cvm.binarray import BinArray
+from pecos.engines.cvm.rng_model import RNGModel
 from pecos.engines.cvm.classical import eval_condition, eval_cop, set_output
 from pecos.engines.cvm.wasm import eval_cfunc, get_ccop
 from pecos.error_models.fake_error_model import FakeErrorModel
@@ -89,8 +90,11 @@ class HybridEngine:
             self.seed = None
 
         if self.seed:
+            self.rng_model = RNGModel(self.seed)
             np.random.seed(self.seed)
             random.seed(self.seed)
+        else:
+            self.rng_model = RNGModel(0)
 
         self.ccop = None
 
@@ -239,6 +243,7 @@ class HybridEngine:
             if eval_condition(params.get("cond"), output) and eval_cond2:
                 # Run quantum simulator
                 if symbol == "cop":
+                    print(f'looking at {params}')
                     if (
                         params.get("cop_type") == "Idle"
                         or params.get("is_transport")
@@ -248,6 +253,7 @@ class HybridEngine:
                         pass
 
                     elif params.get("cop_type") == "CFunc":
+                        print(params)
                         eval_cfunc(self, params, output)
 
                     elif params.get("expr"):

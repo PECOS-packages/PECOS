@@ -141,7 +141,8 @@ class HybridEngine:
         # --------------------
         self.generate_errors = True
         error_circuits = error_gen.start(circuit, error_params)
-
+        self.rng_model.count = 0
+        
         # run through the circuits...
         # ---------------------------
         for tick_circuit, time, params in circuit.iter_ticks():
@@ -154,7 +155,7 @@ class HybridEngine:
                 error_circuits = error_gen.generate_tick_errors(
                     tick_circuit,
                     time,
-                    output,
+                    # output,
                     **params,
                 )
                 errors = error_circuits.get(time, {})
@@ -226,7 +227,6 @@ class HybridEngine:
 
         """
         self.state = state
-
         if removed_locations is None:
             removed_locations = set()
 
@@ -243,7 +243,6 @@ class HybridEngine:
             if eval_condition(params.get("cond"), output) and eval_cond2:
                 # Run quantum simulator
                 if symbol == "cop":
-                    print(f'looking at {params}')
                     if (
                         params.get("cop_type") == "Idle"
                         or params.get("is_transport")
@@ -253,8 +252,11 @@ class HybridEngine:
                         pass
 
                     elif params.get("cop_type") == "CFunc":
-                        print(params)
-                        eval_cfunc(self, params, output)
+                        cop_name = params.get('func')
+                        if 'RNG' in cop_name:
+                            self.rng_model.eval_func(params, output)
+                        else:
+                            eval_cfunc(self, params, output)
 
                     elif params.get("expr"):
                         eval_cop(params.get("expr"), output, width=self.regwidth)

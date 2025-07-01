@@ -887,6 +887,15 @@ wheels = [
 ]
 
 [[package]]
+name = "nanobind"
+version = "2.7.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d8/7d/f77f2bc2e2a210502a164556f8a742cd0f72f39061b97cb9d73bbd3ff0ab/nanobind-2.7.0.tar.gz", hash = "sha256:f9f1b160580c50dcf37b6495a0fd5ec61dc0d95dae5f8004f87dd9ad7eb46b34", size = 976093, upload-time = "2025-04-18T01:17:37.187Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/14/989883082b395146120d34ca7e484a2b24cb73b0e428576a3a4249bd4082/nanobind-2.7.0-py3-none-any.whl", hash = "sha256:73b12d0e751d140d6c1bf4b215e18818a8debfdb374f08dc3776ad208d808e74", size = 241690, upload-time = "2025-04-18T01:17:34.821Z" },
+]
+
+[[package]]
 name = "networkx"
 version = "3.4.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1038,7 +1047,7 @@ source = { editable = "python/pecos-rslib" }
 
 [[package]]
 name = "pecos-workspace"
-version = "0.6.0.dev8"
+version = "0.7.0.dev8"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -1049,6 +1058,7 @@ dev = [
     { name = "mkdocs" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extra = ["python"] },
+    { name = "nanobind" },
     { name = "pre-commit" },
     { name = "ruff" },
     { name = "setuptools" },
@@ -1069,6 +1079,7 @@ dev = [
     { name = "mkdocs" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extras = ["python"] },
+    { name = "nanobind" },
     { name = "pre-commit" },
     { name = "ruff" },
     { name = "setuptools", specifier = ">=62.6" },

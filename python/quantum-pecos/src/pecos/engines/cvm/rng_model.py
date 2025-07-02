@@ -1,17 +1,17 @@
+"""This Module is responsible for keeping track of the state for generating a sequence of random numbers.
+
+It handles RNG platform function calls that that are handled by the pcg_rng library.
+
 """
-This Module is reponsible for keeping track of the state for generating a sequence
-of random numbers. It handles RNG platform function calls that that are handled by the
-pcg_rng library.
-"""
+
 import pecos_rng_pcg
 
 from pecos.engines.cvm.binarray import BinArray
 
 
 class RNGModel:
-    """
-    This class is responsible the functionality of generating a sequence of random numbers.
-    """
+    """This class is responsible the functionality of generating a sequence of random numbers."""
+
     def __init__(
         self,
         shot_id: int,
@@ -47,9 +47,9 @@ class RNGModel:
         return rng_num
 
     def set_index(self, index: int) -> None:
-        """Setting the index for the random number sequence. The
-        number after from the stream will be the idx of interest.
+        """Setting the index for the random number sequence.
 
+        The number after from the stream will be the idx of interest.
         """
         if self.count > index:
             error_msg = "rngindex called after specified already generated"
@@ -58,10 +58,7 @@ class RNGModel:
             self.rng_random()
 
     def extract_val(self, param: str, output: dict) -> int:
-        """Responsible for extracting the value of interest depending on the type of the
-        parameter being passed in.
-
-        """
+        """Responsible for extracting the value of interest depending on the type of the parameter being passed in."""
         if param.isdigit():
             val = int(param)
         elif "[" in param:

@@ -201,7 +201,14 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install build
+          pip install build nanobind
+      
+      - name: Build PECOS RNG
+        run: |
+          cd lib/pecos_rng && mkdir build && cd build/ && cmake ..
+          cmake --build . && cd .. && python -m pip install .
+        env:
+            NANOBIND_DIR: python -m nanobind --include_dir
 
       - name: Build quantum-pecos SDist
         run: |
@@ -252,6 +259,7 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
+          apt-get install -y python3-dev
           pip install build nanobind
 
       - name: Build PECOS RNG

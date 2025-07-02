@@ -19,31 +19,38 @@ installreqs: ## Install Python project requirements to root .venv
 	@echo "Installing requirements..."
 	uv sync
 
+.PHONY: buildrng
+buildrng:
+	@echo "Building and installing RNG library..."
+	export NANOBIND_DIR="python3 -m nanobind --include_dir"
+	cd lib/pecos_rng && mkdir build && cd build/ && cmake .. && cmake --build . && cd .. && uv pip install .
+	
 # Building development environments
 # ---------------------------------
 .PHONY: build
 build: installreqs ## Compile and install for development
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && uv run maturin develop --uv
 	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .[all]
-	export NANOBIND_DIR="python3 -m nanobind --include_dir"
-	cd lib/pecos_rng && mkdir build && cd build/ && cmake .. && cmake --build . && cd .. && uv pip install .
-	
+	$(MAKE) buildrng	
 
 .PHONY: build-basic
 build-basic: installreqs ## Compile and install for development but do not include install extras
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && uv run maturin develop --uv
 	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .
+	$(MAKE) buildrng
 
 .PHONY: build-release
 build-release: installreqs ## Build a faster version of binaries
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && uv run maturin develop --uv --release
 	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .[all]
+	$(MAKE) buildrng
 
 .PHONY: build-native
 build-native: installreqs ## Build a faster version of binaries with native CPU optimization
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && RUSTFLAGS='-C target-cpu=native' \
 	&& uv run maturin develop --uv --release
 	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .[all]
+	$(MAKE) buildrng
 
 # Documentation
 # -------------

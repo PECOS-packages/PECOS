@@ -117,6 +117,7 @@ class HybridEngine:
         Args:
             state: Quantum simulator state.
             circuit: Quantum circuit to execute.
+            shot_id: Integer representing current shot.
             error_gen: Optional error model.
             error_params: Parameters for error generation.
             error_circuits: Pre-generated error circuits.

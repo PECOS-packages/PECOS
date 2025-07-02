@@ -1,3 +1,8 @@
+"""
+This Module is reponsible for keeping track of the state for generating a sequence
+of random numbers. It handles RNG platform function calls that that are handled by the
+pcg_rng library.
+"""
 import pecos_rng_pcg
 
 from pecos.engines.cvm.binarray import BinArray
@@ -7,41 +12,33 @@ class RNGModel:
     """
     This class is responsible the functionality of generating a sequence of random numbers.
     """
-
     def __init__(
-        self, shot_id: int, seed: int = 0, current_bound: int | None = 0
+        self,
+        shot_id: int,
+        seed: int = 0,
+        current_bound: int | None = 0,
     ) -> None:
-        """
-        Constructs an RNGModel object.
-        """
+        """Constructs an RNGModel object."""
         self.shot_id = shot_id
         self.current_bound = current_bound
         self.count = 0
         self.seed = self.set_seed(seed)
 
     def __str__(self) -> str:
-        """
-        Returns the str representation of the model.
-        """
+        """Returns the str representation of the model."""
         return f"RNG Model with bound {self.current_bound} with count {self.count}"
 
     def set_seed(self, seed: int) -> None:
-        """
-        Setting the seed for generating random numbers.
-        """
+        """Setting the seed for generating random numbers."""
         self.seed = seed
         pecos_rng_pcg.pcg32_srandom(seed)
 
     def set_bound(self, bound: int) -> None:
-        """
-        Setting the current bound for generating random numbers.
-        """
+        """Setting the current bound for generating random numbers."""
         self.current_bound = bound
 
     def rng_random(self) -> int:
-        """
-        Generating a random number and keeping track of how many we have generated.
-        """
+        """Generating a random number and keeping track of how many we have generated."""
         if self.current_bound == 0:
             rng_num = pecos_rng_pcg.pcg32_random()
         else:
@@ -50,9 +47,9 @@ class RNGModel:
         return rng_num
 
     def set_index(self, index: int) -> None:
-        """
-        Setting the index for the random number sequence. The
+        """Setting the index for the random number sequence. The
         number after from the stream will be the idx of interest.
+
         """
         if self.count > index:
             error_msg = "rngindex called after specified already generated"
@@ -61,9 +58,9 @@ class RNGModel:
             self.rng_random()
 
     def extract_val(self, param: str, output: dict) -> int:
-        """
-        Responsible for extracting the value of interest depending on the type of the
+        """Responsible for extracting the value of interest depending on the type of the
         parameter being passed in.
+
         """
         if param.isdigit():
             val = int(param)
@@ -80,9 +77,7 @@ class RNGModel:
         return val
 
     def eval_func(self, params: dict, output: dict) -> None:
-        """
-        Calling the appropriate functions dependent on RNG Function call passed in.
-        """
+        """Calling the appropriate functions dependent on RNG Function call passed in."""
         func_name = params.get("func")
         if func_name == "RNGseed":
             seed_var = params.get("args")[0]

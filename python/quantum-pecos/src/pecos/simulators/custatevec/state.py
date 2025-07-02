@@ -43,6 +43,7 @@ class CuStateVec(StateVector):
             num_qubits (int): Number of qubits being represented.
             seed (int): Seed for randomness.
         """
+        self.libhandle = None
         if not isinstance(num_qubits, int):
             msg = "``num_qubits`` should be of type ``int``."
             raise TypeError(msg)
@@ -59,6 +60,7 @@ class CuStateVec(StateVector):
         self.compute_type = ComputeType.COMPUTE_64F
 
         # Allocate the statevector in GPU and initialize it to |0>
+        self.cupy_vector = None
         self.reset()
 
         ####################################################
@@ -106,15 +108,20 @@ class CuStateVec(StateVector):
     def reset(self) -> Self:
         """Reset the quantum state for another run without reinitializing."""
         # Initialize all qubits in the zero state
-        self.cupy_vector = cp.zeros(shape=2**self.num_qubits, dtype=self.cp_type)
-        self.cupy_vector[0] = 1
+        if self.cupy_vector is not None:
+            self.cupy_vector[:] = 0
+            self.cupy_vector[0] = 1
+        else:
+            self.cupy_vector = cp.zeros(shape=2**self.num_qubits, dtype=self.cp_type)
+            self.cupy_vector[0] = 1
         return self
 
     def __del__(self) -> None:
         """Clean up GPU resources when the object is destroyed."""
         # CuPy will release GPU memory when the variable ``self.cupy_vector`` is no longer
         # reachable. However, we need to manually destroy the library handle.
-        cusv.destroy(self.libhandle)
+        if self.libhandle:
+            cusv.destroy(self.libhandle)
 
     @property
     def vector(self) -> ArrayLike:

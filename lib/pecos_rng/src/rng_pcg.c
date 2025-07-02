@@ -32,7 +32,7 @@ typedef struct pcg_state_setseq_64 {
 
 // global RNG state
 static pcg32_random_t pcg32_global = {
-    0x853c49e6748fea9bULL, 
+    0x853c49e6748fea9bULL,
     0xda3e39cb94b95bdbULL
 };
 

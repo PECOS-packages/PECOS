@@ -9,4 +9,4 @@ NB_MODULE(pecos_rng, m) {
     m.def("pcg32_frandom", &pcg32_frandom, "Generate random floating point number");
     m.def("pcg32_boundedrand", &pcg32_boundedrand,  "Generate bounded random number");
     m.def("pcg32_srandom", &pcg32_srandom,  "seeded random");
-} 
+}

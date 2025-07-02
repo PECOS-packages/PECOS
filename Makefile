@@ -24,14 +24,14 @@ buildrng:
 	@echo "Building and installing RNG library..."
 	export NANOBIND_DIR="python3 -m nanobind --include_dir"
 	cd lib/pecos_rng && mkdir build && cd build/ && cmake .. && cmake --build . && cd .. && uv pip install .
-	
+
 # Building development environments
 # ---------------------------------
 .PHONY: build
 build: installreqs ## Compile and install for development
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && uv run maturin develop --uv
 	@unset CONDA_PREFIX && cd python/quantum-pecos && uv pip install -e .[all]
-	$(MAKE) buildrng	
+	$(MAKE) buildrng
 
 .PHONY: build-basic
 build-basic: installreqs ## Compile and install for development but do not include install extras

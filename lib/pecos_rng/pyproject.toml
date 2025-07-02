@@ -20,4 +20,3 @@ wheel.packages = ["pecos_rng_pcg"]
 # Optional: set cmake minimum version or other CMake arguments
 cmake.minimum-version = "3.18"
 cmake.verbose = true
-

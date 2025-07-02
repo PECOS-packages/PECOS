@@ -25,8 +25,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from pecos.engines.cvm.binarray import BinArray
-from pecos.engines.cvm.rng_model import RNGModel
 from pecos.engines.cvm.classical import eval_condition, eval_cop, set_output
+from pecos.engines.cvm.rng_model import RNGModel
 from pecos.engines.cvm.wasm import eval_cfunc, get_ccop
 from pecos.error_models.fake_error_model import FakeErrorModel
 from pecos.errors import NotSupportedGateError
@@ -144,7 +144,7 @@ class HybridEngine:
         error_circuits = error_gen.start(circuit, error_params)
         self.rng_model.count = 0
         self.rng_model.shot_id = shot_id
-        
+
         # run through the circuits...
         # ---------------------------
         for tick_circuit, time, params in circuit.iter_ticks():
@@ -254,8 +254,8 @@ class HybridEngine:
                         pass
 
                     elif params.get("cop_type") == "CFunc":
-                        cop_name = params.get('func')
-                        if 'RNG' in cop_name:
+                        cop_name = params.get("func")
+                        if "RNG" in cop_name:
                             self.rng_model.eval_func(params, output)
                         else:
                             eval_cfunc(self, params, output)

@@ -131,7 +131,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      
+
       - name: Remove conflicting README.md
         run: |
           if [ -f crates/pecos-python/README.md ]; then
@@ -202,7 +202,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install build nanobind
-      
+
       - name: Build PECOS RNG
         run: |
           cd lib/pecos_rng && mkdir build && cd build/ && cmake ..

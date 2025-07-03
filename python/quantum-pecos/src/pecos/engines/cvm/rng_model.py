@@ -4,7 +4,7 @@ It handles RNG platform function calls that that are handled by the pcg_rng libr
 
 """
 
-import pecos_rng_pcg
+from pecos_pcg import pecos_rng
 
 from pecos.engines.cvm.binarray import BinArray
 
@@ -31,7 +31,7 @@ class RNGModel:
     def set_seed(self, seed: int) -> None:
         """Setting the seed for generating random numbers."""
         self.seed = seed
-        pecos_rng_pcg.pcg32_srandom(seed)
+        pecos_rng.pcg32_srandom(seed)
 
     def set_bound(self, bound: int) -> None:
         """Setting the current bound for generating random numbers."""
@@ -40,9 +40,9 @@ class RNGModel:
     def rng_random(self) -> int:
         """Generating a random number and keeping track of how many we have generated."""
         if self.current_bound == 0:
-            rng_num = pecos_rng_pcg.pcg32_random()
+            rng_num = pecos_rng.pcg32_random()
         else:
-            rng_num = pecos_rng_pcg.pcg32_boundedrand(self.current_bound)
+            rng_num = pecos_rng.pcg32_boundedrand(self.current_bound)
         self.count += 1
         return rng_num
 

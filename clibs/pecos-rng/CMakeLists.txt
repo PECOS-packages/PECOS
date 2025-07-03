@@ -11,7 +11,7 @@ else()
 endif()
 
 # Find Python (for Python 3.13)
-find_package(Python 3.13 COMPONENTS Interpreter ${DEV_MODULE} REQUIRED)
+find_package(Python REQUIRED COMPONENTS Interpreter ${DEV_MODULE})
 
 # Detect the installed nanobind package and import it into CMake
 # This executes a Python command to get the nanobind CMake directory
@@ -31,4 +31,4 @@ add_library(rng_pcg STATIC src/rng_pcg.c) # Compile test.c as a static library
 nanobind_add_module(pecos_rng src/wrapper.cpp)
 target_link_libraries(pecos_rng PRIVATE rng_pcg)
 # Install the module so it can be found by pip install
-install(TARGETS pecos_rng DESTINATION "pecos_rng_pcg/")
+install(TARGETS pecos_rng DESTINATION "pecos_pcg")

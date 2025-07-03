@@ -3,7 +3,7 @@ requires = ["scikit-build-core[pyproject]", "nanobind"]
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "pecos_rng_pcg"
+name = "pecos-pcg"
 version = "0.1.0"
 description = "A Python package with a nanobind-based C++ extension"
 license = { text = "MIT" }
@@ -16,7 +16,7 @@ classifiers = [
 ]
 
 [tool.scikit-build]
-wheel.packages = ["pecos_rng_pcg"]
+wheel.packages = ["pecos_pcg"]
 # Optional: set cmake minimum version or other CMake arguments
 cmake.minimum-version = "3.18"
 cmake.verbose = true

@@ -336,8 +336,8 @@ impl GeneralNoiseModelBuilder {
     // TODO: See if we should put a average scaling...
     /// Set the average idling noise error rate per channel for the linear term
     #[must_use]
-    pub fn with_p_average_idle_linear_rate(mut self, rate: f64) -> Self {
-        let rate: f64 = (rate * 3.0 / 2.0).sqrt();
+    pub fn with_average_p_idle_linear_rate(mut self, rate: f64) -> Self {
+        let rate: f64 = rate * 3.0 / 2.0;
         self.p_idle_linear_rate = Some(rate);
         self
     }
@@ -358,7 +358,7 @@ impl GeneralNoiseModelBuilder {
 
     /// Set the average idling noise error rate per channel for the quadratic term
     #[must_use]
-    pub fn with_p_average_idle_quadratic_rate(mut self, rate: f64) -> Self {
+    pub fn with_average_p_idle_quadratic_rate(mut self, rate: f64) -> Self {
         let rate: f64 = (rate * 3.0 / 2.0).sqrt();
         self.p_idle_quadratic_rate = Some(rate);
         self

@@ -5,6 +5,6 @@ from .pecos_rng import (
     pcg32_frandom,
     pcg32_random,
     pcg32_srandom,
-)  # noqa: TID252
+) # noqa: TID252
 
 __all__ = ["pcg32_boundedrand", "pcg32_frandom", "pcg32_random", "pcg32_srandom"]

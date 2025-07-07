@@ -10,7 +10,7 @@ from pecos.engines.cvm.binarray import BinArray
 
 
 class RNGModel:
-    """This class is responsible the functionality of generating a sequence of random numbers."""
+    """This class is responsible for the functionality of generating a sequence of random numbers."""
 
     def __init__(
         self,

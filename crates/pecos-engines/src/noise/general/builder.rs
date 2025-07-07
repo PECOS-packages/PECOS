@@ -359,7 +359,7 @@ impl GeneralNoiseModelBuilder {
     /// Set the average idling noise error rate per channel for the quadratic term
     #[must_use]
     pub fn with_average_p_idle_quadratic_rate(mut self, rate: f64) -> Self {
-        let rate: f64 = (rate * 3.0 / 2.0).sqrt();
+        let rate: f64 = rate * (3.0 / 2.0).sqrt();
         self.p_idle_quadratic_rate = Some(rate);
         self
     }

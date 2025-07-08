@@ -71,14 +71,13 @@ jobs:
 
     - name: Install pecos rng build dependencies
       run: |
-        uv pip install build nanobind
+        uv pip install build nanobind scikit-build-core cmake ninja
   
     - name: Build PECOS RNG
       run: |
+        export NANOBIND_DIR=$(python -m nanobind --include_dir)
         cd clibs/pecos-rng && mkdir build && cd build/ && cmake ..
         make && cd .. && python -m pip install .
-      env:
-          NANOBIND_DIR: python -m nanobind --include_dir
 
     - name: Install pecos-rslib with maturin
       run: |

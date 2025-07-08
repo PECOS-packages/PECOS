@@ -24,6 +24,7 @@ from pecos_rslib._pecos_rslib import ByteMessage
 from pecos_rslib._pecos_rslib import ByteMessageBuilder
 from pecos_rslib._pecos_rslib import StateVecEngineRs
 from pecos_rslib._pecos_rslib import SparseStabEngineRs
+from pecos_rslib._pecos_rslib import pecos_rng
 
 try:
     __version__ = version("pecos-rslib")
@@ -37,4 +38,5 @@ __all__ = [
     "ByteMessageBuilder",
     "StateVecEngineRs",
     "SparseStabEngineRs",
+    "pecos_rng",
 ]

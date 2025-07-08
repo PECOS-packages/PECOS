@@ -1,0 +1,17 @@
+[package]
+name = "pecos-clibs"
+version = "0.1.1"
+authors = ["PECOS Developers"]
+edition = "2024"
+license = "Apache-2.0"
+description = "C library bindings for PECOS"
+
+[dependencies]
+libc = "0.2"
+
+[build-dependencies]
+cc = "1.0"
+
+[lib]
+name = "pecos_clibs"
+crate-type = ["rlib", "cdylib"]

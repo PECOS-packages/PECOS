@@ -4,7 +4,7 @@ It handles RNG platform function calls that that are handled by the pcg_rng libr
 
 """
 
-from pecos_pcg import pecos_rng
+from pecos_rslib import pecos_rng
 
 from pecos.engines.cvm.binarray import BinArray
 

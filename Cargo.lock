@@ -1190,6 +1190,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-clibs"
+version = "0.1.1"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "pecos-core"
 version = "0.1.1"
 dependencies = [
@@ -1283,6 +1291,7 @@ version = "0.1.1"
 dependencies = [
  "parking_lot",
  "pecos",
+ "pecos-clibs",
  "pyo3",
  "pyo3-build-config",
 ]

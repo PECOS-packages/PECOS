@@ -60,6 +60,7 @@ pecos-qec = { version = "0.1.1", path = "crates/pecos-qec" }
 pecos = { version = "0.1.1", path = "crates/pecos" }
 pecos-cli = { version = "0.1.1", path = "crates/pecos-cli" }
 pecos-rslib = { version = "0.1.1", path = "python/pecos-rslib/rust" }
+pecos-clibs = { version = "0.1.1", path = "crates/pecos-clibs" }
 
 [profile.release]
 codegen-units = 1

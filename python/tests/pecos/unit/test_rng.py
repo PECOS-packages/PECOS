@@ -12,11 +12,13 @@ def test_set_seed() -> None:
     rng.set_seed(seed)
     assert rng.seed == seed
 
+
 def test_random_number() -> None:
     """Verifies that the random number generated is an int type."""
     rng = RNGModel(shot_id=0)
     random = rng.rng_random()
     assert isinstance(random, int)
+
 
 def test_bounded_random() -> None:
     """Verifies that a single generated random number is within bounds."""
@@ -29,6 +31,7 @@ def test_bounded_random() -> None:
     random_number = rng.rng_random()
     assert 0 <= random_number < bound
 
+
 def test_set_idx() -> None:
     """Verifies that the idx is set properly for our model."""
     rng = RNGModel(shot_id=0)
@@ -36,6 +39,7 @@ def test_set_idx() -> None:
     idx = 4
     rng.set_index(idx)
     assert rng.count == idx
+
 
 def test_multiple_bounded_rand() -> None:
     """For several randomly generated number, with a random bound, verifies that its appropriate."""

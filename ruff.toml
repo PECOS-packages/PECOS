@@ -91,6 +91,7 @@ ignore = [
     "ANN",
     "D",
 ]
+"clibs/pecos-rng/pecos_pcg/__init__.py" = ["TID252"]
 
 
 [lint.pycodestyle]

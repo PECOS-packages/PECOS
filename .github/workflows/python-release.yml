@@ -205,7 +205,7 @@ jobs:
 
       - name: Build PECOS RNG
         run: |
-          cd lib/pecos_rng && mkdir build && cd build/ && cmake ..
+          cd clibs/pecos-rng && mkdir build && cd build/ && cmake ..
           cmake -DPYTHON_EXECUTABLE=$(which python) --build . && cd .. && python -m pip install .
         env:
             NANOBIND_DIR: python -m nanobind --include_dir

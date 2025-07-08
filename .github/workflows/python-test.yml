@@ -77,8 +77,8 @@ jobs:
       run: |
         export NANOBIND_CMAKE_DIR=$(uv run -- python -m nanobind --cmake_dir)
         export NANOBIND_DIR=$(uv run -- python -m nanobind --include_dir)
-        cd clibs/pecos-rng && mkdir build && cd build/ && cmake .. -DCMAKE_PREFIX_PATH=$NANOBIND_CMAKE_DIR
-        make && cd .. && python -m pip install .
+        cd clibs/pecos-rng && mkdir build && cd build/ && cmake .. -DCMAKE_PREFIX_PATH=$NANOBIND_CMAKE_DIR && make
+        cd .. && python -m pip install .
 
     - name: Install pecos-rslib with maturin
       run: |

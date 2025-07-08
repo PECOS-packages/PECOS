@@ -198,15 +198,14 @@ jobs:
       - name: Install pecos-rslib
         run: pip install ./pecos-rslib-wheel/*.whl
 
-      - name: Install build dependencies
+      - name: Install pecos RNG build dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install build nanobind
+          uv pip install build nanobind
 
       - name: Build PECOS RNG
         run: |
           cd clibs/pecos-rng && mkdir build && cd build/ && cmake ..
-          cmake -DPYTHON_EXECUTABLE=$(which python) --build . && cd .. && python -m pip install .
+          make && cd .. && uv pip install .
         env:
             NANOBIND_DIR: python -m nanobind --include_dir
 

@@ -94,7 +94,7 @@ class GeneralNoiseFactory:
             "with_p_idle_linear_rate", float, "Idle noise linear rate"
         ),
         "p_idle_average_linear_rate": MethodMapping(
-            "with_p_average_idle_linear_rate", float, "Average idle noise linear rate"
+            "with_average_p_idle_linear_rate", float, "Average idle noise linear rate"
         ),
         "p_idle_linear_model": MethodMapping(
             "with_p_idle_linear_model", dict, "Idle noise Pauli distribution"
@@ -103,7 +103,7 @@ class GeneralNoiseFactory:
             "with_p_idle_quadratic_rate", float, "Idle noise quadratic rate"
         ),
         "p_idle_average_quadratic_rate": MethodMapping(
-            "with_p_average_idle_quadratic_rate",
+            "with_average_p_idle_quadratic_rate",
             float,
             "Average idle noise quadratic rate",
         ),

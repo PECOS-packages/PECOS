@@ -239,14 +239,14 @@ impl PyGeneralNoiseModelBuilder {
     /// Raises:
     ///     ValueError: If rate is negative
     #[pyo3(text_signature = "($self, rate)")]
-    fn with_p_average_idle_linear_rate(&self, rate: f64) -> PyResult<Self> {
+    fn with_average_p_idle_linear_rate(&self, rate: f64) -> PyResult<Self> {
         if rate < 0.0 {
             return Err(PyValueError::new_err(
                 "p_average_idle_linear_rate must be non-negative",
             ));
         }
         let mut new_self = self.clone();
-        new_self.inner = new_self.inner.with_p_average_idle_linear_rate(rate);
+        new_self.inner = new_self.inner.with_average_p_idle_linear_rate(rate);
         Ok(new_self)
     }
 
@@ -303,14 +303,14 @@ impl PyGeneralNoiseModelBuilder {
     /// Raises:
     ///     ValueError: If rate is negative
     #[pyo3(text_signature = "($self, rate)")]
-    fn with_p_average_idle_quadratic_rate(&self, rate: f64) -> PyResult<Self> {
+    fn with_average_p_idle_quadratic_rate(&self, rate: f64) -> PyResult<Self> {
         if rate < 0.0 {
             return Err(PyValueError::new_err(
                 "p_average_idle_quadratic_rate must be non-negative",
             ));
         }
         let mut new_self = self.clone();
-        new_self.inner = new_self.inner.with_p_average_idle_quadratic_rate(rate);
+        new_self.inner = new_self.inner.with_average_p_idle_quadratic_rate(rate);
         Ok(new_self)
     }
 

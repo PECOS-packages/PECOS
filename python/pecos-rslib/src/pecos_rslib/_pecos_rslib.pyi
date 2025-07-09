@@ -401,6 +401,41 @@ class QasmSimulationBuilder:
         """
         ...
 
+    def wasm(self, wasm_path: str) -> "QasmSimulationBuilder":
+        """Set the path to a WebAssembly file for foreign function calls.
+
+        Allows QASM programs to call functions defined in WebAssembly modules.
+        The WASM module must export an 'init()' function that is called at the
+        start of each shot.
+
+        Args:
+            wasm_path: Path to a .wasm or .wat file
+
+        Returns:
+            Self for method chaining
+
+        Example:
+            >>> # QASM code with WASM function calls
+            >>> qasm = '''
+            ... OPENQASM 2.0;
+            ... creg a[10];
+            ... creg b[10];
+            ... creg result[10];
+            ... a = 5;
+            ... b = 3;
+            ... result = add(a, b);  // Call WASM function
+            ... '''
+            >>> 
+            >>> # Run with WASM module
+            >>> results = qasm_sim(qasm).wasm("add.wasm").run(100)
+            >>> print(results["result"][0])  # 8
+
+        Note:
+            This feature requires the 'wasm' feature to be enabled when building
+            the Rust library.
+        """
+        ...
+
     def build(self) -> QasmSimulation:
         """Build the simulation for repeated execution.
 

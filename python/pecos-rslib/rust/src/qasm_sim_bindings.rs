@@ -1249,6 +1249,8 @@ pub struct PyQasmSimulationBuilder {
     noise_model: NoiseModelType,
     quantum_engine: QuantumEngineType,
     bit_format: BitVecFormat,
+    #[cfg(feature = "wasm")]
+    wasm_path: Option<String>,
 }
 
 #[pymethods]
@@ -1303,6 +1305,14 @@ impl PyQasmSimulationBuilder {
     pub fn with_binary_string_format(&self) -> Self {
         let mut new = self.clone();
         new.bit_format = BitVecFormat::BinaryString;
+        new
+    }
+
+    /// Set the path to a WebAssembly file (.wasm or .wat) for foreign function calls
+    #[cfg(feature = "wasm")]
+    pub fn wasm(&self, wasm_path: String) -> Self {
+        let mut new = self.clone();
+        new.wasm_path = Some(wasm_path);
         new
     }
 
@@ -1398,6 +1408,11 @@ impl PyQasmSimulationBuilder {
             builder = builder.with_binary_string_format();
         }
 
+        #[cfg(feature = "wasm")]
+        if let Some(ref wasm_path) = self.wasm_path {
+            builder = builder.wasm(wasm_path);
+        }
+
         let sim = builder.build().map_err(|e| pecos_error_to_pyerr(&e))?;
         Ok(PyQasmSimulation { inner: sim })
     }
@@ -1415,6 +1430,11 @@ impl PyQasmSimulationBuilder {
 
         if self.bit_format == BitVecFormat::BinaryString {
             builder = builder.with_binary_string_format();
+        }
+
+        #[cfg(feature = "wasm")]
+        if let Some(ref wasm_path) = self.wasm_path {
+            builder = builder.wasm(wasm_path);
         }
 
         let shot_vec = builder.run(shots).map_err(|e| pecos_error_to_pyerr(&e))?;
@@ -1467,6 +1487,8 @@ pub fn py_qasm_sim(qasm: &str) -> PyQasmSimulationBuilder {
         noise_model: NoiseModelType::PassThrough(Box::new(PassThroughNoiseModel::builder())),
         quantum_engine: QuantumEngineType::SparseStabilizer,
         bit_format: BitVecFormat::BigUint,
+        #[cfg(feature = "wasm")]
+        wasm_path: None,
     }
 }
 

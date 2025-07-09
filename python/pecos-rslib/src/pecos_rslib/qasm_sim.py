@@ -283,6 +283,19 @@ def qasm_sim(qasm: str) -> QasmSimulationBuilder:
         ...     .build()
         ... )
         >>> results = sim.run(1000)
+        >>>
+        >>> # Using WebAssembly functions (requires wasm feature)
+        >>> qasm_with_wasm = '''
+        ... OPENQASM 2.0;
+        ... creg a[10];
+        ... creg b[10];
+        ... creg result[10];
+        ... a = 5;
+        ... b = 3;
+        ... result = add(a, b);  // Call WASM function
+        ... '''
+        >>> # Run with WASM module
+        >>> results = qasm_sim(qasm_with_wasm).wasm("add.wasm").run(100)
     """
     return _qasm_sim(qasm)
 

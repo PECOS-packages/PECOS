@@ -1,11 +1,12 @@
 #[cfg(feature = "wasm")]
 mod wasm_tests {
     use pecos_qasm::simulation::qasm_sim;
+    use std::io::Write;
     use std::path::PathBuf;
 
     #[test]
     fn test_wasm_addition() {
-        let qasm = r#"
+        let qasm = r"
             OPENQASM 2.0;
             creg a[10];
             creg b[10];
@@ -13,7 +14,7 @@ mod wasm_tests {
             a = 1;
             b = 2;
             c = add(a, b);
-        "#;
+        ";
 
         let wat_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
@@ -26,7 +27,7 @@ mod wasm_tests {
             .expect("Simulation should succeed");
 
         // Check that all shots have the expected values
-        for shot in results.shots.iter() {
+        for shot in &results.shots {
             let a_val = shot.data.get("a").expect("Register 'a' should exist");
             let b_val = shot.data.get("b").expect("Register 'b' should exist");
             let c_val = shot.data.get("c").expect("Register 'c' should exist");
@@ -50,10 +51,7 @@ mod wasm_tests {
                     }
                     value
                 }
-                _ => panic!(
-                    "Expected U64, BigInt, or BitVec for register a, got: {:?}",
-                    a_val
-                ),
+                _ => panic!("Expected U64, BigInt, or BitVec for register a, got: {a_val:?}"),
             };
             let b_int = match b_val {
                 pecos_engines::shot_results::Data::U64(v) => *v,
@@ -169,7 +167,6 @@ mod wasm_tests {
         "#;
 
         // Write to a temporary file
-        use std::io::Write;
         let mut temp_file = tempfile::NamedTempFile::new().unwrap();
         temp_file.write_all(wat_content.as_bytes()).unwrap();
         temp_file.flush().unwrap();
@@ -220,7 +217,7 @@ mod wasm_tests {
             .expect("Simulation should succeed");
 
         // Verify quantum entanglement and WASM addition
-        for shot in results.shots.iter() {
+        for shot in &results.shots {
             let c_val = shot.data.get("c").expect("Register 'c' should exist");
             let sum_val = shot.data.get("sum").expect("Register 'sum' should exist");
 
@@ -284,14 +281,14 @@ mod wasm_tests {
     #[test]
     fn test_wasm_void_function() {
         // Test that void functions work (functions with no return value)
-        let qasm = r#"
+        let qasm = r"
             OPENQASM 2.0;
             creg a[10];
             creg b[10];
             a = 5;
             b = 10;
             void_func(a, b);  // Now we support standalone void function calls!
-        "#;
+        ";
 
         let wat_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
@@ -306,7 +303,7 @@ mod wasm_tests {
     #[test]
     fn test_wasm_multiple_functions() {
         // Test using multiple WASM functions in one program
-        let qasm = r#"
+        let qasm = r"
             OPENQASM 2.0;
             creg a[10];
             creg b[10];
@@ -317,7 +314,7 @@ mod wasm_tests {
             c = add(a, b);        // c = 8
             d = multiply(c, 2);   // d = 16
             a = negate(b);        // a = -3 (but stored as two's complement)
-        "#;
+        ";
 
         let wat_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
@@ -329,7 +326,7 @@ mod wasm_tests {
             .run(10)
             .expect("Simulation should succeed");
 
-        for shot in results.shots.iter() {
+        for shot in &results.shots {
             let c_val = shot.data.get("c").expect("Register 'c' should exist");
             let d_val = shot.data.get("d").expect("Register 'd' should exist");
 
@@ -344,7 +341,7 @@ mod wasm_tests {
     #[test]
     fn test_wasm_sequential_function_calls() {
         // Test sequential function calls (instead of nested)
-        let qasm = r#"
+        let qasm = r"
             OPENQASM 2.0;
             creg a[10];
             creg temp1[10];
@@ -354,7 +351,7 @@ mod wasm_tests {
             temp1 = multiply(a, 2);     // 3 * 2 = 6
             temp2 = add(4, 1);          // 4 + 1 = 5
             result = add(temp1, temp2); // 6 + 5 = 11
-        "#;
+        ";
 
         let wat_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
@@ -366,7 +363,7 @@ mod wasm_tests {
             .run(10)
             .expect("Simulation should succeed");
 
-        for shot in results.shots.iter() {
+        for shot in &results.shots {
             let result_val = shot
                 .data
                 .get("result")
@@ -379,13 +376,13 @@ mod wasm_tests {
     #[test]
     fn test_wasm_state_reset_between_shots() {
         // Test that init() is called between shots, resetting state
-        let qasm = r#"
+        let qasm = r"
             OPENQASM 2.0;
             creg counter1[10];
             creg counter2[10];
             counter1 = increment();  // Should always be 1
             counter2 = increment();  // Should always be 2
-        "#;
+        ";
 
         let wat_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
@@ -398,7 +395,7 @@ mod wasm_tests {
             .expect("Simulation should succeed");
 
         // Each shot should have the same values because init() resets state
-        for shot in results.shots.iter() {
+        for shot in &results.shots {
             let c1 = extract_u64(shot.data.get("counter1").unwrap());
             let c2 = extract_u64(shot.data.get("counter2").unwrap());
             assert_eq!(c1, 1, "counter1 should always be 1 (init resets state)");
@@ -409,7 +406,7 @@ mod wasm_tests {
     #[test]
     fn test_wasm_large_values() {
         // Test handling of large values and i64
-        let qasm = r#"
+        let qasm = r"
             OPENQASM 2.0;
             creg a[64];
             creg b[64];
@@ -417,7 +414,7 @@ mod wasm_tests {
             a = 1000000000;
             b = 2000000000;
             c = add64(a, b);  // 3 billion - needs i64
-        "#;
+        ";
 
         let wat_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
@@ -432,7 +429,7 @@ mod wasm_tests {
         let shot = &results.shots[0];
         let c_val = shot.data.get("c").expect("Register 'c' should exist");
         let c_int = extract_u64(c_val);
-        assert_eq!(c_int, 3000000000, "c should be 3 billion");
+        assert_eq!(c_int, 3_000_000_000, "c should be 3 billion");
     }
 
     #[test]
@@ -465,7 +462,7 @@ mod wasm_tests {
         let mut saw_add = false;
         let mut saw_multiply = false;
 
-        for shot in results.shots.iter() {
+        for shot in &results.shots {
             let c_val = extract_u64(shot.data.get("c").unwrap());
             let result_val = extract_u64(shot.data.get("result").unwrap());
 
@@ -484,7 +481,7 @@ mod wasm_tests {
     #[test]
     fn test_wasm_function_with_computed_args() {
         // Test WASM functions with pre-computed arguments
-        let qasm = r#"
+        let qasm = r"
             OPENQASM 2.0;
             creg a[10];
             creg b[10];
@@ -498,7 +495,7 @@ mod wasm_tests {
             temp1 = a + b;           // 5 + 3 = 8
             temp2 = multiply(c, 4);  // 2 * 4 = 8
             result = add(temp1, temp2);  // 8 + 8 = 16
-        "#;
+        ";
 
         let wat_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
@@ -530,7 +527,7 @@ mod wasm_tests {
                     // Take first 8 bytes (64 bits) and convert to u64
                     let mut result = 0u64;
                     for (i, &byte) in bytes.iter().take(8).enumerate() {
-                        result |= (byte as u64) << (i * 8);
+                        result |= u64::from(byte) << (i * 8);
                     }
                     result
                 }

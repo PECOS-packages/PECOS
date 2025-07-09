@@ -198,11 +198,11 @@ mod wasm_tests {
             qreg q[2];
             creg c[2];
             creg sum[10];
-            
+
             h q[0];
             cx q[0], q[1];
             measure q -> c;
-            
+
             sum = add(c[0], c[1]);
         "#;
 
@@ -441,10 +441,10 @@ mod wasm_tests {
             qreg q[1];
             creg c[1];
             creg result[10];
-            
+
             h q[0];
             measure q[0] -> c[0];
-            
+
             if(c==1) result = add(10, 20);
             if(c==0) result = multiply(5, 6);
         "#;

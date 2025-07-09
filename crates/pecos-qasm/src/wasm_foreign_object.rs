@@ -5,8 +5,9 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! // QASM code
+//! ## QASM Usage
+//!
+//! ```text
 //! OPENQASM 2.0;
 //! creg a[10];
 //! creg b[10];
@@ -17,6 +18,37 @@
 //! result = add(a, b);      // Call WASM function
 //! void_func(a, b);         // Call void WASM function
 //! a = get_value();         // Call WASM function with no args
+//! ```
+//!
+//! ## Rust Usage
+//!
+//! ```no_run
+//! # #[cfg(feature = "wasm")] {
+//! use pecos_qasm::simulation::qasm_sim;
+//!
+//! let qasm = r#"
+//!     OPENQASM 2.0;
+//!     creg a[10];
+//!     creg b[10];
+//!     creg result[10];
+//!
+//!     a = 5;
+//!     b = 3;
+//!     result = add(a, b);
+//! "#;
+//!
+//! // Run simulation with WASM module
+//! let results = qasm_sim(qasm)
+//!     .wasm("math.wasm")
+//!     .run(100)
+//!     .expect("Failed to run simulation");
+//!
+//! // Process results
+//! for shot in &results.shots {
+//!     let result_value = shot.data.get("result").unwrap();
+//!     println!("Result: {:?}", result_value);
+//! }
+//! # }
 //! ```
 //!
 //! # Requirements

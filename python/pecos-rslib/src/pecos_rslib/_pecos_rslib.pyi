@@ -425,7 +425,7 @@ class QasmSimulationBuilder:
             ... b = 3;
             ... result = add(a, b);  // Call WASM function
             ... '''
-            >>> 
+            >>>
             >>> # Run with WASM module
             >>> results = qasm_sim(qasm).wasm("add.wasm").run(100)
             >>> print(results["result"][0])  # 8

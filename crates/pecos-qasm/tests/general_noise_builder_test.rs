@@ -40,7 +40,7 @@ fn test_general_noise_builder_basic() {
     let values = shot_map.try_bits_as_u64("c").unwrap();
 
     // Should see mostly 0 (00) and 3 (11), but some errors due to noise
-    let mut counts = std::collections::HashMap::new();
+    let mut counts = std::collections::BTreeMap::new();
     for val in values {
         *counts.entry(val).or_insert(0) += 1;
     }
@@ -163,7 +163,7 @@ fn test_general_noise_builder_noiseless_gates() {
     let values = shot_map.try_bits_as_u64("c").unwrap();
 
     // Should see all possible states due to high noise on X and CX
-    let unique_states: std::collections::HashSet<_> = values.iter().copied().collect();
+    let unique_states: std::collections::BTreeSet<_> = values.iter().copied().collect();
     assert!(
         unique_states.len() >= 3,
         "High noise should create various states"
@@ -187,7 +187,11 @@ fn test_general_noise_builder_with_prep_errors() {
 
     let noise_model = NoiseModelType::General(Box::new(noise_builder));
 
-    let results = qasm_sim(qasm).noise(noise_model).run(1000).unwrap();
+    let results = qasm_sim(qasm)
+        .seed(42)
+        .noise(noise_model)
+        .run(1000)
+        .unwrap();
 
     let shot_map = results.try_as_shot_map().unwrap();
     let values = shot_map.try_bits_as_u64("c").unwrap();
@@ -234,7 +238,7 @@ fn test_general_noise_builder_measurement_errors() {
     let values = shot_map.try_bits_as_u64("c").unwrap();
 
     // Should be 3 (11) without errors
-    let mut counts = std::collections::HashMap::new();
+    let mut counts = std::collections::BTreeMap::new();
     for val in values {
         *counts.entry(val).or_insert(0) += 1;
     }
@@ -330,10 +334,10 @@ fn test_general_noise_builder_with_multiple_noiseless_gates() {
 
     // With all gates noiseless, there's still quantum randomness from H gate
     // We should see a superposition state, but no noise errors
-    let unique_values: std::collections::HashSet<_> = values.iter().copied().collect();
+    let unique_values: std::collections::BTreeSet<_> = values.iter().copied().collect();
 
     // Count the different states we see
-    let mut counts = std::collections::HashMap::new();
+    let mut counts = std::collections::BTreeMap::new();
     for val in values {
         *counts.entry(val).or_insert(0) += 1;
     }

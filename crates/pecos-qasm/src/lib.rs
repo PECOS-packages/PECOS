@@ -58,6 +58,7 @@ pub mod bitvec_expression;
 pub mod config;
 pub mod engine;
 pub mod engine_builder;
+pub mod foreign_objects;
 pub mod includes;
 pub mod parser;
 pub mod prelude;
@@ -68,6 +69,9 @@ pub mod run;
 pub mod simulation;
 pub mod util;
 
+#[cfg(feature = "wasm")]
+pub mod wasm_foreign_object;
+
 pub use crate::run::run_qasm;
 pub use ast::{Expression, GateOperation, Operation, OperationDisplay};
 pub use engine::QASMEngine;
@@ -76,6 +80,9 @@ pub use parser::{ParseConfig, QASMParser};
 pub use preprocessor::Preprocessor;
 pub use program::QASMProgram;
 pub use util::{count_qubits_in_file, count_qubits_in_str};
+
+/// List of built-in mathematical functions that cannot be overridden by WASM
+pub const BUILTIN_FUNCTIONS: &[&str] = &["sin", "cos", "tan", "exp", "ln", "sqrt"];
 
 use log::debug;
 use pecos_core::errors::PecosError;

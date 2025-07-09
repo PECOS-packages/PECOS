@@ -7,6 +7,7 @@ use pecos_engines::byte_message::ByteMessageBuilder;
 use pecos_engines::prelude::*;
 use std::any::Any;
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -28,7 +29,6 @@ struct GateInfo {
 }
 
 /// A QASM Engine that can generate native commands from a QASM program
-#[derive(Debug)]
 pub struct QASMEngine {
     /// The QASM Program being executed
     program: Option<QASMProgram>,
@@ -56,6 +56,10 @@ pub struct QASMEngine {
 
     /// When true, allows general expressions in if statements
     allow_complex_conditionals: bool,
+
+    /// Foreign object for WASM function calls
+    #[cfg(feature = "wasm")]
+    foreign_object: Option<Box<dyn crate::foreign_objects::ForeignObject>>,
 }
 
 impl QASMEngine {
@@ -95,6 +99,15 @@ impl QASMEngine {
     }
 
     /// Load a QASM program into the engine
+    /// Set the foreign object for WASM function calls
+    #[cfg(feature = "wasm")]
+    pub fn set_foreign_object(
+        &mut self,
+        foreign_object: Box<dyn crate::foreign_objects::ForeignObject>,
+    ) {
+        self.foreign_object = Some(foreign_object);
+    }
+
     pub(crate) fn load_program(&mut self, program: QASMProgram) {
         let ast = program.program();
         debug!(
@@ -169,6 +182,14 @@ impl QASMEngine {
         self.register_result_mappings.clear();
         self.classical_registers.clear();
         self.message_builder.reset();
+
+        // Reset WASM state for new shot
+        #[cfg(feature = "wasm")]
+        if let Some(ref mut foreign_obj) = self.foreign_object {
+            if let Err(e) = foreign_obj.new_instance() {
+                log::error!("Failed to reset WASM instance: {}", e);
+            }
+        }
 
         // Re-initialize from program if available
         if let Some(qasm_program) = &self.program {
@@ -1056,6 +1077,15 @@ impl QASMEngine {
 
                     operation_count += 1;
                 }
+                Operation::VoidFunctionCall { expression } => {
+                    debug!("Processing void function call: {:?}", expression);
+
+                    // Evaluate the expression (which should be a function call)
+                    // We use a dummy width of 1 since we'll discard the result anyway
+                    let _ = self.evaluate_expression_bitvec_with_width(expression, 1)?;
+
+                    operation_count += 1;
+                }
                 _ => {
                     debug!("Skipping unsupported operation type");
                 }
@@ -1074,10 +1104,53 @@ impl QASMEngine {
     }
 
     fn evaluate_expression_bitvec_with_width(
-        &self,
+        &mut self,
         expr: &Expression,
         target_width: usize,
     ) -> Result<ExpressionValue, PecosError> {
+        // Check if this is a WASM function call
+        #[cfg(feature = "wasm")]
+        if let Expression::FunctionCall { name, args } = expr {
+            if let Some(ref _foreign_obj) = self.foreign_object {
+                // Check if it's not a built-in function
+                if !crate::BUILTIN_FUNCTIONS.contains(&name.as_str()) {
+                    // Evaluate arguments first (while we still have access to self)
+                    let mut arg_values = Vec::new();
+                    for arg in args {
+                        let val = evaluate_expression_bitvec(arg, self, target_width)?;
+                        arg_values.push(val.as_i64());
+                    }
+
+                    // Now call the WASM function with evaluated arguments
+                    if let Some(ref mut foreign_obj) = self.foreign_object {
+                        let results = foreign_obj.exec(name, &arg_values)?;
+
+                        // Convert result back to BitVec
+                        if results.is_empty() {
+                            // Void function - return 0
+                            return Ok(ExpressionValue::BitVec(BitVec::repeat(
+                                false,
+                                target_width,
+                            )));
+                        } else if results.len() == 1 {
+                            // Single return value - convert to BitVec
+                            let value = results[0];
+                            let mut bitvec = BitVec::<u8, Lsb0>::with_capacity(target_width);
+                            for i in 0..target_width {
+                                bitvec.push((value >> i) & 1 != 0);
+                            }
+                            return Ok(ExpressionValue::BitVec(bitvec));
+                        } else {
+                            return Err(PecosError::ParseInvalidExpression(format!(
+                                "WASM function '{name}' returned {} values, but only single return values are supported in QASM expressions",
+                                results.len()
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
         // Use target width as hint for expression evaluation
         evaluate_expression_bitvec(expr, self, target_width)
     }
@@ -1238,6 +1311,12 @@ impl Clone for QASMEngine {
             ..Self::default()
         };
 
+        // Clone foreign object if present
+        #[cfg(feature = "wasm")]
+        if let Some(ref foreign_obj) = self.foreign_object {
+            engine.foreign_object = Some(foreign_obj.clone_box());
+        }
+
         // Re-initialize classical registers from program
         if let Some(qasm_program) = &engine.program {
             let program = qasm_program.program();
@@ -1348,6 +1427,8 @@ impl Default for QASMEngine {
             measurements_processed: 0,
             message_builder: ByteMessageBuilder::new(),
             allow_complex_conditionals: false,
+            #[cfg(feature = "wasm")]
+            foreign_object: None,
         }
     }
 }
@@ -1376,5 +1457,26 @@ impl BitVecExpressionContext for QASMEngine {
         self.classical_register_sizes()
             .and_then(|sizes| sizes.get(name))
             .copied()
+    }
+}
+
+impl fmt::Debug for QASMEngine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut s = f.debug_struct("QASMEngine");
+        s.field("program", &self.program)
+            .field("register_result_mappings", &self.register_result_mappings)
+            .field("classical_registers", &self.classical_registers)
+            .field("raw_measurements", &self.raw_measurements)
+            .field("current_op", &self.current_op)
+            .field("measurements_processed", &self.measurements_processed)
+            .field(
+                "allow_complex_conditionals",
+                &self.allow_complex_conditionals,
+            );
+
+        #[cfg(feature = "wasm")]
+        s.field("foreign_object", &self.foreign_object.is_some());
+
+        s.finish_non_exhaustive()
     }
 }

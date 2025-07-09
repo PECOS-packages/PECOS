@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("\nRegister 'c' has {} measurements", c_values.len());
 
             // Count unique outcomes
-            let mut counts = std::collections::HashMap::new();
+            let mut counts = std::collections::BTreeMap::new();
             for bitvec in &c_values {
                 // Convert BitVec to string for counting
                 let mut key = String::new();

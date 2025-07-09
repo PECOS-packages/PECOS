@@ -1,7 +1,7 @@
 // Tests for the new qasm_sim API
 
 use pecos_qasm::prelude::*;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 #[test]
 fn test_simple_run() {
@@ -110,7 +110,7 @@ fn test_custom_depolarizing_noise() {
     let values = shot_map.try_bits_as_u64("c").unwrap();
 
     // Count non-Bell states
-    let mut counts = HashMap::new();
+    let mut counts = BTreeMap::new();
     for val in values {
         *counts.entry(val).or_insert(0) += 1;
     }

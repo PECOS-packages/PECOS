@@ -137,6 +137,50 @@ impl QASMProgram {
         let source = read_to_string(path).map_err(|e| PecosError::Input(e.to_string()))?;
         Self::from_str(&source)
     }
+
+    /// Get all function calls used in the program that are not built-in functions
+    #[must_use]
+    pub fn get_non_builtin_function_calls(&self) -> Vec<String> {
+        use crate::ast::{Expression, Operation};
+        use std::collections::BTreeSet;
+
+        // Helper function to extract function calls from expressions
+        fn extract_function_calls(expr: &Expression, calls: &mut BTreeSet<String>) {
+            match expr {
+                Expression::FunctionCall { name, args } => {
+                    if !crate::BUILTIN_FUNCTIONS.contains(&name.as_str()) {
+                        calls.insert(name.clone());
+                    }
+                    // Recursively check arguments
+                    for arg in args {
+                        extract_function_calls(arg, calls);
+                    }
+                }
+                Expression::BinaryOp { left, right, .. } => {
+                    extract_function_calls(left, calls);
+                    extract_function_calls(right, calls);
+                }
+                Expression::UnaryOp { op: _, expr } => {
+                    extract_function_calls(expr, calls);
+                }
+                _ => {}
+            }
+        }
+
+        let mut function_calls = BTreeSet::new();
+
+        // Check all operations
+        for op in &self.program.operations {
+            if let Operation::ClassicalAssignment { expression, .. } = op {
+                extract_function_calls(expression, &mut function_calls);
+            }
+        }
+
+        // Note: Gate parameters are f64 values, not expressions in the current AST
+        // So we don't need to check them for function calls
+
+        function_calls.into_iter().collect()
+    }
 }
 
 impl FromStr for QASMProgram {

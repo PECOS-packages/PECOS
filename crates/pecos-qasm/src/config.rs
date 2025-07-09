@@ -182,15 +182,10 @@ impl GeneralNoiseFields {
         mut builder: GeneralNoiseModelBuilder,
     ) -> GeneralNoiseModelBuilder {
         if let Some(gates) = &self.noiseless_gates {
-            use std::collections::HashSet;
-            let mut gate_set = HashSet::new();
             for gate_str in gates {
                 if let Some(gate_type) = parse_gate_type_from_string(gate_str) {
-                    gate_set.insert(gate_type);
+                    builder = builder.with_noiseless_gate(gate_type);
                 }
-            }
-            for gate_type in gate_set {
-                builder = builder.with_noiseless_gate(gate_type);
             }
         }
         if let Some(s) = self.seed {

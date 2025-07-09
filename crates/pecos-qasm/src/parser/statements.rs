@@ -1,7 +1,8 @@
 use pecos_core::errors::PecosError;
 use pest::iterators::Pair;
 
-use crate::ast::Operation;
+use crate::ast::{Expression, Operation};
+use crate::parser::expressions::parse_expr;
 use crate::parser::gates::{parse_gate_definition, parse_opaque_def};
 use crate::parser::operations::{parse_classical_operation, parse_if_statement, parse_quantum_op};
 use crate::parser::registers::parse_register;
@@ -71,6 +72,12 @@ pub fn parse_statement(pair: Pair<Rule>, program: &mut Program) -> Result<(), Pe
                 program.operations.push(operation);
             }
         }
+        Rule::function_call_stmt => {
+            let op = parse_function_call_statement(inner)?;
+            if let Some(operation) = op {
+                program.operations.push(operation);
+            }
+        }
         _ => {
             // Unknown statement type - provide helpful error
             return Err(QASMParser::error(format!(
@@ -103,6 +110,37 @@ fn parse_conditional(pair: Pair<Rule>, program: &Program) -> Result<Option<Opera
 
 fn parse_opaque_declaration(pair: Pair<Rule>) -> Result<Option<Operation>, PecosError> {
     parse_opaque_def(pair)
+}
+
+/// Parse a standalone function call statement (for void functions)
+fn parse_function_call_statement(pair: Pair<Rule>) -> Result<Option<Operation>, PecosError> {
+    let mut inner = pair.into_inner();
+
+    // Get function name
+    let func_name = inner
+        .next()
+        .ok_or_else(|| QASMParser::error("Missing function name"))?
+        .as_str()
+        .to_string();
+
+    // Parse arguments
+    let mut args = Vec::new();
+    for arg_pair in inner {
+        if arg_pair.as_rule() == Rule::expr {
+            args.push(parse_expr(arg_pair)?);
+        }
+    }
+
+    // Create a function call expression and wrap it in a void function call operation
+    let func_expr = Expression::FunctionCall {
+        name: func_name,
+        args,
+    };
+
+    // Create a void function call operation (similar to classical assignment but without target)
+    Ok(Some(Operation::VoidFunctionCall {
+        expression: func_expr,
+    }))
 }
 
 /// Add context to error messages

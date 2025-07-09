@@ -89,6 +89,9 @@ pub enum Operation {
         expression: Expression,
     },
 
+    /// Void function call (standalone function call with no assignment)
+    VoidFunctionCall { expression: Expression },
+
     /// Conditional operation
     If {
         condition: Expression,
@@ -171,6 +174,9 @@ impl fmt::Display for Operation {
                     write!(f, "{} {qarg}", if i == 0 { " " } else { ", " })?;
                 }
                 Ok(())
+            }
+            Operation::VoidFunctionCall { expression } => {
+                write!(f, "{expression}")
             }
         }
     }

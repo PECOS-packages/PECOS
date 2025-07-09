@@ -39,7 +39,7 @@ fn main() {
     let values = shot_map.try_bits_as_u64("c").unwrap();
 
     // Count unique states
-    let mut state_counts = std::collections::HashMap::new();
+    let mut state_counts = std::collections::BTreeMap::new();
     for val in values {
         *state_counts.entry(val).or_insert(0) += 1;
     }

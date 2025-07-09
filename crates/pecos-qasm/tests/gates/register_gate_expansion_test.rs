@@ -71,7 +71,7 @@ fn test_measure_register_expansion() {
     }
 
     // Verify we have 3 unique qubits
-    let unique_qubits: std::collections::HashSet<_> =
+    let unique_qubits: std::collections::BTreeSet<_> =
         measurements.iter().map(|(q, _, _)| q).collect();
     assert_eq!(unique_qubits.len(), 3, "Expected 3 unique qubits");
 }

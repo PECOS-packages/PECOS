@@ -124,6 +124,8 @@ pub struct QasmSimulation {
     noise_model: NoiseModelType,
     quantum_engine_type: QuantumEngineType,
     bit_format: BitVecFormat,
+    #[cfg(feature = "wasm")]
+    foreign_object: Option<Box<dyn crate::foreign_objects::ForeignObject>>,
 }
 
 impl QasmSimulation {
@@ -145,7 +147,18 @@ impl QasmSimulation {
         let num_qubits = self.engine.num_qubits();
 
         // Create fresh engine instance for this run
+        #[cfg(feature = "wasm")]
+        let mut engine = self.engine.clone();
+        #[cfg(not(feature = "wasm"))]
         let engine = self.engine.clone();
+
+        // Initialize and set foreign object if available
+        #[cfg(feature = "wasm")]
+        if let Some(ref foreign_obj) = self.foreign_object {
+            let mut cloned_obj = foreign_obj.clone_box();
+            cloned_obj.init()?;
+            engine.set_foreign_object(cloned_obj);
+        }
 
         // Get the noise model
         let noise_model = self.noise_model.clone().create_noise_model();
@@ -213,6 +226,8 @@ pub struct QasmSimulationBuilder {
     noise_model: Option<NoiseModelType>,
     quantum_engine_type: Option<QuantumEngineType>,
     bit_format: BitVecFormat,
+    #[cfg(feature = "wasm")]
+    wasm_path: Option<String>,
 }
 
 impl QasmSimulationBuilder {
@@ -226,6 +241,8 @@ impl QasmSimulationBuilder {
             noise_model: None,
             quantum_engine_type: None,
             bit_format: BitVecFormat::BigUint,
+            #[cfg(feature = "wasm")]
+            wasm_path: None,
         }
     }
 
@@ -274,6 +291,14 @@ impl QasmSimulationBuilder {
         self
     }
 
+    /// Set the path to a WebAssembly file (.wasm or .wat) for foreign function calls
+    #[cfg(feature = "wasm")]
+    #[must_use]
+    pub fn wasm(mut self, wasm_path: impl Into<String>) -> Self {
+        self.wasm_path = Some(wasm_path.into());
+        self
+    }
+
     /// Build the simulation (for reusable execution)
     ///
     /// # Errors
@@ -281,6 +306,44 @@ impl QasmSimulationBuilder {
     /// Returns an error if the QASM cannot be parsed.
     pub fn build(self) -> Result<QasmSimulation, PecosError> {
         let engine = QASMEngine::from_str(&self.qasm)?;
+
+        #[cfg(feature = "wasm")]
+        let foreign_object = if let Some(wasm_path) = self.wasm_path {
+            use crate::program::QASMProgram;
+            use crate::wasm_foreign_object::WasmtimeForeignObject;
+            use std::str::FromStr;
+
+            // Create the WASM foreign object
+            let wasm_obj = WasmtimeForeignObject::new(wasm_path)?;
+
+            // Get exported functions from WASM module
+            let exported_functions = wasm_obj.get_exported_functions();
+
+            // Check if init function exists
+            if !exported_functions.contains(&"init".to_string()) {
+                return Err(PecosError::Input(
+                    "WebAssembly module must export an 'init' function".to_string(),
+                ));
+            }
+
+            // Parse the QASM program to extract function calls
+            let program = QASMProgram::from_str(&self.qasm)?;
+            let non_builtin_calls = program.get_non_builtin_function_calls();
+
+            // Validate that all non-builtin function calls exist in WASM module
+            for func_name in non_builtin_calls {
+                if !exported_functions.contains(&func_name) {
+                    return Err(PecosError::Input(format!(
+                        "Function '{}' is called in QASM but not exported by WebAssembly module. Available functions: {:?}",
+                        func_name, exported_functions
+                    )));
+                }
+            }
+
+            Some(Box::new(wasm_obj) as Box<dyn crate::foreign_objects::ForeignObject>)
+        } else {
+            None
+        };
 
         Ok(QasmSimulation {
             engine,
@@ -291,6 +354,8 @@ impl QasmSimulationBuilder {
                 .quantum_engine_type
                 .unwrap_or(QuantumEngineType::SparseStabilizer),
             bit_format: self.bit_format,
+            #[cfg(feature = "wasm")]
+            foreign_object,
         })
     }
 

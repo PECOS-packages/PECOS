@@ -29,7 +29,7 @@
 //!
 //! This prelude includes:
 //!
-//! * Standard library types needed for QASM operations (`FromStr`, `HashMap`)
+//! * Standard library types needed for QASM operations (`FromStr`, `BTreeMap`)
 //! * QASM engine types (`QASMEngine`, `QASMEngineBuilder`, `QASMProgram`)
 //! * QASM simulation function (`run_qasm`)
 //! * Result types (`Shot`, `ShotVec`, `ShotMap`) from pecos-engines

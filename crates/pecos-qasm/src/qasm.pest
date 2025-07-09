@@ -10,7 +10,7 @@ oqasm = { "OPENQASM" ~ WHITE_SPACE* ~ version_num ~ ";" }
 version_num = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
 
 // Any statement in the program
-statement = { include | register_decl | quantum_op | classical_op | if_stmt | gate_def | opaque_def }
+statement = { include | register_decl | quantum_op | classical_op | function_call_stmt | if_stmt | gate_def | opaque_def }
 
 // Include statement
 include = { "include" ~ string ~ ";" }
@@ -67,6 +67,9 @@ classical_op = {
     (identifier ~ "=" ~ expr ~ ";")  // Support for register-wide assignments
 }
 
+// Standalone function call statement (for void functions)
+function_call_stmt = { identifier ~ "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" ~ ";" }
+
 // Gate definition (simplified)
 gate_def = { "gate" ~ identifier ~ param_list? ~ identifier_list ~ "{" ~ gate_def_statement* ~ "}" }
 gate_def_statement = { gate_def_call }
@@ -102,9 +105,8 @@ primary_expr = {
     "(" ~ expr ~ ")"
 }
 
-// Function calls (sin, cos, etc.)
-function_call = { function_name ~ "(" ~ expr ~ ("," ~ expr)* ~ ")" }
-function_name = @{ "sin" | "cos" | "tan" | "exp" | "ln" | "sqrt" }
+// Function calls (sin, cos, etc. or any identifier for WASM functions)
+function_call = { identifier ~ "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
 pi_constant = @{ "pi" }
 number = @{ real | int }
 

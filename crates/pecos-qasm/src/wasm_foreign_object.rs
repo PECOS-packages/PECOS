@@ -128,6 +128,7 @@ impl WasmtimeForeignObject {
     }
 
     /// Get the list of exported function names from the module
+    #[must_use]
     pub fn get_exported_functions(&self) -> Vec<String> {
         let mut functions = Vec::new();
         for export in self.module.exports() {
@@ -140,11 +141,12 @@ impl WasmtimeForeignObject {
 
     /// Convert i64 to i32 with bounds checking
     fn i64_to_i32(value: i64) -> Result<i32, PecosError> {
-        if value > i32::MAX as i64 || value < i32::MIN as i64 {
+        if value > i64::from(i32::MAX) || value < i64::from(i32::MIN) {
             Err(PecosError::Input(format!(
                 "Value {value} is out of range for i32"
             )))
         } else {
+            #[allow(clippy::cast_possible_truncation)]
             Ok(value as i32)
         }
     }
@@ -180,7 +182,7 @@ impl ForeignObject for WasmtimeForeignObject {
 
         // Call init
         match init_func.call(&mut self.store, &[], &mut []) {
-            Ok(_) => {
+            Ok(()) => {
                 debug!("WebAssembly init function called successfully");
                 Ok(())
             }
@@ -214,19 +216,17 @@ impl ForeignObject for WasmtimeForeignObject {
         })?;
 
         // Get the function from cache or fetch and cache it
-        let func = match self.function_cache.get(func_name) {
-            Some(cached_func) => cached_func.clone(),
-            None => {
-                // Get the function (we already validated it exists at build time)
-                let func = instance
-                    .get_func(&mut self.store, func_name)
-                    .expect(&format!(
-                        "Function '{func_name}' should exist (validated at build time)"
-                    ));
-                self.function_cache
-                    .insert(func_name.to_string(), func.clone());
-                self.function_cache.get(func_name).unwrap().clone()
-            }
+        let func = if let Some(cached_func) = self.function_cache.get(func_name) {
+            *cached_func
+        } else {
+            // Get the function (we already validated it exists at build time)
+            let func = instance
+                .get_func(&mut self.store, func_name)
+                .unwrap_or_else(|| {
+                    panic!("Function '{func_name}' should exist (validated at build time)")
+                });
+            self.function_cache.insert(func_name.to_string(), func);
+            func
         };
 
         // Get function type
@@ -256,8 +256,7 @@ impl ForeignObject for WasmtimeForeignObject {
                 }
                 _ => {
                     return Err(PecosError::Processing(format!(
-                        "Unsupported parameter type for argument {} of function '{func_name}'",
-                        i
+                        "Unsupported parameter type for argument {i} of function '{func_name}'"
                     )));
                 }
             }
@@ -268,17 +267,16 @@ impl ForeignObject for WasmtimeForeignObject {
 
         // Call the function
         match func.call(&mut self.store, &wasm_args, &mut wasm_results) {
-            Ok(_) => {
+            Ok(()) => {
                 // Convert results to i64
                 let mut results_i64 = Vec::new();
                 for (i, val) in wasm_results.iter().enumerate() {
                     match val {
-                        Val::I32(v) => results_i64.push(*v as i64),
+                        Val::I32(v) => results_i64.push(i64::from(*v)),
                         Val::I64(v) => results_i64.push(*v),
                         _ => {
                             return Err(PecosError::Processing(format!(
-                                "Unsupported return type for result {} of function '{func_name}'",
-                                i
+                                "Unsupported return type for result {i} of function '{func_name}'"
                             )));
                         }
                     }

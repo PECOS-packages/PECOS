@@ -1140,12 +1140,11 @@ impl QASMEngine {
                                 bitvec.push((value >> i) & 1 != 0);
                             }
                             return Ok(ExpressionValue::BitVec(bitvec));
-                        } else {
-                            return Err(PecosError::ParseInvalidExpression(format!(
-                                "WASM function '{name}' returned {} values, but only single return values are supported in QASM expressions",
-                                results.len()
-                            )));
                         }
+                        return Err(PecosError::ParseInvalidExpression(format!(
+                            "WASM function '{name}' returned {} values, but only single return values are supported in QASM expressions",
+                            results.len()
+                        )));
                     }
                 }
             }

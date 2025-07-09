@@ -334,8 +334,7 @@ impl QasmSimulationBuilder {
             for func_name in non_builtin_calls {
                 if !exported_functions.contains(&func_name) {
                     return Err(PecosError::Input(format!(
-                        "Function '{}' is called in QASM but not exported by WebAssembly module. Available functions: {:?}",
-                        func_name, exported_functions
+                        "Function '{func_name}' is called in QASM but not exported by WebAssembly module. Available functions: {exported_functions:?}"
                     )));
                 }
             }

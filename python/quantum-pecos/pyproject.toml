@@ -67,7 +67,7 @@ visualization = [
 ]
 simulators = [
     "quantum-pecos[projectq]",
-    "quantum-pecos[qulacs]; python_version < '3.13'",
+    "quantum-pecos[qulacs]",
 ]
 wasm-all = [
     "quantum-pecos[wasmtime]",

@@ -1,19 +1,26 @@
-from pecos import QuantumCircuit
+"""Integration tests for hybrid engine with old error model."""
+
+from pecos import HybridEngine, QuantumCircuit
 from pecos.error_models.error_depolar import DepolarizingErrorModel
-from pecos import HybridEngine
 from pecos.simulators import SparseSim
 
 
-def test_simple_conditional():
-    """Verify simulation and noise modeling works with conditional operations"""
-    qc = QuantumCircuit(cvar_spec={'m': 1, 'a': 1}, num_qubits=1)
-    qc.append("X", {0}, cond={'a': 'a', 'op': '==', 'b': 0})
-    qc.append("measure Z", {0}, var_output = {0: ('m', 0)})
+def test_simple_conditional() -> None:
+    """Verify simulation and noise modeling works with conditional operations."""
+    qc = QuantumCircuit(cvar_spec={"m": 1, "a": 1}, num_qubits=1)
+    qc.append("X", {0}, cond={"a": "a", "op": "==", "b": 0})
+    qc.append("measure Z", {0}, var_output={0: ("m", 0)})
 
     eng = HybridEngine()
     state = SparseSim(1)
     err = DepolarizingErrorModel()
 
-    error_params = {"p1": 0.01, "p2": 0.01, "p_init": 0.01, "p_meas": 0.01, "p2_mem": 0.01}
+    error_params = {
+        "p1": 0.01,
+        "p2": 0.01,
+        "p_init": 0.01,
+        "p_meas": 0.01,
+        "p2_mem": 0.01,
+    }
 
     eng.run(state, qc, error_gen=err, shot_id=0, error_params=error_params)

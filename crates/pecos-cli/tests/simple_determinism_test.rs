@@ -254,7 +254,7 @@ fn test_noise_impact_on_determinism() -> Result<(), Box<dyn std::error::Error>> 
 ///
 /// NOTE: Currently skipped as worker count determinism is an open issue in PECOS
 #[test]
-#[ignore]
+#[ignore = "worker count determinism is an open issue in PECOS"]
 fn test_worker_count_consistency() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let phir_path = manifest_dir.join("../../examples/phir/simple_test.json");

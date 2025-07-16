@@ -60,6 +60,7 @@ class FakeErrorModel(ParentErrorModel):
         self,
         _tick_circuit: QuantumCircuit,
         _time: int | tuple[int, ...],
+        _output: dict,
         **_params: GateParams,
     ) -> ErrorCircuits:
         """Generate tick errors that ignores parameters and returns pre-configured error circuits."""

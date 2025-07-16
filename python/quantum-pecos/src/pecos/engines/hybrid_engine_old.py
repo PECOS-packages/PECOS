@@ -158,7 +158,7 @@ class HybridEngine:
                 error_circuits = error_gen.generate_tick_errors(
                     tick_circuit,
                     time,
-                    # output,
+                    output,
                     **params,
                 )
                 errors = error_circuits.get(time, {})

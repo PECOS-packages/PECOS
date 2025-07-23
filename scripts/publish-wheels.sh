@@ -10,7 +10,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Default values
-ZIP_FILE="pecos-distribution.zip"
+ARTIFACT_FILE="pecos-distribution.zip"
 DRY_RUN=false
 PACKAGE=""
 
@@ -18,7 +18,7 @@ PACKAGE=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         -f|--file)
-            ZIP_FILE="$2"
+            ARTIFACT_FILE="$2"
             shift 2
             ;;
         -p|--package)
@@ -33,7 +33,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  -f, --file FILE      Path to the distribution zip file (default: pecos-distribution.zip)"
+            echo "  -f, --file FILE      Path to the GitHub Actions artifact zip (default: pecos-distribution.zip)"
             echo "  -p, --package PKG    Publish only specific package (pecos-rslib or quantum-pecos)"
             echo "  --dry-run            Show what would be uploaded without actually uploading"
             echo "  -h, --help           Show this help message"
@@ -51,9 +51,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Check if zip file exists
-if [ ! -f "$ZIP_FILE" ]; then
-    echo -e "${RED}Error: Distribution file '$ZIP_FILE' not found!${NC}"
+# Check if artifact file exists
+if [ ! -f "$ARTIFACT_FILE" ]; then
+    echo -e "${RED}Error: Artifact file '$ARTIFACT_FILE' not found!${NC}"
     echo "Please download the 'pecos-distribution' artifact from GitHub Actions."
     exit 1
 fi
@@ -70,7 +70,7 @@ TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
 
 echo -e "${GREEN}Extracting distribution bundle...${NC}"
-unzip -q "$ZIP_FILE" -d "$TEMP_DIR"
+unzip -q "$ARTIFACT_FILE" -d "$TEMP_DIR"
 
 # Function to publish a package
 publish_package() {

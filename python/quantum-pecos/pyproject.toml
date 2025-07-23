@@ -15,7 +15,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quantum-pecos"
-version = "0.6.0.dev8"
+version = "0.7.0.dev0"
 authors = [
     {name = "The PECOS Developers"},
 ]

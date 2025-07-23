@@ -146,7 +146,7 @@ jobs:
           - runner: ubuntu-latest
             os: ubuntu-latest
             architecture: x86_64
-          # Windows x86_64  
+          # Windows x86_64
           - runner: windows-latest
             os: windows-latest
             architecture: x86_64

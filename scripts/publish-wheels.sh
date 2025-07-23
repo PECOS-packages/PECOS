@@ -76,22 +76,22 @@ unzip -q "$ZIP_FILE" -d "$TEMP_DIR"
 publish_package() {
     local package_name=$1
     local package_dir="$TEMP_DIR/dist/$package_name"
-    
+
     if [ ! -d "$package_dir" ]; then
         echo -e "${YELLOW}Warning: $package_name directory not found in distribution${NC}"
         return
     fi
-    
+
     local file_count=$(ls -1 "$package_dir" | wc -l)
     if [ "$file_count" -eq 0 ]; then
         echo -e "${YELLOW}Warning: No files found in $package_name directory${NC}"
         return
     fi
-    
+
     echo -e "\n${GREEN}=== Publishing $package_name ===${NC}"
     echo "Found $file_count distribution file(s):"
     ls -la "$package_dir"
-    
+
     if [ "$DRY_RUN" = true ]; then
         echo -e "\n${YELLOW}DRY RUN: Would upload the following files:${NC}"
         ls -1 "$package_dir"

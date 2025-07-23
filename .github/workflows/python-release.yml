@@ -296,19 +296,19 @@ jobs:
         run: |
           mkdir -p dist/pecos-rslib
           mkdir -p dist/quantum-pecos
-          
+
       # Download artifacts into temp directory first
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: temp-artifacts/
-          
+
       - name: Organize distribution files
         run: |
           # Debug: Show what we downloaded
           echo "=== Downloaded artifacts structure ==="
           ls -la temp-artifacts/
-          
+
           # Move pecos-rslib wheels to distribution directory
           for artifact in temp-artifacts/wheel-pecos-rslib-*/; do
             if [ -d "$artifact" ]; then
@@ -316,7 +316,7 @@ jobs:
               mv "$artifact"*.whl dist/pecos-rslib/ 2>/dev/null || true
             fi
           done
-          
+
           # Move quantum-pecos files to distribution directory
           for artifact in temp-artifacts/*-quantum-pecos*/; do
             if [ -d "$artifact" ]; then
@@ -325,10 +325,10 @@ jobs:
               mv "$artifact"*.tar.gz dist/quantum-pecos/ 2>/dev/null || true
             fi
           done
-          
+
           # Clean up
           rm -rf temp-artifacts
-          
+
       - name: List all collected artifacts
         run: |
           echo "=== pecos-rslib artifacts ==="
@@ -340,14 +340,14 @@ jobs:
           echo "=== Summary ==="
           echo "pecos-rslib wheels: $(ls -1 dist/pecos-rslib/*.whl 2>/dev/null | wc -l)"
           echo "quantum-pecos distributions: $(ls -1 dist/quantum-pecos/* 2>/dev/null | wc -l)"
-          
+
       - name: Create release bundle
         run: |
           # Create a single zip containing both package directories
           zip -r pecos-distribution.zip dist/
           echo "Created pecos-distribution.zip containing:"
           unzip -l pecos-distribution.zip | grep -E "(pecos-rslib|quantum-pecos)/"
-          
+
       - name: Upload distribution bundle
         uses: actions/upload-artifact@v4
         with:

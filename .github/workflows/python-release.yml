@@ -136,13 +136,28 @@ jobs:
 
   test_abi3_wheels:
     needs: build_wheels_pecos_rslib
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ['3.10', '3.11', '3.12', '3.13']
-        architecture: [x86_64]
+        include:
+          # Linux x86_64
+          - runner: ubuntu-latest
+            os: ubuntu-latest
+            architecture: x86_64
+          # Windows x86_64  
+          - runner: windows-latest
+            os: windows-latest
+            architecture: x86_64
+          # macOS x86_64 (Intel)
+          - runner: macos-13
+            os: macos-latest
+            architecture: x86_64
+          # macOS aarch64 (Apple Silicon)
+          - runner: macos-latest
+            os: macos-latest
+            architecture: aarch64
     steps:
       - uses: actions/checkout@v4
         with:

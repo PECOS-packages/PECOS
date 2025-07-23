@@ -115,7 +115,6 @@ jobs:
           fi
 
       - name: Test wheel is abi3
-        if: matrix.architecture != 'aarch64'
         run: |
           # Check that the wheel has abi3 tag
           ls -la python/pecos-rslib/dist/

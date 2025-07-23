@@ -2,7 +2,6 @@ name: Python Artifacts
 
 env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
-  PYTHON_VERSION: '3.10'
 
 on:
   push:
@@ -135,6 +134,9 @@ jobs:
       (needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true' || needs.check_pr_push.result == 'skipped') &&
       (github.event_name != 'pull_request' || github.event.pull_request.merged == true || github.event.action == 'opened' || github.event.action == 'synchronize')
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
         with:
@@ -143,12 +145,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: ${{ matrix.python-version }}
 
       - name: Download pecos-rslib wheel
         uses: actions/download-artifact@v4
         with:
-          name: wheel-pecos-rslib-ubuntu-latest-x86_64-py${{ env.PYTHON_VERSION }}
+          name: wheel-pecos-rslib-ubuntu-latest-x86_64-py${{ matrix.python-version }}
           path: ./pecos-rslib-wheel
 
       - name: Install pecos-rslib
@@ -178,7 +180,7 @@ jobs:
       - name: Upload quantum-pecos SDist
         uses: actions/upload-artifact@v4
         with:
-          name: sdist-quantum-pecos
+          name: sdist-quantum-pecos-py${{ matrix.python-version }}
           path: python/quantum-pecos/dist/*.tar.gz
 
   build_wheels_quantum_pecos:

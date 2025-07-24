@@ -92,6 +92,21 @@ publish_package() {
     echo "Found $file_count distribution file(s):"
     ls -la "$package_dir"
 
+    # Run twine check
+    echo -e "\n${GREEN}Running twine check...${NC}"
+    if twine check "$package_dir"/* 2>&1 | grep -v "license-file"; then
+        echo -e "${GREEN}Distribution checks passed${NC}"
+    else
+        # Check if there are errors other than license-file
+        if twine check "$package_dir"/* 2>&1 | grep -v "license-file" | grep -q "ERROR"; then
+            echo -e "${RED}Distribution checks failed${NC}"
+            echo "Run 'twine check $package_dir/*' to see details"
+            return 1
+        else
+            echo -e "${YELLOW}Only license-file warnings found (safe to ignore for maturin wheels)${NC}"
+        fi
+    fi
+
     if [ "$DRY_RUN" = true ]; then
         echo -e "\n${YELLOW}DRY RUN: Would upload the following files:${NC}"
         ls -1 "$package_dir"

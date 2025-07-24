@@ -135,25 +135,21 @@ jobs:
 
   test_abi3_wheels:
     needs: build_wheels_pecos_rslib
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13']
-        include:
-          # Linux x86_64
+        platform:
           - runner: ubuntu-latest
             os: ubuntu-latest
             architecture: x86_64
-          # Windows x86_64
           - runner: windows-latest
             os: windows-latest
             architecture: x86_64
-          # macOS x86_64 (Intel)
           - runner: macos-13
             os: macos-latest
             architecture: x86_64
-          # macOS aarch64 (Apple Silicon)
           - runner: macos-latest
             os: macos-latest
             architecture: aarch64
@@ -170,7 +166,7 @@ jobs:
       - name: Download abi3 wheel
         uses: actions/download-artifact@v4
         with:
-          name: wheel-pecos-rslib-${{ matrix.os }}-${{ matrix.architecture }}
+          name: wheel-pecos-rslib-${{ matrix.platform.os }}-${{ matrix.platform.architecture }}
           path: ./pecos-rslib-wheel
 
       - name: Test abi3 wheel with Python ${{ matrix.python-version }}
@@ -290,6 +286,11 @@ jobs:
 
   collect_artifacts:
     needs: [build_wheels_pecos_rslib, build_sdist_quantum_pecos, build_wheels_quantum_pecos, test_abi3_wheels]
+    if: |
+      needs.build_wheels_pecos_rslib.result == 'success' &&
+      needs.build_sdist_quantum_pecos.result == 'success' &&
+      needs.build_wheels_quantum_pecos.result == 'success' &&
+      needs.test_abi3_wheels.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Create distribution directories

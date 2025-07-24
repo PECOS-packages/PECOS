@@ -340,10 +340,10 @@ jobs:
           echo "=== Summary ==="
           echo "pecos-rslib wheels: $(ls -1 dist/pecos-rslib/*.whl 2>/dev/null | wc -l)"
           echo "quantum-pecos distributions: $(ls -1 dist/quantum-pecos/* 2>/dev/null | wc -l)"
-          
+
       - name: Install twine
         run: pip install twine
-        
+
       - name: Check distributions with twine
         run: |
           echo "=== Checking pecos-rslib distributions ==="

@@ -340,6 +340,17 @@ jobs:
           echo "=== Summary ==="
           echo "pecos-rslib wheels: $(ls -1 dist/pecos-rslib/*.whl 2>/dev/null | wc -l)"
           echo "quantum-pecos distributions: $(ls -1 dist/quantum-pecos/* 2>/dev/null | wc -l)"
+          
+      - name: Install twine
+        run: pip install twine
+        
+      - name: Check distributions with twine
+        run: |
+          echo "=== Checking pecos-rslib distributions ==="
+          twine check dist/pecos-rslib/*
+          echo ""
+          echo "=== Checking quantum-pecos distributions ==="
+          twine check dist/quantum-pecos/*
 
       - name: Upload distribution bundle
         uses: actions/upload-artifact@v4

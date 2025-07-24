@@ -290,6 +290,11 @@ jobs:
 
   collect_artifacts:
     needs: [build_wheels_pecos_rslib, build_sdist_quantum_pecos, build_wheels_quantum_pecos, test_abi3_wheels]
+    if: |
+      always() &&
+      needs.build_wheels_pecos_rslib.result == 'success' &&
+      needs.build_sdist_quantum_pecos.result == 'success' &&
+      needs.build_wheels_quantum_pecos.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Create distribution directories

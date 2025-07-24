@@ -55,8 +55,8 @@ jobs:
     needs: check_pr_push
     if: |
       always() &&
-      (needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true' || needs.check_pr_push.result == 'skipped') &&
-      (github.event_name != 'pull_request' || github.event.pull_request.merged == true || github.event.action == 'opened' || github.event.action == 'synchronize')
+      (needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true' ||
+       needs.check_pr_push.result == 'skipped' && contains(fromJSON('["master", "dev", "development"]'), github.ref_name))
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -134,11 +134,8 @@ jobs:
           path: python/pecos-rslib/dist/*.whl
 
   test_abi3_wheels:
-    needs: [check_pr_push, build_wheels_pecos_rslib]
-    if: |
-      needs.build_wheels_pecos_rslib.result == 'success' &&
-      (needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true' || needs.check_pr_push.result == 'skipped') &&
-      (github.event_name != 'pull_request' || github.event.pull_request.merged == true || github.event.action == 'opened' || github.event.action == 'synchronize')
+    needs: build_wheels_pecos_rslib
+    if: needs.build_wheels_pecos_rslib.result == 'success'
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
@@ -182,11 +179,8 @@ jobs:
           python -c 'import sys; print(f"Python version: {sys.version}")'
 
   build_sdist_quantum_pecos:
-    needs: [check_pr_push, build_wheels_pecos_rslib]
-    if: |
-      needs.build_wheels_pecos_rslib.result == 'success' &&
-      (needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true' || needs.check_pr_push.result == 'skipped') &&
-      (github.event_name != 'pull_request' || github.event.pull_request.merged == true || github.event.action == 'opened' || github.event.action == 'synchronize')
+    needs: build_wheels_pecos_rslib
+    if: needs.build_wheels_pecos_rslib.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -235,11 +229,8 @@ jobs:
           path: python/quantum-pecos/dist/*.tar.gz
 
   build_wheels_quantum_pecos:
-    needs: [check_pr_push, build_wheels_pecos_rslib]
-    if: |
-      needs.build_wheels_pecos_rslib.result == 'success' &&
-      (needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true' || needs.check_pr_push.result == 'skipped') &&
-      (github.event_name != 'pull_request' || github.event.pull_request.merged == true || github.event.action == 'opened' || github.event.action == 'synchronize')
+    needs: build_wheels_pecos_rslib
+    if: needs.build_wheels_pecos_rslib.result == 'success'
     runs-on: ubuntu-latest
 
     steps:

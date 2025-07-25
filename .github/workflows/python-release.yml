@@ -37,40 +37,29 @@ defaults:
 jobs:
   check_pr_push:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    if: |
+      github.event_name == 'pull_request' && github.event.action != 'closed' ||
+      github.event_name == 'push' && contains(fromJSON('["master", "dev", "development"]'), github.ref_name)
     outputs:
       run: ${{ steps.check.outputs.run }}
     steps:
       - name: Check if should run on PR push
         id: check
         run: |
-          if [ "${{ env.TRIGGER_ON_PR_PUSH }}" = "true" ]; then
+          # Always run on pushes to main branches
+          if [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref_name }}" =~ ^(master|dev|development)$ ]]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+          # For PRs, check the TRIGGER_ON_PR_PUSH setting
+          elif [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ env.TRIGGER_ON_PR_PUSH }}" = "true" ]; then
             echo "run=true" >> $GITHUB_OUTPUT
           else
             echo "run=false" >> $GITHUB_OUTPUT
           fi
 
 
-  debug_context:
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Debug GitHub Context
-        run: |
-          echo "Event: ${{ github.event_name }}"
-          echo "Action: ${{ github.event.action }}"
-          echo "Ref: ${{ github.ref }}"
-          echo "Ref Name: ${{ github.ref_name }}"
-          echo "Base Ref: ${{ github.base_ref }}"
-          echo "Head Ref: ${{ github.head_ref }}"
-          echo "PR Merged: ${{ github.event.pull_request.merged }}"
-
   build_wheels_pecos_rslib:
     needs: check_pr_push
-    if: |
-      always() &&
-      (needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true' ||
-       needs.check_pr_push.result == 'skipped')
+    if: needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -149,7 +138,9 @@ jobs:
 
   test_abi3_wheels:
     needs: build_wheels_pecos_rslib
-    if: needs.build_wheels_pecos_rslib.result == 'success'
+    if: |
+      always() &&
+      needs.build_wheels_pecos_rslib.result == 'success'
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
@@ -194,7 +185,9 @@ jobs:
 
   build_sdist_quantum_pecos:
     needs: build_wheels_pecos_rslib
-    if: needs.build_wheels_pecos_rslib.result == 'success'
+    if: |
+      always() &&
+      needs.build_wheels_pecos_rslib.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -244,7 +237,9 @@ jobs:
 
   build_wheels_quantum_pecos:
     needs: build_wheels_pecos_rslib
-    if: needs.build_wheels_pecos_rslib.result == 'success'
+    if: |
+      always() &&
+      needs.build_wheels_pecos_rslib.result == 'success'
     runs-on: ubuntu-latest
 
     steps:

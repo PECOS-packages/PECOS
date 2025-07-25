@@ -51,12 +51,26 @@ jobs:
           fi
 
 
+  debug_context:
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Debug GitHub Context
+        run: |
+          echo "Event: ${{ github.event_name }}"
+          echo "Action: ${{ github.event.action }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Ref Name: ${{ github.ref_name }}"
+          echo "Base Ref: ${{ github.base_ref }}"
+          echo "Head Ref: ${{ github.head_ref }}"
+          echo "PR Merged: ${{ github.event.pull_request.merged }}"
+
   build_wheels_pecos_rslib:
     needs: check_pr_push
     if: |
       always() &&
       (needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true' ||
-       needs.check_pr_push.result == 'skipped' && contains(fromJSON('["master", "dev", "development"]'), github.ref_name))
+       needs.check_pr_push.result == 'skipped')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

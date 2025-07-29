@@ -89,10 +89,18 @@ fn test_integer_constant_folding() {
                 let value = pecos_core::bitvec::to_decimal_string(bv);
                 if value == "1" {
                     // Condition is true, operation should be X
-                    if let pecos_qasm::ast::Operation::Gate { name, .. } = &**operation {
-                        if name == "x" {
-                            x_count += 1;
+                    match &**operation {
+                        pecos_qasm::ast::Operation::Gate { name, .. } => {
+                            if name == "x" {
+                                x_count += 1;
+                            }
                         }
+                        pecos_qasm::ast::Operation::NativeGate(gate) => {
+                            if matches!(gate.gate_type, pecos_engines::GateType::X) {
+                                x_count += 1;
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }

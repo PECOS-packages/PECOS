@@ -40,6 +40,41 @@ pub fn expand_gates(program: &mut Program) -> Result<(), PecosError> {
                     &mut expanded_operations,
                 )?;
             }
+            Operation::If {
+                condition,
+                operation,
+            } => {
+                // Recursively expand the operation inside the if statement
+                let inner_op = operation.as_ref();
+                match inner_op {
+                    Operation::Gate {
+                        name,
+                        parameters,
+                        qubits,
+                    } => {
+                        let expanded_inner = expand_gate_operation(
+                            name,
+                            parameters,
+                            qubits,
+                            &program.gate_definitions,
+                        )?;
+                        // Create separate If operations for each expanded gate
+                        for expanded_op in expanded_inner {
+                            expanded_operations.push(Operation::If {
+                                condition: condition.clone(),
+                                operation: Box::new(expanded_op),
+                            });
+                        }
+                    }
+                    _ => {
+                        // For non-gate operations inside If, just clone
+                        expanded_operations.push(Operation::If {
+                            condition: condition.clone(),
+                            operation: operation.clone(),
+                        });
+                    }
+                }
+            }
             _ => expanded_operations.push(operation.clone()),
         }
     }

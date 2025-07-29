@@ -275,17 +275,38 @@ pub fn parse_measure(pair: Pair<Rule>, program: &Program) -> Result<Option<Opera
 ///
 /// Panics if the parser encounters an unexpected structure in the parse tree
 pub fn parse_reset(pair: Pair<Rule>, program: &Program) -> Result<Option<Operation>, PecosError> {
-    let qubit_id = pair.into_inner().next().unwrap();
-    let (reg_name, idx) = parse_indexed_id(&qubit_id)?;
-    let qubit = resolve_qubit_index(&reg_name, idx, program)?;
+    let any_item = pair.into_inner().next().unwrap();
+    let inner = any_item.into_inner().next().unwrap();
 
-    // Create a Gate with GateType::Prep (PECOS's name for reset)
-    let gate = Gate::new(
-        GateType::Prep,
-        vec![], // No parameters
-        vec![QubitId(qubit)],
-    );
-    Ok(Some(Operation::NativeGate(gate)))
+    match inner.as_rule() {
+        Rule::qubit_id => {
+            // Single qubit - create a single Prep gate
+            let (reg_name, idx) = parse_indexed_id(&inner)?;
+            let qubit = resolve_qubit_index(&reg_name, idx, program)?;
+            let gate = Gate::new(
+                GateType::Prep,
+                vec![], // No parameters
+                vec![QubitId(qubit)],
+            );
+            Ok(Some(Operation::NativeGate(gate)))
+        }
+        Rule::identifier => {
+            // Full register - create a Gate operation that will be expanded later
+            let reg_name = inner.as_str();
+            let qubit_ids = program
+                .quantum_registers
+                .get(reg_name)
+                .ok_or_else(|| unknown_register("quantum", reg_name))?;
+
+            // Return as a Gate operation (not NativeGate) to be expanded during gate expansion phase
+            Ok(Some(Operation::Gate {
+                name: "reset".to_string(),
+                parameters: vec![],
+                qubits: qubit_ids.clone(),
+            }))
+        }
+        _ => Err(QASMParser::error("Invalid reset syntax")),
+    }
 }
 
 /// Parse a barrier operation

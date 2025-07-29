@@ -47,7 +47,7 @@ measure = {
 bit_id = ${ identifier ~ "[" ~ int ~ "]" }
 
 // Reset and barrier
-reset = { "reset" ~ qubit_id ~ ";" }
+reset = { "reset" ~ any_item ~ ";" }
 barrier = { "barrier" ~ any_list ~ ";" }
 any_list = { any_item ~ ("," ~ any_item)* }
 any_item = { qubit_id | identifier }

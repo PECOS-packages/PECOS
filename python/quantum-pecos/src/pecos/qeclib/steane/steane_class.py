@@ -34,6 +34,8 @@ from pecos.qeclib.steane.preps.t_plus_state import (
     PrepEncodeTPlusNonFT,
 )
 from pecos.qeclib.steane.qec.qec_3parallel import ParallelFlagQECActiveCorrection, ParallelFlagQEC
+from pecos.qeclib.steane.syn_extract.bare import SynExtractBare
+from pecos.qeclib.steane.syn_extract.flagged import SynExtractFlagged
 from pecos.slr import Block, CReg, If, Permute, QReg, Vars
 
 if TYPE_CHECKING:
@@ -52,6 +54,7 @@ class Steane(Vars):
         name: str,
         default_rus_limit: int = 3,
         ancillas: QReg | None = None,
+        flag_qubits: QReg | None = None,
     ) -> None:
         """Initialize a Steane code instance with associated quantum and classical registers.
 
@@ -65,8 +68,12 @@ class Steane(Vars):
             ValueError: If provided ancilla register has fewer than 3 qubits.
         """
         super().__init__()
+        self.check_indices = [[3, 2, 4, 1], [6, 3, 2, 5], [7, 6, 3, 4]]
+
         self.d = QReg(f"{name}_d", 7)
         self.a = ancillas or QReg(f"{name}_a", 3)
+        if flag_qubits is not None:
+            self.f = flag_qubits or QReg(f"{name}_f", 3)
         self.c = CReg(f"{name}_c", 32)
 
         if self.a.size < 3:
@@ -97,6 +104,9 @@ class Steane(Vars):
 
         if ancillas is None:
             self.vars.append(self.a)
+
+        if flag_qubits is None:
+            self.vars.append(self.f)
 
         self.vars.extend(
             [
@@ -778,12 +788,34 @@ class Steane(Vars):
             block.extend(If(self.syn_meas != 0).Then(flag.set(1)))
         return block
 
+    def qec_knill(self):
+        """prepare a Bell state and then teleport"""
+        # TODO: ...
+        ...
+
+    def syn_bare(self, syn: CReg) -> Block:
+        """One single syndrome bit per check using bare syndrome extraction"""
+        return SynExtractBare(self.d, self.a, self.check_indices, syn)
+
+    def syn_flagged(self, syn: CReg, flags: CReg) -> Block:
+        """One single syndrome bit and one single flag bit per check"""
+        return SynExtractFlagged(self.d, self.a, self.f, self.check_indices, syn, flags)
+
+    def syn_2para_v1_flagged(self):
+        # TODO: ...
+        ...
+
+    def syn_2para_v2_flagged(self):
+        # TODO: ...
+        ...
+
     def permute(self, other: Steane) -> Block:
         """Permute this code block (including both quantum and classical registers) with another."""
         block = Block(
             Permute(self.d, other.d),
             Permute(self.a, other.a),
         )
+        # TODO: Use Permute on classical variables rather that a custom solution
         for var_a, var_b in zip(self.vars, other.vars, strict=False):
             if isinstance(var_a, CReg):
                 block.extend(

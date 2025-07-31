@@ -545,25 +545,40 @@ class Steane(Vars):
             block.extend(If(self.flags != 0).Then(flag.set(1)))
         return block
 
-    def qec_not_active(self, flag: Bit | None = None, pf_x: Bit | None = None, pf_z: Bit | None = None,) -> Block:
+    def qec_not_active(self, flag: Bit | None = None, pf_x: Bit | None = None, pf_z: Bit | None = None,
+                       flag_x: CReg | None = None, flag_z: CReg | None = None,
+                       syn_x: CReg | None = None, syn_z: CReg | None = None,) -> Block:
         """Perform quantum error correction using parallel flag-based without active correction.
+
+        There are potentially three syndrome extraction paths take:
+            0: XZZ flag_x = 000, flag_z = 000 -> ZXX flag_x = 000, flag_z = 000 -> Done
+            1: XZZ flag_x = 00*, flag_z = **0 -> measure XXXZZZ (syn_x, syn_z)
+            2: XZZ flag_x = 000, flag_z = 000 -> ZXX flag_x = **0, flag_z = 00* -> measure XXXZZZ (syn_x, syn_z)
+        (where at least one of the *s is 1)
+
+        Therefore:
+            if flag_x & flag_z == 0, we went down path 0
+            if flag_x[0] | flag_z[1] | flag_z[2] == 1, we went down path 1
+            if flag_x[1] | flag_z[2] | flag_z[0] == 1, we went down path 2
 
         Args:
             flag: Optional flag bit for conditional execution.
-            pf_x: Optional Pauli frame bit for X corrections
-            pf_z: Optional Pauli frame bit for Z corrections
+            flag_x: Optional CReg of the syndrome measured by the X checks for the first two of flagged syndrome
+                   extractions. It is a raw syndrome made during the first two rounds of syndrome extraction.
+            flag_z: Optional CReg of the syndrome measured by the X checks for the first two of flagged syndrome
+                   extractions. It is a raw syndrome made during the first two rounds of syndrome extraction.
+            syn_x: Optional CReg of the syndrome measured by the X checks for the last round of non-flagged syndrome
+                   extraction. It is a raw syndrome made during the final round of syndrome extraction.
+            syn_z: Optional CReg of the syndrome measured by the Z checks for the last round of non-flagged syndrome
+                   extraction. It is a raw syndrome made during the final round of syndrome extraction.
+            pf_x: Optional Pauli frame bit for logical X corrections determined by lookup table decoder
+            pf_z: Optional Pauli frame bit for logical Z corrections determined by lookup table decoder
 
         Returns:
             Block containing the quantum error correction operations.
         """
 
         block = Block()
-
-        if  pf_x is None:
-            pf_x = self.pf_x
-
-        if pf_z is None:
-            pf_z = self.pf_z
 
         block.extend(ParallelFlagQEC(
             q=self.d,
@@ -576,12 +591,36 @@ class Steane(Vars):
             last_raw_syn_x=self.last_raw_syn_x,
             last_raw_syn_z=self.last_raw_syn_z,
             syndromes=self.syndromes,
-            pf_x=pf_x,
-            pf_z=pf_z,
+            pf_x=self.pf_x,
+            pf_z=self.pf_z,
             scratch=self.scratch,
         ))
         if flag is not None:
-            block.extend(If(self.flags != 0).Then(flag.set(1)))
+            block.extend(
+                If(self.flags != 0).Then(flag.set(1))
+            )
+
+        if  flag_x is not None:
+            assert(len(flag_x) == 3)
+            block.extend(flag_x.set(self.flag_x))
+
+        if flag_z is not None:
+            assert (len(flag_z) == 3)
+            block.extend(flag_z.set(self.flag_z))
+
+        if  syn_x is not None:
+            assert (len(syn_x) == 3)
+            block.extend(syn_x.set(self.syn_x))
+
+        if syn_z is not None:
+            assert (len(syn_z) == 3)
+            block.extend(syn_z.set(self.syn_z))
+
+        if  pf_x is not None:
+            block.extend(pf_x.set(self.pf_x))
+
+        if pf_z is not None:
+            block.extend(pf_z.set(self.pf_z))
 
         return block
 

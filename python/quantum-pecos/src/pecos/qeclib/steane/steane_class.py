@@ -33,7 +33,7 @@ from pecos.qeclib.steane.preps.t_plus_state import (
     PrepEncodeTPlusFTRUS,
     PrepEncodeTPlusNonFT,
 )
-from pecos.qeclib.steane.qec.qec_3parallel import ParallelFlagQECActiveCorrection
+from pecos.qeclib.steane.qec.qec_3parallel import ParallelFlagQECActiveCorrection, ParallelFlagQEC
 from pecos.slr import Block, CReg, If, Permute, QReg, Vars
 
 if TYPE_CHECKING:
@@ -543,6 +543,46 @@ class Steane(Vars):
         )
         if flag is not None:
             block.extend(If(self.flags != 0).Then(flag.set(1)))
+        return block
+
+    def qec_not_active(self, flag: Bit | None = None, pf_x: Bit | None = None, pf_z: Bit | None = None,) -> Block:
+        """Perform quantum error correction using parallel flag-based without active correction.
+
+        Args:
+            flag: Optional flag bit for conditional execution.
+            pf_x: Optional Pauli frame bit for X corrections
+            pf_z: Optional Pauli frame bit for Z corrections
+
+        Returns:
+            Block containing the quantum error correction operations.
+        """
+
+        block = Block()
+
+        if  pf_x is None:
+            pf_x = self.pf_x
+
+        if pf_z is None:
+            pf_z = self.pf_z
+
+        block.extend(ParallelFlagQEC(
+            q=self.d,
+            a=self.a,
+            flag_x=self.flag_x,
+            flag_z=self.flag_z,
+            flags=self.flags,
+            syn_x=self.syn_x,
+            syn_z=self.syn_z,
+            last_raw_syn_x=self.last_raw_syn_x,
+            last_raw_syn_z=self.last_raw_syn_z,
+            syndromes=self.syndromes,
+            pf_x=pf_x,
+            pf_z=pf_z,
+            scratch=self.scratch,
+        ))
+        if flag is not None:
+            block.extend(If(self.flags != 0).Then(flag.set(1)))
+
         return block
 
     def qec_steane(

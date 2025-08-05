@@ -506,7 +506,7 @@ impl GeneralNoiseModel {
 
                     // TODO: Implement prep crosstalk when needed
                 }
-                GateType::Measure => {
+                GateType::Measure | GateType::MeasureLeaked => {
                     // Track which qubits are being measured for leakage handling
                     self.measured_qubits
                         .extend(gate.qubits.iter().map(|q| usize::from(*q)));

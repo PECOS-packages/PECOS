@@ -8,6 +8,7 @@ pub struct PCGRandom {
 }
 
 impl PCGRandom {
+    #[must_use]
     pub fn init_global_state() -> PCGRandom {
         PCGRandom {
             state: 0x853c_49e6_748f_ea9b,

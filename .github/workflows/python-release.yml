@@ -208,16 +208,19 @@ jobs:
       - name: Install pecos-rslib
         run: pip install ./pecos-rslib-wheel/*.whl
 
-      - name: Install pecos RNG build dependencies
-        run: |
-          pip install build nanobind
-
-      - name: Build PECOS RNG
-        run: |
-          cd clib/pecos-rng && mkdir build && cd build/ && cmake ..
-          make && cd .. && pip install .
-        env:
-            NANOBIND_DIR: python -m nanobind --include_dir
+      # TODO: Re-enable RNG build once it's exposed via python/pecos-rslib/
+      # The RNG functionality has been moved from clib/pecos-rng to crates/pecos-rng
+      # and will be exposed through the Rust library bindings
+      # - name: Install pecos RNG build dependencies
+      #   run: |
+      #     pip install build nanobind
+      #
+      # - name: Build PECOS RNG
+      #   run: |
+      #     cd clib/pecos-rng && mkdir build && cd build/ && cmake ..
+      #     make && cd .. && pip install .
+      #   env:
+      #       NANOBIND_DIR: python -m nanobind --include_dir
 
       - name: Build quantum-pecos SDist
         run: |
@@ -261,16 +264,19 @@ jobs:
       - name: Install pecos-rslib
         run: pip install ./pecos-rslib-wheel/*.whl
 
-      - name: Install pecos rng build dependencies
-        run: |
-          pip install build nanobind
-
-      - name: Build PECOS RNG
-        run: |
-          cd clib/pecos-rng && mkdir build && cd build/ && cmake ..
-          make && cd .. && pip install .
-        env:
-            NANOBIND_DIR: python -m nanobind --include_dir
+      # TODO: Re-enable RNG build once it's exposed via python/pecos-rslib/
+      # The RNG functionality has been moved from clib/pecos-rng to crates/pecos-rng
+      # and will be exposed through the Rust library bindings
+      # - name: Install pecos rng build dependencies
+      #   run: |
+      #     pip install build nanobind
+      #
+      # - name: Build PECOS RNG
+      #   run: |
+      #     cd clib/pecos-rng && mkdir build && cd build/ && cmake ..
+      #     make && cd .. && pip install .
+      #   env:
+      #       NANOBIND_DIR: python -m nanobind --include_dir
 
       - name: Build quantum-pecos wheel
         run: |

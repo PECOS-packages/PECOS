@@ -21,7 +21,8 @@ impl PCGRandom {
     #[inline(always)]
     pub(crate) fn pcg_setseq_64_step_r(rng: &mut PCGRandom) {
         const PCG_DEFAULT_MULTIPLIER_64: u64 = 6364136223846793005;
-        rng.state = rng.state
+        rng.state = rng
+            .state
             .wrapping_mul(PCG_DEFAULT_MULTIPLIER_64)
             .wrapping_add(rng.inc);
     }

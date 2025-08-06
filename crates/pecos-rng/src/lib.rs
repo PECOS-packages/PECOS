@@ -1,23 +1,24 @@
 pub mod rng_pcg;
 
 // use rng_pcg::{PCGRandom};
-use pyo3::types::PyModule;
 use pyo3::prelude::*;
+use pyo3::types::PyModule;
 
 use crate::rng_pcg::PCGRandom;
-
 
 #[pyclass]
 #[derive(Clone, Copy)]
 pub struct RngPcg {
-    global_state: PCGRandom    
+    global_state: PCGRandom,
 }
 
 #[pymethods]
 impl RngPcg {
     #[new]
     pub fn new() -> RngPcg {
-        RngPcg { global_state: PCGRandom::init_global_state() }
+        RngPcg {
+            global_state: PCGRandom::init_global_state(),
+        }
     }
 
     pub fn random(&mut self) -> u32 {
@@ -44,7 +45,6 @@ fn rng_pcg_py(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RngPcg>()?;
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {

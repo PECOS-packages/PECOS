@@ -1,4 +1,4 @@
-use pecos_rng::{RngPcg};
+use pecos_rng::RngPcg;
 
 use std::sync::Arc;
 use std::thread;

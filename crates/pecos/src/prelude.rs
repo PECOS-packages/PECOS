@@ -67,6 +67,4 @@ pub use pecos_qir::setup_qir_engine;
 pub use pecos_engines::run_sim;
 
 // Re-export PCG RNG functions
-pub use pecos_rng::{
-    RngPcg
-};
+pub use pecos_rng::RngPcg;

@@ -2,13 +2,13 @@
 #[allow(clippy::cast_possible_truncation)]
 #[allow(clippy::cast_possible_wrap)]
 #[allow(clippy::cast_sign_loss)]
-pub(crate) struct PCGRandom {
-    pub(crate) state: u64,
+pub struct PCGRandom {
+    pub state: u64,
     inc: u64,
 }
 
 impl PCGRandom {
-    pub(crate) fn init_global_state() -> PCGRandom {
+    pub fn init_global_state() -> PCGRandom {
         PCGRandom {
             state: 0x853c_49e6_748f_ea9b,
             inc: 0xda3e_39cb_94b9_5bdb,
@@ -17,13 +17,13 @@ impl PCGRandom {
 
     #[inline]
     #[allow(clippy::cast_possible_wrap)]
-    pub(crate) fn pcg_rotr(value: u32, urot: u32) -> u32 {
+    fn pcg_rotr(value: u32, urot: u32) -> u32 {
         let rot = urot as i32;
         (value >> rot) | (value << ((-rot) & 31))
     }
 
     #[inline]
-    pub(crate) fn pcg_setseq_64_step_r(rng: &mut PCGRandom) {
+    fn pcg_setseq_64_step_r(rng: &mut PCGRandom) {
         const PCG_DEFAULT_MULTIPLIER_64: u64 = 6_364_136_223_846_793_005;
         rng.state = rng
             .state
@@ -33,14 +33,14 @@ impl PCGRandom {
 
     #[inline]
     #[allow(clippy::cast_possible_truncation)]
-    pub(crate) fn pcg_output_xsh(state: u64) -> u32 {
+    fn pcg_output_xsh(state: u64) -> u32 {
         let value = ((state >> 18) ^ state) >> 27;
         let urot = state >> 59;
         PCGRandom::pcg_rotr(value as u32, urot as u32)
     }
 
     #[inline]
-    pub(crate) fn pcg32_random_r(rng: &mut PCGRandom) -> u32 {
+    pub fn pcg32_random_r(rng: &mut PCGRandom) -> u32 {
         let old_state: u64 = rng.state;
         PCGRandom::pcg_setseq_64_step_r(rng);
         PCGRandom::pcg_output_xsh(old_state)
@@ -48,7 +48,7 @@ impl PCGRandom {
 
     #[inline]
     #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-    pub(crate) fn pcg32_boundedrand_r(rng: &mut PCGRandom, ubound: u32) -> u32 {
+    pub fn pcg32_boundedrand_r(rng: &mut PCGRandom, ubound: u32) -> u32 {
         let bound: i32 = ubound as i32;
         let threshold: u32 = (-bound % bound) as u32;
         loop {
@@ -60,7 +60,7 @@ impl PCGRandom {
     }
 
     #[inline]
-    pub(crate) fn pcg32_srandom_r(rng: &mut PCGRandom, initstate: u64, initseq: u64) {
+    pub fn pcg32_srandom_r(rng: &mut PCGRandom, initstate: u64, initseq: u64) {
         rng.state = 0_u64;
         rng.inc = (initseq << 1_u64) | 1_u64;
         PCGRandom::pcg_setseq_64_step_r(rng);

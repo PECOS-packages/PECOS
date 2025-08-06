@@ -8,7 +8,8 @@ It handles RNG platform function calls that are handled by the pcg_rng library.
 
 from __future__ import annotations
 
-from pecos_rng import RngPcg
+# from pecos_rslib import RngPcg 
+from pecos_rslib._pecos_rslib import RngPcg
 
 from pecos.engines.cvm.binarray import BinArray
 
@@ -26,8 +27,8 @@ class RNGModel:
         self.shot_id = shot_id
         self.current_bound = current_bound
         self.count = 0
-        self.seed = self.set_seed(seed)
         self.pcg = RngPcg()
+        self.seed = self.set_seed(seed)
 
     def __str__(self) -> str:
         """Returns the str representation of the model."""
@@ -61,7 +62,7 @@ class RNGModel:
             error_msg = "rngindex called after specified already generated"
             raise BufferError(error_msg)
         while self.count < index:
-            self.pcg.random()
+            self.rng_random()
 
     def extract_val(self, param: str, output: dict) -> int:
         """Responsible for extracting the value of interest depending on the type of the parameter being passed in."""

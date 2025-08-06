@@ -8,6 +8,7 @@ use crate::rng_pcg::PCGRandom;
 
 
 #[pyclass]
+#[derive(Clone, Copy)]
 pub struct RngPcg {
     global_state: PCGRandom    
 }

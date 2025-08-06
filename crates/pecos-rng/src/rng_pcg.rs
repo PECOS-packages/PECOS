@@ -1,3 +1,4 @@
+#[derive(Clone, Copy)]
 pub(crate) struct PCGRandom {
     pub(crate) state: u64,
     inc: u64,

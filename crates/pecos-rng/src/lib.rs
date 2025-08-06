@@ -12,13 +12,20 @@ pub struct RngPcg {
     global_state: PCGRandom,
 }
 
+impl Default for RngPcg {
+    fn default() -> Self {
+        Self {
+            global_state: PCGRandom::init_global_state(),
+        }
+    }
+}
+
 #[pymethods]
 impl RngPcg {
     #[new]
+    #[must_use]
     pub fn new() -> RngPcg {
-        RngPcg {
-            global_state: PCGRandom::init_global_state(),
-        }
+        Self::default()
     }
 
     pub fn random(&mut self) -> u32 {
@@ -30,7 +37,7 @@ impl RngPcg {
     }
 
     pub fn frandom(&mut self) -> f64 {
-        let random = self.random() as f64;
+        let random = f64::from(self.random());
         let exp: i32 = -32;
         random * 2f64.powi(exp)
     }

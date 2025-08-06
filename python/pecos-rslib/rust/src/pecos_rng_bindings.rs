@@ -1,6 +1,6 @@
 // use rng_pcg::{PCGRandom};
-use pyo3::prelude::*;
 use pecos::prelude::rng_pcg::PCGRandom;
+use pyo3::prelude::*;
 
 // use core::prelude::rng_pcg::PCGRandom;
 

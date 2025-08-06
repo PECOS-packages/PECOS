@@ -20,6 +20,7 @@ mod byte_message_bindings;
 mod engine_bindings;
 mod noise_helpers;
 // mod pcg_bindings;
+mod pecos_rng_bindings;
 pub mod phir_bridge;
 mod qasm_sim_bindings;
 mod sparse_sim;
@@ -27,15 +28,14 @@ mod sparse_stab_bindings;
 mod sparse_stab_engine_bindings;
 mod state_vec_bindings;
 mod state_vec_engine_bindings;
-mod pecos_rng_bindings;
 
 use byte_message_bindings::{PyByteMessage, PyByteMessageBuilder};
+use pecos_rng_bindings::RngPcg;
+use pyo3::prelude::*;
 use sparse_stab_bindings::SparseSim;
 use sparse_stab_engine_bindings::PySparseStabEngine;
 use state_vec_bindings::RsStateVec;
 use state_vec_engine_bindings::PyStateVecEngine;
-use pecos_rng_bindings::RngPcg;
-use pyo3::prelude::*;
 
 /// A Python module implemented in Rust.
 #[pymodule]

@@ -98,7 +98,6 @@ fn test_pcg_deterministic_behavior() {
     );
 }
 
-
 #[test]
 fn test_pcg_shared_state_interference() {
     // This test is more likely to fail when run in parallel with other tests
@@ -141,7 +140,7 @@ fn test_pcg_rapid_reseeding() {
     // Now verify multiple times
     for round in 0..50 {
         for (i, &expected) in expected_values.iter().enumerate() {
-            PCGRandom::pcg32_srandom_r(&mut pcg, initstate, i as u64 );
+            PCGRandom::pcg32_srandom_r(&mut pcg, initstate, i as u64);
             let actual = PCGRandom::pcg32_random_r(&mut pcg);
             assert_eq!(
                 actual, expected,
@@ -165,7 +164,9 @@ fn test_pcg_concurrent_access() {
     let expected_sequences: Vec<Vec<u32>> = (0..num_threads)
         .map(|thread_id: usize| {
             PCGRandom::pcg32_srandom_r(&mut pcg, initstate, thread_id as u64);
-            (0..iterations_per_thread).map(|_| PCGRandom::pcg32_random_r(&mut pcg)).collect()
+            (0..iterations_per_thread)
+                .map(|_| PCGRandom::pcg32_random_r(&mut pcg))
+                .collect()
         })
         .collect();
 
@@ -224,10 +225,14 @@ fn test_pcg_thread_independence() {
 
     // First, get expected sequences
     PCGRandom::pcg32_srandom_r(&mut pcg, initstate, 100);
-    let expected_seq1: Vec<u32> = (0..5).map(|_| PCGRandom::pcg32_random_r(&mut pcg)).collect();
+    let expected_seq1: Vec<u32> = (0..5)
+        .map(|_| PCGRandom::pcg32_random_r(&mut pcg))
+        .collect();
 
     PCGRandom::pcg32_srandom_r(&mut pcg, initstate, 200);
-    let expected_seq2: Vec<u32> = (0..5).map(|_| PCGRandom::pcg32_random_r(&mut pcg)).collect();
+    let expected_seq2: Vec<u32> = (0..5)
+        .map(|_| PCGRandom::pcg32_random_r(&mut pcg))
+        .collect();
 
     // Run threads concurrently
     let handle1 = thread::spawn(move || {

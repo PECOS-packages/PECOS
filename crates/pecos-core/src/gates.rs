@@ -250,7 +250,7 @@ impl Gate {
         )
     }
 
-    /// Create MeasureLeaked gate on multiple qubits
+    /// Create `MeasureLeaked` gate on multiple qubits
     #[must_use]
     pub fn measure_leaked(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::new(

@@ -451,7 +451,7 @@ impl ByteMessageBuilder {
 
     /// Add measure leakage operations for multiple qubits
     ///
-    /// This behaves like add_measurements() but is intended for measuring qubits
+    /// This behaves like `add_measurements()` but is intended for measuring qubits
     /// that may be in a leaked state. In the future, this will output 0, 1, or 2
     /// (where 2 indicates the qubit is leaked).
     ///

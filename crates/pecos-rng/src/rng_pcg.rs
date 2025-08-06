@@ -60,6 +60,13 @@ impl PCGRandom {
     }
 
     #[inline]
+    pub fn frandom(rng: &mut PCGRandom) -> f64 {
+        let random = f64::from(PCGRandom::pcg32_random_r(rng));
+        let exp: i32 = -32;
+        random * 2f64.powi(exp)
+    }
+
+    #[inline]
     pub fn pcg32_srandom_r(rng: &mut PCGRandom, initstate: u64, initseq: u64) {
         rng.state = 0_u64;
         rng.inc = (initseq << 1_u64) | 1_u64;

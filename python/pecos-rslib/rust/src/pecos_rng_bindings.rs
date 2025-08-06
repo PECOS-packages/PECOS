@@ -35,9 +35,7 @@ impl RngPcg {
     }
 
     pub fn frandom(&mut self) -> f64 {
-        let random = f64::from(self.random());
-        let exp: i32 = -32;
-        random * 2f64.powi(exp)
+        PCGRandom::frandom(&mut self.global_state)
     }
 
     pub fn srandom(&mut self, seq: u64) {

@@ -8,7 +8,6 @@ It handles RNG platform function calls that are handled by the pcg_rng library.
 
 from __future__ import annotations
 
-# from pecos_rslib import RngPcg 
 from pecos_rslib._pecos_rslib import RngPcg
 
 from pecos.engines.cvm.binarray import BinArray

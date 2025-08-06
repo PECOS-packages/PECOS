@@ -1,4 +1,4 @@
-use pecos_rng::RngPcg;
+use pecos_rng::rng_pcg::PCGRandom;
 
 use std::sync::Arc;
 use std::thread;
@@ -6,9 +6,9 @@ use std::thread;
 #[test]
 fn test_pcg_random_generates_values() {
     // Test that random() generates different values
-    let mut rng_pcg = RngPcg::new();
-    let val1 = rng_pcg.random();
-    let val2 = rng_pcg.random();
+    let mut rng_pcg = PCGRandom::init_global_state();
+    let val1 = PCGRandom::pcg32_random_r(&mut rng_pcg);
+    let val2 = PCGRandom::pcg32_random_r(&mut rng_pcg);
 
     // It's extremely unlikely that two consecutive calls return the same value
     // (probability is 1 in 2^32)
@@ -23,10 +23,10 @@ fn test_pcg_bounded_random() {
     // Test bounded random with various bounds
     let bounds = [1, 2, 10, 100, 1000];
 
-    let mut pcg = RngPcg::new();
+    let mut rng_pcg = PCGRandom::init_global_state();
     for bound in bounds {
         for _ in 0..10 {
-            let val = pcg.boundedrand(bound);
+            let val = PCGRandom::pcg32_boundedrand_r(&mut rng_pcg, bound);
             assert!(
                 val < bound,
                 "boundedrand({bound}) returned {val}, which is >= {bound}"
@@ -38,9 +38,9 @@ fn test_pcg_bounded_random() {
 #[test]
 fn test_pcg_frandom_range() {
     // Test that frandom returns values in [0.0, 1.0)
-    let mut pcg = RngPcg::new();
+    let mut pcg = PCGRandom::init_global_state();
     for _ in 0..100 {
-        let val = pcg.frandom();
+        let val = PCGRandom::frandom(&mut pcg);
         assert!(val >= 0.0, "frandom() returned {val}, which is < 0.0");
         assert!(val < 1.0, "frandom() returned {val}, which is >= 1.0");
     }
@@ -52,14 +52,15 @@ fn test_pcg_seeding() {
     // Note: PCG uses global state, so we test determinism directly
 
     // Test that the same seed produces the same first few values
-    let mut pcg = RngPcg::new();
-    pcg.srandom(12345);
-    let first_val_1 = pcg.random();
-    let second_val_1 = pcg.random();
+    let mut pcg = PCGRandom::init_global_state();
+    let init_state = 42_u64;
+    PCGRandom::pcg32_srandom_r(&mut pcg, init_state, 12345);
+    let first_val_1 = PCGRandom::pcg32_random_r(&mut pcg);
+    let second_val_1 = PCGRandom::pcg32_random_r(&mut pcg);
 
-    pcg.srandom(12345);
-    let first_val_2 = pcg.random();
-    let second_val_2 = pcg.random();
+    PCGRandom::pcg32_srandom_r(&mut pcg, init_state, 12345);
+    let first_val_2 = PCGRandom::pcg32_random_r(&mut pcg);
+    let second_val_2 = PCGRandom::pcg32_random_r(&mut pcg);
 
     assert_eq!(
         first_val_1, first_val_2,
@@ -71,8 +72,8 @@ fn test_pcg_seeding() {
     );
 
     // Test that different seeds produce different values
-    pcg.srandom(54321);
-    let different_first = pcg.random();
+    PCGRandom::pcg32_srandom_r(&mut pcg, init_state, 54321);
+    let different_first = PCGRandom::pcg32_random_r(&mut pcg);
 
     assert_ne!(
         first_val_1, different_first,
@@ -83,18 +84,20 @@ fn test_pcg_seeding() {
 #[test]
 fn test_pcg_deterministic_behavior() {
     // Test that the RNG is deterministic after seeding
-    let mut pcg = RngPcg::new();
-    pcg.srandom(999);
-    let first_value = pcg.random();
+    let mut pcg = PCGRandom::init_global_state();
+    let init_state = 42_u64;
+    PCGRandom::pcg32_srandom_r(&mut pcg, init_state, 999);
+    let first_value = PCGRandom::pcg32_random_r(&mut pcg);
 
-    pcg.srandom(999);
-    let second_value = pcg.random();
+    PCGRandom::pcg32_srandom_r(&mut pcg, init_state, 999);
+    let second_value = PCGRandom::pcg32_random_r(&mut pcg);
 
     assert_eq!(
         first_value, second_value,
         "First value after seeding should be deterministic"
     );
 }
+
 
 #[test]
 fn test_pcg_shared_state_interference() {
@@ -103,14 +106,14 @@ fn test_pcg_shared_state_interference() {
 
     const ITERATIONS: usize = 100;
     let mut results: Vec<u32> = Vec::new();
-    let mut pcg = RngPcg::new();
-
+    let mut pcg = PCGRandom::init_global_state();
+    let init_state = 42_u64;
     for i in 0..ITERATIONS {
-        pcg.srandom(42);
+        PCGRandom::pcg32_srandom_r(&mut pcg, init_state, 42);
         // Add some delay to increase chance of interference
         std::thread::yield_now();
 
-        let val = pcg.random();
+        let val = PCGRandom::pcg32_random_r(&mut pcg);
         results.push(val);
 
         assert!(
@@ -126,19 +129,20 @@ fn test_pcg_shared_state_interference() {
 #[test]
 fn test_pcg_rapid_reseeding() {
     // Rapidly reseed and check values to increase chance of race conditions
-    let mut pcg = RngPcg::new();
+    let mut pcg = PCGRandom::init_global_state();
+    let initstate = 42_u64;
     let expected_values: Vec<u32> = (0..10)
         .map(|i| {
-            pcg.srandom(i);
-            pcg.random()
+            PCGRandom::pcg32_srandom_r(&mut pcg, initstate, i);
+            PCGRandom::pcg32_random_r(&mut pcg)
         })
         .collect();
 
     // Now verify multiple times
     for round in 0..50 {
         for (i, &expected) in expected_values.iter().enumerate() {
-            pcg.srandom(i as u64);
-            let actual = pcg.random();
+            PCGRandom::pcg32_srandom_r(&mut pcg, initstate, i as u64 );
+            let actual = PCGRandom::pcg32_random_r(&mut pcg);
             assert_eq!(
                 actual, expected,
                 "Round {round}, seed {i}: Expected {expected} but got {actual} (state corruption detected!)"
@@ -154,13 +158,14 @@ fn test_pcg_concurrent_access() {
     let num_threads = 10;
     let iterations_per_thread = 100;
     let barrier = Arc::new(std::sync::Barrier::new(num_threads));
+    let initstate = 42_u64;
 
-    let mut pcg = RngPcg::new();
+    let mut pcg = PCGRandom::init_global_state();
     // First, generate expected sequences for each thread
     let expected_sequences: Vec<Vec<u32>> = (0..num_threads)
-        .map(|thread_id| {
-            pcg.srandom(thread_id as u64);
-            (0..iterations_per_thread).map(|_| pcg.random()).collect()
+        .map(|thread_id: usize| {
+            PCGRandom::pcg32_srandom_r(&mut pcg, initstate, thread_id as u64);
+            (0..iterations_per_thread).map(|_| PCGRandom::pcg32_random_r(&mut pcg)).collect()
         })
         .collect();
 
@@ -174,12 +179,12 @@ fn test_pcg_concurrent_access() {
                 barrier.wait();
 
                 // Each thread uses its own seed
-                pcg.srandom(thread_id as u64);
+                PCGRandom::pcg32_srandom_r(&mut pcg, initstate, thread_id as u64);
 
                 let mut results = Vec::new();
                 #[allow(clippy::needless_range_loop)]
                 for i in 0..iterations_per_thread {
-                    let val = pcg.random();
+                    let val = PCGRandom::pcg32_random_r(&mut pcg);
                     results.push(val);
 
                     // Verify we're getting the expected value
@@ -214,30 +219,32 @@ fn test_pcg_concurrent_access() {
 fn test_pcg_thread_independence() {
     // Verify that threads with different seeds maintain independent sequences
 
-    let mut pcg = RngPcg::new();
-    // First, get expected sequences
-    pcg.srandom(100);
-    let expected_seq1: Vec<u32> = (0..5).map(|_| pcg.random()).collect();
+    let mut pcg = PCGRandom::init_global_state();
+    let initstate = 42_u64;
 
-    pcg.srandom(200);
-    let expected_seq2: Vec<u32> = (0..5).map(|_| pcg.random()).collect();
+    // First, get expected sequences
+    PCGRandom::pcg32_srandom_r(&mut pcg, initstate, 100);
+    let expected_seq1: Vec<u32> = (0..5).map(|_| PCGRandom::pcg32_random_r(&mut pcg)).collect();
+
+    PCGRandom::pcg32_srandom_r(&mut pcg, initstate, 200);
+    let expected_seq2: Vec<u32> = (0..5).map(|_| PCGRandom::pcg32_random_r(&mut pcg)).collect();
 
     // Run threads concurrently
     let handle1 = thread::spawn(move || {
-        pcg.srandom(100);
+        PCGRandom::pcg32_srandom_r(&mut pcg, initstate, 100);
         let mut results = vec![];
         for _ in 0..5 {
-            results.push(pcg.random());
+            results.push(PCGRandom::pcg32_random_r(&mut pcg));
             thread::yield_now(); // Encourage interleaving
         }
         results
     });
 
     let handle2 = thread::spawn(move || {
-        pcg.srandom(200);
+        PCGRandom::pcg32_srandom_r(&mut pcg, initstate, 200);
         let mut results = vec![];
         for _ in 0..5 {
-            results.push(pcg.random());
+            results.push(PCGRandom::pcg32_random_r(&mut pcg));
             thread::yield_now(); // Encourage interleaving
         }
         results

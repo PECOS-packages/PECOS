@@ -1,0 +1,71 @@
+pub mod rng_pcg;
+
+// use rng_pcg::{PCGRandom};
+use pyo3::types::PyModule;
+use pyo3::prelude::*;
+
+use crate::rng_pcg::PCGRandom;
+
+
+#[pyclass]
+pub struct RngPcg {
+    global_state: PCGRandom    
+}
+
+#[pymethods]
+impl RngPcg {
+    #[new]
+    pub fn new() -> RngPcg {
+        RngPcg { global_state: PCGRandom::init_global_state() }
+    }
+
+    pub fn random(&mut self) -> u32 {
+        PCGRandom::pcg32_random_r(&mut self.global_state)
+    }
+
+    pub fn boundedrand(&mut self, bound: u32) -> u32 {
+        PCGRandom::pcg32_boundedrand_r(&mut self.global_state, bound)
+    }
+
+    pub fn frandom(&mut self) -> f64 {
+        let random = self.random() as f64;
+        let exp: i32 = -32;
+        random * 2f64.powi(exp)
+    }
+
+    pub fn srandom(&mut self, seq: u64) {
+        PCGRandom::pcg32_srandom_r(&mut self.global_state, 42_u64, seq);
+    }
+}
+
+#[pymodule]
+fn rng_pcg_py(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<RngPcg>()?;
+    Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pcg_functions() {
+        let mut pcg = RngPcg::new();
+        // Set seed
+        pcg.srandom(15);
+
+        // Test basic random
+        let r1 = pcg.random();
+        assert!(r1 > 0);
+
+        // Test bounded random
+        let bound = 100;
+        let r2 = pcg.boundedrand(bound);
+        assert!(r2 < bound);
+
+        // Test float random
+        let r3 = pcg.frandom();
+        assert!((0.0..1.0).contains(&r3));
+    }
+}

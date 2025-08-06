@@ -9,7 +9,7 @@ It handles RNG platform function calls that are handled by the pcg_rng library.
 from __future__ import annotations
 
 try:
-    from pecos_pcg import pecos_rng
+    from pecos_rng import RngPcg
 except ImportError:
     from pecos_rslib._pecos_rslib import pcg as pecos_rng
 
@@ -30,6 +30,7 @@ class RNGModel:
         self.current_bound = current_bound
         self.count = 0
         self.seed = self.set_seed(seed)
+        self.pcg = RngPcg()
 
     def __str__(self) -> str:
         """Returns the str representation of the model."""
@@ -38,7 +39,7 @@ class RNGModel:
     def set_seed(self, seed: int) -> None:
         """Setting the seed for generating random numbers."""
         self.seed = seed
-        pecos_rng.pcg32_srandom(seed)
+        self.pcg.srandom(seed)
 
     def set_bound(self, bound: int) -> None:
         """Setting the current bound for generating random numbers."""
@@ -47,9 +48,9 @@ class RNGModel:
     def rng_random(self) -> int:
         """Generating a random number and keeping track of how many we have generated."""
         if self.current_bound == 0:
-            rng_num = pecos_rng.pcg32_random()
+            rng_num = self.pcg.random()
         else:
-            rng_num = pecos_rng.pcg32_boundedrand(self.current_bound)
+            rng_num = self.pcg.boundedrand(self.current_bound)
         self.count += 1
         return rng_num
 
@@ -62,7 +63,7 @@ class RNGModel:
             error_msg = "rngindex called after specified already generated"
             raise BufferError(error_msg)
         while self.count < index:
-            self.rng_random()
+            self.pcg.random()
 
     def extract_val(self, param: str, output: dict) -> int:
         """Responsible for extracting the value of interest depending on the type of the parameter being passed in."""

@@ -19,7 +19,7 @@
 mod byte_message_bindings;
 mod engine_bindings;
 mod noise_helpers;
-mod pcg_bindings;
+// mod pcg_bindings;
 pub mod phir_bridge;
 mod qasm_sim_bindings;
 mod sparse_sim;
@@ -50,6 +50,6 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register QASM simulation functions
     qasm_sim_bindings::register_qasm_sim_module(m)?;
 
-    pcg_bindings::create_pcg_module(m)?;
+    // pcg_bindings::create_pcg_module(m)?;
     Ok(())
 }

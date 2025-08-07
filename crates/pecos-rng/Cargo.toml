@@ -12,7 +12,6 @@ categories.workspace = true
 description = "Random number generators for PECOS quantum computing simulations"
 
 [dependencies]
-pyo3 = { workspace=true, features = ["extension-module", "abi3-py310", "generate-import-lib"] }
 
 [lints]
 workspace = true

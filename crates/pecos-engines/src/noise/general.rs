@@ -326,9 +326,10 @@ pub struct GeneralNoiseModel {
     /// Random number generator for stochastic noise processes
     rng: NoiseRng<ChaCha8Rng>,
 
-    /// Track which qubits are being measured in the current batch
+    /// Track which qubits are being measured in the current batch and their gate types
     /// This is needed to properly handle leakage during measurements
-    measured_qubits: Vec<usize>,
+    /// Each entry is (`qubit_id`, `is_measure_leaked`)
+    measured_qubits: Vec<(usize, bool)>,
 }
 
 impl ControlEngine for GeneralNoiseModel {
@@ -506,10 +507,14 @@ impl GeneralNoiseModel {
 
                     // TODO: Implement prep crosstalk when needed
                 }
-                GateType::Measure => {
+                GateType::Measure | GateType::MeasureLeaked => {
                     // Track which qubits are being measured for leakage handling
-                    self.measured_qubits
-                        .extend(gate.qubits.iter().map(|q| usize::from(*q)));
+                    let is_measure_leaked = gate.gate_type == GateType::MeasureLeaked;
+                    self.measured_qubits.extend(
+                        gate.qubits
+                            .iter()
+                            .map(|q| (usize::from(*q), is_measure_leaked)),
+                    );
                     // Measurement noise is handled in apply_noise_on_continue_processing
                     // We still need to add the original gate here
                     builder.add_gate_command(&gate);
@@ -584,23 +589,32 @@ impl GeneralNoiseModel {
 
         // Check if we have leaked qubits that were measured
         let has_leakage = !self.leaked_qubits.is_empty()
-            && self.measured_qubits.iter().any(|&q| self.is_leaked(q));
+            && self.measured_qubits.iter().any(|(q, _)| self.is_leaked(*q));
 
         for (idx, outcome) in measurement_outcomes.into_iter().enumerate() {
             let mut val = outcome;
 
             // Check if this measurement corresponds to a leaked qubit
             if has_leakage && idx < self.measured_qubits.len() {
-                let qubit = self.measured_qubits[idx];
+                let (qubit, is_measure_leaked) = self.measured_qubits[idx];
                 if self.is_leaked(qubit) {
-                    trace!("Qubit {qubit} is leaked, measuring as 1");
-                    // Force the measurement outcome to be 1 for leaked qubits
-                    val = 1;
+                    if is_measure_leaked {
+                        trace!("Qubit {qubit} is leaked, MeasureLeaked returns 2");
+                        // For MeasureLeaked, return 2 for leaked qubits
+                        val = 2;
+                    } else {
+                        trace!("Qubit {qubit} is leaked, Measure returns 1");
+                        // For regular Measure, force the measurement outcome to be 1
+                        val = 1;
+                    }
                 }
             }
 
-            // Apply asymmetric measurement noise
-            if val == 1 {
+            // Apply asymmetric measurement noise (but not for leaked measurements returning 2)
+            if val == 2 {
+                // No noise applied to leaked measurements
+                trace!("No measurement noise applied to leaked qubit outcome");
+            } else if val == 1 {
                 if self.rng.occurs(self.p_meas_1) {
                     trace!("Flipped measurement outcome 1->0");
                     val = 0;
@@ -1001,7 +1015,32 @@ impl GeneralNoiseModel {
         }
     }
 
-    fn mark_as_leaked(&mut self, qubit: usize) {
+    /// Mark a qubit as leaked
+    ///
+    /// This method explicitly sets a qubit to the leaked state, simulating a qubit that has
+    /// transitioned outside the computational basis (e.g., to a higher energy level in ion traps).
+    ///
+    /// # Behavior of Leaked Qubits
+    ///
+    /// - Regular `Measure` operations on leaked qubits always return 1
+    /// - `MeasureLeaked` operations on leaked qubits return 2
+    /// - Leaked qubits remain leaked until a `Prep` operation is applied
+    /// - Gates applied to leaked qubits have no effect on the quantum state
+    ///
+    /// # Use Cases
+    ///
+    /// - Testing algorithm robustness against leakage errors
+    /// - Setting up specific initial conditions for simulations
+    /// - Research into leakage-aware quantum algorithms
+    /// - Debugging circuits with leakage errors
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut noise_model = GeneralNoiseModel::default();
+    /// noise_model.mark_as_leaked(0); // Mark qubit 0 as leaked
+    /// ```
+    pub fn mark_as_leaked(&mut self, qubit: usize) {
         // TODO: see if some of the mark_as_leaked needs to move to self.leak()
         trace!("Marking qubit {qubit} as leaked");
         self.leaked_qubits.insert(qubit);
@@ -1932,6 +1971,182 @@ mod tests {
                 "Position {i}: With 0% 0->1 flip and 100% 1->0 flip, all should be 0"
             );
         }
+    }
+
+    #[test]
+    fn test_measure_leaked_without_leakage() {
+        use crate::byte_message::ByteMessageBuilder;
+
+        // Create a noise model with no errors (deterministic)
+        let mut model = GeneralNoiseModel::builder()
+            .with_prep_probability(0.0)
+            .with_meas_0_probability(0.0)
+            .with_meas_1_probability(0.0)
+            .with_p1_probability(0.0)
+            .with_p2_probability(0.0)
+            .build();
+
+        let noise = model
+            .as_any_mut()
+            .downcast_mut::<GeneralNoiseModel>()
+            .unwrap();
+
+        // No qubits are leaked
+        assert!(!noise.is_leaked(0));
+        assert!(!noise.is_leaked(1));
+
+        // Create measurement gates with both Measure and MeasureLeaked
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.add_measurements(&[0]); // Regular measure
+        builder.add_measure_leakages(&[1]); // MeasureLeaked
+
+        let measurement_command = builder.build();
+        let _noisy_command = noise.apply_noise_on_start(&measurement_command).unwrap();
+
+        // Create measurement results (both qubits in |0⟩ state)
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_outcomes();
+        builder.add_outcomes(&[0, 0]);
+
+        let results_message = noise
+            .apply_noise_on_continue_processing(builder.build())
+            .unwrap();
+
+        let results = results_message.outcomes().unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0], 0, "Regular Measure of |0⟩ should return 0");
+        assert_eq!(
+            results[1], 0,
+            "MeasureLeaked of |0⟩ should return 0 (not leaked)"
+        );
+
+        // Test with |1⟩ state
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_outcomes();
+        builder.add_outcomes(&[1, 1]);
+
+        let results_message = noise
+            .apply_noise_on_continue_processing(builder.build())
+            .unwrap();
+
+        let results = results_message.outcomes().unwrap();
+        assert_eq!(results[0], 1, "Regular Measure of |1⟩ should return 1");
+        assert_eq!(
+            results[1], 1,
+            "MeasureLeaked of |1⟩ should return 1 (not leaked)"
+        );
+    }
+
+    #[test]
+    fn test_measure_leaked_with_leakage() {
+        use crate::byte_message::ByteMessageBuilder;
+
+        // Create a noise model with no measurement errors (deterministic)
+        let mut model = GeneralNoiseModel::builder()
+            .with_prep_probability(0.0)
+            .with_meas_0_probability(0.0)
+            .with_meas_1_probability(0.0)
+            .with_p1_probability(0.0)
+            .with_p2_probability(0.0)
+            .build();
+
+        let noise = model
+            .as_any_mut()
+            .downcast_mut::<GeneralNoiseModel>()
+            .unwrap();
+
+        // Manually mark qubits 0 and 1 as leaked
+        noise.mark_as_leaked(0);
+        noise.mark_as_leaked(1);
+
+        // Create measurement gates with both Measure and MeasureLeaked
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.add_measurements(&[0]); // Regular measure on leaked qubit
+        builder.add_measure_leakages(&[1]); // MeasureLeaked on leaked qubit
+
+        let measurement_command = builder.build();
+        let _noisy_command = noise.apply_noise_on_start(&measurement_command).unwrap();
+
+        // Create measurement results (simulator returns 0, but noise model will override)
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_outcomes();
+        builder.add_outcomes(&[0, 0]);
+
+        let results_message = noise
+            .apply_noise_on_continue_processing(builder.build())
+            .unwrap();
+
+        let results = results_message.outcomes().unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(
+            results[0], 1,
+            "Regular Measure of leaked qubit should return 1"
+        );
+        assert_eq!(
+            results[1], 2,
+            "MeasureLeaked of leaked qubit should return 2"
+        );
+    }
+
+    #[test]
+    fn test_measure_leaked_mixed_scenario() {
+        use crate::byte_message::ByteMessageBuilder;
+
+        // Create a noise model with no measurement errors (deterministic)
+        let mut model = GeneralNoiseModel::builder()
+            .with_prep_probability(0.0)
+            .with_meas_0_probability(0.0)
+            .with_meas_1_probability(0.0)
+            .with_p1_probability(0.0)
+            .with_p2_probability(0.0)
+            .build();
+
+        let noise = model
+            .as_any_mut()
+            .downcast_mut::<GeneralNoiseModel>()
+            .unwrap();
+
+        // Mark only even qubits as leaked
+        noise.mark_as_leaked(0);
+        noise.mark_as_leaked(2);
+
+        // Create mixed measurement gates
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        builder.add_measurements(&[0]); // Regular measure on leaked qubit 0
+        builder.add_measure_leakages(&[1]); // MeasureLeaked on non-leaked qubit 1
+        builder.add_measure_leakages(&[2]); // MeasureLeaked on leaked qubit 2
+        builder.add_measurements(&[3]); // Regular measure on non-leaked qubit 3
+
+        let measurement_command = builder.build();
+        let _noisy_command = noise.apply_noise_on_start(&measurement_command).unwrap();
+
+        // Create measurement results (mix of 0s and 1s from simulator)
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_outcomes();
+        builder.add_outcomes(&[0, 1, 0, 1]); // Simulator results before noise
+
+        let results_message = noise
+            .apply_noise_on_continue_processing(builder.build())
+            .unwrap();
+
+        let results = results_message.outcomes().unwrap();
+        assert_eq!(results.len(), 4);
+        assert_eq!(results[0], 1, "Measure on leaked qubit 0 should return 1");
+        assert_eq!(
+            results[1], 1,
+            "MeasureLeaked on non-leaked qubit 1 should preserve simulator result 1"
+        );
+        assert_eq!(
+            results[2], 2,
+            "MeasureLeaked on leaked qubit 2 should return 2"
+        );
+        assert_eq!(
+            results[3], 1,
+            "Measure on non-leaked qubit 3 should preserve simulator result 1"
+        );
     }
 
     #[test]

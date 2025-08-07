@@ -213,7 +213,7 @@ impl Engine for StateVecEngine {
                 }
 
                 // TODO: Fix it so we have multiple result_ids or get rid of result ids...
-                GateType::Measure => {
+                GateType::Measure | GateType::MeasureLeaked => {
                     for q in &cmd.qubits {
                         debug!("Processing measurement on qubit {q:?}");
                         let meas_result = self.simulator.mz(**q);
@@ -460,7 +460,7 @@ impl Engine for SparseStabEngine {
                     self.process_two_qubit_gate(cmd.gate_type, &cmd.qubits);
                 }
                 // Special operations
-                GateType::Measure => {
+                GateType::Measure | GateType::MeasureLeaked => {
                     for q in &cmd.qubits {
                         debug!("Processing measurement on qubit {q:?}");
                         let meas_result = self.simulator.mz(**q);

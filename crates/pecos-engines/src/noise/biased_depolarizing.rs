@@ -176,7 +176,7 @@ impl BiasedDepolarizingNoiseModel {
                     trace!("Applying two-qubit gate with possible fault");
                     self.apply_tq_faults(&mut builder, gate);
                 }
-                GateType::Measure => {
+                GateType::Measure | GateType::MeasureLeaked => {
                     trace!("Applying measurement. Will apply bias after engine returns results.");
                     // we apply biased measurement after the engine
                     // returns the results, rather than before measurement

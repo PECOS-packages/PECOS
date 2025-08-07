@@ -208,6 +208,9 @@ jobs:
       - name: Install pecos-rslib
         run: pip install ./pecos-rslib-wheel/*.whl
 
+      - name: Install build dependencies
+        run: pip install build
+
       - name: Build quantum-pecos SDist
         run: |
           cd python/quantum-pecos
@@ -249,6 +252,9 @@ jobs:
 
       - name: Install pecos-rslib
         run: pip install ./pecos-rslib-wheel/*.whl
+
+      - name: Install build dependencies
+        run: pip install build
 
       - name: Build quantum-pecos wheel
         run: |

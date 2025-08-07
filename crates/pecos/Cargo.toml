@@ -22,7 +22,7 @@ pecos-engines.workspace = true
 pecos-qasm.workspace = true
 pecos-phir.workspace = true
 pecos-qir.workspace = true
-pecos-clib-pcg.workspace = true
+pecos-rng.workspace = true
 log.workspace = true
 serde_json.workspace = true
 
@@ -35,6 +35,7 @@ pecos-engines.workspace = true
 pecos-qasm.workspace = true
 pecos-qir.workspace = true
 pecos-phir.workspace = true
+pecos-rng.workspace = true
 log.workspace = true
 serde_json.workspace = true
 

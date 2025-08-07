@@ -67,7 +67,4 @@ pub use pecos_qir::setup_qir_engine;
 pub use pecos_engines::run_sim;
 
 // Re-export PCG RNG functions
-pub use pecos_clib_pcg::{
-    boundedrand as pcg32_boundedrand, frandom as pcg32_frandom, random as pcg32_random,
-    srandom as pcg32_srandom,
-};
+pub use pecos_rng::rng_pcg;

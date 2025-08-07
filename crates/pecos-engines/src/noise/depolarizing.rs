@@ -150,7 +150,7 @@ impl DepolarizingNoiseModel {
                 GateType::RZ => {
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                 }
-                GateType::Measure => {
+                GateType::Measure | GateType::MeasureLeaked => {
                     trace!("Applying measurement with possible fault");
                     self.apply_meas_faults(&mut builder, gate);
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);

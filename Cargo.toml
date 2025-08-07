@@ -15,7 +15,7 @@ default-members = [
     "crates/pecos-phir",
     "crates/pecos-qir",
     "crates/pecos-qec",
-    "crates/pecos-clib-pcg",
+    "crates/pecos-rng",
     "crates/pecos",
     "crates/pecos-cli",
     "python/pecos-rslib/rust",
@@ -98,7 +98,7 @@ pecos-phir = { version = "0.1.1", path = "crates/pecos-phir" }
 pecos-engines = { version = "0.1.1", path = "crates/pecos-engines" }
 pecos-qir = { version = "0.1.1", path = "crates/pecos-qir" }
 pecos-qec = { version = "0.1.1", path = "crates/pecos-qec" }
-pecos-clib-pcg = { version = "0.1.1", path = "crates/pecos-clib-pcg" }
+pecos-rng = { version = "0.1.0", path = "crates/pecos-rng" }
 pecos = { version = "0.1.1", path = "crates/pecos" }
 pecos-cli = { version = "0.1.1", path = "crates/pecos-cli" }
 pecos-rslib = { version = "0.1.1", path = "python/pecos-rslib/rust" }

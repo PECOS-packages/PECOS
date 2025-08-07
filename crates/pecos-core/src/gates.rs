@@ -250,6 +250,16 @@ impl Gate {
         )
     }
 
+    /// Create `MeasureLeaked` gate on multiple qubits
+    #[must_use]
+    pub fn measure_leaked(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::new(
+            GateType::MeasureLeaked,
+            vec![],
+            qubits.iter().map(|&q| q.into()).collect(),
+        )
+    }
+
     /// Create Prep gate on multiple qubits
     #[must_use]
     pub fn prep(qubits: &[impl Into<QubitId> + Copy]) -> Self {

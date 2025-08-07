@@ -449,6 +449,24 @@ impl ByteMessageBuilder {
         self
     }
 
+    /// Add measure leakage operations for multiple qubits
+    ///
+    /// This behaves like `add_measurements()` but is intended for measuring qubits
+    /// that may be in a leaked state. In the future, this will output 0, 1, or 2
+    /// (where 2 indicates the qubit is leaked).
+    ///
+    /// # Panics
+    ///
+    /// Panics if any qubit ID is too large to fit in a u32.
+    pub fn add_measure_leakages(&mut self, qubit_ids: &[usize]) -> &mut Self {
+        for &qubit in qubit_ids {
+            // Add a measure_leaked as a regular gate command
+            let gate = Gate::measure_leaked(&[qubit]);
+            self.add_gate_command(&gate);
+        }
+        self
+    }
+
     /// Add a Prep gate
     pub fn add_prep(&mut self, qubits: &[usize]) -> &mut Self {
         let gate = Gate::prep(qubits);
@@ -728,6 +746,30 @@ mod tests {
         assert_eq!(commands.len(), 3);
         for i in 0..3 {
             assert_eq!(commands[i].gate_type, GateType::Measure);
+            assert_eq!(commands[i].qubits, vec![QubitId(qubits[i])]);
+        }
+    }
+
+    #[test]
+    fn test_add_measure_leakages() {
+        // Create a builder
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+
+        // Add measure_leakages for multiple qubits
+        let qubits = vec![0, 1, 2];
+        builder.add_measure_leakages(&qubits);
+
+        // Build the message
+        let message = builder.build();
+
+        // Parse the message
+        let commands = message.quantum_ops().unwrap();
+
+        // Verify the commands
+        assert_eq!(commands.len(), 3);
+        for i in 0..3 {
+            assert_eq!(commands[i].gate_type, GateType::MeasureLeaked);
             assert_eq!(commands[i].qubits, vec![QubitId(qubits[i])]);
         }
     }

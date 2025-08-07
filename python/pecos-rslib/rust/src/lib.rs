@@ -19,7 +19,8 @@
 mod byte_message_bindings;
 mod engine_bindings;
 mod noise_helpers;
-mod pcg_bindings;
+// mod pcg_bindings;
+mod pecos_rng_bindings;
 pub mod phir_bridge;
 mod qasm_sim_bindings;
 mod sparse_sim;
@@ -29,12 +30,12 @@ mod state_vec_bindings;
 mod state_vec_engine_bindings;
 
 use byte_message_bindings::{PyByteMessage, PyByteMessageBuilder};
+use pecos_rng_bindings::RngPcg;
+use pyo3::prelude::*;
 use sparse_stab_bindings::SparseSim;
 use sparse_stab_engine_bindings::PySparseStabEngine;
 use state_vec_bindings::RsStateVec;
 use state_vec_engine_bindings::PyStateVecEngine;
-
-use pyo3::prelude::*;
 
 /// A Python module implemented in Rust.
 #[pymodule]
@@ -46,10 +47,10 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyByteMessageBuilder>()?;
     m.add_class::<PyStateVecEngine>()?;
     m.add_class::<PySparseStabEngine>()?;
+    m.add_class::<RngPcg>()?;
 
     // Register QASM simulation functions
     qasm_sim_bindings::register_qasm_sim_module(m)?;
 
-    pcg_bindings::create_pcg_module(m)?;
     Ok(())
 }

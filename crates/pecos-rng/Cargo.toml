@@ -1,21 +1,17 @@
 [package]
-name = "pecos-clib-pcg"
+name = "pecos-rng"
 version.workspace = true
 edition.workspace = true
+readme.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "PCG RNG C library wrapper for PECOS"
-readme = "README.md"
+description = "Random number generators for PECOS quantum computing simulations"
 
 [dependencies]
-
-[build-dependencies]
-cc.workspace = true
-ureq = { version = "2.9", default-features = false, features = ["native-tls"] }
 
 [lints]
 workspace = true

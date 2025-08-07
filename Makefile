@@ -24,42 +24,27 @@ installreqs: ## Install Python project requirements to root .venv
 		uv sync --project .; \
 	fi
 
-.PHONY: buildrng
-buildrng:
-	@echo "Skipping RNG library build (using Rust fallback)..."
-	# @echo "Building and installing RNG library..."
-	# uv pip install nanobind
-	# @if [ -z "$(CC)" ] && [ -z "$(CXX)" ]; then \
-	# 	cd clib/pecos-rng && CC=gcc CXX=g++ uv pip install -e .; \
-	# else \
-	# 	cd clib/pecos-rng && uv pip install -e .; \
-	# fi
-
 # Building development environments
 # ---------------------------------
 .PHONY: build
 build: installreqs ## Compile and install for development
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && uv run maturin develop --uv
-	$(MAKE) buildrng
 	@unset CONDA_PREFIX && uv pip install -e "./python/quantum-pecos[all]"
 
 .PHONY: build-basic
 build-basic: installreqs ## Compile and install for development but do not include install extras
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && uv run maturin develop --uv
-	$(MAKE) buildrng
 	@unset CONDA_PREFIX && uv pip install -e ./python/quantum-pecos
 
 .PHONY: build-release
 build-release: installreqs ## Build a faster version of binaries
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && uv run maturin develop --uv --release
-	$(MAKE) buildrng
 	@unset CONDA_PREFIX && uv pip install -e "./python/quantum-pecos[all]"
 
 .PHONY: build-native
 build-native: installreqs ## Build a faster version of binaries with native CPU optimization
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && RUSTFLAGS='-C target-cpu=native' \
 	&& uv run maturin develop --uv --release
-	$(MAKE) buildrng
 	@unset CONDA_PREFIX && uv pip install -e "./python/quantum-pecos[all]"
 
 # Documentation
@@ -228,12 +213,6 @@ clean-unix:
 	@find . -type d -name "junit" -exec rm -rf {} +
 	@find python -name "*.so" -delete
 	@find python -name "*.pyd" -delete
-	@# Clean clib build artifacts
-	@find clib -type d -name "build" -exec rm -rf {} +
-	@find clib -type d -name "dist" -exec rm -rf {} +
-	@find clib -type d -name "*.egg-info" -exec rm -rf {} +
-	@find clib -type d -name ".venv" -exec rm -rf {} +
-	@find clib -name "uv.lock" -delete
 	@# Clean all target directories in crates (in case they were built independently)
 	@find crates -type d -name "target" -exec rm -rf {} +
 	@find python -type d -name "target" -exec rm -rf {} +
@@ -255,12 +234,6 @@ clean-windows-ps:
 	@powershell -Command "Get-ChildItem -Path . -Recurse -Directory -Filter '.hypothesis' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
 	@powershell -Command "Get-ChildItem -Path . -Recurse -Directory -Filter 'junit' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
 	@powershell -Command "Get-ChildItem -Path python -Recurse -File -Include '*.so','*.pyd' | Remove-Item -Force -ErrorAction SilentlyContinue"
-	@# Clean clib build artifacts
-	@powershell -Command "Get-ChildItem -Path clib -Recurse -Directory -Filter 'build' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "Get-ChildItem -Path clib -Recurse -Directory -Filter 'dist' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "Get-ChildItem -Path clib -Recurse -Directory -Filter '*.egg-info' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "Get-ChildItem -Path clib -Recurse -Directory -Filter '.venv' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "Get-ChildItem -Path clib -Recurse -File -Filter 'uv.lock' | Remove-Item -Force -ErrorAction SilentlyContinue"
 	@# Clean all target directories in crates
 	@powershell -Command "Get-ChildItem -Path crates -Recurse -Directory -Filter 'target' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
 	@powershell -Command "Get-ChildItem -Path python -Recurse -Directory -Filter 'target' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
@@ -281,12 +254,6 @@ clean-windows-cmd:
 	-@for /f "delims=" %%d in ('dir /s /b /ad .hypothesis 2^>nul') do @rd /s /q "%%d" 2>nul
 	-@for /f "delims=" %%d in ('dir /s /b /ad junit 2^>nul') do @rd /s /q "%%d" 2>nul
 	-@for /f "delims=" %%f in ('dir /s /b python\*.so python\*.pyd 2^>nul') do @del "%%f" 2>nul
-	-@REM Clean clib build artifacts
-	-@for /f "delims=" %%d in ('dir /s /b /ad clib\build 2^>nul') do @rd /s /q "%%d" 2>nul
-	-@for /f "delims=" %%d in ('dir /s /b /ad clib\dist 2^>nul') do @rd /s /q "%%d" 2>nul
-	-@for /f "delims=" %%d in ('dir /s /b /ad clib\*.egg-info 2^>nul') do @rd /s /q "%%d" 2>nul
-	-@for /f "delims=" %%d in ('dir /s /b /ad clib\.venv 2^>nul') do @rd /s /q "%%d" 2>nul
-	-@for /f "delims=" %%f in ('dir /s /b clib\uv.lock 2^>nul') do @del "%%f" 2>nul
 	-@REM Clean all target directories in crates
 	-@for /f "delims=" %%d in ('dir /s /b /ad crates\target 2^>nul') do @rd /s /q "%%d" 2>nul
 	-@for /f "delims=" %%d in ('dir /s /b /ad python\target 2^>nul') do @rd /s /q "%%d" 2>nul

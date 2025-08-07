@@ -156,7 +156,7 @@ def get_val(
     a: BinArray | tuple[str, int] | list[str | int] | str | int,
     output: dict[str, BinArray],
     width: int,
-    shot_id: int
+    shot_id: int,
 ) -> BinArray:
     """Extract and convert a value to BinArray.
 
@@ -167,6 +167,7 @@ def get_val(
         a: Value to extract - can be BinArray, variable reference, or literal.
         output: Dictionary containing variable values.
         width: Bit width for value conversion.
+        shot_id: The current instance's shot id
 
     Returns:
         Value converted to BinArray format.
@@ -182,10 +183,7 @@ def get_val(
         val = output[sym][idx]
 
     elif isinstance(a, str):
-        if a == 'JOB_shotnum':
-            val = shot_id
-        else:
-            val = int(output[a])
+        val = shot_id if a == "JOB_shotnum" else int(output[a])
 
     elif isinstance(a, int):
         val = a
@@ -201,7 +199,7 @@ def recur_eval_op(
     expr_dict: dict[str, Any],
     output: dict[str, BinArray],
     width: int,
-    shot_id: int
+    shot_id: int,
 ) -> BinArray:
     """Recursively evaluate a nested expression dictionary.
 
@@ -212,6 +210,7 @@ def recur_eval_op(
         expr_dict: Dictionary containing expression with 'op', 'a', 'b', 'c' keys.
         output: Dictionary containing variable values.
         width: Bit width for operations.
+        shot_id: The current instance's shot id.
 
     Returns:
         Result of the evaluated expression as BinArray.
@@ -252,7 +251,7 @@ def eval_cop(
     cop_expr: dict[str, Any] | list[dict[str, Any]],
     output: dict[str, BinArray],
     width: int,
-    shot_id: int
+    shot_id: int,
 ) -> None:
     """Evaluate classical operation expression.
 

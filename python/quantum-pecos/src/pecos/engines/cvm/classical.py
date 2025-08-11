@@ -221,23 +221,23 @@ def recur_eval_op(
     c = expr_dict.get("c")
 
     if isinstance(a, dict):
-        a = recur_eval_op(a, output, width)
+        a = recur_eval_op(a, output, width, shot_id=shot_id)
 
     elif c:  # c => unary operation
         c = (
-            recur_eval_op(c, output, width)
+            recur_eval_op(c, output, width, shot_id=shot_id)
             if isinstance(c, dict)
             else get_val(c, output, width, shot_id)
         )
 
-        a = eval_op(op, c, width=width, shot_id=shot_id)
+        a = eval_op(op, c, width=width)
 
     else:
         a = get_val(a, output, width, shot_id)
 
     if b:
         b = (
-            recur_eval_op(b, output, width)
+            recur_eval_op(b, output, width, shot_id=shot_id)
             if isinstance(b, dict)
             else get_val(b, output, width, shot_id)
         )

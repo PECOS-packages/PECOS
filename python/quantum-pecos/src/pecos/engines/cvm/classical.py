@@ -156,6 +156,7 @@ def get_val(
     a: BinArray | tuple[str, int] | list[str | int] | str | int,
     output: dict[str, BinArray],
     width: int,
+    shot_id: int,
 ) -> BinArray:
     """Extract and convert a value to BinArray.
 
@@ -166,6 +167,7 @@ def get_val(
         a: Value to extract - can be BinArray, variable reference, or literal.
         output: Dictionary containing variable values.
         width: Bit width for value conversion.
+        shot_id: The current instance's shot id
 
     Returns:
         Value converted to BinArray format.
@@ -181,7 +183,7 @@ def get_val(
         val = output[sym][idx]
 
     elif isinstance(a, str):
-        val = int(output[a])
+        val = shot_id if a == "JOB_shotnum" else int(output[a])
 
     elif isinstance(a, int):
         val = a
@@ -197,6 +199,7 @@ def recur_eval_op(
     expr_dict: dict[str, Any],
     output: dict[str, BinArray],
     width: int,
+    shot_id: int,
 ) -> BinArray:
     """Recursively evaluate a nested expression dictionary.
 
@@ -207,6 +210,7 @@ def recur_eval_op(
         expr_dict: Dictionary containing expression with 'op', 'a', 'b', 'c' keys.
         output: Dictionary containing variable values.
         width: Bit width for operations.
+        shot_id: The current instance's shot id.
 
     Returns:
         Result of the evaluated expression as BinArray.
@@ -217,25 +221,25 @@ def recur_eval_op(
     c = expr_dict.get("c")
 
     if isinstance(a, dict):
-        a = recur_eval_op(a, output, width)
+        a = recur_eval_op(a, output, width, shot_id=shot_id)
 
     elif c:  # c => unary operation
         c = (
-            recur_eval_op(c, output, width)
+            recur_eval_op(c, output, width, shot_id=shot_id)
             if isinstance(c, dict)
-            else get_val(c, output, width)
+            else get_val(c, output, width, shot_id)
         )
 
         a = eval_op(op, c, width=width)
 
     else:
-        a = get_val(a, output, width)
+        a = get_val(a, output, width, shot_id)
 
     if b:
         b = (
-            recur_eval_op(b, output, width)
+            recur_eval_op(b, output, width, shot_id=shot_id)
             if isinstance(b, dict)
-            else get_val(b, output, width)
+            else get_val(b, output, width, shot_id)
         )
 
         a = eval_op(op, a, b, width=width)
@@ -247,6 +251,7 @@ def eval_cop(
     cop_expr: dict[str, Any] | list[dict[str, Any]],
     output: dict[str, BinArray],
     width: int,
+    shot_id: int,
 ) -> None:
     """Evaluate classical operation expression.
 
@@ -280,7 +285,7 @@ def eval_cop(
 
     # Eval assignment
     # ---------------
-    expr_eval = recur_eval_op(cop_expr, output, width)
+    expr_eval = recur_eval_op(cop_expr, output, width, shot_id)
 
     # Assign the final value:
     # -----------------------

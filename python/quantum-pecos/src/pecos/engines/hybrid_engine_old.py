@@ -262,7 +262,12 @@ class HybridEngine:
                             eval_cfunc(self, params, output)
 
                     elif params.get("expr"):
-                        eval_cop(params.get("expr"), output, width=self.regwidth)
+                        eval_cop(
+                            params.get("expr"),
+                            output,
+                            width=self.regwidth,
+                            shot_id=self.rng_model.shot_id,
+                        )
 
                     elif params.get("cop_type") == "ExportCVar":
                         sym = params["export"]

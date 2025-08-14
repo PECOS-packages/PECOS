@@ -131,20 +131,20 @@ pub mod utils {
                             if let Ok(d) = d_str.parse::<usize>() {
                                 max_detector = Some(max_detector.map_or(d, |m: usize| m.max(d)));
                             }
-                        } else if let Some(l_str) = part.strip_prefix('L') {
-                            if let Ok(l) = l_str.parse::<usize>() {
-                                observables.insert(l);
-                            }
+                        } else if let Some(l_str) = part.strip_prefix('L')
+                            && let Ok(l) = l_str.parse::<usize>()
+                        {
+                            observables.insert(l);
                         }
                     }
                 }
                 "detector" => {
                     // Parse detector declarations
                     for part in &parts[1..] {
-                        if let Some(d_str) = part.strip_prefix('D') {
-                            if let Ok(d) = d_str.parse::<usize>() {
-                                max_detector = Some(max_detector.map_or(d, |m: usize| m.max(d)));
-                            }
+                        if let Some(d_str) = part.strip_prefix('D')
+                            && let Ok(d) = d_str.parse::<usize>()
+                        {
+                            max_detector = Some(max_detector.map_or(d, |m: usize| m.max(d)));
                         }
                     }
                 }

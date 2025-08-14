@@ -21,10 +21,10 @@ fn main() {
     if let Ok(entries) = fs::read_dir(&includes_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("inc") {
-                if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
-                    inc_files.push(filename.to_string());
-                }
+            if path.extension().and_then(|s| s.to_str()) == Some("inc")
+                && let Some(filename) = path.file_name().and_then(|s| s.to_str())
+            {
+                inc_files.push(filename.to_string());
             }
         }
     }

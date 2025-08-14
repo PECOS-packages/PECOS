@@ -169,9 +169,13 @@ impl BlockExecutor {
                 cop, args, returns, ..
             } => {
                 debug!("Processing classical operation: {cop}");
-                let result =
-                    self.processor
-                        .handle_classical_op(cop, args, returns, &[op.clone()], 0)?;
+                let result = self.processor.handle_classical_op(
+                    cop,
+                    args,
+                    returns,
+                    std::slice::from_ref(op),
+                    0,
+                )?;
                 if !result {
                     debug!("Classical operation handled as expression or skipped: {cop}");
                 }

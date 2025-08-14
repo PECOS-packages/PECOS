@@ -15,7 +15,7 @@ use crate::engine_bindings::{PyEngineCommon, PyEngineWrapper, PyQuantumEngineWra
 use pecos::prelude::SparseStabEngine;
 use pyo3::prelude::*;
 
-/// Python wrapper for Rust SparseStabEngine to execute ByteMessage circuits with Clifford gates
+/// Python wrapper for Rust `SparseStabEngine` to execute `ByteMessage` circuits with Clifford gates
 #[pyclass(name = "SparseStabEngineRs")]
 pub struct PySparseStabEngine {
     inner: SparseStabEngine,
@@ -42,7 +42,7 @@ impl PyEngineCommon for PySparseStabEngine {}
 
 #[pymethods]
 impl PySparseStabEngine {
-    /// Create a new SparseStabEngine with the specified number of qubits
+    /// Create a new `SparseStabEngine` with the specified number of qubits
     #[new]
     fn new(num_qubits: usize) -> Self {
         Self {
@@ -56,13 +56,13 @@ impl PySparseStabEngine {
         self.py_reset()
     }
 
-    /// Process a ByteMessage circuit and return the measurement results
+    /// Process a `ByteMessage` circuit and return the measurement results
     #[pyo3(text_signature = "($self, message)")]
     fn process(&mut self, message: &PyByteMessage) -> PyResult<PyByteMessage> {
         self.py_process(message)
     }
 
-    /// Execute a ByteMessage circuit multiple times and return the measurement results
+    /// Execute a `ByteMessage` circuit multiple times and return the measurement results
     #[pyo3(text_signature = "($self, message, shots=1000)")]
     fn run_circuit_with_shots(
         &mut self,

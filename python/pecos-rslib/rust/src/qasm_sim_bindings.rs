@@ -46,7 +46,7 @@ fn parse_gate_type_from_string(gate_str: &str) -> Option<GateType> {
     }
 }
 
-/// Python wrapper for GeneralNoiseModelBuilder
+/// Python wrapper for `GeneralNoiseModelBuilder`
 #[pyclass(name = "GeneralNoiseModelBuilder", module = "pecos_rslib._pecos_rslib")]
 #[derive(Debug, Clone)]
 pub struct PyGeneralNoiseModelBuilder {
@@ -73,7 +73,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If gate type is unknown
+    ///     `ValueError`: If gate type is unknown
     #[pyo3(text_signature = "($self, gate)")]
     fn with_noiseless_gate(&self, gate: &str) -> PyResult<Self> {
         let mut new_self = self.clone();
@@ -111,7 +111,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If scale is negative
+    ///     `ValueError`: If scale is negative
     #[pyo3(text_signature = "($self, scale)")]
     fn with_scale(&self, scale: f64) -> PyResult<Self> {
         if scale < 0.0 {
@@ -134,7 +134,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If scale is not between 0 and 1
+    ///     `ValueError`: If scale is not between 0 and 1
     #[pyo3(text_signature = "($self, scale)")]
     fn with_leakage_scale(&self, scale: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&scale) {
@@ -156,7 +156,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If scale is negative
+    ///     `ValueError`: If scale is negative
     #[pyo3(text_signature = "($self, scale)")]
     fn with_emission_scale(&self, scale: f64) -> PyResult<Self> {
         if scale < 0.0 {
@@ -178,7 +178,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If prob is not between 0 and 1
+    ///     `ValueError`: If prob is not between 0 and 1
     #[pyo3(text_signature = "($self, prob)")]
     fn with_seepage_prob(&self, prob: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&prob) {
@@ -195,7 +195,7 @@ impl PyGeneralNoiseModelBuilder {
     /// Set whether to use coherent vs incoherent dephasing.
     ///
     /// Args:
-    ///     use_coherent: If True, use coherent dephasing. If False, use incoherent.
+    ///     `use_coherent`: If True, use coherent dephasing. If False, use incoherent.
     ///
     /// Returns:
     ///     Self for method chaining
@@ -215,7 +215,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If rate is negative
+    ///     `ValueError`: If rate is negative
     #[pyo3(text_signature = "($self, rate)")]
     fn with_p_idle_linear_rate(&self, rate: f64) -> PyResult<Self> {
         if rate < 0.0 {
@@ -237,7 +237,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If rate is negative
+    ///     `ValueError`: If rate is negative
     #[pyo3(text_signature = "($self, rate)")]
     fn with_average_p_idle_linear_rate(&self, rate: f64) -> PyResult<Self> {
         if rate < 0.0 {
@@ -279,7 +279,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If rate is negative
+    ///     `ValueError`: If rate is negative
     #[pyo3(text_signature = "($self, rate)")]
     fn with_p_idle_quadratic_rate(&self, rate: f64) -> PyResult<Self> {
         if rate < 0.0 {
@@ -301,7 +301,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If rate is negative
+    ///     `ValueError`: If rate is negative
     #[pyo3(text_signature = "($self, rate)")]
     fn with_average_p_idle_quadratic_rate(&self, rate: f64) -> PyResult<Self> {
         if rate < 0.0 {
@@ -323,7 +323,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If factor is not positive
+    ///     `ValueError`: If factor is not positive
     #[pyo3(text_signature = "($self, factor)")]
     fn with_p_idle_coherent_to_incoherent_factor(&self, factor: f64) -> PyResult<Self> {
         if factor <= 0.0 {
@@ -347,7 +347,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If scale is negative
+    ///     `ValueError`: If scale is negative
     #[pyo3(text_signature = "($self, scale)")]
     fn with_idle_scale(&self, scale: f64) -> PyResult<Self> {
         if scale < 0.0 {
@@ -368,7 +368,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If p is not between 0 and 1
+    ///     `ValueError`: If p is not between 0 and 1
     #[pyo3(text_signature = "($self, p)")]
     fn with_prep_probability(&self, p: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&p) {
@@ -388,7 +388,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If ratio is not between 0 and 1
+    ///     `ValueError`: If ratio is not between 0 and 1
     #[pyo3(text_signature = "($self, ratio)")]
     fn with_prep_leak_ratio(&self, ratio: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&ratio) {
@@ -410,7 +410,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If p is not between 0 and 1
+    ///     `ValueError`: If p is not between 0 and 1
     #[pyo3(text_signature = "($self, p)")]
     fn with_p_prep_crosstalk(&self, p: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&p) {
@@ -432,7 +432,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If scale is negative
+    ///     `ValueError`: If scale is negative
     #[pyo3(text_signature = "($self, scale)")]
     fn with_prep_scale(&self, scale: f64) -> PyResult<Self> {
         if scale < 0.0 {
@@ -452,7 +452,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If scale is negative
+    ///     `ValueError`: If scale is negative
     #[pyo3(text_signature = "($self, scale)")]
     fn with_p_prep_crosstalk_scale(&self, scale: f64) -> PyResult<Self> {
         if scale < 0.0 {
@@ -478,7 +478,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If p is not between 0 and 1
+    ///     `ValueError`: If p is not between 0 and 1
     #[pyo3(text_signature = "($self, p)")]
     fn with_p1_probability(&self, p: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&p) {
@@ -501,7 +501,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If p is not between 0 and 1
+    ///     `ValueError`: If p is not between 0 and 1
     #[pyo3(text_signature = "($self, p)")]
     fn with_average_p1_probability(&self, p: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&p) {
@@ -521,7 +521,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If ratio is not between 0 and 1
+    ///     `ValueError`: If ratio is not between 0 and 1
     #[pyo3(text_signature = "($self, ratio)")]
     fn with_p1_emission_ratio(&self, ratio: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&ratio) {
@@ -563,7 +563,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If prob is not between 0 and 1
+    ///     `ValueError`: If prob is not between 0 and 1
     #[pyo3(text_signature = "($self, prob)")]
     fn with_p1_seepage_prob(&self, prob: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&prob) {
@@ -589,7 +589,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Example:
-    ///     >>> builder.with_p1_pauli_model({
+    ///     >>> `builder.with_p1_pauli_model`({
     ///     ...     "X": 0.5,  # 50% X errors (bit flips)
     ///     ...     "Y": 0.3,  # 30% Y errors
     ///     ...     "Z": 0.2   # 20% Z errors (phase flips)
@@ -616,7 +616,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If scale is negative
+    ///     `ValueError`: If scale is negative
     #[pyo3(text_signature = "($self, scale)")]
     fn with_p1_scale(&self, scale: f64) -> PyResult<Self> {
         if scale < 0.0 {
@@ -640,7 +640,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If p is not between 0 and 1
+    ///     `ValueError`: If p is not between 0 and 1
     #[pyo3(text_signature = "($self, p)")]
     fn with_p2_probability(&self, p: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&p) {
@@ -663,7 +663,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If p is not between 0 and 1
+    ///     `ValueError`: If p is not between 0 and 1
     #[pyo3(text_signature = "($self, p)")]
     fn with_average_p2_probability(&self, p: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&p) {
@@ -704,7 +704,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If power is not positive
+    ///     `ValueError`: If power is not positive
     #[pyo3(text_signature = "($self, power)")]
     fn with_p2_angle_power(&self, power: f64) -> PyResult<Self> {
         if power <= 0.0 {
@@ -724,7 +724,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If ratio is not between 0 and 1
+    ///     `ValueError`: If ratio is not between 0 and 1
     #[pyo3(text_signature = "($self, ratio)")]
     fn with_p2_emission_ratio(&self, ratio: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&ratio) {
@@ -766,7 +766,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If prob is not between 0 and 1
+    ///     `ValueError`: If prob is not between 0 and 1
     #[pyo3(text_signature = "($self, prob)")]
     fn with_p2_seepage_prob(&self, prob: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&prob) {
@@ -812,7 +812,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If p is not between 0 and 1
+    ///     `ValueError`: If p is not between 0 and 1
     #[pyo3(text_signature = "($self, p)")]
     fn with_p2_idle(&self, p: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&p) {
@@ -832,7 +832,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If scale is negative
+    ///     `ValueError`: If scale is negative
     #[pyo3(text_signature = "($self, scale)")]
     fn with_p2_scale(&self, scale: f64) -> PyResult<Self> {
         if scale < 0.0 {
@@ -856,7 +856,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If p is not between 0 and 1
+    ///     `ValueError`: If p is not between 0 and 1
     #[pyo3(text_signature = "($self, p)")]
     fn with_meas_0_probability(&self, p: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&p) {
@@ -879,7 +879,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If p is not between 0 and 1
+    ///     `ValueError`: If p is not between 0 and 1
     #[pyo3(text_signature = "($self, p)")]
     fn with_meas_1_probability(&self, p: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&p) {
@@ -901,7 +901,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If p is not between 0 and 1
+    ///     `ValueError`: If p is not between 0 and 1
     #[pyo3(text_signature = "($self, p)")]
     fn with_meas_probability(&self, p: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&p) {
@@ -921,7 +921,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If p is not between 0 and 1
+    ///     `ValueError`: If p is not between 0 and 1
     #[pyo3(text_signature = "($self, p)")]
     fn with_p_meas_crosstalk(&self, p: f64) -> PyResult<Self> {
         if !(0.0..=1.0).contains(&p) {
@@ -943,7 +943,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If scale is negative
+    ///     `ValueError`: If scale is negative
     #[pyo3(text_signature = "($self, scale)")]
     fn with_meas_scale(&self, scale: f64) -> PyResult<Self> {
         if scale < 0.0 {
@@ -963,7 +963,7 @@ impl PyGeneralNoiseModelBuilder {
     ///     Self for method chaining
     ///
     /// Raises:
-    ///     ValueError: If scale is negative
+    ///     `ValueError`: If scale is negative
     #[pyo3(text_signature = "($self, scale)")]
     fn with_p_meas_crosstalk_scale(&self, scale: f64) -> PyResult<Self> {
         if scale < 0.0 {
@@ -1216,7 +1216,7 @@ pub fn py_get_quantum_engines() -> Vec<&'static str> {
     vec!["StateVector", "SparseStabilizer"]
 }
 
-/// Python wrapper for QasmSimulation
+/// Python wrapper for `QasmSimulation`
 #[pyclass(name = "QasmSimulation", module = "pecos_rslib._pecos_rslib")]
 pub struct PyQasmSimulation {
     inner: QasmSimulation,
@@ -1239,7 +1239,7 @@ impl PyQasmSimulation {
     }
 }
 
-/// Python wrapper for QasmSimulationBuilder
+/// Python wrapper for `QasmSimulationBuilder`
 #[pyclass(name = "QasmSimulationBuilder", module = "pecos_rslib._pecos_rslib")]
 #[derive(Clone)]
 pub struct PyQasmSimulationBuilder {
@@ -1278,7 +1278,7 @@ impl PyQasmSimulationBuilder {
         new
     }
 
-    /// Set the noise model using a GeneralNoiseModelBuilder or other noise types
+    /// Set the noise model using a `GeneralNoiseModelBuilder` or other noise types
     pub fn noise(&self, noise_model: &Bound<'_, PyAny>) -> PyResult<Self> {
         let mut new = self.clone();
 
@@ -1321,32 +1321,32 @@ impl PyQasmSimulationBuilder {
         let mut new = self.clone();
 
         // Handle seed
-        if let Some(seed_val) = config.get_item("seed")? {
-            if !seed_val.is_none() {
-                let seed: u64 = seed_val.extract()?;
-                new.seed = Some(seed);
-            }
+        if let Some(seed_val) = config.get_item("seed")?
+            && !seed_val.is_none()
+        {
+            let seed: u64 = seed_val.extract()?;
+            new.seed = Some(seed);
         }
 
         // Handle workers
-        if let Some(workers_val) = config.get_item("workers")? {
-            if !workers_val.is_none() {
-                // Check if it's the string "auto"
-                if let Ok(workers_str) = workers_val.extract::<String>() {
-                    if workers_str == "auto" {
-                        new.workers = std::thread::available_parallelism()
-                            .map(std::num::NonZero::get)
-                            .unwrap_or(4);
-                    } else {
-                        return Err(PyValueError::new_err(format!(
-                            "Invalid workers value: {workers_str}"
-                        )));
-                    }
+        if let Some(workers_val) = config.get_item("workers")?
+            && !workers_val.is_none()
+        {
+            // Check if it's the string "auto"
+            if let Ok(workers_str) = workers_val.extract::<String>() {
+                if workers_str == "auto" {
+                    new.workers = std::thread::available_parallelism()
+                        .map(std::num::NonZero::get)
+                        .unwrap_or(4);
                 } else {
-                    // Try to extract as integer
-                    let workers: usize = workers_val.extract()?;
-                    new.workers = workers;
+                    return Err(PyValueError::new_err(format!(
+                        "Invalid workers value: {workers_str}"
+                    )));
                 }
+            } else {
+                // Try to extract as integer
+                let workers: usize = workers_val.extract()?;
+                new.workers = workers;
             }
         }
 
@@ -1365,28 +1365,28 @@ impl PyQasmSimulationBuilder {
         }
 
         // Handle quantum_engine
-        if let Some(engine_val) = config.get_item("quantum_engine")? {
-            if !engine_val.is_none() {
-                let engine_str: String = engine_val.extract()?;
-                match engine_str.as_str() {
-                    "StateVector" => new.quantum_engine = QuantumEngineType::StateVector,
-                    "SparseStabilizer" => new.quantum_engine = QuantumEngineType::SparseStabilizer,
-                    _ => {
-                        return Err(PyValueError::new_err(format!(
-                            "Unknown quantum engine: {engine_str}"
-                        )));
-                    }
+        if let Some(engine_val) = config.get_item("quantum_engine")?
+            && !engine_val.is_none()
+        {
+            let engine_str: String = engine_val.extract()?;
+            match engine_str.as_str() {
+                "StateVector" => new.quantum_engine = QuantumEngineType::StateVector,
+                "SparseStabilizer" => new.quantum_engine = QuantumEngineType::SparseStabilizer,
+                _ => {
+                    return Err(PyValueError::new_err(format!(
+                        "Unknown quantum engine: {engine_str}"
+                    )));
                 }
             }
         }
 
         // Handle binary_string_format
-        if let Some(format_val) = config.get_item("binary_string_format")? {
-            if !format_val.is_none() {
-                let use_binary: bool = format_val.extract()?;
-                if use_binary {
-                    new.bit_format = BitVecFormat::BinaryString;
-                }
+        if let Some(format_val) = config.get_item("binary_string_format")?
+            && !format_val.is_none()
+        {
+            let use_binary: bool = format_val.extract()?;
+            if use_binary {
+                new.bit_format = BitVecFormat::BinaryString;
             }
         }
 

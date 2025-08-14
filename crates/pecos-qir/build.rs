@@ -126,10 +126,10 @@ fn is_dir_newer_than(dir: &Path, time: std::time::SystemTime) -> bool {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             if let Ok(metadata) = entry.metadata() {
-                if let Ok(modified) = metadata.modified() {
-                    if modified > time {
-                        return true;
-                    }
+                if let Ok(modified) = metadata.modified()
+                    && modified > time
+                {
+                    return true;
                 }
 
                 // Recursively check subdirectories

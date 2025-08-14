@@ -116,10 +116,10 @@ fn main() -> Result<(), PecosError> {
     // 6. Show format comparisons for the same data
     println!("\n6. Format comparison for Shot 0:");
     println!("---------------------------------");
-    if let Some(DataVec::BitVec(vecs)) = shot_map.get("creg") {
-        if let Some(bv) = vecs.first() {
-            println!("  Original BitVec: {bv:?}");
-        }
+    if let Some(DataVec::BitVec(vecs)) = shot_map.get("creg")
+        && let Some(bv) = vecs.first()
+    {
+        println!("  Original BitVec: {bv:?}");
     }
     println!("  As u64:     {}", creg_ints[0]);
     println!("  As binary:  {}", creg_binary[0]);

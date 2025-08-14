@@ -10,11 +10,12 @@ fn main() {
     let mut seed_option = None;
 
     for i in 1..args.len() {
-        if args[i] == "--seed" && i + 1 < args.len() {
-            if let Ok(seed) = args[i + 1].parse::<u64>() {
-                seed_option = Some(seed);
-                break;
-            }
+        if args[i] == "--seed"
+            && i + 1 < args.len()
+            && let Ok(seed) = args[i + 1].parse::<u64>()
+        {
+            seed_option = Some(seed);
+            break;
         }
     }
 

@@ -911,12 +911,11 @@ impl GeneralNoiseModel {
                     if has_leakage {
                         // potentially seep qubits
                         for qubit in &gate.qubits {
-                            if self.is_leaked(usize::from(*qubit)) {
-                                if let Some(gates) =
+                            if self.is_leaked(usize::from(*qubit))
+                                && let Some(gates) =
                                     self.seep(usize::from(*qubit), self.p2_seepage_prob)
-                                {
-                                    noise.extend(gates);
-                                }
+                            {
+                                noise.extend(gates);
                             }
                         }
                     } else {
@@ -931,10 +930,8 @@ impl GeneralNoiseModel {
 
                         if result.has_leakage() {
                             for (qubit, leaked) in qubits.iter().zip(result.has_leakages().iter()) {
-                                if *leaked {
-                                    if let Some(gate) = self.leak(usize::from(*qubit)) {
-                                        noise.push(gate);
-                                    }
+                                if *leaked && let Some(gate) = self.leak(usize::from(*qubit)) {
+                                    noise.push(gate);
                                 }
                             }
                         }

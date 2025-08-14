@@ -1,0 +1,23 @@
+[package]
+name = "pecos-julia-ffi"
+version = "0.1.0-dev0"
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "C FFI bindings for PECOS Julia package"
+publish = false
+
+[lib]
+name = "pecos_julia"
+crate-type = ["cdylib"]
+
+[dependencies]
+# PECOS - the meta crate that includes everything via its prelude
+pecos = { workspace = true }
+
+[lints]
+workspace = true

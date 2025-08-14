@@ -335,12 +335,12 @@ fn run_program(args: &RunArgs) -> Result<(), PecosError> {
     match &args.output_file {
         Some(file_path) => {
             // Ensure parent directory exists
-            if let Some(parent) = std::path::Path::new(file_path).parent() {
-                if !parent.exists() {
-                    std::fs::create_dir_all(parent).map_err(|e| {
-                        PecosError::Resource(format!("Failed to create directory: {e}"))
-                    })?;
-                }
+            if let Some(parent) = std::path::Path::new(file_path).parent()
+                && !parent.exists()
+            {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    PecosError::Resource(format!("Failed to create directory: {e}"))
+                })?;
             }
 
             // Write results to file

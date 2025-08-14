@@ -30,6 +30,13 @@ installreqs: ## Install Python project requirements to root .venv
 build: installreqs ## Compile and install for development
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && uv run maturin develop --uv
 	@unset CONDA_PREFIX && uv pip install -e "./python/quantum-pecos[all]"
+	@if command -v julia >/dev/null 2>&1; then \
+		echo "Julia detected, building Julia FFI library..."; \
+		cd julia/pecos-julia-ffi && cargo build; \
+		echo "Julia FFI library built successfully"; \
+	else \
+		echo "Julia not detected, skipping Julia build"; \
+	fi
 
 .PHONY: build-basic
 build-basic: installreqs ## Compile and install for development but do not include install extras
@@ -40,6 +47,13 @@ build-basic: installreqs ## Compile and install for development but do not inclu
 build-release: installreqs ## Build a faster version of binaries
 	@unset CONDA_PREFIX && cd python/pecos-rslib/ && uv run maturin develop --uv --release
 	@unset CONDA_PREFIX && uv pip install -e "./python/quantum-pecos[all]"
+	@if command -v julia >/dev/null 2>&1; then \
+		echo "Julia detected, building Julia FFI library (release)..."; \
+		cd julia/pecos-julia-ffi && cargo build --release; \
+		echo "Julia FFI library built successfully"; \
+	else \
+		echo "Julia not detected, skipping Julia build"; \
+	fi
 
 .PHONY: build-native
 build-native: installreqs ## Build a faster version of binaries with native CPU optimization
@@ -78,12 +92,50 @@ clippy:  ## Run cargo clippy with all features
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 .PHONY: fmt
-fmt: ## Run autoformatting for cargo
+fmt: ## Check Rust formatting (without fixing)
 	cargo fmt --all -- --check
 
-.PHONY: lint  ## Run all quality checks / linting / reformatting
-lint: check fmt clippy
+.PHONY: fmt-fix
+fmt-fix: ## Fix Rust formatting issues
+	cargo fmt --all
+
+.PHONY: lint
+lint: check fmt clippy  ## Run all quality checks / linting / reformatting (check only)
 	uv run pre-commit run --all-files
+	@if command -v julia >/dev/null 2>&1; then \
+		echo "Julia detected, running Julia formatting check and linting..."; \
+		$(MAKE) julia-format-check julia-lint; \
+	else \
+		echo "Julia not detected, skipping Julia linting"; \
+	fi
+
+.PHONY: normalize-line-endings
+normalize-line-endings:  ## Normalize line endings according to .gitattributes
+	@echo "Normalizing line endings according to .gitattributes..."
+	@echo "This will refresh all tracked files to apply .gitattributes rules"
+	@git rm --cached -r . >/dev/null 2>&1 || true
+	@git reset --hard >/dev/null 2>&1
+	@echo "Line endings normalized. Check 'git status' for any changes."
+
+.PHONY: lint-fix
+lint-fix:  ## Fix all auto-fixable linting issues (Rust, Python, Julia)
+	@echo "Fixing Rust formatting..."
+	cargo fmt --all
+	cargo clippy --fix --workspace --all-targets --all-features --allow-staged
+	@echo ""
+	@echo "Running pre-commit fixes..."
+	uv run pre-commit run --all-files || true
+	@echo ""
+	@if command -v julia >/dev/null 2>&1; then \
+		echo "Fixing Julia formatting..."; \
+		$(MAKE) julia-format; \
+		echo ""; \
+		echo "Note: Some Julia linting issues from Aqua.jl may require manual fixes."; \
+	else \
+		echo "Julia not detected, skipping Julia formatting"; \
+	fi
+	@echo ""
+	@echo "Linting fixes applied! Run 'make lint' to check for remaining issues."
 
 # Testing
 # -------
@@ -187,6 +239,115 @@ pytest-all:  pytest ## Run all tests on the Python package ASSUMES: previous bui
 
 .PHONY: test
 test: rstest-all pytest-all ## Run all tests. ASSUMES: previous build command
+	@if command -v julia >/dev/null 2>&1; then \
+		echo "Julia detected, running Julia tests..."; \
+		$(MAKE) julia-test; \
+	else \
+		echo "Julia not detected, skipping Julia tests"; \
+	fi
+
+.PHONY: test-all
+test-all: rstest-all pytest-all ## Run all tests including Julia (warns if Julia not installed)
+	@if command -v julia >/dev/null 2>&1; then \
+		echo "Julia detected, running Julia tests..."; \
+		$(MAKE) julia-test; \
+	else \
+		echo ""; \
+		echo "WARNING: Julia is not installed. Skipping Julia tests."; \
+		echo "   To run Julia tests, please install Julia from https://julialang.org/downloads/"; \
+		echo ""; \
+	fi
+
+# Julia bindings
+# --------------
+
+.PHONY: julia-build
+julia-build: ## Build Julia FFI library
+	@echo "Building Julia FFI library..."
+	cd julia/pecos-julia-ffi && cargo build --release
+	@echo "Julia library built at: target/release/libpecos_julia.{so,dylib,dll}"
+
+.PHONY: julia-build-debug
+julia-build-debug: ## Build Julia FFI library in debug mode
+	@echo "Building Julia FFI library (debug)..."
+	cd julia/pecos-julia-ffi && cargo build
+	@echo "Julia library built at: target/debug/libpecos_julia.{so,dylib,dll}"
+
+.PHONY: julia-test
+julia-test: julia-build ## Run Julia tests (requires Julia installed)
+	@echo "Running Julia tests..."
+	@if command -v julia >/dev/null 2>&1; then \
+		cd julia/PECOS.jl && julia --project=. -e 'using Pkg; Pkg.instantiate(); include("test/runtests.jl")'; \
+	else \
+		echo "Julia not found. Please install Julia to run tests."; \
+		exit 1; \
+	fi
+
+.PHONY: julia-examples
+julia-examples: julia-build-debug ## Run Julia examples (requires Julia installed)
+	@echo "Running Julia examples..."
+	@if command -v julia >/dev/null 2>&1; then \
+		cd julia/PECOS.jl && julia --project=. examples/demo.jl; \
+		cd julia/PECOS.jl && julia --project=. examples/basic_usage.jl; \
+	else \
+		echo "Julia not found. Please install Julia to run examples."; \
+		exit 1; \
+	fi
+
+.PHONY: julia-clean
+julia-clean: ## Clean Julia build artifacts
+	@echo "Cleaning Julia artifacts..."
+	@rm -rf julia/PECOS.jl/Manifest.toml
+	@rm -rf julia/PECOS.jl/dev/PECOS_julia_jll/Manifest.toml
+	@rm -rf julia/PECOS.jl/dev/PECOS_julia_jll/src/Manifest.toml
+	@find julia -name "*.jl.*.cov" -delete
+	@find julia -name "*.jl.cov" -delete
+	@find julia -name "*.jl.mem" -delete
+
+.PHONY: julia-info
+julia-info: ## Show Julia package information
+	@echo "Julia Package Information:"
+	@echo "========================="
+	@echo "Package name: PECOS.jl"
+	@echo "Location: julia/PECOS.jl"
+	@echo "FFI library: julia/pecos-julia-ffi"
+	@echo ""
+	@echo "To install for development:"
+	@echo "  1. Build FFI library: make julia-build"
+	@echo "  2. In Julia REPL: ] add julia/PECOS.jl"
+	@echo ""
+	@echo "To run tests: make julia-test"
+	@echo "To run examples: make julia-examples"
+
+.PHONY: julia-format
+julia-format: ## Format Julia code using JuliaFormatter
+	@echo "Formatting Julia code..."
+	@if command -v julia >/dev/null 2>&1; then \
+		cd julia/PECOS.jl && julia -e 'using Pkg; if !haskey(Pkg.project().dependencies, "JuliaFormatter"); Pkg.add("JuliaFormatter"); end; using JuliaFormatter; format("."; verbose=true)'; \
+	else \
+		echo "Julia not found. Please install Julia to format code."; \
+		exit 1; \
+	fi
+
+.PHONY: julia-format-check
+julia-format-check: ## Check Julia code formatting without modifying files
+	@echo "Checking Julia code formatting..."
+	@if command -v julia >/dev/null 2>&1; then \
+		cd julia/PECOS.jl && julia -e 'using Pkg; if !haskey(Pkg.project().dependencies, "JuliaFormatter"); Pkg.add("JuliaFormatter"); end; using JuliaFormatter; if !format("."; verbose=false, overwrite=false); println("Formatting issues found. Run `make julia-format` to fix."); exit(1); else println("All Julia code is properly formatted."); end'; \
+	else \
+		echo "Julia not found. Please install Julia to check formatting."; \
+		exit 1; \
+	fi
+
+.PHONY: julia-lint
+julia-lint: julia-build ## Run Aqua.jl quality checks on Julia code
+	@echo "Running Julia code quality checks with Aqua.jl..."
+	@if command -v julia >/dev/null 2>&1; then \
+		cd julia/PECOS.jl && julia --project=. test/aqua_tests.jl; \
+	else \
+		echo "Julia not found. Please install Julia to run linting."; \
+		exit 1; \
+	fi
 
 # Utility
 # -------
@@ -216,6 +377,13 @@ clean-unix:
 	@# Clean all target directories in crates (in case they were built independently)
 	@find crates -type d -name "target" -exec rm -rf {} +
 	@find python -type d -name "target" -exec rm -rf {} +
+	@# Clean Julia artifacts
+	@rm -rf julia/PECOS.jl/Manifest.toml
+	@rm -rf julia/PECOS.jl/dev/PECOS_julia_jll/Manifest.toml
+	@rm -rf julia/PECOS.jl/dev/PECOS_julia_jll/src/Manifest.toml
+	@find julia -name "*.jl.*.cov" -delete
+	@find julia -name "*.jl.cov" -delete
+	@find julia -name "*.jl.mem" -delete
 	@# Clean the root workspace target directory
 	@cargo clean
 	@# Clean the persistent QIR library directory
@@ -271,8 +439,8 @@ pip-install-uv:  ## Install uv using pip and create a venv. (Recommended to inst
 .PHONY: dev
 dev: clean build test  ## Run the typical sequence of commands to check everything is running correctly
 
-.PHONY: devl  ## Run the commands to make sure everything runs + lint
-devl: dev lint
+.PHONY: devl
+devl: dev lint  ## Run the commands to make sure everything runs + lint
 
 # Help
 # ----
@@ -282,3 +450,9 @@ help:  ## Show the help menu
 	@echo "Available make commands:"
 	@echo ""
 	@grep -E '^[a-z.A-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "Note: Julia support is automatically detected."
+	@echo "  - 'make build' will also build Julia FFI if Julia is installed"
+	@echo "  - 'make test' will also run Julia tests if Julia is installed"
+	@echo "  - 'make lint' checks code quality; 'make lint-fix' fixes issues"
+	@echo "  - Use 'make julia-info' for more Julia-specific information"

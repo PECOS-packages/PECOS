@@ -1,0 +1,134 @@
+# Copyright 2025 The PECOS Developers
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
+
+name: Julia test
+
+env:
+  TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
+  RUSTFLAGS: -C debuginfo=0
+  RUST_BACKTRACE: 1
+
+on:
+  push:
+    branches: [ "master", "development", "dev" ]
+  pull_request:
+    branches: [ "master", "development", "dev" ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  julia-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+        julia-version: ["1.10", "1.11", "1"]  # 1 = latest stable
+        # Exclude some combinations to reduce CI time
+        exclude:
+          - os: windows-latest
+            julia-version: "1.11"
+          - os: macOS-latest
+            julia-version: "1.11"
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Julia ${{ matrix.julia-version }}
+      uses: julia-actions/setup-julia@v2
+      with:
+        version: ${{ matrix.julia-version }}
+
+    - name: Set up Rust
+      run: rustup show
+
+    - name: Cache Rust
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: julia/pecos-julia-ffi
+
+    - name: Set up Visual Studio environment on Windows
+      if: runner.os == 'Windows'
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Build Rust FFI library (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        cd julia/pecos-julia-ffi
+        cargo build --release
+
+    - name: Build Rust FFI library (Unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        cd julia/pecos-julia-ffi
+        cargo build --release
+
+    - name: Run Julia tests
+      run: |
+        cd julia/PECOS.jl
+        julia --project=. -e 'using Pkg; Pkg.instantiate(); include("test/runtests.jl")'
+
+    - name: Run examples
+      run: |
+        cd julia/PECOS.jl
+
+        # Run demo
+        julia --project=. examples/demo.jl
+
+        # Run basic usage
+        julia --project=. examples/basic_usage.jl
+
+    - name: Check package loadable
+      run: |
+        cd julia/PECOS.jl
+        julia --project=. -e 'using PECOS; println(pecos_version())'
+
+    - name: Run Julia formatter check
+      run: |
+        cd julia/PECOS.jl
+        julia -e '
+          using Pkg
+          Pkg.add("JuliaFormatter")
+          using JuliaFormatter
+          if !format("."; verbose=false, overwrite=false)
+            println("Formatting issues found. Please run JuliaFormatter.")
+            exit(1)
+          end'
+
+    - name: Run Julia linting with Aqua.jl
+      run: |
+        # Aqua needs the library to be built to load the module
+        cd julia/PECOS.jl
+        julia --project=. -e '
+          using Pkg
+          Pkg.add("Aqua")
+          using PECOS, Aqua
+          Aqua.test_all(PECOS;
+            ambiguities=false,
+            unbound_args=true,
+            undefined_exports=true,
+            project_extras=true,
+            stale_deps=false,
+            deps_compat=true,
+            piracies=true,
+            persistent_tasks=false
+          )'

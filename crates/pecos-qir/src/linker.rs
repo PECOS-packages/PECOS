@@ -176,12 +176,11 @@ impl QirLinker {
         // Check if the library file exists
         if library_file.exists() {
             // Check if library is newer than QIR file
-            if let Ok(lib_metadata) = fs::metadata(&library_file) {
-                if let Ok(lib_modified) = lib_metadata.modified() {
-                    if lib_modified >= qir_modified {
-                        return Ok(Some(library_file));
-                    }
-                }
+            if let Ok(lib_metadata) = fs::metadata(&library_file)
+                && let Ok(lib_modified) = lib_metadata.modified()
+                && lib_modified >= qir_modified
+            {
+                return Ok(Some(library_file));
             }
         }
 
@@ -271,17 +270,15 @@ impl QirLinker {
             "which"
         };
 
-        if let Ok(output) = Command::new(command).arg(tool_name).output() {
-            if output.status.success() {
-                if let Ok(path_str) = String::from_utf8(output.stdout) {
-                    if let Some(first_line) = path_str.lines().next() {
-                        let path = PathBuf::from(first_line.trim());
-                        if path.exists() {
-                            debug!("Found {tool_name} from PATH: {}", path.display());
-                            return Some(path);
-                        }
-                    }
-                }
+        if let Ok(output) = Command::new(command).arg(tool_name).output()
+            && output.status.success()
+            && let Ok(path_str) = String::from_utf8(output.stdout)
+            && let Some(first_line) = path_str.lines().next()
+        {
+            let path = PathBuf::from(first_line.trim());
+            if path.exists() {
+                debug!("Found {tool_name} from PATH: {}", path.display());
+                return Some(path);
             }
         }
 

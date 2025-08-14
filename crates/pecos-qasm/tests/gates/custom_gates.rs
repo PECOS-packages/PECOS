@@ -193,12 +193,10 @@ fn test_gate_parameter_passing() {
         if let Operation::Gate {
             name, parameters, ..
         } = op
+            && name == "RZ"
+            && let Some(&angle) = parameters.first()
         {
-            if name == "RZ" {
-                if let Some(&angle) = parameters.first() {
-                    rz_angles.push(angle);
-                }
-            }
+            rz_angles.push(angle);
         }
     }
 

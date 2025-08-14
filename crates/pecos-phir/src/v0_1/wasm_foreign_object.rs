@@ -312,13 +312,13 @@ impl ForeignObject for WasmtimeForeignObject {
             }
             Err(e) => {
                 // Check if the error is a timeout
-                if let Some(trap) = e.downcast_ref::<Trap>() {
-                    if trap.to_string().contains("interrupt") {
-                        let timeout_ms = WASM_EXECUTION_MAX_TICKS * WASM_EXECUTION_TICK_LENGTH_MS;
-                        return Err(PecosError::Processing(format!(
-                            "WebAssembly function '{func_name}' timed out after {timeout_ms}ms"
-                        )));
-                    }
+                if let Some(trap) = e.downcast_ref::<Trap>()
+                    && trap.to_string().contains("interrupt")
+                {
+                    let timeout_ms = WASM_EXECUTION_MAX_TICKS * WASM_EXECUTION_TICK_LENGTH_MS;
+                    return Err(PecosError::Processing(format!(
+                        "WebAssembly function '{func_name}' timed out after {timeout_ms}ms"
+                    )));
                 }
 
                 Err(PecosError::Processing(format!(

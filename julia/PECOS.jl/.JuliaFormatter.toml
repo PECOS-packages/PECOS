@@ -1,0 +1,54 @@
+# Copyright 2025 The PECOS Developers
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
+
+# JuliaFormatter configuration for PECOS.jl
+
+# Use 4 spaces for indentation (Julia standard)
+indent = 4
+
+# Maximum line length
+margin = 92
+
+# Always use trailing comma in multi-line expressions
+trailing_comma = true
+
+# Always use whitespace around operators
+whitespace_ops_in_indices = true
+
+# Remove extra newlines
+remove_extra_newlines = true
+
+# Normalize line endings
+normalize_line_endings = "unix"
+
+# Format docstrings
+format_docstrings = true
+
+# Always use return instead of implicit returns
+always_use_return = false
+
+# Use short-circuit evaluation style
+short_to_long_function_def = false
+
+# Align struct fields
+align_struct_field = true
+
+# Align assignment operators
+align_assignment = true
+
+# Align conditional expressions
+align_conditional = true
+
+# Align pair arrows in NamedTuples
+align_pair_arrow = true
+
+# Style for import statements
+import_to_using = false

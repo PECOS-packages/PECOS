@@ -65,11 +65,11 @@ fn extract_runtime_exports(content: &str) -> Vec<String> {
         if lines[i].contains("#[unsafe(no_mangle)]") {
             // Look at the next few lines for the function name
             for j in 1..=3 {
-                if i + j < lines.len() {
-                    if let Some(func_name) = extract_function_name(lines[i + j]) {
-                        exports.push(func_name);
-                        break;
-                    }
+                if i + j < lines.len()
+                    && let Some(func_name) = extract_function_name(lines[i + j])
+                {
+                    exports.push(func_name);
+                    break;
                 }
             }
         }

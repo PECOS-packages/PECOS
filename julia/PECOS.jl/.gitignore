@@ -1,0 +1,24 @@
+# Julia package gitignore
+
+# Compiled files
+deps/deps.jl
+deps/*.so
+deps/*.dylib
+deps/*.dll
+
+# Build artifacts
+deps/build.log
+deps/rust-src/target/
+
+# Julia artifacts
+Manifest.toml
+docs/build/
+docs/site/
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

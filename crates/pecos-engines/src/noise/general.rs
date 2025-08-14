@@ -92,7 +92,7 @@ use pecos_core::QubitId;
 use pecos_core::errors::PecosError;
 use rand_chacha::ChaCha8Rng;
 use std::any::Any;
-use std::collections::HashSet;
+use std::collections::{HashSet, BTreeSet};
 
 /// General noise model implementation that includes parameterized error channels for various quantum operations
 ///
@@ -326,6 +326,17 @@ pub struct GeneralNoiseModel {
     /// Random number generator for stochastic noise processes
     rng: NoiseRng<ChaCha8Rng>,
 
+    /// Set of qubits that have been initialized at any point in the program.
+    ///
+    /// This is so that we know which qubits exists and we can apply crosstalk
+    /// to them. Qubits that are measured / discarded are not removed from here, since
+    /// PECOS does not assume measurements are destructive. This should not cause a
+    /// problem, since inactive qubits suffering error have no effect on the state,
+    /// and active qubits should always suffer errors under this naive crosstalk model.
+    ///
+    /// Using a BTreeSet because we will iterate over the qubits and we want determinism.
+    initialized_qubits: BTreeSet<usize>,
+
     /// Track which qubits are being measured in the current batch and their gate types
     /// This is needed to properly handle leakage during measurements
     /// Each entry is (`qubit_id`, `is_measure_leaked`)
@@ -503,9 +514,11 @@ impl GeneralNoiseModel {
                     );
                 }
                 GateType::Prep => {
+                    for &q in &gate.qubits {
+                        self.initialized_qubits.insert(usize::from(q));
+                    }
                     self.apply_prep_faults(&gate, &mut builder);
-
-                    // TODO: Implement prep crosstalk when needed
+                    self.apply_crosstalk_faults(&gate, self.p_prep_crosstalk, &mut builder);
                 }
                 GateType::Measure | GateType::MeasureLeaked => {
                     // Track which qubits are being measured for leakage handling
@@ -518,6 +531,7 @@ impl GeneralNoiseModel {
                     // Measurement noise is handled in apply_noise_on_continue_processing
                     // We still need to add the original gate here
                     builder.add_gate_command(&gate);
+                    self.apply_crosstalk_faults(&gate, self.p_meas_crosstalk, &mut builder);
                 }
                 GateType::I => {
                     let err_msg = format!(
@@ -781,6 +795,39 @@ impl GeneralNoiseModel {
                 }
             }
         }
+    }
+
+    /// Apply crosstalk noise
+    ///
+    /// Naive crosstalk noise model:
+    /// 1. All qubits in the trap but the ones in the `gate` are subject to crosstalk
+    //     error. The `gate` should be either qubit measurement or initialization.
+    //  2. *Each* qubit not in `gate` has the given `probability` to suffer an error.
+    /// 3. Affected qubits are collapsed into the computational basis (Z measurement).
+    ///
+    /// In ion trap systems, this could represent scattered light during optical pumping
+    /// affecting neighboring ions.
+    pub fn apply_crosstalk_faults(
+        &mut self,
+        gate: &Gate,
+        probability: f64,
+        builder: &mut ByteMessageBuilder
+    ) {
+        let mut affected_qubits = Vec::new();
+        let gate_qubits: Vec<usize> = gate.qubits.iter().map(|q| usize::from(*q)).collect();
+
+        for q in self.initialized_qubits.clone() {
+            if !gate_qubits.contains(&q) {
+                if self.rng.occurs(probability) {
+                    affected_qubits.push(q);
+                }
+            }
+        }
+        // TODO potentially major issue: I expect these will be adding measurement
+        // outcomes to the OutputEngine, which should be ignored. How do we do this?
+        // Perhaps there should be another add_collapse() method that applies a
+        // measurement and discards the outcome.
+        builder.add_measurements(&affected_qubits);
     }
 
     /// Apply single-qubit gate noise faults

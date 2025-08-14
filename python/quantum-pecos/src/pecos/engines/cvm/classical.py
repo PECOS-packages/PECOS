@@ -361,9 +361,8 @@ def eval_condition(
         a = conditional_expr["a"]
         b = conditional_expr["b"]
         op = conditional_expr["op"]
-
         if isinstance(a, str):
-            a = output[a]  # str -> BinArray
+            a = output[a] # str -> BinArray
         elif isinstance(a, tuple | list) and len(a) == 2:
             a = output[a[0]][a[1]]  # (str, int) -> int (1 or 0)
         else:

@@ -285,7 +285,7 @@ def eval_cop(
 
     # Eval assignment
     # ---------------
-    expr_eval = recur_eval_op(cop_expr, output, width, shot_id)
+    expr_eval = recur_eval_op(cop_expr, output, width, shot_id=shot_id)
 
     # Assign the final value:
     # -----------------------

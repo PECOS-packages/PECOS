@@ -267,7 +267,7 @@ class HybridEngine:
                             params.get("expr"),
                             output,
                             width=self.regwidth,
-                            shot_id=self.rng_model.shot_id,
+                            shot_id = self.rng_model.shot_id
                         )
 
                     elif params.get("cop_type") == "ExportCVar":

@@ -1,7 +1,7 @@
 use crate::noise::{
     GeneralNoiseModel, NoiseRng, SingleQubitWeightedSampler, TwoQubitWeightedSampler,
 };
-use std::collections::{BTreeMap, HashSet, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 impl Default for GeneralNoiseModel {
     /// Create a new noise model with default error parameters

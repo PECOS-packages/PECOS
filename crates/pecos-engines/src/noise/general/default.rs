@@ -100,7 +100,7 @@ impl Default for GeneralNoiseModel {
             p2_idle: 0.0,
             leaked_qubits: HashSet::new(),
             rng: NoiseRng::default(),
-            initialized_qubits: BTreeSet::new(),
+            prepared_qubits: BTreeSet::new(),
             measured_qubits: Vec::new(),
             p_meas_crosstalk: 0.0,
             p_prep_crosstalk: 0.0,

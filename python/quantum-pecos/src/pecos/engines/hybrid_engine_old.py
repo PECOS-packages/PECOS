@@ -129,7 +129,7 @@ class HybridEngine:
             Tuple of final simulator state and output dictionary.
         """
         output = set_output(state, circuit, output_spec, output)
-        output['JOB_shotnum'] = shot_id
+        output["JOB_shotnum"] = shot_id
         output_export = {}
 
         self.circuit = circuit
@@ -267,7 +267,7 @@ class HybridEngine:
                             params.get("expr"),
                             output,
                             width=self.regwidth,
-                            shot_id = self.rng_model.shot_id
+                            shot_id=self.rng_model.shot_id,
                         )
 
                     elif params.get("cop_type") == "ExportCVar":

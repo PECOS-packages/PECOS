@@ -830,11 +830,10 @@ impl GeneralNoiseModel {
         let gate_qubits: Vec<usize> = gate.qubits.iter().map(|q| usize::from(*q)).collect();
 
         for q in self.prepared_qubits.clone() {
-            if !gate_qubits.contains(&q)
-                && self.rng.occurs(probability) {
-                    affected_qubits.push(q);
-                    trace!("Qubit {q} affected by crosstalk error");
-                }
+            if !gate_qubits.contains(&q) && self.rng.occurs(probability) {
+                affected_qubits.push(q);
+                trace!("Qubit {q} affected by crosstalk error");
+            }
         }
 
         builder.add_measurements(&affected_qubits);

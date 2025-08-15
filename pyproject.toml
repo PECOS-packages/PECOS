@@ -1,6 +1,6 @@
 [project]
 name = "pecos-workspace"
-version = "0.7.0.dev3"
+version = "0.7.0.dev4"
 dependencies = [
     "wasmer~=1.1.0",
     "wasmer-compiler-cranelift~=1.1.0",

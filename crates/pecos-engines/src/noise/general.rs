@@ -338,9 +338,11 @@ pub struct GeneralNoiseModel {
     initialized_qubits: BTreeSet<usize>,
 
     /// Track which qubits are being measured in the current batch and their gate types
-    /// This is needed to properly handle leakage during measurements
-    /// Each entry is (`qubit_id`, `is_measure_leaked`)
-    measured_qubits: Vec<(usize, bool)>,
+    /// This is needed to properly handle leakage during measurements as well
+    /// as crosstalk.
+    /// TODO: manage this via result tags.
+    /// Each entry is (`qubit_id`, `is_measure_leaked`, `is_crosstalk`)
+    measured_qubits: Vec<(usize, bool, bool)>,
 }
 
 impl ControlEngine for GeneralNoiseModel {
@@ -526,7 +528,7 @@ impl GeneralNoiseModel {
                     self.measured_qubits.extend(
                         gate.qubits
                             .iter()
-                            .map(|q| (usize::from(*q), is_measure_leaked)),
+                            .map(|q| (usize::from(*q), is_measure_leaked, false)),
                     );
                     // Measurement noise is handled in apply_noise_on_continue_processing
                     // We still need to add the original gate here
@@ -603,15 +605,23 @@ impl GeneralNoiseModel {
 
         // Check if we have leaked qubits that were measured
         let has_leakage = !self.leaked_qubits.is_empty()
-            && self.measured_qubits.iter().any(|(q, _)| self.is_leaked(*q));
+            && self.measured_qubits.iter().any(|(q, _, _)| self.is_leaked(*q));
 
         for (idx, outcome) in measurement_outcomes.into_iter().enumerate() {
             let mut val = outcome;
 
-            // Check if this measurement corresponds to a leaked qubit
-            if has_leakage && idx < self.measured_qubits.len() {
-                let (qubit, is_measure_leaked) = self.measured_qubits[idx];
-                if self.is_leaked(qubit) {
+            // Check if this measurement corresponds to a leaked qubit or comes from
+            // crosstalk
+            if idx < self.measured_qubits.len() {
+                let (qubit, is_measure_leaked, is_crosstalk) = self.measured_qubits[idx];
+
+                // Check if this measurement comes from crosstalk noise. If so, ignore it.
+                if is_crosstalk {
+                    trace!("Qubit {qubit} was measured by crosstalk; outcome is ignored.");
+                    continue;  // Skip this iteration
+                }
+
+                if has_leakage && self.is_leaked(qubit) {
                     if is_measure_leaked {
                         trace!("Qubit {qubit} is leaked, MeasureLeaked returns 2");
                         // For MeasureLeaked, return 2 for leaked qubits
@@ -820,14 +830,20 @@ impl GeneralNoiseModel {
             if !gate_qubits.contains(&q) {
                 if self.rng.occurs(probability) {
                     affected_qubits.push(q);
+                    trace!("Qubit {q} affected by crosstalk error");
                 }
             }
         }
-        // TODO potentially major issue: I expect these will be adding measurement
-        // outcomes to the OutputEngine, which should be ignored. How do we do this?
-        // Perhaps there should be another add_collapse() method that applies a
-        // measurement and discards the outcome.
+
         builder.add_measurements(&affected_qubits);
+        // We need to mark these measurements as being introduced by crosstalk rather
+        // than the user's program so that we can discard the results in
+        // apply_noise_on_continue_processing.
+        self.measured_qubits.extend(
+            affected_qubits
+                .iter()
+                .map(|&q| (q, false, true)),  // (qubit, is_measure_leaked, is_crosstalk)
+        );
     }
 
     /// Apply single-qubit gate noise faults
@@ -2269,6 +2285,118 @@ mod tests {
         assert!(
             (flip_rate - 0.5).abs() < 0.15,
             "Leaked qubit flip rate {flip_rate:.3} should be close to 0.5"
+        );
+    }
+
+    #[test]
+    fn test_prep_crosstalk() {
+        use crate::byte_message::ByteMessageBuilder;
+
+        let mut model = GeneralNoiseModel::builder()
+            .with_p_prep_crosstalk(1.0)
+            .with_seed(42)
+            .build();
+        let noise = model
+            .as_any_mut()
+            .downcast_mut::<GeneralNoiseModel>()
+            .unwrap();
+
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        // Prepare a bunch of |0> states
+        builder.add_prep(&[0, 1, 2, 3, 4]);
+        // Apply mid-circuit measurement and reset
+        builder.add_measurements(&[2]);
+        builder.add_prep(&[2]);
+        let _cmd = noise.apply_noise_on_start(&builder.build()).unwrap();
+
+        assert_eq!(
+            noise.measured_qubits.len(), 5,
+            "There should be 5 measured qubits: one from MCMR and the others from
+            crosstalk got: {:?}", noise.measured_qubits
+        );
+
+        let (q, _, is_crosstalk) = noise.measured_qubits[0];
+        assert_eq!(q, 2, "The first measurement should be the MCMR on qubit 2");
+        assert!(!is_crosstalk, "The first measurement should come from MCMR");
+
+        for (_, _, is_crosstalk) in &noise.measured_qubits[1..] {
+            assert!(is_crosstalk, "The other measurements should come from crosstalk");
+        }
+
+        // All results are 0
+        let mut outcome_builder = ByteMessageBuilder::new();
+        let _ = outcome_builder.for_outcomes();
+        outcome_builder.add_outcomes(&[0, 0, 0, 0, 0]);
+
+        let mcmr = noise
+            .apply_noise_on_continue_processing(outcome_builder.build())
+            .unwrap();
+        let results = mcmr.outcomes().unwrap();
+
+        assert_eq!(
+            noise.measured_qubits.len(), 0,
+            "The list of measured_qubits should have been cleared."
+        );
+        assert_eq!(
+            results.len(), 1,
+            "There should only be one outcome: that of the mid-circ measurement"
+        );
+    }
+
+    #[test]
+    fn test_meas_crosstalk() {
+        use crate::byte_message::ByteMessageBuilder;
+
+        let mut model = GeneralNoiseModel::builder()
+            .with_p_meas_crosstalk(1.0)
+            .with_seed(42)
+            .build();
+        let noise = model
+            .as_any_mut()
+            .downcast_mut::<GeneralNoiseModel>()
+            .unwrap();
+
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+        // Prepare a bunch of |0> states
+        builder.add_prep(&[0, 1, 2, 3, 4]);
+        // Apply mid-circuit measurement and reset
+        builder.add_measurements(&[2]);
+        builder.add_prep(&[2]);
+        let _cmd = noise.apply_noise_on_start(&builder.build()).unwrap();
+
+        assert_eq!(
+            noise.measured_qubits.len(), 5,
+            "There should be 5 measured qubits: one from MCMR and the others from
+            crosstalk got: {:?}", noise.measured_qubits
+        );
+
+        let (q, _, is_crosstalk) = noise.measured_qubits[0];
+        assert_eq!(q, 2, "The first measurement should be the MCMR on qubit 2");
+        assert!(!is_crosstalk, "The first measurement should come from MCMR");
+
+        for (_, _, is_crosstalk) in &noise.measured_qubits[1..] {
+            assert!(is_crosstalk, "The other measurements should come from crosstalk");
+        }
+
+        // All results are 0
+        let mut outcome_builder = ByteMessageBuilder::new();
+        let _ = outcome_builder.for_outcomes();
+        outcome_builder.add_outcomes(&[0, 0, 0, 0, 0]);
+
+        let mcmr = noise
+            .apply_noise_on_continue_processing(outcome_builder.build())
+            .unwrap();
+        let results = mcmr.outcomes().unwrap();
+
+        assert_eq!(
+            noise.measured_qubits.len(), 0,
+            "The list of measured_qubits should have been cleared."
+        );
+        assert_eq!(
+            results.len(), 1,
+            "There should only be one outcome: that of the mid-circ measurement"
         );
     }
 

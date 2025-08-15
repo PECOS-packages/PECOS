@@ -172,9 +172,9 @@ pub struct GeneralNoiseModel {
     /// qubit states after initialization. Ranges from 0 to 1.
     p_prep_leak_ratio: f64,
 
-    /// Probability of crosstalk during initialization operations
+    /// Probability of crosstalk during preparation operations
     ///
-    /// Models the probability that an initialization operation on one qubit affects nearby qubits.
+    /// Models the probability that a preparation operation on one qubit affects nearby qubits.
     /// In ion trap systems, this could represent scattered light during optical pumping affecting
     /// neighboring ions.
     p_prep_crosstalk: f64,
@@ -326,7 +326,7 @@ pub struct GeneralNoiseModel {
     /// Random number generator for stochastic noise processes
     rng: NoiseRng<ChaCha8Rng>,
 
-    /// Set of qubits that have been initialized at any point in the program.
+    /// Set of qubits that have been prepared at any point in the program.
     ///
     /// This is so that we know which qubits exists and we can apply crosstalk
     /// to them. Qubits that are measured / discarded are not removed from here, since
@@ -335,7 +335,7 @@ pub struct GeneralNoiseModel {
     /// and active qubits should always suffer errors under this naive crosstalk model.
     ///
     /// Using a BTreeSet because we will iterate over the qubits and we want determinism.
-    initialized_qubits: BTreeSet<usize>,
+    prepared_qubits: BTreeSet<usize>,
 
     /// Track which qubits are being measured in the current batch and their gate types
     /// This is needed to properly handle leakage during measurements as well
@@ -517,7 +517,7 @@ impl GeneralNoiseModel {
                 }
                 GateType::Prep => {
                     for &q in &gate.qubits {
-                        self.initialized_qubits.insert(usize::from(q));
+                        self.prepared_qubits.insert(usize::from(q));
                     }
                     self.apply_prep_faults(&gate, &mut builder);
                     self.apply_crosstalk_faults(&gate, self.p_prep_crosstalk, &mut builder);
@@ -811,7 +811,7 @@ impl GeneralNoiseModel {
     ///
     /// Naive crosstalk noise model:
     /// 1. All qubits in the trap but the ones in the `gate` are subject to crosstalk
-    //     error. The `gate` should be either qubit measurement or initialization.
+    //     error. The `gate` should be either qubit measurement or preparation.
     //  2. *Each* qubit not in `gate` has the given `probability` to suffer an error.
     /// 3. Affected qubits are collapsed into the computational basis (Z measurement).
     ///
@@ -826,7 +826,7 @@ impl GeneralNoiseModel {
         let mut affected_qubits = Vec::new();
         let gate_qubits: Vec<usize> = gate.qubits.iter().map(|q| usize::from(*q)).collect();
 
-        for q in self.initialized_qubits.clone() {
+        for q in self.prepared_qubits.clone() {
             if !gate_qubits.contains(&q) {
                 if self.rng.occurs(probability) {
                     affected_qubits.push(q);

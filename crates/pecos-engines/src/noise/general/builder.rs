@@ -658,6 +658,7 @@ impl GeneralNoiseModelBuilder {
         let prob: f64 = prob * 18.0 / 5.0;
         self.p_meas_crosstalk = Some(prob);
         self
+    }
 
     /// Set the scaling factor for measurement faults
     ///

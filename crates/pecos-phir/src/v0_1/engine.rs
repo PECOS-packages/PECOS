@@ -367,97 +367,97 @@ impl PHIREngine {
                     match block.as_str() {
                         "if" => {
                             // Process if/else block
-                            if let Some(_cond) = condition {
-                                if let (Some(tb), fb) = (true_branch, false_branch) {
-                                    // Get operations based on condition
-                                    let branch_ops = self.processor.process_conditional_block(
-                                        condition.as_ref().unwrap(),
-                                        tb,
-                                        fb.as_deref(),
-                                    )?;
+                            if let Some(_cond) = condition
+                                && let (Some(tb), fb) = (true_branch, false_branch)
+                            {
+                                // Get operations based on condition
+                                let branch_ops = self.processor.process_conditional_block(
+                                    condition.as_ref().unwrap(),
+                                    tb,
+                                    fb.as_deref(),
+                                )?;
 
-                                    // Replace the current op with the branch operations
-                                    // This is a simplification - a more robust implementation would
-                                    // involve temporarily changing the ops list
-                                    for branch_op in &branch_ops {
-                                        match branch_op {
-                                            Operation::QuantumOp {
-                                                qop, angles, args, ..
-                                            } => {
-                                                // Process each quantum operation in the branch
-                                                let qop_str = qop.clone();
-                                                let args_clone = args.clone();
-                                                let angles_clone = angles.clone();
+                                // Replace the current op with the branch operations
+                                // This is a simplification - a more robust implementation would
+                                // involve temporarily changing the ops list
+                                for branch_op in &branch_ops {
+                                    match branch_op {
+                                        Operation::QuantumOp {
+                                            qop, angles, args, ..
+                                        } => {
+                                            // Process each quantum operation in the branch
+                                            let qop_str = qop.clone();
+                                            let args_clone = args.clone();
+                                            let angles_clone = angles.clone();
 
-                                                match self.processor.process_quantum_op(
-                                                    &qop_str,
-                                                    angles_clone.as_ref(),
-                                                    &args_clone,
-                                                ) {
-                                                    Ok((gate_type, qubit_args, angle_args)) => {
-                                                        self.processor
-                                                            .add_quantum_operation_to_builder(
-                                                                &mut self.message_builder,
-                                                                &gate_type,
-                                                                &qubit_args,
-                                                                &angle_args,
-                                                            )?;
-                                                        operation_count += 1;
-                                                    }
-                                                    Err(e) => return Err(e),
+                                            match self.processor.process_quantum_op(
+                                                &qop_str,
+                                                angles_clone.as_ref(),
+                                                &args_clone,
+                                            ) {
+                                                Ok((gate_type, qubit_args, angle_args)) => {
+                                                    self.processor
+                                                        .add_quantum_operation_to_builder(
+                                                            &mut self.message_builder,
+                                                            &gate_type,
+                                                            &qubit_args,
+                                                            &angle_args,
+                                                        )?;
+                                                    operation_count += 1;
                                                 }
+                                                Err(e) => return Err(e),
                                             }
-                                            Operation::ClassicalOp {
-                                                cop,
-                                                args,
-                                                returns,
-                                                metadata: _,
-                                                function,
-                                            } => {
+                                        }
+                                        Operation::ClassicalOp {
+                                            cop,
+                                            args,
+                                            returns,
+                                            metadata: _,
+                                            function,
+                                        } => {
+                                            debug!(
+                                                "Processing classical operation in branch: {cop}"
+                                            );
+                                            // Handle classical operations from conditional branches
+                                            if cop == "ffcall" {
                                                 debug!(
-                                                    "Processing classical operation in branch: {cop}"
+                                                    "Processing ffcall in branch: function={function:?}, args={args:?}, returns={returns:?}"
                                                 );
-                                                // Handle classical operations from conditional branches
-                                                if cop == "ffcall" {
+                                            }
+                                            // For ffcall operations from branches, we need to handle them specially
+                                            // because they have the function name directly in the operation
+                                            if cop == "ffcall" {
+                                                // Create a temporary operation list with just this operation
+                                                // This ensures handle_classical_op can find the function name
+                                                let temp_ops = vec![branch_op.clone()];
+                                                if self.processor.handle_classical_op(
+                                                    cop, args, returns, &temp_ops,
+                                                    0, // The operation is at index 0 in temp_ops
+                                                )? {
                                                     debug!(
-                                                        "Processing ffcall in branch: function={function:?}, args={args:?}, returns={returns:?}"
+                                                        "Classical ffcall operation in branch completed"
                                                     );
                                                 }
-                                                // For ffcall operations from branches, we need to handle them specially
-                                                // because they have the function name directly in the operation
-                                                if cop == "ffcall" {
-                                                    // Create a temporary operation list with just this operation
-                                                    // This ensures handle_classical_op can find the function name
-                                                    let temp_ops = vec![branch_op.clone()];
-                                                    if self.processor.handle_classical_op(
-                                                        cop, args, returns, &temp_ops,
-                                                        0, // The operation is at index 0 in temp_ops
-                                                    )? {
-                                                        debug!(
-                                                            "Classical ffcall operation in branch completed"
-                                                        );
-                                                    }
-                                                } else {
-                                                    // For other classical operations, use the original ops
-                                                    if self.processor.handle_classical_op(
-                                                        cop,
-                                                        args,
-                                                        returns,
-                                                        &branch_ops,
-                                                        0, // Index within branch ops
-                                                    )? {
-                                                        debug!(
-                                                            "Classical operation in branch completed"
-                                                        );
-                                                    }
+                                            } else {
+                                                // For other classical operations, use the original ops
+                                                if self.processor.handle_classical_op(
+                                                    cop,
+                                                    args,
+                                                    returns,
+                                                    &branch_ops,
+                                                    0, // Index within branch ops
+                                                )? {
+                                                    debug!(
+                                                        "Classical operation in branch completed"
+                                                    );
                                                 }
                                             }
-                                            _ => {
-                                                // For other operation types, we'll handle them later
-                                                debug!(
-                                                    "Skipping other operation type in branch: {branch_op:?}"
-                                                );
-                                            }
+                                        }
+                                        _ => {
+                                            // For other operation types, we'll handle them later
+                                            debug!(
+                                                "Skipping other operation type in branch: {branch_op:?}"
+                                            );
                                         }
                                     }
                                 }
@@ -728,18 +728,18 @@ impl ControlEngine for PHIREngine {
         log::debug!("PHIREngine: Measurement results received: {measurement_results:?}");
 
         // For Bell state debugging - check if we have 2 qubits and get result patterns
-        if let Some(prog) = &self.program {
-            if prog.ops.iter().any(|op| {
+        if let Some(prog) = &self.program
+            && prog.ops.iter().any(|op| {
                 if let Operation::VariableDefinition { variable, size, .. } = op {
                     variable == "q" && *size == 2
                 } else {
                     false
                 }
-            }) {
-                log::debug!(
-                    "Bell state program detected - measurement results: {measurement_results:?}"
-                );
-            }
+            })
+        {
+            log::debug!(
+                "Bell state program detected - measurement results: {measurement_results:?}"
+            );
         }
 
         let ops = match &self.program {
@@ -762,17 +762,16 @@ impl ControlEngine for PHIREngine {
                 if let Operation::ClassicalOp {
                     cop, args, returns, ..
                 } = &ops[self.current_op]
+                    && cop == "Result"
                 {
-                    if cop == "Result" {
-                        debug!("Processing Result operation: {cop}");
-                        self.processor.handle_classical_op(
-                            cop,
-                            args,
-                            returns,
-                            &ops,
-                            self.current_op,
-                        )?;
-                    }
+                    debug!("Processing Result operation: {cop}");
+                    self.processor.handle_classical_op(
+                        cop,
+                        args,
+                        returns,
+                        &ops,
+                        self.current_op,
+                    )?;
                 }
             }
 
@@ -814,10 +813,10 @@ impl ClassicalEngine for PHIREngine {
                     variable: _,
                     size,
                 } = op
+                    && data == "qvar_define"
+                    && data_type == "qubits"
                 {
-                    if data == "qvar_define" && data_type == "qubits" {
-                        total += size;
-                    }
+                    total += size;
                 }
             }
             return total;
@@ -1116,10 +1115,9 @@ impl Engine for PHIREngine {
                         if let Operation::ClassicalOp {
                             cop, args, returns, ..
                         } = op
+                            && cop == "Result"
                         {
-                            if cop == "Result" {
-                                result_ops.push((i, args.clone(), returns.clone()));
-                            }
+                            result_ops.push((i, args.clone(), returns.clone()));
                         }
                     }
 

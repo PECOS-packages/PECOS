@@ -193,14 +193,14 @@ pub fn parse_quantum_op(
                     }))
                 } else {
                     // Register size mismatch
-                    return Err(register_size_mismatch(
+                    Err(register_size_mismatch(
                         &format!("gate {gate_name}"),
                         &format!(
                             "first operand has {} qubits, second has {}",
                             qubits1.len(),
                             qubits2.len()
                         ),
-                    ));
+                    ))
                 }
             } else {
                 // For gates with more than 2 operands, just collect all qubits

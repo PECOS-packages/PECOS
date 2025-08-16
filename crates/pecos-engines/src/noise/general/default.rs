@@ -1,7 +1,7 @@
 use crate::noise::{
     GeneralNoiseModel, NoiseRng, SingleQubitWeightedSampler, TwoQubitWeightedSampler,
 };
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 impl Default for GeneralNoiseModel {
     /// Create a new noise model with default error parameters
@@ -100,6 +100,7 @@ impl Default for GeneralNoiseModel {
             p2_idle: 0.0,
             leaked_qubits: HashSet::new(),
             rng: NoiseRng::default(),
+            prepared_qubits: BTreeSet::new(),
             measured_qubits: Vec::new(),
             p_meas_crosstalk: 0.0,
             p_prep_crosstalk: 0.0,

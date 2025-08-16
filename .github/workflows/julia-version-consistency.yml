@@ -1,0 +1,130 @@
+# Copyright 2025 The PECOS Developers
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
+
+name: Julia version consistency
+
+on:
+  push:
+    branches: [ "master", "development", "dev" ]
+  pull_request:
+    branches: [ "master", "development", "dev" ]
+  workflow_dispatch:
+
+jobs:
+  check-julia-versions:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check Julia version consistency
+      run: |
+        echo "Checking Julia version consistency across files..."
+
+        # Define the files to check
+        declare -A version_files=(
+          ["PECOS.jl Project.toml"]="julia/PECOS.jl/Project.toml"
+          ["pecos-julia-ffi Cargo.toml"]="julia/pecos-julia-ffi/Cargo.toml"
+          ["build_tarballs.jl"]="julia/PECOS.jl/deps/build_tarballs.jl"
+        )
+
+        # Extract versions
+        echo "=== Extracting versions ==="
+
+        # PECOS.jl version
+        pecos_version=$(grep -E '^version = ".*"' julia/PECOS.jl/Project.toml | sed 's/version = "\(.*\)"/\1/')
+        echo "PECOS.jl version: $pecos_version"
+
+        # pecos-julia-ffi version
+        ffi_version=$(grep -E '^version = ".*"' julia/pecos-julia-ffi/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+        echo "pecos-julia-ffi version: $ffi_version"
+
+        # build_tarballs.jl version
+        bt_version=$(grep -E '^version = v".*"' julia/PECOS.jl/deps/build_tarballs.jl | sed 's/version = v"\([^"]*\)".*/\1/')
+        echo "build_tarballs.jl version: $bt_version"
+
+        # Check if all versions match
+        echo ""
+        echo "=== Version consistency check ==="
+
+        errors=0
+
+        if [ "$pecos_version" != "$ffi_version" ]; then
+          echo "ERROR: Version mismatch between PECOS.jl ($pecos_version) and pecos-julia-ffi ($ffi_version)"
+          errors=$((errors + 1))
+        fi
+
+        if [ "$pecos_version" != "$bt_version" ]; then
+          echo "ERROR: Version mismatch between PECOS.jl ($pecos_version) and build_tarballs.jl ($bt_version)"
+          errors=$((errors + 1))
+        fi
+
+        # Check Julia compat versions
+        echo ""
+        echo "=== Julia compatibility check ==="
+
+        julia_compat=$(grep -E 'julia = ".*"' julia/PECOS.jl/Project.toml | sed 's/julia = "\(.*\)"/\1/')
+        echo "PECOS.jl Julia compat: $julia_compat"
+
+        bt_julia_compat=$(grep -E 'julia_compat' julia/PECOS.jl/deps/build_tarballs.jl | grep -oE '"[0-9.]+"' | tr -d '"')
+        echo "build_tarballs.jl Julia compat: $bt_julia_compat"
+
+        if [ "$julia_compat" != "$bt_julia_compat" ]; then
+          echo "WARNING: Julia compatibility mismatch between PECOS.jl ($julia_compat) and build_tarballs.jl ($bt_julia_compat)"
+        fi
+
+        # Check library name consistency
+        echo ""
+        echo "=== Library name check ==="
+
+        lib_name_cargo=$(grep -E 'name = ".*"' julia/pecos-julia-ffi/Cargo.toml | head -1 | sed 's/name = "\(.*\)"/\1/')
+        echo "Cargo library name: $lib_name_cargo"
+
+        if [[ "$lib_name_cargo" != "pecos-julia-ffi" ]]; then
+          echo "ERROR: Unexpected library name in Cargo.toml: $lib_name_cargo"
+          errors=$((errors + 1))
+        fi
+
+        # Final result
+        echo ""
+        echo "=== Summary ==="
+
+        if [ $errors -eq 0 ]; then
+          echo "All version checks passed!"
+        else
+          echo "Found $errors version inconsistencies!"
+          exit 1
+        fi
+
+    - name: Check for version tags
+      run: |
+        echo "=== Checking for version tags ==="
+
+        # Get current version
+        version=$(grep -E '^version = ".*"' julia/PECOS.jl/Project.toml | sed 's/version = "\(.*\)"/\1/')
+
+        # Check if we're on a tag
+        if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+          tag_name="${GITHUB_REF#refs/tags/}"
+          echo "Current tag: $tag_name"
+
+          # Check if it's a Julia release tag
+          if [[ "$tag_name" == jl-* ]]; then
+            tag_version="${tag_name#jl-}"
+            if [ "$tag_version" != "$version" ]; then
+              echo "ERROR: Tag version ($tag_version) doesn't match package version ($version)"
+              exit 1
+            else
+              echo "Tag version matches package version"
+            fi
+          fi
+        else
+          echo "Not on a tag, skipping tag version check"
+        fi

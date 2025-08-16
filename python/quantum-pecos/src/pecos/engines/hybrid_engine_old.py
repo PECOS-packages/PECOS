@@ -129,6 +129,7 @@ class HybridEngine:
             Tuple of final simulator state and output dictionary.
         """
         output = set_output(state, circuit, output_spec, output)
+        output["JOB_shotnum"] = shot_id
         output_export = {}
 
         self.circuit = circuit

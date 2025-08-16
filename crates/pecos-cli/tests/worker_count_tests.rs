@@ -75,15 +75,15 @@ fn get_values(json_output: &str) -> Vec<String> {
     let mut register_values: HashMap<String, Vec<String>> = HashMap::new();
 
     // Parse the JSON - expecting an object with register names as keys
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_output) {
-        if let Some(obj) = json.as_object() {
-            // For each register, collect its values
-            for (reg_name, values) in obj {
-                if let Some(arr) = values.as_array() {
-                    let string_values: Vec<String> =
-                        arr.iter().map(|v| v.to_string().replace('"', "")).collect();
-                    register_values.insert(reg_name.clone(), string_values);
-                }
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_output)
+        && let Some(obj) = json.as_object()
+    {
+        // For each register, collect its values
+        for (reg_name, values) in obj {
+            if let Some(arr) = values.as_array() {
+                let string_values: Vec<String> =
+                    arr.iter().map(|v| v.to_string().replace('"', "")).collect();
+                register_values.insert(reg_name.clone(), string_values);
             }
         }
     }

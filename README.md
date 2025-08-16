@@ -46,6 +46,9 @@ PECOS now consists of multiple interconnected components:
   - `/crates/pecos-cli/`: Command-line interface for PECOS
   - `/crates/pecos-python/`: Rust code for Python extensions
   - `/crates/benchmarks/`: A collection of benchmarks to test the performance of the crates
+- `/julia/`: Contains Julia packages (experimental)
+  - `/julia/PECOS.jl/`: Main Julia package
+  - `/julia/pecos-julia-ffi/`: Rust FFI library for Julia bindings
 
 ### Quantum Error Correction Decoders
 
@@ -120,6 +123,27 @@ pecos = "0.x.x"  # Replace with the latest version
   **Note**: Only LLVM version 14.x is compatible. LLVM 15 or later versions will not work with PECOS's QIR implementation.
 
   If LLVM 14 is not installed, PECOS will still function normally but QIR-related features will be disabled.
+
+### Julia Package (Experimental)
+
+PECOS also provides experimental Julia bindings. To use the Julia package from the development branch:
+
+```julia
+using Pkg
+Pkg.add(url="https://github.com/PECOS-packages/PECOS#dev", subdir="julia/PECOS.jl")
+```
+
+Then you can use it:
+
+```julia
+using PECOS
+println(pecos_version())  # Prints PECOS version
+```
+
+**Note**: The Julia package requires the Rust FFI library to be built. Currently, you need to build it locally:
+1. Clone the repository
+2. Build the FFI library: `cd julia/pecos-julia-ffi && cargo build --release`
+3. Add the package locally: `Pkg.develop(path="julia/PECOS.jl")`
 
 ## Development Setup
 

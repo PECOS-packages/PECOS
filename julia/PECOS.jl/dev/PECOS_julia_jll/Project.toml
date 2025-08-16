@@ -1,0 +1,13 @@
+name = "PECOS_julia_jll"
+uuid = "12345678-0000-0000-0000-000000000001"
+version = "0.1.0+0"
+license = "Apache-2.0"
+
+[deps]
+JLLWrappers = "692b3bcd-3c85-4b1f-b108-f13ce0eb3210"
+Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+
+[compat]
+julia = "1.10"
+JLLWrappers = "1.2.0"

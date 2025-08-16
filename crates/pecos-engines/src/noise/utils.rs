@@ -274,9 +274,9 @@ impl NoiseUtils {
     #[must_use]
     pub fn create_gate_message(gates: &[Gate]) -> ByteMessage {
         let mut builder = Self::create_quantum_builder();
-        gates
-            .iter()
-            .for_each(|gate| Self::add_gate_to_builder(&mut builder, gate));
+        for gate in gates {
+            Self::add_gate_to_builder(&mut builder, gate);
+        }
         builder.build()
     }
 

@@ -127,18 +127,18 @@ impl EnhancedResultHandling for Environment {
         // If no mappings exist, include all measurement variables (those starting with 'm')
         if results.is_empty() {
             for info in self.get_all_variables() {
-                if info.name.starts_with('m') || info.name.starts_with("measurement") {
-                    if let Some(value) = self.get(&info.name) {
-                        let formatted = match format {
-                            ResultFormat::Integer => value.to_string(),
-                            ResultFormat::Hex => format!("0x{:x}", value.as_u64()),
-                            ResultFormat::Binary => format!("0b{:b}", value.as_u64()),
-                            ResultFormat::BitString(width) => {
-                                format!("{:0>width$b}", value.as_u64(), width = width)
-                            }
-                        };
-                        results.insert(info.name.clone(), formatted);
-                    }
+                if (info.name.starts_with('m') || info.name.starts_with("measurement"))
+                    && let Some(value) = self.get(&info.name)
+                {
+                    let formatted = match format {
+                        ResultFormat::Integer => value.to_string(),
+                        ResultFormat::Hex => format!("0x{:x}", value.as_u64()),
+                        ResultFormat::Binary => format!("0b{:b}", value.as_u64()),
+                        ResultFormat::BitString(width) => {
+                            format!("{:0>width$b}", value.as_u64(), width = width)
+                        }
+                    };
+                    results.insert(info.name.clone(), formatted);
                 }
             }
         }

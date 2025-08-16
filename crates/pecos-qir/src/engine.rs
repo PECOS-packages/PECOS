@@ -143,10 +143,10 @@ impl QirEngine {
         self.measurement_results.clear();
         self.commands_generated = false;
 
-        if let Some(ref library) = self.library {
-            if let Err(e) = library.reset() {
-                debug!("QIR: Failed to reset QIR runtime: {e}");
-            }
+        if let Some(ref library) = self.library
+            && let Err(e) = library.reset()
+        {
+            debug!("QIR: Failed to reset QIR runtime: {e}");
         }
     }
 
@@ -354,14 +354,14 @@ impl QirEngine {
     /// * `Shot` - The results of the quantum computation
     fn get_results_impl(&self) -> Shot {
         // Try to get shot results from the runtime
-        if let Some(library) = &self.library {
-            if let Ok(Some(shot)) = library.get_shot_results() {
-                debug!(
-                    "QIR: Retrieved shot from runtime with {} registers",
-                    shot.data.len()
-                );
-                return shot;
-            }
+        if let Some(library) = &self.library
+            && let Ok(Some(shot)) = library.get_shot_results()
+        {
+            debug!(
+                "QIR: Retrieved shot from runtime with {} registers",
+                shot.data.len()
+            );
+            return shot;
         }
 
         // Fallback: create shot result from raw measurements
@@ -552,11 +552,11 @@ impl QirEngine {
         let direct_pattern = Regex::new(r"inttoptr\s*\(\s*i64\s+(\d+)\s+to\s+%Qubit\*\)")
             .expect("Invalid regex pattern for direct qubit references");
         for cap in direct_pattern.captures_iter(content) {
-            if let Some(index_match) = cap.get(1) {
-                if let Ok(index) = index_match.as_str().parse::<usize>() {
-                    max_qubit_index = max_qubit_index.max(index);
-                    found_allocation = true;
-                }
+            if let Some(index_match) = cap.get(1)
+                && let Ok(index) = index_match.as_str().parse::<usize>()
+            {
+                max_qubit_index = max_qubit_index.max(index);
+                found_allocation = true;
             }
         }
 
@@ -574,11 +574,11 @@ impl QirEngine {
             Regex::new(r"__quantum__rt__array_create_1d\s*\(\s*i64\s+\d+\s*,\s*i64\s+(\d+)\s*\)")
                 .expect("Invalid regex pattern for array allocations");
         for cap in array_pattern.captures_iter(content) {
-            if let Some(size_match) = cap.get(1) {
-                if let Ok(size) = size_match.as_str().parse::<usize>() {
-                    max_qubit_index = max_qubit_index.max(size - 1);
-                    found_allocation = true;
-                }
+            if let Some(size_match) = cap.get(1)
+                && let Ok(size) = size_match.as_str().parse::<usize>()
+            {
+                max_qubit_index = max_qubit_index.max(size - 1);
+                found_allocation = true;
             }
         }
 

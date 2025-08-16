@@ -327,17 +327,13 @@ impl TwoQubitWeightedSampler {
         let mut gates = Vec::new();
 
         // Convert the first operation if not leaked
-        if !qubit0_leaked {
-            if let Some(gate) = create_pauli_gate(chars[0], qubit0) {
-                gates.push(gate);
-            }
+        if !qubit0_leaked && let Some(gate) = create_pauli_gate(chars[0], qubit0) {
+            gates.push(gate);
         }
 
         // Convert the second operation if not leaked
-        if !qubit1_leaked {
-            if let Some(gate) = create_pauli_gate(chars[1], qubit1) {
-                gates.push(gate);
-            }
+        if !qubit1_leaked && let Some(gate) = create_pauli_gate(chars[1], qubit1) {
+            gates.push(gate);
         }
 
         // Only return gates if we have some

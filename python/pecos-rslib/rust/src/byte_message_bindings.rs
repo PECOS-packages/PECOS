@@ -15,7 +15,7 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyType};
 
-/// Python wrapper for Rust ByteMessageBuilder
+/// Python wrapper for Rust `ByteMessageBuilder`
 #[pyclass(name = "ByteMessageBuilder", module = "pecos_rslib._pecos_rslib")]
 pub struct PyByteMessageBuilder {
     inner: ByteMessageBuilder,
@@ -23,7 +23,7 @@ pub struct PyByteMessageBuilder {
 
 #[pymethods]
 impl PyByteMessageBuilder {
-    /// Create a new ByteMessageBuilder
+    /// Create a new `ByteMessageBuilder`
     #[new]
     fn new() -> Self {
         Self {
@@ -112,7 +112,7 @@ impl PyByteMessageBuilder {
 
     // Removed add_flush since it's no longer needed
 
-    /// Build the message and return a PyByteMessage
+    /// Build the message and return a `PyByteMessage`
     #[pyo3(text_signature = "($self)")]
     fn build(&mut self) -> PyByteMessage {
         PyByteMessage {
@@ -138,7 +138,7 @@ impl PyByteMessageBuilder {
     }
 }
 
-/// Python wrapper for Rust ByteMessage
+/// Python wrapper for Rust `ByteMessage`
 #[pyclass(name = "ByteMessage", module = "pecos_rslib._pecos_rslib")]
 pub struct PyByteMessage {
     inner: ByteMessage,
@@ -146,13 +146,13 @@ pub struct PyByteMessage {
 
 #[pymethods]
 impl PyByteMessage {
-    /// Create a new ByteMessageBuilder
+    /// Create a new `ByteMessageBuilder`
     #[classmethod]
     fn builder(_cls: &Bound<PyType>) -> PyByteMessageBuilder {
         PyByteMessageBuilder::new()
     }
 
-    /// Create a ByteMessageBuilder configured for quantum operations
+    /// Create a `ByteMessageBuilder` configured for quantum operations
     #[classmethod]
     fn quantum_operations_builder(_cls: &Bound<PyType>) -> PyByteMessageBuilder {
         let mut builder = PyByteMessageBuilder::new();
@@ -160,7 +160,7 @@ impl PyByteMessage {
         builder
     }
 
-    /// Create a ByteMessageBuilder configured for measurement outcomes
+    /// Create a `ByteMessageBuilder` configured for measurement outcomes
     #[classmethod]
     fn outcomes_builder(_cls: &Bound<PyType>) -> PyByteMessageBuilder {
         let mut builder = PyByteMessageBuilder::new();
@@ -176,7 +176,7 @@ impl PyByteMessage {
         }
     }
 
-    /// Get the ByteMessage as bytes
+    /// Get the `ByteMessage` as bytes
     #[pyo3(text_signature = "($self)")]
     fn as_bytes(&self, py: Python<'_>) -> PyObject {
         PyBytes::new(py, self.inner.as_bytes()).into()
@@ -224,7 +224,7 @@ impl PyByteMessage {
         dump_batch(self.inner.as_bytes())
     }
 
-    /// Get measurement results as a list of (result_id, outcome) tuples
+    /// Get measurement results as a list of (`result_id`, outcome) tuples
     #[pyo3(text_signature = "($self)")]
     pub fn measurement_results(&self, py: Python<'_>) -> PyResult<PyObject> {
         // Get raw outcomes

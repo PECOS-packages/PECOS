@@ -331,7 +331,10 @@ impl QASMParser {
     }
 
     /// Parse using Pest and convert errors
-    fn parse_pest(rule: Rule, source: &str) -> Result<pest::iterators::Pairs<Rule>, PecosError> {
+    fn parse_pest(
+        rule: Rule,
+        source: &str,
+    ) -> Result<pest::iterators::Pairs<'_, Rule>, PecosError> {
         <Self as pest::Parser<Rule>>::parse(rule, source).map_err(|e| {
             // Extract line/column information if available
             let (line, col) = match e.line_col {

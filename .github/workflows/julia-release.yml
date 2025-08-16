@@ -1,0 +1,608 @@
+# Copyright 2025 The PECOS Developers
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
+
+name: Julia Artifacts
+
+env:
+  TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
+
+on:
+  push:
+    branches:
+      - dev
+      - development
+      - master
+    tags:
+      - 'jl-*'  # Trigger on Julia-specific tags
+  pull_request:
+    branches:
+      - dev
+      - development
+      - master
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit SHA
+        type: string
+      dry_run:
+        description: 'Dry run (build but not publish)'
+        type: boolean
+        default: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check_pr_push:
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' && github.event.action != 'closed' ||
+      github.event_name == 'push' && contains(fromJSON('["master", "dev", "development"]'), github.ref_name)
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - name: Check if should run on PR push
+        id: check
+        run: |
+          # Always run on pushes to main branches
+          if [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref_name }}" =~ ^(master|dev|development)$ ]]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+          # For PRs, check the TRIGGER_ON_PR_PUSH setting
+          elif [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ env.TRIGGER_ON_PR_PUSH }}" = "true" ]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+          else
+            echo "run=false" >> $GITHUB_OUTPUT
+          fi
+
+  build_julia_binaries:
+    needs: check_pr_push
+    if: needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        architecture: [x86_64, aarch64]
+        exclude:
+          - os: windows-latest
+            architecture: aarch64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+
+      - name: Set up Rust
+        run: rustup show
+
+      - name: Install Rust target
+        run: |
+          if [ "${{ matrix.architecture }}" = "aarch64" ]; then
+            if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+              rustup target add aarch64-unknown-linux-gnu
+              sudo apt-get update
+              sudo apt-get install -y gcc-aarch64-linux-gnu
+            elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+              rustup target add aarch64-apple-darwin
+            fi
+          else
+            # For x86_64 builds on ARM64 macOS
+            if [ "${{ matrix.os }}" = "macos-latest" ]; then
+              rustup target add x86_64-apple-darwin
+            fi
+          fi
+
+      - name: Set up Visual Studio environment on Windows
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build library (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd julia/pecos-julia-ffi
+          cargo build --release
+
+          # Create artifact directory
+          New-Item -ItemType Directory -Force -Path ..\..\artifacts
+
+          # Copy the built library
+          Copy-Item ..\..\target\release\pecos_julia.dll -Destination ..\..\artifacts\
+
+          # List artifacts
+          Get-ChildItem ..\..\artifacts\
+
+      - name: Build library (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cd julia/pecos-julia-ffi
+
+          if [ "${{ matrix.architecture }}" = "aarch64" ]; then
+            if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+              export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+              cargo build --release --target aarch64-unknown-linux-gnu
+              target_dir="../../target/aarch64-unknown-linux-gnu/release"
+            elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+              cargo build --release --target aarch64-apple-darwin
+              target_dir="../../target/aarch64-apple-darwin/release"
+            fi
+          else
+            # For x86_64 builds
+            if [ "${{ matrix.os }}" = "macos-latest" ]; then
+              # On ARM64 macOS, explicitly build for x86_64
+              cargo build --release --target x86_64-apple-darwin
+              target_dir="../../target/x86_64-apple-darwin/release"
+            else
+              cargo build --release
+              target_dir="../../target/release"
+            fi
+          fi
+
+          # Create artifact directory
+          mkdir -p ../../artifacts
+
+          # Copy the built library
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            cp $target_dir/libpecos_julia.dylib ../../artifacts/
+          else
+            cp $target_dir/libpecos_julia.so ../../artifacts/
+          fi
+
+          # List artifacts
+          ls -la ../../artifacts/
+
+      - name: Create tarball
+        run: |
+          cd artifacts
+          mkdir -p lib
+          mv * lib/ 2>/dev/null || true
+          tar -czf ../pecos_julia-${{ matrix.os }}-${{ matrix.architecture }}.tar.gz lib
+          cd ..
+          ls -la *.tar.gz
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: julia-binary-${{ matrix.os }}-${{ matrix.architecture }}
+          path: pecos_julia-*.tar.gz
+
+  test_binaries:
+    needs: build_julia_binaries
+    if: |
+      always() &&
+      needs.build_julia_binaries.result == 'success'
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        julia-version: ['1.10', '1.11', '1']
+        platform:
+          - runner: ubuntu-latest
+            os: ubuntu-latest
+            architecture: x86_64
+          - runner: windows-latest
+            os: windows-latest
+            architecture: x86_64
+          - runner: macos-13
+            os: macos-latest
+            architecture: x86_64
+          - runner: macos-latest
+            os: macos-latest
+            architecture: aarch64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+
+      - name: Set up Julia ${{ matrix.julia-version }}
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.julia-version }}
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: julia-binary-${{ matrix.platform.os }}-${{ matrix.platform.architecture }}
+          path: ./julia-binary
+
+      - name: Set up test environment
+        run: |
+          # Extract the tarball
+          cd julia-binary
+          tar -xzf *.tar.gz
+          cd ..
+
+          # Create a temporary JLL structure
+          mkdir -p temp_jll
+          cp -r julia-binary/lib temp_jll/
+
+          cd julia/PECOS.jl
+
+          # Create a test script that uses the binary directly
+          cat > test_binary.jl << 'EOF'
+          # Add the library path
+          lib_path = joinpath(@__DIR__, "..", "..", "temp_jll", "lib")
+
+          # Determine the library name based on OS
+          lib_name = if Sys.iswindows()
+              "pecos_julia.dll"
+          elseif Sys.isapple()
+              "libpecos_julia.dylib"
+          else
+              "libpecos_julia.so"
+          end
+
+          lib_file = joinpath(lib_path, lib_name)
+
+          # Test direct ccall
+          println("Testing binary at: $lib_file")
+
+          # Test version function
+          ptr = ccall((:pecos_version, lib_file), Ptr{UInt8}, ())
+          version = unsafe_string(ptr)
+          ccall((:free_rust_string, lib_file), Cvoid, (Ptr{UInt8},), ptr)
+          println("Version: $version")
+
+          # Test add function
+          result = ccall((:add_two_numbers, lib_file), Int64, (Int64, Int64), 10, 32)
+          println("10 + 32 = $result")
+
+          if result == 42
+              println("Binary test passed!")
+              exit(0)
+          else
+              println("Binary test failed!")
+              exit(1)
+          end
+          EOF
+
+      - name: Test binary with Julia ${{ matrix.julia-version }}
+        run: |
+          cd julia/PECOS.jl
+          julia test_binary.jl
+
+  create_jll_package:
+    needs: [build_julia_binaries, test_binaries]
+    if: |
+      needs.build_julia_binaries.result == 'success' &&
+      needs.test_binaries.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.10'
+
+      - name: Create distribution directories
+        run: |
+          mkdir -p dist/binaries
+          mkdir -p dist/jll
+
+      # Download artifacts into temp directory first
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: temp-artifacts/
+
+      - name: Organize binaries
+        run: |
+          # Move all binaries to distribution directory
+          for artifact in temp-artifacts/julia-binary-*/; do
+            if [ -d "$artifact" ]; then
+              echo "Processing $artifact"
+              cp "$artifact"* dist/binaries/
+            fi
+          done
+
+          # List collected binaries
+          echo "=== Collected binaries ==="
+          ls -la dist/binaries/
+
+      - name: Create JLL structure
+        run: |
+          cd julia/PECOS.jl
+
+          # Create a script to generate JLL package structure
+          cat > create_jll.jl << 'EOF'
+          version = "0.1.0"
+
+          # Create JLL directory structure
+          jll_dir = joinpath(@__DIR__, "..", "..", "dist", "jll", "PECOS_julia_jll")
+          mkpath(joinpath(jll_dir, "src"))
+
+          # Create Project.toml
+          project_content = """
+          name = "PECOS_julia_jll"
+          uuid = "00000000-0000-0000-0000-000000000000"  # Will be assigned by registry
+          version = "$version+0"
+
+          [deps]
+          JLLWrappers = "692b3bcd-3c85-4b1f-b108-f13ce0eb3210"
+          Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+          Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+
+          [compat]
+          JLLWrappers = "1.6"
+          julia = "1.10"
+          """
+
+          write(joinpath(jll_dir, "Project.toml"), project_content)
+
+          # Create basic JLL wrapper
+          jll_content = """
+          module PECOS_julia_jll
+
+          using Libdl
+
+          const libpecos_julia = "libpecos_julia"
+
+          function __init__()
+              # Initialization code will be added by BinaryBuilder
+          end
+
+          end # module
+          """
+
+          write(joinpath(jll_dir, "src", "PECOS_julia_jll.jl"), jll_content)
+
+          println("Created JLL structure at: $jll_dir")
+          EOF
+
+          julia create_jll.jl
+
+      - name: Create release info
+        run: |
+          cat > dist/RELEASE_INFO.md << 'EOF'
+          # PECOS Julia Binary Distribution
+
+          This distribution contains:
+
+          1. **binaries/** - Pre-built libraries for all platforms
+             - Linux x86_64: libpecos_julia.so
+             - Linux aarch64: libpecos_julia.so
+             - macOS x86_64: libpecos_julia.dylib
+             - macOS aarch64: libpecos_julia.dylib
+             - Windows x86_64: pecos_julia.dll
+
+          2. **jll/** - JLL package structure (for BinaryBuilder submission)
+
+          ## Next Steps
+
+          1. Submit to Yggdrasil for JLL creation
+          2. Wait for JLL registration
+          3. Update PECOS.jl to use registered JLL
+          4. Register PECOS.jl package
+
+          ## Version
+
+          Version: 0.1.0
+          Commit: ${{ github.sha }}
+          EOF
+
+      - name: Upload distribution bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: pecos-julia-distribution
+          path: dist/
+
+  create_release_bundle:
+    needs: [build_julia_binaries, test_binaries]
+    if: |
+      needs.build_julia_binaries.result == 'success' &&
+      needs.test_binaries.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+
+      - name: Create distribution directories
+        run: |
+          mkdir -p release-bundle/binaries
+          mkdir -p release-bundle/checksums
+
+      # Download artifacts
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: temp-artifacts/
+
+      - name: Organize and checksum binaries
+        run: |
+          # Process each platform's binary
+          for artifact in temp-artifacts/julia-binary-*/; do
+            if [ -d "$artifact" ]; then
+              platform=$(basename "$artifact" | sed 's/julia-binary-//')
+              echo "Processing $platform"
+
+              # Move the tarball
+              mv "$artifact"/*.tar.gz "release-bundle/binaries/" || true
+
+              # Create checksum
+              cd release-bundle/binaries
+              for tarball in pecos_julia-*.tar.gz; do
+                if [ -f "$tarball" ]; then
+                  sha256sum "$tarball" > "../checksums/${tarball}.sha256"
+                fi
+              done
+              cd ../..
+            fi
+          done
+
+          # List final structure
+          echo "=== Release Bundle Structure ==="
+          find release-bundle -type f | sort
+
+      - name: Generate Artifacts.toml
+        run: |
+          cd release-bundle
+
+          # Create Artifacts.toml with actual checksums
+          cat > ../julia/PECOS.jl/Artifacts.toml << 'EOF'
+          # Auto-generated by julia-release workflow
+          # For release: ${{ github.ref_name }}
+
+          [PECOS_julia]
+          git-tree-sha1 = "0000000000000000000000000000000000000000"  # Tree hash will be computed on first use
+
+          EOF
+
+          # Add download entries for each platform
+          for tarball in binaries/*.tar.gz; do
+            if [ -f "$tarball" ]; then
+              filename=$(basename "$tarball")
+              platform=$(echo "$filename" | sed 's/pecos_julia-//; s/.tar.gz//')
+              sha256=$(sha256sum "$tarball" | cut -d' ' -f1)
+
+              cat >> ../julia/PECOS.jl/Artifacts.toml << EOF
+          [[PECOS_julia.download]]
+          url = "https://github.com/PECOS-packages/PECOS/releases/download/${{ github.ref_name }}/$filename"
+          sha256 = "$sha256"
+
+          EOF
+            fi
+          done
+
+          echo "Generated Artifacts.toml:"
+          cat ../julia/PECOS.jl/Artifacts.toml
+
+      - name: Create submission instructions
+        run: |
+          cat > release-bundle/SUBMISSION_INSTRUCTIONS.md << 'EOF'
+          # Julia Package Submission Instructions
+
+          This bundle contains pre-built binaries for PECOS.jl.
+
+          ## Contents
+
+          - `binaries/` - Pre-built libraries for all platforms
+          - `checksums/` - SHA256 checksums for verification
+
+          ## Manual Submission Process
+
+          ### Option 1: Submit to Julia General Registry (Recommended)
+
+          1. Update `julia/PECOS.jl/deps/Artifacts.toml`:
+             - Add the URLs where you'll host these binaries
+             - Add the SHA256 checksums from the checksums folder
+
+          2. Host the binaries:
+             - Create a GitHub release and upload the tarballs
+             - Or use any other hosting service
+
+          3. Register the package:
+             ```julia
+             using Registrator
+             Registrator.register(
+                 "https://github.com/PECOS-packages/PECOS.git",
+                 subdir="julia/PECOS.jl"
+             )
+             ```
+
+          ### Option 2: Submit to Yggdrasil (For JLL creation)
+
+          1. Fork https://github.com/JuliaPackaging/Yggdrasil
+          2. Create a new folder: `P/PECOS_julia/`
+          3. Copy `build_tarballs.jl` from the PECOS repo
+          4. Create a pull request
+
+          ## Platform Support
+
+          Binaries are included for:
+          - Linux x86_64
+          - Linux aarch64
+          - macOS x86_64
+          - macOS aarch64
+          - Windows x86_64
+
+          ## Version Info
+
+          - Version: 0.1.0
+          - Commit: ${{ github.sha }}
+          - Branch: ${{ github.ref_name }}
+          - Date: $(date -u +%Y-%m-%d)
+          EOF
+
+      - name: Create tarball of entire bundle
+        run: |
+          tar -czf pecos-julia-release-bundle-${{ github.run_number }}.tar.gz release-bundle/
+          ls -lh pecos-julia-release-bundle-*.tar.gz
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: pecos-julia-release-bundle
+          path: pecos-julia-release-bundle-*.tar.gz
+          retention-days: 30  # Keep for 30 days
+
+      - name: Determine if pre-release
+        id: check-prerelease
+        if: startsWith(github.ref, 'refs/tags/jl-')
+        run: |
+          # Extract version from tag (remove jl- prefix)
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#jl-}"
+
+          # Check if it contains a hyphen (pre-release indicator)
+          if [[ "$VERSION" == *"-"* ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "Pre-release detected: $VERSION"
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "Release version detected: $VERSION"
+          fi
+
+      - name: Create GitHub Release and Upload Binaries
+        if: startsWith(github.ref, 'refs/tags/jl-')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release-bundle/binaries/*.tar.gz
+          body: |
+            ## Julia binaries for PECOS ${{ github.ref_name }}
+
+            These binaries are automatically downloaded when installing the Julia package.
+
+            ### Installation
+            ```julia
+            using Pkg
+            Pkg.add(url="https://github.com/PECOS-packages/PECOS", subdir="julia/PECOS.jl")
+            ```
+
+            The correct binary for your platform will be downloaded automatically.
+          draft: false
+          prerelease: ${{ steps.check-prerelease.outputs.is_prerelease }}
+          fail_on_unmatched_files: true
+
+      - name: Commit Artifacts.toml to branch
+        if: startsWith(github.ref, 'refs/tags/jl-')
+        run: |
+          # Configure git
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          # Add and commit the Artifacts.toml
+          git add julia/PECOS.jl/Artifacts.toml
+          git commit -m "Add Artifacts.toml for ${{ github.ref_name }}" || echo "No changes to commit"
+
+          # Push to the tag's branch
+          git push origin HEAD:${{ github.ref_name }}-artifacts || echo "Push failed"

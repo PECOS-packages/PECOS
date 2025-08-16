@@ -285,7 +285,7 @@ def eval_cop(
 
     # Eval assignment
     # ---------------
-    expr_eval = recur_eval_op(cop_expr, output, width, shot_id)
+    expr_eval = recur_eval_op(cop_expr, output, width, shot_id=shot_id)
 
     # Assign the final value:
     # -----------------------
@@ -361,7 +361,6 @@ def eval_condition(
         a = conditional_expr["a"]
         b = conditional_expr["b"]
         op = conditional_expr["op"]
-
         if isinstance(a, str):
             a = output[a]  # str -> BinArray
         elif isinstance(a, tuple | list) and len(a) == 2:

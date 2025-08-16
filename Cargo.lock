@@ -1841,6 +1841,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-julia-ffi"
+version = "0.1.0-dev0"
+dependencies = [
+ "pecos",
+]
+
+[[package]]
 name = "pecos-ldpc-decoders"
 version = "0.1.1"
 dependencies = [

@@ -15,7 +15,7 @@ use crate::engine_bindings::{PyEngineCommon, PyEngineWrapper, PyQuantumEngineWra
 use pecos::prelude::StateVecEngine;
 use pyo3::prelude::*;
 
-/// Python wrapper for Rust StateVecEngine to execute ByteMessage circuits
+/// Python wrapper for Rust `StateVecEngine` to execute `ByteMessage` circuits
 #[pyclass(name = "StateVecEngineRs")]
 pub struct PyStateVecEngine {
     inner: StateVecEngine,
@@ -42,7 +42,7 @@ impl PyEngineCommon for PyStateVecEngine {}
 
 #[pymethods]
 impl PyStateVecEngine {
-    /// Create a new StateVecEngine with the specified number of qubits
+    /// Create a new `StateVecEngine` with the specified number of qubits
     #[new]
     fn new(num_qubits: usize) -> Self {
         Self {
@@ -56,13 +56,13 @@ impl PyStateVecEngine {
         self.py_reset()
     }
 
-    /// Process a ByteMessage circuit and return the measurement results
+    /// Process a `ByteMessage` circuit and return the measurement results
     #[pyo3(text_signature = "($self, message)")]
     fn process(&mut self, message: &PyByteMessage) -> PyResult<PyByteMessage> {
         self.py_process(message)
     }
 
-    /// Execute a ByteMessage circuit multiple times and return the measurement results
+    /// Execute a `ByteMessage` circuit multiple times and return the measurement results
     #[pyo3(text_signature = "($self, message, shots=1000)")]
     fn run_circuit_with_shots(
         &mut self,

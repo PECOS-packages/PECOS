@@ -1,0 +1,69 @@
+# Copyright 2025 The PECOS Developers
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
+
+name: Julia - Update build hash
+
+on:
+  push:
+    tags:
+      - 'jl-*'
+
+jobs:
+  update-build-hash:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Get commit SHA
+      id: get-sha
+      run: |
+        # Get the commit SHA that the tag points to
+        COMMIT_SHA=$(git rev-list -n 1 ${{ github.ref_name }})
+        echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+        echo "Tag ${{ github.ref_name }} points to commit: $COMMIT_SHA"
+
+    - name: Update build_tarballs.jl
+      run: |
+        # Update the commit reference in build_tarballs.jl
+        sed -i 's/get(ENV, "PECOS_BUILD_COMMIT", "main")/"${{ steps.get-sha.outputs.commit_sha }}"/' \
+          julia/PECOS.jl/deps/build_tarballs.jl
+
+        # Show the change
+        echo "Updated build_tarballs.jl:"
+        grep -n "GitSource" julia/PECOS.jl/deps/build_tarballs.jl
+
+    - name: Create Pull Request
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        commit-message: "Update Julia build hash for ${{ github.ref_name }}"
+        title: "Update Julia build hash for ${{ github.ref_name }}"
+        body: |
+          This PR automatically updates the commit hash in `build_tarballs.jl` for tag `${{ github.ref_name }}`.
+
+          The build will now use commit: `${{ steps.get-sha.outputs.commit_sha }}`
+
+          After merging this PR:
+          1. The julia-release workflow will build binaries with this specific commit
+          2. You can manually download the artifacts and submit to Yggdrasil
+          3. The submission script will automatically use this commit hash
+        branch: update-julia-hash-${{ github.ref_name }}
+        delete-branch: true
+        labels: |
+          julia
+          automated

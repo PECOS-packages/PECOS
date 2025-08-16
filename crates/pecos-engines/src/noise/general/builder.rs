@@ -412,6 +412,15 @@ impl GeneralNoiseModelBuilder {
         self
     }
 
+    // TODO: See if we should put a average scaling...
+    /// Set the average prep crosstalk
+    #[must_use]
+    pub fn with_average_p_prep_crosstalk(mut self, prob: f64) -> Self {
+        let prob: f64 = prob * 18.0 / 5.0;
+        self.p_prep_crosstalk = Some(prob);
+        self
+    }
+
     /// Set the scaling factor for initialization errors
     ///
     /// Multiplier for preparation error probabilities. Allows adjustment of the relative
@@ -639,6 +648,15 @@ impl GeneralNoiseModelBuilder {
     #[must_use]
     pub fn with_p_meas_crosstalk(mut self, prob: f64) -> Self {
         self.p_meas_crosstalk = Some(Self::validate_probability(prob));
+        self
+    }
+
+    // TODO: See if we should put a average scaling...
+    /// Set the average measurement crosstalk
+    #[must_use]
+    pub fn with_average_p_meas_crosstalk(mut self, prob: f64) -> Self {
+        let prob: f64 = prob * 18.0 / 5.0;
+        self.p_meas_crosstalk = Some(prob);
         self
     }
 

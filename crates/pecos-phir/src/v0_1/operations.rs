@@ -1151,8 +1151,107 @@ impl OperationProcessor {
                                             function: Some(name),
                                             ..
                                         } = branch_op
+                                            && op_cop == "ffcall"
+                                            && op_args == args
+                                            && op_returns == returns
                                         {
-                                            if op_cop == "ffcall"
+                                            // Execute the function directly
+                                            let mut fo_clone = foreign_obj.clone_box();
+
+                                            // Convert arguments to i64 values
+                                            let mut call_args = Vec::new();
+                                            for arg in args {
+                                                let value = self.evaluate_arg_item(arg)?;
+                                                call_args.push(value);
+                                            }
+
+                                            let result = fo_clone.exec(name, &call_args)?;
+
+                                            // Handle return values
+                                            if !returns.is_empty() {
+                                                for (i, ret) in returns.iter().enumerate() {
+                                                    if i < result.len() {
+                                                        match ret {
+                                                            ArgItem::Simple(var) => {
+                                                                // Assign to a variable
+                                                                let result_value =
+                                                                    u32::try_from(result[i])
+                                                                        .unwrap_or(0);
+
+                                                                // Update primary storage in environment
+                                                                if !self
+                                                                    .environment
+                                                                    .has_variable(var)
+                                                                {
+                                                                    let _ = self
+                                                                        .environment
+                                                                        .add_variable(
+                                                                            var,
+                                                                            DataType::I32,
+                                                                            32,
+                                                                        );
+                                                                }
+                                                                let _ = self.environment.set(
+                                                                    var,
+                                                                    u64::from(result_value),
+                                                                );
+
+                                                                // All values stored in environment
+                                                            }
+                                                            ArgItem::Indexed((var, idx)) => {
+                                                                // Assign to a bit
+                                                                let bit_value =
+                                                                    u32::try_from(result[i] & 1)
+                                                                        .unwrap_or(0);
+
+                                                                // Update primary storage in environment
+                                                                if !self
+                                                                    .environment
+                                                                    .has_variable(var)
+                                                                {
+                                                                    let _ = self
+                                                                        .environment
+                                                                        .add_variable(
+                                                                            var,
+                                                                            DataType::I32,
+                                                                            32,
+                                                                        );
+                                                                }
+
+                                                                // Set the bit in environment
+                                                                let _ = self.environment.set_bit(
+                                                                    var,
+                                                                    *idx,
+                                                                    u64::from(bit_value),
+                                                                );
+
+                                                                // Environment is the single source of truth - no need for additional storage
+                                                            }
+                                                            _ => {
+                                                                return Err(PecosError::Input(
+                                                                            "Invalid return type for foreign function call".to_string(),
+                                                                        ));
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            return Ok(true);
+                                        }
+                                    }
+
+                                    // Check false branch if it exists
+                                    if let Some(fb_ops) = fb {
+                                        for branch_op in fb_ops {
+                                            if let Operation::ClassicalOp {
+                                                cop: op_cop,
+                                                args: op_args,
+                                                returns: op_returns,
+                                                function: Some(name),
+                                                ..
+                                            } = branch_op
+                                                && op_cop == "ffcall"
                                                 && op_args == args
                                                 && op_returns == returns
                                             {
@@ -1197,7 +1296,7 @@ impl OperationProcessor {
                                                                         u64::from(result_value),
                                                                     );
 
-                                                                    // All values stored in environment
+                                                                    // Environment is the single source of truth for all variable data
                                                                 }
                                                                 ArgItem::Indexed((var, idx)) => {
                                                                     // Assign to a bit
@@ -1228,12 +1327,12 @@ impl OperationProcessor {
                                                                             u64::from(bit_value),
                                                                         );
 
-                                                                    // Environment is the single source of truth - no need for additional storage
+                                                                    // Environment is the single source of truth for all variable data
                                                                 }
                                                                 _ => {
                                                                     return Err(PecosError::Input(
-                                                                            "Invalid return type for foreign function call".to_string(),
-                                                                        ));
+                                                                                "Invalid return type for foreign function call".to_string(),
+                                                                            ));
                                                                 }
                                                             }
                                                         }
@@ -1241,123 +1340,6 @@ impl OperationProcessor {
                                                 }
 
                                                 return Ok(true);
-                                            }
-                                        }
-                                    }
-
-                                    // Check false branch if it exists
-                                    if let Some(fb_ops) = fb {
-                                        for branch_op in fb_ops {
-                                            if let Operation::ClassicalOp {
-                                                cop: op_cop,
-                                                args: op_args,
-                                                returns: op_returns,
-                                                function: Some(name),
-                                                ..
-                                            } = branch_op
-                                            {
-                                                if op_cop == "ffcall"
-                                                    && op_args == args
-                                                    && op_returns == returns
-                                                {
-                                                    // Execute the function directly
-                                                    let mut fo_clone = foreign_obj.clone_box();
-
-                                                    // Convert arguments to i64 values
-                                                    let mut call_args = Vec::new();
-                                                    for arg in args {
-                                                        let value = self.evaluate_arg_item(arg)?;
-                                                        call_args.push(value);
-                                                    }
-
-                                                    let result = fo_clone.exec(name, &call_args)?;
-
-                                                    // Handle return values
-                                                    if !returns.is_empty() {
-                                                        for (i, ret) in returns.iter().enumerate() {
-                                                            if i < result.len() {
-                                                                match ret {
-                                                                    ArgItem::Simple(var) => {
-                                                                        // Assign to a variable
-                                                                        let result_value =
-                                                                            u32::try_from(
-                                                                                result[i],
-                                                                            )
-                                                                            .unwrap_or(0);
-
-                                                                        // Update primary storage in environment
-                                                                        if !self
-                                                                            .environment
-                                                                            .has_variable(var)
-                                                                        {
-                                                                            let _ = self
-                                                                                .environment
-                                                                                .add_variable(
-                                                                                    var,
-                                                                                    DataType::I32,
-                                                                                    32,
-                                                                                );
-                                                                        }
-                                                                        let _ =
-                                                                            self.environment.set(
-                                                                                var,
-                                                                                u64::from(
-                                                                                    result_value,
-                                                                                ),
-                                                                            );
-
-                                                                        // Environment is the single source of truth for all variable data
-                                                                    }
-                                                                    ArgItem::Indexed((
-                                                                        var,
-                                                                        idx,
-                                                                    )) => {
-                                                                        // Assign to a bit
-                                                                        let bit_value =
-                                                                            u32::try_from(
-                                                                                result[i] & 1,
-                                                                            )
-                                                                            .unwrap_or(0);
-
-                                                                        // Update primary storage in environment
-                                                                        if !self
-                                                                            .environment
-                                                                            .has_variable(var)
-                                                                        {
-                                                                            let _ = self
-                                                                                .environment
-                                                                                .add_variable(
-                                                                                    var,
-                                                                                    DataType::I32,
-                                                                                    32,
-                                                                                );
-                                                                        }
-
-                                                                        // Set the bit in environment
-                                                                        let _ = self
-                                                                            .environment
-                                                                            .set_bit(
-                                                                                var,
-                                                                                *idx,
-                                                                                u64::from(
-                                                                                    bit_value,
-                                                                                ),
-                                                                            );
-
-                                                                        // Environment is the single source of truth for all variable data
-                                                                    }
-                                                                    _ => {
-                                                                        return Err(PecosError::Input(
-                                                                                "Invalid return type for foreign function call".to_string(),
-                                                                            ));
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-
-                                                    return Ok(true);
-                                                }
                                             }
                                         }
                                     }
@@ -1682,15 +1664,12 @@ impl OperationProcessor {
 
             // Store in the standard measurement variable
             // Create the variable if it doesn't exist
-            if !self.environment.has_variable(&prefixed_name) {
-                if let Err(e) = self
+            if !self.environment.has_variable(&prefixed_name)
+                && let Err(e) = self
                     .environment
                     .add_variable(&prefixed_name, DataType::I32, 32)
-                {
-                    log::warn!(
-                        "Could not create measurement variable: {prefixed_name}. Error: {e}"
-                    );
-                }
+            {
+                log::warn!("Could not create measurement variable: {prefixed_name}. Error: {e}");
             }
 
             // Set the measurement value
@@ -1709,17 +1688,17 @@ impl OperationProcessor {
                     returns,
                     ..
                 } = op
+                    && qop == "Measure"
+                    && !returns.is_empty()
                 {
-                    if qop == "Measure" && !returns.is_empty() {
-                        // Get the variable name and index from the returns field
-                        let (var_name, var_idx) = &returns[0];
+                    // Get the variable name and index from the returns field
+                    let (var_name, var_idx) = &returns[0];
 
-                        // Check if this is the right measurement result
-                        if *var_idx == result_id as usize {
-                            // Store the result in the specific bit of the variable
-                            self.store_measurement_result(var_name, *var_idx, *outcome);
-                            found_mapping = true;
-                        }
+                    // Check if this is the right measurement result
+                    if *var_idx == result_id as usize {
+                        // Store the result in the specific bit of the variable
+                        self.store_measurement_result(var_name, *var_idx, *outcome);
+                        found_mapping = true;
                     }
                 }
             }

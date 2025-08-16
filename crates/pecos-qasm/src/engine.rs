@@ -152,10 +152,10 @@ impl QASMEngine {
     pub fn qubit_id(&self, register_name: &str, index: usize) -> Option<usize> {
         if let Some(qasm_program) = &self.program {
             let program = qasm_program.program();
-            if let Some(qubit_ids) = program.quantum_registers.get(register_name) {
-                if index < qubit_ids.len() {
-                    return Some(qubit_ids[index]);
-                }
+            if let Some(qubit_ids) = program.quantum_registers.get(register_name)
+                && index < qubit_ids.len()
+            {
+                return Some(qubit_ids[index]);
             }
         }
         None
@@ -185,10 +185,10 @@ impl QASMEngine {
 
         // Reset WASM state for new shot
         #[cfg(feature = "wasm")]
-        if let Some(ref mut foreign_obj) = self.foreign_object {
-            if let Err(e) = foreign_obj.new_instance() {
-                log::error!("Failed to reset WASM instance: {e}");
-            }
+        if let Some(ref mut foreign_obj) = self.foreign_object
+            && let Err(e) = foreign_obj.new_instance()
+        {
+            log::error!("Failed to reset WASM instance: {e}");
         }
 
         // Re-initialize from program if available
@@ -1100,42 +1100,39 @@ impl QASMEngine {
     ) -> Result<ExpressionValue, PecosError> {
         // Check if this is a WASM function call
         #[cfg(feature = "wasm")]
-        if let Expression::FunctionCall { name, args } = expr {
-            if let Some(ref _foreign_obj) = self.foreign_object {
-                // Check if it's not a built-in function
-                if !crate::BUILTIN_FUNCTIONS.contains(&name.as_str()) {
-                    // Evaluate arguments first (while we still have access to self)
-                    let mut arg_values = Vec::new();
-                    for arg in args {
-                        let val = evaluate_expression_bitvec(arg, self, target_width)?;
-                        arg_values.push(val.as_i64());
-                    }
+        if let Expression::FunctionCall { name, args } = expr
+            && let Some(ref _foreign_obj) = self.foreign_object
+        {
+            // Check if it's not a built-in function
+            if !crate::BUILTIN_FUNCTIONS.contains(&name.as_str()) {
+                // Evaluate arguments first (while we still have access to self)
+                let mut arg_values = Vec::new();
+                for arg in args {
+                    let val = evaluate_expression_bitvec(arg, self, target_width)?;
+                    arg_values.push(val.as_i64());
+                }
 
-                    // Now call the WASM function with evaluated arguments
-                    if let Some(ref mut foreign_obj) = self.foreign_object {
-                        let results = foreign_obj.exec(name, &arg_values)?;
+                // Now call the WASM function with evaluated arguments
+                if let Some(ref mut foreign_obj) = self.foreign_object {
+                    let results = foreign_obj.exec(name, &arg_values)?;
 
-                        // Convert result back to BitVec
-                        if results.is_empty() {
-                            // Void function - return 0
-                            return Ok(ExpressionValue::BitVec(BitVec::repeat(
-                                false,
-                                target_width,
-                            )));
-                        } else if results.len() == 1 {
-                            // Single return value - convert to BitVec
-                            let value = results[0];
-                            let mut bitvec = BitVec::<u8, Lsb0>::with_capacity(target_width);
-                            for i in 0..target_width {
-                                bitvec.push((value >> i) & 1 != 0);
-                            }
-                            return Ok(ExpressionValue::BitVec(bitvec));
+                    // Convert result back to BitVec
+                    if results.is_empty() {
+                        // Void function - return 0
+                        return Ok(ExpressionValue::BitVec(BitVec::repeat(false, target_width)));
+                    } else if results.len() == 1 {
+                        // Single return value - convert to BitVec
+                        let value = results[0];
+                        let mut bitvec = BitVec::<u8, Lsb0>::with_capacity(target_width);
+                        for i in 0..target_width {
+                            bitvec.push((value >> i) & 1 != 0);
                         }
-                        return Err(PecosError::ParseInvalidExpression(format!(
-                            "WASM function '{name}' returned {} values, but only single return values are supported in QASM expressions",
-                            results.len()
-                        )));
+                        return Ok(ExpressionValue::BitVec(bitvec));
                     }
+                    return Err(PecosError::ParseInvalidExpression(format!(
+                        "WASM function '{name}' returned {} values, but only single return values are supported in QASM expressions",
+                        results.len()
+                    )));
                 }
             }
         }

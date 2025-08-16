@@ -40,8 +40,8 @@ impl PHIREngine {
     /// # Errors
     ///
     /// Returns a `PyErr` if:
-    /// - Python module "pecos.classical_interpreters" cannot be imported
-    /// - "PHIRClassicalInterpreter" class cannot be found
+    /// - Python module "`pecos.classical_interpreters`" cannot be imported
+    /// - "`PHIRClassicalInterpreter`" class cannot be found
     /// - Interpreter cannot be instantiated
     /// - The interpreter's init method fails when given the JSON
     /// - The PHIR JSON is invalid
@@ -567,34 +567,32 @@ impl PHIREngine {
                 continue; // If we can't extract the op as a dict, skip it
             };
 
-            if let Some(t) = op_dict.get("qop") {
-                if let Ok(op_type) = t.extract::<String>(py) {
-                    if op_type == "Measure" {
-                        // Get the returns field
-                        if let Some(returns) = op_dict.get("returns") {
-                            // Extract the returns as a list
-                            if let Ok(returns_list) = returns.extract::<Vec<Vec<String>>>(py) {
-                                // Process each return
-                                for ret in returns_list {
-                                    if ret.len() >= 2 {
-                                        // The first element is the register name, the second is the index
-                                        let register_name = ret[0].clone();
-                                        if let Ok(index) = ret[1].parse::<u32>() {
-                                            // Store the mapping from result_id to (register_name, index)
-                                            result_to_register
-                                                .insert(result_id, (register_name.clone(), index));
+            if let Some(t) = op_dict.get("qop")
+                && let Ok(op_type) = t.extract::<String>(py)
+                && op_type == "Measure"
+            {
+                // Get the returns field
+                if let Some(returns) = op_dict.get("returns") {
+                    // Extract the returns as a list
+                    if let Ok(returns_list) = returns.extract::<Vec<Vec<String>>>(py) {
+                        // Process each return
+                        for ret in returns_list {
+                            if ret.len() >= 2 {
+                                // The first element is the register name, the second is the index
+                                let register_name = ret[0].clone();
+                                if let Ok(index) = ret[1].parse::<u32>() {
+                                    // Store the mapping from result_id to (register_name, index)
+                                    result_to_register
+                                        .insert(result_id, (register_name.clone(), index));
 
-                                            // Also create a measurement_X name as a fallback
-                                            let measurement_name =
-                                                format!("measurement_{result_id}");
-                                            register_mappings
-                                                .entry(measurement_name)
-                                                .or_insert_with(|| register_name.clone());
+                                    // Also create a measurement_X name as a fallback
+                                    let measurement_name = format!("measurement_{result_id}");
+                                    register_mappings
+                                        .entry(measurement_name)
+                                        .or_insert_with(|| register_name.clone());
 
-                                            // Increment the result_id for the next measurement
-                                            result_id += 1;
-                                        }
-                                    }
+                                    // Increment the result_id for the next measurement
+                                    result_id += 1;
                                 }
                             }
                         }
@@ -610,24 +608,21 @@ impl PHIREngine {
                 continue; // If we can't extract the op as a dict, skip it
             };
 
-            if let Some(t) = op_dict.get("cop") {
-                if let Ok(cop_type) = t.extract::<String>(py) {
-                    if cop_type == "Result" {
-                        // This is a Result instruction - it maps source registers to output registers
-                        if let (Some(args), Some(returns)) =
-                            (op_dict.get("args"), op_dict.get("returns"))
-                        {
-                            if let (Ok(src_regs), Ok(dst_regs)) = (
-                                args.extract::<Vec<String>>(py),
-                                returns.extract::<Vec<String>>(py),
-                            ) {
-                                // Map each source register to its destination
-                                for (i, src) in src_regs.iter().enumerate() {
-                                    if i < dst_regs.len() {
-                                        register_mappings.insert(src.clone(), dst_regs[i].clone());
-                                    }
-                                }
-                            }
+            if let Some(t) = op_dict.get("cop")
+                && let Ok(cop_type) = t.extract::<String>(py)
+                && cop_type == "Result"
+            {
+                // This is a Result instruction - it maps source registers to output registers
+                if let (Some(args), Some(returns)) = (op_dict.get("args"), op_dict.get("returns"))
+                    && let (Ok(src_regs), Ok(dst_regs)) = (
+                        args.extract::<Vec<String>>(py),
+                        returns.extract::<Vec<String>>(py),
+                    )
+                {
+                    // Map each source register to its destination
+                    for (i, src) in src_regs.iter().enumerate() {
+                        if i < dst_regs.len() {
+                            register_mappings.insert(src.clone(), dst_regs[i].clone());
                         }
                     }
                 }
@@ -884,10 +879,10 @@ impl ClassicalEngine for PHIREngine {
                     // Fallback if Python-side doesn't implement num_qubits
                     match interpreter.getattr(py, "program") {
                         Ok(program) => {
-                            if let Ok(qvars) = program.getattr(py, "quantum_variables") {
-                                if let Ok(total) = qvars.call_method0(py, "total_qubits") {
-                                    return total.extract(py).unwrap_or(0);
-                                }
+                            if let Ok(qvars) = program.getattr(py, "quantum_variables")
+                                && let Ok(total) = qvars.call_method0(py, "total_qubits")
+                            {
+                                return total.extract(py).unwrap_or(0);
                             }
                             0 // Default if we can't get the information
                         }

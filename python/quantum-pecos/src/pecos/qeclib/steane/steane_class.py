@@ -792,6 +792,7 @@ class Steane(Vars):
         """prepare a Bell state and then teleport"""
         # TODO: ...
         ...
+        raise NotImplementedError("qec_knill not implemented.")
 
     def syn_bare(self, syn: CReg) -> Block:
         """One single syndrome bit per check using bare syndrome extraction"""
@@ -803,11 +804,11 @@ class Steane(Vars):
 
     def syn_2para_v1_flagged(self):
         # TODO: ...
-        ...
+        raise NotImplementedError("syn_2para_v1_flagged not implemented.")
 
     def syn_2para_v2_flagged(self):
         # TODO: ...
-        ...
+        raise NotImplementedError("syn_2para_v2_flagged not implemented.")
 
     def permute(self, other: Steane) -> Block:
         """Permute this code block (including both quantum and classical registers) with another."""

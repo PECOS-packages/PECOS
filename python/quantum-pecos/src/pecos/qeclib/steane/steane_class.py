@@ -72,8 +72,9 @@ class Steane(Vars):
         Raises:
             ValueError: If provided ancilla register has fewer than 3 qubits.
         """
+
         super().__init__()
-        self.check_indices = [[3, 2, 4, 1], [6, 3, 2, 5], [7, 6, 3, 4]]
+        self.check_indices = [[2, 1, 3, 0], [5, 2, 1, 4], [6, 5, 2, 3]]
 
         self.d = QReg(f"{name}_d", 7)
         self.a = ancillas or QReg(f"{name}_a", 3)
@@ -83,9 +84,9 @@ class Steane(Vars):
             self.f = None
         self.c = CReg(f"{name}_c", 32)
 
-        if self.a.size < 3:
-            msg = f"Steane ancilla registers must have >= 3 qubits (provided: {self.a.size})"
-            raise ValueError(msg)
+        # if self.a.size < 3:
+        #     msg = f"Steane ancilla registers must have >= 3 qubits (provided: {self.a.size})"
+        #     raise ValueError(msg)
 
         # TODO: Make it so I can put these in self.c... need to convert things like if(c) and c = a ^ b, a = 0;
         #  to allow lists of bits

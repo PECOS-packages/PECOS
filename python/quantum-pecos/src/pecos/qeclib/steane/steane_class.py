@@ -74,6 +74,8 @@ class Steane(Vars):
         self.a = ancillas or QReg(f"{name}_a", 3)
         if flag_qubits is not None:
             self.f = flag_qubits or QReg(f"{name}_f", 3)
+        else:
+            self.f = None
         self.c = CReg(f"{name}_c", 32)
 
         if self.a.size < 3:
@@ -791,7 +793,6 @@ class Steane(Vars):
     def qec_knill(self):
         """prepare a Bell state and then teleport"""
         # TODO: ...
-        ...
         raise NotImplementedError("qec_knill not implemented.")
 
     def syn_bare(self, syn: CReg) -> Block:

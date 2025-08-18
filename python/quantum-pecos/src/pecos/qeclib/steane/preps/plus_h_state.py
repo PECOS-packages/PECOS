@@ -89,6 +89,7 @@ class PrepHStateFT(Block):
                 flag=a[1],
                 out=out[0],
                 out_flag=out[1],
+                with_barriers=True,
             ),
         )
 

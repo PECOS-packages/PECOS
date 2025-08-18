@@ -53,17 +53,21 @@ class QASMGenerator(Generator):
                 self.write(f"// Generated using: PECOS version {__version__}")
             for var in block.vars:
                 var_def = self.process_var_def(var)
-                self.write(var_def)
+                if var_def:
+                    self.write(var_def)
 
             for op in block.ops:
                 op_name = type(op).__name__
                 if op_name == "Vars":
                     for var in op.vars:
                         var_def = self.process_var_def(var)
-                        self.write(var_def)
+                        if var_def:
+                            self.write(var_def)
         return previous_scope
 
     def process_var_def(self, var) -> str:
+        if var is None:
+            return ""
         var_type = type(var).__name__
         return f"{var_type.lower()} {var.sym}[{var.size}];"
 

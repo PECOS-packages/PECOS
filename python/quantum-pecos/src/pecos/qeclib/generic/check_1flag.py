@@ -56,6 +56,8 @@ class Check1Flag(Block):
             flag: Flag qubit used to detect hook errors.
             out: Classical bit to store the measurement result.
             out_flag: Classical bit to store the flag measurement result.
+            with_barriers: Whether to insert barrier instructions between operations to prevent
+                gate reordering. Defaults to False.
 
         Raises:
             Exception: If check weight is less than 3.

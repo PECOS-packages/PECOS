@@ -1,8 +1,16 @@
+"""Flagged syndrome extraction implementations for the Steane code.
+
+This module provides syndrome extraction with flag qubits for detecting
+and diagnosing errors during the syndrome extraction process in the
+Steane 7-qubit quantum error correction code.
+"""
+
 from itertools import cycle
 from typing import Any
 
 from pecos.qeclib.generic.check_1flag import Check1Flag
-from pecos.slr import (Block, Comment, CReg, QReg)
+from pecos.slr import Block, Comment, CReg, QReg
+
 
 def poly2qubits(poly: list[Any], data: QReg) -> list[Any]:
     """Convert polygon node IDs to qubit references.
@@ -16,17 +24,38 @@ def poly2qubits(poly: list[Any], data: QReg) -> list[Any]:
     """
     return [data[q] for q in poly]
 
-class SynExtractFlagged(Block):
 
-    def __init__(self, data: QReg, ancillas: QReg, flag_qubits: QReg, checks: list, syn: CReg, flag_bits: CReg) -> None:
+class SynExtractFlagged(Block):
+    """Flagged syndrome extraction for Steane code with flag qubits for error detection."""
+
+    def __init__(
+        self,
+        data: QReg,
+        ancillas: QReg,
+        flag_qubits: QReg,
+        checks: list,
+        syn: CReg,
+        flag_bits: CReg,
+    ) -> None:
         """Initialize flagged syndrome extraction.
 
         Args:
             data: Data qubit register.
             ancillas: Ancilla qubit register.
+            flag_qubits: Flag qubit register for hook error detection.
+            checks: List of check operators to apply.
             syn: Classical register for syndrome storage.
+            flag_bits: Classical register for flag bit storage.
+
+        Raises:
+            ValueError: If register lengths don't match expected sizes.
         """
-        assert(len(syn) == len(flag_bits) == 2*len(checks) == 6)
+        if not (len(syn) == len(flag_bits) == 2 * len(checks) == 6):
+            msg = (
+                f"Expected syndrome and flag registers of length 6 (2 * {len(checks)} checks), "
+                f"got syn={len(syn)}, flag_bits={len(flag_bits)}"
+            )
+            raise ValueError(msg)
         a = cycle(range(len(ancillas)))
         f = cycle(range(len(flag_qubits)))
         s = iter(range(len(syn)))

@@ -17,7 +17,7 @@ all necessary operations for fault-tolerant quantum computation.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 from warnings import warn
 
 from pecos.qeclib.steane.decoders.lookup import (
@@ -33,7 +33,10 @@ from pecos.qeclib.steane.preps.t_plus_state import (
     PrepEncodeTPlusFTRUS,
     PrepEncodeTPlusNonFT,
 )
-from pecos.qeclib.steane.qec.qec_3parallel import ParallelFlagQECActiveCorrection, ParallelFlagQEC
+from pecos.qeclib.steane.qec.qec_3parallel import (
+    ParallelFlagQEC,
+    ParallelFlagQECActiveCorrection,
+)
 from pecos.qeclib.steane.syn_extract.bare import SynExtractBare
 from pecos.qeclib.steane.syn_extract.flagged import SynExtractFlagged
 from pecos.slr import Block, CReg, If, Permute, QReg, Vars
@@ -63,6 +66,8 @@ class Steane(Vars):
             default_rus_limit: Default limit for repeat-until-success procedures. Defaults to 3.
             ancillas: Optional pre-existing ancilla register. If None, creates a new 3-qubit
                 ancilla register. Must have at least 3 qubits if provided.
+            flag_qubits: Optional pre-existing flag qubit register. If None, creates a new 3-qubit
+                flag register when needed.
 
         Raises:
             ValueError: If provided ancilla register has fewer than 3 qubits.
@@ -557,9 +562,16 @@ class Steane(Vars):
             block.extend(If(self.flags != 0).Then(flag.set(1)))
         return block
 
-    def qec_not_active(self, flag: Bit | None = None, pf_x: Bit | None = None, pf_z: Bit | None = None,
-                       flag_x: CReg | None = None, flag_z: CReg | None = None,
-                       syn_x: CReg | None = None, syn_z: CReg | None = None,) -> Block:
+    def qec_not_active(
+        self,
+        flag: Bit | None = None,
+        pf_x: Bit | None = None,
+        pf_z: Bit | None = None,
+        flag_x: CReg | None = None,
+        flag_z: CReg | None = None,
+        syn_x: CReg | None = None,
+        syn_z: CReg | None = None,
+    ) -> Block:
         """Perform quantum error correction using parallel flag-based without active correction.
 
         There are potentially three syndrome extraction paths take:
@@ -589,46 +601,55 @@ class Steane(Vars):
         Returns:
             Block containing the quantum error correction operations.
         """
-
         block = Block()
 
-        block.extend(ParallelFlagQEC(
-            q=self.d,
-            a=self.a,
-            flag_x=self.flag_x,
-            flag_z=self.flag_z,
-            flags=self.flags,
-            syn_x=self.syn_x,
-            syn_z=self.syn_z,
-            last_raw_syn_x=self.last_raw_syn_x,
-            last_raw_syn_z=self.last_raw_syn_z,
-            syndromes=self.syndromes,
-            pf_x=self.pf_x,
-            pf_z=self.pf_z,
-            scratch=self.scratch,
-        ))
+        block.extend(
+            ParallelFlagQEC(
+                q=self.d,
+                a=self.a,
+                flag_x=self.flag_x,
+                flag_z=self.flag_z,
+                flags=self.flags,
+                syn_x=self.syn_x,
+                syn_z=self.syn_z,
+                last_raw_syn_x=self.last_raw_syn_x,
+                last_raw_syn_z=self.last_raw_syn_z,
+                syndromes=self.syndromes,
+                pf_x=self.pf_x,
+                pf_z=self.pf_z,
+                scratch=self.scratch,
+            ),
+        )
         if flag is not None:
             block.extend(
-                If(self.flags != 0).Then(flag.set(1))
+                If(self.flags != 0).Then(flag.set(1)),
             )
 
-        if  flag_x is not None:
-            assert(len(flag_x) == 3)
+        if flag_x is not None:
+            if len(flag_x) != 3:
+                msg = f"flag_x must have length 3, got {len(flag_x)}"
+                raise ValueError(msg)
             block.extend(flag_x.set(self.flag_x))
 
         if flag_z is not None:
-            assert (len(flag_z) == 3)
+            if len(flag_z) != 3:
+                msg = f"flag_z must have length 3, got {len(flag_z)}"
+                raise ValueError(msg)
             block.extend(flag_z.set(self.flag_z))
 
-        if  syn_x is not None:
-            assert (len(syn_x) == 3)
+        if syn_x is not None:
+            if len(syn_x) != 3:
+                msg = f"syn_x must have length 3, got {len(syn_x)}"
+                raise ValueError(msg)
             block.extend(syn_x.set(self.syn_x))
 
         if syn_z is not None:
-            assert (len(syn_z) == 3)
+            if len(syn_z) != 3:
+                msg = f"syn_z must have length 3, got {len(syn_z)}"
+                raise ValueError(msg)
             block.extend(syn_z.set(self.syn_z))
 
-        if  pf_x is not None:
+        if pf_x is not None:
             block.extend(pf_x.set(self.pf_x))
 
         if pf_z is not None:
@@ -790,26 +811,39 @@ class Steane(Vars):
             block.extend(If(self.syn_meas != 0).Then(flag.set(1)))
         return block
 
-    def qec_knill(self):
-        """prepare a Bell state and then teleport"""
+    def qec_knill(self) -> NoReturn:
+        """Prepare a Bell state and then teleport."""
         # TODO: ...
-        raise NotImplementedError("qec_knill not implemented.")
+        msg = "qec_knill not implemented."
+        raise NotImplementedError(msg)
 
     def syn_bare(self, syn: CReg) -> Block:
-        """One single syndrome bit per check using bare syndrome extraction"""
+        """One single syndrome bit per check using bare syndrome extraction."""
         return SynExtractBare(self.d, self.a, self.check_indices, syn)
 
     def syn_flagged(self, syn: CReg, flags: CReg) -> Block:
-        """One single syndrome bit and one single flag bit per check"""
+        """One single syndrome bit and one single flag bit per check."""
         return SynExtractFlagged(self.d, self.a, self.f, self.check_indices, syn, flags)
 
-    def syn_2para_v1_flagged(self):
-        # TODO: ...
-        raise NotImplementedError("syn_2para_v1_flagged not implemented.")
+    def syn_2para_v1_flagged(self) -> NoReturn:
+        """Two-parallel syndrome extraction version 1 with flagging (not implemented).
 
-    def syn_2para_v2_flagged(self):
+        Raises:
+            NotImplementedError: This method is not yet implemented.
+        """
         # TODO: ...
-        raise NotImplementedError("syn_2para_v2_flagged not implemented.")
+        msg = "syn_2para_v1_flagged not implemented."
+        raise NotImplementedError(msg)
+
+    def syn_2para_v2_flagged(self) -> NoReturn:
+        """Two-parallel syndrome extraction version 2 with flagging (not implemented).
+
+        Raises:
+            NotImplementedError: This method is not yet implemented.
+        """
+        # TODO: ...
+        msg = "syn_2para_v2_flagged not implemented."
+        raise NotImplementedError(msg)
 
     def permute(self, other: Steane) -> Block:
         """Permute this code block (including both quantum and classical registers) with another."""

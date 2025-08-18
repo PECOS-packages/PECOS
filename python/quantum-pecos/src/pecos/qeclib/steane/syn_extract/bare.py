@@ -1,8 +1,15 @@
+"""Bare syndrome extraction implementations for the Steane code.
+
+This module provides syndrome extraction without flag qubits for detecting
+errors in the Steane 7-qubit quantum error correction code.
+"""
+
 from itertools import cycle
 from typing import Any
 
 from pecos.qeclib.generic.check import Check
-from pecos.slr import (Block, Comment, CReg, QReg)
+from pecos.slr import Block, Comment, CReg, QReg
+
 
 def poly2qubits(poly: list[Any], data: QReg) -> list[Any]:
     """Convert polygon node IDs to qubit references.
@@ -16,7 +23,9 @@ def poly2qubits(poly: list[Any], data: QReg) -> list[Any]:
     """
     return [data[q] for q in poly]
 
+
 class SynExtractBare(Block):
+    """Bare syndrome extraction for Steane code without flag qubits."""
 
     def __init__(self, data: QReg, ancillas: QReg, checks: list, syn: CReg) -> None:
         """Initialize bare syndrome extraction.
@@ -24,9 +33,15 @@ class SynExtractBare(Block):
         Args:
             data: Data qubit register.
             ancillas: Ancilla qubit register.
+            checks: List of check operators to apply.
             syn: Classical register for syndrome storage.
+
+        Raises:
+            ValueError: If syndrome register length doesn't match expected size.
         """
-        assert(len(syn) == 2*len(checks) == 6)
+        if len(syn) != 2 * len(checks) or len(syn) != 6:
+            msg = f"Expected syndrome register of length 6 (2 * {len(checks)} checks), got {len(syn)}"
+            raise ValueError(msg)
         a = cycle(range(len(ancillas)))
         s = iter(range(len(syn)))
 

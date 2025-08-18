@@ -16,8 +16,9 @@ fault-tolerant error detection and correction using parallel syndrome extraction
 # specific language governing permissions and limitations under the License.
 
 from pecos.qeclib.steane.decoders.lookup import (
+    FlagLookupQASM,
     FlagLookupQASMActiveCorrectionX,
-    FlagLookupQASMActiveCorrectionZ, FlagLookupQASM,
+    FlagLookupQASMActiveCorrectionZ,
 )
 from pecos.qeclib.steane.syn_extract.six_check_nonflagging import SixUnflaggedSyn
 from pecos.qeclib.steane.syn_extract.three_parallel_flagging import (
@@ -112,6 +113,7 @@ class ParallelFlagQECActiveCorrection(Block):
             ),
         )
 
+
 class ParallelFlagQEC(Block):
     """Defining QEC Block that does adaptive syndrome extraction, decodes, and updates the Paul frame."""
 
@@ -175,7 +177,6 @@ class ParallelFlagQEC(Block):
             If(flags != 0).Then(
                 SixUnflaggedSyn(q, a, syn_x, syn_z),
             ),
-
             FlagLookupQASM(
                 basis="X",
                 syn=syn_x,
@@ -186,7 +187,6 @@ class ParallelFlagQEC(Block):
                 flags=flags,
                 scratch=scratch,
             ),
-
             FlagLookupQASM(
                 basis="Z",
                 syn=syn_z,
@@ -198,4 +198,3 @@ class ParallelFlagQEC(Block):
                 scratch=scratch,
             ),
         )
-

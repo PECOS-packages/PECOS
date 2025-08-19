@@ -32,53 +32,64 @@ class SynExtractFlagged(Block):
         self,
         data: QReg,
         ancillas: QReg,
-        flag_qubits: QReg,
         checks: list,
-        syn: CReg,
-        flag_bits: CReg,
+        syn_x: CReg,
+        syn_z: CReg,
+        flag_bits_x: CReg,
+        flag_bits_z: CReg,
     ) -> None:
         """Initialize flagged syndrome extraction.
 
         Args:
             data: Data qubit register.
             ancillas: Ancilla qubit register.
-            flag_qubits: Flag qubit register for hook error detection.
             checks: List of check operators to apply.
-            syn: Classical register for syndrome storage.
-            flag_bits: Classical register for flag bit storage.
+            syn_x: Classical register for X syndrome storage.
+            syn_z: Classical register for Z syndrome storage.
+            flag_bits_x: Classical register for X flag bit storage.
+            flag_bits_z: Classical register for Z flag bit storage.
 
         Raises:
             ValueError: If register lengths don't match expected sizes.
         """
-        if not (len(syn) == len(flag_bits) == 2 * len(checks) == 6):
+        if not (
+            len(syn_x)
+            == len(syn_z)
+            == len(flag_bits_x)
+            == len(flag_bits_z)
+            == len(checks)
+            == 3
+        ):
             msg = (
-                f"Expected syndrome and flag registers of length 6 (2 * {len(checks)} checks), "
-                f"got syn={len(syn)}, flag_bits={len(flag_bits)}"
+                f"Expected syndrome and flag registers of length 3 ({len(checks)} checks), "
+                f"got syn_x={len(syn_x)}, syn_z={len(syn_z)}, "
+                f"flag_bits_x={len(flag_bits_x)}, flag_bits_z={len(flag_bits_z)}"
             )
             raise ValueError(msg)
         a = cycle(range(len(ancillas)))
-        f = cycle(range(len(flag_qubits)))
-        s = iter(range(len(syn)))
-        fb = iter(range(len(flag_bits)))
+        sx = iter(range(len(syn_x)))
+        sz = iter(range(len(syn_z)))
+        fbx = iter(range(len(flag_bits_x)))
+        fbz = iter(range(len(flag_bits_z)))
 
         super().__init__()
 
         pauli = "Z"
         for c in checks:
             data_ids = c[:-1]
-            syn_id = next(s)
+            syn_id = next(sz)
             anc_id = next(a)
-            flag_qubit_id = next(f)
-            flag_bit_id = next(fb)
+            flag_qubit_id = next(a)
+            flag_bit_id = next(fbz)
             self.extend(
-                Comment(f"Check['{pauli}', {data_ids}] -> {syn}[{syn_id}]"),
+                Comment(f"Check['{pauli}', {data_ids}] -> {syn_z}[{syn_id}]"),
                 Check1Flag(
                     d=poly2qubits(c, data),
                     ops=pauli,
                     a=ancillas[anc_id],
-                    flag=flag_qubits[flag_qubit_id],
-                    out=syn[syn_id],
-                    out_flag=flag_bits[flag_bit_id],
+                    flag=ancillas[flag_qubit_id],
+                    out=syn_z[syn_id],
+                    out_flag=flag_bits_z[flag_bit_id],
                     with_barriers=False,
                 ),
             )
@@ -86,19 +97,19 @@ class SynExtractFlagged(Block):
         pauli = "X"
         for c in checks:
             data_ids = c[:-1]
-            syn_id = next(s)
+            syn_id = next(sx)
             anc_id = next(a)
-            flag_qubit_id = next(f)
-            flag_bit_id = next(fb)
+            flag_qubit_id = next(a)
+            flag_bit_id = next(fbx)
             self.extend(
-                Comment(f"Check['{pauli}', {data_ids}] -> {syn}[{syn_id}]"),
+                Comment(f"Check['{pauli}', {data_ids}] -> {syn_x}[{syn_id}]"),
                 Check1Flag(
                     d=poly2qubits(c, data),
                     ops=pauli,
                     a=ancillas[anc_id],
-                    flag=flag_qubits[flag_qubit_id],
-                    out=syn[syn_id],
-                    out_flag=flag_bits[flag_bit_id],
+                    flag=ancillas[flag_qubit_id],
+                    out=syn_x[syn_id],
+                    out_flag=flag_bits_x[flag_bit_id],
                     with_barriers=False,
                 ),
             )

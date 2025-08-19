@@ -72,7 +72,6 @@ class Steane(Vars):
         Raises:
             ValueError: If provided ancilla register has fewer than 3 qubits.
         """
-
         super().__init__()
         self.check_indices = [[2, 1, 3, 0], [5, 2, 1, 4], [6, 5, 2, 3]]
 

@@ -149,7 +149,15 @@ class Measure(Block):
     in the Steane code, measuring in the X, Y, or Z basis.
     """
 
-    def __init__(self, q: QReg, meas_creg: CReg, log_raw: Bit, meas_basis: str) -> None:
+    def __init__(
+        self,
+        q: QReg,
+        meas_creg: CReg,
+        log_raw: Bit,
+        meas_basis: str,
+        *,
+        barrier: bool = True,
+    ) -> None:
         """Initialize Measure block for logical measurement in specified basis.
 
         Args:
@@ -157,6 +165,7 @@ class Measure(Block):
             meas_creg: Classical register to store the measurement results.
             log_raw: Bit to store the raw logical measurement result.
             meas_basis: Measurement basis ('X', 'Y', or 'Z').
+            barrier: Whether to add a barrier operation.
 
         Raises:
             Exception: If meas_basis is not 'X', 'Y', or 'Z'.
@@ -166,17 +175,17 @@ class Measure(Block):
         if meas_basis == "X":
             self.extend(
                 Comment("Destructive logical X measurement"),
-                MeasureX(q, meas_creg, log_raw),
+                MeasureX(q, meas_creg, log_raw, barrier=barrier),
             )
         elif meas_basis == "Y":
             self.extend(
                 Comment("Destructive logical Y measurement"),
-                MeasureY(q, meas_creg, log_raw),
+                MeasureY(q, meas_creg, log_raw, barrier=barrier),
             )
         elif meas_basis == "Z":
             self.extend(
                 Comment("Destructive logical Z measurement"),
-                MeasureZ(q, meas_creg, log_raw),
+                MeasureZ(q, meas_creg, log_raw, barrier=barrier),
             )
         else:
             msg = f"Logical measurement in '{meas_basis}' basis is not supported."

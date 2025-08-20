@@ -43,6 +43,8 @@ class Check1Flag(Block):
         flag: Qubit,
         out: Bit,
         out_flag: Bit,
+        *,
+        with_barriers: bool = False,
     ) -> None:
         """Initialize a stabilizer check measurement with flag qubit.
 
@@ -54,6 +56,8 @@ class Check1Flag(Block):
             flag: Flag qubit used to detect hook errors.
             out: Classical bit to store the measurement result.
             out_flag: Classical bit to store the flag measurement result.
+            with_barriers: Whether to insert barrier instructions between operations to prevent
+                gate reordering. Defaults to False.
 
         Raises:
             Exception: If check weight is less than 3.
@@ -83,25 +87,54 @@ class Check1Flag(Block):
             Comment(f"Measure check {ops}"),
             Prep(a, flag),
             H(a),
-            Barrier(a, d[0]),
-            self.cu(ops[0], a, d[0]),
-            Barrier(a, flag),
-            CX(a, flag),
-            Barrier(a, flag),
         )
+        if with_barriers:
+            self.extend(
+                Barrier(a, d[0]),
+            )
+        self.extend(
+            self.cu(ops[0], a, d[0]),
+        )
+        if with_barriers:
+            self.extend(
+                Barrier(a, flag),
+            )
+        self.extend(
+            CX(a, flag),
+        )
+        if with_barriers:
+            self.extend(
+                Barrier(a, flag),
+            )
 
         for i in range(1, n - 1):
             self.extend(
                 self.cu(ops[i], a, d[i]),
-                Barrier(a, d[i]),  # To preserve order
             )
+            if with_barriers:
+                self.extend(
+                    Barrier(a, d[i]),  # To preserve order
+                )
 
+        if with_barriers:
+            self.extend(
+                Barrier(a, flag),
+            )
         self.extend(
-            Barrier(a, flag),
             CX(a, flag),
-            Barrier(a, flag),
+        )
+        if with_barriers:
+            self.extend(
+                Barrier(a, flag),
+            )
+        self.extend(
             self.cu(ops[-1], a, d[-1]),
-            Barrier(a, d[-1]),
+        )
+        if with_barriers:
+            self.extend(
+                Barrier(a, d[-1]),
+            )
+        self.extend(
             H(a),
             Measure(a) > out,
             Measure(flag) > out_flag,

@@ -41,6 +41,8 @@ class Check(Block):
         paulis: str,
         a: Qubit,
         out: Bit,
+        *,
+        with_barriers: bool = False,
     ) -> None:
         """Initialize a stabilizer check measurement.
 
@@ -50,6 +52,8 @@ class Check(Block):
                 Can be a single character (applied to all qubits) or one character per qubit.
             a: Ancilla qubit used for the check measurement.
             out: Classical bit to store the measurement result.
+            with_barriers: Whether to insert barrier instructions between operations to prevent
+                gate reordering. Defaults to False.
 
         Raises:
             Exception: If check weight is less than 2.
@@ -84,11 +88,19 @@ class Check(Block):
         )
 
         for i in range(n):
+            if with_barriers:
+                self.extend(
+                    Barrier(a, d[i]),  # to preserve order
+                )
+
             self.extend(
-                Barrier(a, d[i]),  # to preserve order
                 self.cp(ps[i], a, d[i]),
-                Barrier(a, d[i]),  # to preserve order
             )
+
+            if with_barriers:
+                self.extend(
+                    Barrier(a, d[i]),  # to preserve order
+                )
 
         self.extend(
             H(a),

@@ -60,6 +60,12 @@ class Block(Node):
 
         return self
 
+    def __iadd__(self, other):
+        """Implements += operator. For lists/tuples, calls extend(*other). For single items, calls extend(other)."""
+        if isinstance(other, list | tuple):
+            return self.extend(*other)
+        return self.extend(other)
+
     def __iter__(self):
         for op in self.ops:
             if hasattr(op, "ops"):

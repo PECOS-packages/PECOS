@@ -16,6 +16,7 @@ fault-tolerant error detection and correction using parallel syndrome extraction
 # specific language governing permissions and limitations under the License.
 
 from pecos.qeclib.steane.decoders.lookup import (
+    FlagLookupQASM,
     FlagLookupQASMActiveCorrectionX,
     FlagLookupQASMActiveCorrectionZ,
 )
@@ -109,5 +110,91 @@ class ParallelFlagQECActiveCorrection(Block):
                 flag_z,
                 flags,
                 scratch,
+            ),
+        )
+
+
+class ParallelFlagQEC(Block):
+    """Defining QEC Block that does adaptive syndrome extraction, decodes, and updates the Paul frame."""
+
+    def __init__(
+        self,
+        q: QReg,
+        a: QReg,
+        flag_x: CReg,
+        flag_z: CReg,
+        flags: CReg,
+        syn_x: CReg,
+        syn_z: CReg,
+        last_raw_syn_x: CReg,
+        last_raw_syn_z: CReg,
+        syndromes: CReg,
+        pf_x: Bit,
+        pf_z: Bit,
+        scratch: CReg,
+    ) -> None:
+        """Initialize ParallelFlagQECActiveCorrection block for error correction.
+
+        Args:
+            q: Data register containing the 7 qubits of the Steane code.
+            a: Ancilla register for syndrome extraction.
+            flag_x: Classical register for X stabilizer flags.
+            flag_z: Classical register for Z stabilizer flags.
+            flags: Combined flags register.
+            syn_x: Classical register for X syndromes.
+            syn_z: Classical register for Z syndromes.
+            last_raw_syn_x: Previous X syndrome measurements.
+            last_raw_syn_z: Previous Z syndrome measurements.
+            syndromes: Classical register for syndrome storage.
+            pf_x: Pauli frame bit for X errors.
+            pf_z: Pauli frame bit for Z errors.
+            scratch: Scratch classical register for intermediate calculations.
+        """
+        super().__init__(
+            # flagging XZZ checks
+            ThreeParallelFlaggingXZZ(
+                q,
+                a,
+                flag_x,
+                flag_z,
+                flags,
+                last_raw_syn_x,
+                last_raw_syn_z,
+            ),
+            # flagging ZXX checks
+            If(flags == 0).Then(
+                ThreeParallelFlaggingZXX(
+                    q,
+                    a,
+                    flag_x,
+                    flag_z,
+                    flags,
+                    last_raw_syn_x,
+                    last_raw_syn_z,
+                ),
+            ),
+            # Remeasure all the checks unflagged
+            If(flags != 0).Then(
+                SixUnflaggedSyn(q, a, syn_x, syn_z),
+            ),
+            FlagLookupQASM(
+                basis="X",
+                syn=syn_x,
+                syndromes=syndromes,
+                raw_syn=last_raw_syn_x,
+                pf=pf_z,
+                flag=flag_x,
+                flags=flags,
+                scratch=scratch,
+            ),
+            FlagLookupQASM(
+                basis="Z",
+                syn=syn_z,
+                syndromes=syndromes,
+                raw_syn=last_raw_syn_z,
+                pf=pf_x,
+                flag=flag_z,
+                flags=flags,
+                scratch=scratch,
             ),
         )

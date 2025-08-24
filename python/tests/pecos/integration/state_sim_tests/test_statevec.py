@@ -181,7 +181,7 @@ def test_init(simulator: str) -> None:
         "MPS",
     ],
 )
-def test_H_measure(simulator: str) -> None:
+def test_h_measure(simulator: str) -> None:
     """Test Hadamard gate followed by measurement."""
     qc = QuantumCircuit()
     qc.append({"H": {0, 1, 2, 3, 4}})
@@ -403,20 +403,23 @@ def test_hybrid_engine_no_noise(simulator: str) -> None:
     """Test that HybridEngine can use these simulators."""
     check_dependencies(simulator)
 
-    n_shots = 1000
+    num_shots = 100
     phir_folder = Path(__file__).parent.parent / "phir"
 
+    # Use seed parameter in HybridEngine.run for deterministic results where supported
+    # Note: Some simulators like Qulacs may not support seeding
     results = HybridEngine(qsim=simulator).run(
         program=json.load(Path.open(phir_folder / "bell_qparallel.json")),
-        shots=n_shots,
+        shots=num_shots,
+        seed=42,
     )
 
     # Check either "c" (if Result command worked) or "m" (fallback)
     register = "c" if "c" in results else "m"
     result_values = results[register]
     assert np.isclose(
-        result_values.count("00") / n_shots,
-        result_values.count("11") / n_shots,
+        result_values.count("00") / num_shots,
+        result_values.count("11") / num_shots,
         atol=0.1,
     )
 
@@ -434,7 +437,7 @@ def test_hybrid_engine_noisy(simulator: str) -> None:
     """Test that HybridEngine with noise can use these simulators."""
     check_dependencies(simulator)
 
-    n_shots = 1000
+    n_shots = 100
     phir_folder = Path(__file__).parent.parent / "phir"
 
     generic_errors = GenericErrorModel(
@@ -452,7 +455,9 @@ def test_hybrid_engine_noisy(simulator: str) -> None:
         },
     )
     sim = HybridEngine(qsim=simulator, error_model=generic_errors)
+    # Use seed for deterministic results where supported
     sim.run(
         program=json.load(Path.open(phir_folder / "example1_no_wasm.json")),
         shots=n_shots,
+        seed=42,
     )

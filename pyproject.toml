@@ -4,6 +4,7 @@ version = "0.7.0.dev4"
 dependencies = [
     # Note: guppylang is an optional dependency in quantum-pecos
     # Don't include it here as a direct dependency
+    "stim>=1.15.0",
 ]
 
 [tool.uv.workspace]

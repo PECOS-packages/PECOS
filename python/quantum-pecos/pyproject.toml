@@ -63,6 +63,9 @@ guppy = [
     "selene-sim~=0.2.0",  # Then selene-sim (dependency of guppylang)
     "hugr>=0.13.0,<0.14",  # Use stable version compatible with guppylang
 ]
+stim = [
+    "stim>=1.12.0",  # For Stim circuit conversion and interoperability
+]
 projectq = [  # State-vector sims using ProjectQ
     "pybind11>=2.2.3",
     "projectq>=0.5",
@@ -88,6 +91,7 @@ all = [
     "quantum-pecos[visualization]",
     "quantum-pecos[qir]",
     "quantum-pecos[guppy]",
+    "quantum-pecos[stim]",
 ]
 # The following only work for some environments/Python versions:
 qulacs = [  # State-vector sims using Qulacs

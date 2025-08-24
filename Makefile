@@ -228,10 +228,13 @@ pytest:  ## Run tests on the Python package (not including optional dependencies
 .PHONY: pytest-dep
 pytest-dep: ## Run tests on the Python package only for optional dependencies. ASSUMES: previous build command
 	uv run pytest ./python/tests/ --doctest-modules -m optional_dependency
+	uv run pytest ./python/slr-tests/ -m optional_dependency
 
 .PHONY: pytest-all
-pytest-all:  pytest ## Run all tests on the Python package ASSUMES: previous build command
-	uv run pytest ./python/tests/ -m "optional_dependency"
+pytest-all:  ## Run all tests on the Python package including optional dependencies. ASSUMES: previous build command
+	uv run pytest ./python/tests/ --doctest-modules
+	uv run pytest ./python/pecos-rslib/tests/
+	uv run pytest ./python/slr-tests/
 
 # .PHONY: pytest-doc
 # pydoctest:  ## Run doctests with pytest. ASSUMES: A build command was ran previously. ASSUMES: previous build command

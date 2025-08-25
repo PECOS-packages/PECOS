@@ -1,5 +1,5 @@
 """Guppy code generation package for SLR programs."""
 
-from pecos.slr.gen_codes.guppy.generator import GuppyGenerator
+from pecos.slr.gen_codes.guppy.ir_generator import IRGuppyGenerator
 
-__all__ = ["GuppyGenerator"]
+__all__ = ["IRGuppyGenerator"]

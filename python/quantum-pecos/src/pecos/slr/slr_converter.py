@@ -21,11 +21,9 @@ except ImportError:
     QIRGenerator = None
 
 try:
-    from pecos.slr.gen_codes.guppy.ir_generator import (
-        IRGuppyGenerator as GuppyGenerator,
-    )
+    from pecos.slr.gen_codes.guppy import IRGuppyGenerator
 except ImportError:
-    GuppyGenerator = None
+    IRGuppyGenerator = None
 
 try:
     from pecos.slr.gen_codes.gen_stim import StimGenerator
@@ -73,7 +71,7 @@ class SlrConverter:
             generator = QIRGenerator()
         elif target == Language.GUPPY:
             self._check_guppy_imported()
-            generator = GuppyGenerator()
+            generator = IRGuppyGenerator()
         elif target == Language.HUGR:
             # HUGR is handled specially in the hugr() method
             msg = "Use the hugr() method directly to compile to HUGR"
@@ -121,10 +119,10 @@ class SlrConverter:
 
     @staticmethod
     def _check_guppy_imported():
-        if GuppyGenerator is None:
+        if IRGuppyGenerator is None:
             msg = (
-                "Trying to compile to Guppy without the GuppyGenerator. "
-                "Make sure gen_guppy.py is available."
+                "Trying to compile to Guppy without the IRGuppyGenerator. "
+                "Make sure ir_generator.py is available."
             )
             raise Exception(msg)
 
@@ -145,7 +143,7 @@ class SlrConverter:
         self._check_guppy_imported()
 
         # First generate Guppy code
-        generator = GuppyGenerator()
+        generator = IRGuppyGenerator()
         generator.generate_block(self._block)
 
         # Then compile to HUGR

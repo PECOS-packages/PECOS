@@ -196,16 +196,16 @@ fn build_cxx_bridge(ldpc_dir: &Path) -> Result<()> {
         .include(include_dir.join("robin_map"))
         .include(include_dir.join("rapidcsv"))
         .include("include");
-    
+
     // Use C++17 when available, fall back to C++14 for older compilers
     // This helps with cross-compilation where older toolchains may not fully support C++17
     let target = env::var("TARGET").unwrap_or_default();
     if target.contains("aarch64") || target.contains("arm") {
         // For ARM targets, check what's supported
-        if !build.is_flag_supported("-std=c++17").unwrap_or(false) {
-            build.std("c++14");
-        } else {
+        if build.is_flag_supported("-std=c++17").unwrap_or(false) {
             build.std("c++17");
+        } else {
+            build.std("c++14");
         }
     } else {
         // For other targets, use C++17

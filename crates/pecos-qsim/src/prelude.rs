@@ -18,5 +18,6 @@ pub use crate::{
     pauli_prop::{PauliProp, StdPauliProp},
     quantum_simulator::QuantumSimulator,
     sparse_stab::{SparseStab, StdSparseStab},
+    stabilizer_tableau::StabilizerTableauSimulator,
     state_vec::StateVec,
 };

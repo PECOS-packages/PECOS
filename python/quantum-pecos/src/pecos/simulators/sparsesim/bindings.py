@@ -51,6 +51,13 @@ gate_dict = {
     "SYdg": q1.SYdg,  # +z-x == R(Y, -pi/2)
     "SZ": q1.SZ,  # +y+z == R(Z, pi/2)
     "SZdg": q1.SZdg,  # -y+z == R(Z, -pi/2)
+    # Alternative names for square roots
+    "Q": q1.SX,  # sqrt(X)
+    "Qd": q1.SXdg,  # sqrt(X)†
+    "R": q1.SY,  # sqrt(Y)
+    "Rd": q1.SYdg,  # sqrt(Y)†
+    "S": q1.SZ,  # sqrt(Z)
+    "Sd": q1.SZdg,  # sqrt(Z)†
     # Hadamard-like
     "H": q1.H,
     "H2": q1.H2,
@@ -61,12 +68,17 @@ gate_dict = {
     # Face rotations
     "F": q1.F,  # +y+x
     "Fdg": q1.Fdg,  # +z+y
+    "F1": q1.F,  # Alternative name for F
+    "F1d": q1.Fdg,  # Alternative name for Fdg
     "F2": q1.F2,  # -z+y
     "F2dg": q1.F2dg,  # -y-x
+    "F2d": q1.F2dg,  # Alternative name for F2dg
     "F3": q1.F3,  # +y-x
     "F3dg": q1.F3dg,  # -z-y
+    "F3d": q1.F3dg,  # Alternative name for F3dg
     "F4": q1.F4,  # +z-y
     "F4dg": q1.F4dg,  # -y-z
+    "F4d": q1.F4dg,  # Alternative name for F4dg
     # two-qubit operations
     # ====================
     "CX": q2.CX,

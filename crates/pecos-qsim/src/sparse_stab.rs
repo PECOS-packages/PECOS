@@ -772,6 +772,28 @@ where
     }
 }
 
+// Implement StabilizerTableauSimulator trait for SparseStab
+use crate::stabilizer_tableau::StabilizerTableauSimulator;
+
+impl<T, E, R> StabilizerTableauSimulator for SparseStab<T, E, R>
+where
+    T: for<'a> Set<'a, Element = E>,
+    E: IndexableElement,
+    R: RngCore + SeedableRng + Rng + Debug,
+{
+    fn stab_tableau(&self) -> String {
+        Self::tableau_string(self.num_qubits, &self.stabs)
+    }
+
+    fn destab_tableau(&self) -> String {
+        Self::tableau_string(self.num_qubits, &self.destabs)
+    }
+
+    fn num_qubits(&self) -> usize {
+        self.num_qubits
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

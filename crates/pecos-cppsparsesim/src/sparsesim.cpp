@@ -13,11 +13,6 @@
 
 #include "sparsesim.h"
 
-// Function to create random outcomes
-unsigned int random_outcome(void) {
-  // return random() > RAND_MAX/2;:
-  return rand()%2;
-}
 
 int_set_vec build_empty(int_num size, int reserve_buckets) {
 
@@ -56,10 +51,22 @@ int_set_vec build_ones(int_num size, int reserve_buckets){
 
 State::State(const int_num& num_qubits, const int& reserve_buckets)
     : num_qubits(num_qubits),
-      reserve_buckets(reserve_buckets)
+      reserve_buckets(reserve_buckets),
+      rng(std::random_device{}()),  // Initialize with random seed by default
+      dist(0, 1)  // Distribution for 0 or 1
 {
     //num_qubits = num_qubits;
     clear();
+}
+
+void State::set_seed(unsigned int seed) {
+    rng.seed(seed);
+    // Also set global rand() for backward compatibility with existing code
+    srand(seed);
+}
+
+unsigned int State::random_outcome() {
+    return dist(rng);
 }
 
 void State::clear() {  // Allows state to reinitialize.

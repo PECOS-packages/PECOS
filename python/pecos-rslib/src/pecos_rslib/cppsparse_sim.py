@@ -1,4 +1,4 @@
-# Copyright 2024 The PECOS Developers
+# Copyright 2025 The PECOS Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 # the License.You may obtain a copy of the License at
@@ -9,9 +9,9 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Rust-based sparse stabilizer simulator for PECOS.
+"""C++-based sparse stabilizer simulator for PECOS.
 
-This module provides a Python interface to the high-performance Rust implementation of sparse stabilizer simulation,
+This module provides a Python interface to the high-performance C++ implementation of sparse stabilizer simulation,
 enabling efficient quantum circuit simulation for stabilizer circuits with reduced memory overhead and improved
 performance compared to dense state vector representations.
 """
@@ -22,30 +22,35 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NoReturn
 
-from pecos_rslib._pecos_rslib import SparseSim as RustSparseSim
+from pecos_rslib._pecos_rslib import CppSparseSim as CppRustSparseSim
 
 if TYPE_CHECKING:
     from pecos.typing import SimulatorGateParams
 
 
-class SparseSimRs:
-    """Rust-based sparse stabilizer simulator.
+class CppSparseSimRs:
+    """C++-based sparse stabilizer simulator wrapped via Rust.
 
-    A high-performance sparse stabilizer simulator implemented in Rust, providing efficient simulation of quantum
-    circuits that can be represented using the stabilizer formalism with reduced memory requirements.
+    A high-performance sparse stabilizer simulator implemented in C++, exposed through Rust bindings,
+    providing efficient simulation of quantum circuits that can be represented using the stabilizer
+    formalism with reduced memory requirements.
     """
 
-    def __init__(self, num_qubits: int):
-        """Initialize the Rust-based sparse simulator.
+    def __init__(self, num_qubits: int, seed: int | None = None):
+        """Initialize the C++-based sparse simulator.
 
         Args:
             num_qubits: Number of qubits to simulate.
+            seed: Optional seed for the RNG. If None, uses hardware random.
         """
-        self._sim = RustSparseSim(num_qubits)
+        if seed is not None:
+            self._sim = CppRustSparseSim(num_qubits, seed)
+        else:
+            self._sim = CppRustSparseSim(num_qubits)
         self.num_qubits = num_qubits
         self.bindings = dict(gate_dict)
 
-    def reset(self) -> SparseSimRs:
+    def reset(self) -> CppSparseSimRs:
         """Reset the simulator to its initial state.
 
         Returns:
@@ -53,6 +58,14 @@ class SparseSimRs:
         """
         self._sim.reset()
         return self
+
+    def set_seed(self, seed: int) -> None:
+        """Set the RNG seed for this simulator instance.
+
+        Args:
+            seed: The seed value for the random number generator.
+        """
+        self._sim.set_seed(seed)
 
     def run_gate(
         self,
@@ -127,9 +140,6 @@ class SparseSimRs:
         """
         self.run_circuit(circuit, removed_locations)
 
-    # def print_stabs(self, *, verbose: bool = True, print_y: bool = True, print_destabs: bool = False) -> list[str]:
-    #     return self._sim.print_stabs(verbose, print_y, print_destabs)
-
     @property
     def stabs(self) -> TableauWrapper:
         """Get stabilizers tableau wrapper.
@@ -152,33 +162,48 @@ class SparseSimRs:
         self,
         *,
         verbose: bool = True,
-        print_y: bool = True,  # noqa: ARG002
+        print_y: bool = True,
         print_destabs: bool = False,
     ) -> str | tuple[str, str]:
         """Print stabilizer tableau(s).
 
         Args:
             verbose: Whether to print to stdout.
-            print_y: Whether to print Y operators (unused).
+            print_y: Whether to print Y operators as Y (True) or W (False).
             print_destabs: Whether to also print destabilizers.
 
         Returns:
             String representation of stabilizers, or tuple if destabs included.
         """
-        stabs = self._sim.stab_tableau()
+        stabs_raw = self._sim.stab_tableau()
+        stabs_lines = stabs_raw.strip().split("\n")
+        stabs_formatted = [
+            adjust_tableau_string(line, is_stab=True, print_y=print_y)
+            for line in stabs_lines
+        ]
+
         if print_destabs:
-            destabs = self._sim.destab_tableau()
+            destabs_raw = self._sim.destab_tableau()
+            destabs_lines = destabs_raw.strip().split("\n")
+            destabs_formatted = [
+                adjust_tableau_string(line, is_stab=False, print_y=print_y)
+                for line in destabs_lines
+            ]
+
             if verbose:
                 print("Stabilizers:")
-                print(stabs)
+                for line in stabs_formatted:
+                    print(line)
                 print("Destabilizers:")
-                print(destabs)
-            return stabs, destabs
+                for line in destabs_formatted:
+                    print(line)
+            return stabs_formatted, destabs_formatted
         else:
             if verbose:
                 print("Stabilizers:")
-                print(stabs)
-            return stabs
+                for line in stabs_formatted:
+                    print(line)
+            return stabs_formatted
 
     def logical_sign(self, logical_op) -> NoReturn:  # noqa: ARG002
         """Calculate logical sign (not implemented).
@@ -189,8 +214,6 @@ class SparseSimRs:
         Raises:
             NotImplementedError: This method is not yet implemented.
         """
-        # This method needs to be implemented based on the Python version
-        # It might require additional Rust functions to be exposed
         msg = "logical_sign method not implemented yet"
         raise NotImplementedError(msg)
 
@@ -209,8 +232,6 @@ class SparseSimRs:
         Raises:
             NotImplementedError: This method is not yet implemented.
         """
-        # This method needs to be implemented based on the Python version
-        # It might require additional Rust functions to be exposed
         msg = "refactor method not implemented yet"
         raise NotImplementedError(msg)
 
@@ -224,8 +245,6 @@ class SparseSimRs:
         Raises:
             NotImplementedError: This method is not yet implemented.
         """
-        # This method needs to be implemented based on the Python version
-        # It might require additional Rust functions to be exposed
         msg = "find_stab method not implemented yet"
         raise NotImplementedError(msg)
 
@@ -235,8 +254,6 @@ class SparseSimRs:
         Raises:
             NotImplementedError: This method is not yet implemented.
         """
-        # This method needs to be implemented
-        # It might require an additional Rust function to be exposed
         msg = "copy method not implemented yet"
         raise NotImplementedError(msg)
 
@@ -246,7 +263,9 @@ class TableauWrapper:
         self._sim = sim
         self._is_stab = is_stab
 
-    def print_tableau(self, *, verbose: bool = False) -> list[str]:
+    def print_tableau(
+        self, *, verbose: bool = False, print_y: bool = False
+    ) -> list[str]:
         if self._is_stab:
             tableau = self._sim.stab_tableau()
         else:
@@ -254,7 +273,8 @@ class TableauWrapper:
 
         lines = tableau.strip().split("\n")
         adjusted_lines = [
-            adjust_tableau_string(line, is_stab=self._is_stab) for line in lines
+            adjust_tableau_string(line, is_stab=self._is_stab, print_y=print_y)
+            for line in lines
         ]
 
         if verbose:
@@ -264,23 +284,117 @@ class TableauWrapper:
         return adjusted_lines
 
 
-def adjust_tableau_string(line: str, *, is_stab: bool) -> str:
+def _measure_z_forced(sim, qubit: int, params: dict) -> int | None:
+    """Perform forced Z measurement, returning None (omitted) when result is 0."""
+    params.get("forced_outcome", 0)
+    # Debug output
+    # print(f"[Python] _measure_z_forced: qubit={qubit}, forced_outcome={forced}")
+    result = sim.run_1q_gate("MZForced", qubit, params)
+    # print(f"[Python] _measure_z_forced: result={result}")
+    # For compatibility with Python simulators, return None when measurement is 0
+    # This causes the result to be omitted from the output dict
+    if result == 0:
+        return None
+    return result
+
+
+def _init_to_zero(sim, qubit: int, forced_outcome: int = -1) -> None:
+    """Initialize qubit to |0> by measuring and correcting.
+
+    Args:
+        sim: The simulator instance
+        qubit: The qubit to initialize
+        forced_outcome: The forced measurement outcome (-1 for random, 0 or 1 for forced)
+    """
+    # Measure the qubit with optional forcing
+    if forced_outcome == -1:
+        result = sim.mz(qubit)
+    else:
+        # Use forced measurement - this matches Python's behavior
+        result = sim.run_1q_gate("MZForced", qubit, {"forced_outcome": forced_outcome})
+        result = result if result is not None else 0
+    # If it's |1>, flip it to |0>
+    if result:
+        sim.x(qubit)
+    return None
+
+
+def _init_to_one(sim, qubit: int, forced_outcome: int = -1) -> None:
+    """Initialize qubit to |1> by measuring and correcting.
+
+    Args:
+        sim: The simulator instance
+        qubit: The qubit to initialize
+        forced_outcome: The forced measurement outcome (-1 for random, 0 or 1 for forced)
+    """
+    # Measure the qubit with optional forcing
+    if forced_outcome == -1:
+        result = sim.mz(qubit)
+    else:
+        # Use forced measurement
+        result = sim.run_1q_gate("MZForced", qubit, {"forced_outcome": forced_outcome})
+        result = result if result is not None else 0
+    # If it's |0>, flip it to |1>
+    if not result:
+        sim.x(qubit)
+    return None
+
+
+def _init_to_plus(sim, qubit: int) -> None:
+    """Initialize qubit to |+>."""
+    # First ensure |0> (no forcing since we want deterministic init)
+    _init_to_zero(sim, qubit, forced_outcome=-1)
+    # Apply H to get |+>
+    sim.h(qubit)
+    return None
+
+
+def _init_to_minus(sim, qubit: int) -> None:
+    """Initialize qubit to |->."""
+    # First ensure |1>
+    _init_to_one(sim, qubit)
+    # Apply H to get |->
+    sim.h(qubit)
+    return None
+
+
+def _init_to_plus_i(sim, qubit: int) -> None:
+    """Initialize qubit to |+i> using H5 gate."""
+    # C++ H5 on |0> produces iY which is iW (what we need for |+i>)
+    _init_to_zero(sim, qubit, forced_outcome=-1)
+    sim.run_1q_gate("H5", qubit, {})
+    return None
+
+
+def _init_to_minus_i(sim, qubit: int) -> None:
+    """Initialize qubit to |-i> using H6 gate."""
+    # C++ H6 on |0> produces -iY which is -iW (what we need for |-i>)
+    _init_to_zero(sim, qubit, forced_outcome=-1)
+    sim.run_1q_gate("H6", qubit, {})
+    return None
+
+
+def adjust_tableau_string(line: str, *, is_stab: bool, print_y: bool = True) -> str:
     """
     Adjust the tableau string to ensure the sign part always takes up two spaces
-    and convert 'Y' to 'W'. For destabilizers, always use two spaces for the sign.
+    and handle Y vs W display based on print_y parameter.
 
     Args:
         line (str): A single line from the tableau string.
         is_stab (bool): True if this is a stabilizer, False if destabilizer.
+        print_y (bool): If True, show Y operators as Y. If False, show as W with proper phase.
 
     Returns:
-        str: The adjusted line with proper spacing for signs and 'W' instead of 'Y'.
+        str: The adjusted line with proper spacing and Y/W formatting.
     """
+    # First handle the sign formatting
     if is_stab:
         if line.startswith("+i"):
             adjusted = " i" + line[2:]
         elif line.startswith("-i"):
             adjusted = "-i" + line[2:]
+        elif line.startswith("i"):
+            adjusted = " i" + line[1:]  # Handle bare imaginary (no + or -)
         elif line.startswith("+"):
             adjusted = "  " + line[1:]
         elif line.startswith("-"):
@@ -288,13 +402,26 @@ def adjust_tableau_string(line: str, *, is_stab: bool) -> str:
         else:
             adjusted = "  " + line  # Default case, shouldn't happen with correct input
     else:
-        # For destabilizers, always use two spaces for the sign
-        adjusted = "  " + line[1:]
+        # For destabilizers, strip all signs (no phases shown)
+        # Remove any sign prefix (+, -, +i, -i, i) and add two spaces
+        if line.startswith("+i") or line.startswith("-i"):
+            adjusted = "  " + line[2:]  # Strip 2 chars for imaginary signs
+        elif line.startswith("i"):
+            adjusted = "  " + line[1:]  # Strip 1 char for bare imaginary
+        elif line.startswith("+") or line.startswith("-"):
+            adjusted = "  " + line[1:]  # Strip 1 char for real signs
+        else:
+            adjusted = "  " + line  # No sign to strip
 
-    return adjusted.replace("Y", "W")
+    # Handle Y vs W conversion based on print_y parameter
+    if not print_y:
+        # Simply replace Y with W - the phase is already correct from C++
+        adjusted = adjusted.replace("Y", "W")
+
+    return adjusted
 
 
-# Define the gate dictionary
+# Define the gate dictionary - reuse the same mappings as SparseSim
 gate_dict = {
     "I": lambda sim, q, **params: None,  # noqa: ARG005
     "X": lambda sim, q, **params: sim._sim.run_1q_gate("X", q, params),
@@ -306,6 +433,17 @@ gate_dict = {
     "SYdg": lambda sim, q, **params: sim._sim.run_1q_gate("SYdg", q, params),
     "SZ": lambda sim, q, **params: sim._sim.run_1q_gate("SZ", q, params),
     "SZdg": lambda sim, q, **params: sim._sim.run_1q_gate("SZdg", q, params),
+    # Alternative names for square root gates
+    "Q": lambda sim, q, **params: sim._sim.run_1q_gate(
+        "SX", q, params
+    ),  # Q = sqrt(X) = SX
+    "Qd": lambda sim, q, **params: sim._sim.run_1q_gate("SXdg", q, params),  # Q† = SXdg
+    "R": lambda sim, q, **params: sim._sim.run_1q_gate(
+        "SY", q, params
+    ),  # R = sqrt(Y) = SY
+    "Rd": lambda sim, q, **params: sim._sim.run_1q_gate("SYdg", q, params),  # R† = SYdg
+    "S": lambda sim, q, **params: sim._sim.run_1q_gate("SZ", q, params),  # S gate is SZ
+    "Sd": lambda sim, q, **params: sim._sim.run_1q_gate("SZdg", q, params),  # S dagger
     "H": lambda sim, q, **params: sim._sim.run_1q_gate("H", q, params),
     "H2": lambda sim, q, **params: sim._sim.run_1q_gate("H2", q, params),
     "H3": lambda sim, q, **params: sim._sim.run_1q_gate("H3", q, params),
@@ -314,84 +452,72 @@ gate_dict = {
     "H6": lambda sim, q, **params: sim._sim.run_1q_gate("H6", q, params),
     "F": lambda sim, q, **params: sim._sim.run_1q_gate("F", q, params),
     "Fdg": lambda sim, q, **params: sim._sim.run_1q_gate("Fdg", q, params),
+    "F1": lambda sim, q, **params: sim._sim.run_1q_gate(
+        "F", q, params
+    ),  # Alternative name for F
+    "F1d": lambda sim, q, **params: sim._sim.run_1q_gate(
+        "Fdg", q, params
+    ),  # Alternative name for Fdg
     "F2": lambda sim, q, **params: sim._sim.run_1q_gate("F2", q, params),
     "F2dg": lambda sim, q, **params: sim._sim.run_1q_gate("F2dg", q, params),
+    "F2d": lambda sim, q, **params: sim._sim.run_1q_gate(
+        "F2dg", q, params
+    ),  # Alternative name for F2dg
     "F3": lambda sim, q, **params: sim._sim.run_1q_gate("F3", q, params),
     "F3dg": lambda sim, q, **params: sim._sim.run_1q_gate("F3dg", q, params),
+    "F3d": lambda sim, q, **params: sim._sim.run_1q_gate(
+        "F3dg", q, params
+    ),  # Alternative name for F3dg
     "F4": lambda sim, q, **params: sim._sim.run_1q_gate("F4", q, params),
     "F4dg": lambda sim, q, **params: sim._sim.run_1q_gate("F4dg", q, params),
+    "F4d": lambda sim, q, **params: sim._sim.run_1q_gate(
+        "F4dg", q, params
+    ),  # Alternative name for F4dg
     "II": lambda sim, qs, **params: None,  # noqa: ARG005
     "CX": lambda sim, qs, **params: sim._sim.run_2q_gate("CX", qs, params),
     "CNOT": lambda sim, qs, **params: sim._sim.run_2q_gate("CX", qs, params),
     "CY": lambda sim, qs, **params: sim._sim.run_2q_gate("CY", qs, params),
     "CZ": lambda sim, qs, **params: sim._sim.run_2q_gate("CZ", qs, params),
+    "SWAP": lambda sim, qs, **params: sim._sim.run_2q_gate("SWAP", qs, params),
+    "G": lambda sim, qs, **params: sim._sim.run_2q_gate(
+        "G2", qs, params
+    ),  # G is an alias for G2
+    "G2": lambda sim, qs, **params: sim._sim.run_2q_gate("G2", qs, params),
     "SXX": lambda sim, qs, **params: sim._sim.run_2q_gate("SXX", qs, params),
     "SXXdg": lambda sim, qs, **params: sim._sim.run_2q_gate("SXXdg", qs, params),
     "SYY": lambda sim, qs, **params: sim._sim.run_2q_gate("SYY", qs, params),
     "SYYdg": lambda sim, qs, **params: sim._sim.run_2q_gate("SYYdg", qs, params),
     "SZZ": lambda sim, qs, **params: sim._sim.run_2q_gate("SZZ", qs, params),
     "SZZdg": lambda sim, qs, **params: sim._sim.run_2q_gate("SZZdg", qs, params),
-    "SWAP": lambda sim, qs, **params: sim._sim.run_2q_gate("SWAP", qs, params),
-    "G": lambda sim, qs, **params: sim._sim.run_2q_gate("G2", qs, params),
-    "G2": lambda sim, qs, **params: sim._sim.run_2q_gate("G2", qs, params),
+    "SqrtXX": lambda sim, qs, **params: sim._sim.run_2q_gate(
+        "SXX", qs, params
+    ),  # SqrtXX is an alias for SXX
     "MZ": lambda sim, q, **params: sim._sim.run_1q_gate("MZ", q, params),
     "MX": lambda sim, q, **params: sim._sim.run_1q_gate("MX", q, params),
     "MY": lambda sim, q, **params: sim._sim.run_1q_gate("MY", q, params),
-    "PZ": lambda sim, q, **params: sim._sim.run_1q_gate("PZ", q, params),
-    "PX": lambda sim, q, **params: sim._sim.run_1q_gate("PX", q, params),
-    "PY": lambda sim, q, **params: sim._sim.run_1q_gate("PY", q, params),
-    "PnZ": lambda sim, q, **params: sim._sim.run_1q_gate("PnZ", q, params),
-    "Init": lambda sim, q, **params: sim._sim.run_1q_gate("PZ", q, params),
-    "Init +Z": lambda sim, q, **params: sim._sim.run_1q_gate("PZ", q, params),
-    "Init -Z": lambda sim, q, **params: sim._sim.run_1q_gate("PnZ", q, params),
-    "Init +X": lambda sim, q, **params: sim._sim.run_1q_gate("PX", q, params),
-    "Init -X": lambda sim, q, **params: sim._sim.run_1q_gate("PnX", q, params),
-    "Init +Y": lambda sim, q, **params: sim._sim.run_1q_gate("PY", q, params),
-    "Init -Y": lambda sim, q, **params: sim._sim.run_1q_gate("PnY", q, params),
-    "init |0>": lambda sim, q, **params: sim._sim.run_1q_gate("PZ", q, params),
-    "init |1>": lambda sim, q, **params: sim._sim.run_1q_gate("PnZ", q, params),
-    "init |+>": lambda sim, q, **params: sim._sim.run_1q_gate("PX", q, params),
-    "init |->": lambda sim, q, **params: sim._sim.run_1q_gate("PnX", q, params),
-    "init |+i>": lambda sim, q, **params: sim._sim.run_1q_gate("PY", q, params),
-    "init |-i>": lambda sim, q, **params: sim._sim.run_1q_gate("PnY", q, params),
-    "leak": lambda sim, q, **params: sim._sim.run_1q_gate("PZ", q, params),
-    "leak |0>": lambda sim, q, **params: sim._sim.run_1q_gate("PZ", q, params),
-    "leak |1>": lambda sim, q, **params: sim._sim.run_1q_gate("PnZ", q, params),
-    "unleak |0>": lambda sim, q, **params: sim._sim.run_1q_gate("PZ", q, params),
-    "unleak |1>": lambda sim, q, **params: sim._sim.run_1q_gate("PnZ", q, params),
     "Measure +X": lambda sim, q, **params: sim._sim.run_1q_gate("MX", q, params),
     "Measure +Y": lambda sim, q, **params: sim._sim.run_1q_gate("MY", q, params),
     "Measure +Z": lambda sim, q, **params: sim._sim.run_1q_gate("MZ", q, params),
-    "Q": lambda sim, q, **params: sim._sim.run_1q_gate("SX", q, params),
-    "Qd": lambda sim, q, **params: sim._sim.run_1q_gate("SXdg", q, params),
-    "R": lambda sim, q, **params: sim._sim.run_1q_gate("SY", q, params),
-    "Rd": lambda sim, q, **params: sim._sim.run_1q_gate("SYdg", q, params),
-    "S": lambda sim, q, **params: sim._sim.run_1q_gate("SZ", q, params),
-    "Sd": lambda sim, q, **params: sim._sim.run_1q_gate("SZdg", q, params),
-    "H1": lambda sim, q, **params: sim._sim.run_1q_gate("H1", q, params),
-    "F1": lambda sim, q, **params: sim._sim.run_1q_gate("F", q, params),
-    "F1d": lambda sim, q, **params: sim._sim.run_1q_gate("Fdg", q, params),
-    "F2d": lambda sim, q, **params: sim._sim.run_1q_gate("F2dg", q, params),
-    "F3d": lambda sim, q, **params: sim._sim.run_1q_gate("F3dg", q, params),
-    "F4d": lambda sim, q, **params: sim._sim.run_1q_gate("F4dg", q, params),
-    "SqrtXX": lambda sim, qs, **params: sim._sim.run_2q_gate("SXX", qs, params),
-    "SqrtYY": lambda sim, qs, **params: sim._sim.run_2q_gate("SYY", qs, params),
-    "SqrtZZ": lambda sim, qs, **params: sim._sim.run_2q_gate("SZZ", qs, params),
     "Measure": lambda sim, q, **params: sim._sim.run_1q_gate("MZ", q, params),
-    "measure Z": lambda sim, q, **params: sim._sim.run_1q_gate("MZ", q, params),
-    "MZForced": lambda sim, q, **params: sim._sim.run_1q_gate("MZForced", q, params),
-    "PZForced": lambda sim, q, **params: sim._sim.run_1q_gate("PZForced", q, params),
-    "SqrtXXd": lambda sim, qs, **params: sim._sim.run_2q_gate("SXXdg", qs, params),
-    "SqrtYYd": lambda sim, qs, **params: sim._sim.run_2q_gate("SYYdg", qs, params),
-    "SqrtZZd": lambda sim, qs, **params: sim._sim.run_2q_gate("SZZdg", qs, params),
-    "SqrtX": lambda sim, q, **params: sim._sim.run_1q_gate("SX", q, params),
-    "SqrtXd": lambda sim, q, **params: sim._sim.run_1q_gate("SXdg", q, params),
-    "SqrtY": lambda sim, q, **params: sim._sim.run_1q_gate("SY", q, params),
-    "SqrtYd": lambda sim, q, **params: sim._sim.run_1q_gate("SYdg", q, params),
-    "SqrtZ": lambda sim, q, **params: sim._sim.run_1q_gate("SZ", q, params),
-    "SqrtZd": lambda sim, q, **params: sim._sim.run_1q_gate("SZdg", q, params),
+    "measure Z": lambda sim, q, **params: _measure_z_forced(sim._sim, q, params),
+    "MZForced": lambda sim, q, **params: _measure_z_forced(sim._sim, q, params),
+    # PZForced - for the forced projection gate, we still support forced_outcome
+    "PZForced": lambda sim, q, **params: (
+        _init_to_zero(sim._sim, q, forced_outcome=params.get("forced_outcome", 0))
+        if params.get("forced_outcome", 0) == 0
+        else _init_to_one(sim._sim, q, forced_outcome=params.get("forced_outcome", 1))
+    ),
+    # Init gates - always initialize to the specified state, ignore forced_outcome
+    # CppSparseStab doesn't have PZ/PX/PY projection gates, so we measure and correct
+    "Init": lambda sim, q, **params: _init_to_zero(sim._sim, q),  # Init to |0>
+    "init |0>": lambda sim, q, **params: _init_to_zero(
+        sim._sim, q, forced_outcome=params.get("forced_outcome", -1)
+    ),
+    "init |1>": lambda sim, q, **params: _init_to_one(sim._sim, q),
+    "init |+>": lambda sim, q, **params: _init_to_plus(sim._sim, q),
+    "init |->": lambda sim, q, **params: _init_to_minus(sim._sim, q),
+    "init |+i>": lambda sim, q, **params: _init_to_plus_i(sim._sim, q),
+    "init |-i>": lambda sim, q, **params: _init_to_minus_i(sim._sim, q),
 }
 
-# "force output": qmeas.force_output,
-
-__all__ = ["SparseSimRs", "gate_dict"]
+__all__ = ["CppSparseSimRs", "gate_dict"]

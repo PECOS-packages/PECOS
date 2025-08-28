@@ -1812,6 +1812,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-cppsparsesim"
+version = "0.1.1"
+dependencies = [
+ "cc",
+ "cxx",
+ "cxx-build",
+ "pecos-core",
+ "pecos-qsim",
+ "rand",
+ "rand_chacha",
+]
+
+[[package]]
 name = "pecos-decoder-core"
 version = "0.1.1"
 dependencies = [
@@ -1939,8 +1952,10 @@ dependencies = [
  "parking_lot",
  "pecos",
  "pecos-core",
+ "pecos-cppsparsesim",
  "pecos-engines",
  "pecos-qasm",
+ "pecos-qsim",
  "pyo3",
  "pyo3-build-config",
  "serde_json",

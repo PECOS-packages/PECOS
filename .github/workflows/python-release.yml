@@ -97,16 +97,6 @@ jobs:
           working-directory: python/pecos-rslib
           target: ${{ matrix.architecture == 'aarch64' && (matrix.os == 'macos-latest' && 'aarch64-apple-darwin' || 'aarch64-unknown-linux-gnu') || (matrix.os == 'macos-latest' && 'x86_64-apple-darwin' || '') }}
           manylinux: auto
-          before-script-linux: |
-            # Install basic dependencies
-            if command -v yum &> /dev/null; then
-              yum install -y openssl-devel
-            elif command -v apt-get &> /dev/null; then
-              apt-get update && apt-get install -y libssl-dev pkg-config
-            else
-              echo "No supported package manager found"
-              exit 1
-            fi
 
       - name: Restore README.md
         if: always()

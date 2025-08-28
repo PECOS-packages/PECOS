@@ -19,6 +19,7 @@ components within the PECOS framework, enabling efficient quantum circuit simula
 from importlib.metadata import PackageNotFoundError, version
 
 from pecos_rslib.rssparse_sim import SparseSimRs
+from pecos_rslib.cppsparse_sim import CppSparseSimRs
 from pecos_rslib.rsstate_vec import StateVecRs
 from pecos_rslib._pecos_rslib import ByteMessage
 from pecos_rslib._pecos_rslib import ByteMessageBuilder
@@ -60,6 +61,7 @@ except PackageNotFoundError:
 
 __all__ = [
     "SparseSimRs",
+    "CppSparseSimRs",
     "StateVecRs",
     "ByteMessage",
     "ByteMessageBuilder",

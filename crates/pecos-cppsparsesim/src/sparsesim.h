@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <vector>
 #include <unordered_set>
+#include <random>
 
 using namespace std;
 
@@ -59,14 +60,19 @@ class State {
         const int reserve_buckets; // Whether to reserve buckets.
         Generators stabs, destabs;  // Stabilizers and destabilizer generator matrices.
         int_set signs_minus, signs_i;  // A column that stores minuses and is.
+
+        // Per-instance random number generator
+        std::mt19937 rng;
+        std::uniform_int_distribution<int> dist;
         // Methods
+        void set_seed(unsigned int seed);  // Set RNG seed
         void clear();
         void hadamard(const int_num& qubit); // H
         void bitflip(const int_num& qubit); // X
         void phaseflip(const int_num& qubit); // Z
         void Y(const int_num& qubit);  // Y
         void phaserot(const int_num& qubit);  // S
-        void SZd(const int_num& qubit);  // Sd
+        void SZdg(const int_num& qubit);  // Sd
         void SY(const int_num& qubit);  // R
         void SYdg(const int_num& qubit);  // Rd
         void SX(const int_num& qubit);  // Q
@@ -89,6 +95,7 @@ class State {
         unsigned int measure(const int_num& qubit, int forced_outcome, bool collapse);
 
     private:
+        unsigned int random_outcome();  // Instance method for random outcomes
         unsigned int deterministic_measure(const int_num& qubit);
         unsigned int nondeterministic_measure(const int_num& qubit, int forced_outcome);
 };
@@ -100,4 +107,3 @@ void cnot_gen_mod(Generators& gen, const int_num& tqubit, const int_num& cqubit)
 void swap_gen_mod(Generators& gen, const int_num& qubit1, const int_num& qubit2);
 void F1_gen_mod(Generators& gen, const int_num& qubit);
 void F2_gen_mod(Generators& gen, const int_num& qubit);
-unsigned int random_outcome(void);

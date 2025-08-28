@@ -91,28 +91,18 @@ jobs:
 
       - name: Build wheel
         uses: PyO3/maturin-action@v1
-        env:
-          # Set C++14 standard for cross-compilation compatibility
-          CXXFLAGS: "-std=c++14"
-          CXX_aarch64_unknown_linux_gnu: "aarch64-linux-gnu-g++"
-          CXXFLAGS_aarch64_unknown_linux_gnu: "-std=c++14"
         with:
           command: build
-          args: --release --out dist --interpreter python3.10
+          args: --release --out dist --interpreter python3.10 ${{ matrix.architecture == 'aarch64' && '--zig' || '' }}
           working-directory: python/pecos-rslib
           target: ${{ matrix.architecture == 'aarch64' && (matrix.os == 'macos-latest' && 'aarch64-apple-darwin' || 'aarch64-unknown-linux-gnu') || (matrix.os == 'macos-latest' && 'x86_64-apple-darwin' || '') }}
           manylinux: auto
           before-script-linux: |
-            # Install dependencies and ensure modern C++ compiler
+            # Install basic dependencies
             if command -v yum &> /dev/null; then
-              yum install -y openssl-devel gcc-c++ libstdc++-devel
-              # For manylinux, install newer gcc if needed
-              if [ "${{ matrix.architecture }}" = "aarch64" ]; then
-                yum install -y devtoolset-10-gcc-c++ || true
-                source /opt/rh/devtoolset-10/enable 2>/dev/null || true
-              fi
+              yum install -y openssl-devel
             elif command -v apt-get &> /dev/null; then
-              apt-get update && apt-get install -y libssl-dev pkg-config g++ libstdc++-11-dev
+              apt-get update && apt-get install -y libssl-dev pkg-config
             else
               echo "No supported package manager found"
               exit 1

@@ -17,6 +17,7 @@
 // the License.
 
 mod byte_message_bindings;
+mod coin_toss_bindings;
 mod cpp_sparse_sim_bindings;
 mod engine_bindings;
 mod noise_helpers;
@@ -31,6 +32,7 @@ mod state_vec_bindings;
 mod state_vec_engine_bindings;
 
 use byte_message_bindings::{PyByteMessage, PyByteMessageBuilder};
+use coin_toss_bindings::RsCoinToss;
 use cpp_sparse_sim_bindings::CppSparseSim;
 use pecos_rng_bindings::RngPcg;
 use pyo3::prelude::*;
@@ -46,6 +48,7 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CppSparseSim>()?;
     m.add_class::<phir_bridge::PHIREngine>()?;
     m.add_class::<RsStateVec>()?;
+    m.add_class::<RsCoinToss>()?;
     m.add_class::<PyByteMessage>()?;
     m.add_class::<PyByteMessageBuilder>()?;
     m.add_class::<PyStateVecEngine>()?;

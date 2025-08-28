@@ -23,7 +23,7 @@ pub struct RsStateVec {
 #[pymethods]
 impl RsStateVec {
     /// Creates a new state-vector simulator with the specified number of qubits
-    /// 
+    ///
     /// # Arguments
     /// * `num_qubits` - Number of qubits in the system
     /// * `seed` - Optional seed for the random number generator

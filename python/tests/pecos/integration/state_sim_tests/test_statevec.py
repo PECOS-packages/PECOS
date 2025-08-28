@@ -29,9 +29,9 @@ from pecos.engines.hybrid_engine import HybridEngine
 from pecos.error_models.generic_error_model import GenericErrorModel
 from pecos.simulators import (
     MPS,
-    StateVec,
     CuStateVec,
     Qulacs,
+    StateVec,
 )
 
 str_to_sim = {

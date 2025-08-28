@@ -11,6 +11,7 @@
 // the License.
 
 pub mod clifford_gateable;
+pub mod coin_toss;
 pub mod gens;
 pub mod pauli_prop;
 // pub mod paulis;
@@ -23,6 +24,7 @@ pub mod state_vec;
 
 pub use arbitrary_rotation_gateable::ArbitraryRotationGateable;
 pub use clifford_gateable::{CliffordGateable, MeasurementResult};
+pub use coin_toss::CoinToss;
 pub use gens::Gens;
 // pub use paulis::Paulis;
 pub use pauli_prop::{PauliProp, StdPauliProp};

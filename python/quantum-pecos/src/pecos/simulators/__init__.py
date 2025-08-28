@@ -17,11 +17,10 @@ and fault propagation simulators.
 # specific language governing permissions and limitations under the License.
 
 # Rust version of stabilizer sim
-from pecos_rslib import SparseSimRs, StateVecRs
+from pecos_rslib import SparseSimRs, StateVec
 from pecos_rslib import SparseSimRs as SparseSim
 
 from pecos.simulators import sim_class_types
-from pecos.simulators.basic_sv.state import BasicSV  # Basic numpy statevector simulator
 from pecos.simulators.cointoss import (
     CoinToss,
 )
@@ -45,13 +44,6 @@ try:
 except ImportError:
     SparseSimCy = None
 
-# Attempt to import optional ProjectQ package
-try:
-    import projectq
-
-    from pecos.simulators.projectq.state import ProjectQSim  # wrapper for ProjectQ sim
-except ImportError:
-    ProjectQSim = None
 
 # Attempt to import optional Qulacs package
 try:

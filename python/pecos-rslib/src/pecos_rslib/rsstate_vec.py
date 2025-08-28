@@ -28,21 +28,22 @@ if TYPE_CHECKING:
     from pecos.typing import SimulatorGateParams
 
 
-class StateVecRs:
+class StateVec:
     """Rust-based quantum state vector simulator.
 
     A high-performance quantum state vector simulator implemented in Rust, providing efficient simulation of arbitrary
     quantum circuits with full quantum state representation and support for complex quantum operations.
     """
 
-    def __init__(self, num_qubits: int):
+    def __init__(self, num_qubits: int, seed: int | None = None):
         """
         Initializes the Rust-backed state vector simulator.
 
         Args:
             num_qubits (int): The number of qubits in the quantum system.
+            seed (int | None): Optional seed for the random number generator.
         """
-        self._sim = RustStateVec(num_qubits)
+        self._sim = RustStateVec(num_qubits, seed)
         self.num_qubits = num_qubits
         self.bindings = dict(gate_dict)
 
@@ -60,7 +61,7 @@ class StateVecRs:
         else:
             vector = list(raw_vector)
 
-        # Convert vector from little-endian to big-endian ordering to match BasicSV
+        # Convert vector from little-endian to big-endian ordering to match PECOS convention
         num_qubits = self.num_qubits
 
         # Create indices mapping using pure Python
@@ -75,7 +76,7 @@ class StateVecRs:
 
         return final_vector
 
-    def reset(self) -> StateVecRs:
+    def reset(self) -> StateVec:
         """Resets the quantum state to the all-zero state."""
         self._sim.reset()
         return self
@@ -344,4 +345,4 @@ gate_dict = {
 
 # "force output": qmeas.force_output,
 
-__all__ = ["StateVecRs", "gate_dict"]
+__all__ = ["StateVec", "gate_dict"]

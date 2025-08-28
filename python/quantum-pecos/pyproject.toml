@@ -63,10 +63,6 @@ guppy = [
     "selene-sim~=0.2.0",  # Then selene-sim (dependency of guppylang)
     "hugr>=0.13.0,<0.14",  # Use stable version compatible with guppylang
 ]
-projectq = [  # State-vector sims using ProjectQ
-    "pybind11>=2.2.3",
-    "projectq>=0.5",
-]
 wasmtime = [
     "wasmtime>=13.0"
 ]
@@ -74,7 +70,6 @@ visualization = [
     "plotly~=5.9.0",
 ]
 simulators = [
-    "quantum-pecos[projectq]",
     "quantum-pecos[qulacs]; python_version < '3.13'",
 ]
 wasm-all = [

@@ -112,6 +112,16 @@ class PauliPropRs:
             else:
                 paulis_dict[key] = value
         self._sim.add_paulis(paulis_dict)
+    
+    def set_faults(self, paulis: dict[str, set[int] | list[int]]) -> None:
+        """Set the faults by clearing and then adding new ones.
+
+        Args:
+            paulis: Dictionary with keys "X", "Y", "Z" mapping to sets/lists of qubit indices.
+        """
+        self.reset()
+        if paulis:
+            self.add_paulis(paulis)
 
     def weight(self) -> int:
         """Get the weight of the Pauli string (number of non-identity operators)."""
@@ -182,6 +192,18 @@ class PauliPropRs:
     def mz(self, qubit: int) -> bool:
         """Measure in Z basis."""
         return self._sim.mz(qubit)
+    
+    def is_identity(self) -> bool:
+        """Check if this is the identity operator."""
+        return self._sim.is_identity()
+    
+    def get_sign_bool(self) -> bool:
+        """Get the sign as a boolean (False for +, True for -)."""
+        return self._sim.get_sign()
+    
+    def get_img_value(self) -> int:
+        """Get the imaginary component (0 for real, 1 for imaginary)."""
+        return self._sim.get_img()
 
     def __str__(self) -> str:
         """String representation."""

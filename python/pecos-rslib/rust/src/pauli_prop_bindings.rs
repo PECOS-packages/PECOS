@@ -205,6 +205,21 @@ impl PyPauliProp {
         self.inner.mz(qubit).outcome
     }
 
+    /// Check if this is the identity operator
+    pub fn is_identity(&self) -> bool {
+        self.inner.is_identity()
+    }
+
+    /// Get the sign as a boolean (false for +, true for -)
+    pub fn get_sign(&self) -> bool {
+        self.inner.get_sign()
+    }
+
+    /// Get the imaginary component (0 for real, 1 for imaginary)
+    pub fn get_img(&self) -> u8 {
+        self.inner.get_img()
+    }
+
     /// Get all faults as a dictionary (compatible with Python PauliFaultProp)
     pub fn get_faults(&self, py: Python<'_>) -> PyResult<PyObject> {
         let dict = PyDict::new(py);

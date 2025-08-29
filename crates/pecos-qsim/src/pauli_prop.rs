@@ -288,7 +288,7 @@ where
     /// ```rust
     /// use std::collections::BTreeMap;
     /// use pecos_qsim::StdPauliProp;
-    /// use pecos_core::VecSet;
+    /// use pecos_core::{VecSet, Set};
     /// 
     /// let mut sim = StdPauliProp::with_sign_tracking(4);
     /// let mut paulis = BTreeMap::new();
@@ -313,12 +313,12 @@ where
                 
                 if self.sign.is_some() {
                     if was_y {
-                        // X·Y = iZ
-                        self.flip_img(1);
-                    } else if was_z {
-                        // X·Z = -iY
+                        // Y·X = -iZ (applying X after Y)
                         self.flip_img(1);
                         self.flip_sign();
+                    } else if was_z {
+                        // Z·X = iY (applying X after Z)
+                        self.flip_img(1);
                     }
                 }
             }
@@ -334,12 +334,12 @@ where
                 
                 if self.sign.is_some() {
                     if was_x {
-                        // Z·X = iY
-                        self.flip_img(1);
-                    } else if was_y {
-                        // Z·Y = -iX
+                        // X·Z = -iY (applying Z after X)
                         self.flip_img(1);
                         self.flip_sign();
+                    } else if was_y {
+                        // Y·Z = iX (applying Z after Y)
+                        self.flip_img(1);
                     }
                 }
             }
@@ -355,12 +355,12 @@ where
                 
                 if self.sign.is_some() {
                     if was_z {
-                        // Y·Z = iX
-                        self.flip_img(1);
-                    } else if was_x {
-                        // Y·X = -iZ
+                        // Z·Y = -iX (applying Y after Z)
                         self.flip_img(1);
                         self.flip_sign();
+                    } else if was_x {
+                        // X·Y = iZ (applying Y after X)
+                        self.flip_img(1);
                     }
                 }
             }
@@ -395,6 +395,30 @@ where
         }
         
         count
+    }
+
+    /// Checks if this is the identity operator (no Pauli operators on any qubit).
+    ///
+    /// # Returns
+    /// true if there are no X, Y, or Z operators on any qubit
+    pub fn is_identity(&self) -> bool {
+        self.xs.is_empty() && self.zs.is_empty()
+    }
+
+    /// Gets the sign as a boolean (false for +, true for -).
+    ///
+    /// # Returns
+    /// false for positive sign, true for negative sign
+    pub fn get_sign(&self) -> bool {
+        self.sign.unwrap_or(false)
+    }
+
+    /// Gets the imaginary component (0 for real, 1 for imaginary).
+    ///
+    /// # Returns
+    /// 0 for real, 1 for imaginary
+    pub fn get_img(&self) -> u8 {
+        self.img.unwrap_or(0)
     }
 
     /// Returns the sign string representation.
@@ -757,7 +781,7 @@ mod tests {
         // Start with X on qubit 0
         sim.add_x(0);
         
-        // Add Z to same qubit: Z * X = iY (since we're applying Z to existing X)
+        // Add Z to same qubit: X·Z = -iY (applying Z after X)
         let mut paulis = BTreeMap::new();
         let mut z_set = VecSet::new();
         z_set.insert(0);
@@ -767,7 +791,7 @@ mod tests {
         
         // Should now have Y on qubit 0
         assert!(sim.contains_y(0));
-        // Phase should be +i (Z * X = iY)
-        assert_eq!(sim.sign_string(), "+i");
+        // Phase should be -i (X·Z = -iY)
+        assert_eq!(sim.sign_string(), "-i");
     }
 }

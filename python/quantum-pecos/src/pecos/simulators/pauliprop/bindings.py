@@ -11,7 +11,7 @@
 
 """Specifies the symbol and function for each gate."""
 
-from pecos.simulators.paulifaultprop import (
+from pecos.simulators.pauliprop import (
     gates_init,
     gates_meas,
     gates_one_qubit,

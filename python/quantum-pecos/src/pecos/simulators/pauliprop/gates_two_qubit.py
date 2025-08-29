@@ -19,14 +19,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.simulators.paulifaultprop.gates_one_qubit import SX, SY, SZ, H, SYdg, SZdg, X
+from pecos.simulators.pauliprop.gates_one_qubit import SX, SY, SZ, H, SYdg, SZdg, X
 
 if TYPE_CHECKING:
-    from pecos.simulators.paulifaultprop.state import PauliFaultProp
+    from pecos.simulators.pauliprop.state import PauliProp
     from pecos.typing import SimulatorGateParams
 
 
-def CX(state: PauliFaultProp, qubits: tuple[int, int]) -> None:
+def CX(state: PauliProp, qubits: tuple[int, int]) -> None:
     """Applies the controlled-X gate.
 
     state (SparseSim): Instance representing the stabilizer state.
@@ -119,7 +119,7 @@ def CX(state: PauliFaultProp, qubits: tuple[int, int]) -> None:
         state.flip_sign()
 
 
-def CZ(state: PauliFaultProp, qubits: tuple[int, int]) -> None:
+def CZ(state: PauliProp, qubits: tuple[int, int]) -> None:
     """Applies the controlled-Z gate.
 
     II -> II
@@ -150,7 +150,7 @@ def CZ(state: PauliFaultProp, qubits: tuple[int, int]) -> None:
     H(state, qubits[1])
 
 
-def CY(state: PauliFaultProp, qubits: tuple[int, int]) -> None:
+def CY(state: PauliProp, qubits: tuple[int, int]) -> None:
     """Applies the controlled-Y gate.
 
     II -> II
@@ -181,7 +181,7 @@ def CY(state: PauliFaultProp, qubits: tuple[int, int]) -> None:
     SZ(state, qubits[1])
 
 
-def SWAP(state: PauliFaultProp, qubits: tuple[int, int]) -> None:
+def SWAP(state: PauliProp, qubits: tuple[int, int]) -> None:
     """Applies a SWAP gate.
 
     state (SparseSim): Instance representing the stabilizer state.
@@ -197,7 +197,7 @@ def SWAP(state: PauliFaultProp, qubits: tuple[int, int]) -> None:
     CX(state, (q1, q2))
 
 
-def G2(state: PauliFaultProp, qubits: tuple[int, int]) -> None:
+def G2(state: PauliProp, qubits: tuple[int, int]) -> None:
     """Applies a CZ.H(1).H(2).CZ.
 
     state (SparseSim): Instance representing the stabilizer state.
@@ -213,7 +213,7 @@ def G2(state: PauliFaultProp, qubits: tuple[int, int]) -> None:
 
 
 def II(
-    state: PauliFaultProp,
+    state: PauliProp,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
@@ -228,7 +228,7 @@ def II(
 
 
 def SXX(
-    state: PauliFaultProp,
+    state: PauliProp,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
@@ -249,7 +249,7 @@ def SXX(
 
 
 def SXXdg(
-    state: PauliFaultProp,
+    state: PauliProp,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
@@ -268,7 +268,7 @@ def SXXdg(
 
 
 def SYY(
-    state: PauliFaultProp,
+    state: PauliProp,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
@@ -282,7 +282,7 @@ def SYY(
     TODO: verify implementation!
 
     Args:
-        state: The PauliFaultProp state instance.
+        state: The PauliProp state instance.
         qubits (tuple[int, int]): A tuple of two qubit indices to apply the gate to.
     """
     qubit1, qubit2 = qubits
@@ -294,14 +294,14 @@ def SYY(
 
 
 def SYYdg(
-    state: PauliFaultProp,
+    state: PauliProp,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
     """Adjoint of SYY.
 
     Args:
-        state: The PauliFaultProp state instance.
+        state: The PauliProp state instance.
         qubits (tuple[int, int]): A tuple of two qubit indices to apply the gate to.
         **_params: Unused additional parameters (kept for interface compatibility).
     """
@@ -314,7 +314,7 @@ def SYYdg(
 
 
 def SZZ(
-    state: PauliFaultProp,
+    state: PauliProp,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:
@@ -332,7 +332,7 @@ def SZZ(
 
 
 def SZZdg(
-    state: PauliFaultProp,
+    state: PauliProp,
     qubits: tuple[int, int],
     **_params: SimulatorGateParams,
 ) -> None:

@@ -24,8 +24,9 @@ from pecos.simulators import sim_class_types
 
 # Ignores quantum gates, coin toss for measurements
 from pecos.simulators.default_simulator import DefaultSimulator
-from pecos.simulators.paulifaultprop import (
-    PauliFaultProp,
+from pecos.simulators.pauliprop import (
+    PauliProp,
+    PauliFaultProp,  # Backward compatibility
 )
 
 # Pauli fault propagation sim

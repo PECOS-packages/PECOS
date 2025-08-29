@@ -19,9 +19,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pecos_rslib import PauliPropRs
 from pecos.simulators.gate_syms import alt_symbols
-from pecos.simulators.paulifaultprop import bindings
-from pecos.simulators.paulifaultprop.logical_sign import find_logical_signs
+from pecos.simulators.pauliprop import bindings
+from pecos.simulators.pauliprop.logical_sign import find_logical_signs
 from pecos.simulators.sim_class_types import PauliPropagation
 
 if TYPE_CHECKING:
@@ -29,7 +30,7 @@ if TYPE_CHECKING:
     from pecos.circuits.quantum_circuit import ParamGateCollection
 
 
-class PauliFaultProp(PauliPropagation):
+class PauliProp(PauliPropagation):
     r"""A simulator that evolves Pauli faults through Clifford circuits.
 
     The unitary evolution of a Pauli follows :math:`PC = CP' \Leftrightarrow P' = C^{\dagger} P C`, where :math:`P` and
@@ -44,7 +45,7 @@ class PauliFaultProp(PauliPropagation):
     """
 
     def __init__(self, *, num_qubits: int, track_sign: bool = False) -> None:
-        """Initialize a PauliFaultProp state.
+        """Initialize a PauliProp state.
 
         Args:
             num_qubits (int): Number of qubits in the system.
@@ -56,26 +57,88 @@ class PauliFaultProp(PauliPropagation):
         super().__init__()
 
         self.num_qubits = num_qubits
-        self.faults = {
-            "X": set(),
-            "Y": set(),
-            "Z": set(),
-        }
-        # Here we will encode Y as the qubit id in faults_x and faults_z
-
         self.track_sign = track_sign
-        self.sign = 0
-        self.img = 0
+        
+        # Use Rust backend
+        self._backend = PauliPropRs(num_qubits, track_sign)
 
-        self.bindings = bindings.gate_dict
+        # Set up optimized bindings for gates available in Rust backend
+        self._setup_optimized_bindings()
+        
+        # Fall back to Python implementations for gates not in Rust
+        for gate, func in bindings.gate_dict.items():
+            if gate not in self.bindings:
+                self.bindings[gate] = func
+        
+        # Add alternative symbols
         for k, v in alt_symbols.items():
             if v in self.bindings:
                 self.bindings[k] = self.bindings[v]
+    
+    def _setup_optimized_bindings(self) -> None:
+        """Set up direct bindings to Rust backend for supported gates."""
+        self.bindings = {}
+        backend = self._backend  # Local reference to avoid attribute lookup
+        
+        # Single-qubit gates - location is always an int
+        self.bindings["H"] = lambda s, q, **p: backend.h(q)
+        self.bindings["SX"] = lambda s, q, **p: backend.sx(q)
+        self.bindings["SY"] = lambda s, q, **p: backend.sy(q)
+        self.bindings["SZ"] = lambda s, q, **p: backend.sz(q)
+        
+        # Two-qubit gates - location is always a tuple
+        self.bindings["CX"] = lambda s, qs, **p: backend.cx(qs[0], qs[1])
+        self.bindings["CY"] = lambda s, qs, **p: backend.cy(qs[0], qs[1])
+        self.bindings["CZ"] = lambda s, qs, **p: backend.cz(qs[0], qs[1])
+        self.bindings["SWAP"] = lambda s, qs, **p: backend.swap(qs[0], qs[1])
+        
+        # Note: X, Y, Z are Pauli operators, not gates to apply to the state,
+        # so they should still use the Python implementations
+    
+    @property
+    def faults(self):
+        """Get the current faults dictionary."""
+        return self._backend.faults
+    
+    @faults.setter
+    def faults(self, value):
+        """Set the faults dictionary."""
+        self._backend.set_faults(value)
+    
+    @property
+    def sign(self):
+        """Get the sign (0 for +, 1 for -)."""
+        return 1 if self._backend.get_sign_bool() else 0
+    
+    @sign.setter
+    def sign(self, value):
+        """Set the sign."""
+        # Reset sign to 0, then flip if needed
+        current = self.sign
+        if current != value:
+            self._backend.flip_sign()
+    
+    @property
+    def img(self):
+        """Get the imaginary component (0 or 1)."""
+        return self._backend.get_img_value()
+    
+    @img.setter
+    def img(self, value):
+        """Set the imaginary component."""
+        # Determine how many flips needed to get to target value
+        current = self.img
+        if current != value:
+            # If current is 0 and we want 1, flip once
+            # If current is 1 and we want 0, flip 3 times (or once more to cycle back)
+            if value == 1 and current == 0:
+                self._backend.flip_img(1)
+            elif value == 0 and current == 1:
+                self._backend.flip_img(3)
 
     def flip_sign(self) -> None:
         """Flip the sign of the Pauli string."""
-        self.sign += 1
-        self.sign %= 2
+        self._backend.flip_sign()
 
     def flip_img(self, num_is: int) -> None:
         """Flip the imaginary component based on number of i factors.
@@ -83,13 +146,7 @@ class PauliFaultProp(PauliPropagation):
         Args:
             num_is: Number of imaginary factors to add.
         """
-        self.img += num_is
-        self.img %= 4
-
-        if self.img in {2, 3}:
-            self.flip_sign()
-
-        self.img %= 2
+        self._backend.flip_img(num_is)
 
     def logical_sign(self, logical_op: QuantumCircuit) -> int:
         """Find the sign of a logical operator.
@@ -131,7 +188,7 @@ class PauliFaultProp(PauliPropagation):
         if circuit_type in {"faults", "recovery"}:
             self.add_faults(circuit)
             return None
-        if self.faults["X"] or self.faults["Y"] or self.faults["Z"]:
+        if not self._backend.is_identity():
             # Only apply gates if there are faults to act on
             return super().run_circuit(circuit, removed_locations)
         return None
@@ -163,94 +220,10 @@ class PauliFaultProp(PauliPropagation):
                 symbol, locations, _ = elem
 
             if symbol in {"X", "Y", "Z"}:
-                if symbol == "X":
-                    # X.I = X
-                    # X.X = I
-                    # X.Y = iZ
-                    # X.Z = -iY
-
-                    yoverlap = self.faults["Y"] & locations
-                    zoverlap = self.faults["Z"] & locations
-
-                    self.faults["Y"] -= yoverlap
-                    self.faults["Z"] -= zoverlap
-
-                    self.faults["Y"] ^= zoverlap
-                    self.faults["Z"] ^= yoverlap
-
-                    self.faults["X"] ^= locations - yoverlap - zoverlap
-
-                    if self.track_sign:
-                        if yoverlap:
-                            # X.Y = i Z
-                            self.flip_img(len(yoverlap))
-
-                        if zoverlap:
-                            # X.Z = -i Y
-                            self.flip_img(len(zoverlap))
-
-                            if len(zoverlap) % 2:
-                                self.flip_sign()
-
-                elif symbol == "Z":
-                    # Z.I = Z
-                    # Z.X = iY
-                    # Z.Y = -iX
-                    # Z.Z = I
-
-                    xoverlap = self.faults["X"] & locations
-                    yoverlap = self.faults["Y"] & locations
-
-                    self.faults["X"] -= xoverlap
-                    self.faults["Y"] -= yoverlap
-
-                    self.faults["X"] ^= yoverlap
-                    self.faults["Y"] ^= xoverlap
-
-                    self.faults["Z"] ^= locations - xoverlap - yoverlap
-
-                    if self.track_sign:
-                        if xoverlap:
-                            # Z.X = i Y
-                            self.flip_img(len(xoverlap))
-
-                        if yoverlap:
-                            # Z.Y = -i X
-                            self.flip_img(len(yoverlap))
-
-                            if len(yoverlap) % 2:
-                                self.flip_sign()
-
-                else:
-                    # Y.I = Y
-                    # Y.X = -iZ
-                    # Y.Y = I
-                    # Y.Z = iX
-
-                    xoverlap = self.faults["X"] & locations
-                    zoverlap = self.faults["Z"] & locations
-
-                    self.faults["X"] -= xoverlap
-                    self.faults["Z"] -= zoverlap
-
-                    self.faults["X"] ^= zoverlap
-                    self.faults["Z"] ^= xoverlap
-
-                    self.faults["Y"] ^= locations - xoverlap - zoverlap
-
-                    if self.track_sign:
-                        if zoverlap:
-                            # Y Z = i X
-                            self.flip_img(len(zoverlap))
-
-                        if xoverlap:
-                            # Y X = -i Z
-                            self.flip_img(len(xoverlap))
-
-                            if len(xoverlap) % 2:
-                                self.flip_sign()
-
-            else:
+                # Convert locations to a dict for add_paulis
+                paulis_dict = {symbol: locations}
+                self._backend.add_paulis(paulis_dict)
+            elif symbol != "I":
                 msg = f"Got {symbol}. Can only handle Pauli errors."
                 raise Exception(msg)
 
@@ -260,20 +233,7 @@ class PauliFaultProp(PauliPropagation):
         Returns:
             String representation with sign and Pauli operators.
         """
-        fault_dict = self.faults
-
-        pstr = "-" if self.sign else "+"
-
-        for q in range(self.num_qubits):
-            if q in fault_dict.get("X", set()):
-                pstr += "X"
-            elif q in fault_dict.get("Y", set()):
-                pstr += "Y"
-            elif q in fault_dict.get("Z", set()):
-                pstr += "Z"
-            else:
-                pstr += "I"
-        return pstr
+        return self._backend.to_dense_string()
 
     def fault_str_sign(self, *, strip: bool = False) -> str:
         """Get the sign component of the fault string.
@@ -284,23 +244,23 @@ class PauliFaultProp(PauliPropagation):
         Returns:
             String representation of the sign component.
         """
-        fault_str = []
-
-        if self.sign:
-            fault_str.append("-")
+        sign_str = self._backend.sign_string()
+        
+        # Convert to the expected format
+        if sign_str == "+":
+            fault_str = "+ "
+        elif sign_str == "-":
+            fault_str = "- "
+        elif sign_str == "+i":
+            fault_str = "+i"
+        elif sign_str == "-i":
+            fault_str = "-i"
         else:
-            fault_str.append("+")
-
-        if self.img:
-            fault_str.append("i")
-        else:
-            fault_str.append(" ")
-
-        fault_str = "".join(fault_str)
-
+            fault_str = sign_str
+        
         if strip:
             fault_str = fault_str.strip()
-
+        
         return fault_str
 
     def fault_str_operator(self) -> str:
@@ -309,22 +269,14 @@ class PauliFaultProp(PauliPropagation):
         Returns:
             String representation of the Pauli operators.
         """
-        fault_str = []
-
-        for q in range(self.num_qubits):
-            if q in self.faults["X"]:
-                fault_str.append("X")
-
-            elif q in self.faults["Y"]:
-                fault_str.append("Y")
-
-            elif q in self.faults["Z"]:
-                fault_str.append("Z")
-
-            else:
-                fault_str.append("I")
-
-        return "".join(fault_str)
+        # Get the dense string and remove the sign part
+        full_str = self._backend.to_dense_string()
+        # Remove the sign prefix (+, -, +i, -i)
+        if full_str.startswith("+i") or full_str.startswith("-i"):
+            return full_str[2:]
+        elif full_str.startswith("+") or full_str.startswith("-"):
+            return full_str[1:]
+        return full_str
 
     def fault_string(self) -> str:
         """Get the complete fault string with sign and operators.
@@ -332,7 +284,14 @@ class PauliFaultProp(PauliPropagation):
         Returns:
             Complete string representation of the fault state.
         """
-        return f"{self.fault_str_sign()}{self.fault_str_operator()}"
+        # Use the backend's string representation but format it for compatibility
+        backend_str = self._backend.to_dense_string()
+        # Ensure there's a space after the sign if no 'i'
+        if backend_str.startswith("+") and not backend_str.startswith("+i"):
+            return "+ " + backend_str[1:]
+        elif backend_str.startswith("-") and not backend_str.startswith("-i"):
+            return "- " + backend_str[1:]
+        return backend_str
 
     def fault_wt(self) -> int:
         """Get the weight of the fault (number of non-identity operators).
@@ -340,16 +299,13 @@ class PauliFaultProp(PauliPropagation):
         Returns:
             Total weight of X, Y, and Z operators.
         """
-        wt = len(self.faults["X"])
-        wt += len(self.faults["Y"])
-        wt += len(self.faults["Z"])
-
-        return wt
+        return self._backend.weight()
 
     def __str__(self) -> str:
         """Return string representation of the Pauli fault state."""
+        faults = self.faults
         return "{{'X': {}, 'Y': {}, 'Z': {}}}".format(
-            self.faults["X"],
-            self.faults["Y"],
-            self.faults["Z"],
+            faults["X"],
+            faults["Y"],
+            faults["Z"],
         )

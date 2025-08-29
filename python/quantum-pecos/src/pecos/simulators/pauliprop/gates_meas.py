@@ -20,15 +20,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pecos.simulators.paulifaultprop.state import PauliFaultProp
+    from pecos.simulators.pauliprop.state import PauliProp
     from pecos.typing import SimulatorGateParams
 
 
-def meas_x(state: PauliFaultProp, qubit: int, **_params: SimulatorGateParams) -> int:
+def meas_x(state: PauliProp, qubit: int, **_params: SimulatorGateParams) -> int:
     """Measurement in the X basis.
 
     Args:
-        state: The PauliFaultProp state instance.
+        state: The PauliProp state instance.
         qubit (int): The qubit index to measure.
         **_params: Unused additional parameters (kept for interface compatibility).
     """
@@ -37,11 +37,11 @@ def meas_x(state: PauliFaultProp, qubit: int, **_params: SimulatorGateParams) ->
     return 0
 
 
-def meas_z(state: PauliFaultProp, qubit: int, **_params: SimulatorGateParams) -> int:
+def meas_z(state: PauliProp, qubit: int, **_params: SimulatorGateParams) -> int:
     """Measurement in the Z basis.
 
     Args:
-        state: The PauliFaultProp state instance.
+        state: The PauliProp state instance.
         qubit (int): The qubit index to measure.
         **_params: Unused additional parameters (kept for interface compatibility).
     """
@@ -50,11 +50,11 @@ def meas_z(state: PauliFaultProp, qubit: int, **_params: SimulatorGateParams) ->
     return 0
 
 
-def meas_y(state: PauliFaultProp, qubit: int, **_params: SimulatorGateParams) -> int:
+def meas_y(state: PauliProp, qubit: int, **_params: SimulatorGateParams) -> int:
     """Measurement in the Y basis.
 
     Args:
-        state: The PauliFaultProp state instance.
+        state: The PauliProp state instance.
         qubit (int): The qubit index to measure.
         **_params: Unused additional parameters (kept for interface compatibility).
     """
@@ -64,7 +64,7 @@ def meas_y(state: PauliFaultProp, qubit: int, **_params: SimulatorGateParams) ->
 
 
 def meas_pauli(
-    state: PauliFaultProp,
+    state: PauliProp,
     qubits: int | tuple[int, ...],
     **params: SimulatorGateParams,
 ) -> int:
@@ -115,7 +115,7 @@ def meas_pauli(
     return meas % 2
 
 
-def force_output(_state: PauliFaultProp, _qubit: int, forced_output: int = -1) -> int:
+def force_output(_state: PauliProp, _qubit: int, forced_output: int = -1) -> int:
     """Outputs value.
 
     Used for error generators to generate outputs when replacing measurements.

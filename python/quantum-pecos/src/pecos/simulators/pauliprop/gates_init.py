@@ -20,15 +20,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pecos.simulators.paulifaultprop.state import PauliFaultProp
+    from pecos.simulators.pauliprop.state import PauliProp
     from pecos.typing import SimulatorGateParams
 
 
-def init(state: PauliFaultProp, qubit: int, **_params: SimulatorGateParams) -> None:
+def init(state: PauliProp, qubit: int, **_params: SimulatorGateParams) -> None:
     """Initialize qubit to zero state.
 
     Args:
-        state: The PauliFaultProp state instance.
+        state: The PauliProp state instance.
         qubit (int): The qubit index to initialize.
         **_params: Unused additional parameters (kept for interface compatibility).
     """

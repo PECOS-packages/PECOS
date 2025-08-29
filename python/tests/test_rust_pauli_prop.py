@@ -13,7 +13,7 @@
 
 import pytest
 from pecos_rslib import PauliPropRs
-from pecos.simulators import PauliFaultProp
+from pecos.simulators import PauliProp
 from pecos.circuits import QuantumCircuit
 
 
@@ -44,12 +44,12 @@ def test_rust_pauli_prop_composition():
     """Test Pauli composition with phase tracking."""
     sim = PauliPropRs(num_qubits=3, track_sign=True)
     
-    # X * Z = -iY
+    # X * Z = -iY (applying Z after X)
     sim.add_x(0)
     sim.add_paulis({"Z": {0}})
     
     assert sim.contains_y(0)
-    assert sim.sign_string() == "+i"  # Z*X = iY
+    assert sim.sign_string() == "-i"  # X*Z = -iY
     
     # Y * Y = I
     sim.add_y(0)
@@ -80,7 +80,7 @@ def test_rust_vs_python_consistency():
     """Test that Rust and Python implementations give same results."""
     # Create both simulators
     rust_sim = PauliPropRs(num_qubits=4, track_sign=True)
-    py_sim = PauliFaultProp(num_qubits=4, track_sign=True)
+    py_sim = PauliProp(num_qubits=4, track_sign=True)
     
     # Add same faults using appropriate APIs
     qc = QuantumCircuit()

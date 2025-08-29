@@ -21,14 +21,14 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pecos.circuits import QuantumCircuit
-    from pecos.simulators.paulifaultprop.state import PauliFaultProp
+    from pecos.simulators.pauliprop.state import PauliProp
 
 
-def find_logical_signs(state: PauliFaultProp, logical_circuit: QuantumCircuit) -> int:
+def find_logical_signs(state: PauliProp, logical_circuit: QuantumCircuit) -> int:
     """Find the sign of the logical operator.
 
     Args:
-        state: The PauliFaultProp state instance.
+        state: The PauliProp state instance.
         logical_circuit (QuantumCircuit): The logical circuit to find the sign of.
     """
     if len(logical_circuit) != 1:

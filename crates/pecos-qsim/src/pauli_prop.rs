@@ -461,6 +461,40 @@ where
 
 // Specialized implementation for StdPauliProp (usize indices)
 impl StdPauliProp {
+    /// Get all qubits with X operators (including those with Y)
+    pub fn get_x_qubits(&self) -> Vec<usize> {
+        self.xs.iter().copied().collect()
+    }
+    
+    /// Get all qubits with Z operators (including those with Y)
+    pub fn get_z_qubits(&self) -> Vec<usize> {
+        self.zs.iter().copied().collect()
+    }
+    
+    /// Get all qubits with only X operators (not Y)
+    pub fn get_x_only_qubits(&self) -> Vec<usize> {
+        self.xs.iter()
+            .filter(|&q| !self.contains_z(*q))
+            .copied()
+            .collect()
+    }
+    
+    /// Get all qubits with only Z operators (not Y)
+    pub fn get_z_only_qubits(&self) -> Vec<usize> {
+        self.zs.iter()
+            .filter(|&q| !self.contains_x(*q))
+            .copied()
+            .collect()
+    }
+    
+    /// Get all qubits with Y operators (both X and Z)
+    pub fn get_y_qubits(&self) -> Vec<usize> {
+        self.xs.iter()
+            .filter(|&q| self.contains_z(*q))
+            .copied()
+            .collect()
+    }
+    
     /// Returns the operator string as a dense representation.
     ///
     /// Requires `num_qubits` to be set.

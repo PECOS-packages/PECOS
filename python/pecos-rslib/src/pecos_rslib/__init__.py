@@ -22,6 +22,7 @@ from pecos_rslib.rssparse_sim import SparseSimRs
 from pecos_rslib.cppsparse_sim import CppSparseSimRs
 from pecos_rslib.rsstate_vec import StateVec
 from pecos_rslib.rscoin_toss import CoinToss
+from pecos_rslib.rspauli_prop import PauliPropRs
 from pecos_rslib._pecos_rslib import ByteMessage
 from pecos_rslib._pecos_rslib import ByteMessageBuilder
 from pecos_rslib._pecos_rslib import StateVecEngineRs
@@ -65,6 +66,7 @@ __all__ = [
     "CppSparseSimRs",
     "StateVec",
     "CoinToss",
+    "PauliPropRs",
     "ByteMessage",
     "ByteMessageBuilder",
     "StateVecEngineRs",

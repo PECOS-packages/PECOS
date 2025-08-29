@@ -17,7 +17,7 @@ and fault propagation simulators.
 # specific language governing permissions and limitations under the License.
 
 # Rust version of simulators
-from pecos_rslib import CoinToss, CppSparseSimRs, SparseSimRs, StateVec
+from pecos_rslib import CoinToss, CppSparseSimRs, SparseSimRs
 from pecos_rslib import SparseSimRs as SparseSim
 
 from pecos.simulators import sim_class_types
@@ -25,20 +25,24 @@ from pecos.simulators import sim_class_types
 # Ignores quantum gates, coin toss for measurements
 from pecos.simulators.default_simulator import DefaultSimulator
 from pecos.simulators.pauliprop import (
-    PauliProp,
     PauliFaultProp,  # Backward compatibility
+    PauliProp,
 )
 
 # Pauli fault propagation sim
 from pecos.simulators.sparsesim import (
     SparseSim as SparseSimPy,
 )
+from pecos.simulators.statevec import StateVec
 
 # Attempt to import optional Qulacs package
 try:
     from pecos.simulators.qulacs.state import Qulacs  # wrapper for Qulacs sim
 except ImportError:
     Qulacs = None
+
+# Import Qulacs-RS (Rust version)
+from pecos.simulators.qulacs_rs import QulacsRs
 
 
 # Attempt to import optional cuquantum and cupy packages

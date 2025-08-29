@@ -14,3 +14,4 @@ sha2.workspace = true
 dirs.workspace = true
 tar.workspace = true
 flate2.workspace = true
+bzip2.workspace = true

@@ -10,13 +10,13 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use pecos_qsim::{StdPauliProp, CliffordGateable, QuantumSimulator};
+use pecos_core::{Set, VecSet};
+use pecos_qsim::{CliffordGateable, QuantumSimulator, StdPauliProp};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySet};
 use std::collections::BTreeMap;
-use pecos_core::{VecSet, Set};
 
-/// Python wrapper for the Rust PauliProp simulator
+/// Python wrapper for the Rust `PauliProp` simulator
 ///
 /// This simulator tracks how Pauli operators propagate through Clifford circuits.
 /// It's particularly useful for fault propagation and stabilizer simulations.
@@ -27,11 +27,11 @@ pub struct PyPauliProp {
 
 #[pymethods]
 impl PyPauliProp {
-    /// Create a new PauliProp simulator
+    /// Create a new `PauliProp` simulator
     ///
     /// Args:
-    ///     num_qubits: Optional number of qubits (for string representation)
-    ///     track_sign: Whether to track sign and phase
+    ///     `num_qubits`: Optional number of qubits (for string representation)
+    ///     `track_sign`: Whether to track sign and phase
     #[new]
     #[pyo3(signature = (num_qubits=None, track_sign=false))]
     pub fn new(num_qubits: Option<usize>, track_sign: bool) -> Self {
@@ -45,7 +45,7 @@ impl PyPauliProp {
         } else {
             StdPauliProp::new()
         };
-        
+
         PyPauliProp { inner }
     }
 
@@ -100,11 +100,11 @@ impl PyPauliProp {
     ///     paulis: Dictionary with keys "X", "Y", "Z" mapping to sets of qubit indices
     pub fn add_paulis(&mut self, paulis: &Bound<'_, PyDict>) -> PyResult<()> {
         let mut btree_map = BTreeMap::new();
-        
+
         // Convert Python dict to BTreeMap<String, VecSet<usize>>
         for (key, value) in paulis.iter() {
             let key_str: String = key.extract()?;
-            
+
             if let Ok(py_set) = value.downcast::<PySet>() {
                 let mut vec_set = VecSet::new();
                 for item in py_set.iter() {
@@ -123,7 +123,7 @@ impl PyPauliProp {
                 btree_map.insert(key_str, vec_set);
             }
         }
-        
+
         self.inner.add_paulis(&btree_map);
         Ok(())
     }
@@ -143,7 +143,7 @@ impl PyPauliProp {
         self.inner.sparse_string()
     }
 
-    /// Get the dense string representation (for StdPauliProp)
+    /// Get the dense string representation (for `StdPauliProp`)
     pub fn dense_string(&self) -> String {
         self.inner.dense_string()
     }
@@ -175,7 +175,7 @@ impl PyPauliProp {
         self.inner.sx(qubit);
     }
 
-    /// Apply sqrt(Y) gate  
+    /// Apply sqrt(Y) gate
     pub fn sy(&mut self, qubit: usize) {
         self.inner.sy(qubit);
     }
@@ -220,31 +220,31 @@ impl PyPauliProp {
         self.inner.get_img()
     }
 
-    /// Get all faults as a dictionary (compatible with Python PauliFaultProp)
+    /// Get all faults as a dictionary (compatible with Python `PauliFaultProp`)
     pub fn get_faults(&self, py: Python<'_>) -> PyResult<PyObject> {
         let dict = PyDict::new(py);
-        
+
         // Get X-only qubits
         let x_set = PySet::empty(py)?;
         for qubit in self.inner.get_x_only_qubits() {
             x_set.add(qubit)?;
         }
         dict.set_item("X", x_set)?;
-        
-        // Get Y qubits  
+
+        // Get Y qubits
         let y_set = PySet::empty(py)?;
         for qubit in self.inner.get_y_qubits() {
             y_set.add(qubit)?;
         }
         dict.set_item("Y", y_set)?;
-        
+
         // Get Z-only qubits
         let z_set = PySet::empty(py)?;
         for qubit in self.inner.get_z_only_qubits() {
             z_set.add(qubit)?;
         }
         dict.set_item("Z", z_set)?;
-        
+
         Ok(dict.into())
     }
 

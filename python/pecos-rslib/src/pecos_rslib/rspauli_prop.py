@@ -23,12 +23,12 @@ from typing import TYPE_CHECKING
 from pecos_rslib._pecos_rslib import PauliProp as RustPauliProp
 
 if TYPE_CHECKING:
-    from typing import Any
+    pass
 
 
 class PauliPropRs:
     """Rust-based Pauli propagation simulator.
-    
+
     A high-performance simulator for tracking Pauli operator propagation through
     Clifford circuits. Useful for fault propagation and stabilizer simulations.
     """
@@ -112,7 +112,7 @@ class PauliPropRs:
             else:
                 paulis_dict[key] = value
         self._sim.add_paulis(paulis_dict)
-    
+
     def set_faults(self, paulis: dict[str, set[int] | list[int]]) -> None:
         """Set the faults by clearing and then adding new ones.
 
@@ -156,7 +156,7 @@ class PauliPropRs:
         return self.weight()
 
     # Clifford gates
-    
+
     def h(self, qubit: int) -> None:
         """Apply Hadamard gate."""
         self._sim.h(qubit)
@@ -192,15 +192,15 @@ class PauliPropRs:
     def mz(self, qubit: int) -> bool:
         """Measure in Z basis."""
         return self._sim.mz(qubit)
-    
+
     def is_identity(self) -> bool:
         """Check if this is the identity operator."""
         return self._sim.is_identity()
-    
+
     def get_sign_bool(self) -> bool:
         """Get the sign as a boolean (False for +, True for -)."""
         return self._sim.get_sign()
-    
+
     def get_img_value(self) -> int:
         """Get the imaginary component (0 for real, 1 for imaginary)."""
         return self._sim.get_img()

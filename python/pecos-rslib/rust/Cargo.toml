@@ -32,6 +32,7 @@ pecos-qasm = { workspace = true, features = ["wasm"] }
 pecos-engines = { workspace = true }
 pecos-qsim = { workspace = true }
 pecos-cppsparsesim = { path = "../../../crates/pecos-cppsparsesim" }
+pecos-qulacs = { path = "../../../crates/pecos-qulacs" }
 parking_lot = { workspace = true}
 serde_json = { workspace = true }
 

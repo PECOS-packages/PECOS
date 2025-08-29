@@ -22,13 +22,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, List
 
-from pecos_rslib._pecos_rslib import RsStateVec as RustStateVec
+from pecos_rslib._pecos_rslib import RsStateVec
 
 if TYPE_CHECKING:
     from pecos.typing import SimulatorGateParams
 
 
-class StateVec:
+class StateVecRs:
     """Rust-based quantum state vector simulator.
 
     A high-performance quantum state vector simulator implemented in Rust, providing efficient simulation of arbitrary
@@ -43,7 +43,7 @@ class StateVec:
             num_qubits (int): The number of qubits in the quantum system.
             seed (int | None): Optional seed for the random number generator.
         """
-        self._sim = RustStateVec(num_qubits, seed)
+        self._sim = RsStateVec(num_qubits, seed)
         self.num_qubits = num_qubits
         self.bindings = dict(gate_dict)
 
@@ -76,7 +76,7 @@ class StateVec:
 
         return final_vector
 
-    def reset(self) -> StateVec:
+    def reset(self) -> StateVecRs:
         """Resets the quantum state to the all-zero state."""
         self._sim.reset()
         return self
@@ -345,4 +345,4 @@ gate_dict = {
 
 # "force output": qmeas.force_output,
 
-__all__ = ["StateVec", "gate_dict"]
+__all__ = ["StateVecRs", "gate_dict"]

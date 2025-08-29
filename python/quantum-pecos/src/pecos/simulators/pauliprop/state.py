@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pecos_rslib import PauliPropRs
+
 from pecos.simulators.gate_syms import alt_symbols
 from pecos.simulators.pauliprop import bindings
 from pecos.simulators.pauliprop.logical_sign import find_logical_signs
@@ -58,73 +59,85 @@ class PauliProp(PauliPropagation):
 
         self.num_qubits = num_qubits
         self.track_sign = track_sign
-        
+
         # Use Rust backend
         self._backend = PauliPropRs(num_qubits, track_sign)
 
         # Set up optimized bindings for gates available in Rust backend
         self._setup_optimized_bindings()
-        
+
         # Fall back to Python implementations for gates not in Rust
         for gate, func in bindings.gate_dict.items():
             if gate not in self.bindings:
                 self.bindings[gate] = func
-        
+
         # Add alternative symbols
         for k, v in alt_symbols.items():
             if v in self.bindings:
                 self.bindings[k] = self.bindings[v]
-    
+
     def _setup_optimized_bindings(self) -> None:
         """Set up direct bindings to Rust backend for supported gates."""
         self.bindings = {}
         backend = self._backend  # Local reference to avoid attribute lookup
-        
+
         # Single-qubit gates - location is always an int
-        self.bindings["H"] = lambda s, q, **p: backend.h(q)
-        self.bindings["SX"] = lambda s, q, **p: backend.sx(q)
-        self.bindings["SY"] = lambda s, q, **p: backend.sy(q)
-        self.bindings["SZ"] = lambda s, q, **p: backend.sz(q)
-        
+        self.bindings["H"] = lambda s, q, **p: backend.h(q)  # noqa: ARG005
+        self.bindings["SX"] = lambda s, q, **p: backend.sx(q)  # noqa: ARG005
+        self.bindings["SY"] = lambda s, q, **p: backend.sy(q)  # noqa: ARG005
+        self.bindings["SZ"] = lambda s, q, **p: backend.sz(q)  # noqa: ARG005
+
         # Two-qubit gates - location is always a tuple
-        self.bindings["CX"] = lambda s, qs, **p: backend.cx(qs[0], qs[1])
-        self.bindings["CY"] = lambda s, qs, **p: backend.cy(qs[0], qs[1])
-        self.bindings["CZ"] = lambda s, qs, **p: backend.cz(qs[0], qs[1])
-        self.bindings["SWAP"] = lambda s, qs, **p: backend.swap(qs[0], qs[1])
-        
+        self.bindings["CX"] = lambda s, qs, **p: backend.cx(  # noqa: ARG005
+            qs[0],
+            qs[1],
+        )
+        self.bindings["CY"] = lambda s, qs, **p: backend.cy(  # noqa: ARG005
+            qs[0],
+            qs[1],
+        )
+        self.bindings["CZ"] = lambda s, qs, **p: backend.cz(  # noqa: ARG005
+            qs[0],
+            qs[1],
+        )
+        self.bindings["SWAP"] = lambda s, qs, **p: backend.swap(  # noqa: ARG005
+            qs[0],
+            qs[1],
+        )
+
         # Note: X, Y, Z are Pauli operators, not gates to apply to the state,
         # so they should still use the Python implementations
-    
+
     @property
-    def faults(self):
+    def faults(self) -> dict:
         """Get the current faults dictionary."""
         return self._backend.faults
-    
+
     @faults.setter
-    def faults(self, value):
+    def faults(self, value: dict) -> None:
         """Set the faults dictionary."""
         self._backend.set_faults(value)
-    
+
     @property
-    def sign(self):
+    def sign(self) -> int:
         """Get the sign (0 for +, 1 for -)."""
         return 1 if self._backend.get_sign_bool() else 0
-    
+
     @sign.setter
-    def sign(self, value):
+    def sign(self, value: int) -> None:
         """Set the sign."""
         # Reset sign to 0, then flip if needed
         current = self.sign
         if current != value:
             self._backend.flip_sign()
-    
+
     @property
-    def img(self):
+    def img(self) -> int:
         """Get the imaginary component (0 or 1)."""
         return self._backend.get_img_value()
-    
+
     @img.setter
-    def img(self, value):
+    def img(self, value: int) -> None:
         """Set the imaginary component."""
         # Determine how many flips needed to get to target value
         current = self.img
@@ -245,7 +258,7 @@ class PauliProp(PauliPropagation):
             String representation of the sign component.
         """
         sign_str = self._backend.sign_string()
-        
+
         # Convert to the expected format
         if sign_str == "+":
             fault_str = "+ "
@@ -257,10 +270,10 @@ class PauliProp(PauliPropagation):
             fault_str = "-i"
         else:
             fault_str = sign_str
-        
+
         if strip:
             fault_str = fault_str.strip()
-        
+
         return fault_str
 
     def fault_str_operator(self) -> str:
@@ -272,9 +285,9 @@ class PauliProp(PauliPropagation):
         # Get the dense string and remove the sign part
         full_str = self._backend.to_dense_string()
         # Remove the sign prefix (+, -, +i, -i)
-        if full_str.startswith("+i") or full_str.startswith("-i"):
+        if full_str.startswith(("+i", "-i")):
             return full_str[2:]
-        elif full_str.startswith("+") or full_str.startswith("-"):
+        if full_str.startswith(("+", "-")):
             return full_str[1:]
         return full_str
 
@@ -289,7 +302,7 @@ class PauliProp(PauliPropagation):
         # Ensure there's a space after the sign if no 'i'
         if backend_str.startswith("+") and not backend_str.startswith("+i"):
             return "+ " + backend_str[1:]
-        elif backend_str.startswith("-") and not backend_str.startswith("-i"):
+        if backend_str.startswith("-") and not backend_str.startswith("-i"):
             return "- " + backend_str[1:]
         return backend_str
 

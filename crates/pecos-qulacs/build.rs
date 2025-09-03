@@ -90,14 +90,14 @@ fn main() {
     build.flag_if_supported("-O3");
     build.flag_if_supported("-ffast-math");
     
+    // Silence OpenMP pragma warnings since we intentionally don't use OpenMP
+    // PECOS uses thread-level parallelism instead of OpenMP's internal parallelism
+    build.flag_if_supported("-Wno-unknown-pragmas");
+    
     // Define preprocessor macros
     // Note: _USE_MATH_DEFINES is already defined in Qulacs source files
     // to avoid redefinition warnings, we let Qulacs handle this internally
     build.define("EIGEN_NO_DEBUG", None);
-    
-    // OpenMP is intentionally disabled. PECOS uses thread-level parallelism 
-    // where each thread gets its own independent Qulacs instance, which is 
-    // more suitable for our use case than OpenMP's internal parallelism.
     
     // Compile everything
     build.compile("qulacs_wrapper");

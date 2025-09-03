@@ -30,13 +30,13 @@ from pecos.error_models.generic_error_model import GenericErrorModel
 from pecos.simulators import (
     MPS,
     CuStateVec,
-    Qulacs,  
+    Qulacs,
     StateVec,
 )
 
 str_to_sim = {
     "StateVec": StateVec,
-    "Qulacs": Qulacs,  
+    "Qulacs": Qulacs,
     "CuStateVec": CuStateVec,
     "MPS": MPS,
 }

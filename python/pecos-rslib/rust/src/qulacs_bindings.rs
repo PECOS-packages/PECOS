@@ -21,6 +21,101 @@ pub struct RsQulacs {
     inner: QulacsStateVec,
 }
 
+impl RsQulacs {
+    /// Handle simple two-qubit gates that don't require parameters
+    fn handle_simple_2q_gate(
+        &mut self,
+        symbol: &str,
+        q1: usize,
+        q2: usize,
+    ) -> PyResult<Option<u8>> {
+        match symbol {
+            "CX" => {
+                self.inner.cx(q1, q2);
+            }
+            "CY" => {
+                self.inner.cy(q1, q2);
+            }
+            "CZ" => {
+                self.inner.cz(q1, q2);
+            }
+            "SWAP" => {
+                self.inner.swap(q1, q2);
+            }
+            "G" | "G2" => {
+                self.inner.g(q1, q2);
+            }
+            "SXX" => {
+                self.inner.rxx(std::f64::consts::FRAC_PI_2, q1, q2);
+            }
+            "SXXdg" => {
+                self.inner.rxx(-std::f64::consts::FRAC_PI_2, q1, q2);
+            }
+            "SYY" => {
+                self.inner.ryy(std::f64::consts::FRAC_PI_2, q1, q2);
+            }
+            "SYYdg" => {
+                self.inner.ryy(-std::f64::consts::FRAC_PI_2, q1, q2);
+            }
+            "SZZ" | "SqrtZZ" => {
+                self.inner.rzz(std::f64::consts::FRAC_PI_2, q1, q2);
+            }
+            "SZZdg" => {
+                self.inner.rzz(-std::f64::consts::FRAC_PI_2, q1, q2);
+            }
+            _ => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Unknown simple two-qubit gate",
+                ));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Helper method to extract angle parameter from dict
+    fn extract_angle_param(params: &Bound<'_, PyDict>, gate_name: &str) -> PyResult<f64> {
+        match params.get_item("angle") {
+            Ok(Some(py_any)) => py_any.extract::<f64>().map_err(|_| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Expected a valid angle parameter for {gate_name} gate"
+                ))
+            }),
+            Ok(None) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Angle parameter missing for {gate_name} gate"
+            ))),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Helper method to extract angles parameter from dict
+    fn extract_angles_param(
+        params: &Bound<'_, PyDict>,
+        gate_name: &str,
+        expected_count: usize,
+    ) -> PyResult<Vec<f64>> {
+        match params.get_item("angles") {
+            Ok(Some(py_any)) => {
+                let angles = py_any.extract::<Vec<f64>>().map_err(|_| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Expected valid angles parameter for {gate_name} gate"
+                    ))
+                })?;
+                if angles.len() == expected_count {
+                    Ok(angles)
+                } else {
+                    Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "{gate_name} requires exactly {expected_count} angles"
+                    )))
+                }
+            }
+            Ok(None) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Angles parameter missing for {gate_name} gate"
+            ))),
+            Err(err) => Err(err),
+        }
+    }
+}
+
 #[pymethods]
 impl RsQulacs {
     /// Creates a new Qulacs state-vector simulator with the specified number of qubits
@@ -61,11 +156,13 @@ impl RsQulacs {
     ) -> PyResult<Option<u8>> {
         // Check bounds
         if location >= self.inner.num_qubits() {
-            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                format!("Qubit index {} out of range for {} qubits", location, self.inner.num_qubits())
-            ));
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                "Qubit index {} out of range for {} qubits",
+                location,
+                self.inner.num_qubits()
+            )));
         }
-        
+
         match symbol {
             "X" => {
                 self.inner.x(location);
@@ -220,7 +317,7 @@ impl RsQulacs {
                                     let theta = angles[0];
                                     let phi = angles[1];
                                     let pi_half = std::f64::consts::PI / 2.0;
-                                    
+
                                     self.inner.rz(-phi + pi_half, location);
                                     self.inner.ry(theta, location);
                                     self.inner.rz(phi - pi_half, location);
@@ -382,200 +479,59 @@ impl RsQulacs {
 
         let q1: usize = location.get_item(0)?.extract()?;
         let q2: usize = location.get_item(1)?.extract()?;
-        
+
         // Check bounds
         let num_qubits = self.inner.num_qubits();
         if q1 >= num_qubits || q2 >= num_qubits {
-            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(
-                format!("Qubit indices ({}, {}) out of range for {} qubits", q1, q2, num_qubits)
-            ));
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                "Qubit indices ({q1}, {q2}) out of range for {num_qubits} qubits"
+            )));
         }
 
         match symbol {
-            "CX" => {
-                self.inner.cx(q1, q2);
-                Ok(None)
-            }
-            "CY" => {
-                self.inner.cy(q1, q2);
-                Ok(None)
-            }
-            "CZ" => {
-                self.inner.cz(q1, q2);
-                Ok(None)
-            }
-            "SWAP" => {
-                self.inner.swap(q1, q2);
-                Ok(None)
-            }
-            "G" => {
-                // G gate is implemented via CliffordGateable trait
-                self.inner.g(q1, q2);
-                Ok(None)
-            }
+            "CX" | "CY" | "CZ" | "SWAP" | "G" | "SXX" | "SXXdg" | "SYY" | "SYYdg" | "SZZ"
+            | "SqrtZZ" | "SZZdg" | "G2" => self.handle_simple_2q_gate(symbol, q1, q2),
             "RZZ" => {
-                if let Some(params) = params {
-                    match params.get_item("angle") {
-                        Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.rzz(angle, q1, q2);
-                            } else {
-                                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    "Expected a valid angle parameter for RZZ gate",
-                                ));
-                            }
-                        }
-                        Ok(None) => {
-                            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Angle parameter missing for RZZ gate",
-                            ));
-                        }
-                        Err(err) => {
-                            return Err(err);
-                        }
-                    }
-                } else {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                let params = params.ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
                         "Angle parameter required for RZZ gate",
-                    ));
-                }
+                    )
+                })?;
+                let angle = Self::extract_angle_param(params, "RZZ")?;
+                self.inner.rzz(angle, q1, q2);
                 Ok(None)
             }
             "RXX" => {
-                if let Some(params) = params {
-                    match params.get_item("angle") {
-                        Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.rxx(angle, q1, q2);
-                            } else {
-                                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    "Expected a valid angle parameter for RXX gate",
-                                ));
-                            }
-                        }
-                        Ok(None) => {
-                            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Angle parameter missing for RXX gate",
-                            ));
-                        }
-                        Err(err) => {
-                            return Err(err);
-                        }
-                    }
-                } else {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                let params = params.ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
                         "Angle parameter required for RXX gate",
-                    ));
-                }
+                    )
+                })?;
+                let angle = Self::extract_angle_param(params, "RXX")?;
+                self.inner.rxx(angle, q1, q2);
                 Ok(None)
             }
             "RYY" => {
-                if let Some(params) = params {
-                    match params.get_item("angle") {
-                        Ok(Some(py_any)) => {
-                            if let Ok(angle) = py_any.extract::<f64>() {
-                                self.inner.ryy(angle, q1, q2);
-                            } else {
-                                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    "Expected a valid angle parameter for RYY gate",
-                                ));
-                            }
-                        }
-                        Ok(None) => {
-                            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Angle parameter missing for RYY gate",
-                            ));
-                        }
-                        Err(err) => {
-                            return Err(err);
-                        }
-                    }
-                } else {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                let params = params.ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
                         "Angle parameter required for RYY gate",
-                    ));
-                }
-                Ok(None)
-            }
-            "SXX" => {
-                // Use the CliffordGateable trait method if available, else use RXX
-                // Since we have RXX which is more efficient, use it directly
-                self.inner.rxx(std::f64::consts::FRAC_PI_2, q1, q2);
-                Ok(None)
-            }
-            "SXXdg" => {
-                // SXXdg = RXX(-π/2)
-                self.inner.rxx(-std::f64::consts::FRAC_PI_2, q1, q2);
-                Ok(None)
-            }
-            "SYY" => {
-                // SYY = RYY(π/2)
-                self.inner.ryy(std::f64::consts::FRAC_PI_2, q1, q2);
-                Ok(None)
-            }
-            "SYYdg" => {
-                // SYYdg = RYY(-π/2)
-                self.inner.ryy(-std::f64::consts::FRAC_PI_2, q1, q2);
-                Ok(None)
-            }
-            "SZZ" | "SqrtZZ" => {
-                // SZZ = RZZ(π/2)
-                self.inner.rzz(std::f64::consts::FRAC_PI_2, q1, q2);
-                Ok(None)
-            }
-            "SZZdg" => {
-                // SZZdg = RZZ(-π/2)
-                self.inner.rzz(-std::f64::consts::FRAC_PI_2, q1, q2);
+                    )
+                })?;
+                let angle = Self::extract_angle_param(params, "RYY")?;
+                self.inner.ryy(angle, q1, q2);
                 Ok(None)
             }
             "RZZRYYRXX" => {
-                if let Some(params) = params {
-                    match params.get_item("angles") {
-                        Ok(Some(py_any)) => {
-                            if let Ok(angles) = py_any.extract::<Vec<f64>>() {
-                                if angles.len() == 3 {
-                                    // R2XXYYZZ expects angles for XX, YY, ZZ in that order
-                                    // But we apply gates as RZZ @ RYY @ RXX (reverse order)
-                                    // So: RZZ(angles[2]), RYY(angles[1]), RXX(angles[0])
-                                    self.inner.rzz(angles[2], q1, q2);
-                                    self.inner.ryy(angles[1], q1, q2);
-                                    self.inner.rxx(angles[0], q1, q2);
-                                } else {
-                                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                        "RZZRYYRXX requires exactly 3 angles",
-                                    ));
-                                }
-                            } else {
-                                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                    "Expected a list of angles for RZZRYYRXX gate",
-                                ));
-                            }
-                        }
-                        Ok(None) => {
-                            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Angles parameter missing for RZZRYYRXX gate",
-                            ));
-                        }
-                        Err(err) => {
-                            return Err(err);
-                        }
-                    }
-                } else {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                let params = params.ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(
                         "Angles parameter required for RZZRYYRXX gate",
-                    ));
-                }
-                Ok(None)
-            }
-            "G2" => {
-                // G2 gate implementation (using decomposition)
-                // G2 = H(q2) CX(q1,q2) H(q1) H(q2) CX(q1,q2) H(q2)
-                self.inner.h(q2);
-                self.inner.cx(q1, q2);
-                self.inner.h(q1);
-                self.inner.h(q2);
-                self.inner.cx(q1, q2);
-                self.inner.h(q2);
+                    )
+                })?;
+                let angles = Self::extract_angles_param(params, "RZZRYYRXX", 3)?;
+                // Use the rzzryyrxx method from ArbitraryRotationGateable trait
+                // angles[0] = theta (XX), angles[1] = phi (YY), angles[2] = lambda (ZZ)
+                self.inner
+                    .rzzryyrxx(angles[0], angles[1], angles[2], q1, q2);
                 Ok(None)
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(

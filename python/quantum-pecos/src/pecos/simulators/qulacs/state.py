@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pecos_rslib._pecos_rslib as rslib
 
 from pecos.simulators.qulacs import bindings
@@ -26,7 +27,6 @@ from pecos.simulators.sim_class_types import StateVector
 
 if TYPE_CHECKING:
     from numpy.typing import ArrayLike
-    import numpy as np
 
 
 class Qulacs(StateVector):
@@ -64,8 +64,9 @@ class Qulacs(StateVector):
         Returns:
             The state vector as a numpy array with complex values.
         """
-        import numpy as np
-        
         # Convert from [(real, imag), ...] tuples to complex numpy array
         complex_tuples = self.qulacs_state.vector
-        return np.array([complex(real, imag) for real, imag in complex_tuples], dtype=complex)
+        return np.array(
+            [complex(real, imag) for real, imag in complex_tuples],
+            dtype=complex,
+        )

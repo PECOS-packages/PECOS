@@ -29,15 +29,14 @@ from pecos.simulators.pauliprop import (
     PauliProp,
 )
 
+# Use Qulacs (Rust version) as the primary Qulacs implementation
+from pecos.simulators.qulacs import Qulacs
+
 # Pauli fault propagation sim
 from pecos.simulators.sparsesim import (
     SparseSim as SparseSimPy,
 )
 from pecos.simulators.statevec import StateVec
-
-# Use Qulacs (Rust version) as the primary Qulacs implementation
-from pecos.simulators.qulacs import Qulacs
-
 
 # Attempt to import optional cuquantum and cupy packages
 try:

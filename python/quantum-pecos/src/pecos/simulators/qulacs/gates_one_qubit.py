@@ -32,7 +32,6 @@ def identity(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
         qubit: The index of the qubit where the gate is applied
     """
     # Identity gate does nothing
-    pass
 
 
 def X(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -155,18 +154,24 @@ def Tdg(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
     state.qulacs_state.run_1q_gate("Tdg", qubit)
 
 
-def RX(state: Qulacs, qubit: int, angles: tuple[float] | list[float] | None = None, **params: SimulatorGateParams) -> None:
+def RX(
+    state: Qulacs,
+    qubit: int,
+    angles: tuple[float] | list[float] | None = None,
+    **params: SimulatorGateParams,
+) -> None:
     """Rotation around X axis.
 
     Args:
         state: An instance of Qulacs
         qubit: The index of the qubit where the gate is applied
         angles: A tuple or list containing a single rotation angle in radians
+        **params: Additional parameters, can include 'angle' (float) or 'angles' (list)
     """
     # Extract angle from various possible sources for compatibility
     if angles is not None:
         # Standard interface: angles as positional parameter (Qulacs compatibility)
-        if hasattr(angles, '__len__'):
+        if hasattr(angles, "__len__"):
             if len(angles) != 1:
                 msg = "RX gate must be given 1 angle parameter."
                 raise ValueError(msg)
@@ -180,7 +185,7 @@ def RX(state: Qulacs, qubit: int, angles: tuple[float] | list[float] | None = No
     elif "angles" in params:
         # Angles from kwargs
         angles_param = params["angles"]
-        if hasattr(angles_param, '__len__'):
+        if hasattr(angles_param, "__len__"):
             if len(angles_param) != 1:
                 msg = "RX gate must be given 1 angle parameter."
                 raise ValueError(msg)
@@ -188,23 +193,30 @@ def RX(state: Qulacs, qubit: int, angles: tuple[float] | list[float] | None = No
         else:
             angle = angles_param
     else:
-        raise TypeError("RX gate requires an 'angle' or 'angles' parameter")
-    
+        msg = "RX gate requires an 'angle' or 'angles' parameter"
+        raise TypeError(msg)
+
     state.qulacs_state.run_1q_gate("RX", qubit, {"angle": angle})
 
 
-def RY(state: Qulacs, qubit: int, angles: tuple[float] | list[float] | None = None, **params: SimulatorGateParams) -> None:
+def RY(
+    state: Qulacs,
+    qubit: int,
+    angles: tuple[float] | list[float] | None = None,
+    **params: SimulatorGateParams,
+) -> None:
     """Rotation around Y axis.
 
     Args:
         state: An instance of Qulacs
         qubit: The index of the qubit where the gate is applied
         angles: A tuple or list containing a single rotation angle in radians
+        **params: Additional parameters, can include 'angle' (float) or 'angles' (list)
     """
     # Extract angle from various possible sources for compatibility
     if angles is not None:
         # Standard interface: angles as positional parameter (Qulacs compatibility)
-        if hasattr(angles, '__len__'):
+        if hasattr(angles, "__len__"):
             if len(angles) != 1:
                 msg = "RY gate must be given 1 angle parameter."
                 raise ValueError(msg)
@@ -218,7 +230,7 @@ def RY(state: Qulacs, qubit: int, angles: tuple[float] | list[float] | None = No
     elif "angles" in params:
         # Angles from kwargs
         angles_param = params["angles"]
-        if hasattr(angles_param, '__len__'):
+        if hasattr(angles_param, "__len__"):
             if len(angles_param) != 1:
                 msg = "RY gate must be given 1 angle parameter."
                 raise ValueError(msg)
@@ -226,23 +238,30 @@ def RY(state: Qulacs, qubit: int, angles: tuple[float] | list[float] | None = No
         else:
             angle = angles_param
     else:
-        raise TypeError("RY gate requires an 'angle' or 'angles' parameter")
-    
+        msg = "RY gate requires an 'angle' or 'angles' parameter"
+        raise TypeError(msg)
+
     state.qulacs_state.run_1q_gate("RY", qubit, {"angle": angle})
 
 
-def RZ(state: Qulacs, qubit: int, angles: tuple[float] | list[float] | None = None, **params: SimulatorGateParams) -> None:
+def RZ(
+    state: Qulacs,
+    qubit: int,
+    angles: tuple[float] | list[float] | None = None,
+    **params: SimulatorGateParams,
+) -> None:
     """Rotation around Z axis.
 
     Args:
         state: An instance of Qulacs
         qubit: The index of the qubit where the gate is applied
         angles: A tuple or list containing a single rotation angle in radians
+        **params: Additional parameters, can include 'angle' (float) or 'angles' (list)
     """
     # Extract angle from various possible sources for compatibility
     if angles is not None:
         # Standard interface: angles as positional parameter (Qulacs compatibility)
-        if hasattr(angles, '__len__'):
+        if hasattr(angles, "__len__"):
             if len(angles) != 1:
                 msg = "RZ gate must be given 1 angle parameter."
                 raise ValueError(msg)
@@ -256,7 +275,7 @@ def RZ(state: Qulacs, qubit: int, angles: tuple[float] | list[float] | None = No
     elif "angles" in params:
         # Angles from kwargs
         angles_param = params["angles"]
-        if hasattr(angles_param, '__len__'):
+        if hasattr(angles_param, "__len__"):
             if len(angles_param) != 1:
                 msg = "RZ gate must be given 1 angle parameter."
                 raise ValueError(msg)
@@ -264,22 +283,29 @@ def RZ(state: Qulacs, qubit: int, angles: tuple[float] | list[float] | None = No
         else:
             angle = angles_param
     else:
-        raise TypeError("RZ gate requires an 'angle' or 'angles' parameter")
-    
+        msg = "RZ gate requires an 'angle' or 'angles' parameter"
+        raise TypeError(msg)
+
     state.qulacs_state.run_1q_gate("RZ", qubit, {"angle": angle})
 
 
-def R1XY(state: Qulacs, qubit: int, angles: tuple[float] | list[float] | None = None, **params: SimulatorGateParams) -> None:
+def R1XY(
+    state: Qulacs,
+    qubit: int,
+    angles: tuple[float] | list[float] | None = None,
+    **params: SimulatorGateParams,
+) -> None:
     """Single-qubit rotation with two angles (experimental).
 
     Args:
         state: An instance of Qulacs
         qubit: The index of the qubit where the gate is applied
         angles: A tuple or list of two rotation angles
+        **params: Additional parameters, can include 'angles' (list of 2 floats)
     """
     # Extract angles from angles parameter or params
     if angles is not None:
-        if hasattr(angles, '__len__'):
+        if hasattr(angles, "__len__"):
             if len(angles) < 2:
                 msg = "R1XY gate must be given 2 angle parameters."
                 raise ValueError(msg)
@@ -289,7 +315,7 @@ def R1XY(state: Qulacs, qubit: int, angles: tuple[float] | list[float] | None = 
             raise ValueError(msg)
     elif "angles" in params:
         angles_param = params["angles"]
-        if hasattr(angles_param, '__len__'):
+        if hasattr(angles_param, "__len__"):
             if len(angles_param) < 2:
                 msg = "R1XY gate must be given 2 angle parameters."
                 raise ValueError(msg)
@@ -300,11 +326,12 @@ def R1XY(state: Qulacs, qubit: int, angles: tuple[float] | list[float] | None = 
     else:
         msg = "R1XY gate requires 'angles' parameter with 2 values."
         raise TypeError(msg)
-    
+
     state.qulacs_state.run_1q_gate("R1XY", qubit, {"angles": angle_list})
 
 
 # Additional gate aliases and implementations for compatibility
+
 
 def F(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
     """F gate (F1 gate - qutrit Hadamard projected to 2 levels)."""
@@ -320,6 +347,7 @@ def Fdg(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
 
 # Hadamard variants - these would need specific implementations
 # For now, defaulting to standard Hadamard
+
 
 def H2(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
     """H2 gate variant."""
@@ -347,6 +375,7 @@ def H6(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
 
 
 # F gate variants - similar to Hadamard variants
+
 
 def F2(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
     """F2 gate variant."""

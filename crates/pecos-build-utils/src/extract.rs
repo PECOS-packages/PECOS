@@ -24,7 +24,9 @@ pub fn extract_archive(
         let tar = BzDecoder::new(data);
         Archive::new(Box::new(tar) as Box<dyn std::io::Read>)
     } else {
-        return Err(BuildError::Archive("Unknown archive format - not gzip or bzip2".to_string()));
+        return Err(BuildError::Archive(
+            "Unknown archive format - not gzip or bzip2".to_string(),
+        ));
     };
 
     // Extract to temporary directory first

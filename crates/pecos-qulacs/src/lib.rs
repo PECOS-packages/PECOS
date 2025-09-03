@@ -105,7 +105,7 @@ where
     pub fn num_qubits(&self) -> usize {
         self.num_qubits
     }
-    
+
     /// Convert PECOS qubit index to Qulacs qubit index
     /// PECOS uses MSB-first ordering (q0 is leftmost/most significant)
     /// Qulacs uses LSB-first ordering (q0 is rightmost/least significant)
@@ -116,9 +116,11 @@ where
             // This prevents panic in Rust and allows proper error propagation
             return pecos_qubit;
         }
-        self.num_qubits.saturating_sub(1).saturating_sub(pecos_qubit)
+        self.num_qubits
+            .saturating_sub(1)
+            .saturating_sub(pecos_qubit)
     }
-    
+
     /// Convert PECOS basis state to Qulacs basis state by reversing bit order
     #[inline]
     fn convert_basis_state(&self, pecos_basis: usize) -> usize {
@@ -131,9 +133,11 @@ where
         }
         qulacs_basis
     }
-    
 
     /// Prepare the state as a specific computational basis state
+    ///
+    /// # Panics
+    /// Panics if `basis_state` is greater than or equal to 2^n where n is the number of qubits.
     #[inline]
     pub fn prepare_computational_basis(&mut self, basis_state: usize) -> &mut Self {
         assert!(basis_state < 1 << self.num_qubits);
@@ -158,7 +162,7 @@ where
     pub fn state(&self) -> Vec<Complex64> {
         let size = ffi::get_vector_size(&self.state);
         let mut vector = Vec::with_capacity(size);
-        
+
         // Since we convert qubit indices when applying gates,
         // the state vector is already in the correct ordering for PECOS
         // We just need to retrieve it directly
@@ -166,11 +170,14 @@ where
             let amp = ffi::get_amplitude(&self.state, idx as u64);
             vector.push(Complex64::new(amp[0], amp[1]));
         }
-        
+
         vector
     }
 
     /// Returns the probability of measuring a specific basis state
+    ///
+    /// # Panics
+    /// Panics if `basis_state` is greater than or equal to 2^n where n is the number of qubits.
     #[inline]
     #[must_use]
     pub fn probability(&self, basis_state: usize) -> f64 {
@@ -321,12 +328,12 @@ where
         let qulacs_qubit = self.convert_qubit_index(pecos_qubit);
         let prob_zero = ffi::get_marginal_probability(&self.state, qulacs_qubit);
         let is_deterministic = prob_zero.abs() < 1e-10 || (prob_zero - 1.0).abs() < 1e-10;
-        
+
         // The C++ measure_z function uses its own RNG (which we've seeded)
         // and properly collapses the state
         let outcome_bit = ffi::measure_z(self.state.pin_mut(), qulacs_qubit);
         let outcome = outcome_bit != 0;
-        
+
         MeasurementResult {
             outcome,
             is_deterministic,
@@ -351,7 +358,6 @@ where
         self.sxdg(q);
         self
     }
-
 }
 
 // Implement ArbitraryRotationGateable trait
@@ -442,18 +448,12 @@ where
 
 // SAFETY: QulacsStateVec is Send + Sync because:
 // 1. Each QulacsState instance in C++ is completely independent (no shared global state)
-// 2. UniquePtr provides exclusive ownership  
+// 2. UniquePtr provides exclusive ownership
 // 3. The RNG is required to be Send + Sync
 // 4. All operations on QulacsState are self-contained
-unsafe impl<R> Send for QulacsStateVec<R>
-where
-    R: RngCore + SeedableRng + Debug + Send,
-{}
+unsafe impl<R> Send for QulacsStateVec<R> where R: RngCore + SeedableRng + Debug + Send {}
 
-unsafe impl<R> Sync for QulacsStateVec<R>
-where
-    R: RngCore + SeedableRng + Debug + Sync,
-{}
+unsafe impl<R> Sync for QulacsStateVec<R> where R: RngCore + SeedableRng + Debug + Sync {}
 
 #[cfg(test)]
 mod tests;

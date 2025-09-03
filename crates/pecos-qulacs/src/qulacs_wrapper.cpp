@@ -5,7 +5,7 @@
 #include <array>
 
 // Constructor and destructor
-QulacsState::QulacsState(size_t n_qubits) 
+QulacsState::QulacsState(size_t n_qubits)
     : state(std::make_unique<QuantumStateCpu>(n_qubits)), rng_seed(0) {
 }
 
@@ -19,13 +19,13 @@ std::unique_ptr<QulacsState> create_quantum_state(size_t n_qubits) {
 std::unique_ptr<QulacsState> clone_quantum_state(const QulacsState& state) {
     size_t n_qubits = state.get_state()->qubit_count;
     auto new_state = std::make_unique<QulacsState>(n_qubits);
-    
+
     // Copy the quantum state using Qulacs' copy functionality
     new_state->get_state()->load(state.get_state());
-    
+
     // Copy the RNG seed as well
     new_state->set_rng_seed(state.get_rng_seed());
-    
+
     return new_state;
 }
 
@@ -164,7 +164,7 @@ void apply_global_phase(QulacsState& state, double angle) {
     auto* data = state.get_state()->data_cpp();
     size_t dim = state.get_state()->dim;
     std::complex<double> phase = std::exp(std::complex<double>(0, angle));
-    
+
     for (size_t i = 0; i < dim; ++i) {
         data[i] *= phase;
     }
@@ -195,9 +195,9 @@ void set_seed(QulacsState& state, uint32_t seed) {
     state.set_rng_seed(seed);
 }
 
-// Measurement  
+// Measurement
 uint8_t measure_z(QulacsState& state, size_t qubit) {
-    
+
     // Use Qulacs' built-in sampling to get a measurement outcome
     auto* cpu_state = dynamic_cast<QuantumStateCpu*>(state.get_state());
     if (cpu_state) {
@@ -205,14 +205,14 @@ uint8_t measure_z(QulacsState& state, size_t qubit) {
         // Note: We increment the seed after each use to get different results
         uint32_t current_seed = state.get_rng_seed();
         state.set_rng_seed(current_seed + 1);  // Increment for next measurement
-        
+
         auto samples = cpu_state->sampling(1, current_seed);
         bool outcome = (samples[0] >> qubit) & 1;
-        
+
         // Manually collapse the state by zeroing out incompatible amplitudes
         auto* data = cpu_state->data_cpp();
         double norm_factor = 0.0;
-        
+
         // First pass: zero out incompatible amplitudes and calculate normalization
         for (ITYPE i = 0; i < cpu_state->dim; ++i) {
             bool state_bit = (i >> qubit) & 1;
@@ -222,7 +222,7 @@ uint8_t measure_z(QulacsState& state, size_t qubit) {
                 norm_factor += std::norm(data[i]);
             }
         }
-        
+
         // Second pass: normalize remaining amplitudes
         if (norm_factor > 1e-15) {
             double inv_norm = 1.0 / std::sqrt(norm_factor);
@@ -233,10 +233,10 @@ uint8_t measure_z(QulacsState& state, size_t qubit) {
                 }
             }
         }
-        
+
         return outcome ? 1 : 0;
     }
-    
+
     // Fallback: just return 0
     return 0;
 }

@@ -110,7 +110,10 @@ pub fn qulacs_download_info() -> DownloadInfo {
 /// Create DownloadInfo for Eigen
 pub fn eigen_download_info() -> DownloadInfo {
     DownloadInfo {
-        url: format!("https://gitlab.com/libeigen/eigen/-/archive/{}/eigen-{}.tar.gz", EIGEN_VERSION, EIGEN_VERSION),
+        url: format!(
+            "https://gitlab.com/libeigen/eigen/-/archive/{}/eigen-{}.tar.gz",
+            EIGEN_VERSION, EIGEN_VERSION
+        ),
         sha256: EIGEN_SHA256,
         name: format!("eigen-{}", EIGEN_VERSION),
     }
@@ -120,7 +123,10 @@ pub fn eigen_download_info() -> DownloadInfo {
 pub fn boost_download_info() -> DownloadInfo {
     let version_underscore = BOOST_VERSION.replace('.', "_");
     DownloadInfo {
-        url: format!("https://archives.boost.io/release/{}/source/boost_{}.tar.bz2", BOOST_VERSION, version_underscore),
+        url: format!(
+            "https://archives.boost.io/release/{}/source/boost_{}.tar.bz2",
+            BOOST_VERSION, version_underscore
+        ),
         sha256: BOOST_SHA256,
         name: format!("boost-{}", BOOST_VERSION),
     }

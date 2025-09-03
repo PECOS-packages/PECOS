@@ -24,7 +24,12 @@ if TYPE_CHECKING:
     from pecos.typing import SimulatorGateParams
 
 
-def CX(state: Qulacs, control: int | tuple[int, int] | list[int], target: int | None = None, **_params: SimulatorGateParams) -> None:
+def CX(
+    state: Qulacs,
+    control: int | tuple[int, int] | list[int],
+    target: int | None = None,
+    **_params: SimulatorGateParams,
+) -> None:
     """CNOT gate (controlled X gate).
 
     Args:
@@ -35,18 +40,24 @@ def CX(state: Qulacs, control: int | tuple[int, int] | list[int], target: int | 
     # Handle both calling conventions
     if target is None:
         # Called with tuple/list: CX(state, (control, target))
-        if isinstance(control, (tuple, list)):
+        if isinstance(control, tuple | list):
             qubits = tuple(control)
         else:
-            raise ValueError("CX requires two qubits")
+            msg = "CX requires two qubits"
+            raise ValueError(msg)
     else:
         # Called with separate args: CX(state, control, target)
         qubits = (control, target)
-    
+
     state.qulacs_state.run_2q_gate("CX", qubits, None)
 
 
-def CY(state: Qulacs, control: int | tuple[int, int] | list[int], target: int | None = None, **_params: SimulatorGateParams) -> None:
+def CY(
+    state: Qulacs,
+    control: int | tuple[int, int] | list[int],
+    target: int | None = None,
+    **_params: SimulatorGateParams,
+) -> None:
     """Controlled Y gate.
 
     Args:
@@ -57,18 +68,24 @@ def CY(state: Qulacs, control: int | tuple[int, int] | list[int], target: int | 
     # Handle both calling conventions
     if target is None:
         # Called with tuple/list: CY(state, (control, target))
-        if isinstance(control, (tuple, list)):
+        if isinstance(control, tuple | list):
             qubits = tuple(control)
         else:
-            raise ValueError("CY requires two qubits")
+            msg = "CY requires two qubits"
+            raise ValueError(msg)
     else:
         # Called with separate args: CY(state, control, target)
         qubits = (control, target)
-    
+
     state.qulacs_state.run_2q_gate("CY", qubits, None)
 
 
-def CZ(state: Qulacs, control: int | tuple[int, int] | list[int], target: int | None = None, **_params: SimulatorGateParams) -> None:
+def CZ(
+    state: Qulacs,
+    control: int | tuple[int, int] | list[int],
+    target: int | None = None,
+    **_params: SimulatorGateParams,
+) -> None:
     """Controlled Z gate.
 
     Args:
@@ -79,18 +96,24 @@ def CZ(state: Qulacs, control: int | tuple[int, int] | list[int], target: int | 
     # Handle both calling conventions
     if target is None:
         # Called with tuple/list: CZ(state, (control, target))
-        if isinstance(control, (tuple, list)):
+        if isinstance(control, tuple | list):
             qubits = tuple(control)
         else:
-            raise ValueError("CZ requires two qubits")
+            msg = "CZ requires two qubits"
+            raise ValueError(msg)
     else:
         # Called with separate args: CZ(state, control, target)
         qubits = (control, target)
-    
+
     state.qulacs_state.run_2q_gate("CZ", qubits, None)
 
 
-def SWAP(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | None = None, **_params: SimulatorGateParams) -> None:
+def SWAP(
+    state: Qulacs,
+    qubit1: int | tuple[int, int] | list[int],
+    qubit2: int | None = None,
+    **_params: SimulatorGateParams,
+) -> None:
     """SWAP gate.
 
     Args:
@@ -101,18 +124,25 @@ def SWAP(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int |
     # Handle both calling conventions
     if qubit2 is None:
         # Called with tuple/list: SWAP(state, (qubit1, qubit2))
-        if isinstance(qubit1, (tuple, list)):
+        if isinstance(qubit1, tuple | list):
             qubits = tuple(qubit1)
         else:
-            raise ValueError("SWAP requires two qubits")
+            msg = "SWAP requires two qubits"
+            raise ValueError(msg)
     else:
         # Called with separate args: SWAP(state, qubit1, qubit2)
         qubits = (qubit1, qubit2)
-    
+
     state.qulacs_state.run_2q_gate("SWAP", qubits, None)
 
 
-def RXX(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | None = None, angles: list[float] | None = None, **params: SimulatorGateParams) -> None:
+def RXX(
+    state: Qulacs,
+    qubit1: int | tuple[int, int] | list[int],
+    qubit2: int | None = None,
+    angles: list[float] | None = None,
+    **params: SimulatorGateParams,
+) -> None:
     """RXX gate (two-qubit X rotation).
 
     Args:
@@ -120,18 +150,20 @@ def RXX(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | 
         qubit1: First qubit index, or tuple/list of both qubits
         qubit2: Second qubit index (if qubit1 is just an int)
         angles: List containing a single rotation angle in radians
+        **params: Additional parameters, can include 'angle' (float) or 'angles' (list)
     """
     # Handle both calling conventions
     if qubit2 is None:
         # Called with tuple/list: RXX(state, (qubit1, qubit2))
-        if isinstance(qubit1, (tuple, list)):
+        if isinstance(qubit1, tuple | list):
             qubits = tuple(qubit1)
         else:
-            raise ValueError("RXX requires two qubits")
+            msg = "RXX requires two qubits"
+            raise ValueError(msg)
     else:
         # Called with separate args: RXX(state, qubit1, qubit2)
         qubits = (qubit1, qubit2)
-    
+
     # Extract angle from angles parameter or params
     if angles is not None and len(angles) > 0:
         angle = angles[0]
@@ -139,11 +171,17 @@ def RXX(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | 
         angle = params["angles"][0]
     else:
         angle = 0.0
-    
+
     state.qulacs_state.run_2q_gate("RXX", qubits, {"angle": angle})
 
 
-def RYY(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | None = None, angles: list[float] | None = None, **params: SimulatorGateParams) -> None:
+def RYY(
+    state: Qulacs,
+    qubit1: int | tuple[int, int] | list[int],
+    qubit2: int | None = None,
+    angles: list[float] | None = None,
+    **params: SimulatorGateParams,
+) -> None:
     """RYY gate (two-qubit Y rotation).
 
     Args:
@@ -151,18 +189,20 @@ def RYY(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | 
         qubit1: First qubit index, or tuple/list of both qubits
         qubit2: Second qubit index (if qubit1 is just an int)
         angles: List containing a single rotation angle in radians
+        **params: Additional parameters, can include 'angle' (float) or 'angles' (list)
     """
     # Handle both calling conventions
     if qubit2 is None:
         # Called with tuple/list: RYY(state, (qubit1, qubit2))
-        if isinstance(qubit1, (tuple, list)):
+        if isinstance(qubit1, tuple | list):
             qubits = tuple(qubit1)
         else:
-            raise ValueError("RYY requires two qubits")
+            msg = "RYY requires two qubits"
+            raise ValueError(msg)
     else:
         # Called with separate args: RYY(state, qubit1, qubit2)
         qubits = (qubit1, qubit2)
-    
+
     # Extract angle from angles parameter or params
     if angles is not None and len(angles) > 0:
         angle = angles[0]
@@ -170,11 +210,17 @@ def RYY(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | 
         angle = params["angles"][0]
     else:
         angle = 0.0
-    
+
     state.qulacs_state.run_2q_gate("RYY", qubits, {"angle": angle})
 
 
-def RZZ(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | None = None, angles: list[float] | None = None, **params: SimulatorGateParams) -> None:
+def RZZ(
+    state: Qulacs,
+    qubit1: int | tuple[int, int] | list[int],
+    qubit2: int | None = None,
+    angles: list[float] | None = None,
+    **params: SimulatorGateParams,
+) -> None:
     """RZZ gate (two-qubit Z rotation).
 
     Args:
@@ -182,18 +228,20 @@ def RZZ(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | 
         qubit1: First qubit index, or tuple/list of both qubits
         qubit2: Second qubit index (if qubit1 is just an int)
         angles: List containing a single rotation angle in radians
+        **params: Additional parameters, can include 'angle' (float) or 'angles' (list)
     """
     # Handle both calling conventions
     if qubit2 is None:
         # Called with tuple/list: RZZ(state, (qubit1, qubit2))
-        if isinstance(qubit1, (tuple, list)):
+        if isinstance(qubit1, tuple | list):
             qubits = tuple(qubit1)
         else:
-            raise ValueError("RZZ requires two qubits")
+            msg = "RZZ requires two qubits"
+            raise ValueError(msg)
     else:
         # Called with separate args: RZZ(state, qubit1, qubit2)
         qubits = (qubit1, qubit2)
-    
+
     # Extract angle from angles parameter or params
     if angles is not None and len(angles) > 0:
         angle = angles[0]
@@ -201,11 +249,17 @@ def RZZ(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | 
         angle = params["angles"][0]
     else:
         angle = 0.0
-    
+
     state.qulacs_state.run_2q_gate("RZZ", qubits, {"angle": angle})
 
 
-def R2XXYYZZ(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | None = None, angles: list[float] | None = None, **params: SimulatorGateParams) -> None:
+def R2XXYYZZ(
+    state: Qulacs,
+    qubit1: int | tuple[int, int] | list[int],
+    qubit2: int | None = None,
+    angles: list[float] | None = None,
+    **params: SimulatorGateParams,
+) -> None:
     """Combined RXX, RYY, RZZ rotation gate.
 
     Args:
@@ -213,18 +267,20 @@ def R2XXYYZZ(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: i
         qubit1: First qubit index, or tuple/list of both qubits
         qubit2: Second qubit index (if qubit1 is just an int)
         angles: List of three angles for ZZ, YY, XX rotations (in that order)
+        **params: Additional parameters, can include 'angles' (list of 3 floats)
     """
     # Handle both calling conventions
     if qubit2 is None:
         # Called with tuple/list: R2XXYYZZ(state, (qubit1, qubit2))
-        if isinstance(qubit1, (tuple, list)):
+        if isinstance(qubit1, tuple | list):
             qubits = tuple(qubit1)
         else:
-            raise ValueError("R2XXYYZZ requires two qubits")
+            msg = "R2XXYYZZ requires two qubits"
+            raise ValueError(msg)
     else:
         # Called with separate args: R2XXYYZZ(state, qubit1, qubit2)
         qubits = (qubit1, qubit2)
-    
+
     # Extract angles from angles parameter or params
     if angles is not None and len(angles) >= 3:
         angle_list = angles[:3]
@@ -232,12 +288,17 @@ def R2XXYYZZ(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: i
         angle_list = params["angles"][:3]
     else:
         angle_list = [0.0, 0.0, 0.0]
-    
+
     # Apply RZZ, RYY, RXX in order (note the order matches RZZRYYRXX)
     state.qulacs_state.run_2q_gate("RZZRYYRXX", qubits, {"angles": angle_list})
 
 
-def SXX(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | None = None, **_params: SimulatorGateParams) -> None:
+def SXX(
+    state: Qulacs,
+    qubit1: int | tuple[int, int] | list[int],
+    qubit2: int | None = None,
+    **_params: SimulatorGateParams,
+) -> None:
     """SXX gate (square root of XX).
 
     Args:
@@ -248,18 +309,24 @@ def SXX(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | 
     # Handle both calling conventions
     if qubit2 is None:
         # Called with tuple/list: SXX(state, (qubit1, qubit2))
-        if isinstance(qubit1, (tuple, list)):
+        if isinstance(qubit1, tuple | list):
             qubits = tuple(qubit1)
         else:
-            raise ValueError("SXX requires two qubits")
+            msg = "SXX requires two qubits"
+            raise ValueError(msg)
     else:
         # Called with separate args: SXX(state, qubit1, qubit2)
         qubits = (qubit1, qubit2)
-    
+
     state.qulacs_state.run_2q_gate("SXX", qubits, None)
 
 
-def SXXdg(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | None = None, **_params: SimulatorGateParams) -> None:
+def SXXdg(
+    state: Qulacs,
+    qubit1: int | tuple[int, int] | list[int],
+    qubit2: int | None = None,
+    **_params: SimulatorGateParams,
+) -> None:
     """SXX dagger gate.
 
     Args:
@@ -270,18 +337,24 @@ def SXXdg(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int 
     # Handle both calling conventions
     if qubit2 is None:
         # Called with tuple/list: SXXdg(state, (qubit1, qubit2))
-        if isinstance(qubit1, (tuple, list)):
+        if isinstance(qubit1, tuple | list):
             qubits = tuple(qubit1)
         else:
-            raise ValueError("SXXdg requires two qubits")
+            msg = "SXXdg requires two qubits"
+            raise ValueError(msg)
     else:
         # Called with separate args: SXXdg(state, qubit1, qubit2)
         qubits = (qubit1, qubit2)
-    
+
     state.qulacs_state.run_2q_gate("SXXdg", qubits, None)
 
 
-def SYY(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | None = None, **_params: SimulatorGateParams) -> None:
+def SYY(
+    state: Qulacs,
+    qubit1: int | tuple[int, int] | list[int],
+    qubit2: int | None = None,
+    **_params: SimulatorGateParams,
+) -> None:
     """SYY gate (square root of YY).
 
     Args:
@@ -292,18 +365,24 @@ def SYY(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | 
     # Handle both calling conventions
     if qubit2 is None:
         # Called with tuple/list: SYY(state, (qubit1, qubit2))
-        if isinstance(qubit1, (tuple, list)):
+        if isinstance(qubit1, tuple | list):
             qubits = tuple(qubit1)
         else:
-            raise ValueError("SYY requires two qubits")
+            msg = "SYY requires two qubits"
+            raise ValueError(msg)
     else:
         # Called with separate args: SYY(state, qubit1, qubit2)
         qubits = (qubit1, qubit2)
-    
+
     state.qulacs_state.run_2q_gate("SYY", qubits, None)
 
 
-def SYYdg(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | None = None, **_params: SimulatorGateParams) -> None:
+def SYYdg(
+    state: Qulacs,
+    qubit1: int | tuple[int, int] | list[int],
+    qubit2: int | None = None,
+    **_params: SimulatorGateParams,
+) -> None:
     """SYY dagger gate.
 
     Args:
@@ -314,18 +393,24 @@ def SYYdg(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int 
     # Handle both calling conventions
     if qubit2 is None:
         # Called with tuple/list: SYYdg(state, (qubit1, qubit2))
-        if isinstance(qubit1, (tuple, list)):
+        if isinstance(qubit1, tuple | list):
             qubits = tuple(qubit1)
         else:
-            raise ValueError("SYYdg requires two qubits")
+            msg = "SYYdg requires two qubits"
+            raise ValueError(msg)
     else:
         # Called with separate args: SYYdg(state, qubit1, qubit2)
         qubits = (qubit1, qubit2)
-    
+
     state.qulacs_state.run_2q_gate("SYYdg", qubits, None)
 
 
-def SZZ(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | None = None, **_params: SimulatorGateParams) -> None:
+def SZZ(
+    state: Qulacs,
+    qubit1: int | tuple[int, int] | list[int],
+    qubit2: int | None = None,
+    **_params: SimulatorGateParams,
+) -> None:
     """SZZ gate (square root of ZZ).
 
     Args:
@@ -336,18 +421,24 @@ def SZZ(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | 
     # Handle both calling conventions
     if qubit2 is None:
         # Called with tuple/list: SZZ(state, (qubit1, qubit2))
-        if isinstance(qubit1, (tuple, list)):
+        if isinstance(qubit1, tuple | list):
             qubits = tuple(qubit1)
         else:
-            raise ValueError("SZZ requires two qubits")
+            msg = "SZZ requires two qubits"
+            raise ValueError(msg)
     else:
         # Called with separate args: SZZ(state, qubit1, qubit2)
         qubits = (qubit1, qubit2)
-    
+
     state.qulacs_state.run_2q_gate("SZZ", qubits, None)
 
 
-def SZZdg(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | None = None, **_params: SimulatorGateParams) -> None:
+def SZZdg(
+    state: Qulacs,
+    qubit1: int | tuple[int, int] | list[int],
+    qubit2: int | None = None,
+    **_params: SimulatorGateParams,
+) -> None:
     """SZZ dagger gate.
 
     Args:
@@ -358,18 +449,24 @@ def SZZdg(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int 
     # Handle both calling conventions
     if qubit2 is None:
         # Called with tuple/list: SZZdg(state, (qubit1, qubit2))
-        if isinstance(qubit1, (tuple, list)):
+        if isinstance(qubit1, tuple | list):
             qubits = tuple(qubit1)
         else:
-            raise ValueError("SZZdg requires two qubits")
+            msg = "SZZdg requires two qubits"
+            raise ValueError(msg)
     else:
         # Called with separate args: SZZdg(state, qubit1, qubit2)
         qubits = (qubit1, qubit2)
-    
+
     state.qulacs_state.run_2q_gate("SZZdg", qubits, None)
 
 
-def G(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | None = None, **_params: SimulatorGateParams) -> None:
+def G(
+    state: Qulacs,
+    qubit1: int | tuple[int, int] | list[int],
+    qubit2: int | None = None,
+    **_params: SimulatorGateParams,
+) -> None:
     """G gate (special two-qubit gate).
 
     Args:
@@ -380,12 +477,13 @@ def G(state: Qulacs, qubit1: int | tuple[int, int] | list[int], qubit2: int | No
     # Handle both calling conventions
     if qubit2 is None:
         # Called with tuple/list: G(state, (qubit1, qubit2))
-        if isinstance(qubit1, (tuple, list)):
+        if isinstance(qubit1, tuple | list):
             qubits = tuple(qubit1)
         else:
-            raise ValueError("G requires two qubits")
+            msg = "G requires two qubits"
+            raise ValueError(msg)
     else:
         # Called with separate args: G(state, qubit1, qubit2)
         qubits = (qubit1, qubit2)
-    
+
     state.qulacs_state.run_2q_gate("G2", qubits, None)

@@ -15,10 +15,10 @@ private:
 public:
     QulacsState(size_t n_qubits);
     ~QulacsState();
-    
+
     QuantumStateCpu* get_state() { return state.get(); }
     const QuantumStateCpu* get_state() const { return state.get(); }
-    
+
     void set_rng_seed(uint32_t seed) { rng_seed = seed; }
     uint32_t get_rng_seed() const { return rng_seed; }
 };

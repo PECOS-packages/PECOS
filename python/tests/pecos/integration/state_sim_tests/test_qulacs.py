@@ -9,22 +9,22 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Tests for Qulacs-RS simulator."""
+"""Tests for Qulacs simulator."""
 
 import numpy as np
 import pytest
 
-pytest.importorskip("pecos_rslib", reason="pecos_rslib required for qulacs-rs tests")
+pytest.importorskip("pecos_rslib", reason="pecos_rslib required for qulacs tests")
 
-from pecos.simulators.qulacs_rs import QulacsRs
+from pecos.simulators.qulacs import Qulacs
 
 
-class TestQulacsRsBasic:
-    """Basic functionality tests for QulacsRs simulator."""
+class TestQulacsBasic:
+    """Basic functionality tests for Qulacs simulator."""
     
     def test_initialization(self):
         """Test simulator initialization."""
-        sim = QulacsRs(3)
+        sim = Qulacs(3)
         assert sim.num_qubits == 3
         
         # Check initial state is |000⟩
@@ -36,8 +36,8 @@ class TestQulacsRsBasic:
     
     def test_initialization_with_seed(self):
         """Test simulator initialization with deterministic seed."""
-        sim1 = QulacsRs(2, seed=42)
-        sim2 = QulacsRs(2, seed=42)
+        sim1 = Qulacs(2, seed=42)
+        sim2 = Qulacs(2, seed=42)
         
         # Apply some gates and measure
         sim1.bindings["H"](sim1, 0)
@@ -48,7 +48,7 @@ class TestQulacsRsBasic:
     
     def test_reset(self):
         """Test state reset functionality."""
-        sim = QulacsRs(2)
+        sim = Qulacs(2)
         
         # Apply some gates
         sim.bindings["H"](sim, 0)
@@ -62,12 +62,12 @@ class TestQulacsRsBasic:
         assert np.allclose(sim.vector, expected)
 
 
-class TestQulacsRsSingleQubitGates:
+class TestQulacsSingleQubitGates:
     """Test single-qubit gate operations."""
     
     def test_pauli_gates(self):
         """Test Pauli X, Y, Z gates."""
-        sim = QulacsRs(1)
+        sim = Qulacs(1)
         
         # Test X gate: X|0⟩ = |1⟩
         sim.bindings["X"](sim, 0)
@@ -95,7 +95,7 @@ class TestQulacsRsSingleQubitGates:
     
     def test_hadamard_gate(self):
         """Test Hadamard gate."""
-        sim = QulacsRs(1)
+        sim = Qulacs(1)
         
         # H|0⟩ = |+⟩ = (|0⟩ + |1⟩)/√2
         sim.bindings["H"](sim, 0)
@@ -111,7 +111,7 @@ class TestQulacsRsSingleQubitGates:
     
     def test_phase_gates(self):
         """Test S and T gates."""
-        sim = QulacsRs(1)
+        sim = Qulacs(1)
         
         # Test S gate: S|+⟩ = |i⟩ = (|0⟩ + i|1⟩)/√2
         sim.bindings["H"](sim, 0)  # |+⟩
@@ -132,7 +132,7 @@ class TestQulacsRsSingleQubitGates:
     
     def test_rotation_gates(self):
         """Test rotation gates RX, RY, RZ."""
-        sim = QulacsRs(1)
+        sim = Qulacs(1)
         
         # Test RX(π) = -iX
         sim.bindings["RX"](sim, 0, angle=np.pi)
@@ -158,12 +158,12 @@ class TestQulacsRsSingleQubitGates:
         assert np.isclose(np.abs(state[1]), 1, atol=1e-10)
 
 
-class TestQulacsRsTwoQubitGates:
+class TestQulacsTwoQubitGates:
     """Test two-qubit gate operations."""
     
     def test_bell_state(self):
         """Test Bell state creation with H and CNOT."""
-        sim = QulacsRs(2)
+        sim = Qulacs(2)
         
         # Create Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
         sim.bindings["H"](sim, 0)
@@ -178,7 +178,7 @@ class TestQulacsRsTwoQubitGates:
     
     def test_controlled_gates(self):
         """Test controlled X, Y, Z gates."""
-        sim = QulacsRs(2)
+        sim = Qulacs(2)
         
         # Test CX gate
         sim.bindings["X"](sim, 0)  # |10⟩
@@ -200,7 +200,7 @@ class TestQulacsRsTwoQubitGates:
     
     def test_swap_gate(self):
         """Test SWAP gate."""
-        sim = QulacsRs(2)
+        sim = Qulacs(2)
         
         # Prepare |10⟩ and swap to |01⟩
         sim.bindings["X"](sim, 0)  # |10⟩
@@ -211,12 +211,12 @@ class TestQulacsRsTwoQubitGates:
         assert np.sum(probs > 0.5) == 1  # Exactly one state should be populated
 
 
-class TestQulacsRsMeasurement:
+class TestQulacsMeasurement:
     """Test measurement operations."""
     
     def test_deterministic_measurement(self):
         """Test measurement on definite states."""
-        sim = QulacsRs(1, seed=100)
+        sim = Qulacs(1, seed=100)
         
         # Measure |0⟩ state
         sim.reset()
@@ -230,7 +230,7 @@ class TestQulacsRsMeasurement:
     
     def test_measurement_statistics(self):
         """Test measurement statistics on superposition states."""
-        sim = QulacsRs(1, seed=42)
+        sim = Qulacs(1, seed=42)
         
         # Prepare |+⟩ state and measure many times
         n_trials = 1000
@@ -248,12 +248,12 @@ class TestQulacsRsMeasurement:
         assert abs(ratio - 0.5) < 0.1  # Allow some variance
 
 
-class TestQulacsRsCompatibility:
+class TestQulacsCompatibility:
     """Test compatibility with existing PECOS patterns."""
     
     def test_gate_bindings_structure(self):
         """Test that gate bindings follow expected structure."""
-        sim = QulacsRs(2)
+        sim = Qulacs(2)
         
         # Test that all expected gates are available
         expected_gates = [
@@ -267,7 +267,7 @@ class TestQulacsRsCompatibility:
     
     def test_numpy_compatibility(self):
         """Test numpy array compatibility."""
-        sim = QulacsRs(2)
+        sim = Qulacs(2)
         
         state = sim.vector
         
@@ -287,12 +287,12 @@ class TestQulacsRsCompatibility:
         assert probabilities.dtype == float
 
 
-class TestQulacsRsAdvanced:
+class TestQulacsAdvanced:
     """Advanced tests for edge cases and complex scenarios."""
     
     def test_ghz_state(self):
         """Test GHZ state creation."""
-        sim = QulacsRs(3)
+        sim = Qulacs(3)
         
         # Create GHZ state |GHZ⟩ = (|000⟩ + |111⟩)/√2
         sim.bindings["H"](sim, 0)
@@ -308,7 +308,7 @@ class TestQulacsRsAdvanced:
     
     def test_state_normalization_preservation(self):
         """Test that state remains normalized after various operations."""
-        sim = QulacsRs(3)
+        sim = Qulacs(3)
         
         # Apply various gates
         sim.bindings["H"](sim, 0)
@@ -324,7 +324,7 @@ class TestQulacsRsAdvanced:
     
     def test_gate_reversibility(self):
         """Test that gates are properly reversible."""
-        sim = QulacsRs(2)
+        sim = Qulacs(2)
         
         # Save initial state
         initial_state = sim.vector.copy()

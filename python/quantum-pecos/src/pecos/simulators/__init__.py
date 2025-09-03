@@ -35,14 +35,8 @@ from pecos.simulators.sparsesim import (
 )
 from pecos.simulators.statevec import StateVec
 
-# Attempt to import optional Qulacs package
-try:
-    from pecos.simulators.qulacs.state import Qulacs  # wrapper for Qulacs sim
-except ImportError:
-    Qulacs = None
-
-# Import Qulacs-RS (Rust version)
-from pecos.simulators.qulacs_rs import QulacsRs
+# Use Qulacs (Rust version) as the primary Qulacs implementation
+from pecos.simulators.qulacs import Qulacs
 
 
 # Attempt to import optional cuquantum and cupy packages

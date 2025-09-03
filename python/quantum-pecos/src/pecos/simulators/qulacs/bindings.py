@@ -1,4 +1,4 @@
-# Copyright 2024 The PECOS Developers
+# Copyright 2025 The PECOS Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 # the License.You may obtain a copy of the License at
@@ -12,7 +12,7 @@
 """Gate bindings for Qulacs quantum simulator.
 
 This module provides gate operation bindings for the Qulacs quantum simulator, organizing and exposing
-quantum gate implementations using the Qulacs framework for quantum circuit simulation.
+quantum gate implementations using the pure Rust backend for high performance and thread safety.
 """
 
 import pecos.simulators.qulacs.gates_one_qubit as one_q

@@ -9,22 +9,22 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Unit tests for Qulacs-RS gate operations."""
+"""Unit tests for Qulacs gate operations."""
 
 import numpy as np
 import pytest
 
-pytest.importorskip("pecos_rslib", reason="pecos_rslib required for qulacs-rs tests")
+pytest.importorskip("pecos_rslib", reason="pecos_rslib required for qulacs tests")
 
-from pecos.simulators.qulacs_rs import QulacsRs
+from pecos.simulators.qulacs import Qulacs
 
 
-class TestQulacsRsGateBindings:
+class TestQulacsGateBindings:
     """Test individual gate operations and their bindings."""
     
     def test_identity_gate(self):
         """Test identity gate does nothing."""
-        sim = QulacsRs(1)
+        sim = Qulacs(1)
         initial_state = sim.vector.copy()
         
         sim.bindings["I"](sim, 0)
@@ -33,7 +33,7 @@ class TestQulacsRsGateBindings:
     
     def test_gate_parameter_passing(self):
         """Test gates that require parameters work correctly."""
-        sim = QulacsRs(1)
+        sim = Qulacs(1)
         
         # Test parameterized rotation gates
         angles_to_test = [0, np.pi/4, np.pi/2, np.pi, 2*np.pi]
@@ -48,7 +48,7 @@ class TestQulacsRsGateBindings:
     
     def test_square_root_gates(self):
         """Test square root gates (SX, SY, SZ)."""
-        sim = QulacsRs(1)
+        sim = Qulacs(1)
         
         # SX applied twice should equal X
         sim.bindings["SX"](sim, 0)
@@ -65,7 +65,7 @@ class TestQulacsRsGateBindings:
     
     def test_dagger_gates(self):
         """Test that dagger gates are proper inverses."""
-        sim = QulacsRs(1)
+        sim = Qulacs(1)
         
         # Test T and Tdg
         sim.bindings["T"](sim, 0)
@@ -81,7 +81,7 @@ class TestQulacsRsGateBindings:
     
     def test_all_single_qubit_gates_exist(self):
         """Test all expected single-qubit gates are in bindings."""
-        sim = QulacsRs(1)
+        sim = Qulacs(1)
         
         single_qubit_gates = [
             "I", "X", "Y", "Z", "H",
@@ -94,7 +94,7 @@ class TestQulacsRsGateBindings:
     
     def test_all_two_qubit_gates_exist(self):
         """Test all expected two-qubit gates are in bindings."""
-        sim = QulacsRs(2)
+        sim = Qulacs(2)
         
         two_qubit_gates = [
             "CX", "CY", "CZ", "SWAP",
@@ -106,7 +106,7 @@ class TestQulacsRsGateBindings:
     
     def test_gate_aliases(self):
         """Test that gate aliases work correctly."""
-        sim = QulacsRs(2)
+        sim = Qulacs(2)
         
         # Test CNOT alias for CX
         sim.bindings["X"](sim, 0)  # |10⟩
@@ -117,11 +117,11 @@ class TestQulacsRsGateBindings:
         assert np.allclose(sim.vector, expected)
         
         # Test S alias for SZ
-        sim2 = QulacsRs(1)
+        sim2 = Qulacs(1)
         sim2.bindings["H"](sim2, 0)
         sim2.bindings["S"](sim2, 0)  # Should be same as SZ
         
-        sim3 = QulacsRs(1)
+        sim3 = Qulacs(1)
         sim3.bindings["H"](sim3, 0)
         sim3.bindings["SZ"](sim3, 0)
         
@@ -129,7 +129,7 @@ class TestQulacsRsGateBindings:
     
     def test_measurement_and_init_gates(self):
         """Test measurement and initialization gates."""
-        sim = QulacsRs(1, seed=42)
+        sim = Qulacs(1, seed=42)
         
         # Test init gates
         sim.bindings["Init"](sim, 0)  # Should initialize to |0⟩
@@ -143,7 +143,7 @@ class TestQulacsRsGateBindings:
     def test_single_qubit_initialization(self):
         """Test single-qubit initialization doesn't affect other qubits."""
         # Test with 3-qubit system
-        sim = QulacsRs(3)
+        sim = Qulacs(3)
         
         # Initialize to a specific state: |101⟩
         sim.bindings["X"](sim, 0)  # qubit 0 -> |1⟩
@@ -179,13 +179,13 @@ class TestQulacsRsGateBindings:
         assert np.allclose(sim.vector, expected_final), f"Reset qubit 2 to |0⟩ incorrect: {sim.vector}"
 
 
-class TestQulacsRsThreadSafety:
+class TestQulacsThreadSafety:
     """Test thread safety aspects of the simulator."""
     
     def test_independent_simulators(self):
         """Test that different simulator instances are independent."""
-        sim1 = QulacsRs(2, seed=42)
-        sim2 = QulacsRs(2, seed=42)
+        sim1 = Qulacs(2, seed=42)
+        sim2 = Qulacs(2, seed=42)
         
         # Apply different operations to each
         sim1.bindings["X"](sim1, 0)
@@ -196,8 +196,8 @@ class TestQulacsRsThreadSafety:
     
     def test_simulator_cloning_behavior(self):
         """Test that simulators with same seed produce same results."""
-        sim1 = QulacsRs(2, seed=123)
-        sim2 = QulacsRs(2, seed=123)
+        sim1 = Qulacs(2, seed=123)
+        sim2 = Qulacs(2, seed=123)
         
         # Apply same operations
         operations = [
@@ -224,12 +224,12 @@ class TestQulacsRsThreadSafety:
         assert np.allclose(sim1.vector, sim2.vector)
 
 
-class TestQulacsRsErrorHandling:
+class TestQulacsErrorHandling:
     """Test error handling and edge cases."""
     
     def test_invalid_qubit_indices(self):
         """Test behavior with invalid qubit indices."""
-        sim = QulacsRs(2)
+        sim = Qulacs(2)
         
         # Should raise an IndexError for out-of-bounds qubit index
         with pytest.raises(IndexError):
@@ -237,7 +237,7 @@ class TestQulacsRsErrorHandling:
     
     def test_missing_parameters(self):
         """Test behavior when required parameters are missing."""
-        sim = QulacsRs(1)
+        sim = Qulacs(1)
         
         # RX gate requires angle parameter
         with pytest.raises(TypeError):

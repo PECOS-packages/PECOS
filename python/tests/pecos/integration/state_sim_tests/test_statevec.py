@@ -30,16 +30,13 @@ from pecos.error_models.generic_error_model import GenericErrorModel
 from pecos.simulators import (
     MPS,
     CuStateVec,
-    Qulacs,
+    Qulacs,  
     StateVec,
 )
 
-from pecos.simulators.qulacs_rs import QulacsRs
-
 str_to_sim = {
     "StateVec": StateVec,
-    "Qulacs": Qulacs,
-    "QulacsRs": QulacsRs,
+    "Qulacs": Qulacs,  
     "CuStateVec": CuStateVec,
     "MPS": MPS,
 }
@@ -156,7 +153,6 @@ def generate_random_state(seed: int | None = None) -> QuantumCircuit:
     [
         "StateVec",
         "Qulacs",
-        "QulacsRs",
         "CuStateVec",
         "MPS",
     ],
@@ -177,7 +173,6 @@ def test_init(simulator: str) -> None:
     [
         "StateVec",
         "Qulacs",
-        "QulacsRs",
         "CuStateVec",
         "MPS",
     ],
@@ -196,7 +191,6 @@ def test_H_measure(simulator: str) -> None:
     [
         "StateVec",
         "Qulacs",
-        "QulacsRs",
         "CuStateVec",
         "MPS",
     ],
@@ -243,7 +237,6 @@ def test_comp_basis_circ_and_measure(simulator: str) -> None:
     [
         "StateVec",
         "Qulacs",
-        "QulacsRs",
         "CuStateVec",
         "MPS",
     ],
@@ -397,7 +390,6 @@ def test_all_gate_circ(simulator: str) -> None:
     [
         "StateVec",
         "Qulacs",
-        "QulacsRs",
         "CuStateVec",
         "MPS",
     ],
@@ -429,7 +421,6 @@ def test_hybrid_engine_no_noise(simulator: str) -> None:
     [
         "StateVec",
         "Qulacs",
-        "QulacsRs",
         "CuStateVec",
         "MPS",
     ],

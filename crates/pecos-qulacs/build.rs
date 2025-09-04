@@ -97,7 +97,7 @@ fn add_qulacs_source_files(build: &mut cc::Build, qulacs_src: &Path) {
         }
     }
 
-    // Core csim files - only add files that exist
+    // Core csim files - these are the actual files present in Qulacs 0.6.12
     let csim_files = vec![
         "memory_ops.cpp",
         "stat_ops.cpp",
@@ -128,6 +128,18 @@ fn add_qulacs_source_files(build: &mut cc::Build, qulacs_src: &Path) {
         "memory_ops_dm.cpp",
         "stat_ops_dm.cpp",
         "constant.cpp",
+        // Files that were missing but actually exist in Qulacs 0.6.12
+        "update_ops_control_single_target_single.cpp",
+        "update_ops_control_single_target_multi.cpp",
+        "update_ops_control_multi_target_single.cpp",
+        "update_ops_control_multi_target_multi.cpp",
+        "update_ops_named_FusedSWAP.cpp",
+        "update_ops_reflection.cpp",
+        "update_ops_reversible_boolean.cpp",
+        "update_ops_qft.cpp",
+        "update_ops_named_projection.cpp",
+        "update_ops_matrix_dense_double_eigen.cpp",
+        "update_ops_matrix_dense_multi_eigen.cpp",
     ];
 
     for file in &csim_files {

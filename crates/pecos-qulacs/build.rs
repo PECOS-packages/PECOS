@@ -3,30 +3,17 @@ use pecos_build_utils::{
     qulacs_download_info,
 };
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn main() {
-    println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=src/bridge.rs");
-    println!("cargo:rerun-if-changed=src/qulacs_wrapper.cpp");
-    println!("cargo:rerun-if-changed=src/qulacs_wrapper.h");
+    setup_rerun_conditions();
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let target = env::var("TARGET").unwrap_or_default();
     let is_windows = target.contains("windows");
 
-    // Download all dependencies
-    let qulacs_data = download_cached(&qulacs_download_info()).expect("Failed to download Qulacs");
-    let eigen_data = download_cached(&eigen_download_info()).expect("Failed to download Eigen");
-    let boost_data = download_cached(&boost_download_info()).expect("Failed to download Boost");
-
-    // Extract archives
-    let qulacs_path =
-        extract_archive(&qulacs_data, &out_dir, Some("qulacs")).expect("Failed to extract Qulacs");
-    let eigen_path =
-        extract_archive(&eigen_data, &out_dir, Some("eigen")).expect("Failed to extract Eigen");
-    let boost_path =
-        extract_archive(&boost_data, &out_dir, Some("boost")).expect("Failed to extract Boost");
+    // Download and extract dependencies
+    let (qulacs_path, eigen_path, boost_path) = download_and_extract_dependencies(&out_dir);
 
     // Build our wrapper with actual Qulacs
     let mut build = cxx_build::bridge("src/bridge.rs");
@@ -36,6 +23,45 @@ fn main() {
 
     // Add essential Qulacs source files
     let qulacs_src = qulacs_path.join("src");
+    add_qulacs_source_files(&mut build, &qulacs_src);
+
+    // Configure includes and compiler flags
+    configure_build(&mut build, &eigen_path, &boost_path, &qulacs_src, &out_dir, is_windows);
+
+    // Compile everything
+    build.compile("qulacs_wrapper");
+
+    // Add Windows-specific boost exception stub if needed
+    if is_windows {
+        create_windows_boost_stub(&out_dir);
+    }
+}
+
+fn setup_rerun_conditions() {
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/bridge.rs");
+    println!("cargo:rerun-if-changed=src/qulacs_wrapper.cpp");
+    println!("cargo:rerun-if-changed=src/qulacs_wrapper.h");
+}
+
+fn download_and_extract_dependencies(out_dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
+    // Download all dependencies
+    let qulacs_data = download_cached(&qulacs_download_info()).expect("Failed to download Qulacs");
+    let eigen_data = download_cached(&eigen_download_info()).expect("Failed to download Eigen");
+    let boost_data = download_cached(&boost_download_info()).expect("Failed to download Boost");
+
+    // Extract archives
+    let qulacs_path =
+        extract_archive(&qulacs_data, out_dir, Some("qulacs")).expect("Failed to extract Qulacs");
+    let eigen_path =
+        extract_archive(&eigen_data, out_dir, Some("eigen")).expect("Failed to extract Eigen");
+    let boost_path =
+        extract_archive(&boost_data, out_dir, Some("boost")).expect("Failed to extract Boost");
+
+    (qulacs_path, eigen_path, boost_path)
+}
+
+fn add_qulacs_source_files(build: &mut cc::Build, qulacs_src: &Path) {
 
     // Core cppsim files - only add files that exist
     let cppsim_files = vec![
@@ -55,17 +81,17 @@ fn main() {
         "observable.cpp",
         "gate_noisy_evolution.cpp",
     ];
-    
+
     for file in &cppsim_files {
         let path = qulacs_src.join("cppsim").join(file);
         if path.exists() {
             build.file(path);
         } else {
-            eprintln!("Warning: Skipping missing file: cppsim/{}", file);
+            eprintln!("Warning: Skipping missing file: cppsim/{file}");
         }
     }
 
-    // Core csim files - only add files that exist  
+    // Core csim files - only add files that exist
     let csim_files = vec![
         "memory_ops.cpp",
         "stat_ops.cpp",
@@ -97,24 +123,33 @@ fn main() {
         "stat_ops_dm.cpp",
         "constant.cpp",
     ];
-    
+
     for file in &csim_files {
         let path = qulacs_src.join("csim").join(file);
         if path.exists() {
             build.file(path);
         } else {
-            eprintln!("Warning: Skipping missing file: csim/{}", file);
+            eprintln!("Warning: Skipping missing file: csim/{file}");
         }
     }
+}
 
+fn configure_build(
+    build: &mut cc::Build,
+    eigen_path: &Path,
+    boost_path: &Path,
+    qulacs_src: &Path,
+    out_dir: &Path,
+    is_windows: bool,
+) {
     // Include directories
-    build.include(&eigen_path);
-    build.include(&boost_path);
-    build.include(&qulacs_src);
+    build.include(eigen_path);
+    build.include(boost_path);
+    build.include(qulacs_src);
     build.include(qulacs_src.join("cppsim"));
     build.include(qulacs_src.join("csim"));
     build.include("src");
-    build.include(&out_dir);
+    build.include(out_dir);
 
     // Set compiler flags
     if is_windows {
@@ -137,36 +172,33 @@ fn main() {
 
     // Define preprocessor macros
     build.define("EIGEN_NO_DEBUG", None);
+}
 
-    // Compile everything
-    build.compile("qulacs_wrapper");
-    
-    // Add a stub implementation for boost::throw_exception for Windows
-    if is_windows {
-        println!("cargo:rustc-link-lib=static=qulacs_wrapper");
-        // Create a simple boost exception handler stub
-        std::fs::write(
-            out_dir.join("boost_exception_stub.cpp"),
-            r#"
-            #include <exception>
-            namespace boost {
-                struct source_location {
-                    const char* file_name() const { return ""; }
-                    const char* function_name() const { return ""; }
-                    int line() const { return 0; }
-                };
-                void throw_exception(std::exception const& e, source_location const&) {
-                    throw e;
-                }
+fn create_windows_boost_stub(out_dir: &Path) {
+    println!("cargo:rustc-link-lib=static=qulacs_wrapper");
+    // Create a simple boost exception handler stub
+    std::fs::write(
+        out_dir.join("boost_exception_stub.cpp"),
+        r#"
+        #include <exception>
+        namespace boost {
+            struct source_location {
+                const char* file_name() const { return ""; }
+                const char* function_name() const { return ""; }
+                int line() const { return 0; }
+            };
+            void throw_exception(std::exception const& e, source_location const&) {
+                throw e;
             }
-            "#,
-        ).expect("Failed to write boost exception stub");
-        
-        // Compile the stub
-        cc::Build::new()
-            .cpp(true)
-            .file(out_dir.join("boost_exception_stub.cpp"))
-            .std("c++14")
-            .compile("boost_exception_stub");
-    }
+        }
+        "#,
+    )
+    .expect("Failed to write boost exception stub");
+
+    // Compile the stub
+    cc::Build::new()
+        .cpp(true)
+        .file(out_dir.join("boost_exception_stub.cpp"))
+        .std("c++14")
+        .compile("boost_exception_stub");
 }

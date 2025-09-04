@@ -15,7 +15,6 @@ readme.workspace = true
 pecos-core.workspace = true
 pecos-qsim.workspace = true
 num-complex.workspace = true
-thiserror.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
 cxx.workspace = true
@@ -23,7 +22,6 @@ cxx.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
-approx.workspace = true
 
 [build-dependencies]
 cxx-build.workspace = true

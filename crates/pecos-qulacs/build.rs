@@ -26,7 +26,14 @@ fn main() {
     add_qulacs_source_files(&mut build, &qulacs_src);
 
     // Configure includes and compiler flags
-    configure_build(&mut build, &eigen_path, &boost_path, &qulacs_src, &out_dir, is_windows);
+    configure_build(
+        &mut build,
+        &eigen_path,
+        &boost_path,
+        &qulacs_src,
+        &out_dir,
+        is_windows,
+    );
 
     // Compile everything
     build.compile("qulacs_wrapper");
@@ -62,7 +69,6 @@ fn download_and_extract_dependencies(out_dir: &Path) -> (PathBuf, PathBuf, PathB
 }
 
 fn add_qulacs_source_files(build: &mut cc::Build, qulacs_src: &Path) {
-
     // Core cppsim files - only add files that exist
     let cppsim_files = vec![
         "state.cpp",

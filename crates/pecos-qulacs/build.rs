@@ -72,6 +72,7 @@ fn add_qulacs_source_files(build: &mut cc::Build, qulacs_src: &Path) {
     // Core cppsim files - only add files that exist
     let cppsim_files = vec![
         "state.cpp",
+        "state_dm.cpp", // Added: contains state::from_ptree implementation
         "gate.cpp",
         "gate_factory.cpp",
         "gate_matrix.cpp",

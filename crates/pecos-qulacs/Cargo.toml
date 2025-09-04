@@ -26,6 +26,7 @@ rand.workspace = true
 [build-dependencies]
 cxx-build.workspace = true
 pecos-build-utils.workspace = true
+cc = "1.0"
 
 [lib]
 name = "pecos_qulacs"

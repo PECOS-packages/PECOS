@@ -37,85 +37,75 @@ fn main() {
     // Add essential Qulacs source files
     let qulacs_src = qulacs_path.join("src");
 
-    // Core cppsim files
-    build.file(qulacs_src.join("cppsim/state.cpp"));
-    build.file(qulacs_src.join("cppsim/gate.cpp"));
-    build.file(qulacs_src.join("cppsim/gate_factory.cpp"));
-    build.file(qulacs_src.join("cppsim/gate_matrix.cpp"));
-    build.file(qulacs_src.join("cppsim/gate_named_one.cpp"));
-    build.file(qulacs_src.join("cppsim/utility.cpp"));
-    build.file(qulacs_src.join("cppsim/circuit.cpp"));
-    build.file(qulacs_src.join("cppsim/qubit_info.cpp"));
+    // Core cppsim files - only add files that exist
+    let cppsim_files = vec![
+        "state.cpp",
+        "gate.cpp",
+        "gate_factory.cpp",
+        "gate_matrix.cpp",
+        "gate_named_one.cpp",
+        "utility.cpp",
+        "circuit.cpp",
+        "qubit_info.cpp",
+        "gate_matrix_sparse.cpp",
+        "gate_matrix_diagonal.cpp",
+        "gate_merge.cpp",
+        "pauli_operator.cpp",
+        "general_quantum_operator.cpp",
+        "observable.cpp",
+        "gate_noisy_evolution.cpp",
+    ];
     
-    // Add missing gate implementation files for Windows
-    build.file(qulacs_src.join("cppsim/gate_matrix_sparse.cpp"));
-    build.file(qulacs_src.join("cppsim/gate_matrix_diagonal.cpp"));
-    build.file(qulacs_src.join("cppsim/gate_named_two.cpp"));
-    build.file(qulacs_src.join("cppsim/gate_named_pauli.cpp"));
-    build.file(qulacs_src.join("cppsim/gate_merge.cpp"));
-    build.file(qulacs_src.join("cppsim/gate_reversible.cpp"));
-    build.file(qulacs_src.join("cppsim/gate_reflect.cpp"));
+    for file in &cppsim_files {
+        let path = qulacs_src.join("cppsim").join(file);
+        if path.exists() {
+            build.file(path);
+        } else {
+            eprintln!("Warning: Skipping missing file: cppsim/{}", file);
+        }
+    }
+
+    // Core csim files - only add files that exist  
+    let csim_files = vec![
+        "memory_ops.cpp",
+        "stat_ops.cpp",
+        "update_ops_named.cpp",
+        "update_ops_named_X.cpp",
+        "update_ops_named_Y.cpp",
+        "update_ops_named_Z.cpp",
+        "update_ops_named_H.cpp",
+        "update_ops_named_CNOT.cpp",
+        "update_ops_named_CZ.cpp",
+        "update_ops_named_SWAP.cpp",
+        "update_ops_named_state.cpp",
+        "update_ops_matrix_dense_single.cpp",
+        "update_ops_pauli_single.cpp",
+        "stat_ops_probability.cpp",
+        "utility.cpp",
+        "init_ops_fill.cpp",
+        "init_ops_random.cpp",
+        "update_ops_matrix_dense_double.cpp",
+        "update_ops_matrix_diagonal_single.cpp",
+        "update_ops_matrix_phase_single.cpp",
+        "update_ops_matrix_dense_multi.cpp",
+        "update_ops_matrix_diagonal_multi.cpp",
+        "update_ops_pauli_multi.cpp",
+        "stat_ops_expectation_value.cpp",
+        "stat_ops_transition_amplitude.cpp",
+        "update_ops_dm.cpp",
+        "memory_ops_dm.cpp",
+        "stat_ops_dm.cpp",
+        "constant.cpp",
+    ];
     
-    // Add quantum operator files
-    build.file(qulacs_src.join("cppsim/pauli_operator.cpp"));
-    build.file(qulacs_src.join("cppsim/general_quantum_operator.cpp"));
-    build.file(qulacs_src.join("cppsim/hermitian_quantum_operator.cpp"));
-    build.file(qulacs_src.join("cppsim/observable.cpp"));
-    
-    // Add noisy evolution files  
-    build.file(qulacs_src.join("cppsim/gate_noisy_evolution.cpp"));
-
-    // Core csim files
-    build.file(qulacs_src.join("csim/memory_ops.cpp"));
-    build.file(qulacs_src.join("csim/stat_ops.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_named.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_named_X.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_named_Y.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_named_Z.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_named_H.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_named_CNOT.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_named_CZ.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_named_SWAP.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_named_state.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_matrix_dense_single.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_pauli_single.cpp"));
-    build.file(qulacs_src.join("csim/stat_ops_probability.cpp"));
-
-    // Additional missing utility files
-    build.file(qulacs_src.join("csim/utility.cpp"));
-    build.file(qulacs_src.join("csim/init_ops_fill.cpp"));
-    build.file(qulacs_src.join("csim/init_ops_random.cpp"));
-
-    // Matrix operations that might be needed for gates
-    build.file(qulacs_src.join("csim/update_ops_matrix_dense_double.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_matrix_diagonal_single.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_matrix_phase_single.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_control_single_target.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_control_multi_target.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_matrix_dense_multi.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_matrix_sparse.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_matrix_diagonal_multi.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_matrix_diagonal_double.cpp"));
-    
-    // Pauli operations needed for quantum operators
-    build.file(qulacs_src.join("csim/update_ops_pauli_multi.cpp"));
-    build.file(qulacs_src.join("csim/stat_ops_expectation_value.cpp"));
-    build.file(qulacs_src.join("csim/stat_ops_transition_amplitude.cpp"));
-
-    // Density matrix operations (apparently needed by gate factory)
-    build.file(qulacs_src.join("csim/update_ops_dm.cpp"));
-    build.file(qulacs_src.join("csim/memory_ops_dm.cpp"));
-    build.file(qulacs_src.join("csim/stat_ops_dm.cpp"));
-
-    // Constants needed by operations
-    build.file(qulacs_src.join("csim/constant.cpp"));
-    
-    // Special gate operations referenced in errors
-    build.file(qulacs_src.join("csim/update_ops_P0_P1.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_rotate.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_FusedSWAP.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_reflection.cpp"));
-    build.file(qulacs_src.join("csim/update_ops_reversible.cpp"));
+    for file in &csim_files {
+        let path = qulacs_src.join("csim").join(file);
+        if path.exists() {
+            build.file(path);
+        } else {
+            eprintln!("Warning: Skipping missing file: csim/{}", file);
+        }
+    }
 
     // Include directories
     build.include(&eigen_path);

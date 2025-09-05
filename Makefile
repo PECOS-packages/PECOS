@@ -156,8 +156,8 @@ rstest: qir-staticlib-if-needed  ## Run Rust tests
 	cargo test --workspace
 
 .PHONY: rstest-all
-rstest-all: qir-staticlib-if-needed  ## Run Rust tests with all features (includes WASM, decoders, etc.)
-	cargo test --workspace --all-features
+rstest-all: qir-staticlib-if-needed  ## Run Rust tests with all features except GPU
+	cargo test --workspace --all-features --exclude pecos-quest && cargo test -p pecos-quest
 
 # Decoder-specific commands
 # -------------------------

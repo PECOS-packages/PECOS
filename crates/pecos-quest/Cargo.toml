@@ -1,0 +1,41 @@
+[package]
+name = "pecos-quest"
+version.workspace = true
+edition.workspace = true
+readme.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "QuEST quantum simulator wrapper for PECOS"
+
+[features]
+default = ["cpu"]
+cpu = []
+gpu = ["cuda"]
+cuda = []  # Actual CUDA support
+
+[dependencies]
+thiserror.workspace = true
+cxx.workspace = true
+pecos-core.workspace = true
+pecos-qsim.workspace = true
+num-complex.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+
+[build-dependencies]
+pecos-build-utils.workspace = true
+cxx-build.workspace = true
+cc.workspace = true
+
+[dev-dependencies]
+approx = "0.5"
+
+[lib]
+name = "pecos_quest"
+
+[lints]
+workspace = true

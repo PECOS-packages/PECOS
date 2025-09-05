@@ -95,6 +95,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0674a1ddeecb70197781e945de4b3b8ffb61fa939a5597bcf48503737663100"
 
 [[package]]
+name = "approx"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab112f0a86d568ea0e627cc1d6be74a1e9cd55214684db5561995f6dad897c6"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1942,6 +1951,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-quest"
+version = "0.1.1"
+dependencies = [
+ "approx",
+ "cc",
+ "cxx",
+ "cxx-build",
+ "num-complex",
+ "pecos-build-utils",
+ "pecos-core",
+ "pecos-qsim",
+ "rand",
+ "rand_chacha",
+ "thiserror 2.0.16",
+]
+
+[[package]]
 name = "pecos-rng"
 version = "0.1.1"
 
@@ -1956,6 +1982,7 @@ dependencies = [
  "pecos-engines",
  "pecos-qasm",
  "pecos-qsim",
+ "pecos-quest",
  "pyo3",
  "pyo3-build-config",
  "serde_json",

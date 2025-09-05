@@ -35,6 +35,10 @@ from pecos.simulators.sparsesim import (
 )
 from pecos.simulators.statevec import StateVec
 
+# QuEST simulators
+from pecos.simulators.quest_statevec import QuestStateVec
+from pecos.simulators.quest_densitymatrix import QuestDensityMatrix
+
 # Attempt to import optional Qulacs package
 try:
     from pecos.simulators.qulacs.state import Qulacs  # wrapper for Qulacs sim

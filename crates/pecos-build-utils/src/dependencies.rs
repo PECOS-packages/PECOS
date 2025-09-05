@@ -31,6 +31,11 @@ pub const CHROMOBIUS_COMMIT: &str = "35e289570fdc1d71e73582e1fd4e0c8e29298ef5";
 pub const CHROMOBIUS_SHA256: &str =
     "da73d819e67572065fd715db45fabb342c2a2a1e961d2609df4f9864b9836054";
 
+/// QuEST library constants
+/// Used by QuEST quantum simulator wrapper
+pub const QUEST_COMMIT: &str = "v4.0.0";
+pub const QUEST_SHA256: &str = "e6a922a9dc1d6ee7c4d2591a277646dca2ce2fd90eecf36fd66970cb24bbfb67";
+
 /// Helper functions to create DownloadInfo structs for each dependency
 use crate::DownloadInfo;
 
@@ -80,5 +85,14 @@ pub fn chromobius_download_info() -> DownloadInfo {
         url: format!("https://github.com/quantumlib/chromobius/archive/{CHROMOBIUS_COMMIT}.tar.gz"),
         sha256: CHROMOBIUS_SHA256,
         name: format!("chromobius-{}", &CHROMOBIUS_COMMIT[..8]),
+    }
+}
+
+/// Create DownloadInfo for QuEST
+pub fn quest_download_info() -> DownloadInfo {
+    DownloadInfo {
+        url: format!("https://github.com/QuEST-Kit/QuEST/archive/refs/tags/{QUEST_COMMIT}.tar.gz"),
+        sha256: QUEST_SHA256,
+        name: format!("quest-{}", QUEST_COMMIT),
     }
 }

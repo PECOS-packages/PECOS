@@ -43,6 +43,12 @@ try:
 except ImportError:
     CuStateVec = None
 
+try:
+    from pecos.simulators import QuestStateVec, QuestDensityMatrix
+except ImportError:
+    QuestStateVec = None
+    QuestDensityMatrix = None
+
 
 class QuantumSimulator:
     """General-purpose quantum simulator with multiple backend support.
@@ -97,6 +103,10 @@ class QuantumSimulator:
                 self.state = Qulacs
             elif self.backend == "CuStateVec":
                 self.state = CuStateVec
+            elif self.backend == "QuestStateVec":
+                self.state = QuestStateVec
+            elif self.backend == "QuestDensityMatrix":
+                self.state = QuestDensityMatrix
             else:
                 msg = f"simulator `{self.backend}` not currently implemented!"
                 raise NotImplementedError(msg)

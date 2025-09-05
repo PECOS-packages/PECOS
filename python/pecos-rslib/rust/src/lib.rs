@@ -26,6 +26,7 @@ mod pauli_prop_bindings;
 mod pecos_rng_bindings;
 pub mod phir_bridge;
 mod qasm_sim_bindings;
+mod quest_bindings;
 mod sparse_sim;
 mod sparse_stab_bindings;
 mod sparse_stab_engine_bindings;
@@ -38,6 +39,7 @@ use cpp_sparse_sim_bindings::CppSparseSim;
 use pauli_prop_bindings::PyPauliProp;
 use pecos_rng_bindings::RngPcg;
 use pyo3::prelude::*;
+use quest_bindings::{QuestStateVec, QuestDensityMatrix};
 use sparse_stab_bindings::SparseSim;
 use sparse_stab_engine_bindings::PySparseStabEngine;
 use state_vec_bindings::RsStateVec;
@@ -57,6 +59,8 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyStateVecEngine>()?;
     m.add_class::<PySparseStabEngine>()?;
     m.add_class::<RngPcg>()?;
+    m.add_class::<QuestStateVec>()?;
+    m.add_class::<QuestDensityMatrix>()?;
 
     // Register QASM simulation functions
     qasm_sim_bindings::register_qasm_sim_module(m)?;

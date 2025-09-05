@@ -27,6 +27,8 @@ from pecos_rslib._pecos_rslib import ByteMessage
 from pecos_rslib._pecos_rslib import ByteMessageBuilder
 from pecos_rslib._pecos_rslib import StateVecEngineRs
 from pecos_rslib._pecos_rslib import SparseStabEngineRs
+from pecos_rslib._pecos_rslib import QuestStateVec
+from pecos_rslib._pecos_rslib import QuestDensityMatrix
 
 # QASM simulation exports
 from pecos_rslib._pecos_rslib import NoiseModel
@@ -71,6 +73,9 @@ __all__ = [
     "ByteMessageBuilder",
     "StateVecEngineRs",
     "SparseStabEngineRs",
+    # QuEST simulators
+    "QuestStateVec",
+    "QuestDensityMatrix",
     # QASM simulation
     "NoiseModel",
     "QuantumEngine",

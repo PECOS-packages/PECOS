@@ -19,6 +19,7 @@ default-members = [
     "crates/pecos-rng",
     "crates/pecos",
     "crates/pecos-cli",
+    "crates/pecos-quest",
     "python/pecos-rslib/rust",
     "crates/benchmarks",
 ]
@@ -109,6 +110,9 @@ pecos-decoder-core = { version = "0.1.1", path = "crates/pecos-decoder-core" }
 pecos-build-utils = { version = "0.1.1", path = "crates/pecos-build-utils" }
 pecos-ldpc-decoders = { version = "0.1.1", path = "crates/pecos-ldpc-decoders" }
 pecos-decoders = { version = "0.1.1", path = "crates/pecos-decoders" }
+
+# QuEST simulator wrapper
+pecos-quest = { version = "0.1.1", path = "crates/pecos-quest" }
 
 # Optimize build times
 [profile.dev]

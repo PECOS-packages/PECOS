@@ -214,6 +214,10 @@ fn build_cxx_bridge(quest_dir: &Path) {
     // Report ccache/sccache configuration
     report_cache_config();
 
+    // Disable warnings for external QuEST code
+    // This properly handles warning flags without conflicts
+    build.warnings(false);
+
     // Use different optimization levels for debug vs release builds
     if cfg!(debug_assertions) {
         build.flag_if_supported("-O0"); // No optimization for faster compilation
@@ -225,13 +229,10 @@ fn build_cxx_bridge(quest_dir: &Path) {
     // Platform-specific flags
     if cfg!(not(target_env = "msvc")) {
         // For GCC/Clang
-        build
-            .flag("-w") // Suppress all warnings from external code
-            .flag_if_supported("-fPIC"); // Position-independent code
+        build.flag_if_supported("-fPIC"); // Position-independent code
     } else {
         // For MSVC
         build
-            .flag("/W0") // Warning level 0 (no warnings)
             .flag_if_supported("/permissive-") // Enable standards-compliant C++ parsing
             .flag_if_supported("/Zc:__cplusplus"); // Report correct __cplusplus macro value
     }

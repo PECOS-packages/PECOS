@@ -832,3 +832,88 @@ template std::complex<double> gpu_densmatr_calcExpecFullStateDiagMatr_sub<0, 0>(
 template std::complex<double> gpu_densmatr_calcExpecFullStateDiagMatr_sub<0, 1>(Qureg, FullStateDiagMatr, std::complex<double>);
 template std::complex<double> gpu_densmatr_calcExpecFullStateDiagMatr_sub<1, 0>(Qureg, FullStateDiagMatr, std::complex<double>);
 template std::complex<double> gpu_densmatr_calcExpecFullStateDiagMatr_sub<1, 1>(Qureg, FullStateDiagMatr, std::complex<double>);
+
+// macOS ARM64 specific symbols with boolean template parameters
+// These use different name mangling than x86_64
+#if defined(__APPLE__) && defined(__aarch64__)
+
+// Provide the exact symbols that macOS ARM64 expects with boolean template parameters
+// These map to the same implementations as the integer versions above
+
+// gpu_densmatr_allTargDiagMatr_sub with boolean template parameters
+extern "C++" void _Z32gpu_densmatr_allTargDiagMatr_subILb0ELb0EEv5Qureg17FullStateDiagMatrNSt3__17complexIdEE(
+    Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {
+    // Call the integer template version
+    gpu_densmatr_allTargDiagMatr_sub<0, 0>(q, m, globalPhase);
+}
+
+extern "C++" void _Z32gpu_densmatr_allTargDiagMatr_subILb0ELb1EEv5Qureg17FullStateDiagMatrNSt3__17complexIdEE(
+    Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {
+    gpu_densmatr_allTargDiagMatr_sub<0, 1>(q, m, globalPhase);
+}
+
+extern "C++" void _Z32gpu_densmatr_allTargDiagMatr_subILb1ELb0EEv5Qureg17FullStateDiagMatrNSt3__17complexIdEE(
+    Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {
+    gpu_densmatr_allTargDiagMatr_sub<1, 0>(q, m, globalPhase);
+}
+
+extern "C++" void _Z32gpu_densmatr_allTargDiagMatr_subILb1ELb1EEv5Qureg17FullStateDiagMatrNSt3__17complexIdEE(
+    Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {
+    gpu_densmatr_allTargDiagMatr_sub<1, 1>(q, m, globalPhase);
+}
+
+// gpu_statevec_allTargDiagMatr_sub with boolean template parameter
+extern "C++" void _Z32gpu_statevec_allTargDiagMatr_subILb0EEv5Qureg17FullStateDiagMatrNSt3__17complexIdEE(
+    Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {
+    gpu_statevec_allTargDiagMatr_sub<0>(q, m, globalPhase);
+}
+
+extern "C++" void _Z32gpu_statevec_allTargDiagMatr_subILb1EEv5Qureg17FullStateDiagMatrNSt3__17complexIdEE(
+    Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {
+    gpu_statevec_allTargDiagMatr_sub<1>(q, m, globalPhase);
+}
+
+// gpu_statevec_calcExpecFullStateDiagMatr_sub with boolean template parameter
+extern "C++" std::complex<double> _Z43gpu_statevec_calcExpecFullStateDiagMatr_subILb0ELb1EENSt3__17complexIdEE5Qureg17FullStateDiagMatrS2_(
+    Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {
+    return gpu_statevec_calcExpecFullStateDiagMatr_sub<0, 1>(q, m, globalPhase);
+}
+
+extern "C++" std::complex<double> _Z43gpu_statevec_calcExpecFullStateDiagMatr_subILb0ELb0EENSt3__17complexIdEE5Qureg17FullStateDiagMatrS2_(
+    Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {
+    return gpu_statevec_calcExpecFullStateDiagMatr_sub<0, 0>(q, m, globalPhase);
+}
+
+// gpu_densmatr_calcExpecFullStateDiagMatr_sub with boolean template parameters
+extern "C++" std::complex<double> _Z43gpu_densmatr_calcExpecFullStateDiagMatr_subILb0ELb0EENSt3__17complexIdEE5Qureg17FullStateDiagMatrS2_(
+    Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {
+    return gpu_densmatr_calcExpecFullStateDiagMatr_sub<0, 0>(q, m, globalPhase);
+}
+
+extern "C++" std::complex<double> _Z43gpu_densmatr_calcExpecFullStateDiagMatr_subILb0ELb1EENSt3__17complexIdEE5Qureg17FullStateDiagMatrS2_(
+    Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {
+    return gpu_densmatr_calcExpecFullStateDiagMatr_sub<0, 1>(q, m, globalPhase);
+}
+
+extern "C++" std::complex<double> _Z43gpu_densmatr_calcExpecFullStateDiagMatr_subILb1ELb0EENSt3__17complexIdEE5Qureg17FullStateDiagMatrS2_(
+    Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {
+    return gpu_densmatr_calcExpecFullStateDiagMatr_sub<1, 0>(q, m, globalPhase);
+}
+
+extern "C++" std::complex<double> _Z43gpu_densmatr_calcExpecFullStateDiagMatr_subILb1ELb1EENSt3__17complexIdEE5Qureg17FullStateDiagMatrS2_(
+    Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {
+    return gpu_densmatr_calcExpecFullStateDiagMatr_sub<1, 1>(q, m, globalPhase);
+}
+
+// gpu_densmatr_partialTrace_sub with boolean template parameter
+extern "C++" void _Z29gpu_densmatr_partialTrace_subILb0EEv5QuregrS_NSt3__16vectorIiNS2_9allocatorIiEEEES6_(
+    Qureg traceOut, Qureg traceIn, std::vector<int> targets, std::vector<int> controls) {
+    gpu_densmatr_partialTrace_sub<0>(traceOut, traceIn, targets, controls);
+}
+
+extern "C++" void _Z29gpu_densmatr_partialTrace_subILb1EEv5QuregrS_NSt3__16vectorIiNS2_9allocatorIiEEEES6_(
+    Qureg traceOut, Qureg traceIn, std::vector<int> targets, std::vector<int> controls) {
+    gpu_densmatr_partialTrace_sub<1>(traceOut, traceIn, targets, controls);
+}
+
+#endif // __APPLE__ && __aarch64__

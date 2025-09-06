@@ -824,9 +824,11 @@ template std::complex<double> gpu_densmatr_calcFidelityWithPureState_sub<1>(Qure
 
 // Explicit template instantiations for expectation value calculations
 template std::complex<double> gpu_statevec_calcExpecFullStateDiagMatr_sub<0, 0>(Qureg, FullStateDiagMatr, std::complex<double>);
+template std::complex<double> gpu_statevec_calcExpecFullStateDiagMatr_sub<0, 1>(Qureg, FullStateDiagMatr, std::complex<double>);
 template std::complex<double> gpu_statevec_calcExpecFullStateDiagMatr_sub<1, 0>(Qureg, FullStateDiagMatr, std::complex<double>);
 template std::complex<double> gpu_statevec_calcExpecFullStateDiagMatr_sub<1, 1>(Qureg, FullStateDiagMatr, std::complex<double>);
 
 template std::complex<double> gpu_densmatr_calcExpecFullStateDiagMatr_sub<0, 0>(Qureg, FullStateDiagMatr, std::complex<double>);
+template std::complex<double> gpu_densmatr_calcExpecFullStateDiagMatr_sub<0, 1>(Qureg, FullStateDiagMatr, std::complex<double>);
 template std::complex<double> gpu_densmatr_calcExpecFullStateDiagMatr_sub<1, 0>(Qureg, FullStateDiagMatr, std::complex<double>);
 template std::complex<double> gpu_densmatr_calcExpecFullStateDiagMatr_sub<1, 1>(Qureg, FullStateDiagMatr, std::complex<double>);

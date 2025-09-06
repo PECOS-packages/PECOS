@@ -77,7 +77,7 @@ void gpu_statevec_setQuregToSuperposition_sub(std::complex<double> a, Qureg q1,
 void gpu_densmatr_mixQureg_subA(double a, Qureg q1, double b, Qureg q2) {}
 void gpu_densmatr_mixQureg_subB(double a, Qureg q1, double b, Qureg q2) {}
 void gpu_densmatr_mixQureg_subC(double a, Qureg q1, double b) {}
-void gpu_statevec_calcTotalProb_sub(Qureg q) {}
+// Note: gpu_statevec_calcTotalProb_sub is defined later with correct return type
 void gpu_statevec_initUniformState_sub(Qureg q, std::complex<double> a) {}
 
 
@@ -283,3 +283,467 @@ void gpu_clearCache() {
 void gpu_finalizeCuQuantum() {
     // No-op for CPU-only builds
 }
+
+// Additional GPU info functions
+int gpu_getNumberOfLocalGpus() { return 0; }
+size_t gpu_getTotalMemoryInBytes() { return 0; }
+size_t gpu_getCacheMemoryInBytes() { return 0; }
+
+// Additional matrix structures
+struct CompMatr {
+    int isDensityMatrix;
+    int numQubits;
+    qindex numAmps;
+    qcomp* real;
+    qcomp* imag;
+};
+
+struct DiagMatr {
+    int numQubits;
+    qindex numAmps;
+    qcomp* elems;
+};
+
+struct SuperOp {
+    int numQubits;
+    qindex numAmps;
+    qcomp* real;
+    qcomp* imag;
+};
+
+struct FullStateDiagMatr {
+    int numQubits;
+    qindex numAmps;
+    qcomp* elems;
+};
+
+struct PauliStrSum {
+    int numQubits;
+    int numTerms;
+    double* coeffs;
+    int* pauliCodes;
+};
+
+struct CompMatr2 {
+    qcomp elems[16];  // 4x4 matrix
+};
+
+struct DiagMatr2 {
+    qcomp elems[4];   // 2 qubit diagonal
+};
+
+// GPU copy functions for matrices
+void gpu_copyGpuToCpu(CompMatr m) {}
+void gpu_copyGpuToCpu(SuperOp m) {}
+void gpu_copyCpuToGpu(CompMatr m) {}
+void gpu_copyCpuToGpu(DiagMatr m) {}
+void gpu_copyCpuToGpu(FullStateDiagMatr m) {}
+
+// GPU accelerator stub functions
+std::complex<double> gpu_statevec_getAmp_sub(Qureg q, long long idx) { return 0.0; }
+void gpu_densmatr_setAmpsToPauliStrSum_sub(Qureg q, PauliStrSum p) {}
+void gpu_fullstatediagmatr_setElemsToPauliStrSum(FullStateDiagMatr m, PauliStrSum p) {}
+long long gpu_statevec_packPairSummedAmpsIntoBuffer(Qureg q, int a, int b, int c, int d) { return 0; }
+
+// Decoherence functions
+void gpu_densmatr_oneQubitDephasing_subA(Qureg q, int target, double dephase) {}
+void gpu_densmatr_oneQubitDephasing_subB(Qureg q, int target, double dephase) {}
+void gpu_densmatr_twoQubitDephasing_subA(Qureg q, int q1, int q2, double dephase) {}
+void gpu_densmatr_twoQubitDephasing_subB(Qureg q, int q1, int q2, double dephase) {}
+void gpu_densmatr_oneQubitDepolarising_subA(Qureg q, int target, double depolProb) {}
+void gpu_densmatr_oneQubitDepolarising_subB(Qureg q, int target, double depolProb) {}
+void gpu_densmatr_twoQubitDepolarising_subA(Qureg q, int q1, int q2, double depolProb) {}
+void gpu_densmatr_twoQubitDepolarising_subB(Qureg q, int q1, int q2, double depolProb) {}
+void gpu_densmatr_twoQubitDepolarising_subC(Qureg q, int q1, int q2, double depolProb) {}
+void gpu_densmatr_twoQubitDepolarising_subD(Qureg q, int q1, int q2, double depolProb) {}
+void gpu_densmatr_twoQubitDepolarising_subE(Qureg q, int q1, int q2, double depolProb) {}
+void gpu_densmatr_twoQubitDepolarising_subF(Qureg q, int q1, int q2, double depolProb) {}
+void gpu_densmatr_oneQubitPauliChannel_subA(Qureg q, int target, double px, double py, double pz, double pi) {}
+void gpu_densmatr_oneQubitPauliChannel_subB(Qureg q, int target, double px, double py, double pz, double pi) {}
+void gpu_densmatr_oneQubitDamping_subA(Qureg q, int target, double damping) {}
+void gpu_densmatr_oneQubitDamping_subB(Qureg q, int target, double damping) {}
+void gpu_densmatr_oneQubitDamping_subC(Qureg q, int target, double damping) {}
+void gpu_densmatr_oneQubitDamping_subD(Qureg q, int target, double damping) {}
+
+// Calculation functions - note return types
+double gpu_statevec_calcTotalProb_sub(Qureg q) { return 1.0; }
+double gpu_densmatr_calcTotalProb_sub(Qureg q) { return 1.0; }
+std::complex<double> gpu_statevec_calcInnerProduct_sub(Qureg q1, Qureg q2) { return 0.0; }
+double gpu_densmatr_calcHilbertSchmidtDistance_sub(Qureg q1, Qureg q2) { return 0.0; }
+double gpu_statevec_calcExpecAnyTargZ_sub(Qureg q, std::vector<int> targets) { return 0.0; }
+std::complex<double> gpu_densmatr_calcExpecAnyTargZ_sub(Qureg q, std::vector<int> targets) { return 0.0; }
+std::complex<double> gpu_statevec_calcExpecPauliStr_subA(Qureg q, std::vector<int> a, std::vector<int> b, std::vector<int> c) { return 0.0; }
+std::complex<double> gpu_statevec_calcExpecPauliStr_subB(Qureg q, std::vector<int> a, std::vector<int> b, std::vector<int> c) { return 0.0; }
+std::complex<double> gpu_densmatr_calcExpecPauliStr_sub(Qureg q, std::vector<int> a, std::vector<int> b, std::vector<int> c) { return 0.0; }
+
+// Init functions
+void gpu_statevec_initDebugState_sub(Qureg q) {}
+void gpu_statevec_initUnnormalisedUniformlyRandomPureStateAmps_sub(Qureg q) {}
+
+// Template stubs for SWAP operations
+template<int N>
+void gpu_statevec_anyCtrlSwap_subA(Qureg q, std::vector<int> ctrls, std::vector<int> ctrlVals, int q1, int q2) {}
+
+template<int N>
+void gpu_statevec_anyCtrlSwap_subB(Qureg q, std::vector<int> ctrls, std::vector<int> ctrlVals) {}
+
+template<int N>
+void gpu_statevec_anyCtrlSwap_subC(Qureg q, std::vector<int> ctrls, std::vector<int> ctrlVals, int q1, int q2) {}
+
+// Template stubs for two-target dense matrix operations
+template<int N>
+void gpu_statevec_anyCtrlTwoTargDenseMatr_sub(Qureg q, std::vector<int> ctrls, std::vector<int> ctrlVals, int t1, int t2, CompMatr2 m) {}
+
+// Template stubs for any-target dense matrix operations
+template<int N1, int N2, int N3>
+void gpu_statevec_anyCtrlAnyTargDenseMatr_sub(Qureg q, std::vector<int> ctrls, std::vector<int> ctrlVals, std::vector<int> targets, CompMatr m) {}
+
+// Template stubs for two-target diagonal matrix operations
+template<int N>
+void gpu_statevec_anyCtrlTwoTargDiagMatr_sub(Qureg q, std::vector<int> ctrls, std::vector<int> ctrlVals, int t1, int t2, DiagMatr2 m) {}
+
+// Template stubs for any-target diagonal matrix operations
+template<int N1, int N2, int N3, int N4>
+void gpu_statevec_anyCtrlAnyTargDiagMatr_sub(Qureg q, std::vector<int> ctrls, std::vector<int> ctrlVals, std::vector<int> targets, DiagMatr m, std::complex<double> globalPhase) {}
+
+// Explicit template instantiations for SWAP operations
+template void gpu_statevec_anyCtrlSwap_subA<0>(Qureg, std::vector<int>, std::vector<int>, int, int);
+template void gpu_statevec_anyCtrlSwap_subA<1>(Qureg, std::vector<int>, std::vector<int>, int, int);
+template void gpu_statevec_anyCtrlSwap_subA<2>(Qureg, std::vector<int>, std::vector<int>, int, int);
+template void gpu_statevec_anyCtrlSwap_subA<3>(Qureg, std::vector<int>, std::vector<int>, int, int);
+template void gpu_statevec_anyCtrlSwap_subA<4>(Qureg, std::vector<int>, std::vector<int>, int, int);
+template void gpu_statevec_anyCtrlSwap_subA<5>(Qureg, std::vector<int>, std::vector<int>, int, int);
+template void gpu_statevec_anyCtrlSwap_subA<-1>(Qureg, std::vector<int>, std::vector<int>, int, int);
+
+template void gpu_statevec_anyCtrlSwap_subB<0>(Qureg, std::vector<int>, std::vector<int>);
+template void gpu_statevec_anyCtrlSwap_subB<1>(Qureg, std::vector<int>, std::vector<int>);
+template void gpu_statevec_anyCtrlSwap_subB<2>(Qureg, std::vector<int>, std::vector<int>);
+template void gpu_statevec_anyCtrlSwap_subB<3>(Qureg, std::vector<int>, std::vector<int>);
+template void gpu_statevec_anyCtrlSwap_subB<4>(Qureg, std::vector<int>, std::vector<int>);
+template void gpu_statevec_anyCtrlSwap_subB<5>(Qureg, std::vector<int>, std::vector<int>);
+template void gpu_statevec_anyCtrlSwap_subB<-1>(Qureg, std::vector<int>, std::vector<int>);
+
+template void gpu_statevec_anyCtrlSwap_subC<0>(Qureg, std::vector<int>, std::vector<int>, int, int);
+template void gpu_statevec_anyCtrlSwap_subC<1>(Qureg, std::vector<int>, std::vector<int>, int, int);
+template void gpu_statevec_anyCtrlSwap_subC<2>(Qureg, std::vector<int>, std::vector<int>, int, int);
+template void gpu_statevec_anyCtrlSwap_subC<3>(Qureg, std::vector<int>, std::vector<int>, int, int);
+template void gpu_statevec_anyCtrlSwap_subC<4>(Qureg, std::vector<int>, std::vector<int>, int, int);
+template void gpu_statevec_anyCtrlSwap_subC<5>(Qureg, std::vector<int>, std::vector<int>, int, int);
+template void gpu_statevec_anyCtrlSwap_subC<-1>(Qureg, std::vector<int>, std::vector<int>, int, int);
+
+// Explicit template instantiations for two-target dense matrix operations
+template void gpu_statevec_anyCtrlTwoTargDenseMatr_sub<0>(Qureg, std::vector<int>, std::vector<int>, int, int, CompMatr2);
+template void gpu_statevec_anyCtrlTwoTargDenseMatr_sub<1>(Qureg, std::vector<int>, std::vector<int>, int, int, CompMatr2);
+template void gpu_statevec_anyCtrlTwoTargDenseMatr_sub<2>(Qureg, std::vector<int>, std::vector<int>, int, int, CompMatr2);
+template void gpu_statevec_anyCtrlTwoTargDenseMatr_sub<3>(Qureg, std::vector<int>, std::vector<int>, int, int, CompMatr2);
+template void gpu_statevec_anyCtrlTwoTargDenseMatr_sub<4>(Qureg, std::vector<int>, std::vector<int>, int, int, CompMatr2);
+template void gpu_statevec_anyCtrlTwoTargDenseMatr_sub<5>(Qureg, std::vector<int>, std::vector<int>, int, int, CompMatr2);
+template void gpu_statevec_anyCtrlTwoTargDenseMatr_sub<-1>(Qureg, std::vector<int>, std::vector<int>, int, int, CompMatr2);
+
+// Explicit template instantiations for two-target diagonal matrix operations
+template void gpu_statevec_anyCtrlTwoTargDiagMatr_sub<0>(Qureg, std::vector<int>, std::vector<int>, int, int, DiagMatr2);
+template void gpu_statevec_anyCtrlTwoTargDiagMatr_sub<1>(Qureg, std::vector<int>, std::vector<int>, int, int, DiagMatr2);
+template void gpu_statevec_anyCtrlTwoTargDiagMatr_sub<2>(Qureg, std::vector<int>, std::vector<int>, int, int, DiagMatr2);
+template void gpu_statevec_anyCtrlTwoTargDiagMatr_sub<3>(Qureg, std::vector<int>, std::vector<int>, int, int, DiagMatr2);
+template void gpu_statevec_anyCtrlTwoTargDiagMatr_sub<4>(Qureg, std::vector<int>, std::vector<int>, int, int, DiagMatr2);
+template void gpu_statevec_anyCtrlTwoTargDiagMatr_sub<5>(Qureg, std::vector<int>, std::vector<int>, int, int, DiagMatr2);
+template void gpu_statevec_anyCtrlTwoTargDiagMatr_sub<-1>(Qureg, std::vector<int>, std::vector<int>, int, int, DiagMatr2);
+// Explicit template instantiations for any-target dense matrix operations
+// gpu_statevec_anyCtrlAnyTargDenseMatr_sub<N1, N2, N3>
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<0, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<0, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<0, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<0, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<0, 2, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<0, 2, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<0, 3, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<0, 3, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<0, 4, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<0, 4, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<0, 5, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<0, 5, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<0, -1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<0, -1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<1, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<1, 2, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<1, 2, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<1, 3, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<1, 3, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<1, 4, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<1, 4, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<1, 5, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<1, 5, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<1, -1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<1, -1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<2, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<2, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<2, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<2, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<2, 2, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<2, 2, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<2, 3, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<2, 3, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<2, 4, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<2, 4, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<2, 5, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<2, 5, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<2, -1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<2, -1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<3, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<3, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<3, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<3, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<3, 2, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<3, 2, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<3, 3, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<3, 3, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<3, 4, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<3, 4, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<3, 5, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<3, 5, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<3, -1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<3, -1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<4, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<4, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<4, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<4, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<4, 2, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<4, 2, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<4, 3, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<4, 3, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<4, 4, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<4, 4, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<4, 5, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<4, 5, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<4, -1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<4, -1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<5, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<5, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<5, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<5, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<5, 2, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<5, 2, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<5, 3, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<5, 3, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<5, 4, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<5, 4, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<5, 5, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<5, 5, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<5, -1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<5, -1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<-1, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<-1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<-1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<-1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<-1, 2, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<-1, 2, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<-1, 3, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<-1, 3, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<-1, 4, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<-1, 4, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<-1, 5, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<-1, 5, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<-1, -1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+template void gpu_statevec_anyCtrlAnyTargDenseMatr_sub<-1, -1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, CompMatr);
+
+// Explicit template instantiations for any-target diagonal matrix operations
+// gpu_statevec_anyCtrlAnyTargDiagMatr_sub<N1, N2, N3, N4>
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 0, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 0, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 0, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 0, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 1, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 2, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 2, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 2, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 2, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 3, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 3, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 3, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 3, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 4, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 4, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 4, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 4, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 5, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 5, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 5, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, 5, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, -1, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, -1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, -1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<0, -1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 0, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 0, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 0, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 0, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 1, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 2, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 2, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 2, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 2, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 3, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 3, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 3, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 3, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 4, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 4, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 4, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 4, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 5, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 5, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 5, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, 5, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, -1, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, -1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, -1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<1, -1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 0, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 0, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 0, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 0, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 1, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 2, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 2, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 2, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 2, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 3, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 3, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 3, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 3, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 4, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 4, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 4, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 4, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 5, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 5, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 5, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, 5, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, -1, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, -1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, -1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<2, -1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 0, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 0, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 0, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 0, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 1, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 2, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 2, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 2, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 2, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 3, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 3, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 3, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 3, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 4, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 4, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 4, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 4, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 5, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 5, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 5, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, 5, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, -1, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, -1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, -1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<3, -1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 0, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 0, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 0, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 0, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 1, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 2, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 2, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 2, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 2, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 3, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 3, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 3, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 3, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 4, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 4, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 4, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 4, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 5, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 5, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 5, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, 5, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, -1, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, -1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, -1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<4, -1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 0, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 0, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 0, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 0, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 1, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 2, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 2, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 2, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 2, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 3, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 3, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 3, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 3, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 4, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 4, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 4, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 4, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 5, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 5, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 5, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, 5, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, -1, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, -1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, -1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<5, -1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 0, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 0, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 0, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 0, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 1, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 2, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 2, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 2, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 2, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 3, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 3, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 3, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 3, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 4, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 4, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 4, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 4, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 5, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 5, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 5, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, 5, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, -1, 0, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, -1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, -1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, -1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);

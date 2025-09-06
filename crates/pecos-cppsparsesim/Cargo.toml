@@ -13,10 +13,7 @@ readme = "README.md"
 
 [dependencies]
 cxx.workspace = true
-pecos-core.workspace = true
 pecos-qsim.workspace = true
-rand.workspace = true
-rand_chacha.workspace = true
 
 [build-dependencies]
 cxx-build.workspace = true

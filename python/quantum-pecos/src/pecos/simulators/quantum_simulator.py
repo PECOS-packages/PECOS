@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from pecos.reps.pypmir.op_types import QOp
-from pecos.simulators import StateVec
+from pecos.simulators import Qulacs, StateVec
 from pecos.simulators.sparsesim.state import SparseSim
 
 JSONType = dict[str, Any] | list[Any] | str | int | float | bool | None

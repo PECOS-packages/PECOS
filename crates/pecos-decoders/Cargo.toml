@@ -20,9 +20,6 @@ default = []
 ldpc = ["dep:pecos-ldpc-decoders"]
 all = ["ldpc"]
 
-[dev-dependencies]
-ndarray.workspace = true
-
 [lib]
 name = "pecos_decoders"
 

@@ -33,18 +33,14 @@ from pecos.simulators.quest_densitymatrix import QuestDensityMatrix
 # QuEST simulators
 from pecos.simulators.quest_statevec import QuestStateVec
 
+# Use Qulacs (Rust version) as the primary Qulacs implementation
+from pecos.simulators.qulacs import Qulacs
+
 # Pauli fault propagation sim
 from pecos.simulators.sparsesim import (
     SparseSim as SparseSimPy,
 )
 from pecos.simulators.statevec import StateVec
-
-# Attempt to import optional Qulacs package
-try:
-    from pecos.simulators.qulacs.state import Qulacs  # wrapper for Qulacs sim
-except ImportError:
-    Qulacs = None
-
 
 # Attempt to import optional cuquantum and cupy packages
 try:

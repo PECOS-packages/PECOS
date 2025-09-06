@@ -1,4 +1,4 @@
-# Copyright 2024 The PECOS Developers
+# Copyright 2025 The PECOS Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 # the License.You may obtain a copy of the License at
@@ -12,14 +12,15 @@
 """Quantum state representation for Qulacs simulator.
 
 This module provides quantum state representation and management for the Qulacs simulator, including state vector
-storage and manipulation using Qulacs quantum simulation framework.
+storage and manipulation using a pure Rust backend for high performance and thread safety.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from qulacs import QuantumState
+import numpy as np
+import pecos_rslib._pecos_rslib as rslib
 
 from pecos.simulators.qulacs import bindings
 from pecos.simulators.sim_class_types import StateVector
@@ -29,13 +30,14 @@ if TYPE_CHECKING:
 
 
 class Qulacs(StateVector):
-    """Wrapper of Qulacs state vector simulator."""
+    """Wrapper of Qulacs state vector simulator using pure Rust backend."""
 
-    def __init__(self, num_qubits: int) -> None:
+    def __init__(self, num_qubits: int, *, seed: int | None = None) -> None:
         """Initializes the state vector.
 
         Args:
             num_qubits (int): Number of qubits being represented.
+            seed (int, optional): Random seed for deterministic behavior.
         """
         if not isinstance(num_qubits, int):
             msg = "``num_qubits`` should be of type ``int``."
@@ -45,14 +47,14 @@ class Qulacs(StateVector):
 
         self.bindings = bindings.gate_dict
         self.num_qubits = num_qubits
-        self.qulacs_state = QuantumState(num_qubits)
+        self.qulacs_state = rslib.RsQulacs(num_qubits, seed=seed)
 
         self.reset()
 
     def reset(self) -> Qulacs:
         """Reset the quantum state for another run without reinitializing."""
         # Initialize state vector to |0>
-        self.qulacs_state.set_zero_state()
+        self.qulacs_state.reset()
         return self
 
     @property
@@ -60,6 +62,11 @@ class Qulacs(StateVector):
         """Get the quantum state vector from Qulacs.
 
         Returns:
-            The state vector as a numpy array.
+            The state vector as a numpy array with complex values.
         """
-        return self.qulacs_state.get_vector()
+        # Convert from [(real, imag), ...] tuples to complex numpy array
+        complex_tuples = self.qulacs_state.vector
+        return np.array(
+            [complex(real, imag) for real, imag in complex_tuples],
+            dtype=complex,
+        )

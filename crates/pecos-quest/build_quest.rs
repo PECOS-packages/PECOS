@@ -208,8 +208,8 @@ fn build_cxx_bridge(quest_dir: &Path) {
             .define("COMPILE_CUQUANTUM", "0");
     }
 
-    // Use C++17 standard (QuEST v4 requirement)
-    build.std("c++17");
+    // Use C++20 standard (QuEST v4 uses designated initializers which require C++20)
+    build.std("c++20");
 
     // Report ccache/sccache configuration
     report_cache_config();

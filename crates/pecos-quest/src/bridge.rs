@@ -1,4 +1,4 @@
-//! CXX bridge definitions for QuEST simulator
+//! CXX bridge definitions for `QuEST` simulator
 
 #[cxx::bridge]
 pub mod ffi {
@@ -27,10 +27,12 @@ pub mod ffi {
         pub imag: f64,
     }
 
+    #[allow(clippy::missing_safety_doc)]
     unsafe extern "C++" {
         include!("quest_ffi.h");
 
         // Environment management
+        #[must_use]
         fn quest_create_env() -> *mut u8;
         unsafe fn quest_destroy_env(env: *mut u8);
         unsafe fn quest_get_env_info(env: *mut u8) -> QuESTEnvInfo;

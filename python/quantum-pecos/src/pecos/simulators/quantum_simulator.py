@@ -44,7 +44,7 @@ except ImportError:
     CuStateVec = None
 
 try:
-    from pecos.simulators import QuestStateVec, QuestDensityMatrix
+    from pecos.simulators import QuestDensityMatrix, QuestStateVec
 except ImportError:
     QuestStateVec = None
     QuestDensityMatrix = None

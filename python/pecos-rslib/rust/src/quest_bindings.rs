@@ -10,12 +10,14 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use pecos_quest::{QuestStateVec as RustQuestStateVec, QuestDensityMatrix as RustQuestDensityMatrix};
-use pecos_qsim::{QuantumSimulator, CliffordGateable, ArbitraryRotationGateable};
+use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
+use pecos_quest::{
+    QuestDensityMatrix as RustQuestDensityMatrix, QuestStateVec as RustQuestStateVec,
+};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-/// The struct represents the QuEST state-vector simulator exposed to Python
+/// The struct represents the `QuEST` state-vector simulator exposed to Python
 #[pyclass]
 pub struct QuestStateVec {
     inner: RustQuestStateVec,
@@ -23,7 +25,7 @@ pub struct QuestStateVec {
 
 #[pymethods]
 impl QuestStateVec {
-    /// Creates a new QuEST state-vector simulator with the specified number of qubits
+    /// Creates a new `QuEST` state-vector simulator with the specified number of qubits
     ///
     /// # Arguments
     /// * `num_qubits` - Number of qubits in the system
@@ -38,7 +40,7 @@ impl QuestStateVec {
             },
         }
     }
-    
+
     /// Returns the number of qubits in the simulator
     fn num_qubits(&self) -> usize {
         self.inner.num_qubits()
@@ -48,17 +50,17 @@ impl QuestStateVec {
     fn reset(&mut self) {
         self.inner.reset();
     }
-    
+
     /// Prepares a computational basis state
     fn prepare_computational_basis(&mut self, index: usize) {
         self.inner.prepare_computational_basis(index);
     }
-    
+
     /// Gets the probability of a computational basis state
     fn probability(&self, index: usize) -> f64 {
         self.inner.probability(index)
     }
-    
+
     /// Gets the amplitude of a computational basis state as a complex number
     fn get_amplitude(&self, index: usize) -> (f64, f64) {
         let amp = self.inner.get_amplitude(index);
@@ -172,11 +174,10 @@ impl QuestStateVec {
             }
             "MZ" => {
                 let result = self.inner.mz(location);
-                Ok(Some(if result.outcome { 1 } else { 0 }))
+                Ok(Some(u8::from(result.outcome)))
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Unknown single-qubit gate: {}",
-                symbol
+                "Unknown single-qubit gate: {symbol}"
             ))),
         }
     }
@@ -198,10 +199,10 @@ impl QuestStateVec {
                 "Two-qubit gate requires exactly 2 qubit indices",
             ));
         }
-        
+
         let control = locations.get_item(0)?.extract::<usize>()?;
         let target = locations.get_item(1)?.extract::<usize>()?;
-        
+
         match symbol {
             "CX" | "CNOT" => {
                 self.inner.cx(control, target);
@@ -228,11 +229,9 @@ impl QuestStateVec {
                                 ))
                             }
                         }
-                        Ok(None) => {
-                            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Angle parameter missing for RXX gate",
-                            ))
-                        }
+                        Ok(None) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Angle parameter missing for RXX gate",
+                        )),
                         Err(err) => Err(err),
                     }
                 } else {
@@ -254,11 +253,9 @@ impl QuestStateVec {
                                 ))
                             }
                         }
-                        Ok(None) => {
-                            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Angle parameter missing for RYY gate",
-                            ))
-                        }
+                        Ok(None) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Angle parameter missing for RYY gate",
+                        )),
                         Err(err) => Err(err),
                     }
                 } else {
@@ -280,11 +277,9 @@ impl QuestStateVec {
                                 ))
                             }
                         }
-                        Ok(None) => {
-                            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Angle parameter missing for RZZ gate",
-                            ))
-                        }
+                        Ok(None) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Angle parameter missing for RZZ gate",
+                        )),
                         Err(err) => Err(err),
                     }
                 } else {
@@ -294,32 +289,31 @@ impl QuestStateVec {
                 }
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Unknown two-qubit gate: {}",
-                symbol
+                "Unknown two-qubit gate: {symbol}"
             ))),
         }
     }
-    
+
     /// Applies a T gate to the specified qubit
     fn t_gate(&mut self, location: usize) {
         self.inner.t(location);
     }
-    
+
     /// Applies a T-dagger gate to the specified qubit
     fn tdg_gate(&mut self, location: usize) {
         self.inner.tdg(location);
     }
-    
+
     /// Applies a square root of XX gate to two qubits
     fn sxx_gate(&mut self, control: usize, target: usize) {
         self.inner.sxx(control, target);
     }
-    
+
     /// Applies a square root of YY gate to two qubits
     fn syy_gate(&mut self, control: usize, target: usize) {
         self.inner.syy(control, target);
     }
-    
+
     /// Applies a square root of ZZ gate to two qubits
     fn szz_gate(&mut self, control: usize, target: usize) {
         self.inner.szz(control, target);
@@ -328,84 +322,84 @@ impl QuestStateVec {
     fn r1xy_gate(&mut self, theta: f64, phi: f64, location: usize) {
         self.inner.r1xy(theta, phi, location);
     }
-    
+
     /// Applies RZZRYYRXX gate (combination of RZZ, RYY, RXX) to two qubits
-    /// NOTE: This uses the trait implementation which may differ from StateVec's decomposition
-    /// For consistency with StateVec tests, the Python bindings use manual decompositions
+    /// NOTE: This uses the trait implementation which may differ from `StateVec`'s decomposition
+    /// For consistency with `StateVec` tests, the Python bindings use manual decompositions
     fn rzzryyrxx_gate(&mut self, theta: f64, phi: f64, lambda: f64, q1: usize, q2: usize) {
         // Use the trait implementation directly
         // Note: The trait's rzzryyrxx has a different decomposition than StateVec's
         // which is why Python bindings use manual decompositions for RXX, RYY, RZZ
         self.inner.rzzryyrxx(theta, phi, lambda, q1, q2);
     }
-    
+
     /// Applies a SWAP gate to two qubits
     fn swap_gate(&mut self, control: usize, target: usize) {
         self.inner.swap(control, target);
     }
-    
+
     /// Applies H2 gate variant
     fn h2_gate(&mut self, location: usize) {
         self.inner.h2(location);
     }
-    
+
     /// Applies H3 gate variant
     fn h3_gate(&mut self, location: usize) {
         self.inner.h3(location);
     }
-    
+
     /// Applies H4 gate variant
     fn h4_gate(&mut self, location: usize) {
         self.inner.h4(location);
     }
-    
+
     /// Applies H5 gate variant
     fn h5_gate(&mut self, location: usize) {
         self.inner.h5(location);
     }
-    
+
     /// Applies H6 gate variant
     fn h6_gate(&mut self, location: usize) {
         self.inner.h6(location);
     }
-    
+
     /// Measures in the X basis
     fn mx_gate(&mut self, location: usize) -> u8 {
         let result = self.inner.mx(location);
-        if result.outcome { 1 } else { 0 }
+        u8::from(result.outcome)
     }
-    
+
     /// Measures in the Y basis
     fn my_gate(&mut self, location: usize) -> u8 {
         let result = self.inner.my(location);
-        if result.outcome { 1 } else { 0 }
+        u8::from(result.outcome)
     }
-    
+
     /// Applies a square root of X gate to the specified qubit
     fn sx_gate(&mut self, location: usize) {
         self.inner.sx(location);
     }
-    
+
     /// Applies a square root of X-dagger gate to the specified qubit
     fn sxdg_gate(&mut self, location: usize) {
         self.inner.sxdg(location);
     }
-    
+
     /// Applies a square root of Y gate to the specified qubit
     fn sy_gate(&mut self, location: usize) {
         self.inner.sy(location);
     }
-    
+
     /// Applies a square root of Y-dagger gate to the specified qubit
     fn sydg_gate(&mut self, location: usize) {
         self.inner.sydg(location);
     }
-    
+
     /// Applies a square root of Z gate to the specified qubit
     fn sz_gate(&mut self, location: usize) {
         self.inner.sz(location);
     }
-    
+
     /// Applies a square root of Z-dagger gate to the specified qubit
     fn szdg_gate(&mut self, location: usize) {
         self.inner.szdg(location);
@@ -417,7 +411,7 @@ impl QuestStateVec {
     }
 }
 
-/// The struct represents the QuEST density matrix simulator exposed to Python
+/// The struct represents the `QuEST` density matrix simulator exposed to Python
 #[pyclass]
 pub struct QuestDensityMatrix {
     inner: RustQuestDensityMatrix,
@@ -425,7 +419,7 @@ pub struct QuestDensityMatrix {
 
 #[pymethods]
 impl QuestDensityMatrix {
-    /// Creates a new QuEST density matrix simulator with the specified number of qubits
+    /// Creates a new `QuEST` density matrix simulator with the specified number of qubits
     ///
     /// # Arguments
     /// * `num_qubits` - Number of qubits in the system
@@ -440,7 +434,7 @@ impl QuestDensityMatrix {
             },
         }
     }
-    
+
     /// Returns the number of qubits in the simulator
     fn num_qubits(&self) -> usize {
         self.inner.num_qubits()
@@ -450,17 +444,17 @@ impl QuestDensityMatrix {
     fn reset(&mut self) {
         self.inner.reset();
     }
-    
+
     /// Prepares a computational basis state
     fn prepare_computational_basis(&mut self, index: usize) {
         self.inner.prepare_computational_basis(index);
     }
-    
+
     /// Gets the probability of a computational basis state
     fn probability(&self, index: usize) -> f64 {
         self.inner.probability(index)
     }
-    
+
     // Note: calculate_purity is not exposed in QuEST wrapper yet
 
     /// Executes a single-qubit gate based on the provided symbol and location
@@ -570,11 +564,10 @@ impl QuestDensityMatrix {
             }
             "MZ" => {
                 let result = self.inner.mz(location);
-                Ok(Some(if result.outcome { 1 } else { 0 }))
+                Ok(Some(u8::from(result.outcome)))
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Unknown single-qubit gate: {}",
-                symbol
+                "Unknown single-qubit gate: {symbol}"
             ))),
         }
     }
@@ -596,10 +589,10 @@ impl QuestDensityMatrix {
                 "Two-qubit gate requires exactly 2 qubit indices",
             ));
         }
-        
+
         let control = locations.get_item(0)?.extract::<usize>()?;
         let target = locations.get_item(1)?.extract::<usize>()?;
-        
+
         match symbol {
             "CX" | "CNOT" => {
                 self.inner.cx(control, target);
@@ -626,11 +619,9 @@ impl QuestDensityMatrix {
                                 ))
                             }
                         }
-                        Ok(None) => {
-                            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Angle parameter missing for RXX gate",
-                            ))
-                        }
+                        Ok(None) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Angle parameter missing for RXX gate",
+                        )),
                         Err(err) => Err(err),
                     }
                 } else {
@@ -652,11 +643,9 @@ impl QuestDensityMatrix {
                                 ))
                             }
                         }
-                        Ok(None) => {
-                            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Angle parameter missing for RYY gate",
-                            ))
-                        }
+                        Ok(None) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Angle parameter missing for RYY gate",
+                        )),
                         Err(err) => Err(err),
                     }
                 } else {
@@ -678,11 +667,9 @@ impl QuestDensityMatrix {
                                 ))
                             }
                         }
-                        Ok(None) => {
-                            Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Angle parameter missing for RZZ gate",
-                            ))
-                        }
+                        Ok(None) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Angle parameter missing for RZZ gate",
+                        )),
                         Err(err) => Err(err),
                     }
                 } else {
@@ -692,32 +679,31 @@ impl QuestDensityMatrix {
                 }
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Unknown two-qubit gate: {}",
-                symbol
+                "Unknown two-qubit gate: {symbol}"
             ))),
         }
     }
-    
+
     /// Applies a T gate to the specified qubit
     fn t_gate(&mut self, location: usize) {
         self.inner.t(location);
     }
-    
+
     /// Applies a T-dagger gate to the specified qubit
     fn tdg_gate(&mut self, location: usize) {
         self.inner.tdg(location);
     }
-    
+
     /// Applies a square root of XX gate to two qubits
     fn sxx_gate(&mut self, control: usize, target: usize) {
         self.inner.sxx(control, target);
     }
-    
+
     /// Applies a square root of YY gate to two qubits
     fn syy_gate(&mut self, control: usize, target: usize) {
         self.inner.syy(control, target);
     }
-    
+
     /// Applies a square root of ZZ gate to two qubits
     fn szz_gate(&mut self, control: usize, target: usize) {
         self.inner.szz(control, target);
@@ -726,84 +712,84 @@ impl QuestDensityMatrix {
     fn r1xy_gate(&mut self, theta: f64, phi: f64, location: usize) {
         self.inner.r1xy(theta, phi, location);
     }
-    
+
     /// Applies RZZRYYRXX gate (combination of RZZ, RYY, RXX) to two qubits
-    /// NOTE: This uses the trait implementation which may differ from StateVec's decomposition
-    /// For consistency with StateVec tests, the Python bindings use manual decompositions
+    /// NOTE: This uses the trait implementation which may differ from `StateVec`'s decomposition
+    /// For consistency with `StateVec` tests, the Python bindings use manual decompositions
     fn rzzryyrxx_gate(&mut self, theta: f64, phi: f64, lambda: f64, q1: usize, q2: usize) {
         // Use the trait implementation directly
         // Note: The trait's rzzryyrxx has a different decomposition than StateVec's
         // which is why Python bindings use manual decompositions for RXX, RYY, RZZ
         self.inner.rzzryyrxx(theta, phi, lambda, q1, q2);
     }
-    
+
     /// Applies a SWAP gate to two qubits
     fn swap_gate(&mut self, control: usize, target: usize) {
         self.inner.swap(control, target);
     }
-    
+
     /// Applies H2 gate variant
     fn h2_gate(&mut self, location: usize) {
         self.inner.h2(location);
     }
-    
+
     /// Applies H3 gate variant
     fn h3_gate(&mut self, location: usize) {
         self.inner.h3(location);
     }
-    
+
     /// Applies H4 gate variant
     fn h4_gate(&mut self, location: usize) {
         self.inner.h4(location);
     }
-    
+
     /// Applies H5 gate variant
     fn h5_gate(&mut self, location: usize) {
         self.inner.h5(location);
     }
-    
+
     /// Applies H6 gate variant
     fn h6_gate(&mut self, location: usize) {
         self.inner.h6(location);
     }
-    
+
     /// Measures in the X basis
     fn mx_gate(&mut self, location: usize) -> u8 {
         let result = self.inner.mx(location);
-        if result.outcome { 1 } else { 0 }
+        u8::from(result.outcome)
     }
-    
+
     /// Measures in the Y basis
     fn my_gate(&mut self, location: usize) -> u8 {
         let result = self.inner.my(location);
-        if result.outcome { 1 } else { 0 }
+        u8::from(result.outcome)
     }
-    
+
     /// Applies a square root of X gate to the specified qubit
     fn sx_gate(&mut self, location: usize) {
         self.inner.sx(location);
     }
-    
+
     /// Applies a square root of X-dagger gate to the specified qubit
     fn sxdg_gate(&mut self, location: usize) {
         self.inner.sxdg(location);
     }
-    
+
     /// Applies a square root of Y gate to the specified qubit
     fn sy_gate(&mut self, location: usize) {
         self.inner.sy(location);
     }
-    
+
     /// Applies a square root of Y-dagger gate to the specified qubit
     fn sydg_gate(&mut self, location: usize) {
         self.inner.sydg(location);
     }
-    
+
     /// Applies a square root of Z gate to the specified qubit
     fn sz_gate(&mut self, location: usize) {
         self.inner.sz(location);
     }
-    
+
     /// Applies a square root of Z-dagger gate to the specified qubit
     fn szdg_gate(&mut self, location: usize) {
         self.inner.szdg(location);

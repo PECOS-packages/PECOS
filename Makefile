@@ -121,7 +121,7 @@ normalize-line-endings:  ## Normalize line endings according to .gitattributes
 lint-fix:  ## Fix all auto-fixable linting issues (Rust, Python, Julia)
 	@echo "Fixing Rust formatting..."
 	cargo fmt --all
-	cargo clippy --fix --workspace --all-targets --all-features --allow-staged
+	cargo clippy --fix --workspace --all-targets --all-features --allow-staged --allow-dirty
 	@echo ""
 	@echo "Running pre-commit fixes..."
 	uv run pre-commit run --all-files || true

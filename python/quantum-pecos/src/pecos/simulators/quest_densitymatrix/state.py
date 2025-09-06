@@ -59,7 +59,7 @@ class QuestDensityMatrix:
         # A full implementation would extract the full density matrix
         size = 2**self.num_qubits
         matrix = [[complex(0, 0) for _ in range(size)] for _ in range(size)]
-        
+
         # This is a simplified version - full implementation would extract
         # the actual density matrix elements from QuEST
         for i in range(size):
@@ -67,7 +67,7 @@ class QuestDensityMatrix:
             if prob > 0:
                 # Diagonal elements only for now
                 matrix[i][i] = complex(prob, 0)
-        
+
         return matrix
 
     def reset(self) -> QuestDensityMatrix:
@@ -131,13 +131,13 @@ class QuestDensityMatrix:
         """
         if removed_locations is None:
             removed_locations = set()
-            
+
         output = {}
         for symbol, locations, params in circuit.items():
             results = self.run_gate(
-                symbol, 
+                symbol,
                 locations - removed_locations,
-                **params
+                **params,
             )
             if results:
                 output.update(results)
@@ -158,10 +158,10 @@ class QuestDensityMatrix:
             The probability of the given basis state.
         """
         return self.backend.probability(index)
-    
+
     def prepare_computational_basis(self, index: int) -> None:
         """Prepare a computational basis state.
-        
+
         Args:
             index: The basis state index to prepare.
         """

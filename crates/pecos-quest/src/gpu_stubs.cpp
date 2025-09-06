@@ -72,7 +72,7 @@ void gpu_copyCpuToGpu(std::complex<double>* cpuPtr, std::complex<double>* gpuPtr
 // Most accelerator functions are now provided by accelerator.cpp
 // We only need to stub functions that accelerator.cpp calls but aren't defined
 
-void gpu_statevec_setQuregToSuperposition_sub(std::complex<double> a, Qureg q1, 
+void gpu_statevec_setQuregToSuperposition_sub(std::complex<double> a, Qureg q1,
     std::complex<double> b, Qureg q2, std::complex<double> c, Qureg q3) {}
 void gpu_densmatr_mixQureg_subA(double a, Qureg q1, double b, Qureg q2) {}
 void gpu_densmatr_mixQureg_subB(double a, Qureg q1, double b, Qureg q2) {}
@@ -93,29 +93,29 @@ template<int N>
 long long gpu_statevec_packAmpsIntoBuffer(Qureg q, std::vector<int> a, std::vector<int> b) { return 0; }
 
 template<int N>
-void gpu_statevec_anyCtrlOneTargDenseMatr_subA(Qureg q, std::vector<int> a, 
+void gpu_statevec_anyCtrlOneTargDenseMatr_subA(Qureg q, std::vector<int> a,
     std::vector<int> b, int c, CompMatr1 d) {}
 
 template<int N>
-void gpu_statevec_anyCtrlOneTargDenseMatr_subB(Qureg q, std::vector<int> a, 
+void gpu_statevec_anyCtrlOneTargDenseMatr_subB(Qureg q, std::vector<int> a,
     std::vector<int> b, qcomp c, qcomp d) {}
 
 template<int N>
-void gpu_statevec_anyCtrlOneTargDiagMatr_sub(Qureg q, std::vector<int> a, 
+void gpu_statevec_anyCtrlOneTargDiagMatr_sub(Qureg q, std::vector<int> a,
     std::vector<int> b, int c, DiagMatr1 d) {}
 
 template<int N>
-void gpu_statevector_anyCtrlAnyTargZOrPhaseGadget_sub(Qureg q, std::vector<int> a, 
+void gpu_statevector_anyCtrlAnyTargZOrPhaseGadget_sub(Qureg q, std::vector<int> a,
     std::vector<int> b, std::vector<int> c, std::complex<double> d, std::complex<double> e) {}
 
 template<int N, int M = 0>
-void gpu_statevector_anyCtrlPauliTensorOrGadget_subA(Qureg q, std::vector<int> a, 
-    std::vector<int> b, std::vector<int> c, std::vector<int> d, 
+void gpu_statevector_anyCtrlPauliTensorOrGadget_subA(Qureg q, std::vector<int> a,
+    std::vector<int> b, std::vector<int> c, std::vector<int> d,
     std::vector<int> e, std::complex<double> f, std::complex<double> g) {}
 
 template<int N>
-void gpu_statevector_anyCtrlPauliTensorOrGadget_subB(Qureg q, std::vector<int> a, 
-    std::vector<int> b, std::vector<int> c, std::vector<int> d, 
+void gpu_statevector_anyCtrlPauliTensorOrGadget_subB(Qureg q, std::vector<int> a,
+    std::vector<int> b, std::vector<int> c, std::vector<int> d,
     std::vector<int> e, std::complex<double> f, std::complex<double> g, long long h) {}
 
 template<int N>
@@ -175,7 +175,7 @@ template void gpu_statevector_anyCtrlAnyTargZOrPhaseGadget_sub<4>(Qureg, std::ve
 template void gpu_statevector_anyCtrlAnyTargZOrPhaseGadget_sub<5>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, std::complex<double>, std::complex<double>);
 template void gpu_statevector_anyCtrlAnyTargZOrPhaseGadget_sub<-1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, std::complex<double>, std::complex<double>);
 
-// Note: Single template parameter versions are removed as they conflict with 
+// Note: Single template parameter versions are removed as they conflict with
 // two-parameter versions where M=0 (which are included below)
 
 // Two template parameter versions - need all combinations

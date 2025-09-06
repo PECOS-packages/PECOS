@@ -28,16 +28,16 @@ from pecos.simulators.pauliprop import (
     PauliFaultProp,  # Backward compatibility
     PauliProp,
 )
+from pecos.simulators.quest_densitymatrix import QuestDensityMatrix
+
+# QuEST simulators
+from pecos.simulators.quest_statevec import QuestStateVec
 
 # Pauli fault propagation sim
 from pecos.simulators.sparsesim import (
     SparseSim as SparseSimPy,
 )
 from pecos.simulators.statevec import StateVec
-
-# QuEST simulators
-from pecos.simulators.quest_statevec import QuestStateVec
-from pecos.simulators.quest_densitymatrix import QuestDensityMatrix
 
 # Attempt to import optional Qulacs package
 try:

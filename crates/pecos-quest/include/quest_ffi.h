@@ -17,7 +17,7 @@ void quest_destroy_env(uint8_t* env);
 QuESTEnvInfo quest_get_env_info(uint8_t* env);
 void quest_sync_env(uint8_t* env);
 
-// Qureg creation and destruction  
+// Qureg creation and destruction
 uint8_t* quest_create_qureg(uint8_t* env, int32_t num_qubits);
 uint8_t* quest_create_density_qureg(uint8_t* env, int32_t num_qubits);
 void quest_destroy_qureg(uint8_t* qureg);

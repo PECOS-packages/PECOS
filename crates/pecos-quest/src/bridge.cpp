@@ -21,28 +21,28 @@ private:
     static std::atomic<bool> is_initialized;
     static std::atomic<int> ref_count;
     static QuESTEnv* global_env_ptr;
-    
+
     GlobalQuestEnv() = delete;
-    
+
 public:
     static QuESTEnv& getInstance() {
         std::lock_guard<std::mutex> lock(init_mutex);
-        
+
         if (!is_initialized.load()) {
             // Initialize QuEST environment only once per process
             initQuESTEnv();
             global_env_ptr = new QuESTEnv(getQuESTEnv());
             is_initialized = true;
         }
-        
+
         return *global_env_ptr;
     }
-    
+
     static void addRef() {
         std::lock_guard<std::mutex> lock(init_mutex);
         ref_count++;
     }
-    
+
     static void releaseRef() {
         std::lock_guard<std::mutex> lock(init_mutex);
         ref_count--;
@@ -61,20 +61,20 @@ QuESTEnv* GlobalQuestEnv::global_env_ptr = nullptr;
 // This provides the illusion of independent environments while sharing the global one
 struct QuestEnvHandle {
     QuESTEnv cached_env;  // Cache a copy for thread-safe access
-    
+
     QuestEnvHandle() {
         cached_env = GlobalQuestEnv::getInstance();
         GlobalQuestEnv::addRef();
     }
-    
+
     ~QuestEnvHandle() {
         GlobalQuestEnv::releaseRef();
     }
-    
+
     // Make it non-copyable but moveable
     QuestEnvHandle(const QuestEnvHandle&) = delete;
     QuestEnvHandle& operator=(const QuestEnvHandle&) = delete;
-    QuestEnvHandle(QuestEnvHandle&& other) noexcept 
+    QuestEnvHandle(QuestEnvHandle&& other) noexcept
         : cached_env(other.cached_env) {
         // Transfer ownership
         other.cached_env = {};
@@ -87,7 +87,7 @@ struct QuestEnvHandle {
         }
         return *this;
     }
-    
+
     QuESTEnv& getEnv() { return cached_env; }
 };
 
@@ -95,7 +95,7 @@ struct QuestEnvHandle {
 struct QuregHandle {
     Qureg qureg;
     bool owned;
-    
+
     QuregHandle(int numQubits, bool isDensity) : owned(true) {
         if (isDensity) {
             qureg = createDensityQureg(numQubits);
@@ -105,15 +105,15 @@ struct QuregHandle {
             // Initialization will be done from Rust
         }
     }
-    
+
     QuregHandle(const Qureg& q) : qureg(q), owned(false) {}
-    
+
     ~QuregHandle() {
         if (owned && qureg.cpuAmps != nullptr) {
             destroyQureg(qureg);
         }
     }
-    
+
     // Make it non-copyable but moveable
     QuregHandle(const QuregHandle&) = delete;
     QuregHandle& operator=(const QuregHandle&) = delete;
@@ -139,7 +139,7 @@ void quest_destroy_env(uint8_t* env) {
 QuESTEnvInfo quest_get_env_info(uint8_t* env) {
     auto* handle = reinterpret_cast<QuestEnvHandle*>(env);
     QuESTEnv& questEnv = handle->getEnv();
-    
+
     QuESTEnvInfo info;
     info.is_multithreaded = questEnv.isMultithreaded != 0;
     info.is_gpu_accelerated = questEnv.isGpuAccelerated != 0;
@@ -209,7 +209,7 @@ QuregInfo quest_get_qureg_info(uint8_t* qureg) {
 // State initialization - operates on independent Quregs
 void quest_init_zero_state(uint8_t* qureg) {
     auto* handle = reinterpret_cast<QuregHandle*>(qureg);
-    
+
     // Initialize to |00...0⟩ state
     initZeroState(handle->qureg);
 }

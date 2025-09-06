@@ -4,7 +4,7 @@ Rust wrapper for the QuEST quantum simulator, implementing PECOS quantum simulat
 
 ## Features
 
-- **Dual Simulation Modes**: 
+- **Dual Simulation Modes**:
   - `QuestStateVec`: Pure state vector simulation
   - `QuestDensityMatrix`: Mixed state density matrix simulation
 - **PECOS Compatible**: Drop-in replacement for other PECOS simulators
@@ -78,7 +78,7 @@ cargo run --package pecos-quest --example bell_state
 
 Implements standard PECOS traits:
 - `QuantumSimulator`
-- `CliffordGateable` 
+- `CliffordGateable`
 - `ArbitraryRotationGateable`
 - `RngManageable`
 

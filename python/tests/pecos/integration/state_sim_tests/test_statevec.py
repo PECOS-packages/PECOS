@@ -30,9 +30,9 @@ from pecos.error_models.generic_error_model import GenericErrorModel
 from pecos.simulators import (
     MPS,
     CuStateVec,
+    QuestStateVec,
     Qulacs,
     StateVec,
-    QuestStateVec,
 )
 
 str_to_sim = {
@@ -71,7 +71,7 @@ def verify(simulator: str, qc: QuantumCircuit, final_vector: np.ndarray) -> None
     # Use looser tolerance for simulators that use gate decompositions
     # QuestStateVec uses decompositions for RXX, RYY, RZZ which accumulate errors
     rtol = 1e-3 if simulator == "QuestStateVec" else 1e-5
-    
+
     np.testing.assert_allclose(
         sim_vector_adjusted,
         final_vector_normalized,
@@ -111,7 +111,6 @@ def compare_against_statevec(simulator: str, qc: QuantumCircuit) -> None:
 
     sim = check_dependencies(simulator)(len(qc.qudits))
     sim.run_circuit(qc)
-
 
     # Use updated verify function
     verify(simulator, qc, statevec.vector)

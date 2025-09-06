@@ -122,13 +122,13 @@ class QuestStateVec:
         """
         if removed_locations is None:
             removed_locations = set()
-            
+
         output = {}
         for symbol, locations, params in circuit.items():
             results = self.run_gate(
-                symbol, 
+                symbol,
                 locations - removed_locations,
-                **params
+                **params,
             )
             if results:
                 output.update(results)

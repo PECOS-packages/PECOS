@@ -39,7 +39,7 @@ use cpp_sparse_sim_bindings::CppSparseSim;
 use pauli_prop_bindings::PyPauliProp;
 use pecos_rng_bindings::RngPcg;
 use pyo3::prelude::*;
-use quest_bindings::{QuestStateVec, QuestDensityMatrix};
+use quest_bindings::{QuestDensityMatrix, QuestStateVec};
 use sparse_stab_bindings::SparseSim;
 use sparse_stab_engine_bindings::PySparseStabEngine;
 use state_vec_bindings::RsStateVec;

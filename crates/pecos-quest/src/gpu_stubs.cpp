@@ -406,6 +406,41 @@ void gpu_statevec_anyCtrlTwoTargDiagMatr_sub(Qureg q, std::vector<int> ctrls, st
 template<int N1, int N2, int N3, int N4>
 void gpu_statevec_anyCtrlAnyTargDiagMatr_sub(Qureg q, std::vector<int> ctrls, std::vector<int> ctrlVals, std::vector<int> targets, DiagMatr m, std::complex<double> globalPhase) {}
 
+// Template stubs for all-target diagonal matrix operations
+template<int N>
+void gpu_statevec_allTargDiagMatr_sub(Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {}
+
+template<int N1, int N2>
+void gpu_densmatr_allTargDiagMatr_sub(Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {}
+
+// Template stubs for partial trace operations
+template<int N>
+void gpu_densmatr_partialTrace_sub(Qureg traceOut, Qureg traceIn, std::vector<int> targets, std::vector<int> controls) {}
+
+// Template stubs for probability calculations
+template<int N>
+void gpu_statevec_calcProbsOfAllMultiQubitOutcomes_sub(double* probs, Qureg q, std::vector<int> qubits) {}
+
+template<int N>
+void gpu_densmatr_calcProbsOfAllMultiQubitOutcomes_sub(double* probs, Qureg q, std::vector<int> qubits) {}
+
+// Template stubs for fidelity calculations
+template<int N>
+std::complex<double> gpu_densmatr_calcFidelityWithPureState_sub(Qureg densMatr, Qureg pureState) {
+    return std::complex<double>(0.0, 0.0);
+}
+
+// Template stubs for expectation value calculations
+template<int N1, int N2>
+std::complex<double> gpu_statevec_calcExpecFullStateDiagMatr_sub(Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {
+    return std::complex<double>(0.0, 0.0);
+}
+
+template<int N1, int N2>
+std::complex<double> gpu_densmatr_calcExpecFullStateDiagMatr_sub(Qureg q, FullStateDiagMatr m, std::complex<double> globalPhase) {
+    return std::complex<double>(0.0, 0.0);
+}
+
 // Explicit template instantiations for SWAP operations
 template void gpu_statevec_anyCtrlSwap_subA<0>(Qureg, std::vector<int>, std::vector<int>, int, int);
 template void gpu_statevec_anyCtrlSwap_subA<1>(Qureg, std::vector<int>, std::vector<int>, int, int);
@@ -747,3 +782,51 @@ template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, -1, 0, 0>(Qureg, std::
 template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, -1, 0, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
 template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, -1, 1, 0>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
 template void gpu_statevec_anyCtrlAnyTargDiagMatr_sub<-1, -1, 1, 1>(Qureg, std::vector<int>, std::vector<int>, std::vector<int>, DiagMatr, std::complex<double>);
+
+// Explicit template instantiations for all-target diagonal matrix operations
+template void gpu_statevec_allTargDiagMatr_sub<0>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_statevec_allTargDiagMatr_sub<1>(Qureg, FullStateDiagMatr, std::complex<double>);
+
+template void gpu_densmatr_allTargDiagMatr_sub<0, 0>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<0, 1>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<1, 0>(Qureg, FullStateDiagMatr, std::complex<double>);
+template void gpu_densmatr_allTargDiagMatr_sub<1, 1>(Qureg, FullStateDiagMatr, std::complex<double>);
+
+// Explicit template instantiations for partial trace operations
+template void gpu_densmatr_partialTrace_sub<0>(Qureg, Qureg, std::vector<int>, std::vector<int>);
+template void gpu_densmatr_partialTrace_sub<1>(Qureg, Qureg, std::vector<int>, std::vector<int>);
+template void gpu_densmatr_partialTrace_sub<2>(Qureg, Qureg, std::vector<int>, std::vector<int>);
+template void gpu_densmatr_partialTrace_sub<3>(Qureg, Qureg, std::vector<int>, std::vector<int>);
+template void gpu_densmatr_partialTrace_sub<4>(Qureg, Qureg, std::vector<int>, std::vector<int>);
+template void gpu_densmatr_partialTrace_sub<5>(Qureg, Qureg, std::vector<int>, std::vector<int>);
+template void gpu_densmatr_partialTrace_sub<-1>(Qureg, Qureg, std::vector<int>, std::vector<int>);
+
+// Explicit template instantiations for probability calculations
+template void gpu_statevec_calcProbsOfAllMultiQubitOutcomes_sub<0>(double*, Qureg, std::vector<int>);
+template void gpu_statevec_calcProbsOfAllMultiQubitOutcomes_sub<1>(double*, Qureg, std::vector<int>);
+template void gpu_statevec_calcProbsOfAllMultiQubitOutcomes_sub<2>(double*, Qureg, std::vector<int>);
+template void gpu_statevec_calcProbsOfAllMultiQubitOutcomes_sub<3>(double*, Qureg, std::vector<int>);
+template void gpu_statevec_calcProbsOfAllMultiQubitOutcomes_sub<4>(double*, Qureg, std::vector<int>);
+template void gpu_statevec_calcProbsOfAllMultiQubitOutcomes_sub<5>(double*, Qureg, std::vector<int>);
+template void gpu_statevec_calcProbsOfAllMultiQubitOutcomes_sub<-1>(double*, Qureg, std::vector<int>);
+
+template void gpu_densmatr_calcProbsOfAllMultiQubitOutcomes_sub<0>(double*, Qureg, std::vector<int>);
+template void gpu_densmatr_calcProbsOfAllMultiQubitOutcomes_sub<1>(double*, Qureg, std::vector<int>);
+template void gpu_densmatr_calcProbsOfAllMultiQubitOutcomes_sub<2>(double*, Qureg, std::vector<int>);
+template void gpu_densmatr_calcProbsOfAllMultiQubitOutcomes_sub<3>(double*, Qureg, std::vector<int>);
+template void gpu_densmatr_calcProbsOfAllMultiQubitOutcomes_sub<4>(double*, Qureg, std::vector<int>);
+template void gpu_densmatr_calcProbsOfAllMultiQubitOutcomes_sub<5>(double*, Qureg, std::vector<int>);
+template void gpu_densmatr_calcProbsOfAllMultiQubitOutcomes_sub<-1>(double*, Qureg, std::vector<int>);
+
+// Explicit template instantiations for fidelity calculations
+template std::complex<double> gpu_densmatr_calcFidelityWithPureState_sub<0>(Qureg, Qureg);
+template std::complex<double> gpu_densmatr_calcFidelityWithPureState_sub<1>(Qureg, Qureg);
+
+// Explicit template instantiations for expectation value calculations
+template std::complex<double> gpu_statevec_calcExpecFullStateDiagMatr_sub<0, 0>(Qureg, FullStateDiagMatr, std::complex<double>);
+template std::complex<double> gpu_statevec_calcExpecFullStateDiagMatr_sub<1, 0>(Qureg, FullStateDiagMatr, std::complex<double>);
+template std::complex<double> gpu_statevec_calcExpecFullStateDiagMatr_sub<1, 1>(Qureg, FullStateDiagMatr, std::complex<double>);
+
+template std::complex<double> gpu_densmatr_calcExpecFullStateDiagMatr_sub<0, 0>(Qureg, FullStateDiagMatr, std::complex<double>);
+template std::complex<double> gpu_densmatr_calcExpecFullStateDiagMatr_sub<1, 0>(Qureg, FullStateDiagMatr, std::complex<double>);
+template std::complex<double> gpu_densmatr_calcExpecFullStateDiagMatr_sub<1, 1>(Qureg, FullStateDiagMatr, std::complex<double>);

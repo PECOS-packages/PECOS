@@ -19,6 +19,7 @@ default-members = [
     "crates/pecos-rng",
     "crates/pecos",
     "crates/pecos-cli",
+    "crates/pecos-quest",
     "python/pecos-rslib/rust",
     "crates/benchmarks",
 ]
@@ -85,12 +86,12 @@ ndarray = "0.16"
 anyhow = "1"
 cxx = "1"
 cxx-build = "1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "native-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 tar = "0.4"
 flate2 = "1"
+bzip2 = "0.4"
 sha2 = "0.10"
 dirs = "6"
-petgraph = "0.6"
 
 pecos-core = { version = "0.1.1", path = "crates/pecos-core" }
 pecos-qsim = { version = "0.1.1", path = "crates/pecos-qsim" }
@@ -109,6 +110,9 @@ pecos-decoder-core = { version = "0.1.1", path = "crates/pecos-decoder-core" }
 pecos-build-utils = { version = "0.1.1", path = "crates/pecos-build-utils" }
 pecos-ldpc-decoders = { version = "0.1.1", path = "crates/pecos-ldpc-decoders" }
 pecos-decoders = { version = "0.1.1", path = "crates/pecos-decoders" }
+
+# QuEST simulator wrapper
+pecos-quest = { version = "0.1.1", path = "crates/pecos-quest" }
 
 # Optimize build times
 [profile.dev]

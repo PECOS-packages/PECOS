@@ -1,4 +1,4 @@
-# Copyright 2024 The PECOS Developers
+# Copyright 2025 The PECOS Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 # the License.You may obtain a copy of the License at
@@ -12,15 +12,12 @@
 """Single-qubit gate operations for Qulacs simulator.
 
 This module provides single-qubit quantum gate operations for the Qulacs simulator, including Pauli gates,
-rotation gates, Hadamard gates, and other fundamental single-qubit operations using Qulacs.
+rotation gates, Hadamard gates, and other fundamental single-qubit operations using the Rust backend.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-
-import numpy as np
-import qulacs.gate as qgate
 
 if TYPE_CHECKING:
     from pecos.simulators.qulacs import Qulacs
@@ -34,6 +31,7 @@ def identity(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of Qulacs
         qubit: The index of the qubit where the gate is applied
     """
+    # Identity gate does nothing
 
 
 def X(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -43,9 +41,7 @@ def X(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of Qulacs
         qubit: The index of the qubit where the gate is applied
     """
-    # Qulacs uses qubit index 0 as the least significant bit
-    idx = state.num_qubits - qubit - 1
-    qgate.X(idx).update_quantum_state(state.qulacs_state)
+    state.qulacs_state.run_1q_gate("X", qubit)
 
 
 def Y(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -55,9 +51,7 @@ def Y(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of Qulacs
         qubit: The index of the qubit where the gate is applied
     """
-    # Qulacs uses qubit index 0 as the least significant bit
-    idx = state.num_qubits - qubit - 1
-    qgate.Y(idx).update_quantum_state(state.qulacs_state)
+    state.qulacs_state.run_1q_gate("Y", qubit)
 
 
 def Z(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -67,287 +61,347 @@ def Z(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of Qulacs
         qubit: The index of the qubit where the gate is applied
     """
-    # Qulacs uses qubit index 0 as the least significant bit
-    idx = state.num_qubits - qubit - 1
-    qgate.Z(idx).update_quantum_state(state.qulacs_state)
+    state.qulacs_state.run_1q_gate("Z", qubit)
+
+
+def H(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
+    """Hadamard gate.
+
+    Args:
+        state: An instance of Qulacs
+        qubit: The index of the qubit where the gate is applied
+    """
+    state.qulacs_state.run_1q_gate("H", qubit)
+
+
+def SX(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
+    """Square root of X gate.
+
+    Args:
+        state: An instance of Qulacs
+        qubit: The index of the qubit where the gate is applied
+    """
+    state.qulacs_state.run_1q_gate("SX", qubit)
+
+
+def SXdg(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
+    """Dagger of square root of X gate.
+
+    Args:
+        state: An instance of Qulacs
+        qubit: The index of the qubit where the gate is applied
+    """
+    state.qulacs_state.run_1q_gate("SXdg", qubit)
+
+
+def SY(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
+    """Square root of Y gate.
+
+    Args:
+        state: An instance of Qulacs
+        qubit: The index of the qubit where the gate is applied
+    """
+    state.qulacs_state.run_1q_gate("SY", qubit)
+
+
+def SYdg(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
+    """Dagger of square root of Y gate.
+
+    Args:
+        state: An instance of Qulacs
+        qubit: The index of the qubit where the gate is applied
+    """
+    state.qulacs_state.run_1q_gate("SYdg", qubit)
+
+
+def SZ(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
+    """Square root of Z gate (S gate).
+
+    Args:
+        state: An instance of Qulacs
+        qubit: The index of the qubit where the gate is applied
+    """
+    state.qulacs_state.run_1q_gate("SZ", qubit)
+
+
+def SZdg(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
+    """Dagger of square root of Z gate (S† gate).
+
+    Args:
+        state: An instance of Qulacs
+        qubit: The index of the qubit where the gate is applied
+    """
+    state.qulacs_state.run_1q_gate("SZdg", qubit)
+
+
+def T(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
+    """T gate.
+
+    Args:
+        state: An instance of Qulacs
+        qubit: The index of the qubit where the gate is applied
+    """
+    state.qulacs_state.run_1q_gate("T", qubit)
+
+
+def Tdg(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
+    """T dagger gate.
+
+    Args:
+        state: An instance of Qulacs
+        qubit: The index of the qubit where the gate is applied
+    """
+    state.qulacs_state.run_1q_gate("Tdg", qubit)
 
 
 def RX(
     state: Qulacs,
     qubit: int,
-    angles: tuple[float],
-    **_params: SimulatorGateParams,
+    angles: tuple[float] | list[float] | None = None,
+    **params: SimulatorGateParams,
 ) -> None:
-    """Apply an RX gate.
+    """Rotation around X axis.
 
     Args:
         state: An instance of Qulacs
         qubit: The index of the qubit where the gate is applied
-        angles: A tuple containing a single angle in radians
+        angles: A tuple or list containing a single rotation angle in radians
+        **params: Additional parameters, can include 'angle' (float) or 'angles' (list)
     """
-    if len(angles) != 1:
-        msg = "Gate must be given 1 angle parameter."
-        raise ValueError(msg)
-    theta = angles[0]
+    # Extract angle from various possible sources for compatibility
+    if angles is not None:
+        # Standard interface: angles as positional parameter (Qulacs compatibility)
+        if hasattr(angles, "__len__"):
+            if len(angles) != 1:
+                msg = "RX gate must be given 1 angle parameter."
+                raise ValueError(msg)
+            angle = angles[0]
+        else:
+            # Allow single float for convenience
+            angle = angles
+    elif "angle" in params:
+        # Qulacs style: angle as keyword parameter
+        angle = params["angle"]
+    elif "angles" in params:
+        # Angles from kwargs
+        angles_param = params["angles"]
+        if hasattr(angles_param, "__len__"):
+            if len(angles_param) != 1:
+                msg = "RX gate must be given 1 angle parameter."
+                raise ValueError(msg)
+            angle = angles_param[0]
+        else:
+            angle = angles_param
+    else:
+        msg = "RX gate requires an 'angle' or 'angles' parameter"
+        raise TypeError(msg)
 
-    # Qulacs uses qubit index 0 as the least significant bit
-    idx = state.num_qubits - qubit - 1
-    qgate.RotX(idx, theta).update_quantum_state(state.qulacs_state)
+    state.qulacs_state.run_1q_gate("RX", qubit, {"angle": angle})
 
 
 def RY(
     state: Qulacs,
     qubit: int,
-    angles: tuple[float],
-    **_params: SimulatorGateParams,
+    angles: tuple[float] | list[float] | None = None,
+    **params: SimulatorGateParams,
 ) -> None:
-    """Apply an RY gate.
+    """Rotation around Y axis.
 
     Args:
         state: An instance of Qulacs
         qubit: The index of the qubit where the gate is applied
-        angles: A tuple containing a single angle in radians
+        angles: A tuple or list containing a single rotation angle in radians
+        **params: Additional parameters, can include 'angle' (float) or 'angles' (list)
     """
-    if len(angles) != 1:
-        msg = "Gate must be given 1 angle parameter."
-        raise ValueError(msg)
-    theta = angles[0]
+    # Extract angle from various possible sources for compatibility
+    if angles is not None:
+        # Standard interface: angles as positional parameter (Qulacs compatibility)
+        if hasattr(angles, "__len__"):
+            if len(angles) != 1:
+                msg = "RY gate must be given 1 angle parameter."
+                raise ValueError(msg)
+            angle = angles[0]
+        else:
+            # Allow single float for convenience
+            angle = angles
+    elif "angle" in params:
+        # Qulacs style: angle as keyword parameter
+        angle = params["angle"]
+    elif "angles" in params:
+        # Angles from kwargs
+        angles_param = params["angles"]
+        if hasattr(angles_param, "__len__"):
+            if len(angles_param) != 1:
+                msg = "RY gate must be given 1 angle parameter."
+                raise ValueError(msg)
+            angle = angles_param[0]
+        else:
+            angle = angles_param
+    else:
+        msg = "RY gate requires an 'angle' or 'angles' parameter"
+        raise TypeError(msg)
 
-    # Qulacs uses qubit index 0 as the least significant bit
-    idx = state.num_qubits - qubit - 1
-    qgate.RotY(idx, theta).update_quantum_state(state.qulacs_state)
+    state.qulacs_state.run_1q_gate("RY", qubit, {"angle": angle})
 
 
 def RZ(
     state: Qulacs,
     qubit: int,
-    angles: tuple[float],
-    **_params: SimulatorGateParams,
+    angles: tuple[float] | list[float] | None = None,
+    **params: SimulatorGateParams,
 ) -> None:
-    """Apply an RZ gate.
+    """Rotation around Z axis.
 
     Args:
         state: An instance of Qulacs
         qubit: The index of the qubit where the gate is applied
-        angles: A tuple containing a single angle in radians
+        angles: A tuple or list containing a single rotation angle in radians
+        **params: Additional parameters, can include 'angle' (float) or 'angles' (list)
     """
-    if len(angles) != 1:
-        msg = "Gate must be given 1 angle parameter."
-        raise ValueError(msg)
-    theta = angles[0]
+    # Extract angle from various possible sources for compatibility
+    if angles is not None:
+        # Standard interface: angles as positional parameter (Qulacs compatibility)
+        if hasattr(angles, "__len__"):
+            if len(angles) != 1:
+                msg = "RZ gate must be given 1 angle parameter."
+                raise ValueError(msg)
+            angle = angles[0]
+        else:
+            # Allow single float for convenience
+            angle = angles
+    elif "angle" in params:
+        # Qulacs style: angle as keyword parameter
+        angle = params["angle"]
+    elif "angles" in params:
+        # Angles from kwargs
+        angles_param = params["angles"]
+        if hasattr(angles_param, "__len__"):
+            if len(angles_param) != 1:
+                msg = "RZ gate must be given 1 angle parameter."
+                raise ValueError(msg)
+            angle = angles_param[0]
+        else:
+            angle = angles_param
+    else:
+        msg = "RZ gate requires an 'angle' or 'angles' parameter"
+        raise TypeError(msg)
 
-    # Qulacs uses qubit index 0 as the least significant bit
-    idx = state.num_qubits - qubit - 1
-    qgate.RotZ(idx, theta).update_quantum_state(state.qulacs_state)
+    state.qulacs_state.run_1q_gate("RZ", qubit, {"angle": angle})
 
 
 def R1XY(
     state: Qulacs,
     qubit: int,
-    angles: tuple[float, float],
-    **_params: SimulatorGateParams,
+    angles: tuple[float] | list[float] | None = None,
+    **params: SimulatorGateParams,
 ) -> None:
-    """Apply an R1XY gate.
+    """Single-qubit rotation with two angles (experimental).
 
     Args:
         state: An instance of Qulacs
         qubit: The index of the qubit where the gate is applied
-        angles: A tuple containing two angles in radians
+        angles: A tuple or list of two rotation angles
+        **params: Additional parameters, can include 'angles' (list of 2 floats)
     """
-    if len(angles) != 2:
-        msg = "Gate must be given 2 angle parameters."
-        raise ValueError(msg)
-    theta = angles[0]
-    phi = angles[1]
+    # Extract angles from angles parameter or params
+    if angles is not None:
+        if hasattr(angles, "__len__"):
+            if len(angles) < 2:
+                msg = "R1XY gate must be given 2 angle parameters."
+                raise ValueError(msg)
+            angle_list = list(angles[:2])
+        else:
+            msg = "R1XY gate requires a list or tuple of 2 angles."
+            raise ValueError(msg)
+    elif "angles" in params:
+        angles_param = params["angles"]
+        if hasattr(angles_param, "__len__"):
+            if len(angles_param) < 2:
+                msg = "R1XY gate must be given 2 angle parameters."
+                raise ValueError(msg)
+            angle_list = list(angles_param[:2])
+        else:
+            msg = "R1XY gate requires a list or tuple of 2 angles."
+            raise ValueError(msg)
+    else:
+        msg = "R1XY gate requires 'angles' parameter with 2 values."
+        raise TypeError(msg)
 
-    # Gate is equal to RZ(phi-pi/2)*RY(theta)*RZ(-phi+pi/2)
-    RZ(state, qubit, angles=(-phi + np.pi / 2,))
-    RY(state, qubit, angles=(theta,))
-    RZ(state, qubit, angles=(phi - np.pi / 2,))
-
-
-def SX(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """Apply a square-root of X.
-
-    Args:
-        state: An instance of Qulacs
-        qubit: The index of the qubit where the gate is applied
-    """
-    RX(state, qubit, angles=(np.pi / 2,))
-
-
-def SXdg(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """Apply adjoint of the square-root of X.
-
-    Args:
-        state: An instance of Qulacs
-        qubit: The index of the qubit where the gate is applied
-    """
-    RX(state, qubit, angles=(-np.pi / 2,))
+    state.qulacs_state.run_1q_gate("R1XY", qubit, {"angles": angle_list})
 
 
-def SY(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """Apply a square-root of Y.
-
-    Args:
-        state: An instance of Qulacs
-        qubit: The index of the qubit where the gate is applied
-    """
-    RY(state, qubit, angles=(np.pi / 2,))
-
-
-def SYdg(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """Apply adjoint of the square-root of Y.
-
-    Args:
-        state: An instance of Qulacs
-        qubit: The index of the qubit where the gate is applied
-    """
-    RY(state, qubit, angles=(-np.pi / 2,))
-
-
-def SZ(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """Apply a square-root of Z.
-
-    Args:
-        state: An instance of Qulacs
-        qubit: The index of the qubit where the gate is applied
-    """
-    RZ(state, qubit, angles=(np.pi / 2,))
-
-
-def SZdg(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """Apply adjoint of the square-root of Z.
-
-    Args:
-        state: An instance of Qulacs
-        qubit: The index of the qubit where the gate is applied
-    """
-    RZ(state, qubit, angles=(-np.pi / 2,))
-
-
-def H(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """Apply Hadamard gate.
-
-    Args:
-        state: An instance of Qulacs
-        qubit: The index of the qubit where the gate is applied
-    """
-    # Qulacs uses qubit index 0 as the least significant bit
-    idx = state.num_qubits - qubit - 1
-    qgate.H(idx).update_quantum_state(state.qulacs_state)
+# Additional gate aliases and implementations for compatibility
 
 
 def F(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """Apply face rotation of an octahedron #1 (X->Y->Z->X).
-
-    Args:
-        state: An instance of Qulacs
-        qubit: The index of the qubit where the gate is applied
-    """
-    RX(state, qubit, angles=(np.pi / 2,))
-    RZ(state, qubit, angles=(np.pi / 2,))
+    """F gate (F1 gate - qutrit Hadamard projected to 2 levels)."""
+    # F gate has matrix [[1+i, 1-i], [1+i, -1+i]]/2
+    # It's different from SX
+    state.qulacs_state.run_1q_gate("F", qubit)
 
 
 def Fdg(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """Apply adjoint of face rotation of an octahedron #1 (X<-Y<-Z<-X).
-
-    Args:
-        state: An instance of Qulacs
-        qubit: The index of the qubit where the gate is applied
-    """
-    RZ(state, qubit, angles=(-np.pi / 2,))
-    RX(state, qubit, angles=(-np.pi / 2,))
+    """F dagger gate."""
+    state.qulacs_state.run_1q_gate("Fdg", qubit)
 
 
-def T(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """Apply a T gate.
-
-    Args:
-        state: An instance of Qulacs
-        qubit: The index of the qubit where the gate is applied
-    """
-    RZ(state, qubit, angles=(np.pi / 4,))
-
-
-def Tdg(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """Apply adjoint of a T gate.
-
-    Args:
-        state: An instance of Qulacs
-        qubit: The index of the qubit where the gate is applied
-    """
-    RZ(state, qubit, angles=(-np.pi / 4,))
+# Hadamard variants - these would need specific implementations
+# For now, defaulting to standard Hadamard
 
 
 def H2(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """'H2': ('S', 'S', 'H', 'S', 'S')."""
-    Z(state, qubit)
-    H(state, qubit)
-    Z(state, qubit)
+    """H2 gate variant."""
+    state.qulacs_state.run_1q_gate("H2", qubit, {})
 
 
 def H3(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """'H3': ('H', 'S', 'S', 'H', 'S',)."""
-    X(state, qubit)
-    SZ(state, qubit)
+    """H3 gate variant."""
+    state.qulacs_state.run_1q_gate("H3", qubit, {})
 
 
 def H4(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """'H4': ('H', 'S', 'S', 'H', 'S', 'S', 'S',)."""
-    X(state, qubit)
-    SZdg(state, qubit)
+    """H4 gate variant."""
+    state.qulacs_state.run_1q_gate("H4", qubit, {})
 
 
 def H5(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """'H5': ('S', 'S', 'S', 'H', 'S')."""
-    SZdg(state, qubit)
-    H(state, qubit)
-    SZ(state, qubit)
+    """H5 gate variant."""
+    state.qulacs_state.run_1q_gate("H5", qubit, {})
 
 
 def H6(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """'H6': ('S', 'H', 'S', 'S', 'S',)."""
-    SZ(state, qubit)
-    H(state, qubit)
-    SZdg(state, qubit)
+    """H6 gate variant."""
+    state.qulacs_state.run_1q_gate("H6", qubit, {})
+
+
+# F gate variants - similar to Hadamard variants
 
 
 def F2(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """'F2': ('S', 'S', 'H', 'S')."""
-    Z(state, qubit)
-    H(state, qubit)
-    SZ(state, qubit)
+    """F2 gate variant."""
+    state.qulacs_state.run_1q_gate("F2", qubit, {})
 
 
 def F2d(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """'F2d': ('S', 'S', 'S', 'H', 'S', 'S')."""
-    SZdg(state, qubit)
-    H(state, qubit)
-    Z(state, qubit)
+    """F2 dagger gate variant."""
+    state.qulacs_state.run_1q_gate("F2dg", qubit, {})
 
 
 def F3(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """'F3': ('S', 'H', 'S', 'S')."""
-    SZ(state, qubit)
-    H(state, qubit)
-    Z(state, qubit)
+    """F3 gate variant."""
+    state.qulacs_state.run_1q_gate("F3", qubit, {})
 
 
 def F3d(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """'F3d': ('S', 'S', 'H', 'S', 'S', 'S')."""
-    Z(state, qubit)
-    H(state, qubit)
-    SZdg(state, qubit)
+    """F3 dagger gate variant."""
+    state.qulacs_state.run_1q_gate("F3dg", qubit, {})
 
 
 def F4(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """'F4': ('H', 'S', 'S', 'S')."""
-    H(state, qubit)
-    SZdg(state, qubit)
+    """F4 gate variant."""
+    state.qulacs_state.run_1q_gate("F4", qubit, {})
 
 
 def F4d(state: Qulacs, qubit: int, **_params: SimulatorGateParams) -> None:
-    """'F4d': ('S', 'H')."""
-    SZ(state, qubit)
-    H(state, qubit)
+    """F4 dagger gate variant."""
+    state.qulacs_state.run_1q_gate("F4dg", qubit, {})

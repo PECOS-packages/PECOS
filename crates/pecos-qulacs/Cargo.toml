@@ -1,0 +1,35 @@
+[package]
+name = "pecos-qulacs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Qulacs quantum simulator bindings for PECOS"
+readme.workspace = true
+
+[dependencies]
+pecos-core.workspace = true
+pecos-qsim.workspace = true
+num-complex.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+cxx.workspace = true
+
+
+[dev-dependencies]
+rand.workspace = true
+
+[build-dependencies]
+cxx-build.workspace = true
+pecos-build-utils.workspace = true
+cc = "1.0"
+
+[lib]
+name = "pecos_qulacs"
+
+[lints]
+workspace = true

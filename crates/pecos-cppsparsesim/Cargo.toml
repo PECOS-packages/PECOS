@@ -1,0 +1,23 @@
+[package]
+name = "pecos-cppsparsesim"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "C++ sparse stabilizer simulator bindings for PECOS"
+readme = "README.md"
+
+[dependencies]
+cxx.workspace = true
+pecos-qsim.workspace = true
+
+[build-dependencies]
+cxx-build.workspace = true
+cc.workspace = true
+
+[lints]
+workspace = true

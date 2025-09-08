@@ -121,7 +121,7 @@ normalize-line-endings:  ## Normalize line endings according to .gitattributes
 lint-fix:  ## Fix all auto-fixable linting issues (Rust, Python, Julia)
 	@echo "Fixing Rust formatting..."
 	cargo fmt --all
-	cargo clippy --fix --workspace --all-targets --all-features --allow-staged
+	cargo clippy --fix --workspace --all-targets --all-features --allow-staged --allow-dirty
 	@echo ""
 	@echo "Running pre-commit fixes..."
 	uv run pre-commit run --all-files || true
@@ -156,8 +156,8 @@ rstest: qir-staticlib-if-needed  ## Run Rust tests
 	cargo test --workspace
 
 .PHONY: rstest-all
-rstest-all: qir-staticlib-if-needed  ## Run Rust tests with all features (includes WASM, decoders, etc.)
-	cargo test --workspace --all-features
+rstest-all: qir-staticlib-if-needed  ## Run Rust tests with all features except GPU
+	cargo test --workspace --all-features --exclude pecos-quest && cargo test -p pecos-quest
 
 # Decoder-specific commands
 # -------------------------

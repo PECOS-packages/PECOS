@@ -85,7 +85,7 @@ class SparseSimRs:
                     msg = f"Gate {symbol} is not supported in this simulator."
                     raise Exception(msg)
 
-                if results:
+                if results is not None:
                     output[location] = results
 
         return output

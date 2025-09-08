@@ -23,10 +23,18 @@ pub struct RsStateVec {
 #[pymethods]
 impl RsStateVec {
     /// Creates a new state-vector simulator with the specified number of qubits
+    ///
+    /// # Arguments
+    /// * `num_qubits` - Number of qubits in the system
+    /// * `seed` - Optional seed for the random number generator
     #[new]
-    pub fn new(num_qubits: usize) -> Self {
+    #[pyo3(signature = (num_qubits, seed=None))]
+    pub fn new(num_qubits: usize, seed: Option<u64>) -> Self {
         RsStateVec {
-            inner: StateVec::new(num_qubits),
+            inner: match seed {
+                Some(s) => StateVec::with_seed(num_qubits, s),
+                None => StateVec::new(num_qubits),
+            },
         }
     }
 

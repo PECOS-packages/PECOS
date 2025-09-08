@@ -20,7 +20,6 @@ Optional packages include:
 
 * Cython (for compiling C and C++ extensions)
 * PyTest (for running tests)
-* ProjectQ (to take advantage of ProjectQ's simulators via PECOS)
 
 
 Note on Python Distribution/Environment

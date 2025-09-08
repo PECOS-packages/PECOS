@@ -21,15 +21,11 @@ from __future__ import annotations
 from typing import Any
 
 from pecos.reps.pypmir.op_types import QOp
-from pecos.simulators import StateVecRs
+from pecos.simulators import Qulacs, StateVec
 from pecos.simulators.sparsesim.state import SparseSim
 
 JSONType = dict[str, Any] | list[Any] | str | int | float | bool | None
 
-try:
-    from pecos.simulators.projectq.state import ProjectQSim
-except ImportError:
-    ProjectQSim = None
 
 try:
     from pecos.simulators import MPS
@@ -46,6 +42,12 @@ try:
     from pecos.simulators import CuStateVec
 except ImportError:
     CuStateVec = None
+
+try:
+    from pecos.simulators import QuestDensityMatrix, QuestStateVec
+except ImportError:
+    QuestStateVec = None
+    QuestDensityMatrix = None
 
 
 class QuantumSimulator:
@@ -92,17 +94,21 @@ class QuantumSimulator:
                 if Qulacs is not None:
                     self.state = Qulacs
                 else:
-                    self.state = StateVecRs
-            elif "ProjectQSim":
-                self.state = ProjectQSim
+                    self.state = StateVec
+            elif self.backend == "StateVec":
+                self.state = StateVec
             elif self.backend in {"MPS", "mps"}:
                 self.state = MPS
             elif self.backend == "Qulacs":
                 self.state = Qulacs
             elif self.backend == "CuStateVec":
                 self.state = CuStateVec
+            elif self.backend == "QuestStateVec":
+                self.state = QuestStateVec
+            elif self.backend == "QuestDensityMatrix":
+                self.state = QuestDensityMatrix
             else:
-                msg = f"simulator `{self.state}` not currently implemented!"
+                msg = f"simulator `{self.backend}` not currently implemented!"
                 raise NotImplementedError(msg)
 
         if self.backend is None:

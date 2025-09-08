@@ -16,49 +16,31 @@ and fault propagation simulators.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-# Rust version of stabilizer sim
-from pecos_rslib import SparseSimRs, StateVecRs
+# Rust version of simulators
+from pecos_rslib import CoinToss, CppSparseSimRs, SparseSimRs
 from pecos_rslib import SparseSimRs as SparseSim
 
 from pecos.simulators import sim_class_types
-from pecos.simulators.basic_sv.state import BasicSV  # Basic numpy statevector simulator
-from pecos.simulators.cointoss import (
-    CoinToss,
-)
 
 # Ignores quantum gates, coin toss for measurements
 from pecos.simulators.default_simulator import DefaultSimulator
-from pecos.simulators.paulifaultprop import (
-    PauliFaultProp,
+from pecos.simulators.pauliprop import (
+    PauliFaultProp,  # Backward compatibility
+    PauliProp,
 )
+from pecos.simulators.quest_densitymatrix import QuestDensityMatrix
+
+# QuEST simulators
+from pecos.simulators.quest_statevec import QuestStateVec
+
+# Use Qulacs (Rust version) as the primary Qulacs implementation
+from pecos.simulators.qulacs import Qulacs
 
 # Pauli fault propagation sim
 from pecos.simulators.sparsesim import (
     SparseSim as SparseSimPy,
 )
-
-# C++ version of SparseStabSim wrapper
-try:
-    from pecos.simulators.cysparsesim import (
-        SparseSim as SparseSimCy,
-    )
-except ImportError:
-    SparseSimCy = None
-
-# Attempt to import optional ProjectQ package
-try:
-    import projectq
-
-    from pecos.simulators.projectq.state import ProjectQSim  # wrapper for ProjectQ sim
-except ImportError:
-    ProjectQSim = None
-
-# Attempt to import optional Qulacs package
-try:
-    from pecos.simulators.qulacs.state import Qulacs  # wrapper for Qulacs sim
-except ImportError:
-    Qulacs = None
-
+from pecos.simulators.statevec import StateVec
 
 # Attempt to import optional cuquantum and cupy packages
 try:

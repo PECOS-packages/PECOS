@@ -20,7 +20,6 @@ cxx.workspace = true
 [build-dependencies]
 pecos-build-utils.workspace = true
 cxx-build.workspace = true
-cc.workspace = true
 
 [dev-dependencies]
 rand.workspace = true

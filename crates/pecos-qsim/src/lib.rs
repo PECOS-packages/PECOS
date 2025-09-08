@@ -11,6 +11,7 @@
 // the License.
 
 pub mod clifford_gateable;
+pub mod coin_toss;
 pub mod gens;
 pub mod pauli_prop;
 // pub mod paulis;
@@ -18,14 +19,17 @@ pub mod arbitrary_rotation_gateable;
 pub mod prelude;
 pub mod quantum_simulator;
 pub mod sparse_stab;
+pub mod stabilizer_tableau;
 pub mod state_vec;
 
 pub use arbitrary_rotation_gateable::ArbitraryRotationGateable;
 pub use clifford_gateable::{CliffordGateable, MeasurementResult};
+pub use coin_toss::CoinToss;
 pub use gens::Gens;
 // pub use paulis::Paulis;
 pub use pauli_prop::{PauliProp, StdPauliProp};
 pub use pecos_core::VecSet;
 pub use quantum_simulator::QuantumSimulator;
 pub use sparse_stab::{SparseStab, StdSparseStab};
+pub use stabilizer_tableau::StabilizerTableauSimulator;
 pub use state_vec::StateVec;

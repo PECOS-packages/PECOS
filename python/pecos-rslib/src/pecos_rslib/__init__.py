@@ -19,11 +19,16 @@ components within the PECOS framework, enabling efficient quantum circuit simula
 from importlib.metadata import PackageNotFoundError, version
 
 from pecos_rslib.rssparse_sim import SparseSimRs
+from pecos_rslib.cppsparse_sim import CppSparseSimRs
 from pecos_rslib.rsstate_vec import StateVecRs
+from pecos_rslib.rscoin_toss import CoinToss
+from pecos_rslib.rspauli_prop import PauliPropRs
 from pecos_rslib._pecos_rslib import ByteMessage
 from pecos_rslib._pecos_rslib import ByteMessageBuilder
 from pecos_rslib._pecos_rslib import StateVecEngineRs
 from pecos_rslib._pecos_rslib import SparseStabEngineRs
+from pecos_rslib._pecos_rslib import QuestStateVec
+from pecos_rslib._pecos_rslib import QuestDensityMatrix
 
 # QASM simulation exports
 from pecos_rslib._pecos_rslib import NoiseModel
@@ -60,11 +65,17 @@ except PackageNotFoundError:
 
 __all__ = [
     "SparseSimRs",
+    "CppSparseSimRs",
     "StateVecRs",
+    "CoinToss",
+    "PauliPropRs",
     "ByteMessage",
     "ByteMessageBuilder",
     "StateVecEngineRs",
     "SparseStabEngineRs",
+    # QuEST simulators
+    "QuestStateVec",
+    "QuestDensityMatrix",
     # QASM simulation
     "NoiseModel",
     "QuantumEngine",

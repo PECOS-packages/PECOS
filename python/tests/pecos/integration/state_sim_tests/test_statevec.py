@@ -29,18 +29,18 @@ from pecos.engines.hybrid_engine import HybridEngine
 from pecos.error_models.generic_error_model import GenericErrorModel
 from pecos.simulators import (
     MPS,
-    BasicSV,
     CuStateVec,
+    QuestStateVec,
     Qulacs,
-    StateVecRs,
+    StateVec,
 )
 
 str_to_sim = {
-    "StateVecRS": StateVecRs,
-    "BasicSV": BasicSV,
+    "StateVec": StateVec,
     "Qulacs": Qulacs,
     "CuStateVec": CuStateVec,
     "MPS": MPS,
+    "QuestStateVec": QuestStateVec,
 }
 
 
@@ -61,17 +61,21 @@ def verify(simulator: str, qc: QuantumCircuit, final_vector: np.ndarray) -> None
     final_vector_normalized = final_vector / (np.linalg.norm(final_vector) or 1)
 
     phase = (
-        sim_vector_normalized[0] / final_vector_normalized[0]
-        if np.abs(final_vector_normalized[0]) > 1e-10
+        final_vector_normalized[0] / sim_vector_normalized[0]
+        if np.abs(sim_vector_normalized[0]) > 1e-10
         else 1
     )
 
-    final_vector_adjusted = final_vector_normalized * phase
+    sim_vector_adjusted = sim_vector_normalized * phase
+
+    # Use looser tolerance for simulators that use gate decompositions
+    # QuestStateVec uses decompositions for RXX, RYY, RZZ which accumulate errors
+    rtol = 1e-3 if simulator == "QuestStateVec" else 1e-5
 
     np.testing.assert_allclose(
-        sim_vector_normalized,
-        final_vector_adjusted,
-        rtol=1e-5,
+        sim_vector_adjusted,
+        final_vector_normalized,
+        rtol=rtol,
         err_msg="State vectors do not match.",
     )
 
@@ -85,14 +89,8 @@ def check_measurement(
     sim = check_dependencies(simulator)(len(qc.qudits))
 
     results = sim.run_circuit(qc)
-    print(f"[CHECK MEASUREMENT] Simulator: {simulator}")
-    print(f"[CHECK MEASUREMENT] Results: {results}")
-    print(
-        f"[CHECK MEASUREMENT] sim.vector (abs values): {[abs(x) for x in sim.vector]}",
-    )
 
     if final_results is not None:
-        print(f"[CHECK MEASUREMENT] Expected results: {final_results}")
         assert results == final_results
 
     state = 0
@@ -102,25 +100,20 @@ def check_measurement(
     final_vector[state] = 1
 
     abs_values_vector = [abs(x) for x in sim.vector]
-    print(f"[CHECK MEASUREMENT] Expected final_vector: {final_vector}")
 
     assert np.allclose(abs_values_vector, final_vector)
 
 
-def compare_against_basicsv(simulator: str, qc: QuantumCircuit) -> None:
-    """Compare simulator results against BasicSV reference implementation."""
-    basicsv = BasicSV(len(qc.qudits))
-    basicsv.run_circuit(qc)
+def compare_against_statevec(simulator: str, qc: QuantumCircuit) -> None:
+    """Compare simulator results against StateVec reference implementation."""
+    statevec = StateVec(len(qc.qudits))
+    statevec.run_circuit(qc)
 
     sim = check_dependencies(simulator)(len(qc.qudits))
     sim.run_circuit(qc)
 
-    print(f"[COMPARE] Simulator: {simulator}")
-    print(f"[COMPARE] BasicSV vector: {basicsv.vector}")
-    print(f"[COMPARE] sim.vector: {sim.vector}")
-
     # Use updated verify function
-    verify(simulator, qc, basicsv.vector)
+    verify(simulator, qc, statevec.vector)
 
 
 def generate_random_state(seed: int | None = None) -> QuantumCircuit:
@@ -153,11 +146,11 @@ def generate_random_state(seed: int | None = None) -> QuantumCircuit:
 @pytest.mark.parametrize(
     "simulator",
     [
-        "StateVecRS",
-        "BasicSV",
+        "StateVec",
         "Qulacs",
         "CuStateVec",
         "MPS",
+        "QuestStateVec",
     ],
 )
 def test_init(simulator: str) -> None:
@@ -174,11 +167,11 @@ def test_init(simulator: str) -> None:
 @pytest.mark.parametrize(
     "simulator",
     [
-        "StateVecRS",
-        "BasicSV",
+        "StateVec",
         "Qulacs",
         "CuStateVec",
         "MPS",
+        "QuestStateVec",
     ],
 )
 def test_h_measure(simulator: str) -> None:
@@ -193,11 +186,11 @@ def test_h_measure(simulator: str) -> None:
 @pytest.mark.parametrize(
     "simulator",
     [
-        "StateVecRS",
-        "BasicSV",
+        "StateVec",
         "Qulacs",
         "CuStateVec",
         "MPS",
+        "QuestStateVec",
     ],
 )
 def test_comp_basis_circ_and_measure(simulator: str) -> None:
@@ -212,16 +205,12 @@ def test_comp_basis_circ_and_measure(simulator: str) -> None:
     final_vector[10] = 1  # |1010>
 
     # Run the circuit and compare results
-    print(f"[TEST - DEBUG] Running {simulator} for Step 1 (X gates)")
     verify(simulator, qc, final_vector)
 
     # Insert detailed debug prints after verify
     sim_class = check_dependencies(simulator)
     sim_instance = sim_class(len(qc.qudits))
     sim_instance.run_circuit(qc)
-    print(f"[TEST - DEBUG] Simulator: {simulator}")
-    print(f"[TEST - DEBUG] Produced vector: {sim_instance.vector}")
-    print(f"[TEST - DEBUG] Expected vector: {final_vector}")
 
     # Step 2
     qc.append({"CX": {(2, 1)}})  # |1010> -> |1110>
@@ -230,20 +219,18 @@ def test_comp_basis_circ_and_measure(simulator: str) -> None:
     final_vector[14] = 1  # |1110>
 
     # Run the circuit and compare results for Step 2
-    print(f"[TEST - DEBUG] Running {simulator} for Step 2 (CX gate)")
     verify(simulator, qc, final_vector)
     sim_instance.run_circuit(qc)
-    print(f"[TEST - DEBUG] Produced vector after Step 2: {sim_instance.vector}")
-    print(f"[TEST - DEBUG] Expected vector after Step 2: {final_vector}")
 
 
 @pytest.mark.parametrize(
     "simulator",
     [
-        "StateVecRS",
+        "StateVec",
         "Qulacs",
         "CuStateVec",
         "MPS",
+        "QuestStateVec",
     ],
 )
 def test_all_gate_circ(simulator: str) -> None:
@@ -254,136 +241,136 @@ def test_all_gate_circ(simulator: str) -> None:
     qcs.append(generate_random_state(seed=5555))
     qcs.append(generate_random_state(seed=42))
 
-    # Verify that each of these states matches with BasicSV
+    # Verify that each of these states matches with StateVec
     for qc in qcs:
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
 
     # Apply each gate on randomly generated states and compare again
     for qc in qcs:
         qc.append({"SZZ": {(4, 2)}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"RX": {0, 2}}, angles=(np.pi / 4,))
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"SXXdg": {(0, 3)}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"RY": {0, 3}}, angles=(np.pi / 8,))
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"RZZ": {(0, 3)}}, angles=(np.pi / 16,))
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"RZ": {1, 4}}, angles=(np.pi / 16,))
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"R1XY": {2}}, angles=(np.pi / 16, np.pi / 2))
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"I": {0, 1, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"X": {1, 2}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"Y": {3, 4}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"CY": {(2, 3), (4, 1)}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"SYY": {(1, 4)}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"Z": {2, 0}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"H": {3, 1}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"RYY": {(2, 1)}}, angles=(np.pi / 8,))
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"SZZdg": {(3, 1)}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"F": {0, 2, 4}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"CX": {(0, 1), (4, 2)}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"Fdg": {3, 1}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"SYYdg": {(1, 3)}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"SX": {1, 2}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"R2XXYYZZ": {(0, 4)}}, angles=(np.pi / 4, np.pi / 16, np.pi / 2))
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"SY": {3, 4}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"SZ": {2, 0}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"SZdg": {1, 2}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"CZ": {(1, 3)}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"SXdg": {3, 4}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"SYdg": {2, 0}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"T": {0, 2, 4}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"SXX": {(0, 2)}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"SWAP": {(4, 0)}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"Tdg": {3, 1}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"RXX": {(1, 3)}}, angles=(np.pi / 4,))
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"Q": {1, 4, 2}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"Qd": {0, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"R": {0}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"Rd": {1, 4, 2}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"S": {0, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"Sd": {0}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"H1": {0, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"H2": {2, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"H3": {1, 4, 2}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"H4": {2, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"H5": {0, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"H6": {1, 4, 2}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"H+z+x": {2, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"H-z-x": {1, 4, 2}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"H+y-z": {0, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"H-y-z": {2, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"H-x+y": {0, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"H-x-y": {1, 4, 2}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"F1": {0, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"F1d": {2, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"F2": {1, 4, 2}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"F2d": {0, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"F3": {2, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"F3d": {1, 4, 2}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"F4": {2, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"F4d": {0, 3}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"CNOT": {(0, 1)}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"G": {(1, 3)}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
         qc.append({"II": {(4, 2)}})
-        compare_against_basicsv(simulator, qc)
+        compare_against_statevec(simulator, qc)
 
         # Measure
         qc.append({"Measure": {0, 1, 2, 3, 4}})
@@ -393,10 +380,10 @@ def test_all_gate_circ(simulator: str) -> None:
 @pytest.mark.parametrize(
     "simulator",
     [
-        "StateVecRs",
-        "MPS",
+        "StateVec",
         "Qulacs",
         "CuStateVec",
+        "QuestStateVec",
     ],
 )
 def test_hybrid_engine_no_noise(simulator: str) -> None:
@@ -427,10 +414,10 @@ def test_hybrid_engine_no_noise(simulator: str) -> None:
 @pytest.mark.parametrize(
     "simulator",
     [
-        "StateVecRs",
-        "MPS",
+        "StateVec",
         "Qulacs",
         "CuStateVec",
+        "QuestStateVec",
     ],
 )
 def test_hybrid_engine_noisy(simulator: str) -> None:

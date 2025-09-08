@@ -126,6 +126,20 @@ class ScopeManager:
     def is_in_loop(self) -> bool:
         """Check if currently inside a loop scope."""
         return any(scope.scope_type == ScopeType.LOOP for scope in self.scope_stack)
+    
+    def is_in_conditional_within_loop(self) -> bool:
+        """Check if currently inside a conditional (if) within a loop."""
+        in_loop = False
+        in_conditional = False
+        
+        for scope in self.scope_stack:
+            if scope.scope_type == ScopeType.LOOP:
+                in_loop = True
+            elif scope.scope_type in (ScopeType.IF_THEN, ScopeType.IF_ELSE):
+                if in_loop:
+                    in_conditional = True
+        
+        return in_loop and in_conditional
 
     def mark_resource_returned(self, qreg_name: str) -> None:
         """Mark a resource as returned from current scope."""

@@ -1861,6 +1861,7 @@ dependencies = [
  "log",
  "pecos-core",
  "pecos-engines",
+ "pecos-rng",
  "pest",
  "pest_derive",
  "regex",

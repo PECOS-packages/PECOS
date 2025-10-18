@@ -1,4 +1,7 @@
-use crate::simulation::{NoiseModelType, QuantumEngineType, qasm_sim};
+use crate::{
+    prelude::QasmSimulationBuilder,
+    simulation::{NoiseModelType, QuantumEngineType, qasm_sim},
+};
 use pecos_core::errors::PecosError;
 use pecos_engines::shot_results::ShotVec;
 
@@ -107,7 +110,7 @@ pub fn run_qasm<N>(
 where
     N: Into<NoiseModelType>,
 {
-    let mut builder = qasm_sim(qasm).noise(noise);
+    let mut builder: QasmSimulationBuilder = qasm_sim(qasm).noise(noise);
 
     if let Some(e) = quantum_engine {
         builder = builder.quantum_engine(e);

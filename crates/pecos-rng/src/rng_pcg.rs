@@ -7,6 +7,18 @@ pub struct PCGRandom {
     inc: u64,
 }
 
+impl Default for PCGRandom {
+    fn default() -> Self {
+        PCGRandom::init_global_state()
+    }
+}
+
+impl std::fmt::Debug for PCGRandom {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "RNG: State->{}, inc->{}", self.state, self.inc)
+    }
+}
+
 impl PCGRandom {
     #[must_use]
     pub fn init_global_state() -> PCGRandom {
@@ -74,5 +86,60 @@ impl PCGRandom {
         PCGRandom::pcg_setseq_64_step_r(rng);
         rng.state += initstate;
         PCGRandom::pcg_setseq_64_step_r(rng);
+    }
+}
+
+pub struct RNGModel {
+    pub rng_gen: PCGRandom,
+    pub curr_bound: u32,
+    pub count: u64,
+}
+
+impl Default for RNGModel {
+    fn default() -> Self {
+        RNGModel {
+            rng_gen: PCGRandom::default(),
+            curr_bound: 0,
+            count: 0,
+        }
+    }
+}
+
+impl std::fmt::Debug for RNGModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "RNGModel: {:?}; Current rng bound: {} with index count: {}",
+            self.rng_gen, self.curr_bound, self.count
+        )
+    }
+}
+
+impl RNGModel {
+    pub fn set_seed(&mut self, seed: u64) {
+        PCGRandom::pcg32_srandom_r(&mut self.rng_gen, 42_u64, seed);
+    }
+
+    pub fn set_index(&mut self, idx: u64) {
+        println!("count is {}", self.count);
+        if self.count > idx {
+            panic!("RNGindex called after specified index already generated");
+        }
+        while self.count < idx {
+            self.rng_num();
+        }
+    }
+
+    pub fn rng_num(&mut self) -> u32 {
+        self.count += 1;
+        if self.curr_bound == 0 {
+            PCGRandom::pcg32_random_r(&mut self.rng_gen)
+        } else {
+            PCGRandom::pcg32_boundedrand_r(&mut self.rng_gen, self.curr_bound)
+        }
+    }
+
+    pub fn set_bound(&mut self, ubound: u32) {
+        self.curr_bound = ubound;
     }
 }

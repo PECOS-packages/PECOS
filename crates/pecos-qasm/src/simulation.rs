@@ -253,12 +253,22 @@ impl QasmSimulationBuilder {
         self
     }
 
+    // #[must_use]
+    // pub fn set_seed(&mut self, seed: u64) {
+    //     self.seed = Some(seed);
+    // }
+
     /// Set the number of workers
     #[must_use]
     pub fn workers(mut self, workers: usize) -> Self {
         self.workers = Some(workers);
         self
     }
+
+    // #[must_use]
+    // pub fn set_workers(&mut self, workers: usize) {
+    //     self.workers = Some(workers);
+    // }
 
     /// Use automatic worker count based on available CPUs
     #[must_use]
@@ -283,6 +293,10 @@ impl QasmSimulationBuilder {
         self.quantum_engine_type = Some(engine);
         self
     }
+    // #[must_use]
+    // pub fn set_quantum_engine(&mut self, engine: QuantumEngineType) {
+    //     self.quantum_engine_type = Some(engine);
+    // }
 
     /// Configure output to use binary string format
     #[must_use]

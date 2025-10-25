@@ -8,6 +8,12 @@ fn main() {
     env_logger::init();
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
+    // Embed LLVM bin path at compile time for runtime use
+    if let Ok(llvm_prefix) = env::var("LLVM_SYS_140_PREFIX") {
+        let llvm_bin = PathBuf::from(&llvm_prefix).join("bin");
+        println!("cargo:rustc-env=PECOS_LLVM_BIN_PATH={}", llvm_bin.display());
+    }
+
     // Find or build libhelios_selene_interface.a
     find_or_build_helios_lib(&out_dir);
 

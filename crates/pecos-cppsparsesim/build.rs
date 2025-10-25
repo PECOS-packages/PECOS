@@ -44,9 +44,7 @@ fn main() {
     // On macOS, use the -stdlib=libc++ flag to ensure proper C++ standard library linkage
     if target.contains("darwin") {
         bridge.flag("-stdlib=libc++");
-        // Prevent opportunistic linking to Homebrew's libunwind (Xcode 15+ issue)
-        bridge.flag("-L/usr/lib");
-        bridge.flag("-Wl,-search_paths_first");
+        // Note: Linker-specific flags are passed via cargo:rustc-link-arg below, not here
     }
 
     bridge.compile("cppsparsesim-bridge");

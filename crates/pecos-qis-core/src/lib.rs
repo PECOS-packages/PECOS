@@ -6,6 +6,34 @@
 //! The reference runtime implementation is:
 //! - `SeleneRuntime`: Selene-based QIS runtime (in pecos-qis-selene crate)
 //!
+//! # LLVM Setup
+//!
+//! This crate requires LLVM 14 for QIR (Quantum Intermediate Representation) support.
+//!
+//! If the build fails, just run the commands shown in the error message. Typically:
+//!
+//! ```bash
+//! cargo install pecos-llvm-utils
+//! pecos-llvm install
+//! export PECOS_LLVM=$(pecos-llvm find)
+//! export LLVM_SYS_140_PREFIX="$PECOS_LLVM"
+//! cargo build
+//! ```
+//!
+//! This takes ~5 minutes, downloads ~400MB, and installs to `~/.pecos/llvm`.
+//!
+//! **`PECOS_LLVM` vs `LLVM_SYS_140_PREFIX`**: Use `PECOS_LLVM` to specify which LLVM installation
+//! PECOS should use. This takes priority over system-wide `LLVM_SYS_140_PREFIX`, allowing
+//! you to use a different LLVM for PECOS than other projects.
+//!
+//! **Don't need QIR?** Disable LLVM:
+//! ```toml
+//! [dependencies]
+//! pecos-qis-core = { version = "0.1", default-features = false }
+//! ```
+//!
+//! See the [Getting Started guide](https://quantum-pecos.readthedocs.io/) for more details.
+//!
 //! # Example Usage
 //!
 //! This crate provides the core builder API for QIS engines. Specific runtime

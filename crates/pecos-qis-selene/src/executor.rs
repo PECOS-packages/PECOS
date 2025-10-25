@@ -17,6 +17,54 @@ type ResetInterfaceFn = unsafe extern "C" fn();
 type GetOperationsFn = unsafe extern "C" fn() -> *mut OperationCollector;
 type CallQmainFn = unsafe extern "C" fn(extern "C" fn(u64) -> u64) -> u64;
 
+/// Find an LLVM tool with the following priority:
+/// 1. Embedded path from build time (`PECOS_LLVM_BIN_PATH`)
+/// 2. Runtime `LLVM_SYS_140_PREFIX` environment variable
+/// 3. Fall back to PATH
+fn find_llvm_tool(tool_name: &str) -> PathBuf {
+    let tool_exe = if cfg!(windows) {
+        format!("{tool_name}.exe")
+    } else {
+        tool_name.to_string()
+    };
+
+    option_env!("PECOS_LLVM_BIN_PATH")
+        .and_then(|bin_path| {
+            let path = PathBuf::from(bin_path).join(&tool_exe);
+            if path.exists() {
+                debug!(
+                    "Using {} from embedded PECOS_LLVM_BIN_PATH: {}",
+                    tool_name,
+                    path.display()
+                );
+                Some(path)
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            std::env::var("LLVM_SYS_140_PREFIX")
+                .ok()
+                .and_then(|prefix| {
+                    let path = PathBuf::from(prefix).join("bin").join(&tool_exe);
+                    if path.exists() {
+                        debug!(
+                            "Using {} from LLVM_SYS_140_PREFIX: {}",
+                            tool_name,
+                            path.display()
+                        );
+                        Some(path)
+                    } else {
+                        None
+                    }
+                })
+        })
+        .unwrap_or_else(|| {
+            debug!("Using {tool_name} from PATH");
+            PathBuf::from(tool_name)
+        })
+}
+
 /// Helios interface implementation
 ///
 /// This interface:
@@ -343,28 +391,7 @@ impl QisHeliosInterface {
                     InterfaceError::LoadError(format!("Failed to create bitcode file: {e}"))
                 })?;
 
-                // Try to find llvm-as: first check LLVM_SYS_140_PREFIX, then fall back to PATH
-                let llvm_as_cmd = std::env::var("LLVM_SYS_140_PREFIX")
-                    .ok()
-                    .and_then(|prefix| {
-                        let mut path = PathBuf::from(prefix);
-                        path.push("bin");
-                        path.push(if cfg!(windows) {
-                            "llvm-as.exe"
-                        } else {
-                            "llvm-as"
-                        });
-                        if path.exists() {
-                            debug!("Using llvm-as from LLVM_SYS_140_PREFIX: {}", path.display());
-                            Some(path)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or_else(|| {
-                        debug!("Using llvm-as from PATH");
-                        PathBuf::from("llvm-as")
-                    });
+                let llvm_as_cmd = find_llvm_tool("llvm-as");
 
                 let output = Command::new(&llvm_as_cmd)
                     .arg("-o")
@@ -396,15 +423,7 @@ impl QisHeliosInterface {
         #[cfg(target_os = "windows")]
         let program_temp_path = {
             // Use llvm-nm to check which symbols exist in the bitcode
-            let llvm_nm_cmd = std::env::var("LLVM_SYS_140_PREFIX")
-                .ok()
-                .and_then(|prefix| {
-                    let mut path = PathBuf::from(prefix);
-                    path.push("bin");
-                    path.push("llvm-nm.exe");
-                    if path.exists() { Some(path) } else { None }
-                })
-                .unwrap_or_else(|| PathBuf::from("llvm-nm"));
+            let llvm_nm_cmd = find_llvm_tool("llvm-nm");
 
             let nm_output = Command::new(&llvm_nm_cmd)
                 .arg(&program_temp_path)
@@ -460,15 +479,7 @@ entry:
                     InterfaceError::LoadError(format!("Failed to create wrapper BC file: {e}"))
                 })?;
 
-                let llvm_as_cmd = std::env::var("LLVM_SYS_140_PREFIX")
-                    .ok()
-                    .and_then(|prefix| {
-                        let mut path = PathBuf::from(prefix);
-                        path.push("bin");
-                        path.push("llvm-as.exe");
-                        if path.exists() { Some(path) } else { None }
-                    })
-                    .unwrap_or_else(|| PathBuf::from("llvm-as"));
+                let llvm_as_cmd = find_llvm_tool("llvm-as");
 
                 let as_output = Command::new(&llvm_as_cmd)
                     .arg("-o")
@@ -491,15 +502,7 @@ entry:
                     InterfaceError::LoadError(format!("Failed to create linked BC file: {e}"))
                 })?;
 
-                let llvm_link_cmd = std::env::var("LLVM_SYS_140_PREFIX")
-                    .ok()
-                    .and_then(|prefix| {
-                        let mut path = PathBuf::from(prefix);
-                        path.push("bin");
-                        path.push("llvm-link.exe");
-                        if path.exists() { Some(path) } else { None }
-                    })
-                    .unwrap_or_else(|| PathBuf::from("llvm-link"));
+                let llvm_link_cmd = find_llvm_tool("llvm-link");
 
                 let link_output = Command::new(&llvm_link_cmd)
                     .arg("-o")

@@ -115,17 +115,26 @@ pecos = "0.x.x"  # Replace with the latest version
 
 #### Optional Dependencies
 
-- **LLVM version 14**: Required for LLVM IR execution support
-  - Linux: `sudo apt install llvm-14`
-  - macOS: `brew install llvm@14`
-  - Windows:
-    - For development builds, use the included setup script: `.\scripts\setup_llvm.ps1`
-    - This will extract the bundled LLVM 14.0.6 and configure the build and test environment
-    - Alternatively, download LLVM 14.x installer from [LLVM releases](https://releases.llvm.org/download.html#14.0.0)
+- **LLVM version 14**: Required for LLVM IR execution support (optional)
 
-  **Note**: Only LLVM version 14.x is compatible. LLVM 15 or later versions will not work with PECOS's LLVM runtime implementation.
+  PECOS provides an automated installer or you can install manually:
 
-  If LLVM 14 is not installed, PECOS will still function normally but LLVM IR execution features will be disabled.
+  ```sh
+  # Quick setup with automated installer (recommended):
+  cargo run -p pecos-llvm-utils --bin pecos-llvm -- install
+  cargo build
+  ```
+
+  The installer automatically configures PECOS after installation.
+
+  For detailed LLVM installation instructions for all platforms (macOS, Linux, Windows), see the [**Getting Started Guide**](docs/user-guide/getting-started.md#llvm-for-qis-support).
+
+  For full development environment setup, see the [**Development Setup Guide**](docs/development/DEVELOPMENT.md).
+
+  **Building without LLVM:** If you don't need LLVM IR support:
+  ```sh
+  cargo build --no-default-features
+  ```
 
 ### Julia Package (Experimental)
 

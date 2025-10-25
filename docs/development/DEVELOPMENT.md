@@ -16,7 +16,19 @@ For developers who want to contribute or modify PECOS:
    uv sync
    ```
 
-4. You may wish to explicitly activate the environment for development. To do so:
+4. **LLVM 14 Setup (Required for LLVM IR/QIS Support)**
+
+   PECOS requires LLVM version 14 for LLVM IR execution features.
+
+   **Quick setup:**
+   ```sh
+   cargo run -p pecos-llvm-utils --bin pecos-llvm -- install
+   cargo build
+   ```
+
+   For detailed installation instructions for all platforms (macOS, Linux, Windows), see the [**LLVM Setup Guide**](../user-guide/getting-started.md#llvm-for-qis-support) in the Getting Started documentation.
+
+5. You may wish to explicitly activate the environment for development. To do so:
 
     === "Linux/Mac"
         ```sh
@@ -28,24 +40,24 @@ For developers who want to contribute or modify PECOS:
         .\.venv\Scripts\activate
         ```
 
-5. Build the project in editable mode
+6. Build the project in editable mode
     ```sh
    make build
    ```
    See other build options in the `Makefile`.
 
-6. Run all Python and Rust tests:
+7. Run all Python and Rust tests:
    ```sh
    make test
    ```
    Note: Make sure you have run a build command before running tests.
 
-7. Run linters using pre-commit (after [installing it](https://pre-commit.com/)) to make sure all everything is properly linted/formated
+8. Run linters using pre-commit (after [installing it](https://pre-commit.com/)) to make sure all everything is properly linted/formated
    ```sh
    make lint
    ```
 
-8. To deactivate your development venv:
+9. To deactivate your development venv:
     ```sh
     deactivate
     ```

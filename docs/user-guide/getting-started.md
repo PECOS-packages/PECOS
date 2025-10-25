@@ -43,27 +43,76 @@ This guide will help you get up and running with PECOS quickly, whether you're u
 
 ## Optional Dependencies
 
-### LLVM for QIR Support
+### LLVM for QIS Support
 
-LLVM version 14 is required for QIR (Quantum Intermediate Representation) support:
+LLVM version 14 is required for LLVM IR execution with QIS (Quantum Instruction Set) support.
 
-=== "Linux"
-    ```bash
-    sudo apt install llvm-14
-    ```
+**Setup Steps:**
 
-=== "macOS"
-    ```bash
-    brew install llvm@14
-    ```
+**Option 1 - Use pecos-llvm installer (recommended for all platforms):**
 
-=== "Windows"
-    Download LLVM 14.x installer from [LLVM releases](https://releases.llvm.org/download.html#14.0.0)
+```bash
+# Install LLVM 14.0.6 to ~/.pecos/llvm/ (~400MB, ~5 minutes)
+cargo run -p pecos-llvm-utils --bin pecos-llvm -- install
+
+# Build PECOS
+cargo build
+```
+
+The installer automatically configures PECOS after installation.
+
+**Option 2 - Manual installation:**
+
+1. **Install LLVM 14** for your platform:
+
+   === "macOS"
+       ```bash
+       brew install llvm@14
+       ```
+       Works on both Intel and Apple Silicon Macs.
+
+   === "Linux (Debian/Ubuntu)"
+       ```bash
+       sudo apt update
+       sudo apt install llvm-14 llvm-14-dev
+       ```
+
+   === "Linux (Fedora/RHEL)"
+       ```bash
+       sudo dnf install llvm14 llvm14-devel
+       ```
+
+   === "Linux (Arch)"
+       ```bash
+       yay -S llvm14  # May need to build from AUR
+       ```
+
+   === "Windows"
+       1. Download: [LLVM-14.0.6-win64.exe](https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/LLVM-14.0.6-win64.exe)
+       2. Run the installer (typically installs to `C:\Program Files\LLVM`)
+
+2. **Configure PECOS** to detect your LLVM installation:
+   ```bash
+   cargo run -p pecos-llvm-utils --bin pecos-llvm -- configure
+   ```
+
+3. **Build PECOS**:
+   ```bash
+   cargo build
+   ```
+
+**Check LLVM Status:**
+
+```bash
+cargo run -p pecos-llvm-utils --bin pecos-llvm -- check
+cargo run -p pecos-llvm-utils --bin pecos-llvm -- version
+```
 
 !!! warning
-    PECOS's QIR implementation is currently only compatible with LLVM version 14.x.
+    PECOS's LLVM IR implementation is currently only compatible with LLVM version 14.x.
 
-If LLVM 14 is not installed, PECOS will still function normally but QIR-related features will be disabled.
+!!! note
+    The `.cargo/config.toml` file is auto-generated and machine-specific. It's in `.gitignore` and should not be committed.
 
 ### Simulators with Special Requirements
 

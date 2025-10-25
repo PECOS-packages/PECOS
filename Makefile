@@ -4,13 +4,9 @@
 PYTHON := $(shell which python 2>/dev/null || which python3 2>/dev/null)
 SHELL=bash
 
-# Set LLVM path for Windows development builds (only if llvm/ directory exists)
-ifdef OS
-    # Windows - check if local LLVM exists and set path
-    ifneq ($(wildcard llvm/bin/llvm-config.exe),)
-        export LLVM_SYS_140_PREFIX := $(CURDIR)/llvm
-    endif
-endif
+# LLVM Configuration
+# LLVM is automatically detected by build.rs files using pecos-llvm-utils
+# No manual configuration needed!
 
 # Requirements
 # ------------
@@ -35,34 +31,48 @@ installreqs: ## Install Python project requirements to root .venv
 # Building development environments
 # ---------------------------------
 
-# Helper to unset CONDA_PREFIX and set LLVM path in a cross-platform way
+.PHONY: check-llvm
+check-llvm: ## Check LLVM 14 installation status
+	@cargo run -q --release --package pecos-llvm-utils --bin pecos-llvm -- check || true
+
+# LLVM Detection Helper
+# Auto-detect LLVM if not already set
+SETUP_LLVM = \
+	if [ -z "$$LLVM_SYS_140_PREFIX" ]; then \
+		DETECTED_LLVM=$$(cargo run -q --release -p pecos-llvm-utils --bin pecos-llvm -- find 2>/dev/null); \
+		if [ -n "$$DETECTED_LLVM" ]; then \
+			export PECOS_LLVM="$$DETECTED_LLVM"; \
+			export LLVM_SYS_140_PREFIX="$$DETECTED_LLVM"; \
+			echo "Auto-detected LLVM at: $$LLVM_SYS_140_PREFIX"; \
+		fi; \
+	fi
+
+# Helper to unset CONDA_PREFIX and add LLVM to PATH for runtime tools
 ifdef OS
     # Windows (running in Git Bash/MSYS)
     UNSET_CONDA = set "CONDA_PREFIX=" &&
-    # Set LLVM path if local installation exists
-    ifneq ($(wildcard llvm/bin/llvm-config.exe),)
-        SET_LLVM = set "LLVM_SYS_140_PREFIX=$(CURDIR)/llvm" &&
-        # Add LLVM bin to PATH for runtime tools (llvm-as, etc.)
-        # Use colon separator - Git Bash uses Unix-style paths internally
-        ADD_LLVM_TO_PATH = export PATH="$(CURDIR)/llvm/bin:$$PATH" &&
+    ifdef LLVM_SYS_140_PREFIX
+        ADD_LLVM_TO_PATH = export PATH="$(LLVM_SYS_140_PREFIX)/bin:$$PATH" &&
     else
-        SET_LLVM =
         ADD_LLVM_TO_PATH =
     endif
 else
     # Unix/Linux/macOS
     UNSET_CONDA = unset CONDA_PREFIX &&
-    SET_LLVM =
-    ADD_LLVM_TO_PATH =
+    ifdef LLVM_SYS_140_PREFIX
+        ADD_LLVM_TO_PATH = export PATH="$(LLVM_SYS_140_PREFIX)/bin:$$PATH" &&
+    else
+        ADD_LLVM_TO_PATH =
+    endif
 endif
 
 .PHONY: build
 build: installreqs ## Compile and install for development
-	@$(UNSET_CONDA) $(SET_LLVM) cd python/pecos-rslib/ && uv run maturin develop --uv
+	@$(SETUP_LLVM); $(UNSET_CONDA) cd python/pecos-rslib/ && uv run maturin develop --uv
 	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all]"
 	@if command -v julia >/dev/null 2>&1; then \
 		echo "Julia detected, building Julia FFI library..."; \
-		cd julia/pecos-julia-ffi && cargo build; \
+		$(SETUP_LLVM); cd julia/pecos-julia-ffi && cargo build; \
 		echo "Julia FFI library built successfully"; \
 	else \
 		echo "Julia not detected, skipping Julia build"; \
@@ -70,12 +80,12 @@ build: installreqs ## Compile and install for development
 
 .PHONY: build-basic
 build-basic: installreqs ## Compile and install for development but do not include install extras
-	@$(UNSET_CONDA) $(SET_LLVM) cd python/pecos-rslib/ && uv run maturin develop --uv
+	@$(SETUP_LLVM); $(UNSET_CONDA) cd python/pecos-rslib/ && uv run maturin develop --uv
 	@$(UNSET_CONDA) uv pip install -e ./python/quantum-pecos
 
 .PHONY: build-release
 build-release: installreqs ## Build a faster version of binaries
-	@$(UNSET_CONDA) $(SET_LLVM) cd python/pecos-rslib/ && uv run maturin develop --uv --release
+	@$(SETUP_LLVM); $(UNSET_CONDA) cd python/pecos-rslib/ && uv run maturin develop --uv --release
 	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all]"
 	@if command -v julia >/dev/null 2>&1; then \
 		echo "Julia detected, building Julia FFI library (release)..."; \
@@ -87,13 +97,13 @@ build-release: installreqs ## Build a faster version of binaries
 
 .PHONY: build-native
 build-native: installreqs ## Build a faster version of binaries with native CPU optimization
-	@$(UNSET_CONDA) $(SET_LLVM) cd python/pecos-rslib/ && RUSTFLAGS='-C target-cpu=native' \
+	@$(UNSET_CONDA) cd python/pecos-rslib/ && RUSTFLAGS='-C target-cpu=native' \
 	uv run maturin develop --uv --release
 	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all]"
 
 .PHONY: build-cuda
 build-cuda: installreqs ## Compile and install for development with CUDA support
-	@$(UNSET_CONDA) $(SET_LLVM) cd python/pecos-rslib/ && uv run maturin develop --uv
+	@$(UNSET_CONDA) cd python/pecos-rslib/ && uv run maturin develop --uv
 	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all,cuda]"
 	@if command -v julia >/dev/null 2>&1; then \
 		echo "Julia detected, building Julia FFI library..."; \

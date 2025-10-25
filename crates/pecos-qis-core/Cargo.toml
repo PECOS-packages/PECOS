@@ -33,6 +33,9 @@ optional = true
 default = ["llvm"]
 llvm = ["dep:inkwell"]
 
+[build-dependencies]
+pecos-llvm-utils.workspace = true
+
 [dev-dependencies]
 pecos-qis-selene.workspace = true
 

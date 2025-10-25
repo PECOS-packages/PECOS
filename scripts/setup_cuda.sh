@@ -99,19 +99,19 @@ fi
 
 # Function to print status messages
 print_status() {
-    echo -e "${GREEN}✓${NC} $1"
+    echo -e "${GREEN}[OK]${NC} $1"
 }
 
 print_warning() {
-    echo -e "${YELLOW}⚠${NC} $1"
+    echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
 print_error() {
-    echo -e "${RED}✗${NC} $1"
+    echo -e "${RED}[ERROR]${NC} $1"
 }
 
 print_info() {
-    echo -e "${BLUE}ℹ${NC} $1"
+    echo -e "${BLUE}[INFO]${NC} $1"
 }
 
 # Function to check if command exists

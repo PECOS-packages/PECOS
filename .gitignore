@@ -6,6 +6,9 @@ tmp/
 # LLVM (extracted from archive for Windows development)
 llvm/
 
+# Cargo config with machine-specific LLVM paths
+.cargo/config.toml
+
 # pytest results
 junit/
 

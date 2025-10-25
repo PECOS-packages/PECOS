@@ -198,22 +198,40 @@ fn configure_build(
         build.flag("/bigobj"); // Allow larger object files
         build.flag("/EHsc"); // Enable exception handling
 
+        // Suppress warnings from external headers (Eigen, Boost, Qulacs)
+        build.flag_if_supported("/external:anglebrackets"); // Treat angle-bracket includes as external
+        build.flag_if_supported("/external:W0"); // Disable warnings for external headers
+
         // Use standard optimization level - /bigobj should prevent compiler crashes
         build.opt_level(2); // Maximize speed optimization (/O2)
     } else {
         build.flag_if_supported("-std=c++14");
         build.flag_if_supported("-O3");
-        build.flag_if_supported("-ffast-math");
+
+        // On macOS with ARM (Apple Silicon), -ffast-math causes issues with Eigen's NEON code
+        // which uses infinity constants. Use a more targeted optimization instead.
+        if target.contains("darwin") && target.contains("aarch64") {
+            // Enable fast math but allow infinity and NaN
+            build.flag_if_supported("-fno-math-errno");
+            build.flag_if_supported("-fno-trapping-math");
+        } else {
+            build.flag_if_supported("-ffast-math");
+        }
+
         // Silence OpenMP pragma warnings since we intentionally don't use OpenMP
         // PECOS uses thread-level parallelism instead of OpenMP's internal parallelism
         build.flag_if_supported("-Wno-unknown-pragmas");
 
+        // Suppress specific warnings from third-party libraries (Eigen, Boost, Qulacs)
+        build.flag_if_supported("-Wno-unused-but-set-variable"); // Eigen SparseLU warnings
+        build.flag_if_supported("-Wno-deprecated-copy-with-user-provided-copy"); // Boost warnings
+        build.flag_if_supported("-Wno-unqualified-std-cast-call"); // Qulacs move() warnings
+        build.flag_if_supported("-Wno-inconsistent-missing-override"); // Qulacs override warnings
+
         // On macOS, use the -stdlib=libc++ flag to ensure proper C++ standard library linkage
         if target.contains("darwin") {
             build.flag("-stdlib=libc++");
-            // Prevent opportunistic linking to Homebrew's libunwind (Xcode 15+ issue)
-            build.flag("-L/usr/lib");
-            build.flag("-Wl,-search_paths_first");
+            // Note: Linker flags are passed via cargo:rustc-link-arg below, not here
         }
     }
 

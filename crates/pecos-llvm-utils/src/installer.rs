@@ -371,6 +371,8 @@ fn is_valid_installation(path: &Path) -> bool {
     llvm_config.exists()
 }
 
+// Allow unnecessary_wraps since the Result is needed on macOS but not on other platforms
+#[allow(clippy::unnecessary_wraps)]
 fn apply_platform_fixes(llvm_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "macos")]
     {

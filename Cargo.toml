@@ -100,6 +100,11 @@ bincode = "2"
 tracing = "0.1"
 cargo_metadata = "0.23"
 
+# Windows workaround: Disable zstd-sys legacy feature to avoid MSVC ICE
+# MSVC 14.43 has an internal compiler error (C1001) when compiling zstd_v06.c
+# The legacy feature compiles old zstd formats (v0.1-v0.7) that PECOS doesn't need
+zstd-sys = { version = "2.0", default-features = false, features = ["zdict_builder"] }
+
 pecos-core = { version = "0.1.1", path = "crates/pecos-core" }
 pecos-programs = { version = "0.1.1", path = "crates/pecos-programs" }
 pecos-qsim = { version = "0.1.1", path = "crates/pecos-qsim" }

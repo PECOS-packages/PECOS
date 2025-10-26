@@ -302,28 +302,60 @@ fn extract_7z(archive: &PathBuf, dest: &PathBuf) -> Result<(), Box<dyn std::erro
     // The archive extracts to a directory like LLVM-14.0.6-win64
     // Find the extracted directory
     let mut extracted_dir = None;
+    let mut found_dirs = Vec::new();
+
     for entry in fs::read_dir(extract_to)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() && path.file_name().unwrap().to_str().unwrap().contains("LLVM") {
-            extracted_dir = Some(path);
-            break;
+        if path.is_dir()
+            && let Some(name) = path.file_name().and_then(|n| n.to_str())
+        {
+            found_dirs.push(name.to_string());
+            // Case-insensitive search for "LLVM" in directory name
+            if name.to_uppercase().contains("LLVM") {
+                extracted_dir = Some(path);
+                break;
+            }
         }
     }
 
-    let extracted_dir = extracted_dir.ok_or("Could not find extracted LLVM directory")?;
-
-    // If dest doesn't exist, rename extracted_dir to dest
-    if dest.exists() {
-        // Move contents
-        for entry in fs::read_dir(&extracted_dir)? {
-            let entry = entry?;
-            let dest_path = dest.join(entry.file_name());
-            fs::rename(entry.path(), dest_path)?;
+    // If we found a subdirectory with "LLVM" in the name, use it
+    if let Some(extracted_dir) = extracted_dir {
+        // If dest doesn't exist, rename extracted_dir to dest
+        if dest.exists() {
+            // Move contents
+            for entry in fs::read_dir(&extracted_dir)? {
+                let entry = entry?;
+                let dest_path = dest.join(entry.file_name());
+                fs::rename(entry.path(), dest_path)?;
+            }
+            fs::remove_dir(&extracted_dir)?;
+        } else {
+            fs::rename(&extracted_dir, dest)?;
         }
-        fs::remove_dir(&extracted_dir)?;
     } else {
-        fs::rename(&extracted_dir, dest)?;
+        // No subdirectory found with "LLVM" in name
+        // Check if there's only one directory - it might be the LLVM directory with a different name
+        if found_dirs.len() == 1 {
+            // Assume this single directory is the LLVM installation
+            let single_dir = extract_to.join(&found_dirs[0]);
+            if dest.exists() {
+                // Move contents
+                for entry in fs::read_dir(&single_dir)? {
+                    let entry = entry?;
+                    let dest_path = dest.join(entry.file_name());
+                    fs::rename(entry.path(), dest_path)?;
+                }
+                fs::remove_dir(&single_dir)?;
+            } else {
+                fs::rename(&single_dir, dest)?;
+            }
+        } else {
+            return Err(format!(
+                "Could not find extracted LLVM directory. Expected directory with 'LLVM' in name. Found directories: {found_dirs:?}"
+            )
+            .into());
+        }
     }
 
     Ok(())
@@ -354,6 +386,12 @@ fn apply_platform_fixes(llvm_dir: &Path) -> Result<(), Box<dyn std::error::Error
         fix_libunwind_references(llvm_dir)?;
 
         println!("Done");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Suppress unused parameter warning on non-macOS platforms
+        let _ = llvm_dir;
     }
 
     Ok(())

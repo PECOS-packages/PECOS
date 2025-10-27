@@ -333,7 +333,8 @@ pub fn write_cargo_config(
     // Create .cargo directory if it doesn't exist
     fs::create_dir_all(&cargo_dir)?;
 
-    let llvm_path_str = llvm_path.to_string_lossy();
+    // Convert path to forward slashes for TOML compatibility (Windows accepts forward slashes)
+    let llvm_path_str = llvm_path.to_string_lossy().replace('\\', "/");
 
     // Format the LLVM_SYS_140_PREFIX line based on force flag
     let llvm_line = if force {

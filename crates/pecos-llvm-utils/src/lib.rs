@@ -81,13 +81,13 @@ fn find_system_llvm_14() -> Option<PathBuf> {
     #[cfg(target_os = "linux")]
     {
         // Check if llvm-config-14 is in PATH and get its prefix
-        if let Ok(output) = Command::new("llvm-config-14").arg("--prefix").output() {
-            if output.status.success() {
-                let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                let path = PathBuf::from(path_str);
-                if is_valid_llvm_14(&path) {
-                    return Some(path);
-                }
+        if let Ok(output) = Command::new("llvm-config-14").arg("--prefix").output()
+            && output.status.success()
+        {
+            let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let path = PathBuf::from(path_str);
+            if is_valid_llvm_14(&path) {
+                return Some(path);
             }
         }
 

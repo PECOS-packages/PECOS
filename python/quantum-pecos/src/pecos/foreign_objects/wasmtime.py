@@ -167,6 +167,16 @@ class WasmtimeObj:
         self.stop_flag.set()
         self.inc_thread_handle.join()
 
+    def __del__(self) -> None:
+        """Ensure cleanup happens when object is garbage collected."""
+        try:
+            if hasattr(self, 'stop_flag') and hasattr(self, 'inc_thread_handle'):
+                if not self.stop_flag.is_set():
+                    self.teardown()
+        except Exception:
+            # Suppress any exceptions during cleanup to avoid issues during interpreter shutdown
+            pass
+
     def to_dict(self) -> dict:
         """Convert the WasmtimeObj to a dictionary for serialization.
 

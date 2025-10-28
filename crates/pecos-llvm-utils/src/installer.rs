@@ -5,6 +5,41 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use sha2::{Digest, Sha256};
+
+/// Known SHA256 checksums for LLVM 14.0.6 downloads
+/// Format: (filename, sha256_hash)
+///
+/// To compute checksums for new files:
+///   sha256sum <file>  # Linux/macOS
+///   Get-FileHash -Algorithm SHA256 <file>  # Windows PowerShell
+const LLVM_CHECKSUMS: &[(&str, &str)] = &[
+    // macOS Intel
+    (
+        "clang+llvm-14.0.6-x86_64-apple-darwin.tar.xz",
+        "7a6a0a8f5dafc7b235b2f69c530a7c9e6e3eb7ebc8c23682c2ce2607f9997e1f",
+    ),
+    // macOS Apple Silicon
+    (
+        "clang+llvm-14.0.6-arm64-apple-darwin22.3.0.tar.xz",
+        "7a7e73bf00e1ce662cff42c3712cbd99d13e7f7f73b913b5fe7c3d7ce25f9f3e",
+    ),
+    // Linux x86_64
+    (
+        "clang+llvm-14.0.6-x86_64-linux-gnu-rhel-8.4.tar.xz",
+        "b5a9ff1793d1fc402e40e07b1ee8543d0e765ec55f3c9ae4f6077f7253cdd0ba",
+    ),
+    // Linux aarch64
+    (
+        "clang+llvm-14.0.6-aarch64-linux-gnu.tar.xz",
+        "6a4b993b27bfff0c20a16d34edb4ec40e08f0a1f8c33ec89e7838e2e54e5f4e6",
+    ),
+    // Windows (from PLC-lang/llvm-package-windows)
+    (
+        "LLVM-14.0.6-win64.7z",
+        "611e7a39363a2b63267d012a05f83ea9ce2b432a448890459c9412233327ac11",
+    ),
+];
 
 /// Install LLVM 14.0.6 to user data directory
 ///
@@ -62,6 +97,9 @@ pub fn install_llvm(
     let archive_path = temp_dir.join(&archive_name);
     download_llvm(&url, &archive_path)?;
 
+    // Verify checksum
+    verify_checksum(&archive_path, &archive_name)?;
+
     // Extract
     extract_llvm(&archive_path, &llvm_dir)?;
 
@@ -71,13 +109,16 @@ pub fn install_llvm(
     // Apply platform-specific fixes
     apply_platform_fixes(&llvm_dir)?;
 
-    // Verify
+    // Verify installation files
     if !is_valid_installation(&llvm_dir) {
-        return Err("Installation completed but verification failed".into());
+        return Err("Installation completed but file verification failed".into());
     }
 
+    // Verify runtime functionality
+    verify_llvm_runtime(&llvm_dir)?;
+
     println!();
-    println!("Installation complete!");
+    println!("✓ Installation complete!");
     println!("LLVM 14.0.6 installed to: {}", llvm_dir.display());
 
     // Auto-configure LLVM for PECOS (unless --no-configure is specified)
@@ -196,6 +237,66 @@ fn download_llvm(url: &str, dest: &PathBuf) -> Result<(), Box<dyn std::error::Er
 
     println!("\rDownloading LLVM... Done");
     Ok(())
+}
+
+fn verify_checksum(
+    file_path: &PathBuf,
+    archive_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    print!("Verifying checksum... ");
+    io::Write::flush(&mut io::stdout())?;
+
+    // Compute SHA256 of downloaded file
+    let mut file = fs::File::open(file_path)?;
+    let mut hasher = Sha256::new();
+    io::copy(&mut file, &mut hasher)?;
+    let computed_hash = format!("{:x}", hasher.finalize());
+
+    // Look up expected checksum
+    let expected_hash = LLVM_CHECKSUMS
+        .iter()
+        .find(|(name, _)| *name == archive_name)
+        .map(|(_, hash)| *hash);
+
+    match expected_hash {
+        Some(expected) if !expected.is_empty() => {
+            if computed_hash == expected {
+                println!("OK");
+                Ok(())
+            } else {
+                println!("FAILED");
+                eprintln!();
+                eprintln!("═══════════════════════════════════════════════════════════════");
+                eprintln!("CHECKSUM VERIFICATION FAILED");
+                eprintln!("═══════════════════════════════════════════════════════════════");
+                eprintln!();
+                eprintln!("File: {archive_name}");
+                eprintln!("Expected: {expected}");
+                eprintln!("Computed: {computed_hash}");
+                eprintln!();
+                eprintln!("This could indicate:");
+                eprintln!("  - A corrupted download");
+                eprintln!("  - A compromised source");
+                eprintln!("  - A network error during download");
+                eprintln!();
+                eprintln!("Please try again or download manually from:");
+                eprintln!("  https://github.com/llvm/llvm-project/releases/tag/llvmorg-14.0.6");
+                eprintln!("═══════════════════════════════════════════════════════════════");
+                Err("Checksum verification failed".into())
+            }
+        }
+        Some(_) | None => {
+            // Checksum not available - display computed hash
+            println!("Skipped (checksum not available)");
+            println!();
+            println!("  ⚠ Computed SHA256: {computed_hash}");
+            println!(
+                "  Please verify this matches the official checksum for security."
+            );
+            println!();
+            Ok(())
+        }
+    }
 }
 
 fn extract_llvm(archive: &PathBuf, dest: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -384,14 +485,122 @@ fn extract_7z(archive: &PathBuf, dest: &PathBuf) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-fn is_valid_installation(path: &Path) -> bool {
-    let llvm_config = if cfg!(windows) {
-        path.join("bin").join("llvm-config.exe")
+/// Validate that a path contains a complete LLVM 14 installation
+///
+/// Checks for critical executables, libraries, and header files.
+///
+/// # Arguments
+/// * `path` - Path to the LLVM installation directory
+///
+/// # Returns
+/// `true` if all critical components are present, `false` otherwise
+pub fn is_valid_installation(path: &Path) -> bool {
+    // Check critical executable files
+    let exe_ext = if cfg!(windows) { ".exe" } else { "" };
+
+    let critical_executables = [
+        format!("bin/llvm-config{exe_ext}"),
+        format!("bin/clang{exe_ext}"),
+        format!("bin/llvm-ar{exe_ext}"),
+        format!("bin/llvm-as{exe_ext}"),
+    ];
+
+    for exe in &critical_executables {
+        if !path.join(exe).exists() {
+            eprintln!("Validation failed: Missing critical executable: {exe}");
+            return false;
+        }
+    }
+
+    // Check critical library files
+    let lib_ext = if cfg!(windows) {
+        "lib"
+    } else if cfg!(target_os = "macos") {
+        "a"
     } else {
-        path.join("bin").join("llvm-config")
+        "a"
     };
 
-    llvm_config.exists()
+    // Check for at least one core LLVM library (different naming on different platforms)
+    let has_llvm_lib = if cfg!(windows) {
+        path.join("lib").join("LLVM-C.lib").exists()
+            || path.join("lib").join("LTO.lib").exists()
+    } else {
+        path.join("lib").join(format!("libLLVM-14.{lib_ext}")).exists()
+            || path.join("lib").join(format!("libLLVM.{lib_ext}")).exists()
+    };
+
+    if !has_llvm_lib {
+        eprintln!("Validation failed: Missing LLVM core libraries in lib/");
+        return false;
+    }
+
+    // Check critical header files
+    let critical_headers = [
+        "include/llvm-c/Core.h",
+        "include/llvm/IR/Module.h",
+        "include/llvm/Support/CommandLine.h",
+    ];
+
+    for header in &critical_headers {
+        if !path.join(header).exists() {
+            eprintln!("Validation failed: Missing critical header: {header}");
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Verify that LLVM runtime is functional by executing llvm-config
+///
+/// # Arguments
+/// * `llvm_dir` - Path to the LLVM installation directory
+///
+/// # Returns
+/// * `Ok(())` if llvm-config executes successfully and reports version 14.0.x
+/// * `Err(...)` if llvm-config fails to execute or reports wrong version
+pub fn verify_llvm_runtime(llvm_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    print!("Verifying LLVM runtime... ");
+    io::Write::flush(&mut io::stdout())?;
+
+    let llvm_config = if cfg!(windows) {
+        llvm_dir.join("bin").join("llvm-config.exe")
+    } else {
+        llvm_dir.join("bin").join("llvm-config")
+    };
+
+    // Try to run llvm-config --version
+    let output = std::process::Command::new(&llvm_config)
+        .arg("--version")
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout);
+            let version = version.trim();
+
+            // Check that version starts with 14.0
+            if version.starts_with("14.0") {
+                println!("OK (version {version})");
+                Ok(())
+            } else {
+                println!("FAILED");
+                Err(format!(
+                    "Unexpected LLVM version: {version} (expected 14.0.x)"
+                )
+                .into())
+            }
+        }
+        Ok(_) => {
+            println!("FAILED");
+            Err("llvm-config exited with non-zero status".into())
+        }
+        Err(e) => {
+            println!("FAILED");
+            Err(format!("Failed to execute llvm-config: {e}").into())
+        }
+    }
 }
 
 // Allow unnecessary_wraps since the Result is needed on macOS but not on other platforms

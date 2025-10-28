@@ -42,6 +42,11 @@ enum Commands {
     Configure,
     /// Show LLVM version information
     Version,
+    /// Validate an LLVM installation at a specific path
+    Validate {
+        /// Path to the LLVM installation to validate
+        path: std::path::PathBuf,
+    },
 }
 
 fn main() {
@@ -56,6 +61,7 @@ fn main() {
         } => cmd_install(force, no_configure),
         Commands::Configure => cmd_configure(),
         Commands::Version => cmd_version(),
+        Commands::Validate { path } => cmd_validate(path),
     }
 }
 
@@ -160,5 +166,54 @@ fn cmd_version() {
     } else {
         println!("LLVM 14 not found");
         process::exit(1);
+    }
+}
+
+fn cmd_validate(path: std::path::PathBuf) {
+    use pecos_llvm_utils::installer::{is_valid_installation, verify_llvm_runtime};
+
+    println!("Validating LLVM installation at: {}", path.display());
+    println!();
+
+    // Check if path exists
+    if !path.exists() {
+        eprintln!("✗ Path does not exist");
+        process::exit(1);
+    }
+
+    // Validate file structure
+    println!("Checking file structure...");
+    let files_valid = is_valid_installation(&path);
+
+    if !files_valid {
+        eprintln!();
+        eprintln!("✗ Validation FAILED: Missing critical files");
+        eprintln!();
+        eprintln!("This LLVM installation is incomplete or corrupted.");
+        eprintln!("Consider reinstalling LLVM:");
+        eprintln!("  cargo run -p pecos-llvm-utils --bin pecos-llvm -- install --force");
+        process::exit(1);
+    }
+
+    println!("✓ File structure OK");
+    println!();
+
+    // Validate runtime
+    match verify_llvm_runtime(&path) {
+        Ok(()) => {
+            println!();
+            println!("✓ All checks passed!");
+            println!("This LLVM installation appears to be valid and functional.");
+            process::exit(0);
+        }
+        Err(e) => {
+            eprintln!();
+            eprintln!("✗ Runtime validation FAILED: {e}");
+            eprintln!();
+            eprintln!("The LLVM binaries may be corrupted or have missing dependencies.");
+            eprintln!("Consider reinstalling LLVM:");
+            eprintln!("  cargo run -p pecos-llvm-utils --bin pecos-llvm -- install --force");
+            process::exit(1);
+        }
     }
 }

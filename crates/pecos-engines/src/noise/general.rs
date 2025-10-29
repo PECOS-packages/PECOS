@@ -309,7 +309,17 @@ pub struct GeneralNoiseModel {
     /// Models the probability that a measurement operation on one qubit affects nearby qubits. In
     /// ion trap systems, this could represent scattered light during fluorescence detection
     /// affecting neighboring ions.
-    p_meas_crosstalk: f64,
+    /// Further details on how crosstalk is modeled depends on information from
+    /// the device runtime, which are provided as MeasCrosstalkGlobalPayload instructions.
+    p_meas_crosstalk_global: f64,
+
+    /// Probability of crosstalk during measurement operations on local qubits
+    ///
+    /// See doc for p_meas_crosstalk_global. The intended distinction is that this
+    /// parameter applies to only qubits that are close to the measured qubit.
+    /// /// Further details on how crosstalk is modeled depends on information from
+    /// the device runtime, which are provided as MeasCrosstalkLocalPayload instructions.
+    p_meas_crosstalk_local: f64,
 
     // --- internally used variables --- //
     /// The maximum of `p_meas_0` and `p_meas_1`
@@ -520,7 +530,7 @@ impl GeneralNoiseModel {
                         self.prepared_qubits.insert(usize::from(q));
                     }
                     self.apply_prep_faults(&gate, &mut builder);
-                    self.apply_crosstalk_faults(&gate, self.p_prep_crosstalk, &mut builder);
+                    self.apply_simple_crosstalk_faults(&gate, self.p_prep_crosstalk, &mut builder);
                 }
                 GateType::Measure | GateType::MeasureLeaked => {
                     // Track which qubits are being measured for leakage handling
@@ -533,7 +543,31 @@ impl GeneralNoiseModel {
                     // Measurement noise is handled in apply_noise_on_continue_processing
                     // We still need to add the original gate here
                     builder.add_gate_command(&gate);
-                    self.apply_crosstalk_faults(&gate, self.p_meas_crosstalk, &mut builder);
+                    // TODO: simplified crosstalk (H1/H2)
+                    // if self.simple_crosstalk:
+                    //    self.apply_simple_crosstalk_faults(&gate, self.p_meas_crosstalk, &mut builder);
+                }
+                GateType::MeasCrosstalkGlobalPayload => {
+                    let probability = self.p_meas_crosstalk_global * gate.params[0];
+
+                    // Global crosstalk applies to all qubits that are *not* in the payload
+                    let gate_qubits: Vec<usize> = gate.qubits.iter().map(|q| usize::from(*q)).collect();
+                    let potential_victims = self.prepared_qubits
+                        .iter()
+                        .filter(|q| !gate_qubits.contains(q))
+                        .cloned()
+                        .collect();
+
+                    // Otherwise, it is the same channel for Global and Local
+                    trace!("Applying global crosstalk...");
+                    self.apply_crosstalk_faults_from_payload(probability, potential_victims, &mut builder);
+                }
+                GateType::MeasCrosstalkLocalPayload => {
+                    let probability = self.p_meas_crosstalk_local * gate.params[0];
+                    let potential_victims = gate.qubits.iter().map(|q| usize::from(*q)).collect();
+
+                    trace!("Applying local crosstalk...");
+                    self.apply_crosstalk_faults_from_payload(probability, potential_victims, &mut builder);
                 }
                 GateType::I => {
                     let err_msg = format!(
@@ -810,7 +844,7 @@ impl GeneralNoiseModel {
         }
     }
 
-    /// Apply crosstalk noise
+    /// Apply simple crosstalk noise
     ///
     /// Naive crosstalk noise model:
     /// 1. All qubits in the trap but the ones in the `gate` are subject to crosstalk
@@ -820,7 +854,7 @@ impl GeneralNoiseModel {
     ///
     /// In ion trap systems, this could represent scattered light during optical pumping
     /// affecting neighboring ions.
-    pub fn apply_crosstalk_faults(
+    pub fn apply_simple_crosstalk_faults(
         &mut self,
         gate: &Gate,
         probability: f64,
@@ -843,6 +877,50 @@ impl GeneralNoiseModel {
         self.measured_qubits.extend(
             affected_qubits.iter().map(|&q| (q, false, true)), // (qubit, is_measure_leaked, is_crosstalk)
         );
+    }
+
+    /// Apply crosstalk noise from runtime information given by Crosstalk*Payload instructions
+    ///
+    /// In ion trap systems, this could represent scattered light during optical pumping
+    /// affecting neighboring ions.
+    pub fn apply_crosstalk_faults_from_payload(
+        &mut self,
+        probability: f64,
+        qubits: Vec<usize>,
+        builder: &mut ByteMessageBuilder,
+    ) {
+        // This needs to be checked here because of the strength_factor from
+        // the payload potentially causing probability larger than 1.0
+        // TODO: do validation earlier?
+        assert!(
+            (0.0..=1.0).contains(&probability),
+            "Probability must be between 0 and 1, got {probability}"
+        );
+
+        for q in qubits {
+            // If q is already leaked, we currently skip.
+            // TODO: We should include a seepage component to crosstalk in the future.
+            if !self.is_leaked(q) && self.rng.occurs(probability) {
+                // The qubit leaks with some (hardcoded) probability
+                if self.rng.occurs(0.75) {
+                    if let Some(gate) = self.leak(usize::from(q)) {
+                        builder.add_gate_command(&gate);
+                    }
+                    trace!("Qubit {q} leaked during crosstalk");
+                // Otherwise, it results in a fully mixed distribution of 0/1 state
+                } else {
+                    // Reset the qubit
+                    builder.add_prep(&[q]);
+                    // Bit-flip with 0.5 probability to generate a full mixture
+                    if self.rng.occurs(0.5) {
+                        builder.add_x(&[q]);
+                        trace!("Qubit {q} collapsed to |1> during crosstalk");
+                    } else {
+                        trace!("Qubit {q} collapsed to |0> during crosstalk");
+                    }
+                }
+            }
+        }
     }
 
     /// Apply single-qubit gate noise faults

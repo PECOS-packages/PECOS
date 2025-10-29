@@ -832,10 +832,17 @@ impl PyGeneralNoiseModelBuilder {
         })
     }
 
-    /// Set the probability of crosstalk during measurement operations
-    fn with_p_meas_crosstalk(&self, prob: f64) -> PyResult<Self> {
+    /// Set the probability of global crosstalk during measurement operations
+    fn with_p_meas_crosstalk_global(&self, prob: f64) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_p_meas_crosstalk(prob),
+            inner: self.inner.clone().with_p_meas_crosstalk_global(prob),
+        })
+    }
+
+    /// Set the probability of local crosstalk during measurement operations
+    fn with_p_meas_crosstalk_local(&self, prob: f64) -> PyResult<Self> {
+        Ok(Self {
+            inner: self.inner.clone().with_p_meas_crosstalk_local(prob),
         })
     }
 

@@ -102,7 +102,9 @@ impl Default for GeneralNoiseModel {
             rng: NoiseRng::default(),
             prepared_qubits: BTreeSet::new(),
             measured_qubits: Vec::new(),
-            p_meas_crosstalk: 0.0,
+            // TODO: Maybe the p_meas_crosstalk parameter should remain for the simple_crosstalk?
+            p_meas_crosstalk_global: 0.0,
+            p_meas_crosstalk_local: 0.0,
             p_prep_crosstalk: 0.0,
 
             p_idle_coherent_to_incoherent_factor: 1.5,

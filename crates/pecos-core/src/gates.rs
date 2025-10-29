@@ -295,6 +295,43 @@ impl Gate {
         }
     }
 
+    /// Create a new MeasCrosstalkGlobalPayload with the data from runtime.
+    ///
+    /// # Arguments
+    ///
+    /// * `strength_factor` - Runtime-informed crosstalk strength. For instance, it may
+    /// reflect the length of time the crosstalk source was active for.
+    /// * `qubits` - The qubits that are guaranteed *not* to be affected by the
+    /// global crosstalk event.
+    ///
+    /// TODO: it seems unintuitive to give the complement of the list of victim qubits.
+    /// It fits better with the previous version of crosstalk, but we might want to
+    /// refactor this.
+    ///
+    /// # Returns
+    ///
+    /// A new MeasCrosstalkGlobalPayload gate with the specified parameters
+    #[must_use]
+    pub fn global_crosstalk(strength_factor: f64, qubits: Vec<QubitId>) -> Self {
+        Self::new(GateType::MeasCrosstalkGlobalPayload, vec![strength_factor], qubits)
+    }
+
+    /// Create a new MeasCrosstalkLocalPayload with the data from runtime.
+    ///
+    /// # Arguments
+    ///
+    /// * `strength_factor` - Runtime-informed crosstalk strength. For instance, it may
+    /// reflect the length of time the crosstalk source was active for.
+    /// * `qubits` - The qubits that are potential victims of the local crosstalk event.
+    ///
+    /// # Returns
+    ///
+    /// A new MeasCrosstalkLocalPayload gate with the specified parameters
+    #[must_use]
+    pub fn local_crosstalk(strength_factor: f64, qubits: Vec<QubitId>) -> Self {
+        Self::new(GateType::MeasCrosstalkLocalPayload, vec![strength_factor], qubits)
+    }
+
     /// Returns the number of angle parameters this gate requires
     ///
     /// # Returns

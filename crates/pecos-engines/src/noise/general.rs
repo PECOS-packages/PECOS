@@ -898,9 +898,11 @@ impl GeneralNoiseModel {
         );
 
         for q in qubits {
-            // If q is already leaked, we currently skip.
             // TODO: We should include a seepage component to crosstalk in the future.
-            if !self.is_leaked(q) && self.rng.occurs(probability) {
+            if self.prepared_qubits.contains(&q)
+                && !self.is_leaked(q) // If q is already leaked, we currently skip
+                && self.rng.occurs(probability)
+            {
                 // The qubit leaks with some (hardcoded) probability
                 if self.rng.occurs(0.75) {
                     if let Some(gate) = self.leak(usize::from(q)) {

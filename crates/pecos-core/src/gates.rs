@@ -312,8 +312,12 @@ impl Gate {
     ///
     /// A new MeasCrosstalkGlobalPayload gate with the specified parameters
     #[must_use]
-    pub fn global_crosstalk(strength_factor: f64, qubits: Vec<QubitId>) -> Self {
-        Self::new(GateType::MeasCrosstalkGlobalPayload, vec![strength_factor], qubits)
+    pub fn meas_crosstalk_global_payload(strength_factor: f64, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::new(
+            GateType::MeasCrosstalkGlobalPayload,
+            vec![strength_factor],
+            qubits.iter().map(|&q| q.into()).collect(),
+        )
     }
 
     /// Create a new MeasCrosstalkLocalPayload with the data from runtime.
@@ -328,8 +332,12 @@ impl Gate {
     ///
     /// A new MeasCrosstalkLocalPayload gate with the specified parameters
     #[must_use]
-    pub fn local_crosstalk(strength_factor: f64, qubits: Vec<QubitId>) -> Self {
-        Self::new(GateType::MeasCrosstalkLocalPayload, vec![strength_factor], qubits)
+    pub fn meas_crosstalk_local_payload(strength_factor: f64, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::new(
+            GateType::MeasCrosstalkLocalPayload,
+            vec![strength_factor],
+            qubits.iter().map(|&q| q.into()).collect(),
+        )
     }
 
     /// Returns the number of angle parameters this gate requires

@@ -17,22 +17,22 @@ const LLVM_CHECKSUMS: &[(&str, &str)] = &[
     // macOS Intel
     (
         "clang+llvm-14.0.6-x86_64-apple-darwin.tar.xz",
-        "7a6a0a8f5dafc7b235b2f69c530a7c9e6e3eb7ebc8c23682c2ce2607f9997e1f",
+        "e6cc6b8279661fd4452c2847cb8e55ce1e54e1faf4ab497b37c85ffdb6685e7c",
     ),
     // macOS Apple Silicon
     (
         "clang+llvm-14.0.6-arm64-apple-darwin22.3.0.tar.xz",
-        "7a7e73bf00e1ce662cff42c3712cbd99d13e7f7f73b913b5fe7c3d7ce25f9f3e",
+        "82f4f7607a16c9aaf7314b945bde6a4639836ec9d2b474ebb3a31dee33e3c15a",
     ),
     // Linux x86_64
     (
         "clang+llvm-14.0.6-x86_64-linux-gnu-rhel-8.4.tar.xz",
-        "b5a9ff1793d1fc402e40e07b1ee8543d0e765ec55f3c9ae4f6077f7253cdd0ba",
+        "7412026be8bb8f6b4c25ef58c7a1f78ed5ea039d94f0fa633a386de9c60a6942",
     ),
     // Linux aarch64
     (
         "clang+llvm-14.0.6-aarch64-linux-gnu.tar.xz",
-        "6a4b993b27bfff0c20a16d34edb4ec40e08f0a1f8c33ec89e7838e2e54e5f4e6",
+        "7412026be8bb8f6b4c25ef58c7a1f78ed5ea039d94f0fa633a386de9c60a6942",
     ),
     // Windows (from PLC-lang/llvm-package-windows)
     (

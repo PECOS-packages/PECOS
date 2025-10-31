@@ -88,8 +88,22 @@ The installer automatically configures PECOS after installation.
        ```
 
    === "Windows"
-       1. Download: [LLVM-14.0.6-win64.exe](https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/LLVM-14.0.6-win64.exe)
-       2. Run the installer (typically installs to `C:\Program Files\LLVM`)
+       !!! warning "Windows LLVM Requirement"
+           The official LLVM Windows installer (`LLVM-*.exe`) is **toolchain-only** and lacks required development files (`llvm-config.exe` and headers). You need a **full development package**.
+
+       **Recommended: Use pecos-llvm installer** (see Option 1 above)
+
+       **For system-wide installation:**
+
+       Download a full development package from community sources:
+
+       - [bitgate/llvm-windows-full-builds](https://github.com/bitgate/llvm-windows-full-builds) (recommended)
+       - [vovkos/llvm-package-windows](https://github.com/vovkos/llvm-package-windows)
+
+       Extract to a location like `C:\LLVM` or `C:\Program Files\LLVM-14`, then set:
+       ```cmd
+       set LLVM_SYS_140_PREFIX=C:\LLVM
+       ```
 
 2. **Configure PECOS** to detect your LLVM installation:
    ```bash

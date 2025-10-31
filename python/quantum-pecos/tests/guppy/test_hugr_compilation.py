@@ -91,6 +91,8 @@ class TestHUGRCompilation:
 
     def test_llvm_ir_format_validation(self) -> None:
         """Test that generated LLVM IR follows HUGR conventions."""
+        import os
+
         # Create a test LLVM IR file following HUGR conventions
         test_llvm = """
 ; HUGR convention LLVM IR
@@ -124,32 +126,40 @@ attributes #0 = { "EntryPoint" }
             llvm_file = Path(f.name)
 
         try:
-            # Try to validate with llvm-as if available
+            # Find llvm-as - check PATH first, then LLVM_SYS_140_PREFIX
             llvm_as_path = shutil.which("llvm-as")
+
+            if not llvm_as_path:
+                # Not in PATH, try LLVM_SYS_140_PREFIX environment variable
+                llvm_prefix = os.environ.get("LLVM_SYS_140_PREFIX")
+                if llvm_prefix:
+                    potential_path = (
+                        Path(llvm_prefix) / "bin" / "llvm-as.exe"
+                        if os.name == "nt"
+                        else Path(llvm_prefix) / "bin" / "llvm-as"
+                    )
+                    if potential_path.exists():
+                        llvm_as_path = str(potential_path)
+
             if llvm_as_path:
+                # Validate with llvm-as
+                output_path = "nul" if os.name == "nt" else "/dev/null"
                 result = subprocess.run(
-                    [llvm_as_path, str(llvm_file), "-o", "/dev/null"],
+                    [llvm_as_path, str(llvm_file), "-o", output_path],
                     capture_output=True,
                     text=True,
                     check=False,
                 )
 
-                if result.returncode == 0:
-                    # Successfully validated
-                    assert True, "LLVM IR format is valid"
-                else:
-                    # Validation failed
-                    pytest.skip(f"LLVM IR validation failed: {result.stderr}")
+                assert (
+                    result.returncode == 0
+                ), f"LLVM IR validation failed: {result.stderr}"
             else:
-                # llvm-as not available, just check file was created
-                assert llvm_file.exists(), "LLVM IR file should be created"
-                content = llvm_file.read_text()
-
-                # Check for key HUGR convention patterns
-                assert "__quantum__qis__" in content, "Should have quantum intrinsics"
-                assert "i64" in content, "Should use i64 for qubit indices"
-                assert "@main" in content, "Should have main entry point"
-                assert "EntryPoint" in content, "Should have EntryPoint attribute"
+                # llvm-as not available - this shouldn't happen for HUGR/QIS tests
+                pytest.fail(
+                    "llvm-as not found. LLVM should be available for HUGR/QIS tests. "
+                    "Check LLVM_SYS_140_PREFIX environment variable.",
+                )
 
         finally:
             # Clean up

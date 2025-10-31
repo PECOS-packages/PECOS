@@ -29,7 +29,7 @@ enum Commands {
         #[arg(short, long)]
         quiet: bool,
     },
-    /// Install LLVM 14.0.6 to ~/.pecos/llvm/
+    /// Install LLVM 14.0.6 (default: ~/.pecos/llvm/)
     Install {
         /// Force reinstall even if already present
         #[arg(short, long)]
@@ -37,6 +37,16 @@ enum Commands {
         /// Skip automatic configuration after installation
         #[arg(long)]
         no_configure: bool,
+        /// Install system-wide to standard location (requires admin/sudo)
+        /// Windows: C:\Program Files\LLVM-14, Unix: /usr/local/LLVM-14
+        /// Sets `LLVM_SYS_140_PREFIX` environment variable permanently
+        #[arg(long, conflicts_with = "user")]
+        system: bool,
+        /// Install to user-level standard location
+        /// Windows: %LOCALAPPDATA%\Programs\LLVM-14, Unix: ~/.local/LLVM-14
+        /// Sets `LLVM_SYS_140_PREFIX` environment variable permanently
+        #[arg(long, conflicts_with = "system")]
+        user: bool,
     },
     /// Auto-configure LLVM for PECOS (updates .cargo/config.toml)
     Configure,
@@ -58,7 +68,21 @@ fn main() {
         Commands::Install {
             force,
             no_configure,
-        } => cmd_install(force, no_configure),
+            system,
+            user,
+        } => {
+            use pecos_llvm_utils::installer::InstallLocation;
+
+            let location = if system {
+                InstallLocation::System
+            } else if user {
+                InstallLocation::User
+            } else {
+                InstallLocation::PecosManaged
+            };
+
+            cmd_install(force, no_configure, location);
+        }
         Commands::Configure => cmd_configure(),
         Commands::Version => cmd_version(),
         Commands::Validate { path } => cmd_validate(&path),
@@ -100,10 +124,14 @@ fn cmd_check(quiet: bool) {
     }
 }
 
-fn cmd_install(force: bool, no_configure: bool) {
+fn cmd_install(
+    force: bool,
+    no_configure: bool,
+    location: pecos_llvm_utils::installer::InstallLocation,
+) {
     use pecos_llvm_utils::installer::install_llvm;
 
-    match install_llvm(force, no_configure) {
+    match install_llvm(force, no_configure, location) {
         Ok(_install_path) => {
             // Success message is printed by install_llvm
             process::exit(0);

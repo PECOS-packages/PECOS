@@ -11,7 +11,9 @@ use std::process::Command;
 /// Find LLVM 14 installation on the system.
 ///
 /// This function searches for LLVM 14 in the following priority order:
-/// 1. Home directory (~/.pecos/llvm)
+/// 1. Home directory:
+///    - Windows: ~/.pecos/LLVM-14 (new) or ~/.pecos/llvm (legacy)
+///    - Unix: ~/.pecos/llvm
 /// 2. Project-local installation (llvm/ directory relative to repository root)
 /// 3. System installations (platform-specific locations)
 ///
@@ -31,11 +33,30 @@ use std::process::Command;
 /// ```
 #[must_use]
 pub fn find_llvm_14(repo_root: Option<PathBuf>) -> Option<PathBuf> {
-    // 1. Check home directory (~/.pecos/llvm)
+    // 1. Check home directory
     if let Some(home_dir) = dirs::home_dir() {
-        let user_llvm = home_dir.join(".pecos").join("llvm");
-        if is_valid_llvm_14(&user_llvm) {
-            return Some(user_llvm);
+        let pecos_dir = home_dir.join(".pecos");
+
+        // On Windows, check new location first (LLVM-14), then legacy (llvm)
+        #[cfg(target_os = "windows")]
+        {
+            let user_llvm_new = pecos_dir.join("LLVM-14");
+            if is_valid_llvm_14(&user_llvm_new) {
+                return Some(user_llvm_new);
+            }
+            let user_llvm_legacy = pecos_dir.join("llvm");
+            if is_valid_llvm_14(&user_llvm_legacy) {
+                return Some(user_llvm_legacy);
+            }
+        }
+
+        // On Unix, check standard location
+        #[cfg(not(target_os = "windows"))]
+        {
+            let user_llvm = pecos_dir.join("llvm");
+            if is_valid_llvm_14(&user_llvm) {
+                return Some(user_llvm);
+            }
         }
     }
 
@@ -106,9 +127,21 @@ fn find_system_llvm_14() -> Option<PathBuf> {
 
     #[cfg(target_os = "windows")]
     {
-        // Windows typically uses project-local installation
-        // System-wide LLVM installations on Windows would need to be in PATH
-        // or have LLVM_SYS_140_PREFIX set
+        // Try common Windows installation paths
+        // Note: The official LLVM Windows installer (LLVM-*.exe) is toolchain-only
+        // and lacks llvm-config.exe and development headers.
+        // Users need a full development package (e.g., from community sources).
+        for path_str in [
+            "C:\\Program Files\\LLVM",    // Official installer (usually incomplete)
+            "C:\\LLVM",                   // Custom installation
+            "C:\\Program Files\\LLVM-14", // Versioned installation
+            "C:\\LLVM-14",                // Versioned custom installation
+        ] {
+            let llvm_path = PathBuf::from(path_str);
+            if is_valid_llvm_14(&llvm_path) {
+                return Some(llvm_path);
+            }
+        }
     }
 
     None
@@ -184,10 +217,16 @@ pub fn print_llvm_not_found_error() {
 
     #[cfg(target_os = "windows")]
     {
-        eprintln!("  Or download manually:");
-        eprintln!("    https://releases.llvm.org/download.html#14.0.0");
+        eprintln!("  For system-wide installation on Windows:");
+        eprintln!("    IMPORTANT: The official LLVM Windows installer (LLVM-*.exe) is");
+        eprintln!("    toolchain-only and lacks development files (llvm-config, headers).");
         eprintln!();
-        eprintln!("  Then set:");
+        eprintln!("    You need a FULL DEVELOPMENT package from:");
+        eprintln!("    - https://github.com/bitgate/llvm-windows-full-builds (recommended)");
+        eprintln!("    - https://github.com/vovkos/llvm-package-windows");
+        eprintln!("    - Build from source: https://llvm.org/docs/GettingStarted.html");
+        eprintln!();
+        eprintln!("  After installation, set:");
         eprintln!("    set LLVM_SYS_140_PREFIX=C:\\path\\to\\llvm");
     }
 
@@ -207,7 +246,7 @@ pub fn print_llvm_not_found_error() {
 /// configuration function for PECOS.
 ///
 /// Priority order:
-/// 1. ~/.pecos/llvm/ - PECOS-managed LLVM (if it exists)
+/// 1. ~/.pecos/llvm (or LLVM-14 on Windows) - PECOS-managed LLVM (if it exists)
 /// 2. `LLVM_SYS_140_PREFIX` environment variable (if set and valid)
 /// 3. System LLVM 14 (Homebrew, system paths, etc.)
 ///
@@ -227,18 +266,33 @@ pub fn auto_configure_llvm(
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     use std::env;
 
-    // Priority 1: Check ~/.pecos/llvm/
+    // Priority 1: Check ~/.pecos/ for PECOS-managed LLVM
+    // Uses find_llvm_14 which checks platform-appropriate paths
     if let Some(home_dir) = dirs::home_dir() {
-        let pecos_llvm = home_dir.join(".pecos").join("llvm");
-        if is_valid_llvm_14(&pecos_llvm) {
-            // Found PECOS-managed LLVM, configure it
-            let project_root = project_root
-                .or_else(get_repo_root_from_manifest)
-                .or_else(find_cargo_project_root)
-                .ok_or("Could not find Cargo project root")?;
+        let pecos_dir = home_dir.join(".pecos");
 
-            write_cargo_config(&project_root, &pecos_llvm, true)?;
-            return Ok(pecos_llvm);
+        // Windows: checks LLVM-14 (custom) then llvm (standard)
+        // Unix: checks llvm only
+        #[cfg(target_os = "windows")]
+        let pecos_llvm_paths = vec![
+            pecos_dir.join("LLVM-14"), // Custom Windows naming
+            pecos_dir.join("llvm"),    // Standard naming
+        ];
+
+        #[cfg(not(target_os = "windows"))]
+        let pecos_llvm_paths = vec![pecos_dir.join("llvm")];
+
+        for pecos_llvm in pecos_llvm_paths {
+            if is_valid_llvm_14(&pecos_llvm) {
+                // Found PECOS-managed LLVM, configure it
+                let project_root = project_root
+                    .or_else(get_repo_root_from_manifest)
+                    .or_else(find_cargo_project_root)
+                    .ok_or("Could not find Cargo project root")?;
+
+                write_cargo_config(&project_root, &pecos_llvm, true)?;
+                return Ok(pecos_llvm);
+            }
         }
     }
 

@@ -101,7 +101,7 @@ cuda = [
 # Install with: uv pip install -e .[cuda]
 
 [tool.uv]
-default-groups = ["dev", "test"]
+# default-groups = ["dev", "test"]  # Commented out - groups not defined in dependency-groups
 
 [tool.uv.sources]
 pecos-rslib = { workspace = true }

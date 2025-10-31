@@ -1,6 +1,5 @@
 //! Utilities for HUGR processing and validation
 
-use crate::REGISTRY;
 use anyhow::{Error, Result, anyhow};
 use tket::extension::{TKET1_EXTENSION_ID, TKET1_OP_NAME};
 use tket::hugr::envelope::get_generator;
@@ -56,8 +55,10 @@ pub fn read_hugr_envelope(bytes: &[u8]) -> Result<Hugr> {
     };
 
     // Try to load as a Package first
+    // Use None for the registry to allow loading HUGRs with unknown/newer extensions
+    // This is more permissive and matches how Selene loads HUGRs
     let mut cursor = std::io::Cursor::new(&bytes_to_load);
-    match Package::load(&mut cursor, Some(&REGISTRY)) {
+    match Package::load(&mut cursor, None) {
         Ok(package) => {
             // Validate package module count
             if package.modules.len() != 1 {
@@ -93,9 +94,9 @@ pub fn read_hugr_envelope(bytes: &[u8]) -> Result<Hugr> {
         }
         Err(_) if is_json => {
             // If Package loading failed for JSON, it might be a direct HUGR
-            // Try loading as a direct HUGR
+            // Try loading as a direct HUGR with None for more permissive loading
             let mut cursor = std::io::Cursor::new(&bytes_to_load);
-            match Hugr::load(&mut cursor, Some(&REGISTRY)) {
+            match Hugr::load(&mut cursor, None) {
                 Ok(hugr) => {
                     // Still check for unsupported operations
                     for node in hugr.nodes() {
@@ -113,9 +114,12 @@ pub fn read_hugr_envelope(bytes: &[u8]) -> Result<Hugr> {
         }
         Err(e) => {
             // For binary format, if Package loading failed, try direct HUGR loading
+            // Use None for the registry to be more permissive
+            log::debug!("Package::load failed with: {e:?}");
             let mut cursor = std::io::Cursor::new(&bytes_to_load);
-            match Hugr::load(&mut cursor, Some(&REGISTRY)) {
+            match Hugr::load(&mut cursor, None) {
                 Ok(hugr) => {
+                    log::debug!("Successfully loaded as direct HUGR (not package)");
                     // Still check for unsupported operations
                     for node in hugr.nodes() {
                         let op = hugr.get_optype(node);
@@ -127,7 +131,12 @@ pub fn read_hugr_envelope(bytes: &[u8]) -> Result<Hugr> {
                     }
                     Ok(hugr)
                 }
-                Err(_) => Err(Error::new(e).context("Error loading HUGR package")),
+                Err(hugr_err) => {
+                    log::error!("Both Package::load and Hugr::load failed");
+                    log::error!("Package error: {e:?}");
+                    log::error!("Hugr error: {hugr_err:?}");
+                    Err(Error::new(e).context(format!("Error loading HUGR package (also tried direct HUGR load which failed with: {hugr_err})")))
+                }
             }
         }
     }

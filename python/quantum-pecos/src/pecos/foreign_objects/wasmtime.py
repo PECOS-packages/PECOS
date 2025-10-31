@@ -170,12 +170,16 @@ class WasmtimeObj:
     def __del__(self) -> None:
         """Ensure cleanup happens when object is garbage collected."""
         try:
-            if hasattr(self, 'stop_flag') and hasattr(self, 'inc_thread_handle'):
-                if not self.stop_flag.is_set():
-                    self.teardown()
-        except Exception:
-            # Suppress any exceptions during cleanup to avoid issues during interpreter shutdown
-            pass
+            if (
+                hasattr(self, "stop_flag")
+                and hasattr(self, "inc_thread_handle")
+                and not self.stop_flag.is_set()
+            ):
+                self.teardown()
+        except Exception as e:  # noqa: BLE001
+            # Broad exception handling is required in __del__ to prevent errors during interpreter shutdown.
+            # Any exception type could be raised, and logging is not safe at this stage.
+            del e  # Explicitly acknowledge we're ignoring the exception
 
     def to_dict(self) -> dict:
         """Convert the WasmtimeObj to a dictionary for serialization.

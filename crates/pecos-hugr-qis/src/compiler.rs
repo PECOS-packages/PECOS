@@ -96,6 +96,7 @@ fn codegen_extensions() -> CodegenExtsMap<'static, Hugr> {
         .add_logic_extensions()
         .add_extension(SeleneHeapArrayCodegen::LOWERING.codegen_extension())
         .add_default_static_array_extensions()
+        .add_default_borrow_array_extensions(pcg.clone())
         .add_extension(FuturesCodegenExtension)
         .add_extension(QSystemCodegenExtension::from(pcg.clone()))
         .add_extension(RandomCodegenExtension)

@@ -78,42 +78,6 @@ pub use utils::read_hugr_envelope;
 pub use tket::hugr::llvm::inkwell::OptimizationLevel;
 
 // Extension registry used throughout the crate
-use tket::extension::rotation::ROTATION_EXTENSION;
-use tket::extension::{TKET_EXTENSION, TKET1_EXTENSION};
-use tket::hugr::extension::{ExtensionRegistry, prelude as hugr_prelude};
-use tket::hugr::std_extensions::arithmetic::{
-    conversions, float_ops, float_types, int_ops, int_types,
-};
-use tket::hugr::std_extensions::{collections, logic, ptr};
-use tket_qsystem::extension::{futures as qsystem_futures, qsystem, result as qsystem_result};
-
-/// Extension registry with all required extensions for HUGR compilation
-static REGISTRY: std::sync::LazyLock<ExtensionRegistry> = std::sync::LazyLock::new(|| {
-    ExtensionRegistry::new([
-        hugr_prelude::PRELUDE.to_owned(),
-        int_types::EXTENSION.to_owned(),
-        int_ops::EXTENSION.to_owned(),
-        float_types::EXTENSION.to_owned(),
-        float_ops::EXTENSION.to_owned(),
-        conversions::EXTENSION.to_owned(),
-        logic::EXTENSION.to_owned(),
-        ptr::EXTENSION.to_owned(),
-        collections::list::EXTENSION.to_owned(),
-        collections::array::EXTENSION.to_owned(),
-        collections::static_array::EXTENSION.to_owned(),
-        collections::value_array::EXTENSION.to_owned(),
-        qsystem_futures::EXTENSION.to_owned(),
-        qsystem_result::EXTENSION.to_owned(),
-        qsystem::EXTENSION.to_owned(),
-        ROTATION_EXTENSION.to_owned(),
-        TKET_EXTENSION.to_owned(),
-        TKET1_EXTENSION.to_owned(),
-        tket::extension::bool::BOOL_EXTENSION.to_owned(),
-        tket::extension::debug::DEBUG_EXTENSION.to_owned(),
-        tket_qsystem::extension::gpu::EXTENSION.to_owned(),
-        tket_qsystem::extension::wasm::EXTENSION.to_owned(),
-    ])
-});
 
 // Convenience functions
 use pecos_core::errors::PecosError;

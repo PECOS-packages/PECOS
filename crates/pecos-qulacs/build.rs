@@ -197,6 +197,7 @@ fn configure_build(
         // Fix MSVC compiler crash with Eigen templates
         build.flag("/bigobj"); // Allow larger object files
         build.flag("/EHsc"); // Enable exception handling
+        build.flag("/Z7"); // Embed debug info in .obj files (no PDB) - required for parallel builds
 
         // Suppress warnings from external headers (Eigen, Boost, Qulacs)
         build.flag_if_supported("/external:anglebrackets"); // Treat angle-bracket includes as external

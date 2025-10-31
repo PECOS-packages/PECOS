@@ -66,12 +66,9 @@ def sim(program: ProgramType) -> object:
         hugr_package = program.compile()
         logger.info("Compiled Guppy function to HUGR package")
 
-        # Convert HUGR package to HugrProgram for Rust
-        if hasattr(hugr_package, "to_bytes"):
-            hugr_bytes = hugr_package.to_bytes()
-        else:
-            hugr_str = hugr_package.to_str()
-            hugr_bytes = hugr_str.encode("utf-8")
+        # Convert HUGR package to binary format for Rust
+        # to_bytes() is the standard binary encoding (uses envelope with format 0x02)
+        hugr_bytes = hugr_package.to_bytes()
 
         # Create HugrProgram - Rust will handle HUGR->QIS conversion
         hugr_program = _pecos_rslib.HugrProgram.from_bytes(hugr_bytes)

@@ -1341,7 +1341,7 @@ impl ClassicalEngine for QASMEngine {
         for reg_name in &reg_names {
             if let Some(bitvec) = self.classical_registers.get(*reg_name) {
                 // Clone the BitVec directly - it already has the correct width
-                let reg_name_str = (*reg_name).to_string();
+                let reg_name_str = (*reg_name).clone();
                 result
                     .data
                     .insert(reg_name_str, Data::BitVec(bitvec.clone()));

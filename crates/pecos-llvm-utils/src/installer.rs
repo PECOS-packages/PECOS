@@ -279,13 +279,13 @@ fn set_llvm_env_var(llvm_path: &Path, system_wide: bool) -> Result<(), Box<dyn s
             eprintln!("Setting user-level variable instead.");
             eprintln!();
             eprintln!("To set system-wide, add to /etc/environment (requires sudo):");
-            eprintln!("  LLVM_SYS_140_PREFIX=\"{}\"", path_str);
+            eprintln!("  LLVM_SYS_140_PREFIX=\"{path_str}\"");
             eprintln!();
         }
 
         // User-level: append to shell RC files
         let home_dir = dirs::home_dir().ok_or("Could not determine home directory")?;
-        let export_line = format!("export LLVM_SYS_140_PREFIX=\"{}\"\n", path_str);
+        let export_line = format!("export LLVM_SYS_140_PREFIX=\"{path_str}\"\n");
 
         // Try to add to common shell RC files
         let rc_files = vec![
@@ -298,15 +298,15 @@ fn set_llvm_env_var(llvm_path: &Path, system_wide: bool) -> Result<(), Box<dyn s
         for rc_file in rc_files {
             if rc_file.exists() {
                 // Check if already present
-                if let Ok(contents) = fs::read_to_string(&rc_file) {
-                    if contents.contains("LLVM_SYS_140_PREFIX") {
-                        println!(
-                            "LLVM_SYS_140_PREFIX already present in {}",
-                            rc_file.display()
-                        );
-                        updated_any = true;
-                        continue;
-                    }
+                if let Ok(contents) = fs::read_to_string(&rc_file)
+                    && contents.contains("LLVM_SYS_140_PREFIX")
+                {
+                    println!(
+                        "LLVM_SYS_140_PREFIX already present in {}",
+                        rc_file.display()
+                    );
+                    updated_any = true;
+                    continue;
                 }
 
                 // Append to file
@@ -314,7 +314,7 @@ fn set_llvm_env_var(llvm_path: &Path, system_wide: bool) -> Result<(), Box<dyn s
                     Ok(mut file) => {
                         use std::io::Write;
                         writeln!(file, "\n# Added by pecos-llvm installer")?;
-                        write!(file, "{}", export_line)?;
+                        write!(file, "{export_line}")?;
                         println!("Added LLVM_SYS_140_PREFIX to {}", rc_file.display());
                         updated_any = true;
                     }
@@ -742,12 +742,20 @@ pub fn is_valid_installation(path: &Path) -> bool {
 
     // Check for at least one core LLVM library (different naming on different platforms)
     let has_llvm_lib = if cfg!(windows) {
-        path.join("lib").join("LLVM-C.lib").exists() || path.join("lib").join("LTO.lib").exists()
+        // Windows: check for LLVM-C.lib, LTO.lib, or individual component libraries
+        path.join("lib").join("LLVM-C.lib").exists()
+            || path.join("lib").join("LTO.lib").exists()
+            || path.join("lib").join("LLVMCore.lib").exists()
     } else {
+        // Unix: check for monolithic libraries or individual component libraries
         path.join("lib")
             .join(format!("libLLVM-14.{lib_ext}"))
             .exists()
             || path.join("lib").join(format!("libLLVM.{lib_ext}")).exists()
+            || path
+                .join("lib")
+                .join(format!("libLLVMCore.{lib_ext}"))
+                .exists()
     };
 
     if !has_llvm_lib {

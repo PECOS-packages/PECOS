@@ -126,20 +126,38 @@ attributes #0 = { "EntryPoint" }
             llvm_file = Path(f.name)
 
         try:
-            # Find llvm-as - check PATH first, then LLVM_SYS_140_PREFIX
+            # Find llvm-as - check PATH first, then use pecos-llvm-utils
             llvm_as_path = shutil.which("llvm-as")
 
             if not llvm_as_path:
-                # Not in PATH, try LLVM_SYS_140_PREFIX environment variable
-                llvm_prefix = os.environ.get("LLVM_SYS_140_PREFIX")
-                if llvm_prefix:
-                    potential_path = (
-                        Path(llvm_prefix) / "bin" / "llvm-as.exe"
-                        if os.name == "nt"
-                        else Path(llvm_prefix) / "bin" / "llvm-as"
-                    )
-                    if potential_path.exists():
-                        llvm_as_path = str(potential_path)
+                # Use pecos-llvm-utils to find the tool
+                cargo_path = shutil.which("cargo")
+                if cargo_path:
+                    try:
+                        result = subprocess.run(
+                            [
+                                cargo_path,
+                                "run",
+                                "-q",
+                                "--release",
+                                "-p",
+                                "pecos-llvm-utils",
+                                "--bin",
+                                "pecos-llvm",
+                                "--",
+                                "tool",
+                                "llvm-as",
+                            ],
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                            timeout=30,
+                        )
+                        if result.returncode == 0 and result.stdout.strip():
+                            llvm_as_path = result.stdout.strip()
+                    except (subprocess.TimeoutExpired, Exception):  # noqa: S110
+                        # Silently fall through to failure case - error will be reported below
+                        pass
 
             if llvm_as_path:
                 # Validate with llvm-as

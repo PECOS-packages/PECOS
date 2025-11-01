@@ -4,7 +4,9 @@
 //! Handles LLVM 14 detection, installation, and configuration for PECOS.
 
 use clap::{Parser, Subcommand};
-use pecos_llvm_utils::{find_llvm_14, get_repo_root_from_manifest, print_llvm_not_found_error};
+use pecos_llvm_utils::{
+    find_llvm_14, find_tool, get_repo_root_from_manifest, print_llvm_not_found_error,
+};
 use std::process;
 
 #[derive(Parser)]
@@ -57,6 +59,11 @@ enum Commands {
         /// Path to the LLVM installation to validate
         path: std::path::PathBuf,
     },
+    /// Find a specific LLVM tool (e.g., llvm-as, clang)
+    Tool {
+        /// Name of the tool to find (e.g., "llvm-as", "clang", "llvm-link")
+        name: String,
+    },
 }
 
 fn main() {
@@ -86,6 +93,7 @@ fn main() {
         Commands::Configure => cmd_configure(),
         Commands::Version => cmd_version(),
         Commands::Validate { path } => cmd_validate(&path),
+        Commands::Tool { name } => cmd_tool(&name),
     }
 }
 
@@ -243,5 +251,18 @@ fn cmd_validate(path: &std::path::Path) {
             eprintln!("  cargo run -p pecos-llvm-utils --bin pecos-llvm -- install --force");
             process::exit(1);
         }
+    }
+}
+
+fn cmd_tool(tool_name: &str) {
+    if let Some(tool_path) = find_tool(tool_name) {
+        println!("{}", tool_path.display());
+        process::exit(0);
+    } else {
+        eprintln!("ERROR: Tool '{tool_name}' not found");
+        eprintln!();
+        eprintln!("Make sure LLVM 14 is installed:");
+        eprintln!("  cargo run -p pecos-llvm-utils --bin pecos-llvm -- check");
+        process::exit(1);
     }
 }

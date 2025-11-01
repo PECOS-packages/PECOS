@@ -360,6 +360,49 @@ pub fn find_cargo_project_root() -> Option<PathBuf> {
     }
 }
 
+/// Find a specific LLVM tool by name
+///
+/// This function locates a specific LLVM tool (e.g., `llvm-as`, `clang`) by:
+/// 1. Finding the LLVM 14 installation
+/// 2. Constructing the tool path with proper OS-specific naming (e.g., `.exe` on Windows)
+/// 3. Verifying the tool exists
+///
+/// # Arguments
+/// * `tool_name` - The name of the tool (e.g., "llvm-as", "clang", "llvm-link")
+///
+/// # Returns
+/// * `Some(PathBuf)` if the tool is found
+/// * `None` if LLVM 14 is not found or the tool doesn't exist
+///
+/// # Example
+/// ```no_run
+/// use pecos_llvm_utils::find_tool;
+///
+/// if let Some(llvm_as) = find_tool("llvm-as") {
+///     println!("Found llvm-as at: {}", llvm_as.display());
+/// }
+/// ```
+#[must_use]
+pub fn find_tool(tool_name: &str) -> Option<PathBuf> {
+    // Find LLVM installation
+    let repo_root = get_repo_root_from_manifest();
+    let llvm_path = find_llvm_14(repo_root)?;
+
+    // Construct tool path with OS-specific extension
+    let tool_path = if cfg!(windows) {
+        llvm_path.join("bin").join(format!("{tool_name}.exe"))
+    } else {
+        llvm_path.join("bin").join(tool_name)
+    };
+
+    // Verify the tool exists
+    if tool_path.exists() {
+        Some(tool_path)
+    } else {
+        None
+    }
+}
+
 /// Write or update .cargo/config.toml with LLVM configuration
 ///
 /// # Arguments

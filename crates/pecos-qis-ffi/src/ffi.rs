@@ -678,27 +678,38 @@ pub unsafe extern "C" fn panic(code: i32, message: *const std::ffi::c_char) {
 /// This is typically used to record measurement results to classical registers
 ///
 /// # Safety
-/// This function is safe to call from C/LLVM code. The `result_id` parameter must be a valid
-/// non-negative result ID that fits in usize. The `register_name` pointer may be null or must
-/// point to a valid null-terminated C string. Invalid IDs or pointers will cause undefined behavior.
+/// This function is safe to call from C/LLVM code. The `result_ptr` parameter is an i8* pointer
+/// that represents a result ID (typically from inttoptr i64 conversion in LLVM IR).
+/// The `register_name` pointer may be null or must point to a valid null-terminated C string.
+/// Invalid pointers will cause undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __quantum__rt__result_record_output(
-    result_id: i64,
+    result_ptr: *const std::ffi::c_void,
     register_name: *const std::ffi::c_char,
 ) {
-    // For now, this is a no-op since we're collecting operations rather than executing them
-    // In a real implementation, this would record the measurement result to the specified register
-    // The actual measurement results are handled by the runtime during execution
+    // Extract the result ID from the pointer
+    // HUGR generates: %result_ptr = inttoptr i64 %result_id to i8*
+    let result_id = result_ptr as usize;
 
-    // We could potentially add this as metadata to the interface if needed
-    // For debugging, we can at least validate the inputs
-    let _result_id = i64_to_usize(result_id);
+    // Convert the C string to a Rust String
+    let register_name_str = if register_name.is_null() {
+        "unknown".to_string()
+    } else {
+        let c_str = unsafe { std::ffi::CStr::from_ptr(register_name) };
+        c_str.to_str().unwrap_or("unknown").to_string()
+    };
 
-    if !register_name.is_null() {
-        // Mark the unsafe operation explicitly
-        let _register = unsafe { std::ffi::CStr::from_ptr(register_name) }.to_string_lossy();
-        // In the future, we might want to record this information
-    }
+    log::trace!(
+        "Recording output mapping: result_id={result_id} -> register_name='{register_name_str}'"
+    );
+
+    // Queue the operation to record this output mapping
+    with_interface(|interface| {
+        interface.queue_operation(Operation::RecordOutput {
+            result_id,
+            register_name: register_name_str,
+        });
+    });
 }
 
 // =============================================================================

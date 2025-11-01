@@ -141,33 +141,44 @@ class TestLLVMSimulation:
 
     def test_sim_api_with_llvm_simple(self) -> None:
         """Test sim API with simple LLVM IR program."""
-        # Proper QIR-compliant LLVM IR
+        # QIS format LLVM IR - uses i64 for qubit indices and qmain entry point
+        # This matches the format that PECOS HUGR compiler generates
         llvm_ir = """
         ; ModuleID = 'quantum_test'
+        source_filename = "quantum_test"
 
-        %Qubit = type opaque
-        %Result = type opaque
+        @str_c = constant [2 x i8] c"c\\00"
 
-        declare void @__quantum__qis__h__body(%Qubit*)
-        declare %Result* @__quantum__qis__mz__body(%Qubit*)
-        declare %Qubit* @__quantum__rt__qubit_allocate()
-        declare void @__quantum__rt__qubit_release(%Qubit*)
-        declare void @__quantum__rt__result_record_output(%Result*, i8*)
-
-        @0 = internal constant [2 x i8] c"c\\00"
-
-        define void @main() #0 {
+        ; Entry point using qmain(i64)->i64 protocol
+        define i64 @qmain(i64 %0) #0 {
         entry:
-            %qubit = call %Qubit* @__quantum__rt__qubit_allocate()
-            call void @__quantum__qis__h__body(%Qubit* %qubit)
-            %result = call %Result* @__quantum__qis__mz__body(%Qubit* %qubit)
-            call void @__quantum__rt__result_record_output(%Result* %result,
-                i8* getelementptr inbounds ([2 x i8], [2 x i8]* @0, i32 0, i32 0))
-            call void @__quantum__rt__qubit_release(%Qubit* %qubit)
-            ret void
+            ; Allocate qubit (returns i64)
+            %qubit = call i64 @__quantum__rt__qubit_allocate()
+
+            ; Apply H gate (takes i64 qubit index)
+            call void @__quantum__qis__h__body(i64 %qubit)
+
+            ; Allocate result handle
+            %result_id = call i64 @__quantum__rt__result_allocate()
+
+            ; Measure qubit (returns i32 measurement)
+            %measurement = call i32 @__quantum__qis__m__body(i64 %qubit, i64 %result_id)
+
+            ; Record output (convert i64 to i8* pointer for register name)
+            %result_ptr = inttoptr i64 %result_id to i8*
+            call void @__quantum__rt__result_record_output(i8* %result_ptr,
+                i8* getelementptr inbounds ([2 x i8], [2 x i8]* @str_c, i32 0, i32 0))
+
+            ret i64 0
         }
 
-        attributes #0 = { "EntryPoint" "requiredQubits"="1" }
+        declare i64 @__quantum__rt__qubit_allocate()
+        declare void @__quantum__qis__h__body(i64)
+        declare i64 @__quantum__rt__result_allocate()
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare void @__quantum__rt__result_record_output(i8*, i8*)
+
+        attributes #0 = { "EntryPoint" }
         """
 
         try:
@@ -207,45 +218,53 @@ class TestLLVMSimulation:
 
     def test_sim_api_with_llvm_bell_state(self) -> None:
         """Test sim API with Bell state in LLVM IR."""
-        # Bell state in QIS format - uses i64 qubit indices (not QIR opaque pointers)
-        # This is the format PECOS actually supports (from HUGR compilation)
+        # QIS format LLVM IR - uses i64 for qubit indices and qmain entry point
+        # This matches the format that PECOS HUGR compiler generates
         llvm_ir = """
         ; ModuleID = 'bell_state'
+        source_filename = "bell_state"
 
-        declare void @__quantum__qis__h__body(i64)
-        declare void @__quantum__qis__cnot__body(i64, i64)
-        declare i1 @__quantum__qis__mz__body(i64)
-        declare void @__quantum__rt__result_record_output(i64, i8*)
+        @str_c0 = constant [3 x i8] c"c0\\00"
+        @str_c1 = constant [3 x i8] c"c1\\00"
 
-        @0 = internal constant [3 x i8] c"c0\\00"
-        @1 = internal constant [3 x i8] c"c1\\00"
-
-        define void @main() #0 {
+        ; Entry point using qmain(i64)->i64 protocol
+        define i64 @qmain(i64 %0) #0 {
         entry:
+            ; Allocate qubits (returns i64)
+            %q0 = call i64 @__quantum__rt__qubit_allocate()
+            %q1 = call i64 @__quantum__rt__qubit_allocate()
+
             ; Apply H to qubit 0
-            call void @__quantum__qis__h__body(i64 0)
+            call void @__quantum__qis__h__body(i64 %q0)
 
-            ; Apply CNOT(0, 1)
-            call void @__quantum__qis__cnot__body(i64 0, i64 1)
+            ; Apply CX(q0, q1)
+            call void @__quantum__qis__cx__body(i64 %q0, i64 %q1)
 
-            ; Measure both qubits
-            %m0 = call i1 @__quantum__qis__mz__body(i64 0)
-            %m1 = call i1 @__quantum__qis__mz__body(i64 1)
+            ; Measure qubit 0
+            %result_id0 = call i64 @__quantum__rt__result_allocate()
+            %measurement0 = call i32 @__quantum__qis__m__body(i64 %q0, i64 %result_id0)
+            %result_ptr0 = inttoptr i64 %result_id0 to i8*
+            call void @__quantum__rt__result_record_output(i8* %result_ptr0,
+                i8* getelementptr inbounds ([3 x i8], [3 x i8]* @str_c0, i32 0, i32 0))
 
-            ; Convert i1 to i64 for result recording
-            %r0 = zext i1 %m0 to i64
-            %r1 = zext i1 %m1 to i64
+            ; Measure qubit 1
+            %result_id1 = call i64 @__quantum__rt__result_allocate()
+            %measurement1 = call i32 @__quantum__qis__m__body(i64 %q1, i64 %result_id1)
+            %result_ptr1 = inttoptr i64 %result_id1 to i8*
+            call void @__quantum__rt__result_record_output(i8* %result_ptr1,
+                i8* getelementptr inbounds ([3 x i8], [3 x i8]* @str_c1, i32 0, i32 0))
 
-            ; Record results
-            call void @__quantum__rt__result_record_output(i64 %r0,
-                i8* getelementptr inbounds ([3 x i8], [3 x i8]* @0, i32 0, i32 0))
-            call void @__quantum__rt__result_record_output(i64 %r1,
-                i8* getelementptr inbounds ([3 x i8], [3 x i8]* @1, i32 0, i32 0))
-
-            ret void
+            ret i64 0
         }
 
-        attributes #0 = { "EntryPoint" "requiredQubits"="2" }
+        declare i64 @__quantum__rt__qubit_allocate()
+        declare void @__quantum__qis__h__body(i64)
+        declare void @__quantum__qis__cx__body(i64, i64)
+        declare i64 @__quantum__rt__result_allocate()
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare void @__quantum__rt__result_record_output(i8*, i8*)
+
+        attributes #0 = { "EntryPoint" }
         """
 
         try:

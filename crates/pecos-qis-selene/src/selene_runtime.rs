@@ -148,6 +148,17 @@ impl SeleneRuntime {
                     let _ = id; // Just track it
                     self.current_op_index += 1;
                 }
+                Operation::RecordOutput {
+                    result_id,
+                    register_name,
+                } => {
+                    trace!(
+                        "Recording output: result_id={result_id}, register_name={register_name}"
+                    );
+                    // Metadata operation - just advance the index
+                    // The actual result mapping is handled by the runtime's results collection
+                    self.current_op_index += 1;
+                }
                 Operation::Barrier => {
                     trace!("Barrier encountered");
                     // Barriers don't produce quantum ops but can break batches

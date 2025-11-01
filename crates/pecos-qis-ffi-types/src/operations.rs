@@ -20,6 +20,12 @@ pub enum Operation {
     /// Release a qubit
     ReleaseQubit { id: usize },
 
+    /// Record output mapping from result ID to classical register name
+    RecordOutput {
+        result_id: usize,
+        register_name: String,
+    },
+
     /// Classical control flow marker
     Barrier,
 }

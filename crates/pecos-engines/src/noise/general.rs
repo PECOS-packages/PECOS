@@ -2442,68 +2442,71 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_meas_crosstalk() {
-        use crate::byte_message::ByteMessageBuilder;
+    // TODO: This test no longer applies, since it corresponds to the naive
+    // crosstalk model. If the naive one is maintained, this could be reintroduced
+    // but we need a flag to choose whether to use naive or new one.
+    // #[test]
+    // fn test_meas_crosstalk() {
+    //     use crate::byte_message::ByteMessageBuilder;
 
-        let mut model = GeneralNoiseModel::builder()
-            .with_p_meas_crosstalk(1.0)
-            .with_seed(42)
-            .build();
-        let noise = model
-            .as_any_mut()
-            .downcast_mut::<GeneralNoiseModel>()
-            .unwrap();
+    //     let mut model = GeneralNoiseModel::builder()
+    //         .with_p_meas_crosstalk(1.0)
+    //         .with_seed(42)
+    //         .build();
+    //     let noise = model
+    //         .as_any_mut()
+    //         .downcast_mut::<GeneralNoiseModel>()
+    //         .unwrap();
 
-        let mut builder = ByteMessageBuilder::new();
-        let _ = builder.for_quantum_operations();
-        // Prepare a bunch of |0> states
-        builder.add_prep(&[0, 1, 2, 3, 4]);
-        // Apply mid-circuit measurement and reset
-        builder.add_measurements(&[2]);
-        builder.add_prep(&[2]);
-        let _cmd = noise.apply_noise_on_start(&builder.build()).unwrap();
+    //     let mut builder = ByteMessageBuilder::new();
+    //     let _ = builder.for_quantum_operations();
+    //     // Prepare a bunch of |0> states
+    //     builder.add_prep(&[0, 1, 2, 3, 4]);
+    //     // Apply mid-circuit measurement and reset
+    //     builder.add_measurements(&[2]);
+    //     builder.add_prep(&[2]);
+    //     let _cmd = noise.apply_noise_on_start(&builder.build()).unwrap();
 
-        assert_eq!(
-            noise.measured_qubits.len(),
-            5,
-            "There should be 5 measured qubits: one from MCMR and the others from
-            crosstalk got: {:?}",
-            noise.measured_qubits
-        );
+    //     assert_eq!(
+    //         noise.measured_qubits.len(),
+    //         5,
+    //         "There should be 5 measured qubits: one from MCMR and the others from
+    //         crosstalk got: {:?}",
+    //         noise.measured_qubits
+    //     );
 
-        let (q, _, is_crosstalk) = noise.measured_qubits[0];
-        assert_eq!(q, 2, "The first measurement should be the MCMR on qubit 2");
-        assert!(!is_crosstalk, "The first measurement should come from MCMR");
+    //     let (q, _, is_crosstalk) = noise.measured_qubits[0];
+    //     assert_eq!(q, 2, "The first measurement should be the MCMR on qubit 2");
+    //     assert!(!is_crosstalk, "The first measurement should come from MCMR");
 
-        for (_, _, is_crosstalk) in &noise.measured_qubits[1..] {
-            assert!(
-                is_crosstalk,
-                "The other measurements should come from crosstalk"
-            );
-        }
+    //     for (_, _, is_crosstalk) in &noise.measured_qubits[1..] {
+    //         assert!(
+    //             is_crosstalk,
+    //             "The other measurements should come from crosstalk"
+    //         );
+    //     }
 
-        // All results are 0
-        let mut outcome_builder = ByteMessageBuilder::new();
-        let _ = outcome_builder.for_outcomes();
-        outcome_builder.add_outcomes(&[0, 0, 0, 0, 0]);
+    //     // All results are 0
+    //     let mut outcome_builder = ByteMessageBuilder::new();
+    //     let _ = outcome_builder.for_outcomes();
+    //     outcome_builder.add_outcomes(&[0, 0, 0, 0, 0]);
 
-        let mcmr = noise
-            .apply_noise_on_continue_processing(outcome_builder.build())
-            .unwrap();
-        let results = mcmr.outcomes().unwrap();
+    //     let mcmr = noise
+    //         .apply_noise_on_continue_processing(outcome_builder.build())
+    //         .unwrap();
+    //     let results = mcmr.outcomes().unwrap();
 
-        assert_eq!(
-            noise.measured_qubits.len(),
-            0,
-            "The list of measured_qubits should have been cleared."
-        );
-        assert_eq!(
-            results.len(),
-            1,
-            "There should only be one outcome: that of the mid-circ measurement"
-        );
-    }
+    //     assert_eq!(
+    //         noise.measured_qubits.len(),
+    //         0,
+    //         "The list of measured_qubits should have been cleared."
+    //     );
+    //     assert_eq!(
+    //         results.len(),
+    //         1,
+    //         "There should only be one outcome: that of the mid-circ measurement"
+    //     );
+    // }
 
     #[test]
     fn test_parameter_scaling() {

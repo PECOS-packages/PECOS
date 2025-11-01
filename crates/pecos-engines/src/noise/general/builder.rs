@@ -663,7 +663,7 @@ impl GeneralNoiseModelBuilder {
     #[must_use]
     pub fn with_average_p_meas_crosstalk_global(mut self, prob: f64) -> Self {
         let prob: f64 = prob * 18.0 / 5.0;
-        self.p_meas_crosstalk_global = Some(prob);
+        self.p_meas_crosstalk_global = Some(Self::validate_probability(prob));
         self
     }
 
@@ -678,7 +678,7 @@ impl GeneralNoiseModelBuilder {
     #[must_use]
     pub fn with_average_p_meas_crosstalk_local(mut self, prob: f64) -> Self {
         let prob: f64 = prob * 18.0 / 5.0;
-        self.p_meas_crosstalk_local = Some(prob);
+        self.p_meas_crosstalk_local = Some(Self::validate_probability(prob));
         self
     }
 

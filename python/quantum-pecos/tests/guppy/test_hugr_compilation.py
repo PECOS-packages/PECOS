@@ -128,12 +128,15 @@ attributes #0 = { "EntryPoint" }
         try:
             # Find llvm-as - check PATH first, then use pecos-llvm-utils
             llvm_as_path = shutil.which("llvm-as")
+            print(f"DEBUG: llvm-as in PATH: {llvm_as_path}")
 
             if not llvm_as_path:
                 # Use pecos-llvm-utils to find the tool
                 cargo_path = shutil.which("cargo")
+                print(f"DEBUG: cargo found at: {cargo_path}")
                 if cargo_path:
                     try:
+                        print("DEBUG: Running cargo to find llvm-as...")
                         result = subprocess.run(
                             [
                                 cargo_path,
@@ -151,13 +154,20 @@ attributes #0 = { "EntryPoint" }
                             capture_output=True,
                             text=True,
                             check=False,
-                            timeout=30,
+                            timeout=120,  # Increased from 30s to account for compilation time on CI
                         )
+                        print(f"DEBUG: cargo returncode: {result.returncode}")
+                        print(f"DEBUG: cargo stdout: {result.stdout[:200]}")
+                        print(f"DEBUG: cargo stderr: {result.stderr[:200]}")
                         if result.returncode == 0 and result.stdout.strip():
                             llvm_as_path = result.stdout.strip()
-                    except (subprocess.TimeoutExpired, Exception):  # noqa: S110
-                        # Silently fall through to failure case - error will be reported below
-                        pass
+                            print(f"DEBUG: llvm-as found at: {llvm_as_path}")
+                    except subprocess.TimeoutExpired as e:
+                        print(f"DEBUG: cargo command timed out after {e.timeout}s")
+                    except Exception as e:
+                        print(f"DEBUG: cargo command failed with exception: {e}")
+                else:
+                    print("DEBUG: cargo not found in PATH")
 
             if llvm_as_path:
                 # Validate with llvm-as

@@ -327,6 +327,8 @@ impl QisHeliosInterface {
                                 debug!("SDK path: {sdk_path}");
                                 clang_cmd.arg("-isysroot");
                                 clang_cmd.arg(sdk_path);
+                                // Add library search path so linker can find pthread, etc.
+                                clang_cmd.arg(format!("-L{sdk_path}/usr/lib"));
                             } else {
                                 warn!("xcrun output was not valid UTF-8");
                             }

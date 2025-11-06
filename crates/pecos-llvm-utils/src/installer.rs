@@ -7,20 +7,6 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Installation location type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InstallLocation {
-    /// PECOS-managed installation at ~/.pecos/llvm/ (default)
-    /// Uses .cargo/config.toml for configuration
-    PecosManaged,
-    /// System-wide installation at standard location (requires admin/sudo)
-    /// Sets `LLVM_SYS_140_PREFIX` environment variable
-    System,
-    /// User-level installation at standard location
-    /// Sets `LLVM_SYS_140_PREFIX` environment variable
-    User,
-}
-
 /// Known SHA256 checksums for LLVM 14.0.6 downloads
 /// Format: (filename, `sha256_hash`)
 ///
@@ -55,46 +41,37 @@ const LLVM_CHECKSUMS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Install LLVM 14.0.6 to specified location
+/// Install LLVM 14.0.6 to ~/.pecos/llvm/
 ///
-/// Installs to location based on `InstallLocation`:
+/// Downloads and installs LLVM 14.0.6 pre-built binaries to a PECOS-managed
+/// directory at ~/.pecos/llvm/. This ensures a clean, isolated installation
+/// that PECOS can safely modify (e.g., fixing dylib references on macOS).
 ///
-/// **`PecosManaged`** (default):
-/// - All platforms: ~/.pecos/llvm
-/// - Configures via .cargo/config.toml
-///
-/// **System** (--system flag):
-/// - Windows: C:\Program Files\LLVM-14 (requires admin)
-/// - Unix: /usr/local/LLVM-14 (requires sudo)
-/// - Sets `LLVM_SYS_140_PREFIX` environment variable permanently
-///
-/// **User** (--user flag):
-/// - Windows: %LOCALAPPDATA%\Programs\LLVM-14
-/// - macOS: ~/Library/Application Support/LLVM-14
-/// - Linux: ~/.local/LLVM-14
-/// - Sets `LLVM_SYS_140_PREFIX` environment variable permanently
+/// After installation, run `pecos-llvm configure` to update .cargo/config.toml,
+/// or set the `LLVM_SYS_140_PREFIX` environment variable to `~/.pecos/llvm` manually.
 ///
 /// # Arguments
 /// * `force` - Force reinstall even if already present
 /// * `no_configure` - Skip automatic configuration after installation
-/// * `location` - Where to install LLVM
 ///
 /// # Errors
 /// Returns an error if:
 /// - LLVM is already installed and `force` is false
 /// - The download or extraction fails
-/// - Platform-specific fixes fail
 /// - Installation verification fails
-/// - Setting environment variable fails (System/User installs)
+/// - Platform fixes fail (e.g., `install_name_tool` on macOS)
 ///
 /// # Returns
-/// Path to the installed LLVM directory
+/// Path to the installed LLVM directory (~/.pecos/llvm/)
 pub fn install_llvm(
     force: bool,
     no_configure: bool,
-    location: InstallLocation,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let llvm_dir = get_install_location(location)?;
+    // PECOS-managed installation: ~/.pecos/llvm
+    let llvm_dir = dirs::home_dir()
+        .ok_or("Could not determine home directory")?
+        .join(".pecos")
+        .join("llvm");
 
     // Check if already installed
     if !force && llvm_dir.exists() && is_valid_installation(&llvm_dir) {
@@ -135,7 +112,7 @@ pub fn install_llvm(
     // Cleanup LLVM temp directory only (not entire tmp directory)
     fs::remove_dir_all(&temp_dir)?;
 
-    // Apply platform-specific fixes
+    // Apply platform-specific fixes (e.g., fix libunwind on macOS)
     apply_platform_fixes(&llvm_dir)?;
 
     // Verify installation files
@@ -150,237 +127,37 @@ pub fn install_llvm(
     println!("Installation complete!");
     println!("LLVM 14.0.6 installed to: {}", llvm_dir.display());
 
-    // Configure LLVM based on installation location (unless --no-configure is specified)
+    // Configure LLVM (unless --no-configure is specified)
     if no_configure {
         println!();
         println!("Skipping automatic configuration (--no-configure specified).");
-        match location {
-            InstallLocation::PecosManaged => {
-                println!();
-                println!("To configure PECOS, run:");
-                println!("  cargo run -p pecos-llvm-utils --bin pecos-llvm -- configure");
-            }
-            InstallLocation::System | InstallLocation::User => {
-                println!();
-                println!("To make this installation permanent, set the environment variable:");
-                println!("  LLVM_SYS_140_PREFIX={}", llvm_dir.display());
-            }
-        }
+        println!();
+        println!("To configure PECOS, run:");
+        println!("  pecos-llvm configure");
+        println!();
+        println!("Or set the environment variable manually:");
+        println!("  export LLVM_SYS_140_PREFIX=\"{}\"", llvm_dir.display());
     } else {
         println!();
-        match location {
-            InstallLocation::PecosManaged => {
-                // PECOS-managed: use .cargo/config.toml
-                println!("Configuring PECOS to use this LLVM installation...");
-                match crate::auto_configure_llvm(None) {
-                    Ok(configured_path) => {
-                        println!("Updated .cargo/config.toml with LLVM configuration");
-                        println!("Configured LLVM path: {}", configured_path.display());
-                        println!();
-                        println!("You can now build PECOS:");
-                        println!("  cargo build");
-                    }
-                    Err(e) => {
-                        eprintln!("Warning: Could not auto-configure LLVM: {e}");
-                        println!();
-                        println!("Please run configuration manually:");
-                        println!("  cargo run -p pecos-llvm-utils --bin pecos-llvm -- configure");
-                    }
-                }
+        println!("Configuring PECOS to use this LLVM installation...");
+        match crate::auto_configure_llvm(None) {
+            Ok(configured_path) => {
+                println!("Updated .cargo/config.toml with LLVM configuration");
+                println!("Configured LLVM path: {}", configured_path.display());
+                println!();
+                println!("You can now build PECOS:");
+                println!("  cargo build");
             }
-            InstallLocation::System | InstallLocation::User => {
-                // System/User: set LLVM_SYS_140_PREFIX environment variable
-                println!("Setting LLVM_SYS_140_PREFIX environment variable...");
-                match set_llvm_env_var(&llvm_dir, location == InstallLocation::System) {
-                    Ok(()) => {
-                        println!("Environment variable set successfully!");
-                        println!("LLVM_SYS_140_PREFIX={}", llvm_dir.display());
-                        println!();
-                        println!("You can now build PECOS:");
-                        println!("  cargo build");
-                        println!();
-                        if location == InstallLocation::System {
-                            println!("Note: You may need to restart your terminal or system for");
-                            println!("system-wide environment changes to take effect.");
-                        } else {
-                            println!("Note: You may need to restart your terminal for the");
-                            println!("environment variable to take effect in new sessions.");
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Warning: Could not set environment variable: {e}");
-                        println!();
-                        println!("Please set it manually:");
-                        #[cfg(target_os = "windows")]
-                        println!("  setx LLVM_SYS_140_PREFIX \"{}\"", llvm_dir.display());
-                        #[cfg(not(target_os = "windows"))]
-                        println!("  export LLVM_SYS_140_PREFIX=\"{}\"", llvm_dir.display());
-                    }
-                }
+            Err(e) => {
+                eprintln!("Warning: Could not auto-configure LLVM: {e}");
+                println!();
+                println!("Please run configuration manually:");
+                println!("  pecos-llvm configure");
             }
         }
     }
 
     Ok(llvm_dir)
-}
-
-/// Set `LLVM_SYS_140_PREFIX` environment variable permanently
-///
-/// # Arguments
-/// * `llvm_path` - Path to the LLVM installation
-/// * `system_wide` - If true, set system-wide; if false, set for current user
-///
-/// # Errors
-/// Returns an error if setting the environment variable fails
-fn set_llvm_env_var(llvm_path: &Path, system_wide: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let path_str = llvm_path.to_string_lossy();
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-
-        if system_wide {
-            // System-wide on Windows requires admin rights and registry manipulation
-            // For now, we'll use setx which sets user-level, and warn about system-level
-            eprintln!(
-                "Warning: System-wide environment variables on Windows require administrator"
-            );
-            eprintln!("privileges and registry modification. Setting user-level variable instead.");
-            eprintln!();
-            eprintln!("To set system-wide, run as administrator:");
-            eprintln!("  setx /M LLVM_SYS_140_PREFIX \"{path_str}\"");
-            eprintln!();
-        }
-
-        // Use setx to set user-level environment variable permanently
-        let output = Command::new("setx")
-            .args(["LLVM_SYS_140_PREFIX", &path_str])
-            .output()?;
-
-        if !output.status.success() {
-            return Err(format!(
-                "setx command failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )
-            .into());
-        }
-
-        Ok(())
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        // On Unix, we need to add to shell RC files for user or /etc/environment for system
-        if system_wide {
-            // System-wide: would need sudo to write to /etc/environment
-            eprintln!(
-                "Warning: System-wide environment variables on Unix require root privileges."
-            );
-            eprintln!("Setting user-level variable instead.");
-            eprintln!();
-            eprintln!("To set system-wide, add to /etc/environment (requires sudo):");
-            eprintln!("  LLVM_SYS_140_PREFIX=\"{path_str}\"");
-            eprintln!();
-        }
-
-        // User-level: append to shell RC files
-        let home_dir = dirs::home_dir().ok_or("Could not determine home directory")?;
-        let export_line = format!("export LLVM_SYS_140_PREFIX=\"{path_str}\"\n");
-
-        // Try to add to common shell RC files
-        let rc_files = vec![
-            home_dir.join(".bashrc"),
-            home_dir.join(".zshrc"),
-            home_dir.join(".profile"),
-        ];
-
-        let mut updated_any = false;
-        for rc_file in rc_files {
-            if rc_file.exists() {
-                // Check if already present
-                if let Ok(contents) = fs::read_to_string(&rc_file)
-                    && contents.contains("LLVM_SYS_140_PREFIX")
-                {
-                    println!(
-                        "LLVM_SYS_140_PREFIX already present in {}",
-                        rc_file.display()
-                    );
-                    updated_any = true;
-                    continue;
-                }
-
-                // Append to file
-                match fs::OpenOptions::new().append(true).open(&rc_file) {
-                    Ok(mut file) => {
-                        use std::io::Write;
-                        writeln!(file, "\n# Added by pecos-llvm installer")?;
-                        write!(file, "{export_line}")?;
-                        println!("Added LLVM_SYS_140_PREFIX to {}", rc_file.display());
-                        updated_any = true;
-                    }
-                    Err(e) => {
-                        eprintln!("Warning: Could not update {}: {}", rc_file.display(), e);
-                    }
-                }
-            }
-        }
-
-        if !updated_any {
-            eprintln!("Warning: No shell RC files found. Please add manually:");
-            eprintln!("  {}", export_line.trim());
-            return Err("No shell RC files found to update".into());
-        }
-
-        Ok(())
-    }
-}
-
-fn get_install_location(location: InstallLocation) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    match location {
-        InstallLocation::PecosManaged => {
-            // PECOS-managed: ~/.pecos/llvm (all platforms)
-            let home_dir = dirs::home_dir().ok_or("Could not determine home directory")?;
-            Ok(home_dir.join(".pecos").join("llvm"))
-        }
-        InstallLocation::System => {
-            // System-wide: standard locations with admin/sudo rights
-            #[cfg(target_os = "windows")]
-            {
-                Ok(PathBuf::from("C:\\Program Files\\LLVM-14"))
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                Ok(PathBuf::from("/usr/local/LLVM-14"))
-            }
-        }
-        InstallLocation::User => {
-            // User-level: standard user-accessible locations
-            #[cfg(target_os = "windows")]
-            {
-                // %LOCALAPPDATA%\Programs\LLVM-14
-                let local_appdata = std::env::var("LOCALAPPDATA")
-                    .map_err(|_| "Could not determine LOCALAPPDATA")?;
-                Ok(PathBuf::from(local_appdata)
-                    .join("Programs")
-                    .join("LLVM-14"))
-            }
-            #[cfg(target_os = "macos")]
-            {
-                // ~/Library/Application Support/LLVM-14
-                let home_dir = dirs::home_dir().ok_or("Could not determine home directory")?;
-                Ok(home_dir
-                    .join("Library")
-                    .join("Application Support")
-                    .join("LLVM-14"))
-            }
-            #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-            {
-                // ~/.local/LLVM-14 (Linux and others)
-                let home_dir = dirs::home_dir().ok_or("Could not determine home directory")?;
-                Ok(home_dir.join(".local").join("LLVM-14"))
-            }
-        }
-    }
 }
 
 fn get_download_url() -> Result<(String, String), Box<dyn std::error::Error>> {
@@ -833,119 +610,52 @@ pub fn verify_llvm_runtime(llvm_dir: &Path) -> Result<(), Box<dyn std::error::Er
     }
 }
 
-// Allow unnecessary_wraps since the Result is needed on macOS but not on other platforms
-#[allow(clippy::unnecessary_wraps)]
+/// Apply platform-specific fixes to the LLVM installation
+///
+/// On macOS, fixes the libunwind dylib install name to use an absolute path
+/// instead of @rpath, which prevents runtime linking issues.
+///
+/// # Arguments
+/// * `llvm_dir` - Path to the LLVM installation directory
+///
+/// # Errors
+/// Returns an error if `install_name_tool` fails to execute
+#[cfg(target_os = "macos")]
 fn apply_platform_fixes(llvm_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(target_os = "macos")]
-    {
-        print!("Applying macOS fixes... ");
-        io::Write::flush(&mut io::stdout())?;
-
-        // Fix 1: Configure clang to use macOS SDK
-        // The pre-built LLVM doesn't know where system libraries are on macOS
-        configure_macos_sdk(llvm_dir)?;
-
-        // Fix 2: Fix libunwind dylib references
-        // LLVM 14.0.6 libunwind libraries have @rpath references to themselves
-        fix_libunwind_references(llvm_dir)?;
-
-        println!("Done");
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        // Suppress unused parameter warning on non-macOS platforms
-        let _ = llvm_dir;
-    }
-
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn configure_macos_sdk(llvm_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
-    // Get the SDK path from xcrun
-    let output = Command::new("xcrun").args(["--show-sdk-path"]).output()?;
-
-    if !output.status.success() {
-        return Err("Failed to find macOS SDK. Is Xcode Command Line Tools installed?".into());
-    }
-
-    let sdk_path = String::from_utf8(output.stdout)?.trim().to_string();
-
-    // Create wrapper scripts for clang and clang-14 that add SDK flags
-    let bin_dir = llvm_dir.join("bin");
-
-    // Rename original binaries
-    let clang_orig = bin_dir.join("clang");
-    let clang_real = bin_dir.join("clang-real");
-    if clang_orig.exists() && !clang_real.exists() {
-        fs::rename(&clang_orig, &clang_real)?;
-    }
-
-    let clang14_orig = bin_dir.join("clang-14");
-    let clang14_real = bin_dir.join("clang-14-real");
-    if clang14_orig.exists() && !clang14_real.exists() {
-        fs::rename(&clang14_orig, &clang14_real)?;
-    }
-
-    // Create wrapper script for clang
-    let wrapper_content = format!(
-        "#!/bin/bash\nexec \"$(dirname \"$0\")/clang-real\" -isysroot {sdk_path} -L{sdk_path}/usr/lib \"$@\"\n"
-    );
-    fs::write(&clang_orig, &wrapper_content)?;
-    fs::set_permissions(&clang_orig, fs::Permissions::from_mode(0o755))?;
-
-    // Create wrapper script for clang-14
-    let wrapper14_content = format!(
-        "#!/bin/bash\nexec \"$(dirname \"$0\")/clang-14-real\" -isysroot {sdk_path} -L{sdk_path}/usr/lib \"$@\"\n"
-    );
-    fs::write(&clang14_orig, &wrapper14_content)?;
-    fs::set_permissions(&clang14_orig, fs::Permissions::from_mode(0o755))?;
-
-    // Also create wrapper for clang++ if it exists
-    let clangpp_orig = bin_dir.join("clang++");
-    let clangpp_real = bin_dir.join("clang++-real");
-    if clangpp_orig.exists() && !clangpp_real.exists() {
-        fs::rename(&clangpp_orig, &clangpp_real)?;
-        let wrapperpp_content = format!(
-            "#!/bin/bash\nexec \"$(dirname \"$0\")/clang++-real\" -isysroot {sdk_path} -L{sdk_path}/usr/lib \"$@\"\n"
-        );
-        fs::write(&clangpp_orig, &wrapperpp_content)?;
-        fs::set_permissions(&clangpp_orig, fs::Permissions::from_mode(0o755))?;
-    }
-
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn fix_libunwind_references(llvm_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    use std::process::Command;
+    print!("Applying macOS platform fixes... ");
+    io::Write::flush(&mut io::stdout())?;
 
     let lib_dir = llvm_dir.join("lib");
+    let libunwind = lib_dir.join("libunwind.1.0.dylib");
 
-    // Find all libunwind dylibs
-    if let Ok(entries) = fs::read_dir(&lib_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                // Check for libunwind dylib files using case-insensitive extension check
-                if name.starts_with("libunwind")
-                    && std::path::Path::new(name)
-                        .extension()
-                        .is_some_and(|ext| ext.eq_ignore_ascii_case("dylib"))
-                {
-                    // Fix the install name to use absolute path instead of @rpath
-                    let abs_path = path.to_string_lossy().to_string();
-                    Command::new("install_name_tool")
-                        .args(["-id", &abs_path, &abs_path])
-                        .output()?;
-                }
-            }
-        }
+    if !libunwind.exists() {
+        println!("Skipped (libunwind not found)");
+        return Ok(());
     }
 
+    // Fix libunwind's install name from @rpath to absolute path
+    // This prevents "Library not loaded: @rpath/libunwind.1.dylib" errors
+    let new_install_name = lib_dir.join("libunwind.1.dylib");
+
+    let status = Command::new("install_name_tool")
+        .arg("-id")
+        .arg(&new_install_name)
+        .arg(&libunwind)
+        .status()?;
+
+    if !status.success() {
+        println!("FAILED");
+        return Err("install_name_tool failed to fix libunwind".into());
+    }
+
+    println!("OK");
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_platform_fixes(_llvm_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    // No platform fixes needed on non-macOS platforms
     Ok(())
 }

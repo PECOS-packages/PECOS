@@ -93,26 +93,36 @@ fn print_llvm_not_found_error_extended() {
 
     #[cfg(target_os = "windows")]
     {
-        eprintln!("Option 2: Manual installation");
+        eprintln!("Option 2: Manual installation (advanced)");
         eprintln!();
-        eprintln!("  1. Download LLVM 14.0.6 for Windows:");
-        eprintln!(
-            "     https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/LLVM-14.0.6-win64.exe"
-        );
+        eprintln!("  WARNING: The official LLVM installer lacks development files.");
+        eprintln!("  You need a FULL development package from community sources:");
         eprintln!();
-        eprintln!("  2. Run the installer and note the installation directory");
-        eprintln!("     (typically C:\\Program Files\\LLVM)");
+        eprintln!("  Recommended sources:");
+        eprintln!("    https://github.com/bitgate/llvm-windows-full-builds");
+        eprintln!("    https://github.com/vovkos/llvm-package-windows");
         eprintln!();
-        eprintln!("  3. Configure PECOS to use it:");
-        eprintln!("     cargo run -p pecos-llvm-utils --bin pecos-llvm -- configure");
-        eprintln!();
-        eprintln!("  4. Build PECOS:");
-        eprintln!("     cargo build");
+        eprintln!("  After extracting to C:\\LLVM (or similar):");
+        eprintln!("    set LLVM_SYS_140_PREFIX=C:\\LLVM");
+        eprintln!("    cargo run -p pecos-llvm-utils --bin pecos-llvm -- configure");
+        eprintln!("    cargo build");
         eprintln!();
     }
 
-    eprintln!("The 'configure' command will detect your LLVM installation and");
-    eprintln!("update .cargo/config.toml automatically.");
+    eprintln!("Alternative: Set LLVM path manually");
+    eprintln!("  Instead of 'configure', you can set environment variables:");
+    eprintln!();
+    #[cfg(target_os = "windows")]
+    eprintln!("    set LLVM_SYS_140_PREFIX=C:\\path\\to\\llvm");
+    #[cfg(not(target_os = "windows"))]
+    eprintln!("    export LLVM_SYS_140_PREFIX=/path/to/llvm");
+    #[cfg(not(target_os = "windows"))]
+    eprintln!("  Or add llvm-config to PATH:");
+    #[cfg(not(target_os = "windows"))]
+    eprintln!("    export PATH=\"/path/to/llvm/bin:$PATH\"");
+    eprintln!();
+    eprintln!("For detailed instructions, see:");
+    eprintln!("  https://github.com/CQCL/PECOS/blob/master/docs/user-guide/getting-started.md");
     eprintln!();
     eprintln!("Don't need LLVM IR support? Build without it:");
     eprintln!("  cargo build --no-default-features");

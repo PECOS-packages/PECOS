@@ -115,6 +115,10 @@ fn build_shim_library(out_dir: &Path) -> PathBuf {
         cmd.arg(format!("-I{selene_include}"));
     }
 
+    // On macOS, add SDK flags to ensure compiler can find system headers/libraries
+    #[cfg(target_os = "macos")]
+    add_macos_sdk_flags(&mut cmd);
+
     let output = cmd.output().expect("Failed to execute clang");
 
     assert!(
@@ -345,6 +349,10 @@ fn build_helios_from_cargo_dependency(out_dir: &Path) -> Result<(), String> {
         .arg(&interface_o)
         .arg(&interface_c);
 
+    // On macOS, add SDK flags to ensure compiler can find system headers/libraries
+    #[cfg(target_os = "macos")]
+    add_macos_sdk_flags(&mut compile_cmd);
+
     let output = compile_cmd
         .output()
         .map_err(|e| format!("Failed to execute clang: {e}"))?;
@@ -413,4 +421,33 @@ fn find_c_compiler() -> String {
 
     // If nothing works, return "cc" and let it fail with a better error
     "cc".to_string()
+}
+
+/// Get the macOS SDK path using xcrun
+///
+/// Returns None if not on macOS or if xcrun fails
+#[cfg(target_os = "macos")]
+fn get_macos_sdk_path() -> Option<String> {
+    let output = Command::new("xcrun")
+        .args(["--show-sdk-path"])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+/// Add macOS SDK flags to a compiler command
+///
+/// This ensures that the compiler can find system headers and libraries
+/// when using pre-built LLVM that doesn't have SDK paths configured.
+#[cfg(target_os = "macos")]
+fn add_macos_sdk_flags(cmd: &mut Command) {
+    if let Some(sdk_path) = get_macos_sdk_path() {
+        cmd.arg(format!("-isysroot{sdk_path}"));
+        cmd.arg(format!("-L{sdk_path}/usr/lib"));
+    }
 }

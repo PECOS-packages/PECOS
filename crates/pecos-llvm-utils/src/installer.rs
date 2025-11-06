@@ -655,6 +655,7 @@ fn apply_platform_fixes(llvm_dir: &Path) -> Result<(), Box<dyn std::error::Error
 }
 
 #[cfg(not(target_os = "macos"))]
+#[allow(clippy::unnecessary_wraps)]
 fn apply_platform_fixes(_llvm_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     // No platform fixes needed on non-macOS platforms
     Ok(())

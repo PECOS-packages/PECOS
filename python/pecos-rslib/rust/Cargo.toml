@@ -21,7 +21,8 @@ test = false
 
 [dependencies]
 # Use the pecos metacrate which includes all simulators and runtimes by default
-pecos = { workspace = true }
+# Enable llvm feature explicitly for full Python functionality
+pecos = { workspace = true, features = ["llvm"] }
 
 pyo3 = { workspace=true, features = ["extension-module", "abi3-py310", "generate-import-lib"] }
 parking_lot.workspace = true

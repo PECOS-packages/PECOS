@@ -17,7 +17,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # PECOS - the meta crate that includes everything via its prelude
-pecos = { workspace = true }
+# Enable llvm feature explicitly for full Julia functionality
+pecos = { workspace = true, features = ["llvm"] }
 
 [lints]
 workspace = true

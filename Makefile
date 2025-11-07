@@ -238,11 +238,13 @@ lint-fix:  ## Fix all auto-fixable linting issues (Rust, Python, Julia)
 
 .PHONY: rstest
 rstest:  ## Run Rust tests
-	@$(ADD_LLVM_TO_PATH) cargo test --workspace --release
+	@$(ADD_LLVM_TO_PATH) cargo test --workspace --release --exclude pecos-quest --exclude pecos-decoders --features llvm
+	@$(ADD_LLVM_TO_PATH) cargo test -p pecos-quest --release
+	@$(ADD_LLVM_TO_PATH) cargo test -p pecos-decoders --release --all-features
 
 .PHONY: rstest-all
 rstest-all:  ## Run Rust tests with all features except GPU
-	@$(ADD_LLVM_TO_PATH) cargo test --workspace --exclude pecos-quest --exclude pecos-decoders
+	@$(ADD_LLVM_TO_PATH) cargo test --workspace --exclude pecos-quest --exclude pecos-decoders --features llvm
 	@$(ADD_LLVM_TO_PATH) cargo test -p pecos-quest
 	@$(ADD_LLVM_TO_PATH) cargo test -p pecos-decoders --all-features
 

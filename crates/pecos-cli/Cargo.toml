@@ -23,7 +23,7 @@ env_logger.workspace = true
 log.workspace = true
 
 [features]
-default = ["qasm", "llvm", "phir", "selene"]
+default = ["qasm", "phir", "selene"]
 qasm = ["pecos/qasm"]
 llvm = ["pecos/llvm"]
 phir = ["pecos/phir"]

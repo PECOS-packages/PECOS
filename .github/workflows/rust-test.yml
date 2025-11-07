@@ -74,7 +74,7 @@ jobs:
         run: rustup component add clippy
 
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --features llvm -- -D warnings
 
   rust-lint-no-llvm:
     runs-on: ubuntu-latest
@@ -245,11 +245,11 @@ jobs:
 
           echo "RUSTFLAGS: $RUSTFLAGS"
 
-          cargo test --no-run
+          cargo test --no-run --features llvm
 
       - name: Compile tests (Linux/Windows)
         if: matrix.os != 'macos-latest'
-        run: cargo test --no-run
+        run: cargo test --no-run --features llvm
 
       - name: Run tests (macOS)
         if: matrix.os == 'macos-latest'
@@ -264,7 +264,7 @@ jobs:
           unset PKG_CONFIG_PATH
           export LIBRARY_PATH=/usr/lib
 
-          cargo test --workspace
+          cargo test --workspace --features llvm
 
       - name: Run tests (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -274,13 +274,13 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           # Run all non-doctest tests
-          cargo test --workspace --exclude pecos-rslib --lib --bins --tests --examples
+          cargo test --workspace --features llvm --exclude pecos-rslib --lib --bins --tests --examples
 
           # For Windows, we need to run doctests for the pecos crate specially
           # to ensure they run from the crate directory
           cd crates/pecos
-          cargo test --doc
+          cargo test --doc --features llvm
           cd ../..
 
           # Run doctests for other crates normally
-          cargo test --workspace --exclude pecos-rslib --exclude pecos --doc
+          cargo test --workspace --features llvm --exclude pecos-rslib --exclude pecos --doc

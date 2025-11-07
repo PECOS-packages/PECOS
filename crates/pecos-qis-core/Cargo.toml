@@ -30,7 +30,7 @@ features = ["llvm14-0"]
 optional = true
 
 [features]
-default = ["llvm"]
+default = []
 llvm = ["dep:inkwell"]
 
 [build-dependencies]

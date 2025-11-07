@@ -39,7 +39,7 @@ class TestHUGRCompilation:
 
         # Test compilation of pecos-hugr-qis crate
         result = subprocess.run(
-            [cargo_path, "check", "-p", "pecos-hugr-qis"],
+            [cargo_path, "check", "-p", "pecos-hugr-qis", "--features", "llvm"],
             capture_output=True,
             text=True,
             cwd=project_root,
@@ -75,7 +75,16 @@ class TestHUGRCompilation:
 
         # Run HUGR-specific unit tests
         result = subprocess.run(
-            [cargo_path, "test", "-p", "pecos-hugr-qis", "--", "--nocapture"],
+            [
+                cargo_path,
+                "test",
+                "-p",
+                "pecos-hugr-qis",
+                "--features",
+                "llvm",
+                "--",
+                "--nocapture",
+            ],
             capture_output=True,
             text=True,
             cwd=project_root,

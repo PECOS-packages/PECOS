@@ -1500,20 +1500,22 @@ impl OperationProcessor {
                 // Get angles safely
                 let angles_ref = angles.as_ref().ok_or_else(|| {
                     PecosError::ValidationInvalidGateParameters(format!(
-                        "'{qop}' gate requires two angles (phi, theta)"
+                        "'{qop}' gate requires two angles (theta, phi)"
                     ))
                 })?;
 
                 if angles_ref.len() < 2 {
                     return Err(PecosError::ValidationInvalidGateParameters(format!(
-                        "'{qop}' gate requires two angles (phi, theta), but only {} provided",
+                        "'{qop}' gate requires two angles (theta, phi), but only {} provided",
                         angles_ref.len()
                     )));
                 }
 
-                let phi = angles_ref[0];
-                let theta = angles_ref[1];
-                Ok((qop.to_string(), qubit_args, vec![phi, theta]))
+                // R1XY convention: angles[0] = theta (rotation angle), angles[1] = phi (axis angle)
+                // See: R1XY = RZ(phi-pi/2) * RY(theta) * RZ(phi-pi/2)
+                let theta = angles_ref[0];
+                let phi = angles_ref[1];
+                Ok((qop.to_string(), qubit_args, vec![theta, phi]))
             }
 
             // Two-qubit gates

@@ -142,7 +142,7 @@ def r1xy2cliff(
 ) -> str | bool:
     """Identifies (ignoring global phases) a Clifford given the angles of a R1XY gate."""
     if use_conv_table:
-        if np.isclose(theta % 2 * np.pi, 0.0, atol=atol):
+        if np.isclose(theta % (2 * np.pi), 0.0, atol=atol):
             return "I"
         for cangs, csym in r1xy_ang2str.items():
             a, b = cangs
@@ -162,7 +162,7 @@ def rz2cliff(
 ) -> str | bool:
     """Identifies (ignoring global phases) a Clifford given the angles of a RZ gate."""
     if use_conv_table:
-        if np.isclose(theta % 2 * np.pi, 0.0, atol=atol):
+        if np.isclose(theta % (2 * np.pi), 0.0, atol=atol):
             return "I"
         for cangs, csym in rz_ang2str.items():
             a = cangs[0]

@@ -154,6 +154,9 @@ class HybridEngine:
         self.machine.init(num_qubits)
         self.error_model.init(num_qubits, self.machine)
         self.op_processor.init()
+        # Pass seed to quantum simulator if one was set
+        if self.seed is not None:
+            self.qsim.qsim_params["seed"] = self.seed
         self.qsim.init(num_qubits)
 
     def shot_reinit_components(self) -> None:

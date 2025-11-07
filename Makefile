@@ -237,16 +237,32 @@ lint-fix:  ## Fix all auto-fixable linting issues (Rust, Python, Julia)
 # -------
 
 .PHONY: rstest
-rstest:  ## Run Rust tests
-	@$(ADD_LLVM_TO_PATH) cargo test --workspace --release --exclude pecos-quest --exclude pecos-decoders --features llvm
-	@$(ADD_LLVM_TO_PATH) cargo test -p pecos-quest --release
-	@$(ADD_LLVM_TO_PATH) cargo test -p pecos-decoders --release --all-features
+rstest:  ## Run Rust tests (with GPU features only if CUDA available)
+	@if [ "$(CUDA_AVAILABLE)" = "no" ]; then \
+		echo "CUDA not detected - testing all features except GPU"; \
+		$(ADD_LLVM_TO_PATH) cargo test --workspace --release --exclude pecos-quest --exclude pecos-decoders --features llvm; \
+		$(ADD_LLVM_TO_PATH) cargo test -p pecos-quest --release --features cpu; \
+		$(ADD_LLVM_TO_PATH) cargo test -p pecos-decoders --release --all-features; \
+	else \
+		echo "CUDA detected - testing with all features including GPU"; \
+		$(ADD_LLVM_TO_PATH) cargo test --workspace --release --exclude pecos-quest --exclude pecos-decoders --features llvm; \
+		$(ADD_LLVM_TO_PATH) cargo test -p pecos-quest --release --all-features; \
+		$(ADD_LLVM_TO_PATH) cargo test -p pecos-decoders --release --all-features; \
+	fi
 
 .PHONY: rstest-all
-rstest-all:  ## Run Rust tests with all features except GPU
-	@$(ADD_LLVM_TO_PATH) cargo test --workspace --exclude pecos-quest --exclude pecos-decoders --features llvm
-	@$(ADD_LLVM_TO_PATH) cargo test -p pecos-quest
-	@$(ADD_LLVM_TO_PATH) cargo test -p pecos-decoders --all-features
+rstest-all:  ## Run Rust tests with all features (including GPU if CUDA available)
+	@if [ "$(CUDA_AVAILABLE)" = "no" ]; then \
+		echo "CUDA not detected - testing all features except GPU"; \
+		$(ADD_LLVM_TO_PATH) cargo test --workspace --exclude pecos-quest --exclude pecos-decoders --features llvm; \
+		$(ADD_LLVM_TO_PATH) cargo test -p pecos-quest --features cpu; \
+		$(ADD_LLVM_TO_PATH) cargo test -p pecos-decoders --all-features; \
+	else \
+		echo "CUDA detected - testing with all features including GPU"; \
+		$(ADD_LLVM_TO_PATH) cargo test --workspace --exclude pecos-quest --exclude pecos-decoders --features llvm; \
+		$(ADD_LLVM_TO_PATH) cargo test -p pecos-quest --all-features; \
+		$(ADD_LLVM_TO_PATH) cargo test -p pecos-decoders --all-features; \
+	fi
 
 # Decoder-specific commands
 # -------------------------

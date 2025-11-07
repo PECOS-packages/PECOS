@@ -74,7 +74,13 @@ jobs:
         run: rustup component add clippy
 
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets --features llvm -- -D warnings
+        run: |
+          echo "Running clippy with all features (including LLVM)..."
+          cargo clippy --workspace --exclude pecos --exclude pecos-quest --all-targets --all-features -- -D warnings
+          echo "Running clippy on pecos with all non-GPU features..."
+          cargo clippy -p pecos --all-targets --features "llvm,selene,qasm,phir,all-simulators" -- -D warnings
+          echo "Running clippy on pecos-quest with CPU features only..."
+          cargo clippy -p pecos-quest --all-targets --features "cpu" -- -D warnings
 
   rust-lint-no-llvm:
     runs-on: ubuntu-latest
@@ -245,11 +251,16 @@ jobs:
 
           echo "RUSTFLAGS: $RUSTFLAGS"
 
-          cargo test --no-run --features llvm
+          cargo test --no-run --workspace --exclude pecos-quest --exclude pecos-decoders --features llvm
+          cargo test --no-run -p pecos-quest --features cpu
+          cargo test --no-run -p pecos-decoders --all-features
 
       - name: Compile tests (Linux/Windows)
         if: matrix.os != 'macos-latest'
-        run: cargo test --no-run --features llvm
+        run: |
+          cargo test --no-run --workspace --exclude pecos-quest --exclude pecos-decoders --features llvm
+          cargo test --no-run -p pecos-quest --features cpu
+          cargo test --no-run -p pecos-decoders --all-features
 
       - name: Run tests (macOS)
         if: matrix.os == 'macos-latest'
@@ -264,17 +275,24 @@ jobs:
           unset PKG_CONFIG_PATH
           export LIBRARY_PATH=/usr/lib
 
-          cargo test --workspace --features llvm
+          cargo test --workspace --exclude pecos-quest --exclude pecos-decoders --features llvm
+          cargo test -p pecos-quest --features cpu
+          cargo test -p pecos-decoders --all-features
 
       - name: Run tests (Linux)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test --workspace
+        run: |
+          cargo test --workspace --exclude pecos-quest --exclude pecos-decoders --features llvm
+          cargo test -p pecos-quest --features cpu
+          cargo test -p pecos-decoders --all-features
 
       - name: Run tests (Windows)
         if: matrix.os == 'windows-latest'
         run: |
           # Run all non-doctest tests
-          cargo test --workspace --features llvm --exclude pecos-rslib --lib --bins --tests --examples
+          cargo test --workspace --exclude pecos-quest --exclude pecos-decoders --exclude pecos-rslib --features llvm --lib --bins --tests --examples
+          cargo test -p pecos-quest --features cpu --lib --bins --tests --examples
+          cargo test -p pecos-decoders --all-features --lib --bins --tests --examples
 
           # For Windows, we need to run doctests for the pecos crate specially
           # to ensure they run from the crate directory
@@ -283,4 +301,6 @@ jobs:
           cd ../..
 
           # Run doctests for other crates normally
-          cargo test --workspace --features llvm --exclude pecos-rslib --exclude pecos --doc
+          cargo test --workspace --exclude pecos-quest --exclude pecos-decoders --exclude pecos-rslib --exclude pecos --features llvm --doc
+          cargo test -p pecos-quest --doc
+          cargo test -p pecos-decoders --all-features --doc

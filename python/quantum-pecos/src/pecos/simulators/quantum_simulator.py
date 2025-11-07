@@ -114,7 +114,20 @@ class QuantumSimulator:
         if self.backend is None:
             self.state = SparseSim
 
-        self.state = self.state(num_qubits=num_qubits, **self.qsim_params)
+        # Try to initialize with all params including seed
+        # If the simulator doesn't support seed, retry without it
+        try:
+            self.state = self.state(num_qubits=num_qubits, **self.qsim_params)
+        except TypeError as e:
+            if "seed" in str(e) and "unexpected keyword argument" in str(e):
+                # Simulator doesn't support seed parameter, retry without it
+                params_without_seed = {
+                    k: v for k, v in self.qsim_params.items() if k != "seed"
+                }
+                self.state = self.state(num_qubits=num_qubits, **params_without_seed)
+            else:
+                # Different TypeError, re-raise it
+                raise
 
     def shot_reinit(self) -> None:
         """Run all code needed at the beginning of each shot, e.g., resetting state."""

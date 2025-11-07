@@ -90,6 +90,7 @@ pub mod ffi {
             outcome_prob: &mut f64,
         ) -> i32;
         unsafe fn quest_calc_prob_of_outcome(qureg: *mut u8, qubit: i32, outcome: i32) -> f64;
+        unsafe fn quest_apply_forced_measurement(qureg: *mut u8, qubit: i32, outcome: i32) -> f64;
         unsafe fn quest_calc_total_prob(qureg: *mut u8) -> f64;
 
         // Amplitude access

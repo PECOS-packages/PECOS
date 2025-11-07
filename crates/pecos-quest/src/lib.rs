@@ -374,17 +374,24 @@ where
     // }
 
     fn mz(&mut self, qubit: usize) -> MeasurementResult {
+        use rand::Rng;
+
         self.check_qubit_index(qubit).expect("Invalid qubit index");
         let quest_qubit = self.convert_qubit_index(qubit);
 
-        let mut outcome_prob = 0.0;
-        let outcome = unsafe {
-            ffi::quest_measure_with_stats(self.qureg.ptr, quest_qubit, &mut outcome_prob)
-        };
+        // Get probability of measuring |0⟩ (deterministic calculation)
+        let prob_0 = unsafe { ffi::quest_calc_prob_of_outcome(self.qureg.ptr, quest_qubit, 0) };
+
+        // Sample outcome using our seeded Rust RNG
+        let outcome = i32::from(self.rng.random::<f64>() >= prob_0);
+
+        // Collapse state to the sampled outcome
+        let actual_prob =
+            unsafe { ffi::quest_apply_forced_measurement(self.qureg.ptr, quest_qubit, outcome) };
 
         MeasurementResult {
             outcome: outcome != 0,
-            is_deterministic: (outcome_prob - 1.0).abs() < f64::EPSILON,
+            is_deterministic: (actual_prob - 1.0).abs() < f64::EPSILON,
         }
     }
 }
@@ -763,17 +770,24 @@ where
     // }
 
     fn mz(&mut self, qubit: usize) -> MeasurementResult {
+        use rand::Rng;
+
         self.check_qubit_index(qubit).expect("Invalid qubit index");
         let quest_qubit = self.convert_qubit_index(qubit);
 
-        let mut outcome_prob = 0.0;
-        let outcome = unsafe {
-            ffi::quest_measure_with_stats(self.qureg.ptr, quest_qubit, &mut outcome_prob)
-        };
+        // Get probability of measuring |0⟩ (deterministic calculation)
+        let prob_0 = unsafe { ffi::quest_calc_prob_of_outcome(self.qureg.ptr, quest_qubit, 0) };
+
+        // Sample outcome using our seeded Rust RNG
+        let outcome = i32::from(self.rng.random::<f64>() >= prob_0);
+
+        // Collapse state to the sampled outcome
+        let actual_prob =
+            unsafe { ffi::quest_apply_forced_measurement(self.qureg.ptr, quest_qubit, outcome) };
 
         MeasurementResult {
             outcome: outcome != 0,
-            is_deterministic: (outcome_prob - 1.0).abs() < f64::EPSILON,
+            is_deterministic: (actual_prob - 1.0).abs() < f64::EPSILON,
         }
     }
 }

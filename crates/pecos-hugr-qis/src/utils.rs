@@ -2,7 +2,6 @@
 
 use anyhow::{Error, Result, anyhow};
 use tket::extension::{TKET1_EXTENSION_ID, TKET1_OP_NAME};
-use tket::hugr::envelope::get_generator;
 use tket::hugr::ops::OpType;
 use tket::hugr::package::Package;
 use tket::hugr::types::Term;
@@ -69,15 +68,9 @@ pub fn read_hugr_envelope(bytes: &[u8]) -> Result<Hugr> {
             }
 
             // Validate the package
-            package.validate().map_err(|e| {
-                let generator = get_generator(&package.modules);
-                let any = Error::new(e);
-                if let Some(generator) = generator {
-                    any.context(format!("in package with generator {generator}"))
-                } else {
-                    any
-                }
-            })?;
+            package
+                .validate()
+                .map_err(|e| Error::new(e).context("HUGR package validation failed"))?;
 
             // Check that no opaque tket1 operations are present
             for node in package.modules[0].nodes() {

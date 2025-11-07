@@ -1,4 +1,3 @@
-use assert_cmd::prelude::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
@@ -60,7 +59,7 @@ fn test_seed_produces_consistent_results() -> Result<(), Box<dyn std::error::Err
     let test_file = manifest_dir.join("../../examples/phir/bell.phir.json");
 
     // Run multiple times with seed 42, forcing JSON format
-    let seed_42_run1 = Command::cargo_bin("pecos")?
+    let seed_42_run1 = Command::new(assert_cmd::cargo::cargo_bin!("pecos"))
         .env("RUST_LOG", "info")
         .arg("run")
         .arg(&test_file)
@@ -74,7 +73,7 @@ fn test_seed_produces_consistent_results() -> Result<(), Box<dyn std::error::Err
         .arg("42")
         .output()?;
 
-    let seed_42_run2 = Command::cargo_bin("pecos")?
+    let seed_42_run2 = Command::new(assert_cmd::cargo::cargo_bin!("pecos"))
         .env("RUST_LOG", "info")
         .arg("run")
         .arg(&test_file)
@@ -89,7 +88,7 @@ fn test_seed_produces_consistent_results() -> Result<(), Box<dyn std::error::Err
         .output()?;
 
     // Run multiple times with seed 43
-    let seed_43_run1 = Command::cargo_bin("pecos")?
+    let seed_43_run1 = Command::new(assert_cmd::cargo::cargo_bin!("pecos"))
         .env("RUST_LOG", "info")
         .arg("run")
         .arg(&test_file)
@@ -103,7 +102,7 @@ fn test_seed_produces_consistent_results() -> Result<(), Box<dyn std::error::Err
         .arg("43")
         .output()?;
 
-    let seed_43_run2 = Command::cargo_bin("pecos")?
+    let seed_43_run2 = Command::new(assert_cmd::cargo::cargo_bin!("pecos"))
         .env("RUST_LOG", "info")
         .arg("run")
         .arg(&test_file)

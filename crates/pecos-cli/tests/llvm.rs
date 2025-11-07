@@ -6,7 +6,6 @@
 /// This test modifies the build directory and should ideally be serialized,
 /// but currently runs without locks. Consider adding `serial_test` or `LlvmTestLock`
 /// if conflicts arise with other compilation tests.
-use assert_cmd::prelude::*;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -34,7 +33,7 @@ fn test_pecos_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    let output = Command::cargo_bin("pecos")?
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("pecos"))
         .env("RUST_LOG", "info")
         .env("PATH", path.clone())
         .arg("compile")
@@ -66,7 +65,7 @@ fn test_pecos_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Test execution
-    let output = Command::cargo_bin("pecos")?
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("pecos"))
         .env("RUST_LOG", "info")
         .arg("run")
         .arg("--jit")

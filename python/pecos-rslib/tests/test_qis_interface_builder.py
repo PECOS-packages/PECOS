@@ -103,7 +103,7 @@ class TestQisInterfaceBuilder:
             m0_vals = results_dict.get("measurement_0", [])
             m1_vals = results_dict.get("measurement_1", [])
 
-            for m0, m1 in zip(m0_vals, m1_vals):
+            for m0, m1 in zip(m0_vals, m1_vals, strict=False):
                 if m0 == 0 and m1 == 0:
                     count_00 += 1
                 elif m0 == 1 and m1 == 1:
@@ -169,7 +169,7 @@ class TestQisInterfaceBuilder:
             m1_vals = results_dict.get("measurement_1", [])
             m2_vals = results_dict.get("measurement_2", [])
 
-            for m0, m1, m2 in zip(m0_vals, m1_vals, m2_vals):
+            for m0, m1, m2 in zip(m0_vals, m1_vals, m2_vals, strict=False):
                 if m0 == 0 and m1 == 0 and m2 == 0:
                     count_000 += 1
                 elif m0 == 1 and m1 == 1 and m2 == 1:

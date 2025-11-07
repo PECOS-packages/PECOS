@@ -14,7 +14,6 @@
 ///
 /// These tests help verify that the quantum simulator correctly implements
 /// quantum entanglement, superposition, and noise models.
-use assert_cmd::prelude::*;
 use pecos::prelude::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -38,7 +37,7 @@ struct PecosTestConfig<'a> {
 
 /// Helper function to run PECOS CLI with given parameters
 fn run_pecos(config: PecosTestConfig) -> Result<String, Box<dyn std::error::Error>> {
-    let mut cmd = Command::cargo_bin("pecos")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("pecos"));
     cmd.env("RUST_LOG", "info")
         .env("RUST_BACKTRACE", "0") // Disable backtrace to avoid extra output on segfault
         .arg("run")

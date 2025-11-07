@@ -11,7 +11,6 @@
 /// Note: These tests require LLVM compilation capabilities which depend on
 /// LLVM toolchain availability. If tests fail due to missing dependencies,
 /// ensure that the LLVM toolchain is properly installed.
-use assert_cmd::prelude::*;
 use pecos::prelude::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -69,7 +68,7 @@ fn run_pecos(
     noise_prob: &str,
     seed: u64,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let mut cmd = Command::cargo_bin("pecos")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("pecos"));
     cmd.env("RUST_LOG", "info").arg("run");
 
     // Add --jit flag for LLVM files (when Selene is not available)
@@ -379,7 +378,7 @@ fn test_qis_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // First, test compilation using explicit JIT interface (since Selene may not be available in tests)
-    let output = Command::cargo_bin("pecos")?
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("pecos"))
         .env("RUST_LOG", "info")
         .arg("compile")
         .arg("--jit")
@@ -410,7 +409,7 @@ fn test_qis_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Then, test execution using explicit JIT interface for consistency
-    let output = Command::cargo_bin("pecos")?
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("pecos"))
         .env("RUST_LOG", "info")
         .arg("run")
         .arg("--jit")

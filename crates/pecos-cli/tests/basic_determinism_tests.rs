@@ -14,7 +14,6 @@
 ///
 /// These tests provide the foundation for ensuring PECOS maintains deterministic
 /// behavior, which is crucial for reproducible quantum simulations.
-use assert_cmd::prelude::*;
 use pecos::prelude::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -32,7 +31,7 @@ fn run_pecos(
     noise_prob: &str,
     seed: u64,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let mut cmd = Command::cargo_bin("pecos")?;
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("pecos"));
     cmd.env("RUST_LOG", "info").arg("run");
 
     // Add --jit flag for LLVM files (when Selene is not available)

@@ -14,7 +14,6 @@
 ///
 /// These tests help ensure that the PECOS simulator maintains proper deterministic
 /// behavior regardless of the parallelization configuration.
-use assert_cmd::prelude::*;
 use pecos::prelude::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -29,7 +28,7 @@ fn run_pecos(
     noise_prob: &str,
     seed: u64,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let output = Command::cargo_bin("pecos")?
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("pecos"))
         .env("RUST_LOG", "info")
         .arg("run")
         .arg(file_path)

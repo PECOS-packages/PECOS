@@ -3,9 +3,8 @@ use pecos::DynamicEngineBuilder;
 #[cfg(feature = "phir")]
 use pecos::phir_json_engine;
 use pecos::prelude::*;
-use pecos::qis_engine;
-#[cfg(feature = "selene")]
-use pecos::{helios_interface_builder, selene_simple_runtime};
+#[cfg(all(feature = "llvm", feature = "selene"))]
+use pecos::{helios_interface_builder, qis_engine, selene_simple_runtime};
 use std::path::Path;
 
 /// Sets up a classical engine for the CLI based on the program type

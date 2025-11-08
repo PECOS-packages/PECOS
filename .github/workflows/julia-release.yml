@@ -238,7 +238,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        julia-version: ['1.10', '1.11', '1']
+        julia-version: ['1.10', '1']  # 1.10 = LTS, 1 = latest stable
         platform:
           - runner: ubuntu-latest
             os: ubuntu-latest

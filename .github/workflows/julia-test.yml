@@ -38,13 +38,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macOS-latest]
-        julia-version: ["1.10", "1.11", "1"]  # 1 = latest stable
-        # Exclude some combinations to reduce CI time
-        exclude:
-          - os: windows-latest
-            julia-version: "1.11"
-          - os: macOS-latest
-            julia-version: "1.11"
+        julia-version: ["1.10", "1"]  # 1.10 = LTS, 1 = latest stable
 
     steps:
     - uses: actions/checkout@v4

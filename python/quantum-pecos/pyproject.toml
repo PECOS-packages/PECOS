@@ -72,7 +72,6 @@ visualization = [
 ]
 wasm-all = [
     "quantum-pecos[wasmtime]",
-    "quantum-pecos[wasmer]; python_version < '3.13'",
 ]
 all = [
     "quantum-pecos[simulators]",
@@ -80,11 +79,6 @@ all = [
     "quantum-pecos[visualization]",
     "quantum-pecos[guppy]",
     "quantum-pecos[qir]",
-]
-# The following only work for some environments/Python versions:
-wasmer = [
-    "wasmer~=1.1.0", # Package not currently compatible with Python 3.13
-    "wasmer_compiler_cranelift~=1.1.0",
 ]
 
 # CUDA dependencies. See docs/user-guide/cuda-setup.md for detailed installation instructions

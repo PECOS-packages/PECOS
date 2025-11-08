@@ -41,8 +41,6 @@ spec_example_phir = json.load(Path.open(this_dir / "phir/spec_example.phir.json"
 # run all without optional_dependency tests: pytest -v -m "not optional_dependency"
 
 
-@pytest.mark.wasmtime
-@pytest.mark.optional_dependency
 def test_spec_example_wasmtime() -> None:
     """A random example showing that various basic aspects of PHIR is runnable by PECOS."""
     wasm = WasmtimeObj(math_wat)
@@ -53,8 +51,6 @@ def test_spec_example_wasmtime() -> None:
     )
 
 
-@pytest.mark.wasmtime
-@pytest.mark.optional_dependency
 def test_spec_example_noisy_wasmtime() -> None:
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
     wasm = WasmtimeObj(str(math_wat))
@@ -80,8 +76,6 @@ def test_spec_example_noisy_wasmtime() -> None:
     )
 
 
-@pytest.mark.wasmtime
-@pytest.mark.optional_dependency
 def test_example1_wasmtime() -> None:
     """A random example showing that various basic aspects of PHIR is runnable by PECOS."""
     wasm = WasmtimeObj(add_wat)
@@ -92,8 +86,6 @@ def test_example1_wasmtime() -> None:
     )
 
 
-@pytest.mark.wasmtime
-@pytest.mark.optional_dependency
 def test_example1_noisy_wasmtime() -> None:
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
     wasm = WasmtimeObj(str(add_wat))

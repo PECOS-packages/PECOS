@@ -250,7 +250,7 @@ autosummary_generate = True
 
 # -- Options for autodoc extension ----------------------------------------------
 # Mock modules that are not available during doc build
-autodoc_mock_imports = ["wasmer", "wasmtime", "cupy", "pecos.slr.std", "pecos.slr.slr"]
+autodoc_mock_imports = ["cupy", "pecos.slr.std", "pecos.slr.slr"]
 
 # Skip problematic modules
 autosummary_mock_imports = [

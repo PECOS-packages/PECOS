@@ -62,20 +62,11 @@ qir = [
 guppy = [
     "guppylang>=0.21.0",  # Install guppylang first
     "selene-sim~=0.2.0",  # Then selene-sim (dependency of guppylang)
-    # hugr package is not directly needed - comes via guppylang/selene-sim
-]
-wasmtime = [
-    "wasmtime>=13.0"
 ]
 visualization = [
     "plotly~=5.9.0",
 ]
-wasm-all = [
-    "quantum-pecos[wasmtime]",
-]
 all = [
-    "quantum-pecos[simulators]",
-    "quantum-pecos[wasm-all]",
     "quantum-pecos[visualization]",
     "quantum-pecos[guppy]",
     "quantum-pecos[qir]",

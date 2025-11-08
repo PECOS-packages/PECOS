@@ -3555,7 +3555,6 @@ all = [
     { name = "llvmlite", marker = "python_full_version < '3.13'" },
     { name = "plotly" },
     { name = "selene-sim" },
-    { name = "wasmtime" },
 ]
 cuda = [
     { name = "cupy-cuda13x", marker = "python_full_version >= '3.11'" },
@@ -3571,12 +3570,6 @@ qir = [
 ]
 visualization = [
     { name = "plotly" },
-]
-wasm-all = [
-    { name = "wasmtime" },
-]
-wasmtime = [
-    { name = "wasmtime" },
 ]
 
 [package.metadata]
@@ -3594,15 +3587,11 @@ requires-dist = [
     { name = "pytket-cutensornet", marker = "python_full_version >= '3.11' and extra == 'cuda'", specifier = ">=0.12.0" },
     { name = "quantum-pecos", extras = ["guppy"], marker = "extra == 'all'" },
     { name = "quantum-pecos", extras = ["qir"], marker = "extra == 'all'" },
-    { name = "quantum-pecos", extras = ["simulators"], marker = "extra == 'all'" },
     { name = "quantum-pecos", extras = ["visualization"], marker = "extra == 'all'" },
-    { name = "quantum-pecos", extras = ["wasm-all"], marker = "extra == 'all'" },
-    { name = "quantum-pecos", extras = ["wasmtime"], marker = "extra == 'wasm-all'" },
     { name = "scipy", specifier = ">=1.1.0" },
     { name = "selene-sim", marker = "extra == 'guppy'", specifier = "~=0.2.0" },
-    { name = "wasmtime", marker = "extra == 'wasmtime'", specifier = ">=13.0" },
 ]
-provides-extras = ["qir", "guppy", "wasmtime", "visualization", "wasm-all", "all", "cuda"]
+provides-extras = ["qir", "guppy", "visualization", "all", "cuda"]
 
 [[package]]
 name = "qwasm"

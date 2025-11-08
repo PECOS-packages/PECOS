@@ -79,7 +79,7 @@
 
 //! Re-export WebAssembly foreign object from pecos-wasm crate
 //!
-//! This module previously contained the WasmtimeForeignObject implementation,
+//! This module previously contained the `WasmtimeForeignObject` implementation,
 //! but it has been moved to the unified pecos-wasm crate to avoid duplication
 //! across different PECOS crates.
 

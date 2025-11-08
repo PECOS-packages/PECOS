@@ -10,20 +10,20 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! PyO3 bindings for WebAssembly foreign object
+//! `PyO3` bindings for WebAssembly foreign object
 //!
-//! This module provides Python bindings for the Rust WasmForeignObject implementation,
+//! This module provides Python bindings for the Rust `WasmForeignObject` implementation,
 //! allowing Python code to use the Rust Wasmtime runtime instead of the Python wasmtime package.
 
-use pecos_wasm::{ForeignObject, WasmForeignObject};
+use pecos::wasm::{ForeignObject, WasmForeignObject};
 use pyo3::exceptions::{PyException, PyFileNotFoundError, PyRuntimeError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use std::path::Path;
 
-/// Python wrapper for WasmForeignObject
+/// Python wrapper for `WasmForeignObject`
 ///
-/// This class provides the same interface as the Python WasmtimeObj class,
+/// This class provides the same interface as the Python `WasmtimeObj` class,
 /// but uses the Rust implementation under the hood for better performance
 /// and thread safety.
 #[pyclass(name = "RsWasmForeignObject")]
@@ -38,14 +38,14 @@ impl PyWasmForeignObject {
     /// Args:
     ///     file: Path to WASM file (str or pathlib.Path) or WASM bytes (bytes)
     ///     timeout: Optional timeout in seconds (default: 1.0 second)
-    ///     memory_size: Optional maximum memory size in bytes per linear memory (default: None = unlimited)
+    ///     `memory_size`: Optional maximum memory size in bytes per linear memory (default: None = unlimited)
     ///
     /// Returns:
     ///     New WebAssembly foreign object instance
     ///
     /// Raises:
-    ///     FileNotFoundError: If file path doesn't exist
-    ///     RuntimeError: If WASM compilation fails
+    ///     `FileNotFoundError`: If file path doesn't exist
+    ///     `RuntimeError`: If WASM compilation fails
     #[new]
     #[pyo3(signature = (file, timeout=None, memory_size=None))]
     fn new(
@@ -76,8 +76,8 @@ impl PyWasmForeignObject {
                 )));
             }
 
-            let inner =
-                WasmForeignObject::with_limits(path, timeout_seconds, memory_size).map_err(|e| {
+            let inner = WasmForeignObject::with_limits(path, timeout_seconds, memory_size)
+                .map_err(|e| {
                     PyRuntimeError::new_err(format!("Failed to load WASM from file: {e}"))
                 })?;
             return Ok(Self { inner });
@@ -93,8 +93,8 @@ impl PyWasmForeignObject {
                 )));
             }
 
-            let inner =
-                WasmForeignObject::with_limits(path, timeout_seconds, memory_size).map_err(|e| {
+            let inner = WasmForeignObject::with_limits(path, timeout_seconds, memory_size)
+                .map_err(|e| {
                     PyRuntimeError::new_err(format!("Failed to load WASM from file: {e}"))
                 })?;
             return Ok(Self { inner });
@@ -112,7 +112,7 @@ impl PyWasmForeignObject {
     /// and calls the 'init' function in the WASM module.
     ///
     /// Raises:
-    ///     RuntimeError: If init function is missing or execution fails
+    ///     `RuntimeError`: If init function is missing or execution fails
     fn init(&mut self) -> PyResult<()> {
         self.inner
             .init()
@@ -121,15 +121,15 @@ impl PyWasmForeignObject {
 
     /// Reset variables before each shot
     ///
-    /// Calls the 'shot_reinit' function in the WASM module if it exists.
+    /// Calls the '`shot_reinit`' function in the WASM module if it exists.
     /// This is a no-op if the function doesn't exist.
     ///
     /// Raises:
-    ///     RuntimeError: If shot_reinit function exists but execution fails
+    ///     `RuntimeError`: If `shot_reinit` function exists but execution fails
     fn shot_reinit(&mut self) -> PyResult<()> {
-        self.inner.shot_reinit().map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to call shot_reinit: {e}"))
-        })
+        self.inner
+            .shot_reinit()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to call shot_reinit: {e}")))
     }
 
     /// Create a new WASM instance
@@ -137,11 +137,11 @@ impl PyWasmForeignObject {
     /// Resets the object's internal state by creating a fresh instance.
     ///
     /// Raises:
-    ///     RuntimeError: If instance creation fails
+    ///     `RuntimeError`: If instance creation fails
     fn new_instance(&mut self) -> PyResult<()> {
-        self.inner.new_instance().map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to create new instance: {e}"))
-        })
+        self.inner
+            .new_instance()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create new instance: {e}")))
     }
 
     /// Get list of exported function names
@@ -155,14 +155,15 @@ impl PyWasmForeignObject {
     /// Execute a WASM function
     ///
     /// Args:
-    ///     func_name: Name of the function to execute
+    ///     `func_name`: Name of the function to execute
     ///     args: List of integer arguments (i64)
     ///
     /// Returns:
     ///     Tuple containing the function results (or single 0 for void functions)
     ///
     /// Raises:
-    ///     RuntimeError: If function not found or execution fails
+    ///     `RuntimeError`: If function not found or execution fails
+    #[allow(clippy::needless_pass_by_value)] // PyO3 extracts Python sequences as Vec
     fn exec(&mut self, py: Python<'_>, func_name: &str, args: Vec<i64>) -> PyResult<Py<PyAny>> {
         let results = self.inner.exec(func_name, &args).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to execute '{func_name}': {e}"))
@@ -190,7 +191,7 @@ impl PyWasmForeignObject {
     /// Serialize to dictionary for pickling
     ///
     /// Returns:
-    ///     Dictionary containing 'fobj_class', 'wasm_bytes', 'timeout', and 'memory_size'
+    ///     Dictionary containing '`fobj_class`', '`wasm_bytes`', 'timeout', and '`memory_size`'
     fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = pyo3::types::PyDict::new(py);
 
@@ -219,7 +220,7 @@ impl PyWasmForeignObject {
     /// Deserialize from dictionary (for pickling)
     ///
     /// Args:
-    ///     wasmtime_dict: Dictionary containing 'fobj_class', 'wasm_bytes', and optionally 'timeout' and 'memory_size'
+    ///     `wasmtime_dict`: Dictionary containing '`fobj_class`', '`wasm_bytes`', and optionally 'timeout' and '`memory_size`'
     ///
     /// Returns:
     ///     New instance created from the dictionary
@@ -257,10 +258,10 @@ impl PyWasmForeignObject {
         let wasm_bytes = new_obj.inner.wasm_bytes();
         let timeout = new_obj.inner.timeout_seconds();
         let memory_size = new_obj.inner.memory_size();
-        self.inner =
-            WasmForeignObject::from_bytes_with_limits(wasm_bytes, timeout, memory_size).map_err(
-                |e| PyRuntimeError::new_err(format!("Failed to deserialize WASM object: {e}")),
-            )?;
+        self.inner = WasmForeignObject::from_bytes_with_limits(wasm_bytes, timeout, memory_size)
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to deserialize WASM object: {e}"))
+            })?;
         Ok(())
     }
 }

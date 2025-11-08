@@ -13,7 +13,7 @@
 //!
 //! This crate provides a unified WebAssembly foreign object implementation that can be used
 //! across different PECOS crates (pecos-qasm, pecos-phir-json, etc.) and exposed to Python
-//! via PyO3.
+//! via `PyO3`.
 //!
 //! # Features
 //!

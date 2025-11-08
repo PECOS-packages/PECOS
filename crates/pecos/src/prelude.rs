@@ -122,3 +122,10 @@ pub use pecos_quest::{QuestDensityMatrix, QuestStateVec};
 
 #[cfg(feature = "qulacs")]
 pub use pecos_qulacs::QulacsStateVec;
+
+// ============================================================================
+// WebAssembly foreign object support
+// ============================================================================
+
+#[cfg(feature = "wasm")]
+pub use pecos_wasm::{ForeignObject, WasmForeignObject};

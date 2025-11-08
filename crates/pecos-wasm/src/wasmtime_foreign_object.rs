@@ -24,7 +24,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use wasmtime::{Config, Engine, Func, Instance, Module, Store, StoreLimits, StoreLimitsBuilder, Trap, Val};
+use wasmtime::{
+    Config, Engine, Func, Instance, Module, Store, StoreLimits, StoreLimitsBuilder, Trap, Val,
+};
 
 /// Length of each tick in milliseconds (10ms per tick)
 const WASM_EXECUTION_TICK_LENGTH_MS: u64 = 10;
@@ -114,7 +116,10 @@ impl WasmForeignObject {
     ///
     /// Number of ticks before timeout
     fn calculate_max_ticks(timeout_seconds: f64) -> u64 {
-        let timeout_ms = (timeout_seconds * 1000.0).round() as u64;
+        // Ensure non-negative timeout (clamp to 0 for negative values)
+        // Casting is safe for reasonable timeout values (< 18 quadrillion seconds)
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let timeout_ms = (timeout_seconds.max(0.0) * 1000.0).round() as u64;
         timeout_ms / WASM_EXECUTION_TICK_LENGTH_MS
     }
 
@@ -211,7 +216,10 @@ impl WasmForeignObject {
     /// # Errors
     ///
     /// Returns an error if WebAssembly compilation fails
-    pub fn from_bytes_with_timeout(wasm_bytes: &[u8], timeout_seconds: f64) -> Result<Self, PecosError> {
+    pub fn from_bytes_with_timeout(
+        wasm_bytes: &[u8],
+        timeout_seconds: f64,
+    ) -> Result<Self, PecosError> {
         Self::from_bytes_with_limits(wasm_bytes, timeout_seconds, None)
     }
 

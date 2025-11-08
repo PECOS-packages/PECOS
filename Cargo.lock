@@ -2437,6 +2437,7 @@ dependencies = [
  "pecos-quest",
  "pecos-qulacs",
  "pecos-rng",
+ "pecos-wasm",
  "serde_json",
  "tempfile",
 ]
@@ -2753,7 +2754,6 @@ dependencies = [
  "log",
  "parking_lot",
  "pecos",
- "pecos-wasm",
  "pyo3",
  "pyo3-build-config",
  "serde_json",

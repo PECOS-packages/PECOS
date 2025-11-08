@@ -262,6 +262,28 @@ pub mod results {
     };
 }
 
+/// WebAssembly foreign object support
+///
+/// This module provides WebAssembly execution support for classical computations
+/// within PECOS quantum programs (QASM and PHIR).
+///
+/// # Example
+///
+/// ```rust,no_run
+/// # #[cfg(feature = "wasm")]
+/// # {
+/// use pecos::wasm::WasmForeignObject;
+/// use std::path::Path;
+///
+/// // Load a WASM module
+/// let wasm_obj = WasmForeignObject::new(Path::new("module.wasm")).unwrap();
+/// # }
+/// ```
+#[cfg(feature = "wasm")]
+pub mod wasm {
+    pub use pecos_wasm::{ForeignObject, WasmForeignObject};
+}
+
 // ============================================================================
 // Top-level re-exports for convenience and backward compatibility
 // ============================================================================
@@ -314,3 +336,7 @@ pub use pecos_quest::{
 
 #[cfg(feature = "qulacs")]
 pub use pecos_qulacs::QulacsStateVec;
+
+// WebAssembly foreign object support
+#[cfg(feature = "wasm")]
+pub use pecos_wasm::{ForeignObject, WasmForeignObject};

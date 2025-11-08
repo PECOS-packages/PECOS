@@ -20,13 +20,13 @@ which provides better performance and thread safety compared to the previous Pyt
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pecos_rslib._pecos_rslib import RsWasmForeignObject
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
 
 class WasmtimeObj:
@@ -59,7 +59,11 @@ class WasmtimeObj:
                         For example, 10 * 1024 * 1024 for 10 MB limit.
         """
         # Create the Rust object with optional timeout and memory limit
-        self._rust_obj = RsWasmForeignObject(file, timeout=timeout, memory_size=memory_size)
+        self._rust_obj = RsWasmForeignObject(
+            file,
+            timeout=timeout,
+            memory_size=memory_size,
+        )
 
         # Get WASM bytes for compatibility with serialization
         self.wasm_bytes = self._rust_obj.to_dict()["wasm_bytes"]
@@ -160,5 +164,7 @@ class WasmtimeObj:
         timeout = wasmtime_dict.get("timeout")
         memory_size = wasmtime_dict.get("memory_size")
         return wasmtime_dict["fobj_class"](
-            wasmtime_dict["wasm_bytes"], timeout=timeout, memory_size=memory_size
+            wasmtime_dict["wasm_bytes"],
+            timeout=timeout,
+            memory_size=memory_size,
         )

@@ -21,15 +21,12 @@ test = false
 
 [features]
 default = ["wasm"]
-wasm = ["pecos-wasm", "pecos-wasm/wasm"]
+wasm = ["pecos/wasm"]
 
 [dependencies]
 # Use the pecos metacrate which includes all simulators and runtimes by default
-# Enable llvm feature explicitly for full Python functionality
-pecos = { workspace = true, features = ["llvm"] }
-
-# WebAssembly support (optional)
-pecos-wasm = { path = "../../../crates/pecos-wasm", version = "0.1.1", optional = true }
+# Enable llvm and wasm features explicitly for full Python functionality
+pecos = { workspace = true, features = ["llvm", "wasm"] }
 
 pyo3 = { workspace=true, features = ["extension-module", "abi3-py310", "generate-import-lib"] }
 parking_lot.workspace = true

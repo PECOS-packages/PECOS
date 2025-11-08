@@ -9,7 +9,7 @@
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//! Unified ForeignObject trait for PECOS
+//! Unified `ForeignObject` trait for PECOS
 //!
 //! This trait defines the interface for foreign object implementations (like WebAssembly modules)
 //! that can be called from PECOS quantum simulations.
@@ -108,7 +108,7 @@ pub trait ForeignObject: Debug + Send + Sync {
 
 /// Dummy foreign object for when no foreign object is needed
 ///
-/// This is a no-op implementation that returns errors for all exec() calls.
+/// This is a no-op implementation that returns errors for all `exec()` calls.
 /// Useful as a placeholder or default value.
 #[derive(Debug, Clone)]
 pub struct DummyForeignObject {}

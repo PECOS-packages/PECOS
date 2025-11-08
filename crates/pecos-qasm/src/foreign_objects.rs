@@ -11,7 +11,7 @@
 
 //! Re-export foreign object trait from pecos-wasm crate
 //!
-//! This module previously defined its own ForeignObject trait,
+//! This module previously defined its own `ForeignObject` trait,
 //! but now uses the unified trait from pecos-wasm.
 
 // Re-export from pecos-wasm crate

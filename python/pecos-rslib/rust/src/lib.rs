@@ -36,6 +36,8 @@ mod sparse_stab_bindings;
 mod sparse_stab_engine_bindings;
 mod state_vec_bindings;
 mod state_vec_engine_bindings;
+#[cfg(feature = "wasm")]
+mod wasm_foreign_object_bindings;
 
 // Note: hugr_bindings module is currently disabled - conflicts with pecos-qis-interface due to duplicate symbols
 
@@ -52,6 +54,8 @@ use sparse_stab_bindings::SparseSim;
 use sparse_stab_engine_bindings::PySparseStabEngine;
 use state_vec_bindings::RsStateVec;
 use state_vec_engine_bindings::PyStateVecEngine;
+#[cfg(feature = "wasm")]
+use wasm_foreign_object_bindings::PyWasmForeignObject;
 
 /// Clear the global JIT compilation cache (deprecated - JIT is no longer available)
 #[pyfunction]
@@ -161,6 +165,10 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Utility functions
     m.add_function(wrap_pyfunction!(clear_jit_cache, m)?)?;
+
+    // WebAssembly foreign object (optional)
+    #[cfg(feature = "wasm")]
+    m.add_class::<PyWasmForeignObject>()?;
 
     Ok(())
 }

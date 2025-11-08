@@ -75,13 +75,11 @@ wasm-all = [
     "quantum-pecos[wasmer]; python_version < '3.13'",
 ]
 all = [
-    "quantum-pecos[qir]",
     "quantum-pecos[simulators]",
     "quantum-pecos[wasm-all]",
     "quantum-pecos[visualization]",
     "quantum-pecos[guppy]",
     "quantum-pecos[qir]",
-    "quantum-pecos[guppy]",
 ]
 # The following only work for some environments/Python versions:
 wasmer = [

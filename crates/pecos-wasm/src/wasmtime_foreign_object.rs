@@ -24,18 +24,37 @@ use std::path::Path;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use wasmtime::{Config, Engine, Func, Instance, Module, Store, Trap, Val};
+use wasmtime::{Config, Engine, Func, Instance, Module, Store, StoreLimits, StoreLimitsBuilder, Trap, Val};
 
-/// Maximum number of ticks before timeout (10,000 ticks × 10ms = 100 seconds)
-const WASM_EXECUTION_MAX_TICKS: u64 = 10_000;
-/// Length of each tick in milliseconds
+/// Length of each tick in milliseconds (10ms per tick)
 const WASM_EXECUTION_TICK_LENGTH_MS: u64 = 10;
+/// Default timeout in seconds (1 second to match Python implementation)
+const DEFAULT_TIMEOUT_SECONDS: f64 = 1.0;
+
+/// Store context holding resource limits
+#[derive(Debug)]
+struct StoreContext {
+    limits: StoreLimits,
+}
+
+impl StoreContext {
+    fn new(memory_size: Option<usize>) -> Self {
+        let mut builder = StoreLimitsBuilder::new();
+        if let Some(size) = memory_size {
+            builder = builder.memory_size(size);
+        }
+        Self {
+            limits: builder.build(),
+        }
+    }
+}
 
 /// WebAssembly foreign object implementation using Wasmtime
 ///
 /// This implementation provides:
 /// - Thread-safe execution with RwLock/Mutex synchronization
-/// - Configurable timeout via epoch interruption (default: 100 seconds)
+/// - Configurable timeout via epoch interruption (default: 1 second)
+/// - Configurable memory limits (default: unlimited)
 /// - Type conversion between i32/i64 with bounds checking and warnings
 /// - Function discovery and caching
 /// - Proper resource cleanup via Drop trait
@@ -44,8 +63,15 @@ const WASM_EXECUTION_TICK_LENGTH_MS: u64 = 10;
 ///
 /// ```no_run
 /// # use pecos_wasm::{WasmForeignObject, ForeignObject};
+/// // Create with defaults (1-second timeout, unlimited memory)
 /// let mut wasm = WasmForeignObject::new("math.wasm").unwrap();
 /// wasm.init().unwrap();
+///
+/// // Or create with custom timeout (5 seconds)
+/// let mut wasm = WasmForeignObject::with_timeout("math.wasm", 5.0).unwrap();
+///
+/// // Or create with custom memory limit (10 MB)
+/// let mut wasm = WasmForeignObject::with_limits("math.wasm", 5.0, Some(10 * 1024 * 1024)).unwrap();
 ///
 /// // Execute a function
 /// let result = wasm.exec("add", &[5, 3]).unwrap();
@@ -62,7 +88,7 @@ pub struct WasmForeignObject {
     /// Wasmtime module
     module: Module,
     /// Wasmtime store (thread-safe)
-    store: RwLock<Store<()>>,
+    store: RwLock<Store<StoreContext>>,
     /// Wasmtime instance (thread-safe)
     instance: RwLock<Option<Instance>>,
     /// Cached function names (thread-safe)
@@ -71,14 +97,50 @@ pub struct WasmForeignObject {
     stop_flag: Arc<RwLock<bool>>,
     /// Last function call results
     last_results: Vec<Val>,
+    /// Timeout in seconds for WASM execution (default: 1.0 second)
+    timeout_seconds: f64,
+    /// Maximum memory size in bytes per linear memory (default: None = unlimited)
+    memory_size: Option<usize>,
 }
 
 impl WasmForeignObject {
-    /// Create a new WebAssembly foreign object from a file
+    /// Calculate maximum ticks from timeout in seconds
+    ///
+    /// # Parameters
+    ///
+    /// * `timeout_seconds` - Timeout in seconds
+    ///
+    /// # Returns
+    ///
+    /// Number of ticks before timeout
+    fn calculate_max_ticks(timeout_seconds: f64) -> u64 {
+        let timeout_ms = (timeout_seconds * 1000.0).round() as u64;
+        timeout_ms / WASM_EXECUTION_TICK_LENGTH_MS
+    }
+
+    /// Create a new WebAssembly foreign object from a file with default timeout
     ///
     /// # Parameters
     ///
     /// * `path` - Path to the WebAssembly file (.wasm or .wat)
+    ///
+    /// # Returns
+    ///
+    /// A new WebAssembly foreign object with 1-second timeout
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read or if WebAssembly compilation fails
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, PecosError> {
+        Self::with_timeout(path, DEFAULT_TIMEOUT_SECONDS)
+    }
+
+    /// Create a new WebAssembly foreign object from a file with custom timeout
+    ///
+    /// # Parameters
+    ///
+    /// * `path` - Path to the WebAssembly file (.wasm or .wat)
+    /// * `timeout_seconds` - Timeout in seconds for WASM execution
     ///
     /// # Returns
     ///
@@ -87,19 +149,60 @@ impl WasmForeignObject {
     /// # Errors
     ///
     /// Returns an error if the file cannot be read or if WebAssembly compilation fails
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, PecosError> {
+    pub fn with_timeout<P: AsRef<Path>>(path: P, timeout_seconds: f64) -> Result<Self, PecosError> {
+        Self::with_limits(path, timeout_seconds, None)
+    }
+
+    /// Create a new WebAssembly foreign object from a file with custom limits
+    ///
+    /// # Parameters
+    ///
+    /// * `path` - Path to the WebAssembly file (.wasm or .wat)
+    /// * `timeout_seconds` - Timeout in seconds for WASM execution
+    /// * `memory_size` - Optional maximum memory size in bytes per linear memory (None = unlimited)
+    ///
+    /// # Returns
+    ///
+    /// A new WebAssembly foreign object
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read or if WebAssembly compilation fails
+    pub fn with_limits<P: AsRef<Path>>(
+        path: P,
+        timeout_seconds: f64,
+        memory_size: Option<usize>,
+    ) -> Result<Self, PecosError> {
         // Read the WebAssembly file
         let wasm_bytes = std::fs::read(path)
             .map_err(|e| PecosError::Input(format!("Failed to read WebAssembly file: {e}")))?;
 
-        Self::from_bytes(&wasm_bytes)
+        Self::from_bytes_with_limits(&wasm_bytes, timeout_seconds, memory_size)
     }
 
-    /// Create a new WebAssembly foreign object from bytes
+    /// Create a new WebAssembly foreign object from bytes with default timeout
     ///
     /// # Parameters
     ///
     /// * `wasm_bytes` - WebAssembly binary
+    ///
+    /// # Returns
+    ///
+    /// A new WebAssembly foreign object with 1-second timeout
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if WebAssembly compilation fails
+    pub fn from_bytes(wasm_bytes: &[u8]) -> Result<Self, PecosError> {
+        Self::from_bytes_with_limits(wasm_bytes, DEFAULT_TIMEOUT_SECONDS, None)
+    }
+
+    /// Create a new WebAssembly foreign object from bytes with custom timeout
+    ///
+    /// # Parameters
+    ///
+    /// * `wasm_bytes` - WebAssembly binary
+    /// * `timeout_seconds` - Timeout in seconds for WASM execution
     ///
     /// # Returns
     ///
@@ -108,7 +211,30 @@ impl WasmForeignObject {
     /// # Errors
     ///
     /// Returns an error if WebAssembly compilation fails
-    pub fn from_bytes(wasm_bytes: &[u8]) -> Result<Self, PecosError> {
+    pub fn from_bytes_with_timeout(wasm_bytes: &[u8], timeout_seconds: f64) -> Result<Self, PecosError> {
+        Self::from_bytes_with_limits(wasm_bytes, timeout_seconds, None)
+    }
+
+    /// Create a new WebAssembly foreign object from bytes with custom limits
+    ///
+    /// # Parameters
+    ///
+    /// * `wasm_bytes` - WebAssembly binary
+    /// * `timeout_seconds` - Timeout in seconds for WASM execution
+    /// * `memory_size` - Optional maximum memory size in bytes per linear memory (None = unlimited)
+    ///
+    /// # Returns
+    ///
+    /// A new WebAssembly foreign object
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if WebAssembly compilation fails
+    pub fn from_bytes_with_limits(
+        wasm_bytes: &[u8],
+        timeout_seconds: f64,
+        memory_size: Option<usize>,
+    ) -> Result<Self, PecosError> {
         // Create a new WebAssembly engine with epoch interruption enabled
         let mut config = Config::new();
         config.epoch_interruption(true);
@@ -116,8 +242,12 @@ impl WasmForeignObject {
             PecosError::Processing(format!("Failed to create WebAssembly engine: {e}"))
         })?;
 
-        // Create a new store
-        let store = Store::new(&engine, ());
+        // Create a new store with resource limits
+        let store_context = StoreContext::new(memory_size);
+        let mut store = Store::new(&engine, store_context);
+
+        // Set the resource limiter
+        store.limiter(|ctx| &mut ctx.limits);
 
         // Compile the WebAssembly module
         let module = Module::new(&engine, wasm_bytes).map_err(|e| {
@@ -146,6 +276,8 @@ impl WasmForeignObject {
             func_names: Mutex::new(None),
             stop_flag,
             last_results: Vec::new(),
+            timeout_seconds,
+            memory_size,
         };
 
         // Create the instance
@@ -210,13 +342,34 @@ impl WasmForeignObject {
     pub fn wasm_bytes(&self) -> &[u8] {
         &self.wasm_bytes
     }
+
+    /// Get the configured timeout in seconds
+    ///
+    /// # Returns
+    ///
+    /// The timeout in seconds for WASM execution
+    #[must_use]
+    pub fn timeout_seconds(&self) -> f64 {
+        self.timeout_seconds
+    }
+
+    /// Get the configured memory size limit
+    ///
+    /// # Returns
+    ///
+    /// The memory size limit in bytes per linear memory (None = unlimited)
+    #[must_use]
+    pub fn memory_size(&self) -> Option<usize> {
+        self.memory_size
+    }
 }
 
 impl ForeignObject for WasmForeignObject {
     fn clone_box(&self) -> Box<dyn ForeignObject> {
-        // Create a new instance from the same bytes
+        // Create a new instance from the same bytes with the same timeout and memory limit
         let mut result =
-            Self::from_bytes(&self.wasm_bytes).expect("Failed to clone WasmForeignObject");
+            Self::from_bytes_with_limits(&self.wasm_bytes, self.timeout_seconds, self.memory_size)
+                .expect("Failed to clone WasmForeignObject");
 
         // Initialize it the same way
         if self.instance.read().is_some() {
@@ -326,8 +479,9 @@ impl ForeignObject for WasmForeignObject {
             })
             .collect();
 
-        // Set execution deadline
-        store.set_epoch_deadline(WASM_EXECUTION_MAX_TICKS);
+        // Set execution deadline based on configured timeout
+        let max_ticks = Self::calculate_max_ticks(self.timeout_seconds);
+        store.set_epoch_deadline(max_ticks);
 
         // Get the number of results
         let results_len = func_type.results().len();
@@ -387,9 +541,9 @@ impl ForeignObject for WasmForeignObject {
                 if let Some(trap) = e.downcast_ref::<Trap>()
                     && trap.to_string().contains("interrupt")
                 {
-                    let timeout_ms = WASM_EXECUTION_MAX_TICKS * WASM_EXECUTION_TICK_LENGTH_MS;
                     return Err(PecosError::Processing(format!(
-                        "WebAssembly function '{func_name}' timed out after {timeout_ms}ms"
+                        "WebAssembly function '{func_name}' timed out after {}s",
+                        self.timeout_seconds
                     )));
                 }
 

@@ -36,7 +36,9 @@ impl PyWasmForeignObject {
     /// Create a new WebAssembly foreign object
     ///
     /// Args:
-    ///     file: Path to WASM file (str) or WASM bytes (bytes)
+    ///     file: Path to WASM file (str or pathlib.Path) or WASM bytes (bytes)
+    ///     timeout: Optional timeout in seconds (default: 1.0 second)
+    ///     memory_size: Optional maximum memory size in bytes per linear memory (default: None = unlimited)
     ///
     /// Returns:
     ///     New WebAssembly foreign object instance
@@ -45,13 +47,23 @@ impl PyWasmForeignObject {
     ///     FileNotFoundError: If file path doesn't exist
     ///     RuntimeError: If WASM compilation fails
     #[new]
-    fn new(_py: Python<'_>, file: &Bound<'_, PyAny>) -> PyResult<Self> {
+    #[pyo3(signature = (file, timeout=None, memory_size=None))]
+    fn new(
+        _py: Python<'_>,
+        file: &Bound<'_, PyAny>,
+        timeout: Option<f64>,
+        memory_size: Option<usize>,
+    ) -> PyResult<Self> {
+        let timeout_seconds = timeout.unwrap_or(1.0);
+
         // Try to extract as bytes first
-        if let Ok(bytes) = file.downcast::<PyBytes>() {
+        if let Ok(bytes) = file.cast::<PyBytes>() {
             let wasm_bytes = bytes.as_bytes();
-            let inner = WasmForeignObject::from_bytes(wasm_bytes).map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to load WASM from bytes: {e}"))
-            })?;
+            let inner =
+                WasmForeignObject::from_bytes_with_limits(wasm_bytes, timeout_seconds, memory_size)
+                    .map_err(|e| {
+                        PyRuntimeError::new_err(format!("Failed to load WASM from bytes: {e}"))
+                    })?;
             return Ok(Self { inner });
         }
 
@@ -64,15 +76,33 @@ impl PyWasmForeignObject {
                 )));
             }
 
-            let inner = WasmForeignObject::new(path).map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to load WASM from file: {e}"))
-            })?;
+            let inner =
+                WasmForeignObject::with_limits(path, timeout_seconds, memory_size).map_err(|e| {
+                    PyRuntimeError::new_err(format!("Failed to load WASM from file: {e}"))
+                })?;
             return Ok(Self { inner });
         }
 
-        // If neither worked, return error
+        // Try to handle pathlib.Path objects via __fspath__ protocol
+        if file.hasattr("__fspath__")? {
+            let path_str = file.call_method0("__fspath__")?.extract::<String>()?;
+            let path = Path::new(&path_str);
+            if !path.exists() {
+                return Err(PyFileNotFoundError::new_err(format!(
+                    "WASM file not found: {path_str}"
+                )));
+            }
+
+            let inner =
+                WasmForeignObject::with_limits(path, timeout_seconds, memory_size).map_err(|e| {
+                    PyRuntimeError::new_err(format!("Failed to load WASM from file: {e}"))
+                })?;
+            return Ok(Self { inner });
+        }
+
+        // If none of the above worked, return error
         Err(PyException::new_err(
-            "Expected str (file path) or bytes (WASM binary)",
+            "Expected str (file path), pathlib.Path, or bytes (WASM binary)",
         ))
     }
 
@@ -133,7 +163,7 @@ impl PyWasmForeignObject {
     ///
     /// Raises:
     ///     RuntimeError: If function not found or execution fails
-    fn exec(&mut self, py: Python<'_>, func_name: &str, args: Vec<i64>) -> PyResult<PyObject> {
+    fn exec(&mut self, py: Python<'_>, func_name: &str, args: Vec<i64>) -> PyResult<Py<PyAny>> {
         let results = self.inner.exec(func_name, &args).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to execute '{func_name}': {e}"))
         })?;
@@ -160,8 +190,8 @@ impl PyWasmForeignObject {
     /// Serialize to dictionary for pickling
     ///
     /// Returns:
-    ///     Dictionary containing 'fobj_class' and 'wasm_bytes'
-    fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    ///     Dictionary containing 'fobj_class', 'wasm_bytes', 'timeout', and 'memory_size'
+    fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = pyo3::types::PyDict::new(py);
 
         // Get the Python class for fobj_class
@@ -173,29 +203,49 @@ impl PyWasmForeignObject {
         let wasm_bytes = PyBytes::new(py, self.inner.wasm_bytes());
         dict.set_item("wasm_bytes", wasm_bytes)?;
 
+        // Get timeout
+        dict.set_item("timeout", self.inner.timeout_seconds())?;
+
+        // Get memory_size (None or usize)
+        if let Some(size) = self.inner.memory_size() {
+            dict.set_item("memory_size", size)?;
+        } else {
+            dict.set_item("memory_size", py.None())?;
+        }
+
         Ok(dict.into())
     }
 
     /// Deserialize from dictionary (for pickling)
     ///
     /// Args:
-    ///     wasmtime_dict: Dictionary containing 'fobj_class' and 'wasm_bytes'
+    ///     wasmtime_dict: Dictionary containing 'fobj_class', 'wasm_bytes', and optionally 'timeout' and 'memory_size'
     ///
     /// Returns:
     ///     New instance created from the dictionary
     #[staticmethod]
     fn from_dict(py: Python<'_>, wasmtime_dict: &Bound<'_, PyAny>) -> PyResult<Self> {
         use pyo3::types::PyDictMethods;
-        let dict = wasmtime_dict.downcast::<pyo3::types::PyDict>()?;
+        let dict = wasmtime_dict.cast::<pyo3::types::PyDict>()?;
         let wasm_bytes = dict
             .get_item("wasm_bytes")?
             .ok_or_else(|| PyException::new_err("Missing 'wasm_bytes' in dictionary"))?;
 
-        Self::new(py, &wasm_bytes)
+        // Get timeout if present (default to 1.0 for backward compatibility)
+        let timeout = dict
+            .get_item("timeout")?
+            .and_then(|t| t.extract::<f64>().ok());
+
+        // Get memory_size if present (default to None for backward compatibility)
+        let memory_size = dict
+            .get_item("memory_size")?
+            .and_then(|m| m.extract::<usize>().ok());
+
+        Self::new(py, &wasm_bytes, timeout, memory_size)
     }
 
     /// Support for pickle (Python serialization)
-    fn __getstate__(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn __getstate__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.to_dict(py)
     }
 
@@ -203,11 +253,14 @@ impl PyWasmForeignObject {
     fn __setstate__(&mut self, py: Python<'_>, state: &Bound<'_, PyAny>) -> PyResult<()> {
         // Create new object and swap the inner value
         let new_obj = Self::from_dict(py, state)?;
-        // Replace inner by creating a new instance from the same bytes
+        // Replace inner by creating a new instance from the same bytes with the same timeout and memory limit
         let wasm_bytes = new_obj.inner.wasm_bytes();
-        self.inner = WasmForeignObject::from_bytes(wasm_bytes).map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to deserialize WASM object: {e}"))
-        })?;
+        let timeout = new_obj.inner.timeout_seconds();
+        let memory_size = new_obj.inner.memory_size();
+        self.inner =
+            WasmForeignObject::from_bytes_with_limits(wasm_bytes, timeout, memory_size).map_err(
+                |e| PyRuntimeError::new_err(format!("Failed to deserialize WASM object: {e}")),
+            )?;
         Ok(())
     }
 }

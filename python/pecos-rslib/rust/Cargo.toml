@@ -19,10 +19,14 @@ doctest = false
 # Skip unit tests as well - all testing should be done through Python
 test = false
 
+[features]
+default = ["wasm"]
+wasm = ["pecos/wasm"]
+
 [dependencies]
 # Use the pecos metacrate which includes all simulators and runtimes by default
-# Enable llvm feature explicitly for full Python functionality
-pecos = { workspace = true, features = ["llvm"] }
+# Enable llvm and wasm features explicitly for full Python functionality
+pecos = { workspace = true, features = ["llvm", "wasm"] }
 
 pyo3 = { workspace=true, features = ["extension-module", "abi3-py310", "generate-import-lib"] }
 parking_lot.workspace = true

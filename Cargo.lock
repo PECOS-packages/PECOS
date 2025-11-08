@@ -2437,6 +2437,7 @@ dependencies = [
  "pecos-quest",
  "pecos-qulacs",
  "pecos-rng",
+ "pecos-wasm",
  "serde_json",
  "tempfile",
 ]
@@ -2598,15 +2599,14 @@ name = "pecos-phir-json"
 version = "0.1.1"
 dependencies = [
  "log",
- "parking_lot",
  "pecos-core",
  "pecos-engines",
  "pecos-phir",
  "pecos-programs",
+ "pecos-wasm",
  "serde",
  "serde_json",
  "tempfile",
- "wasmtime",
  "wat",
 ]
 
@@ -2626,12 +2626,12 @@ dependencies = [
  "pecos-core",
  "pecos-engines",
  "pecos-programs",
+ "pecos-wasm",
  "pest",
  "pest_derive",
  "regex",
  "serde_json",
  "tempfile",
- "wasmtime",
  "wat",
 ]
 
@@ -2758,6 +2758,16 @@ dependencies = [
  "pyo3-build-config",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "pecos-wasm"
+version = "0.1.1"
+dependencies = [
+ "log",
+ "parking_lot",
+ "pecos-core",
+ "wasmtime",
 ]
 
 [[package]]

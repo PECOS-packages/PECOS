@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, Protocol
 
 from pecos.engines.cvm.binarray import BinArray
 from pecos.engines.cvm.sim_func import sim_exec
-from pecos.engines.cvm.wasm_vms.wasmer import read_wasmer
 from pecos.engines.cvm.wasm_vms.wasmtime import read_wasmtime
 from pecos.errors import MissingCCOPError
 
@@ -96,12 +95,6 @@ def get_ccop(circuit: QuantumCircuit) -> CCOPObject | None:
 
         elif ccop_type == "wasmtime":
             ccop = read_wasmtime(ccop)
-
-        elif ccop_type in {"wasmer", "wasmer_cl"}:
-            ccop = read_wasmer(ccop, compiler="wasmer_cl")
-
-        elif ccop_type == "wasmer_llvm":
-            ccop = read_wasmer(ccop, compiler=ccop_type)
 
         elif ccop_type in {"obj", "object"}:
             pass

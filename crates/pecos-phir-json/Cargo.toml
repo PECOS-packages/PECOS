@@ -15,7 +15,7 @@ description = "PHIR-JSON (PECOS High-level Intermediate Representation JSON form
 default = ["v0_1", "wasm"]
 v0_1 = []
 all-versions = ["v0_1"]
-wasm = ["wasmtime", "wat", "parking_lot"]
+wasm = ["pecos-wasm/wasm", "wat"]
 
 [dependencies]
 log.workspace = true
@@ -25,9 +25,8 @@ pecos-core.workspace = true
 pecos-engines.workspace = true
 pecos-phir.workspace = true
 pecos-programs.workspace = true
-wasmtime = { workspace = true, optional = true }
+pecos-wasm = { workspace = true, optional = true }
 wat = { workspace = true, optional = true }
-parking_lot = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Testing

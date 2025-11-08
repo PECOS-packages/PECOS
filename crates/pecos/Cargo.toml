@@ -37,12 +37,18 @@ pecos-cppsparsesim = { workspace = true, optional = true }
 pecos-quest = { workspace = true, optional = true }
 pecos-qulacs = { workspace = true, optional = true }
 
+# WebAssembly foreign object support (optional)
+pecos-wasm = { workspace = true, optional = true }
+
 [features]
-default = ["selene", "qasm", "phir", "all-simulators"]
+default = ["selene", "qasm", "phir", "wasm", "all-simulators"]
 qasm = []
 llvm = ["pecos-qis-core/llvm", "pecos-hugr-qis", "pecos-hugr-qis?/llvm"]
 phir = []
 selene = ["pecos-qis-selene"]
+
+# WebAssembly support
+wasm = ["pecos-wasm", "pecos-wasm/wasm"]
 
 # Quantum simulator backends
 cppsparsesim = ["pecos-cppsparsesim"]

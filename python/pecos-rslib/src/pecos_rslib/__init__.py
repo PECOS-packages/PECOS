@@ -27,6 +27,7 @@ from pecos_rslib._pecos_rslib import (
     ByteMessageBuilder,
     QuestDensityMatrix,
     QuestStateVec,
+    RsWasmForeignObject,
     ShotMap,
     ShotVec,
     SparseStabEngineRs,
@@ -435,6 +436,8 @@ __all__ = [
     # QuEST simulators
     "QuestStateVec",
     "QuestDensityMatrix",
+    # WebAssembly foreign object
+    "RsWasmForeignObject",
     # QIS engine (replaces Selene engine)
     "qis_engine",
     # QASM simulation - DEPRECATED: Use sim() instead

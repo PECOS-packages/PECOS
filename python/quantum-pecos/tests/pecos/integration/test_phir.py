@@ -23,14 +23,6 @@ from pecos.foreign_objects.wasmtime import WasmtimeObj
 from phir.model import PHIRModel
 from pydantic import ValidationError
 
-try:
-    from pecos.foreign_objects.wasmer import WasmerObj
-
-    WASMER_ERR_MSG = None
-except ImportError as e:
-    WasmerObj = None
-    WASMER_ERR_MSG = str(e)
-
 # tools for converting wasm to wat: https://github.com/WebAssembly/wabt/releases/tag/1.0.33
 
 this_dir = Path(__file__).parent
@@ -49,23 +41,6 @@ spec_example_phir = json.load(Path.open(this_dir / "phir/spec_example.phir.json"
 # run all without optional_dependency tests: pytest -v -m "not optional_dependency"
 
 
-def is_wasmer_supported() -> bool:
-    """A check on whether Wasmer is known to support OS/Python versions.
-
-    Note: wasmer-python currently only supports Python 3.7-3.10.
-    See: https://github.com/wasmerio/wasmer-python/issues/778 (Python 3.12)
-         https://github.com/wasmerio/wasmer-python/issues/696 (Python 3.11)
-
-    Future considerations:
-    - Consider dropping wasmer-python in favor of Wasmtime (which is actively maintained)
-    - Alternative: Implement Wasmer support through Rust bindings for cross-platform/version compatibility
-    - These tests are currently redundant with Wasmtime tests
-    """
-    return WASMER_ERR_MSG != "Wasmer is not available on this system"
-
-
-@pytest.mark.wasmtime
-@pytest.mark.optional_dependency
 def test_spec_example_wasmtime() -> None:
     """A random example showing that various basic aspects of PHIR is runnable by PECOS."""
     wasm = WasmtimeObj(math_wat)
@@ -76,8 +51,6 @@ def test_spec_example_wasmtime() -> None:
     )
 
 
-@pytest.mark.wasmtime
-@pytest.mark.optional_dependency
 def test_spec_example_noisy_wasmtime() -> None:
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
     wasm = WasmtimeObj(str(math_wat))
@@ -103,8 +76,6 @@ def test_spec_example_noisy_wasmtime() -> None:
     )
 
 
-@pytest.mark.wasmtime
-@pytest.mark.optional_dependency
 def test_example1_wasmtime() -> None:
     """A random example showing that various basic aspects of PHIR is runnable by PECOS."""
     wasm = WasmtimeObj(add_wat)
@@ -115,62 +86,9 @@ def test_example1_wasmtime() -> None:
     )
 
 
-@pytest.mark.wasmtime
-@pytest.mark.optional_dependency
 def test_example1_noisy_wasmtime() -> None:
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
     wasm = WasmtimeObj(str(add_wat))
-    generic_errors = GenericErrorModel(
-        error_params={
-            "p1": 2e-1,
-            "p2": 2e-1,
-            "p_meas": 2e-1,
-            "p_init": 1e-1,
-            "p1_error_model": {
-                "X": 0.25,
-                "Y": 0.25,
-                "Z": 0.25,
-                "L": 0.25,
-            },
-        },
-    )
-    sim = HybridEngine(error_model=generic_errors)
-    sim.run(
-        program=example1_phir,
-        foreign_object=wasm,
-        shots=1000,
-    )
-
-
-@pytest.mark.skipif(
-    not is_wasmer_supported(),
-    reason="Wasmer is not supported on some OS/Python version combinations. "
-    "wasmer-python only supports Python 3.7-3.10 (current Python 3.11+). "
-    "Wasmtime tests provide equivalent coverage.",
-)
-@pytest.mark.wasmer
-@pytest.mark.optional_dependency
-def test_example1_wasmer() -> None:
-    """A random example showing that various basic aspects of PHIR is runnable by PECOS."""
-    wasm = WasmerObj(add_wat)
-    HybridEngine().run(
-        program=example1_phir,
-        foreign_object=wasm,
-        shots=1000,
-    )
-
-
-@pytest.mark.skipif(
-    not is_wasmer_supported(),
-    reason="Wasmer is not supported on some OS/Python version combinations. "
-    "wasmer-python only supports Python 3.7-3.10 (current Python 3.11+). "
-    "Wasmtime tests provide equivalent coverage.",
-)
-@pytest.mark.wasmer
-@pytest.mark.optional_dependency
-def test_example1_noisy_wasmer() -> None:
-    """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
-    wasm = WasmerObj(str(add_wat))
     generic_errors = GenericErrorModel(
         error_params={
             "p1": 2e-1,

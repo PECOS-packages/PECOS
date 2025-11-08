@@ -3555,9 +3555,6 @@ all = [
     { name = "llvmlite", marker = "python_full_version < '3.13'" },
     { name = "plotly" },
     { name = "selene-sim" },
-    { name = "wasmer", marker = "python_full_version < '3.13'" },
-    { name = "wasmer-compiler-cranelift", marker = "python_full_version < '3.13'" },
-    { name = "wasmtime" },
 ]
 cuda = [
     { name = "cupy-cuda13x", marker = "python_full_version >= '3.11'" },
@@ -3573,18 +3570,6 @@ qir = [
 ]
 visualization = [
     { name = "plotly" },
-]
-wasm-all = [
-    { name = "wasmer", marker = "python_full_version < '3.13'" },
-    { name = "wasmer-compiler-cranelift", marker = "python_full_version < '3.13'" },
-    { name = "wasmtime" },
-]
-wasmer = [
-    { name = "wasmer" },
-    { name = "wasmer-compiler-cranelift" },
-]
-wasmtime = [
-    { name = "wasmtime" },
 ]
 
 [package.metadata]
@@ -3602,18 +3587,11 @@ requires-dist = [
     { name = "pytket-cutensornet", marker = "python_full_version >= '3.11' and extra == 'cuda'", specifier = ">=0.12.0" },
     { name = "quantum-pecos", extras = ["guppy"], marker = "extra == 'all'" },
     { name = "quantum-pecos", extras = ["qir"], marker = "extra == 'all'" },
-    { name = "quantum-pecos", extras = ["simulators"], marker = "extra == 'all'" },
     { name = "quantum-pecos", extras = ["visualization"], marker = "extra == 'all'" },
-    { name = "quantum-pecos", extras = ["wasm-all"], marker = "extra == 'all'" },
-    { name = "quantum-pecos", extras = ["wasmer"], marker = "python_full_version < '3.13' and extra == 'wasm-all'" },
-    { name = "quantum-pecos", extras = ["wasmtime"], marker = "extra == 'wasm-all'" },
     { name = "scipy", specifier = ">=1.1.0" },
     { name = "selene-sim", marker = "extra == 'guppy'", specifier = "~=0.2.0" },
-    { name = "wasmer", marker = "extra == 'wasmer'", specifier = "~=1.1.0" },
-    { name = "wasmer-compiler-cranelift", marker = "extra == 'wasmer'", specifier = "~=1.1.0" },
-    { name = "wasmtime", marker = "extra == 'wasmtime'", specifier = ">=13.0" },
 ]
-provides-extras = ["qir", "guppy", "wasmtime", "visualization", "wasm-all", "all", "wasmer", "cuda"]
+provides-extras = ["qir", "guppy", "visualization", "all", "cuda"]
 
 [[package]]
 name = "qwasm"
@@ -4345,28 +4323,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/20/28/e6f1a6f655d620846bd9df527390ecc26b3805a0c5989048c210e22c5ca9/virtualenv-20.35.4.tar.gz", hash = "sha256:643d3914d73d3eeb0c552cbb12d7e82adf0e504dbf86a3182f8771a153a1971c", size = 6028799, upload-time = "2025-10-29T06:57:40.511Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/79/0c/c05523fa3181fdf0c9c52a6ba91a23fbf3246cc095f26f6516f9c60e6771/virtualenv-20.35.4-py3-none-any.whl", hash = "sha256:c21c9cede36c9753eeade68ba7d523529f228a403463376cf821eaae2b650f1b", size = 6005095, upload-time = "2025-10-29T06:57:37.598Z" },
-]
-
-[[package]]
-name = "wasmer"
-version = "1.1.0"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/cf/0a/9e5efd92e5cf24d5c08030b4f76dcdf10cbc55c639bbf4df8aeb0c76d448/wasmer-1.1.0-cp310-cp310-macosx_10_7_x86_64.whl", hash = "sha256:c2af4b907ae2dabcac41e316e811d5937c93adf1f8b05c5d49427f8ce0f37630", size = 1465236, upload-time = "2022-01-07T23:23:52.601Z" },
-    { url = "https://files.pythonhosted.org/packages/a7/79/3f53cf611cbdd04a9b9997bf3ad18e5602350f90d404c162fbf3112684f2/wasmer-1.1.0-cp310-cp310-manylinux_2_24_x86_64.whl", hash = "sha256:ab1ae980021e5ec0bf0c6cdd3b979b1d15a5f3eb2b8a32da8dcb1156e4a1e484", size = 1603286, upload-time = "2022-01-07T23:23:54.467Z" },
-    { url = "https://files.pythonhosted.org/packages/24/70/ca7bf7a3f85d8de745eca73e40bc83cf86bb52ea494b33721fc0572889ab/wasmer-1.1.0-cp310-none-win_amd64.whl", hash = "sha256:d0d93aec6215893d33e803ef0a8d37bf948c585dd80ba0e23a83fafee820bc03", size = 1435852, upload-time = "2022-01-07T23:23:56.134Z" },
-    { url = "https://files.pythonhosted.org/packages/39/6b/30e25924cae7add377f5601e71c778e9a1e515c7a58291f52756c1bb7e87/wasmer-1.1.0-py3-none-any.whl", hash = "sha256:2caf8c67feae9cd4246421551036917811c446da4f27ad4c989521ef42751931", size = 1617, upload-time = "2022-01-07T23:24:10.046Z" },
-]
-
-[[package]]
-name = "wasmer-compiler-cranelift"
-version = "1.1.0"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c5/cf/e0ac8ec0dde10716668819eb894edddd15cece14fcb4c26ee82ed3d1f65e/wasmer_compiler_cranelift-1.1.0-cp310-cp310-macosx_10_7_x86_64.whl", hash = "sha256:9869910179f39696a020edc5689f7759257ac1cce569a7a0fcf340c59788baad", size = 1731266, upload-time = "2022-01-07T23:24:11.614Z" },
-    { url = "https://files.pythonhosted.org/packages/74/9b/1cb2c909ef82f464afed1cd799cfcae95063fc3233c5140819e4b4ceee54/wasmer_compiler_cranelift-1.1.0-cp310-cp310-manylinux_2_24_x86_64.whl", hash = "sha256:405546ee864ac158a4107f374dfbb1c8d6cfb189829bdcd13050143a4bd98f28", size = 1854396, upload-time = "2022-01-07T23:24:12.878Z" },
-    { url = "https://files.pythonhosted.org/packages/a1/46/bf489a62c2f919ffcfce4b92c9d07e0257b14a1afd4fb122a7b64632c8ec/wasmer_compiler_cranelift-1.1.0-cp310-none-win_amd64.whl", hash = "sha256:bdf75af9ef082e6aeb752550f694273340ece970b65099e0746db0f972760d11", size = 1705776, upload-time = "2022-01-07T23:24:14.097Z" },
-    { url = "https://files.pythonhosted.org/packages/28/fa/26489c8f25470a3d50994aac8ebeabb2ca7f88874a15e0e77272b3a912c4/wasmer_compiler_cranelift-1.1.0-py3-none-any.whl", hash = "sha256:200fea80609cfb088457327acf66d5aa61f4c4f66b5a71133ada960b534c7355", size = 1866, upload-time = "2022-01-07T23:24:26.736Z" },
 ]
 
 [[package]]

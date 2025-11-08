@@ -242,7 +242,7 @@ impl ClassicalControlEngineBuilder for QasmEngineBuilder {
             let wasm_obj = WasmtimeForeignObject::from_bytes(&wasm_program.wasm_bytes)?;
 
             // Get exported functions from WASM module
-            let exported_functions = wasm_obj.get_exported_functions();
+            let exported_functions = wasm_obj.get_funcs();
 
             // Check if init function exists
             if !exported_functions.contains(&"init".to_string()) {

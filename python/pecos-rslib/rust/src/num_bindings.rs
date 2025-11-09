@@ -24,7 +24,28 @@ use pyo3::types::PyTuple;
 
 // Import numerical computing types from pecos prelude
 // Functions are accessed via pecos::prelude module
-use pecos::prelude::{BrentqOptions, CurveFitOptions, NewtonOptions, Poly1d as RustPoly1d};
+use pecos::prelude::{
+    BrentqOptions, CurveFitError, CurveFitOptions, NewtonOptions, Poly1d as RustPoly1d,
+};
+
+/// Helper function to convert `CurveFitError` to appropriate Python exception.
+///
+/// Maps Rust errors to Python exceptions following `scipy.optimize.curve_fit` conventions:
+/// - `ConvergenceError` -> `RuntimeError` (scipy raises `RuntimeError` for convergence failures)
+/// - `InvalidInput` -> `ValueError` (standard Python convention for invalid inputs)
+/// - `NumericalIssue` -> `RuntimeError` (similar to convergence issues)
+fn map_curve_fit_error(error: CurveFitError) -> PyErr {
+    match error {
+        CurveFitError::InvalidInput { message } => {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("curve_fit failed: {message}"))
+        }
+        CurveFitError::ConvergenceError { message } | CurveFitError::NumericalIssue { message } => {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "curve_fit failed: {message}"
+            ))
+        }
+    }
+}
 
 /// Find root of a function using Brent's method.
 ///
@@ -408,9 +429,7 @@ fn curve_fit_array(
 
     // Call Rust implementation
     let result = pecos::prelude::curve_fit(func, xdata_view, ydata_view, p0_view, Some(opts))
-        .map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("curve_fit failed: {e}"))
-        })?;
+        .map_err(map_curve_fit_error)?;
 
     // Convert results to Python arrays
     let popt = PyArray1::from_array(py, &result.params).unbind();
@@ -590,9 +609,7 @@ fn curve_fit_tuple<'py>(
     // Call Rust implementation with index-based xdata
     let result =
         pecos::prelude::curve_fit(func, xdata_indices.view(), ydata_view, p0_view, Some(opts))
-            .map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("curve_fit failed: {e}"))
-            })?;
+            .map_err(map_curve_fit_error)?;
 
     // Convert results to Python arrays
     let popt = PyArray1::from_array(py, &result.params).unbind();

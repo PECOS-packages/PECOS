@@ -22,7 +22,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import brentq, curve_fit, newton
 
@@ -324,6 +323,8 @@ def plot(
         p_start(float): Starting point for the plot axes. If None, automatically determined.
         p_end(float): Ending point for the plot axes. If None, automatically determined.
     """
+    import matplotlib.pyplot as plt
+
     if p_start is None:
         p_start = min(plog) * 0.9
 

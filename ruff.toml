@@ -200,6 +200,10 @@ ignore = [
 "python/quantum-pecos/src/pecos/frontends/*.py" = ["PLC0415"]  # All frontends have optional dependencies
 "python/quantum-pecos/src/pecos/frontends/guppy_frontend.py" = ["PLC0415", "S603", "S607"]  # Also uses subprocess for external tools
 "python/quantum-pecos/src/pecos/frontends/selene_native_backend.py" = ["S311"]  # Uses random for test placeholders
+"python/quantum-pecos/src/pecos/qeccs/plot.py" = ["PLC0415"]  # matplotlib: optional visualization dependency
+"python/quantum-pecos/src/pecos/qeclib/color488/plot_layout.py" = ["PLC0415"]  # matplotlib: optional visualization dependency
+"python/quantum-pecos/src/pecos/qeclib/surface/visualization/lattice_2d.py" = ["PLC0415"]  # matplotlib: optional visualization dependency
+"python/quantum-pecos/src/pecos/tools/pseudo_threshold_tools.py" = ["PLC0415"]  # matplotlib: optional visualization dependency
 
 # Examples - relaxed rules for demonstration code
 "python/pecos-rslib/examples/*.py" = ["PLC0415", "INP001"]  # Lazy imports, no __init__.py needed

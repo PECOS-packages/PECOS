@@ -3515,7 +3515,6 @@ name = "quantum-pecos"
 version = "0.7.0.dev4"
 source = { editable = "python/quantum-pecos" }
 dependencies = [
-    { name = "matplotlib" },
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "networkx", version = "3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -3529,6 +3528,7 @@ dependencies = [
 [package.optional-dependencies]
 all = [
     { name = "guppylang" },
+    { name = "matplotlib" },
     { name = "plotly" },
     { name = "selene-sim" },
 ]
@@ -3542,6 +3542,7 @@ guppy = [
     { name = "selene-sim" },
 ]
 visualization = [
+    { name = "matplotlib" },
     { name = "plotly" },
 ]
 
@@ -3550,7 +3551,7 @@ requires-dist = [
     { name = "cupy-cuda13x", marker = "python_full_version >= '3.11' and extra == 'cuda'", specifier = ">=13.0.0" },
     { name = "cuquantum-python-cu13", marker = "python_full_version >= '3.11' and extra == 'cuda'", specifier = ">=25.3.0" },
     { name = "guppylang", marker = "extra == 'guppy'", specifier = ">=0.21.0" },
-    { name = "matplotlib", specifier = ">=2.2.0" },
+    { name = "matplotlib", marker = "extra == 'visualization'", specifier = ">=2.2.0" },
     { name = "networkx", specifier = ">=2.1.0" },
     { name = "numpy", specifier = ">=1.15.0" },
     { name = "pecos-rslib", editable = "python/pecos-rslib" },

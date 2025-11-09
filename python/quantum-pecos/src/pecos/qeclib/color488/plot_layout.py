@@ -13,10 +13,11 @@
 
 from typing import TYPE_CHECKING
 
-import matplotlib.pyplot as plt
 import networkx as nx
+from matplotlib import pyplot as plt
 
 if TYPE_CHECKING:
+
     from pecos.qeclib.color488 import Color488
 
 
@@ -36,6 +37,8 @@ def plot_layout(
     Returns:
         The matplotlib pyplot module with the plot rendered.
     """
+    import matplotlib.pyplot as plt
+
     positions, polygons = color488.get_layout()
 
     # Calculate the mid-point for each polygon

@@ -123,7 +123,6 @@ def test_permutation_with_conditional_qasm() -> None:
 
 
 @pytest.mark.optional_dependency
-@pytest.skipif_no_llvmlite
 def test_multiple_permutations_qir() -> None:
     """Test multiple sequential permutations in QIR generation."""
     # Create a program with multiple sequential permutations
@@ -172,7 +171,6 @@ def test_multiple_permutations_qir() -> None:
 
 
 @pytest.mark.optional_dependency
-@pytest.skipif_no_llvmlite
 def test_permutation_with_conditional_qir() -> None:
     """Test permutation with conditional operations in QIR generation."""
     # Create a program with permutation and conditional operations

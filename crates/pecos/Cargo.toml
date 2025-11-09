@@ -25,6 +25,7 @@ pecos-phir-json.workspace = true
 pecos-qis-ffi-types.workspace = true
 pecos-qis-core.workspace = true
 pecos-qis-selene = { workspace = true, optional = true }
+pecos-llvm = { workspace = true, optional = true }
 pecos-hugr-qis = { workspace = true, optional = true }
 pecos-phir = { workspace = true, features = ["hugr"] }
 pecos-rng.workspace = true
@@ -43,7 +44,7 @@ pecos-wasm = { workspace = true, optional = true }
 [features]
 default = ["selene", "qasm", "phir", "wasm", "all-simulators"]
 qasm = []
-llvm = ["pecos-qis-core/llvm", "pecos-hugr-qis", "pecos-hugr-qis?/llvm"]
+llvm = ["pecos-qis-core/llvm", "pecos-llvm", "pecos-hugr-qis", "pecos-hugr-qis?/llvm"]
 phir = []
 selene = ["pecos-qis-selene"]
 

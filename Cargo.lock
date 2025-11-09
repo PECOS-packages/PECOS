@@ -2426,6 +2426,7 @@ dependencies = [
  "pecos-cppsparsesim",
  "pecos-engines",
  "pecos-hugr-qis",
+ "pecos-llvm",
  "pecos-phir",
  "pecos-phir-json",
  "pecos-programs",
@@ -2560,6 +2561,18 @@ dependencies = [
  "pecos-build-utils",
  "pecos-decoder-core",
  "rand 0.9.2",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "pecos-llvm"
+version = "0.1.1"
+dependencies = [
+ "inkwell",
+ "log",
+ "pecos-core",
+ "pecos-llvm-utils",
+ "regex",
  "thiserror 2.0.17",
 ]
 
@@ -2750,12 +2763,14 @@ version = "0.1.1"
 name = "pecos-rslib"
 version = "0.1.1"
 dependencies = [
+ "inkwell",
  "libc",
  "log",
  "parking_lot",
  "pecos",
  "pyo3",
  "pyo3-build-config",
+ "regex",
  "serde_json",
  "tempfile",
 ]

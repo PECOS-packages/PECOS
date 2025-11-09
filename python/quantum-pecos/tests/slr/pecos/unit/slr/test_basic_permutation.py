@@ -134,7 +134,6 @@ def test_same_register_permutation_qasm(
 
 
 @pytest.mark.optional_dependency
-@pytest.skipif_no_llvmlite
 def test_basic_permutation_qir(basic_permutation_program: tuple) -> None:
     """Test basic permutation functionality in QIR generation."""
     prog, _, _ = basic_permutation_program
@@ -174,7 +173,6 @@ def test_basic_permutation_qir(basic_permutation_program: tuple) -> None:
 
 
 @pytest.mark.optional_dependency
-@pytest.skipif_no_llvmlite
 def test_same_register_permutation_qir(
     same_register_permutation_program: tuple,
 ) -> None:

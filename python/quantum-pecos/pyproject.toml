@@ -56,9 +56,6 @@ documentation = "https://quantum-pecos.readthedocs.io"
 repository = "https://github.com/PECOS-packages/PECOS"
 
 [project.optional-dependencies]
-qir = [
-    "llvmlite==0.43.0; python_version < '3.13'"
-]
 guppy = [
     "guppylang>=0.21.0",  # Install guppylang first
     "selene-sim~=0.2.0",  # Then selene-sim (dependency of guppylang)
@@ -69,7 +66,6 @@ visualization = [
 all = [
     "quantum-pecos[visualization]",
     "quantum-pecos[guppy]",
-    "quantum-pecos[qir]",
 ]
 
 # CUDA dependencies. See docs/user-guide/cuda-setup.md for detailed installation instructions

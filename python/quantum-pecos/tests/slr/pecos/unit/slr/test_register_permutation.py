@@ -118,7 +118,6 @@ def test_mixed_permutation_qasm() -> None:
 
 
 @pytest.mark.optional_dependency
-@pytest.skipif_no_llvmlite
 def test_whole_register_permutation_qir() -> None:
     """Test permutation of whole registers in QIR generation."""
     prog = create_whole_register_permutation_program()
@@ -159,7 +158,6 @@ def test_whole_register_permutation_qir() -> None:
 
 
 @pytest.mark.optional_dependency
-@pytest.skipif_no_llvmlite
 def test_mixed_permutation_qir() -> None:
     """Test mixed whole register and element permutations in QIR generation."""
     prog = create_mixed_permutation_program()

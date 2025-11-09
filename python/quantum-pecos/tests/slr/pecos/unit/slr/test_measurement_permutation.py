@@ -71,7 +71,6 @@ def test_register_measurement_permutation_qasm(
 
 
 @pytest.mark.optional_dependency
-@pytest.skipif_no_llvmlite
 def test_individual_measurement_permutation_qir(
     individual_measurement_program: tuple,
 ) -> None:
@@ -153,7 +152,6 @@ def test_individual_measurement_permutation_qir(
 
 
 @pytest.mark.optional_dependency
-@pytest.skipif_no_llvmlite
 def test_register_measurement_permutation_qir(
     register_measurement_program: tuple,
 ) -> None:

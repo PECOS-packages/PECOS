@@ -80,7 +80,6 @@ def test_measurement_unrolling_qasm() -> None:
 
 
 @pytest.mark.optional_dependency
-@pytest.skipif_no_llvmlite
 def test_measurement_unrolling_qir() -> None:
     """Test measurement unrolling with permutations in QIR generation."""
     prog = create_measurement_unrolling_program()

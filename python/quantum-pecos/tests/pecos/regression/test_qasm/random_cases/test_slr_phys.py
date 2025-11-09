@@ -89,7 +89,6 @@ def test_bell() -> None:
 
 
 @pytest.mark.optional_dependency
-@pytest.skipif_no_llvmlite
 def test_bell_qir() -> None:
     """Test that a simple Bell prep and measure circuit can be created."""
     prog: Main = Main(
@@ -105,7 +104,6 @@ def test_bell_qir() -> None:
 
 
 @pytest.mark.optional_dependency
-@pytest.skipif_no_llvmlite
 def test_bell_qreg_qir() -> None:
     """Test that a simple Bell prep and measure circuit can be created."""
     prog: Main = Main(
@@ -195,7 +193,6 @@ def test_strange_program() -> None:
 
 
 @pytest.mark.optional_dependency
-@pytest.skipif_no_llvmlite
 def test_control_flow_qir() -> None:
     """Test a program with control flow into QIR."""
     prog = Main(
@@ -232,7 +229,6 @@ def test_control_flow_qir() -> None:
 
 
 @pytest.mark.optional_dependency
-@pytest.skipif_no_llvmlite
 def test_plus_qir() -> None:
     """Test a program with addition compiling into QIR."""
     prog = Main(
@@ -249,7 +245,6 @@ def test_plus_qir() -> None:
 
 
 @pytest.mark.optional_dependency
-@pytest.skipif_no_llvmlite
 def test_nested_xor_qir() -> None:
     """Test a program with addition compiling into QIR."""
     prog = Main(
@@ -268,7 +263,6 @@ def test_nested_xor_qir() -> None:
 
 
 @pytest.mark.optional_dependency
-@pytest.skipif_no_llvmlite
 def test_minus_qir() -> None:
     """Test a program with addition compiling into QIR."""
     prog = Main(
@@ -285,7 +279,6 @@ def test_minus_qir() -> None:
 
 
 @pytest.mark.optional_dependency
-@pytest.skipif_no_llvmlite
 def test_steane_qir() -> None:
     """Test the teleportation program using the Steane code."""
     # print(SlrConverter(telep("X", "X")).qir())

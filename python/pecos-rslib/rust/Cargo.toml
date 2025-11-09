@@ -30,10 +30,14 @@ pecos = { workspace = true, features = ["llvm", "wasm"] }
 
 pyo3 = { workspace=true, features = ["extension-module", "abi3-py310", "generate-import-lib"] }
 parking_lot.workspace = true
+regex.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 log.workspace = true
 libc.workspace = true
+
+# Inkwell for LLVM types (needed for llvmlite bindings)
+inkwell = { workspace = true, features = ["llvm14-0"] }
 
 [build-dependencies]
 pyo3-build-config.workspace = true

@@ -121,6 +121,7 @@ pecos-qis-ffi-types = { version = "0.1.1", path = "crates/pecos-qis-ffi-types" }
 pecos-qis-selene = { version = "0.1.1", path = "crates/pecos-qis-selene" }
 pecos-qis-core = { version = "0.1.1", path = "crates/pecos-qis-core" }
 pecos-hugr-qis = { version = "0.1.1", path = "crates/pecos-hugr-qis" }
+pecos-llvm = { version = "0.1.1", path = "crates/pecos-llvm" }
 pecos-rslib = { version = "0.1.1", path = "python/pecos-rslib/rust" }
 pecos-wasm = { version = "0.1.1", path = "crates/pecos-wasm" }
 pecos-build-utils = { version = "0.1.1", path = "crates/pecos-build-utils" }

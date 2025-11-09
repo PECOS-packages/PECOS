@@ -32,6 +32,8 @@ from pecos_rslib._pecos_rslib import (
     ShotVec,
     SparseStabEngineRs,
     StateVecEngineRs,
+    binding,  # llvmlite-compatible binding module for bitcode
+    ir,  # llvmlite-compatible LLVM IR module
 )
 from pecos_rslib.cppsparse_sim import CppSparseSimRs
 from pecos_rslib.rscoin_toss import CoinToss
@@ -433,6 +435,9 @@ __all__ = [
     "ByteMessageBuilder",
     "StateVecEngineRs",
     "SparseStabEngineRs",
+    # llvmlite-compatible modules
+    "ir",
+    "binding",
     # QuEST simulators
     "QuestStateVec",
     "QuestDensityMatrix",

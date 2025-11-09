@@ -1,0 +1,32 @@
+[package]
+name = "pecos-llvm"
+version.workspace = true
+edition.workspace = true
+description = "Rust wrapper for LLVM IR generation using inkwell"
+readme.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+pecos-core.workspace = true
+thiserror.workspace = true
+log.workspace = true
+regex.workspace = true
+
+# Inkwell for LLVM IR generation
+[dependencies.inkwell]
+workspace = true
+features = ["llvm14-0"]
+
+[features]
+default = []
+
+[build-dependencies]
+pecos-llvm-utils.workspace = true
+
+[lints]
+workspace = true

@@ -27,6 +27,8 @@ mod pauli_prop_bindings;
 mod hugr_compilation_bindings;
 mod pecos_rng_bindings;
 mod phir_json_bridge;
+// mod qir_bindings;  // Removed - replaced by llvm_bindings
+mod llvm_bindings;
 mod quest_bindings;
 mod qulacs_bindings;
 mod shot_results_bindings;
@@ -67,7 +69,9 @@ fn clear_jit_cache() {
 /// A Python module implemented in Rust.
 #[pymodule]
 fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    eprintln!("[MODULE INIT] _pecos_rslib module initializing...");
+    // Note: Rust logging is controlled via RUST_LOG environment variable (e.g., RUST_LOG=debug)
+    // We don't use pyo3-log because it interferes with Python's logging.basicConfig() in tests
+    log::debug!("_pecos_rslib module initializing...");
 
     // CRITICAL: Preload libselene_simple_runtime.so with RTLD_GLOBAL BEFORE anything else
     // This prevents conflicts with LLVM-14 when the Selene runtime is loaded later
@@ -78,7 +82,7 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         const RTLD_LAZY: i32 = 0x00001;
         const RTLD_GLOBAL: i32 = 0x00100;
 
-        eprintln!("[MODULE INIT] Unix detected, attempting preload...");
+        log::debug!("Unix detected, attempting Selene runtime preload...");
 
         // Try to find libselene_simple_runtime.so
         let possible_paths = [
@@ -88,12 +92,11 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
             "../selene/target/release/libselene_simple_runtime.so",
         ];
 
-        eprintln!("[PRELOAD] Checking for Selene runtime libraries...");
+        log::debug!("Checking for Selene runtime libraries...");
         for path in &possible_paths {
-            eprintln!("[PRELOAD] Checking path: {path}");
+            log::trace!("Checking path: {path}");
             if std::path::Path::new(path).exists() {
-                eprintln!("[PRELOAD] Found! Attempting to preload: {path}");
-                log::debug!("Preloading Selene runtime from: {path}");
+                log::debug!("Found Selene runtime! Attempting to preload: {path}");
 
                 unsafe {
                     let path_cstr = CString::new(path.as_bytes()).unwrap();
@@ -105,8 +108,9 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
                             log::warn!("Failed to preload {path}: {error}");
                         }
                     } else {
-                        eprintln!("[PRELOAD] SUCCESS! Preloaded with RTLD_GLOBAL");
-                        log::info!("Successfully preloaded Selene runtime with RTLD_GLOBAL");
+                        log::info!(
+                            "Successfully preloaded Selene runtime with RTLD_GLOBAL from: {path}"
+                        );
                         break;
                     }
                 }
@@ -114,7 +118,6 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         }
     }
 
-    log::debug!("_pecos_rslib module initializing (version 2)...");
     m.add_class::<SparseSim>()?;
     m.add_class::<phir_json_bridge::PhirJsonEngine>()?;
     m.add_class::<CppSparseSim>()?;
@@ -140,6 +143,12 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register HUGR compilation functions
     hugr_compilation_bindings::register_hugr_compilation_functions(m)?;
+
+    // Register LLVM IR generation module (compatible with Python's llvmlite API)
+    llvm_bindings::register_llvm_module(m)?;
+
+    // Register binding module for LLVM bitcode generation
+    llvm_bindings::register_binding_module(m)?;
 
     // Register program types
     m.add_class::<PyQasmProgram>()?;

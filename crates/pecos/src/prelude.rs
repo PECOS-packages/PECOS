@@ -92,6 +92,10 @@ pub use pecos_rng::prelude::*;
 #[cfg(feature = "llvm")]
 pub use pecos_hugr_qis::prelude::*;
 
+// Re-export LLVM IR generation prelude
+#[cfg(feature = "llvm")]
+pub use pecos_llvm::prelude::*;
+
 // Re-export PHIR-JSON prelude
 pub use pecos_phir_json::prelude::*;
 

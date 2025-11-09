@@ -65,8 +65,8 @@ class WasmtimeObj:
             memory_size=memory_size,
         )
 
-        # Get WASM bytes for compatibility with serialization
-        self.wasm_bytes = self._rust_obj.to_dict()["wasm_bytes"]
+        # Get WASM bytes directly from property (no dict allocation)
+        self.wasm_bytes = self._rust_obj.wasm_bytes
 
     def init(self) -> None:
         """Initialize object before running a series of experiments.

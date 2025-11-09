@@ -17,11 +17,11 @@
 
 use crate::foreign_object::ForeignObject;
 use log::{debug, warn};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use pecos_core::errors::PecosError;
 use std::any::Any;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
 use wasmtime::{
@@ -82,9 +82,8 @@ impl StoreContext {
 #[derive(Debug)]
 pub struct WasmForeignObject {
     /// WebAssembly binary
-    #[allow(dead_code)]
     wasm_bytes: Vec<u8>,
-    /// Wasmtime engine
+    /// Wasmtime engine (must be kept alive for module/store to remain valid)
     #[allow(dead_code)]
     engine: Engine,
     /// Wasmtime module
@@ -93,8 +92,8 @@ pub struct WasmForeignObject {
     store: RwLock<Store<StoreContext>>,
     /// Wasmtime instance (thread-safe)
     instance: RwLock<Option<Instance>>,
-    /// Cached function names (thread-safe)
-    func_names: Mutex<Option<Vec<String>>>,
+    /// Cached function names (initialized once, lock-free reads)
+    func_names: OnceLock<Arc<[String]>>,
     /// Stop flag for epoch increment thread
     stop_flag: Arc<RwLock<bool>>,
     /// Last function call results
@@ -281,7 +280,7 @@ impl WasmForeignObject {
             module,
             store: RwLock::new(store),
             instance: RwLock::new(None),
-            func_names: Mutex::new(None),
+            func_names: OnceLock::new(),
             stop_flag,
             last_results: Vec::new(),
             timeout_seconds,
@@ -332,11 +331,28 @@ impl WasmForeignObject {
     ///
     /// Returns an error if the `shot_reinit` function exists but execution fails
     pub fn shot_reinit(&mut self) -> Result<(), PecosError> {
-        let funcs = self.get_funcs();
-        if funcs.contains(&"shot_reinit".to_string()) {
+        if self.has_func("shot_reinit") {
             self.exec("shot_reinit", &[])?;
         }
         Ok(())
+    }
+
+    /// Check if a function exists in the WebAssembly module (zero-allocation)
+    ///
+    /// This is more efficient than `get_funcs().contains()` for existence checks
+    /// as it doesn't allocate or clone the function list.
+    ///
+    /// # Parameters
+    ///
+    /// * `func_name` - Name of the function to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if the function exists, `false` otherwise
+    fn has_func(&self, func_name: &str) -> bool {
+        self.module
+            .exports()
+            .any(|e| e.name() == func_name && e.ty().func().is_some())
     }
 
     /// Get the WebAssembly binary bytes
@@ -392,8 +408,7 @@ impl ForeignObject for WasmForeignObject {
         self.new_instance()?;
 
         // Check if the init function exists
-        let funcs = self.get_funcs();
-        if !funcs.contains(&"init".to_string()) {
+        if !self.has_func("init") {
             return Err(PecosError::Input(
                 "WebAssembly module must contain an 'init' function".to_string(),
             ));
@@ -420,23 +435,27 @@ impl ForeignObject for WasmForeignObject {
     }
 
     fn get_funcs(&self) -> Vec<String> {
-        // Check if we've already cached the function names
-        if let Some(ref funcs) = *self.func_names.lock() {
-            return funcs.clone();
-        }
+        // Use OnceLock::get_or_init for lock-free cached access
+        // The Arc is cloned (cheap), then converted to Vec for trait compatibility
+        let arc_funcs = self.func_names.get_or_init(|| {
+            // Collect function names and convert to Arc<[String]>
+            let funcs: Vec<String> = self
+                .module
+                .exports()
+                .filter_map(|export| {
+                    if export.ty().func().is_some() {
+                        Some(export.name().to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Arc::from(funcs)
+        });
 
-        // Get the function names
-        let mut funcs = Vec::new();
-        for export in self.module.exports() {
-            if export.ty().func().is_some() {
-                funcs.push(export.name().to_string());
-            }
-        }
-
-        // Cache the function names
-        *self.func_names.lock() = Some(funcs.clone());
-
-        funcs
+        // Convert Arc<[String]> to Vec<String> for trait compatibility
+        // This clones the strings but Arc::clone is cheap
+        arc_funcs.to_vec()
     }
 
     fn exec(&mut self, func_name: &str, args: &[i64]) -> Result<Vec<i64>, PecosError> {

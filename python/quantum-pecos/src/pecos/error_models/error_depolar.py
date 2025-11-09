@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
+from pecos_rslib.num import mean
 
 from pecos.circuits import QuantumCircuit
 from pecos.engines.cvm.classical import eval_condition
@@ -70,7 +70,7 @@ class DepolarizingErrorModel(ParentErrorModel):
         self.error_params["p2"] *= scale
 
         if isinstance(self.error_params["p_meas"], tuple):
-            self.error_params["p_meas"] = np.mean(self.error_params["p_meas"])
+            self.error_params["p_meas"] = mean(self.error_params["p_meas"])
 
         self.error_params["p_meas"] *= scale
         self.error_params["p_init"] *= scale

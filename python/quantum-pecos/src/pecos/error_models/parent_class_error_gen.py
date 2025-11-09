@@ -19,6 +19,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from pecos_rslib.num import random
 
 from pecos.error_models.class_errors_circuit import ErrorCircuits
 
@@ -272,7 +273,7 @@ class Generator:
             return locations
 
         # Create len(locations) number of random float between 0 and 1.
-        rand_nums = np.random.random(len(locations))
+        rand_nums = random.random(len(locations))
         rand_nums = rand_nums <= p  # Boolean evaluation of random number <= p
 
         # TODO: Think about using the numpy function vectorize...
@@ -357,7 +358,7 @@ class Generator:
             _error_params: dict[str, Any],
         ) -> None:
             """Apply random error after gate execution."""
-            after.update(np.random.choice(self.data), {location}, emptyappend=True)
+            after.update(random.choice(self.data, 1)[0], {location}, emptyappend=True)
 
         def error_func_before(
             self,
@@ -368,7 +369,7 @@ class Generator:
             _error_params: dict[str, Any],
         ) -> None:
             """Apply random error before gate execution."""
-            before.update(np.random.choice(self.data), {location}, emptyappend=True)
+            before.update(random.choice(self.data, 1)[0], {location}, emptyappend=True)
 
     class ErrorSetMultiQuditGate:
         """Class used to create a callable that returns an element from the error_set with uniform distribution."""
@@ -406,7 +407,7 @@ class Generator:
         ) -> None:
             """Apply sampled multi-qubit error after gate execution."""
             # Choose an error symbol or tuple of symbols:
-            index = np.random.choice(len(self.data))
+            index = int(random.choice(len(self.data), 1)[0])
             error_symbols = self.data[index]
 
             if isinstance(error_symbols, tuple | np.ndarray) and len(error_symbols) > 1:
@@ -435,7 +436,7 @@ class Generator:
             _error_params: dict[str, Any],
         ) -> None:
             """Apply sampled multi-qubit error before gate execution."""
-            index = np.random.choice(len(self.data))
+            index = int(random.choice(len(self.data), 1)[0])
             error_symbols = self.data[index]
 
             if isinstance(error_symbols, np.ndarray) and len(error_symbols) > 1:

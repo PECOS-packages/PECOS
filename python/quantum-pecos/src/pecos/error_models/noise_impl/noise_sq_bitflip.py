@@ -16,7 +16,7 @@ probabilities during quantum computations.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-import numpy as np
+from pecos_rslib.num import random
 
 from pecos.reps.pyphir.op_types import QOp
 
@@ -29,15 +29,11 @@ def noise_sq_bitflip(op: QOp, p: float) -> list[QOp] | None:
         op: Ideal quantum operation.
         p: Probability of bitflip.
     """
-    rand_nums = np.random.random(len(op.args)) <= p
+    # Use fused operation to check and get error indices in one pass
+    error_indices = random.compare_indices(len(op.args), p)
 
-    if np.any(rand_nums):
-        flip_locs = []
-        for r, loc in zip(rand_nums, op.args, strict=False):
-            if r:
-                flip_locs.append(loc)
-
-            return [QOp(name="X", args=flip_locs, metadata={})]
-        return None
+    if error_indices:
+        flip_locs = [op.args[idx] for idx in error_indices]
+        return [QOp(name="X", args=flip_locs, metadata={})]
 
     return None

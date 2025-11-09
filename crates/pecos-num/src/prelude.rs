@@ -12,7 +12,7 @@
 
 //! A prelude for users of the `pecos-num` crate.
 //!
-//! This prelude re-exports numerical computing functions that replace scipy.optimize.
+//! This prelude re-exports numerical computing functions that replace scipy and numpy functionality.
 
 // Re-export curve fitting
 pub use crate::curve_fit::{CurveFitError, CurveFitOptions, CurveFitResult, curve_fit};
@@ -22,3 +22,9 @@ pub use crate::optimize::{BrentqOptions, NewtonOptions, OptimizeError, brentq, n
 
 // Re-export polynomial fitting
 pub use crate::polynomial::{Poly1d, PolynomialError, polyfit};
+
+// Re-export random number generation
+pub use crate::random;
+
+// Re-export statistical functions
+pub use crate::stats::{mean, std};

@@ -25,6 +25,9 @@ nalgebra.workspace = true  # Required by levenberg-marquardt
 # Array interface (for API compatibility and return types)
 ndarray.workspace = true
 
+# Random number generation (for numpy.random drop-in replacements)
+rand.workspace = true
+
 # Logging
 log.workspace = true
 

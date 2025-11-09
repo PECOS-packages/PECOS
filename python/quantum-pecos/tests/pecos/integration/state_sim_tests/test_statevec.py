@@ -34,6 +34,7 @@ from pecos.simulators import (
     Qulacs,
     StateVec,
 )
+from pecos_rslib.num import random
 
 str_to_sim = {
     "StateVec": StateVec,
@@ -152,22 +153,22 @@ def compare_against_statevec(
 
 def generate_random_state(seed: int | None = None) -> QuantumCircuit:
     """Generate a quantum circuit with random gates for testing."""
-    np.random.seed(seed)
+    random.seed(seed)
 
     qc = QuantumCircuit()
     qc.append({"Init": {0, 1, 2, 3}})
 
     for _ in range(3):
-        qc.append({"RZ": {0}}, angles=(np.pi * np.random.random(),))
-        qc.append({"RZ": {1}}, angles=(np.pi * np.random.random(),))
-        qc.append({"RZ": {2}}, angles=(np.pi * np.random.random(),))
-        qc.append({"RZ": {3}}, angles=(np.pi * np.random.random(),))
-        qc.append({"RXX": {(0, 1)}}, angles=(np.pi * np.random.random(),))
-        qc.append({"RXX": {(0, 2)}}, angles=(np.pi * np.random.random(),))
-        qc.append({"RXX": {(0, 3)}}, angles=(np.pi * np.random.random(),))
-        qc.append({"RXX": {(1, 2)}}, angles=(np.pi * np.random.random(),))
-        qc.append({"RXX": {(1, 3)}}, angles=(np.pi * np.random.random(),))
-        qc.append({"RXX": {(2, 3)}}, angles=(np.pi * np.random.random(),))
+        qc.append({"RZ": {0}}, angles=(np.pi * random.random(1)[0],))
+        qc.append({"RZ": {1}}, angles=(np.pi * random.random(1)[0],))
+        qc.append({"RZ": {2}}, angles=(np.pi * random.random(1)[0],))
+        qc.append({"RZ": {3}}, angles=(np.pi * random.random(1)[0],))
+        qc.append({"RXX": {(0, 1)}}, angles=(np.pi * random.random(1)[0],))
+        qc.append({"RXX": {(0, 2)}}, angles=(np.pi * random.random(1)[0],))
+        qc.append({"RXX": {(0, 3)}}, angles=(np.pi * random.random(1)[0],))
+        qc.append({"RXX": {(1, 2)}}, angles=(np.pi * random.random(1)[0],))
+        qc.append({"RXX": {(1, 3)}}, angles=(np.pi * random.random(1)[0],))
+        qc.append({"RXX": {(2, 3)}}, angles=(np.pi * random.random(1)[0],))
 
     return qc
 

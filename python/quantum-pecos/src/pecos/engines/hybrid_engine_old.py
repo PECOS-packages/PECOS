@@ -18,11 +18,10 @@ for backward compatibility with existing quantum-classical workflows.
 from __future__ import annotations
 
 import os
-import random
 import struct
 from typing import TYPE_CHECKING
 
-import numpy as np
+from pecos_rslib.num import random
 
 from pecos.engines.cvm.binarray import BinArray
 from pecos.engines.cvm.classical import eval_condition, eval_cop, set_output
@@ -91,7 +90,6 @@ class HybridEngine:
 
         if self.seed:
             self.rng_model = RNGModel(self.seed)
-            np.random.seed(self.seed)
             random.seed(self.seed)
         else:
             self.rng_model = RNGModel(0)

@@ -17,10 +17,10 @@ quantum-classical algorithms with integrated classical computation support.
 
 from __future__ import annotations
 
-import random
 from typing import TYPE_CHECKING, Any, Protocol, Union
 
 import numpy as np
+from pecos_rslib.num import random
 
 from pecos.classical_interpreters.phir_classical_interpreter import (
     PhirClassicalInterpreter,
@@ -178,8 +178,7 @@ class HybridEngine:
     def use_seed(seed: int | None = None) -> int:
         """Use a seed to set random number generators."""
         if seed is None:
-            seed = np.random.randint(np.iinfo(np.int32).max)
-        np.random.seed(seed)
+            seed = int(random.randint(0, np.iinfo(np.int32).max, 1)[0])
         random.seed(seed)
         return seed
 

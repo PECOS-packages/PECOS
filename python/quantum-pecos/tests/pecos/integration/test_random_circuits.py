@@ -18,6 +18,7 @@ from typing import Any
 
 import numpy as np
 from pecos.simulators import CppSparseSimRs, SparseSimPy, SparseSimRs
+from pecos_rslib.num import random
 
 
 def test_random_circuits() -> None:
@@ -78,12 +79,12 @@ def run_circuit_test(
         gates = ["H", "S", "CNOT", "measure Z", "init |0>"]
 
     for seed in range(trials):
-        np.random.seed(seed)
+        random.seed(seed)
         circuit = generate_circuit(gates, num_qubits, circuit_depth)
 
         measurements = []
         for _i, state_sim in enumerate(state_sims):
-            np.random.seed(seed)
+            random.seed(seed)
             verbose = (
                 seed == 32 and state_sim.__name__ == "CppSparseSimRs"
             )  # Debug failing case
@@ -116,7 +117,7 @@ def run_circuit_test(
 
 def get_qubits(num_qubits: int, size: int) -> np.ndarray:
     """Get random qubit indices for gate operations."""
-    return np.random.choice(list(range(num_qubits)), size, replace=False)
+    return random.choice(list(range(num_qubits)), size, replace=False)
 
 
 def generate_circuit(
@@ -125,7 +126,7 @@ def generate_circuit(
     circuit_depth: int,
 ) -> list[tuple[str, int | np.ndarray]]:
     """Generate a random quantum circuit with specified gates and depth."""
-    circuit_elements = list(np.random.choice(gates, circuit_depth))
+    circuit_elements = list(random.choice(gates, circuit_depth))
 
     circuit = []
 
@@ -180,12 +181,12 @@ def run_a_circuit(
             measurements.append(m)
 
         elif element == "init |0>":
-            q_tuple = tuple(q) if isinstance(q, np.ndarray) else q
+            q_tuple = tuple(q) if isinstance(q, (np.ndarray, list)) else q
 
             state.run_gate(element, {q_tuple}, forced_outcome=0)
 
         else:
-            q_tuple = tuple(q) if isinstance(q, np.ndarray) else q
+            q_tuple = tuple(q) if isinstance(q, (np.ndarray, list)) else q
 
             state.run_gate(element, {q_tuple})
 

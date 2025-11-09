@@ -24,6 +24,7 @@ import contextlib
 from typing import TYPE_CHECKING
 
 import numpy as np
+from pecos_rslib.num import mean
 
 from pecos import circuits
 from pecos.decoders import MWPM2D
@@ -674,7 +675,7 @@ def codecapacity_logical_rate3(
         print(f"\nTotal number of runs: {sum(run_durations)}")
 
     run_durations = np.array(run_durations)
-    duration_mean = np.mean(run_durations)
+    duration_mean = mean(run_durations)
 
     logical_rate = 1.0 / duration_mean
 

@@ -630,14 +630,378 @@ fn curve_fit_tuple<'py>(
     Ok((popt, pcov))
 }
 
+// ============================================================================
+// Random Number Generation - NumPy drop-in replacements
+// ============================================================================
+
+/// Generate random floats from a uniform distribution over [0.0, 1.0).
+///
+/// This is a drop-in replacement for `numpy.random.random(size)`.
+///
+/// Args:
+///     size: int - Number of random values to generate
+///
+/// Returns:
+///     ndarray: Array of random floats in [0.0, 1.0)
+///
+/// Examples:
+///     >>> from `pecos_rslib.num.random` import random
+///     >>> values = random(5)
+///     >>> len(values)
+///     5
+#[pyfunction]
+fn random(py: Python<'_>, size: usize) -> Py<PyArray1<f64>> {
+    let result = pecos::prelude::random::random(size);
+    PyArray1::from_array(py, &result).unbind()
+}
+
+/// Generate random integers from a uniform distribution.
+///
+/// This is a drop-in replacement for `numpy.random.randint(low, high, size)`.
+///
+/// Args:
+///     low: int - Lowest integer to be drawn (or upper bound if high is None)
+///     high: Optional[int] - If provided, one above the largest integer to be drawn
+///     size: Optional[int] - Number of random integers to generate. If None, returns a single integer.
+///
+/// Returns:
+///     int | ndarray: Single integer or array of random integers
+///
+/// Examples:
+///     >>> from `pecos_rslib.num.random` import randint
+///     >>> # Single random integer in [0, 10)
+///     >>> val = randint(10)
+///     >>> 0 <= val < 10
+///     True
+///     >>> # Array of random integers in [5, 15)
+///     >>> vals = randint(5, 15, 100)
+///     >>> len(vals)
+///     100
+#[pyfunction]
+#[pyo3(signature = (low, high=None, size=None))]
+#[allow(clippy::needless_pass_by_value)] // Python object requires ownership
+fn randint(
+    py: Python<'_>,
+    low: i64,
+    high: Option<i64>,
+    size: Option<usize>,
+) -> PyResult<Py<PyAny>> {
+    use pyo3::IntoPyObject;
+
+    if let Some(n) = size {
+        // Return array
+        let result = pecos::prelude::random::randint(low, high, n);
+        Ok(PyArray1::from_array(py, &result).into())
+    } else {
+        // Return scalar
+        let result = pecos::prelude::random::randint_scalar(low, high);
+        Ok(result.into_pyobject(py)?.into_any().unbind())
+    }
+}
+
+/// Set the random seed for reproducible results.
+///
+/// This is a drop-in replacement for `numpy.random.seed(seed)`.
+///
+/// Sets a thread-local seed for all subsequent random number generation.
+/// This ensures reproducibility for scientific computing and testing.
+///
+/// Args:
+///     `seed_value`: int - The seed value (will be cast to u64)
+///
+/// Examples:
+///     >>> from `pecos_rslib.num.random` import seed, random
+///     >>> seed(42)
+///     >>> values1 = random(5)
+///     >>> seed(42)
+///     >>> values2 = random(5)
+///     >>> # values1 and values2 are identical
+///     >>> import numpy as np
+///     >>> `np.array_equal(values1`, values2)
+///     True
+#[pyfunction]
+fn seed(seed_value: u64) {
+    pecos::prelude::random::seed(seed_value);
+}
+
+/// Generate a random sample from a given array.
+///
+/// This is a drop-in replacement for `numpy.random.choice(a, size, replace=True)`.
+///
+/// Args:
+///     a: list | ndarray - Array to sample from
+///     size: Optional[int] - Number of samples to draw. If None, returns a single sample.
+///     replace: bool - Whether to sample with replacement (default: True)
+///
+/// Returns:
+///     Any | list: Single sample or list of samples
+///
+/// Examples:
+///     >>> from pecos_rslib.num.random import choice
+///     >>> items = ["X", "Y", "Z"]  # Quotes are Python syntax, not Rust links
+///     >>> # Single sample
+///     >>> sample = choice(items)
+///     >>> sample in items
+///     True
+///     >>> # Multiple samples with replacement
+///     >>> samples = choice(items, 5, True)
+///     >>> len(samples)
+///     5
+///
+/// Note: This is Python example code, not Rust documentation links
+#[allow(clippy::doc_link_with_quotes, clippy::doc_markdown)]
+#[pyfunction]
+#[pyo3(signature = (a, size=None, replace=true))]
+#[allow(clippy::needless_pass_by_value)] // Py<PyAny> is a cheap ref-counted pointer
+fn choice(py: Python<'_>, a: Py<PyAny>, size: Option<usize>, replace: bool) -> PyResult<Py<PyAny>> {
+    // Convert Python array/list to Vec<Py<PyAny>>
+    let array = Python::attach(|py| {
+        let obj = a.bind(py);
+
+        // First try to handle numpy arrays by converting to list
+        if let Ok(to_list_method) = obj.getattr("tolist")
+            && let Ok(list_obj) = to_list_method.call0()
+        {
+            let seq = list_obj.cast::<pyo3::types::PySequence>()?;
+            let len = seq.len()?;
+            let mut items = Vec::with_capacity(len);
+            for i in 0..len {
+                items.push(seq.get_item(i)?.unbind());
+            }
+            return Ok::<Vec<Py<PyAny>>, PyErr>(items);
+        }
+
+        // Fall back to treating as sequence
+        let seq = obj.cast::<pyo3::types::PySequence>()?;
+        let len = seq.len()?;
+
+        let mut items = Vec::with_capacity(len);
+        for i in 0..len {
+            items.push(seq.get_item(i)?.unbind());
+        }
+
+        Ok::<Vec<Py<PyAny>>, PyErr>(items)
+    })?;
+
+    if array.is_empty() {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "Cannot sample from empty array",
+        ));
+    }
+
+    // Validate size for sampling without replacement
+    if let Some(n) = size
+        && !replace
+        && n > array.len()
+    {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "Cannot take larger sample ({}) than population ({}) when replace=False",
+            n,
+            array.len()
+        )));
+    }
+
+    // Optimize by sampling indices instead of cloning Python objects
+    // This avoids expensive Python::attach() and clone_ref() calls
+    let indices: Vec<usize> = (0..array.len()).collect();
+
+    if let Some(n) = size {
+        // Sample indices instead of objects
+        let sampled_indices = pecos::prelude::random::choice(&indices, n, replace);
+
+        // Build result list by indexing array once per sample
+        let py_list = pyo3::types::PyList::empty(py);
+        for &idx in &sampled_indices {
+            py_list.append(&array[idx])?;
+        }
+        Ok(py_list.into())
+    } else {
+        // Return single sample
+        let idx = pecos::prelude::random::choice_scalar(&indices);
+        Ok(array[idx].clone_ref(py))
+    }
+}
+
+/// Fused operation: Check if any random value is less than threshold.
+///
+/// This is a high-performance fused version of `np.any(np.random.random(size) < threshold)`.
+///
+/// # Arguments
+///
+/// * `size` - Number of random values to potentially generate
+/// * `threshold` - Threshold to compare against
+///
+/// # Returns
+///
+/// Returns `True` if any generated random value is less than `threshold`, `False` otherwise.
+///
+/// # Performance
+///
+/// Expected 2-3x speedup over numpy due to:
+/// - No array allocation
+/// - Short-circuit evaluation
+/// - Reduced Python overhead
+///
+/// # Examples
+///
+/// ```python
+/// from pecos_rslib.num import random
+///
+/// # Seed for reproducibility
+/// random.seed(42)
+///
+/// # Check if any of 100 qubits have errors (1% error rate)
+/// has_error = random.compare_any(100, 0.01)
+/// ```
+#[pyfunction]
+fn compare_any(size: usize, threshold: f64) -> bool {
+    pecos::prelude::random::compare_any(size, threshold)
+}
+
+/// Fused operation: Get indices where random values are less than threshold.
+///
+/// This is a high-performance fused version of:
+/// ```python
+/// rand_nums = np.random.random(size) < threshold
+/// indices = [i for i, r in enumerate(rand_nums) if r]
+/// ```
+///
+/// # Arguments
+///
+/// * `size` - Number of random values to generate
+/// * `threshold` - Threshold to compare against
+///
+/// # Returns
+///
+/// Returns a list of indices where the random value was less than `threshold`.
+///
+/// # Performance
+///
+/// Expected 1.5-2x speedup over numpy due to:
+/// - No intermediate boolean array allocation
+/// - Direct collection of matching indices
+/// - Reduced Python overhead
+///
+/// # Examples
+///
+/// ```python
+/// from pecos_rslib.num import random
+///
+/// # Seed for reproducibility
+/// random.seed(42)
+///
+/// # Get indices of qubits with errors (1% error rate)
+/// error_indices = random.compare_indices(100, 0.01)
+/// for idx in error_indices:
+///     apply_error(qubits[idx])
+/// ```
+#[pyfunction]
+fn compare_indices(py: Python<'_>, size: usize, threshold: f64) -> PyResult<Py<PyAny>> {
+    let indices = pecos::prelude::random::compare_indices(size, threshold);
+
+    // Convert Vec<usize> to Python list
+    let py_list = pyo3::types::PyList::empty(py);
+    for idx in indices {
+        py_list.append(idx)?;
+    }
+    Ok(py_list.into())
+}
+
+/// Calculate the arithmetic mean of a sequence of values.
+///
+/// Drop-in replacement for `numpy.mean()` for 1D arrays without axis parameter.
+///
+/// # Arguments
+///
+/// * `values` - A Python list or sequence of numeric values
+///
+/// # Returns
+///
+/// The arithmetic mean as f64, or `NaN` if the sequence is empty
+///
+/// # Examples
+///
+/// ```python
+/// from pecos_rslib.num import mean
+///
+/// # Calculate mean of a list
+/// values = [1.0, 2.0, 3.0, 4.0, 5.0]
+/// avg = mean(values)  # Returns 3.0
+///
+/// # Error model use case: average measurement error rates
+/// p_meas = (0.01, 0.015, 0.02)
+/// avg_p_meas = mean(p_meas)  # Returns 0.015
+/// ```
+// PyO3 requires Vec<T> for automatic extraction from Python sequences.
+// The Vec is consumed but this is unavoidable with current PyO3 API.
+#[allow(clippy::needless_pass_by_value)]
+#[pyfunction]
+fn mean(values: Vec<f64>) -> f64 {
+    pecos::prelude::mean(&values)
+}
+
+/// Calculate the standard deviation of values.
+///
+/// Drop-in replacement for `numpy.std()` for 1D arrays without axis parameter.
+///
+/// # Arguments
+///
+/// * `values` - A Python list or sequence of numeric values
+/// * `ddof` - Delta degrees of freedom (0 for population std, 1 for sample std)
+///
+/// # Returns
+///
+/// The standard deviation as f64, or `NaN` if the sequence is empty or if n <= ddof
+///
+/// # Examples
+///
+/// ```python
+/// from pecos_rslib.num import std
+///
+/// # Calculate population standard deviation
+/// values = [1.0, 2.0, 3.0, 4.0, 5.0]
+/// population_std = std(values, 0)  # Returns ~1.414
+///
+/// # Calculate sample standard deviation
+/// sample_std = std(values, 1)  # Returns ~1.581
+///
+/// # Jackknife analysis use case
+/// parameter_estimates = [1.5, 1.6, 1.4, 1.5, 1.7]
+/// uncertainty = std(parameter_estimates, 0)
+/// ```
+// PyO3 requires Vec<T> for automatic extraction from Python sequences.
+// The Vec is consumed but this is unavoidable with current PyO3 API.
+#[allow(clippy::needless_pass_by_value)]
+#[pyfunction]
+fn std(values: Vec<f64>, ddof: usize) -> f64 {
+    pecos::prelude::std(&values, ddof)
+}
+
 /// Register the num submodule with Python bindings.
 pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let num_module = PyModule::new(m.py(), "num")?;
+
+    // Add optimization functions
     num_module.add_function(wrap_pyfunction!(brentq, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(newton, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(polyfit, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(curve_fit, &num_module)?)?;
     num_module.add_class::<Poly1d>()?;
+
+    // Add statistical functions
+    num_module.add_function(wrap_pyfunction!(mean, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(self::std, &num_module)?)?;
+
+    // Create random submodule
+    let random_module = PyModule::new(m.py(), "random")?;
+    random_module.add_function(wrap_pyfunction!(seed, &random_module)?)?;
+    random_module.add_function(wrap_pyfunction!(random, &random_module)?)?;
+    random_module.add_function(wrap_pyfunction!(randint, &random_module)?)?;
+    random_module.add_function(wrap_pyfunction!(choice, &random_module)?)?;
+    random_module.add_function(wrap_pyfunction!(compare_any, &random_module)?)?;
+    random_module.add_function(wrap_pyfunction!(compare_indices, &random_module)?)?;
+    num_module.add_submodule(&random_module)?;
+
     m.add_submodule(&num_module)?;
     Ok(())
 }

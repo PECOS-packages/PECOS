@@ -52,6 +52,11 @@ test = [
 [tool.uv.sources]
 pecos-rslib = { workspace = true }
 
+[tool.pytest.ini_options]
+markers = [
+    "performance: marks tests as performance benchmarks (deselect with '-m \"not performance\"')",
+]
+
 [tool.ruff]
 lint.extend-select = ["S", "B", "PT"]  # Enable bandit, pytest rules
 lint.ignore = ["S101"]  # Ignore assert warnings in tests

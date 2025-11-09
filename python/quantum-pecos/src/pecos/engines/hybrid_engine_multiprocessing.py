@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 from warnings import warn
 
 import numpy as np
+from pecos_rslib.num import random
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -72,7 +73,8 @@ def run_multisim(
         "initialize": True,
     }
 
-    np.random.seed(seed)
+    if seed is not None:
+        random.seed(seed)
     max_value = np.iinfo(np.int32).max
 
     manager = multiprocessing.get_context("spawn").Manager()
@@ -80,7 +82,7 @@ def run_multisim(
     args = []
     for i, sh in enumerate(multi_shots):
         # make a unique seed for each process
-        sd = np.random.randint(max_value)
+        sd = int(random.randint(0, max_value, 1)[0])
 
         kwargs_temp = dict(kwargs)
         kwargs_temp.update(

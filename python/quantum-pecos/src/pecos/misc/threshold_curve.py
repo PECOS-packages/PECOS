@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from pecos_rslib.num import curve_fit
+from pecos_rslib.num import curve_fit, mean, std
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -307,11 +307,11 @@ def jackknife_pd(
             print("parameter values:", result[0])
             print(f"parameter stds: {result[1]}\n")
 
-    est = np.mean(opt_list, axis=0)
-    std = np.std(opt_list, axis=0)
+    est = mean(opt_list, axis=0)
+    stds = std(opt_list, axis=0)
 
     print(f"Mean: {est}")
-    print(f"Std: {std}")
+    print(f"Std: {stds}")
 
     return est, std
 
@@ -358,11 +358,11 @@ def jackknife_p(
             print("parameter values:", result[0])
             print(f"parameter stds: {result[1]}\n")
 
-    est = np.mean(opt_list, axis=0)
-    std = np.std(opt_list, axis=0)
+    est = mean(opt_list, axis=0)
+    stds = std(opt_list, axis=0)
 
     print(f"Mean: {est}")
-    print(f"Std: {std}")
+    print(f"Std: {stds}")
 
     return est, std
 
@@ -410,11 +410,11 @@ def jackknife_d(
             print("parameter values:", result[0])
             print(f"parameter stds: {result[1]}\n")
 
-    est = np.mean(opt_list, axis=0)
-    std = np.std(opt_list, axis=0)
+    est = mean(opt_list, axis=0)
+    stds = std(opt_list, axis=0)
 
     print(f"Mean: {est}")
-    print(f"Std: {std}")
+    print(f"Std: {stds}")
 
     return est, std
 
@@ -436,7 +436,7 @@ def get_est(
         Tuple of (mean, standard_deviation).
     """
     v_est = sum(value_is) / len(value_is)
-    v_est_std = np.std(value_is)
+    v_est_std = std(value_is)
 
     if verbose:
         print(f"{label}_est: {v_est} (mean) +- {v_est_std} (std)")

@@ -16,7 +16,7 @@ two-qubit gate operations like CNOT and CZ gates.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-import numpy as np
+from pecos_rslib.num import random
 
 from pecos.reps.pyphir.op_types import QOp
 
@@ -40,24 +40,25 @@ def noise_tq_depolarizing(op: QOp, p: float, noise_dict: dict) -> list[QOp] | No
     Raises:
         NotImplementedError: If leakage faults are encountered.
     """
-    rand_nums = np.random.random(len(op.args)) <= p
+    # Use fused operation to check and get error indices in one pass
+    error_indices = random.compare_indices(len(op.args), p)
 
-    if np.any(rand_nums):
+    if error_indices:
         noise = {}
-        for r, loc in zip(rand_nums, op.args, strict=False):
-            if r:
-                rand = np.random.random()
-                p_tot = 0.0
-                for (fault1, fault2), prob in noise_dict.items():
-                    p_tot += prob
+        for idx in error_indices:
+            loc = op.args[idx]
+            rand = random.random(1)[0]
+            p_tot = 0.0
+            for (fault1, fault2), prob in noise_dict.items():
+                p_tot += prob
 
-                    if p_tot >= rand:
-                        loc1, loc2 = loc
-                        if fault1 != "I":
-                            noise.setdefault(fault1, []).append(loc1)
-                        if fault2 != "I":
-                            noise.setdefault(fault2, []).append(loc2)
-                        break
+                if p_tot >= rand:
+                    loc1, loc2 = loc
+                    if fault1 != "I":
+                        noise.setdefault(fault1, []).append(loc1)
+                    if fault2 != "I":
+                        noise.setdefault(fault2, []).append(loc2)
+                    break
 
         if noise:
             if "L" in noise:

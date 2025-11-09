@@ -20,11 +20,10 @@ quantum circuits on various simulator backends in the PECOS framework.
 from __future__ import annotations
 
 import os
-import random
 import struct
 from typing import TYPE_CHECKING
 
-import numpy as np
+from pecos_rslib.num import random
 
 from pecos.misc.std_output import StdOutput
 
@@ -57,7 +56,6 @@ class Standard:
             self.seed = None
 
         if self.seed:
-            np.random.seed(self.seed)
             random.seed(self.seed)
 
     @staticmethod

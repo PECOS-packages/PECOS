@@ -17,7 +17,6 @@ including CUDA-based state vector storage and manipulation for high-performance 
 
 from __future__ import annotations
 
-import random
 from typing import TYPE_CHECKING
 
 import cupy as cp
@@ -44,18 +43,17 @@ if TYPE_CHECKING:
 class CuStateVec(StateVector):
     """Simulation using cuQuantum's cuStateVec."""
 
-    def __init__(self, num_qubits: int, seed: int | None = None) -> None:
+    def __init__(self, num_qubits: int, _seed: int | None = None) -> None:
         """Initializes the state vector.
 
         Args:
             num_qubits (int): Number of qubits being represented.
-            seed (int): Seed for randomness.
+            _seed (int): Seed for randomness (kept for API compatibility, not used in GPU-based simulator).
         """
         self.libhandle = None
         if not isinstance(num_qubits, int):
             msg = "``num_qubits`` should be of type ``int``."
             raise TypeError(msg)
-        random.seed(seed)
 
         super().__init__()
 

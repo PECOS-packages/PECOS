@@ -22,13 +22,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
+from pecos_rslib.num import random
 
 from pecos.circuits import QuantumCircuit
 from pecos.engines.circuit_runners import TimingRunner
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence
+
+    import numpy as np
 
     from pecos.protocols import SimulatorProtocol
 
@@ -156,8 +158,8 @@ def generate_circuits(
     circuits = []
 
     for seed in range(seed_start, seed_start + trials):
-        np.random.seed(seed)
-        circuit_elements = list(np.random.choice(gates, circuit_depth))
+        random.seed(seed)
+        circuit_elements = list(random.choice(gates, circuit_depth))
         qc = QuantumCircuit()
 
         for element in circuit_elements:
@@ -194,4 +196,4 @@ def get_qubits(num_qubits: int, size: int) -> np.ndarray:
     Returns:
         Array of randomly selected qubit indices.
     """
-    return np.random.choice(list(range(num_qubits)), size, replace=False)
+    return random.choice(list(range(num_qubits)), size, replace=False)

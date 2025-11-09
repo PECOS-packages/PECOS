@@ -14,12 +14,12 @@
 
 //! # pecos-num: Numerical Computing for PECOS
 //!
-//! This crate provides numerical computing functionality for PECOS, serving as a
-//! Rust-based replacement for scipy.optimize functions. It offers:
+//! This crate provides numerical computing functionality for PECOS, including:
 //!
+//! - Random number generation (numpy.random drop-in replacements)
 //! - Root finding algorithms (Brent's method, Newton-Raphson)
 //! - Curve fitting (Levenberg-Marquardt, polynomial fitting)
-//! - Performance improvements over scipy
+//! - Performance improvements over scipy/numpy
 //! - Better cross-platform support
 //!
 //! ## Usage
@@ -31,7 +31,10 @@ pub mod curve_fit;
 pub mod optimize;
 pub mod polynomial;
 pub mod prelude;
+pub mod random;
+pub mod stats;
 
 pub use curve_fit::{CurveFitError, CurveFitOptions, CurveFitResult, curve_fit};
 pub use optimize::{BrentqOptions, NewtonOptions, OptimizeError, brentq, newton};
 pub use polynomial::{Poly1d, PolynomialError, polyfit};
+pub use stats::mean;

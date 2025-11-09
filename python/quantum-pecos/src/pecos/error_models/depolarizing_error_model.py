@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
+from pecos_rslib.num import mean
 
 from pecos.error_models.noise_impl.gate_groups import one_qubits, two_qubits
 from pecos.error_models.noise_impl.noise_initz_bitflip import noise_initz_bitflip
@@ -123,7 +123,7 @@ class DepolarizingErrorModel:
         self._eparams["p2"] *= scale
 
         if isinstance(self._eparams["p_meas"], tuple):
-            self._eparams["p_meas"] = np.mean(self._eparams["p_meas"])
+            self._eparams["p_meas"] = mean(self._eparams["p_meas"])
 
         self._eparams["p_meas"] *= scale
         self._eparams["p_init"] *= scale

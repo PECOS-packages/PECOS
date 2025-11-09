@@ -35,15 +35,37 @@ from pecos_rslib._pecos_rslib import (
     StateVecEngineRs,
     binding,  # llvmlite-compatible binding module for bitcode
     ir,  # llvmlite-compatible LLVM IR module
-    num,  # Numerical computing functions (scipy.optimize replacements)
 )
 from pecos_rslib.cppsparse_sim import CppSparseSimRs
+from pecos_rslib.num_wrapper import (  # Enhanced num module with axis support
+    mean,
+    std,
+    brentq,
+    newton,
+    polyfit,
+    curve_fit,
+    Poly1d,
+    random,
+)
 from pecos_rslib.rscoin_toss import CoinToss
 from pecos_rslib.rspauli_prop import PauliPropRs
 from pecos_rslib.rssparse_sim import SparseSimRs
 from pecos_rslib.rsstate_vec import StateVecRs
 
-# Register num module in sys.modules to enable "from pecos_rslib.num import ..." syntax
+# Create a module-like object for num to enable "from pecos_rslib.num import ..." syntax
+import types
+
+num = types.ModuleType("num")
+num.mean = mean
+num.std = std
+num.brentq = brentq
+num.newton = newton
+num.polyfit = polyfit
+num.curve_fit = curve_fit
+num.Poly1d = Poly1d
+num.random = random
+
+# Register num module in sys.modules
 sys.modules["pecos_rslib.num"] = num
 
 # HUGR compilation functions - explicit, no automatic fallback

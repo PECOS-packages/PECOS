@@ -33,7 +33,6 @@ dependencies = [
     "numpy>=1.15.0",
     "scipy>=1.1.0",
     "networkx>=2.1.0",
-    "matplotlib>=2.2.0",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -61,6 +60,7 @@ guppy = [
     "selene-sim~=0.2.0",  # Then selene-sim (dependency of guppylang)
 ]
 visualization = [
+    "matplotlib>=2.2.0",
     "plotly~=5.9.0",
 ]
 all = [

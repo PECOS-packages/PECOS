@@ -11,11 +11,15 @@
 
 """Test configuration and shared fixtures."""
 
-# Configure matplotlib to use non-interactive backend for tests
+# Configure matplotlib to use non-interactive backend for tests (if available)
 # This must be done before importing matplotlib.pyplot to avoid GUI backend issues on Windows
-import matplotlib as mpl
+try:
+    import matplotlib as mpl
 
-mpl.use("Agg")
+    mpl.use("Agg")
+except ImportError:
+    # matplotlib is optional - only needed for visualization tests
+    pass
 
 # Note: llvmlite functionality is now always available via Rust (pecos_rslib.ir and pecos_rslib.binding)
 # No need for conditional test skipping

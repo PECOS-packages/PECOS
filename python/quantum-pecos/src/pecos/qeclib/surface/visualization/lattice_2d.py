@@ -5,12 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Circle, PathPatch
-from matplotlib.path import Path
 
 if TYPE_CHECKING:
+    from matplotlib import pyplot as plt
+    from matplotlib.path import Path
+
     from pecos.qeclib.surface.patches.patch_base import SurfacePatch
 
 
@@ -75,6 +75,9 @@ def plot_colored_polygons(
         polygon_colors (dict[int, int]): List of indices into `colors` for each polygon.
         config (Lattice2DConfig | None): Optional Lattice2DConfig object.
     """
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Circle, PathPatch
+
     c = config
 
     # Plot setup
@@ -208,6 +211,8 @@ def create_cup_path(
     Returns:
         Path: A matplotlib path representing the cup shape.
     """
+    from matplotlib.path import Path
+
     # Calculate midpoint of the base
     mid_base = ((base1[0] + base2[0]) / 2, (base1[1] + base2[1]) / 2)
 

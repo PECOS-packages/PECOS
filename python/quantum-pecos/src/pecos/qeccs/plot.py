@@ -21,9 +21,9 @@ for various QECC implementations in PECOS.
 from typing import TYPE_CHECKING, TypeVar
 
 import networkx as nx
-from matplotlib import pyplot as plt
 
 if TYPE_CHECKING:
+
     from pecos.protocols import LogicalInstructionProtocol, QECCProtocol
 
 T = TypeVar("T")
@@ -54,6 +54,8 @@ def plot_qecc(
         **kwargs: Additional keyword arguments (will raise exception if any are provided).
 
     """
+    from matplotlib import pyplot as plt
+
     if kwargs:
         msg = f"keys {kwargs.keys()} not recognized!"
         raise Exception(msg)
@@ -166,6 +168,8 @@ def plot_instr(
         **kwargs: Additional keyword arguments (will raise exception if any are provided)
 
     """
+    from matplotlib import pyplot as plt
+
     if kwargs:
         msg = f"keys {kwargs.keys()} not recognized!"
         raise Exception(msg)

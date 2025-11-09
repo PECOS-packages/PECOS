@@ -22,6 +22,7 @@ mod cpp_sparse_sim_bindings;
 mod engine_bindings;
 mod engine_builders;
 mod noise_helpers;
+mod num_bindings;
 mod pauli_prop_bindings;
 // mod pcg_bindings;
 mod hugr_compilation_bindings;
@@ -149,6 +150,9 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register binding module for LLVM bitcode generation
     llvm_bindings::register_binding_module(m)?;
+
+    // Register numerical computing module (scipy.optimize replacements)
+    num_bindings::register_num_module(m)?;
 
     // Register program types
     m.add_class::<PyQasmProgram>()?;

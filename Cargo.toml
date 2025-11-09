@@ -85,6 +85,12 @@ tket = "0.16"
 tket-qsystem = { version = "0.22", default-features = false }
 ndarray = "0.16"
 anyhow = "1"
+
+# Numerical computing dependencies (for pecos-num)
+peroxide = "0.40"
+roots = "0.0.8"
+levenberg-marquardt = "0.15"
+nalgebra = "0.34"
 cxx = "1.0.187"
 cxx-build = "1.0.187"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
@@ -126,6 +132,7 @@ pecos-rslib = { version = "0.1.1", path = "python/pecos-rslib/rust" }
 pecos-wasm = { version = "0.1.1", path = "crates/pecos-wasm" }
 pecos-build-utils = { version = "0.1.1", path = "crates/pecos-build-utils" }
 pecos-llvm-utils = { version = "0.1.1", path = "crates/pecos-llvm-utils" }
+pecos-num = { version = "0.1.1", path = "crates/pecos-num" }
 
 # Decoder crates
 pecos-decoder-core = { version = "0.1.1", path = "crates/pecos-decoder-core" }

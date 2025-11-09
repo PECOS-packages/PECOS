@@ -17,6 +17,7 @@ components within the PECOS framework, enabling efficient quantum circuit simula
 
 import ctypes
 import logging
+import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, NoReturn
@@ -34,12 +35,16 @@ from pecos_rslib._pecos_rslib import (
     StateVecEngineRs,
     binding,  # llvmlite-compatible binding module for bitcode
     ir,  # llvmlite-compatible LLVM IR module
+    num,  # Numerical computing functions (scipy.optimize replacements)
 )
 from pecos_rslib.cppsparse_sim import CppSparseSimRs
 from pecos_rslib.rscoin_toss import CoinToss
 from pecos_rslib.rspauli_prop import PauliPropRs
 from pecos_rslib.rssparse_sim import SparseSimRs
 from pecos_rslib.rsstate_vec import StateVecRs
+
+# Register num module in sys.modules to enable "from pecos_rslib.num import ..." syntax
+sys.modules["pecos_rslib.num"] = num
 
 # HUGR compilation functions - explicit, no automatic fallback
 try:
@@ -438,6 +443,8 @@ __all__ = [
     # llvmlite-compatible modules
     "ir",
     "binding",
+    # Numerical computing (scipy.optimize replacements)
+    "num",
     # QuEST simulators
     "QuestStateVec",
     "QuestDensityMatrix",

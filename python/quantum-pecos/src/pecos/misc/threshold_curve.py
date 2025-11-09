@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from scipy.optimize import curve_fit
+from pecos_rslib.num import curve_fit
 
 if TYPE_CHECKING:
     from collections.abc import Callable

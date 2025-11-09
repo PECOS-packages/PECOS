@@ -31,7 +31,6 @@ dependencies = [
     "pecos-rslib==0.7.0.dev4",
     "phir>=0.3.3",
     "numpy>=1.15.0",
-    "scipy>=1.1.0",
     "networkx>=2.1.0",
 ]
 classifiers = [

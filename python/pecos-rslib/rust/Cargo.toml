@@ -25,10 +25,12 @@ wasm = ["pecos/wasm"]
 
 [dependencies]
 # Use the pecos metacrate which includes all simulators and runtimes by default
-# Enable llvm and wasm features explicitly for full Python functionality
+# Enable llvm and wasm features for full Python functionality
+# pecos-num is included by default in pecos
 pecos = { workspace = true, features = ["llvm", "wasm"] }
 
 pyo3 = { workspace=true, features = ["extension-module", "abi3-py310", "generate-import-lib"] }
+numpy = "0.27"
 parking_lot.workspace = true
 regex.workspace = true
 serde_json.workspace = true

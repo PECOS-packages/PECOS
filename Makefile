@@ -327,7 +327,7 @@ decoder-cache-clean: ## Clean decoder download cache
 .PHONY: pytest
 pytest:  ## Run tests on the Python package (not including optional dependencies). ASSUMES: previous build command
 	@$(ADD_LLVM_TO_PATH) uv run pytest ./python/quantum-pecos/tests/ --doctest-modules -m "not optional_dependency"
-	@$(ADD_LLVM_TO_PATH) uv run pytest ./python/pecos-rslib/tests/
+	@$(ADD_LLVM_TO_PATH) uv run --with scipy --with numpy pytest ./python/pecos-rslib/tests/
 	@$(ADD_LLVM_TO_PATH) uv run pytest ./python/slr-tests/ -m "not optional_dependency"
 
 .PHONY: pytest-dep
@@ -337,7 +337,7 @@ pytest-dep: ## Run tests on the Python package only for optional dependencies. A
 .PHONY: pytest-all
 pytest-all: ## Run all tests on the Python package ASSUMES: previous build command
 	@$(ADD_LLVM_TO_PATH) uv run pytest ./python/quantum-pecos/tests/ -m ""
-	@$(ADD_LLVM_TO_PATH) uv run pytest ./python/pecos-rslib/tests/
+	@$(ADD_LLVM_TO_PATH) uv run --with scipy --with numpy pytest ./python/pecos-rslib/tests/
 
 # .PHONY: pytest-doc
 # pydoctest:  ## Run doctests with pytest. ASSUMES: A build command was ran previously. ASSUMES: previous build command

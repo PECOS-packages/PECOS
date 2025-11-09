@@ -1,0 +1,32 @@
+[package]
+name = "pecos-num"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme.workspace = true
+description = "Numerical computing support for PECOS quantum error correction simulations"
+
+[dependencies]
+# Comprehensive numerical computing library (for Newton, polynomial fitting)
+peroxide.workspace = true
+
+# Root finding (for Brent's method only - Peroxide doesn't have it)
+roots.workspace = true
+
+# Curve fitting (scipy-compatible API, better match than Peroxide's AD-based optimizer)
+levenberg-marquardt.workspace = true
+nalgebra.workspace = true  # Required by levenberg-marquardt
+
+# Array interface (for API compatibility and return types)
+ndarray.workspace = true
+
+# Logging
+log.workspace = true
+
+[lints]
+workspace = true

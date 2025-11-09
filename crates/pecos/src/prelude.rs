@@ -48,6 +48,7 @@
 //! - `pecos_qis_selene::prelude` - Selene-based QIS interface (when `selene` feature enabled)
 //! - `pecos_programs::prelude` - Program type definitions
 //! - `pecos_rng::prelude` - Random number generation
+//! - `pecos_num::prelude` - Numerical computing (scipy.optimize replacement)
 //! - `pecos_hugr_qis::prelude` - HUGR to QIS compilation
 //! - `pecos_phir_json::prelude` - PHIR-JSON format support
 //!
@@ -87,6 +88,9 @@ pub use pecos_programs::prelude::*;
 
 // Re-export RNG prelude
 pub use pecos_rng::prelude::*;
+
+// Re-export numerical computing prelude
+pub use pecos_num::prelude::*;
 
 // Re-export HUGR compiler prelude
 #[cfg(feature = "llvm")]

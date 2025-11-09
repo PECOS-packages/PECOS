@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from scipy.optimize import brentq, curve_fit, newton
+from pecos_rslib.num import brentq, curve_fit, newton
 
 from pecos.decoders import MWPM2D
 from pecos.engines import circuit_runners

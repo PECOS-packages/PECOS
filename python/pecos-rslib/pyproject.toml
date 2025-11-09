@@ -43,6 +43,11 @@ manifest-path = "rust/Cargo.toml"
 dev = [
     "patchelf; platform_system != 'Windows'",  # For setting rpath in shared libraries during development (Linux/macOS only)
 ]
+test = [
+    "pytest>=7.0",
+    "numpy>=1.20",
+    "scipy>=1.7",  # For comparison tests only
+]
 
 [tool.uv.sources]
 pecos-rslib = { workspace = true }

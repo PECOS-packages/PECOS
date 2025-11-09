@@ -29,6 +29,7 @@ pecos-llvm = { workspace = true, optional = true }
 pecos-hugr-qis = { workspace = true, optional = true }
 pecos-phir = { workspace = true, features = ["hugr"] }
 pecos-rng.workspace = true
+pecos-num.workspace = true
 log.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true

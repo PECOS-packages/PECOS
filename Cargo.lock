@@ -2630,7 +2630,6 @@ dependencies = [
  "pecos-engines",
  "pecos-hugr-qis",
  "pecos-llvm",
- "pecos-num",
  "pecos-phir",
  "pecos-phir-json",
  "pecos-programs",

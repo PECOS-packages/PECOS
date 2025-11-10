@@ -299,8 +299,6 @@ impl Gate {
     ///
     /// # Arguments
     ///
-    /// * `strength_factor` - Runtime-informed crosstalk strength. For instance, it may
-    /// reflect the length of time the crosstalk source was active for.
     /// * `qubits` - The qubits that are guaranteed *not* to be affected by the
     /// global crosstalk event.
     ///
@@ -312,10 +310,10 @@ impl Gate {
     ///
     /// A new MeasCrosstalkGlobalPayload gate with the specified parameters
     #[must_use]
-    pub fn meas_crosstalk_global_payload(strength_factor: f64, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+    pub fn meas_crosstalk_global_payload(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::new(
             GateType::MeasCrosstalkGlobalPayload,
-            vec![strength_factor],
+            vec![],
             qubits.iter().map(|&q| q.into()).collect(),
         )
     }
@@ -324,18 +322,16 @@ impl Gate {
     ///
     /// # Arguments
     ///
-    /// * `strength_factor` - Runtime-informed crosstalk strength. For instance, it may
-    /// reflect the length of time the crosstalk source was active for.
     /// * `qubits` - The qubits that are potential victims of the local crosstalk event.
     ///
     /// # Returns
     ///
     /// A new MeasCrosstalkLocalPayload gate with the specified parameters
     #[must_use]
-    pub fn meas_crosstalk_local_payload(strength_factor: f64, qubits: &[impl Into<QubitId> + Copy]) -> Self {
+    pub fn meas_crosstalk_local_payload(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::new(
             GateType::MeasCrosstalkLocalPayload,
-            vec![strength_factor],
+            vec![],
             qubits.iter().map(|&q| q.into()).collect(),
         )
     }

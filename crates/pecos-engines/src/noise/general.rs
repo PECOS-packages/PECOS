@@ -555,7 +555,7 @@ impl GeneralNoiseModel {
                     //    self.apply_simple_crosstalk_faults(&gate, self.p_meas_crosstalk, &mut builder);
                 }
                 GateType::MeasCrosstalkGlobalPayload => {
-                    let probability = self.p_meas_crosstalk_global * gate.params[0];
+                    let probability = self.p_meas_crosstalk_global;
 
                     // Global crosstalk applies to all qubits that are *not* in the payload
                     let gate_qubits: Vec<usize> = gate.qubits.iter().map(|q| usize::from(*q)).collect();
@@ -570,7 +570,7 @@ impl GeneralNoiseModel {
                     self.apply_crosstalk_faults_from_payload(probability, potential_victims, &mut builder);
                 }
                 GateType::MeasCrosstalkLocalPayload => {
-                    let probability = self.p_meas_crosstalk_local * gate.params[0];
+                    let probability = self.p_meas_crosstalk_local;
                     let potential_victims = gate.qubits.iter().map(|q| usize::from(*q)).collect();
 
                     trace!("Applying local crosstalk...");

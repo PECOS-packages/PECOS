@@ -142,6 +142,8 @@ impl GateType {
             | GateType::SZZdg
             | GateType::Measure
             | GateType::MeasureLeaked
+            | GateType::MeasCrosstalkGlobalPayload
+            | GateType::MeasCrosstalkLocalPayload
             | GateType::Prep => 0,
 
             // Gates with one parameter
@@ -149,9 +151,7 @@ impl GateType {
             | GateType::RY
             | GateType::RZ
             | GateType::RZZ
-            | GateType::Idle
-            | GateType::MeasCrosstalkGlobalPayload
-            | GateType::MeasCrosstalkLocalPayload => 1,
+            | GateType::Idle => 1,
 
             // Gates with two parameters
             GateType::R1XY => 2,
@@ -297,14 +297,14 @@ mod tests {
         assert_eq!(GateType::SZZdg.classical_arity(), 0);
         assert_eq!(GateType::Measure.classical_arity(), 0);
         assert_eq!(GateType::MeasureLeaked.classical_arity(), 0);
+        assert_eq!(GateType::MeasCrosstalkGlobalPayload.classical_arity(), 0);
+        assert_eq!(GateType::MeasCrosstalkLocalPayload.classical_arity(), 0);
         assert_eq!(GateType::Prep.classical_arity(), 0);
 
         // Gates with one parameter
         assert_eq!(GateType::RZ.classical_arity(), 1);
         assert_eq!(GateType::RZZ.classical_arity(), 1);
         assert_eq!(GateType::Idle.classical_arity(), 1);
-        assert_eq!(GateType::MeasCrosstalkGlobalPayload.classical_arity(), 1);
-        assert_eq!(GateType::MeasCrosstalkLocalPayload.classical_arity(), 1);
 
         // Gates with two parameters
         assert_eq!(GateType::R1XY.classical_arity(), 2);
@@ -328,8 +328,8 @@ mod tests {
         assert_eq!(GateType::MeasureLeaked.quantum_arity(), 1);
         assert_eq!(GateType::Prep.quantum_arity(), 1);
         assert_eq!(GateType::Idle.quantum_arity(), 1);
-        assert_eq!(GateType::MeasCrosstalkGlobalPayload.classical_arity(), 1);
-        assert_eq!(GateType::MeasCrosstalkLocalPayload.classical_arity(), 1);
+        assert_eq!(GateType::MeasCrosstalkGlobalPayload.quantum_arity(), 1);
+        assert_eq!(GateType::MeasCrosstalkLocalPayload.quantum_arity(), 1);
 
         // Two-qubit gates
         assert_eq!(GateType::CX.quantum_arity(), 2);
@@ -351,6 +351,8 @@ mod tests {
         assert!(!GateType::SZZdg.is_parameterized());
         assert!(!GateType::Measure.is_parameterized());
         assert!(!GateType::MeasureLeaked.is_parameterized());
+        assert!(!GateType::MeasCrosstalkGlobalPayload.is_parameterized());
+        assert!(!GateType::MeasCrosstalkLocalPayload.is_parameterized());
         assert!(!GateType::Prep.is_parameterized());
 
         // Parameterized gates
@@ -359,8 +361,6 @@ mod tests {
         assert!(GateType::R1XY.is_parameterized());
         assert!(GateType::U.is_parameterized());
         assert!(GateType::Idle.is_parameterized());
-        assert!(GateType::MeasCrosstalkGlobalPayload.is_parameterized());
-        assert!(GateType::MeasCrosstalkLocalPayload.is_parameterized());
     }
 
     #[test]

@@ -40,6 +40,7 @@ from pecos_rslib.cppsparse_sim import CppSparseSimRs
 from pecos_rslib.num_wrapper import (  # Enhanced num module with axis support
     mean,
     power,
+    sqrt,
     std,
     brentq,
     newton,
@@ -59,6 +60,7 @@ import types
 num = types.ModuleType("num")
 num.mean = mean
 num.power = power
+num.sqrt = sqrt
 num.std = std
 num.brentq = brentq
 num.newton = newton

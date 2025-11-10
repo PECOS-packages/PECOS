@@ -974,6 +974,31 @@ fn power(base: f64, exponent: f64) -> f64 {
     pecos::prelude::power(base, exponent)
 }
 
+/// Calculate the square root of a value.
+///
+/// Drop-in replacement for `numpy.sqrt()` for scalar values.
+///
+/// Args:
+///     x (float): Input value
+///
+/// Returns:
+///     float: The square root of x
+///
+/// Examples:
+///     >>> from `pecos_rslib`._`pecos_rslib` import num
+///     >>> num.sqrt(4.0)
+///     2.0
+///     >>> num.sqrt(9.0)
+///     3.0
+///
+///     Variance to standard deviation:
+///     >>> variance = 2.0
+///     >>> std_dev = num.sqrt(variance)
+#[pyfunction]
+fn sqrt(x: f64) -> f64 {
+    pecos::prelude::sqrt(x)
+}
+
 /// Calculate the standard deviation of values.
 ///
 /// Drop-in replacement for `numpy.std()` for 1D arrays without axis parameter.
@@ -1025,6 +1050,7 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Add statistical functions
     num_module.add_function(wrap_pyfunction!(mean, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(power, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(sqrt, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(self::std, &num_module)?)?;
 
     // Create random submodule

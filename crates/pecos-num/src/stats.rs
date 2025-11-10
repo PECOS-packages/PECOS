@@ -87,6 +87,37 @@ pub fn power(base: f64, exponent: f64) -> f64 {
     base.powf(exponent)
 }
 
+/// Calculate the square root of a value.
+///
+/// Drop-in replacement for `numpy.sqrt()` for scalar values.
+///
+/// # Arguments
+///
+/// * `x` - Input value
+///
+/// # Returns
+///
+/// The square root of x. Returns NaN for negative inputs.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::stats::sqrt;
+///
+/// assert_eq!(sqrt(4.0), 2.0);
+/// assert_eq!(sqrt(9.0), 3.0);
+/// assert!((sqrt(2.0) - 1.414_213_562_373_095).abs() < 1e-10);
+///
+/// // Variance to standard deviation use case
+/// let variance = 2.0;
+/// let std_dev = sqrt(variance);
+/// assert!((std_dev - 1.414_213_562_373_095).abs() < 1e-10);
+/// ```
+#[must_use]
+pub fn sqrt(x: f64) -> f64 {
+    x.sqrt()
+}
+
 /// Calculate the standard deviation of values along an axis.
 ///
 /// Drop-in replacement for `numpy.std()` with ddof (delta degrees of freedom) parameter.
@@ -326,5 +357,60 @@ mod tests {
         // Test with larger exponents
         assert!((power(2.0, 10.0) - 1024.0).abs() < 1e-10);
         assert!((power(1.5, 5.0) - 7.59375).abs() < 1e-10);
+    }
+
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn test_sqrt_perfect_squares() {
+        assert_eq!(sqrt(4.0), 2.0);
+        assert_eq!(sqrt(9.0), 3.0);
+        assert_eq!(sqrt(16.0), 4.0);
+        assert_eq!(sqrt(25.0), 5.0);
+        assert_eq!(sqrt(100.0), 10.0);
+    }
+
+    #[test]
+    fn test_sqrt_irrational() {
+        // Test irrational square roots
+        assert!((sqrt(2.0) - std::f64::consts::SQRT_2).abs() < 1e-10);
+        assert!((sqrt(3.0) - 1.732_050_807_568_877).abs() < 1e-10);
+        assert!((sqrt(5.0) - 2.236_067_977_499_79).abs() < 1e-10);
+    }
+
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn test_sqrt_special_cases() {
+        assert_eq!(sqrt(0.0), 0.0);
+        assert_eq!(sqrt(1.0), 1.0);
+        assert!(sqrt(-1.0).is_nan());
+        assert!(sqrt(f64::NEG_INFINITY).is_nan());
+        assert_eq!(sqrt(f64::INFINITY), f64::INFINITY);
+    }
+
+    #[test]
+    fn test_sqrt_variance_to_std() {
+        // Test the variance-to-standard-deviation use case
+        let variance = 2.0;
+        let std_dev = sqrt(variance);
+        assert!((std_dev - std::f64::consts::SQRT_2).abs() < 1e-10);
+
+        let variance = 4.0;
+        let std_dev = sqrt(variance);
+        assert!((std_dev - 2.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_sqrt_small_values() {
+        // Test with small fractional values
+        assert!((sqrt(0.25) - 0.5).abs() < 1e-10);
+        assert!((sqrt(0.01) - 0.1).abs() < 1e-10);
+        assert!((sqrt(0.0001) - 0.01).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_sqrt_large_values() {
+        // Test with larger values
+        assert!((sqrt(10_000.0) - 100.0).abs() < 1e-10);
+        assert!((sqrt(1_000_000.0) - 1000.0).abs() < 1e-10);
     }
 }

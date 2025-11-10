@@ -5,6 +5,7 @@ import pytest
 
 from pecos_rslib.num import mean as pecos_mean
 from pecos_rslib.num import power as pecos_power
+from pecos_rslib.num import sqrt as pecos_sqrt
 from pecos_rslib.num import std as pecos_std
 
 
@@ -495,6 +496,83 @@ class TestPowerThresholdUseCases:
         numpy_result = np.power(distances, 1.0 / v0)
 
         assert np.allclose(pecos_result, numpy_result)
+
+
+class TestSqrtCorrectness:
+    """Test sqrt() correctness against numpy."""
+
+    def test_sqrt_perfect_squares(self):
+        """Test perfect square roots."""
+        assert pecos_sqrt(4.0) == 2.0
+        assert pecos_sqrt(9.0) == 3.0
+        assert pecos_sqrt(16.0) == 4.0
+        assert pecos_sqrt(25.0) == 5.0
+        assert pecos_sqrt(100.0) == 10.0
+
+    def test_sqrt_irrational(self):
+        """Test irrational square roots."""
+        pecos_result = pecos_sqrt(2.0)
+        numpy_result = np.sqrt(2.0)
+        assert abs(pecos_result - numpy_result) < 1e-10
+        assert abs(pecos_result - np.sqrt(2.0)) < 1e-10
+
+    def test_sqrt_special_cases(self):
+        """Test special cases."""
+        assert pecos_sqrt(0.0) == 0.0
+        assert pecos_sqrt(1.0) == 1.0
+        assert np.isnan(pecos_sqrt(-1.0))
+
+    def test_sqrt_array(self):
+        """Test array input."""
+        values = [4.0, 9.0, 16.0, 25.0]
+        pecos_result = pecos_sqrt(values)
+        numpy_result = np.sqrt(values)
+        assert np.allclose(pecos_result, numpy_result)
+        assert np.allclose(pecos_result, [2.0, 3.0, 4.0, 5.0])
+
+    def test_sqrt_2d_array(self):
+        """Test 2D array input."""
+        values = [[4.0, 9.0], [16.0, 25.0]]
+        pecos_result = pecos_sqrt(values)
+        numpy_result = np.sqrt(values)
+        assert np.allclose(pecos_result, numpy_result)
+
+
+class TestSqrtVarianceUseCases:
+    """Test sqrt() with variance-to-std-deviation patterns."""
+
+    def test_sqrt_variance_to_std(self):
+        """Test the pattern: np.sqrt(variance)."""
+        variance = 4.0
+        pecos_result = pecos_sqrt(variance)
+        numpy_result = np.sqrt(variance)
+        assert abs(pecos_result - numpy_result) < 1e-10
+        assert abs(pecos_result - 2.0) < 1e-10
+
+    def test_sqrt_variance_array(self):
+        """Test variance to std deviation with arrays."""
+        variances = np.array([1.0, 4.0, 9.0, 16.0])
+        pecos_result = pecos_sqrt(variances)
+        numpy_result = np.sqrt(variances)
+        assert np.allclose(pecos_result, numpy_result)
+        assert np.allclose(pecos_result, [1.0, 2.0, 3.0, 4.0])
+
+    def test_sqrt_diag_covariance(self):
+        """Test extracting std from covariance matrix diagonal."""
+        # Simulate covariance matrix diagonal (variances)
+        covariance_diag = np.array([0.25, 1.0, 2.25, 4.0])
+        pecos_result = pecos_sqrt(covariance_diag)
+        numpy_result = np.sqrt(covariance_diag)
+        assert np.allclose(pecos_result, numpy_result)
+        assert np.allclose(pecos_result, [0.5, 1.0, 1.5, 2.0])
+
+    def test_sqrt_small_variances(self):
+        """Test with small variance values."""
+        variances = [0.01, 0.04, 0.0001]
+        pecos_result = pecos_sqrt(variances)
+        numpy_result = np.sqrt(variances)
+        assert np.allclose(pecos_result, numpy_result)
+        assert np.allclose(pecos_result, [0.1, 0.2, 0.01])
 
 
 if __name__ == "__main__":

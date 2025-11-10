@@ -227,6 +227,51 @@ def power(x1: ArrayLike, x2: ArrayLike) -> float | np.ndarray:
     return result.reshape(result_shape) if result_shape else float(result)
 
 
+def sqrt(x: ArrayLike) -> float | np.ndarray:
+    """Calculate the square root of x, element-wise.
+
+    Drop-in replacement for `numpy.sqrt()` supporting broadcasting.
+
+    Args:
+        x: Input value(s) (array-like)
+
+    Returns:
+        Element-wise square root of x. If input is a scalar, returns a scalar.
+        Otherwise returns an array.
+
+    Examples:
+        >>> from pecos_rslib.num import sqrt
+        >>>
+        >>> # Scalar input
+        >>> sqrt(4.0)
+        2.0
+        >>>
+        >>> # Array input
+        >>> sqrt([4.0, 9.0, 16.0])
+        array([2., 3., 4.])
+        >>>
+        >>> # Variance to std deviation use case
+        >>> variance = np.array([1.0, 4.0, 9.0])
+        >>> std_dev = sqrt(variance)
+        >>> # Returns array([1., 2., 3.])
+    """
+    # Convert to numpy array
+    arr = np.asarray(x, dtype=np.float64)
+
+    # Check if scalar
+    if arr.ndim == 0:
+        return _num_core.sqrt(float(arr))
+
+    # For arrays, use our Rust implementation element-wise
+    flat = arr.ravel()
+
+    # Compute using Rust implementation
+    result = np.array([_num_core.sqrt(float(val)) for val in flat])
+
+    # Reshape to original shape
+    return result.reshape(arr.shape) if arr.shape else float(result)
+
+
 # Expose all other num functions directly
 brentq = _num_core.brentq
 newton = _num_core.newton
@@ -241,6 +286,7 @@ random = _num_core.random
 __all__ = [
     "mean",
     "power",
+    "sqrt",
     "std",
     "brentq",
     "newton",

@@ -399,6 +399,12 @@ impl ControlEngine for GeneralNoiseModel {
         // Clear the measured qubits for the next batch
         self.measured_qubits.clear();
 
+        // TODO: There may be some measurements on this batch that come from crosstalk
+        // and others that come from actual measurement operations.
+        // In the case of `has_crosstalk` we need to return a `NeedsProcessing` but
+        // we also want to save the result_outcome from the previous actual measurements
+        // so that we can return it when we issue the `Complete` stage.
+
         // If there were crosstalk measurements, we must continue processing so that
         // the engine applies the transitions after crosstalk
         match has_crosstalk {
@@ -656,6 +662,8 @@ impl GeneralNoiseModel {
                 let (qubit, gate_type) = self.measured_qubits[idx];
 
                 // Sanity check: ALL measurement outcomes of this batch come from crosstalk
+                // TODO: This is assumption is wrong! See TODO in `continue_processing`.
+                //      once that TODO is done, remove this (in)sanity check.
                 if !gate_type.is_crosstalk_payload() {
                     return Err(PecosError::Processing(format!(
                         "A batch of crosstalk-induced measurements contains and actual measurement on qubit {qubit}"

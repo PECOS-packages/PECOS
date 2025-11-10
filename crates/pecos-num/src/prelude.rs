@@ -21,7 +21,7 @@ pub use crate::curve_fit::{CurveFitError, CurveFitOptions, CurveFitResult, curve
 pub use crate::optimize::{BrentqOptions, NewtonOptions, OptimizeError, brentq, newton};
 
 // Re-export polynomial fitting
-pub use crate::polynomial::{Poly1d, PolynomialError, polyfit};
+pub use crate::polynomial::{Poly1d, PolynomialError, polyfit, polyfit_with_cov};
 
 // Re-export random number generation
 pub use crate::random;

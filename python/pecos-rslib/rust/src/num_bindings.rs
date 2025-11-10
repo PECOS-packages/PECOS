@@ -204,21 +204,40 @@ fn newton(
 ///     >>> coeffs = polyfit(x, y, 1)
 ///     >>> # coeffs ≈ [2.0, 1.0] (slope, intercept)
 #[pyfunction]
+#[pyo3(signature = (x, y, deg, cov=None))]
 #[allow(clippy::needless_pass_by_value)] // PyReadonlyArray1 is a lightweight wrapper
 fn polyfit(
     py: Python<'_>,
     x: PyReadonlyArray1<f64>,
     y: PyReadonlyArray1<f64>,
     deg: usize,
-) -> PyResult<Py<PyArray1<f64>>> {
+    cov: Option<bool>,
+) -> PyResult<Py<PyAny>> {
     let x_view = x.as_array();
     let y_view = y.as_array();
 
-    let coeffs = pecos::prelude::polyfit(x_view, y_view, deg).map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("polyfit failed: {e}"))
-    })?;
+    let return_cov = cov.unwrap_or(false);
 
-    Ok(PyArray1::from_array(py, &coeffs).unbind())
+    if return_cov {
+        // Call polyfit_with_cov and return tuple (coeffs, cov_matrix)
+        let (coeffs, cov_matrix) =
+            pecos::prelude::polyfit_with_cov(x_view, y_view, deg).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("polyfit failed: {e}"))
+            })?;
+
+        let coeffs_py = PyArray1::from_array(py, &coeffs).unbind();
+        let cov_py = PyArray2::from_array(py, &cov_matrix).unbind();
+
+        let tuple_items: Vec<Py<PyAny>> = vec![coeffs_py.into(), cov_py.into()];
+        Ok(PyTuple::new(py, &tuple_items)?.into())
+    } else {
+        // Call regular polyfit and return just coefficients
+        let coeffs = pecos::prelude::polyfit(x_view, y_view, deg).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("polyfit failed: {e}"))
+        })?;
+
+        Ok(PyArray1::from_array(py, &coeffs).unbind().into())
+    }
 }
 
 /// Polynomial class for evaluation.

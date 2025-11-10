@@ -478,6 +478,7 @@ mod tests {
     #[test]
     fn test_random_statistical_properties() {
         // Test that mean is approximately 0.5 for uniform [0, 1)
+        seed(12345);
         let n = 10000;
         let values = random(n);
 
@@ -525,6 +526,7 @@ mod tests {
     fn test_random_distribution_uniformity() {
         // Chi-square test for uniformity
         // Divide [0, 1) into 10 bins and check counts
+        seed(54321);
         let n = 10000;
         let values = random(n);
         let num_bins = 10;
@@ -609,6 +611,7 @@ mod tests {
     fn test_randint_statistical_uniformity() {
         // Chi-square test for uniformity of randint
         // Use unsigned types since we're dealing with array sizes/indices
+        seed(11111);
         let n = 10000;
         let range_size: u32 = 10;
         let values = randint(range_size, None, n);
@@ -696,6 +699,7 @@ mod tests {
     #[test]
     fn test_choice_uniformity() {
         // Test that choice samples uniformly
+        seed(22222);
         let items = vec![0, 1, 2, 3, 4];
         let n = 10000;
         let samples = choice(&items, n, true);

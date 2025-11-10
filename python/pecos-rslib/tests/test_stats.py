@@ -4,6 +4,8 @@ import numpy as np
 import pytest
 
 from pecos_rslib.num import mean as pecos_mean
+from pecos_rslib.num import Poly1d as pecos_Poly1d
+from pecos_rslib.num import polyfit as pecos_polyfit
 from pecos_rslib.num import power as pecos_power
 from pecos_rslib.num import sqrt as pecos_sqrt
 from pecos_rslib.num import std as pecos_std
@@ -573,6 +575,177 @@ class TestSqrtVarianceUseCases:
         numpy_result = np.sqrt(variances)
         assert np.allclose(pecos_result, numpy_result)
         assert np.allclose(pecos_result, [0.1, 0.2, 0.01])
+
+
+class TestPolyfitCorrectness:
+    """Test polyfit() correctness against numpy (without covariance)."""
+
+    def test_polyfit_linear(self):
+        """Test linear fit (degree 1)."""
+        x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+        y = np.array([1.0, 3.0, 5.0, 7.0, 9.0])  # y = 2x + 1
+
+        pecos_result = pecos_polyfit(x, y, 1)
+        numpy_result = np.polyfit(x, y, 1)
+
+        assert np.allclose(pecos_result, numpy_result)
+        assert np.allclose(pecos_result, [2.0, 1.0])
+
+    def test_polyfit_quadratic(self):
+        """Test quadratic fit (degree 2)."""
+        x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+        y = np.array([1.0, 2.0, 5.0, 10.0, 17.0])  # y = x^2 + 1
+
+        pecos_result = pecos_polyfit(x, y, 2)
+        numpy_result = np.polyfit(x, y, 2)
+
+        assert np.allclose(pecos_result, numpy_result)
+        assert np.allclose(pecos_result, [1.0, 0.0, 1.0])
+
+    def test_polyfit_noisy_data(self):
+        """Test fit with noisy data."""
+        x = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        y = np.array([2.1, 4.9, 9.2, 15.8, 24.1, 35.9])
+
+        pecos_result = pecos_polyfit(x, y, 2)
+        numpy_result = np.polyfit(x, y, 2)
+
+        assert np.allclose(pecos_result, numpy_result)
+
+    def test_polyfit_constant(self):
+        """Test constant fit (degree 0)."""
+        x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        y = np.array([3.1, 2.9, 3.0, 3.2, 2.8])
+
+        pecos_result = pecos_polyfit(x, y, 0)
+        numpy_result = np.polyfit(x, y, 0)
+
+        assert np.allclose(pecos_result, numpy_result)
+
+
+class TestPolyfitCovariance:
+    """Test polyfit() with covariance matrix (cov=True)."""
+
+    def test_polyfit_cov_linear(self):
+        """Test linear fit with covariance matrix."""
+        x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+        y = np.array([1.0, 3.0, 5.0, 7.0, 9.0])
+
+        pecos_coeffs, pecos_cov = pecos_polyfit(x, y, 1, cov=True)
+        numpy_coeffs, numpy_cov = np.polyfit(x, y, 1, cov=True)
+
+        # Check coefficients match
+        assert np.allclose(pecos_coeffs, numpy_coeffs)
+        assert np.allclose(pecos_coeffs, [2.0, 1.0])
+
+        # Check covariance matrices match
+        assert pecos_cov.shape == (2, 2)
+        assert np.allclose(pecos_cov, numpy_cov)
+
+    def test_polyfit_cov_quadratic(self):
+        """Test quadratic fit with covariance matrix."""
+        x = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        y = np.array([2.1, 4.9, 9.2, 15.8, 24.1, 35.9])
+
+        pecos_coeffs, pecos_cov = pecos_polyfit(x, y, 2, cov=True)
+        numpy_coeffs, numpy_cov = np.polyfit(x, y, 2, cov=True)
+
+        # Check coefficients match
+        assert np.allclose(pecos_coeffs, numpy_coeffs)
+
+        # Check covariance matrices match
+        assert pecos_cov.shape == (3, 3)
+        assert np.allclose(pecos_cov, numpy_cov)
+
+    def test_polyfit_cov_variances(self):
+        """Test variance extraction from covariance matrix diagonal."""
+        x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        y = np.array([2.1, 3.9, 6.2, 7.9, 10.1])
+
+        pecos_coeffs, pecos_cov = pecos_polyfit(x, y, 1, cov=True)
+        numpy_coeffs, numpy_cov = np.polyfit(x, y, 1, cov=True)
+
+        # Extract variances (diagonal elements)
+        pecos_var = np.diag(pecos_cov)
+        numpy_var = np.diag(numpy_cov)
+
+        assert np.allclose(pecos_var, numpy_var)
+
+        # Check standard errors
+        pecos_stderr = np.sqrt(pecos_var)
+        numpy_stderr = np.sqrt(numpy_var)
+
+        assert np.allclose(pecos_stderr, numpy_stderr)
+
+    def test_polyfit_cov_symmetric(self):
+        """Test that covariance matrix is symmetric."""
+        x = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+        y = np.array([1.0, 2.5, 3.8, 5.2, 6.9, 8.1])
+
+        _, pecos_cov = pecos_polyfit(x, y, 2, cov=True)
+
+        # Covariance matrix should be symmetric
+        assert np.allclose(pecos_cov, pecos_cov.T)
+
+    def test_polyfit_cov_false_explicit(self):
+        """Test polyfit with cov=False returns only coefficients."""
+        x = np.array([0.0, 1.0, 2.0, 3.0])
+        y = np.array([1.0, 3.0, 5.0, 7.0])
+
+        result = pecos_polyfit(x, y, 1, cov=False)
+
+        # Should return only coefficients, not a tuple
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (2,)
+        assert np.allclose(result, [2.0, 1.0])
+
+    def test_polyfit_backward_compatibility(self):
+        """Test that omitting cov parameter maintains backward compatibility."""
+        x = np.array([0.0, 1.0, 2.0, 3.0])
+        y = np.array([1.0, 3.0, 5.0, 7.0])
+
+        # Without cov parameter (default behavior)
+        result_default = pecos_polyfit(x, y, 1)
+        # With cov=False (explicit)
+        result_false = pecos_polyfit(x, y, 1, cov=False)
+
+        # Both should return just coefficients
+        assert isinstance(result_default, np.ndarray)
+        assert isinstance(result_false, np.ndarray)
+        assert np.allclose(result_default, result_false)
+        assert np.allclose(result_default, [2.0, 1.0])
+
+
+class TestPolyfitWithPoly1d:
+    """Test polyfit() used with Poly1d for evaluation."""
+
+    def test_polyfit_poly1d_linear(self):
+        """Test using polyfit coefficients with Poly1d."""
+        x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+        y = np.array([1.0, 3.0, 5.0, 7.0, 9.0])  # y = 2x + 1
+
+        coeffs = pecos_polyfit(x, y, 1)
+        poly = pecos_Poly1d(coeffs)
+
+        # Evaluate at test points
+        assert abs(poly.eval(0.0) - 1.0) < 1e-10
+        assert abs(poly.eval(1.0) - 3.0) < 1e-10
+        assert abs(poly.eval(2.0) - 5.0) < 1e-10
+        assert abs(poly.eval(5.0) - 11.0) < 1e-10
+
+    def test_polyfit_poly1d_quadratic(self):
+        """Test using quadratic polyfit coefficients with Poly1d."""
+        x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+        y = np.array([1.0, 2.0, 5.0, 10.0, 17.0])  # y = x^2 + 1
+
+        coeffs = pecos_polyfit(x, y, 2)
+        poly = pecos_Poly1d(coeffs)
+
+        # Evaluate at test points
+        assert abs(poly.eval(0.0) - 1.0) < 1e-10
+        assert abs(poly.eval(1.0) - 2.0) < 1e-10
+        assert abs(poly.eval(2.0) - 5.0) < 1e-10
+        assert abs(poly.eval(5.0) - 26.0) < 1e-10
 
 
 if __name__ == "__main__":

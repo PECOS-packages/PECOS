@@ -19,7 +19,7 @@
 //!
 //! Uses Peroxide for linear algebra (SVD solving).
 
-use ndarray::{Array1, ArrayView1};
+use ndarray::{Array1, Array2, ArrayView1};
 use peroxide::fuga::{Col, LU, LinearAlgebra, MatrixTrait, Row, matrix};
 
 /// Error type for polynomial operations.
@@ -141,6 +141,129 @@ pub fn polyfit(
     log::debug!("polyfit: fitted polynomial of degree {deg} with coeffs: {coeffs:?}");
 
     Ok(coeffs)
+}
+
+/// Fit a polynomial to data and compute the covariance matrix of the coefficients.
+///
+/// This is equivalent to `numpy.polyfit(x, y, deg, cov=True)`.
+///
+/// # Arguments
+///
+/// * `x` - x-coordinates of data points
+/// * `y` - y-coordinates of data points
+/// * `deg` - Degree of the polynomial fit
+///
+/// # Returns
+///
+/// A tuple of (coefficients, `covariance_matrix`) where:
+/// - coefficients: Array of polynomial coefficients in decreasing order of degree
+/// - `covariance_matrix`: (deg+1) x (deg+1) covariance matrix of the coefficient estimates
+///
+/// # Errors
+///
+/// Returns `PolynomialError::InsufficientData` if there are fewer data points than deg+1.
+/// Returns `PolynomialError::NumericalIssue` if the fit fails.
+///
+/// # Examples
+///
+/// ```
+/// use ndarray::array;
+/// use pecos_num::polynomial::polyfit_with_cov;
+/// let x = array![0.0, 1.0, 2.0, 3.0];
+/// let y = array![1.0, 3.0, 5.0, 7.0];
+/// let (coeffs, cov) = polyfit_with_cov(x.view(), y.view(), 1).unwrap();
+/// assert!((coeffs[0] - 2.0).abs() < 1e-10);  // slope
+/// assert!((coeffs[1] - 1.0).abs() < 1e-10);  // intercept
+/// assert_eq!(cov.shape(), &[2, 2]);
+/// ```
+pub fn polyfit_with_cov(
+    x: ArrayView1<f64>,
+    y: ArrayView1<f64>,
+    deg: usize,
+) -> Result<(Array1<f64>, Array2<f64>), PolynomialError> {
+    let n = x.len();
+
+    if n != y.len() {
+        return Err(PolynomialError::NumericalIssue {
+            message: format!("x and y must have same length: x={n}, y={}", y.len()),
+        });
+    }
+
+    if n < deg + 1 {
+        return Err(PolynomialError::InsufficientData {
+            num_points: n,
+            degree: deg,
+        });
+    }
+
+    // Build Vandermonde matrix using Peroxide
+    // For degree 2: [[x0^2, x0, 1], [x1^2, x1, 1], ...]
+    let mut vandermonde_data = Vec::with_capacity(n * (deg + 1));
+    for &xi in x {
+        for j in 0..=deg {
+            #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+            let power = (deg - j) as i32;
+            vandermonde_data.push(xi.powi(power));
+        }
+    }
+    let vandermonde = matrix(vandermonde_data, n, deg + 1, Row);
+
+    // Convert y to vector and then to column matrix
+    let y_vec: Vec<f64> = y.iter().copied().collect();
+    let y_mat = matrix(y_vec.clone(), n, 1, Col);
+
+    // Solve least squares: coeffs = (A^T A)^{-1} A^T y
+    let at = vandermonde.t(); // A^T
+    let gram_matrix = &at * &vandermonde; // A^T A (Gram matrix)
+    let at_y = &at * &y_mat; // A^T y
+
+    // Solve the normal equations
+    let at_y_vec: Vec<f64> = at_y.data.clone();
+    let coeffs_vec = gram_matrix.solve(&at_y_vec, LU);
+
+    // Convert coefficients to ndarray
+    let coeffs = Array1::from_vec(coeffs_vec.clone());
+
+    // Compute residuals: residuals = y - A * coeffs
+    let coeffs_mat = matrix(coeffs_vec, deg + 1, 1, Col);
+    let y_pred = &vandermonde * &coeffs_mat;
+    let residuals = &y_mat - &y_pred;
+
+    // Compute residual sum of squares
+    let rss: f64 = residuals.data.iter().map(|r| r * r).sum();
+
+    // Degrees of freedom
+    let dof = n.saturating_sub(deg + 1);
+    let scale_factor = if dof > 0 {
+        // Cast is safe: degrees of freedom for polynomial fitting are always reasonable
+        // (< 2^53), so no precision loss occurs when converting to f64
+        #[allow(clippy::cast_precision_loss)]
+        let dof_f64 = dof as f64;
+        rss / dof_f64
+    } else {
+        // If we have exact fit or overdetermined, use unscaled
+        1.0
+    };
+
+    // Covariance matrix = (A^T A)^{-1} * scale_factor
+    // Invert the Gram matrix
+    let gram_inv = gram_matrix.inv();
+
+    // Scale by residual variance
+    let cov_data: Vec<f64> = gram_inv.data.iter().map(|&x| x * scale_factor).collect();
+    let cov_matrix = Array2::from_shape_vec((deg + 1, deg + 1), cov_data).map_err(|e| {
+        PolynomialError::NumericalIssue {
+            message: format!("Failed to create covariance matrix: {e}"),
+        }
+    })?;
+
+    log::debug!("polyfit_with_cov: fitted polynomial of degree {deg} with coeffs: {coeffs:?}");
+    log::debug!(
+        "polyfit_with_cov: covariance matrix shape: {:?}",
+        cov_matrix.shape()
+    );
+
+    Ok((coeffs, cov_matrix))
 }
 
 /// Polynomial class for evaluation.

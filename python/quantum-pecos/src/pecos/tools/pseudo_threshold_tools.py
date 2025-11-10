@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from pecos_rslib.num import brentq, curve_fit, newton, sqrt
+from pecos_rslib.num import Poly1d, brentq, curve_fit, newton, polyfit, sqrt
 
 from pecos.decoders import MWPM2D
 from pecos.engines import circuit_runners
@@ -173,7 +173,7 @@ def find_polyfit(
     """
     plist = np.array(ps)
 
-    popt, pcov = np.polyfit(ps, plog, deg=deg, cov=True)
+    popt, pcov = polyfit(ps, plog, deg=deg, cov=True)
 
     var = np.diag(pcov)
     stdev = sqrt(var)
@@ -290,8 +290,8 @@ def find_pseudo(
         float: The value of the pseudo-threshold.
 
     """
-    popt = np.polyfit(plist, plog, deg=deg)
-    poly = np.poly1d(popt)
+    popt = polyfit(plist, plog, deg=deg)
+    poly = Poly1d(popt)
 
     def fnc(x: float) -> float:
         return poly(x) - x
@@ -333,7 +333,7 @@ def plot(
 
     pseudo_thr = find_pseudo(plist, plog, deg)
 
-    popt, _ = np.polyfit(
+    popt, _ = polyfit(
         plist,
         plog,
         deg,
@@ -345,7 +345,7 @@ def plot(
 
     x = np.linspace(axis_start, axis_end, 1000)
 
-    poly = np.poly1d(popt)
+    poly = Poly1d(popt)
     yi = poly(x)
 
     # Do the plotting:

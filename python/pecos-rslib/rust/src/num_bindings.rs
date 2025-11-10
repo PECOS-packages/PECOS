@@ -18,7 +18,7 @@
 //! implemented in Rust for better performance and easier deployment.
 
 use numpy::ndarray::Array1;
-use numpy::{PyArray1, PyArray2, PyReadonlyArray1};
+use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
@@ -1055,6 +1055,37 @@ fn std(values: Vec<f64>, ddof: usize) -> f64 {
     pecos::prelude::std(&values, ddof)
 }
 
+/// Extract the diagonal elements from a 2D array.
+///
+/// This is a drop-in replacement for `numpy.diag()` when extracting diagonal elements.
+///
+/// # Arguments
+///
+/// * `matrix` - A 2D array
+///
+/// # Returns
+///
+/// A 1D array containing the diagonal elements
+///
+/// # Examples
+///
+/// ```python
+/// import numpy as np
+/// from pecos_rslib.num import diag
+///
+/// # Extract diagonal from covariance matrix
+/// cov_matrix = np.array([[0.0025, 0.0010], [0.0010, 0.0004]])
+/// variances = diag(cov_matrix)
+/// print(variances)  # [0.0025, 0.0004]
+/// ```
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)] // PyReadonlyArray2 is a lightweight wrapper
+fn diag(py: Python<'_>, matrix: PyReadonlyArray2<f64>) -> Py<PyArray1<f64>> {
+    let matrix_view = matrix.as_array();
+    let diagonal = pecos::prelude::diag(matrix_view);
+    PyArray1::from_array(py, &diagonal).unbind()
+}
+
 /// Register the num submodule with Python bindings.
 pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let num_module = PyModule::new(m.py(), "num")?;
@@ -1071,6 +1102,7 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     num_module.add_function(wrap_pyfunction!(power, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(sqrt, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(self::std, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(diag, &num_module)?)?;
 
     // Create random submodule
     let random_module = PyModule::new(m.py(), "random")?;

@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from pecos_rslib.num import Poly1d, brentq, curve_fit, newton, polyfit, sqrt
+from pecos_rslib.num import Poly1d, brentq, curve_fit, diag, newton, polyfit, sqrt
 
 from pecos.decoders import MWPM2D
 from pecos.engines import circuit_runners
@@ -175,7 +175,7 @@ def find_polyfit(
 
     popt, pcov = polyfit(ps, plog, deg=deg, cov=True)
 
-    var = np.diag(pcov)
+    var = diag(pcov)
     stdev = sqrt(var)
 
     if verbose:
@@ -226,7 +226,7 @@ def find_uniscalefit(
 
     popt, pcov = curve_fit(func, (plist, dlist), plog, p0, maxfev=maxfev, **kwargs)
 
-    var = np.diag(pcov)
+    var = diag(pcov)
     stdev = sqrt(var)
 
     for v in var:

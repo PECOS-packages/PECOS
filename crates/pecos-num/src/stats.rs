@@ -16,6 +16,8 @@
 //!
 //! This module provides drop-in replacements for numpy statistical functions.
 
+use ndarray::{Array1, ArrayView2};
+
 /// Calculate the arithmetic mean of a slice of values.
 ///
 /// # Arguments
@@ -169,6 +171,51 @@ pub fn std(values: &[f64], ddof: usize) -> f64 {
 
     let corrected_n = (n - ddof) as f64;
     (variance / corrected_n).sqrt()
+}
+
+/// Extract the diagonal elements from a 2D array (matrix).
+///
+/// This is a drop-in replacement for `numpy.diag()` when extracting diagonal elements.
+///
+/// # Arguments
+///
+/// * `matrix` - A 2D array view
+///
+/// # Returns
+///
+/// A 1D array containing the diagonal elements
+///
+/// # Examples
+///
+/// ```
+/// use ndarray::array;
+/// use pecos_num::stats::diag;
+///
+/// // Extract diagonal from a square matrix
+/// let matrix = array![[1.0, 2.0, 3.0],
+///                     [4.0, 5.0, 6.0],
+///                     [7.0, 8.0, 9.0]];
+/// let diagonal = diag(matrix.view());
+/// assert_eq!(diagonal, array![1.0, 5.0, 9.0]);
+///
+/// // Works with non-square matrices too
+/// let matrix = array![[1.0, 2.0],
+///                     [3.0, 4.0],
+///                     [5.0, 6.0]];
+/// let diagonal = diag(matrix.view());
+/// assert_eq!(diagonal, array![1.0, 4.0]);
+/// ```
+#[must_use]
+pub fn diag(matrix: ArrayView2<f64>) -> Array1<f64> {
+    let (nrows, ncols) = matrix.dim();
+    let diag_len = nrows.min(ncols);
+
+    let mut diagonal = Array1::zeros(diag_len);
+    for i in 0..diag_len {
+        diagonal[i] = matrix[[i, i]];
+    }
+
+    diagonal
 }
 
 #[cfg(test)]
@@ -412,5 +459,84 @@ mod tests {
         // Test with larger values
         assert!((sqrt(10_000.0) - 100.0).abs() < 1e-10);
         assert!((sqrt(1_000_000.0) - 1000.0).abs() < 1e-10);
+    }
+
+    // Tests for diag()
+    #[test]
+    fn test_diag_square_matrix() {
+        use ndarray::array;
+
+        // 3x3 matrix
+        let matrix = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]];
+        let diagonal = diag(matrix.view());
+
+        assert_eq!(diagonal.len(), 3);
+        #[allow(clippy::float_cmp)]
+        {
+            assert_eq!(diagonal[0], 1.0);
+            assert_eq!(diagonal[1], 5.0);
+            assert_eq!(diagonal[2], 9.0);
+        }
+    }
+
+    #[test]
+    fn test_diag_rectangular_matrix_more_rows() {
+        use ndarray::array;
+
+        // 3x2 matrix (more rows than columns)
+        let matrix = array![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];
+        let diagonal = diag(matrix.view());
+
+        assert_eq!(diagonal.len(), 2);
+        #[allow(clippy::float_cmp)]
+        {
+            assert_eq!(diagonal[0], 1.0);
+            assert_eq!(diagonal[1], 4.0);
+        }
+    }
+
+    #[test]
+    fn test_diag_rectangular_matrix_more_cols() {
+        use ndarray::array;
+
+        // 2x3 matrix (more columns than rows)
+        let matrix = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let diagonal = diag(matrix.view());
+
+        assert_eq!(diagonal.len(), 2);
+        #[allow(clippy::float_cmp)]
+        {
+            assert_eq!(diagonal[0], 1.0);
+            assert_eq!(diagonal[1], 5.0);
+        }
+    }
+
+    #[test]
+    fn test_diag_covariance_matrix() {
+        use ndarray::array;
+
+        // Typical covariance matrix from polyfit
+        let cov_matrix = array![[0.0025, 0.0010], [0.0010, 0.0004]];
+        let variances = diag(cov_matrix.view());
+
+        assert_eq!(variances.len(), 2);
+        assert!((variances[0] - 0.0025).abs() < 1e-10);
+        assert!((variances[1] - 0.0004).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_diag_identity_matrix() {
+        use ndarray::array;
+
+        let identity = array![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let diagonal = diag(identity.view());
+
+        assert_eq!(diagonal.len(), 3);
+        #[allow(clippy::float_cmp)]
+        {
+            assert_eq!(diagonal[0], 1.0);
+            assert_eq!(diagonal[1], 1.0);
+            assert_eq!(diagonal[2], 1.0);
+        }
     }
 }

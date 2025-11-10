@@ -45,14 +45,14 @@
 //! - Leakage and emission error models
 //! - Parameter scaling for error rates
 //! - Angle-dependent noise for parameterized gates
+//! - Crosstalk errors between nearby qubits
+//! - Memory/idle noise with T1/T2 processes
+//! - Coherent vs. incoherent dephasing distinction
 //!
 //! Some features from the Python implementation that are not yet fully implemented:
 //!
-//! - Crosstalk errors between nearby qubits
-//! - Memory/idle noise with T1/T2 processes
 //! - Repumping cycles for leaked qubits
 //! - Zone-specific error rates
-//! - Coherent vs. incoherent dephasing distinction
 //!
 //! ## Usage
 //!
@@ -85,7 +85,7 @@ use crate::engine_system::{ControlEngine, EngineStage};
 use crate::noise::noise_rng::NoiseRng;
 use crate::noise::utils::NoiseUtils;
 use crate::noise::utils::ProbabilityValidator;
-use crate::noise::weighted_sampler::{SingleQubitWeightedSampler, TwoQubitWeightedSampler};
+use crate::noise::weighted_sampler::{SingleQubitWeightedSampler, TwoQubitWeightedSampler, CrosstalkWeightedSampler};
 use crate::noise::{NoiseModel, RngManageable};
 use log::trace;
 use pecos_core::QubitId;
@@ -313,13 +313,20 @@ pub struct GeneralNoiseModel {
     /// the device runtime, which are provided as MeasCrosstalkGlobalPayload instructions.
     p_meas_crosstalk_global: f64,
 
+    /// Transition probabilities on the event of global crosstalk error
+    p_meas_crosstalk_global_model: CrosstalkWeightedSampler,
+
     /// Probability of crosstalk during measurement operations on local qubits
     ///
     /// See doc for p_meas_crosstalk_global. The intended distinction is that this
     /// parameter applies to only qubits that are close to the measured qubit.
-    /// /// Further details on how crosstalk is modeled depends on information from
+    /// Further details on how crosstalk is modeled depends on information from
     /// the device runtime, which are provided as MeasCrosstalkLocalPayload instructions.
     p_meas_crosstalk_local: f64,
+
+    /// Transition probabilities on the event of local crosstalk error
+    p_meas_crosstalk_local_model: CrosstalkWeightedSampler,
+
 
     // --- internally used variables --- //
     /// The maximum of `p_meas_0` and `p_meas_1`
@@ -543,7 +550,7 @@ impl GeneralNoiseModel {
                     // Measurement noise is handled in apply_noise_on_continue_processing
                     // We still need to add the original gate here
                     builder.add_gate_command(&gate);
-                    // TODO: simplified crosstalk (H1/H2)
+                    // TODO: simplified crosstalk (H1/H2). Helios crosstalk handled by Payload ops
                     // if self.simple_crosstalk:
                     //    self.apply_simple_crosstalk_faults(&gate, self.p_meas_crosstalk, &mut builder);
                 }
@@ -889,13 +896,7 @@ impl GeneralNoiseModel {
         qubits: Vec<usize>,
         builder: &mut ByteMessageBuilder,
     ) {
-        // This needs to be checked here because of the strength_factor from
-        // the payload potentially causing probability larger than 1.0
-        // TODO: do validation earlier?
-        assert!(
-            (0.0..=1.0).contains(&probability),
-            "Probability must be between 0 and 1, got {probability}"
-        );
+        let mut affected_qubits = Vec::new();
 
         for q in qubits {
             // TODO: We should include a seepage component to crosstalk in the future.
@@ -903,26 +904,19 @@ impl GeneralNoiseModel {
                 && !self.is_leaked(q) // If q is already leaked, we currently skip
                 && self.rng.occurs(probability)
             {
-                // The qubit leaks with some (hardcoded) probability
-                if self.rng.occurs(0.75) {
-                    if let Some(gate) = self.leak(usize::from(q)) {
-                        builder.add_gate_command(&gate);
-                    }
-                    trace!("Qubit {q} leaked during crosstalk");
-                // Otherwise, it results in a fully mixed distribution of 0/1 state
-                } else {
-                    // Reset the qubit
-                    builder.add_prep(&[q]);
-                    // Bit-flip with 0.5 probability to generate a full mixture
-                    if self.rng.occurs(0.5) {
-                        builder.add_x(&[q]);
-                        trace!("Qubit {q} collapsed to |1> during crosstalk");
-                    } else {
-                        trace!("Qubit {q} collapsed to |0> during crosstalk");
-                    }
-                }
+                affected_qubits.push(q);
+                trace!("Qubit {q} affected by crosstalk error");
             }
         }
+
+        builder.add_measurements(&affected_qubits);
+        // We need to mark these measurements as being introduced by crosstalk rather
+        // than the user's program so that we can discard the results in
+        // apply_noise_on_continue_processing.
+        self.measured_qubits.extend(
+            affected_qubits.iter().map(|&q| (q, false, true)), // (qubit, is_measure_leaked, is_crosstalk)
+        );
+        // TODO: Crosstalk transitions need to be carried out by apply_noise_on_continue_processing
     }
 
     /// Apply single-qubit gate noise faults

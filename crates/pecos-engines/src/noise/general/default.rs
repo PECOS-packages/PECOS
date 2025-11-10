@@ -1,5 +1,5 @@
 use crate::noise::{
-    GeneralNoiseModel, NoiseRng, SingleQubitWeightedSampler, TwoQubitWeightedSampler,
+    GeneralNoiseModel, NoiseRng, SingleQubitWeightedSampler, TwoQubitWeightedSampler, CrosstalkWeightedSampler
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -72,6 +72,10 @@ impl Default for GeneralNoiseModel {
         let p_meas_0: f64 = 0.01; // 1% probability of measuring 1 when state is |0⟩
         let p_meas_1: f64 = 0.01; // 1% probability of measuring 0 when state is |1⟩
 
+        let mut p_meas_crosstalk_model = BTreeMap::new();
+        p_meas_crosstalk_model.insert("0->1".to_string(), 1.0);
+        p_meas_crosstalk_model.insert("1->0".to_string(), 1.0);
+
         // Default error probabilities
         Self {
             p_prep: 0.01,
@@ -104,7 +108,9 @@ impl Default for GeneralNoiseModel {
             measured_qubits: Vec::new(),
             // TODO: Maybe the p_meas_crosstalk parameter should remain for the simple_crosstalk?
             p_meas_crosstalk_global: 0.0,
+            p_meas_crosstalk_global_model: CrosstalkWeightedSampler::new(&p_meas_crosstalk_model),
             p_meas_crosstalk_local: 0.0,
+            p_meas_crosstalk_local_model: CrosstalkWeightedSampler::new(&p_meas_crosstalk_model),
             p_prep_crosstalk: 0.0,
 
             p_idle_coherent_to_incoherent_factor: 1.5,

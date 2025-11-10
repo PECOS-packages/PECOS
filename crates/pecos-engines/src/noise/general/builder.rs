@@ -1,6 +1,6 @@
 use crate::GateType;
 use crate::noise::{
-    GeneralNoiseModel, NoiseRng, SingleQubitWeightedSampler, TwoQubitWeightedSampler,
+    GeneralNoiseModel, NoiseRng, SingleQubitWeightedSampler, TwoQubitWeightedSampler, CrosstalkWeightedSampler
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -46,10 +46,12 @@ pub struct GeneralNoiseModelBuilder {
     // measurement noise
     p_meas_0: Option<f64>,
     p_meas_1: Option<f64>,
+    meas_scale: Option<f64>,
     // TODO: Maybe the p_meas_crosstalk parameter should remain for the simple_crosstalk?
     p_meas_crosstalk_global: Option<f64>,
+    p_meas_crosstalk_global_model: Option<CrosstalkWeightedSampler>,
     p_meas_crosstalk_local: Option<f64>,
-    meas_scale: Option<f64>,
+    p_meas_crosstalk_local_model: Option<CrosstalkWeightedSampler>,
     p_meas_crosstalk_scale: Option<f64>,
 }
 
@@ -103,9 +105,11 @@ impl GeneralNoiseModelBuilder {
             // measurement noise
             p_meas_0: None,
             p_meas_1: None,
-            p_meas_crosstalk_global: None,
-            p_meas_crosstalk_local: None,
             meas_scale: None,
+            p_meas_crosstalk_global: None,
+            p_meas_crosstalk_global_model: None,
+            p_meas_crosstalk_local: None,
+            p_meas_crosstalk_local_model: None,
             p_meas_crosstalk_scale: None,
         }
     }
@@ -249,8 +253,16 @@ impl GeneralNoiseModelBuilder {
             model.p_meas_crosstalk_global = prob;
         }
 
+        if let Some(model_map) = self.p_meas_crosstalk_global_model.clone() {
+            model.p_meas_crosstalk_global_model = model_map;
+        }
+
         if let Some(prob) = self.p_meas_crosstalk_local {
             model.p_meas_crosstalk_local = prob;
+        }
+
+        if let Some(model_map) = self.p_meas_crosstalk_local_model.clone() {
+            model.p_meas_crosstalk_local_model = model_map;
         }
 
         // scale
@@ -658,12 +670,19 @@ impl GeneralNoiseModelBuilder {
         self
     }
 
-    // TODO: See if we should put a average scaling...
     /// Set the average measurement global crosstalk
+    /// TODO: This is no longer applicable on Helios
+    // #[must_use]
+    // pub fn with_average_p_meas_crosstalk_global(mut self, prob: f64) -> Self {
+    //     let prob: f64 = prob * 18.0 / 5.0;
+    //     self.p_meas_crosstalk_global = Some(Self::validate_probability(prob));
+    //     self
+    // }
+
+    /// Set the transition model for global measurement crosstalk
     #[must_use]
-    pub fn with_average_p_meas_crosstalk_global(mut self, prob: f64) -> Self {
-        let prob: f64 = prob * 18.0 / 5.0;
-        self.p_meas_crosstalk_global = Some(Self::validate_probability(prob));
+    pub fn with_p_meas_crosstalk_global_model(mut self, model: &BTreeMap<String, f64>) -> Self {
+        self.p_meas_crosstalk_global_model = Some(CrosstalkWeightedSampler::new(model));
         self
     }
 
@@ -675,10 +694,18 @@ impl GeneralNoiseModelBuilder {
     }
 
     /// Set the average measurement local crosstalk
+    /// TODO: This is no longer applicable on Helios
+    // #[must_use]
+    // pub fn with_average_p_meas_crosstalk_local(mut self, prob: f64) -> Self {
+    //     let prob: f64 = prob * 18.0 / 5.0;
+    //     self.p_meas_crosstalk_local = Some(Self::validate_probability(prob));
+    //     self
+    // }
+
+    /// Set the transition model for local measurement crosstalk
     #[must_use]
-    pub fn with_average_p_meas_crosstalk_local(mut self, prob: f64) -> Self {
-        let prob: f64 = prob * 18.0 / 5.0;
-        self.p_meas_crosstalk_local = Some(Self::validate_probability(prob));
+    pub fn with_p_meas_crosstalk_local_model(mut self, model: &BTreeMap<String, f64>) -> Self {
+        self.p_meas_crosstalk_local_model = Some(CrosstalkWeightedSampler::new(model));
         self
     }
 

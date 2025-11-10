@@ -49,6 +49,44 @@ pub fn mean(values: &[f64]) -> f64 {
     sum / values.len() as f64
 }
 
+/// Calculate the power of a base raised to an exponent.
+///
+/// Drop-in replacement for `numpy.power()` for scalar values.
+///
+/// # Arguments
+///
+/// * `base` - The base value
+/// * `exponent` - The exponent value
+///
+/// # Returns
+///
+/// The result of base^exponent as f64
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::stats::power;
+///
+/// // Basic integer power
+/// assert!((power(2.0, 3.0) - 8.0).abs() < 1e-10);
+///
+/// // Fractional power (square root)
+/// assert!((power(4.0, 0.5) - 2.0).abs() < 1e-10);
+///
+/// // Negative power
+/// assert!((power(2.0, -1.0) - 0.5).abs() < 1e-10);
+///
+/// // Threshold curve use case
+/// let dist = 5.0;
+/// let v0 = 2.0;
+/// let result = power(dist, 1.0 / v0);
+/// assert!((result - 2.236_067_977_499_79).abs() < 1e-10);
+/// ```
+#[must_use]
+pub fn power(base: f64, exponent: f64) -> f64 {
+    base.powf(exponent)
+}
+
 /// Calculate the standard deviation of values along an axis.
 ///
 /// Drop-in replacement for `numpy.std()` with ddof (delta degrees of freedom) parameter.
@@ -221,5 +259,72 @@ mod tests {
         let values = vec![1.5, 1.6, 1.4, 1.5, 1.7];
         let result = std(&values, 0);
         assert!((result - 0.101_980_390_271_855_71).abs() < 1e-10);
+    }
+
+    // Tests for power()
+
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn test_power_integer_exponent() {
+        // Basic integer powers
+        assert_eq!(power(2.0, 3.0), 8.0);
+        assert_eq!(power(3.0, 2.0), 9.0);
+        assert_eq!(power(10.0, 0.0), 1.0);
+    }
+
+    #[test]
+    fn test_power_fractional_exponent() {
+        // Fractional powers (roots)
+        assert!((power(4.0, 0.5) - 2.0).abs() < 1e-10);
+        assert!((power(27.0, 1.0 / 3.0) - 3.0).abs() < 1e-10);
+        assert!((power(16.0, 0.25) - 2.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_power_negative_exponent() {
+        // Negative powers (reciprocals)
+        assert!((power(2.0, -1.0) - 0.5).abs() < 1e-10);
+        assert!((power(4.0, -0.5) - 0.5).abs() < 1e-10);
+        assert!((power(10.0, -2.0) - 0.01).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_power_negative_base() {
+        // Negative base with integer exponent
+        assert!((power(-2.0, 3.0) - (-8.0)).abs() < 1e-10);
+        assert!((power(-3.0, 2.0) - 9.0).abs() < 1e-10);
+    }
+
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn test_power_special_cases() {
+        // Special cases
+        assert_eq!(power(0.0, 2.0), 0.0);
+        assert_eq!(power(1.0, 100.0), 1.0);
+        assert_eq!(power(5.0, 0.0), 1.0);
+    }
+
+    #[test]
+    fn test_power_threshold_curve_pattern() {
+        // Pattern from threshold_curve.py: np.power(dist, 1.0 / v0)
+        let dist = 5.0;
+        let v0 = 2.0;
+        let result = power(dist, 1.0 / v0);
+        assert!((result - 2.236_067_977_499_79).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_power_squared() {
+        // Pattern from threshold_curve.py: np.power(x, 2)
+        let x = 3.5;
+        let result = power(x, 2.0);
+        assert!((result - 12.25).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_power_large_exponent() {
+        // Test with larger exponents
+        assert!((power(2.0, 10.0) - 1024.0).abs() < 1e-10);
+        assert!((power(1.5, 5.0) - 7.59375).abs() < 1e-10);
     }
 }

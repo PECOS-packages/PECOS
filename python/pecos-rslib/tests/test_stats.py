@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from pecos_rslib.num import mean as pecos_mean
+from pecos_rslib.num import power as pecos_power
 from pecos_rslib.num import std as pecos_std
 
 
@@ -390,6 +391,108 @@ class TestStdAxisParameter:
         # Test with ddof=1
         pecos_result = pecos_std(arr, axis=0, ddof=1)
         numpy_result = np.std(arr, axis=0, ddof=1)
+
+        assert np.allclose(pecos_result, numpy_result)
+
+
+class TestPowerCorrectness:
+    """Test power() correctness against numpy."""
+
+    def test_power_scalar_basic(self):
+        """Test basic scalar power operations."""
+        assert pecos_power(2.0, 3.0) == 8.0
+        assert pecos_power(3.0, 2.0) == 9.0
+        assert pecos_power(10.0, 0.0) == 1.0
+
+    def test_power_fractional_exponent(self):
+        """Test fractional powers (roots)."""
+        pecos_result = pecos_power(4.0, 0.5)
+        numpy_result = np.power(4.0, 0.5)
+        assert abs(pecos_result - numpy_result) < 1e-10
+        assert abs(pecos_result - 2.0) < 1e-10
+
+    def test_power_negative_exponent(self):
+        """Test negative exponents."""
+        pecos_result = pecos_power(2.0, -1.0)
+        numpy_result = np.power(2.0, -1.0)
+        assert abs(pecos_result - numpy_result) < 1e-10
+        assert abs(pecos_result - 0.5) < 1e-10
+
+    def test_power_array_base_scalar_exp(self):
+        """Test array base with scalar exponent."""
+        base = [1.0, 2.0, 3.0]
+        exponent = 2.0
+
+        pecos_result = pecos_power(base, exponent)
+        numpy_result = np.power(base, exponent)
+
+        assert np.allclose(pecos_result, numpy_result)
+        assert np.allclose(pecos_result, [1.0, 4.0, 9.0])
+
+    def test_power_scalar_base_array_exp(self):
+        """Test scalar base with array exponent."""
+        base = 2.0
+        exponent = [1.0, 2.0, 3.0]
+
+        pecos_result = pecos_power(base, exponent)
+        numpy_result = np.power(base, exponent)
+
+        assert np.allclose(pecos_result, numpy_result)
+        assert np.allclose(pecos_result, [2.0, 4.0, 8.0])
+
+    def test_power_broadcasting(self):
+        """Test broadcasting with arrays."""
+        base = [[1.0, 2.0], [3.0, 4.0]]
+        exponent = 2.0
+
+        pecos_result = pecos_power(base, exponent)
+        numpy_result = np.power(base, exponent)
+
+        assert np.allclose(pecos_result, numpy_result)
+        assert np.allclose(pecos_result, [[1.0, 4.0], [9.0, 16.0]])
+
+
+class TestPowerThresholdUseCases:
+    """Test power() with patterns from threshold_curve.py."""
+
+    def test_power_dist_scaling(self):
+        """Test the pattern: np.power(dist, 1.0 / v0)."""
+        dist = 5.0
+        v0 = 2.0
+
+        pecos_result = pecos_power(dist, 1.0 / v0)
+        numpy_result = np.power(dist, 1.0 / v0)
+
+        assert abs(pecos_result - numpy_result) < 1e-10
+        assert abs(pecos_result - np.sqrt(5.0)) < 1e-10
+
+    def test_power_squared(self):
+        """Test the pattern: np.power(x, 2)."""
+        x = 3.5
+
+        pecos_result = pecos_power(x, 2.0)
+        numpy_result = np.power(x, 2.0)
+
+        assert abs(pecos_result - numpy_result) < 1e-10
+        assert abs(pecos_result - 12.25) < 1e-10
+
+    def test_power_negative_fractional(self):
+        """Test the pattern: np.power(dist, -1.0 / u)."""
+        dist = 5.0
+        u = 2.0
+
+        pecos_result = pecos_power(dist, -1.0 / u)
+        numpy_result = np.power(dist, -1.0 / u)
+
+        assert abs(pecos_result - numpy_result) < 1e-10
+
+    def test_power_array_scaling(self):
+        """Test power with array of distances."""
+        distances = np.array([3.0, 5.0, 7.0])
+        v0 = 2.0
+
+        pecos_result = pecos_power(distances, 1.0 / v0)
+        numpy_result = np.power(distances, 1.0 / v0)
 
         assert np.allclose(pecos_result, numpy_result)
 

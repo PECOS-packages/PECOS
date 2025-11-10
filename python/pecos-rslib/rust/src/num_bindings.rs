@@ -940,6 +940,40 @@ fn mean(values: Vec<f64>) -> f64 {
     pecos::prelude::mean(&values)
 }
 
+/// Calculate the power of a base raised to an exponent.
+///
+/// Drop-in replacement for `numpy.power()` for scalar values.
+///
+/// # Arguments
+///
+/// * `base` - The base value
+/// * `exponent` - The exponent value
+///
+/// # Returns
+///
+/// The result of base^exponent as f64
+///
+/// # Examples
+///
+/// ```python
+/// from pecos_rslib.num import power
+///
+/// # Basic integer power
+/// result = power(2.0, 3.0)  # Returns 8.0
+///
+/// # Fractional power (square root)
+/// result = power(4.0, 0.5)  # Returns 2.0
+///
+/// # Threshold curve use case
+/// dist = 5.0
+/// v0 = 2.0
+/// result = power(dist, 1.0 / v0)
+/// ```
+#[pyfunction]
+fn power(base: f64, exponent: f64) -> f64 {
+    pecos::prelude::power(base, exponent)
+}
+
 /// Calculate the standard deviation of values.
 ///
 /// Drop-in replacement for `numpy.std()` for 1D arrays without axis parameter.
@@ -990,6 +1024,7 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Add statistical functions
     num_module.add_function(wrap_pyfunction!(mean, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(power, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(self::std, &num_module)?)?;
 
     // Create random submodule

@@ -161,6 +161,72 @@ def std(a: ArrayLike, axis: int | None = None, ddof: int = 0) -> float | np.ndar
     return stds
 
 
+def power(x1: ArrayLike, x2: ArrayLike) -> float | np.ndarray:
+    """Calculate the power of x1 raised to x2, element-wise.
+
+    Drop-in replacement for `numpy.power()` supporting broadcasting.
+
+    Args:
+        x1: The bases (array-like)
+        x2: The exponents (array-like)
+
+    Returns:
+        Element-wise power x1**x2. If both inputs are scalars, returns a scalar.
+        Otherwise returns an array with broadcasting applied.
+
+    Examples:
+        >>> from pecos_rslib.num import power
+        >>>
+        >>> # Scalar inputs
+        >>> power(2.0, 3.0)
+        8.0
+        >>>
+        >>> # Array base, scalar exponent
+        >>> power([1.0, 2.0, 3.0], 2.0)
+        array([1., 4., 9.])
+        >>>
+        >>> # Scalar base, array exponent
+        >>> power(2.0, [1.0, 2.0, 3.0])
+        array([2., 4., 8.])
+        >>>
+        >>> # Threshold curve use case
+        >>> dist = 5.0
+        >>> v0 = 2.0
+        >>> power(dist, 1.0 / v0)
+        2.23606797749979
+    """
+    # Convert to numpy arrays
+    arr1 = np.asarray(x1, dtype=np.float64)
+    arr2 = np.asarray(x2, dtype=np.float64)
+
+    # Check if both are scalars
+    if arr1.ndim == 0 and arr2.ndim == 0:
+        return _num_core.power(float(arr1), float(arr2))
+
+    # Use numpy broadcasting for array operations
+    # For arrays, use our Rust implementation element-wise
+    result_shape = np.broadcast_shapes(arr1.shape, arr2.shape)
+
+    # Broadcast arrays to common shape
+    arr1_broadcast = np.broadcast_to(arr1, result_shape)
+    arr2_broadcast = np.broadcast_to(arr2, result_shape)
+
+    # Flatten and compute element-wise
+    flat1 = arr1_broadcast.ravel()
+    flat2 = arr2_broadcast.ravel()
+
+    # Compute using Rust implementation
+    result = np.array(
+        [
+            _num_core.power(float(b), float(e))
+            for b, e in zip(flat1, flat2, strict=False)
+        ]
+    )
+
+    # Reshape to result shape
+    return result.reshape(result_shape) if result_shape else float(result)
+
+
 # Expose all other num functions directly
 brentq = _num_core.brentq
 newton = _num_core.newton
@@ -174,6 +240,7 @@ random = _num_core.random
 
 __all__ = [
     "mean",
+    "power",
     "std",
     "brentq",
     "newton",

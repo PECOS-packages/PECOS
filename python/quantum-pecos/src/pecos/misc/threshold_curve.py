@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from pecos_rslib.num import curve_fit, mean, std
+from pecos_rslib.num import curve_fit, mean, power, std
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -57,9 +57,9 @@ def func(
     """
     p, dist = x
 
-    x = (p - pth) * np.power(dist, 1.0 / v0)
+    x = (p - pth) * power(dist, 1.0 / v0)
 
-    return a + b * x + c * np.power(x, 2)
+    return a + b * x + c * power(x, 2)
 
 
 def func2(
@@ -93,11 +93,11 @@ def func2(
     """
     p, dist = x
 
-    x = (p - pth) * np.power(dist, 1.0 / v0)
+    x = (p - pth) * power(dist, 1.0 / v0)
 
-    z = a + b * x + c * np.power(x, 2)
+    z = a + b * x + c * power(x, 2)
 
-    z += d * np.power(dist, -1.0 / u)
+    z += d * power(dist, -1.0 / u)
 
     return z
 
@@ -135,15 +135,15 @@ def func3(
     """
     p, dist = x
 
-    x = (p - pth) * np.power(dist, 1.0 / v0)
+    x = (p - pth) * power(dist, 1.0 / v0)
 
     z = np.where(
         bool(dist % 2),
-        d * np.power(dist, -1.0 / uodd),
-        d * np.power(dist, -1.0 / ueven),
+        d * power(dist, -1.0 / uodd),
+        d * power(dist, -1.0 / ueven),
     )
 
-    z += a + b * x + c * np.power(x, 2)
+    z += a + b * x + c * power(x, 2)
 
     return z
 
@@ -173,9 +173,9 @@ def func4(
     """
     p, dist = x
 
-    x = (p - pth) * np.power(dist, 1.0 / v0)
+    x = (p - pth) * power(dist, 1.0 / v0)
 
-    return a * np.exp(-b * np.power(x, v0))
+    return a * np.exp(-b * power(x, v0))
 
 
 def func5(
@@ -207,9 +207,9 @@ def func5(
     """
     p, dist = x
 
-    x = (p - pth) * np.power(dist, 1.0 / v0)
+    x = (p - pth) * power(dist, 1.0 / v0)
 
-    return a + b * x + c * np.power(x, 2) + d * np.power(x, 3)
+    return a + b * x + c * power(x, 2) + d * power(x, 3)
 
 
 def func6(
@@ -233,7 +233,7 @@ def func6(
     """
     p, dist = x
 
-    return a * np.power(p / pth, dist / 2)
+    return a * power(p / pth, dist / 2)
 
 
 def threshold_fit(

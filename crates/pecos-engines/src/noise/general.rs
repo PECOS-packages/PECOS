@@ -94,7 +94,6 @@ use rand_chacha::ChaCha8Rng;
 use std::any::Any;
 use std::collections::BTreeSet;
 
-
 /// General noise model implementation that includes parameterized error channels for various quantum operations
 ///
 /// This comprehensive noise model for quantum computers includes:
@@ -358,9 +357,7 @@ pub struct GeneralNoiseModel {
     /// Track which qubits are being measured in the current batch and their gate types
     /// This is needed to properly handle leakage during measurements as well
     /// as crosstalk.
-    /// TODO: manage this via result tags.
-    /// Each entry is (`qubit_id`, `is_measure_leaked`, `is_crosstalk`)
-    measured_qubits: Vec<(usize, bool, bool)>,
+    measured_qubits: Vec<(usize, GateType)>,
 }
 
 impl ControlEngine for GeneralNoiseModel {
@@ -401,7 +398,7 @@ impl ControlEngine for GeneralNoiseModel {
         let has_crosstalk = self
             .measured_qubits
             .iter()
-            .any(|(_, _, is_crosstalk)| *is_crosstalk);
+            .any(|(_, gate_type)| gate_type.is_crosstalk_payload());
         // Clear the measured qubits for the next batch
         self.measured_qubits.clear();
 
@@ -551,11 +548,10 @@ impl GeneralNoiseModel {
                 }
                 GateType::Measure | GateType::MeasureLeaked => {
                     // Track which qubits are being measured for leakage handling
-                    let is_measure_leaked = gate.gate_type == GateType::MeasureLeaked;
                     self.measured_qubits.extend(
                         gate.qubits
                             .iter()
-                            .map(|q| (usize::from(*q), is_measure_leaked, false)),
+                            .map(|q| (usize::from(*q), gate.gate_type)),
                     );
                     // Measurement noise is handled in apply_noise_on_continue_processing
                     // We still need to add the original gate here
@@ -565,8 +561,6 @@ impl GeneralNoiseModel {
                     //    self.apply_simple_crosstalk_faults(&gate, self.p_meas_crosstalk, &mut builder);
                 }
                 GateType::MeasCrosstalkGlobalPayload => {
-                    let probability = self.p_meas_crosstalk_global;
-
                     // Global crosstalk applies to all qubits that are *not* in the payload
                     let gate_qubits: Vec<usize> = gate.qubits.iter().map(|q| usize::from(*q)).collect();
                     let potential_victims = self.prepared_qubits
@@ -577,14 +571,13 @@ impl GeneralNoiseModel {
 
                     // Otherwise, it is the same channel for Global and Local
                     trace!("Applying global crosstalk...");
-                    self.apply_crosstalk_faults_from_payload(probability, potential_victims, &mut builder);
+                    self.apply_crosstalk_faults_from_payload(gate.gate_type, potential_victims, &mut builder);
                 }
                 GateType::MeasCrosstalkLocalPayload => {
-                    let probability = self.p_meas_crosstalk_local;
                     let potential_victims = gate.qubits.iter().map(|q| usize::from(*q)).collect();
 
                     trace!("Applying local crosstalk...");
-                    self.apply_crosstalk_faults_from_payload(probability, potential_victims, &mut builder);
+                    self.apply_crosstalk_faults_from_payload(gate.gate_type, potential_victims, &mut builder);
                 }
                 GateType::I => {
                     let err_msg = format!(
@@ -654,7 +647,7 @@ impl GeneralNoiseModel {
         let has_crosstalk = self
             .measured_qubits
             .iter()
-            .any(|(_, _, is_crosstalk)| *is_crosstalk);
+            .any(|(_, gate_type)| gate_type.is_crosstalk_payload());
         // If the measurement outcomes originate from crosstalk, process them and
         // request to continue processing, and return the gates needed for the transitions
         if has_crosstalk {
@@ -663,19 +656,23 @@ impl GeneralNoiseModel {
             let mut builder = ByteMessage::quantum_operations_builder();
 
             for (idx, outcome) in measurement_outcomes.into_iter().enumerate() {
-                let (qubit, _, is_crosstalk) = self.measured_qubits[idx];
+                let (qubit, gate_type) = self.measured_qubits[idx];
 
                 // Sanity check: ALL measurement outcomes of this batch come from crosstalk
-                if !is_crosstalk {
+                if !gate_type.is_crosstalk_payload() {
                     return Err(PecosError::Processing(format!(
                         "A batch of crosstalk-induced measurements contains and actual measurement on qubit {qubit}"
                     )));
                 }
 
                 // Apply gates depending on crosstalk transitions
-                // TODO: here I am using local ones, but these could come from global
-                //  crosstalk, and then they should have different transitions...
-                let transition = self.p_meas_crosstalk_local_model.sample_gates(&mut self.rng, qubit, outcome);
+                let transition_model = match gate_type {
+                    GateType::MeasCrosstalkGlobalPayload => &self.p_meas_crosstalk_global_model,
+                    GateType::MeasCrosstalkLocalPayload => &self.p_meas_crosstalk_local_model,
+                    _ => panic!("Cannot match {gate_type}, this should not be possible")
+                };
+
+                let transition = transition_model.sample_gates(&mut self.rng, qubit, outcome);
                 if transition.has_leakage() {
                     if let Some(gate) = self.leak(qubit) {
                         builder.add_gate_command(&gate);
@@ -698,15 +695,15 @@ impl GeneralNoiseModel {
                 && self
                     .measured_qubits
                     .iter()
-                    .any(|(q, _, _)| self.is_leaked(*q));
+                    .any(|(q, _)| self.is_leaked(*q));
 
             for (idx, outcome) in measurement_outcomes.into_iter().enumerate() {
                 let mut val = outcome;
 
                 // Check if this measurement corresponds to a leaked qubit
-                let (qubit, is_measure_leaked, _) = self.measured_qubits[idx];
+                let (qubit, gate_type) = self.measured_qubits[idx];
                 if has_leakage && self.is_leaked(qubit) {
-                    if is_measure_leaked {
+                    if gate_type == GateType::MeasureLeaked {
                         trace!("Qubit {qubit} is leaked, MeasureLeaked returns 2");
                         // For MeasureLeaked, return 2 for leaked qubits
                         val = 2;
@@ -919,7 +916,7 @@ impl GeneralNoiseModel {
         // than the user's program so that we can discard the results in
         // apply_noise_on_continue_processing.
         self.measured_qubits.extend(
-            affected_qubits.iter().map(|&q| (q, false, true)), // (qubit, is_measure_leaked, is_crosstalk)
+            affected_qubits.iter().map(|&q| (q, gate.gate_type)),
         );
     }
 
@@ -929,10 +926,16 @@ impl GeneralNoiseModel {
     /// affecting neighboring ions.
     pub fn apply_crosstalk_faults_from_payload(
         &mut self,
-        probability: f64,
+        gate_type: GateType,
         qubits: Vec<usize>,
         builder: &mut ByteMessageBuilder,
     ) {
+        let probability = match gate_type {
+            GateType::MeasCrosstalkGlobalPayload => self.p_meas_crosstalk_global,
+            GateType::MeasCrosstalkLocalPayload => self.p_meas_crosstalk_local,
+            _ => panic!("Cannot apply crosstalk on {gate_type}"),
+        };
+
         let mut affected_qubits = Vec::new();
 
         for q in qubits {
@@ -951,9 +954,9 @@ impl GeneralNoiseModel {
         // than the user's program so that we can discard the results in
         // apply_noise_on_continue_processing.
         self.measured_qubits.extend(
-            affected_qubits.iter().map(|&q| (q, false, true)), // (qubit, is_measure_leaked, is_crosstalk)
+            affected_qubits.iter().map(|&q| (q, gate_type)),
         );
-        // TODO: Crosstalk transitions need to be carried out by apply_noise_on_continue_processing
+        // NOTE: Crosstalk transitions are carried out by apply_noise_on_continue_processing
     }
 
     /// Apply single-qubit gate noise faults
@@ -2440,13 +2443,13 @@ mod tests {
             noise.measured_qubits
         );
 
-        let (q, _, is_crosstalk) = noise.measured_qubits[0];
+        let (q, gate_type) = noise.measured_qubits[0];
         assert_eq!(q, 2, "The first measurement should be the MCMR on qubit 2");
-        assert!(!is_crosstalk, "The first measurement should come from MCMR");
+        assert!(gate_type == GateType::Measure, "The first measurement should come from MCMR");
 
-        for (_, _, is_crosstalk) in &noise.measured_qubits[1..] {
+        for (_, gate_type) in &noise.measured_qubits[1..] {
             assert!(
-                is_crosstalk,
+                *gate_type == GateType::Prep,
                 "The other measurements should come from crosstalk"
             );
         }

@@ -214,6 +214,15 @@ impl GateType {
     pub const fn is_two_qubit(self) -> bool {
         self.quantum_arity() == 2
     }
+
+    /// Returns whether this gate is a crosstalk payload gate
+    pub const fn is_crosstalk_payload(self) -> bool {
+        match self {
+            GateType::MeasCrosstalkGlobalPayload
+            | GateType::MeasCrosstalkLocalPayload => true,
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Display for GateType {

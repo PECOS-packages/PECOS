@@ -108,9 +108,8 @@ impl Default for GeneralNoiseModel {
             measured_qubits: Vec::new(),
             // TODO: Maybe the p_meas_crosstalk parameter should remain for the simple_crosstalk?
             p_meas_crosstalk_global: 0.0,
-            p_meas_crosstalk_global_model: CrosstalkWeightedSampler::new(&p_meas_crosstalk_model),
             p_meas_crosstalk_local: 0.0,
-            p_meas_crosstalk_local_model: CrosstalkWeightedSampler::new(&p_meas_crosstalk_model),
+            p_meas_crosstalk_model: CrosstalkWeightedSampler::new(&p_meas_crosstalk_model),
             p_prep_crosstalk: 0.0,
 
             p_idle_coherent_to_incoherent_factor: 1.5,

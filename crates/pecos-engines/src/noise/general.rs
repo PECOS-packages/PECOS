@@ -313,9 +313,6 @@ pub struct GeneralNoiseModel {
     /// the device runtime, which are provided as MeasCrosstalkGlobalPayload instructions.
     p_meas_crosstalk_global: f64,
 
-    /// Transition probabilities on the event of global crosstalk error
-    p_meas_crosstalk_global_model: CrosstalkWeightedSampler,
-
     /// Probability of crosstalk during measurement operations on local qubits
     ///
     /// See doc for p_meas_crosstalk_global. The intended distinction is that this
@@ -324,8 +321,8 @@ pub struct GeneralNoiseModel {
     /// the device runtime, which are provided as MeasCrosstalkLocalPayload instructions.
     p_meas_crosstalk_local: f64,
 
-    /// Transition probabilities on the event of local crosstalk error
-    p_meas_crosstalk_local_model: CrosstalkWeightedSampler,
+    /// Transition probabilities on the event of crosstalk error
+    p_meas_crosstalk_model: CrosstalkWeightedSampler,
 
 
     // --- internally used variables --- //
@@ -666,13 +663,7 @@ impl GeneralNoiseModel {
                 }
 
                 // Apply gates depending on crosstalk transitions
-                let transition_model = match gate_type {
-                    GateType::MeasCrosstalkGlobalPayload => &self.p_meas_crosstalk_global_model,
-                    GateType::MeasCrosstalkLocalPayload => &self.p_meas_crosstalk_local_model,
-                    _ => panic!("Cannot match {gate_type}, this should not be possible")
-                };
-
-                let transition = transition_model.sample_gates(&mut self.rng, qubit, outcome);
+                let transition = self.p_meas_crosstalk_model.sample_gates(&mut self.rng, qubit, outcome);
                 if transition.has_leakage() {
                     if let Some(gate) = self.leak(qubit) {
                         builder.add_gate_command(&gate);

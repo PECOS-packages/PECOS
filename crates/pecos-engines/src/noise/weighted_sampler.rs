@@ -353,7 +353,7 @@ pub struct CrosstalkWeightedSampler {
 impl CrosstalkWeightedSampler {
     /// Create a new crosstalk sampler from a weighted map
     ///
-    /// Valid keys are: "0->1", "0->L", "1->0", "1->L"
+    /// Valid keys are: "0->0", "0->1", "0->L", "1->1", "1->0", "1->L"
     ///
     /// # Panics
     /// - If the weighted map contains invalid keys
@@ -366,8 +366,8 @@ impl CrosstalkWeightedSampler {
         Self::validate_crosstalk_keys(weighted_map);
 
         // Separate the 0->* components from the 1->* components
-        const KEYS_FROM_0: [&str; 2] = ["0->1", "0->L"];
-        const KEYS_FROM_1: [&str; 2] = ["1->0", "1->L"];
+        const KEYS_FROM_0: [&str; 3] = ["0->0", "0->1", "0->L"];
+        const KEYS_FROM_1: [&str; 3] = ["1->1", "1->0", "1->L"];
         let weighted_map_from_0 = KEYS_FROM_0.into_iter().filter_map(
             |key| match weighted_map.get(key) {
                 Some(&val) => Some((key.to_string(), val)),
@@ -388,7 +388,7 @@ impl CrosstalkWeightedSampler {
     }
 
     fn validate_crosstalk_keys(weighted_map: &BTreeMap<String, f64>) {
-        const VALID_KEYS: [&str; 4] = ["0->1", "0->L", "1->0", "1->L"];
+        const VALID_KEYS: [&str; 6] = ["0->0", "0->1", "0->L", "1->1", "1->0", "1->L"];
 
         for key in weighted_map.keys() {
             assert!(
@@ -400,7 +400,7 @@ impl CrosstalkWeightedSampler {
 
     /// Get a reference to the normalized weighted map, for keys 0->* or 1->*
     #[must_use]
-    pub fn get_weighted_map(&self, from_state: u8) -> &BTreeMap<String, f64> {
+    pub fn get_weighted_map(&self, from_state: u32) -> &BTreeMap<String, f64> {
         assert!(from_state == 0 || from_state == 1);
         if from_state == 0 {
             self.sampler_from_0.get_weighted_map()
@@ -429,13 +429,17 @@ impl CrosstalkWeightedSampler {
         let key = self.sample_keys(rng, from_state);
 
         match key.as_str() {
-            "0->L" | "1->L" => SingleQubitNoiseResult {
+            "0->0" | "1->1" => SingleQubitNoiseResult {
                 gate: None,
-                qubit_leaked: true,
+                qubit_leaked: false,
             },
             "0->1" | "1->0" => SingleQubitNoiseResult {
                 gate: Some(Gate::x(&[qubit])),
                 qubit_leaked: false,
+            },
+            "0->L" | "1->L" => SingleQubitNoiseResult {
+                gate: None,
+                qubit_leaked: true,
             },
             _ => panic!(
                 "CrosstalkWeightedSampler: invalid key '{key}'"

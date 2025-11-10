@@ -23,9 +23,8 @@ from __future__ import annotations
 from itertools import combinations, product
 from typing import TYPE_CHECKING
 
-import numpy as np
-
 from pecos import circuits
+from pecos.num import floor
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
@@ -70,7 +69,7 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
     data_qudits = qecc.data_qudit_set
     qudits = qecc.qudit_set
 
-    t = int(np.floor((qecc.distance - 1) * 0.5))
+    t = int(floor((qecc.distance - 1) * 0.5))
 
     # circuit runner:
     circ_runner = Standard()

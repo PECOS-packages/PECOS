@@ -23,9 +23,8 @@ import os
 import struct
 from typing import TYPE_CHECKING
 
-from pecos_rslib.num import random
-
 from pecos.misc.std_output import StdOutput
+from pecos.num import random
 
 if TYPE_CHECKING:
     from typing import Any

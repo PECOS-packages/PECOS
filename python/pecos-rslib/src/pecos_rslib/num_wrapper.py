@@ -31,7 +31,7 @@ def mean(a: ArrayLike, axis: int | None = None) -> float | np.ndarray:
         an array of means.
 
     Examples:
-        >>> from pecos_rslib.num import mean
+        >>> from pecos.num import mean
         >>>
         >>> # 1D array - simple mean
         >>> mean([1.0, 2.0, 3.0, 4.0, 5.0])
@@ -103,7 +103,7 @@ def std(a: ArrayLike, axis: int | None = None, ddof: int = 0) -> float | np.ndar
         Otherwise returns an array of standard deviations.
 
     Examples:
-        >>> from pecos_rslib.num import std
+        >>> from pecos.num import std
         >>>
         >>> # 1D array - population std
         >>> values = [1.0, 2.0, 3.0, 4.0, 5.0]
@@ -175,7 +175,7 @@ def power(x1: ArrayLike, x2: ArrayLike) -> float | np.ndarray:
         Otherwise returns an array with broadcasting applied.
 
     Examples:
-        >>> from pecos_rslib.num import power
+        >>> from pecos.num import power
         >>>
         >>> # Scalar inputs
         >>> power(2.0, 3.0)
@@ -201,7 +201,7 @@ def power(x1: ArrayLike, x2: ArrayLike) -> float | np.ndarray:
 
     # Check if both are scalars
     if arr1.ndim == 0 and arr2.ndim == 0:
-        return _num_core.power(float(arr1), float(arr2))
+        return _rust_power(float(arr1), float(arr2))
 
     # Use numpy broadcasting for array operations
     # For arrays, use our Rust implementation element-wise
@@ -217,10 +217,7 @@ def power(x1: ArrayLike, x2: ArrayLike) -> float | np.ndarray:
 
     # Compute using Rust implementation
     result = np.array(
-        [
-            _num_core.power(float(b), float(e))
-            for b, e in zip(flat1, flat2, strict=False)
-        ]
+        [_rust_power(float(b), float(e)) for b, e in zip(flat1, flat2, strict=False)]
     )
 
     # Reshape to result shape
@@ -240,7 +237,7 @@ def sqrt(x: ArrayLike) -> float | np.ndarray:
         Otherwise returns an array.
 
     Examples:
-        >>> from pecos_rslib.num import sqrt
+        >>> from pecos.num import sqrt
         >>>
         >>> # Scalar input
         >>> sqrt(4.0)
@@ -260,13 +257,13 @@ def sqrt(x: ArrayLike) -> float | np.ndarray:
 
     # Check if scalar
     if arr.ndim == 0:
-        return _num_core.sqrt(float(arr))
+        return _rust_sqrt(float(arr))
 
     # For arrays, use our Rust implementation element-wise
     flat = arr.ravel()
 
     # Compute using Rust implementation
-    result = np.array([_num_core.sqrt(float(val)) for val in flat])
+    result = np.array([_rust_sqrt(float(val)) for val in flat])
 
     # Reshape to original shape
     return result.reshape(arr.shape) if arr.shape else float(result)
@@ -277,18 +274,67 @@ brentq = _num_core.brentq
 newton = _num_core.newton
 polyfit = _num_core.polyfit
 curve_fit = _num_core.curve_fit
+# Direct imports from Rust (clean names - no _poly suffix!)
+# These are used internally by wrapper functions
+_rust_exp = _num_core.math.exp
+_rust_sqrt = _num_core.math.sqrt
+_rust_power = _num_core.math.power
+_rust_cos = _num_core.math.cos
+_rust_sin = _num_core.math.sin
+_rust_isnan = _num_core.compare.isnan
+_rust_isclose = _num_core.compare.isclose
+
+# Direct exports that don't need wrappers
 Poly1d = _num_core.Poly1d
 diag = _num_core.diag
 linspace = _num_core.linspace
+floor = _num_core.floor
+ceil = _num_core.ceil
+round = _num_core.round
+
+# Re-export functions that don't have Python wrappers
+exp = _rust_exp
+cos = _rust_cos
+sin = _rust_sin
+isnan = _rust_isnan
+isclose = _rust_isclose
+
+# Mathematical constants - drop-in replacements for numpy.pi, math.pi, etc.
+pi = _num_core.pi
+tau = _num_core.tau
+e = _num_core.e
+FRAC_PI_2 = _num_core.FRAC_PI_2
+FRAC_PI_3 = _num_core.FRAC_PI_3
+FRAC_PI_4 = _num_core.FRAC_PI_4
+FRAC_PI_6 = _num_core.FRAC_PI_6
+FRAC_PI_8 = _num_core.FRAC_PI_8
+FRAC_1_PI = _num_core.FRAC_1_PI
+FRAC_2_PI = _num_core.FRAC_2_PI
+FRAC_2_SQRT_PI = _num_core.FRAC_2_SQRT_PI
+SQRT_2 = _num_core.SQRT_2
+FRAC_1_SQRT_2 = _num_core.FRAC_1_SQRT_2
+LN_2 = _num_core.LN_2
+LN_10 = _num_core.LN_10
+LOG2_E = _num_core.LOG2_E
+LOG10_E = _num_core.LOG10_E
 
 # Re-export the random submodule
 random = _num_core.random
 
 
 __all__ = [
+    # Functions
     "mean",
     "power",
     "sqrt",
+    "exp",
+    "isnan",
+    "cos",
+    "sin",
+    "floor",
+    "ceil",
+    "round",
+    "isclose",
     "std",
     "brentq",
     "newton",
@@ -297,5 +343,24 @@ __all__ = [
     "Poly1d",
     "diag",
     "linspace",
+    # Constants
+    "pi",
+    "tau",
+    "e",
+    "FRAC_PI_2",
+    "FRAC_PI_3",
+    "FRAC_PI_4",
+    "FRAC_PI_6",
+    "FRAC_PI_8",
+    "FRAC_1_PI",
+    "FRAC_2_PI",
+    "FRAC_2_SQRT_PI",
+    "SQRT_2",
+    "FRAC_1_SQRT_2",
+    "LN_2",
+    "LN_10",
+    "LOG2_E",
+    "LOG10_E",
+    # Submodules
     "random",
 ]

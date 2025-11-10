@@ -16,6 +16,7 @@ import pytest
 
 pytest.importorskip("pecos_rslib", reason="pecos_rslib required for qulacs tests")
 
+from pecos.num import pi
 from pecos.simulators.qulacs import Qulacs
 
 
@@ -30,9 +31,9 @@ class TestQulacsBasic:
         # Check initial state is |000⟩
         state = sim.vector
         assert state.shape == (8,)
-        assert np.isclose(np.abs(state[0]) ** 2, 1.0)
+        assert np.isclose(np.abs(state[0]) ** 2, 1.0, rtol=1e-5, atol=1e-8)
         for i in range(1, 8):
-            assert np.isclose(np.abs(state[i]) ** 2, 0.0)
+            assert np.isclose(np.abs(state[i]) ** 2, 0.0, rtol=1e-5, atol=1e-8)
 
     def test_initialization_with_seed(self) -> None:
         """Test simulator initialization with deterministic seed."""
@@ -119,43 +120,43 @@ class TestQulacsSingleQubitGates:
         expected_phase = 1j
         state = sim.vector
         phase_ratio = state[1] / state[0]
-        assert np.isclose(phase_ratio, expected_phase, atol=1e-10)
+        assert np.isclose(phase_ratio, expected_phase, rtol=0.0, atol=1e-10)
 
         # Test T gate
         sim.reset()
         sim.bindings["H"](sim, 0)
         sim.bindings["T"](sim, 0)
         state = sim.vector
-        expected_t_phase = np.exp(1j * np.pi / 4)
+        expected_t_phase = np.exp(1j * pi / 4)
         phase_ratio = state[1] / state[0]
-        assert np.isclose(phase_ratio, expected_t_phase, atol=1e-10)
+        assert np.isclose(phase_ratio, expected_t_phase, rtol=0.0, atol=1e-10)
 
     def test_rotation_gates(self) -> None:
         """Test rotation gates RX, RY, RZ."""
         sim = Qulacs(1)
 
         # Test RX(π) = -iX
-        sim.bindings["RX"](sim, 0, angle=np.pi)
+        sim.bindings["RX"](sim, 0, angle=pi)
         state = sim.vector
-        assert np.isclose(state[0], 0, atol=1e-10)
-        assert np.isclose(state[1], -1j, atol=1e-10)
+        assert np.isclose(state[0], 0, rtol=0.0, atol=1e-10)
+        assert np.isclose(state[1], -1j, rtol=0.0, atol=1e-10)
 
         # Test RY(π/2) creates equal superposition
         sim.reset()
-        sim.bindings["RY"](sim, 0, angle=np.pi / 2)
+        sim.bindings["RY"](sim, 0, angle=pi / 2)
         state = sim.vector
-        assert np.isclose(np.abs(state[0]), 1 / np.sqrt(2), atol=1e-10)
-        assert np.isclose(np.abs(state[1]), 1 / np.sqrt(2), atol=1e-10)
+        assert np.isclose(np.abs(state[0]), 1 / np.sqrt(2), rtol=0.0, atol=1e-10)
+        assert np.isclose(np.abs(state[1]), 1 / np.sqrt(2), rtol=0.0, atol=1e-10)
 
         # Test RZ(π) on |+⟩
         sim.reset()
         sim.bindings["H"](sim, 0)  # Create |+⟩
-        sim.bindings["RZ"](sim, 0, angle=np.pi)
+        sim.bindings["RZ"](sim, 0, angle=pi)
         sim.bindings["H"](sim, 0)  # Should give |1⟩ (possibly with phase)
         state = sim.vector
         # Check that qubit is effectively in |1⟩ state (allowing for global phase)
-        assert np.isclose(np.abs(state[0]), 0, atol=1e-10)
-        assert np.isclose(np.abs(state[1]), 1, atol=1e-10)
+        assert np.isclose(np.abs(state[0]), 0, rtol=0.0, atol=1e-10)
+        assert np.isclose(np.abs(state[1]), 1, rtol=0.0, atol=1e-10)
 
 
 class TestQulacsTwoQubitGates:
@@ -293,7 +294,7 @@ class TestQulacsCompatibility:
 
         # Should be normalized
         norm = np.sum(np.abs(state) ** 2)
-        assert np.isclose(norm, 1.0)
+        assert np.isclose(norm, 1.0, rtol=1e-5, atol=1e-8)
 
         # Should support numpy operations
         probabilities = np.abs(state) ** 2
@@ -327,14 +328,14 @@ class TestQulacsAdvanced:
         # Apply various gates
         sim.bindings["H"](sim, 0)
         sim.bindings["CX"](sim, 0, 1)
-        sim.bindings["RY"](sim, 2, angle=np.pi / 4)
+        sim.bindings["RY"](sim, 2, angle=pi / 4)
         sim.bindings["CZ"](sim, 1, 2)
         sim.bindings["T"](sim, 0)
 
         # Check normalization
         state = sim.vector
         norm_squared = np.sum(np.abs(state) ** 2)
-        assert np.isclose(norm_squared, 1.0, atol=1e-10)
+        assert np.isclose(norm_squared, 1.0, rtol=0.0, atol=1e-10)
 
     def test_gate_reversibility(self) -> None:
         """Test that gates are properly reversible."""

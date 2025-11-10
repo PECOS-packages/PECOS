@@ -27,4 +27,29 @@ pub use crate::polynomial::{Poly1d, PolynomialError, polyfit, polyfit_with_cov};
 pub use crate::random;
 
 // Re-export statistical functions
-pub use crate::stats::{diag, linspace, mean, power, sqrt, std};
+pub use crate::stats::{mean, mean_axis, std, std_axis};
+
+// Re-export mathematical functions
+pub use crate::math::{
+    ceil, cos, cos_array, exp, exp_array, exp_complex, exp_complex_array, floor, power,
+    power_array, round, sin, sin_array, sqrt, sqrt_array,
+};
+
+// Re-export mathematical traits
+pub use crate::math::{Cos, Exp, Power, Sin, Sqrt};
+
+// Re-export comparison traits
+pub use crate::compare::{IsClose, IsNan};
+
+// Re-export ndarray for convenience
+pub use ndarray::{Array, Array1, Array2, ArrayBase, Axis, Ix1, Ix2, IxDyn, array};
+pub use num_complex::Complex64;
+
+// Re-export array operations
+pub use crate::array::{diag, linspace};
+
+// Re-export mathematical constants
+pub use crate::math::{
+    E, FRAC_1_PI, FRAC_1_SQRT_2, FRAC_2_PI, FRAC_2_SQRT_PI, FRAC_PI_2, FRAC_PI_3, FRAC_PI_4,
+    FRAC_PI_6, FRAC_PI_8, LN_2, LN_10, LOG2_E, LOG10_E, PI, SQRT_2, TAU,
+};

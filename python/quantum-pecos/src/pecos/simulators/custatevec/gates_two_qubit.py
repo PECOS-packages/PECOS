@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from pecos.typing import SimulatorGateParams
 from cuquantum.bindings import custatevec as cusv
 
+from pecos.num import pi
 from pecos.simulators.custatevec.gates_one_qubit import H
 
 
@@ -350,7 +351,7 @@ def SXX(
         state: An instance of CuStateVec
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RXX(state, qubits, angles=(math.pi / 2,))
+    RXX(state, qubits, angles=(pi / 2,))
 
 
 def SXXdg(
@@ -364,7 +365,7 @@ def SXXdg(
         state: An instance of CuStateVec
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RXX(state, qubits, angles=(-math.pi / 2,))
+    RXX(state, qubits, angles=(-pi / 2,))
 
 
 def SYY(
@@ -378,7 +379,7 @@ def SYY(
         state: An instance of CuStateVec
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RYY(state, qubits, angles=(math.pi / 2,))
+    RYY(state, qubits, angles=(pi / 2,))
 
 
 def SYYdg(
@@ -392,7 +393,7 @@ def SYYdg(
         state: An instance of CuStateVec
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RYY(state, qubits, angles=(-math.pi / 2,))
+    RYY(state, qubits, angles=(-pi / 2,))
 
 
 def SZZ(
@@ -406,7 +407,7 @@ def SZZ(
         state: An instance of CuStateVec
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RZZ(state, qubits, angles=(math.pi / 2,))
+    RZZ(state, qubits, angles=(pi / 2,))
 
 
 def SZZdg(
@@ -420,7 +421,7 @@ def SZZdg(
         state: An instance of CuStateVec
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RZZ(state, qubits, angles=(-math.pi / 2,))
+    RZZ(state, qubits, angles=(-pi / 2,))
 
 
 def SWAP(

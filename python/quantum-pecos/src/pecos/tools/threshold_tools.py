@@ -24,7 +24,6 @@ import contextlib
 from typing import TYPE_CHECKING
 
 import numpy as np
-from pecos_rslib.num import mean
 
 from pecos import circuits
 from pecos.decoders import MWPM2D
@@ -32,6 +31,7 @@ from pecos.engines import circuit_runners
 from pecos.error_models import XModel
 from pecos.misc.threshold_curve import func as default_func
 from pecos.misc.threshold_curve import threshold_fit as default_fit
+from pecos.num import mean
 from pecos.qeccs import Surface4444
 from pecos.simulators import SparseSimPy
 

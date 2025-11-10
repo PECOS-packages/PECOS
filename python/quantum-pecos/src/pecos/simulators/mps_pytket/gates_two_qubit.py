@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 import cupy as cp
 from pytket import Qubit
 
+from pecos.num import pi
 from pecos.simulators.mps_pytket.gates_one_qubit import H
 
 
@@ -232,7 +233,7 @@ def SXX(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> 
         state: An instance of MPS
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RXX(state, qubits, angles=(math.pi / 2,))
+    RXX(state, qubits, angles=(pi / 2,))
 
 
 def SXXdg(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
@@ -242,7 +243,7 @@ def SXXdg(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -
         state: An instance of MPS
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RXX(state, qubits, angles=(-math.pi / 2,))
+    RXX(state, qubits, angles=(-pi / 2,))
 
 
 def SYY(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
@@ -252,7 +253,7 @@ def SYY(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> 
         state: An instance of MPS
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RYY(state, qubits, angles=(math.pi / 2,))
+    RYY(state, qubits, angles=(pi / 2,))
 
 
 def SYYdg(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
@@ -262,7 +263,7 @@ def SYYdg(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -
         state: An instance of MPS
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RYY(state, qubits, angles=(-math.pi / 2,))
+    RYY(state, qubits, angles=(-pi / 2,))
 
 
 def SZZ(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
@@ -272,7 +273,7 @@ def SZZ(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> 
         state: An instance of MPS
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RZZ(state, qubits, angles=(math.pi / 2,))
+    RZZ(state, qubits, angles=(pi / 2,))
 
 
 def SZZdg(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
@@ -282,7 +283,7 @@ def SZZdg(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -
         state: An instance of MPS
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RZZ(state, qubits, angles=(-math.pi / 2,))
+    RZZ(state, qubits, angles=(-pi / 2,))
 
 
 def SWAP(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:

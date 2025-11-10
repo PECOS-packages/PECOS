@@ -17,8 +17,11 @@
 //! This module provides drop-in replacements for scipy.optimize functions,
 //! implemented in Rust for better performance and easier deployment.
 
-use numpy::ndarray::Array1;
-use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
+use num_complex::Complex64;
+use numpy::ndarray::{Array1, IxDyn};
+use numpy::{PyArray, PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
+use pyo3::conversion::IntoPyObjectExt;
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
@@ -959,63 +962,279 @@ fn mean(values: Vec<f64>) -> f64 {
     pecos::prelude::mean(&values)
 }
 
-/// Calculate the power of a base raised to an exponent.
+/// Check if a value is NaN (Not a Number).
 ///
-/// Drop-in replacement for `numpy.power()` for scalar values.
+/// Drop-in replacement for `numpy.isnan()` for scalar values.
+///
+/// Args:
+///     x (float): Input value to check
+///
+/// Returns:
+///     bool: True if x is NaN, False otherwise
+///
+/// Examples:
+///     >>> from `pecos_rslib`._`pecos_rslib` import num
+///     >>> num.isnan(float('nan'))
+///     True
+///     >>> num.isnan(0.0)
+///     False
+///     >>> num.isnan(1.0)
+///     False
+///     >>> num.isnan(float('inf'))
+///     False
+///
+///     Error checking (curve fitting validation):
+///     >>> result = 0.0 / 0.0  # doctest: +SKIP
+///     >>> if num.isnan(result):  # doctest: +SKIP
+///     ...     print("Invalid computation")  # doctest: +SKIP
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)] // Bound is designed to be passed by value (PyO3 convention)
+fn isnan(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    use pecos::prelude::IsNan;
+
+    // Try scalar float
+    if let Ok(val) = x.extract::<f64>() {
+        let result = val.isnan();
+        return Ok(result.into_py_any(py).unwrap());
+    }
+
+    // Try complex scalar
+    if let Ok(val) = x.extract::<Complex64>() {
+        let result = val.isnan();
+        return Ok(result.into_py_any(py).unwrap());
+    }
+
+    // Try float array
+    if let Ok(arr) = x.cast::<PyArray<f64, IxDyn>>() {
+        let result = arr.try_readonly()?.as_array().isnan();
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+
+    // Try complex array
+    if let Ok(arr) = x.cast::<PyArray<Complex64, IxDyn>>() {
+        let result = arr.try_readonly()?.as_array().isnan();
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+
+    Err(PyTypeError::new_err(
+        "isnan() argument must be float, complex, or numpy array of float/complex",
+    ))
+}
+
+/// Return the floor of x as a float.
+///
+/// Drop-in replacement for `numpy.floor()` for scalar values.
 ///
 /// # Arguments
 ///
-/// * `base` - The base value
-/// * `exponent` - The exponent value
+/// * `x` - Input value
 ///
 /// # Returns
 ///
-/// The result of base^exponent as f64
+/// The largest integer value less than or equal to x, as f64
 ///
 /// # Examples
 ///
 /// ```python
-/// from pecos_rslib.num import power
+/// from pecos_rslib.num import floor
 ///
-/// # Basic integer power
-/// result = power(2.0, 3.0)  # Returns 8.0
+/// # Basic usage
+/// floor(3.7)   # Returns 3.0
+/// floor(-3.7)  # Returns -4.0
 ///
-/// # Fractional power (square root)
-/// result = power(4.0, 0.5)  # Returns 2.0
-///
-/// # Threshold curve use case
-/// dist = 5.0
-/// v0 = 2.0
-/// result = power(dist, 1.0 / v0)
+/// # Fault tolerance threshold calculation
+/// d = 5
+/// t = floor((d - 1) / 2)  # Returns 2.0
 /// ```
 #[pyfunction]
-fn power(base: f64, exponent: f64) -> f64 {
-    pecos::prelude::power(base, exponent)
+fn floor(x: f64) -> f64 {
+    pecos::prelude::floor(x)
 }
 
-/// Calculate the square root of a value.
+/// Return the ceiling of x as a float.
 ///
-/// Drop-in replacement for `numpy.sqrt()` for scalar values.
+/// Drop-in replacement for `numpy.ceil()` for scalar values.
 ///
-/// Args:
-///     x (float): Input value
+/// # Arguments
 ///
-/// Returns:
-///     float: The square root of x
+/// * `x` - Input value
 ///
-/// Examples:
-///     >>> from `pecos_rslib`._`pecos_rslib` import num
-///     >>> num.sqrt(4.0)
-///     2.0
-///     >>> num.sqrt(9.0)
-///     3.0
+/// # Returns
 ///
-///     Variance to standard deviation:
-///     >>> variance = 2.0
-///     >>> std_dev = num.sqrt(variance)
+/// The smallest integer value greater than or equal to x, as f64
+///
+/// # Examples
+///
+/// ```python
+/// from pecos_rslib.num import ceil
+///
+/// # Basic usage
+/// ceil(3.2)   # Returns 4.0
+/// ceil(-3.2)  # Returns -3.0
+/// ```
 #[pyfunction]
-fn sqrt(x: f64) -> f64 {
-    pecos::prelude::sqrt(x)
+fn ceil(x: f64) -> f64 {
+    pecos::prelude::ceil(x)
+}
+
+/// Round a number to the nearest integer as a float.
+///
+/// Drop-in replacement for `numpy.round()` for scalar values (with default decimals=0).
+/// Uses "round half to even" (banker's rounding) to match numpy behavior exactly.
+///
+/// # Arguments
+///
+/// * `x` - Input value
+///
+/// # Returns
+///
+/// The rounded value, as f64
+///
+/// # Examples
+///
+/// ```python
+/// from pecos_rslib.num import round
+///
+/// # Basic usage
+/// round(3.7)   # Returns 4.0
+/// round(3.2)   # Returns 3.0
+///
+/// # Round half to even (banker's rounding)
+/// round(2.5)   # Returns 2.0 (even)
+/// round(3.5)   # Returns 4.0 (even)
+/// ```
+#[pyfunction]
+fn round(x: f64) -> f64 {
+    pecos::prelude::round(x)
+}
+
+/// Returns True if two values are element-wise equal within a tolerance.
+///
+/// Drop-in replacement for `numpy.isclose()` for scalar values.
+///
+/// # Arguments
+///
+/// * `a` - First input value
+/// * `b` - Second input value
+/// * `rtol` - Relative tolerance parameter (default: 1e-5)
+/// * `atol` - Absolute tolerance parameter (default: 1e-8)
+///
+/// # Returns
+///
+/// True if the values are close within the specified tolerances, False otherwise
+///
+/// # Examples
+///
+/// ```python
+/// from pecos_rslib.num import isclose
+///
+/// # Basic usage with defaults
+/// isclose(1.0, 1.0)                           # Returns True (uses default tolerances)
+/// isclose(1.0, 1.00001)                       # Returns True (within default tolerance)
+/// isclose(1.0, 1.1)                           # Returns False
+///
+/// # Custom tolerances
+/// isclose(1.0, 1.00001, rtol=1e-4, atol=1e-8) # Returns True
+/// isclose(1.0, 1.1, rtol=1e-5, atol=1e-8)     # Returns False
+///
+/// # Quantum gate angle comparison (tight tolerance)
+/// import math
+/// theta = math.pi / 2.0
+/// isclose(theta, math.pi / 2.0, rtol=0.0, atol=1e-12)  # Returns True
+/// ```
+#[pyfunction]
+#[pyo3(signature = (a, b, rtol=1e-5, atol=1e-8))]
+#[allow(clippy::needless_pass_by_value)] // Bound is designed to be passed by value (PyO3 convention)
+fn isclose(
+    py: Python<'_>,
+    a: Bound<'_, PyAny>,
+    b: Bound<'_, PyAny>,
+    rtol: f64,
+    atol: f64,
+) -> PyResult<Py<PyAny>> {
+    use pecos::prelude::IsClose;
+
+    // Try scalar floats
+    if let (Ok(a_val), Ok(b_val)) = (a.extract::<f64>(), b.extract::<f64>()) {
+        let result = a_val.isclose(&b_val, rtol, atol);
+        return Ok(result.into_py_any(py).unwrap());
+    }
+
+    // Try complex scalars (both complex)
+    if let (Ok(a_val), Ok(b_val)) = (a.extract::<Complex64>(), b.extract::<Complex64>()) {
+        let result = a_val.isclose(&b_val, rtol, atol);
+        return Ok(result.into_py_any(py).unwrap());
+    }
+
+    // Handle mixed complex/float scalars - promote float to complex
+    if let (Ok(a_val), Ok(b_val)) = (a.extract::<Complex64>(), b.extract::<f64>()) {
+        let b_complex = Complex64::new(b_val, 0.0);
+        let result = a_val.isclose(&b_complex, rtol, atol);
+        return Ok(result.into_py_any(py).unwrap());
+    }
+    if let (Ok(a_val), Ok(b_val)) = (a.extract::<f64>(), b.extract::<Complex64>()) {
+        let a_complex = Complex64::new(a_val, 0.0);
+        let result = a_complex.isclose(&b_val, rtol, atol);
+        return Ok(result.into_py_any(py).unwrap());
+    }
+
+    // Try float arrays
+    if let (Ok(a_arr), Ok(b_arr)) = (
+        a.cast::<PyArray<f64, IxDyn>>(),
+        b.cast::<PyArray<f64, IxDyn>>(),
+    ) {
+        let a_readonly = a_arr.try_readonly()?;
+        let b_readonly = b_arr.try_readonly()?;
+        let result = a_readonly
+            .as_array()
+            .isclose(&b_readonly.as_array(), rtol, atol);
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+
+    // Try complex arrays
+    if let (Ok(a_arr), Ok(b_arr)) = (
+        a.cast::<PyArray<Complex64, IxDyn>>(),
+        b.cast::<PyArray<Complex64, IxDyn>>(),
+    ) {
+        let a_readonly = a_arr.try_readonly()?;
+        let b_readonly = b_arr.try_readonly()?;
+        let result = a_readonly
+            .as_array()
+            .isclose(&b_readonly.as_array(), rtol, atol);
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+
+    // Handle mixed array types: complex array vs float array
+    if let (Ok(a_arr), Ok(b_arr)) = (
+        a.cast::<PyArray<Complex64, IxDyn>>(),
+        b.cast::<PyArray<f64, IxDyn>>(),
+    ) {
+        let a_readonly = a_arr.try_readonly()?;
+        let b_readonly = b_arr.try_readonly()?;
+
+        // Convert float array to complex
+        let b_complex = b_readonly.as_array().mapv(|x| Complex64::new(x, 0.0));
+        let result = a_readonly.as_array().isclose(&b_complex.view(), rtol, atol);
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+
+    // Handle mixed array types: float array vs complex array
+    if let (Ok(a_arr), Ok(b_arr)) = (
+        a.cast::<PyArray<f64, IxDyn>>(),
+        b.cast::<PyArray<Complex64, IxDyn>>(),
+    ) {
+        let a_readonly = a_arr.try_readonly()?;
+        let b_readonly = b_arr.try_readonly()?;
+
+        // Convert float array to complex
+        let a_complex = a_readonly.as_array().mapv(|x| Complex64::new(x, 0.0));
+        let result = a_complex.view().isclose(&b_readonly.as_array(), rtol, atol);
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+
+    Err(PyTypeError::new_err(
+        "isclose() arguments must be float, complex, or numpy arrays of float/complex",
+    ))
 }
 
 /// Calculate the standard deviation of values.
@@ -1114,29 +1333,210 @@ fn diag(py: Python<'_>, matrix: PyReadonlyArray2<f64>) -> Py<PyArray1<f64>> {
 /// ```
 #[pyfunction]
 #[pyo3(signature = (start, stop, num=50, endpoint=true))]
-fn linspace(py: Python<'_>, start: f64, stop: f64, num: usize, endpoint: bool) -> Py<PyArray1<f64>> {
+fn linspace(
+    py: Python<'_>,
+    start: f64,
+    stop: f64,
+    num: usize,
+    endpoint: bool,
+) -> Py<PyArray1<f64>> {
     let result = pecos::prelude::linspace(start, stop, num, endpoint);
     PyArray1::from_array(py, &result).unbind()
+}
+
+// ============================================================================
+// Array and Complex Number Support
+// ============================================================================
+
+// ============================================================================
+// Math Functions (polymorphic - handle scalars, complex, and arrays)
+// ============================================================================
+
+/// Calculate exponential (e^x).
+///
+/// Handles scalars (float), complex numbers, and arrays automatically.
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)] // Bound is designed to be passed by value (PyO3 convention)
+fn exp(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    use pecos::prelude::Exp;
+
+    if let Ok(val) = x.extract::<f64>() {
+        return Ok(val.exp().into_py_any(py).unwrap());
+    }
+    if let Ok(val) = x.extract::<Complex64>() {
+        return Ok(val.exp().into_py_any(py).unwrap());
+    }
+    if let Ok(arr) = x.cast::<PyArray<f64, IxDyn>>() {
+        let result = arr.try_readonly()?.as_array().exp();
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+    if let Ok(arr) = x.cast::<PyArray<Complex64, IxDyn>>() {
+        let result = arr.try_readonly()?.as_array().exp();
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+    Err(PyTypeError::new_err(
+        "exp() argument must be float, complex, or array",
+    ))
+}
+
+/// Calculate square root.
+///
+/// Handles scalars (float) and arrays automatically.
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)] // Bound is designed to be passed by value (PyO3 convention)
+fn sqrt(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    // Import trait to enable .sqrt() method
+    #[allow(unused_imports)]
+    use pecos::prelude::Sqrt;
+
+    if let Ok(val) = x.extract::<f64>() {
+        return Ok(val.sqrt().into_py_any(py).unwrap());
+    }
+    if let Ok(arr) = x.cast::<PyArray<f64, IxDyn>>() {
+        let result = arr.try_readonly()?.as_array().sqrt();
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+    Err(PyTypeError::new_err(
+        "sqrt() argument must be float or array",
+    ))
+}
+
+/// Calculate base raised to exponent.
+///
+/// Handles scalars (float) and arrays automatically.
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)] // Bound is designed to be passed by value (PyO3 convention)
+fn power(py: Python<'_>, base: Bound<'_, PyAny>, exponent: f64) -> PyResult<Py<PyAny>> {
+    use pecos::prelude::Power;
+
+    if let Ok(val) = base.extract::<f64>() {
+        return Ok(val.power(exponent).into_py_any(py).unwrap());
+    }
+    if let Ok(arr) = base.cast::<PyArray<f64, IxDyn>>() {
+        let result = arr.try_readonly()?.as_array().power(exponent);
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+    Err(PyTypeError::new_err("power() base must be float or array"))
+}
+
+/// Calculate cosine (input in radians).
+///
+/// Handles scalars (float) and arrays automatically.
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)] // Bound is designed to be passed by value (PyO3 convention)
+fn cos(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    // Import trait to enable .cos() method
+    #[allow(unused_imports)]
+    use pecos::prelude::Cos;
+
+    if let Ok(val) = x.extract::<f64>() {
+        return Ok(val.cos().into_py_any(py).unwrap());
+    }
+    if let Ok(arr) = x.cast::<PyArray<f64, IxDyn>>() {
+        let result = arr.try_readonly()?.as_array().cos();
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+    Err(PyTypeError::new_err(
+        "cos() argument must be float or array",
+    ))
+}
+
+/// Calculate sine (input in radians).
+///
+/// Handles scalars (float) and arrays automatically.
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)] // Bound is designed to be passed by value (PyO3 convention)
+fn sin(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    // Import trait to enable .sin() method
+    #[allow(unused_imports)]
+    use pecos::prelude::Sin;
+
+    if let Ok(val) = x.extract::<f64>() {
+        return Ok(val.sin().into_py_any(py).unwrap());
+    }
+    if let Ok(arr) = x.cast::<PyArray<f64, IxDyn>>() {
+        let result = arr.try_readonly()?.as_array().sin();
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+    Err(PyTypeError::new_err(
+        "sin() argument must be float or array",
+    ))
 }
 
 /// Register the num submodule with Python bindings.
 pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let num_module = PyModule::new(m.py(), "num")?;
 
-    // Add optimization functions
-    num_module.add_function(wrap_pyfunction!(brentq, &num_module)?)?;
-    num_module.add_function(wrap_pyfunction!(newton, &num_module)?)?;
-    num_module.add_function(wrap_pyfunction!(polyfit, &num_module)?)?;
-    num_module.add_function(wrap_pyfunction!(curve_fit, &num_module)?)?;
-    num_module.add_class::<Poly1d>()?;
+    // Create stats submodule
+    let stats_module = PyModule::new(m.py(), "stats")?;
+    stats_module.add_function(wrap_pyfunction!(mean, &stats_module)?)?;
+    stats_module.add_function(wrap_pyfunction!(self::std, &stats_module)?)?;
+    num_module.add_submodule(&stats_module)?;
 
-    // Add statistical functions
-    num_module.add_function(wrap_pyfunction!(mean, &num_module)?)?;
-    num_module.add_function(wrap_pyfunction!(power, &num_module)?)?;
-    num_module.add_function(wrap_pyfunction!(sqrt, &num_module)?)?;
-    num_module.add_function(wrap_pyfunction!(self::std, &num_module)?)?;
-    num_module.add_function(wrap_pyfunction!(diag, &num_module)?)?;
-    num_module.add_function(wrap_pyfunction!(linspace, &num_module)?)?;
+    // Create math submodule
+    let math_module = PyModule::new(m.py(), "math")?;
+
+    // Math functions (polymorphic - handle scalars, complex, and arrays automatically)
+    math_module.add_function(wrap_pyfunction!(exp, &math_module)?)?;
+    math_module.add_function(wrap_pyfunction!(sqrt, &math_module)?)?;
+    math_module.add_function(wrap_pyfunction!(power, &math_module)?)?;
+    math_module.add_function(wrap_pyfunction!(cos, &math_module)?)?;
+    math_module.add_function(wrap_pyfunction!(sin, &math_module)?)?;
+
+    // Scalar-only functions
+    math_module.add_function(wrap_pyfunction!(floor, &math_module)?)?;
+    math_module.add_function(wrap_pyfunction!(ceil, &math_module)?)?;
+    math_module.add_function(wrap_pyfunction!(round, &math_module)?)?;
+
+    // Add mathematical constants to math submodule
+    math_module.add("pi", pecos::prelude::PI)?;
+    math_module.add("tau", pecos::prelude::TAU)?;
+    math_module.add("e", pecos::prelude::E)?;
+    math_module.add("FRAC_PI_2", pecos::prelude::FRAC_PI_2)?;
+    math_module.add("FRAC_PI_3", pecos::prelude::FRAC_PI_3)?;
+    math_module.add("FRAC_PI_4", pecos::prelude::FRAC_PI_4)?;
+    math_module.add("FRAC_PI_6", pecos::prelude::FRAC_PI_6)?;
+    math_module.add("FRAC_PI_8", pecos::prelude::FRAC_PI_8)?;
+    math_module.add("FRAC_1_PI", pecos::prelude::FRAC_1_PI)?;
+    math_module.add("FRAC_2_PI", pecos::prelude::FRAC_2_PI)?;
+    math_module.add("FRAC_2_SQRT_PI", pecos::prelude::FRAC_2_SQRT_PI)?;
+    math_module.add("SQRT_2", pecos::prelude::SQRT_2)?;
+    math_module.add("FRAC_1_SQRT_2", pecos::prelude::FRAC_1_SQRT_2)?;
+    math_module.add("LN_2", pecos::prelude::LN_2)?;
+    math_module.add("LN_10", pecos::prelude::LN_10)?;
+    math_module.add("LOG2_E", pecos::prelude::LOG2_E)?;
+    math_module.add("LOG10_E", pecos::prelude::LOG10_E)?;
+    num_module.add_submodule(&math_module)?;
+
+    // Create compare submodule
+    let compare_module = PyModule::new(m.py(), "compare")?;
+    compare_module.add_function(wrap_pyfunction!(isnan, &compare_module)?)?;
+    compare_module.add_function(wrap_pyfunction!(isclose, &compare_module)?)?;
+    // Old separate functions removed - now using polymorphic isnan/isclose
+    num_module.add_submodule(&compare_module)?;
+
+    // Create array submodule
+    let array_module = PyModule::new(m.py(), "array")?;
+    array_module.add_function(wrap_pyfunction!(diag, &array_module)?)?;
+    array_module.add_function(wrap_pyfunction!(linspace, &array_module)?)?;
+    num_module.add_submodule(&array_module)?;
+
+    // Create optimize submodule
+    let optimize_module = PyModule::new(m.py(), "optimize")?;
+    optimize_module.add_function(wrap_pyfunction!(brentq, &optimize_module)?)?;
+    optimize_module.add_function(wrap_pyfunction!(newton, &optimize_module)?)?;
+    num_module.add_submodule(&optimize_module)?;
+
+    // Create polynomial submodule
+    let polynomial_module = PyModule::new(m.py(), "polynomial")?;
+    polynomial_module.add_function(wrap_pyfunction!(polyfit, &polynomial_module)?)?;
+    polynomial_module.add_class::<Poly1d>()?;
+    num_module.add_submodule(&polynomial_module)?;
+
+    // Create curve_fit submodule
+    let curve_fit_module = PyModule::new(m.py(), "curve_fit")?;
+    curve_fit_module.add_function(wrap_pyfunction!(curve_fit, &curve_fit_module)?)?;
+    num_module.add_submodule(&curve_fit_module)?;
 
     // Create random submodule
     let random_module = PyModule::new(m.py(), "random")?;
@@ -1147,6 +1547,61 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     random_module.add_function(wrap_pyfunction!(compare_any, &random_module)?)?;
     random_module.add_function(wrap_pyfunction!(compare_indices, &random_module)?)?;
     num_module.add_submodule(&random_module)?;
+
+    // Expose all functions at the top level
+    // Stats functions
+    num_module.add_function(wrap_pyfunction!(mean, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(self::std, &num_module)?)?;
+
+    // Math functions (polymorphic - handle scalars, complex, and arrays automatically)
+    num_module.add_function(wrap_pyfunction!(exp, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(sqrt, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(power, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(cos, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(sin, &num_module)?)?;
+
+    // Scalar-only math functions
+    num_module.add_function(wrap_pyfunction!(floor, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(ceil, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(round, &num_module)?)?;
+
+    // Comparison functions (polymorphic)
+    num_module.add_function(wrap_pyfunction!(isnan, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(isclose, &num_module)?)?;
+
+    // Array functions
+    num_module.add_function(wrap_pyfunction!(diag, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(linspace, &num_module)?)?;
+
+    // Optimization functions
+    num_module.add_function(wrap_pyfunction!(brentq, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(newton, &num_module)?)?;
+
+    // Polynomial functions
+    num_module.add_function(wrap_pyfunction!(polyfit, &num_module)?)?;
+    num_module.add_class::<Poly1d>()?;
+
+    // Curve fitting
+    num_module.add_function(wrap_pyfunction!(curve_fit, &num_module)?)?;
+
+    // Also expose constants at top level
+    num_module.add("pi", pecos::prelude::PI)?;
+    num_module.add("tau", pecos::prelude::TAU)?;
+    num_module.add("e", pecos::prelude::E)?;
+    num_module.add("FRAC_PI_2", pecos::prelude::FRAC_PI_2)?;
+    num_module.add("FRAC_PI_3", pecos::prelude::FRAC_PI_3)?;
+    num_module.add("FRAC_PI_4", pecos::prelude::FRAC_PI_4)?;
+    num_module.add("FRAC_PI_6", pecos::prelude::FRAC_PI_6)?;
+    num_module.add("FRAC_PI_8", pecos::prelude::FRAC_PI_8)?;
+    num_module.add("FRAC_1_PI", pecos::prelude::FRAC_1_PI)?;
+    num_module.add("FRAC_2_PI", pecos::prelude::FRAC_2_PI)?;
+    num_module.add("FRAC_2_SQRT_PI", pecos::prelude::FRAC_2_SQRT_PI)?;
+    num_module.add("SQRT_2", pecos::prelude::SQRT_2)?;
+    num_module.add("FRAC_1_SQRT_2", pecos::prelude::FRAC_1_SQRT_2)?;
+    num_module.add("LN_2", pecos::prelude::LN_2)?;
+    num_module.add("LN_10", pecos::prelude::LN_10)?;
+    num_module.add("LOG2_E", pecos::prelude::LOG2_E)?;
+    num_module.add("LOG10_E", pecos::prelude::LOG10_E)?;
 
     m.add_submodule(&num_module)?;
     Ok(())

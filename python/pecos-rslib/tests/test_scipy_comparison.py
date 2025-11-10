@@ -9,11 +9,11 @@ import numpy as np
 import pytest
 
 # Import both our implementation and scipy
-from pecos_rslib.num import brentq as pecos_brentq
-from pecos_rslib.num import newton as pecos_newton
-from pecos_rslib.num import curve_fit as pecos_curve_fit
-from pecos_rslib.num import polyfit as pecos_polyfit
-from pecos_rslib.num import Poly1d as PecosPoly1d
+from pecos.num import brentq as pecos_brentq
+from pecos.num import newton as pecos_newton
+from pecos.num import curve_fit as pecos_curve_fit
+from pecos.num import polyfit as pecos_polyfit
+from pecos.num import Poly1d as PecosPoly1d
 
 from scipy.optimize import brentq as scipy_brentq
 from scipy.optimize import newton as scipy_newton

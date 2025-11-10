@@ -1,7 +1,7 @@
 """Testing module for the RNG Model."""
 
 from pecos.engines.cvm.rng_model import RNGModel
-from pecos_rslib.num import random
+from pecos.num import random
 
 
 def test_set_seed() -> None:

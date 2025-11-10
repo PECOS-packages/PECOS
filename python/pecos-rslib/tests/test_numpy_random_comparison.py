@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from pecos_rslib.num import random as pecos_random
+from pecos.num import random as pecos_random
 
 
 class TestRandomComparison:

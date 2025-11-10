@@ -23,12 +23,22 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from pecos_rslib.num import Poly1d, brentq, curve_fit, diag, linspace, newton, polyfit, sqrt
 
 from pecos.decoders import MWPM2D
 from pecos.engines import circuit_runners
 from pecos.error_models import XModel
 from pecos.misc.threshold_curve import func
+from pecos.num import (
+    Poly1d,
+    brentq,
+    curve_fit,
+    diag,
+    isnan,
+    linspace,
+    newton,
+    polyfit,
+    sqrt,
+)
 from pecos.qeccs import Surface4444
 from pecos.tools.threshold_tools import (
     codecapacity_logical_rate,
@@ -230,7 +240,7 @@ def find_uniscalefit(
     stdev = sqrt(var)
 
     for v in var:
-        if np.isnan(v):
+        if isnan(v):
             msg = "Was not able to find a good fit. Suggestion: Use `p0` to specify parameter guess."
             raise Exception(msg)
 

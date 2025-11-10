@@ -20,7 +20,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, Union
 
 import numpy as np
-from pecos_rslib.num import random
 
 from pecos.classical_interpreters.phir_classical_interpreter import (
     PhirClassicalInterpreter,
@@ -28,6 +27,7 @@ from pecos.classical_interpreters.phir_classical_interpreter import (
 from pecos.engines import hybrid_engine_multiprocessing
 from pecos.error_models.error_model import NoErrorModel
 from pecos.machines.generic_machine import GenericMachine
+from pecos.num import random
 from pecos.op_processors.generic_op_processor import GenericOpProc
 from pecos.simulators.quantum_simulator import QuantumSimulator
 

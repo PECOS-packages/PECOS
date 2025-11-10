@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 import cupy as cp
 from pytket import Qubit
 
+from pecos.num import pi
+
 
 def _apply_one_qubit_matrix(state: MPS, qubit: int, matrix: cp.ndarray) -> None:
     """Apply the matrix to the state.
@@ -208,9 +210,9 @@ def R1XY(
     phi = angles[1]
 
     # Gate is equal to RZ(phi-pi/2)*RY(theta)*RZ(-phi+pi/2)
-    RZ(state, qubit, angles=(-phi + math.pi / 2,))
+    RZ(state, qubit, angles=(-phi + pi / 2,))
     RY(state, qubit, angles=(theta,))
-    RZ(state, qubit, angles=(phi - math.pi / 2,))
+    RZ(state, qubit, angles=(phi - pi / 2,))
 
 
 def SX(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -220,7 +222,7 @@ def SX(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of MPS
         qubit: The index of the qubit where the gate is applied
     """
-    RX(state, qubit, angles=(math.pi / 2,))
+    RX(state, qubit, angles=(pi / 2,))
 
 
 def SXdg(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -230,7 +232,7 @@ def SXdg(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of MPS
         qubit: The index of the qubit where the gate is applied
     """
-    RX(state, qubit, angles=(-math.pi / 2,))
+    RX(state, qubit, angles=(-pi / 2,))
 
 
 def SY(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -240,7 +242,7 @@ def SY(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of MPS
         qubit: The index of the qubit where the gate is applied
     """
-    RY(state, qubit, angles=(math.pi / 2,))
+    RY(state, qubit, angles=(pi / 2,))
 
 
 def SYdg(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -250,7 +252,7 @@ def SYdg(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of MPS
         qubit: The index of the qubit where the gate is applied
     """
-    RY(state, qubit, angles=(-math.pi / 2,))
+    RY(state, qubit, angles=(-pi / 2,))
 
 
 def SZ(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -260,7 +262,7 @@ def SZ(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of MPS
         qubit: The index of the qubit where the gate is applied
     """
-    RZ(state, qubit, angles=(math.pi / 2,))
+    RZ(state, qubit, angles=(pi / 2,))
 
 
 def SZdg(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -270,7 +272,7 @@ def SZdg(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of MPS
         qubit: The index of the qubit where the gate is applied
     """
-    RZ(state, qubit, angles=(-math.pi / 2,))
+    RZ(state, qubit, angles=(-pi / 2,))
 
 
 def H(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -301,8 +303,8 @@ def F(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of MPS
         qubit: The index of the qubit where the gate is applied
     """
-    RX(state, qubit, angles=(math.pi / 2,))
-    RZ(state, qubit, angles=(math.pi / 2,))
+    RX(state, qubit, angles=(pi / 2,))
+    RZ(state, qubit, angles=(pi / 2,))
 
 
 def Fdg(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -312,8 +314,8 @@ def Fdg(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of MPS
         qubit: The index of the qubit where the gate is applied
     """
-    RZ(state, qubit, angles=(-math.pi / 2,))
-    RX(state, qubit, angles=(-math.pi / 2,))
+    RZ(state, qubit, angles=(-pi / 2,))
+    RX(state, qubit, angles=(-pi / 2,))
 
 
 def T(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -323,7 +325,7 @@ def T(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of MPS
         qubit: The index of the qubit where the gate is applied
     """
-    RZ(state, qubit, angles=(math.pi / 4,))
+    RZ(state, qubit, angles=(pi / 4,))
 
 
 def Tdg(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -333,7 +335,7 @@ def Tdg(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of MPS
         qubit: The index of the qubit where the gate is applied
     """
-    RZ(state, qubit, angles=(-math.pi / 4,))
+    RZ(state, qubit, angles=(-pi / 4,))
 
 
 def H2(state: MPS, qubit: int, **_params: SimulatorGateParams) -> None:

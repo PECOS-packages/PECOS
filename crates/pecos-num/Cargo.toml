@@ -28,6 +28,9 @@ ndarray.workspace = true
 # Random number generation (for numpy.random drop-in replacements)
 rand.workspace = true
 
+# Complex number support (for numpy complex operations)
+num-complex.workspace = true
+
 # Logging
 log.workspace = true
 

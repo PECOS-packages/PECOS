@@ -38,9 +38,18 @@ from pecos_rslib._pecos_rslib import (
 )
 from pecos_rslib.cppsparse_sim import CppSparseSimRs
 from pecos_rslib.num_wrapper import (  # Enhanced num module with axis support
+    # Functions
     mean,
     power,
     sqrt,
+    exp,
+    isnan,
+    cos,
+    sin,
+    floor,
+    ceil,
+    round,
+    isclose,
     std,
     brentq,
     newton,
@@ -49,6 +58,25 @@ from pecos_rslib.num_wrapper import (  # Enhanced num module with axis support
     Poly1d,
     diag,
     linspace,
+    # Constants
+    pi,
+    tau,
+    e,
+    FRAC_PI_2,
+    FRAC_PI_3,
+    FRAC_PI_4,
+    FRAC_PI_6,
+    FRAC_PI_8,
+    FRAC_1_PI,
+    FRAC_2_PI,
+    FRAC_2_SQRT_PI,
+    SQRT_2,
+    FRAC_1_SQRT_2,
+    LN_2,
+    LN_10,
+    LOG2_E,
+    LOG10_E,
+    # Submodules
     random,
 )
 from pecos_rslib.rscoin_toss import CoinToss
@@ -56,25 +84,19 @@ from pecos_rslib.rspauli_prop import PauliPropRs
 from pecos_rslib.rssparse_sim import SparseSimRs
 from pecos_rslib.rsstate_vec import StateVecRs
 
-# Create a module-like object for num to enable "from pecos_rslib.num import ..." syntax
-import types
+# Import the num module directly from Rust - it already has all submodules set up correctly
+from pecos_rslib._pecos_rslib import num
 
-num = types.ModuleType("num")
-num.mean = mean
-num.power = power
-num.sqrt = sqrt
-num.std = std
-num.brentq = brentq
-num.newton = newton
-num.polyfit = polyfit
-num.curve_fit = curve_fit
-num.Poly1d = Poly1d
-num.diag = diag
-num.linspace = linspace
-num.random = random
-
-# Register num module in sys.modules
+# Register submodules in sys.modules so Python can find them
 sys.modules["pecos_rslib.num"] = num
+sys.modules["pecos_rslib.num.stats"] = num.stats
+sys.modules["pecos_rslib.num.math"] = num.math
+sys.modules["pecos_rslib.num.compare"] = num.compare
+sys.modules["pecos_rslib.num.array"] = num.array
+sys.modules["pecos_rslib.num.optimize"] = num.optimize
+sys.modules["pecos_rslib.num.polynomial"] = num.polynomial
+sys.modules["pecos_rslib.num.curve_fit"] = num.curve_fit
+sys.modules["pecos_rslib.num.random"] = num.random
 
 # HUGR compilation functions - explicit, no automatic fallback
 try:
@@ -153,8 +175,8 @@ def _load_selene_runtime():
                 ctypes.CDLL(path_str, mode=ctypes.RTLD_GLOBAL)
                 logger.info(f"Loaded Selene runtime from: {path_str}")
                 return True
-    except (OSError, ImportError, AttributeError) as e:
-        logger.warning(f"Could not load Selene runtime: {e}")
+    except (OSError, ImportError, AttributeError) as err:
+        logger.warning(f"Could not load Selene runtime: {err}")
         return False
     else:
         logger.warning("Could not load Selene runtime library")
@@ -475,6 +497,46 @@ __all__ = [
     "binding",
     # Numerical computing (scipy.optimize replacements)
     "num",
+    # Numerical functions from num_wrapper
+    "mean",
+    "power",
+    "sqrt",
+    "exp",
+    "isnan",
+    "cos",
+    "sin",
+    "floor",
+    "ceil",
+    "round",
+    "isclose",
+    "std",
+    "brentq",
+    "newton",
+    "polyfit",
+    "curve_fit",
+    "Poly1d",
+    "diag",
+    "linspace",
+    # Mathematical constants
+    "pi",
+    "tau",
+    "e",
+    "FRAC_PI_2",
+    "FRAC_PI_3",
+    "FRAC_PI_4",
+    "FRAC_PI_6",
+    "FRAC_PI_8",
+    "FRAC_1_PI",
+    "FRAC_2_PI",
+    "FRAC_2_SQRT_PI",
+    "SQRT_2",
+    "FRAC_1_SQRT_2",
+    "LN_2",
+    "LN_10",
+    "LOG2_E",
+    "LOG10_E",
+    # Numerical submodules
+    "random",
     # QuEST simulators
     "QuestStateVec",
     "QuestDensityMatrix",

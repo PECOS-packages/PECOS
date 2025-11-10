@@ -3,12 +3,12 @@
 import numpy as np
 import pytest
 
-from pecos_rslib.num import mean as pecos_mean
-from pecos_rslib.num import Poly1d as pecos_Poly1d
-from pecos_rslib.num import polyfit as pecos_polyfit
-from pecos_rslib.num import power as pecos_power
-from pecos_rslib.num import sqrt as pecos_sqrt
-from pecos_rslib.num import std as pecos_std
+from pecos.num import mean as pecos_mean
+from pecos.num import Poly1d as pecos_Poly1d
+from pecos.num import polyfit as pecos_polyfit
+from pecos.num import power as pecos_power
+from pecos.num import sqrt as pecos_sqrt
+from pecos.num import std as pecos_std
 
 
 class TestMeanCorrectness:

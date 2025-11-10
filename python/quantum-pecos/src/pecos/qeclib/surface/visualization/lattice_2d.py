@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from pecos_rslib.num import power
+from pecos.num import power
 
 if TYPE_CHECKING:
     from matplotlib import pyplot as plt

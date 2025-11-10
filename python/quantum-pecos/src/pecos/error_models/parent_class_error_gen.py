@@ -19,9 +19,9 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from pecos_rslib.num import random
 
 from pecos.error_models.class_errors_circuit import ErrorCircuits
+from pecos.num import random
 
 logger = logging.getLogger(__name__)
 

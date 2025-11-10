@@ -24,7 +24,8 @@ from typing import TYPE_CHECKING
 from warnings import warn
 
 import numpy as np
-from pecos_rslib.num import random
+
+from pecos.num import random
 
 if TYPE_CHECKING:
     from collections.abc import Callable

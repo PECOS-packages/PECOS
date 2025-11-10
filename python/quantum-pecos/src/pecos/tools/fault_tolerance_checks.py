@@ -23,13 +23,12 @@ import itertools as it
 from itertools import combinations, product
 from typing import TYPE_CHECKING, TypeVar
 
-import numpy as np
-
 from pecos.circuits import LogicalCircuit, QuantumCircuit
 from pecos.decoders import MWPM2D
 from pecos.engines.circuit_runners import Standard
 from pecos.error_models.parent_class_error_gen import ErrorCircuits
 from pecos.misc.stabilizer_funcs import circ2set, find_stab, op_commutes, remove_stab
+from pecos.num import floor
 from pecos.simulators import SparseSimPy
 
 if TYPE_CHECKING:
@@ -115,7 +114,7 @@ def t_errors_check(
         qudit_set.update(qecc.ancilla_qudit_set)
 
     if t_weight is None:
-        t_weight = np.floor((qecc.distance - 1) / 2)
+        t_weight = floor((qecc.distance - 1) / 2)
 
     if error_set is None:
         error_set = {"X", "Y", "Z"}
@@ -261,7 +260,7 @@ def fault_check(
         qudit_set.update(qecc.ancilla_qudit_set)
 
     if t_weight is None:
-        t_weight = np.floor((qecc.distance - 1) / 2)
+        t_weight = floor((qecc.distance - 1) / 2)
 
     if error_set is None:
         error_set = {"X", "Y", "Z"}

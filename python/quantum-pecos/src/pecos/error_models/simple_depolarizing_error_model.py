@@ -20,9 +20,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos_rslib.num import mean, random
-
 from pecos.error_models.noise_impl_old.gate_groups import one_qubits, two_qubits
+from pecos.num import mean, random
 from pecos.reps.pyphir.op_types import QOp
 
 if TYPE_CHECKING:

@@ -16,6 +16,10 @@
 //!
 //! This crate provides numerical computing functionality for PECOS, including:
 //!
+//! - Statistical functions (mean, std)
+//! - Mathematical functions (cos, sin, exp, sqrt, power, etc.)
+//! - Comparison utilities (isnan, isclose)
+//! - Array operations (diag, linspace)
 //! - Random number generation (numpy.random drop-in replacements)
 //! - Root finding algorithms (Brent's method, Newton-Raphson)
 //! - Curve fitting (Levenberg-Marquardt, polynomial fitting)
@@ -27,7 +31,10 @@
 //! This crate is typically accessed through the `pecos::prelude`. Python bindings
 //! are provided separately in `pecos-rslib`.
 
+pub mod array;
+pub mod compare;
 pub mod curve_fit;
+pub mod math;
 pub mod optimize;
 pub mod polynomial;
 pub mod prelude;

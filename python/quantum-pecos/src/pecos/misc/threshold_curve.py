@@ -22,7 +22,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from pecos_rslib.num import curve_fit, mean, power, sqrt, std
+
+from pecos.num import curve_fit, diag, exp, mean, power, sqrt, std
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -175,7 +176,7 @@ def func4(
 
     x = (p - pth) * power(dist, 1.0 / v0)
 
-    return a * np.exp(-b * power(x, v0))
+    return a * exp(-b * power(x, v0))
 
 
 def func5(
@@ -260,7 +261,7 @@ def threshold_fit(
     """
     popt, pcov = curve_fit(func, (plist, dlist), plog, p0, maxfev=maxfev, **kwargs)
 
-    var = np.diag(pcov)
+    var = diag(pcov)
     stdev = sqrt(var)
 
     return popt, stdev

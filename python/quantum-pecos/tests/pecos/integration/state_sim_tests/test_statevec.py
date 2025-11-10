@@ -27,6 +27,7 @@ import pytest
 from pecos.circuits import QuantumCircuit
 from pecos.engines.hybrid_engine import HybridEngine
 from pecos.error_models.generic_error_model import GenericErrorModel
+from pecos.num import pi, random
 from pecos.simulators import (
     MPS,
     CuStateVec,
@@ -34,7 +35,6 @@ from pecos.simulators import (
     Qulacs,
     StateVec,
 )
-from pecos_rslib.num import random
 
 str_to_sim = {
     "StateVec": StateVec,
@@ -159,16 +159,16 @@ def generate_random_state(seed: int | None = None) -> QuantumCircuit:
     qc.append({"Init": {0, 1, 2, 3}})
 
     for _ in range(3):
-        qc.append({"RZ": {0}}, angles=(np.pi * random.random(1)[0],))
-        qc.append({"RZ": {1}}, angles=(np.pi * random.random(1)[0],))
-        qc.append({"RZ": {2}}, angles=(np.pi * random.random(1)[0],))
-        qc.append({"RZ": {3}}, angles=(np.pi * random.random(1)[0],))
-        qc.append({"RXX": {(0, 1)}}, angles=(np.pi * random.random(1)[0],))
-        qc.append({"RXX": {(0, 2)}}, angles=(np.pi * random.random(1)[0],))
-        qc.append({"RXX": {(0, 3)}}, angles=(np.pi * random.random(1)[0],))
-        qc.append({"RXX": {(1, 2)}}, angles=(np.pi * random.random(1)[0],))
-        qc.append({"RXX": {(1, 3)}}, angles=(np.pi * random.random(1)[0],))
-        qc.append({"RXX": {(2, 3)}}, angles=(np.pi * random.random(1)[0],))
+        qc.append({"RZ": {0}}, angles=(pi * random.random(1)[0],))
+        qc.append({"RZ": {1}}, angles=(pi * random.random(1)[0],))
+        qc.append({"RZ": {2}}, angles=(pi * random.random(1)[0],))
+        qc.append({"RZ": {3}}, angles=(pi * random.random(1)[0],))
+        qc.append({"RXX": {(0, 1)}}, angles=(pi * random.random(1)[0],))
+        qc.append({"RXX": {(0, 2)}}, angles=(pi * random.random(1)[0],))
+        qc.append({"RXX": {(0, 3)}}, angles=(pi * random.random(1)[0],))
+        qc.append({"RXX": {(1, 2)}}, angles=(pi * random.random(1)[0],))
+        qc.append({"RXX": {(1, 3)}}, angles=(pi * random.random(1)[0],))
+        qc.append({"RXX": {(2, 3)}}, angles=(pi * random.random(1)[0],))
 
     return qc
 
@@ -289,17 +289,17 @@ def test_all_gate_circ(simulator: str) -> None:
     for qc in qcs:
         qc.append({"SZZ": {(3, 2)}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
-        qc.append({"RX": {0, 2}}, angles=(np.pi / 4,))
+        qc.append({"RX": {0, 2}}, angles=(pi / 4,))
         compare_against_statevec(simulator, qc, **sim_kwargs)
         qc.append({"SXXdg": {(0, 3)}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
-        qc.append({"RY": {0, 3}}, angles=(np.pi / 8,))
+        qc.append({"RY": {0, 3}}, angles=(pi / 8,))
         compare_against_statevec(simulator, qc, **sim_kwargs)
-        qc.append({"RZZ": {(0, 3)}}, angles=(np.pi / 16,))
+        qc.append({"RZZ": {(0, 3)}}, angles=(pi / 16,))
         compare_against_statevec(simulator, qc, **sim_kwargs)
-        qc.append({"RZ": {1, 3}}, angles=(np.pi / 16,))
+        qc.append({"RZ": {1, 3}}, angles=(pi / 16,))
         compare_against_statevec(simulator, qc, **sim_kwargs)
-        qc.append({"R1XY": {2}}, angles=(np.pi / 16, np.pi / 2))
+        qc.append({"R1XY": {2}}, angles=(pi / 16, pi / 2))
         compare_against_statevec(simulator, qc, **sim_kwargs)
         qc.append({"I": {0, 1, 3}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
@@ -315,7 +315,7 @@ def test_all_gate_circ(simulator: str) -> None:
         compare_against_statevec(simulator, qc, **sim_kwargs)
         qc.append({"H": {3, 1}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
-        qc.append({"RYY": {(2, 1)}}, angles=(np.pi / 8,))
+        qc.append({"RYY": {(2, 1)}}, angles=(pi / 8,))
         compare_against_statevec(simulator, qc, **sim_kwargs)
         qc.append({"SZZdg": {(3, 1)}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
@@ -329,7 +329,7 @@ def test_all_gate_circ(simulator: str) -> None:
         compare_against_statevec(simulator, qc, **sim_kwargs)
         qc.append({"SX": {1, 2}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
-        qc.append({"R2XXYYZZ": {(0, 3)}}, angles=(np.pi / 4, np.pi / 16, np.pi / 2))
+        qc.append({"R2XXYYZZ": {(0, 3)}}, angles=(pi / 4, pi / 16, pi / 2))
         compare_against_statevec(simulator, qc, **sim_kwargs)
         qc.append({"SY": {2, 3}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
@@ -351,7 +351,7 @@ def test_all_gate_circ(simulator: str) -> None:
         compare_against_statevec(simulator, qc, **sim_kwargs)
         qc.append({"Tdg": {3, 1}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
-        qc.append({"RXX": {(1, 3)}}, angles=(np.pi / 4,))
+        qc.append({"RXX": {(1, 3)}}, angles=(pi / 4,))
         compare_against_statevec(simulator, qc, **sim_kwargs)
         qc.append({"Q": {0, 1, 2}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
@@ -429,6 +429,7 @@ def test_hybrid_engine_no_noise(simulator: str) -> None:
     assert np.isclose(
         result_values.count("00") / n_shots,
         result_values.count("11") / n_shots,
+        rtol=0.0,
         atol=0.1,
     )
 
@@ -474,6 +475,7 @@ def test_hybrid_engine_no_noise(simulator: str) -> None:
     assert np.isclose(
         result_values.count("00") / n_shots,
         result_values.count("11") / n_shots,
+        rtol=0.0,
         atol=0.1,
     )
 

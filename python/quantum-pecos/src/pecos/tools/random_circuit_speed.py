@@ -22,10 +22,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos_rslib.num import random
-
 from pecos.circuits import QuantumCircuit
 from pecos.engines.circuit_runners import TimingRunner
+from pecos.num import random
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence

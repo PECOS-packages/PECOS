@@ -29,8 +29,9 @@ wasm = ["pecos/wasm"]
 # pecos-num is included by default in pecos
 pecos = { workspace = true, features = ["llvm", "wasm"] }
 
-pyo3 = { workspace=true, features = ["extension-module", "abi3-py310", "generate-import-lib"] }
+pyo3 = { workspace=true, features = ["extension-module", "abi3-py310", "generate-import-lib", "num-complex"] }
 numpy = "0.27"
+num-complex.workspace = true
 parking_lot.workspace = true
 regex.workspace = true
 serde_json.workspace = true

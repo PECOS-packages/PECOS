@@ -16,8 +16,7 @@ probabilities during quantum computations.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos_rslib.num import random
-
+from pecos.num import random
 from pecos.reps.pyphir.op_types import QOp
 
 

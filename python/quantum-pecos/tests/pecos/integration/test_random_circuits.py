@@ -17,8 +17,8 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from pecos.num import random
 from pecos.simulators import CppSparseSimRs, SparseSimPy, SparseSimRs
-from pecos_rslib.num import random
 
 
 def test_random_circuits() -> None:

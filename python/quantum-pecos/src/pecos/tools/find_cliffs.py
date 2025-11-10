@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from pecos.num import cos, exp, isclose, pi, sin
+
 dtype = "complex"
 
 cliff_str2matrix = {
@@ -93,13 +95,13 @@ rz_ang2str = {
 
 def r1xy_matrix(theta: float, phi: float) -> np.ndarray:
     """Creates a np.array matrix for a R1XY gate."""
-    c = np.cos(theta * 0.5)
-    s = np.sin(theta * 0.5)
+    c = cos(theta * 0.5)
+    s = sin(theta * 0.5)
 
     return np.array(
         [
-            [c, -1j * np.exp(-1j * phi) * s],
-            [-1j * np.exp(1j * phi) * s, c],
+            [c, -1j * exp(-1j * phi) * s],
+            [-1j * exp(1j * phi) * s, c],
         ],
         dtype=dtype,
     )
@@ -109,8 +111,8 @@ def rz_matrix(theta: float) -> np.ndarray:
     """Creates a np.array matrix for a RZ gate."""
     return np.array(
         [
-            [np.exp(-1j * theta * 0.5), 0.0],
-            [0.0, np.exp(1j * theta * 0.5)],
+            [exp(-1j * theta * 0.5), 0.0],
+            [0.0, exp(1j * theta * 0.5)],
         ],
         dtype=dtype,
     )
@@ -118,7 +120,8 @@ def rz_matrix(theta: float) -> np.ndarray:
 
 def mnormal(m: np.ndarray, *, atol: float = 1e-12) -> np.ndarray:
     """Normalizes a np.array to help with comparing matrices up to global phases."""
-    unit = m[0, 0] if not np.isclose(m[0, 0], 0.0, atol=atol) else m[0, 1]
+    # Use isclose for complex comparison (from pecos.num)
+    unit = m[0, 0] if not isclose(m[0, 0], 0.0, atol=atol) else m[0, 1]
 
     return m / unit
 
@@ -128,7 +131,7 @@ def m2cliff(m: np.array, *, atol: float = 1e-12) -> str | bool:
     m = mnormal(m)
 
     for sym, c in cliff_str2matrix.items():
-        if np.isclose(c, m, atol=atol).all():
+        if isclose(c, m, atol=atol).all():
             return sym
     return False
 
@@ -142,11 +145,11 @@ def r1xy2cliff(
 ) -> str | bool:
     """Identifies (ignoring global phases) a Clifford given the angles of a R1XY gate."""
     if use_conv_table:
-        if np.isclose(theta % (2 * np.pi), 0.0, atol=atol):
+        if isclose(theta % (2 * pi), 0.0, atol=atol):
             return "I"
         for cangs, csym in r1xy_ang2str.items():
             a, b = cangs
-            if np.isclose(a, theta, atol=atol) and np.isclose(b, phi, atol=atol):
+            if isclose(a, theta, atol=atol) and isclose(b, phi, atol=atol):
                 return csym
 
     m = r1xy_matrix(theta, phi)
@@ -162,11 +165,11 @@ def rz2cliff(
 ) -> str | bool:
     """Identifies (ignoring global phases) a Clifford given the angles of a RZ gate."""
     if use_conv_table:
-        if np.isclose(theta % (2 * np.pi), 0.0, atol=atol):
+        if isclose(theta % (2 * pi), 0.0, atol=atol):
             return "I"
         for cangs, csym in rz_ang2str.items():
             a = cangs[0]
-            if np.isclose(a, theta, atol=atol):
+            if isclose(a, theta, atol=atol):
                 return csym
 
     m = rz_matrix(theta)

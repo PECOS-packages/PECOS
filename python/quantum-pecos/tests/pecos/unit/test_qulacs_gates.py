@@ -16,6 +16,7 @@ import pytest
 
 pytest.importorskip("pecos_rslib", reason="pecos_rslib required for qulacs tests")
 
+from pecos.num import pi
 from pecos.simulators.qulacs import Qulacs
 
 
@@ -36,7 +37,7 @@ class TestQulacsGateBindings:
         sim = Qulacs(1)
 
         # Test parameterized rotation gates
-        angles_to_test = [0, np.pi / 4, np.pi / 2, np.pi, 2 * np.pi]
+        angles_to_test = [0, pi / 4, pi / 2, pi, 2 * pi]
 
         for angle in angles_to_test:
             sim.reset()
@@ -44,7 +45,7 @@ class TestQulacsGateBindings:
 
             # Verify state is normalized
             norm = np.sum(np.abs(sim.vector) ** 2)
-            assert np.isclose(norm, 1.0)
+            assert np.isclose(norm, 1.0, rtol=1e-5, atol=1e-8)
 
     def test_square_root_gates(self) -> None:
         """Test square root gates (SX, SY, SZ)."""
@@ -236,7 +237,7 @@ class TestQulacsThreadSafety:
         operations = [
             ("H", 0),
             ("CX", (0, 1)),
-            ("RZ", 0, {"angle": np.pi / 3}),
+            ("RZ", 0, {"angle": pi / 3}),
         ]
 
         for op in operations:

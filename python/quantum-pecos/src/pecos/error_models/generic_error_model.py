@@ -20,8 +20,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos_rslib.num import mean
-
 from pecos.error_models.noise_impl.noise_initz_bitflip_leakage import (
     noise_initz_bitflip_leakage,
 )
@@ -35,6 +33,7 @@ from pecos.error_models.noise_impl.noise_tq_depolarizing_leakage import (
     noise_tq_depolarizing_leakage,
 )
 from pecos.error_models.noise_impl_old.gate_groups import one_qubits, two_qubits
+from pecos.num import mean
 
 if TYPE_CHECKING:
     from collections.abc import Callable

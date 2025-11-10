@@ -8,7 +8,7 @@ compatible with numpy.random.seed().
 import numpy as np
 import pytest
 
-from pecos_rslib.num import random as pecos_random
+from pecos.num import random as pecos_random
 
 
 class TestSeedReproducibility:

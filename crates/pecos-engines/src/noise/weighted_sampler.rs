@@ -411,7 +411,7 @@ impl CrosstalkWeightedSampler {
 
     /// Sample a raw key from the distribution, for keys 0->* or 1->*
     #[must_use]
-    pub fn sample_keys(&self, rng: &mut NoiseRng, from_state: u8) -> String {
+    pub fn sample_keys(&self, rng: &mut NoiseRng, from_state: u32) -> String {
         assert!(from_state == 0 || from_state == 1);
         if from_state == 0 {
             self.sampler_from_0.sample(rng)
@@ -425,7 +425,7 @@ impl CrosstalkWeightedSampler {
     /// # Panics
     /// - If the sampled key is invalid (this should never happen if the sampler was created properly)
     #[must_use]
-    pub fn sample_gates(&self, rng: &mut NoiseRng, qubit: usize, from_state: u8) -> SingleQubitNoiseResult {
+    pub fn sample_gates(&self, rng: &mut NoiseRng, qubit: usize, from_state: u32) -> SingleQubitNoiseResult {
         let key = self.sample_keys(rng, from_state);
 
         match key.as_str() {

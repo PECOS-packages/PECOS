@@ -94,6 +94,7 @@ use rand_chacha::ChaCha8Rng;
 use std::any::Any;
 use std::collections::BTreeSet;
 
+
 /// General noise model implementation that includes parameterized error channels for various quantum operations
 ///
 /// This comprehensive noise model for quantum computers includes:
@@ -394,13 +395,22 @@ impl ControlEngine for GeneralNoiseModel {
         msg: Self::EngineOutput,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         trace!("GeneralNoise::continue_processing");
-        let results = self
-            .apply_noise_on_continue_processing(msg)
-            .map_err(|e| PecosError::Processing(format!("Error processing noise: {e}")))?;
+        let result = self.apply_noise_on_continue_processing(msg)?;
 
-        // Calling Complete to signal that the NoiseModel is returning its msg back to the
-        // QuantumSystem.
-        Ok(EngineStage::Complete(results))
+        // Check if the outcomes come from crosstalk measurements
+        let has_crosstalk = self
+            .measured_qubits
+            .iter()
+            .any(|(_, _, is_crosstalk)| *is_crosstalk);
+        // Clear the measured qubits for the next batch
+        self.measured_qubits.clear();
+
+        // If there were crosstalk measurements, we must continue processing so that
+        // the engine applies the transitions after crosstalk
+        match has_crosstalk {
+            true => Ok(EngineStage::NeedsProcessing(result)),
+            false => Ok(EngineStage::Complete(result)),
+        }
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
@@ -637,34 +647,64 @@ impl GeneralNoiseModel {
         if !NoiseUtils::has_measurements(&message) {
             return Ok(message);
         }
-
         // Parse the measurements from the message
         let measurement_outcomes = message.outcomes()?;
 
-        // Apply biased measurement noise to each outcome
-        let mut results_builder = ByteMessage::outcomes_builder();
+        // Check if the outcomes come from crosstalk measurements
+        let has_crosstalk = self
+            .measured_qubits
+            .iter()
+            .any(|(_, _, is_crosstalk)| *is_crosstalk);
+        // If the measurement outcomes originate from crosstalk, process them and
+        // request to continue processing, and return the gates needed for the transitions
+        if has_crosstalk {
+            // Create a new message builder where the gates necessary for the
+            // transitions will be introduced
+            let mut builder = ByteMessage::quantum_operations_builder();
 
-        // Check if we have leaked qubits that were measured
-        let has_leakage = !self.leaked_qubits.is_empty()
-            && self
-                .measured_qubits
-                .iter()
-                .any(|(q, _, _)| self.is_leaked(*q));
+            for (idx, outcome) in measurement_outcomes.into_iter().enumerate() {
+                let (qubit, _, is_crosstalk) = self.measured_qubits[idx];
 
-        for (idx, outcome) in measurement_outcomes.into_iter().enumerate() {
-            let mut val = outcome;
-
-            // Check if this measurement corresponds to a leaked qubit or comes from
-            // crosstalk
-            if idx < self.measured_qubits.len() {
-                let (qubit, is_measure_leaked, is_crosstalk) = self.measured_qubits[idx];
-
-                // Check if this measurement comes from crosstalk noise. If so, ignore it.
-                if is_crosstalk {
-                    trace!("Qubit {qubit} was measured by crosstalk; outcome is ignored.");
-                    continue; // Skip this iteration
+                // Sanity check: ALL measurement outcomes of this batch come from crosstalk
+                if !is_crosstalk {
+                    return Err(PecosError::Processing(format!(
+                        "A batch of crosstalk-induced measurements contains and actual measurement on qubit {qubit}"
+                    )));
                 }
 
+                // Apply gates depending on crosstalk transitions
+                // TODO: here I am using local ones, but these could come from global
+                //  crosstalk, and then they should have different transitions...
+                let transition = self.p_meas_crosstalk_local_model.sample_gates(&mut self.rng, qubit, outcome);
+                if transition.has_leakage() {
+                    if let Some(gate) = self.leak(qubit) {
+                        builder.add_gate_command(&gate);
+                    }
+                } else if let Some(gate) = transition.gate {
+                    builder.add_gate_command(&gate);
+                }
+            }
+
+            // Pass the necessary gates to the QuantumEngine to continue
+            Ok(builder.build())
+
+        // Otherwise, these are actual measurement outcomes that need to be processed
+        } else {
+            // Apply biased measurement noise to each outcome
+            let mut results_builder = ByteMessage::outcomes_builder();
+
+            // Check if we have leaked qubits that were measured
+            let has_leakage = !self.leaked_qubits.is_empty()
+                && self
+                    .measured_qubits
+                    .iter()
+                    .any(|(q, _, _)| self.is_leaked(*q));
+
+            for (idx, outcome) in measurement_outcomes.into_iter().enumerate() {
+                let mut val = outcome;
+
+                // Check if this measurement corresponds to a leaked qubit
+                let (qubit, is_measure_leaked, _) = self.measured_qubits[idx];
                 if has_leakage && self.is_leaked(qubit) {
                     if is_measure_leaked {
                         trace!("Qubit {qubit} is leaked, MeasureLeaked returns 2");
@@ -676,30 +716,27 @@ impl GeneralNoiseModel {
                         val = 1;
                     }
                 }
-            }
 
-            // Apply asymmetric measurement noise (but not for leaked measurements returning 2)
-            if val == 2 {
-                // No noise applied to leaked measurements
-                trace!("No measurement noise applied to leaked qubit outcome");
-            } else if val == 1 {
-                if self.rng.occurs(self.p_meas_1) {
-                    trace!("Flipped measurement outcome 1->0");
-                    val = 0;
+                // Apply asymmetric measurement noise (but not for leaked measurements returning 2)
+                if val == 2 {
+                    // No noise applied to leaked measurements
+                    trace!("No measurement noise applied to leaked qubit outcome");
+                } else if val == 1 {
+                    if self.rng.occurs(self.p_meas_1) {
+                        trace!("Flipped measurement outcome 1->0");
+                        val = 0;
+                    }
+                } else if self.rng.occurs(self.p_meas_0) {
+                    trace!("Flipped measurement outcome 0->1");
+                    val = 1;
                 }
-            } else if self.rng.occurs(self.p_meas_0) {
-                trace!("Flipped measurement outcome 0->1");
-                val = 1;
+
+                results_builder.add_outcomes(&[val as usize]);
             }
 
-            results_builder.add_outcomes(&[val as usize]);
+            // Build and return the biased measurement results
+            Ok(results_builder.build())
         }
-
-        // Clear the measured qubits for the next batch
-        self.measured_qubits.clear();
-
-        // Build and return the biased measurement results
-        Ok(results_builder.build())
     }
 
     pub fn apply_idle_faults(

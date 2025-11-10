@@ -48,6 +48,7 @@ from pecos_rslib.num_wrapper import (  # Enhanced num module with axis support
     curve_fit,
     Poly1d,
     diag,
+    linspace,
     random,
 )
 from pecos_rslib.rscoin_toss import CoinToss
@@ -69,6 +70,7 @@ num.polyfit = polyfit
 num.curve_fit = curve_fit
 num.Poly1d = Poly1d
 num.diag = diag
+num.linspace = linspace
 num.random = random
 
 # Register num module in sys.modules

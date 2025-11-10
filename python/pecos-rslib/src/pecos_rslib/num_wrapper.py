@@ -279,6 +279,7 @@ polyfit = _num_core.polyfit
 curve_fit = _num_core.curve_fit
 Poly1d = _num_core.Poly1d
 diag = _num_core.diag
+linspace = _num_core.linspace
 
 # Re-export the random submodule
 random = _num_core.random
@@ -295,5 +296,6 @@ __all__ = [
     "curve_fit",
     "Poly1d",
     "diag",
+    "linspace",
     "random",
 ]

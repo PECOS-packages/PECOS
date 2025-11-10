@@ -1086,6 +1086,39 @@ fn diag(py: Python<'_>, matrix: PyReadonlyArray2<f64>) -> Py<PyArray1<f64>> {
     PyArray1::from_array(py, &diagonal).unbind()
 }
 
+/// Generate evenly spaced values over a specified interval.
+///
+/// This is a drop-in replacement for `numpy.linspace()`.
+///
+/// # Arguments
+///
+/// * `start` - The starting value of the sequence
+/// * `stop` - The end value of the sequence
+/// * `num` - Number of samples to generate. Default is 50.
+/// * `endpoint` - If true, stop is the last sample. Otherwise, it is not included. Default is true.
+///
+/// # Returns
+///
+/// Array of evenly spaced samples
+///
+/// # Examples
+///
+/// ```python
+/// from pecos_rslib.num import linspace
+///
+/// # Generate 1000 points for plotting
+/// x = linspace(0.0, 1.0, 1000)
+/// print(len(x))  # 1000
+/// print(x[0])    # 0.0
+/// print(x[-1])   # 1.0
+/// ```
+#[pyfunction]
+#[pyo3(signature = (start, stop, num=50, endpoint=true))]
+fn linspace(py: Python<'_>, start: f64, stop: f64, num: usize, endpoint: bool) -> Py<PyArray1<f64>> {
+    let result = pecos::prelude::linspace(start, stop, num, endpoint);
+    PyArray1::from_array(py, &result).unbind()
+}
+
 /// Register the num submodule with Python bindings.
 pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let num_module = PyModule::new(m.py(), "num")?;
@@ -1103,6 +1136,7 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     num_module.add_function(wrap_pyfunction!(sqrt, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(self::std, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(diag, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(linspace, &num_module)?)?;
 
     // Create random submodule
     let random_module = PyModule::new(m.py(), "random")?;

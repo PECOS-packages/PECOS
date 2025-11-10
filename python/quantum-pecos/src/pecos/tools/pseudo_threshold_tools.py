@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from pecos_rslib.num import Poly1d, brentq, curve_fit, diag, newton, polyfit, sqrt
+from pecos_rslib.num import Poly1d, brentq, curve_fit, diag, linspace, newton, polyfit, sqrt
 
 from pecos.decoders import MWPM2D
 from pecos.engines import circuit_runners
@@ -343,7 +343,7 @@ def plot(
     axis_start = p_start
     axis_end = p_end
 
-    x = np.linspace(axis_start, axis_end, 1000)
+    x = linspace(axis_start, axis_end, 1000)
 
     poly = Poly1d(popt)
     yi = poly(x)

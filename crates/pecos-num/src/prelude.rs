@@ -27,4 +27,4 @@ pub use crate::polynomial::{Poly1d, PolynomialError, polyfit, polyfit_with_cov};
 pub use crate::random;
 
 // Re-export statistical functions
-pub use crate::stats::{diag, mean, power, sqrt, std};
+pub use crate::stats::{diag, linspace, mean, power, sqrt, std};

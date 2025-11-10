@@ -218,6 +218,73 @@ pub fn diag(matrix: ArrayView2<f64>) -> Array1<f64> {
     diagonal
 }
 
+/// Generate evenly spaced values over a specified interval.
+///
+/// This is a Rust implementation of `numpy.linspace()`.
+///
+/// Returns `num` evenly spaced samples, calculated over the interval `[start, stop]`.
+/// The endpoint of the interval can optionally be excluded.
+///
+/// # Arguments
+///
+/// * `start` - The starting value of the sequence
+/// * `stop` - The end value of the sequence
+/// * `num` - Number of samples to generate. Default is 50.
+/// * `endpoint` - If true, `stop` is the last sample. Otherwise, it is not included. Default is true.
+///
+/// # Returns
+///
+/// Array of `num` equally spaced samples in the closed interval `[start, stop]` or
+/// the half-open interval `[start, stop)` (depending on whether `endpoint` is true or false).
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::stats::linspace;
+///
+/// // Generate 5 values from 0 to 10
+/// let values = linspace(0.0, 10.0, 5, true);
+/// assert_eq!(values.len(), 5);
+/// assert!((values[0] - 0.0).abs() < 1e-10);
+/// assert!((values[4] - 10.0).abs() < 1e-10);
+///
+/// // Generate 4 values from 0 to 10 (endpoint excluded)
+/// let values = linspace(0.0, 10.0, 4, false);
+/// assert_eq!(values.len(), 4);
+/// assert!((values[0] - 0.0).abs() < 1e-10);
+/// assert!((values[3] - 7.5).abs() < 1e-10);
+/// ```
+#[must_use]
+pub fn linspace(start: f64, stop: f64, num: usize, endpoint: bool) -> Array1<f64> {
+    if num == 0 {
+        return Array1::zeros(0);
+    }
+
+    if num == 1 {
+        return Array1::from_vec(vec![start]);
+    }
+
+    let mut result = Array1::zeros(num);
+
+    if endpoint {
+        // Include the endpoint: divide the range into (num-1) segments
+        let step = (stop - start) / (num - 1) as f64;
+        for i in 0..num {
+            result[i] = start + step * i as f64;
+        }
+        // Ensure the last value is exactly stop to avoid floating point errors
+        result[num - 1] = stop;
+    } else {
+        // Exclude the endpoint: divide the range into num segments
+        let step = (stop - start) / num as f64;
+        for i in 0..num {
+            result[i] = start + step * i as f64;
+        }
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,5 +605,63 @@ mod tests {
             assert_eq!(diagonal[1], 1.0);
             assert_eq!(diagonal[2], 1.0);
         }
+    }
+
+    #[test]
+    fn test_linspace_basic() {
+        let values = linspace(0.0, 10.0, 5, true);
+        assert_eq!(values.len(), 5);
+        assert!((values[0] - 0.0).abs() < 1e-10);
+        assert!((values[1] - 2.5).abs() < 1e-10);
+        assert!((values[2] - 5.0).abs() < 1e-10);
+        assert!((values[3] - 7.5).abs() < 1e-10);
+        assert!((values[4] - 10.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_linspace_endpoint_false() {
+        let values = linspace(0.0, 10.0, 4, false);
+        assert_eq!(values.len(), 4);
+        assert!((values[0] - 0.0).abs() < 1e-10);
+        assert!((values[1] - 2.5).abs() < 1e-10);
+        assert!((values[2] - 5.0).abs() < 1e-10);
+        assert!((values[3] - 7.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_linspace_single_value() {
+        let values = linspace(5.0, 10.0, 1, true);
+        assert_eq!(values.len(), 1);
+        #[allow(clippy::float_cmp)]
+        {
+            assert_eq!(values[0], 5.0);
+        }
+    }
+
+    #[test]
+    fn test_linspace_empty() {
+        let values = linspace(0.0, 10.0, 0, true);
+        assert_eq!(values.len(), 0);
+    }
+
+    #[test]
+    fn test_linspace_negative_range() {
+        let values = linspace(-5.0, 5.0, 11, true);
+        assert_eq!(values.len(), 11);
+        assert!((values[0] - (-5.0)).abs() < 1e-10);
+        assert!((values[5] - 0.0).abs() < 1e-10);
+        assert!((values[10] - 5.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_linspace_large_num() {
+        // Test with 1000 points (common use case for plotting)
+        let values = linspace(0.0, 1.0, 1000, true);
+        assert_eq!(values.len(), 1000);
+        assert!((values[0] - 0.0).abs() < 1e-10);
+        assert!((values[999] - 1.0).abs() < 1e-10);
+        // Check spacing is uniform
+        let expected_step = 1.0 / 999.0;
+        assert!((values[1] - values[0] - expected_step).abs() < 1e-10);
     }
 }

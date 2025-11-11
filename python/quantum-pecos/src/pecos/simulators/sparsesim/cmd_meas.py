@@ -332,17 +332,7 @@ def nondeterministic_meas(
     # Measurements
     # ---------------------------------------------------------------------
 
-    """
-    if forced_outcome is not None:
-
-        if forced_outcome == 0 or forced_outcome == 1:
-            meas_outcome = forced_outcome
-        else:
-            raise Exception('forced_outcome can only be 0 or 1 and not %s' % forced_outcome)
-    else:
-        meas_outcome = np.random.randint(2)
-    """
-
+    # Use forced outcome if provided, otherwise generate random outcome (0 or 1)
     meas_outcome = (
         forced_outcome if forced_outcome > -1 else int(random.randint(0, 2, 1)[0])
     )

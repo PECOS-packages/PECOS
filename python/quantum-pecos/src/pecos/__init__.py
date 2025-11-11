@@ -45,6 +45,7 @@ sys.modules["pecos.num.optimize"] = num.optimize
 sys.modules["pecos.num.polynomial"] = num.polynomial
 sys.modules["pecos.num.curve_fit"] = num.curve_fit
 sys.modules["pecos.num.random"] = num.random
+sys.modules["pecos.num.linalg"] = num.linalg
 
 # These imports come after sys.modules setup - this is intentional
 from pecos import (  # noqa: E402

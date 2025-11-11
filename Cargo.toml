@@ -184,3 +184,5 @@ pedantic = { level = "warn", priority = -1 }
 # restriction = "warn"
 cargo = { level = "warn", priority = -1 }
 multiple-crate-versions = "allow" # TODO: remove when possible
+# Allow more function arguments for PyO3 bindings (many parameters needed for Python interop)
+too-many-arguments = "allow"

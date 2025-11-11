@@ -16,7 +16,14 @@ import pytest
 
 pytest.importorskip("pecos_rslib", reason="pecos_rslib required for qulacs tests")
 
-from pecos.num import pi
+from pecos.num import (
+    abs,  # noqa: A004 - intentionally shadow builtin
+    allclose,
+    array,
+    isclose,
+    pi,
+    zeros,
+)
 from pecos.simulators.qulacs import Qulacs
 
 
@@ -31,9 +38,9 @@ class TestQulacsBasic:
         # Check initial state is |000⟩
         state = sim.vector
         assert state.shape == (8,)
-        assert np.isclose(np.abs(state[0]) ** 2, 1.0, rtol=1e-5, atol=1e-8)
+        assert isclose(abs(state[0]) ** 2, 1.0, rtol=1e-5, atol=1e-8)
         for i in range(1, 8):
-            assert np.isclose(np.abs(state[i]) ** 2, 0.0, rtol=1e-5, atol=1e-8)
+            assert isclose(abs(state[i]) ** 2, 0.0, rtol=1e-5, atol=1e-8)
 
     def test_initialization_with_seed(self) -> None:
         """Test simulator initialization with deterministic seed."""
@@ -45,7 +52,7 @@ class TestQulacsBasic:
         sim2.bindings["H"](sim2, 0)
 
         # States should be identical
-        assert np.allclose(sim1.vector, sim2.vector)
+        assert allclose(sim1.vector, sim2.vector)
 
     def test_reset(self) -> None:
         """Test state reset functionality."""
@@ -57,10 +64,10 @@ class TestQulacsBasic:
 
         # Reset should return to |00⟩
         sim.reset()
-        expected = np.zeros(4, dtype=complex)
+        expected = zeros(4, dtype="complex")
         expected[0] = 1.0
 
-        assert np.allclose(sim.vector, expected)
+        assert allclose(sim.vector, expected)
 
 
 class TestQulacsSingleQubitGates:
@@ -72,27 +79,27 @@ class TestQulacsSingleQubitGates:
 
         # Test X gate: X|0⟩ = |1⟩
         sim.bindings["X"](sim, 0)
-        expected = np.array([0, 1], dtype=complex)
-        assert np.allclose(sim.vector, expected)
+        expected = array([0, 1], dtype="complex")
+        assert allclose(sim.vector, expected)
 
         # Test X again: X|1⟩ = |0⟩
         sim.bindings["X"](sim, 0)
-        expected = np.array([1, 0], dtype=complex)
-        assert np.allclose(sim.vector, expected)
+        expected = array([1, 0], dtype="complex")
+        assert allclose(sim.vector, expected)
 
         # Test Y gate: Y|0⟩ = i|1⟩
         sim.reset()
         sim.bindings["Y"](sim, 0)
-        expected = np.array([0, 1j], dtype=complex)
-        assert np.allclose(sim.vector, expected)
+        expected = array([0, 1j], dtype="complex")
+        assert allclose(sim.vector, expected)
 
         # Test Z gate on |+⟩ state
         sim.reset()
         sim.bindings["H"](sim, 0)  # Create |+⟩
         sim.bindings["Z"](sim, 0)  # Z|+⟩ = |-⟩
         sim.bindings["H"](sim, 0)  # H|-⟩ = |1⟩
-        expected = np.array([0, 1], dtype=complex)
-        assert np.allclose(sim.vector, expected)
+        expected = array([0, 1], dtype="complex")
+        assert allclose(sim.vector, expected)
 
     def test_hadamard_gate(self) -> None:
         """Test Hadamard gate."""
@@ -100,15 +107,15 @@ class TestQulacsSingleQubitGates:
 
         # H|0⟩ = |+⟩ = (|0⟩ + |1⟩)/√2
         sim.bindings["H"](sim, 0)
-        expected = np.array([1 / np.sqrt(2), 1 / np.sqrt(2)], dtype=complex)
-        assert np.allclose(sim.vector, expected)
+        expected = array([1 / np.sqrt(2), 1 / np.sqrt(2)], dtype="complex")
+        assert allclose(sim.vector, expected)
 
         # H|1⟩ = |-⟩ = (|0⟩ - |1⟩)/√2
         sim.reset()
         sim.bindings["X"](sim, 0)
         sim.bindings["H"](sim, 0)
-        expected = np.array([1 / np.sqrt(2), -1 / np.sqrt(2)], dtype=complex)
-        assert np.allclose(sim.vector, expected)
+        expected = array([1 / np.sqrt(2), -1 / np.sqrt(2)], dtype="complex")
+        assert allclose(sim.vector, expected)
 
     def test_phase_gates(self) -> None:
         """Test S and T gates."""
@@ -120,7 +127,7 @@ class TestQulacsSingleQubitGates:
         expected_phase = 1j
         state = sim.vector
         phase_ratio = state[1] / state[0]
-        assert np.isclose(phase_ratio, expected_phase, rtol=0.0, atol=1e-10)
+        assert isclose(phase_ratio, expected_phase, rtol=0.0, atol=1e-10)
 
         # Test T gate
         sim.reset()
@@ -129,7 +136,7 @@ class TestQulacsSingleQubitGates:
         state = sim.vector
         expected_t_phase = np.exp(1j * pi / 4)
         phase_ratio = state[1] / state[0]
-        assert np.isclose(phase_ratio, expected_t_phase, rtol=0.0, atol=1e-10)
+        assert isclose(phase_ratio, expected_t_phase, rtol=0.0, atol=1e-10)
 
     def test_rotation_gates(self) -> None:
         """Test rotation gates RX, RY, RZ."""
@@ -138,15 +145,15 @@ class TestQulacsSingleQubitGates:
         # Test RX(π) = -iX
         sim.bindings["RX"](sim, 0, angle=pi)
         state = sim.vector
-        assert np.isclose(state[0], 0, rtol=0.0, atol=1e-10)
-        assert np.isclose(state[1], -1j, rtol=0.0, atol=1e-10)
+        assert isclose(state[0], 0, rtol=0.0, atol=1e-10)
+        assert isclose(state[1], -1j, rtol=0.0, atol=1e-10)
 
         # Test RY(π/2) creates equal superposition
         sim.reset()
         sim.bindings["RY"](sim, 0, angle=pi / 2)
         state = sim.vector
-        assert np.isclose(np.abs(state[0]), 1 / np.sqrt(2), rtol=0.0, atol=1e-10)
-        assert np.isclose(np.abs(state[1]), 1 / np.sqrt(2), rtol=0.0, atol=1e-10)
+        assert isclose(abs(state[0]), 1 / np.sqrt(2), rtol=0.0, atol=1e-10)
+        assert isclose(abs(state[1]), 1 / np.sqrt(2), rtol=0.0, atol=1e-10)
 
         # Test RZ(π) on |+⟩
         sim.reset()
@@ -155,8 +162,8 @@ class TestQulacsSingleQubitGates:
         sim.bindings["H"](sim, 0)  # Should give |1⟩ (possibly with phase)
         state = sim.vector
         # Check that qubit is effectively in |1⟩ state (allowing for global phase)
-        assert np.isclose(np.abs(state[0]), 0, rtol=0.0, atol=1e-10)
-        assert np.isclose(np.abs(state[1]), 1, rtol=0.0, atol=1e-10)
+        assert isclose(abs(state[0]), 0, rtol=0.0, atol=1e-10)
+        assert isclose(abs(state[1]), 1, rtol=0.0, atol=1e-10)
 
 
 class TestQulacsTwoQubitGates:
@@ -171,11 +178,11 @@ class TestQulacsTwoQubitGates:
         sim.bindings["CX"](sim, 0, 1)
 
         state = sim.vector
-        expected = np.zeros(4, dtype=complex)
+        expected = zeros(4, dtype="complex")
         expected[0] = 1 / np.sqrt(2)  # |00⟩
         expected[3] = 1 / np.sqrt(2)  # |11⟩
 
-        assert np.allclose(state, expected)
+        assert allclose(state, expected)
 
     def test_controlled_gates(self) -> None:
         """Test controlled X, Y, Z gates."""
@@ -184,9 +191,9 @@ class TestQulacsTwoQubitGates:
         # Test CX gate
         sim.bindings["X"](sim, 0)  # |10⟩
         sim.bindings["CX"](sim, 0, 1)  # Should become |11⟩
-        expected = np.zeros(4, dtype=complex)
+        expected = zeros(4, dtype="complex")
         expected[3] = 1.0  # |11⟩
-        assert np.allclose(sim.vector, expected)
+        assert allclose(sim.vector, expected)
 
         # Test CZ gate on |++⟩
         sim.reset()
@@ -196,8 +203,8 @@ class TestQulacsTwoQubitGates:
 
         state = sim.vector
         # CZ|++⟩ = (|00⟩ + |01⟩ + |10⟩ - |11⟩)/2
-        expected = np.array([0.5, 0.5, 0.5, -0.5], dtype=complex)
-        assert np.allclose(state, expected)
+        expected = array([0.5, 0.5, 0.5, -0.5], dtype="complex")
+        assert allclose(state, expected)
 
     def test_swap_gate(self) -> None:
         """Test SWAP gate."""
@@ -208,7 +215,7 @@ class TestQulacsTwoQubitGates:
         sim.bindings["SWAP"](sim, 0, 1)  # Should become |01⟩
 
         # Check that exactly one basis state has probability 1
-        probs = np.abs(sim.vector) ** 2
+        probs = abs(sim.vector) ** 2
         assert np.sum(probs > 0.5) == 1  # Exactly one state should be populated
 
 
@@ -293,11 +300,11 @@ class TestQulacsCompatibility:
         assert np.iscomplexobj(state)
 
         # Should be normalized
-        norm = np.sum(np.abs(state) ** 2)
-        assert np.isclose(norm, 1.0, rtol=1e-5, atol=1e-8)
+        norm = np.sum(abs(state) ** 2)
+        assert isclose(norm, 1.0, rtol=1e-5, atol=1e-8)
 
         # Should support numpy operations
-        probabilities = np.abs(state) ** 2
+        probabilities = abs(state) ** 2
         assert isinstance(probabilities, np.ndarray)
         assert probabilities.dtype == float
 
@@ -315,11 +322,11 @@ class TestQulacsAdvanced:
         sim.bindings["CX"](sim, 1, 2)
 
         state = sim.vector
-        expected = np.zeros(8, dtype=complex)
+        expected = zeros(8, dtype="complex")
         expected[0] = 1 / np.sqrt(2)  # |000⟩
         expected[7] = 1 / np.sqrt(2)  # |111⟩
 
-        assert np.allclose(state, expected)
+        assert allclose(state, expected)
 
     def test_state_normalization_preservation(self) -> None:
         """Test that state remains normalized after various operations."""
@@ -334,8 +341,8 @@ class TestQulacsAdvanced:
 
         # Check normalization
         state = sim.vector
-        norm_squared = np.sum(np.abs(state) ** 2)
-        assert np.isclose(norm_squared, 1.0, rtol=0.0, atol=1e-10)
+        norm_squared = np.sum(abs(state) ** 2)
+        assert isclose(norm_squared, 1.0, rtol=0.0, atol=1e-10)
 
     def test_gate_reversibility(self) -> None:
         """Test that gates are properly reversible."""
@@ -354,4 +361,4 @@ class TestQulacsAdvanced:
 
         # Should be back to initial state
         final_state = sim.vector
-        assert np.allclose(initial_state, final_state, atol=1e-10)
+        assert allclose(initial_state, final_state, atol=1e-10)

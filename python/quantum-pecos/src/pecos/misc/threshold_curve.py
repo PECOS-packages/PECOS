@@ -21,13 +21,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
-
-from pecos.num import curve_fit, diag, exp, mean, power, sqrt, std
+from pecos.num import curve_fit, delete, diag, exp, mean, power, sqrt, std, where
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import numpy as np
     from numpy.typing import NDArray
 
 
@@ -138,7 +137,7 @@ def func3(
 
     x = (p - pth) * power(dist, 1.0 / v0)
 
-    z = np.where(
+    z = where(
         bool(dist % 2),
         d * power(dist, -1.0 / uodd),
         d * power(dist, -1.0 / ueven),
@@ -294,9 +293,9 @@ def jackknife_pd(
     opt_list = []
     cov_list = []
     for i in range(len(plog)):
-        p_copy = np.delete(plist, i)
-        plog_copy = np.delete(plog, i)
-        dlist_copy = np.delete(dlist, i)
+        p_copy = delete(plist, i)
+        plog_copy = delete(plog, i)
+        dlist_copy = delete(dlist, i)
 
         result = threshold_fit(p_copy, dlist_copy, plog_copy, func, p0, maxfev)
         opt_list.append(result[0])

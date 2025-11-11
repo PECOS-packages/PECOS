@@ -26,6 +26,7 @@ from typing import Any, NoReturn
 from pecos_rslib._pecos_rslib import (
     ByteMessage,
     ByteMessageBuilder,
+    Array,  # Numpy-independent array type
     QuestDensityMatrix,
     QuestStateVec,
     RsWasmForeignObject,
@@ -34,22 +35,43 @@ from pecos_rslib._pecos_rslib import (
     SparseStabEngineRs,
     StateVecEngineRs,
     binding,  # llvmlite-compatible binding module for bitcode
+    dtypes,  # Rust-backed dtype system  # noqa: F401 - re-exported in __all__
     ir,  # llvmlite-compatible LLVM IR module
 )
 from pecos_rslib.cppsparse_sim import CppSparseSimRs
 from pecos_rslib.num_wrapper import (  # Enhanced num module with axis support
     # Functions
     mean,
+    sum,  # noqa: A004 - intentionally shadow builtin
     power,
     sqrt,
     exp,
+    ln,  # Natural logarithm
+    log,  # Logarithm with base
+    abs,  # noqa: A004 - intentionally shadow builtin
     isnan,
     cos,
     sin,
+    tan,
+    sinh,
+    cosh,
+    tanh,
+    asin,
+    acos,
+    atan,
+    asinh,
+    acosh,
+    atanh,
+    atan2,
     floor,
     ceil,
-    round,
+    round,  # noqa: A004 - intentionally shadow builtin
     isclose,
+    allclose,
+    array_equal,
+    all,  # noqa: A004 - intentionally shadow builtin - Boolean AND reduction
+    any,  # noqa: A004 - intentionally shadow builtin - Boolean OR reduction
+    where,
     std,
     brentq,
     newton,
@@ -58,10 +80,16 @@ from pecos_rslib.num_wrapper import (  # Enhanced num module with axis support
     Poly1d,
     diag,
     linspace,
+    arange,  # Python wrapper with dtype inference
+    zeros,
+    ones,
+    delete,
     # Constants
     pi,
     tau,
     e,
+    inf,
+    nan,
     FRAC_PI_2,
     FRAC_PI_3,
     FRAC_PI_4,
@@ -86,6 +114,9 @@ from pecos_rslib.rsstate_vec import StateVecRs
 
 # Import the num module directly from Rust - it already has all submodules set up correctly
 from pecos_rslib._pecos_rslib import num
+
+# Add Python-friendly aliases (without underscores)
+num.where = num.where_
 
 # Register submodules in sys.modules so Python can find them
 sys.modules["pecos_rslib.num"] = num
@@ -492,6 +523,8 @@ __all__ = [
     "ByteMessageBuilder",
     "StateVecEngineRs",
     "SparseStabEngineRs",
+    # Array types
+    "Array",  # Numpy-independent array type
     # llvmlite-compatible modules
     "ir",
     "binding",
@@ -499,16 +532,36 @@ __all__ = [
     "num",
     # Numerical functions from num_wrapper
     "mean",
+    "sum",
     "power",
     "sqrt",
     "exp",
+    "ln",  # Natural logarithm
+    "log",  # Logarithm with base
+    "abs",
     "isnan",
     "cos",
     "sin",
+    "tan",
+    "sinh",
+    "cosh",
+    "tanh",
+    "asin",
+    "acos",
+    "atan",
+    "asinh",
+    "acosh",
+    "atanh",
+    "atan2",
     "floor",
     "ceil",
     "round",
     "isclose",
+    "allclose",
+    "array_equal",
+    "all",  # Boolean AND reduction
+    "any",  # Boolean OR reduction
+    "where",
     "std",
     "brentq",
     "newton",
@@ -517,10 +570,16 @@ __all__ = [
     "Poly1d",
     "diag",
     "linspace",
+    "arange",  # Python wrapper with dtype inference
+    "zeros",
+    "ones",
+    "delete",
     # Mathematical constants
     "pi",
     "tau",
     "e",
+    "inf",
+    "nan",
     "FRAC_PI_2",
     "FRAC_PI_3",
     "FRAC_PI_4",

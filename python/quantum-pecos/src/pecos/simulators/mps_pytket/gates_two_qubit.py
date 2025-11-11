@@ -18,7 +18,6 @@ CNOT gates, controlled gates, and other entangling operations with MPS bond dime
 from __future__ import annotations
 
 import cmath
-import math
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -28,7 +27,7 @@ if TYPE_CHECKING:
 import cupy as cp
 from pytket import Qubit
 
-from pecos.num import pi
+from pecos.num import cos, pi, sin
 from pecos.simulators.mps_pytket.gates_one_qubit import H
 
 
@@ -134,10 +133,10 @@ def RXX(
 
     matrix = cp.asarray(
         [
-            [math.cos(theta / 2), 0, 0, -1j * math.sin(theta / 2)],
-            [0, math.cos(theta / 2), -1j * math.sin(theta / 2), 0],
-            [0, -1j * math.sin(theta / 2), math.cos(theta / 2), 0],
-            [-1j * math.sin(theta / 2), 0, 0, math.cos(theta / 2)],
+            [cos(theta / 2), 0, 0, -1j * sin(theta / 2)],
+            [0, cos(theta / 2), -1j * sin(theta / 2), 0],
+            [0, -1j * sin(theta / 2), cos(theta / 2), 0],
+            [-1j * sin(theta / 2), 0, 0, cos(theta / 2)],
         ],
         dtype=state.dtype,
     )
@@ -164,10 +163,10 @@ def RYY(
 
     matrix = cp.asarray(
         [
-            [math.cos(theta / 2), 0, 0, 1j * math.sin(theta / 2)],
-            [0, math.cos(theta / 2), -1j * math.sin(theta / 2), 0],
-            [0, -1j * math.sin(theta / 2), math.cos(theta / 2), 0],
-            [1j * math.sin(theta / 2), 0, 0, math.cos(theta / 2)],
+            [cos(theta / 2), 0, 0, 1j * sin(theta / 2)],
+            [0, cos(theta / 2), -1j * sin(theta / 2), 0],
+            [0, -1j * sin(theta / 2), cos(theta / 2), 0],
+            [1j * sin(theta / 2), 0, 0, cos(theta / 2)],
         ],
         dtype=state.dtype,
     )

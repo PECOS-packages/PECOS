@@ -8,7 +8,7 @@ compatible with numpy.random.seed().
 import numpy as np
 import pytest
 
-from pecos.num import random as pecos_random
+from pecos_rslib import array_equal, random as pecos_random
 
 
 class TestSeedReproducibility:
@@ -55,7 +55,7 @@ class TestSeedReproducibility:
         values2 = pecos_random.random(100)
 
         # With 100 random floats, sequences should be different
-        assert not np.array_equal(values1, values2)
+        assert not array_equal(values1, values2)
 
     def test_seed_advances_state(self):
         """Test that RNG state advances between calls."""
@@ -108,8 +108,8 @@ class TestSeedIntegration:
 
         # r1 should match r2 position-wise, i1 should match i2
         # This confirms state advances properly
-        assert not np.array_equal(r1, r2)  # Different because order changed
-        assert not np.array_equal(i1, i2)
+        assert not array_equal(r1, r2)  # Different because order changed
+        assert not array_equal(i1, i2)
 
 
 class TestSeedLargeScale:
@@ -175,7 +175,7 @@ class TestSeedNumericRange:
         pecos_random.seed(2)
         seq2 = pecos_random.random(10)
 
-        assert not np.array_equal(seq1, seq2)
+        assert not array_equal(seq1, seq2)
 
 
 if __name__ == "__main__":

@@ -17,8 +17,6 @@ including CNOT gates, controlled gates, and other entangling operations using CU
 
 from __future__ import annotations
 
-import cmath
-import math
 from typing import TYPE_CHECKING
 
 import cupy as cp
@@ -28,7 +26,7 @@ if TYPE_CHECKING:
     from pecos.typing import SimulatorGateParams
 from cuquantum.bindings import custatevec as cusv
 
-from pecos.num import pi
+from pecos.num import cos, pi, sin
 from pecos.simulators.custatevec.gates_one_qubit import H
 
 
@@ -212,22 +210,22 @@ def RXX(
 
     matrix = cp.asarray(
         [
-            math.cos(theta / 2),
+            cos(theta / 2),
             0,
             0,
-            -1j * math.sin(theta / 2),
+            -1j * sin(theta / 2),
             0,
-            math.cos(theta / 2),
-            -1j * math.sin(theta / 2),
-            0,
-            0,
-            -1j * math.sin(theta / 2),
-            math.cos(theta / 2),
-            0,
-            -1j * math.sin(theta / 2),
+            cos(theta / 2),
+            -1j * sin(theta / 2),
             0,
             0,
-            math.cos(theta / 2),
+            -1j * sin(theta / 2),
+            cos(theta / 2),
+            0,
+            -1j * sin(theta / 2),
+            0,
+            0,
+            cos(theta / 2),
         ],
         dtype=state.cp_type,
     )
@@ -254,22 +252,22 @@ def RYY(
 
     matrix = cp.asarray(
         [
-            math.cos(theta / 2),
+            cos(theta / 2),
             0,
             0,
-            1j * math.sin(theta / 2),
+            1j * sin(theta / 2),
             0,
-            math.cos(theta / 2),
-            -1j * math.sin(theta / 2),
-            0,
-            0,
-            -1j * math.sin(theta / 2),
-            math.cos(theta / 2),
-            0,
-            1j * math.sin(theta / 2),
+            cos(theta / 2),
+            -1j * sin(theta / 2),
             0,
             0,
-            math.cos(theta / 2),
+            -1j * sin(theta / 2),
+            cos(theta / 2),
+            0,
+            1j * sin(theta / 2),
+            0,
+            0,
+            cos(theta / 2),
         ],
         dtype=state.cp_type,
     )
@@ -296,22 +294,22 @@ def RZZ(
 
     matrix = cp.asarray(
         [
-            cmath.exp(-1j * theta / 2),
+            cp.exp(-1j * theta / 2),
             0,
             0,
             0,
             0,
-            cmath.exp(1j * theta / 2),
+            cp.exp(1j * theta / 2),
             0,
             0,
             0,
             0,
-            cmath.exp(1j * theta / 2),
+            cp.exp(1j * theta / 2),
             0,
             0,
             0,
             0,
-            cmath.exp(-1j * theta / 2),
+            cp.exp(-1j * theta / 2),
         ],
         dtype=state.cp_type,
     )

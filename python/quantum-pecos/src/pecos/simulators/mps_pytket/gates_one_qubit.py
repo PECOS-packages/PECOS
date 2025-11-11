@@ -18,7 +18,6 @@ Pauli gates, rotation gates, and other fundamental operations for MPS tensor ope
 from __future__ import annotations
 
 import cmath
-import math
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -28,7 +27,7 @@ if TYPE_CHECKING:
 import cupy as cp
 from pytket import Qubit
 
-from pecos.num import pi
+from pecos.num import cos, pi, sin
 
 
 def _apply_one_qubit_matrix(state: MPS, qubit: int, matrix: cp.ndarray) -> None:
@@ -126,8 +125,8 @@ def RX(
 
     matrix = cp.asarray(
         [
-            [math.cos(theta / 2), -1j * math.sin(theta / 2)],
-            [-1j * math.sin(theta / 2), math.cos(theta / 2)],
+            [cos(theta / 2), -1j * sin(theta / 2)],
+            [-1j * sin(theta / 2), cos(theta / 2)],
         ],
         dtype=state.dtype,
     )
@@ -154,8 +153,8 @@ def RY(
 
     matrix = cp.asarray(
         [
-            [math.cos(theta / 2), -math.sin(theta / 2)],
-            [math.sin(theta / 2), math.cos(theta / 2)],
+            [cos(theta / 2), -sin(theta / 2)],
+            [sin(theta / 2), cos(theta / 2)],
         ],
         dtype=state.dtype,
     )

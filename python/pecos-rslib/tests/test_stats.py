@@ -750,3 +750,342 @@ class TestPolyfitWithPoly1d:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ============================================================================
+# Sum Tests
+# ============================================================================
+
+
+class TestSumBasicTypes:
+    """Test sum() with different input types."""
+
+    def test_sum_list_float(self):
+        """Test sum with list of floats."""
+        from pecos.num import sum as pecos_sum
+
+        values = [1.0, 2.0, 3.0, 4.0, 5.0]
+
+        pecos_result = pecos_sum(values)
+        numpy_result = np.sum(values)
+
+        assert pecos_result == numpy_result
+        assert pecos_result == 15.0
+
+    def test_sum_tuple_float(self):
+        """Test sum with tuple of floats."""
+        from pecos.num import sum as pecos_sum
+
+        values = (1.0, 2.0, 3.0)
+
+        pecos_result = pecos_sum(values)
+        numpy_result = np.sum(values)
+
+        assert pecos_result == numpy_result
+        assert pecos_result == 6.0
+
+    def test_sum_numpy_float(self):
+        """Test sum with numpy array of floats."""
+        from pecos.num import sum as pecos_sum
+
+        values = np.array([1.0, 2.0, 3.0, 4.0])
+
+        pecos_result = pecos_sum(values)
+        numpy_result = np.sum(values)
+
+        assert pecos_result == numpy_result
+        assert pecos_result == 10.0
+
+    def test_sum_complex_list(self):
+        """Test sum with list of complex numbers."""
+        from pecos.num import sum as pecos_sum
+
+        values = [1 + 2j, 3 + 4j, 5 + 6j]
+
+        pecos_result = pecos_sum(values)
+        numpy_result = np.sum(values)
+
+        assert pecos_result == numpy_result
+        assert pecos_result == (9 + 12j)
+
+    def test_sum_complex_numpy(self):
+        """Test sum with numpy array of complex numbers."""
+        from pecos.num import sum as pecos_sum
+
+        values = np.array([1 + 2j, 3 + 4j, 5 + 6j])
+
+        pecos_result = pecos_sum(values)
+        numpy_result = np.sum(values)
+
+        assert pecos_result == numpy_result
+        assert pecos_result == (9 + 12j)
+
+
+class TestSumAxisParameter:
+    """Test sum() with axis parameter."""
+
+    def test_sum_2d_axis_none(self):
+        """Test sum with 2D array, axis=None (sum all elements)."""
+        from pecos.num import sum as pecos_sum
+
+        arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+
+        pecos_result = pecos_sum(arr, axis=None)
+        numpy_result = np.sum(arr, axis=None)
+
+        assert pecos_result == numpy_result
+        assert pecos_result == 21.0
+
+    def test_sum_2d_axis_0(self):
+        """Test sum along axis 0 (down columns)."""
+        from pecos.num import sum as pecos_sum
+
+        arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+
+        pecos_result = pecos_sum(arr, axis=0)
+        numpy_result = np.sum(arr, axis=0)
+
+        np.testing.assert_array_equal(pecos_result, numpy_result)
+        np.testing.assert_array_equal(pecos_result, [5.0, 7.0, 9.0])
+
+    def test_sum_2d_axis_1(self):
+        """Test sum along axis 1 (across rows)."""
+        from pecos.num import sum as pecos_sum
+
+        arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+
+        pecos_result = pecos_sum(arr, axis=1)
+        numpy_result = np.sum(arr, axis=1)
+
+        np.testing.assert_array_equal(pecos_result, numpy_result)
+        np.testing.assert_array_equal(pecos_result, [6.0, 15.0])
+
+    def test_sum_2d_axis_negative(self):
+        """Test sum with negative axis."""
+        from pecos.num import sum as pecos_sum
+
+        arr = np.array([[1.0, 2.0], [3.0, 4.0]])
+
+        # axis=-1 is same as axis=1 for 2D array
+        pecos_result = pecos_sum(arr, axis=-1)
+        numpy_result = np.sum(arr, axis=-1)
+
+        np.testing.assert_array_equal(pecos_result, numpy_result)
+        np.testing.assert_array_equal(pecos_result, [3.0, 7.0])
+
+    def test_sum_3d_axis_0(self):
+        """Test sum with 3D array along axis 0."""
+        from pecos.num import sum as pecos_sum
+
+        arr = np.array([[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]])
+
+        pecos_result = pecos_sum(arr, axis=0)
+        numpy_result = np.sum(arr, axis=0)
+
+        np.testing.assert_array_equal(pecos_result, numpy_result)
+
+    def test_sum_list_with_axis_0(self):
+        """Test sum with list input and axis parameter."""
+        from pecos.num import sum as pecos_sum
+
+        values = [[1.0, 2.0], [3.0, 4.0]]
+
+        pecos_result = pecos_sum(values, axis=0)
+        numpy_result = np.sum(values, axis=0)
+
+        np.testing.assert_array_equal(pecos_result, numpy_result)
+        np.testing.assert_array_equal(pecos_result, [4.0, 6.0])
+
+
+class TestSumComplexWithAxis:
+    """Test sum() with complex numbers and axis parameter."""
+
+    def test_sum_complex_2d_axis_0(self):
+        """Test sum of complex 2D array along axis 0."""
+        from pecos.num import sum as pecos_sum
+
+        arr = np.array([[1 + 1j, 2 + 2j], [3 + 3j, 4 + 4j]])
+
+        pecos_result = pecos_sum(arr, axis=0)
+        numpy_result = np.sum(arr, axis=0)
+
+        np.testing.assert_array_equal(pecos_result, numpy_result)
+
+    def test_sum_complex_2d_axis_1(self):
+        """Test sum of complex 2D array along axis 1."""
+        from pecos.num import sum as pecos_sum
+
+        arr = np.array([[1 + 1j, 2 + 2j], [3 + 3j, 4 + 4j]])
+
+        pecos_result = pecos_sum(arr, axis=1)
+        numpy_result = np.sum(arr, axis=1)
+
+        np.testing.assert_array_equal(pecos_result, numpy_result)
+
+
+class TestSumUseCases:
+    """Test sum() in real quantum computing use cases."""
+
+    def test_sum_probability_normalization(self):
+        """Test sum for quantum state probability normalization check."""
+        from pecos.num import abs as pecos_abs
+        from pecos.num import sum as pecos_sum
+
+        # Quantum state vector (normalized)
+        state = np.array([1 / np.sqrt(2), 0, 0, 1 / np.sqrt(2) * 1j])
+
+        # Calculate probability sum: sum(|psi|^2) should equal 1
+        probs_np = np.abs(state) ** 2
+        norm_np = np.sum(probs_np)
+
+        # Using pecos functions
+        probs_pecos = pecos_abs(state) ** 2
+        norm_pecos = pecos_sum(probs_pecos)
+
+        assert abs(norm_np - 1.0) < 1e-10
+        assert abs(norm_pecos - 1.0) < 1e-10
+        assert abs(norm_pecos - norm_np) < 1e-10
+
+    def test_sum_complex_state_accumulation(self):
+        """Test sum for accumulating complex quantum amplitudes."""
+        from pecos.num import sum as pecos_sum
+
+        # Complex amplitudes from different measurement outcomes
+        amplitudes = np.array([0.5 + 0.5j, 0.3 - 0.2j, 0.1 + 0.7j])
+
+        pecos_result = pecos_sum(amplitudes)
+        numpy_result = np.sum(amplitudes)
+
+        assert pecos_result == numpy_result
+        assert abs(pecos_result - (0.9 + 1.0j)) < 1e-10
+
+    def test_sum_threshold_analysis(self):
+        """Test sum for threshold analysis (summing error rates)."""
+        from pecos.num import sum as pecos_sum
+
+        # Error rates across multiple qubits
+        error_rates = [0.001, 0.0015, 0.002, 0.0012]
+
+        total_error_pecos = pecos_sum(error_rates)
+        total_error_numpy = np.sum(error_rates)
+
+        assert abs(total_error_pecos - total_error_numpy) < 1e-10
+
+
+class TestSumEdgeCases:
+    """Test sum() edge cases."""
+
+    def test_sum_empty_raises_error(self):
+        """Test sum with empty array."""
+        from pecos.num import sum as pecos_sum
+
+        # NumPy returns 0.0 for empty array, we should match
+        values = []
+
+        pecos_result = pecos_sum(values)
+        numpy_result = np.sum(values)
+
+        assert pecos_result == numpy_result
+        assert pecos_result == 0.0
+
+    def test_sum_single_element(self):
+        """Test sum with single element."""
+        from pecos.num import sum as pecos_sum
+
+        values = [42.0]
+
+        pecos_result = pecos_sum(values)
+        numpy_result = np.sum(values)
+
+        assert pecos_result == numpy_result
+        assert pecos_result == 42.0
+
+    def test_sum_negative_values(self):
+        """Test sum with negative values."""
+        from pecos.num import sum as pecos_sum
+
+        values = [-1.0, -2.0, -3.0, 4.0, 5.0]
+
+        pecos_result = pecos_sum(values)
+        numpy_result = np.sum(values)
+
+        assert pecos_result == numpy_result
+        assert pecos_result == 3.0
+
+    def test_sum_mixed_sign_complex(self):
+        """Test sum with mixed sign complex numbers."""
+        from pecos.num import sum as pecos_sum
+
+        values = np.array([1 + 2j, -3 + 4j, 5 - 6j])
+
+        pecos_result = pecos_sum(values)
+        numpy_result = np.sum(values)
+
+        assert pecos_result == numpy_result
+        assert pecos_result == (3 + 0j)
+
+    def test_sum_axis_out_of_bounds(self):
+        """Test sum with axis out of bounds raises error."""
+        from pecos.num import sum as pecos_sum
+
+        arr = np.array([[1.0, 2.0], [3.0, 4.0]])
+
+        with pytest.raises(ValueError, match="axis.*out of bounds"):
+            pecos_sum(arr, axis=5)
+
+
+class TestSumComparison:
+    """Comprehensive comparison tests against NumPy."""
+
+    def test_sum_matches_numpy_1d(self):
+        """Test sum matches numpy for 1D arrays."""
+        from pecos.num import sum as pecos_sum
+
+        test_cases = [
+            [1.0, 2.0, 3.0],
+            [0.1, 0.2, 0.3, 0.4, 0.5],
+            [-1.0, 0.0, 1.0],
+            [100.0, 200.0, 300.0],
+        ]
+
+        for values in test_cases:
+            pecos_result = pecos_sum(values)
+            numpy_result = np.sum(values)
+            assert abs(pecos_result - numpy_result) < 1e-10, f"Failed for {values}"
+
+    def test_sum_matches_numpy_2d_all_axes(self):
+        """Test sum matches numpy for 2D arrays with all axis values."""
+        from pecos.num import sum as pecos_sum
+
+        arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
+
+        # Test axis=None
+        pecos_result = pecos_sum(arr, axis=None)
+        numpy_result = np.sum(arr, axis=None)
+        assert pecos_result == numpy_result
+
+        # Test axis=0
+        pecos_result = pecos_sum(arr, axis=0)
+        numpy_result = np.sum(arr, axis=0)
+        np.testing.assert_array_equal(pecos_result, numpy_result)
+
+        # Test axis=1
+        pecos_result = pecos_sum(arr, axis=1)
+        numpy_result = np.sum(arr, axis=1)
+        np.testing.assert_array_equal(pecos_result, numpy_result)
+
+    def test_sum_matches_numpy_complex(self):
+        """Test sum matches numpy for complex arrays."""
+        from pecos.num import sum as pecos_sum
+
+        test_cases = [
+            [1 + 1j, 2 + 2j, 3 + 3j],
+            [0.5 - 0.5j, 0.5 + 0.5j],
+            [1j, 2j, 3j],
+        ]
+
+        for values in test_cases:
+            arr = np.array(values)
+            pecos_result = pecos_sum(arr)
+            numpy_result = np.sum(arr)
+            assert pecos_result == numpy_result, f"Failed for {values}"

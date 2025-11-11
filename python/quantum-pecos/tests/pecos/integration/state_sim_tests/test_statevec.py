@@ -27,7 +27,15 @@ import pytest
 from pecos.circuits import QuantumCircuit
 from pecos.engines.hybrid_engine import HybridEngine
 from pecos.error_models.generic_error_model import GenericErrorModel
-from pecos.num import pi, random
+from pecos.num import (
+    abs,  # noqa: A004 - intentionally shadow builtin
+    allclose,
+    isclose,
+    linalg,
+    pi,
+    random,
+    zeros,
+)
 from pecos.simulators import (
     MPS,
     CuStateVec,
@@ -74,12 +82,12 @@ def verify(simulator: str, qc: QuantumCircuit, final_vector: np.ndarray) -> None
     sim.run_circuit(qc)
 
     # Normalize vectors
-    sim_vector_normalized = sim.vector / (np.linalg.norm(sim.vector) or 1)
-    final_vector_normalized = final_vector / (np.linalg.norm(final_vector) or 1)
+    sim_vector_normalized = sim.vector / (linalg.norm(sim.vector) or 1)
+    final_vector_normalized = final_vector / (linalg.norm(final_vector) or 1)
 
     phase = (
         final_vector_normalized[0] / sim_vector_normalized[0]
-        if np.abs(sim_vector_normalized[0]) > 1e-10
+        if abs(sim_vector_normalized[0]) > 1e-10
         else 1
     )
 
@@ -119,12 +127,12 @@ def check_measurement(
     state = 0
     for q, value in results.items():
         state += value * 2 ** (sim.num_qubits - 1 - q)
-    final_vector = np.zeros(shape=(2**sim.num_qubits,))
+    final_vector = zeros(shape=(2**sim.num_qubits,))
     final_vector[state] = 1
 
     abs_values_vector = [abs(x) for x in sim.vector]
 
-    assert np.allclose(abs_values_vector, final_vector)
+    assert allclose(abs_values_vector, final_vector)
 
 
 def compare_against_statevec(
@@ -188,7 +196,7 @@ def test_init(simulator: str) -> None:
     qc = QuantumCircuit()
     qc.append({"Init": {0, 1, 2, 3}})
 
-    final_vector = np.zeros(shape=(2**4,))
+    final_vector = zeros(shape=(2**4,))
     final_vector[0] = 1
 
     verify(simulator, qc, final_vector)
@@ -231,7 +239,7 @@ def test_comp_basis_circ_and_measure(simulator: str) -> None:
     # Step 1
     qc.append({"X": {0, 2}})  # |0000> -> |1010>
 
-    final_vector = np.zeros(shape=(2**4,))
+    final_vector = zeros(shape=(2**4,))
     final_vector[10] = 1  # |1010>
 
     # Run the circuit and compare results
@@ -245,7 +253,7 @@ def test_comp_basis_circ_and_measure(simulator: str) -> None:
     # Step 2
     qc.append({"CX": {(2, 1)}})  # |1010> -> |1110>
 
-    final_vector = np.zeros(shape=(2**4,))
+    final_vector = zeros(shape=(2**4,))
     final_vector[14] = 1  # |1110>
 
     # Run the circuit and compare results for Step 2
@@ -426,7 +434,7 @@ def test_hybrid_engine_no_noise(simulator: str) -> None:
 
     register = "c" if "c" in results else "m"
     result_values = results[register]
-    assert np.isclose(
+    assert isclose(
         result_values.count("00") / n_shots,
         result_values.count("11") / n_shots,
         rtol=0.0,
@@ -472,7 +480,7 @@ def test_hybrid_engine_no_noise(simulator: str) -> None:
     # Check either "c" (if Result command worked) or "m" (fallback)
     register = "c" if "c" in results else "m"
     result_values = results[register]
-    assert np.isclose(
+    assert isclose(
         result_values.count("00") / n_shots,
         result_values.count("11") / n_shots,
         rtol=0.0,

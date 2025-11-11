@@ -14,6 +14,8 @@ use pecos::prelude::*;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
+use crate::pecos_array::Array;
+
 /// The struct represents the state-vector simulator exposed to Python
 #[pyclass]
 pub struct RsStateVec {
@@ -510,11 +512,20 @@ impl RsStateVec {
 
     /// Provides direct access to the current state vector as a Python property
     #[getter]
-    fn vector(&self) -> Vec<(f64, f64)> {
-        self.inner
-            .state()
-            .iter()
-            .map(|complex| (complex.re, complex.im))
-            .collect()
+    #[allow(clippy::items_after_statements)] // Use statements for type imports are clearer when near usage
+    fn vector(&self, py: Python<'_>) -> PyResult<Py<Array>> {
+        // Convert the state vector to a 1D complex ndarray
+        use numpy::ndarray::Array1;
+        let state = self.inner.state();
+        let complex_array: Vec<num_complex::Complex64> = state.to_vec();
+        let nd_array = Array1::from(complex_array);
+
+        // Create ArrayData from the ndarray
+        use crate::pecos_array::ArrayData;
+        let array_data = ArrayData::Complex128(nd_array.into_dyn());
+
+        // Create Array and wrap it as a Python object
+        let pecos_array = Array::new(array_data);
+        Py::new(py, pecos_array)
     }
 }

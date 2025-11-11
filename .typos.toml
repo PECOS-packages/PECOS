@@ -16,3 +16,7 @@ ine = "ine"  # Integer not equal operation
 inot = "inot"  # Integer bitwise NOT operation
 # QuEST v4.1.0 uses "calcExpec" (not "calcExpect") in function names
 Expec = "Expec"
+# NumPy uses "arange" (array range), not "arrange"
+arange = "arange"
+# Common variable name prefix for ndarray
+nd = "nd"

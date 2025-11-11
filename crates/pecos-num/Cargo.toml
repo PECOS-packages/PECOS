@@ -31,6 +31,9 @@ rand.workspace = true
 # Complex number support (for numpy complex operations)
 num-complex.workspace = true
 
+# Numeric traits (for generic trait implementations)
+num-traits.workspace = true
+
 # Logging
 log.workspace = true
 

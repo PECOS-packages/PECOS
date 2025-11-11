@@ -18,7 +18,7 @@
 //! across scalars, complex numbers, and arrays.
 
 use ndarray::{Array, ArrayBase, Data, Dimension};
-use num_complex::Complex64;
+use num_complex::{Complex, Complex64};
 
 // ============================================================================
 // Trait Definitions
@@ -154,6 +154,440 @@ pub trait Sin {
     fn sin(&self) -> Self::Output;
 }
 
+/// Trait for calculating tangent.
+///
+/// This trait provides a uniform interface for tangent operations.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::prelude::*;
+///
+/// // Scalars
+/// assert!((0.0_f64.tan()).abs() < 1e-10);
+///
+/// // Arrays
+/// let arr = array![0.0, PI / 4.0];
+/// let result = arr.tan();
+/// assert!((result[0]).abs() < 1e-10);
+/// ```
+pub trait Tan {
+    /// The output type when calculating tangent.
+    type Output;
+
+    /// Calculate tan(self) where self is in radians.
+    fn tan(&self) -> Self::Output;
+}
+
+/// Trait for calculating hyperbolic sine.
+///
+/// This trait provides a uniform interface for hyperbolic sine operations.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::prelude::*;
+///
+/// // Scalars
+/// assert!((0.0_f64.sinh()).abs() < 1e-10);
+/// ```
+pub trait Sinh {
+    /// The output type when calculating hyperbolic sine.
+    type Output;
+
+    /// Calculate sinh(self).
+    fn sinh(&self) -> Self::Output;
+}
+
+/// Trait for calculating hyperbolic cosine.
+///
+/// This trait provides a uniform interface for hyperbolic cosine operations.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::prelude::*;
+///
+/// // Scalars
+/// assert!((0.0_f64.cosh() - 1.0).abs() < 1e-10);
+/// ```
+pub trait Cosh {
+    /// The output type when calculating hyperbolic cosine.
+    type Output;
+
+    /// Calculate cosh(self).
+    fn cosh(&self) -> Self::Output;
+}
+
+/// Trait for calculating hyperbolic tangent.
+///
+/// This trait provides a uniform interface for hyperbolic tangent operations.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::prelude::*;
+///
+/// // Scalars
+/// assert!((0.0_f64.tanh()).abs() < 1e-10);
+///
+/// // Arrays
+/// let arr = array![0.0, 1.0, -1.0];
+/// let result = arr.tanh();
+/// assert!((result[0]).abs() < 1e-10);
+/// ```
+pub trait Tanh {
+    /// The output type when calculating hyperbolic tangent.
+    type Output;
+
+    /// Calculate tanh(self).
+    fn tanh(&self) -> Self::Output;
+}
+
+/// Trait for calculating arcsine (inverse sine).
+///
+/// Drop-in replacement for `numpy.arcsin()` and `math.asin()`.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::prelude::*;
+///
+/// // Scalar
+/// let x = 0.5_f64;
+/// assert!((x.asin() - std::f64::consts::FRAC_PI_6).abs() < 1e-10);
+///
+/// // Array
+/// let arr = array![0.0, 0.5, 1.0];
+/// let result = arr.asin();
+/// assert!(result[0].abs() < 1e-10);
+/// assert!((result[2] - std::f64::consts::FRAC_PI_2).abs() < 1e-10);
+/// ```
+pub trait Asin {
+    /// The output type when calculating arcsine.
+    type Output;
+
+    /// Calculate arcsin(self).
+    fn asin(&self) -> Self::Output;
+}
+
+/// Trait for calculating arccosine (inverse cosine).
+///
+/// Drop-in replacement for `numpy.arccos()` and `math.acos()`.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::prelude::*;
+///
+/// // Scalar
+/// let x = 0.5_f64;
+/// assert!((x.acos() - std::f64::consts::FRAC_PI_3).abs() < 1e-10);
+///
+/// // Array
+/// let arr = array![0.0, 0.5, 1.0];
+/// let result = arr.acos();
+/// assert!((result[0] - std::f64::consts::FRAC_PI_2).abs() < 1e-10);
+/// assert!(result[2].abs() < 1e-10);
+/// ```
+pub trait Acos {
+    /// The output type when calculating arccosine.
+    type Output;
+
+    /// Calculate arccos(self).
+    fn acos(&self) -> Self::Output;
+}
+
+/// Trait for calculating arctangent (inverse tangent).
+///
+/// Drop-in replacement for `numpy.arctan()` and `math.atan()`.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::prelude::*;
+///
+/// // Scalar
+/// let x = 1.0_f64;
+/// assert!((x.atan() - std::f64::consts::FRAC_PI_4).abs() < 1e-10);
+///
+/// // Array
+/// let arr = array![0.0, 1.0, -1.0];
+/// let result = arr.atan();
+/// assert!(result[0].abs() < 1e-10);
+/// assert!((result[1] - std::f64::consts::FRAC_PI_4).abs() < 1e-10);
+/// ```
+pub trait Atan {
+    /// The output type when calculating arctangent.
+    type Output;
+
+    /// Calculate arctan(self).
+    fn atan(&self) -> Self::Output;
+}
+
+/// Trait for calculating inverse hyperbolic sine.
+///
+/// Drop-in replacement for `numpy.arcsinh()` and `math.asinh()`.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::prelude::*;
+///
+/// // Scalar
+/// let x = 1.0_f64;
+/// assert!((x.asinh() - 0.881_373_587_019_543).abs() < 1e-10);
+///
+/// // Array
+/// let arr = array![0.0, 1.0, -1.0];
+/// let result = arr.asinh();
+/// assert!(result[0].abs() < 1e-10);
+/// assert!((result[1] - 0.881_373_587_019_543).abs() < 1e-10);
+/// ```
+pub trait Asinh {
+    /// The output type when calculating inverse hyperbolic sine.
+    type Output;
+
+    /// Calculate arcsinh(self).
+    fn asinh(&self) -> Self::Output;
+}
+
+/// Trait for calculating inverse hyperbolic cosine.
+///
+/// Drop-in replacement for `numpy.arccosh()` and `math.acosh()`.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::prelude::*;
+///
+/// // Scalar
+/// let x = 2.0_f64;
+/// assert!((x.acosh() - 1.316_957_896_924_817).abs() < 1e-10);
+///
+/// // Array
+/// let arr = array![1.0, 2.0, 3.0];
+/// let result = arr.acosh();
+/// assert!(result[0].abs() < 1e-10);
+/// assert!((result[1] - 1.316_957_896_924_817).abs() < 1e-10);
+/// ```
+pub trait Acosh {
+    /// The output type when calculating inverse hyperbolic cosine.
+    type Output;
+
+    /// Calculate arccosh(self).
+    fn acosh(&self) -> Self::Output;
+}
+
+/// Trait for calculating inverse hyperbolic tangent.
+///
+/// Drop-in replacement for `numpy.arctanh()` and `math.atanh()`.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::prelude::*;
+///
+/// // Scalar
+/// let x = 0.5_f64;
+/// assert!((x.atanh() - 0.549_306_144_334_055).abs() < 1e-10);
+///
+/// // Array
+/// let arr = array![0.0, 0.5, -0.5];
+/// let result = arr.atanh();
+/// assert!(result[0].abs() < 1e-10);
+/// assert!((result[1] - 0.549_306_144_334_055).abs() < 1e-10);
+/// ```
+pub trait Atanh {
+    /// The output type when calculating inverse hyperbolic tangent.
+    type Output;
+
+    /// Calculate arctanh(self).
+    fn atanh(&self) -> Self::Output;
+}
+
+/// Trait for calculating two-argument arctangent with quadrant handling.
+///
+/// Drop-in replacement for `numpy.arctan2()` and `math.atan2()`.
+///
+/// Computes the angle θ in radians such that `x = r cos(θ)` and `y = r sin(θ)`,
+/// where `r = sqrt(x² + y²)`. The result is in the range `[-π, π]`.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::prelude::*;
+/// use std::f64::consts::{PI, FRAC_PI_4};
+///
+/// // Scalar - first quadrant
+/// let y = 1.0_f64;
+/// assert!((y.atan2(1.0) - FRAC_PI_4).abs() < 1e-10);
+///
+/// // Scalar - second quadrant
+/// assert!((y.atan2(-1.0) - 3.0 * FRAC_PI_4).abs() < 1e-10);
+/// ```
+pub trait Atan2<Rhs = Self> {
+    /// The output type when calculating atan2.
+    type Output;
+
+    /// Calculate atan2(self, x) - the angle in radians in the range [-π, π].
+    ///
+    /// # Arguments
+    ///
+    /// * `x` - The x-coordinate
+    ///
+    /// # Returns
+    ///
+    /// The angle θ such that `x_input = r cos(θ)` and `self = r sin(θ)`
+    fn atan2(&self, x: Rhs) -> Self::Output;
+}
+
+/// Trait for calculating natural logarithm (base e) for arrays.
+///
+/// This trait extends `.ln()` support to Complex64 arrays for consistency with f64 arrays.
+/// ndarray provides `.ln()` for Float arrays, but not for Complex arrays.
+///
+/// Note: For f64 scalars and arrays, use the stdlib/ndarray `.ln()` method directly.
+/// For Complex64 scalars, use the num-complex `.ln()` method directly.
+/// This trait is only needed for Complex64 arrays.
+///
+/// Drop-in replacement for `numpy.log()` on arrays.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::prelude::*;
+///
+/// // Float arrays use ndarray's built-in .ln()
+/// let arr = array![1.0, E, E * E];
+/// let result = arr.ln();
+/// assert!((result[0]).abs() < 1e-10);
+/// assert!((result[1] - 1.0).abs() < 1e-10);
+/// assert!((result[2] - 2.0).abs() < 1e-10);
+///
+/// // Complex arrays use this trait's .ln()
+/// use pecos_num::math::Ln;
+/// let arr = array![Complex64::new(1.0, 0.0), Complex64::new(E, 0.0)];
+/// let result = arr.ln();
+/// assert!(result[0].re.abs() < 1e-10);
+/// assert!((result[1].re - 1.0).abs() < 1e-10);
+/// ```
+pub trait Ln {
+    /// The output type when calculating natural logarithm.
+    type Output;
+
+    /// Calculate natural logarithm (base e) of self.
+    fn ln(&self) -> Self::Output;
+}
+
+/// Trait for calculating logarithm with custom base for arrays.
+///
+/// This trait extends `.log(base)` support to Complex64 arrays for consistency with f64 arrays.
+/// ndarray provides `.log(base)` for Float arrays, but not for Complex arrays.
+///
+/// Note: For f64 scalars and arrays, use the stdlib/ndarray `.log(base)` method directly.
+/// For Complex64 scalars, use the num-complex `.log(base)` method directly.
+/// This trait is only needed for Complex64 arrays.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::prelude::*;
+///
+/// // Float arrays use ndarray's built-in .log(base)
+/// let arr = array![10.0, 100.0, 1000.0];
+/// let result = arr.log(10.0);
+/// assert!((result[0] - 1.0).abs() < 1e-10);
+/// assert!((result[1] - 2.0).abs() < 1e-10);
+/// assert!((result[2] - 3.0).abs() < 1e-10);
+///
+/// // Complex arrays use this trait's .log(base)
+/// use pecos_num::math::LogBase;
+/// let arr = array![Complex64::new(10.0, 0.0), Complex64::new(100.0, 0.0)];
+/// let result = arr.log(10.0);
+/// assert!((result[0].re - 1.0).abs() < 1e-10);
+/// assert!((result[1].re - 2.0).abs() < 1e-10);
+/// ```
+pub trait LogBase {
+    /// The output type when calculating logarithm.
+    type Output;
+
+    /// Calculate logarithm with given base.
+    fn log(&self, base: f64) -> Self::Output;
+}
+
+/// Trait for calculating absolute value.
+///
+/// This trait provides a uniform interface for absolute value operations
+/// across different numeric types.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::prelude::*;
+///
+/// // Scalars
+/// assert_eq!((-5.0).abs(), 5.0);
+///
+/// // Complex numbers (returns magnitude)
+/// let z = Complex64::new(3.0, 4.0);
+/// assert!((z.abs() - 5.0).abs() < 1e-10);
+///
+/// // Arrays
+/// let arr = array![-1.0, -2.0, 3.0];
+/// let result = arr.abs();
+/// assert_eq!(result, array![1.0, 2.0, 3.0]);
+/// ```
+pub trait Abs {
+    /// The output type when calculating absolute value.
+    /// For complex numbers, this returns f64 (the magnitude).
+    type Output;
+
+    /// Calculate |self| (absolute value or magnitude).
+    fn abs(&self) -> Self::Output;
+}
+
+/// Trait for calculating floor for arrays.
+///
+/// Note: For f32/f64 scalars, use the stdlib `.floor()` method directly.
+/// This trait is primarily for array operations.
+///
+/// Drop-in replacement for `numpy.floor()` on arrays.
+pub trait Floor {
+    /// Output type (same as input for arrays).
+    type Output;
+
+    /// Calculate floor element-wise.
+    fn floor(&self) -> Self::Output;
+}
+
+/// Trait for calculating ceiling for arrays.
+///
+/// Note: For f32/f64 scalars, use the stdlib `.ceil()` method directly.
+/// This trait is primarily for array operations.
+///
+/// Drop-in replacement for `numpy.ceil()` on arrays.
+pub trait Ceil {
+    /// Output type (same as input for arrays).
+    type Output;
+
+    /// Calculate ceiling element-wise.
+    fn ceil(&self) -> Self::Output;
+}
+
+/// Extension trait for rounding using "round half to even" (banker's rounding).
+///
+/// This trait extends `.round_ties_even()` to types not covered by Rust stdlib,
+/// specifically complex numbers. For f32/f64 scalars, use the stdlib method directly.
+///
+/// For complex numbers, both real and imaginary parts are rounded independently,
+/// matching `NumPy`'s behavior.
+pub trait RoundTiesEven {
+    /// Round using "round half to even" (banker's rounding).
+    #[must_use]
+    fn round_ties_even(&self) -> Self;
+}
+
 // ============================================================================
 // Scalar Implementations
 // ============================================================================
@@ -175,6 +609,28 @@ impl Exp for Complex64 {
     #[inline]
     fn exp(&self) -> Complex64 {
         Complex64::exp(*self)
+    }
+}
+
+/// Extend `.round_ties_even()` to Complex64.
+///
+/// Rounds real and imaginary parts independently using "round half to even",
+/// matching `NumPy`'s behavior for complex number rounding.
+impl RoundTiesEven for Complex64 {
+    #[inline]
+    fn round_ties_even(&self) -> Self {
+        Complex64::new(self.re.round_ties_even(), self.im.round_ties_even())
+    }
+}
+
+/// Extend `.round_ties_even()` to Complex<f32>.
+///
+/// Rounds real and imaginary parts independently using "round half to even",
+/// matching `NumPy`'s behavior for complex number rounding.
+impl RoundTiesEven for Complex<f32> {
+    #[inline]
+    fn round_ties_even(&self) -> Self {
+        Complex::new(self.re.round_ties_even(), self.im.round_ties_even())
     }
 }
 
@@ -215,6 +671,258 @@ impl Sin for f64 {
     #[inline]
     fn sin(&self) -> f64 {
         f64::sin(*self)
+    }
+}
+
+/// Calculate tangent for f64 scalars.
+impl Tan for f64 {
+    type Output = f64;
+
+    #[inline]
+    fn tan(&self) -> f64 {
+        f64::tan(*self)
+    }
+}
+
+/// Calculate tangent for Complex64 scalars.
+impl Tan for Complex64 {
+    type Output = Complex64;
+
+    #[inline]
+    fn tan(&self) -> Complex64 {
+        Complex64::tan(*self)
+    }
+}
+
+/// Calculate hyperbolic sine for f64 scalars.
+impl Sinh for f64 {
+    type Output = f64;
+
+    #[inline]
+    fn sinh(&self) -> f64 {
+        f64::sinh(*self)
+    }
+}
+
+/// Calculate hyperbolic sine for Complex64 scalars.
+impl Sinh for Complex64 {
+    type Output = Complex64;
+
+    #[inline]
+    fn sinh(&self) -> Complex64 {
+        Complex64::sinh(*self)
+    }
+}
+
+/// Calculate hyperbolic cosine for f64 scalars.
+impl Cosh for f64 {
+    type Output = f64;
+
+    #[inline]
+    fn cosh(&self) -> f64 {
+        f64::cosh(*self)
+    }
+}
+
+/// Calculate hyperbolic cosine for Complex64 scalars.
+impl Cosh for Complex64 {
+    type Output = Complex64;
+
+    #[inline]
+    fn cosh(&self) -> Complex64 {
+        Complex64::cosh(*self)
+    }
+}
+
+/// Calculate hyperbolic tangent for f64 scalars.
+impl Tanh for f64 {
+    type Output = f64;
+
+    #[inline]
+    fn tanh(&self) -> f64 {
+        f64::tanh(*self)
+    }
+}
+
+/// Calculate hyperbolic tangent for Complex64 scalars.
+impl Tanh for Complex64 {
+    type Output = Complex64;
+
+    #[inline]
+    fn tanh(&self) -> Complex64 {
+        Complex64::tanh(*self)
+    }
+}
+
+/// Calculate arcsine for f64 scalars.
+impl Asin for f64 {
+    type Output = f64;
+
+    #[inline]
+    fn asin(&self) -> f64 {
+        f64::asin(*self)
+    }
+}
+
+/// Calculate arcsine for Complex64 scalars.
+impl Asin for Complex64 {
+    type Output = Complex64;
+
+    #[inline]
+    fn asin(&self) -> Complex64 {
+        Complex64::asin(*self)
+    }
+}
+
+/// Calculate arccosine for f64 scalars.
+impl Acos for f64 {
+    type Output = f64;
+
+    #[inline]
+    fn acos(&self) -> f64 {
+        f64::acos(*self)
+    }
+}
+
+/// Calculate arccosine for Complex64 scalars.
+impl Acos for Complex64 {
+    type Output = Complex64;
+
+    #[inline]
+    fn acos(&self) -> Complex64 {
+        Complex64::acos(*self)
+    }
+}
+
+/// Calculate arctangent for f64 scalars.
+impl Atan for f64 {
+    type Output = f64;
+
+    #[inline]
+    fn atan(&self) -> f64 {
+        f64::atan(*self)
+    }
+}
+
+/// Calculate arctangent for Complex64 scalars.
+impl Atan for Complex64 {
+    type Output = Complex64;
+
+    #[inline]
+    fn atan(&self) -> Complex64 {
+        Complex64::atan(*self)
+    }
+}
+
+/// Calculate inverse hyperbolic sine for f64 scalars.
+impl Asinh for f64 {
+    type Output = f64;
+
+    #[inline]
+    fn asinh(&self) -> f64 {
+        f64::asinh(*self)
+    }
+}
+
+/// Calculate inverse hyperbolic sine for Complex64 scalars.
+impl Asinh for Complex64 {
+    type Output = Complex64;
+
+    #[inline]
+    fn asinh(&self) -> Complex64 {
+        Complex64::asinh(*self)
+    }
+}
+
+/// Calculate inverse hyperbolic cosine for f64 scalars.
+impl Acosh for f64 {
+    type Output = f64;
+
+    #[inline]
+    fn acosh(&self) -> f64 {
+        f64::acosh(*self)
+    }
+}
+
+/// Calculate inverse hyperbolic cosine for Complex64 scalars.
+impl Acosh for Complex64 {
+    type Output = Complex64;
+
+    #[inline]
+    fn acosh(&self) -> Complex64 {
+        Complex64::acosh(*self)
+    }
+}
+
+/// Calculate inverse hyperbolic tangent for f64 scalars.
+impl Atanh for f64 {
+    type Output = f64;
+
+    #[inline]
+    fn atanh(&self) -> f64 {
+        f64::atanh(*self)
+    }
+}
+
+/// Calculate inverse hyperbolic tangent for Complex64 scalars.
+impl Atanh for Complex64 {
+    type Output = Complex64;
+
+    #[inline]
+    fn atanh(&self) -> Complex64 {
+        Complex64::atanh(*self)
+    }
+}
+
+/// Calculate two-argument arctangent for f64 scalars.
+///
+/// Returns the angle θ in radians such that `x = r cos(θ)` and `self = r sin(θ)`,
+/// where `r = sqrt(x² + self²)`. The result is in the range `[-π, π]`.
+impl Atan2 for f64 {
+    type Output = f64;
+
+    #[inline]
+    fn atan2(&self, x: f64) -> f64 {
+        f64::atan2(*self, x)
+    }
+}
+
+/// Calculate two-argument arctangent for Complex64 scalars.
+///
+/// For complex numbers, atan2(y, x) is computed as:
+/// atan2(y, x) = -i * ln((x + i*y) / sqrt(x² + y²))
+///
+/// This provides a complex extension of the real atan2 function.
+impl Atan2 for Complex64 {
+    type Output = Complex64;
+
+    #[inline]
+    fn atan2(&self, x: Complex64) -> Complex64 {
+        // atan2(y, x) = -i * ln((x + i*y) / sqrt(x² + y²))
+        let i = Complex64::new(0.0, 1.0);
+        let numerator = x + i * self;
+        let denominator = (x * x + self * self).sqrt();
+        -i * (numerator / denominator).ln()
+    }
+}
+
+/// Calculate absolute value for f64 scalars.
+impl Abs for f64 {
+    type Output = f64;
+
+    #[inline]
+    fn abs(&self) -> f64 {
+        f64::abs(*self)
+    }
+}
+
+/// Calculate absolute value (magnitude) for complex scalars.
+impl Abs for Complex64 {
+    type Output = f64;
+
+    #[inline]
+    fn abs(&self) -> f64 {
+        Complex64::norm(*self)
     }
 }
 
@@ -307,9 +1015,295 @@ where
     }
 }
 
+/// Calculate tangent element-wise for arrays.
+///
+/// This generic implementation works for any element type that implements Tan.
+impl<S, D, T> Tan for ArrayBase<S, D>
+where
+    S: Data<Elem = T>,
+    T: Tan<Output = T> + Clone,
+    D: Dimension,
+{
+    type Output = Array<T, D>;
+
+    #[inline]
+    fn tan(&self) -> Array<T, D> {
+        self.mapv(|x| x.tan())
+    }
+}
+
+/// Calculate hyperbolic sine element-wise for arrays.
+///
+/// This generic implementation works for any element type that implements Sinh.
+impl<S, D, T> Sinh for ArrayBase<S, D>
+where
+    S: Data<Elem = T>,
+    T: Sinh<Output = T> + Clone,
+    D: Dimension,
+{
+    type Output = Array<T, D>;
+
+    #[inline]
+    fn sinh(&self) -> Array<T, D> {
+        self.mapv(|x| x.sinh())
+    }
+}
+
+/// Calculate hyperbolic cosine element-wise for arrays.
+///
+/// This generic implementation works for any element type that implements Cosh.
+impl<S, D, T> Cosh for ArrayBase<S, D>
+where
+    S: Data<Elem = T>,
+    T: Cosh<Output = T> + Clone,
+    D: Dimension,
+{
+    type Output = Array<T, D>;
+
+    #[inline]
+    fn cosh(&self) -> Array<T, D> {
+        self.mapv(|x| x.cosh())
+    }
+}
+
+/// Calculate hyperbolic tangent element-wise for arrays.
+///
+/// This generic implementation works for any element type that implements Tanh.
+impl<S, D, T> Tanh for ArrayBase<S, D>
+where
+    S: Data<Elem = T>,
+    T: Tanh<Output = T> + Clone,
+    D: Dimension,
+{
+    type Output = Array<T, D>;
+
+    #[inline]
+    fn tanh(&self) -> Array<T, D> {
+        self.mapv(|x| x.tanh())
+    }
+}
+
+/// Calculate arcsine element-wise for arrays.
+///
+/// This generic implementation works for any element type that implements Asin.
+impl<S, D, T> Asin for ArrayBase<S, D>
+where
+    S: Data<Elem = T>,
+    T: Asin<Output = T> + Clone,
+    D: Dimension,
+{
+    type Output = Array<T, D>;
+
+    #[inline]
+    fn asin(&self) -> Array<T, D> {
+        self.mapv(|x| x.asin())
+    }
+}
+
+/// Calculate arccosine element-wise for arrays.
+///
+/// This generic implementation works for any element type that implements Acos.
+impl<S, D, T> Acos for ArrayBase<S, D>
+where
+    S: Data<Elem = T>,
+    T: Acos<Output = T> + Clone,
+    D: Dimension,
+{
+    type Output = Array<T, D>;
+
+    #[inline]
+    fn acos(&self) -> Array<T, D> {
+        self.mapv(|x| x.acos())
+    }
+}
+
+/// Calculate arctangent element-wise for arrays.
+///
+/// This generic implementation works for any element type that implements Atan.
+impl<S, D, T> Atan for ArrayBase<S, D>
+where
+    S: Data<Elem = T>,
+    T: Atan<Output = T> + Clone,
+    D: Dimension,
+{
+    type Output = Array<T, D>;
+
+    #[inline]
+    fn atan(&self) -> Array<T, D> {
+        self.mapv(|x| x.atan())
+    }
+}
+
+/// Calculate inverse hyperbolic sine element-wise for arrays.
+///
+/// This generic implementation works for any element type that implements Asinh.
+impl<S, D, T> Asinh for ArrayBase<S, D>
+where
+    S: Data<Elem = T>,
+    T: Asinh<Output = T> + Clone,
+    D: Dimension,
+{
+    type Output = Array<T, D>;
+
+    #[inline]
+    fn asinh(&self) -> Array<T, D> {
+        self.mapv(|x| x.asinh())
+    }
+}
+
+/// Calculate inverse hyperbolic cosine element-wise for arrays.
+///
+/// This generic implementation works for any element type that implements Acosh.
+impl<S, D, T> Acosh for ArrayBase<S, D>
+where
+    S: Data<Elem = T>,
+    T: Acosh<Output = T> + Clone,
+    D: Dimension,
+{
+    type Output = Array<T, D>;
+
+    #[inline]
+    fn acosh(&self) -> Array<T, D> {
+        self.mapv(|x| x.acosh())
+    }
+}
+
+/// Calculate inverse hyperbolic tangent element-wise for arrays.
+///
+/// This generic implementation works for any element type that implements Atanh.
+impl<S, D, T> Atanh for ArrayBase<S, D>
+where
+    S: Data<Elem = T>,
+    T: Atanh<Output = T> + Clone,
+    D: Dimension,
+{
+    type Output = Array<T, D>;
+
+    #[inline]
+    fn atanh(&self) -> Array<T, D> {
+        self.mapv(|x| x.atanh())
+    }
+}
+
+/// Calculate two-argument arctangent element-wise for arrays with scalar second argument.
+///
+/// Computes `atan2(array_elem`, scalar) for each element in the array.
+impl<S, D, T> Atan2<T> for ArrayBase<S, D>
+where
+    S: Data<Elem = T>,
+    T: Atan2<T, Output = T> + Clone,
+    D: Dimension,
+{
+    type Output = Array<T, D>;
+
+    #[inline]
+    fn atan2(&self, x: T) -> Array<T, D> {
+        self.mapv(|y| y.atan2(x.clone()))
+    }
+}
+
+/// Calculate natural logarithm element-wise for Complex64 arrays.
+///
+/// Provides `.ln()` for Complex64 arrays for consistency with f64 arrays.
+/// (ndarray only provides `.ln()` for Float types, not Complex types)
+impl<S, D> Ln for ArrayBase<S, D>
+where
+    S: Data<Elem = Complex64>,
+    D: Dimension,
+{
+    type Output = Array<Complex64, D>;
+
+    #[inline]
+    fn ln(&self) -> Array<Complex64, D> {
+        self.mapv(num_complex::Complex::ln)
+    }
+}
+
+/// Calculate logarithm with custom base element-wise for Complex64 arrays.
+///
+/// Provides `.log(base)` for Complex64 arrays for consistency with f64 arrays.
+/// (ndarray only provides `.log(base)` for Float types, not Complex types)
+impl<S, D> LogBase for ArrayBase<S, D>
+where
+    S: Data<Elem = Complex64>,
+    D: Dimension,
+{
+    type Output = Array<Complex64, D>;
+
+    #[inline]
+    fn log(&self, base: f64) -> Array<Complex64, D> {
+        self.mapv(|x| x.log(base))
+    }
+}
+
+/// Calculate absolute value element-wise for arrays.
+///
+/// This generic implementation works for any element type that implements Abs.
+/// For arrays of floats, returns array of floats. For arrays of complex numbers,
+/// returns array of f64 (magnitudes).
+impl<S, D, T> Abs for ArrayBase<S, D>
+where
+    S: Data<Elem = T>,
+    T: Abs + Clone,
+    D: Dimension,
+{
+    type Output = Array<T::Output, D>;
+
+    #[inline]
+    fn abs(&self) -> Array<T::Output, D> {
+        self.mapv(|x| x.abs())
+    }
+}
+
+/// Calculate floor element-wise for arrays.
+///
+/// This implementation delegates to the stdlib `floor()` method for each element.
+/// Works for f32 and f64 arrays.
+impl<S, D, T> Floor for ArrayBase<S, D>
+where
+    S: Data<Elem = T>,
+    T: num_traits::Float + Clone,
+    D: Dimension,
+{
+    type Output = Array<T, D>;
+
+    #[inline]
+    fn floor(&self) -> Array<T, D> {
+        self.mapv(num_traits::Float::floor)
+    }
+}
+
+/// Calculate ceiling element-wise for arrays.
+///
+/// This implementation delegates to the stdlib `ceil()` method for each element.
+/// Works for f32 and f64 arrays.
+impl<S, D, T> Ceil for ArrayBase<S, D>
+where
+    S: Data<Elem = T>,
+    T: num_traits::Float + Clone,
+    D: Dimension,
+{
+    type Output = Array<T, D>;
+
+    #[inline]
+    fn ceil(&self) -> Array<T, D> {
+        self.mapv(num_traits::Float::ceil)
+    }
+}
+
 // ============================================================================
-// Legacy Functions (for backward compatibility during transition)
+// Scalar Functions (Python Bindings API)
 // ============================================================================
+//
+// These functions are primarily intended as entry points for the PyO3 bindings
+// and provide a NumPy-compatible scalar API.
+//
+// For Rust code working with arrays, prefer the trait-based approach:
+//   - Use `arr.exp()` instead of calling `exp()` on each element
+//   - Use `arr.sqrt()` instead of manually mapping
+//   - Use `arr.power(2.0)` for element-wise power operations
+//
+// This is more idiomatic Rust and avoids manual iteration patterns.
 
 /// Calculate the power of a base raised to an exponent.
 ///
@@ -520,6 +1514,328 @@ pub fn sin(x: f64) -> f64 {
     x.sin()
 }
 
+/// Calculate the tangent of a value (in radians).
+///
+/// Drop-in replacement for `numpy.tan()` for scalar values.
+///
+/// # Arguments
+///
+/// * `x` - Input value in radians
+///
+/// # Returns
+///
+/// The tangent of x.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::math::tan;
+///
+/// assert!((tan(0.0)).abs() < 1e-10);
+/// assert!((tan(std::f64::consts::PI)).abs() < 1e-10);
+/// assert!((tan(std::f64::consts::PI / 4.0) - 1.0).abs() < 1e-10);
+/// assert!((tan(-std::f64::consts::PI / 4.0) + 1.0).abs() < 1e-10);
+///
+/// // Quantum gate construction use case
+/// let theta = std::f64::consts::PI / 6.0;
+/// let t = tan(theta);
+/// assert!((t - 0.577_350_269_189_625_8).abs() < 1e-10);
+/// ```
+#[must_use]
+pub fn tan(x: f64) -> f64 {
+    x.tan()
+}
+
+/// Calculate the hyperbolic tangent of a value.
+///
+/// Drop-in replacement for `numpy.tanh()` for scalar values.
+///
+/// # Arguments
+///
+/// * `x` - Input value
+///
+/// # Returns
+///
+/// The hyperbolic tangent of x.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::math::tanh;
+///
+/// assert!((tanh(0.0)).abs() < 1e-10);
+/// assert!((tanh(1.0) - 0.761_594_155_955_764_9).abs() < 1e-10);
+/// assert!((tanh(-1.0) + 0.761_594_155_955_764_9).abs() < 1e-10);
+/// assert!((tanh(f64::INFINITY) - 1.0).abs() < 1e-10);
+/// assert!((tanh(f64::NEG_INFINITY) + 1.0).abs() < 1e-10);
+///
+/// // Activation function use case (quantum machine learning)
+/// let x = 0.5;
+/// let activation = tanh(x);
+/// assert!((activation - 0.462_117_157_260_009_8).abs() < 1e-10);
+/// ```
+#[must_use]
+pub fn tanh(x: f64) -> f64 {
+    x.tanh()
+}
+
+/// Calculate the hyperbolic sine of a value.
+///
+/// Drop-in replacement for `numpy.sinh()` for scalar values.
+///
+/// # Arguments
+///
+/// * `x` - Input value
+///
+/// # Returns
+///
+/// The hyperbolic sine of x.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::math::sinh;
+///
+/// assert!((sinh(0.0)).abs() < 1e-10);
+/// assert!((sinh(1.0) - 1.175_201_193_643_801_4).abs() < 1e-10);
+/// assert!((sinh(-1.0) + 1.175_201_193_643_801_4).abs() < 1e-10);
+/// ```
+#[must_use]
+pub fn sinh(x: f64) -> f64 {
+    x.sinh()
+}
+
+/// Calculate the hyperbolic cosine of a value.
+///
+/// Drop-in replacement for `numpy.cosh()` for scalar values.
+///
+/// # Arguments
+///
+/// * `x` - Input value
+///
+/// # Returns
+///
+/// The hyperbolic cosine of x.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::math::cosh;
+///
+/// assert!((cosh(0.0) - 1.0).abs() < 1e-10);
+/// assert!((cosh(1.0) - 1.543_080_634_815_243_7).abs() < 1e-10);
+/// assert!((cosh(-1.0) - 1.543_080_634_815_243_7).abs() < 1e-10);
+/// ```
+#[must_use]
+pub fn cosh(x: f64) -> f64 {
+    x.cosh()
+}
+
+/// Calculate the arcsine (inverse sine) of a value.
+///
+/// Drop-in replacement for `numpy.arcsin()` / `numpy.asin()` for scalar values.
+///
+/// # Arguments
+///
+/// * `x` - Input value (must be in range [-1, 1])
+///
+/// # Returns
+///
+/// The arcsine of x in radians, in the range [-π/2, π/2].
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::math::asin;
+/// use std::f64::consts::{FRAC_PI_2, FRAC_PI_6};
+///
+/// assert!((asin(0.0)).abs() < 1e-10);
+/// assert!((asin(1.0) - FRAC_PI_2).abs() < 1e-10);
+/// assert!((asin(-1.0) + FRAC_PI_2).abs() < 1e-10);
+/// assert!((asin(0.5) - FRAC_PI_6).abs() < 1e-10);
+/// ```
+#[must_use]
+pub fn asin(x: f64) -> f64 {
+    x.asin()
+}
+
+/// Calculate the arccosine (inverse cosine) of a value.
+///
+/// Drop-in replacement for `numpy.arccos()` / `numpy.acos()` for scalar values.
+///
+/// # Arguments
+///
+/// * `x` - Input value (must be in range [-1, 1])
+///
+/// # Returns
+///
+/// The arccosine of x in radians, in the range [0, π].
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::math::acos;
+/// use std::f64::consts::{PI, FRAC_PI_2, FRAC_PI_3};
+///
+/// assert!((acos(1.0)).abs() < 1e-10);
+/// assert!((acos(-1.0) - PI).abs() < 1e-10);
+/// assert!((acos(0.0) - FRAC_PI_2).abs() < 1e-10);
+/// assert!((acos(0.5) - FRAC_PI_3).abs() < 1e-10);
+/// ```
+#[must_use]
+pub fn acos(x: f64) -> f64 {
+    x.acos()
+}
+
+/// Calculate the arctangent (inverse tangent) of a value.
+///
+/// Drop-in replacement for `numpy.arctan()` / `numpy.atan()` for scalar values.
+///
+/// # Arguments
+///
+/// * `x` - Input value
+///
+/// # Returns
+///
+/// The arctangent of x in radians, in the range [-π/2, π/2].
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::math::atan;
+/// use std::f64::consts::FRAC_PI_4;
+///
+/// assert!((atan(0.0)).abs() < 1e-10);
+/// assert!((atan(1.0) - FRAC_PI_4).abs() < 1e-10);
+/// assert!((atan(-1.0) + FRAC_PI_4).abs() < 1e-10);
+/// ```
+#[must_use]
+pub fn atan(x: f64) -> f64 {
+    x.atan()
+}
+
+/// Calculate the inverse hyperbolic sine of a value.
+///
+/// Drop-in replacement for `numpy.arcsinh()` / `numpy.asinh()` for scalar values.
+///
+/// # Arguments
+///
+/// * `x` - Input value
+///
+/// # Returns
+///
+/// The inverse hyperbolic sine of x.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::math::asinh;
+///
+/// assert!((asinh(0.0)).abs() < 1e-10);
+/// assert!((asinh(1.0) - 0.881_373_587_019_543).abs() < 1e-10);
+/// assert!((asinh(-1.0) + 0.881_373_587_019_543).abs() < 1e-10);
+/// ```
+#[must_use]
+pub fn asinh(x: f64) -> f64 {
+    x.asinh()
+}
+
+/// Calculate the inverse hyperbolic cosine of a value.
+///
+/// Drop-in replacement for `numpy.arccosh()` / `numpy.acosh()` for scalar values.
+///
+/// # Arguments
+///
+/// * `x` - Input value (must be >= 1)
+///
+/// # Returns
+///
+/// The inverse hyperbolic cosine of x.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::math::acosh;
+///
+/// assert!((acosh(1.0)).abs() < 1e-10);
+/// assert!((acosh(2.0) - 1.316_957_896_924_817).abs() < 1e-10);
+/// assert!((acosh(3.0) - 1.762_747_174_039_086_1).abs() < 1e-10);
+/// ```
+#[must_use]
+pub fn acosh(x: f64) -> f64 {
+    x.acosh()
+}
+
+/// Calculate the inverse hyperbolic tangent of a value.
+///
+/// Drop-in replacement for `numpy.arctanh()` / `numpy.atanh()` for scalar values.
+///
+/// # Arguments
+///
+/// * `x` - Input value (must be in range (-1, 1))
+///
+/// # Returns
+///
+/// The inverse hyperbolic tangent of x.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::math::atanh;
+///
+/// assert!((atanh(0.0)).abs() < 1e-10);
+/// assert!((atanh(0.5) - 0.549_306_144_334_055).abs() < 1e-10);
+/// assert!((atanh(-0.5) + 0.549_306_144_334_055).abs() < 1e-10);
+/// ```
+#[must_use]
+pub fn atanh(x: f64) -> f64 {
+    x.atanh()
+}
+
+/// Calculate the arctangent of y/x with correct quadrant handling.
+///
+/// Drop-in replacement for `numpy.arctan2()` / `numpy.atan2()`.
+///
+/// Returns the angle in radians between the positive x-axis and the point (x, y).
+/// The result is in the range [-π, π].
+///
+/// This is a convenience wrapper around the `Atan2` trait method.
+/// For polymorphic usage, prefer using the trait method directly: `y.atan2(x)`.
+///
+/// # Arguments
+///
+/// * `y` - y-coordinate (can be scalar or array)
+/// * `x` - x-coordinate (can be scalar or array)
+///
+/// # Returns
+///
+/// The angle in radians, in the range [-π, π].
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::prelude::*;
+/// use std::f64::consts::{PI, FRAC_PI_2, FRAC_PI_4};
+///
+/// // Scalar usage
+/// assert!((atan2(1.0, 1.0) - FRAC_PI_4).abs() < 1e-10);
+/// assert!((atan2(1.0, -1.0) - 3.0 * FRAC_PI_4).abs() < 1e-10);
+///
+/// // Array usage
+/// let y_arr = array![1.0, 1.0, -1.0];
+/// let x_val = 1.0;
+/// let result = atan2(y_arr, x_val);
+/// assert!((result[0] - FRAC_PI_4).abs() < 1e-10);
+/// ```
+#[must_use]
+#[allow(clippy::needless_pass_by_value)] // Generic trait-based design requires ownership
+pub fn atan2<Y, X>(y: Y, x: X) -> Y::Output
+where
+    Y: Atan2<X>,
+{
+    y.atan2(x)
+}
+
 /// Return the floor of x as a float, the largest integer value less than or equal to x.
 ///
 /// Drop-in replacement for `numpy.floor()` for scalar values.
@@ -576,65 +1892,6 @@ pub fn floor(x: f64) -> f64 {
 #[must_use]
 pub fn ceil(x: f64) -> f64 {
     x.ceil()
-}
-
-/// Round a number to the nearest integer as a float.
-///
-/// Drop-in replacement for `numpy.round()` for scalar values (with default decimals=0).
-/// Uses the "round half to even" strategy (banker's rounding) to match numpy behavior.
-///
-/// # Arguments
-///
-/// * `x` - Input value
-///
-/// # Returns
-///
-/// The rounded value.
-///
-/// # Examples
-///
-/// ```
-/// use pecos_num::math::round;
-///
-/// assert_eq!(round(3.7), 4.0);
-/// assert_eq!(round(3.2), 3.0);
-/// assert_eq!(round(-3.7), -4.0);
-/// assert_eq!(round(-3.2), -3.0);
-/// assert_eq!(round(0.0), 0.0);
-///
-/// // Round half to even (banker's rounding)
-/// assert_eq!(round(2.5), 2.0);
-/// assert_eq!(round(3.5), 4.0);
-/// ```
-#[must_use]
-pub fn round(x: f64) -> f64 {
-    // Implement "round half to even" (banker's rounding) to match numpy
-    // Rust's f64::round() uses "round half away from zero" which differs from numpy
-
-    // Handle special values
-    if !x.is_finite() {
-        return x;
-    }
-
-    let floor_val = x.floor();
-    let frac = x - floor_val;
-
-    // If fractional part is exactly 0.5, round to even
-    #[allow(clippy::float_cmp)]
-    if frac == 0.5 {
-        // Check if floor_val is even
-        #[allow(clippy::cast_possible_truncation)]
-        let floor_int = floor_val as i64;
-        if floor_int % 2 == 0 {
-            floor_val
-        } else {
-            floor_val + 1.0
-        }
-    } else if frac > 0.5 {
-        floor_val + 1.0
-    } else {
-        floor_val
-    }
 }
 
 // ============================================================================
@@ -706,203 +1963,6 @@ pub const LOG2_E: f64 = std::f64::consts::LOG2_E;
 
 /// log₁₀(e) ≈ 0.43429448190325182765112891891660508
 pub const LOG10_E: f64 = std::f64::consts::LOG10_E;
-
-// ============================================================================
-// Array Functions
-// ============================================================================
-
-/// Calculate the power of a base raised to an exponent element-wise for arrays.
-///
-/// Drop-in replacement for `numpy.power()` for arrays.
-/// Broadcasts scalar exponent across all elements of the base array.
-///
-/// # Arguments
-///
-/// * `base` - The base array
-/// * `exponent` - The exponent (scalar broadcast to all elements)
-///
-/// # Returns
-///
-/// Array where each element is base[i]^exponent
-///
-/// # Examples
-///
-/// ```
-/// use pecos_num::math::power_array;
-/// use ndarray::array;
-///
-/// let base = array![2.0, 3.0, 4.0];
-/// let result = power_array(&base, 2.0);
-/// assert_eq!(result, array![4.0, 9.0, 16.0]);
-/// ```
-#[must_use]
-pub fn power_array<S, D>(base: &ArrayBase<S, D>, exponent: f64) -> Array<f64, D>
-where
-    S: Data<Elem = f64>,
-    D: Dimension,
-{
-    base.mapv(|x| x.powf(exponent))
-}
-
-/// Calculate the square root element-wise for arrays.
-///
-/// Drop-in replacement for `numpy.sqrt()` for arrays.
-///
-/// # Arguments
-///
-/// * `arr` - Input array
-///
-/// # Returns
-///
-/// Array where each element is the square root of the input element.
-///
-/// # Examples
-///
-/// ```
-/// use pecos_num::math::sqrt_array;
-/// use ndarray::array;
-///
-/// let arr = array![4.0, 9.0, 16.0];
-/// let result = sqrt_array(&arr);
-/// assert_eq!(result, array![2.0, 3.0, 4.0]);
-/// ```
-#[must_use]
-pub fn sqrt_array<S, D>(arr: &ArrayBase<S, D>) -> Array<f64, D>
-where
-    S: Data<Elem = f64>,
-    D: Dimension,
-{
-    arr.mapv(f64::sqrt)
-}
-
-/// Calculate the exponential (e^x) element-wise for arrays.
-///
-/// Drop-in replacement for `numpy.exp()` for arrays.
-///
-/// # Arguments
-///
-/// * `arr` - Input array
-///
-/// # Returns
-///
-/// Array where each element is e^(input element).
-///
-/// # Examples
-///
-/// ```
-/// use pecos_num::math::exp_array;
-/// use ndarray::array;
-///
-/// let arr = array![0.0, 1.0, 2.0];
-/// let result = exp_array(&arr);
-/// assert!((result[0] - 1.0).abs() < 1e-10);
-/// assert!((result[1] - std::f64::consts::E).abs() < 1e-10);
-/// ```
-#[must_use]
-pub fn exp_array<S, D>(arr: &ArrayBase<S, D>) -> Array<f64, D>
-where
-    S: Data<Elem = f64>,
-    D: Dimension,
-{
-    arr.mapv(f64::exp)
-}
-
-/// Calculate the exponential of complex numbers element-wise for arrays.
-///
-/// Drop-in replacement for `numpy.exp()` for complex arrays.
-///
-/// # Arguments
-///
-/// * `arr` - Complex input array
-///
-/// # Returns
-///
-/// Complex array where each element is e^(input element).
-///
-/// # Examples
-///
-/// ```
-/// use pecos_num::math::exp_complex_array;
-/// use num_complex::Complex64;
-/// use ndarray::array;
-///
-/// let arr = array![Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)];
-/// let result = exp_complex_array(&arr);
-/// assert!((result[0].re - 1.0).abs() < 1e-10);
-/// assert!((result[1].re - std::f64::consts::E).abs() < 1e-10);
-/// ```
-#[must_use]
-pub fn exp_complex_array<S, D>(arr: &ArrayBase<S, D>) -> Array<Complex64, D>
-where
-    S: Data<Elem = Complex64>,
-    D: Dimension,
-{
-    arr.mapv(num_complex::Complex::exp)
-}
-
-/// Calculate the cosine element-wise for arrays.
-///
-/// Drop-in replacement for `numpy.cos()` for arrays.
-///
-/// # Arguments
-///
-/// * `arr` - Input array (angles in radians)
-///
-/// # Returns
-///
-/// Array where each element is the cosine of the input element.
-///
-/// # Examples
-///
-/// ```
-/// use pecos_num::math::cos_array;
-/// use ndarray::array;
-///
-/// let arr = array![0.0, std::f64::consts::PI];
-/// let result = cos_array(&arr);
-/// assert!((result[0] - 1.0).abs() < 1e-10);
-/// assert!((result[1] - (-1.0)).abs() < 1e-10);
-/// ```
-#[must_use]
-pub fn cos_array<S, D>(arr: &ArrayBase<S, D>) -> Array<f64, D>
-where
-    S: Data<Elem = f64>,
-    D: Dimension,
-{
-    arr.mapv(f64::cos)
-}
-
-/// Calculate the sine element-wise for arrays.
-///
-/// Drop-in replacement for `numpy.sin()` for arrays.
-///
-/// # Arguments
-///
-/// * `arr` - Input array (angles in radians)
-///
-/// # Returns
-///
-/// Array where each element is the sine of the input element.
-///
-/// # Examples
-///
-/// ```
-/// use pecos_num::math::sin_array;
-/// use ndarray::array;
-///
-/// let arr = array![0.0, std::f64::consts::PI / 2.0];
-/// let result = sin_array(&arr);
-/// assert!((result[0]).abs() < 1e-10);
-/// assert!((result[1] - 1.0).abs() < 1e-10);
-/// ```
-#[must_use]
-pub fn sin_array<S, D>(arr: &ArrayBase<S, D>) -> Array<f64, D>
-where
-    S: Data<Elem = f64>,
-    D: Dimension,
-{
-    arr.mapv(f64::sin)
-}
 
 #[cfg(test)]
 mod tests {
@@ -1360,53 +2420,205 @@ mod tests {
         assert_eq!(ceil(f64::NEG_INFINITY), f64::NEG_INFINITY);
     }
 
-    // Tests for round()
+    // Tests for .round_ties_even() method
     #[allow(clippy::float_cmp)]
     #[test]
     fn test_round_positive() {
-        assert_eq!(round(3.7), 4.0);
-        assert_eq!(round(3.2), 3.0);
-        assert_eq!(round(3.0), 3.0);
-        assert_eq!(round(3.5), 4.0);
+        assert_eq!(3.7_f64.round_ties_even(), 4.0);
+        assert_eq!(3.2_f64.round_ties_even(), 3.0);
+        assert_eq!(3.0_f64.round_ties_even(), 3.0);
+        assert_eq!(3.5_f64.round_ties_even(), 4.0);
     }
 
     #[allow(clippy::float_cmp)]
     #[test]
     fn test_round_negative() {
-        assert_eq!(round(-3.7), -4.0);
-        assert_eq!(round(-3.2), -3.0);
-        assert_eq!(round(-3.0), -3.0);
-        assert_eq!(round(-3.5), -4.0);
+        assert_eq!((-3.7_f64).round_ties_even(), -4.0);
+        assert_eq!((-3.2_f64).round_ties_even(), -3.0);
+        assert_eq!((-3.0_f64).round_ties_even(), -3.0);
+        assert_eq!((-3.5_f64).round_ties_even(), -4.0);
     }
 
     #[allow(clippy::float_cmp)]
     #[test]
     fn test_round_zero() {
-        assert_eq!(round(0.0), 0.0);
-        assert_eq!(round(-0.0), -0.0);
+        assert_eq!(0.0_f64.round_ties_even(), 0.0);
+        assert_eq!((-0.0_f64).round_ties_even(), -0.0);
     }
 
     #[allow(clippy::float_cmp)]
     #[test]
     fn test_round_half_to_even() {
         // Test "round half to even" (banker's rounding) to match numpy
-        assert_eq!(round(2.5), 2.0); // Even
-        assert_eq!(round(3.5), 4.0); // Even
-        assert_eq!(round(4.5), 4.0); // Even
-        assert_eq!(round(5.5), 6.0); // Even
+        assert_eq!(2.5_f64.round_ties_even(), 2.0); // Even
+        assert_eq!(3.5_f64.round_ties_even(), 4.0); // Even
+        assert_eq!(4.5_f64.round_ties_even(), 4.0); // Even
+        assert_eq!(5.5_f64.round_ties_even(), 6.0); // Even
 
         // Test negative half values
-        assert_eq!(round(-2.5), -2.0); // Even
-        assert_eq!(round(-3.5), -4.0); // Even
-        assert_eq!(round(-4.5), -4.0); // Even
-        assert_eq!(round(-5.5), -6.0); // Even
+        assert_eq!((-2.5_f64).round_ties_even(), -2.0); // Even
+        assert_eq!((-3.5_f64).round_ties_even(), -4.0); // Even
+        assert_eq!((-4.5_f64).round_ties_even(), -4.0); // Even
+        assert_eq!((-5.5_f64).round_ties_even(), -6.0); // Even
     }
 
     #[allow(clippy::float_cmp)]
     #[test]
     fn test_round_special_values() {
-        assert!(round(f64::NAN).is_nan());
-        assert_eq!(round(f64::INFINITY), f64::INFINITY);
-        assert_eq!(round(f64::NEG_INFINITY), f64::NEG_INFINITY);
+        assert!(f64::NAN.round_ties_even().is_nan());
+        assert_eq!(f64::INFINITY.round_ties_even(), f64::INFINITY);
+        assert_eq!(f64::NEG_INFINITY.round_ties_even(), f64::NEG_INFINITY);
+    }
+
+    // Tests for complex .round_ties_even() extension
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn test_round_ties_even_complex64() {
+        use crate::math::RoundTiesEven;
+
+        // Test basic rounding
+        let z = Complex64::new(2.5, 3.5);
+        let rounded = z.round_ties_even();
+        assert_eq!(rounded.re, 2.0); // 2.5 rounds to 2 (even)
+        assert_eq!(rounded.im, 4.0); // 3.5 rounds to 4 (even)
+
+        // Test negative values
+        let z = Complex64::new(-2.5, -3.5);
+        let rounded = z.round_ties_even();
+        assert_eq!(rounded.re, -2.0); // -2.5 rounds to -2 (even)
+        assert_eq!(rounded.im, -4.0); // -3.5 rounds to -4 (even)
+
+        // Test non-half values
+        let z = Complex64::new(2.3, 3.7);
+        let rounded = z.round_ties_even();
+        assert_eq!(rounded.re, 2.0);
+        assert_eq!(rounded.im, 4.0);
+
+        // Test mixed signs
+        let z = Complex64::new(4.5, -4.5);
+        let rounded = z.round_ties_even();
+        assert_eq!(rounded.re, 4.0); // 4.5 rounds to 4 (even)
+        assert_eq!(rounded.im, -4.0); // -4.5 rounds to -4 (even)
+    }
+
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn test_round_ties_even_complex32() {
+        use crate::math::RoundTiesEven;
+        use num_complex::Complex;
+
+        // Test basic rounding with f32
+        let z = Complex::<f32>::new(2.5, 3.5);
+        let rounded = z.round_ties_even();
+        assert_eq!(rounded.re, 2.0); // 2.5 rounds to 2 (even)
+        assert_eq!(rounded.im, 4.0); // 3.5 rounds to 4 (even)
+
+        // Test negative values
+        let z = Complex::<f32>::new(-2.5, -3.5);
+        let rounded = z.round_ties_even();
+        assert_eq!(rounded.re, -2.0);
+        assert_eq!(rounded.im, -4.0);
+    }
+
+    // Tests for ln() - NumPy log() uses .ln() (natural logarithm)
+
+    #[test]
+    fn test_ln_basic() {
+        use std::f64::consts::E;
+
+        // ln(1) = 0
+        assert!((1.0_f64.ln() - 0.0).abs() < 1e-10);
+
+        // ln(e) = 1
+        assert!((E.ln() - 1.0).abs() < 1e-10);
+
+        // ln(e^2) = 2
+        assert!(((E * E).ln() - 2.0).abs() < 1e-10);
+
+        // ln(e^3) = 3
+        assert!(((E * E * E).ln() - 3.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_ln_powers_of_ten() {
+        use std::f64::consts::LN_10;
+
+        // ln(10) ≈ 2.302585
+        assert!((10.0_f64.ln() - LN_10).abs() < 1e-10);
+
+        // ln(100) = 2 * ln(10)
+        assert!((100.0_f64.ln() - 2.0 * LN_10).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_ln_fractions() {
+        use std::f64::consts::{E, LN_2};
+
+        // ln(1/e) = -1
+        assert!(((1.0 / E).ln() - (-1.0)).abs() < 1e-10);
+
+        // ln(0.5) = -ln(2)
+        assert!((0.5_f64.ln() + LN_2).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_ln_array() {
+        use std::f64::consts::E;
+
+        // Float arrays use ndarray's built-in .ln()
+        let arr = crate::prelude::array![1.0, E, E * E, E * E * E];
+        let result = arr.ln();
+
+        assert!((result[0] - 0.0).abs() < 1e-10);
+        assert!((result[1] - 1.0).abs() < 1e-10);
+        assert!((result[2] - 2.0).abs() < 1e-10);
+        assert!((result[3] - 3.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_ln_complex() {
+        use std::f64::consts::E;
+
+        // Complex64 scalars use num-complex .ln()
+        // ln(e + 0i) = 1 + 0i
+        let z = Complex64::new(E, 0.0);
+        let result = z.ln();
+        assert!((result.re - 1.0).abs() < 1e-10);
+        assert!(result.im.abs() < 1e-10);
+
+        // ln(1 + 0i) = 0 + 0i
+        let z = Complex64::new(1.0, 0.0);
+        let result = z.ln();
+        assert!(result.re.abs() < 1e-10);
+        assert!(result.im.abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_ln_complex_array() {
+        use crate::math::Ln;
+        use std::f64::consts::E;
+
+        // Complex64 arrays use our Ln trait
+        let arr = crate::prelude::array![Complex64::new(1.0, 0.0), Complex64::new(E, 0.0)];
+        let result = arr.ln();
+
+        assert!(result[0].re.abs() < 1e-10);
+        assert!(result[0].im.abs() < 1e-10);
+        assert!((result[1].re - 1.0).abs() < 1e-10);
+        assert!(result[1].im.abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_log_base_complex_array() {
+        use crate::math::LogBase;
+
+        // Complex64 arrays use our LogBase trait for .log(base)
+        let arr = crate::prelude::array![Complex64::new(10.0, 0.0), Complex64::new(100.0, 0.0)];
+        let result = arr.log(10.0);
+
+        assert!((result[0].re - 1.0).abs() < 1e-10);
+        assert!(result[0].im.abs() < 1e-10);
+        assert!((result[1].re - 2.0).abs() < 1e-10);
+        assert!(result[1].im.abs() < 1e-10);
     }
 }

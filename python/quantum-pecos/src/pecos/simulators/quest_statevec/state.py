@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib import QuestStateVec as RustQuestStateVec
 
+from pecos.num import array, dtypes
 from pecos.simulators.quest_statevec.bindings import get_bindings
 
 if TYPE_CHECKING:
@@ -48,18 +49,18 @@ class QuestStateVec:
         self.bindings = get_bindings(self)
 
     @property
-    def vector(self) -> list[complex]:
-        """Get the state vector as a list of complex numbers.
+    def vector(self) -> Array:  # noqa: F821 - Array is a forward reference
+        """Get the state vector as an Array of complex numbers.
 
         Returns:
-            List of complex amplitudes representing the quantum state.
+            Array of complex amplitudes representing the quantum state.
         """
         # QuEST stores amplitudes internally - we need to extract them
         amplitudes = []
         for i in range(2**self.num_qubits):
             re, im = self.backend.get_amplitude(i)
             amplitudes.append(complex(re, im))
-        return amplitudes
+        return array(amplitudes, dtype=dtypes.complex128)
 
     def reset(self) -> QuestStateVec:
         """Resets the quantum state to the all-zero state."""

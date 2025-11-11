@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib import StateVecRs
 
+from pecos.num import array, dtypes
 from pecos.simulators.statevec.bindings import get_bindings
 
 if TYPE_CHECKING:
@@ -48,13 +49,13 @@ class StateVec:
         self.bindings = get_bindings(self)
 
     @property
-    def vector(self) -> list[complex]:
-        """Get the state vector as a list of complex numbers.
+    def vector(self) -> Array:  # noqa: F821 - Array is a forward reference
+        """Get the state vector as an Array of complex numbers.
 
         Returns:
-            List of complex amplitudes representing the quantum state.
+            Array of complex amplitudes representing the quantum state.
         """
-        return self.backend.vector
+        return array(self.backend.vector, dtype=dtypes.complex128)
 
     def reset(self) -> StateVec:
         """Resets the quantum state to the all-zero state."""

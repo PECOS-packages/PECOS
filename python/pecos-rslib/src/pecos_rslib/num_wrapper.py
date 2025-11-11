@@ -161,112 +161,62 @@ def std(a: ArrayLike, axis: int | None = None, ddof: int = 0) -> float | np.ndar
     return stds
 
 
-def power(x1: ArrayLike, x2: ArrayLike) -> float | np.ndarray:
-    """Calculate the power of x1 raised to x2, element-wise.
+# sum() is now fully polymorphic in Rust - no Python wrapper needed!
+# Import directly from the Rust module
+sum = _num_core.sum
 
-    Drop-in replacement for `numpy.power()` supporting broadcasting.
+
+# power() and sqrt() are fully polymorphic in Rust - no Python wrapper needed!
+# Import directly from the Rust module
+power = _num_core.math.power
+sqrt = _num_core.math.sqrt
+
+
+def where(
+    condition: bool | ArrayLike, x: float | ArrayLike, y: float | ArrayLike
+) -> float | np.ndarray:
+    """Conditional selection based on a boolean condition.
+
+    Drop-in replacement for `numpy.where(condition, x, y)`.
+    Returns x if condition is true, otherwise returns y.
+    Supports both scalar and array inputs with full broadcasting.
 
     Args:
-        x1: The bases (array-like)
-        x2: The exponents (array-like)
+        condition: Boolean condition (scalar or array)
+        x: Value(s) to return if condition is true
+        y: Value(s) to return if condition is false
 
     Returns:
-        Element-wise power x1**x2. If both inputs are scalars, returns a scalar.
+        Selected value(s). If all inputs are scalars, returns a scalar.
         Otherwise returns an array with broadcasting applied.
 
     Examples:
-        >>> from pecos.num import power
+        >>> from pecos.num import where
         >>>
-        >>> # Scalar inputs
-        >>> power(2.0, 3.0)
-        8.0
+        >>> # Scalar usage
+        >>> where(True, 10.0, 20.0)
+        10.0
+        >>> where(False, 10.0, 20.0)
+        20.0
         >>>
-        >>> # Array base, scalar exponent
-        >>> power([1.0, 2.0, 3.0], 2.0)
-        array([1., 4., 9.])
+        >>> # Array usage
+        >>> import numpy as np
+        >>> cond = np.array([True, False, True, False])
+        >>> x_arr = np.array([10.0, 20.0, 30.0, 40.0])
+        >>> y_arr = np.array([100.0, 200.0, 300.0, 400.0])
+        >>> where(cond, x_arr, y_arr)
+        array([10.0, 200.0, 30.0, 400.0])
         >>>
-        >>> # Scalar base, array exponent
-        >>> power(2.0, [1.0, 2.0, 3.0])
-        array([2., 4., 8.])
+        >>> # Broadcasting: scalar condition, array values
+        >>> where(True, np.array([1.0, 2.0, 3.0]), np.array([10.0, 20.0, 30.0]))
+        array([1., 2., 3.])
         >>>
-        >>> # Threshold curve use case
-        >>> dist = 5.0
-        >>> v0 = 2.0
-        >>> power(dist, 1.0 / v0)
-        2.23606797749979
+        >>> # Broadcasting: array condition, scalar values
+        >>> where(np.array([True, False, True]), 100.0, -100.0)
+        array([100., -100., 100.])
     """
-    # Convert to numpy arrays
-    arr1 = np.asarray(x1, dtype=np.float64)
-    arr2 = np.asarray(x2, dtype=np.float64)
-
-    # Check if both are scalars
-    if arr1.ndim == 0 and arr2.ndim == 0:
-        return _rust_power(float(arr1), float(arr2))
-
-    # Use numpy broadcasting for array operations
-    # For arrays, use our Rust implementation element-wise
-    result_shape = np.broadcast_shapes(arr1.shape, arr2.shape)
-
-    # Broadcast arrays to common shape
-    arr1_broadcast = np.broadcast_to(arr1, result_shape)
-    arr2_broadcast = np.broadcast_to(arr2, result_shape)
-
-    # Flatten and compute element-wise
-    flat1 = arr1_broadcast.ravel()
-    flat2 = arr2_broadcast.ravel()
-
-    # Compute using Rust implementation
-    result = np.array(
-        [_rust_power(float(b), float(e)) for b, e in zip(flat1, flat2, strict=False)]
-    )
-
-    # Reshape to result shape
-    return result.reshape(result_shape) if result_shape else float(result)
-
-
-def sqrt(x: ArrayLike) -> float | np.ndarray:
-    """Calculate the square root of x, element-wise.
-
-    Drop-in replacement for `numpy.sqrt()` supporting broadcasting.
-
-    Args:
-        x: Input value(s) (array-like)
-
-    Returns:
-        Element-wise square root of x. If input is a scalar, returns a scalar.
-        Otherwise returns an array.
-
-    Examples:
-        >>> from pecos.num import sqrt
-        >>>
-        >>> # Scalar input
-        >>> sqrt(4.0)
-        2.0
-        >>>
-        >>> # Array input
-        >>> sqrt([4.0, 9.0, 16.0])
-        array([2., 3., 4.])
-        >>>
-        >>> # Variance to std deviation use case
-        >>> variance = np.array([1.0, 4.0, 9.0])
-        >>> std_dev = sqrt(variance)
-        >>> # Returns array([1., 2., 3.])
-    """
-    # Convert to numpy array
-    arr = np.asarray(x, dtype=np.float64)
-
-    # Check if scalar
-    if arr.ndim == 0:
-        return _rust_sqrt(float(arr))
-
-    # For arrays, use our Rust implementation element-wise
-    flat = arr.ravel()
-
-    # Compute using Rust implementation
-    result = np.array([_rust_sqrt(float(val)) for val in flat])
-
-    # Reshape to original shape
-    return result.reshape(arr.shape) if arr.shape else float(result)
+    # Rust handles all broadcasting - just pass through
+    return _num_core.compare.where_array(condition, x, y)
 
 
 # Expose all other num functions directly
@@ -274,35 +224,119 @@ brentq = _num_core.brentq
 newton = _num_core.newton
 polyfit = _num_core.polyfit
 curve_fit = _num_core.curve_fit
-# Direct imports from Rust (clean names - no _poly suffix!)
-# These are used internally by wrapper functions
-_rust_exp = _num_core.math.exp
-_rust_sqrt = _num_core.math.sqrt
-_rust_power = _num_core.math.power
-_rust_cos = _num_core.math.cos
-_rust_sin = _num_core.math.sin
-_rust_isnan = _num_core.compare.isnan
-_rust_isclose = _num_core.compare.isclose
+# Direct imports from Rust for functions that don't need Python wrappers
+# (These are already fully polymorphic in Rust)
 
 # Direct exports that don't need wrappers
 Poly1d = _num_core.Poly1d
 diag = _num_core.diag
 linspace = _num_core.linspace
+# Note: arange has a wrapper function below for dtype inference
+zeros = _num_core.zeros
+ones = _num_core.ones
+delete = _num_core.delete
 floor = _num_core.floor
 ceil = _num_core.ceil
 round = _num_core.round
 
-# Re-export functions that don't have Python wrappers
-exp = _rust_exp
-cos = _rust_cos
-sin = _rust_sin
-isnan = _rust_isnan
-isclose = _rust_isclose
+
+def arange(start, stop=None, step=1):
+    """Return evenly spaced values within a given interval.
+
+    Drop-in replacement for `numpy.arange()`.
+
+    Values are generated in the half-open interval `[start, stop)` with the given step.
+    This function mimics NumPy's dtype inference behavior:
+    - If all arguments are integers, returns int64 array
+    - If any argument is a float, returns float64 array
+
+    Args:
+        start: Start of interval (inclusive). If `stop` is None, this becomes the stop
+               and start is set to 0.
+        stop: End of interval (exclusive). Optional.
+        step: Spacing between values. Default is 1.
+
+    Returns:
+        Array of evenly spaced values with dtype matching NumPy's behavior.
+
+    Examples:
+        >>> from pecos.num import arange
+        >>>
+        >>> # All integers → int64
+        >>> arange(0, 10)
+        array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])  # dtype: int64
+        >>>
+        >>> # Any float → float64
+        >>> arange(0.0, 10)
+        array([0., 1., 2., 3., 4., 5., 6., 7., 8., 9.])  # dtype: float64
+        >>>
+        >>> # Single argument (like range)
+        >>> arange(5)
+        array([0, 1, 2, 3, 4])  # dtype: int64
+    """
+    # Handle single-argument case (like range)
+    if stop is None:
+        stop = start
+        start = 0
+
+    # Check if all arguments are integers to match NumPy's dtype inference
+    # NumPy rule: all integers → int64, any float → float64
+    # Use Python's built-in int/float types only (no numpy types)
+    all_ints = (
+        isinstance(start, int)
+        and not isinstance(start, bool)
+        and isinstance(stop, int)
+        and not isinstance(stop, bool)
+        and isinstance(step, int)
+        and not isinstance(step, bool)
+    )
+
+    # Convert to floats for Rust function (which expects f64)
+    result = _num_core.arange(float(start), float(stop), float(step))
+
+    # Apply NumPy's dtype inference rule
+    if all_ints:
+        # Convert to int64 to match NumPy behavior
+        #  We use the __array__() interface which returns a numpy array
+        arr = np.asarray(result)
+        return arr.astype(np.int64)
+    else:
+        # Keep as float64
+        return result
+
+
+# Re-export functions that are fully polymorphic in Rust (no wrappers needed)
+exp = _num_core.math.exp
+ln = _num_core.math.ln  # Natural logarithm (clearer than log for scientific community)
+log = _num_core.math.log  # Logarithm with custom base: log(x, base)
+cos = _num_core.math.cos
+sin = _num_core.math.sin
+tan = _num_core.math.tan
+sinh = _num_core.math.sinh
+cosh = _num_core.math.cosh
+tanh = _num_core.math.tanh
+asin = _num_core.math.asin
+acos = _num_core.math.acos
+atan = _num_core.math.atan
+asinh = _num_core.math.asinh
+acosh = _num_core.math.acosh
+atanh = _num_core.math.atanh
+atan2 = _num_core.math.atan2
+abs = _num_core.math.abs
+isnan = _num_core.compare.isnan
+isclose = _num_core.compare.isclose
+allclose = _num_core.compare.allclose
+array_equal = _num_core.compare.array_equal
+all = _num_core.compare.all  # Test if all elements are truthy
+any = _num_core.compare.any  # Test if any element is truthy
+# Note: where() has a Python wrapper function defined above for additional logic
 
 # Mathematical constants - drop-in replacements for numpy.pi, math.pi, etc.
 pi = _num_core.pi
 tau = _num_core.tau
 e = _num_core.e
+inf = _num_core.inf
+nan = _num_core.nan
 FRAC_PI_2 = _num_core.FRAC_PI_2
 FRAC_PI_3 = _num_core.FRAC_PI_3
 FRAC_PI_4 = _num_core.FRAC_PI_4
@@ -318,23 +352,44 @@ LN_10 = _num_core.LN_10
 LOG2_E = _num_core.LOG2_E
 LOG10_E = _num_core.LOG10_E
 
-# Re-export the random submodule
+# Re-export submodules
 random = _num_core.random
+linalg = _num_core.linalg
 
 
 __all__ = [
     # Functions
     "mean",
+    "sum",
     "power",
     "sqrt",
     "exp",
+    "ln",  # Natural logarithm
+    "log",  # Logarithm with base
+    "abs",
     "isnan",
     "cos",
     "sin",
+    "tan",
+    "sinh",
+    "cosh",
+    "tanh",
+    "asin",
+    "acos",
+    "atan",
+    "asinh",
+    "acosh",
+    "atanh",
+    "atan2",
     "floor",
     "ceil",
     "round",
     "isclose",
+    "allclose",
+    "array_equal",
+    "all",  # Boolean AND reduction
+    "any",  # Boolean OR reduction
+    "where",
     "std",
     "brentq",
     "newton",
@@ -343,10 +398,16 @@ __all__ = [
     "Poly1d",
     "diag",
     "linspace",
+    "arange",
+    "zeros",
+    "ones",
+    "delete",
     # Constants
     "pi",
     "tau",
     "e",
+    "inf",
+    "nan",
     "FRAC_PI_2",
     "FRAC_PI_3",
     "FRAC_PI_4",
@@ -363,4 +424,5 @@ __all__ = [
     "LOG10_E",
     # Submodules
     "random",
+    "linalg",
 ]

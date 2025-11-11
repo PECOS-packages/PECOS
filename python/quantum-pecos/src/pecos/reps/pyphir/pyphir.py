@@ -17,11 +17,11 @@ circuit compilation, execution, and representation in the PECOS framework.
 
 from __future__ import annotations
 
-from math import pi
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import numpy as np
 
+from pecos.num import pi
 from pecos.reps.pyphir import block_types as blk
 from pecos.reps.pyphir import data_types as d
 from pecos.reps.pyphir import op_types as op

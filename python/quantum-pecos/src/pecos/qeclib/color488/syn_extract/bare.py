@@ -1,9 +1,9 @@
 """Bare syndrome extraction implementations for Color488 codes."""
 
 from itertools import chain, cycle, repeat
-from math import ceil
 from typing import Any
 
+from pecos.num import ceil
 from pecos.qeclib.generic.check import Check
 from pecos.slr import Block, Comment, CReg, Parallel, QReg
 

@@ -19,6 +19,7 @@
 mod byte_message_bindings;
 mod coin_toss_bindings;
 mod cpp_sparse_sim_bindings;
+mod dtypes;
 mod engine_bindings;
 mod engine_builders;
 mod noise_helpers;
@@ -26,6 +27,7 @@ mod num_bindings;
 mod pauli_prop_bindings;
 // mod pcg_bindings;
 mod hugr_compilation_bindings;
+mod pecos_array;
 mod pecos_rng_bindings;
 mod phir_json_bridge;
 // mod qir_bindings;  // Removed - replaced by llvm_bindings
@@ -49,6 +51,7 @@ use coin_toss_bindings::RsCoinToss;
 use cpp_sparse_sim_bindings::CppSparseSim;
 use engine_builders::{PyHugrProgram, PyPhirJsonProgram, PyQasmProgram, PyQisProgram};
 use pauli_prop_bindings::PyPauliProp;
+use pecos_array::Array;
 use pecos_rng_bindings::RngPcg;
 use pyo3::prelude::*;
 use quest_bindings::{QuestDensityMatrix, QuestStateVec};
@@ -135,6 +138,7 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RngPcg>()?;
     m.add_class::<QuestStateVec>()?;
     m.add_class::<QuestDensityMatrix>()?;
+    m.add_class::<Array>()?;
 
     // Register the unified sim() function
     sim::register_sim_module(m)?;
@@ -153,6 +157,9 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register numerical computing module (scipy.optimize replacements)
     num_bindings::register_num_module(m)?;
+
+    // Register dtypes module (Rust-backed dtype system)
+    dtypes::register_dtypes_module(m)?;
 
     // Register program types
     m.add_class::<PyQasmProgram>()?;

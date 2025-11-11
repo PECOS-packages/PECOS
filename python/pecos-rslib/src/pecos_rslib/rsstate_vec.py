@@ -48,31 +48,26 @@ class StateVecRs:
         self.bindings = dict(gate_dict)
 
     @property
-    def vector(self) -> list[complex]:
-        """Get the state vector as a list of complex numbers.
+    def vector(self):
+        """Get the state vector as an Array of complex numbers.
 
         Returns:
-            List of complex amplitudes representing the quantum state.
+            Array of complex amplitudes representing the quantum state.
         """
         raw_vector = self._sim.vector
-        # Convert to list of complex numbers
-        if isinstance(raw_vector[0], (list, tuple)):
-            vector = [complex(r, i) for r, i in raw_vector]
-        else:
-            vector = list(raw_vector)
 
         # Convert vector from little-endian to big-endian ordering to match PECOS convention
         num_qubits = self.num_qubits
 
-        # Create indices mapping using pure Python
-        indices = list(range(len(vector)))
+        # Create indices mapping using len()
+        length = len(raw_vector)
         # Convert indices to binary strings with proper length
-        binary_indices = [format(idx, f"0{num_qubits}b") for idx in indices]
+        binary_indices = [format(idx, f"0{num_qubits}b") for idx in range(length)]
         # Reverse bits to change endianness
         reordered_indices = [int(bits[::-1], 2) for bits in binary_indices]
 
-        # Reorder the vector using pure Python
-        final_vector = [vector[idx] for idx in reordered_indices]
+        # Reorder the vector using Array fancy indexing
+        final_vector = raw_vector[reordered_indices]
 
         return final_vector
 

@@ -17,6 +17,9 @@
 // Re-export curve fitting
 pub use crate::curve_fit::{CurveFitError, CurveFitOptions, CurveFitResult, curve_fit};
 
+// Re-export linear algebra
+pub use crate::linalg::{norm, norm_complex};
+
 // Re-export optimization algorithms
 pub use crate::optimize::{BrentqOptions, NewtonOptions, OptimizeError, brentq, newton};
 
@@ -29,24 +32,68 @@ pub use crate::random;
 // Re-export statistical functions
 pub use crate::stats::{mean, mean_axis, std, std_axis};
 
-// Re-export mathematical functions
+// Re-export mathematical traits (use these for polymorphism!)
 pub use crate::math::{
-    ceil, cos, cos_array, exp, exp_array, exp_complex, exp_complex_array, floor, power,
-    power_array, round, sin, sin_array, sqrt, sqrt_array,
+    Abs, Acos, Acosh, Asin, Asinh, Atan, Atan2, Atanh, Ceil, Cos, Cosh, Exp, Floor, Ln, LogBase,
+    Power, RoundTiesEven, Sin, Sinh, Sqrt, Tan, Tanh,
 };
 
-// Re-export mathematical traits
-pub use crate::math::{Cos, Exp, Power, Sin, Sqrt};
+// Re-export mathematical functions
+// Note: floor/ceil are simple wrappers around stdlib for convenience
+// For NumPy-compatible rounding:
+//   - f32/f64 scalars: use .round_ties_even() directly (stdlib method)
+//   - Complex scalars: use .round_ties_even() (trait extension from this crate)
+//   - f32/f64 arrays: use .mapv(|x| x.round_ties_even())
+//   - Complex arrays: use .mapv(|x| x.round_ties_even())
+pub use crate::math::{atan2, ceil, floor};
 
-// Re-export comparison traits
-pub use crate::compare::{IsClose, IsNan};
+// Re-export comparison functions and traits
+pub use crate::compare::{IsClose, IsNan, Where, allclose, array_equal, where_};
 
-// Re-export ndarray for convenience
-pub use ndarray::{Array, Array1, Array2, ArrayBase, Axis, Ix1, Ix2, IxDyn, array};
-pub use num_complex::Complex64;
+// Re-export ndarray for convenience (expanded for better ergonomics)
+// Core array types
+pub use ndarray::{
+    Array,
+    Array1,
+    Array2,
+    Array3,
+    ArrayBase,
+    ArrayD,
+    ArrayView,
+    ArrayView1,
+    ArrayView2,
+    ArrayView3,
+    ArrayViewMut,
+    ArrayViewMut1,
+    ArrayViewMut2,
+    ArrayViewMut3,
+    Axis,
+    Dim,
+    Dimension,
+    Ix1,
+    Ix2,
+    Ix3,
+    Ix4,
+    Ix5,
+    Ix6,
+    IxDyn,
+    ScalarOperand,
+    Slice,
+    SliceInfo,
+    SliceInfoElem,
+    // Constructors and macros
+    array,
+    aview1,
+    aview2,
+    s,
+};
+
+// Re-export num-complex
+pub use num_complex::{Complex, Complex32, Complex64};
 
 // Re-export array operations
-pub use crate::array::{diag, linspace};
+// Note: sum() for slices removed - use .iter().sum() directly (idiomatic Rust)
+pub use crate::array::{arange, delete, diag, linspace, ones, sum_axis, zeros};
 
 // Re-export mathematical constants
 pub use crate::math::{

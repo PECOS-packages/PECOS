@@ -34,6 +34,7 @@
 pub mod array;
 pub mod compare;
 pub mod curve_fit;
+pub mod linalg;
 pub mod math;
 pub mod optimize;
 pub mod polynomial;
@@ -41,6 +42,7 @@ pub mod prelude;
 pub mod random;
 pub mod stats;
 
+pub use compare::allclose;
 pub use curve_fit::{CurveFitError, CurveFitOptions, CurveFitResult, curve_fit};
 pub use optimize::{BrentqOptions, NewtonOptions, OptimizeError, brentq, newton};
 pub use polynomial::{Poly1d, PolynomialError, polyfit};

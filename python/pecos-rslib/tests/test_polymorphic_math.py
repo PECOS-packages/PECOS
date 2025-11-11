@@ -13,7 +13,7 @@ import math
 
 import numpy as np
 import pytest
-from pecos_rslib import cos, exp, isclose, isnan, sin
+from pecos_rslib import array_equal, cos, exp, isclose, isnan, sin
 
 
 class TestExpPolymorphic:
@@ -208,7 +208,7 @@ class TestIsNanPolymorphic:
         assert isinstance(result, np.ndarray)
         assert result.dtype == bool
         expected = np.array([False, True, False])
-        assert np.array_equal(result, expected)
+        assert array_equal(result, expected)
 
     def test_isnan_array_complex(self):
         """Test isnan with complex array."""
@@ -217,14 +217,14 @@ class TestIsNanPolymorphic:
         assert isinstance(result, np.ndarray)
         assert result.dtype == bool
         expected = np.array([False, True, False])
-        assert np.array_equal(result, expected)
+        assert array_equal(result, expected)
 
     def test_isnan_list_input(self):
         """Test isnan requires numpy arrays (not lists)."""
         result = isnan(np.array([1.0, float("nan"), 3.0]))
         assert isinstance(result, np.ndarray)
         expected = np.array([False, True, False])
-        assert np.array_equal(result, expected)
+        assert array_equal(result, expected)
 
     def test_isnan_2d_array(self):
         """Test isnan preserves 2D array shape."""
@@ -232,7 +232,7 @@ class TestIsNanPolymorphic:
         result = isnan(arr)
         assert result.shape == (2, 2)
         expected = np.array([[False, True], [False, False]])
-        assert np.array_equal(result, expected)
+        assert array_equal(result, expected)
 
 
 class TestIsClosePolymorphic:
@@ -269,7 +269,7 @@ class TestIsClosePolymorphic:
         assert isinstance(result, np.ndarray)
         assert result.dtype == bool
         expected = np.array([True, True, False])
-        assert np.array_equal(result, expected)
+        assert array_equal(result, expected)
 
     def test_isclose_array_complex(self):
         """Test isclose with complex arrays."""
@@ -295,7 +295,7 @@ class TestIsClosePolymorphic:
         result = isclose(arr1, arr2)
         assert result.shape == (2, 2)
         expected = np.array([[True, True], [False, True]])
-        assert np.array_equal(result, expected)
+        assert array_equal(result, expected)
 
     def test_isclose_no_broadcasting(self):
         """Test isclose doesn't support scalar-array broadcasting."""
@@ -308,7 +308,7 @@ class TestIsClosePolymorphic:
         # Workaround: broadcast manually first
         result = isclose(arr, np.full_like(arr, scalar))
         expected = np.array([False, True, False])
-        assert np.array_equal(result, expected)
+        assert array_equal(result, expected)
 
 
 class TestRealWorldUseCases:
@@ -437,7 +437,7 @@ class TestIsCloseMixedTypes:
 
         result = isclose(arr1, arr2)
         expected = np.isclose(arr1, arr2)
-        assert np.array_equal(result, expected)
+        assert array_equal(result, expected)
         assert np.all(result)
 
     def test_isclose_pure_imaginary_array(self):
@@ -447,7 +447,7 @@ class TestIsCloseMixedTypes:
 
         result = isclose(arr1, arr2, rtol=1e-5, atol=1e-8)
         expected = np.isclose(arr1, arr2, rtol=1e-5, atol=1e-8)
-        assert np.array_equal(result, expected)
+        assert array_equal(result, expected)
 
     def test_isclose_quantum_gate_comparison(self):
         """Test realistic quantum gate matrix element comparison."""
@@ -478,7 +478,7 @@ class TestIsCloseMixedArrays:
 
         result = isclose(arr1, arr2)
         expected = np.isclose(arr1, arr2)
-        assert np.array_equal(result, expected)
+        assert array_equal(result, expected)
         assert np.all(result)
 
     def test_float_array_vs_complex_array(self):
@@ -488,7 +488,7 @@ class TestIsCloseMixedArrays:
 
         result = isclose(arr1, arr2)
         expected = np.isclose(arr1, arr2)
-        assert np.array_equal(result, expected)
+        assert array_equal(result, expected)
         assert np.all(result)
 
     def test_pure_imaginary_vs_float_zero(self):
@@ -498,7 +498,7 @@ class TestIsCloseMixedArrays:
 
         result = isclose(arr1, arr2, rtol=1e-5, atol=1e-12)
         expected = np.isclose(arr1, arr2, rtol=1e-5, atol=1e-12)
-        assert np.array_equal(result, expected)
+        assert array_equal(result, expected)
         assert not np.any(result)  # All should be False
 
     def test_float_zero_vs_pure_imaginary(self):
@@ -508,7 +508,7 @@ class TestIsCloseMixedArrays:
 
         result = isclose(arr1, arr2, rtol=1e-5, atol=1e-12)
         expected = np.isclose(arr1, arr2, rtol=1e-5, atol=1e-12)
-        assert np.array_equal(result, expected)
+        assert array_equal(result, expected)
         assert not np.any(result)  # All should be False
 
     def test_float_vs_small_imaginary_array(self):
@@ -518,7 +518,7 @@ class TestIsCloseMixedArrays:
 
         result = isclose(arr1, arr2)
         expected = np.isclose(arr1, arr2)
-        assert np.array_equal(result, expected)
+        assert array_equal(result, expected)
         assert np.all(result)  # All should be True
 
     def test_2d_mixed_arrays(self):
@@ -528,7 +528,7 @@ class TestIsCloseMixedArrays:
 
         result = isclose(arr1, arr2)
         expected = np.isclose(arr1, arr2)
-        assert np.array_equal(result, expected)
+        assert array_equal(result, expected)
         assert result.shape == (2, 2)
         assert np.all(result)
 
@@ -539,7 +539,7 @@ class TestIsCloseMixedArrays:
 
         result = isclose(arr1, arr2)
         expected = np.isclose(arr1, arr2)
-        assert np.array_equal(result, expected)
+        assert array_equal(result, expected)
         # First and third should be close, middle should be far
         assert result[0]
         assert not result[1]

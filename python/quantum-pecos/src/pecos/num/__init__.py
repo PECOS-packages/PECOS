@@ -29,14 +29,22 @@ from __future__ import annotations
 # Re-export other functions
 # Import mean/std from pecos_rslib (not .num) to get Python wrappers with axis support
 # Re-export submodules
+# Import dtypes module from pecos_rslib
 from pecos_rslib import (
+    abs,  # noqa: A004 - intentionally shadow builtin
+    all,  # noqa: A004 - intentionally shadow builtin
+    allclose,
+    any,  # noqa: A004 - intentionally shadow builtin
     cos,
+    dtypes,
     e,
     # Polymorphic math functions
     exp,
-    isclose,
     # Polymorphic comparison functions
+    isclose,
     isnan,
+    ln,  # Natural logarithm (clearer than log)
+    log,  # Logarithm with custom base
     mean,
     num,
     # Constants
@@ -45,35 +53,54 @@ from pecos_rslib import (
     sin,
     sqrt,
     std,
+    sum,  # noqa: A004 - intentionally shadow builtin
     tau,
+    where,
 )
 
 # Import remaining functions from pecos_rslib.num (Rust module)
+# Note: arange imported from num_wrapper to get dtype inference wrapper
 from pecos_rslib.num import (
     Poly1d,
+    arange,
+    array,
     brentq,
     ceil,
     curve_fit,
+    delete,
     diag,
     floor,
     linspace,
     newton,
+    ones,
     polyfit,
-    round,  # noqa: A004 - intentionally shadow builtin for numpy compatibility
+    round,  # noqa: A004 - intentionally shadow builtin
+    zeros,
 )
+
+# Import types module for generic Array typing support
+from pecos.num import types
 
 # Make submodules available
 stats = num.stats
 math = num.math
 compare = num.compare
-array = num.array
+# Note: array function already imported above from pecos_rslib.num
 optimize = num.optimize
 polynomial = num.polynomial
 # Note: curve_fit is already imported above from pecos_rslib.num
 random = num.random
+linalg = num.linalg
+
+# zeros_complex() has been removed - use zeros(shape, dtype="complex") instead
 
 __all__ = [
     "Poly1d",
+    "abs",
+    "all",  # Boolean AND reduction
+    "allclose",
+    "any",  # Boolean OR reduction
+    "arange",
     "array",
     "brentq",
     # Direct exports
@@ -81,17 +108,23 @@ __all__ = [
     "compare",
     "cos",
     "curve_fit",
+    "delete",
     "diag",
+    "dtypes",  # Dtype system
     "e",
     "exp",
     "floor",
-    "isclose",
     # Polymorphic functions
+    "isclose",
     "isnan",
+    "linalg",
     "linspace",
+    "ln",  # Natural logarithm
+    "log",  # Logarithm with base
     "math",
     "mean",
     "newton",
+    "ones",
     "optimize",
     # Constants
     "pi",
@@ -105,5 +138,9 @@ __all__ = [
     # Submodules
     "stats",
     "std",
+    "sum",
     "tau",
+    "types",  # Type hints for Array
+    "where",
+    "zeros",
 ]

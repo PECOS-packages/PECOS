@@ -706,8 +706,8 @@ impl GeneralNoiseModel {
                         val = 1;
                     }
                     if val == 1 {
-                        // TODO: we apply noise to leaked qubits that measure as 1 - is this
-                        // correct?
+                        // NOTE: we still apply bit-flip noise to the outcome 1 of leaked
+                        // qubits that measure as 1. This has been the approach since H1/H2.
                         if self.rng.occurs(self.p_meas_1) {
                             trace!("Flipped measurement outcome 1->0");
                             val = 0;
@@ -719,8 +719,10 @@ impl GeneralNoiseModel {
                     outcomes.push(val);
                 }
                 GateType::Prep => {
-                    // I don't know what to do here. Just ignore the measurement and treat it as a
-                    // passive collapse?
+                    // Just ignore the measurement.
+                    // In the future we will want to do more advanced crosstalk
+                    // on prep as well, but for now it uses apply_simple_crosstalk_faults
+                    // where the measurement outcome is just meant to be thrown away.
                 }
                 _ => {
                     return Err(PecosError::Processing(format!(

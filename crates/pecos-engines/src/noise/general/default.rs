@@ -74,8 +74,8 @@ impl Default for GeneralNoiseModel {
         let p_meas_1: f64 = 0.01; // 1% probability of measuring 0 when state is |1⟩
 
         let mut p_meas_crosstalk_model = BTreeMap::new();
-        p_meas_crosstalk_model.insert("0->1".to_string(), 1.0);
-        p_meas_crosstalk_model.insert("1->0".to_string(), 1.0);
+        p_meas_crosstalk_model.insert("0->0".to_string(), 1.0);
+        p_meas_crosstalk_model.insert("1->1".to_string(), 1.0);
 
         // Default error probabilities
         Self {

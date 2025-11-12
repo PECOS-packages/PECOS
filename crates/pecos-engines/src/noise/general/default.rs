@@ -1,6 +1,7 @@
 use crate::noise::{
     GeneralNoiseModel, NoiseRng, SingleQubitWeightedSampler, TwoQubitWeightedSampler, CrosstalkWeightedSampler
 };
+use crate::byte_message::ByteMessage;
 use std::collections::{BTreeMap, BTreeSet};
 
 impl Default for GeneralNoiseModel {
@@ -116,6 +117,7 @@ impl Default for GeneralNoiseModel {
             noiseless_gates: BTreeSet::new(),
             p_meas_max: p_meas_0.max(p_meas_1),
             leakage_scale: 1.0,
+            results_builder: ByteMessage::outcomes_builder()
         }
     }
 }

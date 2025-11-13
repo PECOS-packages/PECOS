@@ -98,8 +98,8 @@ fn apply_noise(model: &mut GeneralNoiseModel, msg: &ByteMessage) -> Vec<ByteMess
                 for gate in &gates {
                     match &gate.gate_type {
                         GateType::Measure | GateType::MeasureLeaked => {
-                            for _ in gate.qubits.iter() {
-                                let outcome = if measure_rng.random_bool(0.5) { 1 } else { 0 };
+                            for _ in &gate.qubits {
+                                let outcome = usize::from(measure_rng.random_bool(0.5));
                                 response.add_outcomes(&[outcome]);
                             }
                         }
@@ -121,20 +121,14 @@ fn compare_messages(msg1: &ByteMessage, msg2: &ByteMessage) -> bool {
     let results_left = msg1.outcomes().unwrap_or_default();
     let results_right = msg2.outcomes().unwrap_or_default();
     if quantum_ops_left != quantum_ops_right {
-        eprintln!(
-            "Quantum operations differ: {:?} vs {:?}",
-            quantum_ops_left, quantum_ops_right
-        );
+        eprintln!("Quantum operations differ: {quantum_ops_left:?} vs {quantum_ops_right:?}",);
         return false;
     }
     if results_left != results_right {
-        eprintln!(
-            "Measurement outcomes differ: {:?} vs {:?}",
-            results_left, results_right
-        );
+        eprintln!("Measurement outcomes differ: {results_left:?} vs {results_right:?}");
         return false;
     }
-    return true;
+    true
 }
 
 /// Compare two `ByteMessage` vectors by parsing their quantum operations and results
@@ -142,10 +136,7 @@ fn compare_messages(msg1: &ByteMessage, msg2: &ByteMessage) -> bool {
 /// This function extracts and compares the quantum operations and results from two
 /// vectors of messages to determine if they represent the same conversation between
 /// the noise model and the quantum engine.
-fn compare_message_lists(
-    messages_left: &Vec<ByteMessage>,
-    messages_right: &Vec<ByteMessage>,
-) -> bool {
+fn compare_message_lists(messages_left: &[ByteMessage], messages_right: &[ByteMessage]) -> bool {
     if messages_left.len() != messages_right.len() {
         eprintln!(
             "Message lengths differ: {} vs {}",
@@ -156,11 +147,11 @@ fn compare_message_lists(
     }
     for (i, (msg1, msg2)) in messages_left.iter().zip(messages_right.iter()).enumerate() {
         if !compare_messages(msg1, msg2) {
-            eprintln!("Messages differ at index {}", i);
+            eprintln!("Messages differ at index {i}");
             return false;
         }
     }
-    return true;
+    true
 }
 
 #[test]

@@ -362,24 +362,18 @@ impl CrosstalkWeightedSampler {
     /// - If the total weight of each sampler deviates from 1.0 by more than the tolerance
     #[must_use]
     pub fn new(weighted_map: &BTreeMap<String, f64>) -> Self {
+        const KEYS_FROM_0: [&str; 3] = ["0->0", "0->1", "0->L"];
+        const KEYS_FROM_1: [&str; 3] = ["1->1", "1->0", "1->L"];
         Self::validate_crosstalk_keys(weighted_map);
 
         // Separate the 0->* components from the 1->* components
-        const KEYS_FROM_0: [&str; 3] = ["0->0", "0->1", "0->L"];
-        const KEYS_FROM_1: [&str; 3] = ["1->1", "1->0", "1->L"];
         let weighted_map_from_0 = KEYS_FROM_0
             .into_iter()
-            .filter_map(|key| match weighted_map.get(key) {
-                Some(&val) => Some((key.to_string(), val)),
-                None => None,
-            })
+            .filter_map(|key| weighted_map.get(key).map(|&val| (key.to_string(), val)))
             .collect();
         let weighted_map_from_1 = KEYS_FROM_1
             .into_iter()
-            .filter_map(|key| match weighted_map.get(key) {
-                Some(&val) => Some((key.to_string(), val)),
-                None => None,
-            })
+            .filter_map(|key| weighted_map.get(key).map(|&val| (key.to_string(), val)))
             .collect();
 
         Self {
@@ -394,13 +388,14 @@ impl CrosstalkWeightedSampler {
         for key in weighted_map.keys() {
             assert!(
                 VALID_KEYS.contains(&key.as_str()),
-                "CrosstalkWeightedSampler: invalid key '{key}' - must be one of {:?}",
-                VALID_KEYS
+                "CrosstalkWeightedSampler: invalid key '{key}' - must be one of {VALID_KEYS:?}",
             );
         }
     }
 
     /// Get a reference to the normalized weighted map, for keys 0->* or 1->*
+    /// # Panics
+    /// - If `from_state` is not either 0 or 1.
     #[must_use]
     pub fn get_weighted_map(&self, from_state: u32) -> &BTreeMap<String, f64> {
         assert!(from_state == 0 || from_state == 1);
@@ -411,7 +406,9 @@ impl CrosstalkWeightedSampler {
         }
     }
 
-    /// Sample a raw key from the distribution, for keys 0->* or 1->*
+    /// Sample a raw key from the distribution, for keys 0->* or 1->*.
+    /// # Panics
+    /// - If `from_state` is not either 0 or 1.
     #[must_use]
     pub fn sample_keys(&self, rng: &mut NoiseRng, from_state: u32) -> String {
         assert!(from_state == 0 || from_state == 1);

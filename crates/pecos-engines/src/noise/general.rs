@@ -312,15 +312,15 @@ pub struct GeneralNoiseModel {
     /// ion trap systems, this could represent scattered light during fluorescence detection
     /// affecting neighboring ions.
     /// Further details on how crosstalk is modeled depends on information from
-    /// the device runtime, which are provided as MeasCrosstalkGlobalPayload instructions.
+    /// the device runtime, which are provided as `MeasCrosstalkGlobalPayload` instructions.
     p_meas_crosstalk_global: f64,
 
     /// Probability of crosstalk during measurement operations on local qubits
     ///
-    /// See doc for p_meas_crosstalk_global. The intended distinction is that this
+    /// See doc for `p_meas_crosstalk_global`. The intended distinction is that this
     /// parameter applies to only qubits that are close to the measured qubit.
     /// Further details on how crosstalk is modeled depends on information from
-    /// the device runtime, which are provided as MeasCrosstalkLocalPayload instructions.
+    /// the device runtime, which are provided as `MeasCrosstalkLocalPayload` instructions.
     p_meas_crosstalk_local: f64,
 
     /// Transition probabilities on the event of crosstalk error
@@ -399,15 +399,15 @@ impl ControlEngine for GeneralNoiseModel {
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         trace!("GeneralNoise::continue_processing");
         let next_operations = self.apply_noise_on_continue_processing(msg)?;
-        if !next_operations.is_empty()? {
-            // if there are new quantum operations to process.
-            return Ok(EngineStage::NeedsProcessing(next_operations));
-        } else {
+        if next_operations.is_empty()? {
             // No more quantum operations to process, return results
             // collected along the way and reset the results builder.
             let results = self.results_builder.build();
             self.results_builder.reset();
-            return Ok(EngineStage::Complete(results));
+            Ok(EngineStage::Complete(results))
+        } else {
+            // if there are new quantum operations to process.
+            Ok(EngineStage::NeedsProcessing(next_operations))
         }
     }
 
@@ -569,7 +569,7 @@ impl GeneralNoiseModel {
                         .prepared_qubits
                         .iter()
                         .filter(|q| !gate_qubits.contains(q))
-                        .cloned()
+                        .copied()
                         .collect();
 
                     // Otherwise, it is the same channel for Global and Local
@@ -640,8 +640,8 @@ impl GeneralNoiseModel {
     /// If a leaked qubit is measured, it remains leaked and will continue to measure as 1
     /// until a preparation operation is performed.
     ///
-    /// Returns a ByteMessage destined for quantum simulation. Any results from measurements
-    /// that are destined for the user are appended to self.results_builder.
+    /// Returns a `ByteMessage` destined for quantum simulation. Any results from measurements
+    /// that are destined for the user are appended to `self.results_builder`.
     ///
     /// # Errors
     ///
@@ -739,8 +739,7 @@ impl GeneralNoiseModel {
                 }
                 _ => {
                     return Err(PecosError::Processing(format!(
-                        "Unexpected gate type in measurement handling: {:?}",
-                        gate_type
+                        "Unexpected gate type in measurement handling: {gate_type:?}"
                     )));
                 }
             }
@@ -946,7 +945,7 @@ impl GeneralNoiseModel {
         let probability = match gate_type {
             GateType::MeasCrosstalkGlobalPayload => self.p_meas_crosstalk_global,
             GateType::MeasCrosstalkLocalPayload => self.p_meas_crosstalk_local,
-            _ => panic!("Cannot apply crosstalk on {gate_type}"),
+            _ => unreachable!(),
         };
 
         let mut affected_qubits = Vec::new();

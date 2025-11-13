@@ -295,12 +295,12 @@ impl Gate {
         }
     }
 
-    /// Create a new MeasCrosstalkGlobalPayload with the data from runtime.
+    /// Create a new `MeasCrosstalkGlobalPayload` with the data from runtime.
     ///
     /// # Arguments
     ///
     /// * `qubits` - The qubits that are guaranteed *not* to be affected by the
-    /// global crosstalk event.
+    ///   global crosstalk event.
     ///
     /// TODO: it seems unintuitive to give the complement of the list of victim qubits.
     /// It fits better with the previous version of crosstalk, but we might want to
@@ -308,7 +308,7 @@ impl Gate {
     ///
     /// # Returns
     ///
-    /// A new MeasCrosstalkGlobalPayload gate with the specified parameters
+    /// A new `MeasCrosstalkGlobalPayload` gate with the specified parameters
     #[must_use]
     pub fn meas_crosstalk_global_payload(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::new(
@@ -318,7 +318,7 @@ impl Gate {
         )
     }
 
-    /// Create a new MeasCrosstalkLocalPayload with the data from runtime.
+    /// Create a new `MeasCrosstalkLocalPayload` with the data from runtime.
     ///
     /// # Arguments
     ///
@@ -326,7 +326,7 @@ impl Gate {
     ///
     /// # Returns
     ///
-    /// A new MeasCrosstalkLocalPayload gate with the specified parameters
+    /// A new `MeasCrosstalkLocalPayload` gate with the specified parameters
     #[must_use]
     pub fn meas_crosstalk_local_payload(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         Self::new(

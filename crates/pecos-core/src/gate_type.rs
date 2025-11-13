@@ -212,11 +212,12 @@ impl GateType {
     }
 
     /// Returns whether this gate is a crosstalk payload gate
+    #[must_use]
     pub const fn is_crosstalk_payload(self) -> bool {
-        match self {
-            GateType::MeasCrosstalkGlobalPayload | GateType::MeasCrosstalkLocalPayload => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            GateType::MeasCrosstalkGlobalPayload | GateType::MeasCrosstalkLocalPayload
+        )
     }
 }
 

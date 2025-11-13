@@ -302,7 +302,7 @@ impl Gate {
     /// * `qubits` - The qubits that are guaranteed *not* to be affected by the
     ///   global crosstalk event.
     ///
-    /// TODO: it seems unintuitive to give the complement of the list of victim qubits.
+    /// NOTE: it seems unintuitive to give the complement of the list of victim qubits.
     /// It fits better with the previous version of crosstalk, but we might want to
     /// refactor this.
     ///

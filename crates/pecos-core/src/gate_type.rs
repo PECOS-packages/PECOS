@@ -284,7 +284,7 @@ mod tests {
         assert_eq!(GateType::from(36u8), GateType::R1XY);
         assert_eq!(GateType::from(104u8), GateType::Measure);
         assert_eq!(GateType::from(105u8), GateType::MeasureLeaked);
-        assert_eq!(GateType::from(105u8), GateType::Idle);
+        assert_eq!(GateType::from(200u8), GateType::Idle);
         assert_eq!(GateType::from(218u8), GateType::MeasCrosstalkGlobalPayload);
         assert_eq!(GateType::from(219u8), GateType::MeasCrosstalkLocalPayload);
     }

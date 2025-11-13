@@ -520,6 +520,15 @@ impl GeneralNoiseModel {
             .expect("Failed to parse input as quantum operations");
 
         for gate in gates {
+            // Track which qubits are being measured for leakage handling
+            if matches!(gate.gate_type, GateType::Measure | GateType::MeasureLeaked) {
+                self.measured_qubits.extend(
+                    gate.qubits
+                        .iter()
+                        .map(|q| (usize::from(*q), gate.gate_type)),
+                );
+            }
+
             // Skip noise application for noiseless gates
             if self.is_noiseless_gate(&gate.gate_type) {
                 // Just add the gate as-is, without any noise
@@ -548,12 +557,6 @@ impl GeneralNoiseModel {
                     self.apply_simple_crosstalk_faults(&gate, self.p_prep_crosstalk, &mut builder);
                 }
                 GateType::Measure | GateType::MeasureLeaked => {
-                    // Track which qubits are being measured for leakage handling
-                    self.measured_qubits.extend(
-                        gate.qubits
-                            .iter()
-                            .map(|q| (usize::from(*q), gate.gate_type)),
-                    );
                     // Measurement noise is handled in apply_noise_on_continue_processing
                     // We still need to add the original gate here
                     builder.add_gate_command(&gate);
@@ -691,7 +694,7 @@ impl GeneralNoiseModel {
                         trace!("Qubit {qubit} is leaked, MeasureLeaked returns 2");
                         // For MeasureLeaked, return 2 for leaked qubits
                         val = 2;
-                    } else {
+                    } else if !self.noiseless_gates.contains(&GateType::MeasureLeaked) {
                         // For non-leaked qubits, apply measurement noise below
                         // Apply asymmetric measurement noise to each outcome
                         if val == 1 {
@@ -715,16 +718,18 @@ impl GeneralNoiseModel {
                         // For regular Measure, force the measurement outcome to be 1
                         val = 1;
                     }
-                    if val == 1 {
-                        // NOTE: we still apply bit-flip noise to the outcome 1 of leaked
-                        // qubits that measure as 1. This has been the approach since H1/H2.
-                        if self.rng.occurs(self.p_meas_1) {
-                            trace!("Flipped measurement outcome 1->0");
-                            val = 0;
+                    // NOTE: we still apply bit-flip noise to the outcome 1 of leaked
+                    // qubits that measure as 1. This has been the approach since H1/H2.
+                    if !self.noiseless_gates.contains(&GateType::Measure) {
+                        if val == 1 {
+                            if self.rng.occurs(self.p_meas_1) {
+                                trace!("Flipped measurement outcome 1->0");
+                                val = 0;
+                            }
+                        } else if self.rng.occurs(self.p_meas_0) {
+                            trace!("Flipped measurement outcome 0->1");
+                            val = 1;
                         }
-                    } else if self.rng.occurs(self.p_meas_0) {
-                        trace!("Flipped measurement outcome 0->1");
-                        val = 1;
                     }
                     outcomes.push(val);
                 }

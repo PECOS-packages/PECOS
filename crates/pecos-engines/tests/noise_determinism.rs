@@ -14,12 +14,11 @@ use log::info;
 use pecos_engines::noise::general::GeneralNoiseModel;
 use pecos_engines::quantum::{QuantumEngine, StateVecEngine};
 use pecos_engines::{
-    Engine, QuantumSystem, byte_message::ByteMessage, engine_system::ControlEngine,
-    GateType
+    Engine, GateType, QuantumSystem, byte_message::ByteMessage, engine_system::ControlEngine,
 };
-use std::collections::BTreeMap;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use std::collections::BTreeMap;
 
 /// Reset a noise model and set its seed in one operation
 ///
@@ -79,7 +78,9 @@ fn apply_noise(model: &mut GeneralNoiseModel, msg: &ByteMessage) -> Vec<ByteMess
     // but always from the same seed. This is because we are testing that different noise models
     // respond differently to the same inputs.
     let mut measure_rng = ChaCha8Rng::seed_from_u64(5330);
-    let mut state = model.start(msg.clone()).expect("Failed to start noise model processing");
+    let mut state = model
+        .start(msg.clone())
+        .expect("Failed to start noise model processing");
     let mut messages = Vec::new();
     loop {
         match state {
@@ -90,7 +91,9 @@ fn apply_noise(model: &mut GeneralNoiseModel, msg: &ByteMessage) -> Vec<ByteMess
             pecos_engines::engine_system::EngineStage::NeedsProcessing(intermediate_msg) => {
                 // if the intermediate message requires measurements, give it some!
                 messages.push(intermediate_msg.clone());
-                let gates = intermediate_msg.quantum_ops().expect("Failed to get quantum operations");
+                let gates = intermediate_msg
+                    .quantum_ops()
+                    .expect("Failed to get quantum operations");
                 let mut response = ByteMessage::outcomes_builder();
                 for gate in &gates {
                     match &gate.gate_type {
@@ -99,9 +102,8 @@ fn apply_noise(model: &mut GeneralNoiseModel, msg: &ByteMessage) -> Vec<ByteMess
                                 let outcome = if measure_rng.random_bool(0.5) { 1 } else { 0 };
                                 response.add_outcomes(&[outcome]);
                             }
-                        },
-                        _ => {
                         }
+                        _ => {}
                     }
                 }
                 state = model
@@ -119,11 +121,17 @@ fn compare_messages(msg1: &ByteMessage, msg2: &ByteMessage) -> bool {
     let results_left = msg1.outcomes().unwrap_or_default();
     let results_right = msg2.outcomes().unwrap_or_default();
     if quantum_ops_left != quantum_ops_right {
-        eprintln!("Quantum operations differ: {:?} vs {:?}", quantum_ops_left, quantum_ops_right);
+        eprintln!(
+            "Quantum operations differ: {:?} vs {:?}",
+            quantum_ops_left, quantum_ops_right
+        );
         return false;
     }
     if results_left != results_right {
-        eprintln!("Measurement outcomes differ: {:?} vs {:?}", results_left, results_right);
+        eprintln!(
+            "Measurement outcomes differ: {:?} vs {:?}",
+            results_left, results_right
+        );
         return false;
     }
     return true;
@@ -134,9 +142,16 @@ fn compare_messages(msg1: &ByteMessage, msg2: &ByteMessage) -> bool {
 /// This function extracts and compares the quantum operations and results from two
 /// vectors of messages to determine if they represent the same conversation between
 /// the noise model and the quantum engine.
-fn compare_message_lists(messages_left: &Vec<ByteMessage>, messages_right: &Vec<ByteMessage>) -> bool {
+fn compare_message_lists(
+    messages_left: &Vec<ByteMessage>,
+    messages_right: &Vec<ByteMessage>,
+) -> bool {
     if messages_left.len() != messages_right.len() {
-        eprintln!("Message lengths differ: {} vs {}", messages_left.len(), messages_right.len());
+        eprintln!(
+            "Message lengths differ: {} vs {}",
+            messages_left.len(),
+            messages_right.len()
+        );
         return false;
     }
     for (i, (msg1, msg2)) in messages_left.iter().zip(messages_right.iter()).enumerate() {

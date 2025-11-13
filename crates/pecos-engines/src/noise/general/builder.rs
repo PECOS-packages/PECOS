@@ -1,6 +1,7 @@
 use crate::GateType;
 use crate::noise::{
-    GeneralNoiseModel, NoiseRng, SingleQubitWeightedSampler, TwoQubitWeightedSampler, CrosstalkWeightedSampler
+    CrosstalkWeightedSampler, GeneralNoiseModel, NoiseRng, SingleQubitWeightedSampler,
+    TwoQubitWeightedSampler,
 };
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -362,24 +362,25 @@ impl CrosstalkWeightedSampler {
     /// - If the total weight of each sampler deviates from 1.0 by more than the tolerance
     #[must_use]
     pub fn new(weighted_map: &BTreeMap<String, f64>) -> Self {
-
         Self::validate_crosstalk_keys(weighted_map);
 
         // Separate the 0->* components from the 1->* components
         const KEYS_FROM_0: [&str; 3] = ["0->0", "0->1", "0->L"];
         const KEYS_FROM_1: [&str; 3] = ["1->1", "1->0", "1->L"];
-        let weighted_map_from_0 = KEYS_FROM_0.into_iter().filter_map(
-            |key| match weighted_map.get(key) {
+        let weighted_map_from_0 = KEYS_FROM_0
+            .into_iter()
+            .filter_map(|key| match weighted_map.get(key) {
                 Some(&val) => Some((key.to_string(), val)),
                 None => None,
-            }
-        ).collect();
-        let weighted_map_from_1 = KEYS_FROM_1.into_iter().filter_map(
-            |key| match weighted_map.get(key) {
+            })
+            .collect();
+        let weighted_map_from_1 = KEYS_FROM_1
+            .into_iter()
+            .filter_map(|key| match weighted_map.get(key) {
                 Some(&val) => Some((key.to_string(), val)),
                 None => None,
-            }
-        ).collect();
+            })
+            .collect();
 
         Self {
             sampler_from_0: WeightedSampler::new(&weighted_map_from_0),
@@ -393,7 +394,8 @@ impl CrosstalkWeightedSampler {
         for key in weighted_map.keys() {
             assert!(
                 VALID_KEYS.contains(&key.as_str()),
-                "CrosstalkWeightedSampler: invalid key '{key}' - must be one of {:?}", VALID_KEYS
+                "CrosstalkWeightedSampler: invalid key '{key}' - must be one of {:?}",
+                VALID_KEYS
             );
         }
     }
@@ -425,7 +427,12 @@ impl CrosstalkWeightedSampler {
     /// # Panics
     /// - If the sampled key is invalid (this should never happen if the sampler was created properly)
     #[must_use]
-    pub fn sample_gates(&self, rng: &mut NoiseRng, qubit: usize, from_state: u32) -> SingleQubitNoiseResult {
+    pub fn sample_gates(
+        &self,
+        rng: &mut NoiseRng,
+        qubit: usize,
+        from_state: u32,
+    ) -> SingleQubitNoiseResult {
         let key = self.sample_keys(rng, from_state);
 
         match key.as_str() {
@@ -441,9 +448,7 @@ impl CrosstalkWeightedSampler {
                 gate: None,
                 qubit_leaked: true,
             },
-            _ => panic!(
-                "CrosstalkWeightedSampler: invalid key '{key}'"
-            ),
+            _ => panic!("CrosstalkWeightedSampler: invalid key '{key}'"),
         }
     }
 }

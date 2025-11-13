@@ -147,11 +147,7 @@ impl GateType {
             | GateType::Prep => 0,
 
             // Gates with one parameter
-            GateType::RX
-            | GateType::RY
-            | GateType::RZ
-            | GateType::RZZ
-            | GateType::Idle => 1,
+            GateType::RX | GateType::RY | GateType::RZ | GateType::RZZ | GateType::Idle => 1,
 
             // Gates with two parameters
             GateType::R1XY => 2,
@@ -218,8 +214,7 @@ impl GateType {
     /// Returns whether this gate is a crosstalk payload gate
     pub const fn is_crosstalk_payload(self) -> bool {
         match self {
-            GateType::MeasCrosstalkGlobalPayload
-            | GateType::MeasCrosstalkLocalPayload => true,
+            GateType::MeasCrosstalkGlobalPayload | GateType::MeasCrosstalkLocalPayload => true,
             _ => false,
         }
     }

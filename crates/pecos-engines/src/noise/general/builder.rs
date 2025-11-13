@@ -47,7 +47,6 @@ pub struct GeneralNoiseModelBuilder {
     p_meas_0: Option<f64>,
     p_meas_1: Option<f64>,
     meas_scale: Option<f64>,
-    // TODO: Maybe the p_meas_crosstalk parameter should remain for the simple_crosstalk?
     p_meas_crosstalk_global: Option<f64>,
     p_meas_crosstalk_local: Option<f64>,
     p_meas_crosstalk_model: Option<CrosstalkWeightedSampler>,
@@ -664,15 +663,6 @@ impl GeneralNoiseModelBuilder {
         self
     }
 
-    /// Set the average measurement global crosstalk
-    /// TODO: This is no longer applicable on Helios
-    // #[must_use]
-    // pub fn with_average_p_meas_crosstalk_global(mut self, prob: f64) -> Self {
-    //     let prob: f64 = prob * 18.0 / 5.0;
-    //     self.p_meas_crosstalk_global = Some(Self::validate_probability(prob));
-    //     self
-    // }
-
     /// Set the probability of local crosstalk during measurement operations
     #[must_use]
     pub fn with_p_meas_crosstalk_local(mut self, prob: f64) -> Self {
@@ -680,14 +670,14 @@ impl GeneralNoiseModelBuilder {
         self
     }
 
-    /// Set the average measurement local crosstalk
-    /// TODO: This is no longer applicable on Helios
-    // #[must_use]
-    // pub fn with_average_p_meas_crosstalk_local(mut self, prob: f64) -> Self {
-    //     let prob: f64 = prob * 18.0 / 5.0;
-    //     self.p_meas_crosstalk_local = Some(Self::validate_probability(prob));
-    //     self
-    // }
+    /// Set the probability of crosstalk during measurement operations
+    /// This is a shorthand that sets both global and local to the given value
+    #[must_use]
+    pub fn with_p_meas_crosstalk(mut self, prob: f64) -> Self {
+        self.p_meas_crosstalk_global = Some(Self::validate_probability(prob));
+        self.p_meas_crosstalk_local = Some(Self::validate_probability(prob));
+        self
+    }
 
     /// Set the transition model for measurement crosstalk
     #[must_use]

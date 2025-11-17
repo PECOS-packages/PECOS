@@ -6,7 +6,7 @@ to ensure they are drop-in replacements.
 
 import numpy as np
 
-from pecos_rslib import ones, zeros
+from pecos_rslib import dtypes, ones, zeros
 
 
 class TestZeros:
@@ -22,7 +22,7 @@ class TestZeros:
 
         # Check shape and dtype
         assert rust_result.shape == numpy_result.shape
-        assert rust_result.dtype == numpy_result.dtype
+        assert rust_result.dtype == dtypes.f64
 
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
@@ -37,7 +37,7 @@ class TestZeros:
 
         # Check shape and dtype
         assert rust_result.shape == numpy_result.shape
-        assert rust_result.dtype == numpy_result.dtype
+        assert rust_result.dtype == dtypes.f64
 
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
@@ -52,7 +52,7 @@ class TestZeros:
 
         # Check shape and dtype
         assert rust_result.shape == numpy_result.shape
-        assert rust_result.dtype == numpy_result.dtype
+        assert rust_result.dtype == dtypes.f64
 
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
@@ -67,7 +67,7 @@ class TestZeros:
 
         # Check shape and dtype
         assert rust_result.shape == numpy_result.shape
-        assert rust_result.dtype == numpy_result.dtype
+        assert rust_result.dtype == dtypes.complex128
 
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
@@ -82,7 +82,7 @@ class TestZeros:
 
         # Check shape and dtype
         assert rust_result.shape == numpy_result.shape
-        assert rust_result.dtype == numpy_result.dtype
+        assert rust_result.dtype == dtypes.complex128
 
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
@@ -97,7 +97,7 @@ class TestZeros:
 
         # Check shape and dtype
         assert rust_result.shape == numpy_result.shape
-        assert rust_result.dtype == numpy_result.dtype
+        assert rust_result.dtype == dtypes.i64
 
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
@@ -112,7 +112,7 @@ class TestZeros:
 
         # Check shape and dtype
         assert rust_result.shape == numpy_result.shape
-        assert rust_result.dtype == numpy_result.dtype
+        assert rust_result.dtype == dtypes.i64
 
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
@@ -121,15 +121,15 @@ class TestZeros:
         """Test that dtype aliases work (float, complex, int)."""
         # float alias
         result_float = zeros(3, dtype="float")
-        assert result_float.dtype == np.float64
+        assert result_float.dtype == dtypes.f64
 
         # complex alias
         result_complex = zeros(3, dtype="complex")
-        assert result_complex.dtype == np.complex128
+        assert result_complex.dtype == dtypes.complex128
 
         # int alias
         result_int = zeros(3, dtype="int")
-        assert result_int.dtype == np.int64
+        assert result_int.dtype == dtypes.i64
 
     def test_zeros_shape_as_list(self):
         """Test that shape can be provided as a list."""
@@ -169,7 +169,7 @@ class TestOnes:
 
         # Check shape and dtype
         assert rust_result.shape == numpy_result.shape
-        assert rust_result.dtype == numpy_result.dtype
+        assert rust_result.dtype == dtypes.f64
 
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
@@ -184,7 +184,7 @@ class TestOnes:
 
         # Check shape and dtype
         assert rust_result.shape == numpy_result.shape
-        assert rust_result.dtype == numpy_result.dtype
+        assert rust_result.dtype == dtypes.f64
 
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
@@ -199,7 +199,7 @@ class TestOnes:
 
         # Check shape and dtype
         assert rust_result.shape == numpy_result.shape
-        assert rust_result.dtype == numpy_result.dtype
+        assert rust_result.dtype == dtypes.f64
 
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
@@ -214,7 +214,7 @@ class TestOnes:
 
         # Check shape and dtype
         assert rust_result.shape == numpy_result.shape
-        assert rust_result.dtype == numpy_result.dtype
+        assert rust_result.dtype == dtypes.complex128
 
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
@@ -229,7 +229,7 @@ class TestOnes:
 
         # Check shape and dtype
         assert rust_result.shape == numpy_result.shape
-        assert rust_result.dtype == numpy_result.dtype
+        assert rust_result.dtype == dtypes.complex128
 
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
@@ -244,7 +244,7 @@ class TestOnes:
 
         # Check shape and dtype
         assert rust_result.shape == numpy_result.shape
-        assert rust_result.dtype == numpy_result.dtype
+        assert rust_result.dtype == dtypes.i64
 
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
@@ -259,7 +259,7 @@ class TestOnes:
 
         # Check shape and dtype
         assert rust_result.shape == numpy_result.shape
-        assert rust_result.dtype == numpy_result.dtype
+        assert rust_result.dtype == dtypes.i64
 
         # Check values
         np.testing.assert_array_equal(rust_result, numpy_result)
@@ -268,15 +268,15 @@ class TestOnes:
         """Test that dtype aliases work (float, complex, int)."""
         # float alias
         result_float = ones(3, dtype="float")
-        assert result_float.dtype == np.float64
+        assert result_float.dtype == dtypes.f64
 
         # complex alias
         result_complex = ones(3, dtype="complex")
-        assert result_complex.dtype == np.complex128
+        assert result_complex.dtype == dtypes.complex128
 
         # int alias
         result_int = ones(3, dtype="int")
-        assert result_int.dtype == np.int64
+        assert result_int.dtype == dtypes.i64
 
     def test_ones_shape_as_list(self):
         """Test that shape can be provided as a list."""

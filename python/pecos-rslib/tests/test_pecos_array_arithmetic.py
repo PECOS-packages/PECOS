@@ -29,7 +29,8 @@ class TestPecosArrayAddition:
 
         pa_result_np = np.asarray(pa_result)
         np.testing.assert_array_equal(pa_result_np, np_result)
-        assert pa_result.dtype == np_result.dtype
+        # Verify dtype compatibility via buffer protocol conversion
+        assert pa_result_np.dtype == np_result.dtype
 
     def test_scalar_plus_array_float(self):
         """Test: scalar + array (reverse operation)."""

@@ -26,11 +26,14 @@
 
 use num_complex::Complex64;
 use pyo3::prelude::*;
+use pyo3::types::PyBool;
 
 /// Dtype enum representing supported data types
 #[pyclass(name = "DType", module = "pecos_rslib.dtypes")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DType {
+    /// Boolean (bool)
+    Bool,
     /// 64-bit floating point (f64, double precision)
     F64,
     /// 32-bit floating point (f32, single precision)
@@ -54,6 +57,7 @@ impl DType {
     /// String representation of the dtype
     fn __repr__(&self) -> String {
         match self {
+            DType::Bool => "dtypes.bool".to_string(),
             DType::F64 => "dtypes.f64".to_string(),
             DType::F32 => "dtypes.f32".to_string(),
             DType::I64 => "dtypes.i64".to_string(),
@@ -99,10 +103,18 @@ impl DType {
         matches!(self, DType::Complex128 | DType::Complex64)
     }
 
+    /// Check if this is a boolean dtype
+    #[getter]
+    #[allow(clippy::trivially_copy_pass_by_ref)] // PyO3 requires &self for getters
+    fn is_bool(&self) -> bool {
+        matches!(self, DType::Bool)
+    }
+
     /// Item size in bytes
     #[getter]
     fn itemsize(&self) -> usize {
         match self {
+            DType::Bool => 1,
             DType::F64 => 8,
             DType::F32 => 4,
             DType::I64 => 8,
@@ -114,9 +126,28 @@ impl DType {
         }
     }
 
+    /// Python equality comparison
+    fn __eq__(&self, other: &Self) -> bool {
+        self == other
+    }
+
+    /// Python hash implementation
+    fn __hash__(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        (*self as u8).hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// Make `DType` callable as a type constructor (returns Rust-backed scalars)
     fn __call__<'py>(&self, py: Python<'py>, value: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
         match self {
+            DType::Bool => {
+                // Convert to bool and return as Python bool
+                let bool_val = value.extract::<bool>()?;
+                Ok(PyBool::new(py, bool_val).to_owned().into_any().unbind())
+            }
             DType::F64 => {
                 // Convert to f64 and create Rust-backed scalar
                 let float_val = value.extract::<f64>()?;
@@ -165,6 +196,7 @@ impl DType {
     /// Convert to NumPy-compatible dtype string (public Rust method)
     pub fn to_numpy_str(&self) -> &'static str {
         match self {
+            DType::Bool => "bool",
             DType::F64 => "float64",
             DType::F32 => "float32",
             DType::I64 => "int64",
@@ -179,6 +211,8 @@ impl DType {
     /// Parse from a string (supports both Rust-style and NumPy-style names)
     pub fn from_str(s: &str) -> PyResult<Self> {
         match s.to_lowercase().as_str() {
+            // Boolean type
+            "bool" => Ok(DType::Bool),
             // Rust-style names
             "f64" | "float64" => Ok(DType::F64),
             "f32" | "float32" => Ok(DType::F32),
@@ -346,6 +380,7 @@ pub fn register_dtypes_module(parent_module: &Bound<'_, PyModule>) -> PyResult<(
     dtypes.add_class::<ScalarComplex128>()?;
 
     // Create singleton instances for each dtype
+    dtypes.add("bool", DType::Bool)?;
     dtypes.add("f64", DType::F64)?;
     dtypes.add("f32", DType::F32)?;
     dtypes.add("i64", DType::I64)?;

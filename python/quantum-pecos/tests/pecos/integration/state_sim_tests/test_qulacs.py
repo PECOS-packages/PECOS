@@ -293,18 +293,20 @@ class TestQulacsCompatibility:
 
         state = sim.vector
 
-        # Should be numpy array
-        assert isinstance(state, np.ndarray)
+        # Should be numpy-compatible (Array implements buffer protocol)
+        # Can convert to numpy array via np.asarray
+        state_np = np.asarray(state)
+        assert isinstance(state_np, np.ndarray)
 
         # Should have complex dtype
-        assert np.iscomplexobj(state)
+        assert np.iscomplexobj(state_np)
 
         # Should be normalized
-        norm = np.sum(abs(state) ** 2)
+        norm = np.sum(abs(state_np) ** 2)
         assert isclose(norm, 1.0, rtol=1e-5, atol=1e-8)
 
         # Should support numpy operations
-        probabilities = abs(state) ** 2
+        probabilities = abs(state_np) ** 2
         assert isinstance(probabilities, np.ndarray)
         assert probabilities.dtype == float
 

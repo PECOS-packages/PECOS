@@ -28,7 +28,7 @@
 #![allow(clippy::cast_precision_loss)] // Expected precision loss in numeric conversions
 
 use num_complex::Complex64;
-use numpy::ndarray::{Array, Array1, ArrayD, Axis, IxDyn};
+use numpy::ndarray::{Array as NdArray, Array1, ArrayD, Axis, IxDyn};
 use numpy::{
     IntoPyArray, PyArray, PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2,
     PyReadonlyArrayDyn,
@@ -37,6 +37,9 @@ use pyo3::conversion::IntoPyObjectExt;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
+
+// Import Array from pecos_array module for migration from numpy.ndarray to Array
+use crate::pecos_array::Array;
 
 // Import numerical computing types from pecos prelude
 // Functions are accessed via pecos::prelude module
@@ -1731,9 +1734,9 @@ fn linspace(
     stop: f64,
     num: usize,
     endpoint: bool,
-) -> PyResult<Py<PyAny>> {
+) -> PyResult<Py<Array>> {
     let result = pecos::prelude::linspace(start, stop, num, endpoint);
-    Ok(PyArray::from_owned_array(py, result).into_any().unbind())
+    Py::new(py, Array::from_array_f64(result.into_dyn()))
 }
 
 /// Return evenly spaced values within a given interval.
@@ -1790,7 +1793,7 @@ fn arange(
     start: Bound<'_, PyAny>,
     stop: Option<Bound<'_, PyAny>>,
     step: Option<Bound<'_, PyAny>>,
-) -> PyResult<Py<PyAny>> {
+) -> PyResult<Py<Array>> {
     // Handle single-argument case: arange(stop) → arange(0, stop, 1)
     let (start_param, stop_param, step_param) = if let Some(stop_val) = stop {
         (
@@ -1830,14 +1833,10 @@ fn arange(
         // Convert to int64 array
         #[allow(clippy::cast_possible_truncation)] // Intentional truncation for int array
         let result_i64: Array1<i64> = result_f64.mapv(|x| x as i64);
-        Ok(PyArray::from_owned_array(py, result_i64)
-            .into_any()
-            .unbind())
+        Py::new(py, Array::from_array_i64(result_i64.into_dyn()))
     } else {
         // Return as float64 array
-        Ok(PyArray::from_owned_array(py, result_f64)
-            .into_any()
-            .unbind())
+        Py::new(py, Array::from_array_f64(result_f64.into_dyn()))
     }
 }
 
@@ -1877,7 +1876,7 @@ fn zeros(
     py: Python<'_>,
     shape: Bound<'_, PyAny>,
     dtype: Option<&Bound<'_, PyAny>>,
-) -> PyResult<Py<PyAny>> {
+) -> PyResult<Py<Array>> {
     use crate::dtypes::DType;
     use num_complex::Complex64;
 
@@ -1921,14 +1920,14 @@ fn zeros(
                     ));
                 }
             };
-            Ok(PyArray::from_owned_array(py, arr).into_any().unbind())
+            Py::new(py, Array::from_array_f64(arr))
         }
         "complex128" | "complex" => {
             let arr = match shape_vec.len() {
-                1 => Array::from_elem(shape_vec[0], Complex64::new(0.0, 0.0)).into_dyn(),
-                2 => Array::from_elem((shape_vec[0], shape_vec[1]), Complex64::new(0.0, 0.0))
+                1 => NdArray::from_elem(shape_vec[0], Complex64::new(0.0, 0.0)).into_dyn(),
+                2 => NdArray::from_elem((shape_vec[0], shape_vec[1]), Complex64::new(0.0, 0.0))
                     .into_dyn(),
-                3 => Array::from_elem(
+                3 => NdArray::from_elem(
                     (shape_vec[0], shape_vec[1], shape_vec[2]),
                     Complex64::new(0.0, 0.0),
                 )
@@ -1939,20 +1938,22 @@ fn zeros(
                     ));
                 }
             };
-            Ok(PyArray::from_owned_array(py, arr).into_any().unbind())
+            Py::new(py, Array::from_array_c128(arr))
         }
         "int64" | "int" => {
             let arr = match shape_vec.len() {
-                1 => Array::from_elem(shape_vec[0], 0i64).into_dyn(),
-                2 => Array::from_elem((shape_vec[0], shape_vec[1]), 0i64).into_dyn(),
-                3 => Array::from_elem((shape_vec[0], shape_vec[1], shape_vec[2]), 0i64).into_dyn(),
+                1 => NdArray::from_elem(shape_vec[0], 0i64).into_dyn(),
+                2 => NdArray::from_elem((shape_vec[0], shape_vec[1]), 0i64).into_dyn(),
+                3 => {
+                    NdArray::from_elem((shape_vec[0], shape_vec[1], shape_vec[2]), 0i64).into_dyn()
+                }
                 _ => {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                         "only 1D, 2D, and 3D arrays are currently supported",
                     ));
                 }
             };
-            Ok(PyArray::from_owned_array(py, arr).into_any().unbind())
+            Py::new(py, Array::from_array_i64(arr))
         }
         _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
             "unsupported dtype: {dtype_str}. Supported: 'float64', 'complex128', 'int64'"
@@ -1996,7 +1997,7 @@ fn ones(
     py: Python<'_>,
     shape: Bound<'_, PyAny>,
     dtype: Option<&Bound<'_, PyAny>>,
-) -> PyResult<Py<PyAny>> {
+) -> PyResult<Py<Array>> {
     use crate::dtypes::DType;
     use num_complex::Complex64;
 
@@ -2040,14 +2041,14 @@ fn ones(
                     ));
                 }
             };
-            Ok(PyArray::from_owned_array(py, arr).into_any().unbind())
+            Py::new(py, Array::from_array_f64(arr))
         }
         "complex128" | "complex" => {
             let arr = match shape_vec.len() {
-                1 => Array::from_elem(shape_vec[0], Complex64::new(1.0, 0.0)).into_dyn(),
-                2 => Array::from_elem((shape_vec[0], shape_vec[1]), Complex64::new(1.0, 0.0))
+                1 => NdArray::from_elem(shape_vec[0], Complex64::new(1.0, 0.0)).into_dyn(),
+                2 => NdArray::from_elem((shape_vec[0], shape_vec[1]), Complex64::new(1.0, 0.0))
                     .into_dyn(),
-                3 => Array::from_elem(
+                3 => NdArray::from_elem(
                     (shape_vec[0], shape_vec[1], shape_vec[2]),
                     Complex64::new(1.0, 0.0),
                 )
@@ -2058,20 +2059,22 @@ fn ones(
                     ));
                 }
             };
-            Ok(PyArray::from_owned_array(py, arr).into_any().unbind())
+            Py::new(py, Array::from_array_c128(arr))
         }
         "int64" | "int" => {
             let arr = match shape_vec.len() {
-                1 => Array::from_elem(shape_vec[0], 1i64).into_dyn(),
-                2 => Array::from_elem((shape_vec[0], shape_vec[1]), 1i64).into_dyn(),
-                3 => Array::from_elem((shape_vec[0], shape_vec[1], shape_vec[2]), 1i64).into_dyn(),
+                1 => NdArray::from_elem(shape_vec[0], 1i64).into_dyn(),
+                2 => NdArray::from_elem((shape_vec[0], shape_vec[1]), 1i64).into_dyn(),
+                3 => {
+                    NdArray::from_elem((shape_vec[0], shape_vec[1], shape_vec[2]), 1i64).into_dyn()
+                }
                 _ => {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                         "only 1D, 2D, and 3D arrays are currently supported",
                     ));
                 }
             };
-            Ok(PyArray::from_owned_array(py, arr).into_any().unbind())
+            Py::new(py, Array::from_array_i64(arr))
         }
         _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
             "unsupported dtype: {dtype_str}. Supported: 'float64', 'complex128', 'int64'"
@@ -2138,7 +2141,7 @@ fn array(
     py: Python<'_>,
     obj: Bound<'_, PyAny>,
     dtype: Option<&Bound<'_, PyAny>>,
-) -> PyResult<Py<PyAny>> {
+) -> PyResult<Py<Array>> {
     use crate::dtypes::DType;
     use num_complex::Complex64;
 
@@ -2270,7 +2273,7 @@ fn array(
                     // 1D array
                     let vec = extract_f64_vec(&obj)?;
                     let arr = Array1::from_vec(vec).into_dyn();
-                    Ok(PyArray::from_owned_array(py, arr).into_any().unbind())
+                    Py::new(py, Array::from_array_f64(arr))
                 }
                 2 => {
                     // 2D array - need to extract as nested Vec
@@ -2286,10 +2289,10 @@ fn array(
                         }
                     }
 
-                    let arr = Array::from_shape_vec((rows, cols), flat_vec)
+                    let arr = NdArray::from_shape_vec((rows, cols), flat_vec)
                         .map_err(|e| PyErr::new::<PyTypeError, _>(format!("Shape error: {e}")))?
                         .into_dyn();
-                    Ok(PyArray::from_owned_array(py, arr).into_any().unbind())
+                    Py::new(py, Array::from_array_f64(arr))
                 }
                 3 => {
                     // 3D array
@@ -2309,10 +2312,10 @@ fn array(
                         }
                     }
 
-                    let arr = Array::from_shape_vec((dim0, dim1, dim2), flat_vec)
+                    let arr = NdArray::from_shape_vec((dim0, dim1, dim2), flat_vec)
                         .map_err(|e| PyErr::new::<PyTypeError, _>(format!("Shape error: {e}")))?
                         .into_dyn();
-                    Ok(PyArray::from_owned_array(py, arr).into_any().unbind())
+                    Py::new(py, Array::from_array_f64(arr))
                 }
                 _ => Err(PyErr::new::<PyTypeError, _>(
                     "only 1D, 2D, and 3D arrays are currently supported",
@@ -2323,7 +2326,7 @@ fn array(
             1 => {
                 let vec = extract_complex64_vec(&obj)?;
                 let arr = Array1::from_vec(vec).into_dyn();
-                Ok(PyArray::from_owned_array(py, arr).into_any().unbind())
+                Py::new(py, Array::from_array_c128(arr))
             }
             2 => {
                 let rows = shape[0];
@@ -2338,10 +2341,10 @@ fn array(
                     }
                 }
 
-                let arr = Array::from_shape_vec((rows, cols), flat_vec)
+                let arr = NdArray::from_shape_vec((rows, cols), flat_vec)
                     .map_err(|e| PyErr::new::<PyTypeError, _>(format!("Shape error: {e}")))?
                     .into_dyn();
-                Ok(PyArray::from_owned_array(py, arr).into_any().unbind())
+                Py::new(py, Array::from_array_c128(arr))
             }
             3 => {
                 let dim0 = shape[0];
@@ -2360,10 +2363,10 @@ fn array(
                     }
                 }
 
-                let arr = Array::from_shape_vec((dim0, dim1, dim2), flat_vec)
+                let arr = NdArray::from_shape_vec((dim0, dim1, dim2), flat_vec)
                     .map_err(|e| PyErr::new::<PyTypeError, _>(format!("Shape error: {e}")))?
                     .into_dyn();
-                Ok(PyArray::from_owned_array(py, arr).into_any().unbind())
+                Py::new(py, Array::from_array_c128(arr))
             }
             _ => Err(PyErr::new::<PyTypeError, _>(
                 "only 1D, 2D, and 3D arrays are currently supported",
@@ -2373,7 +2376,7 @@ fn array(
             1 => {
                 let vec = extract_i64_vec(&obj)?;
                 let arr = Array1::from_vec(vec).into_dyn();
-                Ok(PyArray::from_owned_array(py, arr).into_any().unbind())
+                Py::new(py, Array::from_array_i64(arr))
             }
             2 => {
                 let rows = shape[0];
@@ -2388,10 +2391,10 @@ fn array(
                     }
                 }
 
-                let arr = Array::from_shape_vec((rows, cols), flat_vec)
+                let arr = NdArray::from_shape_vec((rows, cols), flat_vec)
                     .map_err(|e| PyErr::new::<PyTypeError, _>(format!("Shape error: {e}")))?
                     .into_dyn();
-                Ok(PyArray::from_owned_array(py, arr).into_any().unbind())
+                Py::new(py, Array::from_array_i64(arr))
             }
             3 => {
                 let dim0 = shape[0];
@@ -2410,10 +2413,10 @@ fn array(
                     }
                 }
 
-                let arr = Array::from_shape_vec((dim0, dim1, dim2), flat_vec)
+                let arr = NdArray::from_shape_vec((dim0, dim1, dim2), flat_vec)
                     .map_err(|e| PyErr::new::<PyTypeError, _>(format!("Shape error: {e}")))?
                     .into_dyn();
-                Ok(PyArray::from_owned_array(py, arr).into_any().unbind())
+                Py::new(py, Array::from_array_i64(arr))
             }
             _ => Err(PyErr::new::<PyTypeError, _>(
                 "only 1D, 2D, and 3D arrays are currently supported",
@@ -2947,6 +2950,9 @@ fn norm(_py: Python<'_>, x: Bound<'_, PyAny>, ord: Option<f64>) -> PyResult<f64>
         let pecos_arr_ref = pecos_arr.borrow();
         // Access the internal data field and match on its type
         return match &pecos_arr_ref.data {
+            ArrayData::Bool(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+                "norm() operation not supported on boolean arrays",
+            )),
             ArrayData::Float64(arr) => Ok(norm_fn(arr, ord)),
             ArrayData::Float32(arr) => {
                 // Convert f32 to f64 for norm calculation
@@ -3564,6 +3570,56 @@ fn abs(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         && let Ok(val) = py_complex.extract::<Complex64>()
     {
         return Ok(val.abs().into_py_any(py).unwrap());
+    }
+
+    // Try Array type (our custom array wrapper)
+    if let Ok(arr) = x.extract::<Py<Array>>() {
+        use crate::pecos_array::ArrayData;
+        let arr_ref = arr.bind(py).borrow();
+        match &arr_ref.data {
+            ArrayData::Bool(_) => {
+                return Err(PyTypeError::new_err(
+                    "abs() operation not supported on boolean arrays",
+                ));
+            }
+            // Float types -> use Abs trait (returns f64/f32 arrays)
+            ArrayData::Float64(a) => {
+                let result = a.abs(); // Uses Abs trait
+                return Ok(Py::new(py, Array::from_array_f64(result))?.into_any());
+            }
+            ArrayData::Float32(a) => {
+                // abs() returns Array<f32, D>, convert to f64
+                let result = a.mapv(|v| f64::from(v.abs()));
+                return Ok(Py::new(py, Array::from_array_f64(result))?.into_any());
+            }
+            // Integer types -> use stdlib abs() for each element
+            ArrayData::Int64(a) => {
+                let result = a.mapv(i64::abs);
+                return Ok(Py::new(py, Array::from_array_i64(result))?.into_any());
+            }
+            ArrayData::Int32(a) => {
+                let result = a.mapv(|v| i64::from(v.abs()));
+                return Ok(Py::new(py, Array::from_array_i64(result))?.into_any());
+            }
+            ArrayData::Int16(a) => {
+                let result = a.mapv(|v| i64::from(v.abs()));
+                return Ok(Py::new(py, Array::from_array_i64(result))?.into_any());
+            }
+            ArrayData::Int8(a) => {
+                let result = a.mapv(|v| i64::from(v.abs()));
+                return Ok(Py::new(py, Array::from_array_i64(result))?.into_any());
+            }
+            // Complex types -> use Abs trait (returns f64/f32 magnitudes)
+            ArrayData::Complex128(a) => {
+                let result = a.abs(); // Uses Abs trait, returns Array<f64, D>
+                return Ok(Py::new(py, Array::from_array_f64(result))?.into_any());
+            }
+            ArrayData::Complex64(a) => {
+                // abs() returns Array<f32, D>, convert to f64
+                let result = a.mapv(|v| f64::from(v.norm()));
+                return Ok(Py::new(py, Array::from_array_f64(result))?.into_any());
+            }
+        }
     }
 
     Err(PyTypeError::new_err(

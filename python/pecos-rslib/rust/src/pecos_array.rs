@@ -44,6 +44,7 @@ use crate::dtypes::DType;
 /// We use separate variants for each dtype to maintain type safety
 #[derive(Clone)]
 pub enum ArrayData {
+    Bool(ArrayD<bool>),
     Int8(ArrayD<i8>),
     Int16(ArrayD<i16>),
     Int32(ArrayD<i32>),
@@ -65,6 +66,7 @@ impl ArrayData {
     /// Get the dtype of this array
     fn dtype(&self) -> DType {
         match self {
+            ArrayData::Bool(_) => DType::Bool,
             ArrayData::Int8(_) => DType::I8,
             ArrayData::Int16(_) => DType::I16,
             ArrayData::Int32(_) => DType::I32,
@@ -79,6 +81,7 @@ impl ArrayData {
     /// Get the shape of this array
     fn shape(&self) -> &[usize] {
         match self {
+            ArrayData::Bool(arr) => arr.shape(),
             ArrayData::Int8(arr) => arr.shape(),
             ArrayData::Int16(arr) => arr.shape(),
             ArrayData::Int32(arr) => arr.shape(),
@@ -195,8 +198,8 @@ impl Array {
 
     /// Get the data type of the array
     #[getter]
-    fn dtype(&self) -> String {
-        self.data.dtype().to_numpy_str().to_string()
+    fn dtype(&self) -> DType {
+        self.data.dtype()
     }
 
     /// Get the number of dimensions
@@ -209,6 +212,53 @@ impl Array {
     #[getter]
     fn size(&self) -> usize {
         self.data.size()
+    }
+
+    /// Create a deep copy of the array
+    ///
+    /// Returns:
+    ///     A new `Array` with the same data as this array
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// from pecos_rslib import Array
+    /// import numpy as np
+    ///
+    /// arr = Array(np.array([1.0, 2.0, 3.0]))
+    /// arr_copy = arr.copy()
+    /// arr_copy[0] = 99.0  # Modifying the copy doesn't affect the original
+    /// ```
+    fn copy(&self) -> Self {
+        match &self.data {
+            ArrayData::Bool(arr) => Self {
+                data: ArrayData::Bool(arr.clone()),
+            },
+            ArrayData::Int8(arr) => Self {
+                data: ArrayData::Int8(arr.clone()),
+            },
+            ArrayData::Int16(arr) => Self {
+                data: ArrayData::Int16(arr.clone()),
+            },
+            ArrayData::Int32(arr) => Self {
+                data: ArrayData::Int32(arr.clone()),
+            },
+            ArrayData::Int64(arr) => Self {
+                data: ArrayData::Int64(arr.clone()),
+            },
+            ArrayData::Float32(arr) => Self {
+                data: ArrayData::Float32(arr.clone()),
+            },
+            ArrayData::Float64(arr) => Self {
+                data: ArrayData::Float64(arr.clone()),
+            },
+            ArrayData::Complex64(arr) => Self {
+                data: ArrayData::Complex64(arr.clone()),
+            },
+            ArrayData::Complex128(arr) => Self {
+                data: ArrayData::Complex128(arr.clone()),
+            },
+        }
     }
 
     /// Implement __len__ to return the size of the first dimension
@@ -241,10 +291,25 @@ impl Array {
 
     /// Implement __array__ method for numpy compatibility
     /// This allows numpy to convert `Array` to numpy.ndarray via `np.asarray()`
-    fn __array__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    ///
+    /// Accepts optional keyword arguments (dtype, copy, etc.) for numpy compatibility,
+    /// but currently ignores them and always returns a view of the underlying data.
+    #[pyo3(signature = (dtype=None, copy=None, **_kwargs))]
+    fn __array__(
+        &self,
+        py: Python<'_>,
+        dtype: Option<&Bound<'_, PyAny>>,
+        copy: Option<&Bound<'_, PyAny>>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> PyResult<Py<PyAny>> {
         use numpy::ToPyArray;
 
+        // For now, we ignore dtype and copy parameters and always return the array as-is
+        // In the future, we could handle dtype conversion and copy semantics
+        let _ = (dtype, copy);
+
         match &self.data {
+            ArrayData::Bool(arr) => Ok(arr.to_pyarray(py).unbind().into()),
             ArrayData::Int8(arr) => Ok(arr.to_pyarray(py).unbind().into()),
             ArrayData::Int16(arr) => Ok(arr.to_pyarray(py).unbind().into()),
             ArrayData::Int32(arr) => Ok(arr.to_pyarray(py).unbind().into()),
@@ -311,10 +376,74 @@ impl Array {
             // Apply 1D slice assignment (now supports arbitrary steps)
             self.apply_1d_slice_assignment_with_step(start, stop, step, value)?;
             Ok(())
+        } else if let Ok(idx) = index.extract::<isize>() {
+            // Integer indexing: arr[i] = value
+            let shape = self.data.shape();
+
+            // Only 1D arrays support integer indexing with a single integer
+            if shape.len() != 1 {
+                return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                    "Single integer indexing assignment only works on 1D arrays (use tuple indexing for multi-dimensional arrays, e.g., arr[i, j] = value)",
+                ));
+            }
+
+            // Normalize negative indices
+            let size = shape[0] as isize;
+            let normalized_idx = if idx < 0 { size + idx } else { idx };
+
+            // Bounds checking
+            if normalized_idx < 0 || normalized_idx >= size {
+                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                    "Index {idx} is out of bounds for array of size {size}"
+                )));
+            }
+
+            let idx_usize = normalized_idx as usize;
+
+            // Assign the value based on array dtype
+            match &mut self.data {
+                ArrayData::Bool(arr) => {
+                    let val: bool = value.extract()?;
+                    arr[idx_usize] = val;
+                }
+                ArrayData::Int8(arr) => {
+                    let val: i8 = value.extract()?;
+                    arr[idx_usize] = val;
+                }
+                ArrayData::Int16(arr) => {
+                    let val: i16 = value.extract()?;
+                    arr[idx_usize] = val;
+                }
+                ArrayData::Int32(arr) => {
+                    let val: i32 = value.extract()?;
+                    arr[idx_usize] = val;
+                }
+                ArrayData::Int64(arr) => {
+                    let val: i64 = value.extract()?;
+                    arr[idx_usize] = val;
+                }
+                ArrayData::Float32(arr) => {
+                    let val: f32 = value.extract()?;
+                    arr[idx_usize] = val;
+                }
+                ArrayData::Float64(arr) => {
+                    let val: f64 = value.extract()?;
+                    arr[idx_usize] = val;
+                }
+                ArrayData::Complex64(arr) => {
+                    let val: Complex32 = value.extract()?;
+                    arr[idx_usize] = val;
+                }
+                ArrayData::Complex128(arr) => {
+                    let val: Complex64 = value.extract()?;
+                    arr[idx_usize] = val;
+                }
+            }
+            Ok(())
         } else {
-            // Integer indexing (not implemented)
-            Err(pyo3::exceptions::PyNotImplementedError::new_err(
-                "Integer indexing assignment not yet implemented (use slicing for now)",
+            // Unsupported index type
+            Err(pyo3::exceptions::PyTypeError::new_err(
+                "Index must be an integer, slice, or tuple",
             ))
         }
     }
@@ -401,6 +530,10 @@ impl Array {
 
             // Extract the element and return as Python scalar
             match &self.data {
+                ArrayData::Bool(arr) => {
+                    let val = arr[normalized_idx as usize];
+                    Ok(val.into_pyobject(py)?.to_owned().into_any().unbind())
+                }
                 ArrayData::Int8(arr) => {
                     let val = arr[normalized_idx as usize];
                     Ok(val.into_pyobject(py)?.into_any().unbind())
@@ -511,6 +644,80 @@ impl Array {
     fn __rtruediv__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.binary_op_reverse(other, py, |a, b| a / b, "divide")
     }
+
+    /// Power: self ** other
+    fn __pow__(
+        &self,
+        other: &Bound<'_, PyAny>,
+        _modulo: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
+        self.binary_op(other, py, f64::powf, "power")
+    }
+
+    /// Reverse power: other ** self
+    fn __rpow__(
+        &self,
+        other: &Bound<'_, PyAny>,
+        _modulo: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyAny>> {
+        self.binary_op_reverse(other, py, f64::powf, "power")
+    }
+
+    /// Greater than: self > other
+    fn __gt__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.comparison_op(
+            other,
+            py,
+            |a, b| if a > b { 1.0 } else { 0.0 },
+            "greater than",
+        )
+    }
+
+    /// Greater than or equal: self >= other
+    fn __ge__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.comparison_op(
+            other,
+            py,
+            |a, b| if a >= b { 1.0 } else { 0.0 },
+            "greater than or equal",
+        )
+    }
+
+    /// Less than: self < other
+    fn __lt__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.comparison_op(other, py, |a, b| if a < b { 1.0 } else { 0.0 }, "less than")
+    }
+
+    /// Less than or equal: self <= other
+    fn __le__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.comparison_op(
+            other,
+            py,
+            |a, b| if a <= b { 1.0 } else { 0.0 },
+            "less than or equal",
+        )
+    }
+
+    /// Equal: self == other
+    /// Note: Uses exact float equality to match numpy behavior
+    #[allow(clippy::float_cmp)]
+    fn __eq__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.comparison_op(other, py, |a, b| if a == b { 1.0 } else { 0.0 }, "equal")
+    }
+
+    /// Not equal: self != other
+    /// Note: Uses exact float equality to match numpy behavior
+    #[allow(clippy::float_cmp)]
+    fn __ne__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.comparison_op(
+            other,
+            py,
+            |a, b| if a == b { 0.0 } else { 1.0 },
+            "not equal",
+        )
+    }
 }
 
 impl Array {
@@ -560,6 +767,9 @@ impl Array {
         if let Ok(scalar) = other.extract::<f64>() {
             // Scalar operation: apply to all elements
             match &self.data {
+                ArrayData::Bool(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Arithmetic operations not supported on boolean arrays",
+                )),
                 ArrayData::Int8(arr) => {
                     let result = arr.mapv(|x| op(f64::from(x), scalar) as i8);
                     Ok(Py::new(
@@ -898,6 +1108,9 @@ impl Array {
         if let Ok(scalar) = other.extract::<f64>() {
             // Scalar operation: apply to all elements with reversed operands
             match &self.data {
+                ArrayData::Bool(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Arithmetic operations not supported on boolean arrays",
+                )),
                 ArrayData::Int8(arr) => {
                     let result = arr.mapv(|x| op(scalar, f64::from(x)) as i8);
                     Ok(Py::new(
@@ -994,6 +1207,63 @@ impl Array {
         }
     }
 
+    /// Helper method for comparison operations: self op other
+    /// Always returns a float64 array with 1.0 for True and 0.0 for False
+    /// F is a closure that performs the comparison (e.g., |a, b| if a > b { 1.0 } else { 0.0 })
+    fn comparison_op<F>(
+        &self,
+        other: &Bound<'_, PyAny>,
+        py: Python<'_>,
+        op: F,
+        op_name: &str,
+    ) -> PyResult<Py<PyAny>>
+    where
+        F: Fn(f64, f64) -> f64 + Copy,
+    {
+        // Try to extract as f64 scalar first
+        if let Ok(scalar) = other.extract::<f64>() {
+            // Scalar comparison: apply to all elements, always return float64 array
+            match &self.data {
+                ArrayData::Bool(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Comparison operations with numeric scalars not supported on boolean arrays",
+                )),
+                ArrayData::Int8(arr) => {
+                    let result = arr.mapv(|x| op(f64::from(x), scalar));
+                    Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
+                }
+                ArrayData::Int16(arr) => {
+                    let result = arr.mapv(|x| op(f64::from(x), scalar));
+                    Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
+                }
+                ArrayData::Int32(arr) => {
+                    let result = arr.mapv(|x| op(f64::from(x), scalar));
+                    Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
+                }
+                ArrayData::Int64(arr) => {
+                    let result = arr.mapv(|x| op(x as f64, scalar));
+                    Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
+                }
+                ArrayData::Float32(arr) => {
+                    let result = arr.mapv(|x| op(f64::from(x), scalar));
+                    Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
+                }
+                ArrayData::Float64(arr) => {
+                    let result = arr.mapv(|x| op(x, scalar));
+                    Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
+                }
+                ArrayData::Complex64(_) | ArrayData::Complex128(_) => {
+                    Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        "Comparison {op_name} not supported for complex arrays"
+                    )))
+                }
+            }
+        } else {
+            Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "Unsupported operand type for comparison {op_name}"
+            )))
+        }
+    }
+
     /// Parse a Python slice object into (start, end, step) for a given axis size
     /// This properly handles:
     /// - Negative indices (converted to positive)
@@ -1043,6 +1313,20 @@ impl Array {
         // Apply 1D slice assignment based on data type
         // Use ndarray's slice_mut() with Slice::from() for unit-step slicing
         match &mut self.data {
+            ArrayData::Bool(arr) => {
+                let slice = Slice::from(start..stop);
+                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                if let Ok(scalar_val) = value.extract::<bool>() {
+                    view.fill(scalar_val);
+                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<bool>>() {
+                    let np_arr = arr_val.to_owned_array();
+                    view.assign(&np_arr);
+                } else {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "Value must be a scalar or array matching the slice shape and dtype",
+                    ));
+                }
+            }
             ArrayData::Int8(arr) => {
                 let slice = Slice::from(start..stop);
                 let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
@@ -1209,6 +1493,29 @@ impl Array {
 
         // Apply assignment based on data type
         match &mut self.data {
+            ArrayData::Bool(arr) => {
+                if let Ok(scalar_val) = value.extract::<bool>() {
+                    for &idx in &indices {
+                        arr[idx] = scalar_val;
+                    }
+                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<bool>>() {
+                    let np_arr = arr_val.to_owned_array();
+                    if np_arr.len() != indices.len() {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "Array length {} does not match slice length {}",
+                            np_arr.len(),
+                            indices.len()
+                        )));
+                    }
+                    for (i, &idx) in indices.iter().enumerate() {
+                        arr[idx] = np_arr[i];
+                    }
+                } else {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "Value must be a scalar or array matching the slice shape and dtype",
+                    ));
+                }
+            }
             ArrayData::Int8(arr) => {
                 if let Ok(scalar_val) = value.extract::<i8>() {
                     for &idx in &indices {
@@ -1467,6 +1774,7 @@ impl Array {
 
         // Apply fancy indexing based on dtype
         let result_data = match &self.data {
+            ArrayData::Bool(arr) => ArrayData::Bool(impl_fancy_indexing!(arr)),
             ArrayData::Int8(arr) => ArrayData::Int8(impl_fancy_indexing!(arr)),
             ArrayData::Int16(arr) => ArrayData::Int16(impl_fancy_indexing!(arr)),
             ArrayData::Int32(arr) => ArrayData::Int32(impl_fancy_indexing!(arr)),
@@ -1490,6 +1798,36 @@ impl Array {
         // Apply slices iteratively using ndarray's slice_axis()
         // For negative steps, we convert to forward slice + invert_axis
         match &self.data {
+            ArrayData::Bool(arr) => {
+                let mut result = arr.clone();
+                for (axis, start, stop, step) in slices {
+                    if step < 0 {
+                        // ndarray's Slice doesn't match NumPy for negative steps (see issue #312)
+                        // We need to manually implement NumPy's behavior:
+                        // 1. Slice forward [stop+1, start+1] with step=1
+                        // 2. Reverse the axis
+                        // 3. Apply step magnitude if > 1
+                        let actual_start = if stop == -1 { 0 } else { stop + 1 };
+                        let actual_end = start + 1;
+                        let slice_info = Slice::new(actual_start, Some(actual_end), 1);
+                        result = result.slice_axis(Axis(axis), slice_info).to_owned();
+                        result.invert_axis(Axis(axis));
+
+                        // Now apply step magnitude if it's not -1
+                        let step_magnitude = step.abs();
+                        if step_magnitude > 1 {
+                            let slice_stepped = Slice::new(0, None, step_magnitude);
+                            result = result.slice_axis(Axis(axis), slice_stepped).to_owned();
+                        }
+                    } else {
+                        let slice_info = Slice::new(start, Some(stop), step);
+                        result = result.slice_axis(Axis(axis), slice_info).to_owned();
+                    }
+                }
+                Ok(Array {
+                    data: ArrayData::Bool(result),
+                })
+            }
             ArrayData::Int8(arr) => {
                 let mut result = arr.clone();
                 for (axis, start, stop, step) in slices {
@@ -1741,6 +2079,7 @@ impl Array {
     ///          [[5, 6], [7, 8]]]
     fn format_array(&self) -> String {
         match &self.data {
+            ArrayData::Bool(arr) => Self::format_array_typed(arr, "bool"),
             ArrayData::Float64(arr) => Self::format_array_typed(arr, "float64"),
             ArrayData::Float32(arr) => Self::format_array_typed(arr, "float32"),
             ArrayData::Int64(arr) => Self::format_array_typed(arr, "int64"),
@@ -2016,6 +2355,7 @@ impl Array {
 
         // Apply the operation to each dtype variant
         match &self.data {
+            ArrayData::Bool(arr) => apply_mixed_indexing_impl!(arr, Bool),
             ArrayData::Float64(arr) => apply_mixed_indexing_impl!(arr, Float64),
             ArrayData::Float32(arr) => apply_mixed_indexing_impl!(arr, Float32),
             ArrayData::Int64(arr) => apply_mixed_indexing_impl!(arr, Int64),
@@ -2233,6 +2573,7 @@ impl Array {
 
         // Apply the operation to each dtype variant
         match &mut self.data {
+            ArrayData::Bool(arr) => apply_mixed_indexing_assignment_impl!(arr, bool, Bool),
             ArrayData::Float64(arr) => apply_mixed_indexing_assignment_impl!(arr, f64, Float64),
             ArrayData::Float32(arr) => apply_mixed_indexing_assignment_impl!(arr, f32, Float32),
             ArrayData::Int64(arr) => apply_mixed_indexing_assignment_impl!(arr, i64, Int64),

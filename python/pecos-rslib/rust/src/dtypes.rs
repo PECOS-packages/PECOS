@@ -126,9 +126,48 @@ impl DType {
         }
     }
 
-    /// Python equality comparison
-    fn __eq__(&self, other: &Self) -> bool {
-        self == other
+    /// Python rich comparison (allows comparison with `NumPy` dtypes)
+    fn __richcmp__(
+        &self,
+        other: &Bound<'_, PyAny>,
+        op: pyo3::pyclass::CompareOp,
+    ) -> PyResult<Py<PyAny>> {
+        use pyo3::pyclass::CompareOp;
+
+        let py = other.py();
+
+        // Try to convert other to DType
+        let other_dtype: Option<DType> = if other.is_instance_of::<DType>() {
+            // Direct DType comparison
+            Some(other.extract::<DType>()?)
+        } else if other.hasattr("name")? {
+            // NumPy dtype instance comparison - get the name and convert to DType
+            let name: String = other.getattr("name")?.extract()?;
+            DType::from_str(&name).ok()
+        } else if other.hasattr("__name__")? {
+            // NumPy scalar type class comparison (e.g., np.float64)
+            let name: String = other.getattr("__name__")?.extract()?;
+            DType::from_str(&name).ok()
+        } else {
+            None
+        };
+
+        let result = match (op, other_dtype) {
+            (CompareOp::Eq, Some(other)) => self == &other,
+            (CompareOp::Ne, Some(other)) => self != &other,
+            (CompareOp::Eq, None) => false, // Can't compare, so not equal
+            (CompareOp::Ne, None) => true,  // Can't compare, so not equal
+            _ => {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "DType only supports == and != comparisons",
+                ));
+            }
+        };
+
+        Ok(pyo3::types::PyBool::new(py, result)
+            .to_owned()
+            .into_any()
+            .unbind())
     }
 
     /// Python hash implementation

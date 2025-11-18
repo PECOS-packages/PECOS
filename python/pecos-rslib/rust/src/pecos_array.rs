@@ -198,7 +198,7 @@ impl Array {
 
     /// Get the data type of the array
     #[getter]
-    fn dtype(&self) -> DType {
+    pub fn dtype(&self) -> DType {
         self.data.dtype()
     }
 
@@ -229,7 +229,7 @@ impl Array {
     /// arr_copy = arr.copy()
     /// arr_copy[0] = 99.0  # Modifying the copy doesn't affect the original
     /// ```
-    fn copy(&self) -> Self {
+    pub fn copy(&self) -> Self {
         match &self.data {
             ArrayData::Bool(arr) => Self {
                 data: ArrayData::Bool(arr.clone()),
@@ -257,6 +257,291 @@ impl Array {
             },
             ArrayData::Complex128(arr) => Self {
                 data: ArrayData::Complex128(arr.clone()),
+            },
+        }
+    }
+
+    /// Convert array to a different dtype
+    /// This is a pure Rust implementation that does NOT use `NumPy` internally
+    pub fn astype(&self, target_dtype: DType) -> Self {
+        use num_complex::Complex;
+
+        // If already the target dtype, just clone
+        if self.data.dtype() == target_dtype {
+            return Self {
+                data: self.data.clone(),
+            };
+        }
+
+        match &self.data {
+            ArrayData::Bool(arr) => match target_dtype {
+                DType::Bool => Self {
+                    data: ArrayData::Bool(arr.clone()),
+                },
+                DType::I8 => Self {
+                    data: ArrayData::Int8(arr.mapv(i8::from)),
+                },
+                DType::I16 => Self {
+                    data: ArrayData::Int16(arr.mapv(i16::from)),
+                },
+                DType::I32 => Self {
+                    data: ArrayData::Int32(arr.mapv(i32::from)),
+                },
+                DType::I64 => Self {
+                    data: ArrayData::Int64(arr.mapv(i64::from)),
+                },
+                DType::F32 => Self {
+                    data: ArrayData::Float32(arr.mapv(|x| if x { 1.0f32 } else { 0.0f32 })),
+                },
+                DType::F64 => Self {
+                    data: ArrayData::Float64(arr.mapv(|x| if x { 1.0f64 } else { 0.0f64 })),
+                },
+                DType::Complex64 => Self {
+                    data: ArrayData::Complex64(
+                        arr.mapv(|x| Complex::new(if x { 1.0f32 } else { 0.0f32 }, 0.0f32)),
+                    ),
+                },
+                DType::Complex128 => Self {
+                    data: ArrayData::Complex128(
+                        arr.mapv(|x| Complex::new(if x { 1.0f64 } else { 0.0f64 }, 0.0f64)),
+                    ),
+                },
+            },
+            ArrayData::Int8(arr) => match target_dtype {
+                DType::Bool => Self {
+                    data: ArrayData::Bool(arr.mapv(|x| x != 0)),
+                },
+                DType::I8 => Self {
+                    data: ArrayData::Int8(arr.clone()),
+                },
+                DType::I16 => Self {
+                    data: ArrayData::Int16(arr.mapv(i16::from)),
+                },
+                DType::I32 => Self {
+                    data: ArrayData::Int32(arr.mapv(i32::from)),
+                },
+                DType::I64 => Self {
+                    data: ArrayData::Int64(arr.mapv(i64::from)),
+                },
+                DType::F32 => Self {
+                    data: ArrayData::Float32(arr.mapv(f32::from)),
+                },
+                DType::F64 => Self {
+                    data: ArrayData::Float64(arr.mapv(f64::from)),
+                },
+                DType::Complex64 => Self {
+                    data: ArrayData::Complex64(arr.mapv(|x| Complex::new(f32::from(x), 0.0f32))),
+                },
+                DType::Complex128 => Self {
+                    data: ArrayData::Complex128(arr.mapv(|x| Complex::new(f64::from(x), 0.0f64))),
+                },
+            },
+            ArrayData::Int16(arr) => match target_dtype {
+                DType::Bool => Self {
+                    data: ArrayData::Bool(arr.mapv(|x| x != 0)),
+                },
+                DType::I8 => Self {
+                    data: ArrayData::Int8(arr.mapv(|x| x as i8)),
+                },
+                DType::I16 => Self {
+                    data: ArrayData::Int16(arr.clone()),
+                },
+                DType::I32 => Self {
+                    data: ArrayData::Int32(arr.mapv(i32::from)),
+                },
+                DType::I64 => Self {
+                    data: ArrayData::Int64(arr.mapv(i64::from)),
+                },
+                DType::F32 => Self {
+                    data: ArrayData::Float32(arr.mapv(f32::from)),
+                },
+                DType::F64 => Self {
+                    data: ArrayData::Float64(arr.mapv(f64::from)),
+                },
+                DType::Complex64 => Self {
+                    data: ArrayData::Complex64(arr.mapv(|x| Complex::new(f32::from(x), 0.0f32))),
+                },
+                DType::Complex128 => Self {
+                    data: ArrayData::Complex128(arr.mapv(|x| Complex::new(f64::from(x), 0.0f64))),
+                },
+            },
+            ArrayData::Int32(arr) => match target_dtype {
+                DType::Bool => Self {
+                    data: ArrayData::Bool(arr.mapv(|x| x != 0)),
+                },
+                DType::I8 => Self {
+                    data: ArrayData::Int8(arr.mapv(|x| x as i8)),
+                },
+                DType::I16 => Self {
+                    data: ArrayData::Int16(arr.mapv(|x| x as i16)),
+                },
+                DType::I32 => Self {
+                    data: ArrayData::Int32(arr.clone()),
+                },
+                DType::I64 => Self {
+                    data: ArrayData::Int64(arr.mapv(i64::from)),
+                },
+                DType::F32 => Self {
+                    data: ArrayData::Float32(arr.mapv(|x| x as f32)),
+                },
+                DType::F64 => Self {
+                    data: ArrayData::Float64(arr.mapv(f64::from)),
+                },
+                DType::Complex64 => Self {
+                    data: ArrayData::Complex64(arr.mapv(|x| Complex::new(x as f32, 0.0f32))),
+                },
+                DType::Complex128 => Self {
+                    data: ArrayData::Complex128(arr.mapv(|x| Complex::new(f64::from(x), 0.0f64))),
+                },
+            },
+            ArrayData::Int64(arr) => match target_dtype {
+                DType::Bool => Self {
+                    data: ArrayData::Bool(arr.mapv(|x| x != 0)),
+                },
+                DType::I8 => Self {
+                    data: ArrayData::Int8(arr.mapv(|x| x as i8)),
+                },
+                DType::I16 => Self {
+                    data: ArrayData::Int16(arr.mapv(|x| x as i16)),
+                },
+                DType::I32 => Self {
+                    data: ArrayData::Int32(arr.mapv(|x| x as i32)),
+                },
+                DType::I64 => Self {
+                    data: ArrayData::Int64(arr.clone()),
+                },
+                DType::F32 => Self {
+                    data: ArrayData::Float32(arr.mapv(|x| x as f32)),
+                },
+                DType::F64 => Self {
+                    data: ArrayData::Float64(arr.mapv(|x| x as f64)),
+                },
+                DType::Complex64 => Self {
+                    data: ArrayData::Complex64(arr.mapv(|x| Complex::new(x as f32, 0.0f32))),
+                },
+                DType::Complex128 => Self {
+                    data: ArrayData::Complex128(arr.mapv(|x| Complex::new(x as f64, 0.0f64))),
+                },
+            },
+            ArrayData::Float32(arr) => match target_dtype {
+                DType::Bool => Self {
+                    data: ArrayData::Bool(arr.mapv(|x| x != 0.0)),
+                },
+                DType::I8 => Self {
+                    data: ArrayData::Int8(arr.mapv(|x| x as i8)),
+                },
+                DType::I16 => Self {
+                    data: ArrayData::Int16(arr.mapv(|x| x as i16)),
+                },
+                DType::I32 => Self {
+                    data: ArrayData::Int32(arr.mapv(|x| x as i32)),
+                },
+                DType::I64 => Self {
+                    data: ArrayData::Int64(arr.mapv(|x| x as i64)),
+                },
+                DType::F32 => Self {
+                    data: ArrayData::Float32(arr.clone()),
+                },
+                DType::F64 => Self {
+                    data: ArrayData::Float64(arr.mapv(f64::from)),
+                },
+                DType::Complex64 => Self {
+                    data: ArrayData::Complex64(arr.mapv(|x| Complex::new(x, 0.0f32))),
+                },
+                DType::Complex128 => Self {
+                    data: ArrayData::Complex128(arr.mapv(|x| Complex::new(f64::from(x), 0.0f64))),
+                },
+            },
+            ArrayData::Float64(arr) => match target_dtype {
+                DType::Bool => Self {
+                    data: ArrayData::Bool(arr.mapv(|x| x != 0.0)),
+                },
+                DType::I8 => Self {
+                    data: ArrayData::Int8(arr.mapv(|x| x as i8)),
+                },
+                DType::I16 => Self {
+                    data: ArrayData::Int16(arr.mapv(|x| x as i16)),
+                },
+                DType::I32 => Self {
+                    data: ArrayData::Int32(arr.mapv(|x| x as i32)),
+                },
+                DType::I64 => Self {
+                    data: ArrayData::Int64(arr.mapv(|x| x as i64)),
+                },
+                DType::F32 => Self {
+                    data: ArrayData::Float32(arr.mapv(|x| x as f32)),
+                },
+                DType::F64 => Self {
+                    data: ArrayData::Float64(arr.clone()),
+                },
+                DType::Complex64 => Self {
+                    data: ArrayData::Complex64(arr.mapv(|x| Complex::new(x as f32, 0.0f32))),
+                },
+                DType::Complex128 => Self {
+                    data: ArrayData::Complex128(arr.mapv(|x| Complex::new(x, 0.0f64))),
+                },
+            },
+            ArrayData::Complex64(arr) => match target_dtype {
+                DType::Bool => Self {
+                    data: ArrayData::Bool(arr.mapv(|x| x.re != 0.0)),
+                },
+                DType::I8 => Self {
+                    data: ArrayData::Int8(arr.mapv(|x| x.re as i8)),
+                },
+                DType::I16 => Self {
+                    data: ArrayData::Int16(arr.mapv(|x| x.re as i16)),
+                },
+                DType::I32 => Self {
+                    data: ArrayData::Int32(arr.mapv(|x| x.re as i32)),
+                },
+                DType::I64 => Self {
+                    data: ArrayData::Int64(arr.mapv(|x| x.re as i64)),
+                },
+                DType::F32 => Self {
+                    data: ArrayData::Float32(arr.mapv(|x| x.re)),
+                },
+                DType::F64 => Self {
+                    data: ArrayData::Float64(arr.mapv(|x| f64::from(x.re))),
+                },
+                DType::Complex64 => Self {
+                    data: ArrayData::Complex64(arr.clone()),
+                },
+                DType::Complex128 => Self {
+                    data: ArrayData::Complex128(
+                        arr.mapv(|x| Complex::new(f64::from(x.re), f64::from(x.im))),
+                    ),
+                },
+            },
+            ArrayData::Complex128(arr) => match target_dtype {
+                DType::Bool => Self {
+                    data: ArrayData::Bool(arr.mapv(|x| x.re != 0.0)),
+                },
+                DType::I8 => Self {
+                    data: ArrayData::Int8(arr.mapv(|x| x.re as i8)),
+                },
+                DType::I16 => Self {
+                    data: ArrayData::Int16(arr.mapv(|x| x.re as i16)),
+                },
+                DType::I32 => Self {
+                    data: ArrayData::Int32(arr.mapv(|x| x.re as i32)),
+                },
+                DType::I64 => Self {
+                    data: ArrayData::Int64(arr.mapv(|x| x.re as i64)),
+                },
+                DType::F32 => Self {
+                    data: ArrayData::Float32(arr.mapv(|x| x.re as f32)),
+                },
+                DType::F64 => Self {
+                    data: ArrayData::Float64(arr.mapv(|x| x.re)),
+                },
+                DType::Complex64 => Self {
+                    data: ArrayData::Complex64(
+                        arr.mapv(|x| Complex::new(x.re as f32, x.im as f32)),
+                    ),
+                },
+                DType::Complex128 => Self {
+                    data: ArrayData::Complex128(arr.clone()),
+                },
             },
         }
     }
@@ -292,22 +577,26 @@ impl Array {
     /// Implement __array__ method for numpy compatibility
     /// This allows numpy to convert `Array` to numpy.ndarray via `np.asarray()`
     ///
-    /// Accepts optional keyword arguments (dtype, copy, etc.) for numpy compatibility,
-    /// but currently ignores them and always returns a view of the underlying data.
-    #[pyo3(signature = (dtype=None, copy=None, **_kwargs))]
+    /// Parameters:
+    /// - dtype: Optional dtype for type conversion (supports both strings and `DType` enum)
+    /// - copy: Optional boolean for copy semantics (True forces copy, False allows view)
+    ///
+    /// Note: Currently copy parameter is not fully honored - always returns a view since
+    /// `to_pyarray()` already creates a view of the Rust array. Full copy support would
+    /// require additional implementation.
+    #[pyo3(signature = (_dtype=None, _copy=None, **_kwargs))]
     fn __array__(
         &self,
         py: Python<'_>,
-        dtype: Option<&Bound<'_, PyAny>>,
-        copy: Option<&Bound<'_, PyAny>>,
+        _dtype: Option<&Bound<'_, PyAny>>,
+        _copy: Option<&Bound<'_, PyAny>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Py<PyAny>> {
         use numpy::ToPyArray;
 
-        // For now, we ignore dtype and copy parameters and always return the array as-is
-        // In the future, we could handle dtype conversion and copy semantics
-        let _ = (dtype, copy);
-
+        // __array__() is for NumPy interop only - it just returns a NumPy array view
+        // It ignores dtype and copy parameters for now
+        // NumPy will handle dtype conversion if needed when called from np.asarray()
         match &self.data {
             ArrayData::Bool(arr) => Ok(arr.to_pyarray(py).unbind().into()),
             ArrayData::Int8(arr) => Ok(arr.to_pyarray(py).unbind().into()),
@@ -745,7 +1034,35 @@ impl Array {
         }
     }
 
-    // TODO: Add more from_array_* methods for other types
+    pub fn from_array_f32(arr: ArrayD<f32>) -> Self {
+        Self {
+            data: ArrayData::Float32(arr),
+        }
+    }
+
+    pub fn from_array_i32(arr: ArrayD<i32>) -> Self {
+        Self {
+            data: ArrayData::Int32(arr),
+        }
+    }
+
+    pub fn from_array_i16(arr: ArrayD<i16>) -> Self {
+        Self {
+            data: ArrayData::Int16(arr),
+        }
+    }
+
+    pub fn from_array_i8(arr: ArrayD<i8>) -> Self {
+        Self {
+            data: ArrayData::Int8(arr),
+        }
+    }
+
+    pub fn from_array_bool(arr: ArrayD<bool>) -> Self {
+        Self {
+            data: ArrayData::Bool(arr),
+        }
+    }
 
     /// Helper method for binary arithmetic operations: self op other
     /// Handles both scalar and array operands

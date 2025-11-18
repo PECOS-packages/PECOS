@@ -38,8 +38,8 @@ use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-// Import Array from pecos_array module for migration from numpy.ndarray to Array
-use crate::pecos_array::Array;
+// Import Array and ArrayData from pecos_array module for migration from numpy.ndarray to Array
+use crate::pecos_array::{Array, ArrayData};
 
 // Import numerical computing types from pecos prelude
 // Functions are accessed via pecos::prelude module
@@ -1955,8 +1955,80 @@ fn zeros(
             };
             Py::new(py, Array::from_array_i64(arr))
         }
+        "float32" | "f32" => {
+            let arr = match shape_vec.len() {
+                1 => NdArray::from_elem(shape_vec[0], 0.0f32).into_dyn(),
+                2 => NdArray::from_elem((shape_vec[0], shape_vec[1]), 0.0f32).into_dyn(),
+                3 => NdArray::from_elem((shape_vec[0], shape_vec[1], shape_vec[2]), 0.0f32)
+                    .into_dyn(),
+                _ => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "only 1D, 2D, and 3D arrays are currently supported",
+                    ));
+                }
+            };
+            Py::new(py, Array::from_array_f32(arr))
+        }
+        "int32" | "i32" => {
+            let arr = match shape_vec.len() {
+                1 => NdArray::from_elem(shape_vec[0], 0i32).into_dyn(),
+                2 => NdArray::from_elem((shape_vec[0], shape_vec[1]), 0i32).into_dyn(),
+                3 => {
+                    NdArray::from_elem((shape_vec[0], shape_vec[1], shape_vec[2]), 0i32).into_dyn()
+                }
+                _ => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "only 1D, 2D, and 3D arrays are currently supported",
+                    ));
+                }
+            };
+            Py::new(py, Array::from_array_i32(arr))
+        }
+        "int16" | "i16" => {
+            let arr = match shape_vec.len() {
+                1 => NdArray::from_elem(shape_vec[0], 0i16).into_dyn(),
+                2 => NdArray::from_elem((shape_vec[0], shape_vec[1]), 0i16).into_dyn(),
+                3 => {
+                    NdArray::from_elem((shape_vec[0], shape_vec[1], shape_vec[2]), 0i16).into_dyn()
+                }
+                _ => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "only 1D, 2D, and 3D arrays are currently supported",
+                    ));
+                }
+            };
+            Py::new(py, Array::from_array_i16(arr))
+        }
+        "int8" | "i8" => {
+            let arr = match shape_vec.len() {
+                1 => NdArray::from_elem(shape_vec[0], 0i8).into_dyn(),
+                2 => NdArray::from_elem((shape_vec[0], shape_vec[1]), 0i8).into_dyn(),
+                3 => NdArray::from_elem((shape_vec[0], shape_vec[1], shape_vec[2]), 0i8).into_dyn(),
+                _ => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "only 1D, 2D, and 3D arrays are currently supported",
+                    ));
+                }
+            };
+            Py::new(py, Array::from_array_i8(arr))
+        }
+        "bool" => {
+            let arr = match shape_vec.len() {
+                1 => NdArray::from_elem(shape_vec[0], false).into_dyn(),
+                2 => NdArray::from_elem((shape_vec[0], shape_vec[1]), false).into_dyn(),
+                3 => {
+                    NdArray::from_elem((shape_vec[0], shape_vec[1], shape_vec[2]), false).into_dyn()
+                }
+                _ => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "only 1D, 2D, and 3D arrays are currently supported",
+                    ));
+                }
+            };
+            Py::new(py, Array::from_array_bool(arr))
+        }
         _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "unsupported dtype: {dtype_str}. Supported: 'float64', 'complex128', 'int64'"
+            "unsupported dtype: {dtype_str}. Supported: 'float64', 'float32', 'complex128', 'int64', 'int32', 'int16', 'int8', 'bool'"
         ))),
     }
 }
@@ -2076,8 +2148,80 @@ fn ones(
             };
             Py::new(py, Array::from_array_i64(arr))
         }
+        "float32" | "f32" => {
+            let arr = match shape_vec.len() {
+                1 => NdArray::from_elem(shape_vec[0], 1.0f32).into_dyn(),
+                2 => NdArray::from_elem((shape_vec[0], shape_vec[1]), 1.0f32).into_dyn(),
+                3 => NdArray::from_elem((shape_vec[0], shape_vec[1], shape_vec[2]), 1.0f32)
+                    .into_dyn(),
+                _ => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "only 1D, 2D, and 3D arrays are currently supported",
+                    ));
+                }
+            };
+            Py::new(py, Array::from_array_f32(arr))
+        }
+        "int32" | "i32" => {
+            let arr = match shape_vec.len() {
+                1 => NdArray::from_elem(shape_vec[0], 1i32).into_dyn(),
+                2 => NdArray::from_elem((shape_vec[0], shape_vec[1]), 1i32).into_dyn(),
+                3 => {
+                    NdArray::from_elem((shape_vec[0], shape_vec[1], shape_vec[2]), 1i32).into_dyn()
+                }
+                _ => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "only 1D, 2D, and 3D arrays are currently supported",
+                    ));
+                }
+            };
+            Py::new(py, Array::from_array_i32(arr))
+        }
+        "int16" | "i16" => {
+            let arr = match shape_vec.len() {
+                1 => NdArray::from_elem(shape_vec[0], 1i16).into_dyn(),
+                2 => NdArray::from_elem((shape_vec[0], shape_vec[1]), 1i16).into_dyn(),
+                3 => {
+                    NdArray::from_elem((shape_vec[0], shape_vec[1], shape_vec[2]), 1i16).into_dyn()
+                }
+                _ => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "only 1D, 2D, and 3D arrays are currently supported",
+                    ));
+                }
+            };
+            Py::new(py, Array::from_array_i16(arr))
+        }
+        "int8" | "i8" => {
+            let arr = match shape_vec.len() {
+                1 => NdArray::from_elem(shape_vec[0], 1i8).into_dyn(),
+                2 => NdArray::from_elem((shape_vec[0], shape_vec[1]), 1i8).into_dyn(),
+                3 => NdArray::from_elem((shape_vec[0], shape_vec[1], shape_vec[2]), 1i8).into_dyn(),
+                _ => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "only 1D, 2D, and 3D arrays are currently supported",
+                    ));
+                }
+            };
+            Py::new(py, Array::from_array_i8(arr))
+        }
+        "bool" => {
+            let arr = match shape_vec.len() {
+                1 => NdArray::from_elem(shape_vec[0], true).into_dyn(),
+                2 => NdArray::from_elem((shape_vec[0], shape_vec[1]), true).into_dyn(),
+                3 => {
+                    NdArray::from_elem((shape_vec[0], shape_vec[1], shape_vec[2]), true).into_dyn()
+                }
+                _ => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "only 1D, 2D, and 3D arrays are currently supported",
+                    ));
+                }
+            };
+            Py::new(py, Array::from_array_bool(arr))
+        }
         _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "unsupported dtype: {dtype_str}. Supported: 'float64', 'complex128', 'int64'"
+            "unsupported dtype: {dtype_str}. Supported: 'float64', 'float32', 'complex128', 'int64', 'int32', 'int16', 'int8', 'bool'"
         ))),
     }
 }
@@ -2107,7 +2251,7 @@ fn ones(
 /// # Arguments
 ///
 /// * `obj` - Python object (list, tuple, or iterable) to convert to array
-/// * `dtype` - Optional data type ('float64', 'complex128', 'int64'). If not specified, dtype is inferred.
+/// * `dtype` - Optional data type ('float64', 'complex128', 'int64', or `DType` enum). If not specified, dtype is inferred.
 ///
 /// # Returns
 ///
@@ -2117,6 +2261,7 @@ fn ones(
 ///
 /// ```python
 /// from pecos_rslib.num import array
+/// from pecos_rslib import dtypes
 ///
 /// # Create float array (dtype inferred)
 /// arr = array([1.0, 2.0, 3.0])  # dtype: float64
@@ -2127,13 +2272,14 @@ fn ones(
 /// # Create int array (dtype inferred)
 /// arr_int = array([1, 2, 3])  # dtype: int64
 ///
-/// # Explicitly specify dtype
+/// # Explicitly specify dtype (string or DType enum)
 /// arr_float = array([1, 2, 3], dtype='float64')  # [1.0, 2.0, 3.0]
-/// arr_complex = array([1.0, 2.0], dtype='complex128')  # [1+0j, 2+0j]
+/// arr_complex = array([1.0, 2.0], dtype=dtypes.complex128)  # [1+0j, 2+0j]
 ///
 /// # Multi-dimensional arrays
 /// arr_2d = array([[1.0, 2.0], [3.0, 4.0]])  # 2D array
 /// arr_3d = array([[[1.0, 2.0]], [[3.0, 4.0]]])  # 3D array
+///
 /// ```
 #[pyfunction]
 #[pyo3(signature = (obj, dtype=None))]
@@ -2143,289 +2289,170 @@ fn array(
     dtype: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Py<Array>> {
     use crate::dtypes::DType;
-    use num_complex::Complex64;
+    use numpy::PyArrayMethods;
 
-    // Helper function to infer dtype from Python object
-    fn infer_dtype(obj: &Bound<'_, PyAny>) -> PyResult<&'static str> {
-        // Try to peek at first element
-        if let Ok(seq) = obj.try_iter() {
-            for item_result in seq {
-                let item = item_result?;
-                // Check in order: int -> float -> complex
-                // This is important because floats can be extracted as complex!
+    // Check if obj is already an Array - if so, handle dtype conversion or copy
+    if let Ok(existing_array) = obj.extract::<PyRef<'_, Array>>() {
+        // Parse dtype parameter if provided
+        let target_dtype = if let Some(dt) = dtype {
+            Some(if let Ok(enum_dt) = dt.extract::<DType>() {
+                enum_dt
+            } else if let Ok(s) = dt.extract::<&str>() {
+                DType::from_str(s)?
+            } else {
+                return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                    "dtype must be a string or DType enum",
+                ));
+            })
+        } else {
+            None
+        };
 
-                // First check if it's actually a Python complex object
-                if item.hasattr("imag")? {
-                    // It has an imaginary part - it's complex
-                    let imag = item.getattr("imag")?;
-                    let imag_val: f64 = imag.extract()?;
-                    if imag_val != 0.0 {
-                        return Ok("complex128");
-                    }
-                }
+        // Get current dtype
+        let current_dtype = existing_array.dtype();
 
-                // Check if it's int (must come before float since ints can be floats)
-                if item.extract::<i64>().is_ok() {
-                    // Double-check it's not a float by trying to get a float
-                    if let Ok(fval) = item.extract::<f64>()
-                        && fval.fract() != 0.0
-                    {
-                        // Has fractional part, it's a float
-                        return Ok("float64");
-                    }
-                    return Ok("int64");
-                }
+        // Determine if we need to create a new array
+        let needs_conversion = target_dtype.is_some() && target_dtype.unwrap() != current_dtype;
 
-                // Check if it's float
-                if item.extract::<f64>().is_ok() {
-                    return Ok("float64");
-                }
-
-                // Recursively check nested lists
-                if let Ok(inner_dtype) = infer_dtype(&item) {
-                    return Ok(inner_dtype);
-                }
-            }
+        if needs_conversion {
+            // Perform dtype conversion using the pure Rust astype() method
+            let converted_array = existing_array.astype(target_dtype.unwrap());
+            return Py::new(py, converted_array);
         }
-        // Default to float64 if can't infer
-        Ok("float64")
+
+        // No dtype conversion needed - always create a copy
+        let copied_array = existing_array.copy();
+        return Py::new(py, copied_array);
     }
 
-    // Convert dtype to string - accept both DType enum and string
-    let array_dtype = if let Some(dt) = dtype {
-        // dtype was provided
-        if let Ok(enum_dt) = dt.extract::<DType>() {
-            enum_dt.to_numpy_str()
-        } else if let Ok(s) = dt.extract::<&str>() {
-            s
+    // Convert input to NumPy array first, then use buffer protocol
+    // This allows us to support arbitrary N-dimensional arrays
+    // Get NumPy module and call numpy.array() to convert input
+    let numpy_mod = py.import("numpy")?;
+
+    // Build kwargs for numpy.array() call
+    let kwargs = if let Some(dt) = dtype {
+        // dtype was provided - convert DType enum to NumPy-compatible string
+        let dict = pyo3::types::PyDict::new(py);
+
+        // Check if dt is a DType enum - if so, convert to numpy string
+        if let Ok(dtype_enum) = dt.extract::<DType>() {
+            // It's our DType enum - convert to numpy-compatible string
+            let numpy_str = dtype_enum.to_numpy_str();
+            dict.set_item("dtype", numpy_str)?;
         } else {
-            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "dtype must be a string or DType enum",
-            ));
+            // It's already a string or numpy dtype - pass through directly
+            dict.set_item("dtype", dt)?;
         }
+
+        Some(dict)
     } else {
-        infer_dtype(&obj)?
+        None
     };
 
-    // Helper function to convert nested Python lists to Rust Vec (float version)
-    #[allow(clippy::items_after_statements)] // Helper functions defined after statements for clarity
-    fn extract_f64_vec(obj: &Bound<'_, PyAny>) -> PyResult<Vec<f64>> {
-        let mut result = Vec::new();
-        for item_result in obj.try_iter()? {
-            let item = item_result?;
-            result.push(item.extract::<f64>()?);
-        }
-        Ok(result)
+    // Call numpy.array(obj, dtype=dtype) to get a NumPy array
+    let np_array = if let Some(kw) = kwargs {
+        numpy_mod.call_method("array", (obj,), Some(&kw))?
+    } else {
+        numpy_mod.call_method("array", (obj,), None)?
+    };
+
+    // Now use buffer protocol to extract the array data
+    // Try each dtype in order
+    if let Ok(arr) = np_array.cast::<numpy::PyArrayDyn<f64>>() {
+        let ndarray = arr.to_owned_array();
+        return Py::new(
+            py,
+            Array {
+                data: ArrayData::Float64(ndarray),
+            },
+        );
     }
 
-    // Helper function for complex64
-    #[allow(clippy::items_after_statements)]
-    fn extract_complex64_vec(obj: &Bound<'_, PyAny>) -> PyResult<Vec<Complex64>> {
-        let mut result = Vec::new();
-        for item_result in obj.try_iter()? {
-            let item = item_result?;
-            result.push(item.extract::<Complex64>()?);
-        }
-        Ok(result)
+    if let Ok(arr) = np_array.cast::<numpy::PyArrayDyn<i64>>() {
+        let ndarray = arr.to_owned_array();
+        return Py::new(
+            py,
+            Array {
+                data: ArrayData::Int64(ndarray),
+            },
+        );
     }
 
-    // Helper function for i64
-    #[allow(clippy::items_after_statements)]
-    fn extract_i64_vec(obj: &Bound<'_, PyAny>) -> PyResult<Vec<i64>> {
-        let mut result = Vec::new();
-        for item_result in obj.try_iter()? {
-            let item = item_result?;
-            result.push(item.extract::<i64>()?);
-        }
-        Ok(result)
+    if let Ok(arr) = np_array.cast::<numpy::PyArrayDyn<num_complex::Complex<f64>>>() {
+        let ndarray = arr.to_owned_array();
+        return Py::new(
+            py,
+            Array {
+                data: ArrayData::Complex128(ndarray),
+            },
+        );
     }
 
-    // Helper to detect dimensionality
-    #[allow(clippy::items_after_statements)]
-    #[allow(clippy::while_let_loop)] // Loop structure is clearer than while let for this case
-    fn get_shape(obj: &Bound<'_, PyAny>) -> PyResult<Vec<usize>> {
-        let mut shape = Vec::new();
-        let mut current = obj.clone();
-
-        loop {
-            if let Ok(iter) = current.try_iter() {
-                let items: Vec<_> = iter.collect::<PyResult<Vec<_>>>()?;
-                if items.is_empty() {
-                    break;
-                }
-                shape.push(items.len());
-                current = items[0].clone();
-            } else {
-                break;
-            }
-        }
-
-        Ok(shape)
+    if let Ok(arr) = np_array.cast::<numpy::PyArrayDyn<f32>>() {
+        let ndarray = arr.to_owned_array();
+        return Py::new(
+            py,
+            Array {
+                data: ArrayData::Float32(ndarray),
+            },
+        );
     }
 
-    let shape = get_shape(&obj)?;
-    let ndim = shape.len();
-
-    match array_dtype {
-        "float64" | "float" => {
-            match ndim {
-                1 => {
-                    // 1D array
-                    let vec = extract_f64_vec(&obj)?;
-                    let arr = Array1::from_vec(vec).into_dyn();
-                    Py::new(py, Array::from_array_f64(arr))
-                }
-                2 => {
-                    // 2D array - need to extract as nested Vec
-                    let rows = shape[0];
-                    let cols = shape[1];
-                    let mut flat_vec = Vec::with_capacity(rows * cols);
-
-                    for row_result in obj.try_iter()? {
-                        let row = row_result?;
-                        for item_result in row.try_iter()? {
-                            let item = item_result?;
-                            flat_vec.push(item.extract::<f64>()?);
-                        }
-                    }
-
-                    let arr = NdArray::from_shape_vec((rows, cols), flat_vec)
-                        .map_err(|e| PyErr::new::<PyTypeError, _>(format!("Shape error: {e}")))?
-                        .into_dyn();
-                    Py::new(py, Array::from_array_f64(arr))
-                }
-                3 => {
-                    // 3D array
-                    let dim0 = shape[0];
-                    let dim1 = shape[1];
-                    let dim2 = shape[2];
-                    let mut flat_vec = Vec::with_capacity(dim0 * dim1 * dim2);
-
-                    for d0_result in obj.try_iter()? {
-                        let d0 = d0_result?;
-                        for d1_result in d0.try_iter()? {
-                            let d1 = d1_result?;
-                            for item_result in d1.try_iter()? {
-                                let item = item_result?;
-                                flat_vec.push(item.extract::<f64>()?);
-                            }
-                        }
-                    }
-
-                    let arr = NdArray::from_shape_vec((dim0, dim1, dim2), flat_vec)
-                        .map_err(|e| PyErr::new::<PyTypeError, _>(format!("Shape error: {e}")))?
-                        .into_dyn();
-                    Py::new(py, Array::from_array_f64(arr))
-                }
-                _ => Err(PyErr::new::<PyTypeError, _>(
-                    "only 1D, 2D, and 3D arrays are currently supported",
-                )),
-            }
-        }
-        "complex128" | "complex" => match ndim {
-            1 => {
-                let vec = extract_complex64_vec(&obj)?;
-                let arr = Array1::from_vec(vec).into_dyn();
-                Py::new(py, Array::from_array_c128(arr))
-            }
-            2 => {
-                let rows = shape[0];
-                let cols = shape[1];
-                let mut flat_vec = Vec::with_capacity(rows * cols);
-
-                for row_result in obj.try_iter()? {
-                    let row = row_result?;
-                    for item_result in row.try_iter()? {
-                        let item = item_result?;
-                        flat_vec.push(item.extract::<Complex64>()?);
-                    }
-                }
-
-                let arr = NdArray::from_shape_vec((rows, cols), flat_vec)
-                    .map_err(|e| PyErr::new::<PyTypeError, _>(format!("Shape error: {e}")))?
-                    .into_dyn();
-                Py::new(py, Array::from_array_c128(arr))
-            }
-            3 => {
-                let dim0 = shape[0];
-                let dim1 = shape[1];
-                let dim2 = shape[2];
-                let mut flat_vec = Vec::with_capacity(dim0 * dim1 * dim2);
-
-                for d0_result in obj.try_iter()? {
-                    let d0 = d0_result?;
-                    for d1_result in d0.try_iter()? {
-                        let d1 = d1_result?;
-                        for item_result in d1.try_iter()? {
-                            let item = item_result?;
-                            flat_vec.push(item.extract::<Complex64>()?);
-                        }
-                    }
-                }
-
-                let arr = NdArray::from_shape_vec((dim0, dim1, dim2), flat_vec)
-                    .map_err(|e| PyErr::new::<PyTypeError, _>(format!("Shape error: {e}")))?
-                    .into_dyn();
-                Py::new(py, Array::from_array_c128(arr))
-            }
-            _ => Err(PyErr::new::<PyTypeError, _>(
-                "only 1D, 2D, and 3D arrays are currently supported",
-            )),
-        },
-        "int64" | "int" => match ndim {
-            1 => {
-                let vec = extract_i64_vec(&obj)?;
-                let arr = Array1::from_vec(vec).into_dyn();
-                Py::new(py, Array::from_array_i64(arr))
-            }
-            2 => {
-                let rows = shape[0];
-                let cols = shape[1];
-                let mut flat_vec = Vec::with_capacity(rows * cols);
-
-                for row_result in obj.try_iter()? {
-                    let row = row_result?;
-                    for item_result in row.try_iter()? {
-                        let item = item_result?;
-                        flat_vec.push(item.extract::<i64>()?);
-                    }
-                }
-
-                let arr = NdArray::from_shape_vec((rows, cols), flat_vec)
-                    .map_err(|e| PyErr::new::<PyTypeError, _>(format!("Shape error: {e}")))?
-                    .into_dyn();
-                Py::new(py, Array::from_array_i64(arr))
-            }
-            3 => {
-                let dim0 = shape[0];
-                let dim1 = shape[1];
-                let dim2 = shape[2];
-                let mut flat_vec = Vec::with_capacity(dim0 * dim1 * dim2);
-
-                for d0_result in obj.try_iter()? {
-                    let d0 = d0_result?;
-                    for d1_result in d0.try_iter()? {
-                        let d1 = d1_result?;
-                        for item_result in d1.try_iter()? {
-                            let item = item_result?;
-                            flat_vec.push(item.extract::<i64>()?);
-                        }
-                    }
-                }
-
-                let arr = NdArray::from_shape_vec((dim0, dim1, dim2), flat_vec)
-                    .map_err(|e| PyErr::new::<PyTypeError, _>(format!("Shape error: {e}")))?
-                    .into_dyn();
-                Py::new(py, Array::from_array_i64(arr))
-            }
-            _ => Err(PyErr::new::<PyTypeError, _>(
-                "only 1D, 2D, and 3D arrays are currently supported",
-            )),
-        },
-        _ => Err(PyErr::new::<PyTypeError, _>(format!(
-            "unsupported dtype: {array_dtype}. Supported: 'float64', 'complex128', 'int64'"
-        ))),
+    if let Ok(arr) = np_array.cast::<numpy::PyArrayDyn<i32>>() {
+        let ndarray = arr.to_owned_array();
+        return Py::new(
+            py,
+            Array {
+                data: ArrayData::Int32(ndarray),
+            },
+        );
     }
+
+    if let Ok(arr) = np_array.cast::<numpy::PyArrayDyn<i16>>() {
+        let ndarray = arr.to_owned_array();
+        return Py::new(
+            py,
+            Array {
+                data: ArrayData::Int16(ndarray),
+            },
+        );
+    }
+
+    if let Ok(arr) = np_array.cast::<numpy::PyArrayDyn<i8>>() {
+        let ndarray = arr.to_owned_array();
+        return Py::new(
+            py,
+            Array {
+                data: ArrayData::Int8(ndarray),
+            },
+        );
+    }
+
+    if let Ok(arr) = np_array.cast::<numpy::PyArrayDyn<bool>>() {
+        let ndarray = arr.to_owned_array();
+        return Py::new(
+            py,
+            Array {
+                data: ArrayData::Bool(ndarray),
+            },
+        );
+    }
+
+    if let Ok(arr) = np_array.cast::<numpy::PyArrayDyn<num_complex::Complex<f32>>>() {
+        let ndarray = arr.to_owned_array();
+        return Py::new(
+            py,
+            Array {
+                data: ArrayData::Complex64(ndarray),
+            },
+        );
+    }
+
+    // If we get here, dtype is not supported
+    Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+        "Unsupported dtype - array() failed to convert input",
+    ))
 }
 
 /// Delete an element at a specific index from a 1D array.

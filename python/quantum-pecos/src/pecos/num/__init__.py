@@ -31,10 +31,12 @@ from __future__ import annotations
 # Re-export submodules
 # Import dtypes module from pecos_rslib
 from pecos_rslib import (
+    Array,  # Numpy-independent array type
     abs,  # noqa: A004 - intentionally shadow builtin
     all,  # noqa: A004 - intentionally shadow builtin
     allclose,
     any,  # noqa: A004 - intentionally shadow builtin
+    array,  # Array creation function (no NumPy dependency, supports Pauli)
     cos,
     dtypes,
     e,
@@ -63,7 +65,6 @@ from pecos_rslib import (
 from pecos_rslib.num import (
     Poly1d,
     arange,
-    array,
     brentq,
     ceil,
     curve_fit,
@@ -95,6 +96,7 @@ linalg = num.linalg
 # zeros_complex() has been removed - use zeros(shape, dtype="complex") instead
 
 __all__ = [
+    "Array",  # Numpy-independent array type
     "Poly1d",
     "abs",
     "all",  # Boolean AND reduction

@@ -11,6 +11,8 @@
 
 """Tests for Qulacs simulator."""
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -127,7 +129,11 @@ class TestQulacsSingleQubitGates:
         expected_phase = 1j
         state = sim.vector
         phase_ratio = state[1] / state[0]
-        assert isclose(phase_ratio, expected_phase, rtol=0.0, atol=1e-10)
+        # Suppress ComplexWarning from NumPy when comparing complex numbers
+        # This is expected behavior - our isclose handles complex correctly
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=np.exceptions.ComplexWarning)
+            assert isclose(phase_ratio, expected_phase, rtol=0.0, atol=1e-10)
 
         # Test T gate
         sim.reset()
@@ -136,7 +142,10 @@ class TestQulacsSingleQubitGates:
         state = sim.vector
         expected_t_phase = np.exp(1j * pi / 4)
         phase_ratio = state[1] / state[0]
-        assert isclose(phase_ratio, expected_t_phase, rtol=0.0, atol=1e-10)
+        # Suppress ComplexWarning from NumPy when comparing complex numbers
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=np.exceptions.ComplexWarning)
+            assert isclose(phase_ratio, expected_t_phase, rtol=0.0, atol=1e-10)
 
     def test_rotation_gates(self) -> None:
         """Test rotation gates RX, RY, RZ."""

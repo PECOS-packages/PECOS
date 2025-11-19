@@ -796,7 +796,17 @@ fn choice(py: Python<'_>, a: Py<PyAny>, size: Option<usize>, replace: bool) -> P
     let array = Python::attach(|py| {
         let obj = a.bind(py);
 
-        // First try to handle numpy arrays by converting to list
+        // First try to handle Array objects
+        if let Ok(arr) = obj.cast::<crate::pecos_array::Array>() {
+            let len = arr.len()?;
+            let mut items = Vec::with_capacity(len);
+            for i in 0..len {
+                items.push(arr.get_item(i)?.unbind());
+            }
+            return Ok::<Vec<Py<PyAny>>, PyErr>(items);
+        }
+
+        // Next try to handle numpy arrays by converting to list
         if let Ok(to_list_method) = obj.getattr("tolist")
             && let Ok(list_obj) = to_list_method.call0()
         {
@@ -1197,62 +1207,81 @@ fn isclose(
         return Ok(result.into_py_any(py).unwrap());
     }
 
-    // Try float arrays
-    if let (Ok(a_arr), Ok(b_arr)) = (
-        a.cast::<PyArray<f64, IxDyn>>(),
-        b.cast::<PyArray<f64, IxDyn>>(),
-    ) {
-        let a_readonly = a_arr.try_readonly()?;
-        let b_readonly = b_arr.try_readonly()?;
-        let result = a_readonly
-            .as_array()
-            .isclose(&b_readonly.as_array(), rtol, atol);
-        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
-    }
+    // Try to convert inputs to PECOS Arrays if they're not already
+    // This handles NumPy arrays at the boundary by converting them to PECOS Arrays
+    let a_pecos = if let Ok(arr) = a.extract::<Py<Array>>() {
+        arr
+    } else {
+        // Call the Array Python class to create PECOS Array from NumPy array/list
+        let array_class = py.get_type::<Array>();
+        array_class.call1((&a,))?.extract()?
+    };
 
-    // Try complex arrays
-    if let (Ok(a_arr), Ok(b_arr)) = (
-        a.cast::<PyArray<Complex64, IxDyn>>(),
-        b.cast::<PyArray<Complex64, IxDyn>>(),
-    ) {
-        let a_readonly = a_arr.try_readonly()?;
-        let b_readonly = b_arr.try_readonly()?;
-        let result = a_readonly
-            .as_array()
-            .isclose(&b_readonly.as_array(), rtol, atol);
-        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
-    }
+    let b_pecos = if let Ok(arr) = b.extract::<Py<Array>>() {
+        arr
+    } else {
+        // Call the Array Python class to create PECOS Array from NumPy array/list
+        let array_class = py.get_type::<Array>();
+        array_class.call1((&b,))?.extract()?
+    };
 
-    // Handle mixed array types: complex array vs float array
-    if let (Ok(a_arr), Ok(b_arr)) = (
-        a.cast::<PyArray<Complex64, IxDyn>>(),
-        b.cast::<PyArray<f64, IxDyn>>(),
-    ) {
-        let a_readonly = a_arr.try_readonly()?;
-        let b_readonly = b_arr.try_readonly()?;
+    // Now work only with PECOS Arrays
+    use crate::pecos_array::ArrayData;
+    let a_ref = a_pecos.bind(py).borrow();
+    let b_ref = b_pecos.bind(py).borrow();
 
-        // Convert float array to complex
-        let b_complex = b_readonly.as_array().mapv(|x| Complex64::new(x, 0.0));
-        let result = a_readonly.as_array().isclose(&b_complex.view(), rtol, atol);
-        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
-    }
-
-    // Handle mixed array types: float array vs complex array
-    if let (Ok(a_arr), Ok(b_arr)) = (
-        a.cast::<PyArray<f64, IxDyn>>(),
-        b.cast::<PyArray<Complex64, IxDyn>>(),
-    ) {
-        let a_readonly = a_arr.try_readonly()?;
-        let b_readonly = b_arr.try_readonly()?;
-
-        // Convert float array to complex
-        let a_complex = a_readonly.as_array().mapv(|x| Complex64::new(x, 0.0));
-        let result = a_complex.view().isclose(&b_readonly.as_array(), rtol, atol);
-        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    match (&a_ref.data, &b_ref.data) {
+        (ArrayData::Float64(a_data), ArrayData::Float64(b_data)) => {
+            let result = a_data.isclose(b_data, rtol, atol);
+            return Ok(Py::new(
+                py,
+                Array {
+                    data: ArrayData::Bool(result),
+                },
+            )?
+            .into_any());
+        }
+        (ArrayData::Complex128(a_data), ArrayData::Complex128(b_data)) => {
+            let result = a_data.isclose(b_data, rtol, atol);
+            return Ok(Py::new(
+                py,
+                Array {
+                    data: ArrayData::Bool(result),
+                },
+            )?
+            .into_any());
+        }
+        (ArrayData::Float64(a_data), ArrayData::Complex128(b_data)) => {
+            // Convert float to complex
+            let a_complex = a_data.mapv(|x| Complex64::new(x, 0.0));
+            let result = a_complex.isclose(b_data, rtol, atol);
+            return Ok(Py::new(
+                py,
+                Array {
+                    data: ArrayData::Bool(result),
+                },
+            )?
+            .into_any());
+        }
+        (ArrayData::Complex128(a_data), ArrayData::Float64(b_data)) => {
+            // Convert float to complex
+            let b_complex = b_data.mapv(|x| Complex64::new(x, 0.0));
+            let result = a_data.isclose(&b_complex, rtol, atol);
+            return Ok(Py::new(
+                py,
+                Array {
+                    data: ArrayData::Bool(result),
+                },
+            )?
+            .into_any());
+        }
+        _ => {
+            // Unsupported dtype combination
+        }
     }
 
     Err(PyTypeError::new_err(
-        "isclose() arguments must be float, complex, or numpy arrays of float/complex",
+        "isclose() arguments must be float, complex, or PECOS Arrays of float/complex",
     ))
 }
 
@@ -1307,182 +1336,53 @@ fn allclose(
 ) -> PyResult<bool> {
     use pecos::prelude::allclose as rust_allclose;
 
-    // Try float arrays
-    if let (Ok(a_arr), Ok(b_arr)) = (
-        a.cast::<PyArray<f64, IxDyn>>(),
-        b.cast::<PyArray<f64, IxDyn>>(),
-    ) {
-        let a_readonly = a_arr.try_readonly()?;
-        let b_readonly = b_arr.try_readonly()?;
-        return Ok(rust_allclose(
-            &a_readonly.as_array(),
-            &b_readonly.as_array(),
-            rtol,
-            atol,
-            equal_nan,
-        ));
-    }
+    // Try to convert inputs to PECOS Arrays if they're not already
+    // This handles NumPy arrays, lists, etc. at the boundary by converting them to PECOS Arrays
+    let a_pecos = if let Ok(arr) = a.extract::<Py<Array>>() {
+        arr
+    } else {
+        // Call the Array Python class to create PECOS Array from NumPy array/list
+        let array_class = a.py().get_type::<Array>();
+        array_class.call1((&a,))?.extract()?
+    };
 
-    // Try complex arrays
-    if let (Ok(a_arr), Ok(b_arr)) = (
-        a.cast::<PyArray<Complex64, IxDyn>>(),
-        b.cast::<PyArray<Complex64, IxDyn>>(),
-    ) {
-        let a_readonly = a_arr.try_readonly()?;
-        let b_readonly = b_arr.try_readonly()?;
-        return Ok(rust_allclose(
-            &a_readonly.as_array(),
-            &b_readonly.as_array(),
-            rtol,
-            atol,
-            equal_nan,
-        ));
-    }
+    let b_pecos = if let Ok(arr) = b.extract::<Py<Array>>() {
+        arr
+    } else {
+        // Call the Array Python class to create PECOS Array from NumPy array/list
+        let array_class = b.py().get_type::<Array>();
+        array_class.call1((&b,))?.extract()?
+    };
 
-    // Handle mixed array types: complex array vs float array
-    if let (Ok(a_arr), Ok(b_arr)) = (
-        a.cast::<PyArray<Complex64, IxDyn>>(),
-        b.cast::<PyArray<f64, IxDyn>>(),
-    ) {
-        let a_readonly = a_arr.try_readonly()?;
-        let b_readonly = b_arr.try_readonly()?;
+    // Now work only with PECOS Arrays
+    use crate::pecos_array::ArrayData;
+    let a_ref = a_pecos.bind(a.py()).borrow();
+    let b_ref = b_pecos.bind(b.py()).borrow();
 
-        // Convert float array to complex
-        let b_complex = b_readonly.as_array().mapv(|x| Complex64::new(x, 0.0));
-        return Ok(rust_allclose(
-            &a_readonly.as_array(),
-            &b_complex.view(),
-            rtol,
-            atol,
-            equal_nan,
-        ));
-    }
-
-    // Handle mixed array types: float array vs complex array
-    if let (Ok(a_arr), Ok(b_arr)) = (
-        a.cast::<PyArray<f64, IxDyn>>(),
-        b.cast::<PyArray<Complex64, IxDyn>>(),
-    ) {
-        let a_readonly = a_arr.try_readonly()?;
-        let b_readonly = b_arr.try_readonly()?;
-
-        // Convert float array to complex
-        let a_complex = a_readonly.as_array().mapv(|x| Complex64::new(x, 0.0));
-        return Ok(rust_allclose(
-            &a_complex.view(),
-            &b_readonly.as_array(),
-            rtol,
-            atol,
-            equal_nan,
-        ));
-    }
-
-    // Try Python list/tuple conversions for both arguments - convert directly to ndarray
-
-    // Try both as float lists
-    if let (Ok(a_values), Ok(b_values)) = (a.extract::<Vec<f64>>(), b.extract::<Vec<f64>>()) {
-        let a_arr = ArrayD::from_shape_vec(IxDyn(&[a_values.len()]), a_values).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to create array: {e}"))
-        })?;
-        let b_arr = ArrayD::from_shape_vec(IxDyn(&[b_values.len()]), b_values).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to create array: {e}"))
-        })?;
-        return Ok(rust_allclose(
-            &a_arr.view(),
-            &b_arr.view(),
-            rtol,
-            atol,
-            equal_nan,
-        ));
-    }
-
-    // Try both as complex lists
-    if let (Ok(a_values), Ok(b_values)) =
-        (a.extract::<Vec<Complex64>>(), b.extract::<Vec<Complex64>>())
-    {
-        let a_arr = ArrayD::from_shape_vec(IxDyn(&[a_values.len()]), a_values).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to create array: {e}"))
-        })?;
-        let b_arr = ArrayD::from_shape_vec(IxDyn(&[b_values.len()]), b_values).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to create array: {e}"))
-        })?;
-        return Ok(rust_allclose(
-            &a_arr.view(),
-            &b_arr.view(),
-            rtol,
-            atol,
-            equal_nan,
-        ));
-    }
-
-    // Try mixed: float array/list vs complex array/list
-    // Extract a as float (array or list)
-    let a_float_opt = a
-        .extract::<PyReadonlyArrayDyn<f64>>()
-        .ok()
-        .map(|arr| arr.as_array().to_owned())
-        .or_else(|| {
-            a.extract::<Vec<f64>>()
-                .ok()
-                .map(|values| ArrayD::from_shape_vec(IxDyn(&[values.len()]), values).unwrap())
-        });
-
-    // Extract b as complex (array or list)
-    let b_complex_opt = b
-        .extract::<PyReadonlyArrayDyn<Complex64>>()
-        .ok()
-        .map(|arr| arr.as_array().to_owned())
-        .or_else(|| {
-            b.extract::<Vec<Complex64>>()
-                .ok()
-                .map(|values| ArrayD::from_shape_vec(IxDyn(&[values.len()]), values).unwrap())
-        });
-
-    if let (Some(a_float), Some(b_complex)) = (a_float_opt, b_complex_opt) {
-        let a_complex = a_float.mapv(|x| Complex64::new(x, 0.0));
-        return Ok(rust_allclose(
-            &a_complex.view(),
-            &b_complex.view(),
-            rtol,
-            atol,
-            equal_nan,
-        ));
-    }
-
-    // Try mixed: complex array/list vs float array/list
-    let a_complex_opt = a
-        .extract::<PyReadonlyArrayDyn<Complex64>>()
-        .ok()
-        .map(|arr| arr.as_array().to_owned())
-        .or_else(|| {
-            a.extract::<Vec<Complex64>>()
-                .ok()
-                .map(|values| ArrayD::from_shape_vec(IxDyn(&[values.len()]), values).unwrap())
-        });
-
-    let b_float_opt = b
-        .extract::<PyReadonlyArrayDyn<f64>>()
-        .ok()
-        .map(|arr| arr.as_array().to_owned())
-        .or_else(|| {
-            b.extract::<Vec<f64>>()
-                .ok()
-                .map(|values| ArrayD::from_shape_vec(IxDyn(&[values.len()]), values).unwrap())
-        });
-
-    if let (Some(a_complex), Some(b_float)) = (a_complex_opt, b_float_opt) {
-        let b_complex = b_float.mapv(|x| Complex64::new(x, 0.0));
-        return Ok(rust_allclose(
-            &a_complex.view(),
-            &b_complex.view(),
-            rtol,
-            atol,
-            equal_nan,
-        ));
+    match (&a_ref.data, &b_ref.data) {
+        (ArrayData::Float64(a_data), ArrayData::Float64(b_data)) => {
+            return Ok(rust_allclose(a_data, b_data, rtol, atol, equal_nan));
+        }
+        (ArrayData::Complex128(a_data), ArrayData::Complex128(b_data)) => {
+            return Ok(rust_allclose(a_data, b_data, rtol, atol, equal_nan));
+        }
+        (ArrayData::Float64(a_data), ArrayData::Complex128(b_data)) => {
+            // Convert float to complex
+            let a_complex = a_data.mapv(|x| Complex64::new(x, 0.0));
+            return Ok(rust_allclose(&a_complex, b_data, rtol, atol, equal_nan));
+        }
+        (ArrayData::Complex128(a_data), ArrayData::Float64(b_data)) => {
+            // Convert float to complex
+            let b_complex = b_data.mapv(|x| Complex64::new(x, 0.0));
+            return Ok(rust_allclose(a_data, &b_complex, rtol, atol, equal_nan));
+        }
+        _ => {
+            // Unsupported dtype combination
+        }
     }
 
     Err(PyTypeError::new_err(
-        "allclose() arguments must be numeric arrays or lists",
+        "allclose() arguments must be PECOS Arrays of compatible dtypes (float64, complex128)",
     ))
 }
 
@@ -1527,7 +1427,133 @@ fn allclose(
 #[pyfunction]
 #[pyo3(signature = (a, b, equal_nan=false))]
 fn array_equal(a: Bound<'_, PyAny>, b: Bound<'_, PyAny>, equal_nan: bool) -> PyResult<bool> {
+    use crate::pecos_array::ArrayData;
     use pecos::prelude::array_equal as rust_array_equal;
+
+    // First try PECOS Array objects
+    if let (Ok(a_arr), Ok(b_arr)) = (a.extract::<Py<Array>>(), b.extract::<Py<Array>>()) {
+        let a_ref = a_arr.bind(a.py()).borrow();
+        let b_ref = b_arr.bind(b.py()).borrow();
+
+        match (&a_ref.data, &b_ref.data) {
+            (ArrayData::Bool(a_data), ArrayData::Bool(b_data)) => {
+                // For booleans, just check shape and exact equality
+                if a_data.shape() != b_data.shape() {
+                    return Ok(false);
+                }
+                return Ok(a_data.iter().zip(b_data.iter()).all(|(a, b)| a == b));
+            }
+            (ArrayData::Int64(a_data), ArrayData::Int64(b_data)) => {
+                // For integers, just check shape and exact equality
+                if a_data.shape() != b_data.shape() {
+                    return Ok(false);
+                }
+                return Ok(a_data.iter().zip(b_data.iter()).all(|(a, b)| a == b));
+            }
+            (ArrayData::Float64(a_data), ArrayData::Float64(b_data)) => {
+                return Ok(rust_array_equal(a_data, b_data, equal_nan));
+            }
+            (ArrayData::Complex128(a_data), ArrayData::Complex128(b_data)) => {
+                return Ok(rust_array_equal(a_data, b_data, equal_nan));
+            }
+            (ArrayData::Float64(a_data), ArrayData::Complex128(b_data)) => {
+                // Convert float to complex
+                let a_complex = a_data.mapv(|x| Complex64::new(x, 0.0));
+                return Ok(rust_array_equal(&a_complex.view(), b_data, equal_nan));
+            }
+            (ArrayData::Complex128(a_data), ArrayData::Float64(b_data)) => {
+                // Convert float to complex
+                let b_complex = b_data.mapv(|x| Complex64::new(x, 0.0));
+                return Ok(rust_array_equal(a_data, &b_complex.view(), equal_nan));
+            }
+            _ => {
+                // Unsupported dtype combination, fall through to error
+            }
+        }
+    }
+
+    // Try mixed: PECOS Array and NumPy array
+    // Check if one is a PECOS Array and the other is NumPy
+    if let Ok(a_pecos) = a.extract::<Py<Array>>() {
+        let a_ref = a_pecos.bind(a.py()).borrow();
+
+        // Try to match with NumPy bool array
+        if let Ok(b_np) = b.cast::<PyArray<bool, IxDyn>>()
+            && let ArrayData::Bool(a_data) = &a_ref.data {
+                let b_readonly = b_np.try_readonly()?;
+                let b_view = b_readonly.as_array();
+                if a_data.shape() != b_view.shape() {
+                    return Ok(false);
+                }
+                return Ok(a_data.iter().zip(b_view.iter()).all(|(a, b)| a == b));
+            }
+
+        // Try to match with NumPy int array
+        if let Ok(b_np) = b.cast::<PyArray<i64, IxDyn>>()
+            && let ArrayData::Int64(a_data) = &a_ref.data {
+                let b_readonly = b_np.try_readonly()?;
+                let b_view = b_readonly.as_array();
+                if a_data.shape() != b_view.shape() {
+                    return Ok(false);
+                }
+                return Ok(a_data.iter().zip(b_view.iter()).all(|(a, b)| a == b));
+            }
+
+        // Try to match with NumPy float array
+        if let Ok(b_np) = b.cast::<PyArray<f64, IxDyn>>()
+            && let ArrayData::Float64(a_data) = &a_ref.data {
+                let b_readonly = b_np.try_readonly()?;
+                return Ok(rust_array_equal(a_data, &b_readonly.as_array(), equal_nan));
+            }
+
+        // Try to match with NumPy complex array
+        if let Ok(b_np) = b.cast::<PyArray<Complex64, IxDyn>>()
+            && let ArrayData::Complex128(a_data) = &a_ref.data {
+                let b_readonly = b_np.try_readonly()?;
+                return Ok(rust_array_equal(a_data, &b_readonly.as_array(), equal_nan));
+            }
+    }
+
+    // Try the reverse: NumPy array first, PECOS Array second
+    if let Ok(b_pecos) = b.extract::<Py<Array>>() {
+        let b_ref = b_pecos.bind(b.py()).borrow();
+
+        // Try to match with NumPy bool array
+        if let Ok(a_np) = a.cast::<PyArray<bool, IxDyn>>()
+            && let ArrayData::Bool(b_data) = &b_ref.data {
+                let a_readonly = a_np.try_readonly()?;
+                let a_view = a_readonly.as_array();
+                if a_view.shape() != b_data.shape() {
+                    return Ok(false);
+                }
+                return Ok(a_view.iter().zip(b_data.iter()).all(|(a, b)| a == b));
+            }
+
+        // Try to match with NumPy int array
+        if let Ok(a_np) = a.cast::<PyArray<i64, IxDyn>>()
+            && let ArrayData::Int64(b_data) = &b_ref.data {
+                let a_readonly = a_np.try_readonly()?;
+                let a_view = a_readonly.as_array();
+                if a_view.shape() != b_data.shape() {
+                    return Ok(false);
+                }
+                return Ok(a_view.iter().zip(b_data.iter()).all(|(a, b)| a == b));
+            }
+
+        // Try to match with NumPy float array
+        if let Ok(a_np) = a.cast::<PyArray<f64, IxDyn>>()
+            && let ArrayData::Float64(b_data) = &b_ref.data {
+                let a_readonly = a_np.try_readonly()?;
+                return Ok(rust_array_equal(&a_readonly.as_array(), b_data, equal_nan));
+            }
+
+        // Try to match with NumPy complex array
+        if let Ok(a_np) = a.cast::<PyArray<Complex64, IxDyn>>()
+            && let ArrayData::Complex128(b_data) = &b_ref.data {
+                let a_readonly = a_np.try_readonly()?;
+                return Ok(rust_array_equal(&a_readonly.as_array(), b_data, equal_nan));
+            }
+    }
 
     // Try bool arrays (for isnan/isclose return values)
     if let (Ok(a_arr), Ok(b_arr)) = (
@@ -3009,6 +3035,12 @@ fn norm(_py: Python<'_>, x: Bound<'_, PyAny>, ord: Option<f64>) -> PyResult<f64>
                 let arr_f64 = arr.mapv(f64::from);
                 Ok(norm_fn(&arr_f64, ord))
             }
+            ArrayData::Pauli(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+                "norm() operation not supported on Pauli arrays",
+            )),
+            ArrayData::PauliString(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+                "norm() operation not supported on PauliString arrays",
+            )),
         };
     }
 
@@ -3646,6 +3678,16 @@ fn abs(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
                 let result = a.mapv(|v| f64::from(v.norm()));
                 return Ok(Py::new(py, Array::from_array_f64(result))?.into_any());
             }
+            ArrayData::Pauli(_) => {
+                return Err(PyTypeError::new_err(
+                    "abs() operation not supported on Pauli arrays",
+                ));
+            }
+            ArrayData::PauliString(_) => {
+                return Err(PyTypeError::new_err(
+                    "abs() operation not supported on PauliString arrays",
+                ));
+            }
         }
     }
 
@@ -4005,6 +4047,7 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Comparison functions (polymorphic)
     num_module.add_function(wrap_pyfunction!(isnan, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(isclose, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(allclose, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(array_equal, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(where_, &num_module)?)?;
 

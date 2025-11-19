@@ -24,6 +24,7 @@ mod engine_bindings;
 mod engine_builders;
 mod noise_helpers;
 mod num_bindings;
+mod pauli_bindings;
 mod pauli_prop_bindings;
 // mod pcg_bindings;
 mod hugr_compilation_bindings;
@@ -161,6 +162,9 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register dtypes module (Rust-backed dtype system)
     dtypes::register_dtypes_module(m)?;
 
+    // Register Pauli types (quantum operators)
+    pauli_bindings::register_pauli_types(m)?;
+
     // Register program types
     m.add_class::<PyQasmProgram>()?;
     m.add_class::<PyQisProgram>()?;
@@ -185,6 +189,9 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Utility functions
     m.add_function(wrap_pyfunction!(clear_jit_cache, m)?)?;
+
+    // Array creation function (NumPy-like interface, no NumPy dependency)
+    m.add_function(wrap_pyfunction!(pecos_array::array, m)?)?;
 
     // WebAssembly foreign object (optional)
     #[cfg(feature = "wasm")]

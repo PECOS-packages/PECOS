@@ -13,7 +13,7 @@ import math
 
 import numpy as np
 import pytest
-from pecos_rslib import array_equal, cos, exp, isclose, isnan, sin
+from pecos_rslib import Array, array_equal, cos, exp, isclose, isnan, sin
 
 
 class TestExpPolymorphic:
@@ -266,8 +266,9 @@ class TestIsClosePolymorphic:
         arr1 = np.array([1.0, 2.0, 3.0])
         arr2 = np.array([1.0, 2.0 + 1e-9, 3.1])
         result = isclose(arr1, arr2)
-        assert isinstance(result, np.ndarray)
-        assert result.dtype == bool
+        # isclose now returns PECOS Array objects
+        assert isinstance(result, Array)
+        assert str(result.dtype) == "bool"
         expected = np.array([True, True, False])
         assert array_equal(result, expected)
 
@@ -276,17 +277,20 @@ class TestIsClosePolymorphic:
         arr1 = np.array([1.0 + 0j, 2.0 + 1.0j])
         arr2 = np.array([1.0 + 0j, 2.0 + 1.0j + 1e-10])
         result = isclose(arr1, arr2)
-        assert isinstance(result, np.ndarray)
-        assert result.dtype == bool
-        assert np.all(result)
+        # isclose now returns PECOS Array objects
+        assert isinstance(result, Array)
+        assert str(result.dtype) == "bool"
+        # Use array_equal or result.all() to check if all elements are True
+        assert result.all()
 
     def test_isclose_list_input(self):
         """Test isclose requires numpy arrays (not lists)."""
         arr1 = np.array([1.0, 2.0])
         arr2 = np.array([1.0, 2.0 + 1e-9])
         result = isclose(arr1, arr2)
-        assert isinstance(result, np.ndarray)
-        assert np.all(result)
+        # isclose now returns PECOS Array objects
+        assert isinstance(result, Array)
+        assert result.all()
 
     def test_isclose_2d_array(self):
         """Test isclose preserves 2D array shape."""
@@ -302,7 +306,7 @@ class TestIsClosePolymorphic:
         # isclose requires both arguments to be same type (both scalars or both arrays)
         arr = np.array([1.0, 2.0, 3.0])
         scalar = 2.0
-        with pytest.raises(TypeError, match="isclose\\(\\) arguments must be"):
+        with pytest.raises(TypeError, match="Input must be a numpy array"):
             isclose(arr, scalar)
 
         # Workaround: broadcast manually first

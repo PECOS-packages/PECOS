@@ -40,6 +40,13 @@ impl PauliString {
         }
     }
 
+    /// Create a `PauliString` with the given phase and paulis
+    #[inline]
+    #[must_use]
+    pub fn with_phase_and_paulis(phase: QuarterPhase, paulis: Vec<(Pauli, QubitId)>) -> Self {
+        Self { phase, paulis }
+    }
+
     #[inline]
     #[must_use]
     pub fn get_phase(&self) -> QuarterPhase {

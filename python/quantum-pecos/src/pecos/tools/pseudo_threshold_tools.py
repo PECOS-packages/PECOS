@@ -30,6 +30,7 @@ from pecos.error_models import XModel
 from pecos.misc.threshold_curve import func
 from pecos.num import (
     Poly1d,
+    array,
     brentq,
     curve_fit,
     diag,
@@ -117,7 +118,7 @@ def pseudo_threshold_code_capacity(
         msg = f'Mode "{mode}" is not handled!'
         raise Exception(msg)
 
-    ps = np.array(ps)
+    ps = array(ps)
 
     plog = []
 
@@ -144,7 +145,7 @@ def pseudo_threshold_code_capacity(
 
         plog.append(logical_error_rate)
 
-    plog = np.array(plog)
+    plog = array(plog)
 
     if verbose:
         print("ps=", ps)
@@ -181,7 +182,7 @@ def find_polyfit(
     Returns:
         Tuple of pseudo-threshold, fitted parameters, and covariance matrix.
     """
-    plist = np.array(ps)
+    plist = array(ps)
 
     popt, pcov = polyfit(ps, plog, deg=deg, cov=True)
 
@@ -231,7 +232,7 @@ def find_uniscalefit(
     Raises:
         Exception: If fitting fails to converge.
     """
-    plist = np.array(ps)
+    plist = array(ps)
     dlist = ns2nsfit(distance, len(plist))
 
     popt, pcov = curve_fit(func, (plist, dlist), plog, p0, maxfev=maxfev, **kwargs)

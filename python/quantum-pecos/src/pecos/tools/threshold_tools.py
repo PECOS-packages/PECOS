@@ -31,7 +31,7 @@ from pecos.engines import circuit_runners
 from pecos.error_models import XModel
 from pecos.misc.threshold_curve import func as default_func
 from pecos.misc.threshold_curve import threshold_fit as default_fit
-from pecos.num import mean
+from pecos.num import array, mean
 from pecos.qeccs import Surface4444
 from pecos.simulators import SparseSimPy
 
@@ -156,14 +156,14 @@ def threshold_code_capacity(
         msg = f'Mode "{mode}" is not handled!'
         raise Exception(msg)
 
-    plist = np.array(ps * len(ds))
+    plist = array(ps * len(ds))
 
     """
     dlist = []
     for d in ds:
         for p in ps:
             dlist.append(d)
-    dlist = np.array(dlist)
+    dlist = array(dlist)
     """
 
     plog = []
@@ -191,7 +191,7 @@ def threshold_code_capacity(
 
             plog.append(logical_error_rate)
 
-    plog = np.array(plog)
+    plog = array(plog)
 
     return {"distances": ds, "ps_physical": plist, "p_logical": plog}
 
@@ -260,10 +260,10 @@ def threshold_code_capacity_calc(
         msg = f'Mode "{mode}" is not handled!'
         raise Exception(msg)
 
-    plist = np.array(ps * len(ds))
+    plist = array(ps * len(ds))
 
     dlist = [d for d in ds for _p in ps]
-    dlist = np.array(dlist)
+    dlist = array(dlist)
 
     plog = []
     for d in ds:
@@ -289,7 +289,7 @@ def threshold_code_capacity_calc(
 
             plog.append(logical_error_rate)
 
-    plog = np.array(plog)
+    plog = array(plog)
 
     results = threshold_fit(plist, dlist, plog, func, p0)
 
@@ -674,7 +674,7 @@ def codecapacity_logical_rate3(
     if verbose:
         print(f"\nTotal number of runs: {sum(run_durations)}")
 
-    run_durations = np.array(run_durations)
+    run_durations = array(run_durations)
     duration_mean = mean(run_durations)
 
     logical_rate = 1.0 / duration_mean

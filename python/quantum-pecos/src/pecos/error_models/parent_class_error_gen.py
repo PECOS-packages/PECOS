@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from pecos.error_models.class_errors_circuit import ErrorCircuits
-from pecos.num import random
+from pecos.num import array, random
 
 logger = logging.getLogger(__name__)
 
@@ -319,7 +319,9 @@ class Generator:
             _error_params: dict[str, Any],
         ) -> None:
             """Apply deterministic error after gate execution."""
-            after.update(self.data, {location}, emptyappend=True)
+            # Convert Pauli objects to strings for compatibility with gate symbols
+            symbol = str(self.data) if hasattr(self.data, "__str__") else self.data
+            after.update(symbol, {location}, emptyappend=True)
 
         def error_func_before(
             self,
@@ -330,7 +332,9 @@ class Generator:
             _error_params: dict[str, Any],
         ) -> None:
             """Apply deterministic error before gate execution."""
-            before.update(self.data, {location}, emptyappend=True)
+            # Convert Pauli objects to strings for compatibility with gate symbols
+            symbol = str(self.data) if hasattr(self.data, "__str__") else self.data
+            before.update(symbol, {location}, emptyappend=True)
 
     class ErrorSet:
         """Class used to create a callable that returns an element from the error_set with uniform distribution."""
@@ -342,7 +346,7 @@ class Generator:
                 error_set: Collection of error symbols to choose from uniformly.
                 after: If True, apply error after the gate; if False, before.
             """
-            self.data = np.array(list(error_set))
+            self.data = array(list(error_set))
 
             if after:
                 self.error_func = self.error_func_after
@@ -358,7 +362,12 @@ class Generator:
             _error_params: dict[str, Any],
         ) -> None:
             """Apply random error after gate execution."""
-            after.update(random.choice(self.data, 1)[0], {location}, emptyappend=True)
+            error_symbol = random.choice(self.data, 1)[0]
+            # Convert Pauli objects to strings for compatibility with gate symbols
+            symbol = (
+                str(error_symbol) if hasattr(error_symbol, "__str__") else error_symbol
+            )
+            after.update(symbol, {location}, emptyappend=True)
 
         def error_func_before(
             self,
@@ -369,7 +378,12 @@ class Generator:
             _error_params: dict[str, Any],
         ) -> None:
             """Apply random error before gate execution."""
-            before.update(random.choice(self.data, 1)[0], {location}, emptyappend=True)
+            error_symbol = random.choice(self.data, 1)[0]
+            # Convert Pauli objects to strings for compatibility with gate symbols
+            symbol = (
+                str(error_symbol) if hasattr(error_symbol, "__str__") else error_symbol
+            )
+            before.update(symbol, {location}, emptyappend=True)
 
     class ErrorSetMultiQuditGate:
         """Class used to create a callable that returns an element from the error_set with uniform distribution."""
@@ -387,10 +401,10 @@ class Generator:
                 after: If True, apply error after the gate; if False, before.
             """
             try:
-                self.data = np.array(list(error_set))
+                self.data = array(list(error_set))
             except ValueError:
                 error_set[0] = (error_set[0],)
-                self.data = np.array(list(error_set))
+                self.data = array(list(error_set))
 
             if after:
                 self.error_func = self.error_func_after

@@ -15,6 +15,11 @@ pub use crate::{
     errors::PecosError,
     gate_type::GateType,
     gates::Gate,
+    pauli::{Pauli, PauliOperator},
+    phase::quarter_phase::QuarterPhase,
     qubit_id::QubitId,
     rng::{RngManageable, rng_manageable::derive_seed},
 };
+
+// Re-export PauliString from its submodule
+pub use crate::pauli::pauli_string::PauliString;

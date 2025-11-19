@@ -24,9 +24,16 @@ from typing import Any, NoReturn
 
 # Import all modules at the top to avoid E402 errors
 from pecos_rslib._pecos_rslib import (
+    Array,  # Numpy-independent array type
+    array,  # Array creation function (no NumPy dependency)
+    binding,  # llvmlite-compatible binding module for bitcode
     ByteMessage,
     ByteMessageBuilder,
-    Array,  # Numpy-independent array type
+    dtypes,  # Rust-backed dtype system  # noqa: F401 - re-exported in __all__
+    ir,  # llvmlite-compatible LLVM IR module
+    num,  # Numerical computing functions (scipy.optimize replacements)
+    Pauli,  # Quantum Pauli operators (I, X, Y, Z)
+    PauliString,  # Multi-qubit Pauli operators
     QuestDensityMatrix,
     QuestStateVec,
     RsWasmForeignObject,
@@ -34,10 +41,6 @@ from pecos_rslib._pecos_rslib import (
     ShotVec,
     SparseStabEngineRs,
     StateVecEngineRs,
-    binding,  # llvmlite-compatible binding module for bitcode
-    dtypes,  # Rust-backed dtype system  # noqa: F401 - re-exported in __all__
-    ir,  # llvmlite-compatible LLVM IR module
-    num,  # Numerical computing functions (scipy.optimize replacements)
 )
 from pecos_rslib.cppsparse_sim import CppSparseSimRs
 from pecos_rslib.num_wrapper import (  # Enhanced num module with axis support
@@ -525,6 +528,10 @@ __all__ = [
     "SparseStabEngineRs",
     # Array types
     "Array",  # Numpy-independent array type
+    "array",  # Array creation function (no NumPy dependency)
+    # Quantum types
+    "Pauli",  # Pauli operators (I, X, Y, Z)
+    "PauliString",  # Multi-qubit Pauli operators
     # llvmlite-compatible modules
     "ir",
     "binding",

@@ -34,11 +34,12 @@
 #![allow(clippy::needless_pass_by_value)] // PyO3 requires passing Bound by value
 
 use num_complex::{Complex32, Complex64};
-use numpy::ndarray::{ArrayD, Axis, Slice};
+use numpy::ndarray::{ArrayD, Axis, IxDyn, Slice};
 use pyo3::prelude::*;
-use pyo3::types::{PySequence, PySlice, PySliceIndices, PyTuple};
+use pyo3::types::{PyBool, PyFloat, PyInt, PySequence, PySlice, PySliceIndices, PyTuple};
 
 use crate::dtypes::DType;
+use crate::pauli_bindings::{Pauli, PauliString};
 
 /// Internal storage for array data
 /// We use separate variants for each dtype to maintain type safety
@@ -53,6 +54,8 @@ pub enum ArrayData {
     Float64(ArrayD<f64>),
     Complex64(ArrayD<num_complex::Complex<f32>>),
     Complex128(ArrayD<num_complex::Complex<f64>>),
+    Pauli(ArrayD<Pauli>),
+    PauliString(ArrayD<PauliString>),
 }
 
 /// Represents an indexing operation: either an integer index or a slice
@@ -75,6 +78,8 @@ impl ArrayData {
             ArrayData::Float64(_) => DType::F64,
             ArrayData::Complex64(_) => DType::Complex64,
             ArrayData::Complex128(_) => DType::Complex128,
+            ArrayData::Pauli(_) => DType::Pauli,
+            ArrayData::PauliString(_) => DType::PauliString,
         }
     }
 
@@ -90,6 +95,8 @@ impl ArrayData {
             ArrayData::Float64(arr) => arr.shape(),
             ArrayData::Complex64(arr) => arr.shape(),
             ArrayData::Complex128(arr) => arr.shape(),
+            ArrayData::Pauli(arr) => arr.shape(),
+            ArrayData::PauliString(arr) => arr.shape(),
         }
     }
 
@@ -113,80 +120,36 @@ pub struct Array {
     pub(crate) data: ArrayData,
 }
 
+/// Element type tracking for nested sequence parsing
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ElemType {
+    Bool,
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    Float32,
+    Float64,
+    Complex64,
+    Complex128,
+    Pauli,
+    PauliString,
+}
+
 #[pymethods]
 impl Array {
-    /// Create a new `Array` from a numpy array
+    /// Create a new `Array` from a numpy array or Python sequence
     ///
     /// Args:
-    ///     array: A numpy array to wrap
+    ///     data: A numpy array or Python sequence (list/tuple)
+    ///     dtype: Optional dtype specification (`DType` enum or None for auto-detection)
     ///
     /// Returns:
-    ///     A new `Array` wrapping the numpy array data
+    ///     A new `Array` wrapping the data
     #[new]
-    fn py_new(array: &Bound<'_, PyAny>) -> PyResult<Self> {
-        use numpy::{PyArrayDyn, PyArrayMethods};
-
-        // Try to extract as each dtype in order of likelihood
-        // Start with float64 as it's most common
-        if let Ok(arr) = array.cast::<PyArrayDyn<f64>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::Float64(ndarray),
-            });
-        }
-
-        if let Ok(arr) = array.cast::<PyArrayDyn<i64>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::Int64(ndarray),
-            });
-        }
-
-        if let Ok(arr) = array.cast::<PyArrayDyn<num_complex::Complex<f64>>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::Complex128(ndarray),
-            });
-        }
-
-        if let Ok(arr) = array.cast::<PyArrayDyn<f32>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::Float32(ndarray),
-            });
-        }
-
-        if let Ok(arr) = array.cast::<PyArrayDyn<i32>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::Int32(ndarray),
-            });
-        }
-
-        if let Ok(arr) = array.cast::<PyArrayDyn<i16>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::Int16(ndarray),
-            });
-        }
-
-        if let Ok(arr) = array.cast::<PyArrayDyn<i8>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::Int8(ndarray),
-            });
-        }
-
-        if let Ok(arr) = array.cast::<PyArrayDyn<num_complex::Complex<f32>>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::Complex64(ndarray),
-            });
-        }
-
-        Err(pyo3::exceptions::PyTypeError::new_err(
-            "Input must be a numpy array with a supported dtype (int8-64, float32-64, complex64-128)",
-        ))
+    #[pyo3(signature = (data, dtype=None))]
+    fn py_new(data: &Bound<'_, PyAny>, dtype: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        Self::from_python_value(data, dtype)
     }
 
     /// Get the shape of the array as a tuple
@@ -258,6 +221,61 @@ impl Array {
             ArrayData::Complex128(arr) => Self {
                 data: ArrayData::Complex128(arr.clone()),
             },
+            ArrayData::Pauli(arr) => Self {
+                data: ArrayData::Pauli(arr.clone()),
+            },
+            ArrayData::PauliString(arr) => Self {
+                data: ArrayData::PauliString(arr.clone()),
+            },
+        }
+    }
+
+    /// Check if all elements in the array are True (for boolean arrays)
+    /// or non-zero (for numeric arrays).
+    ///
+    /// Args:
+    ///     axis: Ignored (for `NumPy` compatibility)
+    ///     out: Ignored (for `NumPy` compatibility)
+    ///     keepdims: Ignored (for `NumPy` compatibility)
+    ///
+    /// Returns:
+    ///     bool: True if all elements are True/non-zero, False otherwise
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// from pecos.num import array
+    ///
+    /// arr = array([True, True, True])
+    /// assert arr.all() == True
+    ///
+    /// arr2 = array([True, False, True])
+    /// assert arr2.all() == False
+    /// ```
+    #[pyo3(signature = (axis=None, out=None, keepdims=None, **_kwargs))]
+    #[allow(unused_variables)]
+    pub fn all(
+        &self,
+        axis: Option<Py<PyAny>>,
+        out: Option<Py<PyAny>>,
+        keepdims: Option<bool>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> bool {
+        match &self.data {
+            ArrayData::Bool(arr) => arr.iter().all(|&x| x),
+            ArrayData::Int8(arr) => arr.iter().all(|&x| x != 0),
+            ArrayData::Int16(arr) => arr.iter().all(|&x| x != 0),
+            ArrayData::Int32(arr) => arr.iter().all(|&x| x != 0),
+            ArrayData::Int64(arr) => arr.iter().all(|&x| x != 0),
+            ArrayData::Float32(arr) => arr.iter().all(|&x| x != 0.0),
+            ArrayData::Float64(arr) => arr.iter().all(|&x| x != 0.0),
+            ArrayData::Complex64(arr) => arr.iter().all(|&x| x.re != 0.0 || x.im != 0.0),
+            ArrayData::Complex128(arr) => arr.iter().all(|&x| x.re != 0.0 || x.im != 0.0),
+            ArrayData::Pauli(_) | ArrayData::PauliString(_) => {
+                // Pauli arrays don't have a meaningful all() operation
+                // We'll return true if there are any elements
+                self.data.size() > 0
+            }
         }
     }
 
@@ -306,6 +324,8 @@ impl Array {
                         arr.mapv(|x| Complex::new(if x { 1.0f64 } else { 0.0f64 }, 0.0f64)),
                     ),
                 },
+                DType::Pauli => panic!("Cannot convert to Pauli type"),
+                DType::PauliString => panic!("Cannot convert to PauliString type"),
             },
             ArrayData::Int8(arr) => match target_dtype {
                 DType::Bool => Self {
@@ -335,6 +355,8 @@ impl Array {
                 DType::Complex128 => Self {
                     data: ArrayData::Complex128(arr.mapv(|x| Complex::new(f64::from(x), 0.0f64))),
                 },
+                DType::Pauli => panic!("Cannot convert to Pauli type"),
+                DType::PauliString => panic!("Cannot convert to PauliString type"),
             },
             ArrayData::Int16(arr) => match target_dtype {
                 DType::Bool => Self {
@@ -364,6 +386,8 @@ impl Array {
                 DType::Complex128 => Self {
                     data: ArrayData::Complex128(arr.mapv(|x| Complex::new(f64::from(x), 0.0f64))),
                 },
+                DType::Pauli => panic!("Cannot convert to Pauli type"),
+                DType::PauliString => panic!("Cannot convert to PauliString type"),
             },
             ArrayData::Int32(arr) => match target_dtype {
                 DType::Bool => Self {
@@ -393,6 +417,8 @@ impl Array {
                 DType::Complex128 => Self {
                     data: ArrayData::Complex128(arr.mapv(|x| Complex::new(f64::from(x), 0.0f64))),
                 },
+                DType::Pauli => panic!("Cannot convert to Pauli type"),
+                DType::PauliString => panic!("Cannot convert to PauliString type"),
             },
             ArrayData::Int64(arr) => match target_dtype {
                 DType::Bool => Self {
@@ -422,6 +448,8 @@ impl Array {
                 DType::Complex128 => Self {
                     data: ArrayData::Complex128(arr.mapv(|x| Complex::new(x as f64, 0.0f64))),
                 },
+                DType::Pauli => panic!("Cannot convert to Pauli type"),
+                DType::PauliString => panic!("Cannot convert to PauliString type"),
             },
             ArrayData::Float32(arr) => match target_dtype {
                 DType::Bool => Self {
@@ -451,6 +479,8 @@ impl Array {
                 DType::Complex128 => Self {
                     data: ArrayData::Complex128(arr.mapv(|x| Complex::new(f64::from(x), 0.0f64))),
                 },
+                DType::Pauli => panic!("Cannot convert to Pauli type"),
+                DType::PauliString => panic!("Cannot convert to PauliString type"),
             },
             ArrayData::Float64(arr) => match target_dtype {
                 DType::Bool => Self {
@@ -480,6 +510,8 @@ impl Array {
                 DType::Complex128 => Self {
                     data: ArrayData::Complex128(arr.mapv(|x| Complex::new(x, 0.0f64))),
                 },
+                DType::Pauli => panic!("Cannot convert to Pauli type"),
+                DType::PauliString => panic!("Cannot convert to PauliString type"),
             },
             ArrayData::Complex64(arr) => match target_dtype {
                 DType::Bool => Self {
@@ -511,6 +543,8 @@ impl Array {
                         arr.mapv(|x| Complex::new(f64::from(x.re), f64::from(x.im))),
                     ),
                 },
+                DType::Pauli => panic!("Cannot convert to Pauli type"),
+                DType::PauliString => panic!("Cannot convert to PauliString type"),
             },
             ArrayData::Complex128(arr) => match target_dtype {
                 DType::Bool => Self {
@@ -542,6 +576,20 @@ impl Array {
                 DType::Complex128 => Self {
                     data: ArrayData::Complex128(arr.clone()),
                 },
+                DType::Pauli => panic!("Cannot convert to Pauli type"),
+                DType::PauliString => panic!("Cannot convert to PauliString type"),
+            },
+            ArrayData::Pauli(arr) => match target_dtype {
+                DType::Pauli => Self {
+                    data: ArrayData::Pauli(arr.clone()),
+                },
+                _ => panic!("Cannot convert Pauli array to numeric type"),
+            },
+            ArrayData::PauliString(arr) => match target_dtype {
+                DType::PauliString => Self {
+                    data: ArrayData::PauliString(arr.clone()),
+                },
+                _ => panic!("Cannot convert PauliString array to numeric type"),
             },
         }
     }
@@ -607,6 +655,26 @@ impl Array {
             ArrayData::Float64(arr) => Ok(arr.to_pyarray(py).unbind().into()),
             ArrayData::Complex64(arr) => Ok(arr.to_pyarray(py).unbind().into()),
             ArrayData::Complex128(arr) => Ok(arr.to_pyarray(py).unbind().into()),
+            ArrayData::Pauli(arr) => {
+                // Convert to NumPy object array
+                let numpy = py.import("numpy")?;
+                let py_list: Vec<Py<PyAny>> = arr
+                    .iter()
+                    .map(|p| Py::new(py, *p).unwrap().into_any())
+                    .collect();
+                let np_arr = numpy.call_method1("array", (py_list,))?;
+                Ok(np_arr.unbind())
+            }
+            ArrayData::PauliString(arr) => {
+                // Convert to NumPy object array
+                let numpy = py.import("numpy")?;
+                let py_list: Vec<Py<PyAny>> = arr
+                    .iter()
+                    .map(|p| Py::new(py, p.clone()).unwrap().into_any())
+                    .collect();
+                let np_arr = numpy.call_method1("array", (py_list,))?;
+                Ok(np_arr.unbind())
+            }
         }
     }
 
@@ -727,6 +795,14 @@ impl Array {
                     let val: Complex64 = value.extract()?;
                     arr[idx_usize] = val;
                 }
+                ArrayData::Pauli(arr) => {
+                    let val: crate::pauli_bindings::Pauli = value.extract()?;
+                    arr[idx_usize] = val;
+                }
+                ArrayData::PauliString(arr) => {
+                    let val: crate::pauli_bindings::PauliString = value.extract()?;
+                    arr[idx_usize] = val;
+                }
             }
             Ok(())
         } else {
@@ -780,6 +856,12 @@ impl Array {
 
             // Apply mixed indexing
             let result = self.apply_mixed_indexing(&index_ops)?;
+
+            // If result is 0-dimensional (scalar), extract the value instead of returning Array
+            if result.data.shape().is_empty() {
+                return result.extract_scalar(py);
+            }
+
             Ok(Py::new(py, result)?.into_any())
         } else if let Ok(slice) = index.cast::<PySlice>() {
             // Single slice: arr[start:stop:step]
@@ -797,14 +879,8 @@ impl Array {
             Ok(Py::new(py, result)?.into_any())
         } else if let Ok(idx) = index.extract::<isize>() {
             // Integer indexing: arr[i]
+            // For multi-dimensional arrays, this selects along the first axis (like NumPy)
             let shape = self.data.shape();
-
-            // Only 1D arrays support integer indexing with a single integer
-            if shape.len() != 1 {
-                return Err(pyo3::exceptions::PyNotImplementedError::new_err(
-                    "Single integer indexing only works on 1D arrays (use tuple indexing for multi-dimensional arrays, e.g., arr[i, j])",
-                ));
-            }
 
             // Normalize negative indices
             let size = shape[0] as isize;
@@ -817,45 +893,17 @@ impl Array {
                 )));
             }
 
-            // Extract the element and return as Python scalar
-            match &self.data {
-                ArrayData::Bool(arr) => {
-                    let val = arr[normalized_idx as usize];
-                    Ok(val.into_pyobject(py)?.to_owned().into_any().unbind())
-                }
-                ArrayData::Int8(arr) => {
-                    let val = arr[normalized_idx as usize];
-                    Ok(val.into_pyobject(py)?.into_any().unbind())
-                }
-                ArrayData::Int16(arr) => {
-                    let val = arr[normalized_idx as usize];
-                    Ok(val.into_pyobject(py)?.into_any().unbind())
-                }
-                ArrayData::Int32(arr) => {
-                    let val = arr[normalized_idx as usize];
-                    Ok(val.into_pyobject(py)?.into_any().unbind())
-                }
-                ArrayData::Int64(arr) => {
-                    let val = arr[normalized_idx as usize];
-                    Ok(val.into_pyobject(py)?.into_any().unbind())
-                }
-                ArrayData::Float32(arr) => {
-                    let val = arr[normalized_idx as usize];
-                    Ok(val.into_pyobject(py)?.into_any().unbind())
-                }
-                ArrayData::Float64(arr) => {
-                    let val = arr[normalized_idx as usize];
-                    Ok(val.into_pyobject(py)?.into_any().unbind())
-                }
-                ArrayData::Complex64(arr) => {
-                    let val = arr[normalized_idx as usize];
-                    Ok(val.into_pyobject(py)?.into_any().unbind())
-                }
-                ArrayData::Complex128(arr) => {
-                    let val = arr[normalized_idx as usize];
-                    Ok(val.into_pyobject(py)?.into_any().unbind())
-                }
+            // Use apply_mixed_indexing with a single integer index
+            // This handles both 1D (returns scalar) and multi-D (returns sub-array) cases
+            let index_ops = vec![IndexOp::Integer(normalized_idx)];
+            let result = self.apply_mixed_indexing(&index_ops)?;
+
+            // If result is 0-dimensional (scalar), extract the value instead of returning Array
+            if result.data.shape().is_empty() {
+                return result.extract_scalar(py);
             }
+
+            Ok(Py::new(py, result)?.into_any())
         } else if let Ok(seq) = index.cast::<PySequence>() {
             // Fancy indexing: arr[[4, 2, 0, 3, 1]]
             // Check if array is 1D
@@ -1015,6 +1063,734 @@ impl Array {
         Self { data }
     }
 
+    /// Create an Array from Python value (`NumPy` array or sequence)
+    pub fn from_python_value(
+        data: &Bound<'_, PyAny>,
+        dtype: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Self> {
+        use pyo3::types::PySequence;
+
+        // First check if it's already an Array object
+        if let Ok(arr) = data.extract::<PyRef<Array>>() {
+            // If dtype is specified and different, convert; otherwise just copy
+            if let Some(dt) = dtype {
+                let target_dtype = Self::parse_dtype(dt)?;
+                let target_dtype_obj = Self::elemtype_to_dtype(target_dtype)?;
+                return Ok(arr.astype(target_dtype_obj));
+            }
+            return Ok(arr.copy());
+        }
+
+        // Then try NumPy array directly (for compatibility with existing NumPy arrays)
+        if let Ok(arr) = Self::try_from_numpy(data) {
+            return Ok(arr);
+        }
+
+        // Finally try Python sequence (list/tuple) - parse using pure Rust
+        if let Ok(_seq) = data.cast::<PySequence>() {
+            return Self::from_nested_sequence(data, dtype);
+        }
+
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "Input must be a numpy array, Array, or Python sequence (list/tuple)",
+        ))
+    }
+
+    /// Parse dtype from Python (string or `DType` object) to `ElemType`
+    fn parse_dtype(dtype: &Bound<'_, PyAny>) -> PyResult<ElemType> {
+        use crate::dtypes::DType;
+
+        // Try to extract as string first
+        if let Ok(s) = dtype.extract::<String>() {
+            let dtype_obj = DType::from_str(&s)?;
+            return Self::dtype_to_elemtype(&dtype_obj);
+        }
+
+        // Try to extract as DType object
+        if let Ok(dtype_obj) = dtype.extract::<DType>() {
+            return Self::dtype_to_elemtype(&dtype_obj);
+        }
+
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "dtype must be a string or DType object",
+        ))
+    }
+
+    /// Convert `DType` to `ElemType`
+    fn dtype_to_elemtype(dtype: &DType) -> PyResult<ElemType> {
+        use crate::dtypes::DType;
+
+        match dtype {
+            DType::Bool => Ok(ElemType::Bool),
+            DType::I8 => Ok(ElemType::Int8),
+            DType::I16 => Ok(ElemType::Int16),
+            DType::I32 => Ok(ElemType::Int32),
+            DType::I64 => Ok(ElemType::Int64),
+            DType::F32 => Ok(ElemType::Float32),
+            DType::F64 => Ok(ElemType::Float64),
+            DType::Complex64 => Ok(ElemType::Complex64),
+            DType::Complex128 => Ok(ElemType::Complex128),
+            DType::Pauli => Ok(ElemType::Pauli),
+            DType::PauliString => Ok(ElemType::PauliString),
+        }
+    }
+
+    /// Convert `ElemType` to `DType`
+    fn elemtype_to_dtype(elemtype: ElemType) -> PyResult<DType> {
+        use crate::dtypes::DType;
+
+        match elemtype {
+            ElemType::Bool => Ok(DType::Bool),
+            ElemType::Int8 => Ok(DType::I8),
+            ElemType::Int16 => Ok(DType::I16),
+            ElemType::Int32 => Ok(DType::I32),
+            ElemType::Int64 => Ok(DType::I64),
+            ElemType::Float32 => Ok(DType::F32),
+            ElemType::Float64 => Ok(DType::F64),
+            ElemType::Complex64 => Ok(DType::Complex64),
+            ElemType::Complex128 => Ok(DType::Complex128),
+            ElemType::Pauli => Ok(DType::Pauli),
+            ElemType::PauliString => Ok(DType::PauliString),
+        }
+    }
+
+    /// Parse nested Python sequences (lists/tuples) into Array - pure Rust implementation
+    fn from_nested_sequence(
+        data: &Bound<'_, PyAny>,
+        dtype: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Self> {
+
+
+        // Determine shape and element type
+        let shape = Self::infer_shape(data)?;
+        let ndim = shape.len();
+
+        if ndim == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Cannot create array from empty sequence",
+            ));
+        }
+
+        // Parse dtype if provided, otherwise auto-detect
+        let mut elem_type = if let Some(dt) = dtype {
+            Self::parse_dtype(dt)?
+        } else {
+            // Use Int64 as default for auto-detection, will promote to float/complex if needed
+            ElemType::Int64
+        };
+
+        // Flatten and collect all elements
+        let mut flat_f64: Vec<f64> = Vec::new();
+        let mut flat_complex: Vec<num_complex::Complex<f64>> = Vec::new();
+        let mut flat_pauli: Vec<Pauli> = Vec::new();
+        let mut flat_paulistring: Vec<PauliString> = Vec::new();
+        let mut flat_bool: Vec<bool> = Vec::new();
+        let mut flat_i64: Vec<i64> = Vec::new();
+
+        Self::flatten_sequence(
+            data,
+            &mut flat_f64,
+            &mut flat_complex,
+            &mut flat_pauli,
+            &mut flat_paulistring,
+            &mut flat_bool,
+            &mut flat_i64,
+            &mut elem_type,
+            dtype.is_some(), // explicit_dtype flag
+        )?;
+
+        // Create ndarray with the inferred shape
+        match elem_type {
+            ElemType::Bool => {
+                let arr = ArrayD::from_shape_vec(shape, flat_bool).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                })?;
+                Ok(Self {
+                    data: ArrayData::Bool(arr),
+                })
+            }
+            ElemType::Int8 => {
+                // Convert i64 to i8
+                let flat_i8: Vec<i8> = flat_i64.iter().map(|&x| x as i8).collect();
+                let arr = ArrayD::from_shape_vec(shape, flat_i8).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                })?;
+                Ok(Self {
+                    data: ArrayData::Int8(arr),
+                })
+            }
+            ElemType::Int16 => {
+                // Convert i64 to i16
+                let flat_i16: Vec<i16> = flat_i64.iter().map(|&x| x as i16).collect();
+                let arr = ArrayD::from_shape_vec(shape, flat_i16).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                })?;
+                Ok(Self {
+                    data: ArrayData::Int16(arr),
+                })
+            }
+            ElemType::Int32 => {
+                // Convert i64 to i32
+                let flat_i32: Vec<i32> = flat_i64.iter().map(|&x| x as i32).collect();
+                let arr = ArrayD::from_shape_vec(shape, flat_i32).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                })?;
+                Ok(Self {
+                    data: ArrayData::Int32(arr),
+                })
+            }
+            ElemType::Int64 => {
+                let arr = ArrayD::from_shape_vec(shape, flat_i64).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                })?;
+                Ok(Self {
+                    data: ArrayData::Int64(arr),
+                })
+            }
+            ElemType::Float32 => {
+                // Convert f64 to f32
+                let flat_f32: Vec<f32> = flat_f64.iter().map(|&x| x as f32).collect();
+                let arr = ArrayD::from_shape_vec(shape, flat_f32).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                })?;
+                Ok(Self {
+                    data: ArrayData::Float32(arr),
+                })
+            }
+            ElemType::Float64 => {
+                let arr = ArrayD::from_shape_vec(shape, flat_f64).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                })?;
+                Ok(Self {
+                    data: ArrayData::Float64(arr),
+                })
+            }
+            ElemType::Complex64 => {
+                // Convert Complex<f64> to Complex<f32>
+                let flat_c64: Vec<num_complex::Complex<f32>> = flat_complex
+                    .iter()
+                    .map(|&c| num_complex::Complex::new(c.re as f32, c.im as f32))
+                    .collect();
+                let arr = ArrayD::from_shape_vec(shape, flat_c64).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                })?;
+                Ok(Self {
+                    data: ArrayData::Complex64(arr),
+                })
+            }
+            ElemType::Complex128 => {
+                let arr = ArrayD::from_shape_vec(shape, flat_complex).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                })?;
+                Ok(Self {
+                    data: ArrayData::Complex128(arr),
+                })
+            }
+            ElemType::Pauli => {
+                let arr = ArrayD::from_shape_vec(shape, flat_pauli).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                })?;
+                Ok(Self {
+                    data: ArrayData::Pauli(arr),
+                })
+            }
+            ElemType::PauliString => {
+                let arr = ArrayD::from_shape_vec(shape, flat_paulistring).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                })?;
+                Ok(Self {
+                    data: ArrayData::PauliString(arr),
+                })
+            }
+        }
+    }
+
+    /// Infer the shape of a nested sequence
+    fn infer_shape(data: &Bound<'_, PyAny>) -> PyResult<Vec<usize>> {
+        use pyo3::types::{PySequence, PyString};
+
+        let mut shape = Vec::new();
+        let mut current = data.clone();
+
+        loop {
+            // Check if this is a string first - strings are sequences but should be treated as scalars
+            if current.is_instance_of::<PyString>() {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Arrays cannot contain string objects. Use Pauli objects instead of strings for Pauli symbols.",
+                ));
+            }
+
+            // Check if this is an Array object - if so, add its shape and stop
+            if let Ok(arr) = current.extract::<pyo3::PyRef<Array>>() {
+                shape.extend(arr.data.shape());
+                break;
+            }
+
+            if let Ok(seq) = current.cast::<PySequence>() {
+                let len = seq.len()?;
+                shape.push(len);
+
+                if len > 0 {
+                    current = seq.get_item(0)?;
+                } else {
+                    break;
+                }
+            } else {
+                // Reached a scalar
+                break;
+            }
+        }
+
+        Ok(shape)
+    }
+
+    /// Flatten a nested sequence into a 1D vector
+    fn flatten_sequence(
+        data: &Bound<'_, PyAny>,
+        flat_f64: &mut Vec<f64>,
+        flat_complex: &mut Vec<num_complex::Complex<f64>>,
+        flat_pauli: &mut Vec<Pauli>,
+        flat_paulistring: &mut Vec<PauliString>,
+        flat_bool: &mut Vec<bool>,
+        flat_i64: &mut Vec<i64>,
+        elem_type: &mut ElemType,
+        explicit_dtype: bool,
+    ) -> PyResult<()> {
+        use pyo3::types::{PySequence, PyString};
+
+        // Check if this is a string first - strings are sequences in Python but should be treated as scalars/objects
+        // Arrays cannot contain arbitrary Python objects like strings
+        if data.is_instance_of::<PyString>() {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "Arrays cannot contain string objects. Use Pauli objects instead of strings for Pauli symbols.",
+            ));
+        }
+
+        // Check if this is an Array object (before checking sequence)
+        // If it is, we need to flatten its contents directly
+        if let Ok(arr) = data.extract::<pyo3::PyRef<Array>>() {
+            // It's an Array - flatten its raw data directly
+            match &arr.data {
+                ArrayData::Bool(ndarray) => {
+                    for val in ndarray {
+                        flat_bool.push(*val);
+                    }
+                    if !explicit_dtype && *elem_type != ElemType::Bool {
+                        *elem_type = ElemType::Bool;
+                    }
+                }
+                ArrayData::Int8(ndarray) => {
+                    for val in ndarray {
+                        flat_i64.push(i64::from(*val));
+                    }
+                }
+                ArrayData::Int16(ndarray) => {
+                    for val in ndarray {
+                        flat_i64.push(i64::from(*val));
+                    }
+                }
+                ArrayData::Int32(ndarray) => {
+                    for val in ndarray {
+                        flat_i64.push(i64::from(*val));
+                    }
+                }
+                ArrayData::Int64(ndarray) => {
+                    for val in ndarray {
+                        flat_i64.push(*val);
+                    }
+                }
+                ArrayData::Float32(ndarray) => {
+                    for val in ndarray {
+                        flat_f64.push(f64::from(*val));
+                    }
+                    if !explicit_dtype {
+                        *elem_type = ElemType::Float64;
+                    }
+                }
+                ArrayData::Float64(ndarray) => {
+                    for val in ndarray {
+                        flat_f64.push(*val);
+                    }
+                    if !explicit_dtype {
+                        *elem_type = ElemType::Float64;
+                    }
+                }
+                ArrayData::Complex64(ndarray) => {
+                    for val in ndarray {
+                        flat_complex.push(num_complex::Complex::new(f64::from(val.re), f64::from(val.im)));
+                    }
+                    if !explicit_dtype {
+                        *elem_type = ElemType::Complex128;
+                    }
+                }
+                ArrayData::Complex128(ndarray) => {
+                    for val in ndarray {
+                        flat_complex.push(*val);
+                    }
+                    if !explicit_dtype {
+                        *elem_type = ElemType::Complex128;
+                    }
+                }
+                ArrayData::Pauli(ndarray) => {
+                    for val in ndarray {
+                        flat_pauli.push(*val);
+                    }
+                    if !explicit_dtype {
+                        *elem_type = ElemType::Pauli;
+                    }
+                }
+                ArrayData::PauliString(ndarray) => {
+                    for val in ndarray {
+                        flat_paulistring.push(val.clone());
+                    }
+                    if !explicit_dtype {
+                        *elem_type = ElemType::PauliString;
+                    }
+                }
+            }
+        } else if let Ok(seq) = data.cast::<PySequence>() {
+            // It's a sequence - recurse
+            for i in 0..seq.len()? {
+                let item = seq.get_item(i)?;
+                Self::flatten_sequence(
+                    &item,
+                    flat_f64,
+                    flat_complex,
+                    flat_pauli,
+                    flat_paulistring,
+                    flat_bool,
+                    flat_i64,
+                    elem_type,
+                    explicit_dtype,
+                )?;
+            }
+        } else {
+            // It's a scalar - extract it based on explicit or inferred type
+            if explicit_dtype {
+                // Explicit dtype: convert value to target type
+                Self::extract_and_convert_value(
+                    data,
+                    *elem_type,
+                    flat_f64,
+                    flat_complex,
+                    flat_pauli,
+                    flat_paulistring,
+                    flat_bool,
+                    flat_i64,
+                )?;
+            } else {
+                // Auto-detect type (Priority 2, 3, and 4 will be added here)
+                Self::extract_and_infer_type(
+                    data,
+                    elem_type,
+                    flat_f64,
+                    flat_complex,
+                    flat_pauli,
+                    flat_paulistring,
+                    flat_bool,
+                    flat_i64,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Extract value and convert to explicit dtype
+    fn extract_and_convert_value(
+        data: &Bound<'_, PyAny>,
+        target_type: ElemType,
+        flat_f64: &mut Vec<f64>,
+        flat_complex: &mut Vec<num_complex::Complex<f64>>,
+        flat_pauli: &mut Vec<Pauli>,
+        flat_paulistring: &mut Vec<PauliString>,
+        flat_bool: &mut Vec<bool>,
+        flat_i64: &mut Vec<i64>,
+    ) -> PyResult<()> {
+        match target_type {
+            ElemType::Bool => {
+                // Try bool first, then convert from int
+                if let Ok(val) = data.extract::<bool>() {
+                    flat_bool.push(val);
+                } else if let Ok(val) = data.extract::<i64>() {
+                    flat_bool.push(val != 0);
+                } else {
+                    let val = data.extract::<f64>()?;
+                    flat_bool.push(val != 0.0);
+                }
+            }
+            ElemType::Int8 | ElemType::Int16 | ElemType::Int32 | ElemType::Int64 => {
+                let val = data.extract::<i64>()?;
+                flat_i64.push(val);
+            }
+            ElemType::Float32 | ElemType::Float64 => {
+                let val = data.extract::<f64>()?;
+                flat_f64.push(val);
+            }
+            ElemType::Complex64 | ElemType::Complex128 => {
+                // Try complex first, then convert float
+                if let Ok(val) = data.extract::<num_complex::Complex<f64>>() {
+                    flat_complex.push(val);
+                } else {
+                    let val = data.extract::<f64>()?;
+                    flat_complex.push(num_complex::Complex::new(val, 0.0));
+                }
+            }
+            ElemType::Pauli => {
+                let val = data.extract::<Pauli>()?;
+                flat_pauli.push(val);
+            }
+            ElemType::PauliString => {
+                let val = data.extract::<PauliString>()?;
+                flat_paulistring.push(val);
+            }
+        }
+        Ok(())
+    }
+
+    /// Extract value and infer type automatically
+    fn extract_and_infer_type(
+        data: &Bound<'_, PyAny>,
+        elem_type: &mut ElemType,
+        flat_f64: &mut Vec<f64>,
+        flat_complex: &mut Vec<num_complex::Complex<f64>>,
+        flat_pauli: &mut Vec<Pauli>,
+        flat_paulistring: &mut Vec<PauliString>,
+        flat_bool: &mut Vec<bool>,
+        flat_i64: &mut Vec<i64>,
+    ) -> PyResult<()> {
+        use pyo3::types::PyBool;
+
+        // Priority order: PauliString > Pauli > Bool > Int > Complex > Float
+        if data.is_instance_of::<PauliString>() {
+            *elem_type = ElemType::PauliString;
+            let paulistring = data.extract::<PauliString>()?;
+            flat_paulistring.push(paulistring);
+        } else if data.is_instance_of::<Pauli>() {
+            *elem_type = ElemType::Pauli;
+            let pauli = data.extract::<Pauli>()?;
+            flat_pauli.push(pauli);
+        } else if data.is_instance_of::<PyBool>() {
+            // Priority 2: Auto-detect booleans
+            if *elem_type != ElemType::Bool {
+                // Type promotion needed - convert existing values
+                Self::promote_type_to_bool(elem_type, flat_bool, flat_i64, flat_f64)?;
+            }
+            let val = data.extract::<bool>()?;
+            flat_bool.push(val);
+        } else if data.is_instance_of::<pyo3::types::PyComplex>() {
+            // Found complex - promote if needed
+            if matches!(
+                *elem_type,
+                ElemType::Float64 | ElemType::Int64 | ElemType::Bool
+            ) {
+                Self::promote_type_to_complex(
+                    elem_type,
+                    flat_complex,
+                    flat_f64,
+                    flat_i64,
+                    flat_bool,
+                )?;
+            }
+            *elem_type = ElemType::Complex128;
+            let val = data.extract::<num_complex::Complex<f64>>()?;
+            flat_complex.push(val);
+        } else {
+            // Priority 3: Check if it's an integer by type name
+            let type_name = data.get_type().name()?;
+
+            if type_name == "int" {
+                // It's a Python int
+                let ival = data.extract::<i64>()?;
+                match elem_type {
+                    ElemType::Complex128 | ElemType::Complex64 => {
+                        flat_complex.push(num_complex::Complex::new(ival as f64, 0.0));
+                    }
+                    ElemType::Float64 | ElemType::Float32 => {
+                        flat_f64.push(ival as f64);
+                    }
+                    ElemType::Bool => {
+                        flat_bool.push(ival != 0);
+                    }
+                    _ => {
+                        // First value or already in int mode
+                        *elem_type = ElemType::Int64;
+                        flat_i64.push(ival);
+                    }
+                }
+                return Ok(());
+            }
+
+            // Try as float
+            if let Ok(val) = data.extract::<f64>() {
+                if matches!(*elem_type, ElemType::Int64) {
+                    Self::promote_type_to_float(elem_type, flat_f64, flat_i64)?;
+                }
+                if *elem_type == ElemType::Complex128 {
+                    flat_complex.push(num_complex::Complex::new(val, 0.0));
+                } else {
+                    *elem_type = ElemType::Float64;
+                    flat_f64.push(val);
+                }
+                return Ok(());
+            }
+
+            // If we got here, extraction failed
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "Cannot extract numeric value from {type_name}"
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Promote existing values to bool
+    fn promote_type_to_bool(
+        elem_type: &mut ElemType,
+        flat_bool: &mut Vec<bool>,
+        flat_i64: &mut Vec<i64>,
+        flat_f64: &mut Vec<f64>,
+    ) -> PyResult<()> {
+        match elem_type {
+            ElemType::Int64 => {
+                for &i in flat_i64.iter() {
+                    flat_bool.push(i != 0);
+                }
+                flat_i64.clear();
+            }
+            ElemType::Float64 => {
+                for &f in flat_f64.iter() {
+                    flat_bool.push(f != 0.0);
+                }
+                flat_f64.clear();
+            }
+            _ => {}
+        }
+        *elem_type = ElemType::Bool;
+        Ok(())
+    }
+
+    /// Promote existing values to float
+    fn promote_type_to_float(
+        elem_type: &mut ElemType,
+        flat_f64: &mut Vec<f64>,
+        flat_i64: &mut Vec<i64>,
+    ) -> PyResult<()> {
+        for &i in flat_i64.iter() {
+            flat_f64.push(i as f64);
+        }
+        flat_i64.clear();
+        *elem_type = ElemType::Float64;
+        Ok(())
+    }
+
+    /// Promote existing values to complex
+    fn promote_type_to_complex(
+        elem_type: &mut ElemType,
+        flat_complex: &mut Vec<num_complex::Complex<f64>>,
+        flat_f64: &mut Vec<f64>,
+        flat_i64: &mut Vec<i64>,
+        flat_bool: &mut Vec<bool>,
+    ) -> PyResult<()> {
+        match elem_type {
+            ElemType::Float64 => {
+                for &f in flat_f64.iter() {
+                    flat_complex.push(num_complex::Complex::new(f, 0.0));
+                }
+                flat_f64.clear();
+            }
+            ElemType::Int64 => {
+                for &i in flat_i64.iter() {
+                    flat_complex.push(num_complex::Complex::new(i as f64, 0.0));
+                }
+                flat_i64.clear();
+            }
+            ElemType::Bool => {
+                for &b in flat_bool.iter() {
+                    flat_complex.push(num_complex::Complex::new(if b { 1.0 } else { 0.0 }, 0.0));
+                }
+                flat_bool.clear();
+            }
+            _ => {}
+        }
+        *elem_type = ElemType::Complex128;
+        Ok(())
+    }
+
+    /// Try to create Array from `NumPy` array
+    fn try_from_numpy(array: &Bound<'_, PyAny>) -> PyResult<Self> {
+        use numpy::{PyArrayDyn, PyArrayMethods};
+
+        // Try to extract as each dtype in order of likelihood
+        // Start with float64 as it's most common
+        if let Ok(arr) = array.cast::<PyArrayDyn<f64>>() {
+            let ndarray = arr.to_owned_array();
+            return Ok(Self {
+                data: ArrayData::Float64(ndarray),
+            });
+        }
+
+        if let Ok(arr) = array.cast::<PyArrayDyn<i64>>() {
+            let ndarray = arr.to_owned_array();
+            return Ok(Self {
+                data: ArrayData::Int64(ndarray),
+            });
+        }
+
+        if let Ok(arr) = array.cast::<PyArrayDyn<num_complex::Complex<f64>>>() {
+            let ndarray = arr.to_owned_array();
+            return Ok(Self {
+                data: ArrayData::Complex128(ndarray),
+            });
+        }
+
+        if let Ok(arr) = array.cast::<PyArrayDyn<f32>>() {
+            let ndarray = arr.to_owned_array();
+            return Ok(Self {
+                data: ArrayData::Float32(ndarray),
+            });
+        }
+
+        if let Ok(arr) = array.cast::<PyArrayDyn<i32>>() {
+            let ndarray = arr.to_owned_array();
+            return Ok(Self {
+                data: ArrayData::Int32(ndarray),
+            });
+        }
+
+        if let Ok(arr) = array.cast::<PyArrayDyn<i16>>() {
+            let ndarray = arr.to_owned_array();
+            return Ok(Self {
+                data: ArrayData::Int16(ndarray),
+            });
+        }
+
+        if let Ok(arr) = array.cast::<PyArrayDyn<i8>>() {
+            let ndarray = arr.to_owned_array();
+            return Ok(Self {
+                data: ArrayData::Int8(ndarray),
+            });
+        }
+
+        if let Ok(arr) = array.cast::<PyArrayDyn<num_complex::Complex<f32>>>() {
+            let ndarray = arr.to_owned_array();
+            return Ok(Self {
+                data: ArrayData::Complex64(ndarray),
+            });
+        }
+
+        if let Ok(arr) = array.cast::<PyArrayDyn<bool>>() {
+            let ndarray = arr.to_owned_array();
+            return Ok(Self {
+                data: ArrayData::Bool(ndarray),
+            });
+        }
+
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "Input must be a numpy array with a supported dtype",
+        ))
+    }
+
     /// Create a new `Array` from a typed ndarray
     pub fn from_array_i64(arr: ArrayD<i64>) -> Self {
         Self {
@@ -1062,6 +1838,46 @@ impl Array {
         Self {
             data: ArrayData::Bool(arr),
         }
+    }
+
+    /// Compute the broadcast shape for two arrays following `NumPy` broadcasting rules.
+    ///
+    /// `NumPy` broadcasting rules:
+    /// 1. If arrays have different number of dimensions, prepend 1s to the smaller one
+    /// 2. For each dimension, the sizes must either:
+    ///    - Be equal, or
+    ///    - One of them is 1
+    /// 3. The output shape is the maximum of the two shapes in each dimension
+    ///
+    /// Returns `Ok(broadcast_shape)` if broadcasting is possible, Err otherwise.
+    fn broadcast_shape(shape1: &[usize], shape2: &[usize]) -> Result<Vec<usize>, String> {
+        let ndim1 = shape1.len();
+        let ndim2 = shape2.len();
+        let max_ndim = ndim1.max(ndim2);
+
+        let mut result = Vec::with_capacity(max_ndim);
+
+        // Iterate from the trailing dimensions
+        for i in 0..max_ndim {
+            let dim1 = if i < ndim1 { shape1[ndim1 - 1 - i] } else { 1 };
+            let dim2 = if i < ndim2 { shape2[ndim2 - 1 - i] } else { 1 };
+
+            if dim1 == dim2 {
+                result.push(dim1);
+            } else if dim1 == 1 {
+                result.push(dim2);
+            } else if dim2 == 1 {
+                result.push(dim1);
+            } else {
+                return Err(format!(
+                    "Shape mismatch: cannot broadcast shapes {shape1:?} and {shape2:?}"
+                ));
+            }
+        }
+
+        // Reverse to get the correct order (we built it backwards)
+        result.reverse();
+        Ok(result)
     }
 
     /// Helper method for binary arithmetic operations: self op other
@@ -1203,6 +2019,12 @@ impl Array {
                     )?
                     .into_any())
                 }
+                ArrayData::Pauli(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Arithmetic operations not supported on Pauli arrays",
+                )),
+                ArrayData::PauliString(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Arithmetic operations not supported on PauliString arrays",
+                )),
             }
         } else if let Ok(complex_scalar) = other.cast::<PyComplex>() {
             // Complex scalar operation
@@ -1286,22 +2108,40 @@ impl Array {
 
             match (&self.data, other_data) {
                 (ArrayData::Float64(a), ArrayData::Float64(b)) => {
-                    if a.shape() != b.shape() {
-                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                            "Shape mismatch for {}: {:?} vs {:?}",
-                            op_name,
+                    // Compute broadcast shape
+                    let broadcast_shape = Self::broadcast_shape(a.shape(), b.shape())
+                        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+                    // Convert to IxDyn for broadcasting
+                    let target_shape = IxDyn(&broadcast_shape);
+
+                    // Broadcast both arrays to the target shape
+                    let a_broadcast = a.broadcast(target_shape.clone()).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to broadcast array with shape {:?} to {:?}",
                             a.shape(),
-                            b.shape()
-                        )));
-                    }
-                    let result = a
+                            broadcast_shape
+                        ))
+                    })?;
+                    let b_broadcast = b.broadcast(target_shape.clone()).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to broadcast array with shape {:?} to {:?}",
+                            b.shape(),
+                            broadcast_shape
+                        ))
+                    })?;
+
+                    // Apply operation element-wise on broadcasted arrays
+                    let result = a_broadcast
                         .iter()
-                        .zip(b.iter())
+                        .zip(b_broadcast.iter())
                         .map(|(x, y)| op(*x, *y))
                         .collect::<Vec<_>>();
-                    let result_arr = ArrayD::from_shape_vec(a.raw_dim(), result).map_err(|e| {
+
+                    let result_arr = ArrayD::from_shape_vec(target_shape, result).map_err(|e| {
                         pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                     })?;
+
                     Ok(Py::new(
                         py,
                         Array {
@@ -1311,22 +2151,40 @@ impl Array {
                     .into_any())
                 }
                 (ArrayData::Int64(a), ArrayData::Int64(b)) => {
-                    if a.shape() != b.shape() {
-                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                            "Shape mismatch for {}: {:?} vs {:?}",
-                            op_name,
+                    // Compute broadcast shape
+                    let broadcast_shape = Self::broadcast_shape(a.shape(), b.shape())
+                        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+                    // Convert to IxDyn for broadcasting
+                    let target_shape = IxDyn(&broadcast_shape);
+
+                    // Broadcast both arrays to the target shape
+                    let a_broadcast = a.broadcast(target_shape.clone()).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to broadcast array with shape {:?} to {:?}",
                             a.shape(),
-                            b.shape()
-                        )));
-                    }
-                    let result = a
+                            broadcast_shape
+                        ))
+                    })?;
+                    let b_broadcast = b.broadcast(target_shape.clone()).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to broadcast array with shape {:?} to {:?}",
+                            b.shape(),
+                            broadcast_shape
+                        ))
+                    })?;
+
+                    // Apply operation element-wise on broadcasted arrays
+                    let result = a_broadcast
                         .iter()
-                        .zip(b.iter())
+                        .zip(b_broadcast.iter())
                         .map(|(x, y)| op(*x as f64, *y as f64) as i64)
                         .collect::<Vec<_>>();
-                    let result_arr = ArrayD::from_shape_vec(a.raw_dim(), result).map_err(|e| {
+
+                    let result_arr = ArrayD::from_shape_vec(target_shape, result).map_err(|e| {
                         pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                     })?;
+
                     Ok(Py::new(
                         py,
                         Array {
@@ -1336,26 +2194,44 @@ impl Array {
                     .into_any())
                 }
                 (ArrayData::Complex128(a), ArrayData::Complex128(b)) => {
-                    if a.shape() != b.shape() {
-                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                            "Shape mismatch for {}: {:?} vs {:?}",
-                            op_name,
+                    // Compute broadcast shape
+                    let broadcast_shape = Self::broadcast_shape(a.shape(), b.shape())
+                        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+                    // Convert to IxDyn for broadcasting
+                    let target_shape = IxDyn(&broadcast_shape);
+
+                    // Broadcast both arrays to the target shape
+                    let a_broadcast = a.broadcast(target_shape.clone()).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to broadcast array with shape {:?} to {:?}",
                             a.shape(),
-                            b.shape()
-                        )));
-                    }
-                    let result = a
+                            broadcast_shape
+                        ))
+                    })?;
+                    let b_broadcast = b.broadcast(target_shape.clone()).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to broadcast array with shape {:?} to {:?}",
+                            b.shape(),
+                            broadcast_shape
+                        ))
+                    })?;
+
+                    // Apply operation element-wise on broadcasted arrays
+                    let result = a_broadcast
                         .iter()
-                        .zip(b.iter())
+                        .zip(b_broadcast.iter())
                         .map(|(x, y)| {
                             let re = op(x.re, y.re);
                             let im = op(x.im, y.im);
                             Complex64::new(re, im)
                         })
                         .collect::<Vec<_>>();
-                    let result_arr = ArrayD::from_shape_vec(a.raw_dim(), result).map_err(|e| {
+
+                    let result_arr = ArrayD::from_shape_vec(target_shape, result).map_err(|e| {
                         pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                     })?;
+
                     Ok(Py::new(
                         py,
                         Array {
@@ -1374,22 +2250,41 @@ impl Array {
 
             match &self.data {
                 ArrayData::Float64(a) => {
-                    if a.shape() != other_arr.shape() {
-                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                            "Shape mismatch for {}: {:?} vs {:?}",
-                            op_name,
+                    // Compute broadcast shape
+                    let broadcast_shape = Self::broadcast_shape(a.shape(), other_arr.shape())
+                        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+                    // Convert to IxDyn for broadcasting
+                    let target_shape = IxDyn(&broadcast_shape);
+
+                    // Broadcast both arrays to the target shape
+                    let a_broadcast = a.broadcast(target_shape.clone()).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "Failed to broadcast array with shape {:?} to {:?}",
                             a.shape(),
-                            other_arr.shape()
-                        )));
-                    }
-                    let result = a
+                            broadcast_shape
+                        ))
+                    })?;
+                    let b_broadcast =
+                        other_arr.broadcast(target_shape.clone()).ok_or_else(|| {
+                            pyo3::exceptions::PyValueError::new_err(format!(
+                                "Failed to broadcast array with shape {:?} to {:?}",
+                                other_arr.shape(),
+                                broadcast_shape
+                            ))
+                        })?;
+
+                    // Apply operation element-wise on broadcasted arrays
+                    let result = a_broadcast
                         .iter()
-                        .zip(other_arr.iter())
+                        .zip(b_broadcast.iter())
                         .map(|(x, y)| op(*x, *y))
                         .collect::<Vec<_>>();
-                    let result_arr = ArrayD::from_shape_vec(a.raw_dim(), result).map_err(|e| {
+
+                    let result_arr = ArrayD::from_shape_vec(target_shape, result).map_err(|e| {
                         pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                     })?;
+
                     Ok(Py::new(
                         py,
                         Array {
@@ -1516,6 +2411,12 @@ impl Array {
                     )?
                     .into_any())
                 }
+                ArrayData::Pauli(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Arithmetic operations not supported on Pauli arrays",
+                )),
+                ArrayData::PauliString(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Arithmetic operations not supported on PauliString arrays",
+                )),
             }
         } else {
             Err(pyo3::exceptions::PyTypeError::new_err(format!(
@@ -1573,6 +2474,12 @@ impl Array {
                         "Comparison {op_name} not supported for complex arrays"
                     )))
                 }
+                ArrayData::Pauli(_) => Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Comparison {op_name} not supported for Pauli arrays"
+                ))),
+                ArrayData::PauliString(_) => Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Comparison {op_name} not supported for PauliString arrays"
+                ))),
             }
         } else {
             Err(pyo3::exceptions::PyTypeError::new_err(format!(
@@ -1755,6 +2662,16 @@ impl Array {
                         "Value must be a scalar or array matching the slice shape and dtype",
                     ));
                 }
+            }
+            ArrayData::Pauli(_) => {
+                return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                    "Slice assignment not yet implemented for Pauli arrays",
+                ));
+            }
+            ArrayData::PauliString(_) => {
+                return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                    "Slice assignment not yet implemented for PauliString arrays",
+                ));
             }
         }
 
@@ -2025,6 +2942,16 @@ impl Array {
                     ));
                 }
             }
+            ArrayData::Pauli(_) => {
+                return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                    "Fancy indexing assignment not yet implemented for Pauli arrays",
+                ));
+            }
+            ArrayData::PauliString(_) => {
+                return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                    "Fancy indexing assignment not yet implemented for PauliString arrays",
+                ));
+            }
         }
 
         Ok(())
@@ -2073,7 +3000,7 @@ impl Array {
                         idx_usize
                     };
 
-                    result_vec.push($arr[resolved_idx]);
+                    result_vec.push($arr[resolved_idx].clone());
                 }
 
                 // Convert to ndarray
@@ -2100,6 +3027,8 @@ impl Array {
             ArrayData::Float64(arr) => ArrayData::Float64(impl_fancy_indexing!(arr)),
             ArrayData::Complex64(arr) => ArrayData::Complex64(impl_fancy_indexing!(arr)),
             ArrayData::Complex128(arr) => ArrayData::Complex128(impl_fancy_indexing!(arr)),
+            ArrayData::Pauli(arr) => ArrayData::Pauli(impl_fancy_indexing!(arr)),
+            ArrayData::PauliString(arr) => ArrayData::PauliString(impl_fancy_indexing!(arr)),
         };
 
         Ok(Self { data: result_data })
@@ -2385,6 +3314,54 @@ impl Array {
                     data: ArrayData::Complex128(result),
                 })
             }
+            ArrayData::Pauli(arr) => {
+                let mut result = arr.clone();
+                for (axis, start, stop, step) in slices {
+                    if step < 0 {
+                        let actual_start = if stop == -1 { 0 } else { stop + 1 };
+                        let actual_end = start + 1;
+                        let slice_info = Slice::new(actual_start, Some(actual_end), 1);
+                        result = result.slice_axis(Axis(axis), slice_info).to_owned();
+                        result.invert_axis(Axis(axis));
+
+                        let step_magnitude = step.abs();
+                        if step_magnitude > 1 {
+                            let slice_stepped = Slice::new(0, None, step_magnitude);
+                            result = result.slice_axis(Axis(axis), slice_stepped).to_owned();
+                        }
+                    } else {
+                        let slice_info = Slice::new(start, Some(stop), step);
+                        result = result.slice_axis(Axis(axis), slice_info).to_owned();
+                    }
+                }
+                Ok(Array {
+                    data: ArrayData::Pauli(result),
+                })
+            }
+            ArrayData::PauliString(arr) => {
+                let mut result = arr.clone();
+                for (axis, start, stop, step) in slices {
+                    if step < 0 {
+                        let actual_start = if stop == -1 { 0 } else { stop + 1 };
+                        let actual_end = start + 1;
+                        let slice_info = Slice::new(actual_start, Some(actual_end), 1);
+                        result = result.slice_axis(Axis(axis), slice_info).to_owned();
+                        result.invert_axis(Axis(axis));
+
+                        let step_magnitude = step.abs();
+                        if step_magnitude > 1 {
+                            let slice_stepped = Slice::new(0, None, step_magnitude);
+                            result = result.slice_axis(Axis(axis), slice_stepped).to_owned();
+                        }
+                    } else {
+                        let slice_info = Slice::new(start, Some(stop), step);
+                        result = result.slice_axis(Axis(axis), slice_info).to_owned();
+                    }
+                }
+                Ok(Array {
+                    data: ArrayData::PauliString(result),
+                })
+            }
         }
     }
 
@@ -2405,6 +3382,8 @@ impl Array {
             ArrayData::Int8(arr) => Self::format_array_typed(arr, "int8"),
             ArrayData::Complex64(arr) => Self::format_array_complex_f32(arr),
             ArrayData::Complex128(arr) => Self::format_array_complex_f64(arr),
+            ArrayData::Pauli(arr) => Self::format_array_pauli(arr),
+            ArrayData::PauliString(arr) => Self::format_array_paulistring(arr),
         }
     }
 
@@ -2545,21 +3524,117 @@ impl Array {
         }
     }
 
+    /// Format a Pauli array
+    fn format_array_pauli(arr: &ArrayD<crate::pauli_bindings::Pauli>) -> String {
+        use pecos::prelude::Pauli as RustPauli;
+        let shape = arr.shape();
+        let ndim = shape.len();
+
+        match ndim {
+            1 => {
+                // 1D: [Pauli.X, Pauli.Z, Pauli.Y]
+                let elements: Vec<String> = arr
+                    .iter()
+                    .map(|p| {
+                        let rust_pauli: RustPauli = unsafe { std::mem::transmute_copy(p) };
+                        match rust_pauli {
+                            RustPauli::I => "Pauli.I",
+                            RustPauli::X => "Pauli.X",
+                            RustPauli::Y => "Pauli.Y",
+                            RustPauli::Z => "Pauli.Z",
+                        }
+                        .to_string()
+                    })
+                    .collect();
+                format!("[{}]", elements.join(", "))
+            }
+            _ => {
+                // For 2D+ Pauli, just show shape and dtype
+                format!("Array(shape={shape:?}, dtype=pauli)")
+            }
+        }
+    }
+
+    /// Format a `PauliString` array
+    fn format_array_paulistring(arr: &ArrayD<crate::pauli_bindings::PauliString>) -> String {
+        let shape = arr.shape();
+        let ndim = shape.len();
+
+        match ndim {
+            1 => {
+                // 1D: [PauliString(...), PauliString(...)]
+                let elements: Vec<String> = arr.iter().map(|p| format!("{p:?}")).collect();
+                format!("[{}]", elements.join(", "))
+            }
+            _ => {
+                // For 2D+ PauliString, just show shape and dtype
+                format!("Array(shape={shape:?}, dtype=paulistring)")
+            }
+        }
+    }
+
+    /// Extract scalar value from a 0-dimensional array
+    /// Returns the actual Python scalar instead of an Array wrapper
+    fn extract_scalar(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        if !self.data.shape().is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Cannot extract scalar from non-zero-dimensional array",
+            ));
+        }
+
+        match &self.data {
+            ArrayData::Bool(arr) => {
+                let val = *arr.first().unwrap();
+                Ok(PyBool::new(py, val).to_owned().into_any().unbind())
+            }
+            ArrayData::Int8(arr) => {
+                let val = i64::from(*arr.first().unwrap());
+                Ok(PyInt::new(py, val).clone().into_any().unbind())
+            }
+            ArrayData::Int16(arr) => {
+                let val = i64::from(*arr.first().unwrap());
+                Ok(PyInt::new(py, val).clone().into_any().unbind())
+            }
+            ArrayData::Int32(arr) => {
+                let val = i64::from(*arr.first().unwrap());
+                Ok(PyInt::new(py, val).clone().into_any().unbind())
+            }
+            ArrayData::Int64(arr) => {
+                let val = *arr.first().unwrap();
+                Ok(PyInt::new(py, val).clone().into_any().unbind())
+            }
+            ArrayData::Float32(arr) => {
+                let val = f64::from(*arr.first().unwrap());
+                Ok(PyFloat::new(py, val).clone().into_any().unbind())
+            }
+            ArrayData::Float64(arr) => {
+                let val = *arr.first().unwrap();
+                Ok(PyFloat::new(py, val).clone().into_any().unbind())
+            }
+            ArrayData::Complex64(arr) => {
+                let val = arr.first().unwrap();
+                Ok(pyo3::types::PyComplex::from_doubles(py, f64::from(val.re), f64::from(val.im)).into())
+            }
+            ArrayData::Complex128(arr) => {
+                let val = arr.first().unwrap();
+                Ok(pyo3::types::PyComplex::from_doubles(py, val.re, val.im).into())
+            }
+            ArrayData::Pauli(arr) => {
+                let val = arr.first().unwrap();
+                Ok(Py::new(py, *val)?.into_any())
+            }
+            ArrayData::PauliString(arr) => {
+                let val = arr.first().unwrap();
+                Ok(Py::new(py, val.clone())?.into_any())
+            }
+        }
+    }
+
     /// Apply mixed integer/slice indexing leveraging ndarray's `index_axis` and `slice_axis`
     /// This method handles cases like arr[0, 1:3] or arr[:, 0]
     /// where some dimensions are indexed by integers (reducing dimensionality)
     /// and others are sliced (preserving dimensionality)
     fn apply_mixed_indexing(&self, index_ops: &[IndexOp]) -> PyResult<Self> {
-        // Check if all are integers (pure integer indexing)
-        let all_integers = index_ops.iter().all(|op| matches!(op, IndexOp::Integer(_)));
-        if all_integers {
-            // Pure integer indexing - use existing implementation
-            // This case is already handled by multi_index methods
-            return Err(pyo3::exceptions::PyNotImplementedError::new_err(
-                "Pure integer indexing should be handled by existing code",
-            ));
-        }
-
         // Check if all are slices (pure slice indexing)
         let all_slices = index_ops
             .iter()
@@ -2681,6 +3756,8 @@ impl Array {
             ArrayData::Int8(arr) => apply_mixed_indexing_impl!(arr, Int8),
             ArrayData::Complex128(arr) => apply_mixed_indexing_impl!(arr, Complex128),
             ArrayData::Complex64(arr) => apply_mixed_indexing_impl!(arr, Complex64),
+            ArrayData::Pauli(arr) => apply_mixed_indexing_impl!(arr, Pauli),
+            ArrayData::PauliString(arr) => apply_mixed_indexing_impl!(arr, PauliString),
         }
     }
 
@@ -2903,6 +3980,16 @@ impl Array {
             ArrayData::Complex64(arr) => {
                 apply_mixed_indexing_assignment_impl!(arr, num_complex::Complex<f32>, Complex64)
             }
+            ArrayData::Pauli(_) => {
+                Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                    "Mixed integer/slice indexing assignment not yet implemented for Pauli arrays",
+                ))
+            }
+            ArrayData::PauliString(_) => {
+                Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                    "Mixed integer/slice indexing assignment not yet implemented for PauliString arrays",
+                ))
+            }
         }
     }
 
@@ -3003,4 +4090,26 @@ impl Array {
         );
         Ok(())
     }
+}
+
+/// Create an array from a Python sequence or `NumPy` array
+///
+/// This is a convenience function that wraps the Array constructor,
+/// providing a NumPy-like interface without using `NumPy` in the implementation.
+///
+/// Args:
+///     data: A `NumPy` array or Python sequence (list/tuple)
+///     dtype: Optional dtype specification (`DType` enum or None for auto-detection)
+///
+/// Returns:
+///     A new Array wrapping the data
+///
+/// Examples:
+///     >>> from `pecos_rslib` import array, Pauli
+///     >>> arr = array([1.0, 2.0, 3.0])
+///     >>> `pauli_arr` = array([Pauli.X, Pauli.Y, Pauli.Z])
+#[pyfunction]
+#[pyo3(signature = (data, dtype=None))]
+pub fn array(data: &Bound<'_, PyAny>, dtype: Option<&Bound<'_, PyAny>>) -> PyResult<Array> {
+    Array::from_python_value(data, dtype)
 }

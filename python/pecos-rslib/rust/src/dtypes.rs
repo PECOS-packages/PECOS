@@ -50,6 +50,10 @@ pub enum DType {
     Complex128,
     /// 64-bit complex (Complex<f32>, single precision complex)
     Complex64,
+    /// Pauli operator (I, X, Y, Z)
+    Pauli,
+    /// Pauli string (sequence of Pauli operators)
+    PauliString,
 }
 
 #[pymethods]
@@ -66,6 +70,8 @@ impl DType {
             DType::I8 => "dtypes.i8".to_string(),
             DType::Complex128 => "dtypes.complex128".to_string(),
             DType::Complex64 => "dtypes.complex64".to_string(),
+            DType::Pauli => "dtypes.pauli".to_string(),
+            DType::PauliString => "dtypes.paulistring".to_string(),
         }
     }
 
@@ -123,6 +129,8 @@ impl DType {
             DType::I8 => 1,
             DType::Complex128 => 16,
             DType::Complex64 => 8,
+            DType::Pauli => 1,       // Pauli is stored as 2 bits but we use 1 byte
+            DType::PauliString => 8, // PauliString size varies, return pointer size
         }
     }
 
@@ -227,6 +235,38 @@ impl DType {
                 let complex_val = value.extract::<Complex64>()?;
                 Ok(Py::new(py, ScalarComplex128::new(complex_val))?.into_any())
             }
+            DType::Pauli => {
+                // Import Pauli type
+                use crate::pauli_bindings::Pauli;
+
+                // Try to extract as Pauli directly
+                if let Ok(pauli) = value.extract::<Pauli>() {
+                    return Ok(Py::new(py, pauli)?.into_any());
+                }
+
+                // Try to convert from string
+                if let Ok(s) = value.extract::<&str>() {
+                    let pauli = Pauli::from_str(s)?;
+                    return Ok(Py::new(py, pauli)?.into_any());
+                }
+
+                Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Value must be a Pauli or string ('I', 'X', 'Y', 'Z')",
+                ))
+            }
+            DType::PauliString => {
+                // Import PauliString type
+                use crate::pauli_bindings::PauliString;
+
+                // Try to extract as PauliString directly
+                if let Ok(ps) = value.extract::<PauliString>() {
+                    return Ok(Py::new(py, ps)?.into_any());
+                }
+
+                Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Value must be a PauliString",
+                ))
+            }
         }
     }
 }
@@ -244,6 +284,8 @@ impl DType {
             DType::I8 => "int8",
             DType::Complex128 => "complex128",
             DType::Complex64 => "complex64",
+            DType::Pauli => "object", // Pauli arrays are stored as object arrays in NumPy
+            DType::PauliString => "object", // PauliString arrays are stored as object arrays in NumPy
         }
     }
 
@@ -261,6 +303,9 @@ impl DType {
             "i8" | "int8" => Ok(DType::I8),
             "complex128" | "complex" => Ok(DType::Complex128),
             "complex64" => Ok(DType::Complex64),
+            // Pauli types
+            "pauli" => Ok(DType::Pauli),
+            "paulistring" => Ok(DType::PauliString),
             // Common aliases
             "double" => Ok(DType::F64),
             "float" => Ok(DType::F32),
@@ -418,25 +463,31 @@ pub fn register_dtypes_module(parent_module: &Bound<'_, PyModule>) -> PyResult<(
     dtypes.add_class::<ScalarI64>()?;
     dtypes.add_class::<ScalarComplex128>()?;
 
-    // Create singleton instances for each dtype
+    // Create singleton instances for each dtype (Rust-based names)
     dtypes.add("bool", DType::Bool)?;
-    dtypes.add("f64", DType::F64)?;
-    dtypes.add("f32", DType::F32)?;
-    dtypes.add("i64", DType::I64)?;
+    dtypes.add("i8", DType::I8)?;
+    dtypes.add("i16", DType::I16)?;
     dtypes.add("i32", DType::I32)?;
-    dtypes.add("complex128", DType::Complex128)?;
+    dtypes.add("i64", DType::I64)?;
+    dtypes.add("f32", DType::F32)?;
+    dtypes.add("f64", DType::F64)?;
     dtypes.add("complex64", DType::Complex64)?;
+    dtypes.add("complex128", DType::Complex128)?;
+    dtypes.add("pauli", DType::Pauli)?;
+    dtypes.add("paulistring", DType::PauliString)?;
 
-    // Aliases for convenience
-    dtypes.add("float64", DType::F64)?;
-    dtypes.add("float32", DType::F32)?;
-    dtypes.add("int64", DType::I64)?;
+    // NumPy-compatible aliases for convenience
+    dtypes.add("int8", DType::I8)?;
+    dtypes.add("int16", DType::I16)?;
     dtypes.add("int32", DType::I32)?;
-    dtypes.add("complex", DType::Complex128)?; // Default complex is 128-bit
+    dtypes.add("int64", DType::I64)?;
+    dtypes.add("float32", DType::F32)?;
+    dtypes.add("float64", DType::F64)?;
 
-    // More intuitive aliases
-    dtypes.add("float", DType::F64)?; // Default float is 64-bit
+    // Generic aliases (default to 64-bit)
     dtypes.add("int", DType::I64)?; // Default int is 64-bit
+    dtypes.add("float", DType::F64)?; // Default float is 64-bit
+    dtypes.add("complex", DType::Complex128)?; // Default complex is 128-bit
 
     parent_module.add_submodule(&dtypes)?;
     Ok(())

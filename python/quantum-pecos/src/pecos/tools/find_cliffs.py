@@ -15,47 +15,47 @@ from __future__ import annotations
 
 import numpy as np
 
-from pecos.num import cos, exp, isclose, pi, sin
+from pecos.num import array, cos, exp, isclose, pi, sin
 
 dtype = "complex"
 
 cliff_str2matrix = {
-    "I": np.array([[1.0, 0.0], [0.0, 1.0]], dtype=dtype),
-    "X": np.array([[0.0, 1.0], [1.0 + 0.0j, 0.0 + 0.0j]], dtype=dtype),
-    "Y": np.array([[0.0 + 0.0j, 1.0 + 0.0j], [-1.0 + 0.0j, 0.0 + 0.0j]], dtype=dtype),
-    "Z": np.array([[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, -1.0 + 0.0j]], dtype=dtype),
-    "SX": np.array([[1.0 + 0.0j, 0.0 - 1.0j], [0.0 - 1.0j, 1.0 + 0.0j]], dtype=dtype),
-    "SXdg": np.array([[1.0 + 0.0j, 0.0 + 1.0j], [0.0 + 1.0j, 1.0 + 0.0j]], dtype=dtype),
-    "SY": np.array([[1.0 + 0.0j, -1.0 + 0.0j], [1.0 + 0.0j, 1.0 + 0.0j]], dtype=dtype),
-    "SYdg": np.array(
+    "I": array([[1.0, 0.0], [0.0, 1.0]], dtype=dtype),
+    "X": array([[0.0, 1.0], [1.0 + 0.0j, 0.0 + 0.0j]], dtype=dtype),
+    "Y": array([[0.0 + 0.0j, 1.0 + 0.0j], [-1.0 + 0.0j, 0.0 + 0.0j]], dtype=dtype),
+    "Z": array([[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, -1.0 + 0.0j]], dtype=dtype),
+    "SX": array([[1.0 + 0.0j, 0.0 - 1.0j], [0.0 - 1.0j, 1.0 + 0.0j]], dtype=dtype),
+    "SXdg": array([[1.0 + 0.0j, 0.0 + 1.0j], [0.0 + 1.0j, 1.0 + 0.0j]], dtype=dtype),
+    "SY": array([[1.0 + 0.0j, -1.0 + 0.0j], [1.0 + 0.0j, 1.0 + 0.0j]], dtype=dtype),
+    "SYdg": array(
         [[1.0 + 0.0j, 1.0 + 0.0j], [-1.0 + 0.0j, 1.0 + 0.0j]],
         dtype=dtype,
     ),
-    "SZ": np.array([[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, 0.0 + 1.0j]], dtype=dtype),
-    "SZdg": np.array([[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, 0.0 - 1.0j]], dtype=dtype),
-    "H": np.array([[1.0 + 0.0j, 1.0 + 0.0j], [1.0 + 0.0j, -1.0 + 0.0j]], dtype=dtype),
-    "H2": np.array(
+    "SZ": array([[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, 0.0 + 1.0j]], dtype=dtype),
+    "SZdg": array([[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, 0.0 - 1.0j]], dtype=dtype),
+    "H": array([[1.0 + 0.0j, 1.0 + 0.0j], [1.0 + 0.0j, -1.0 + 0.0j]], dtype=dtype),
+    "H2": array(
         [[1.0 + 0.0j, -1.0 + 0.0j], [-1.0 + 0.0j, -1.0 + 0.0j]],
         dtype=dtype,
     ),
-    "H3": np.array([[0.0 + 0.0j, 1.0 + 0.0j], [0.0 + 1.0j, 0.0 + 0.0j]], dtype=dtype),
-    "H4": np.array([[0.0 + 0.0j, 1.0 + 0.0j], [0.0 - 1.0j, 0.0 + 0.0j]], dtype=dtype),
-    "H5": np.array([[1.0 + 0.0j, 0.0 - 1.0j], [0.0 + 1.0j, -1.0 + 0.0j]], dtype=dtype),
-    "H6": np.array([[1.0 + 0.0j, 0.0 + 1.0j], [0.0 - 1.0j, -1.0 + 0.0j]], dtype=dtype),
-    "F": np.array([[1.0 + 0.0j, 0.0 - 1.0j], [1.0 + 0.0j, 0.0 + 1.0j]], dtype=dtype),
-    "Fdg": np.array([[1.0 + 0.0j, 1.0 + 0.0j], [0.0 + 1.0j, 0.0 - 1.0j]], dtype=dtype),
-    "F2": np.array([[1.0 + 0.0j, -1.0 + 0.0j], [0.0 + 1.0j, 0.0 + 1.0j]], dtype=dtype),
-    "F2dg": np.array(
+    "H3": array([[0.0 + 0.0j, 1.0 + 0.0j], [0.0 + 1.0j, 0.0 + 0.0j]], dtype=dtype),
+    "H4": array([[0.0 + 0.0j, 1.0 + 0.0j], [0.0 - 1.0j, 0.0 + 0.0j]], dtype=dtype),
+    "H5": array([[1.0 + 0.0j, 0.0 - 1.0j], [0.0 + 1.0j, -1.0 + 0.0j]], dtype=dtype),
+    "H6": array([[1.0 + 0.0j, 0.0 + 1.0j], [0.0 - 1.0j, -1.0 + 0.0j]], dtype=dtype),
+    "F": array([[1.0 + 0.0j, 0.0 - 1.0j], [1.0 + 0.0j, 0.0 + 1.0j]], dtype=dtype),
+    "Fdg": array([[1.0 + 0.0j, 1.0 + 0.0j], [0.0 + 1.0j, 0.0 - 1.0j]], dtype=dtype),
+    "F2": array([[1.0 + 0.0j, -1.0 + 0.0j], [0.0 + 1.0j, 0.0 + 1.0j]], dtype=dtype),
+    "F2dg": array(
         [[1.0 + 0.0j, 0.0 - 1.0j], [-1.0 + 0.0j, 0.0 - 1.0j]],
         dtype=dtype,
     ),
-    "F3": np.array([[1.0 + 0.0j, 0.0 + 1.0j], [-1.0 + 0.0j, 0.0 + 1.0j]], dtype=dtype),
-    "F3dg": np.array(
+    "F3": array([[1.0 + 0.0j, 0.0 + 1.0j], [-1.0 + 0.0j, 0.0 + 1.0j]], dtype=dtype),
+    "F3dg": array(
         [[1.0 + 0.0j, -1.0 + 0.0j], [0.0 - 1.0j, 0.0 - 1.0j]],
         dtype=dtype,
     ),
-    "F4": np.array([[1.0 + 0.0j, 1.0 + 0.0j], [0.0 - 1.0j, 0.0 + 1.0j]], dtype=dtype),
-    "F4dg": np.array([[1.0 + 0.0j, 0.0 + 1.0j], [1.0 + 0.0j, 0.0 - 1.0j]], dtype=dtype),
+    "F4": array([[1.0 + 0.0j, 1.0 + 0.0j], [0.0 - 1.0j, 0.0 + 1.0j]], dtype=dtype),
+    "F4dg": array([[1.0 + 0.0j, 0.0 + 1.0j], [1.0 + 0.0j, 0.0 - 1.0j]], dtype=dtype),
 }
 
 r1xy_ang2str = {
@@ -98,7 +98,7 @@ def r1xy_matrix(theta: float, phi: float) -> np.ndarray:
     c = cos(theta * 0.5)
     s = sin(theta * 0.5)
 
-    return np.array(
+    return array(
         [
             [c, -1j * exp(-1j * phi) * s],
             [-1j * exp(1j * phi) * s, c],
@@ -109,7 +109,7 @@ def r1xy_matrix(theta: float, phi: float) -> np.ndarray:
 
 def rz_matrix(theta: float) -> np.ndarray:
     """Creates a np.array matrix for a RZ gate."""
-    return np.array(
+    return array(
         [
             [exp(-1j * theta * 0.5), 0.0],
             [0.0, exp(1j * theta * 0.5)],

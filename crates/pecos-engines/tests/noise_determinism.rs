@@ -14,8 +14,10 @@ use log::info;
 use pecos_engines::noise::general::GeneralNoiseModel;
 use pecos_engines::quantum::{QuantumEngine, StateVecEngine};
 use pecos_engines::{
-    Engine, QuantumSystem, byte_message::ByteMessage, engine_system::ControlEngine,
+    Engine, GateType, QuantumSystem, byte_message::ByteMessage, engine_system::ControlEngine,
 };
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha8Rng;
 use std::collections::BTreeMap;
 
 /// Reset a noise model and set its seed in one operation
@@ -70,42 +72,86 @@ fn create_noise_model() -> GeneralNoiseModel {
     model
 }
 
-fn apply_noise(model: &mut GeneralNoiseModel, msg: &ByteMessage) -> ByteMessage {
+fn apply_noise(model: &mut GeneralNoiseModel, msg: &ByteMessage) -> Vec<ByteMessage> {
     info!("Applying noise to message");
-    match model
+    // If measurement results are required from measurements, we provide pseudorandom ones,
+    // but always from the same seed. This is because we are testing that different noise models
+    // respond differently to the same inputs.
+    let mut measure_rng = ChaCha8Rng::seed_from_u64(5330);
+    let mut state = model
         .start(msg.clone())
-        .expect("Failed to start noise model processing")
-    {
-        pecos_engines::engine_system::EngineStage::NeedsProcessing(noisy_msg) => {
-            info!("Processing noisy message");
-            match model
-                .continue_processing(noisy_msg)
-                .expect("Failed to continue processing with noise model")
-            {
-                pecos_engines::engine_system::EngineStage::Complete(result) => result,
-                pecos_engines::engine_system::EngineStage::NeedsProcessing(_) => {
-                    panic!("Expected Complete stage")
-                }
+        .expect("Failed to start noise model processing");
+    let mut messages = Vec::new();
+    loop {
+        match state {
+            pecos_engines::engine_system::EngineStage::Complete(noisy_msg) => {
+                messages.push(noisy_msg);
+                return messages;
             }
-        }
-        pecos_engines::engine_system::EngineStage::Complete(_) => {
-            panic!("Expected NeedsProcessing stage")
+            pecos_engines::engine_system::EngineStage::NeedsProcessing(intermediate_msg) => {
+                // if the intermediate message requires measurements, give it some!
+                messages.push(intermediate_msg.clone());
+                let gates = intermediate_msg
+                    .quantum_ops()
+                    .expect("Failed to get quantum operations");
+                let mut response = ByteMessage::outcomes_builder();
+                for gate in &gates {
+                    match &gate.gate_type {
+                        GateType::Measure | GateType::MeasureLeaked => {
+                            for _ in &gate.qubits {
+                                let outcome = usize::from(measure_rng.random_bool(0.5));
+                                response.add_outcomes(&[outcome]);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                state = model
+                    .continue_processing(response.build())
+                    .expect("Failed to continue processing with measurements");
+            }
         }
     }
 }
 
-/// Compare two `ByteMessage`s by parsing their quantum operations
-///
-/// This function extracts and compares the quantum operations from two messages
-/// to determine if they represent the same quantum circuit.
+/// Compare two `ByteMessage`s by parsing their quantum operations and results
 fn compare_messages(msg1: &ByteMessage, msg2: &ByteMessage) -> bool {
-    let ops1 = msg1.quantum_ops().unwrap_or_default();
-    let ops2 = msg2.quantum_ops().unwrap_or_default();
+    let quantum_ops_left = msg1.quantum_ops().unwrap_or_default();
+    let quantum_ops_right = msg2.quantum_ops().unwrap_or_default();
+    let results_left = msg1.outcomes().unwrap_or_default();
+    let results_right = msg2.outcomes().unwrap_or_default();
+    if quantum_ops_left != quantum_ops_right {
+        eprintln!("Quantum operations differ: {quantum_ops_left:?} vs {quantum_ops_right:?}",);
+        return false;
+    }
+    if results_left != results_right {
+        eprintln!("Measurement outcomes differ: {results_left:?} vs {results_right:?}");
+        return false;
+    }
+    true
+}
 
-    // For determinism tests, we just need to know if they're equal
-    ops1 == ops2
-    // Note: If additional debug info is needed when messages don't match,
-    // we could expand this function to return details about the differences
+/// Compare two `ByteMessage` vectors by parsing their quantum operations and results
+///
+/// This function extracts and compares the quantum operations and results from two
+/// vectors of messages to determine if they represent the same conversation between
+/// the noise model and the quantum engine.
+fn compare_message_lists(messages_left: &[ByteMessage], messages_right: &[ByteMessage]) -> bool {
+    if messages_left.len() != messages_right.len() {
+        eprintln!(
+            "Message lengths differ: {} vs {}",
+            messages_left.len(),
+            messages_right.len()
+        );
+        return false;
+    }
+    for (i, (msg1, msg2)) in messages_left.iter().zip(messages_right.iter()).enumerate() {
+        if !compare_messages(msg1, msg2) {
+            eprintln!("Messages differ at index {i}");
+            return false;
+        }
+    }
+    true
 }
 
 #[test]
@@ -119,7 +165,7 @@ fn test_prep_determinism() {
 
     // Create a message with multiple prep gates
     let mut builder = ByteMessage::quantum_operations_builder();
-    for _ in 0..6 {
+    for _ in 0..20 {
         builder.add_prep(&[0]);
     }
     let msg = builder.build();
@@ -136,8 +182,14 @@ fn test_prep_determinism() {
     // Now these should be identical
     info!("Comparing noisy1 and noisy2 - should be identical with same seed and model");
     assert!(
-        compare_messages(&noisy1, &noisy2),
-        "Messages should be identical with same seed and model"
+        compare_message_lists(&noisy1, &noisy2),
+        "Message lists should be identical with same seed and model"
+    );
+
+    info!("Ensuring that the noise is actually being applied");
+    assert!(
+        !compare_messages(&msg, &noisy1[0]),
+        "Original message should be different from noisy message"
     );
 
     // Now create a completely different model to verify we see different noise
@@ -152,8 +204,8 @@ fn test_prep_determinism() {
     // These should be different
     info!("Comparing noisy1 and noisy3 - should be different with different seeds");
     assert!(
-        !compare_messages(&noisy1, &noisy3),
-        "Different seeds should produce different messages"
+        !compare_message_lists(&noisy1, &noisy3),
+        "Different seeds should produce different message lists"
     );
 }
 
@@ -193,14 +245,14 @@ fn test_single_qubit_gate_determinism() {
     // Verify determinism
     info!("Comparing results - should be identical with same seed");
     assert!(
-        compare_messages(&noisy1, &noisy2),
+        compare_message_lists(&noisy1, &noisy2),
         "Results should be identical with same seed"
     );
 
     // Verify that we get some errors due to noise
-    info!("Comparing original and noisy messages");
+    info!("Comparing original instruction and its noisy command output");
     assert!(
-        !compare_messages(&msg, &noisy1),
+        !compare_messages(&msg, &noisy1[0]),
         "Original message should be different from noisy message"
     );
 }
@@ -237,14 +289,14 @@ fn test_two_qubit_gate_determinism() {
     // Now these should be identical
     info!("Comparing noisy1 and noisy2 - should be identical with same seed and model");
     assert!(
-        compare_messages(&noisy1, &noisy2),
+        compare_message_lists(&noisy1, &noisy2),
         "Messages should be identical with same seed and model"
     );
 
     // Verify that the message is actually being modified by the noise model
     info!("Verifying that noise is being applied");
     assert!(
-        !compare_messages(&msg, &noisy1),
+        !compare_messages(&msg, &noisy1[0]),
         "Original message should be different from noisy message"
     );
 }
@@ -275,7 +327,7 @@ fn test_measurement_determinism() {
     let noisy2 = apply_noise(&mut model2, &msg);
 
     // Verify determinism in the quantum operations
-    assert!(compare_messages(&noisy1, &noisy2));
+    assert!(compare_message_lists(&noisy1, &noisy2));
 }
 
 #[test]
@@ -307,7 +359,7 @@ fn test_different_seeds_produce_different_results() {
     // With different seeds, we expect different noise results
     info!("Comparing outputs from different seeds - should be different");
     assert!(
-        !compare_messages(&noisy1, &noisy2),
+        !compare_message_lists(&noisy1, &noisy2),
         "Different seeds should produce different noise patterns"
     );
 }

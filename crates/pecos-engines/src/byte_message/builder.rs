@@ -493,6 +493,20 @@ impl ByteMessageBuilder {
         self
     }
 
+    /// Add a `MeasCrosstalkGlobalPayload`
+    pub fn add_meas_crosstalk_global_payload(&mut self, qubits: &[usize]) -> &mut Self {
+        let gate = Gate::meas_crosstalk_global_payload(qubits);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add a `MeasCrosstalkLocalPayload`
+    pub fn add_meas_crosstalk_local_payload(&mut self, qubits: &[usize]) -> &mut Self {
+        let gate = Gate::meas_crosstalk_local_payload(qubits);
+        self.add_gate_command(&gate);
+        self
+    }
+
     /// Add a Prep gate
     pub fn add_prep(&mut self, qubits: &[usize]) -> &mut Self {
         let gate = Gate::prep(qubits);

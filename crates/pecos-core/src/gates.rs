@@ -295,6 +295,47 @@ impl Gate {
         }
     }
 
+    /// Create a new `MeasCrosstalkGlobalPayload` with the data from runtime.
+    ///
+    /// # Arguments
+    ///
+    /// * `qubits` - The qubits that are guaranteed *not* to be affected by the
+    ///   global crosstalk event.
+    ///
+    /// NOTE: it seems unintuitive to give the complement of the list of victim qubits.
+    /// It fits better with the previous version of crosstalk, but we might want to
+    /// refactor this.
+    ///
+    /// # Returns
+    ///
+    /// A new `MeasCrosstalkGlobalPayload` gate with the specified parameters
+    #[must_use]
+    pub fn meas_crosstalk_global_payload(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::new(
+            GateType::MeasCrosstalkGlobalPayload,
+            vec![],
+            qubits.iter().map(|&q| q.into()).collect(),
+        )
+    }
+
+    /// Create a new `MeasCrosstalkLocalPayload` with the data from runtime.
+    ///
+    /// # Arguments
+    ///
+    /// * `qubits` - The qubits that are potential victims of the local crosstalk event.
+    ///
+    /// # Returns
+    ///
+    /// A new `MeasCrosstalkLocalPayload` gate with the specified parameters
+    #[must_use]
+    pub fn meas_crosstalk_local_payload(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::new(
+            GateType::MeasCrosstalkLocalPayload,
+            vec![],
+            qubits.iter().map(|&q| q.into()).collect(),
+        )
+    }
+
     /// Returns the number of angle parameters this gate requires
     ///
     /// # Returns

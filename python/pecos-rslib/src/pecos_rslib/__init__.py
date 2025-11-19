@@ -37,6 +37,7 @@ from pecos_rslib._pecos_rslib import (
     binding,  # llvmlite-compatible binding module for bitcode
     dtypes,  # Rust-backed dtype system  # noqa: F401 - re-exported in __all__
     ir,  # llvmlite-compatible LLVM IR module
+    num,  # Numerical computing functions (scipy.optimize replacements)
 )
 from pecos_rslib.cppsparse_sim import CppSparseSimRs
 from pecos_rslib.num_wrapper import (  # Enhanced num module with axis support
@@ -113,7 +114,6 @@ from pecos_rslib.rssparse_sim import SparseSimRs
 from pecos_rslib.rsstate_vec import StateVecRs
 
 # Import the num module directly from Rust - it already has all submodules set up correctly
-from pecos_rslib._pecos_rslib import num
 
 # Add Python-friendly aliases (without underscores)
 num.where = num.where_

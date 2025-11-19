@@ -159,7 +159,10 @@ impl Engine for QuestStateVecEngine {
                         self.simulator.pz(**q);
                     }
                 }
-                GateType::Idle | GateType::I => {
+                GateType::I
+                | GateType::Idle
+                | GateType::MeasCrosstalkLocalPayload
+                | GateType::MeasCrosstalkGlobalPayload => {
                     // No operation needed
                 }
                 GateType::U => {
@@ -343,7 +346,10 @@ impl Engine for QuestDensityMatrixEngine {
                         self.simulator.pz(**q);
                     }
                 }
-                GateType::Idle | GateType::I => {
+                GateType::I
+                | GateType::Idle
+                | GateType::MeasCrosstalkLocalPayload
+                | GateType::MeasCrosstalkGlobalPayload => {
                     // No operation needed
                 }
                 GateType::U => {

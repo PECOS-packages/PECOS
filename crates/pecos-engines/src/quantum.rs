@@ -313,8 +313,11 @@ impl Engine for StateVecEngine {
                         self.simulator.pz(**q);
                     }
                 }
-                GateType::Idle | GateType::I => {
-                    // For idle/identity gates, just let the system naturally evolve for the specified duration
+                GateType::I
+                | GateType::Idle
+                | GateType::MeasCrosstalkLocalPayload
+                | GateType::MeasCrosstalkGlobalPayload => {
+                    // Just let the system naturally evolve for the specified duration
                     // No active operation needed in the simulator
                 }
                 GateType::U => {

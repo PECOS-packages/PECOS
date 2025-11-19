@@ -180,6 +180,15 @@ impl PyWasmForeignObject {
         }
     }
 
+    /// Get the WebAssembly binary bytes
+    ///
+    /// Returns:
+    ///     The WASM binary as bytes
+    #[getter]
+    fn wasm_bytes<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, self.inner.wasm_bytes())
+    }
+
     /// Cleanup resources
     ///
     /// Stops the epoch increment thread. This is called automatically

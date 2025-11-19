@@ -162,8 +162,11 @@ impl DepolarizingNoiseModel {
                     trace!("Applying preparation with possible fault");
                     self.apply_prep_faults(&mut builder, gate);
                 }
-                GateType::Idle | GateType::I => {
-                    // Idle gates just pass through with no idling noise
+                GateType::I
+                | GateType::Idle
+                | GateType::MeasCrosstalkLocalPayload
+                | GateType::MeasCrosstalkGlobalPayload => {
+                    // Just pass through with no added noise
                     // builder.add_quantum_gate(gate);
                 }
             }

@@ -45,14 +45,14 @@
 //! - Leakage and emission error models
 //! - Parameter scaling for error rates
 //! - Angle-dependent noise for parameterized gates
+//! - Crosstalk errors between nearby qubits
+//! - Memory/idle noise with T1/T2 processes
+//! - Coherent vs. incoherent dephasing distinction
 //!
 //! Some features from the Python implementation that are not yet fully implemented:
 //!
-//! - Crosstalk errors between nearby qubits
-//! - Memory/idle noise with T1/T2 processes
 //! - Repumping cycles for leaked qubits
 //! - Zone-specific error rates
-//! - Coherent vs. incoherent dephasing distinction
 //!
 //! ## Usage
 //!
@@ -85,7 +85,9 @@ use crate::engine_system::{ControlEngine, EngineStage};
 use crate::noise::noise_rng::NoiseRng;
 use crate::noise::utils::NoiseUtils;
 use crate::noise::utils::ProbabilityValidator;
-use crate::noise::weighted_sampler::{SingleQubitWeightedSampler, TwoQubitWeightedSampler};
+use crate::noise::weighted_sampler::{
+    CrosstalkWeightedSampler, SingleQubitWeightedSampler, TwoQubitWeightedSampler,
+};
 use crate::noise::{NoiseModel, RngManageable};
 use log::trace;
 use pecos_core::QubitId;
@@ -309,7 +311,20 @@ pub struct GeneralNoiseModel {
     /// Models the probability that a measurement operation on one qubit affects nearby qubits. In
     /// ion trap systems, this could represent scattered light during fluorescence detection
     /// affecting neighboring ions.
-    p_meas_crosstalk: f64,
+    /// Further details on how crosstalk is modeled depends on information from
+    /// the device runtime, which are provided as `MeasCrosstalkGlobalPayload` instructions.
+    p_meas_crosstalk_global: f64,
+
+    /// Probability of crosstalk during measurement operations on local qubits
+    ///
+    /// See doc for `p_meas_crosstalk_global`. The intended distinction is that this
+    /// parameter applies to only qubits that are close to the measured qubit.
+    /// Further details on how crosstalk is modeled depends on information from
+    /// the device runtime, which are provided as `MeasCrosstalkLocalPayload` instructions.
+    p_meas_crosstalk_local: f64,
+
+    /// Transition probabilities on the event of crosstalk error
+    p_meas_crosstalk_model: CrosstalkWeightedSampler,
 
     // --- internally used variables --- //
     /// The maximum of `p_meas_0` and `p_meas_1`
@@ -340,9 +355,10 @@ pub struct GeneralNoiseModel {
     /// Track which qubits are being measured in the current batch and their gate types
     /// This is needed to properly handle leakage during measurements as well
     /// as crosstalk.
-    /// TODO: manage this via result tags.
-    /// Each entry is (`qubit_id`, `is_measure_leaked`, `is_crosstalk`)
-    measured_qubits: Vec<(usize, bool, bool)>,
+    measured_qubits: Vec<(usize, GateType)>,
+
+    /// Stored outcome builder
+    results_builder: ByteMessageBuilder,
 }
 
 impl ControlEngine for GeneralNoiseModel {
@@ -356,6 +372,11 @@ impl ControlEngine for GeneralNoiseModel {
         &mut self,
         input: Self::Input,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
+        if self.results_builder.message_count() > 0 {
+            return Err(PecosError::Processing(
+                "Results builder not empty at start of processing".to_string(),
+            ));
+        }
         // Apply noise to the gates
         let noisy_gates = match self.apply_noise_on_start(&input) {
             Ok(gates) => gates,
@@ -377,13 +398,17 @@ impl ControlEngine for GeneralNoiseModel {
         msg: Self::EngineOutput,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         trace!("GeneralNoise::continue_processing");
-        let results = self
-            .apply_noise_on_continue_processing(msg)
-            .map_err(|e| PecosError::Processing(format!("Error processing noise: {e}")))?;
-
-        // Calling Complete to signal that the NoiseModel is returning its msg back to the
-        // QuantumSystem.
-        Ok(EngineStage::Complete(results))
+        let next_operations = self.apply_noise_on_continue_processing(msg)?;
+        if next_operations.is_empty()? {
+            // No more quantum operations to process, return results
+            // collected along the way and reset the results builder.
+            let results = self.results_builder.build();
+            self.results_builder.reset();
+            Ok(EngineStage::Complete(results))
+        } else {
+            // if there are new quantum operations to process.
+            Ok(EngineStage::NeedsProcessing(next_operations))
+        }
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
@@ -495,6 +520,15 @@ impl GeneralNoiseModel {
             .expect("Failed to parse input as quantum operations");
 
         for gate in gates {
+            // Track which qubits are being measured for leakage handling
+            if matches!(gate.gate_type, GateType::Measure | GateType::MeasureLeaked) {
+                self.measured_qubits.extend(
+                    gate.qubits
+                        .iter()
+                        .map(|q| (usize::from(*q), gate.gate_type)),
+                );
+            }
+
             // Skip noise application for noiseless gates
             if self.is_noiseless_gate(&gate.gate_type) {
                 // Just add the gate as-is, without any noise
@@ -520,20 +554,41 @@ impl GeneralNoiseModel {
                         self.prepared_qubits.insert(usize::from(q));
                     }
                     self.apply_prep_faults(&gate, &mut builder);
-                    self.apply_crosstalk_faults(&gate, self.p_prep_crosstalk, &mut builder);
+                    self.apply_simple_crosstalk_faults(&gate, self.p_prep_crosstalk, &mut builder);
                 }
                 GateType::Measure | GateType::MeasureLeaked => {
-                    // Track which qubits are being measured for leakage handling
-                    let is_measure_leaked = gate.gate_type == GateType::MeasureLeaked;
-                    self.measured_qubits.extend(
-                        gate.qubits
-                            .iter()
-                            .map(|q| (usize::from(*q), is_measure_leaked, false)),
-                    );
                     // Measurement noise is handled in apply_noise_on_continue_processing
                     // We still need to add the original gate here
                     builder.add_gate_command(&gate);
-                    self.apply_crosstalk_faults(&gate, self.p_meas_crosstalk, &mut builder);
+                }
+                GateType::MeasCrosstalkGlobalPayload => {
+                    // Global crosstalk applies to all qubits that are *not* in the payload
+                    let gate_qubits: Vec<usize> =
+                        gate.qubits.iter().map(|q| usize::from(*q)).collect();
+                    let potential_victims = self
+                        .prepared_qubits
+                        .iter()
+                        .filter(|q| !gate_qubits.contains(q))
+                        .copied()
+                        .collect();
+
+                    // Otherwise, it is the same channel for Global and Local
+                    trace!("Applying global crosstalk...");
+                    self.apply_crosstalk_faults_from_payload(
+                        gate.gate_type,
+                        potential_victims,
+                        &mut builder,
+                    );
+                }
+                GateType::MeasCrosstalkLocalPayload => {
+                    let potential_victims = gate.qubits.iter().map(|q| usize::from(*q)).collect();
+
+                    trace!("Applying local crosstalk...");
+                    self.apply_crosstalk_faults_from_payload(
+                        gate.gate_type,
+                        potential_victims,
+                        &mut builder,
+                    );
                 }
                 GateType::I => {
                     let err_msg = format!(
@@ -585,6 +640,9 @@ impl GeneralNoiseModel {
     /// If a leaked qubit is measured, it remains leaked and will continue to measure as 1
     /// until a preparation operation is performed.
     ///
+    /// Returns a `ByteMessage` destined for quantum simulation. Any results from measurements
+    /// that are destined for the user are appended to `self.results_builder`.
+    ///
     /// # Errors
     ///
     /// Returns an error if noise application fails or the message cannot be processed.
@@ -596,69 +654,101 @@ impl GeneralNoiseModel {
         if !NoiseUtils::has_measurements(&message) {
             return Ok(message);
         }
-
         // Parse the measurements from the message
         let measurement_outcomes = message.outcomes()?;
 
-        // Apply biased measurement noise to each outcome
-        let mut results_builder = ByteMessage::outcomes_builder();
+        // Create a new message builder where the gates necessary for the
+        // transitions will be introduced
+        let mut ops_builder = ByteMessage::quantum_operations_builder();
+        let mut outcomes = vec![];
 
-        // Check if we have leaked qubits that were measured
-        let has_leakage = !self.leaked_qubits.is_empty()
-            && self
-                .measured_qubits
-                .iter()
-                .any(|(q, _, _)| self.is_leaked(*q));
+        if measurement_outcomes.len() != self.measured_qubits.len() {
+            return Err(PecosError::Processing(format!(
+                "Mismatch in number of measurement outcomes ({}) and tracked measured qubits ({})",
+                measurement_outcomes.len(),
+                self.measured_qubits.len()
+            )));
+        }
 
         for (idx, outcome) in measurement_outcomes.into_iter().enumerate() {
-            let mut val = outcome;
-
-            // Check if this measurement corresponds to a leaked qubit or comes from
-            // crosstalk
-            if idx < self.measured_qubits.len() {
-                let (qubit, is_measure_leaked, is_crosstalk) = self.measured_qubits[idx];
-
-                // Check if this measurement comes from crosstalk noise. If so, ignore it.
-                if is_crosstalk {
-                    trace!("Qubit {qubit} was measured by crosstalk; outcome is ignored.");
-                    continue; // Skip this iteration
+            let (qubit, gate_type) = self.measured_qubits[idx];
+            match gate_type {
+                GateType::MeasCrosstalkGlobalPayload | GateType::MeasCrosstalkLocalPayload => {
+                    // It is not a measurement destined for the user, but one we
+                    // injected in order to model crosstalk. Use the measurement result
+                    // to determine any transitions to apply.
+                    let transition =
+                        self.p_meas_crosstalk_model
+                            .sample_gates(&mut self.rng, qubit, outcome);
+                    if transition.has_leakage() {
+                        if let Some(gate) = self.leak(qubit) {
+                            ops_builder.add_gate_command(&gate);
+                        }
+                    } else if let Some(gate) = transition.gate {
+                        ops_builder.add_gate_command(&gate);
+                    }
                 }
-
-                if has_leakage && self.is_leaked(qubit) {
-                    if is_measure_leaked {
+                GateType::MeasureLeaked => {
+                    let mut val = outcome as usize;
+                    if self.is_leaked(qubit) {
                         trace!("Qubit {qubit} is leaked, MeasureLeaked returns 2");
                         // For MeasureLeaked, return 2 for leaked qubits
                         val = 2;
-                    } else {
+                    } else if !self.noiseless_gates.contains(&GateType::MeasureLeaked) {
+                        // For non-leaked qubits, apply measurement noise below
+                        // Apply asymmetric measurement noise to each outcome
+                        if val == 1 {
+                            if self.rng.occurs(self.p_meas_1) {
+                                trace!("Flipped measurement outcome 1->0");
+                                val = 0;
+                            }
+                        } else if self.rng.occurs(self.p_meas_0) {
+                            trace!("Flipped measurement outcome 0->1");
+                            val = 1;
+                        }
+                    }
+                    outcomes.push(val);
+                }
+                GateType::Measure => {
+                    // Apply biased measurement noise to each outcome
+                    // Check if we have leaked qubits that were measured
+                    let mut val = outcome as usize;
+                    if self.is_leaked(qubit) {
                         trace!("Qubit {qubit} is leaked, Measure returns 1");
                         // For regular Measure, force the measurement outcome to be 1
                         val = 1;
                     }
+                    // NOTE: we still apply bit-flip noise to the outcome 1 of leaked
+                    // qubits that measure as 1. This has been the approach since H1/H2.
+                    if !self.noiseless_gates.contains(&GateType::Measure) {
+                        if val == 1 {
+                            if self.rng.occurs(self.p_meas_1) {
+                                trace!("Flipped measurement outcome 1->0");
+                                val = 0;
+                            }
+                        } else if self.rng.occurs(self.p_meas_0) {
+                            trace!("Flipped measurement outcome 0->1");
+                            val = 1;
+                        }
+                    }
+                    outcomes.push(val);
+                }
+                GateType::Prep => {
+                    // Just ignore the measurement.
+                    // In the future we will want to do more advanced crosstalk
+                    // on prep as well, but for now it uses apply_simple_crosstalk_faults
+                    // where the measurement outcome is just meant to be thrown away.
+                }
+                _ => {
+                    return Err(PecosError::Processing(format!(
+                        "Unexpected gate type in measurement handling: {gate_type:?}"
+                    )));
                 }
             }
-
-            // Apply asymmetric measurement noise (but not for leaked measurements returning 2)
-            if val == 2 {
-                // No noise applied to leaked measurements
-                trace!("No measurement noise applied to leaked qubit outcome");
-            } else if val == 1 {
-                if self.rng.occurs(self.p_meas_1) {
-                    trace!("Flipped measurement outcome 1->0");
-                    val = 0;
-                }
-            } else if self.rng.occurs(self.p_meas_0) {
-                trace!("Flipped measurement outcome 0->1");
-                val = 1;
-            }
-
-            results_builder.add_outcomes(&[val as usize]);
         }
-
-        // Clear the measured qubits for the next batch
         self.measured_qubits.clear();
-
-        // Build and return the biased measurement results
-        Ok(results_builder.build())
+        self.results_builder.add_outcomes(&outcomes);
+        Ok(ops_builder.build())
     }
 
     pub fn apply_idle_faults(
@@ -810,7 +900,7 @@ impl GeneralNoiseModel {
         }
     }
 
-    /// Apply crosstalk noise
+    /// Apply simple crosstalk noise
     ///
     /// Naive crosstalk noise model:
     /// 1. All qubits in the trap but the ones in the `gate` are subject to crosstalk
@@ -820,7 +910,7 @@ impl GeneralNoiseModel {
     ///
     /// In ion trap systems, this could represent scattered light during optical pumping
     /// affecting neighboring ions.
-    pub fn apply_crosstalk_faults(
+    pub fn apply_simple_crosstalk_faults(
         &mut self,
         gate: &Gate,
         probability: f64,
@@ -840,9 +930,46 @@ impl GeneralNoiseModel {
         // We need to mark these measurements as being introduced by crosstalk rather
         // than the user's program so that we can discard the results in
         // apply_noise_on_continue_processing.
-        self.measured_qubits.extend(
-            affected_qubits.iter().map(|&q| (q, false, true)), // (qubit, is_measure_leaked, is_crosstalk)
-        );
+        self.measured_qubits
+            .extend(affected_qubits.iter().map(|&q| (q, gate.gate_type)));
+    }
+
+    /// Apply crosstalk noise from runtime information given by Crosstalk*Payload instructions
+    ///
+    /// In ion trap systems, this could represent scattered light during optical pumping
+    /// affecting neighboring ions.
+    pub fn apply_crosstalk_faults_from_payload(
+        &mut self,
+        gate_type: GateType,
+        qubits: Vec<usize>,
+        builder: &mut ByteMessageBuilder,
+    ) {
+        let probability = match gate_type {
+            GateType::MeasCrosstalkGlobalPayload => self.p_meas_crosstalk_global,
+            GateType::MeasCrosstalkLocalPayload => self.p_meas_crosstalk_local,
+            _ => unreachable!(),
+        };
+
+        let mut affected_qubits = Vec::new();
+
+        for q in qubits {
+            // TODO: We should include a seepage component to crosstalk in the future.
+            if self.prepared_qubits.contains(&q)
+                && !self.is_leaked(q) // If q is already leaked, we currently skip
+                && self.rng.occurs(probability)
+            {
+                affected_qubits.push(q);
+                trace!("Qubit {q} affected by crosstalk error");
+            }
+        }
+
+        builder.add_measurements(&affected_qubits);
+        // We need to mark these measurements as being introduced by crosstalk rather
+        // than the user's program so that we can discard the results in
+        // apply_noise_on_continue_processing.
+        self.measured_qubits
+            .extend(affected_qubits.iter().map(|&q| (q, gate_type)));
+        // NOTE: Crosstalk transitions are carried out by apply_noise_on_continue_processing
     }
 
     /// Apply single-qubit gate noise faults
@@ -1410,69 +1537,80 @@ mod tests {
         );
     }
 
+    /// Helper function to invoke a measurement request from the user to the noise
+    /// model, and respond back with measurement values from the user. The result
+    /// is the engine stage after the measurement results have been processed.
+    fn request_measurements_and_give_values(
+        noise: &mut GeneralNoiseModel,
+        qubits: &[usize],
+        values: &[usize],
+    ) -> EngineStage<ByteMessage, ByteMessage> {
+        use crate::byte_message::ByteMessageBuilder;
+        // Create a measurement operation on the given qubits
+        let mut request_builder = ByteMessageBuilder::new();
+        let _ = request_builder.for_quantum_operations();
+        for &qubit in qubits {
+            request_builder.add_gate_command(&Gate {
+                gate_type: GateType::Measure,
+                qubits: vec![QubitId(qubit)],
+                params: vec![],
+            });
+        }
+        let measurement_request = request_builder.build();
+
+        // Send the measurement requests to the noise model
+        let Ok(EngineStage::NeedsProcessing(_)) = noise.start(measurement_request) else {
+            panic!("Expected NeedsProcessing stage after measurement with noise");
+        };
+
+        // Now create the measurement results
+        let mut response_builder = ByteMessageBuilder::new();
+        let _ = response_builder.for_outcomes();
+        response_builder.add_outcomes(values);
+        let measurement_response = response_builder.build();
+
+        // Process the measurement results through the noise model
+        noise.continue_processing(measurement_response).unwrap()
+    }
     #[test]
     fn test_biased_measurement() {
-        use crate::byte_message::ByteMessageBuilder;
+        // Create a noise model with 100% flip probabilities,
+        // and a noise model with 0% flip probabilities. Have them
+        // both measure two qubits, one reporting state 0 and one in state 1.
+        // Ensure that the biased model flips both results, while the unbiased
+        // model leaves them unchanged.
 
-        // Create a noise model with 100% flip probabilities for deterministic testing
-        let mut noise = GeneralNoiseModel::new(0.0, 1.0, 1.0, 0.0, 0.0);
+        // The clean model
+        let mut never_flip = GeneralNoiseModel::new(0.0, 0.0, 0.0, 0.0, 0.0);
+        let never_flip_state =
+            request_measurements_and_give_values(&mut never_flip, &[0, 1], &[0, 1]);
+        let EngineStage::Complete(clean_results) = never_flip_state else {
+            panic!("Expected results from the unbiased noise model");
+        };
+        let clean_outcomes = clean_results.outcomes().unwrap();
+        assert_eq!(
+            clean_outcomes.len(),
+            2,
+            "Should have two measurement results from the unbaised model"
+        );
+        assert_eq!(clean_outcomes[0], 0, "0 shouldn't be flipped to 1");
+        assert_eq!(clean_outcomes[1], 1, "1 shouldn't be flipped to 0");
 
-        // Create a message with a 0 measurement result
-        let mut builder = ByteMessageBuilder::new();
-        let _ = builder.for_outcomes();
-        builder.add_outcomes(&[0]);
-        let message_with_zero = builder.build();
-
-        // Test measurement bias - all 0s should be flipped to 1s
-        let biased_zero = noise
-            .apply_noise_on_continue_processing(message_with_zero)
-            .unwrap();
-        let outcomes = biased_zero.outcomes().unwrap();
-        let results: Vec<(usize, u32)> = outcomes.into_iter().enumerate().collect();
-        assert_eq!(results[0].1, 1, "0 should be flipped to 1");
-
-        // Create a message with a 1 measurement result
-        let mut builder = ByteMessageBuilder::new();
-        let _ = builder.for_outcomes();
-        builder.add_outcomes(&[1]);
-        let message_with_one = builder.build();
-
-        // Test measurement bias - all 1s should be flipped to 0s
-        let biased_one = noise
-            .apply_noise_on_continue_processing(message_with_one)
-            .unwrap();
-        let outcomes = biased_one.outcomes().unwrap();
-        let results: Vec<(usize, u32)> = outcomes.into_iter().enumerate().collect();
-        assert_eq!(results[0].1, 0, "1 should be flipped to 0");
-
-        // Create a noise model with 0% flip probabilities
-        noise = GeneralNoiseModel::new(0.0, 0.0, 0.0, 0.0, 0.0);
-
-        // Test measurement bias with 0% flip - all 0s should remain 0s
-        let mut builder = ByteMessageBuilder::new();
-        let _ = builder.for_outcomes();
-        builder.add_outcomes(&[0]);
-        let message_with_zero = builder.build();
-
-        let unbiased_zero = noise
-            .apply_noise_on_continue_processing(message_with_zero)
-            .unwrap();
-        let outcomes = unbiased_zero.outcomes().unwrap();
-        let results: Vec<(usize, u32)> = outcomes.into_iter().enumerate().collect();
-        assert_eq!(results[0].1, 0, "0 should remain 0");
-
-        // Test measurement bias with 0% flip - all 1s should remain 1s
-        let mut builder = ByteMessageBuilder::new();
-        let _ = builder.for_outcomes();
-        builder.add_outcomes(&[1]);
-        let message_with_one = builder.build();
-
-        let unbiased_one = noise
-            .apply_noise_on_continue_processing(message_with_one)
-            .unwrap();
-        let outcomes = unbiased_one.outcomes().unwrap();
-        let results: Vec<(usize, u32)> = outcomes.into_iter().enumerate().collect();
-        assert_eq!(results[0].1, 1, "1 should remain 1");
+        // The noisy model
+        let mut always_flip = GeneralNoiseModel::new(0.0, 1.0, 1.0, 0.0, 0.0);
+        let always_flip_state =
+            request_measurements_and_give_values(&mut always_flip, &[0, 1], &[0, 1]);
+        let EngineStage::Complete(noisy_results) = always_flip_state else {
+            panic!("Expected results from the biased noise model");
+        };
+        let noisy_outcomes = noisy_results.outcomes().unwrap();
+        assert_eq!(
+            noisy_outcomes.len(),
+            2,
+            "Should have two measurement results from the unbaised model"
+        );
+        assert_eq!(noisy_outcomes[0], 1, "0 should be flipped to 1");
+        assert_eq!(noisy_outcomes[1], 0, "1 should be flipped to 0");
     }
 
     #[test]
@@ -1552,8 +1690,6 @@ mod tests {
 
     #[test]
     fn test_leaked_qubit_measurement_behavior() {
-        use crate::byte_message::ByteMessageBuilder;
-
         // Create a noise model with no spontaneous errors
         let mut model = GeneralNoiseModel::builder()
             .with_prep_probability(0.0)
@@ -1562,52 +1698,33 @@ mod tests {
             .with_p1_probability(0.0)
             .with_p2_probability(0.0)
             .build();
-        let noise = model
-            .as_any_mut()
-            .downcast_mut::<GeneralNoiseModel>()
-            .unwrap();
 
         // Manually mark qubit 0 as leaked
-        noise.mark_as_leaked(0);
+        model.mark_as_leaked(0);
 
-        // First, we need to process a measurement gate so the noise model tracks which qubit is measured
-        let mut builder = ByteMessageBuilder::new();
-        let _ = builder.for_quantum_operations();
-        builder.add_measurements(&[0]); // Measure qubit 0
-        let measurement_command = builder.build();
-
-        // Process the measurement gate through the noise model
-        let _noisy_command = noise.apply_noise_on_start(&measurement_command).unwrap();
-
-        // Now create the measurement results
-        let mut builder = ByteMessageBuilder::new();
-        let _ = builder.for_outcomes();
-        builder.add_outcomes(&[0]); // Measurement result is 0
-
-        // Apply measurement noise - this should NOT unleak the qubit
-        let biased_message = noise
-            .apply_noise_on_continue_processing(builder.build())
-            .unwrap();
+        // First, tell the noise model that we are measuring qubit 0, and give it value 0
+        let state = request_measurements_and_give_values(&mut model, &[0], &[0]);
+        let EngineStage::Complete(biased_message) = state else {
+            panic!("Expected Complete stage after measurement with noise");
+        };
 
         // Get the measurement results
         let outcomes = biased_message.outcomes().unwrap();
-        let results: Vec<(usize, u32)> = outcomes.into_iter().enumerate().collect();
+        assert_eq!(outcomes.len(), 1, "Should have one measurement result");
 
         // Verify that the leaked qubit is reported as measured as 1
-        assert_eq!(results[0].1, 1, "Leaked qubit should always measure as 1");
+        assert_eq!(outcomes[0], 1, "Leaked qubit should always measure as 1");
 
         // Verify that the qubit is still leaked after measurement
         // Measurements do not unleak qubits - only prep operations do
         assert!(
-            noise.is_leaked(0),
+            model.is_leaked(0),
             "Qubit should remain leaked after measurement"
         );
     }
 
     #[test]
     fn test_repeated_measurement_of_leaked_qubit() {
-        use crate::byte_message::ByteMessageBuilder;
-
         // Create a noise model with no spontaneous errors
         let mut model = GeneralNoiseModel::builder()
             .with_prep_probability(0.0)
@@ -1616,35 +1733,15 @@ mod tests {
             .with_p1_probability(0.0)
             .with_p2_probability(0.0)
             .build();
-        let noise = model
-            .as_any_mut()
-            .downcast_mut::<GeneralNoiseModel>()
-            .unwrap();
 
         // Manually mark qubit 0 as leaked
-        noise.mark_as_leaked(0);
+        model.mark_as_leaked(0);
 
-        // Process measurement gates - measure qubit 0 three times in a batch
-        let mut builder = ByteMessageBuilder::new();
-        let _ = builder.for_quantum_operations();
-        builder.add_measurements(&[0]); // First measurement of qubit 0
-        builder.add_measurements(&[0]); // Second measurement of qubit 0
-        builder.add_measurements(&[0]); // Third measurement of qubit 0
-        let measurement_command = builder.build();
-
-        // Process the measurement gates through the noise model
-        let _noisy_command = noise.apply_noise_on_start(&measurement_command).unwrap();
-
-        // Now create the measurement results (all originally 0)
-        let mut builder = ByteMessageBuilder::new();
-        let _ = builder.for_outcomes();
-        builder.add_outcomes(&[0, 0, 0]); // Three measurement results, all 0
-
-        // Apply measurement noise
-        let biased_message = noise
-            .apply_noise_on_continue_processing(builder.build())
-            .unwrap();
-
+        // Measure 0 thrice and provide measurement result 0 each time
+        let state = request_measurements_and_give_values(&mut model, &[0, 0, 0], &[0, 0, 0]);
+        let EngineStage::Complete(biased_message) = state else {
+            panic!("Expected Complete stage after measurement with noise");
+        };
         // Get the measurement results
         let outcomes = biased_message.outcomes().unwrap();
         let results: Vec<(usize, u32)> = outcomes.into_iter().enumerate().collect();
@@ -1666,7 +1763,7 @@ mod tests {
 
         // Verify that the qubit is still leaked after all measurements
         assert!(
-            noise.is_leaked(0),
+            model.is_leaked(0),
             "Qubit should remain leaked after repeated measurements"
         );
     }
@@ -1697,19 +1794,21 @@ mod tests {
         let _ = builder.for_quantum_operations();
         builder.add_measurements(&[0]);
         let measurement_command = builder.build();
-        let _noisy_command = noise.apply_noise_on_start(&measurement_command).unwrap();
+        let _noisy_command = noise.start(measurement_command).unwrap();
 
         // Process measurement results
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_outcomes();
         builder.add_outcomes(&[0]);
-        let biased_message = noise
-            .apply_noise_on_continue_processing(builder.build())
-            .unwrap();
+        let state = noise.continue_processing(builder.build()).unwrap();
+        let EngineStage::Complete(biased_message) = state else {
+            panic!("Expected Complete stage after measurement with noise");
+        };
 
         // Verify the leaked qubit measured as 1 but remains leaked
         let outcomes = biased_message.outcomes().unwrap();
         let results: Vec<(usize, u32)> = outcomes.into_iter().enumerate().collect();
+        assert_eq!(results.len(), 1, "Should have one measurement result");
         assert_eq!(results[0].1, 1, "Leaked qubit should measure as 1");
         assert!(
             noise.is_leaked(0),
@@ -1759,7 +1858,7 @@ mod tests {
         let measurement_command = builder.build();
 
         // Process the measurement gates through the noise model
-        let _noisy_command = noise.apply_noise_on_start(&measurement_command).unwrap();
+        let _noisy_command = noise.start(measurement_command).unwrap();
 
         // Create measurement results in the same order
         let mut builder = ByteMessageBuilder::new();
@@ -1767,9 +1866,10 @@ mod tests {
         builder.add_outcomes(&[1, 0, 1, 0, 1]); // Results in order
 
         // Apply measurement noise
-        let noisy_results = noise
-            .apply_noise_on_continue_processing(builder.build())
-            .unwrap();
+        let state = noise.continue_processing(builder.build()).unwrap();
+        let EngineStage::Complete(noisy_results) = state else {
+            panic!("Expected Complete stage after measurement with noise");
+        };
 
         // Parse the noisy results
         let results = noisy_results.outcomes().unwrap();
@@ -1829,7 +1929,7 @@ mod tests {
         let measurement_command = builder.build();
 
         // Process the measurement gates
-        let _noisy_command = noise.apply_noise_on_start(&measurement_command).unwrap();
+        let _noisy_command = noise.start(measurement_command).unwrap();
 
         // Create measurement results (all zeros)
         let mut builder = ByteMessageBuilder::new();
@@ -1837,15 +1937,16 @@ mod tests {
         builder.add_outcomes(&[0, 0, 0, 0, 0]);
 
         // Apply noise (should force leaked qubits to 1)
-        let noisy_results = noise
-            .apply_noise_on_continue_processing(builder.build())
-            .unwrap();
+        let state = noise.continue_processing(builder.build()).unwrap();
+        let EngineStage::Complete(noisy_results) = state else {
+            panic!("Expected Complete stage after measurement with noise");
+        };
 
         // Parse results
         let results = noisy_results.outcomes().unwrap();
 
         // Verify order and leakage effects
-        assert_eq!(results.len(), 5);
+        assert_eq!(results.len(), 5, "Should have 5 measurement results");
         assert_eq!(results[0], 0, "Qubit 0 (non-leaked) should remain 0");
         assert_eq!(results[1], 1, "Qubit 1 (leaked) should be forced to 1");
         assert_eq!(results[2], 0, "Qubit 2 (non-leaked) should remain 0");
@@ -1858,8 +1959,6 @@ mod tests {
 
     #[test]
     fn test_biased_measurement_statistics() {
-        use crate::byte_message::ByteMessageBuilder;
-
         // Test with many measurements to see clear statistical pattern
         const NUM_MEASUREMENTS: usize = 1000;
 
@@ -1879,19 +1978,16 @@ mod tests {
         let mut zeros_flipped = 0;
         for i in 0..NUM_MEASUREMENTS {
             // Need to process measurement gate first
-            let mut builder = ByteMessageBuilder::new();
-            let _ = builder.for_quantum_operations();
-            builder.add_measurements(&[0]);
-            let _cmd = noise.apply_noise_on_start(&builder.build()).unwrap();
-
-            let mut builder = ByteMessageBuilder::new();
-            let _ = builder.for_outcomes();
-            builder.add_outcomes(&[0]);
-
-            let biased_result = noise
-                .apply_noise_on_continue_processing(builder.build())
-                .unwrap();
+            let state = request_measurements_and_give_values(noise, &[0], &[0]);
+            let EngineStage::Complete(biased_result) = state else {
+                panic!("Expected Complete stage after measurement with noise");
+            };
             let results = biased_result.outcomes().unwrap();
+            assert_eq!(
+                results.len(),
+                1,
+                "Expected one measurement result per iteration"
+            );
 
             if results[0] == 1 {
                 zeros_flipped += 1;
@@ -1924,18 +2020,10 @@ mod tests {
 
         for i in 0..NUM_MEASUREMENTS {
             // Process measurement gate
-            let mut builder = ByteMessageBuilder::new();
-            let _ = builder.for_quantum_operations();
-            builder.add_measurements(&[0]);
-            let _cmd = noise.apply_noise_on_start(&builder.build()).unwrap();
-
-            let mut builder = ByteMessageBuilder::new();
-            let _ = builder.for_outcomes();
-            builder.add_outcomes(&[1]);
-
-            let biased_result = noise
-                .apply_noise_on_continue_processing(builder.build())
-                .unwrap();
+            let state = request_measurements_and_give_values(noise, &[0], &[1]);
+            let EngineStage::Complete(biased_result) = state else {
+                panic!("Expected Complete stage after measurement with noise");
+            };
             let results = biased_result.outcomes().unwrap();
 
             if results[0] == 0 {
@@ -1985,16 +2073,17 @@ mod tests {
         for i in 0..10 {
             builder.add_measurements(&[i]);
         }
-        let _cmd = noise.apply_noise_on_start(&builder.build()).unwrap();
+        let _cmd = noise.start(builder.build()).unwrap();
 
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_outcomes();
         // Original pattern: 0,1,0,1,0,1,0,1,0,1
         builder.add_outcomes(&[0, 1, 0, 1, 0, 1, 0, 1, 0, 1]);
 
-        let biased_result = noise
-            .apply_noise_on_continue_processing(builder.build())
-            .unwrap();
+        let state = noise.continue_processing(builder.build()).unwrap();
+        let EngineStage::Complete(biased_result) = state else {
+            panic!("Expected Complete stage after measurement with noise");
+        };
         let results = biased_result.outcomes().unwrap();
 
         // Expected pattern after noise: 1,1,1,1,1,1,1,1,1,1 (all zeros flipped)
@@ -2023,16 +2112,17 @@ mod tests {
         for i in 0..10 {
             builder.add_measurements(&[i]);
         }
-        let _cmd = noise.apply_noise_on_start(&builder.build()).unwrap();
+        let _cmd = noise.start(builder.build()).unwrap();
 
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_outcomes();
         // Same original pattern: 0,1,0,1,0,1,0,1,0,1
         builder.add_outcomes(&[0, 1, 0, 1, 0, 1, 0, 1, 0, 1]);
 
-        let biased_result = noise
-            .apply_noise_on_continue_processing(builder.build())
-            .unwrap();
+        let state = noise.continue_processing(builder.build()).unwrap();
+        let EngineStage::Complete(biased_result) = state else {
+            panic!("Expected Complete stage after measurement with noise");
+        };
         let results = biased_result.outcomes().unwrap();
 
         // Expected pattern after noise: 0,0,0,0,0,0,0,0,0,0 (all ones flipped)
@@ -2073,19 +2163,19 @@ mod tests {
         builder.add_measure_leakages(&[1]); // MeasureLeaked
 
         let measurement_command = builder.build();
-        let _noisy_command = noise.apply_noise_on_start(&measurement_command).unwrap();
+        let _noisy_command = noise.start(measurement_command.clone()).unwrap();
 
         // Create measurement results (both qubits in |0⟩ state)
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_outcomes();
         builder.add_outcomes(&[0, 0]);
 
-        let results_message = noise
-            .apply_noise_on_continue_processing(builder.build())
-            .unwrap();
-
+        let state = noise.continue_processing(builder.build()).unwrap();
+        let EngineStage::Complete(results_message) = state else {
+            panic!("Expected Complete stage after measurement with noise");
+        };
         let results = results_message.outcomes().unwrap();
-        assert_eq!(results.len(), 2);
+        assert_eq!(results.len(), 2, "Should have two measurement results");
         assert_eq!(results[0], 0, "Regular Measure of |0⟩ should return 0");
         assert_eq!(
             results[1], 0,
@@ -2093,13 +2183,15 @@ mod tests {
         );
 
         // Test with |1⟩ state
+        let _noisy_command = noise.start(measurement_command.clone()).unwrap();
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_outcomes();
         builder.add_outcomes(&[1, 1]);
 
-        let results_message = noise
-            .apply_noise_on_continue_processing(builder.build())
-            .unwrap();
+        let state = noise.continue_processing(builder.build()).unwrap();
+        let EngineStage::Complete(results_message) = state else {
+            panic!("Expected Complete stage after measurement with noise");
+        };
 
         let results = results_message.outcomes().unwrap();
         assert_eq!(results[0], 1, "Regular Measure of |1⟩ should return 1");
@@ -2138,19 +2230,20 @@ mod tests {
         builder.add_measure_leakages(&[1]); // MeasureLeaked on leaked qubit
 
         let measurement_command = builder.build();
-        let _noisy_command = noise.apply_noise_on_start(&measurement_command).unwrap();
+        let _noisy_command = noise.start(measurement_command).unwrap();
 
         // Create measurement results (simulator returns 0, but noise model will override)
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_outcomes();
         builder.add_outcomes(&[0, 0]);
 
-        let results_message = noise
-            .apply_noise_on_continue_processing(builder.build())
-            .unwrap();
+        let state = noise.continue_processing(builder.build()).unwrap();
+        let EngineStage::Complete(results_message) = state else {
+            panic!("Expected Complete stage after measurement with noise");
+        };
 
         let results = results_message.outcomes().unwrap();
-        assert_eq!(results.len(), 2);
+        assert_eq!(results.len(), 2, "Should have two measurement results");
         assert_eq!(
             results[0], 1,
             "Regular Measure of leaked qubit should return 1"
@@ -2192,19 +2285,20 @@ mod tests {
         builder.add_measurements(&[3]); // Regular measure on non-leaked qubit 3
 
         let measurement_command = builder.build();
-        let _noisy_command = noise.apply_noise_on_start(&measurement_command).unwrap();
+        let _noisy_command = noise.start(measurement_command).unwrap();
 
         // Create measurement results (mix of 0s and 1s from simulator)
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_outcomes();
         builder.add_outcomes(&[0, 1, 0, 1]); // Simulator results before noise
 
-        let results_message = noise
-            .apply_noise_on_continue_processing(builder.build())
-            .unwrap();
+        let state = noise.continue_processing(builder.build()).unwrap();
+        let EngineStage::Complete(results_message) = state else {
+            panic!("Expected Complete stage after measurement with noise");
+        };
 
         let results = results_message.outcomes().unwrap();
-        assert_eq!(results.len(), 4);
+        assert_eq!(results.len(), 4, "Should have 4 measurement results");
         assert_eq!(results[0], 1, "Measure on leaked qubit 0 should return 1");
         assert_eq!(
             results[1], 1,
@@ -2243,7 +2337,7 @@ mod tests {
         let mut builder = ByteMessageBuilder::new();
         let _ = builder.for_quantum_operations();
         builder.add_measurements(&[0, 1, 2, 3]); // 0 and 2 are leaked
-        let _cmd = noise.apply_noise_on_start(&builder.build()).unwrap();
+        let _cmd = noise.start(builder.build()).unwrap();
 
         // All original results are 0
         let mut builder = ByteMessageBuilder::new();
@@ -2263,12 +2357,14 @@ mod tests {
             let mut gate_builder = ByteMessageBuilder::new();
             let _ = gate_builder.for_quantum_operations();
             gate_builder.add_measurements(&[0, 1, 2, 3]);
-            let _cmd = noise.apply_noise_on_start(&gate_builder.build()).unwrap();
+            let _cmd = noise.start(gate_builder.build()).unwrap();
 
-            let biased_result = noise
-                .apply_noise_on_continue_processing(builder.build())
-                .unwrap();
+            let state = noise.continue_processing(builder.build()).unwrap();
+            let EngineStage::Complete(biased_result) = state else {
+                panic!("Expected Complete stage after measurement with noise");
+            };
             let results = biased_result.outcomes().unwrap();
+            assert_eq!(results.len(), 4, "Expected 4 measurement results");
 
             // Qubits 0 and 2 were leaked, so forced to 1, then 50% chance to flip to 0
             if results[0] == 0 {
@@ -2319,7 +2415,7 @@ mod tests {
         // Apply mid-circuit measurement and reset
         builder.add_measurements(&[2]);
         builder.add_prep(&[2]);
-        let _cmd = noise.apply_noise_on_start(&builder.build()).unwrap();
+        let _cmd = noise.start(builder.build()).unwrap();
 
         assert_eq!(
             noise.measured_qubits.len(),
@@ -2329,13 +2425,16 @@ mod tests {
             noise.measured_qubits
         );
 
-        let (q, _, is_crosstalk) = noise.measured_qubits[0];
+        let (q, gate_type) = noise.measured_qubits[0];
         assert_eq!(q, 2, "The first measurement should be the MCMR on qubit 2");
-        assert!(!is_crosstalk, "The first measurement should come from MCMR");
+        assert!(
+            gate_type == GateType::Measure,
+            "The first measurement should come from MCMR"
+        );
 
-        for (_, _, is_crosstalk) in &noise.measured_qubits[1..] {
+        for (_, gate_type) in &noise.measured_qubits[1..] {
             assert!(
-                is_crosstalk,
+                *gate_type == GateType::Prep,
                 "The other measurements should come from crosstalk"
             );
         }
@@ -2345,9 +2444,11 @@ mod tests {
         let _ = outcome_builder.for_outcomes();
         outcome_builder.add_outcomes(&[0, 0, 0, 0, 0]);
 
-        let mcmr = noise
-            .apply_noise_on_continue_processing(outcome_builder.build())
-            .unwrap();
+        let mcmr = noise.continue_processing(outcome_builder.build()).unwrap();
+
+        let EngineStage::Complete(mcmr) = mcmr else {
+            panic!("Expected Complete stage after processing outcomes");
+        };
         let results = mcmr.outcomes().unwrap();
 
         assert_eq!(
@@ -2381,8 +2482,9 @@ mod tests {
         builder.add_prep(&[0, 1, 2, 3, 4]);
         // Apply mid-circuit measurement and reset
         builder.add_measurements(&[2]);
+        builder.add_meas_crosstalk_global_payload(&[2]);
         builder.add_prep(&[2]);
-        let _cmd = noise.apply_noise_on_start(&builder.build()).unwrap();
+        let _cmd = noise.start(builder.build()).unwrap();
 
         assert_eq!(
             noise.measured_qubits.len(),
@@ -2392,13 +2494,16 @@ mod tests {
             noise.measured_qubits
         );
 
-        let (q, _, is_crosstalk) = noise.measured_qubits[0];
+        let (q, gate_type) = noise.measured_qubits[0];
         assert_eq!(q, 2, "The first measurement should be the MCMR on qubit 2");
-        assert!(!is_crosstalk, "The first measurement should come from MCMR");
+        assert!(
+            !gate_type.is_crosstalk_payload(),
+            "The first measurement should come from MCMR"
+        );
 
-        for (_, _, is_crosstalk) in &noise.measured_qubits[1..] {
+        for (_, gate_type) in &noise.measured_qubits[1..] {
             assert!(
-                is_crosstalk,
+                gate_type.is_crosstalk_payload(),
                 "The other measurements should come from crosstalk"
             );
         }
@@ -2408,9 +2513,11 @@ mod tests {
         let _ = outcome_builder.for_outcomes();
         outcome_builder.add_outcomes(&[0, 0, 0, 0, 0]);
 
-        let mcmr = noise
-            .apply_noise_on_continue_processing(outcome_builder.build())
-            .unwrap();
+        let mcmr = noise.continue_processing(outcome_builder.build()).unwrap();
+
+        let EngineStage::Complete(mcmr) = mcmr else {
+            panic!("Expected Complete stage after processing outcomes");
+        };
         let results = mcmr.outcomes().unwrap();
 
         assert_eq!(
@@ -2812,7 +2919,10 @@ mod tests {
         let msg = builder.build();
 
         // Apply noise to the gates manually since we can't access apply_noise_to_gates directly
-        let message = noise.apply_noise_on_start(&msg).unwrap();
+        let state = noise.start(msg).unwrap();
+        let EngineStage::NeedsProcessing(message) = state else {
+            panic!("Expected NeedsProcessing stage after applying noise to gates");
+        };
         let gates = message.quantum_ops().unwrap();
 
         // We expect the RZ gate to be unchanged, and the X gate might have errors applied

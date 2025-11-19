@@ -189,7 +189,10 @@ impl BiasedDepolarizingNoiseModel {
                     trace!("Applying preparation with possible fault");
                     self.apply_prep_faults(&mut builder, gate);
                 }
-                GateType::Idle | GateType::I => {}
+                GateType::I
+                | GateType::Idle
+                | GateType::MeasCrosstalkLocalPayload
+                | GateType::MeasCrosstalkGlobalPayload => {}
             }
         }
 

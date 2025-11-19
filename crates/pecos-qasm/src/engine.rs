@@ -586,7 +586,10 @@ impl QASMEngine {
         let qubits: Vec<usize> = gate.qubits.iter().map(|q| q.0).collect();
 
         match gate.gate_type {
-            GateType::I | GateType::Idle => Ok(()), // No-op gates
+            GateType::I
+            | GateType::Idle
+            | GateType::MeasCrosstalkLocalPayload
+            | GateType::MeasCrosstalkGlobalPayload => Ok(()), // No-op gates
             GateType::X
             | GateType::Y
             | GateType::Z

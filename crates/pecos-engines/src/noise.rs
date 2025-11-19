@@ -33,7 +33,7 @@ pub use self::noise_rng::NoiseRng;
 pub use self::pass_through::{PassThroughNoiseModel, PassThroughNoiseModelBuilder};
 pub use self::utils::{NoiseUtils, ProbabilityValidator};
 pub use self::weighted_sampler::{
-    SingleQubitWeightedSampler, TwoQubitWeightedSampler, WeightedSampler,
+    CrosstalkWeightedSampler, SingleQubitWeightedSampler, TwoQubitWeightedSampler, WeightedSampler,
 };
 
 use crate::byte_message::ByteMessage;

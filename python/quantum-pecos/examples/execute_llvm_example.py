@@ -6,7 +6,7 @@ the external execute_llvm package, but uses PECOS's own HUGR compilation
 infrastructure.
 """
 
-from pecos import execute_llvm
+import pecos as pc
 
 
 def main() -> None:
@@ -15,7 +15,7 @@ def main() -> None:
     print("=" * 50)
 
     # Check if execute_llvm functionality is available
-    if execute_llvm.is_available():
+    if pc.execute_llvm.is_available():
         print("execute_llvm functionality is available")
     else:
         print("No HUGR->LLVM backend available")
@@ -29,7 +29,7 @@ def main() -> None:
     print("\nCompiling HUGR to LLVM IR...")
     try:
         # This would normally work with real HUGR data
-        llvm_ir = execute_llvm.compile_module_to_string(dummy_hugr_bytes)
+        llvm_ir = pc.execute_llvm.compile_module_to_string(dummy_hugr_bytes)
         print(f"Generated {len(llvm_ir)} characters of LLVM IR")
 
     except RuntimeError as e:

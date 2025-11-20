@@ -15,7 +15,7 @@ This module provides functions to resolve and translate operation names for comp
 simulators in the PECOS framework.
 """
 
-from pecos.num import isclose, pi
+import pecos as pc
 from pecos.reps.pyphir.op_types import QOp
 from pecos.tools.find_cliffs import r1xy2cliff, rz2cliff
 
@@ -30,11 +30,11 @@ def sim_name_resolver(qop: QOp) -> str:
 
     if qop.name == "RZZ":
         (theta,) = qop.angles
-        theta %= 2 * pi
+        theta %= pc.f64.tau
 
-        if isclose(theta, pi / 2, rtol=0.0, atol=1e-12):
+        if pc.isclose(theta, pc.f64.frac_pi_2, rtol=0.0, atol=1e-12):
             return "SZZ"
-        if isclose(theta, pi * (3 / 2), rtol=0.0, atol=1e-12):
+        if pc.isclose(theta, pc.f64.pi * (3 / 2), rtol=0.0, atol=1e-12):
             return "SZZdg"
 
     elif qop.name == "RZ":

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pecos as pc
 from pecos.circuits import QuantumCircuit
 from pecos.engines.cvm.classical import eval_condition
 from pecos.error_models.class_errors_circuit import ErrorCircuits
@@ -32,7 +33,6 @@ from pecos.error_models.noise_impl_old.tq_noise import (
     noise_two_qubit_gates_depolarizing_with_noiseless,
 )
 from pecos.error_models.parent_class_error_gen import ParentErrorModel
-from pecos.num import mean
 
 if TYPE_CHECKING:
     from pecos.typing import ErrorParams, GateParams, OutputDict
@@ -69,7 +69,7 @@ class DepolarizingErrorModel(ParentErrorModel):
         self.error_params["p2"] *= scale
 
         if isinstance(self.error_params["p_meas"], tuple):
-            self.error_params["p_meas"] = mean(self.error_params["p_meas"])
+            self.error_params["p_meas"] = pc.mean(self.error_params["p_meas"])
 
         self.error_params["p_meas"] *= scale
         self.error_params["p_init"] *= scale

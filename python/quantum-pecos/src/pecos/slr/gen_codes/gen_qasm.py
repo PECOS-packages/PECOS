@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from pecos import __version__
+import pecos as pc
 from pecos.slr.gen_codes.generator import Generator
 
 
@@ -50,7 +50,7 @@ class QASMGenerator(Generator):
                 # TODO: dump definitions in for things that are used instead of using includes
                 self.write('include "hqslib1.inc";')
             if self.add_versions:
-                self.write(f"// Generated using: PECOS version {__version__}")
+                self.write(f"// Generated using: PECOS version {pc.__version__}")
             for var in block.vars:
                 var_def = self.process_var_def(var)
                 if var_def:

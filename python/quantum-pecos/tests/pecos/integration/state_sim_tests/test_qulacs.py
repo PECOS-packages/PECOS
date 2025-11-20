@@ -14,18 +14,11 @@
 import warnings
 
 import numpy as np
+import pecos as pc
 import pytest
 
 pytest.importorskip("pecos_rslib", reason="pecos_rslib required for qulacs tests")
 
-from pecos.num import (
-    abs,  # noqa: A004 - intentionally shadow builtin
-    allclose,
-    array,
-    isclose,
-    pi,
-    zeros,
-)
 from pecos.simulators.qulacs import Qulacs
 
 
@@ -40,9 +33,9 @@ class TestQulacsBasic:
         # Check initial state is |000⟩
         state = sim.vector
         assert state.shape == (8,)
-        assert isclose(abs(state[0]) ** 2, 1.0, rtol=1e-5, atol=1e-8)
+        assert pc.isclose(pc.abs(state[0]) ** 2, 1.0, rtol=1e-5, atol=1e-8)
         for i in range(1, 8):
-            assert isclose(abs(state[i]) ** 2, 0.0, rtol=1e-5, atol=1e-8)
+            assert pc.isclose(pc.abs(state[i]) ** 2, 0.0, rtol=1e-5, atol=1e-8)
 
     def test_initialization_with_seed(self) -> None:
         """Test simulator initialization with deterministic seed."""
@@ -54,7 +47,7 @@ class TestQulacsBasic:
         sim2.bindings["H"](sim2, 0)
 
         # States should be identical
-        assert allclose(sim1.vector, sim2.vector)
+        assert pc.allclose(sim1.vector, sim2.vector)
 
     def test_reset(self) -> None:
         """Test state reset functionality."""
@@ -66,10 +59,10 @@ class TestQulacsBasic:
 
         # Reset should return to |00⟩
         sim.reset()
-        expected = zeros(4, dtype="complex")
+        expected = pc.zeros(4, dtype="complex")
         expected[0] = 1.0
 
-        assert allclose(sim.vector, expected)
+        assert pc.allclose(sim.vector, expected)
 
 
 class TestQulacsSingleQubitGates:
@@ -81,27 +74,27 @@ class TestQulacsSingleQubitGates:
 
         # Test X gate: X|0⟩ = |1⟩
         sim.bindings["X"](sim, 0)
-        expected = array([0, 1], dtype="complex")
-        assert allclose(sim.vector, expected)
+        expected = pc.array([0, 1], dtype="complex")
+        assert pc.allclose(sim.vector, expected)
 
         # Test X again: X|1⟩ = |0⟩
         sim.bindings["X"](sim, 0)
-        expected = array([1, 0], dtype="complex")
-        assert allclose(sim.vector, expected)
+        expected = pc.array([1, 0], dtype="complex")
+        assert pc.allclose(sim.vector, expected)
 
         # Test Y gate: Y|0⟩ = i|1⟩
         sim.reset()
         sim.bindings["Y"](sim, 0)
-        expected = array([0, 1j], dtype="complex")
-        assert allclose(sim.vector, expected)
+        expected = pc.array([0, 1j], dtype="complex")
+        assert pc.allclose(sim.vector, expected)
 
         # Test Z gate on |+⟩ state
         sim.reset()
         sim.bindings["H"](sim, 0)  # Create |+⟩
         sim.bindings["Z"](sim, 0)  # Z|+⟩ = |-⟩
         sim.bindings["H"](sim, 0)  # H|-⟩ = |1⟩
-        expected = array([0, 1], dtype="complex")
-        assert allclose(sim.vector, expected)
+        expected = pc.array([0, 1], dtype="complex")
+        assert pc.allclose(sim.vector, expected)
 
     def test_hadamard_gate(self) -> None:
         """Test Hadamard gate."""
@@ -109,15 +102,15 @@ class TestQulacsSingleQubitGates:
 
         # H|0⟩ = |+⟩ = (|0⟩ + |1⟩)/√2
         sim.bindings["H"](sim, 0)
-        expected = array([1 / np.sqrt(2), 1 / np.sqrt(2)], dtype="complex")
-        assert allclose(sim.vector, expected)
+        expected = pc.array([1 / pc.sqrt(2), 1 / pc.sqrt(2)], dtype="complex")
+        assert pc.allclose(sim.vector, expected)
 
         # H|1⟩ = |-⟩ = (|0⟩ - |1⟩)/√2
         sim.reset()
         sim.bindings["X"](sim, 0)
         sim.bindings["H"](sim, 0)
-        expected = array([1 / np.sqrt(2), -1 / np.sqrt(2)], dtype="complex")
-        assert allclose(sim.vector, expected)
+        expected = pc.array([1 / pc.sqrt(2), -1 / pc.sqrt(2)], dtype="complex")
+        assert pc.allclose(sim.vector, expected)
 
     def test_phase_gates(self) -> None:
         """Test S and T gates."""
@@ -133,46 +126,46 @@ class TestQulacsSingleQubitGates:
         # This is expected behavior - our isclose handles complex correctly
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=np.exceptions.ComplexWarning)
-            assert isclose(phase_ratio, expected_phase, rtol=0.0, atol=1e-10)
+            assert pc.isclose(phase_ratio, expected_phase, rtol=0.0, atol=1e-10)
 
         # Test T gate
         sim.reset()
         sim.bindings["H"](sim, 0)
         sim.bindings["T"](sim, 0)
         state = sim.vector
-        expected_t_phase = np.exp(1j * pi / 4)
+        expected_t_phase = pc.exp(1j * pc.f64.frac_pi_4)
         phase_ratio = state[1] / state[0]
         # Suppress ComplexWarning from NumPy when comparing complex numbers
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=np.exceptions.ComplexWarning)
-            assert isclose(phase_ratio, expected_t_phase, rtol=0.0, atol=1e-10)
+            assert pc.isclose(phase_ratio, expected_t_phase, rtol=0.0, atol=1e-10)
 
     def test_rotation_gates(self) -> None:
         """Test rotation gates RX, RY, RZ."""
         sim = Qulacs(1)
 
         # Test RX(π) = -iX
-        sim.bindings["RX"](sim, 0, angle=pi)
+        sim.bindings["RX"](sim, 0, angle=pc.f64.pi)
         state = sim.vector
-        assert isclose(state[0], 0, rtol=0.0, atol=1e-10)
-        assert isclose(state[1], -1j, rtol=0.0, atol=1e-10)
+        assert pc.isclose(state[0], 0, rtol=0.0, atol=1e-10)
+        assert pc.isclose(state[1], -1j, rtol=0.0, atol=1e-10)
 
         # Test RY(π/2) creates equal superposition
         sim.reset()
-        sim.bindings["RY"](sim, 0, angle=pi / 2)
+        sim.bindings["RY"](sim, 0, angle=pc.f64.frac_pi_2)
         state = sim.vector
-        assert isclose(abs(state[0]), 1 / np.sqrt(2), rtol=0.0, atol=1e-10)
-        assert isclose(abs(state[1]), 1 / np.sqrt(2), rtol=0.0, atol=1e-10)
+        assert pc.isclose(pc.abs(state[0]), 1 / pc.sqrt(2), rtol=0.0, atol=1e-10)
+        assert pc.isclose(pc.abs(state[1]), 1 / pc.sqrt(2), rtol=0.0, atol=1e-10)
 
         # Test RZ(π) on |+⟩
         sim.reset()
         sim.bindings["H"](sim, 0)  # Create |+⟩
-        sim.bindings["RZ"](sim, 0, angle=pi)
+        sim.bindings["RZ"](sim, 0, angle=pc.f64.pi)
         sim.bindings["H"](sim, 0)  # Should give |1⟩ (possibly with phase)
         state = sim.vector
         # Check that qubit is effectively in |1⟩ state (allowing for global phase)
-        assert isclose(abs(state[0]), 0, rtol=0.0, atol=1e-10)
-        assert isclose(abs(state[1]), 1, rtol=0.0, atol=1e-10)
+        assert pc.isclose(pc.abs(state[0]), 0, rtol=0.0, atol=1e-10)
+        assert pc.isclose(pc.abs(state[1]), 1, rtol=0.0, atol=1e-10)
 
 
 class TestQulacsTwoQubitGates:
@@ -187,11 +180,11 @@ class TestQulacsTwoQubitGates:
         sim.bindings["CX"](sim, 0, 1)
 
         state = sim.vector
-        expected = zeros(4, dtype="complex")
-        expected[0] = 1 / np.sqrt(2)  # |00⟩
-        expected[3] = 1 / np.sqrt(2)  # |11⟩
+        expected = pc.zeros(4, dtype="complex")
+        expected[0] = 1 / pc.sqrt(2)  # |00⟩
+        expected[3] = 1 / pc.sqrt(2)  # |11⟩
 
-        assert allclose(state, expected)
+        assert pc.allclose(state, expected)
 
     def test_controlled_gates(self) -> None:
         """Test controlled X, Y, Z gates."""
@@ -200,9 +193,9 @@ class TestQulacsTwoQubitGates:
         # Test CX gate
         sim.bindings["X"](sim, 0)  # |10⟩
         sim.bindings["CX"](sim, 0, 1)  # Should become |11⟩
-        expected = zeros(4, dtype="complex")
+        expected = pc.zeros(4, dtype="complex")
         expected[3] = 1.0  # |11⟩
-        assert allclose(sim.vector, expected)
+        assert pc.allclose(sim.vector, expected)
 
         # Test CZ gate on |++⟩
         sim.reset()
@@ -212,8 +205,8 @@ class TestQulacsTwoQubitGates:
 
         state = sim.vector
         # CZ|++⟩ = (|00⟩ + |01⟩ + |10⟩ - |11⟩)/2
-        expected = array([0.5, 0.5, 0.5, -0.5], dtype="complex")
-        assert allclose(state, expected)
+        expected = pc.array([0.5, 0.5, 0.5, -0.5], dtype="complex")
+        assert pc.allclose(state, expected)
 
     def test_swap_gate(self) -> None:
         """Test SWAP gate."""
@@ -223,9 +216,10 @@ class TestQulacsTwoQubitGates:
         sim.bindings["X"](sim, 0)  # |10⟩
         sim.bindings["SWAP"](sim, 0, 1)  # Should become |01⟩
 
-        # Check that exactly one basis state has probability 1
-        probs = abs(sim.vector) ** 2
-        assert np.sum(probs > 0.5) == 1  # Exactly one state should be populated
+        # State should be |01⟩
+        expected = pc.zeros(4, dtype="complex")
+        expected[1] = 1.0  # |01⟩
+        assert pc.allclose(sim.vector, expected)
 
 
 class TestQulacsMeasurement:
@@ -296,29 +290,6 @@ class TestQulacsCompatibility:
         for gate in expected_gates:
             assert gate in sim.bindings, f"Gate {gate} not found in bindings"
 
-    def test_numpy_compatibility(self) -> None:
-        """Test numpy array compatibility."""
-        sim = Qulacs(2)
-
-        state = sim.vector
-
-        # Should be numpy-compatible (Array implements buffer protocol)
-        # Can convert to numpy array via np.asarray
-        state_np = np.asarray(state)
-        assert isinstance(state_np, np.ndarray)
-
-        # Should have complex dtype
-        assert np.iscomplexobj(state_np)
-
-        # Should be normalized
-        norm = np.sum(abs(state_np) ** 2)
-        assert isclose(norm, 1.0, rtol=1e-5, atol=1e-8)
-
-        # Should support numpy operations
-        probabilities = abs(state_np) ** 2
-        assert isinstance(probabilities, np.ndarray)
-        assert probabilities.dtype == float
-
 
 class TestQulacsAdvanced:
     """Advanced tests for edge cases and complex scenarios."""
@@ -333,11 +304,11 @@ class TestQulacsAdvanced:
         sim.bindings["CX"](sim, 1, 2)
 
         state = sim.vector
-        expected = zeros(8, dtype="complex")
-        expected[0] = 1 / np.sqrt(2)  # |000⟩
-        expected[7] = 1 / np.sqrt(2)  # |111⟩
+        expected = pc.zeros(8, dtype="complex")
+        expected[0] = 1 / pc.sqrt(2)  # |000⟩
+        expected[7] = 1 / pc.sqrt(2)  # |111⟩
 
-        assert allclose(state, expected)
+        assert pc.allclose(state, expected)
 
     def test_state_normalization_preservation(self) -> None:
         """Test that state remains normalized after various operations."""
@@ -346,14 +317,14 @@ class TestQulacsAdvanced:
         # Apply various gates
         sim.bindings["H"](sim, 0)
         sim.bindings["CX"](sim, 0, 1)
-        sim.bindings["RY"](sim, 2, angle=pi / 4)
+        sim.bindings["RY"](sim, 2, angle=pc.f64.frac_pi_4)
         sim.bindings["CZ"](sim, 1, 2)
         sim.bindings["T"](sim, 0)
 
-        # Check normalization
+        # Check normalization using PECOS sum
         state = sim.vector
-        norm_squared = np.sum(abs(state) ** 2)
-        assert isclose(norm_squared, 1.0, rtol=0.0, atol=1e-10)
+        norm_squared = pc.sum(pc.abs(state) ** 2)
+        assert pc.isclose(norm_squared, 1.0, rtol=0.0, atol=1e-10)
 
     def test_gate_reversibility(self) -> None:
         """Test that gates are properly reversible."""
@@ -372,4 +343,4 @@ class TestQulacsAdvanced:
 
         # Should be back to initial state
         final_state = sim.vector
-        assert allclose(initial_state, final_state, atol=1e-10)
+        assert pc.allclose(initial_state, final_state, atol=1e-10)

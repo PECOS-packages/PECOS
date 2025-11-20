@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Integration tests for state vector quantum simulators."""
+"""Integration tests for state vector quantum simulators using pure PECOS (no NumPy)."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -22,20 +22,11 @@ if TYPE_CHECKING:
 import json
 from pathlib import Path
 
-import numpy as np
+import pecos as pc
 import pytest
 from pecos.circuits import QuantumCircuit
 from pecos.engines.hybrid_engine import HybridEngine
 from pecos.error_models.generic_error_model import GenericErrorModel
-from pecos.num import (
-    abs,  # noqa: A004 - intentionally shadow builtin
-    allclose,
-    isclose,
-    linalg,
-    pi,
-    random,
-    zeros,
-)
 from pecos.simulators import (
     MPS,
     CuStateVec,
@@ -43,6 +34,7 @@ from pecos.simulators import (
     Qulacs,
     StateVec,
 )
+from pecos.tools.testing import assert_allclose
 
 str_to_sim = {
     "StateVec": StateVec,
@@ -76,18 +68,18 @@ def check_dependencies(
     return sim_class
 
 
-def verify(simulator: str, qc: QuantumCircuit, final_vector: np.ndarray) -> None:
+def verify(simulator: str, qc: QuantumCircuit, final_vector: pc.Array) -> None:
     """Verify quantum circuit simulation results against expected state vector."""
     sim = check_dependencies(simulator)(len(qc.qudits))
     sim.run_circuit(qc)
 
     # Normalize vectors
-    sim_vector_normalized = sim.vector / (linalg.norm(sim.vector) or 1)
-    final_vector_normalized = final_vector / (linalg.norm(final_vector) or 1)
+    sim_vector_normalized = sim.vector / (pc.linalg.norm(sim.vector) or 1)
+    final_vector_normalized = final_vector / (pc.linalg.norm(final_vector) or 1)
 
     phase = (
         final_vector_normalized[0] / sim_vector_normalized[0]
-        if abs(sim_vector_normalized[0]) > 1e-10
+        if pc.abs(sim_vector_normalized[0]) > 1e-10
         else 1
     )
 
@@ -102,7 +94,7 @@ def verify(simulator: str, qc: QuantumCircuit, final_vector: np.ndarray) -> None
     # This prevents "inf" relative errors when comparing to exact 0
     atol = 1e-12
 
-    np.testing.assert_allclose(
+    assert_allclose(
         sim_vector_adjusted,
         final_vector_normalized,
         rtol=rtol,
@@ -127,12 +119,12 @@ def check_measurement(
     state = 0
     for q, value in results.items():
         state += value * 2 ** (sim.num_qubits - 1 - q)
-    final_vector = zeros(shape=(2**sim.num_qubits,))
+    final_vector = pc.zeros(shape=(2**sim.num_qubits,))
     final_vector[state] = 1
 
-    abs_values_vector = [abs(x) for x in sim.vector]
+    abs_values_vector = [pc.abs(x) for x in sim.vector]
 
-    assert allclose(abs_values_vector, final_vector)
+    assert pc.allclose(abs_values_vector, final_vector)
 
 
 def compare_against_statevec(
@@ -161,22 +153,22 @@ def compare_against_statevec(
 
 def generate_random_state(seed: int | None = None) -> QuantumCircuit:
     """Generate a quantum circuit with random gates for testing."""
-    random.seed(seed)
+    pc.random.seed(seed)
 
     qc = QuantumCircuit()
     qc.append({"Init": {0, 1, 2, 3}})
 
     for _ in range(3):
-        qc.append({"RZ": {0}}, angles=(pi * random.random(1)[0],))
-        qc.append({"RZ": {1}}, angles=(pi * random.random(1)[0],))
-        qc.append({"RZ": {2}}, angles=(pi * random.random(1)[0],))
-        qc.append({"RZ": {3}}, angles=(pi * random.random(1)[0],))
-        qc.append({"RXX": {(0, 1)}}, angles=(pi * random.random(1)[0],))
-        qc.append({"RXX": {(0, 2)}}, angles=(pi * random.random(1)[0],))
-        qc.append({"RXX": {(0, 3)}}, angles=(pi * random.random(1)[0],))
-        qc.append({"RXX": {(1, 2)}}, angles=(pi * random.random(1)[0],))
-        qc.append({"RXX": {(1, 3)}}, angles=(pi * random.random(1)[0],))
-        qc.append({"RXX": {(2, 3)}}, angles=(pi * random.random(1)[0],))
+        qc.append({"RZ": {0}}, angles=(pc.f64.pi * pc.random.random(1)[0],))
+        qc.append({"RZ": {1}}, angles=(pc.f64.pi * pc.random.random(1)[0],))
+        qc.append({"RZ": {2}}, angles=(pc.f64.pi * pc.random.random(1)[0],))
+        qc.append({"RZ": {3}}, angles=(pc.f64.pi * pc.random.random(1)[0],))
+        qc.append({"RXX": {(0, 1)}}, angles=(pc.f64.pi * pc.random.random(1)[0],))
+        qc.append({"RXX": {(0, 2)}}, angles=(pc.f64.pi * pc.random.random(1)[0],))
+        qc.append({"RXX": {(0, 3)}}, angles=(pc.f64.pi * pc.random.random(1)[0],))
+        qc.append({"RXX": {(1, 2)}}, angles=(pc.f64.pi * pc.random.random(1)[0],))
+        qc.append({"RXX": {(1, 3)}}, angles=(pc.f64.pi * pc.random.random(1)[0],))
+        qc.append({"RXX": {(2, 3)}}, angles=(pc.f64.pi * pc.random.random(1)[0],))
 
     return qc
 
@@ -196,7 +188,7 @@ def test_init(simulator: str) -> None:
     qc = QuantumCircuit()
     qc.append({"Init": {0, 1, 2, 3}})
 
-    final_vector = zeros(shape=(2**4,))
+    final_vector = pc.zeros(shape=(2**4,))
     final_vector[0] = 1
 
     verify(simulator, qc, final_vector)
@@ -239,7 +231,7 @@ def test_comp_basis_circ_and_measure(simulator: str) -> None:
     # Step 1
     qc.append({"X": {0, 2}})  # |0000> -> |1010>
 
-    final_vector = zeros(shape=(2**4,))
+    final_vector = pc.zeros(shape=(2**4,))
     final_vector[10] = 1  # |1010>
 
     # Run the circuit and compare results
@@ -253,7 +245,7 @@ def test_comp_basis_circ_and_measure(simulator: str) -> None:
     # Step 2
     qc.append({"CX": {(2, 1)}})  # |1010> -> |1110>
 
-    final_vector = zeros(shape=(2**4,))
+    final_vector = pc.zeros(shape=(2**4,))
     final_vector[14] = 1  # |1110>
 
     # Run the circuit and compare results for Step 2
@@ -297,17 +289,17 @@ def test_all_gate_circ(simulator: str) -> None:
     for qc in qcs:
         qc.append({"SZZ": {(3, 2)}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
-        qc.append({"RX": {0, 2}}, angles=(pi / 4,))
+        qc.append({"RX": {0, 2}}, angles=(pc.f64.frac_pi_4,))
         compare_against_statevec(simulator, qc, **sim_kwargs)
         qc.append({"SXXdg": {(0, 3)}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
-        qc.append({"RY": {0, 3}}, angles=(pi / 8,))
+        qc.append({"RY": {0, 3}}, angles=(pc.f64.pi / 8,))
         compare_against_statevec(simulator, qc, **sim_kwargs)
-        qc.append({"RZZ": {(0, 3)}}, angles=(pi / 16,))
+        qc.append({"RZZ": {(0, 3)}}, angles=(pc.f64.pi / 16,))
         compare_against_statevec(simulator, qc, **sim_kwargs)
-        qc.append({"RZ": {1, 3}}, angles=(pi / 16,))
+        qc.append({"RZ": {1, 3}}, angles=(pc.f64.pi / 16,))
         compare_against_statevec(simulator, qc, **sim_kwargs)
-        qc.append({"R1XY": {2}}, angles=(pi / 16, pi / 2))
+        qc.append({"R1XY": {2}}, angles=(pc.f64.pi / 16, pc.f64.frac_pi_2))
         compare_against_statevec(simulator, qc, **sim_kwargs)
         qc.append({"I": {0, 1, 3}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
@@ -323,7 +315,7 @@ def test_all_gate_circ(simulator: str) -> None:
         compare_against_statevec(simulator, qc, **sim_kwargs)
         qc.append({"H": {3, 1}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
-        qc.append({"RYY": {(2, 1)}}, angles=(pi / 8,))
+        qc.append({"RYY": {(2, 1)}}, angles=(pc.f64.pi / 8,))
         compare_against_statevec(simulator, qc, **sim_kwargs)
         qc.append({"SZZdg": {(3, 1)}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
@@ -337,7 +329,10 @@ def test_all_gate_circ(simulator: str) -> None:
         compare_against_statevec(simulator, qc, **sim_kwargs)
         qc.append({"SX": {1, 2}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
-        qc.append({"R2XXYYZZ": {(0, 3)}}, angles=(pi / 4, pi / 16, pi / 2))
+        qc.append(
+            {"R2XXYYZZ": {(0, 3)}},
+            angles=(pc.f64.frac_pi_4, pc.f64.pi / 16, pc.f64.frac_pi_2),
+        )
         compare_against_statevec(simulator, qc, **sim_kwargs)
         qc.append({"SY": {2, 3}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
@@ -359,7 +354,7 @@ def test_all_gate_circ(simulator: str) -> None:
         compare_against_statevec(simulator, qc, **sim_kwargs)
         qc.append({"Tdg": {3, 1}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
-        qc.append({"RXX": {(1, 3)}}, angles=(pi / 4,))
+        qc.append({"RXX": {(1, 3)}}, angles=(pc.f64.frac_pi_4,))
         compare_against_statevec(simulator, qc, **sim_kwargs)
         qc.append({"Q": {0, 1, 2}})
         compare_against_statevec(simulator, qc, **sim_kwargs)
@@ -434,53 +429,7 @@ def test_hybrid_engine_no_noise(simulator: str) -> None:
 
     register = "c" if "c" in results else "m"
     result_values = results[register]
-    assert isclose(
-        result_values.count("00") / n_shots,
-        result_values.count("11") / n_shots,
-        rtol=0.0,
-        atol=0.1,
-    )
-
-    # @pytest.mark.parametrize(
-    #     "simulator",
-    #     [
-    #         "StateVecRs",
-    #         "MPS",
-    #         "Qulacs",
-    #         "CuStateVec",
-    #     ],
-    # )
-    # def test_hybrid_engine_noisy(simulator: str) -> None:
-    #     """Test that HybridEngine with noise can use these simulators."""
-    #     check_dependencies(simulator)
-    #
-    #     n_shots = 1000
-    #     phir_folder = Path(__file__).parent.parent / "phir"
-    #
-    #     generic_errors = GenericErrorModel(
-    #         error_params={
-    #             "p1": 2e-1,
-    #             "p2": 2e-1,
-    #             "p_meas": 2e-1,
-    #             "p_init": 1e-1,
-    #             "p1_error_model": {
-    #                 "X": 0.25,
-    #                 "Y": 0.25,
-    #                 "Z": 0.25,
-    #                 "L": 0.25,
-    #             },
-    #         },
-    #     )
-    #     sim = HybridEngine(qsim=simulator, error_model=generic_errors)
-    #     sim.run(
-    #         program=json.load(Path.open(phir_folder / "example1_no_wasm.phir.json")),
-    #         shots=n_shots,
-    #     )
-
-    # Check either "c" (if Result command worked) or "m" (fallback)
-    register = "c" if "c" in results else "m"
-    result_values = results[register]
-    assert isclose(
+    assert pc.isclose(
         result_values.count("00") / n_shots,
         result_values.count("11") / n_shots,
         rtol=0.0,

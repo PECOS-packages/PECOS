@@ -2621,23 +2621,25 @@ source = { editable = "python/pecos-rslib" }
 dev = [
     { name = "patchelf", marker = "sys_platform != 'win32'" },
 ]
-test = [
+numpy-compat = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pytest" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+test = [
+    { name = "pytest" },
 ]
 
 [package.metadata]
 
 [package.metadata.requires-dev]
 dev = [{ name = "patchelf", marker = "sys_platform != 'win32'" }]
-test = [
+numpy-compat = [
     { name = "numpy", specifier = ">=1.20" },
-    { name = "pytest", specifier = ">=7.0" },
     { name = "scipy", specifier = ">=1.7" },
 ]
+test = [{ name = "pytest", specifier = ">=7.0" }]
 
 [[package]]
 name = "pecos-workspace"
@@ -2656,16 +2658,18 @@ dev = [
     { name = "mkdocstrings", extra = ["python"] },
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "networkx", version = "3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "patchelf", marker = "sys_platform != 'win32'" },
     { name = "phir" },
     { name = "pre-commit" },
     { name = "ruff" },
-    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "setuptools" },
     { name = "wasmtime" },
+]
+numpy-compat = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 test = [
     { name = "hypothesis" },
@@ -2686,14 +2690,16 @@ dev = [
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extras = ["python"] },
     { name = "networkx", specifier = ">=2.1.0" },
-    { name = "numpy", specifier = ">=1.15.0" },
     { name = "patchelf", marker = "sys_platform != 'win32'" },
     { name = "phir", specifier = ">=0.3.3" },
     { name = "pre-commit" },
     { name = "ruff" },
-    { name = "scipy", specifier = ">=1.1.0" },
     { name = "setuptools", specifier = ">=62.6" },
     { name = "wasmtime", specifier = ">=13.0" },
+]
+numpy-compat = [
+    { name = "numpy", specifier = ">=1.15.0" },
+    { name = "scipy", specifier = ">=1.1.0" },
 ]
 test = [
     { name = "hypothesis", specifier = "==6.122.3" },
@@ -3529,8 +3535,6 @@ source = { editable = "python/quantum-pecos" }
 dependencies = [
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "networkx", version = "3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pecos-rslib" },
     { name = "phir" },
 ]
@@ -3556,6 +3560,12 @@ visualization = [
     { name = "plotly" },
 ]
 
+[package.dev-dependencies]
+numpy-compat = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "cupy-cuda13x", marker = "python_full_version >= '3.11' and extra == 'cuda'", specifier = ">=13.0.0" },
@@ -3563,7 +3573,6 @@ requires-dist = [
     { name = "guppylang", marker = "extra == 'guppy'", specifier = ">=0.21.0" },
     { name = "matplotlib", marker = "extra == 'visualization'", specifier = ">=2.2.0" },
     { name = "networkx", specifier = ">=2.1.0" },
-    { name = "numpy", specifier = ">=1.15.0" },
     { name = "pecos-rslib", editable = "python/pecos-rslib" },
     { name = "phir", specifier = ">=0.3.3" },
     { name = "plotly", marker = "extra == 'visualization'", specifier = "~=5.9.0" },
@@ -3573,6 +3582,10 @@ requires-dist = [
     { name = "selene-sim", marker = "extra == 'guppy'", specifier = "~=0.2.0" },
 ]
 provides-extras = ["guppy", "visualization", "all", "cuda"]
+
+[package.metadata.requires-dev]
+numpy-compat = [{ name = "numpy", specifier = ">=1.15.0" }]
+test = []
 
 [[package]]
 name = "qwasm"

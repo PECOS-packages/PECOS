@@ -1,7 +1,7 @@
 use parking_lot::Mutex;
 use pecos::prelude::*;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::types::{PyDict, PyList};
 use std::collections::BTreeMap;
 
 // Import the Rust PhirJsonEngine with a renamed alias to distinguish from Python wrapper
@@ -365,7 +365,9 @@ impl PhirJsonEngine {
 
             // Create a dictionary with the measurement
             let measurement = PyDict::new(py);
-            let register_tuple = PyTuple::new(py, [register_name.clone(), index.to_string()])?;
+            // Create tuple with register name (string) and index (integer, not string)
+            // Changed from index.to_string() to just index to preserve integer type
+            let register_tuple = (register_name.clone(), index);
             measurement.set_item(register_tuple, adjusted_outcome)?;
 
             // Create a list with a single measurement dictionary
@@ -1067,8 +1069,8 @@ impl ClassicalEngine for PhirJsonEngine {
                 };
 
                 // Create a tuple (register_name, index) as the key
-                let register_tuple = PyTuple::new(py, [register_name.clone(), index.to_string()])
-                    .map_err(to_pecos_error)?;
+                // Changed from index.to_string() to just index to preserve integer type
+                let register_tuple = (register_name.clone(), index);
 
                 // Set the item in the measurement dictionary using the register tuple as the key
                 measurement

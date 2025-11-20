@@ -22,24 +22,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
-
+import pecos as pc
 from pecos.decoders import MWPM2D
 from pecos.engines import circuit_runners
 from pecos.error_models import XModel
 from pecos.misc.threshold_curve import func
-from pecos.num import (
-    Poly1d,
-    array,
-    brentq,
-    curve_fit,
-    diag,
-    isnan,
-    linspace,
-    newton,
-    polyfit,
-    sqrt,
-)
 from pecos.qeccs import Surface4444
 from pecos.tools.threshold_tools import (
     codecapacity_logical_rate,
@@ -51,17 +38,19 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from typing import TypedDict
 
-    from numpy.typing import NDArray
-
+    from pecos import (
+        Array,
+        f64,
+    )
     from pecos.engines.circuit_runners import Standard
     from pecos.protocols import Decoder, ErrorGenerator, QECCProtocol
 
     class PseudoThresholdResult(TypedDict):
         """Result from pseudo threshold calculations."""
 
-        ps: NDArray[np.float64]
+        ps: Array[f64]
         distance: int
-        plog: NDArray[np.float64]
+        plog: Array[f64]
 
 
 def pseudo_threshold_code_capacity(
@@ -118,7 +107,7 @@ def pseudo_threshold_code_capacity(
         msg = f'Mode "{mode}" is not handled!'
         raise Exception(msg)
 
-    ps = array(ps)
+    ps = pc.array(ps)
 
     plog = []
 
@@ -145,7 +134,7 @@ def pseudo_threshold_code_capacity(
 
         plog.append(logical_error_rate)
 
-    plog = array(plog)
+    plog = pc.array(plog)
 
     if verbose:
         print("ps=", ps)
@@ -162,12 +151,12 @@ def pseudo_threshold_code_capacity(
 
 
 def find_polyfit(
-    ps: Sequence[float] | NDArray[np.float64],
-    plog: Sequence[float] | NDArray[np.float64],
+    ps: Sequence[float] | Array[f64],
+    plog: Sequence[float] | Array[f64],
     deg: int,
     *,
     verbose: bool = True,
-) -> tuple[float, np.ndarray, np.ndarray]:
+) -> tuple[float, Array, Array]:
     """Find polynomial fit for pseudo-threshold analysis.
 
     Performs polynomial fitting on error probability data to determine
@@ -182,12 +171,12 @@ def find_polyfit(
     Returns:
         Tuple of pseudo-threshold, fitted parameters, and covariance matrix.
     """
-    plist = array(ps)
+    plist = pc.array(ps)
 
-    popt, pcov = polyfit(ps, plog, deg=deg, cov=True)
+    popt, pcov = pc.polyfit(ps, plog, deg=deg, cov=True)
 
-    var = diag(pcov)
-    stdev = sqrt(var)
+    var = pc.diag(pcov)
+    stdev = pc.sqrt(var)
 
     if verbose:
         print("params=", popt)
@@ -202,15 +191,15 @@ def find_polyfit(
 
 
 def find_uniscalefit(
-    ps: list[float] | np.ndarray,
-    plog: list[float] | np.ndarray,
+    ps: list[float] | Array,
+    plog: list[float] | Array,
     distance: int,
-    p0: list[float] | np.ndarray | None = None,
+    p0: list[float] | Array | None = None,
     maxfev: int = 1000000,
     *,
     verbose: bool = True,
     **kwargs: float | bool | str | None,
-) -> tuple[float, float, float, float, np.ndarray, np.ndarray]:
+) -> tuple[float, float, float, float, Array, Array]:
     """Find universal scaling fit for pseudo-threshold analysis.
 
     Performs universal scaling function fitting to extract pseudo-threshold
@@ -232,16 +221,16 @@ def find_uniscalefit(
     Raises:
         Exception: If fitting fails to converge.
     """
-    plist = array(ps)
+    plist = pc.array(ps)
     dlist = ns2nsfit(distance, len(plist))
 
-    popt, pcov = curve_fit(func, (plist, dlist), plog, p0, maxfev=maxfev, **kwargs)
+    popt, pcov = pc.curve_fit(func, (plist, dlist), plog, p0, maxfev=maxfev, **kwargs)
 
-    var = diag(pcov)
-    stdev = sqrt(var)
+    var = pc.diag(pcov)
+    stdev = pc.sqrt(var)
 
     for v in var:
-        if isnan(v):
+        if pc.isnan(v):
             msg = "Was not able to find a good fit. Suggestion: Use `p0` to specify parameter guess."
             raise Exception(msg)
 
@@ -284,8 +273,8 @@ def ns2nsfit(ns: Sequence[int], num: int) -> list[int]:
 
 
 def find_pseudo(
-    plist: Sequence[float] | NDArray[np.float64],
-    plog: Sequence[float] | NDArray[np.float64],
+    plist: Sequence[float] | Array[f64],
+    plog: Sequence[float] | Array[f64],
     deg: int,
 ) -> float:
     """Determines the pseudo threshold from list of ps and plogs.
@@ -301,23 +290,23 @@ def find_pseudo(
         float: The value of the pseudo-threshold.
 
     """
-    popt = polyfit(plist, plog, deg=deg)
-    poly = Poly1d(popt)
+    popt = pc.polyfit(plist, plog, deg=deg)
+    poly = pc.Poly1d(popt)
 
     def fnc(x: float) -> float:
         return poly(x) - x
 
     try:
-        pseudo_thr = brentq(fnc, 0, 1)
+        pseudo_thr = pc.brentq(fnc, 0, 1)
     except ValueError:
-        pseudo_thr = newton(fnc, 0.05)
+        pseudo_thr = pc.newton(fnc, 0.05)
 
     return pseudo_thr
 
 
 def plot(
-    plist: Sequence[float] | NDArray[np.float64],
-    plog: Sequence[float] | NDArray[np.float64],
+    plist: Sequence[float] | Array[f64],
+    plog: Sequence[float] | Array[f64],
     deg: int = 2,
     figsize: tuple[int, int] = (10, 10),
     p_start: float | None = None,
@@ -344,7 +333,7 @@ def plot(
 
     pseudo_thr = find_pseudo(plist, plog, deg)
 
-    popt, _ = polyfit(
+    popt, _ = pc.polyfit(
         plist,
         plog,
         deg,
@@ -354,9 +343,9 @@ def plot(
     axis_start = p_start
     axis_end = p_end
 
-    x = linspace(axis_start, axis_end, 1000)
+    x = pc.linspace(axis_start, axis_end, 1000)
 
-    poly = Poly1d(popt)
+    poly = pc.Poly1d(popt)
     yi = poly(x)
 
     # Do the plotting:

@@ -19,9 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, TypeVar
 
-import numpy as np
-
-from pecos.num import pi
+import pecos as pc
 from pecos.reps.pyphir import block_types as blk
 from pecos.reps.pyphir import data_types as d
 from pecos.reps.pyphir import op_types as op
@@ -35,17 +33,17 @@ if TYPE_CHECKING:
 TypeOp = TypeVar("TypeOp", bound=op.Op)
 
 signed_data_types = {
-    "i8": np.int8,
-    "i16": np.int16,
-    "i32": np.int32,
-    "i64": np.int64,
+    "i8": pc.dtypes.i8,
+    "i16": pc.dtypes.i16,
+    "i32": pc.dtypes.i32,
+    "i64": pc.dtypes.i64,
 }
 
 unsigned_data_types = {
-    "u8": np.uint8,
-    "u16": np.uint16,
-    "u32": np.uint32,
-    "u64": np.uint64,
+    "u8": pc.dtypes.u8,
+    "u16": pc.dtypes.u16,
+    "u32": pc.dtypes.u32,
+    "u64": pc.dtypes.u64,
 }
 
 
@@ -150,7 +148,7 @@ class PyPHIR:
 
                     if o.get("angles"):
                         angles = tuple(
-                            angle * (pi if o["angles"][1] == "pi" else 1)
+                            angle * (pc.f64.pi if o["angles"][1] == "pi" else 1)
                             for angle in o["angles"][0]
                         )
                     else:

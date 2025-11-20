@@ -21,12 +21,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
-
+import pecos as pc
 from pecos.reps.pyphir import unsigned_data_types
 
 if TYPE_CHECKING:
-    from typing import Any
+    from pecos import Integer
 
 
 class BinArray:
@@ -38,7 +37,7 @@ class BinArray:
         self,
         size: int | str,
         value: int | str | BinArray | None = 0,
-        dtype: type[np.integer[Any]] = np.int64,
+        dtype: type[Integer] = pc.i64,
     ) -> None:
         """Initialize a binary array with given size and value.
 
@@ -48,8 +47,8 @@ class BinArray:
                 becomes the size and its value is used.
             value: The initial value for the array. Can be an integer, binary string,
                 or another BinArray. Defaults to 0.
-            dtype: The NumPy integer data type to use for internal storage.
-                Defaults to np.int64 for signed 64-bit integers.
+            dtype: The PECOS integer data type to use for internal storage.
+                Defaults to pc.i64 for signed 64-bit integers.
         """
         self.size = size
         self.value = None

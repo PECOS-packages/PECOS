@@ -3,7 +3,7 @@
 from itertools import chain, cycle, repeat
 from typing import Any
 
-from pecos.num import ceil
+import pecos as pc
 from pecos.qeclib.generic.check import Check
 from pecos.slr import Block, Comment, CReg, Parallel, QReg
 
@@ -89,7 +89,7 @@ class SynExtractBareParallel(Block):
         super().__init__()
 
         annotations = Block()
-        num_parallel_blocks = 2 * ceil(len(checks) / len(ancillas))
+        num_parallel_blocks = 2 * pc.ceil(len(checks) / len(ancillas))
         par_blocks = [Parallel() for _ in range(num_parallel_blocks)]
 
         # iterator for parallelizing circuits for one round of ancilla use

@@ -379,12 +379,26 @@ fn curve_fit<'py>(
     py: Python<'py>,
     f: Py<PyAny>,
     xdata: &Bound<'py, PyAny>,
-    ydata: PyReadonlyArray1<f64>,
+    ydata: &Bound<'py, PyAny>,
     p0: &Bound<'py, PyAny>,
     maxfev: Option<usize>,
     xtol: Option<f64>,
     ftol: Option<f64>,
 ) -> PyResult<(Py<PyArray1<f64>>, Py<PyArray2<f64>>)> {
+    // Convert ydata to PyReadonlyArray1<f64> - handle both NumPy arrays and PECOS Arrays
+    let ydata_array = if let Ok(array) = ydata.extract::<PyReadonlyArray1<f64>>() {
+        // Already a numpy array
+        array
+    } else if ydata.hasattr("__array__")? {
+        // Has __array__ method (PECOS Arrays) - call it to get numpy array
+        let np_array = ydata.call_method0("__array__")?;
+        np_array.extract::<PyReadonlyArray1<f64>>()?
+    } else {
+        return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            "ydata must be a numpy array or implement __array__",
+        ));
+    };
+
     // Convert p0 to array (accept array, tuple, or list)
     let p0_array = if let Ok(array) = p0.extract::<PyReadonlyArray1<f64>>() {
         array
@@ -408,10 +422,10 @@ fn curve_fit<'py>(
     // Check if xdata is a tuple or a single array
     if let Ok(tuple) = xdata.cast() {
         // Handle tuple case (multiple independent variables)
-        curve_fit_tuple(py, f, tuple, ydata, p0_array, maxfev, xtol, ftol)
+        curve_fit_tuple(py, f, tuple, ydata_array, p0_array, maxfev, xtol, ftol)
     } else if let Ok(array) = xdata.extract::<PyReadonlyArray1<f64>>() {
         // Handle single array case
-        curve_fit_array(py, f, array, ydata, p0_array, maxfev, xtol, ftol)
+        curve_fit_array(py, f, array, ydata_array, p0_array, maxfev, xtol, ftol)
     } else {
         Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
             "xdata must be an array or tuple of arrays",
@@ -508,6 +522,7 @@ fn curve_fit_tuple<'py>(
 ) -> PyResult<(Py<PyArray1<f64>>, Py<PyArray2<f64>>)> {
     // Extract arrays from tuple
     let mut xdata_arrays: Vec<Array1<f64>> = Vec::new();
+
     for item in xdata_tuple.iter() {
         // Try to extract as f64 array first
         if let Ok(array) = item.extract::<PyReadonlyArray1<f64>>() {
@@ -522,9 +537,31 @@ fn curve_fit_tuple<'py>(
             // Handle i32 arrays
             let float_array: Array1<f64> = int_array.as_array().mapv(f64::from);
             xdata_arrays.push(float_array);
+        } else if item.hasattr("__array__")? {
+            // Try to convert via __array__() method (handles PECOS Arrays)
+            match item.call_method0("__array__") {
+                Ok(np_array) => {
+                    if let Ok(f64_array) = np_array.extract::<PyReadonlyArray1<f64>>() {
+                        xdata_arrays.push(f64_array.as_array().to_owned());
+                    } else if let Ok(i64_array) = np_array.extract::<PyReadonlyArray1<i64>>() {
+                        #[allow(clippy::cast_precision_loss)]
+                        let float_array: Array1<f64> = i64_array.as_array().mapv(|x| x as f64);
+                        xdata_arrays.push(float_array);
+                    } else {
+                        return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                            "Each element in xdata tuple must be a numeric array (int or float)",
+                        ));
+                    }
+                }
+                Err(_) => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                        "Failed to convert xdata element to array via __array__",
+                    ));
+                }
+            }
         } else {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "Each element in xdata tuple must be a numeric array (int or float)",
+                "Each element in xdata tuple must be a numeric array (int or float) or implement __array__",
             ));
         }
     }
@@ -1181,6 +1218,7 @@ fn isclose(
     rtol: f64,
     atol: f64,
 ) -> PyResult<Py<PyAny>> {
+    use crate::pecos_array::ArrayData;
     use pecos::prelude::IsClose;
 
     // Try scalar floats
@@ -1226,12 +1264,11 @@ fn isclose(
     };
 
     // Now work only with PECOS Arrays
-    use crate::pecos_array::ArrayData;
     let a_ref = a_pecos.bind(py).borrow();
     let b_ref = b_pecos.bind(py).borrow();
 
     match (&a_ref.data, &b_ref.data) {
-        (ArrayData::Float64(a_data), ArrayData::Float64(b_data)) => {
+        (ArrayData::F64(a_data), ArrayData::F64(b_data)) => {
             let result = a_data.isclose(b_data, rtol, atol);
             return Ok(Py::new(
                 py,
@@ -1251,7 +1288,7 @@ fn isclose(
             )?
             .into_any());
         }
-        (ArrayData::Float64(a_data), ArrayData::Complex128(b_data)) => {
+        (ArrayData::F64(a_data), ArrayData::Complex128(b_data)) => {
             // Convert float to complex
             let a_complex = a_data.mapv(|x| Complex64::new(x, 0.0));
             let result = a_complex.isclose(b_data, rtol, atol);
@@ -1263,7 +1300,7 @@ fn isclose(
             )?
             .into_any());
         }
-        (ArrayData::Complex128(a_data), ArrayData::Float64(b_data)) => {
+        (ArrayData::Complex128(a_data), ArrayData::F64(b_data)) => {
             // Convert float to complex
             let b_complex = b_data.mapv(|x| Complex64::new(x, 0.0));
             let result = a_data.isclose(&b_complex, rtol, atol);
@@ -1334,6 +1371,7 @@ fn allclose(
     atol: f64,
     equal_nan: bool,
 ) -> PyResult<bool> {
+    use crate::pecos_array::ArrayData;
     use pecos::prelude::allclose as rust_allclose;
 
     // Try to convert inputs to PECOS Arrays if they're not already
@@ -1355,23 +1393,22 @@ fn allclose(
     };
 
     // Now work only with PECOS Arrays
-    use crate::pecos_array::ArrayData;
     let a_ref = a_pecos.bind(a.py()).borrow();
     let b_ref = b_pecos.bind(b.py()).borrow();
 
     match (&a_ref.data, &b_ref.data) {
-        (ArrayData::Float64(a_data), ArrayData::Float64(b_data)) => {
+        (ArrayData::F64(a_data), ArrayData::F64(b_data)) => {
             return Ok(rust_allclose(a_data, b_data, rtol, atol, equal_nan));
         }
         (ArrayData::Complex128(a_data), ArrayData::Complex128(b_data)) => {
             return Ok(rust_allclose(a_data, b_data, rtol, atol, equal_nan));
         }
-        (ArrayData::Float64(a_data), ArrayData::Complex128(b_data)) => {
+        (ArrayData::F64(a_data), ArrayData::Complex128(b_data)) => {
             // Convert float to complex
             let a_complex = a_data.mapv(|x| Complex64::new(x, 0.0));
             return Ok(rust_allclose(&a_complex, b_data, rtol, atol, equal_nan));
         }
-        (ArrayData::Complex128(a_data), ArrayData::Float64(b_data)) => {
+        (ArrayData::Complex128(a_data), ArrayData::F64(b_data)) => {
             // Convert float to complex
             let b_complex = b_data.mapv(|x| Complex64::new(x, 0.0));
             return Ok(rust_allclose(a_data, &b_complex, rtol, atol, equal_nan));
@@ -1384,6 +1421,141 @@ fn allclose(
     Err(PyTypeError::new_err(
         "allclose() arguments must be PECOS Arrays of compatible dtypes (float64, complex128)",
     ))
+}
+
+/// Assert that all elements in two arrays are close within specified tolerances.
+///
+/// Drop-in replacement for `numpy.testing.assert_allclose()`. Panics with a detailed
+/// error message if any elements are not close according to the tolerance check:
+/// `|a - b| <= (atol + rtol * |b|)`
+///
+/// # Arguments
+///
+/// * `a` - First input array
+/// * `b` - Second input array
+/// * `rtol` - Relative tolerance parameter (default: 1e-5)
+/// * `atol` - Absolute tolerance parameter (default: 1e-8)
+/// * `equal_nan` - If `true`, NaNs in the same position are considered equal (default: `false`)
+///
+/// # Panics
+///
+/// Panics with a detailed error message showing:
+/// - Shape mismatch (if shapes differ)
+/// - Number of mismatched elements
+/// - Maximum absolute difference
+/// - Maximum relative difference
+/// - Location and values of first mismatch
+///
+/// # Examples
+///
+/// ```python
+/// import pecos as pc
+///
+/// # These pass without error
+/// a = pc.array([1.0, 2.0, 3.0])
+/// b = pc.array([1.00001, 2.00001, 3.00001])
+/// pc.assert_allclose(a, b, rtol=1e-4, atol=1e-8)
+///
+/// # This panics with detailed error message
+/// c = pc.array([1.0, 2.0, 4.0])
+/// try:
+///     pc.assert_allclose(a, c, rtol=1e-5, atol=1e-8)
+/// except AssertionError as e:
+///     print(e)  # Shows mismatch details
+/// ```
+#[pyfunction]
+#[pyo3(signature = (a, b, rtol=1e-5, atol=1e-8, equal_nan=false))]
+#[allow(clippy::needless_pass_by_value)] // Bound is designed to be passed by value (PyO3 convention)
+fn assert_allclose(
+    a: Bound<'_, PyAny>,
+    b: Bound<'_, PyAny>,
+    rtol: f64,
+    atol: f64,
+    equal_nan: bool,
+) -> PyResult<()> {
+    use pecos::prelude::assert_allclose as rust_assert_allclose;
+
+    // Try to convert inputs to PECOS Arrays if they're not already
+    let a_pecos = if let Ok(arr) = a.extract::<Py<Array>>() {
+        arr
+    } else {
+        let array_class = a.py().get_type::<Array>();
+        array_class.call1((&a,))?.extract()?
+    };
+
+    let b_pecos = if let Ok(arr) = b.extract::<Py<Array>>() {
+        arr
+    } else {
+        let array_class = b.py().get_type::<Array>();
+        array_class.call1((&b,))?.extract()?
+    };
+
+    // Now work only with PECOS Arrays
+    let a_ref = a_pecos.bind(a.py()).borrow();
+    let b_ref = b_pecos.bind(b.py()).borrow();
+
+    // assert_allclose panics on mismatch, so we catch the panic and convert to PyAssertionError
+    let result = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {
+        match (&a_ref.data, &b_ref.data) {
+            (ArrayData::F64(a_data), ArrayData::F64(b_data)) => {
+                rust_assert_allclose(a_data, b_data, rtol, atol, equal_nan);
+            }
+            (ArrayData::Complex128(a_data), ArrayData::Complex128(b_data)) => {
+                // Convert complex to f64 magnitude for comparison
+                // This requires special handling since assert_allclose expects f64
+                // For now, we'll extract real and imaginary parts separately
+                let a_real = a_data.mapv(|x| x.re);
+                let b_real = b_data.mapv(|x| x.re);
+                let a_imag = a_data.mapv(|x| x.im);
+                let b_imag = b_data.mapv(|x| x.im);
+
+                // Check both real and imaginary parts
+                rust_assert_allclose(&a_real, &b_real, rtol, atol, equal_nan);
+                rust_assert_allclose(&a_imag, &b_imag, rtol, atol, equal_nan);
+            }
+            (ArrayData::F64(a_data), ArrayData::Complex128(b_data)) => {
+                // Convert float to complex
+                let a_complex = a_data.mapv(|x| Complex64::new(x, 0.0));
+                let a_real = a_complex.mapv(|x| x.re);
+                let b_real = b_data.mapv(|x| x.re);
+                let a_imag = a_complex.mapv(|x| x.im);
+                let b_imag = b_data.mapv(|x| x.im);
+
+                rust_assert_allclose(&a_real, &b_real, rtol, atol, equal_nan);
+                rust_assert_allclose(&a_imag, &b_imag, rtol, atol, equal_nan);
+            }
+            (ArrayData::Complex128(a_data), ArrayData::F64(b_data)) => {
+                // Convert float to complex
+                let b_complex = b_data.mapv(|x| Complex64::new(x, 0.0));
+                let a_real = a_data.mapv(|x| x.re);
+                let b_real = b_complex.mapv(|x| x.re);
+                let a_imag = a_data.mapv(|x| x.im);
+                let b_imag = b_complex.mapv(|x| x.im);
+
+                rust_assert_allclose(&a_real, &b_real, rtol, atol, equal_nan);
+                rust_assert_allclose(&a_imag, &b_imag, rtol, atol, equal_nan);
+            }
+            _ => {
+                panic!(
+                    "assert_allclose() arguments must be PECOS Arrays of compatible dtypes (float64, complex128)"
+                );
+            }
+        }
+    }));
+
+    // Convert panic to PyAssertionError
+    if let Err(panic_err) = result {
+        if let Some(msg) = panic_err.downcast_ref::<String>() {
+            return Err(pyo3::exceptions::PyAssertionError::new_err(msg.clone()));
+        } else if let Some(msg) = panic_err.downcast_ref::<&str>() {
+            return Err(pyo3::exceptions::PyAssertionError::new_err(*msg));
+        }
+        return Err(pyo3::exceptions::PyAssertionError::new_err(
+            "Assertion failed in assert_allclose",
+        ));
+    }
+
+    Ok(())
 }
 
 /// Check if two arrays are equal element-wise.
@@ -1443,25 +1615,25 @@ fn array_equal(a: Bound<'_, PyAny>, b: Bound<'_, PyAny>, equal_nan: bool) -> PyR
                 }
                 return Ok(a_data.iter().zip(b_data.iter()).all(|(a, b)| a == b));
             }
-            (ArrayData::Int64(a_data), ArrayData::Int64(b_data)) => {
+            (ArrayData::I64(a_data), ArrayData::I64(b_data)) => {
                 // For integers, just check shape and exact equality
                 if a_data.shape() != b_data.shape() {
                     return Ok(false);
                 }
                 return Ok(a_data.iter().zip(b_data.iter()).all(|(a, b)| a == b));
             }
-            (ArrayData::Float64(a_data), ArrayData::Float64(b_data)) => {
+            (ArrayData::F64(a_data), ArrayData::F64(b_data)) => {
                 return Ok(rust_array_equal(a_data, b_data, equal_nan));
             }
             (ArrayData::Complex128(a_data), ArrayData::Complex128(b_data)) => {
                 return Ok(rust_array_equal(a_data, b_data, equal_nan));
             }
-            (ArrayData::Float64(a_data), ArrayData::Complex128(b_data)) => {
+            (ArrayData::F64(a_data), ArrayData::Complex128(b_data)) => {
                 // Convert float to complex
                 let a_complex = a_data.mapv(|x| Complex64::new(x, 0.0));
                 return Ok(rust_array_equal(&a_complex.view(), b_data, equal_nan));
             }
-            (ArrayData::Complex128(a_data), ArrayData::Float64(b_data)) => {
+            (ArrayData::Complex128(a_data), ArrayData::F64(b_data)) => {
                 // Convert float to complex
                 let b_complex = b_data.mapv(|x| Complex64::new(x, 0.0));
                 return Ok(rust_array_equal(a_data, &b_complex.view(), equal_nan));
@@ -1479,39 +1651,43 @@ fn array_equal(a: Bound<'_, PyAny>, b: Bound<'_, PyAny>, equal_nan: bool) -> PyR
 
         // Try to match with NumPy bool array
         if let Ok(b_np) = b.cast::<PyArray<bool, IxDyn>>()
-            && let ArrayData::Bool(a_data) = &a_ref.data {
-                let b_readonly = b_np.try_readonly()?;
-                let b_view = b_readonly.as_array();
-                if a_data.shape() != b_view.shape() {
-                    return Ok(false);
-                }
-                return Ok(a_data.iter().zip(b_view.iter()).all(|(a, b)| a == b));
+            && let ArrayData::Bool(a_data) = &a_ref.data
+        {
+            let b_readonly = b_np.try_readonly()?;
+            let b_view = b_readonly.as_array();
+            if a_data.shape() != b_view.shape() {
+                return Ok(false);
             }
+            return Ok(a_data.iter().zip(b_view.iter()).all(|(a, b)| a == b));
+        }
 
         // Try to match with NumPy int array
         if let Ok(b_np) = b.cast::<PyArray<i64, IxDyn>>()
-            && let ArrayData::Int64(a_data) = &a_ref.data {
-                let b_readonly = b_np.try_readonly()?;
-                let b_view = b_readonly.as_array();
-                if a_data.shape() != b_view.shape() {
-                    return Ok(false);
-                }
-                return Ok(a_data.iter().zip(b_view.iter()).all(|(a, b)| a == b));
+            && let ArrayData::I64(a_data) = &a_ref.data
+        {
+            let b_readonly = b_np.try_readonly()?;
+            let b_view = b_readonly.as_array();
+            if a_data.shape() != b_view.shape() {
+                return Ok(false);
             }
+            return Ok(a_data.iter().zip(b_view.iter()).all(|(a, b)| a == b));
+        }
 
         // Try to match with NumPy float array
         if let Ok(b_np) = b.cast::<PyArray<f64, IxDyn>>()
-            && let ArrayData::Float64(a_data) = &a_ref.data {
-                let b_readonly = b_np.try_readonly()?;
-                return Ok(rust_array_equal(a_data, &b_readonly.as_array(), equal_nan));
-            }
+            && let ArrayData::F64(a_data) = &a_ref.data
+        {
+            let b_readonly = b_np.try_readonly()?;
+            return Ok(rust_array_equal(a_data, &b_readonly.as_array(), equal_nan));
+        }
 
         // Try to match with NumPy complex array
         if let Ok(b_np) = b.cast::<PyArray<Complex64, IxDyn>>()
-            && let ArrayData::Complex128(a_data) = &a_ref.data {
-                let b_readonly = b_np.try_readonly()?;
-                return Ok(rust_array_equal(a_data, &b_readonly.as_array(), equal_nan));
-            }
+            && let ArrayData::Complex128(a_data) = &a_ref.data
+        {
+            let b_readonly = b_np.try_readonly()?;
+            return Ok(rust_array_equal(a_data, &b_readonly.as_array(), equal_nan));
+        }
     }
 
     // Try the reverse: NumPy array first, PECOS Array second
@@ -1520,39 +1696,43 @@ fn array_equal(a: Bound<'_, PyAny>, b: Bound<'_, PyAny>, equal_nan: bool) -> PyR
 
         // Try to match with NumPy bool array
         if let Ok(a_np) = a.cast::<PyArray<bool, IxDyn>>()
-            && let ArrayData::Bool(b_data) = &b_ref.data {
-                let a_readonly = a_np.try_readonly()?;
-                let a_view = a_readonly.as_array();
-                if a_view.shape() != b_data.shape() {
-                    return Ok(false);
-                }
-                return Ok(a_view.iter().zip(b_data.iter()).all(|(a, b)| a == b));
+            && let ArrayData::Bool(b_data) = &b_ref.data
+        {
+            let a_readonly = a_np.try_readonly()?;
+            let a_view = a_readonly.as_array();
+            if a_view.shape() != b_data.shape() {
+                return Ok(false);
             }
+            return Ok(a_view.iter().zip(b_data.iter()).all(|(a, b)| a == b));
+        }
 
         // Try to match with NumPy int array
         if let Ok(a_np) = a.cast::<PyArray<i64, IxDyn>>()
-            && let ArrayData::Int64(b_data) = &b_ref.data {
-                let a_readonly = a_np.try_readonly()?;
-                let a_view = a_readonly.as_array();
-                if a_view.shape() != b_data.shape() {
-                    return Ok(false);
-                }
-                return Ok(a_view.iter().zip(b_data.iter()).all(|(a, b)| a == b));
+            && let ArrayData::I64(b_data) = &b_ref.data
+        {
+            let a_readonly = a_np.try_readonly()?;
+            let a_view = a_readonly.as_array();
+            if a_view.shape() != b_data.shape() {
+                return Ok(false);
             }
+            return Ok(a_view.iter().zip(b_data.iter()).all(|(a, b)| a == b));
+        }
 
         // Try to match with NumPy float array
         if let Ok(a_np) = a.cast::<PyArray<f64, IxDyn>>()
-            && let ArrayData::Float64(b_data) = &b_ref.data {
-                let a_readonly = a_np.try_readonly()?;
-                return Ok(rust_array_equal(&a_readonly.as_array(), b_data, equal_nan));
-            }
+            && let ArrayData::F64(b_data) = &b_ref.data
+        {
+            let a_readonly = a_np.try_readonly()?;
+            return Ok(rust_array_equal(&a_readonly.as_array(), b_data, equal_nan));
+        }
 
         // Try to match with NumPy complex array
         if let Ok(a_np) = a.cast::<PyArray<Complex64, IxDyn>>()
-            && let ArrayData::Complex128(b_data) = &b_ref.data {
-                let a_readonly = a_np.try_readonly()?;
-                return Ok(rust_array_equal(&a_readonly.as_array(), b_data, equal_nan));
-            }
+            && let ArrayData::Complex128(b_data) = &b_ref.data
+        {
+            let a_readonly = a_np.try_readonly()?;
+            return Ok(rust_array_equal(&a_readonly.as_array(), b_data, equal_nan));
+        }
     }
 
     // Try bool arrays (for isnan/isclose return values)
@@ -2390,7 +2570,7 @@ fn array(
         return Py::new(
             py,
             Array {
-                data: ArrayData::Float64(ndarray),
+                data: ArrayData::F64(ndarray),
             },
         );
     }
@@ -2400,7 +2580,7 @@ fn array(
         return Py::new(
             py,
             Array {
-                data: ArrayData::Int64(ndarray),
+                data: ArrayData::I64(ndarray),
             },
         );
     }
@@ -2420,7 +2600,7 @@ fn array(
         return Py::new(
             py,
             Array {
-                data: ArrayData::Float32(ndarray),
+                data: ArrayData::F32(ndarray),
             },
         );
     }
@@ -2430,7 +2610,7 @@ fn array(
         return Py::new(
             py,
             Array {
-                data: ArrayData::Int32(ndarray),
+                data: ArrayData::I32(ndarray),
             },
         );
     }
@@ -2440,7 +2620,7 @@ fn array(
         return Py::new(
             py,
             Array {
-                data: ArrayData::Int16(ndarray),
+                data: ArrayData::I16(ndarray),
             },
         );
     }
@@ -2450,7 +2630,7 @@ fn array(
         return Py::new(
             py,
             Array {
-                data: ArrayData::Int8(ndarray),
+                data: ArrayData::I8(ndarray),
             },
         );
     }
@@ -2479,6 +2659,84 @@ fn array(
     Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
         "Unsupported dtype - array() failed to convert input",
     ))
+}
+
+/// Convert the input to an array, avoiding copies when possible.
+///
+/// Drop-in replacement for `numpy.asarray()`. Unlike `array()`, this function
+/// returns the input array unchanged if it's already an Array with the correct dtype.
+/// Only creates a copy when:
+/// 1. Input is not an Array (e.g., list, tuple, scalar)
+/// 2. dtype parameter is provided and differs from the input array's dtype
+///
+/// # Arguments
+///
+/// * `obj` - Input object (Array, list, tuple, scalar, etc.)
+/// * `dtype` - Optional target dtype (string or `DType` enum)
+///
+/// # Returns
+///
+/// An Array, possibly without copying if the input is already suitable
+///
+/// # Examples
+///
+/// ```python
+/// import pecos as pc
+///
+/// # No copy - input is already an Array
+/// arr1 = pc.array([1.0, 2.0, 3.0])
+/// arr2 = pc.asarray(arr1)  # arr2 is arr1 (same object)
+///
+/// # Creates copy - dtype conversion needed
+/// arr3 = pc.asarray(arr1, dtype="i64")  # Converts to int64
+///
+/// # Creates Array - input is not an Array
+/// arr4 = pc.asarray([1, 2, 3])  # Converts list to Array
+/// ```
+#[pyfunction]
+#[pyo3(signature = (obj, dtype=None))]
+fn asarray(
+    py: Python<'_>,
+    obj: Bound<'_, PyAny>,
+    dtype: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Py<Array>> {
+    use crate::dtypes::DType;
+
+    // Check if obj is already an Array
+    if let Ok(existing_array) = obj.extract::<PyRef<'_, Array>>() {
+        // Parse dtype parameter if provided
+        let target_dtype = if let Some(dt) = dtype {
+            Some(if let Ok(enum_dt) = dt.extract::<DType>() {
+                enum_dt
+            } else if let Ok(s) = dt.extract::<&str>() {
+                DType::from_str(s)?
+            } else {
+                return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                    "dtype must be a string or DType enum",
+                ));
+            })
+        } else {
+            None
+        };
+
+        // Get current dtype
+        let current_dtype = existing_array.dtype();
+
+        // Determine if we need to create a new array
+        let needs_conversion = target_dtype.is_some() && target_dtype.unwrap() != current_dtype;
+
+        if needs_conversion {
+            // Perform dtype conversion using the pure Rust astype() method
+            let converted_array = existing_array.astype(target_dtype.unwrap());
+            return Py::new(py, converted_array);
+        }
+
+        // No conversion needed - return the same object (no copy!)
+        return Ok(obj.extract::<Py<Array>>()?);
+    }
+
+    // Input is not an Array - delegate to array() which will create one
+    array(py, obj, dtype)
 }
 
 /// Delete an element at a specific index from a 1D array.
@@ -2642,6 +2900,12 @@ fn sum(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
                 let kind: String = kind_attr.extract()?;
 
                 match kind.as_str() {
+                    "b" => {
+                        // Boolean array - sum treats True=1, False=0
+                        let arr = a.extract::<numpy::PyReadonlyArrayDyn<bool>>()?;
+                        let result: i64 = arr.as_array().iter().map(|&b| i64::from(b)).sum();
+                        return Ok(result.into_py_any(py).unwrap());
+                    }
                     "i" | "u" => {
                         // Integer array
                         let arr = a.extract::<numpy::PyReadonlyArrayDyn<i64>>()?;
@@ -2701,6 +2965,7 @@ fn sum(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
     let np_array = if a.extract::<numpy::PyReadonlyArrayDyn<f64>>().is_err()
         && a.extract::<numpy::PyReadonlyArrayDyn<Complex64>>().is_err()
         && a.extract::<numpy::PyReadonlyArrayDyn<i64>>().is_err()
+        && a.extract::<numpy::PyReadonlyArrayDyn<bool>>().is_err()
     {
         // Not a numpy array - convert to numpy array using numpy.array()
         let numpy = py.import("numpy")?;
@@ -2710,7 +2975,31 @@ fn sum(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
         a
     };
 
-    // Try integer array with axis FIRST (before complex/float to avoid unwanted casting)
+    // Try boolean array with axis FIRST - convert to i64 for sum
+    if let Ok(arr) = np_array.extract::<numpy::PyReadonlyArrayDyn<bool>>() {
+        let array = arr.as_array();
+        let ndim = array.ndim();
+
+        // Convert negative axis to positive
+        let normalized_axis = if axis_val < 0 {
+            (ndim as isize + axis_val) as usize
+        } else {
+            axis_val as usize
+        };
+
+        if normalized_axis >= ndim {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "axis {axis_val} is out of bounds for array of dimension {ndim}"
+            )));
+        }
+
+        // Convert boolean array to i64 array, then sum along the specified axis
+        let i64_array = array.mapv(i64::from);
+        let result = i64_array.sum_axis(Axis(normalized_axis));
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+
+    // Try integer array with axis (before complex/float to avoid unwanted casting)
     if let Ok(arr) = np_array.extract::<numpy::PyReadonlyArrayDyn<i64>>() {
         let array = arr.as_array();
         let ndim = array.ndim();
@@ -2781,6 +3070,288 @@ fn sum(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<
 
     Err(PyTypeError::new_err(
         "sum() with axis requires a numpy array of numbers",
+    ))
+}
+
+/// Return the maximum value along an array.
+///
+/// Drop-in replacement for `numpy.max()` or `numpy.amax()`.
+/// Returns the maximum value of an array, or along an axis.
+#[pyfunction]
+#[pyo3(signature = (a, axis=None))]
+#[allow(clippy::needless_pass_by_value)]
+fn max(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<PyAny>> {
+    // Handle axis=None case: find global maximum
+    if axis.is_none() {
+        // Check if it's a numpy array by checking for 'dtype' attribute
+        if let Ok(dtype_attr) = a.getattr("dtype") {
+            // It's a numpy array - check its dtype.kind
+            if let Ok(kind_attr) = dtype_attr.getattr("kind") {
+                let kind: String = kind_attr.extract()?;
+
+                match kind.as_str() {
+                    "b" => {
+                        // Boolean array - max treats True=1, False=0
+                        let arr = a.extract::<numpy::PyReadonlyArrayDyn<bool>>()?;
+                        let result = arr.as_array().iter().any(|&x| x);
+                        return Ok(result.into_py_any(py).unwrap());
+                    }
+                    "i" | "u" => {
+                        // Integer array
+                        let arr = a.extract::<numpy::PyReadonlyArrayDyn<i64>>()?;
+                        let array_view = arr.as_array();
+                        let result = array_view.iter().max().ok_or_else(|| {
+                            PyErr::new::<pyo3::exceptions::PyValueError, _>("max() of empty array")
+                        })?;
+                        return Ok((*result).into_py_any(py).unwrap());
+                    }
+                    "f" => {
+                        // Float array
+                        let arr = a.extract::<numpy::PyReadonlyArrayDyn<f64>>()?;
+                        let array_view = arr.as_array();
+                        let result = array_view
+                            .iter()
+                            .max_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal))
+                            .ok_or_else(|| {
+                                PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                    "max() of empty array",
+                                )
+                            })?;
+                        return Ok((*result).into_py_any(py).unwrap());
+                    }
+                    "c" => {
+                        // Complex array - can't directly compare, need magnitude
+                        return Err(PyTypeError::new_err(
+                            "max() is not supported for complex arrays (use abs() first for magnitude comparison)",
+                        ));
+                    }
+                    _ => {
+                        return Err(PyTypeError::new_err(format!(
+                            "Unsupported dtype kind: {kind}"
+                        )));
+                    }
+                }
+            }
+        }
+
+        // Not a numpy array - try lists/tuples
+        // Try integer list/tuple first
+        if let Ok(values) = a.extract::<Vec<i64>>() {
+            let result = values.iter().max().ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>("max() of empty sequence")
+            })?;
+            return Ok((*result).into_py_any(py).unwrap());
+        }
+
+        // Try float list/tuple
+        if let Ok(values) = a.extract::<Vec<f64>>() {
+            let result = values
+                .iter()
+                .max_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal))
+                .ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>("max() of empty sequence")
+                })?;
+            return Ok((*result).into_py_any(py).unwrap());
+        }
+
+        return Err(PyTypeError::new_err(
+            "max() argument must be a list, tuple, or numpy array of numbers",
+        ));
+    }
+
+    // Handle axis parameter case: find max along specific axis
+    // Note: ndarray doesn't have a built-in max_axis for floats, so we'll fold along the axis
+    let axis_val = axis.unwrap();
+
+    // Integer array with axis
+    if let Ok(arr) = a.extract::<numpy::PyReadonlyArrayDyn<i64>>() {
+        let array = arr.as_array();
+        let ndim = array.ndim();
+
+        let normalized_axis = if axis_val < 0 {
+            (ndim as isize + axis_val) as usize
+        } else {
+            axis_val as usize
+        };
+
+        if normalized_axis >= ndim {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "axis {axis_val} is out of bounds for array of dimension {ndim}"
+            )));
+        }
+
+        // Use fold_axis to find max along axis
+        let result = array.fold_axis(Axis(normalized_axis), i64::MIN, |&max_val, &x| {
+            if x > max_val { x } else { max_val }
+        });
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+
+    // Float array with axis
+    if let Ok(arr) = a.extract::<numpy::PyReadonlyArrayDyn<f64>>() {
+        let array = arr.as_array();
+        let ndim = array.ndim();
+
+        let normalized_axis = if axis_val < 0 {
+            (ndim as isize + axis_val) as usize
+        } else {
+            axis_val as usize
+        };
+
+        if normalized_axis >= ndim {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "axis {axis_val} is out of bounds for array of dimension {ndim}"
+            )));
+        }
+
+        let result = array.fold_axis(Axis(normalized_axis), f64::NEG_INFINITY, |&max_val, &x| {
+            if x > max_val { x } else { max_val }
+        });
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+
+    Err(PyTypeError::new_err(
+        "max() with axis requires a numpy array of numbers",
+    ))
+}
+
+/// Return the minimum value along an array.
+///
+/// Drop-in replacement for `numpy.min()` or `numpy.amin()`.
+/// Returns the minimum value of an array, or along an axis.
+#[pyfunction]
+#[pyo3(signature = (a, axis=None))]
+#[allow(clippy::needless_pass_by_value)]
+fn min(py: Python<'_>, a: Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<Py<PyAny>> {
+    // Handle axis=None case: find global minimum
+    if axis.is_none() {
+        // Check if it's a numpy array by checking for 'dtype' attribute
+        if let Ok(dtype_attr) = a.getattr("dtype") {
+            // It's a numpy array - check its dtype.kind
+            if let Ok(kind_attr) = dtype_attr.getattr("kind") {
+                let kind: String = kind_attr.extract()?;
+
+                match kind.as_str() {
+                    "b" => {
+                        // Boolean array - min treats True=1, False=0
+                        let arr = a.extract::<numpy::PyReadonlyArrayDyn<bool>>()?;
+                        let result = !arr.as_array().iter().all(|&x| x);
+                        return Ok(result.into_py_any(py).unwrap());
+                    }
+                    "i" | "u" => {
+                        // Integer array
+                        let arr = a.extract::<numpy::PyReadonlyArrayDyn<i64>>()?;
+                        let array_view = arr.as_array();
+                        let result = array_view.iter().min().ok_or_else(|| {
+                            PyErr::new::<pyo3::exceptions::PyValueError, _>("min() of empty array")
+                        })?;
+                        return Ok((*result).into_py_any(py).unwrap());
+                    }
+                    "f" => {
+                        // Float array
+                        let arr = a.extract::<numpy::PyReadonlyArrayDyn<f64>>()?;
+                        let array_view = arr.as_array();
+                        let result = array_view
+                            .iter()
+                            .min_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal))
+                            .ok_or_else(|| {
+                                PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                                    "min() of empty array",
+                                )
+                            })?;
+                        return Ok((*result).into_py_any(py).unwrap());
+                    }
+                    "c" => {
+                        // Complex array - can't directly compare, need magnitude
+                        return Err(PyTypeError::new_err(
+                            "min() is not supported for complex arrays (use abs() first for magnitude comparison)",
+                        ));
+                    }
+                    _ => {
+                        return Err(PyTypeError::new_err(format!(
+                            "Unsupported dtype kind: {kind}"
+                        )));
+                    }
+                }
+            }
+        }
+
+        // Not a numpy array - try lists/tuples
+        // Try integer list/tuple first
+        if let Ok(values) = a.extract::<Vec<i64>>() {
+            let result = values.iter().min().ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>("min() of empty sequence")
+            })?;
+            return Ok((*result).into_py_any(py).unwrap());
+        }
+
+        // Try float list/tuple
+        if let Ok(values) = a.extract::<Vec<f64>>() {
+            let result = values
+                .iter()
+                .min_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal))
+                .ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>("min() of empty sequence")
+                })?;
+            return Ok((*result).into_py_any(py).unwrap());
+        }
+
+        return Err(PyTypeError::new_err(
+            "min() argument must be a list, tuple, or numpy array of numbers",
+        ));
+    }
+
+    // Handle axis parameter case: find min along specific axis
+    let axis_val = axis.unwrap();
+
+    // Integer array with axis
+    if let Ok(arr) = a.extract::<numpy::PyReadonlyArrayDyn<i64>>() {
+        let array = arr.as_array();
+        let ndim = array.ndim();
+
+        let normalized_axis = if axis_val < 0 {
+            (ndim as isize + axis_val) as usize
+        } else {
+            axis_val as usize
+        };
+
+        if normalized_axis >= ndim {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "axis {axis_val} is out of bounds for array of dimension {ndim}"
+            )));
+        }
+
+        let result = array.fold_axis(Axis(normalized_axis), i64::MAX, |&min_val, &x| {
+            if x < min_val { x } else { min_val }
+        });
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+
+    // Float array with axis
+    if let Ok(arr) = a.extract::<numpy::PyReadonlyArrayDyn<f64>>() {
+        let array = arr.as_array();
+        let ndim = array.ndim();
+
+        let normalized_axis = if axis_val < 0 {
+            (ndim as isize + axis_val) as usize
+        } else {
+            axis_val as usize
+        };
+
+        if normalized_axis >= ndim {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "axis {axis_val} is out of bounds for array of dimension {ndim}"
+            )));
+        }
+
+        let result = array.fold_axis(Axis(normalized_axis), f64::INFINITY, |&min_val, &x| {
+            if x < min_val { x } else { min_val }
+        });
+        return Ok(PyArray::from_owned_array(py, result).into_any().unbind());
+    }
+
+    Err(PyTypeError::new_err(
+        "min() with axis requires a numpy array of numbers",
     ))
 }
 
@@ -3006,8 +3577,8 @@ fn norm(_py: Python<'_>, x: Bound<'_, PyAny>, ord: Option<f64>) -> PyResult<f64>
             ArrayData::Bool(_) => Err(pyo3::exceptions::PyTypeError::new_err(
                 "norm() operation not supported on boolean arrays",
             )),
-            ArrayData::Float64(arr) => Ok(norm_fn(arr, ord)),
-            ArrayData::Float32(arr) => {
+            ArrayData::F64(arr) => Ok(norm_fn(arr, ord)),
+            ArrayData::F32(arr) => {
                 // Convert f32 to f64 for norm calculation
                 let arr_f64 = arr.mapv(f64::from);
                 Ok(norm_fn(&arr_f64, ord))
@@ -3018,20 +3589,36 @@ fn norm(_py: Python<'_>, x: Bound<'_, PyAny>, ord: Option<f64>) -> PyResult<f64>
                 let arr_c128 = arr.mapv(|v| Complex64::new(f64::from(v.re), f64::from(v.im)));
                 Ok(norm_complex(&arr_c128, ord))
             }
-            ArrayData::Int64(arr) => {
+            ArrayData::I64(arr) => {
                 // Convert int to float for norm
                 let arr_f64 = arr.mapv(|v| v as f64);
                 Ok(norm_fn(&arr_f64, ord))
             }
-            ArrayData::Int32(arr) => {
+            ArrayData::I32(arr) => {
                 let arr_f64 = arr.mapv(f64::from);
                 Ok(norm_fn(&arr_f64, ord))
             }
-            ArrayData::Int16(arr) => {
+            ArrayData::I16(arr) => {
                 let arr_f64 = arr.mapv(f64::from);
                 Ok(norm_fn(&arr_f64, ord))
             }
-            ArrayData::Int8(arr) => {
+            ArrayData::I8(arr) => {
+                let arr_f64 = arr.mapv(f64::from);
+                Ok(norm_fn(&arr_f64, ord))
+            }
+            ArrayData::U64(arr) => {
+                let arr_f64 = arr.mapv(|v| v as f64);
+                Ok(norm_fn(&arr_f64, ord))
+            }
+            ArrayData::U32(arr) => {
+                let arr_f64 = arr.mapv(f64::from);
+                Ok(norm_fn(&arr_f64, ord))
+            }
+            ArrayData::U16(arr) => {
+                let arr_f64 = arr.mapv(f64::from);
+                Ok(norm_fn(&arr_f64, ord))
+            }
+            ArrayData::U8(arr) => {
                 let arr_f64 = arr.mapv(f64::from);
                 Ok(norm_fn(&arr_f64, ord))
             }
@@ -3642,31 +4229,47 @@ fn abs(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
                 ));
             }
             // Float types -> use Abs trait (returns f64/f32 arrays)
-            ArrayData::Float64(a) => {
+            ArrayData::F64(a) => {
                 let result = a.abs(); // Uses Abs trait
                 return Ok(Py::new(py, Array::from_array_f64(result))?.into_any());
             }
-            ArrayData::Float32(a) => {
+            ArrayData::F32(a) => {
                 // abs() returns Array<f32, D>, convert to f64
                 let result = a.mapv(|v| f64::from(v.abs()));
                 return Ok(Py::new(py, Array::from_array_f64(result))?.into_any());
             }
             // Integer types -> use stdlib abs() for each element
-            ArrayData::Int64(a) => {
+            ArrayData::I64(a) => {
                 let result = a.mapv(i64::abs);
                 return Ok(Py::new(py, Array::from_array_i64(result))?.into_any());
             }
-            ArrayData::Int32(a) => {
+            ArrayData::I32(a) => {
                 let result = a.mapv(|v| i64::from(v.abs()));
                 return Ok(Py::new(py, Array::from_array_i64(result))?.into_any());
             }
-            ArrayData::Int16(a) => {
+            ArrayData::I16(a) => {
                 let result = a.mapv(|v| i64::from(v.abs()));
                 return Ok(Py::new(py, Array::from_array_i64(result))?.into_any());
             }
-            ArrayData::Int8(a) => {
+            ArrayData::I8(a) => {
                 let result = a.mapv(|v| i64::from(v.abs()));
                 return Ok(Py::new(py, Array::from_array_i64(result))?.into_any());
+            }
+            // Unsigned types -> already positive, just convert to u64
+            ArrayData::U64(a) => {
+                return Ok(Py::new(py, Array::from_array_u64(a.clone()))?.into_any());
+            }
+            ArrayData::U32(a) => {
+                let result = a.mapv(u64::from);
+                return Ok(Py::new(py, Array::from_array_u64(result))?.into_any());
+            }
+            ArrayData::U16(a) => {
+                let result = a.mapv(u64::from);
+                return Ok(Py::new(py, Array::from_array_u64(result))?.into_any());
+            }
+            ArrayData::U8(a) => {
+                let result = a.mapv(u64::from);
+                return Ok(Py::new(py, Array::from_array_u64(result))?.into_any());
             }
             // Complex types -> use Abs trait (returns f64/f32 magnitudes)
             ArrayData::Complex128(a) => {
@@ -3965,6 +4568,7 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     compare_module.add_function(wrap_pyfunction!(isnan, &compare_module)?)?;
     compare_module.add_function(wrap_pyfunction!(isclose, &compare_module)?)?;
     compare_module.add_function(wrap_pyfunction!(allclose, &compare_module)?)?;
+    compare_module.add_function(wrap_pyfunction!(assert_allclose, &compare_module)?)?;
     compare_module.add_function(wrap_pyfunction!(array_equal, &compare_module)?)?;
     compare_module.add_function(wrap_pyfunction!(all, &compare_module)?)?;
     compare_module.add_function(wrap_pyfunction!(any, &compare_module)?)?;
@@ -3982,6 +4586,9 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     array_module.add_function(wrap_pyfunction!(ones, &array_module)?)?;
     array_module.add_function(wrap_pyfunction!(delete, &array_module)?)?;
     array_module.add_function(wrap_pyfunction!(sum, &array_module)?)?;
+    array_module.add_function(wrap_pyfunction!(max, &array_module)?)?;
+    array_module.add_function(wrap_pyfunction!(min, &array_module)?)?;
+    array_module.add_function(wrap_pyfunction!(asarray, &array_module)?)?;
     num_module.add_submodule(&array_module)?;
 
     // Create optimize submodule
@@ -4048,17 +4655,21 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     num_module.add_function(wrap_pyfunction!(isnan, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(isclose, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(allclose, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(assert_allclose, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(array_equal, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(where_, &num_module)?)?;
 
     // Array functions (polymorphic)
     num_module.add_function(wrap_pyfunction!(sum, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(max, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(min, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(diag, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(linspace, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(arange, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(zeros, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(ones, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(array, &num_module)?)?;
+    num_module.add_function(wrap_pyfunction!(asarray, &num_module)?)?;
     num_module.add_function(wrap_pyfunction!(delete, &num_module)?)?;
 
     // Optimization functions
@@ -4092,6 +4703,27 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     num_module.add("LN_10", pecos::prelude::LN_10)?;
     num_module.add("LOG2_E", pecos::prelude::LOG2_E)?;
     num_module.add("LOG10_E", pecos::prelude::LOG10_E)?;
+
+    // f32 precision constants
+    num_module.add("pi_f32", pecos::prelude::PI_F32)?;
+    num_module.add("tau_f32", pecos::prelude::TAU_F32)?;
+    num_module.add("e_f32", pecos::prelude::E_F32)?;
+    num_module.add("inf_f32", f32::INFINITY)?;
+    num_module.add("nan_f32", f32::NAN)?;
+    num_module.add("FRAC_PI_2_F32", pecos::prelude::FRAC_PI_2_F32)?;
+    num_module.add("FRAC_PI_3_F32", pecos::prelude::FRAC_PI_3_F32)?;
+    num_module.add("FRAC_PI_4_F32", pecos::prelude::FRAC_PI_4_F32)?;
+    num_module.add("FRAC_PI_6_F32", pecos::prelude::FRAC_PI_6_F32)?;
+    num_module.add("FRAC_PI_8_F32", pecos::prelude::FRAC_PI_8_F32)?;
+    num_module.add("FRAC_1_PI_F32", pecos::prelude::FRAC_1_PI_F32)?;
+    num_module.add("FRAC_2_PI_F32", pecos::prelude::FRAC_2_PI_F32)?;
+    num_module.add("FRAC_2_SQRT_PI_F32", pecos::prelude::FRAC_2_SQRT_PI_F32)?;
+    num_module.add("SQRT_2_F32", pecos::prelude::SQRT_2_F32)?;
+    num_module.add("FRAC_1_SQRT_2_F32", pecos::prelude::FRAC_1_SQRT_2_F32)?;
+    num_module.add("LN_2_F32", pecos::prelude::LN_2_F32)?;
+    num_module.add("LN_10_F32", pecos::prelude::LN_10_F32)?;
+    num_module.add("LOG2_E_F32", pecos::prelude::LOG2_E_F32)?;
+    num_module.add("LOG10_E_F32", pecos::prelude::LOG10_E_F32)?;
 
     m.add_submodule(&num_module)?;
     Ok(())

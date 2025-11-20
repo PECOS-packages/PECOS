@@ -3,12 +3,7 @@
 import numpy as np
 import pytest
 
-from pecos.num import mean as pecos_mean
-from pecos.num import Poly1d as pecos_Poly1d
-from pecos.num import polyfit as pecos_polyfit
-from pecos.num import power as pecos_power
-from pecos.num import sqrt as pecos_sqrt
-from pecos.num import std as pecos_std
+import pecos as pc
 
 
 class TestMeanCorrectness:
@@ -18,7 +13,7 @@ class TestMeanCorrectness:
         """Test basic mean calculation."""
         values = [1.0, 2.0, 3.0, 4.0, 5.0]
 
-        pecos_result = pecos_mean(values)
+        pecos_result = pc.mean(values)
         numpy_result = np.mean(values)
 
         assert pecos_result == numpy_result
@@ -28,7 +23,7 @@ class TestMeanCorrectness:
         """Test mean with tuple input (error model use case)."""
         values = (0.01, 0.015, 0.02)
 
-        pecos_result = pecos_mean(values)
+        pecos_result = pc.mean(values)
         numpy_result = np.mean(values)
 
         assert abs(pecos_result - numpy_result) < 1e-10
@@ -38,7 +33,7 @@ class TestMeanCorrectness:
         """Test mean with single value."""
         values = [42.0]
 
-        pecos_result = pecos_mean(values)
+        pecos_result = pc.mean(values)
         numpy_result = np.mean(values)
 
         assert pecos_result == numpy_result
@@ -48,7 +43,7 @@ class TestMeanCorrectness:
         """Test mean with two values."""
         values = [0.5, 0.3]
 
-        pecos_result = pecos_mean(values)
+        pecos_result = pc.mean(values)
         numpy_result = np.mean(values)
 
         assert pecos_result == numpy_result
@@ -58,7 +53,7 @@ class TestMeanCorrectness:
         """Test mean with empty sequence returns NaN."""
         values = []
 
-        pecos_result = pecos_mean(values)
+        pecos_result = pc.mean(values)
 
         assert np.isnan(pecos_result)
 
@@ -66,7 +61,7 @@ class TestMeanCorrectness:
         """Test mean with negative values."""
         values = [-1.0, -2.0, -3.0]
 
-        pecos_result = pecos_mean(values)
+        pecos_result = pc.mean(values)
         numpy_result = np.mean(values)
 
         assert pecos_result == numpy_result
@@ -76,7 +71,7 @@ class TestMeanCorrectness:
         """Test mean with mixed positive/negative values."""
         values = [-2.0, 0.0, 2.0]
 
-        pecos_result = pecos_mean(values)
+        pecos_result = pc.mean(values)
         numpy_result = np.mean(values)
 
         assert pecos_result == numpy_result
@@ -86,7 +81,7 @@ class TestMeanCorrectness:
         """Test mean with high precision values."""
         values = [0.001, 0.002]
 
-        pecos_result = pecos_mean(values)
+        pecos_result = pc.mean(values)
         numpy_result = np.mean(values)
 
         assert abs(pecos_result - numpy_result) < 1e-10
@@ -101,7 +96,7 @@ class TestMeanErrorModelUseCases:
         # Simulating the p_meas tuple averaging use case
         p_meas_tuple = (0.01, 0.015, 0.02)
 
-        pecos_avg = pecos_mean(p_meas_tuple)
+        pecos_avg = pc.mean(p_meas_tuple)
         numpy_avg = np.mean(p_meas_tuple)
 
         assert abs(pecos_avg - numpy_avg) < 1e-10
@@ -111,7 +106,7 @@ class TestMeanErrorModelUseCases:
         """Test averaging two measurement error rates."""
         p_meas = (0.001, 0.002)
 
-        pecos_avg = pecos_mean(p_meas)
+        pecos_avg = pc.mean(p_meas)
         numpy_avg = np.mean(p_meas)
 
         assert abs(pecos_avg - numpy_avg) < 1e-10
@@ -127,7 +122,7 @@ class TestMeanErrorModelUseCases:
         ]
 
         for p_meas_tuple in test_cases:
-            pecos_avg = pecos_mean(p_meas_tuple)
+            pecos_avg = pc.mean(p_meas_tuple)
             numpy_avg = np.mean(p_meas_tuple)
 
             assert (
@@ -142,7 +137,7 @@ class TestMeanAxisParameter:
         """Test mean along axis 0 (down columns)."""
         arr = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
 
-        pecos_result = pecos_mean(arr, axis=0)
+        pecos_result = pc.mean(arr, axis=0)
         numpy_result = np.mean(arr, axis=0)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -152,7 +147,7 @@ class TestMeanAxisParameter:
         """Test mean along axis 1 (across rows)."""
         arr = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
 
-        pecos_result = pecos_mean(arr, axis=1)
+        pecos_result = pc.mean(arr, axis=1)
         numpy_result = np.mean(arr, axis=1)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -162,7 +157,7 @@ class TestMeanAxisParameter:
         """Test mean with axis=None (mean of all elements)."""
         arr = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
 
-        pecos_result = pecos_mean(arr, axis=None)
+        pecos_result = pc.mean(arr, axis=None)
         numpy_result = np.mean(arr, axis=None)
 
         assert abs(pecos_result - numpy_result) < 1e-10
@@ -177,7 +172,7 @@ class TestMeanAxisParameter:
             [1.4, 2.6, 3.4],  # Run 3 fit parameters
         ]
 
-        pecos_result = pecos_mean(opt_list, axis=0)
+        pecos_result = pc.mean(opt_list, axis=0)
         numpy_result = np.mean(opt_list, axis=0)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -190,7 +185,7 @@ class TestMeanAxisParameter:
             [[5.0, 6.0], [7.0, 8.0]],
         ]
 
-        pecos_result = pecos_mean(arr, axis=0)
+        pecos_result = pc.mean(arr, axis=0)
         numpy_result = np.mean(arr, axis=0)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -199,7 +194,7 @@ class TestMeanAxisParameter:
         """Test that numpy arrays work as input."""
         arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
 
-        pecos_result = pecos_mean(arr, axis=0)
+        pecos_result = pc.mean(arr, axis=0)
         numpy_result = np.mean(arr, axis=0)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -212,7 +207,7 @@ class TestStdCorrectness:
         """Test basic population standard deviation (ddof=0)."""
         values = [1.0, 2.0, 3.0, 4.0, 5.0]
 
-        pecos_result = pecos_std(values, ddof=0)
+        pecos_result = pc.std(values, ddof=0)
         numpy_result = np.std(values, ddof=0)
 
         assert abs(pecos_result - numpy_result) < 1e-10
@@ -222,7 +217,7 @@ class TestStdCorrectness:
         """Test basic sample standard deviation (ddof=1)."""
         values = [1.0, 2.0, 3.0, 4.0, 5.0]
 
-        pecos_result = pecos_std(values, ddof=1)
+        pecos_result = pc.std(values, ddof=1)
         numpy_result = np.std(values, ddof=1)
 
         assert abs(pecos_result - numpy_result) < 1e-10
@@ -232,7 +227,7 @@ class TestStdCorrectness:
         """Test std with single value (should be 0)."""
         values = [42.0]
 
-        pecos_result = pecos_std(values, ddof=0)
+        pecos_result = pc.std(values, ddof=0)
         numpy_result = np.std(values, ddof=0)
 
         assert abs(pecos_result - numpy_result) < 1e-10
@@ -242,7 +237,7 @@ class TestStdCorrectness:
         """Test std with empty sequence returns NaN."""
         values = []
 
-        pecos_result = pecos_std(values, ddof=0)
+        pecos_result = pc.std(values, ddof=0)
 
         assert np.isnan(pecos_result)
 
@@ -251,7 +246,7 @@ class TestStdCorrectness:
         values = [1.0, 2.0]
 
         # With ddof=2, corrected n would be 0
-        pecos_result = pecos_std(values, ddof=2)
+        pecos_result = pc.std(values, ddof=2)
 
         assert np.isnan(pecos_result)
 
@@ -259,7 +254,7 @@ class TestStdCorrectness:
         """Test std with all identical values (should be 0)."""
         values = [5.0, 5.0, 5.0, 5.0]
 
-        pecos_result = pecos_std(values, ddof=0)
+        pecos_result = pc.std(values, ddof=0)
         numpy_result = np.std(values, ddof=0)
 
         assert abs(pecos_result - numpy_result) < 1e-10
@@ -269,7 +264,7 @@ class TestStdCorrectness:
         """Test std with negative values."""
         values = [-3.0, -1.0, 1.0, 3.0]
 
-        pecos_result = pecos_std(values, ddof=0)
+        pecos_result = pc.std(values, ddof=0)
         numpy_result = np.std(values, ddof=0)
 
         assert abs(pecos_result - numpy_result) < 1e-10
@@ -279,7 +274,7 @@ class TestStdCorrectness:
         """Test std with two values."""
         values = [1.0, 3.0]
 
-        pecos_result = pecos_std(values, ddof=0)
+        pecos_result = pc.std(values, ddof=0)
         numpy_result = np.std(values, ddof=0)
 
         assert abs(pecos_result - numpy_result) < 1e-10
@@ -294,7 +289,7 @@ class TestStdAnalysisUseCases:
         # Simulating jackknife parameter estimates
         parameter_estimates = [1.5, 1.6, 1.4, 1.5, 1.7]
 
-        pecos_result = pecos_std(parameter_estimates, ddof=0)
+        pecos_result = pc.std(parameter_estimates, ddof=0)
         numpy_result = np.std(parameter_estimates, ddof=0)
 
         assert abs(pecos_result - numpy_result) < 1e-10
@@ -305,7 +300,7 @@ class TestStdAnalysisUseCases:
         # Simulating bootstrap parameter estimates
         bootstrap_params = [2.1, 2.3, 2.0, 2.2, 2.1, 2.4]
 
-        pecos_result = pecos_std(bootstrap_params, ddof=0)
+        pecos_result = pc.std(bootstrap_params, ddof=0)
         numpy_result = np.std(bootstrap_params, ddof=0)
 
         assert abs(pecos_result - numpy_result) < 1e-10
@@ -315,7 +310,7 @@ class TestStdAnalysisUseCases:
         # Simulating threshold parameter fits from multiple runs
         threshold_params = [0.01, 0.012, 0.009, 0.011, 0.010]
 
-        pecos_result = pecos_std(threshold_params, ddof=0)
+        pecos_result = pc.std(threshold_params, ddof=0)
         numpy_result = np.std(threshold_params, ddof=0)
 
         assert abs(pecos_result - numpy_result) < 1e-10
@@ -328,7 +323,7 @@ class TestStdAxisParameter:
         """Test std along axis 0 (down columns)."""
         arr = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
 
-        pecos_result = pecos_std(arr, axis=0, ddof=0)
+        pecos_result = pc.std(arr, axis=0, ddof=0)
         numpy_result = np.std(arr, axis=0, ddof=0)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -338,7 +333,7 @@ class TestStdAxisParameter:
         """Test std along axis 1 (across rows)."""
         arr = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
 
-        pecos_result = pecos_std(arr, axis=1, ddof=0)
+        pecos_result = pc.std(arr, axis=1, ddof=0)
         numpy_result = np.std(arr, axis=1, ddof=0)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -347,7 +342,7 @@ class TestStdAxisParameter:
         """Test std with axis=None (std of all elements)."""
         arr = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
 
-        pecos_result = pecos_std(arr, axis=None, ddof=0)
+        pecos_result = pc.std(arr, axis=None, ddof=0)
         numpy_result = np.std(arr, axis=None, ddof=0)
 
         assert abs(pecos_result - numpy_result) < 1e-10
@@ -361,7 +356,7 @@ class TestStdAxisParameter:
             [1.4, 2.6, 3.4],  # Run 3 fit parameters
         ]
 
-        pecos_result = pecos_std(opt_list, axis=0, ddof=0)
+        pecos_result = pc.std(opt_list, axis=0, ddof=0)
         numpy_result = np.std(opt_list, axis=0, ddof=0)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -373,7 +368,7 @@ class TestStdAxisParameter:
             [[5.0, 6.0], [7.0, 8.0]],
         ]
 
-        pecos_result = pecos_std(arr, axis=0, ddof=0)
+        pecos_result = pc.std(arr, axis=0, ddof=0)
         numpy_result = np.std(arr, axis=0, ddof=0)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -382,7 +377,7 @@ class TestStdAxisParameter:
         """Test that numpy arrays work as input."""
         arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
 
-        pecos_result = pecos_std(arr, axis=0, ddof=0)
+        pecos_result = pc.std(arr, axis=0, ddof=0)
         numpy_result = np.std(arr, axis=0, ddof=0)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -392,7 +387,7 @@ class TestStdAxisParameter:
         arr = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
 
         # Test with ddof=1
-        pecos_result = pecos_std(arr, axis=0, ddof=1)
+        pecos_result = pc.std(arr, axis=0, ddof=1)
         numpy_result = np.std(arr, axis=0, ddof=1)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -403,20 +398,20 @@ class TestPowerCorrectness:
 
     def test_power_scalar_basic(self):
         """Test basic scalar power operations."""
-        assert pecos_power(2.0, 3.0) == 8.0
-        assert pecos_power(3.0, 2.0) == 9.0
-        assert pecos_power(10.0, 0.0) == 1.0
+        assert pc.power(2.0, 3.0) == 8.0
+        assert pc.power(3.0, 2.0) == 9.0
+        assert pc.power(10.0, 0.0) == 1.0
 
     def test_power_fractional_exponent(self):
         """Test fractional powers (roots)."""
-        pecos_result = pecos_power(4.0, 0.5)
+        pecos_result = pc.power(4.0, 0.5)
         numpy_result = np.power(4.0, 0.5)
         assert abs(pecos_result - numpy_result) < 1e-10
         assert abs(pecos_result - 2.0) < 1e-10
 
     def test_power_negative_exponent(self):
         """Test negative exponents."""
-        pecos_result = pecos_power(2.0, -1.0)
+        pecos_result = pc.power(2.0, -1.0)
         numpy_result = np.power(2.0, -1.0)
         assert abs(pecos_result - numpy_result) < 1e-10
         assert abs(pecos_result - 0.5) < 1e-10
@@ -426,7 +421,7 @@ class TestPowerCorrectness:
         base = [1.0, 2.0, 3.0]
         exponent = 2.0
 
-        pecos_result = pecos_power(base, exponent)
+        pecos_result = pc.power(base, exponent)
         numpy_result = np.power(base, exponent)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -437,7 +432,7 @@ class TestPowerCorrectness:
         base = 2.0
         exponent = [1.0, 2.0, 3.0]
 
-        pecos_result = pecos_power(base, exponent)
+        pecos_result = pc.power(base, exponent)
         numpy_result = np.power(base, exponent)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -448,7 +443,7 @@ class TestPowerCorrectness:
         base = [[1.0, 2.0], [3.0, 4.0]]
         exponent = 2.0
 
-        pecos_result = pecos_power(base, exponent)
+        pecos_result = pc.power(base, exponent)
         numpy_result = np.power(base, exponent)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -463,7 +458,7 @@ class TestPowerThresholdUseCases:
         dist = 5.0
         v0 = 2.0
 
-        pecos_result = pecos_power(dist, 1.0 / v0)
+        pecos_result = pc.power(dist, 1.0 / v0)
         numpy_result = np.power(dist, 1.0 / v0)
 
         assert abs(pecos_result - numpy_result) < 1e-10
@@ -473,7 +468,7 @@ class TestPowerThresholdUseCases:
         """Test the pattern: np.power(x, 2)."""
         x = 3.5
 
-        pecos_result = pecos_power(x, 2.0)
+        pecos_result = pc.power(x, 2.0)
         numpy_result = np.power(x, 2.0)
 
         assert abs(pecos_result - numpy_result) < 1e-10
@@ -484,7 +479,7 @@ class TestPowerThresholdUseCases:
         dist = 5.0
         u = 2.0
 
-        pecos_result = pecos_power(dist, -1.0 / u)
+        pecos_result = pc.power(dist, -1.0 / u)
         numpy_result = np.power(dist, -1.0 / u)
 
         assert abs(pecos_result - numpy_result) < 1e-10
@@ -494,7 +489,7 @@ class TestPowerThresholdUseCases:
         distances = np.array([3.0, 5.0, 7.0])
         v0 = 2.0
 
-        pecos_result = pecos_power(distances, 1.0 / v0)
+        pecos_result = pc.power(distances, 1.0 / v0)
         numpy_result = np.power(distances, 1.0 / v0)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -505,29 +500,29 @@ class TestSqrtCorrectness:
 
     def test_sqrt_perfect_squares(self):
         """Test perfect square roots."""
-        assert pecos_sqrt(4.0) == 2.0
-        assert pecos_sqrt(9.0) == 3.0
-        assert pecos_sqrt(16.0) == 4.0
-        assert pecos_sqrt(25.0) == 5.0
-        assert pecos_sqrt(100.0) == 10.0
+        assert pc.sqrt(4.0) == 2.0
+        assert pc.sqrt(9.0) == 3.0
+        assert pc.sqrt(16.0) == 4.0
+        assert pc.sqrt(25.0) == 5.0
+        assert pc.sqrt(100.0) == 10.0
 
     def test_sqrt_irrational(self):
         """Test irrational square roots."""
-        pecos_result = pecos_sqrt(2.0)
+        pecos_result = pc.sqrt(2.0)
         numpy_result = np.sqrt(2.0)
         assert abs(pecos_result - numpy_result) < 1e-10
         assert abs(pecos_result - np.sqrt(2.0)) < 1e-10
 
     def test_sqrt_special_cases(self):
         """Test special cases."""
-        assert pecos_sqrt(0.0) == 0.0
-        assert pecos_sqrt(1.0) == 1.0
-        assert np.isnan(pecos_sqrt(-1.0))
+        assert pc.sqrt(0.0) == 0.0
+        assert pc.sqrt(1.0) == 1.0
+        assert np.isnan(pc.sqrt(-1.0))
 
     def test_sqrt_array(self):
         """Test array input."""
         values = [4.0, 9.0, 16.0, 25.0]
-        pecos_result = pecos_sqrt(values)
+        pecos_result = pc.sqrt(values)
         numpy_result = np.sqrt(values)
         assert np.allclose(pecos_result, numpy_result)
         assert np.allclose(pecos_result, [2.0, 3.0, 4.0, 5.0])
@@ -535,7 +530,7 @@ class TestSqrtCorrectness:
     def test_sqrt_2d_array(self):
         """Test 2D array input."""
         values = [[4.0, 9.0], [16.0, 25.0]]
-        pecos_result = pecos_sqrt(values)
+        pecos_result = pc.sqrt(values)
         numpy_result = np.sqrt(values)
         assert np.allclose(pecos_result, numpy_result)
 
@@ -546,7 +541,7 @@ class TestSqrtVarianceUseCases:
     def test_sqrt_variance_to_std(self):
         """Test the pattern: np.sqrt(variance)."""
         variance = 4.0
-        pecos_result = pecos_sqrt(variance)
+        pecos_result = pc.sqrt(variance)
         numpy_result = np.sqrt(variance)
         assert abs(pecos_result - numpy_result) < 1e-10
         assert abs(pecos_result - 2.0) < 1e-10
@@ -554,7 +549,7 @@ class TestSqrtVarianceUseCases:
     def test_sqrt_variance_array(self):
         """Test variance to std deviation with arrays."""
         variances = np.array([1.0, 4.0, 9.0, 16.0])
-        pecos_result = pecos_sqrt(variances)
+        pecos_result = pc.sqrt(variances)
         numpy_result = np.sqrt(variances)
         assert np.allclose(pecos_result, numpy_result)
         assert np.allclose(pecos_result, [1.0, 2.0, 3.0, 4.0])
@@ -563,7 +558,7 @@ class TestSqrtVarianceUseCases:
         """Test extracting std from covariance matrix diagonal."""
         # Simulate covariance matrix diagonal (variances)
         covariance_diag = np.array([0.25, 1.0, 2.25, 4.0])
-        pecos_result = pecos_sqrt(covariance_diag)
+        pecos_result = pc.sqrt(covariance_diag)
         numpy_result = np.sqrt(covariance_diag)
         assert np.allclose(pecos_result, numpy_result)
         assert np.allclose(pecos_result, [0.5, 1.0, 1.5, 2.0])
@@ -571,7 +566,7 @@ class TestSqrtVarianceUseCases:
     def test_sqrt_small_variances(self):
         """Test with small variance values."""
         variances = [0.01, 0.04, 0.0001]
-        pecos_result = pecos_sqrt(variances)
+        pecos_result = pc.sqrt(variances)
         numpy_result = np.sqrt(variances)
         assert np.allclose(pecos_result, numpy_result)
         assert np.allclose(pecos_result, [0.1, 0.2, 0.01])
@@ -585,7 +580,7 @@ class TestPolyfitCorrectness:
         x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
         y = np.array([1.0, 3.0, 5.0, 7.0, 9.0])  # y = 2x + 1
 
-        pecos_result = pecos_polyfit(x, y, 1)
+        pecos_result = pc.polyfit(x, y, 1)
         numpy_result = np.polyfit(x, y, 1)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -596,7 +591,7 @@ class TestPolyfitCorrectness:
         x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
         y = np.array([1.0, 2.0, 5.0, 10.0, 17.0])  # y = x^2 + 1
 
-        pecos_result = pecos_polyfit(x, y, 2)
+        pecos_result = pc.polyfit(x, y, 2)
         numpy_result = np.polyfit(x, y, 2)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -607,7 +602,7 @@ class TestPolyfitCorrectness:
         x = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
         y = np.array([2.1, 4.9, 9.2, 15.8, 24.1, 35.9])
 
-        pecos_result = pecos_polyfit(x, y, 2)
+        pecos_result = pc.polyfit(x, y, 2)
         numpy_result = np.polyfit(x, y, 2)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -617,7 +612,7 @@ class TestPolyfitCorrectness:
         x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
         y = np.array([3.1, 2.9, 3.0, 3.2, 2.8])
 
-        pecos_result = pecos_polyfit(x, y, 0)
+        pecos_result = pc.polyfit(x, y, 0)
         numpy_result = np.polyfit(x, y, 0)
 
         assert np.allclose(pecos_result, numpy_result)
@@ -631,7 +626,7 @@ class TestPolyfitCovariance:
         x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
         y = np.array([1.0, 3.0, 5.0, 7.0, 9.0])
 
-        pecos_coeffs, pecos_cov = pecos_polyfit(x, y, 1, cov=True)
+        pecos_coeffs, pecos_cov = pc.polyfit(x, y, 1, cov=True)
         numpy_coeffs, numpy_cov = np.polyfit(x, y, 1, cov=True)
 
         # Check coefficients match
@@ -647,7 +642,7 @@ class TestPolyfitCovariance:
         x = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
         y = np.array([2.1, 4.9, 9.2, 15.8, 24.1, 35.9])
 
-        pecos_coeffs, pecos_cov = pecos_polyfit(x, y, 2, cov=True)
+        pecos_coeffs, pecos_cov = pc.polyfit(x, y, 2, cov=True)
         numpy_coeffs, numpy_cov = np.polyfit(x, y, 2, cov=True)
 
         # Check coefficients match
@@ -662,7 +657,7 @@ class TestPolyfitCovariance:
         x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
         y = np.array([2.1, 3.9, 6.2, 7.9, 10.1])
 
-        pecos_coeffs, pecos_cov = pecos_polyfit(x, y, 1, cov=True)
+        pecos_coeffs, pecos_cov = pc.polyfit(x, y, 1, cov=True)
         numpy_coeffs, numpy_cov = np.polyfit(x, y, 1, cov=True)
 
         # Extract variances (diagonal elements)
@@ -672,17 +667,17 @@ class TestPolyfitCovariance:
         assert np.allclose(pecos_var, numpy_var)
 
         # Check standard errors
-        pecos_stderr = np.sqrt(pecos_var)
+        pc.stderr = np.sqrt(pecos_var)
         numpy_stderr = np.sqrt(numpy_var)
 
-        assert np.allclose(pecos_stderr, numpy_stderr)
+        assert np.allclose(pc.stderr, numpy_stderr)
 
     def test_polyfit_cov_symmetric(self):
         """Test that covariance matrix is symmetric."""
         x = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
         y = np.array([1.0, 2.5, 3.8, 5.2, 6.9, 8.1])
 
-        _, pecos_cov = pecos_polyfit(x, y, 2, cov=True)
+        _, pecos_cov = pc.polyfit(x, y, 2, cov=True)
 
         # Covariance matrix should be symmetric
         assert np.allclose(pecos_cov, pecos_cov.T)
@@ -692,7 +687,7 @@ class TestPolyfitCovariance:
         x = np.array([0.0, 1.0, 2.0, 3.0])
         y = np.array([1.0, 3.0, 5.0, 7.0])
 
-        result = pecos_polyfit(x, y, 1, cov=False)
+        result = pc.polyfit(x, y, 1, cov=False)
 
         # Should return only coefficients, not a tuple
         assert isinstance(result, np.ndarray)
@@ -705,9 +700,9 @@ class TestPolyfitCovariance:
         y = np.array([1.0, 3.0, 5.0, 7.0])
 
         # Without cov parameter (default behavior)
-        result_default = pecos_polyfit(x, y, 1)
+        result_default = pc.polyfit(x, y, 1)
         # With cov=False (explicit)
-        result_false = pecos_polyfit(x, y, 1, cov=False)
+        result_false = pc.polyfit(x, y, 1, cov=False)
 
         # Both should return just coefficients
         assert isinstance(result_default, np.ndarray)
@@ -724,8 +719,8 @@ class TestPolyfitWithPoly1d:
         x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
         y = np.array([1.0, 3.0, 5.0, 7.0, 9.0])  # y = 2x + 1
 
-        coeffs = pecos_polyfit(x, y, 1)
-        poly = pecos_Poly1d(coeffs)
+        coeffs = pc.polyfit(x, y, 1)
+        poly = pc.Poly1d(coeffs)
 
         # Evaluate at test points
         assert abs(poly.eval(0.0) - 1.0) < 1e-10
@@ -738,8 +733,8 @@ class TestPolyfitWithPoly1d:
         x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
         y = np.array([1.0, 2.0, 5.0, 10.0, 17.0])  # y = x^2 + 1
 
-        coeffs = pecos_polyfit(x, y, 2)
-        poly = pecos_Poly1d(coeffs)
+        coeffs = pc.polyfit(x, y, 2)
+        poly = pc.Poly1d(coeffs)
 
         # Evaluate at test points
         assert abs(poly.eval(0.0) - 1.0) < 1e-10
@@ -762,7 +757,7 @@ class TestSumBasicTypes:
 
     def test_sum_list_float(self):
         """Test sum with list of floats."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         values = [1.0, 2.0, 3.0, 4.0, 5.0]
 
@@ -774,7 +769,7 @@ class TestSumBasicTypes:
 
     def test_sum_tuple_float(self):
         """Test sum with tuple of floats."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         values = (1.0, 2.0, 3.0)
 
@@ -786,7 +781,7 @@ class TestSumBasicTypes:
 
     def test_sum_numpy_float(self):
         """Test sum with numpy array of floats."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         values = np.array([1.0, 2.0, 3.0, 4.0])
 
@@ -798,7 +793,7 @@ class TestSumBasicTypes:
 
     def test_sum_complex_list(self):
         """Test sum with list of complex numbers."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         values = [1 + 2j, 3 + 4j, 5 + 6j]
 
@@ -810,7 +805,7 @@ class TestSumBasicTypes:
 
     def test_sum_complex_numpy(self):
         """Test sum with numpy array of complex numbers."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         values = np.array([1 + 2j, 3 + 4j, 5 + 6j])
 
@@ -826,7 +821,7 @@ class TestSumAxisParameter:
 
     def test_sum_2d_axis_none(self):
         """Test sum with 2D array, axis=None (sum all elements)."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
 
@@ -838,7 +833,7 @@ class TestSumAxisParameter:
 
     def test_sum_2d_axis_0(self):
         """Test sum along axis 0 (down columns)."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
 
@@ -850,7 +845,7 @@ class TestSumAxisParameter:
 
     def test_sum_2d_axis_1(self):
         """Test sum along axis 1 (across rows)."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
 
@@ -862,7 +857,7 @@ class TestSumAxisParameter:
 
     def test_sum_2d_axis_negative(self):
         """Test sum with negative axis."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         arr = np.array([[1.0, 2.0], [3.0, 4.0]])
 
@@ -875,7 +870,7 @@ class TestSumAxisParameter:
 
     def test_sum_3d_axis_0(self):
         """Test sum with 3D array along axis 0."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         arr = np.array([[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]])
 
@@ -886,7 +881,7 @@ class TestSumAxisParameter:
 
     def test_sum_list_with_axis_0(self):
         """Test sum with list input and axis parameter."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         values = [[1.0, 2.0], [3.0, 4.0]]
 
@@ -902,7 +897,7 @@ class TestSumComplexWithAxis:
 
     def test_sum_complex_2d_axis_0(self):
         """Test sum of complex 2D array along axis 0."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         arr = np.array([[1 + 1j, 2 + 2j], [3 + 3j, 4 + 4j]])
 
@@ -913,7 +908,7 @@ class TestSumComplexWithAxis:
 
     def test_sum_complex_2d_axis_1(self):
         """Test sum of complex 2D array along axis 1."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         arr = np.array([[1 + 1j, 2 + 2j], [3 + 3j, 4 + 4j]])
 
@@ -928,8 +923,8 @@ class TestSumUseCases:
 
     def test_sum_probability_normalization(self):
         """Test sum for quantum state probability normalization check."""
-        from pecos.num import abs as pecos_abs
-        from pecos.num import sum as pecos_sum
+        from pecos import abs as pecos_abs
+        from pecos import sum as pecos_sum
 
         # Quantum state vector (normalized)
         state = np.array([1 / np.sqrt(2), 0, 0, 1 / np.sqrt(2) * 1j])
@@ -948,7 +943,7 @@ class TestSumUseCases:
 
     def test_sum_complex_state_accumulation(self):
         """Test sum for accumulating complex quantum amplitudes."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         # Complex amplitudes from different measurement outcomes
         amplitudes = np.array([0.5 + 0.5j, 0.3 - 0.2j, 0.1 + 0.7j])
@@ -961,7 +956,7 @@ class TestSumUseCases:
 
     def test_sum_threshold_analysis(self):
         """Test sum for threshold analysis (summing error rates)."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         # Error rates across multiple qubits
         error_rates = [0.001, 0.0015, 0.002, 0.0012]
@@ -977,7 +972,7 @@ class TestSumEdgeCases:
 
     def test_sum_empty_raises_error(self):
         """Test sum with empty array."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         # NumPy returns 0.0 for empty array, we should match
         values = []
@@ -990,7 +985,7 @@ class TestSumEdgeCases:
 
     def test_sum_single_element(self):
         """Test sum with single element."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         values = [42.0]
 
@@ -1002,7 +997,7 @@ class TestSumEdgeCases:
 
     def test_sum_negative_values(self):
         """Test sum with negative values."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         values = [-1.0, -2.0, -3.0, 4.0, 5.0]
 
@@ -1014,7 +1009,7 @@ class TestSumEdgeCases:
 
     def test_sum_mixed_sign_complex(self):
         """Test sum with mixed sign complex numbers."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         values = np.array([1 + 2j, -3 + 4j, 5 - 6j])
 
@@ -1026,7 +1021,7 @@ class TestSumEdgeCases:
 
     def test_sum_axis_out_of_bounds(self):
         """Test sum with axis out of bounds raises error."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         arr = np.array([[1.0, 2.0], [3.0, 4.0]])
 
@@ -1039,7 +1034,7 @@ class TestSumComparison:
 
     def test_sum_matches_numpy_1d(self):
         """Test sum matches numpy for 1D arrays."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         test_cases = [
             [1.0, 2.0, 3.0],
@@ -1055,7 +1050,7 @@ class TestSumComparison:
 
     def test_sum_matches_numpy_2d_all_axes(self):
         """Test sum matches numpy for 2D arrays with all axis values."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         arr = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
 
@@ -1076,7 +1071,7 @@ class TestSumComparison:
 
     def test_sum_matches_numpy_complex(self):
         """Test sum matches numpy for complex arrays."""
-        from pecos.num import sum as pecos_sum
+        from pecos import sum as pecos_sum
 
         test_cases = [
             [1 + 1j, 2 + 2j, 3 + 3j],

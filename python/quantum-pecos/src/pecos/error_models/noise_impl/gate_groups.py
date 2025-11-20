@@ -18,7 +18,7 @@ noise application in error models.
 
 from __future__ import annotations
 
-from pecos.num import array
+import pecos as pc
 from pecos.quantum import Pauli
 
 two_qubits = {
@@ -100,7 +100,7 @@ measurementsz = {"measure X", "measure Y", "Measure +X", "Measure +Y"}
 initsx = {"init |0>", "init |1>"}
 initsz = {"init |+>", "init |->", "init |+i>", "init |-i>"}
 
-error_two_paulis_collection = array(
+error_two_paulis_collection = pc.array(
     [
         (Pauli.I, Pauli.X),
         (Pauli.I, Pauli.Y),
@@ -120,7 +120,7 @@ error_two_paulis_collection = array(
     ],
 )
 
-error_one_paulis_collection = array([Pauli.X, Pauli.Y, Pauli.Z])
+error_one_paulis_collection = pc.array([Pauli.X, Pauli.Y, Pauli.Z])
 
 # Residual one-qubit gates that are applied due to leakage cause the MS gate not to be applied but the non-leaked
 # qubits still gets the wrapper one-gates applied.

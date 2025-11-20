@@ -29,7 +29,7 @@ from pecos.simulators.sim_class_types import StateVector
 if TYPE_CHECKING:
     import sys
 
-    from numpy.typing import ArrayLike
+    from pecos import Array
 
     # Handle Python 3.10 compatibility for Self type
     if sys.version_info >= (3, 11):
@@ -137,7 +137,7 @@ class CuStateVec(StateVector):
             cusv.destroy(self.libhandle)
 
     @property
-    def vector(self) -> ArrayLike:
+    def vector(self) -> Array:
         """Get the quantum state vector from GPU memory.
 
         Returns:

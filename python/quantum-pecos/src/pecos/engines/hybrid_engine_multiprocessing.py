@@ -23,9 +23,7 @@ from os import getpid
 from typing import TYPE_CHECKING
 from warnings import warn
 
-import numpy as np
-
-from pecos.num import random
+import pecos as pc
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -75,15 +73,16 @@ def run_multisim(
     }
 
     if seed is not None:
-        random.seed(seed)
-    max_value = np.iinfo(np.int32).max
+        pc.random.seed(seed)
+    # Use i32::MAX from Rust as max seed value
+    max_value = pc.dtypes.i32.max
 
     manager = multiprocessing.get_context("spawn").Manager()
     queue = manager.Queue()
     args = []
     for i, sh in enumerate(multi_shots):
         # make a unique seed for each process
-        sd = int(random.randint(0, max_value, 1)[0])
+        sd = int(pc.random.randint(0, max_value, 1)[0])
 
         kwargs_temp = dict(kwargs)
         kwargs_temp.update(

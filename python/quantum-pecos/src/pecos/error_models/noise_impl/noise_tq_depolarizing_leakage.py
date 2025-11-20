@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.num import random
+import pecos as pc
 from pecos.reps.pyphir.op_types import QOp
 
 if TYPE_CHECKING:
@@ -54,13 +54,13 @@ def noise_tq_depolarizing_leakage(
         op = QOp(name=op.name, args=new_args, metadata=dict(op.metadata))
 
     # Use fused operation to check and get error indices in one pass
-    error_indices = random.compare_indices(len(op.args), p)
+    error_indices = pc.random.compare_indices(len(op.args), p)
 
     if error_indices:
         noise = {}
         for idx in error_indices:
             loc = op.args[idx]
-            rand = random.random(1)[0]
+            rand = pc.random.random(1)[0]
             p_tot = 0.0
             for (fault1, fault2), prob in noise_dict.items():
                 p_tot += prob

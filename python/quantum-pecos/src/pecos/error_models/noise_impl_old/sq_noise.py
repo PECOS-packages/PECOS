@@ -20,8 +20,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pecos as pc
 from pecos.error_models.noise_impl_old.gate_groups import error_one_paulis_collection
-from pecos.num import random
 
 if TYPE_CHECKING:
     from pecos import QuantumCircuit
@@ -33,9 +33,9 @@ def noise_depolarizing_sq_gate(
     p: float,
 ) -> None:
     """Apply a symmetric depolarizing noise model."""
-    rand_nums = random.random(len(locations)) <= p
+    rand_nums = pc.random.random(len(locations)) <= p
 
     for r, loc in zip(rand_nums, locations, strict=False):
         if r:
-            err = random.choice(error_one_paulis_collection, 1)[0]
+            err = pc.random.choice(error_one_paulis_collection, 1)[0]
             after.append(err, {loc})

@@ -17,10 +17,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar
 
+import pecos as pc
 from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.error_models.class_errors_circuit import ErrorCircuits
 from pecos.error_models.parent_class_error_gen import ParentErrorModel
-from pecos.num import array
 from pecos.quantum import Pauli
 
 if TYPE_CHECKING:
@@ -48,7 +48,7 @@ class DepolarModel(ParentErrorModel):
     inits_x: ClassVar[set[str]] = {"init |+>", "init |->"}
     inits_y: ClassVar[set[str]] = {"init |+i>", "init |-i>"}
 
-    error_two_paulis_collection = array(
+    error_two_paulis_collection = pc.array(
         [
             (Pauli.I, Pauli.X),
             (Pauli.I, Pauli.Y),
@@ -65,7 +65,7 @@ class DepolarModel(ParentErrorModel):
             (Pauli.Z, Pauli.X),
             (Pauli.Z, Pauli.Y),
             (Pauli.Z, Pauli.Z),
-        ]
+        ],
     )
 
     def __init__(
@@ -99,7 +99,8 @@ class DepolarModel(ParentErrorModel):
         zerror_before = self.gen.ErrorStaticSymbol(Pauli.Z, after=False)
         pauli_errors = self.gen.ErrorSet([Pauli.X, Pauli.Y, Pauli.Z])
         pauli_errors_before = self.gen.ErrorSet(
-            [Pauli.X, Pauli.Y, Pauli.Z], after=False
+            [Pauli.X, Pauli.Y, Pauli.Z],
+            after=False,
         )
         two_pauli_errors = self.gen.ErrorSetTwoQuditTensorProduct(
             self.error_two_paulis_collection,

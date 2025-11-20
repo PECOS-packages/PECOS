@@ -20,11 +20,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pecos as pc
 from pecos.error_models.noise_impl_old.gate_groups import (
     error_one_paulis_collection,
     error_two_paulis_collection,
 )
-from pecos.num import random
 
 if TYPE_CHECKING:
     from pecos import QuantumCircuit
@@ -45,11 +45,11 @@ def noise_depolarizing_two_qubit_gates(
         after: QuantumCircuit collecting the noise that occurs after the ideal gates.
         p: The probability of a depolarizing error occurring on the two-qubit gate.
     """
-    rand_nums = random.random(len(locations)) <= p
+    rand_nums = pc.random.random(len(locations)) <= p
 
     for r, (loc1, loc2) in zip(rand_nums, locations, strict=False):
         if r:
-            index = int(random.choice(len(error_two_paulis_collection), 1)[0])
+            index = int(pc.random.choice(len(error_two_paulis_collection), 1)[0])
             err1, err2 = error_two_paulis_collection[index]
 
             if err1:
@@ -74,7 +74,7 @@ def noise_two_qubit_gates_depolarizing_with_noiseless(
         p: The probability of a depolarizing error occurring on the two-qubit gate.
         noiseless_qubits: Set of qubits that are considered noiseless. Defaults to None.
     """
-    rand_nums = random.random(len(locations)) <= p
+    rand_nums = pc.random.random(len(locations)) <= p
 
     for r, (loc1, loc2) in zip(rand_nums, locations, strict=False):
         if r:
@@ -82,15 +82,15 @@ def noise_two_qubit_gates_depolarizing_with_noiseless(
                 continue
 
             if loc1 in noiseless_qubits:
-                err = random.choice(error_one_paulis_collection, 1)[0]
+                err = pc.random.choice(error_one_paulis_collection, 1)[0]
                 after.append(err, {loc2})
 
             elif loc2 in noiseless_qubits:
-                err = random.choice(error_one_paulis_collection, 1)[0]
+                err = pc.random.choice(error_one_paulis_collection, 1)[0]
                 after.append(err, {loc1})
 
             else:
-                index = int(random.choice(len(error_two_paulis_collection), 1)[0])
+                index = int(pc.random.choice(len(error_two_paulis_collection), 1)[0])
                 err1, err2 = error_two_paulis_collection[index]
 
                 if err1:

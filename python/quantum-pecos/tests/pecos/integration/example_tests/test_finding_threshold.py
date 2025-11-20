@@ -12,7 +12,6 @@
 
 """Integration tests for quantum error correction threshold finding."""
 
-import numpy as np
 import pecos as pc
 from pecos.misc.threshold_curve import func
 
@@ -25,10 +24,10 @@ def test_finding_threshold() -> None:
     )
     ps = [0.19, 0.17, 0.15, 0.13, 0.11]
     ds = [5, 7, 9]
-    plist = np.array(ps * len(ds))
+    plist = pc.array(ps * len(ds))
 
     dlist = [d for d in ds for _ in ps]
-    dlist = np.array(dlist)
+    dlist = pc.array(dlist)
 
     plog = []
     for d in ds:
@@ -47,7 +46,7 @@ def test_finding_threshold() -> None:
                 )[0],
             )
 
-    plog = np.array(plog)
+    plog = pc.array(plog)
 
     # print("Finished!")
 

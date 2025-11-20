@@ -14,7 +14,7 @@
 
 from typing import Final
 
-import numpy as np
+import pecos as pc
 from hypothesis import assume, given
 from hypothesis import strategies as st
 from pecos.engines.cvm.binarray import BinArray
@@ -118,7 +118,7 @@ def test_bitwise_xor() -> None:
 
 def test_unsigned_bitwise_not() -> None:
     """Test BinArray bitwise NOT operation for unsigned data."""
-    ba = BinArray("1010", dtype=np.uint64)  # 10
+    ba = BinArray("1010", dtype=pc.u64)  # 10
     result = ~ba
     assert result == 0b0101
 

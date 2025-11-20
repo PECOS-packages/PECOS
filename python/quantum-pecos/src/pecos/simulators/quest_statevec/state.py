@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib import QuestStateVec as RustQuestStateVec
 
-from pecos.num import array, dtypes
+import pecos as pc
 from pecos.simulators.quest_statevec.bindings import get_bindings
 
 if TYPE_CHECKING:
@@ -60,7 +60,7 @@ class QuestStateVec:
         for i in range(2**self.num_qubits):
             re, im = self.backend.get_amplitude(i)
             amplitudes.append(complex(re, im))
-        return array(amplitudes, dtype=dtypes.complex128)
+        return pc.array(amplitudes, dtype=pc.dtypes.complex128)
 
     def reset(self) -> QuestStateVec:
         """Resets the quantum state to the all-zero state."""

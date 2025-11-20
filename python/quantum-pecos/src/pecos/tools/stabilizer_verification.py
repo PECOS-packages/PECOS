@@ -23,7 +23,7 @@ from __future__ import annotations
 from itertools import combinations, product
 from typing import TYPE_CHECKING
 
-from pecos import simulators
+import pecos as pc
 from pecos.circuits import QuantumCircuit
 
 if TYPE_CHECKING:
@@ -44,7 +44,7 @@ class VerifyStabilizers:
         Sets up the circuit simulator and initializes empty data structures
         for stabilizer checks, logical operators, and qubit tracking.
         """
-        self.circ_sim = simulators.SparseSimPy
+        self.circ_sim = pc.simulators.SparseSimPy
 
         self.checks = []
         self.logical_zs = []
@@ -334,7 +334,7 @@ class VerifyStabilizers:
         # ------------
         # Separate the checks, logical stabilizers, and ancilla stabilizers.
         circuit = self.circuit
-        state = simulators.SparseSimPy(self.num_qubits)
+        state = pc.simulators.SparseSimPy(self.num_qubits)
         state.run_circuit(circuit)
         self.get_info(state, verbose=False)
         self.state = state

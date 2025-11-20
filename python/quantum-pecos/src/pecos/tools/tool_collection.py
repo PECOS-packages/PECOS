@@ -23,8 +23,7 @@ from __future__ import annotations
 from itertools import combinations, product
 from typing import TYPE_CHECKING
 
-from pecos import circuits
-from pecos.num import floor
+import pecos as pc
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
@@ -39,7 +38,7 @@ from pecos.simulators import SparseSimPy
 
 
 def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
-    """Checks that the decoder can correct all Pauli errors of weight up to floor(distance/2).
+    """Checks that the decoder can correct all Pauli errors of weight up to pc.floor(distance/2).
 
     Args:
     ----
@@ -53,13 +52,13 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
     """
     # The logical circuits:
     # ---------------------
-    init_zero = circuits.LogicalCircuit(layout=qecc.layout)
+    init_zero = pc.circuits.LogicalCircuit(layout=qecc.layout)
     init_zero.append(qecc.gate("ideal init |0>"))
 
-    init_plus = circuits.LogicalCircuit(layout=qecc.layout)
+    init_plus = pc.circuits.LogicalCircuit(layout=qecc.layout)
     init_plus.append(qecc.gate("ideal init |+>"))
 
-    syn_extract = circuits.LogicalCircuit(layout=qecc.layout)
+    syn_extract = pc.circuits.LogicalCircuit(layout=qecc.layout)
     syn_extract.append(qecc.gate("I", num_syn_extract=1))
 
     logical_ops = qecc.instruction("instr_syn_extract").final_logical_ops
@@ -69,7 +68,7 @@ def fault_tolerance_check(qecc: QECCProtocol, decoder: Decoder) -> None:
     data_qudits = qecc.data_qudit_set
     qudits = qecc.qudit_set
 
-    t = int(floor((qecc.distance - 1) * 0.5))
+    t = int(pc.floor((qecc.distance - 1) * 0.5))
 
     # circuit runner:
     circ_runner = Standard()

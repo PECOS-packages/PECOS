@@ -48,7 +48,7 @@ pub use crate::math::{
 pub use crate::math::{atan2, ceil, floor};
 
 // Re-export comparison functions and traits
-pub use crate::compare::{IsClose, IsNan, Where, allclose, array_equal, where_};
+pub use crate::compare::{IsClose, IsNan, Where, allclose, array_equal, assert_allclose, where_};
 
 // Re-export ndarray for convenience (expanded for better ergonomics)
 // Core array types
@@ -95,8 +95,15 @@ pub use num_complex::{Complex, Complex32, Complex64};
 // Note: sum() for slices removed - use .iter().sum() directly (idiomatic Rust)
 pub use crate::array::{arange, delete, diag, linspace, ones, sum_axis, zeros};
 
-// Re-export mathematical constants
+// Re-export mathematical constants (f64)
 pub use crate::math::{
     E, FRAC_1_PI, FRAC_1_SQRT_2, FRAC_2_PI, FRAC_2_SQRT_PI, FRAC_PI_2, FRAC_PI_3, FRAC_PI_4,
     FRAC_PI_6, FRAC_PI_8, LN_2, LN_10, LOG2_E, LOG10_E, PI, SQRT_2, TAU,
+};
+
+// Re-export mathematical constants (f32)
+pub use crate::math::{
+    E_F32, FRAC_1_PI_F32, FRAC_1_SQRT_2_F32, FRAC_2_PI_F32, FRAC_2_SQRT_PI_F32, FRAC_PI_2_F32,
+    FRAC_PI_3_F32, FRAC_PI_4_F32, FRAC_PI_6_F32, FRAC_PI_8_F32, LN_2_F32, LN_10_F32, LOG2_E_F32,
+    LOG10_E_F32, PI_F32, SQRT_2_F32, TAU_F32,
 };

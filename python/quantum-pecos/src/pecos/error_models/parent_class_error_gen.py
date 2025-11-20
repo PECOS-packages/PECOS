@@ -18,10 +18,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
+import pecos as pc
 from pecos.error_models.class_errors_circuit import ErrorCircuits
-from pecos.num import array, random
 
 logger = logging.getLogger(__name__)
 
@@ -273,10 +271,10 @@ class Generator:
             return locations
 
         # Create len(locations) number of random float between 0 and 1.
-        rand_nums = random.random(len(locations))
+        rand_nums = pc.random.random(len(locations))
         rand_nums = rand_nums <= p  # Boolean evaluation of random number <= p
 
-        # TODO: Think about using the numpy function vectorize...
+        # TODO: Consider vectorizing this operation for better performance
         error_locations = set()
 
         for i, loc in enumerate(locations):
@@ -346,7 +344,7 @@ class Generator:
                 error_set: Collection of error symbols to choose from uniformly.
                 after: If True, apply error after the gate; if False, before.
             """
-            self.data = array(list(error_set))
+            self.data = pc.array(list(error_set))
 
             if after:
                 self.error_func = self.error_func_after
@@ -362,7 +360,7 @@ class Generator:
             _error_params: dict[str, Any],
         ) -> None:
             """Apply random error after gate execution."""
-            error_symbol = random.choice(self.data, 1)[0]
+            error_symbol = pc.random.choice(self.data, 1)[0]
             # Convert Pauli objects to strings for compatibility with gate symbols
             symbol = (
                 str(error_symbol) if hasattr(error_symbol, "__str__") else error_symbol
@@ -378,7 +376,7 @@ class Generator:
             _error_params: dict[str, Any],
         ) -> None:
             """Apply random error before gate execution."""
-            error_symbol = random.choice(self.data, 1)[0]
+            error_symbol = pc.random.choice(self.data, 1)[0]
             # Convert Pauli objects to strings for compatibility with gate symbols
             symbol = (
                 str(error_symbol) if hasattr(error_symbol, "__str__") else error_symbol
@@ -401,10 +399,10 @@ class Generator:
                 after: If True, apply error after the gate; if False, before.
             """
             try:
-                self.data = array(list(error_set))
+                self.data = pc.array(list(error_set))
             except ValueError:
                 error_set[0] = (error_set[0],)
-                self.data = array(list(error_set))
+                self.data = pc.array(list(error_set))
 
             if after:
                 self.error_func = self.error_func_after
@@ -421,10 +419,10 @@ class Generator:
         ) -> None:
             """Apply sampled multi-qubit error after gate execution."""
             # Choose an error symbol or tuple of symbols:
-            index = int(random.choice(len(self.data), 1)[0])
+            index = int(pc.random.choice(len(self.data), 1)[0])
             error_symbols = self.data[index]
 
-            if isinstance(error_symbols, tuple | np.ndarray) and len(error_symbols) > 1:
+            if isinstance(error_symbols, tuple | pc.Array) and len(error_symbols) > 1:
                 for sym, loc in zip(error_symbols, location, strict=False):
                     if sym != "I":
                         after.update(sym, {loc}, emptyappend=True)
@@ -450,10 +448,10 @@ class Generator:
             _error_params: dict[str, Any],
         ) -> None:
             """Apply sampled multi-qubit error before gate execution."""
-            index = int(random.choice(len(self.data), 1)[0])
+            index = int(pc.random.choice(len(self.data), 1)[0])
             error_symbols = self.data[index]
 
-            if isinstance(error_symbols, np.ndarray) and len(error_symbols) > 1:
+            if isinstance(error_symbols, pc.Array) and len(error_symbols) > 1:
                 for sym, loc in zip(error_symbols, location, strict=False):
                     if sym != "I":
                         before.update(sym, {loc}, emptyappend=True)

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.num import random
+import pecos as pc
 
 if TYPE_CHECKING:
     from pecos.simulators.sparsesim.state import SparseSim
@@ -172,7 +172,7 @@ def meas_z(
                 msg,
             )
     else:
-        meas_outcome = int(random.randint(0, 2, 1)[0])
+        meas_outcome = int(pc.random.randint(0, 2, 1)[0])
 
     return meas_outcome
 
@@ -334,7 +334,7 @@ def nondeterministic_meas(
 
     # Use forced outcome if provided, otherwise generate random outcome (0 or 1)
     meas_outcome = (
-        forced_outcome if forced_outcome > -1 else int(random.randint(0, 2, 1)[0])
+        forced_outcome if forced_outcome > -1 else int(pc.random.randint(0, 2, 1)[0])
     )
 
     # Use the random outcome as the sign of the replaced stabilizer

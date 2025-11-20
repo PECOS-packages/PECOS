@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.num import random
+import pecos as pc
 
 if TYPE_CHECKING:
     from pecos import QuantumCircuit
@@ -41,7 +41,7 @@ def noise_tq_mem(
     """
     err_qubits = set()
     for locs in locations:
-        rand_nums = random.random(len(locs)) <= p
+        rand_nums = pc.random.random(len(locs)) <= p
 
         for r, loc in zip(rand_nums, locs, strict=False):
             if r:

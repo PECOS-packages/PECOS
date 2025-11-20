@@ -10,7 +10,7 @@ import time
 import numpy as np
 import pytest
 
-from pecos.num import random as pecos_random
+import pecos as pc
 
 
 class TestCompareAnyCorrectness:
@@ -19,23 +19,23 @@ class TestCompareAnyCorrectness:
     def test_compare_any_always_true(self):
         """With threshold=1.0, should always be True."""
         # Numpy version
-        pecos_random.seed(42)
-        result = pecos_random.compare_any(100, 1.0)
+        pc.random.seed(42)
+        result = pc.random.compare_any(100, 1.0)
         assert result is True
 
     def test_compare_any_always_false(self):
         """With threshold=0.0, should always be False."""
-        pecos_random.seed(42)
-        result = pecos_random.compare_any(100, 0.0)
+        pc.random.seed(42)
+        result = pc.random.compare_any(100, 0.0)
         assert result is False
 
     def test_compare_any_reproducibility(self):
         """Same seed should produce same result."""
-        pecos_random.seed(12345)
-        result1 = pecos_random.compare_any(1000, 0.05)
+        pc.random.seed(12345)
+        result1 = pc.random.compare_any(1000, 0.05)
 
-        pecos_random.seed(12345)
-        result2 = pecos_random.compare_any(1000, 0.05)
+        pc.random.seed(12345)
+        result2 = pc.random.compare_any(1000, 0.05)
 
         assert result1 == result2
 
@@ -46,12 +46,12 @@ class TestCompareAnyCorrectness:
         threshold = 0.01
 
         # Fused pecos version
-        pecos_random.seed(seed_val)
-        pecos_result = pecos_random.compare_any(n, threshold)
+        pc.random.seed(seed_val)
+        pecos_result = pc.random.compare_any(n, threshold)
 
         # Unfused pecos version
-        pecos_random.seed(seed_val)
-        unfused_result = any(pecos_random.random(1)[0] < threshold for _ in range(n))
+        pc.random.seed(seed_val)
+        unfused_result = any(pc.random.random(1)[0] < threshold for _ in range(n))
 
         # Results should match with same seed
         assert pecos_result == unfused_result
@@ -59,13 +59,13 @@ class TestCompareAnyCorrectness:
     def test_compare_any_statistical_properties(self):
         """Test statistical properties match expected probabilities."""
         # For p=0.5, n=1000, P(at least one) ≈ 1.0
-        pecos_random.seed(777)
-        assert pecos_random.compare_any(1000, 0.5) is True
+        pc.random.seed(777)
+        assert pc.random.compare_any(1000, 0.5) is True
 
         # For p=0.001, n=10, P(at least one) = 1 - (1-0.001)^10 ≈ 0.01
         # Run 1000 trials, expect ~10 hits
-        pecos_random.seed(666)
-        hits = sum(pecos_random.compare_any(10, 0.001) for _ in range(1000))
+        pc.random.seed(666)
+        hits = sum(pc.random.compare_any(10, 0.001) for _ in range(1000))
         # Allow wide tolerance for low probability events
         assert 0 <= hits <= 30, f"Expected ~10 hits, got {hits}"
 
@@ -75,23 +75,23 @@ class TestCompareIndicesCorrectness:
 
     def test_compare_indices_all(self):
         """With threshold=1.0, should return all indices."""
-        pecos_random.seed(42)
-        result = pecos_random.compare_indices(10, 1.0)
+        pc.random.seed(42)
+        result = pc.random.compare_indices(10, 1.0)
         assert result == list(range(10))
 
     def test_compare_indices_none(self):
         """With threshold=0.0, should return empty."""
-        pecos_random.seed(42)
-        result = pecos_random.compare_indices(10, 0.0)
+        pc.random.seed(42)
+        result = pc.random.compare_indices(10, 0.0)
         assert result == []
 
     def test_compare_indices_reproducibility(self):
         """Same seed should produce same indices."""
-        pecos_random.seed(54321)
-        result1 = pecos_random.compare_indices(100, 0.1)
+        pc.random.seed(54321)
+        result1 = pc.random.compare_indices(100, 0.1)
 
-        pecos_random.seed(54321)
-        result2 = pecos_random.compare_indices(100, 0.1)
+        pc.random.seed(54321)
+        result2 = pc.random.compare_indices(100, 0.1)
 
         assert result1 == result2
 
@@ -102,12 +102,12 @@ class TestCompareIndicesCorrectness:
         threshold = 0.1
 
         # Fused pecos version
-        pecos_random.seed(seed_val)
-        pecos_result = pecos_random.compare_indices(n, threshold)
+        pc.random.seed(seed_val)
+        pecos_result = pc.random.compare_indices(n, threshold)
 
         # Unfused pecos version
-        pecos_random.seed(seed_val)
-        unfused_result = [i for i in range(n) if pecos_random.random(1)[0] < threshold]
+        pc.random.seed(seed_val)
+        unfused_result = [i for i in range(n) if pc.random.random(1)[0] < threshold]
 
         # Results should match with same seed
         assert pecos_result == unfused_result
@@ -115,8 +115,8 @@ class TestCompareIndicesCorrectness:
     def test_compare_indices_statistical_properties(self):
         """Test statistical properties match expected probabilities."""
         # For p=0.5, n=10000, expect ~5000 indices
-        pecos_random.seed(555)
-        result = pecos_random.compare_indices(10000, 0.5)
+        pc.random.seed(555)
+        result = pc.random.compare_indices(10000, 0.5)
         count = len(result)
         expected = 5000
         tolerance = 200  # ±200 for statistical variation
@@ -136,11 +136,11 @@ class TestCompareConsistency:
     def test_consistency_with_seed(self):
         """If compare_indices returns non-empty, compare_any should be True."""
         for seed_val in [111, 222, 333, 444, 555]:
-            pecos_random.seed(seed_val)
-            indices = pecos_random.compare_indices(100, 0.1)
+            pc.random.seed(seed_val)
+            indices = pc.random.compare_indices(100, 0.1)
 
-            pecos_random.seed(seed_val)
-            has_any = pecos_random.compare_any(100, 0.1)
+            pc.random.seed(seed_val)
+            has_any = pc.random.compare_any(100, 0.1)
 
             if len(indices) > 0:
                 assert (
@@ -164,16 +164,16 @@ class TestComparePerformance:
 
         # Warmup
         for _ in range(10):
-            pecos_random.seed(42)
-            pecos_random.compare_any(n, threshold)
+            pc.random.seed(42)
+            pc.random.compare_any(n, threshold)
             np.random.seed(42)
             np.any(np.random.random(n) < threshold)
 
         # Benchmark fused version
-        pecos_random.seed(123)
+        pc.random.seed(123)
         start = time.perf_counter()
         for _ in range(iterations):
-            pecos_random.compare_any(n, threshold)
+            pc.random.compare_any(n, threshold)
         pecos_time = time.perf_counter() - start
 
         # Benchmark unfused numpy version
@@ -204,17 +204,17 @@ class TestComparePerformance:
 
         # Warmup
         for _ in range(5):
-            pecos_random.seed(42)
-            pecos_random.compare_indices(n, threshold)
+            pc.random.seed(42)
+            pc.random.compare_indices(n, threshold)
             np.random.seed(42)
             rand_nums = np.random.random(n) < threshold
             [i for i, r in enumerate(rand_nums) if r]
 
         # Benchmark fused version
-        pecos_random.seed(456)
+        pc.random.seed(456)
         start = time.perf_counter()
         for _ in range(iterations):
-            pecos_random.compare_indices(n, threshold)
+            pc.random.compare_indices(n, threshold)
         pecos_time = time.perf_counter() - start
 
         # Benchmark unfused numpy version
@@ -247,12 +247,12 @@ class TestErrorModelUsage:
         error_rate = 0.01
         n_trials = 1000
 
-        pecos_random.seed(777)
+        pc.random.seed(777)
 
         # Count trials with errors using fused operation
         trials_with_errors = 0
         for _ in range(n_trials):
-            if pecos_random.compare_any(n_qubits, error_rate):
+            if pc.random.compare_any(n_qubits, error_rate):
                 trials_with_errors += 1
 
         # Expected probability: P(at least one error) = 1 - (1-p)^n
@@ -271,8 +271,8 @@ class TestErrorModelUsage:
         n_qubits = 1000
         error_rate = 0.01
 
-        pecos_random.seed(888)
-        error_indices = pecos_random.compare_indices(n_qubits, error_rate)
+        pc.random.seed(888)
+        error_indices = pc.random.compare_indices(n_qubits, error_rate)
 
         # All indices should be valid
         assert all(0 <= idx < n_qubits for idx in error_indices)

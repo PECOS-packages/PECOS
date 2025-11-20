@@ -11,7 +11,7 @@
 
 """Tests for PHIR classical interpreter functionality."""
 
-import numpy as np
+import pecos as pc
 import pytest
 from pecos.classical_interpreters.phir_classical_interpreter import (
     PhirClassicalInterpreter,
@@ -33,14 +33,15 @@ def interpreter() -> PhirClassicalInterpreter:
     }
 
     # Test patterns: alternating bits for u8, highest bit set for u64
+    # Use Rust-backed dtypes instead of NumPy
     interpreter.cenv = [
-        np.uint8(0b10101010),  # u8_var with alternating bits
-        np.uint64(0x8000000000000000),  # u64_var with only bit 63 set
+        pc.dtypes.u8(0b10101010),  # u8_var with alternating bits
+        pc.dtypes.u64(0x8000000000000000),  # u64_var with only bit 63 set
     ]
 
     interpreter.cid2dtype = [
-        np.uint8,
-        np.uint64,
+        pc.dtypes.u8,
+        pc.dtypes.u64,
     ]
 
     return interpreter
@@ -69,19 +70,19 @@ def test_get_bit_out_of_bounds(interpreter: PhirClassicalInterpreter) -> None:
     # Test with specific error message patterns matching the implementation
     with pytest.raises(
         ValueError,
-        match=r"Bit index 8 out of range for.*uint8.* \(max 7\)",
+        match=r"Bit index 8 out of range for.*\.u8.* \(max 7\)",
     ):
         interpreter.get_bit("u8_var", 8)  # u8 has bits 0-7 only
 
     with pytest.raises(
         ValueError,
-        match=r"Bit index 64 out of range for.*uint64.* \(max 63\)",
+        match=r"Bit index 64 out of range for.*\.u64.* \(max 63\)",
     ):
         interpreter.get_bit("u64_var", 64)  # u64 has bits 0-63 only
 
     # Test with an extremely large index
     with pytest.raises(
         ValueError,
-        match=r"Bit index 1000 out of range for.*uint64.* \(max 63\)",
+        match=r"Bit index 1000 out of range for.*\.u64.* \(max 63\)",
     ):
         interpreter.get_bit("u64_var", 1000)

@@ -21,12 +21,12 @@ from typing import TYPE_CHECKING
 
 import pecos_rslib._pecos_rslib as rslib
 
-from pecos.num import array
+import pecos as pc
 from pecos.simulators.qulacs import bindings
 from pecos.simulators.sim_class_types import StateVector
 
 if TYPE_CHECKING:
-    from numpy.typing import ArrayLike
+    from pecos import Array
 
 
 class Qulacs(StateVector):
@@ -58,15 +58,15 @@ class Qulacs(StateVector):
         return self
 
     @property
-    def vector(self) -> ArrayLike:
+    def vector(self) -> Array:
         """Get the quantum state vector from Qulacs.
 
         Returns:
-            The state vector as a numpy array with complex values.
+            The state vector as a PECOS array with complex values.
         """
-        # Convert from [(real, imag), ...] tuples to complex numpy array
+        # Convert from [(real, imag), ...] tuples to complex array
         complex_tuples = self.qulacs_state.vector
-        return array(
+        return pc.array(
             [complex(real, imag) for real, imag in complex_tuples],
             dtype="complex",
         )

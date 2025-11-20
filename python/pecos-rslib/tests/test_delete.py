@@ -7,7 +7,7 @@ to ensure it's a drop-in replacement.
 import numpy as np
 import pytest
 
-from pecos_rslib import delete
+import pecos as pc
 
 
 class TestDeleteBasic:
@@ -16,7 +16,7 @@ class TestDeleteBasic:
     def test_delete_middle_float(self):
         """Test deleting middle element from float array."""
         arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        result = delete(arr, 2)
+        result = pc.delete(arr, 2)
         expected = np.delete(arr, 2)
 
         np.testing.assert_array_equal(result, expected)
@@ -25,7 +25,7 @@ class TestDeleteBasic:
     def test_delete_first_float(self):
         """Test deleting first element from float array."""
         arr = np.array([10.0, 20.0, 30.0])
-        result = delete(arr, 0)
+        result = pc.delete(arr, 0)
         expected = np.delete(arr, 0)
 
         np.testing.assert_array_equal(result, expected)
@@ -33,7 +33,7 @@ class TestDeleteBasic:
     def test_delete_last_float(self):
         """Test deleting last element from float array."""
         arr = np.array([10.0, 20.0, 30.0])
-        result = delete(arr, 2)
+        result = pc.delete(arr, 2)
         expected = np.delete(arr, 2)
 
         np.testing.assert_array_equal(result, expected)
@@ -41,7 +41,7 @@ class TestDeleteBasic:
     def test_delete_complex(self):
         """Test deleting from complex array."""
         arr = np.array([1 + 2j, 3 + 4j, 5 + 6j, 7 + 8j])
-        result = delete(arr, 1)
+        result = pc.delete(arr, 1)
         expected = np.delete(arr, 1)
 
         np.testing.assert_array_equal(result, expected)
@@ -50,7 +50,7 @@ class TestDeleteBasic:
     def test_delete_int(self):
         """Test deleting from integer array."""
         arr = np.array([10, 20, 30, 40, 50], dtype=np.int64)
-        result = delete(arr, 3)
+        result = pc.delete(arr, 3)
         expected = np.delete(arr, 3)
 
         np.testing.assert_array_equal(result, expected)
@@ -65,12 +65,12 @@ class TestDeleteEdgeCases:
         arr = np.array([1.0, 2.0])
 
         # Delete first
-        result = delete(arr, 0)
+        result = pc.delete(arr, 0)
         expected = np.delete(arr, 0)
         np.testing.assert_array_equal(result, expected)
 
         # Delete second
-        result = delete(arr, 1)
+        result = pc.delete(arr, 1)
         expected = np.delete(arr, 1)
         np.testing.assert_array_equal(result, expected)
 
@@ -79,7 +79,7 @@ class TestDeleteEdgeCases:
         arr = np.array([42.0])
 
         # NumPy allows this and returns an empty array
-        result = delete(arr, 0)
+        result = pc.delete(arr, 0)
         expected = np.delete(arr, 0)
 
         np.testing.assert_array_equal(result, expected)
@@ -91,10 +91,10 @@ class TestDeleteEdgeCases:
         arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
 
         with pytest.raises(IndexError):
-            delete(arr, 5)
+            pc.delete(arr, 5)
 
         with pytest.raises(IndexError):
-            delete(arr, 10)
+            pc.delete(arr, 10)
 
 
 class TestDeleteJackknifeUseCase:
@@ -106,7 +106,7 @@ class TestDeleteJackknifeUseCase:
 
         # Leave-one-out: remove each element in turn
         for i in range(len(plist)):
-            rust_result = delete(plist, i)
+            rust_result = pc.delete(plist, i)
             numpy_result = np.delete(plist, i)
 
             np.testing.assert_array_equal(rust_result, numpy_result)
@@ -125,9 +125,9 @@ class TestDeleteJackknifeUseCase:
         results = []
         for i in range(len(plog)):
             # This is exactly what threshold_curve.py does
-            p_copy = delete(plist, i)
-            plog_copy = delete(plog, i)
-            dlist_copy = delete(dlist, i)
+            p_copy = pc.delete(plist, i)
+            plog_copy = pc.delete(plog, i)
+            dlist_copy = pc.delete(dlist, i)
 
             # Verify all arrays have correct length
             assert len(p_copy) == len(plist) - 1
@@ -150,7 +150,7 @@ class TestDeleteWithLists:
     def test_delete_from_list(self):
         """Test deleting from Python list."""
         lst = [1.0, 2.0, 3.0, 4.0, 5.0]
-        result = delete(lst, 2)
+        result = pc.delete(lst, 2)
         expected = np.delete(np.array(lst), 2)
 
         np.testing.assert_array_equal(result, expected)
@@ -158,7 +158,7 @@ class TestDeleteWithLists:
     def test_delete_from_complex_list(self):
         """Test deleting from list of complex numbers."""
         lst = [1 + 2j, 3 + 4j, 5 + 6j]
-        result = delete(lst, 1)
+        result = pc.delete(lst, 1)
         expected = np.delete(np.array(lst), 1)
 
         np.testing.assert_array_equal(result, expected)
@@ -170,7 +170,7 @@ class TestDeleteTypePreservation:
     def test_float64_preserved(self):
         """Test float64 dtype is preserved."""
         arr = np.array([1.0, 2.0, 3.0], dtype=np.float64)
-        result = delete(arr, 1)
+        result = pc.delete(arr, 1)
 
         assert result.dtype == np.float64
         np.testing.assert_array_equal(result, np.array([1.0, 3.0]))
@@ -178,7 +178,7 @@ class TestDeleteTypePreservation:
     def test_complex128_preserved(self):
         """Test complex128 dtype is preserved."""
         arr = np.array([1 + 2j, 3 + 4j, 5 + 6j], dtype=np.complex128)
-        result = delete(arr, 0)
+        result = pc.delete(arr, 0)
 
         assert result.dtype == np.complex128
         np.testing.assert_array_equal(result, np.array([3 + 4j, 5 + 6j]))
@@ -186,7 +186,7 @@ class TestDeleteTypePreservation:
     def test_int64_preserved(self):
         """Test int64 dtype is preserved."""
         arr = np.array([10, 20, 30, 40], dtype=np.int64)
-        result = delete(arr, 2)
+        result = pc.delete(arr, 2)
 
         assert result.dtype == np.int64
         np.testing.assert_array_equal(result, np.array([10, 20, 40]))
@@ -198,18 +198,18 @@ class TestDeletePerformance:
     def test_delete_maintains_order(self):
         """Test that delete() maintains element order."""
         arr = np.array([5.0, 3.0, 8.0, 1.0, 9.0, 2.0])
-        result = delete(arr, 2)
+        result = pc.delete(arr, 2)
 
         # Element order should be preserved (just element at index 2 removed)
         expected = np.array([5.0, 3.0, 1.0, 9.0, 2.0])
         np.testing.assert_array_equal(result, expected)
 
     def test_delete_from_pecos_num(self):
-        """Test that delete() is accessible from pecos.num."""
-        from pecos.num import delete as pecos_delete
+        """Test that delete() is accessible from pecos."""
+        # Already imported at top: import pecos as pc
 
         arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        result = pecos_delete(arr, 2)
+        result = pc.delete(arr, 2)
         expected = np.delete(arr, 2)
 
         np.testing.assert_array_equal(result, expected)

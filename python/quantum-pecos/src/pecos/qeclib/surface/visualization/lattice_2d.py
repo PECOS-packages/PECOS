@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from pecos.num import power
+import pecos as pc
 
 if TYPE_CHECKING:
     from matplotlib import pyplot as plt
@@ -98,7 +98,7 @@ def plot_colored_polygons(
     # Calculate font size based on scale factor
     radius = c.point_size + 0.05 / scale_factor
     font_size = (
-        power(scale_factor, 0.5) * 18
+        pc.power(scale_factor, 0.5) * 18
     )  # Scale font size proportionally to the circle radius
 
     # Process the polygons

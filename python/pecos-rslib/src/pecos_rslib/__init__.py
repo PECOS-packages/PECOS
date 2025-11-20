@@ -24,7 +24,6 @@ from typing import Any, NoReturn
 
 # Import all modules at the top to avoid E402 errors
 from pecos_rslib._pecos_rslib import (
-    Array,  # Numpy-independent array type
     array,  # Array creation function (no NumPy dependency)
     binding,  # llvmlite-compatible binding module for bitcode
     ByteMessage,
@@ -47,6 +46,8 @@ from pecos_rslib.num_wrapper import (  # Enhanced num module with axis support
     # Functions
     mean,
     sum,  # noqa: A004 - intentionally shadow builtin
+    max,  # noqa: A004 - intentionally shadow builtin
+    min,  # noqa: A004 - intentionally shadow builtin
     power,
     sqrt,
     exp,
@@ -88,26 +89,12 @@ from pecos_rslib.num_wrapper import (  # Enhanced num module with axis support
     zeros,
     ones,
     delete,
-    # Constants
-    pi,
-    tau,
-    e,
+    # Note: Mathematical constants (pi, tau, e, frac_pi_2, etc.) are NOT imported here
+    # They are only available via dtype namespaces: pc.f64.pi, pc.f64.frac_pi_2, etc.
+    # This makes precision explicit and allows for future f32, complex constants
+    # Keep inf and nan for convenience (they're not precision-specific)
     inf,
     nan,
-    FRAC_PI_2,
-    FRAC_PI_3,
-    FRAC_PI_4,
-    FRAC_PI_6,
-    FRAC_PI_8,
-    FRAC_1_PI,
-    FRAC_2_PI,
-    FRAC_2_SQRT_PI,
-    SQRT_2,
-    FRAC_1_SQRT_2,
-    LN_2,
-    LN_10,
-    LOG2_E,
-    LOG10_E,
     # Submodules
     random,
 )
@@ -115,6 +102,36 @@ from pecos_rslib.rscoin_toss import CoinToss
 from pecos_rslib.rspauli_prop import PauliPropRs
 from pecos_rslib.rssparse_sim import SparseSimRs
 from pecos_rslib.rsstate_vec import StateVecRs
+from pecos_rslib.typing import (
+    Array,
+    Complex,
+    Float,
+    Inexact,
+    Integer,
+    Numeric,
+    SignedInteger,
+    UnsignedInteger,
+)
+
+# Import scalar type classes directly from dtypes submodule for NumPy-like API
+# This allows: pc.i64(42) and def foo(x: pc.i64) just like np.int64(42) and def foo(x: np.int64)
+# Access scalar classes via the .type attribute of dtype instances
+i8 = dtypes.i8.type
+i16 = dtypes.i16.type
+i32 = dtypes.i32.type
+i64 = dtypes.i64.type
+u8 = dtypes.u8.type
+u16 = dtypes.u16.type
+u32 = dtypes.u32.type
+u64 = dtypes.u64.type
+f32 = dtypes.f32.type
+f64 = dtypes.f64.type
+complex64 = dtypes.complex64.type
+complex128 = dtypes.complex128.type
+
+# Mathematical constants are now defined as #[classattr] in Rust (dtypes.rs)
+# for both ScalarF64 (f64.pi, etc.) and ScalarF32 (f32.pi, etc.)
+# No Python-side setup is needed - constants are available directly on the type classes
 
 # Import the num module directly from Rust - it already has all submodules set up correctly
 
@@ -540,6 +557,8 @@ __all__ = [
     # Numerical functions from num_wrapper
     "mean",
     "sum",
+    "max",
+    "min",
     "power",
     "sqrt",
     "exp",
@@ -581,26 +600,11 @@ __all__ = [
     "zeros",
     "ones",
     "delete",
-    # Mathematical constants
-    "pi",
-    "tau",
-    "e",
+    # Note: Mathematical constants (pi, e, frac_pi_2, etc.) are NOT exported here
+    # Access via dtype namespaces: pc.f64.pi, pc.f64.frac_pi_2, etc.
+    # Only inf/nan are exported (not precision-specific)
     "inf",
     "nan",
-    "FRAC_PI_2",
-    "FRAC_PI_3",
-    "FRAC_PI_4",
-    "FRAC_PI_6",
-    "FRAC_PI_8",
-    "FRAC_1_PI",
-    "FRAC_2_PI",
-    "FRAC_2_SQRT_PI",
-    "SQRT_2",
-    "FRAC_1_SQRT_2",
-    "LN_2",
-    "LN_10",
-    "LOG2_E",
-    "LOG10_E",
     # Numerical submodules
     "random",
     # QuEST simulators
@@ -685,6 +689,29 @@ __all__ = [
     "noise",
     "quantum",
     "programs",
+    # Type aliases
+    "Integer",
+    "SignedInteger",
+    "UnsignedInteger",
+    "Float",
+    "Complex",
+    "Numeric",
+    "Inexact",
+    # Scalar type classes (NumPy-like API)
+    "i8",
+    "i16",
+    "i32",
+    "i64",
+    "u8",
+    "u16",
+    "u32",
+    "u64",
+    "f32",
+    "f64",
+    "complex64",
+    "complex128",
+    # Keep dtypes module for dtype instances
+    "dtypes",
 ]
 
 # IMPORTANT: Override sim module with sim function

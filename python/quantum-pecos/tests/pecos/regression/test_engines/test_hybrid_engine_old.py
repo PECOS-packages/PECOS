@@ -1,12 +1,12 @@
 """Tests for the hybrid engine."""
 
-from pecos import HybridEngine, QuantumCircuit
+import pecos as pc
 from pecos.simulators import SparseSim
 
 
 def test_hybrid_engine() -> None:
     """Test hybrid engine functionality with a simple Bell state circuit."""
-    qc = QuantumCircuit(cvar_spec={"m": 2})
+    qc = pc.QuantumCircuit(cvar_spec={"m": 2})
     qc.append("init |0>", {0, 1})
     qc.append("H", {0})
     qc.append("CNOT", {(0, 1)})
@@ -14,7 +14,7 @@ def test_hybrid_engine() -> None:
     qc.append("measure Z", {1}, var=("m", 1))
 
     state = SparseSim(2)
-    runner = HybridEngine()
+    runner = pc.HybridEngine()
 
     ms = []
     for i in range(10):

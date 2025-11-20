@@ -17,7 +17,7 @@
 This module provides fundamental quantum types for PECOS:
 - Pauli operators (I, X, Y, Z)
 - Pauli strings (multi-qubit Pauli operators)
-- Array support for quantum operators (via pecos.num.array)
+- Array support for quantum operators (via pecos.array)
 
 All functionality is provided by pecos_rslib - this module just re-exports
 with clean documentation for quantum computing use cases.
@@ -32,7 +32,7 @@ Examples:
     >>> SINGLE_QUBIT_ERRORS = [Pauli.X, Pauli.Y, Pauli.Z]
 
     >>> # Create Pauli arrays (Rust-backed, dtype=pauli)
-    >>> from pecos.num import array
+    >>> from pecos import array
     >>> errors = array([Pauli.X, Pauli.Y, Pauli.Z])
 
     >>> # Create Pauli strings with convenient syntax
@@ -42,7 +42,12 @@ Examples:
 
 from __future__ import annotations
 
-import numpy as np
+from typing import TYPE_CHECKING
+
+from pecos import Integer
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 # Import Pauli types from pecos_rslib
 try:
@@ -56,7 +61,10 @@ except ImportError as e:
     raise ImportError(msg) from e
 
 
-def pauli_string(operators, phase=1):
+def pauli_string(
+    operators: str | Sequence[tuple[Pauli, int]] | dict[int, Pauli],
+    phase: int | complex = 1,  # noqa: PYI041
+) -> PauliString:
     """Create a PauliString from a convenient specification.
 
     This function provides a user-friendly way to create PauliString objects
@@ -68,11 +76,10 @@ def pauli_string(operators, phase=1):
             - List of (Pauli, qubit_index) tuples
             - Dict mapping qubit_index -> Pauli
         phase: Phase factor, one of:
-            - 1 or +1: PlusOne (default)
-            - 1j or +1j: PlusI
-            - -1: MinusOne
-            - -1j: MinusI
-            - 0, 1, 2, 3: Integer phase codes (0=+1, 1=+i, 2=-1, 3=-i)
+            - 1 or +1: Plus one (default)
+            - -1: Minus one
+            - 1j or +1j: Plus i
+            - -1j: Minus i
 
     Returns:
         PauliString object
@@ -103,15 +110,13 @@ def pauli_string(operators, phase=1):
         >>> print(ps)  # -i*Z_0
     """
     # Convert phase to integer code
-    if isinstance(phase, (int, np.integer)):
+    if isinstance(phase, int | Integer):
         if phase == 1:
             phase_code = 0  # +1
         elif phase == -1:
             phase_code = 2  # -1
-        elif phase in (0, 1, 2, 3):
-            phase_code = phase
         else:
-            msg = f"Invalid integer phase: {phase}. Must be 0, 1, 2, 3, +1, or -1"
+            msg = f"Invalid integer phase: {phase}. Must be +1 or -1"
             raise ValueError(msg)
     elif isinstance(phase, complex):
         if phase == 1j:

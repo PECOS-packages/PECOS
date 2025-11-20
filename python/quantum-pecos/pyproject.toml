@@ -30,7 +30,6 @@ keywords = ["quantum", "QEC", "simulation", "PECOS"]
 dependencies = [
     "pecos-rslib==0.7.0.dev4",
     "phir>=0.3.3",
-    "numpy>=1.15.0",
     "networkx>=2.1.0",
 ]
 classifiers = [
@@ -79,8 +78,17 @@ cuda = [
 ]
 # Install with: uv pip install -e .[cuda]
 
+[dependency-groups]
+test = [
+    # Core testing dependencies - no numpy required
+]
+numpy-compat = [
+    "numpy>=1.15.0",  # NumPy compatibility tests - core functionality uses pecos.num
+]
+
 [tool.uv]
-# default-groups = ["dev", "test"]  # Commented out - groups not defined in dependency-groups
+# default-groups = ["dev", "test"]  # Uncommented now that dependency-groups is defined
+default-groups = ["test"]
 
 [tool.uv.sources]
 pecos-rslib = { workspace = true }

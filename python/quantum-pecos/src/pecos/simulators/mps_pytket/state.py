@@ -30,8 +30,7 @@ from pecos.simulators.mps_pytket import bindings
 from pecos.simulators.sim_class_types import StateTN
 
 if TYPE_CHECKING:
-    import numpy as np
-
+    from pecos import Array
     from pecos.typing import SimulatorInitParams
 
 
@@ -100,7 +99,7 @@ class MPS(StateTN):
         self.libhandle.destroy()
 
     @property
-    def vector(self) -> np.ndarray:
+    def vector(self) -> Array:
         """Obtain the statevector encoded in this MPS.
 
         Note:
@@ -109,6 +108,6 @@ class MPS(StateTN):
             of tensor network methods.
 
         Returns:
-            The statevector represented by the MPS as a numpy array.
+            The statevector represented by the MPS as a PECOS array.
         """
         return self.mps.get_statevector()

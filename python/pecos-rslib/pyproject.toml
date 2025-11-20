@@ -45,8 +45,10 @@ dev = [
 ]
 test = [
     "pytest>=7.0",
+]
+numpy-compat = [  # NumPy/SciPy compatibility tests
     "numpy>=1.20",
-    "scipy>=1.7",  # For comparison tests only
+    "scipy>=1.7",
 ]
 
 [tool.uv.sources]
@@ -55,6 +57,7 @@ pecos-rslib = { workspace = true }
 [tool.pytest.ini_options]
 markers = [
     "performance: marks tests as performance benchmarks (deselect with '-m \"not performance\"')",
+    "numpy: mark tests that verify NumPy compatibility (requires numpy installed)",
 ]
 
 [tool.ruff]

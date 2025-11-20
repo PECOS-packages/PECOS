@@ -16,7 +16,7 @@ probability during quantum gate operations.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.num import random
+import pecos as pc
 from pecos.reps.pyphir.op_types import QOp
 
 
@@ -36,13 +36,13 @@ def noise_sq_depolarizing(op: QOp, p: float, noise_dict: dict) -> list[QOp] | No
         or None if no noise is applied.
     """
     # Use fused operation to check and get error indices in one pass
-    error_indices = random.compare_indices(len(op.args), p)
+    error_indices = pc.random.compare_indices(len(op.args), p)
 
     noise = {}
     if error_indices:
         for idx in error_indices:
             loc = op.args[idx]
-            rand = random.random(1)[0]
+            rand = pc.random.random(1)[0]
             p_tot = 0.0
             for fault1, prob in noise_dict.items():
                 p_tot += prob

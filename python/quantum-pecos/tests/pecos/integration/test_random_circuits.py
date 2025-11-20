@@ -16,8 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
-from pecos.num import random
+import pecos as pc
 from pecos.simulators import CppSparseSimRs, SparseSimPy, SparseSimRs
 
 
@@ -79,12 +78,12 @@ def run_circuit_test(
         gates = ["H", "S", "CNOT", "measure Z", "init |0>"]
 
     for seed in range(trials):
-        random.seed(seed)
+        pc.random.seed(seed)
         circuit = generate_circuit(gates, num_qubits, circuit_depth)
 
         measurements = []
         for _i, state_sim in enumerate(state_sims):
-            random.seed(seed)
+            pc.random.seed(seed)
             verbose = (
                 seed == 32 and state_sim.__name__ == "CppSparseSimRs"
             )  # Debug failing case
@@ -115,18 +114,18 @@ def run_circuit_test(
     return True
 
 
-def get_qubits(num_qubits: int, size: int) -> np.ndarray:
+def get_qubits(num_qubits: int, size: int) -> pc.Array:
     """Get random qubit indices for gate operations."""
-    return random.choice(list(range(num_qubits)), size, replace=False)
+    return pc.random.choice(list(range(num_qubits)), size, replace=False)
 
 
 def generate_circuit(
     gates: list[str],
     num_qubits: int,
     circuit_depth: int,
-) -> list[tuple[str, int | np.ndarray]]:
+) -> list[tuple[str, int | pc.Array]]:
     """Generate a random quantum circuit with specified gates and depth."""
-    circuit_elements = list(random.choice(gates, circuit_depth))
+    circuit_elements = list(pc.random.choice(gates, circuit_depth))
 
     circuit = []
 
@@ -145,7 +144,7 @@ def generate_circuit(
 def run_a_circuit(
     num_qubits: int,
     state_rep: type[Any],
-    circuit: list[tuple[str, int | np.ndarray]],
+    circuit: list[tuple[str, int | pc.Array]],
     *,
     verbose: bool = False,
     _test_seed: int | None = None,  # Unused - kept for API compatibility
@@ -181,12 +180,12 @@ def run_a_circuit(
             measurements.append(m)
 
         elif element == "init |0>":
-            q_tuple = tuple(q) if isinstance(q, (np.ndarray, list)) else q
+            q_tuple = tuple(q) if isinstance(q, (pc.Array, list)) else q
 
             state.run_gate(element, {q_tuple}, forced_outcome=0)
 
         else:
-            q_tuple = tuple(q) if isinstance(q, (np.ndarray, list)) else q
+            q_tuple = tuple(q) if isinstance(q, (pc.Array, list)) else q
 
             state.run_gate(element, {q_tuple})
 

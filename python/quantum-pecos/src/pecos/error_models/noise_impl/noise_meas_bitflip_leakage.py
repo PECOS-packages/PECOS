@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.num import random
+import pecos as pc
 from pecos.reps.pyphir.op_types import QOp
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ def noise_meas_bitflip_leakage(
     # Bit flip noise
     # --------------
     # Use fused operation to check and get error indices in one pass
-    error_indices = random.compare_indices(len(op.args), p)
+    error_indices = pc.random.compare_indices(len(op.args), p)
 
     noise = []
 

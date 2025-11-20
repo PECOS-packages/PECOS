@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib import StateVecRs
 
-from pecos.num import array, dtypes
+import pecos as pc
 from pecos.simulators.statevec.bindings import get_bindings
 
 if TYPE_CHECKING:
@@ -55,7 +55,7 @@ class StateVec:
         Returns:
             Array of complex amplitudes representing the quantum state.
         """
-        return array(self.backend.vector, dtype=dtypes.complex128)
+        return pc.array(self.backend.vector, dtype=pc.dtypes.complex128)
 
     def reset(self) -> StateVec:
         """Resets the quantum state to the all-zero state."""

@@ -20,8 +20,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pecos as pc
 from pecos.error_models.noise_impl_old.gate_groups import one_qubits, two_qubits
-from pecos.num import mean, random
 from pecos.reps.pyphir.op_types import QOp
 
 if TYPE_CHECKING:
@@ -96,7 +96,7 @@ class SimpleDepolarizingErrorModel:
         self._eparams["p2"] *= 5 / 4
 
         if isinstance(self._eparams["p_meas"], tuple):
-            self._eparams["p_meas"] = mean(self._eparams["p_meas"])
+            self._eparams["p_meas"] = pc.mean(self._eparams["p_meas"])
 
     def shot_reinit(self) -> None:
         """Run all code needed at the beginning of each shot, e.g., resetting state."""
@@ -125,7 +125,7 @@ class SimpleDepolarizingErrorModel:
             if op.name in {"init |0>", "Init", "Init +Z"}:
                 erroneous_ops = [op]
                 # Use fused operation to check and get error indices in one pass
-                error_indices = random.compare_indices(
+                error_indices = pc.random.compare_indices(
                     len(op.args),
                     self._eparams["p_init"],
                 )
@@ -140,13 +140,13 @@ class SimpleDepolarizingErrorModel:
             if op.name in one_qubits:
                 erroneous_ops = [op]
                 # Use fused operation to check and get error indices in one pass
-                error_indices = random.compare_indices(
+                error_indices = pc.random.compare_indices(
                     len(op.args),
                     self._eparams["p1"],
                 )
 
                 for idx in error_indices:
-                    err = random.choice(one_qubit_paulis, 1)[0]
+                    err = pc.random.choice(one_qubit_paulis, 1)[0]
                     erroneous_ops.append(
                         QOp(name=err[0], args=[op.args[idx]], metadata={}),
                     )
@@ -156,13 +156,13 @@ class SimpleDepolarizingErrorModel:
             elif op.name in two_qubits:
                 erroneous_ops = [op]
                 # Use fused operation to check and get error indices in one pass
-                error_indices = random.compare_indices(
+                error_indices = pc.random.compare_indices(
                     len(op.args),
                     self._eparams["p2"],
                 )
 
                 for idx in error_indices:
-                    err = random.choice(two_qubit_paulis, 1)[0]
+                    err = pc.random.choice(two_qubit_paulis, 1)[0]
                     loc1, loc2 = op.args[idx]
                     if err[0] != "I":
                         erroneous_ops.append(
@@ -178,7 +178,7 @@ class SimpleDepolarizingErrorModel:
             elif op.name in {"measure Z", "Measure", "Measure +Z"}:
                 erroneous_ops = []
                 # Use fused operation to check and get error indices in one pass
-                error_indices = random.compare_indices(
+                error_indices = pc.random.compare_indices(
                     len(op.args),
                     self._eparams["p_meas"],
                 )

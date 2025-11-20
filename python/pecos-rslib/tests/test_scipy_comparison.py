@@ -5,19 +5,23 @@ These tests verify that our Rust implementations produce results that match
 scipy within reasonable numerical tolerances.
 """
 
-import numpy as np
 import pytest
 
+# Skip entire module if scipy/numpy not available
+pytest.importorskip("scipy")
+pytest.importorskip("numpy")
+
+import numpy as np
+
 # Import both our implementation and scipy
-from pecos.num import brentq as pecos_brentq
-from pecos.num import newton as pecos_newton
-from pecos.num import curve_fit as pecos_curve_fit
-from pecos.num import polyfit as pecos_polyfit
-from pecos.num import Poly1d as PecosPoly1d
+import pecos as pc
 
 from scipy.optimize import brentq as scipy_brentq
 from scipy.optimize import newton as scipy_newton
 from scipy.optimize import curve_fit as scipy_curve_fit
+
+# Mark all tests in this module as requiring numpy
+pytestmark = pytest.mark.numpy
 
 
 class TestBrentqComparison:
@@ -29,7 +33,7 @@ class TestBrentqComparison:
         def f(x):
             return x * x - 2.0
 
-        pecos_root = pecos_brentq(f, 0.0, 2.0)
+        pecos_root = pc.brentq(f, 0.0, 2.0)
         scipy_root = scipy_brentq(f, 0.0, 2.0)
 
         assert abs(pecos_root - scipy_root) < 1e-10
@@ -41,7 +45,7 @@ class TestBrentqComparison:
         def f(x):
             return x**3 - x - 2.0
 
-        pecos_root = pecos_brentq(f, 1.0, 2.0)
+        pecos_root = pc.brentq(f, 1.0, 2.0)
         scipy_root = scipy_brentq(f, 1.0, 2.0)
 
         assert abs(pecos_root - scipy_root) < 1e-10
@@ -55,7 +59,7 @@ class TestBrentqComparison:
         def f(x):
             return np.cos(x) - x
 
-        pecos_root = pecos_brentq(f, 0.0, 1.0)
+        pecos_root = pc.brentq(f, 0.0, 1.0)
         scipy_root = scipy_brentq(f, 0.0, 1.0)
 
         assert abs(pecos_root - scipy_root) < 1e-10
@@ -66,7 +70,7 @@ class TestBrentqComparison:
         def f(x):
             return np.exp(x) - 3.0
 
-        pecos_root = pecos_brentq(f, 0.0, 2.0)
+        pecos_root = pc.brentq(f, 0.0, 2.0)
         scipy_root = scipy_brentq(f, 0.0, 2.0)
 
         assert abs(pecos_root - scipy_root) < 1e-10
@@ -78,7 +82,7 @@ class TestBrentqComparison:
         def f(x):
             return x**3 - 0.001
 
-        pecos_root = pecos_brentq(f, 0.0, 1.0)
+        pecos_root = pc.brentq(f, 0.0, 1.0)
         scipy_root = scipy_brentq(f, 0.0, 1.0)
 
         assert abs(pecos_root - scipy_root) < 1e-10
@@ -89,7 +93,7 @@ class TestBrentqComparison:
         def f(x):
             return np.tanh(10 * x)
 
-        pecos_root = pecos_brentq(f, -1.0, 1.0)
+        pecos_root = pc.brentq(f, -1.0, 1.0)
         scipy_root = scipy_brentq(f, -1.0, 1.0)
 
         assert abs(pecos_root - scipy_root) < 1e-10
@@ -101,7 +105,7 @@ class TestBrentqComparison:
             return x * x + 1.0  # No real roots
 
         with pytest.raises(ValueError, match="opposite signs"):
-            pecos_brentq(f, -1.0, 1.0)
+            pc.brentq(f, -1.0, 1.0)
 
         with pytest.raises(ValueError, match="sign"):
             scipy_brentq(f, -1.0, 1.0)
@@ -119,7 +123,7 @@ class TestNewtonComparison:
         def fprime(x):
             return 2.0 * x
 
-        pecos_root = pecos_newton(f, 1.0, fprime=fprime)
+        pecos_root = pc.newton(f, 1.0, fprime=fprime)
         scipy_root = scipy_newton(f, 1.0, fprime=fprime)
 
         assert abs(pecos_root - scipy_root) < 1e-8
@@ -131,7 +135,7 @@ class TestNewtonComparison:
         def f(x):
             return x * x - 2.0
 
-        pecos_root = pecos_newton(f, 1.0)
+        pecos_root = pc.newton(f, 1.0)
         scipy_root = scipy_newton(f, 1.0)
 
         # Numerical derivatives may differ slightly, so use larger tolerance
@@ -147,7 +151,7 @@ class TestNewtonComparison:
         def fprime(x):
             return 3.0 * x**2 - 1.0
 
-        pecos_root = pecos_newton(f, 1.5, fprime=fprime)
+        pecos_root = pc.newton(f, 1.5, fprime=fprime)
         scipy_root = scipy_newton(f, 1.5, fprime=fprime)
 
         assert abs(pecos_root - scipy_root) < 1e-8
@@ -161,7 +165,7 @@ class TestNewtonComparison:
         def fprime(x):
             return np.exp(x)
 
-        pecos_root = pecos_newton(f, 1.0, fprime=fprime)
+        pecos_root = pc.newton(f, 1.0, fprime=fprime)
         scipy_root = scipy_newton(f, 1.0, fprime=fprime)
 
         assert abs(pecos_root - scipy_root) < 1e-8
@@ -176,7 +180,7 @@ class TestNewtonComparison:
         def fprime(x):
             return -np.sin(x) - 1.0
 
-        pecos_root = pecos_newton(f, 0.5, fprime=fprime)
+        pecos_root = pc.newton(f, 0.5, fprime=fprime)
         scipy_root = scipy_newton(f, 0.5, fprime=fprime)
 
         assert abs(pecos_root - scipy_root) < 1e-8
@@ -191,7 +195,7 @@ class TestNewtonComparison:
             return 3 * x**2 - 2
 
         # Start far from the root
-        pecos_root = pecos_newton(f, 3.0, fprime=fprime)
+        pecos_root = pc.newton(f, 3.0, fprime=fprime)
         scipy_root = scipy_newton(f, 3.0, fprime=fprime)
 
         assert abs(pecos_root - scipy_root) < 1e-8
@@ -210,7 +214,7 @@ class TestCurveFitComparison:
         ydata = np.array([1.0, 3.0, 5.0, 7.0, 9.0])  # y = 2*x + 1
         p0 = np.array([1.0, 0.0])
 
-        pecos_popt, pecos_pcov = pecos_curve_fit(linear, xdata, ydata, p0)
+        pecos_popt, pecos_pcov = pc.curve_fit(linear, xdata, ydata, p0)
         scipy_popt, scipy_pcov = scipy_curve_fit(linear, xdata, ydata, p0)
 
         # Parameters should match closely
@@ -228,7 +232,7 @@ class TestCurveFitComparison:
         ydata = np.array([1.0, 2.718, 7.389, 20.086, 54.598])
         p0 = np.array([1.0, 1.0])
 
-        pecos_popt, pecos_pcov = pecos_curve_fit(exponential, xdata, ydata, p0)
+        pecos_popt, pecos_pcov = pc.curve_fit(exponential, xdata, ydata, p0)
         scipy_popt, scipy_pcov = scipy_curve_fit(exponential, xdata, ydata, p0)
 
         np.testing.assert_allclose(pecos_popt, scipy_popt, rtol=1e-3, atol=1e-4)
@@ -244,7 +248,7 @@ class TestCurveFitComparison:
         ydata = np.array([3.0, 6.0, 11.0, 18.0, 27.0])  # y = x^2 + 2*x + 3
         p0 = np.array([1.0, 1.0, 1.0])
 
-        pecos_popt, pecos_pcov = pecos_curve_fit(quadratic, xdata, ydata, p0)
+        pecos_popt, pecos_pcov = pc.curve_fit(quadratic, xdata, ydata, p0)
         scipy_popt, scipy_pcov = scipy_curve_fit(quadratic, xdata, ydata, p0)
 
         np.testing.assert_allclose(pecos_popt, scipy_popt, rtol=1e-6, atol=1e-8)
@@ -264,9 +268,7 @@ class TestCurveFitComparison:
         np.random.seed(42)
         ydata = gaussian(xdata, 2.0, 1.0, 1.5) + 0.01 * np.random.randn(50)
 
-        pecos_popt, pecos_pcov = pecos_curve_fit(
-            gaussian, xdata, ydata, p0, maxfev=5000
-        )
+        pecos_popt, pecos_pcov = pc.curve_fit(gaussian, xdata, ydata, p0, maxfev=5000)
         scipy_popt, scipy_pcov = scipy_curve_fit(
             gaussian, xdata, ydata, p0, maxfev=5000
         )
@@ -286,7 +288,7 @@ class TestCurveFitComparison:
         plog = np.array([0.01, 0.015, 0.02, 0.025, 0.03])
         p0 = np.array([1.0, 1.0, 1.0])
 
-        pecos_popt, pecos_pcov = pecos_curve_fit(func, (p, d), plog, p0, maxfev=5000)
+        pecos_popt, pecos_pcov = pc.curve_fit(func, (p, d), plog, p0, maxfev=5000)
         scipy_popt, scipy_pcov = scipy_curve_fit(func, (p, d), plog, p0, maxfev=5000)
 
         # This is a difficult optimization problem - different optimizers may converge
@@ -320,7 +322,7 @@ class TestCurveFitComparison:
         ydata = sine(xdata, 1.5, 2.0, 0.5) + 0.05 * np.random.randn(100)
         p0 = np.array([1.0, 2.0, 0.0])
 
-        pecos_popt, pecos_pcov = pecos_curve_fit(sine, xdata, ydata, p0, maxfev=5000)
+        pecos_popt, pecos_pcov = pc.curve_fit(sine, xdata, ydata, p0, maxfev=5000)
         scipy_popt, scipy_pcov = scipy_curve_fit(sine, xdata, ydata, p0, maxfev=5000)
 
         # Parameters should be similar
@@ -336,7 +338,7 @@ class TestCurveFitComparison:
         ydata = np.array([2.0, 5.66, 10.39, 16.0, 22.36])  # y ≈ 2*x^1.5
         p0 = np.array([1.0, 1.0])
 
-        pecos_popt, pecos_pcov = pecos_curve_fit(power_law, xdata, ydata, p0)
+        pecos_popt, pecos_pcov = pc.curve_fit(power_law, xdata, ydata, p0)
         scipy_popt, scipy_pcov = scipy_curve_fit(power_law, xdata, ydata, p0)
 
         np.testing.assert_allclose(pecos_popt, scipy_popt, rtol=1e-3, atol=1e-4)
@@ -352,7 +354,7 @@ class TestCurveFitComparison:
         ydata = 2.5 * xdata + 1.3 + np.random.normal(0, 0.5, 50)
         p0 = np.array([1.0, 0.0])
 
-        pecos_popt, pecos_pcov = pecos_curve_fit(linear, xdata, ydata, p0)
+        pecos_popt, pecos_pcov = pc.curve_fit(linear, xdata, ydata, p0)
         scipy_popt, scipy_pcov = scipy_curve_fit(linear, xdata, ydata, p0)
 
         # Should converge to similar values
@@ -370,15 +372,15 @@ class TestCurveFitComparison:
 
         # Test with tuple (quantum-pecos usage pattern)
         p0_tuple = (1.0, 0.0, 0.0)
-        popt_tuple, _ = pecos_curve_fit(quadratic, xdata, ydata, p0_tuple)
+        popt_tuple, _ = pc.curve_fit(quadratic, xdata, ydata, p0_tuple)
 
         # Test with list
         p0_list = [1.0, 0.0, 0.0]
-        popt_list, _ = pecos_curve_fit(quadratic, xdata, ydata, p0_list)
+        popt_list, _ = pc.curve_fit(quadratic, xdata, ydata, p0_list)
 
         # Test with array
         p0_array = np.array([1.0, 0.0, 0.0])
-        popt_array, _ = pecos_curve_fit(quadratic, xdata, ydata, p0_array)
+        popt_array, _ = pc.curve_fit(quadratic, xdata, ydata, p0_array)
 
         # All should produce the same result
         np.testing.assert_allclose(popt_tuple, popt_array, rtol=1e-10, atol=1e-12)
@@ -396,7 +398,7 @@ class TestPolyfitComparison:
         x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
         y = np.array([1.0, 3.0, 5.0, 7.0, 9.0])  # y = 2*x + 1
 
-        pecos_coeffs = pecos_polyfit(x, y, 1)
+        pecos_coeffs = pc.polyfit(x, y, 1)
         scipy_coeffs = np.polyfit(x, y, 1)
 
         np.testing.assert_allclose(pecos_coeffs, scipy_coeffs, rtol=1e-10, atol=1e-12)
@@ -406,7 +408,7 @@ class TestPolyfitComparison:
         x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
         y = np.array([3.0, 6.0, 11.0, 18.0, 27.0])  # y = x^2 + 2*x + 3
 
-        pecos_coeffs = pecos_polyfit(x, y, 2)
+        pecos_coeffs = pc.polyfit(x, y, 2)
         scipy_coeffs = np.polyfit(x, y, 2)
 
         np.testing.assert_allclose(pecos_coeffs, scipy_coeffs, rtol=1e-10, atol=1e-12)
@@ -416,7 +418,7 @@ class TestPolyfitComparison:
         x = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
         y = np.array([1.0, 3.0, 17.0, 55.0, 129.0, 251.0])  # y = x^3 + 2*x^2 + 3*x + 1
 
-        pecos_coeffs = pecos_polyfit(x, y, 3)
+        pecos_coeffs = pc.polyfit(x, y, 3)
         scipy_coeffs = np.polyfit(x, y, 3)
 
         np.testing.assert_allclose(pecos_coeffs, scipy_coeffs, rtol=1e-9, atol=1e-10)
@@ -429,7 +431,7 @@ class TestPolyfitComparison:
         true_coeffs = np.array([1.0, -2.0, 3.0, -1.0, 2.0, 1.0])
         y = np.polyval(true_coeffs, x)
 
-        pecos_coeffs = pecos_polyfit(x, y, 5)
+        pecos_coeffs = pc.polyfit(x, y, 5)
         scipy_coeffs = np.polyfit(x, y, 5)
 
         np.testing.assert_allclose(pecos_coeffs, scipy_coeffs, rtol=1e-8, atol=1e-10)
@@ -442,7 +444,7 @@ class TestPolyfitComparison:
         x = np.linspace(0, 5, 30)
         y = 2 * x**2 - 3 * x + 1 + np.random.normal(0, 0.5, 30)
 
-        pecos_coeffs = pecos_polyfit(x, y, 2)
+        pecos_coeffs = pc.polyfit(x, y, 2)
         scipy_coeffs = np.polyfit(x, y, 2)
 
         # Should get similar coefficients
@@ -454,7 +456,7 @@ class TestPolyfitComparison:
         x = np.linspace(-2, 2, 100)
         y = 1.5 * x + 2.0 + np.random.normal(0, 0.1, 100)
 
-        pecos_coeffs = pecos_polyfit(x, y, 1)
+        pecos_coeffs = pc.polyfit(x, y, 1)
         scipy_coeffs = np.polyfit(x, y, 1)
 
         np.testing.assert_allclose(pecos_coeffs, scipy_coeffs, rtol=1e-8, atol=1e-10)
@@ -467,7 +469,7 @@ class TestPoly1dComparison:
         """Test polynomial evaluation."""
         coeffs = np.array([2.0, 3.0, 1.0])  # 2*x^2 + 3*x + 1
 
-        pecos_poly = PecosPoly1d(coeffs)
+        pecos_poly = pc.Poly1d(coeffs)
         scipy_poly = np.poly1d(coeffs)
 
         test_points = [-2.0, -1.0, 0.0, 1.0, 2.0, 3.5]
@@ -480,7 +482,7 @@ class TestPoly1dComparison:
         """Test degree calculation."""
         coeffs = np.array([1.0, 2.0, 3.0, 4.0])  # degree 3
 
-        pecos_poly = PecosPoly1d(coeffs)
+        pecos_poly = pc.Poly1d(coeffs)
         scipy_poly = np.poly1d(coeffs)
 
         assert pecos_poly.degree() == len(coeffs) - 1
@@ -491,10 +493,10 @@ class TestPoly1dComparison:
         x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
         y = np.array([1.0, 3.0, 5.0, 7.0, 9.0])
 
-        pecos_coeffs = pecos_polyfit(x, y, 1)
+        pecos_coeffs = pc.polyfit(x, y, 1)
         scipy_coeffs = np.polyfit(x, y, 1)
 
-        pecos_poly = PecosPoly1d(pecos_coeffs)
+        pecos_poly = pc.Poly1d(pecos_coeffs)
         scipy_poly = np.poly1d(scipy_coeffs)
 
         # Evaluate at original points
@@ -508,7 +510,7 @@ class TestPoly1dComparison:
         """Test with complex polynomial."""
         coeffs = np.array([1.0, -2.5, 3.7, -1.2, 0.5])
 
-        pecos_poly = PecosPoly1d(coeffs)
+        pecos_poly = pc.Poly1d(coeffs)
         scipy_poly = np.poly1d(coeffs)
 
         test_points = np.linspace(-3, 3, 20)
@@ -527,7 +529,7 @@ class TestEdgeCases:
         def f(x):
             return x - 0.5
 
-        pecos_root = pecos_brentq(f, 0.4999, 0.5001)
+        pecos_root = pc.brentq(f, 0.4999, 0.5001)
         scipy_root = scipy_brentq(f, 0.4999, 0.5001)
 
         assert abs(pecos_root - scipy_root) < 1e-10
@@ -546,7 +548,7 @@ class TestEdgeCases:
             return 3 * x**2
 
         # Both should converge to something close to 0
-        pecos_root = pecos_newton(f, 0.1, fprime=fprime)
+        pecos_root = pc.newton(f, 0.1, fprime=fprime)
         scipy_root = scipy_newton(f, 0.1, fprime=fprime)
 
         # Verify both find a root (may not be exactly 0 due to numerical issues)
@@ -571,7 +573,7 @@ class TestEdgeCases:
         ydata = np.array([1.0, 3.0, 5.0])  # Exactly y = 2*x + 1
         p0 = np.array([1.0, 0.0])
 
-        pecos_popt, _ = pecos_curve_fit(linear, xdata, ydata, p0)
+        pecos_popt, _ = pc.curve_fit(linear, xdata, ydata, p0)
         scipy_popt, _ = scipy_curve_fit(linear, xdata, ydata, p0)
 
         # Should get exact solution
@@ -585,7 +587,7 @@ class TestEdgeCases:
         coeffs_true = np.array([2.0, -1.0, 3.0])  # 2*x^2 - x + 3
         y = np.polyval(coeffs_true, x)
 
-        pecos_coeffs = pecos_polyfit(x, y, 2)
+        pecos_coeffs = pc.polyfit(x, y, 2)
         scipy_coeffs = np.polyfit(x, y, 2)
 
         # Should recover exact coefficients

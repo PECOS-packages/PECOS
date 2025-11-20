@@ -39,6 +39,7 @@
 //!
 //! PECOS exports functionality through organized namespaces for easy discovery:
 //!
+//! ### Quantum Simulation
 //! - [`engines`] - Classical control engines (QASM, QIS, PHIR)
 //! - [`quantum`] - Quantum simulation backends (state vector, sparse stabilizer)
 //! - [`noise`] - Noise models (depolarizing, general, etc.)
@@ -46,7 +47,16 @@
 //! - [`runtime`] - QIS runtime implementations
 //! - [`results`] - Result types (Shot, `ShotVec`, `ShotMap`)
 //!
-//! All types are also re-exported at the crate root for convenience.
+//! ### Numerical Computing
+//! - [`linalg`] - Linear algebra operations (norm, etc.)
+//! - [`random`] - Random number generation (NumPy-compatible)
+//! - [`optimize`] - Optimization algorithms (root finding, curve fitting)
+//! - [`polynomial`] - Polynomial fitting and evaluation
+//! - [`stats`] - Statistical functions (mean, std, etc.)
+//! - [`math`] - Mathematical functions (sin, cos, exp, etc.)
+//! - [`compare`] - Comparison utilities (allclose, isclose, etc.)
+//!
+//! Commonly used functions are also re-exported at the crate root for convenience.
 //!
 //! ## Program Types
 //!
@@ -285,6 +295,182 @@ pub mod wasm {
 }
 
 // ============================================================================
+// Numerical computing namespace modules (pecos-num)
+// ============================================================================
+
+/// Linear algebra operations
+///
+/// This module provides linear algebra operations for vectors and matrices.
+///
+/// # Available Functions
+///
+/// - **`norm()`** - Vector/matrix norm calculation (L2 norm by default)
+///
+/// # Example
+///
+/// ```rust
+/// use pecos::linalg;
+/// use pecos::prelude::*;
+///
+/// let vec = Array1::from_vec(vec![3.0, 4.0]);
+/// let norm = linalg::norm(&vec.view(), None); // None = L2 norm
+/// assert!((norm - 5.0).abs() < 1e-10);
+/// ```
+pub mod linalg {
+    pub use pecos_num::linalg::*;
+}
+
+/// Random number generation
+///
+/// This module provides NumPy-compatible random number generation functions.
+///
+/// # Available Functions
+///
+/// - **`seed()`** - Set the random seed for reproducibility
+/// - **`randint()`** - Generate random integers in range [low, high)
+/// - **`random()`** - Generate random floats in [0, 1)
+/// - **`choice()`** - Random sampling from arrays
+/// - **`shuffle()`** - Shuffle arrays in-place
+/// - And more...
+///
+/// # Example
+///
+/// ```rust
+/// use pecos::random;
+///
+/// // Set seed for reproducibility
+/// random::seed(42);
+///
+/// // Generate random integers in range [0, 10), size 100
+/// let samples = random::randint(0, Some(10), 100);
+/// assert_eq!(samples.len(), 100);
+/// ```
+pub mod random {
+    pub use pecos_num::random::*;
+}
+
+/// Optimization algorithms
+///
+/// This module provides root finding and optimization algorithms.
+///
+/// # Available Functions
+///
+/// - **`brentq()`** - Brent's method for root finding
+/// - **`newton()`** - Newton-Raphson method for root finding
+///
+/// # Example
+///
+/// ```rust
+/// use pecos::optimize;
+///
+/// // Find root of x^2 - 2 = 0 in range [0, 2]
+/// let root = optimize::brentq(|x| x * x - 2.0, 0.0, 2.0, None).unwrap();
+/// assert!((root - std::f64::consts::SQRT_2).abs() < 1e-10);
+/// ```
+pub mod optimize {
+    pub use pecos_num::optimize::*;
+}
+
+/// Polynomial operations
+///
+/// This module provides polynomial fitting and evaluation.
+///
+/// # Available Functions
+///
+/// - **`polyfit()`** - Fit polynomial to data
+/// - **`Poly1d`** - Polynomial evaluation and manipulation
+///
+/// # Example
+///
+/// ```rust
+/// use pecos::polynomial;
+/// use pecos::prelude::*;
+///
+/// let x = Array1::from_vec(vec![0.0, 1.0, 2.0, 3.0]);
+/// let y = Array1::from_vec(vec![1.0, 3.0, 5.0, 7.0]);
+///
+/// // Fit linear polynomial (degree 1): y = mx + b
+/// let coeffs = polynomial::polyfit(x.view(), y.view(), 1).unwrap();
+/// assert_eq!(coeffs.len(), 2); // [b, m]
+/// ```
+pub mod polynomial {
+    pub use pecos_num::polynomial::*;
+}
+
+/// Statistical functions
+///
+/// This module provides statistical analysis functions.
+///
+/// # Available Functions
+///
+/// - **`mean()`** - Calculate mean/average
+/// - **`std()`** - Calculate standard deviation
+/// - And more...
+///
+/// # Example
+///
+/// ```rust
+/// use pecos::stats;
+///
+/// let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+/// let avg = stats::mean(&data);
+/// assert_eq!(avg, 3.0);
+/// ```
+pub mod stats {
+    pub use pecos_num::stats::*;
+}
+
+/// Mathematical functions
+///
+/// This module provides mathematical functions for arrays and scalars.
+///
+/// # Available Functions
+///
+/// - Trigonometric: `sin()`, `cos()`, `tan()`, etc.
+/// - Hyperbolic: `sinh()`, `cosh()`, `tanh()`, etc.
+/// - Exponential: `exp()`, `log()`, `ln()`, etc.
+/// - Power: `sqrt()`, `power()`, etc.
+///
+/// # Example
+///
+/// ```rust
+/// use pecos::math;
+///
+/// let x = std::f64::consts::PI / 2.0;
+/// let result = math::sin(x);
+/// assert!((result - 1.0).abs() < 1e-10);
+/// ```
+pub mod math {
+    pub use pecos_num::math::*;
+}
+
+/// Comparison and logical operations
+///
+/// This module provides comparison utilities for floating-point values.
+///
+/// # Available Functions
+///
+/// - **`isclose()`** - Element-wise approximate equality
+/// - **`allclose()`** - Array approximate equality with tolerance
+/// - **`isnan()`** - Check for NaN values
+///
+/// # Example
+///
+/// ```rust
+/// use pecos::compare;
+/// use pecos::prelude::*;
+///
+/// let a = Array1::from_vec(vec![1.0, 2.0, 3.0]);
+/// let b = Array1::from_vec(vec![1.0 + 1e-9, 2.0, 3.0]);
+///
+/// // allclose(a, b, rtol, atol, equal_nan)
+/// assert!(compare::allclose(&a.view(), &b.view(), 1e-8, 1e-8, false));
+/// ```
+pub mod compare {
+    pub use pecos_num::compare::*;
+}
+
+// ============================================================================
 // Top-level re-exports for convenience and backward compatibility
 // ============================================================================
 
@@ -340,3 +526,18 @@ pub use pecos_qulacs::QulacsStateVec;
 // WebAssembly foreign object support
 #[cfg(feature = "wasm")]
 pub use pecos_wasm::{ForeignObject, WasmForeignObject};
+
+// Numerical computing - commonly used functions at top level for convenience
+pub use pecos_num::{
+    Poly1d,
+    // Comparison utilities
+    allclose,
+    // Optimization algorithms
+    brentq,
+    curve_fit,
+    // Statistical functions
+    mean,
+    newton,
+    // Polynomial operations
+    polyfit,
+};

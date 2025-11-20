@@ -21,23 +21,25 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.num import curve_fit, delete, diag, exp, mean, power, sqrt, std, where
+import pecos as pc
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import numpy as np
-    from numpy.typing import NDArray
+    from pecos import (
+        Array,
+        f64,
+    )
 
 
 def func(
-    x: tuple[NDArray[np.float64], NDArray[np.float64]],
+    x: tuple[Array[f64], Array[f64]],
     pth: float,
     v0: float,
     a: float,
     b: float,
     c: float,
-) -> float | NDArray[np.float64]:
+) -> float | Array[f64]:
     """Fit error rates to determine threshold using polynomial expansion.
 
     Function that represents the curve to fit error rates to in order to determine the threshold. (see:
@@ -57,13 +59,13 @@ def func(
     """
     p, dist = x
 
-    x = (p - pth) * power(dist, 1.0 / v0)
+    x = (p - pth) * pc.power(dist, 1.0 / v0)
 
-    return a + b * x + c * power(x, 2)
+    return a + b * x + c * pc.power(x, 2)
 
 
 def func2(
-    x: tuple[NDArray[np.float64], NDArray[np.float64]],
+    x: tuple[Array[f64], Array[f64]],
     pth: float,
     v0: float,
     a: float,
@@ -71,7 +73,7 @@ def func2(
     c: float,
     d: float,
     u: float,
-) -> float | NDArray[np.float64]:
+) -> float | Array[f64]:
     """Fit error rates with finite-size correction to determine threshold.
 
     Function that represents the curve to fit error rates to in order to determine the threshold. (see:
@@ -93,17 +95,17 @@ def func2(
     """
     p, dist = x
 
-    x = (p - pth) * power(dist, 1.0 / v0)
+    x = (p - pth) * pc.power(dist, 1.0 / v0)
 
-    z = a + b * x + c * power(x, 2)
+    z = a + b * x + c * pc.power(x, 2)
 
-    z += d * power(dist, -1.0 / u)
+    z += d * pc.power(dist, -1.0 / u)
 
     return z
 
 
 def func3(
-    x: tuple[NDArray[np.float64], NDArray[np.float64]],
+    x: tuple[Array[f64], Array[f64]],
     pth: float,
     v0: float,
     a: float,
@@ -112,7 +114,7 @@ def func3(
     d: float,
     uodd: float,
     ueven: float,
-) -> float | NDArray[np.float64]:
+) -> float | Array[f64]:
     """Fit error rates with odd/even distance corrections to determine threshold.
 
     Function that represents the curve to fit error rates to in order to determine the threshold. (see:
@@ -135,26 +137,26 @@ def func3(
     """
     p, dist = x
 
-    x = (p - pth) * power(dist, 1.0 / v0)
+    x = (p - pth) * pc.power(dist, 1.0 / v0)
 
-    z = where(
+    z = pc.where(
         bool(dist % 2),
-        d * power(dist, -1.0 / uodd),
-        d * power(dist, -1.0 / ueven),
+        d * pc.power(dist, -1.0 / uodd),
+        d * pc.power(dist, -1.0 / ueven),
     )
 
-    z += a + b * x + c * power(x, 2)
+    z += a + b * x + c * pc.power(x, 2)
 
     return z
 
 
 def func4(
-    x: tuple[NDArray[np.float64], NDArray[np.float64]],
+    x: tuple[Array[f64], Array[f64]],
     pth: float,
     v0: float,
     a: float,
     b: float,
-) -> float | NDArray[np.float64]:
+) -> float | Array[f64]:
     """Fit error rates using exponential decay to determine threshold.
 
     Function that represents the curve to fit error rates to in order to determine the threshold. (see:
@@ -173,20 +175,20 @@ def func4(
     """
     p, dist = x
 
-    x = (p - pth) * power(dist, 1.0 / v0)
+    x = (p - pth) * pc.power(dist, 1.0 / v0)
 
-    return a * exp(-b * power(x, v0))
+    return a * pc.exp(-b * pc.power(x, v0))
 
 
 def func5(
-    x: tuple[NDArray[np.float64], NDArray[np.float64]],
+    x: tuple[Array[f64], Array[f64]],
     pth: float,
     v0: float,
     a: float,
     b: float,
     c: float,
     d: float,
-) -> float | NDArray[np.float64]:
+) -> float | Array[f64]:
     """Fit error rates using cubic polynomial to determine threshold.
 
     Function that represents the curve to fit error rates to in order to determine the threshold. (see:
@@ -207,16 +209,16 @@ def func5(
     """
     p, dist = x
 
-    x = (p - pth) * power(dist, 1.0 / v0)
+    x = (p - pth) * pc.power(dist, 1.0 / v0)
 
-    return a + b * x + c * power(x, 2) + d * power(x, 3)
+    return a + b * x + c * pc.power(x, 2) + d * pc.power(x, 3)
 
 
 def func6(
-    x: tuple[NDArray[np.float64], NDArray[np.float64]],
+    x: tuple[Array[f64], Array[f64]],
     a: float,
     pth: float,
-) -> float | NDArray[np.float64]:
+) -> float | Array[f64]:
     """Fit error rates using power law relationship to determine threshold.
 
     Function that represents the curve to fit error rates to in order to determine the threshold. (see:
@@ -233,18 +235,18 @@ def func6(
     """
     p, dist = x
 
-    return a * power(p / pth, dist / 2)
+    return a * pc.power(p / pth, dist / 2)
 
 
 def threshold_fit(
-    plist: NDArray[np.float64] | list[float],
-    dlist: NDArray[np.float64] | list[float],
-    plog: NDArray[np.float64] | list[float],
-    func: Callable[..., float | NDArray[np.float64]],
-    p0: NDArray[np.float64] | list[float],
+    plist: Array[f64] | list[float],
+    dlist: Array[f64] | list[float],
+    plog: Array[f64] | list[float],
+    func: Callable[..., float | Array[f64]],
+    p0: Array[f64] | list[float],
     maxfev: int = 100000,
     **kwargs: float | bool | str | None,
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+) -> tuple[Array[f64], Array[f64]]:
     """Fit threshold curve to logical error rate data.
 
     Args:
@@ -258,24 +260,24 @@ def threshold_fit(
         **kwargs: Additional keyword arguments passed to curve_fit.
 
     """
-    popt, pcov = curve_fit(func, (plist, dlist), plog, p0, maxfev=maxfev, **kwargs)
+    popt, pcov = pc.curve_fit(func, (plist, dlist), plog, p0, maxfev=maxfev, **kwargs)
 
-    var = diag(pcov)
-    stdev = sqrt(var)
+    var = pc.diag(pcov)
+    stdev = pc.sqrt(var)
 
     return popt, stdev
 
 
 def jackknife_pd(
-    plist: NDArray[np.float64] | list[float],
-    dlist: NDArray[np.float64] | list[float],
-    plog: NDArray[np.float64] | list[float],
-    func: Callable[..., float | NDArray[np.float64]],
-    p0: NDArray[np.float64] | list[float],
+    plist: Array[f64] | list[float],
+    dlist: Array[f64] | list[float],
+    plog: Array[f64] | list[float],
+    func: Callable[..., float | Array[f64]],
+    p0: Array[f64] | list[float],
     maxfev: int = 100000,
     *,
     verbose: bool = True,
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+) -> tuple[Array[f64], Array[f64]]:
     """Perform jackknife resampling for parameter and distance data.
 
     Args:
@@ -293,9 +295,9 @@ def jackknife_pd(
     opt_list = []
     cov_list = []
     for i in range(len(plog)):
-        p_copy = delete(plist, i)
-        plog_copy = delete(plog, i)
-        dlist_copy = delete(dlist, i)
+        p_copy = pc.delete(plist, i)
+        plog_copy = pc.delete(plog, i)
+        dlist_copy = pc.delete(dlist, i)
 
         result = threshold_fit(p_copy, dlist_copy, plog_copy, func, p0, maxfev)
         opt_list.append(result[0])
@@ -307,25 +309,25 @@ def jackknife_pd(
             print("parameter values:", result[0])
             print(f"parameter stds: {result[1]}\n")
 
-    est = mean(opt_list, axis=0)
-    stds = std(opt_list, axis=0)
+    est = pc.mean(opt_list, axis=0)
+    stds = pc.std(opt_list, axis=0)
 
     print(f"Mean: {est}")
     print(f"Std: {stds}")
 
-    return est, std
+    return est, stds
 
 
 def jackknife_p(
-    plist: NDArray[np.float64] | list[float],
-    dlist: NDArray[np.float64] | list[float],
-    plog: NDArray[np.float64] | list[float],
-    func: Callable[..., float | NDArray[np.float64]],
-    p0: NDArray[np.float64] | list[float],
+    plist: Array[f64] | list[float],
+    dlist: Array[f64] | list[float],
+    plog: Array[f64] | list[float],
+    func: Callable[..., float | Array[f64]],
+    p0: Array[f64] | list[float],
     maxfev: int = 100000,
     *,
     verbose: bool = True,
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+) -> tuple[Array[f64], Array[f64]]:
     """Perform jackknife resampling by removing each unique probability value.
 
     Args:
@@ -358,25 +360,25 @@ def jackknife_p(
             print("parameter values:", result[0])
             print(f"parameter stds: {result[1]}\n")
 
-    est = mean(opt_list, axis=0)
-    stds = std(opt_list, axis=0)
+    est = pc.mean(opt_list, axis=0)
+    stds = pc.std(opt_list, axis=0)
 
     print(f"Mean: {est}")
     print(f"Std: {stds}")
 
-    return est, std
+    return est, stds
 
 
 def jackknife_d(
-    plist: NDArray[np.float64] | list[float],
-    dlist: NDArray[np.float64] | list[float],
-    plog: NDArray[np.float64] | list[float],
-    func: Callable[..., float | NDArray[np.float64]],
-    p0: NDArray[np.float64] | list[float],
+    plist: Array[f64] | list[float],
+    dlist: Array[f64] | list[float],
+    plog: Array[f64] | list[float],
+    func: Callable[..., float | Array[f64]],
+    p0: Array[f64] | list[float],
     maxfev: int = 100000,
     *,
     verbose: bool = True,
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+) -> tuple[Array[f64], Array[f64]]:
     """Perform jackknife resampling by removing each unique distance value.
 
     Args:
@@ -410,13 +412,13 @@ def jackknife_d(
             print("parameter values:", result[0])
             print(f"parameter stds: {result[1]}\n")
 
-    est = mean(opt_list, axis=0)
-    stds = std(opt_list, axis=0)
+    est = pc.mean(opt_list, axis=0)
+    stds = pc.std(opt_list, axis=0)
 
     print(f"Mean: {est}")
     print(f"Std: {stds}")
 
-    return est, std
+    return est, stds
 
 
 def get_est(
@@ -436,7 +438,7 @@ def get_est(
         Tuple of (mean, standard_deviation).
     """
     v_est = sum(value_is) / len(value_is)
-    v_est_std = std(value_is)
+    v_est_std = pc.std(value_is)
 
     if verbose:
         print(f"{label}_est: {v_est} (mean) +- {v_est_std} (std)")

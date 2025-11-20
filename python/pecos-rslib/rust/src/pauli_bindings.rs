@@ -50,6 +50,7 @@ unsafe impl Send for Pauli {}
 unsafe impl Sync for Pauli {}
 
 #[pymethods]
+#[allow(clippy::trivially_copy_pass_by_ref)] // PyO3 requires &self for special methods
 impl Pauli {
     /// Identity operator (no error)
     #[classattr]
@@ -116,6 +117,7 @@ impl Pauli {
     }
 
     /// Convert to integer (0=I, 1=X, 2=Z, 3=Y)
+    #[allow(clippy::wrong_self_convention)] // PyO3 requires &self for all methods
     fn to_int(&self) -> u8 {
         self.0 as u8
     }
@@ -199,10 +201,12 @@ impl PauliString {
         let rust_paulis = if let Some(pauli_input) = paulis {
             use pyo3::types::PyList;
 
-            // Try to extract as a list
-            let list = pauli_input.downcast::<PyList>().map_err(|_| {
-                pyo3::exceptions::PyTypeError::new_err("paulis must be a list")
-            })?;
+            // Try to extract as a list - using cast() per PyO3 0.27 API
+            let Ok(list) = pauli_input.cast::<PyList>() else {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "paulis must be a list",
+                ));
+            };
 
             if list.is_empty() {
                 Vec::new()
@@ -232,7 +236,7 @@ impl PauliString {
                         .collect::<PyResult<Vec<_>>>()?
                 } else {
                     return Err(pyo3::exceptions::PyTypeError::new_err(
-                        "paulis must be a list of Pauli objects or (Pauli, qubit_id) tuples"
+                        "paulis must be a list of Pauli objects or (Pauli, qubit_id) tuples",
                     ));
                 }
             }

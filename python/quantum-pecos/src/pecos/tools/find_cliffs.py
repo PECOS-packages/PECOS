@@ -13,49 +13,52 @@
 
 from __future__ import annotations
 
-import numpy as np
+from typing import TYPE_CHECKING
 
-from pecos.num import array, cos, exp, isclose, pi, sin
+import pecos as pc
+
+if TYPE_CHECKING:
+    from pecos import Array
 
 dtype = "complex"
 
 cliff_str2matrix = {
-    "I": array([[1.0, 0.0], [0.0, 1.0]], dtype=dtype),
-    "X": array([[0.0, 1.0], [1.0 + 0.0j, 0.0 + 0.0j]], dtype=dtype),
-    "Y": array([[0.0 + 0.0j, 1.0 + 0.0j], [-1.0 + 0.0j, 0.0 + 0.0j]], dtype=dtype),
-    "Z": array([[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, -1.0 + 0.0j]], dtype=dtype),
-    "SX": array([[1.0 + 0.0j, 0.0 - 1.0j], [0.0 - 1.0j, 1.0 + 0.0j]], dtype=dtype),
-    "SXdg": array([[1.0 + 0.0j, 0.0 + 1.0j], [0.0 + 1.0j, 1.0 + 0.0j]], dtype=dtype),
-    "SY": array([[1.0 + 0.0j, -1.0 + 0.0j], [1.0 + 0.0j, 1.0 + 0.0j]], dtype=dtype),
-    "SYdg": array(
+    "I": pc.array([[1.0, 0.0], [0.0, 1.0]], dtype=dtype),
+    "X": pc.array([[0.0, 1.0], [1.0 + 0.0j, 0.0 + 0.0j]], dtype=dtype),
+    "Y": pc.array([[0.0 + 0.0j, 1.0 + 0.0j], [-1.0 + 0.0j, 0.0 + 0.0j]], dtype=dtype),
+    "Z": pc.array([[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, -1.0 + 0.0j]], dtype=dtype),
+    "SX": pc.array([[1.0 + 0.0j, 0.0 - 1.0j], [0.0 - 1.0j, 1.0 + 0.0j]], dtype=dtype),
+    "SXdg": pc.array([[1.0 + 0.0j, 0.0 + 1.0j], [0.0 + 1.0j, 1.0 + 0.0j]], dtype=dtype),
+    "SY": pc.array([[1.0 + 0.0j, -1.0 + 0.0j], [1.0 + 0.0j, 1.0 + 0.0j]], dtype=dtype),
+    "SYdg": pc.array(
         [[1.0 + 0.0j, 1.0 + 0.0j], [-1.0 + 0.0j, 1.0 + 0.0j]],
         dtype=dtype,
     ),
-    "SZ": array([[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, 0.0 + 1.0j]], dtype=dtype),
-    "SZdg": array([[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, 0.0 - 1.0j]], dtype=dtype),
-    "H": array([[1.0 + 0.0j, 1.0 + 0.0j], [1.0 + 0.0j, -1.0 + 0.0j]], dtype=dtype),
-    "H2": array(
+    "SZ": pc.array([[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, 0.0 + 1.0j]], dtype=dtype),
+    "SZdg": pc.array([[1.0 + 0.0j, 0.0 + 0.0j], [0.0 + 0.0j, 0.0 - 1.0j]], dtype=dtype),
+    "H": pc.array([[1.0 + 0.0j, 1.0 + 0.0j], [1.0 + 0.0j, -1.0 + 0.0j]], dtype=dtype),
+    "H2": pc.array(
         [[1.0 + 0.0j, -1.0 + 0.0j], [-1.0 + 0.0j, -1.0 + 0.0j]],
         dtype=dtype,
     ),
-    "H3": array([[0.0 + 0.0j, 1.0 + 0.0j], [0.0 + 1.0j, 0.0 + 0.0j]], dtype=dtype),
-    "H4": array([[0.0 + 0.0j, 1.0 + 0.0j], [0.0 - 1.0j, 0.0 + 0.0j]], dtype=dtype),
-    "H5": array([[1.0 + 0.0j, 0.0 - 1.0j], [0.0 + 1.0j, -1.0 + 0.0j]], dtype=dtype),
-    "H6": array([[1.0 + 0.0j, 0.0 + 1.0j], [0.0 - 1.0j, -1.0 + 0.0j]], dtype=dtype),
-    "F": array([[1.0 + 0.0j, 0.0 - 1.0j], [1.0 + 0.0j, 0.0 + 1.0j]], dtype=dtype),
-    "Fdg": array([[1.0 + 0.0j, 1.0 + 0.0j], [0.0 + 1.0j, 0.0 - 1.0j]], dtype=dtype),
-    "F2": array([[1.0 + 0.0j, -1.0 + 0.0j], [0.0 + 1.0j, 0.0 + 1.0j]], dtype=dtype),
-    "F2dg": array(
+    "H3": pc.array([[0.0 + 0.0j, 1.0 + 0.0j], [0.0 + 1.0j, 0.0 + 0.0j]], dtype=dtype),
+    "H4": pc.array([[0.0 + 0.0j, 1.0 + 0.0j], [0.0 - 1.0j, 0.0 + 0.0j]], dtype=dtype),
+    "H5": pc.array([[1.0 + 0.0j, 0.0 - 1.0j], [0.0 + 1.0j, -1.0 + 0.0j]], dtype=dtype),
+    "H6": pc.array([[1.0 + 0.0j, 0.0 + 1.0j], [0.0 - 1.0j, -1.0 + 0.0j]], dtype=dtype),
+    "F": pc.array([[1.0 + 0.0j, 0.0 - 1.0j], [1.0 + 0.0j, 0.0 + 1.0j]], dtype=dtype),
+    "Fdg": pc.array([[1.0 + 0.0j, 1.0 + 0.0j], [0.0 + 1.0j, 0.0 - 1.0j]], dtype=dtype),
+    "F2": pc.array([[1.0 + 0.0j, -1.0 + 0.0j], [0.0 + 1.0j, 0.0 + 1.0j]], dtype=dtype),
+    "F2dg": pc.array(
         [[1.0 + 0.0j, 0.0 - 1.0j], [-1.0 + 0.0j, 0.0 - 1.0j]],
         dtype=dtype,
     ),
-    "F3": array([[1.0 + 0.0j, 0.0 + 1.0j], [-1.0 + 0.0j, 0.0 + 1.0j]], dtype=dtype),
-    "F3dg": array(
+    "F3": pc.array([[1.0 + 0.0j, 0.0 + 1.0j], [-1.0 + 0.0j, 0.0 + 1.0j]], dtype=dtype),
+    "F3dg": pc.array(
         [[1.0 + 0.0j, -1.0 + 0.0j], [0.0 - 1.0j, 0.0 - 1.0j]],
         dtype=dtype,
     ),
-    "F4": array([[1.0 + 0.0j, 1.0 + 0.0j], [0.0 - 1.0j, 0.0 + 1.0j]], dtype=dtype),
-    "F4dg": array([[1.0 + 0.0j, 0.0 + 1.0j], [1.0 + 0.0j, 0.0 - 1.0j]], dtype=dtype),
+    "F4": pc.array([[1.0 + 0.0j, 1.0 + 0.0j], [0.0 - 1.0j, 0.0 + 1.0j]], dtype=dtype),
+    "F4dg": pc.array([[1.0 + 0.0j, 0.0 + 1.0j], [1.0 + 0.0j, 0.0 - 1.0j]], dtype=dtype),
 }
 
 r1xy_ang2str = {
@@ -93,45 +96,45 @@ rz_ang2str = {
 }
 
 
-def r1xy_matrix(theta: float, phi: float) -> np.ndarray:
-    """Creates a np.array matrix for a R1XY gate."""
-    c = cos(theta * 0.5)
-    s = sin(theta * 0.5)
+def r1xy_matrix(theta: float, phi: float) -> Array:
+    """Creates a Array matrix for a R1XY gate."""
+    c = pc.cos(theta * 0.5)
+    s = pc.sin(theta * 0.5)
 
-    return array(
+    return pc.array(
         [
-            [c, -1j * exp(-1j * phi) * s],
-            [-1j * exp(1j * phi) * s, c],
+            [c, -1j * pc.exp(-1j * phi) * s],
+            [-1j * pc.exp(1j * phi) * s, c],
         ],
         dtype=dtype,
     )
 
 
-def rz_matrix(theta: float) -> np.ndarray:
-    """Creates a np.array matrix for a RZ gate."""
-    return array(
+def rz_matrix(theta: float) -> Array:
+    """Creates a Array matrix for a RZ gate."""
+    return pc.array(
         [
-            [exp(-1j * theta * 0.5), 0.0],
-            [0.0, exp(1j * theta * 0.5)],
+            [pc.exp(-1j * theta * 0.5), 0.0],
+            [0.0, pc.exp(1j * theta * 0.5)],
         ],
         dtype=dtype,
     )
 
 
-def mnormal(m: np.ndarray, *, atol: float = 1e-12) -> np.ndarray:
-    """Normalizes a np.array to help with comparing matrices up to global phases."""
+def mnormal(m: Array, *, atol: float = 1e-12) -> Array:
+    """Normalizes a Array to help with comparing matrices up to global phases."""
     # Use isclose for complex comparison (from pecos.num)
-    unit = m[0, 0] if not isclose(m[0, 0], 0.0, atol=atol) else m[0, 1]
+    unit = m[0, 0] if not pc.isclose(m[0, 0], 0.0, atol=atol) else m[0, 1]
 
     return m / unit
 
 
-def m2cliff(m: np.array, *, atol: float = 1e-12) -> str | bool:
+def m2cliff(m: Array, *, atol: float = 1e-12) -> str | bool:
     """Identifies (ignoring global phases) a Clifford given a matrix."""
     m = mnormal(m)
 
     for sym, c in cliff_str2matrix.items():
-        if isclose(c, m, atol=atol).all():
+        if pc.isclose(c, m, atol=atol).all():
             return sym
     return False
 
@@ -145,11 +148,11 @@ def r1xy2cliff(
 ) -> str | bool:
     """Identifies (ignoring global phases) a Clifford given the angles of a R1XY gate."""
     if use_conv_table:
-        if isclose(theta % (2 * pi), 0.0, atol=atol):
+        if pc.isclose(theta % pc.f64.tau, 0.0, atol=atol):
             return "I"
         for cangs, csym in r1xy_ang2str.items():
             a, b = cangs
-            if isclose(a, theta, atol=atol) and isclose(b, phi, atol=atol):
+            if pc.isclose(a, theta, atol=atol) and pc.isclose(b, phi, atol=atol):
                 return csym
 
     m = r1xy_matrix(theta, phi)
@@ -165,11 +168,11 @@ def rz2cliff(
 ) -> str | bool:
     """Identifies (ignoring global phases) a Clifford given the angles of a RZ gate."""
     if use_conv_table:
-        if isclose(theta % (2 * pi), 0.0, atol=atol):
+        if pc.isclose(theta % pc.f64.tau, 0.0, atol=atol):
             return "I"
         for cangs, csym in rz_ang2str.items():
             a = cangs[0]
-            if isclose(a, theta, atol=atol):
+            if pc.isclose(a, theta, atol=atol):
                 return csym
 
     m = rz_matrix(theta)

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib.llvm import binding, ir
 
-from pecos import __version__
+import pecos as pc
 from pecos.qeclib.qubit import qgate_base
 from pecos.slr import Block, If, Repeat
 from pecos.slr.cops import (
@@ -245,7 +245,7 @@ class QIRGenerator(Generator):
         self.entry_block = self._main_func.append_basic_block(name="entry")
         self.current_block = self.entry_block
         self._builder = ir.IRBuilder(self.entry_block)
-        self._builder.comment(f"// Generated using: PECOS version {__version__}")
+        self._builder.comment(f"// Generated using: PECOS version {pc.__version__}")
 
         def icmp_signed_closure(op: str):
             return lambda left, right: self._builder.icmp_signed(op, left, right)

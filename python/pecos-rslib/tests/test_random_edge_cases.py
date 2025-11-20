@@ -7,7 +7,7 @@ Tests for seeding, reproducibility, edge cases, and integration patterns.
 import numpy as np
 import pytest
 
-from pecos.num import random as pecos_random
+import pecos as pc
 
 
 class TestEdgeCases:
@@ -15,13 +15,13 @@ class TestEdgeCases:
 
     def test_random_size_zero(self):
         """Test that size=0 returns empty array."""
-        result = pecos_random.random(0)
+        result = pc.random.random(0)
         assert len(result) == 0
         assert isinstance(result, np.ndarray)
 
     def test_random_size_one(self):
         """Test that size=1 returns single element array."""
-        result = pecos_random.random(1)
+        result = pc.random.random(1)
         assert len(result) == 1
         assert isinstance(result, np.ndarray)
         assert 0.0 <= result[0] < 1.0
@@ -29,7 +29,7 @@ class TestEdgeCases:
     def test_random_large_array(self):
         """Test that large arrays work correctly."""
         size = 1_000_000
-        result = pecos_random.random(size)
+        result = pc.random.random(size)
         assert len(result) == size
         # Statistical test on large sample
         mean = np.mean(result)
@@ -37,18 +37,18 @@ class TestEdgeCases:
 
     def test_randint_size_zero(self):
         """Test that randint with size=0 returns empty array."""
-        result = pecos_random.randint(0, 10, 0)
+        result = pc.random.randint(0, 10, 0)
         assert len(result) == 0
         assert isinstance(result, np.ndarray)
 
     def test_randint_single_value_range(self):
         """Test randint with high=low+1 (only one possible value)."""
-        result = pecos_random.randint(5, 6, 100)
+        result = pc.random.randint(5, 6, 100)
         assert np.all(result == 5)
 
     def test_randint_large_range(self):
         """Test randint with very large range."""
-        result = pecos_random.randint(-1_000_000, 1_000_000, 1000)
+        result = pc.random.randint(-1_000_000, 1_000_000, 1000)
         assert len(result) == 1000
         assert np.all(result >= -1_000_000)
         assert np.all(result < 1_000_000)
@@ -56,20 +56,20 @@ class TestEdgeCases:
     def test_choice_size_zero(self):
         """Test that choice with size=0 returns empty list."""
         items = [1, 2, 3, 4, 5]
-        result = pecos_random.choice(items, 0)
+        result = pc.random.choice(items, 0)
         assert len(result) == 0
 
     def test_choice_single_element_array(self):
         """Test choice from single-element array."""
         items = [42]
-        result = pecos_random.choice(items, 10)
+        result = pc.random.choice(items, 10)
         assert len(result) == 10
         assert all(x == 42 for x in result)
 
     def test_choice_all_elements_no_replacement(self):
         """Test sampling all elements without replacement."""
         items = [1, 2, 3, 4, 5]
-        result = pecos_random.choice(items, 5, replace=False)
+        result = pc.random.choice(items, 5, replace=False)
         assert len(result) == 5
         assert set(result) == set(items)
 
@@ -82,7 +82,7 @@ class TestMultiThreading:
         import concurrent.futures
 
         def generate_random(n):
-            return pecos_random.random(n)
+            return pc.random.random(n)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             futures = [executor.submit(generate_random, 1000) for _ in range(10)]
@@ -99,7 +99,7 @@ class TestMultiThreading:
         import concurrent.futures
 
         def generate_randint(n):
-            return pecos_random.randint(0, 100, n)
+            return pc.random.randint(0, 100, n)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             futures = [executor.submit(generate_randint, 1000) for _ in range(10)]
@@ -121,7 +121,7 @@ class TestQuantumPecosPatterns:
         n_qubits = 1000
         error_rate = 0.01
 
-        random_vals = pecos_random.random(n_qubits)
+        random_vals = pc.random.random(n_qubits)
         errors = random_vals < error_rate
 
         # Should have approximately error_rate fraction of True values
@@ -137,7 +137,7 @@ class TestQuantumPecosPatterns:
         all_qubits = list(range(100))
         n_select = 10
 
-        selected = pecos_random.choice(all_qubits, n_select, replace=False)
+        selected = pc.random.choice(all_qubits, n_select, replace=False)
 
         assert len(selected) == n_select
         assert len(set(selected)) == n_select  # All unique
@@ -148,7 +148,7 @@ class TestQuantumPecosPatterns:
         # Simulate: outcomes = np.random.randint(0, 2, n_measurements)
         n_measurements = 1000
 
-        outcomes = pecos_random.randint(0, 2, n_measurements)
+        outcomes = pc.random.randint(0, 2, n_measurements)
 
         assert len(outcomes) == n_measurements
         assert np.all((outcomes == 0) | (outcomes == 1))
@@ -165,7 +165,7 @@ class TestQuantumPecosPatterns:
 
         # Generate errors for each round
         for _ in range(n_rounds):
-            error_mask = pecos_random.random(n_qubits) < 0.01
+            error_mask = pc.random.random(n_qubits) < 0.01
             assert len(error_mask) == n_qubits
             assert error_mask.dtype == bool or error_mask.dtype == np.bool_
 
@@ -177,7 +177,7 @@ class TestQuantumPecosPatterns:
 
         results = []
         for _ in range(batch_size):
-            sample = pecos_random.randint(0, 1000, n_samples)
+            sample = pc.random.randint(0, 1000, n_samples)
             results.append(sample)
 
         # Verify all batches are valid
@@ -192,7 +192,7 @@ class TestNumpyCompatibilityExtended:
 
     def test_random_dtype_compatibility(self):
         """Verify dtype matches numpy exactly."""
-        pecos_result = pecos_random.random(100)
+        pecos_result = pc.random.random(100)
         numpy_result = np.random.random(100)
 
         assert pecos_result.dtype == numpy_result.dtype
@@ -200,14 +200,14 @@ class TestNumpyCompatibilityExtended:
 
     def test_randint_dtype_compatibility(self):
         """Verify randint dtype matches numpy."""
-        pecos_result = pecos_random.randint(0, 100, 100)
+        pecos_result = pc.random.randint(0, 100, 100)
         numpy_result = np.random.randint(0, 100, 100)
 
         assert pecos_result.dtype == numpy_result.dtype
 
     def test_random_array_flags(self):
         """Verify array flags match numpy."""
-        result = pecos_random.random(100)
+        result = pc.random.random(100)
 
         # Should be C-contiguous like numpy
         assert result.flags["C_CONTIGUOUS"]
@@ -218,17 +218,17 @@ class TestNumpyCompatibilityExtended:
         """Test that choice preserves element types."""
         # String elements
         string_items = ["a", "b", "c", "d"]
-        string_result = pecos_random.choice(string_items, 10)
+        string_result = pc.random.choice(string_items, 10)
         assert all(isinstance(x, str) for x in string_result)
 
         # Integer elements
         int_items = [1, 2, 3, 4, 5]
-        int_result = pecos_random.choice(int_items, 10)
+        int_result = pc.random.choice(int_items, 10)
         assert all(isinstance(x, int) for x in int_result)
 
         # Float elements
         float_items = [1.5, 2.5, 3.5, 4.5]
-        float_result = pecos_random.choice(float_items, 10)
+        float_result = pc.random.choice(float_items, 10)
         assert all(isinstance(x, (float, np.floating)) for x in float_result)
 
 

@@ -331,26 +331,59 @@ all = _num_core.compare.all  # Test if all elements are truthy
 any = _num_core.compare.any  # Test if any element is truthy
 # Note: where() has a Python wrapper function defined above for additional logic
 
+# Statistical functions - drop-in replacements for numpy.max(), numpy.min()
+max = _num_core.max  # Maximum value
+min = _num_core.min  # Minimum value
+
 # Mathematical constants - drop-in replacements for numpy.pi, math.pi, etc.
+# Following NumPy/SciPy convention: lowercase names for constants
 pi = _num_core.pi
 tau = _num_core.tau
 e = _num_core.e
 inf = _num_core.inf
 nan = _num_core.nan
-FRAC_PI_2 = _num_core.FRAC_PI_2
-FRAC_PI_3 = _num_core.FRAC_PI_3
-FRAC_PI_4 = _num_core.FRAC_PI_4
-FRAC_PI_6 = _num_core.FRAC_PI_6
-FRAC_PI_8 = _num_core.FRAC_PI_8
-FRAC_1_PI = _num_core.FRAC_1_PI
-FRAC_2_PI = _num_core.FRAC_2_PI
-FRAC_2_SQRT_PI = _num_core.FRAC_2_SQRT_PI
-SQRT_2 = _num_core.SQRT_2
-FRAC_1_SQRT_2 = _num_core.FRAC_1_SQRT_2
-LN_2 = _num_core.LN_2
-LN_10 = _num_core.LN_10
-LOG2_E = _num_core.LOG2_E
-LOG10_E = _num_core.LOG10_E
+# Pi fractions - lowercase for NumPy-style consistency
+frac_pi_2 = _num_core.FRAC_PI_2
+frac_pi_3 = _num_core.FRAC_PI_3
+frac_pi_4 = _num_core.FRAC_PI_4
+frac_pi_6 = _num_core.FRAC_PI_6
+frac_pi_8 = _num_core.FRAC_PI_8
+frac_1_pi = _num_core.FRAC_1_PI
+frac_2_pi = _num_core.FRAC_2_PI
+frac_2_sqrt_pi = _num_core.FRAC_2_SQRT_PI
+# Square root constants
+sqrt_2 = _num_core.SQRT_2
+frac_1_sqrt_2 = _num_core.FRAC_1_SQRT_2
+# Logarithmic constants
+ln_2 = _num_core.LN_2
+ln_10 = _num_core.LN_10
+log2_e = _num_core.LOG2_E
+log10_e = _num_core.LOG10_E
+
+# f32 Mathematical constants - single precision
+# Following NumPy/SciPy convention: lowercase names for constants
+pi_f32 = _num_core.pi_f32
+tau_f32 = _num_core.tau_f32
+e_f32 = _num_core.e_f32
+inf_f32 = _num_core.inf_f32
+nan_f32 = _num_core.nan_f32
+# Pi fractions - lowercase for NumPy-style consistency
+frac_pi_2_f32 = _num_core.FRAC_PI_2_F32
+frac_pi_3_f32 = _num_core.FRAC_PI_3_F32
+frac_pi_4_f32 = _num_core.FRAC_PI_4_F32
+frac_pi_6_f32 = _num_core.FRAC_PI_6_F32
+frac_pi_8_f32 = _num_core.FRAC_PI_8_F32
+frac_1_pi_f32 = _num_core.FRAC_1_PI_F32
+frac_2_pi_f32 = _num_core.FRAC_2_PI_F32
+frac_2_sqrt_pi_f32 = _num_core.FRAC_2_SQRT_PI_F32
+# Square root constants
+sqrt_2_f32 = _num_core.SQRT_2_F32
+frac_1_sqrt_2_f32 = _num_core.FRAC_1_SQRT_2_F32
+# Logarithmic constants
+ln_2_f32 = _num_core.LN_2_F32
+ln_10_f32 = _num_core.LN_10_F32
+log2_e_f32 = _num_core.LOG2_E_F32
+log10_e_f32 = _num_core.LOG10_E_F32
 
 # Re-export submodules
 random = _num_core.random
@@ -361,6 +394,8 @@ __all__ = [
     # Functions
     "mean",
     "sum",
+    "max",
+    "min",
     "power",
     "sqrt",
     "exp",
@@ -402,26 +437,26 @@ __all__ = [
     "zeros",
     "ones",
     "delete",
-    # Constants
+    # Constants (lowercase for NumPy compatibility)
     "pi",
     "tau",
     "e",
     "inf",
     "nan",
-    "FRAC_PI_2",
-    "FRAC_PI_3",
-    "FRAC_PI_4",
-    "FRAC_PI_6",
-    "FRAC_PI_8",
-    "FRAC_1_PI",
-    "FRAC_2_PI",
-    "FRAC_2_SQRT_PI",
-    "SQRT_2",
-    "FRAC_1_SQRT_2",
-    "LN_2",
-    "LN_10",
-    "LOG2_E",
-    "LOG10_E",
+    "frac_pi_2",
+    "frac_pi_3",
+    "frac_pi_4",
+    "frac_pi_6",
+    "frac_pi_8",
+    "frac_1_pi",
+    "frac_2_pi",
+    "frac_2_sqrt_pi",
+    "sqrt_2",
+    "frac_1_sqrt_2",
+    "ln_2",
+    "ln_10",
+    "log2_e",
+    "log10_e",
     # Submodules
     "random",
     "linalg",

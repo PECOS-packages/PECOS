@@ -21,13 +21,13 @@ import os
 import struct
 from typing import TYPE_CHECKING
 
+import pecos as pc
 from pecos.engines.cvm.binarray import BinArray
 from pecos.engines.cvm.classical import eval_condition, eval_cop, set_output
 from pecos.engines.cvm.rng_model import RNGModel
 from pecos.engines.cvm.wasm import eval_cfunc, get_ccop
 from pecos.error_models.fake_error_model import FakeErrorModel
 from pecos.errors import NotSupportedGateError
-from pecos.num import random
 
 if TYPE_CHECKING:
     from typing import Protocol
@@ -89,7 +89,7 @@ class HybridEngine:
 
         if self.seed:
             self.rng_model = RNGModel(self.seed)
-            random.seed(self.seed)
+            pc.random.seed(self.seed)
         else:
             self.rng_model = RNGModel(0)
 

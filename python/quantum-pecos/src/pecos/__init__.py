@@ -30,22 +30,132 @@ except PackageNotFoundError:
 import sys
 from typing import NoReturn
 
-# Import the polymorphic num module wrapper
-# This MUST happen before importing pecos submodules that use pecos.num
-from pecos import num
+# ============================================================================
+# NumPy-style Numerical Computing API (Hybrid Flat + Structured)
+# ============================================================================
+#
+# PECOS follows NumPy's organization:
+#   - Common functions at top level: pecos.array(), pecos.sin(), pecos.mean()
+#   - Specialized functions in submodules: pecos.linalg.norm(), pecos.random.randint()
+#
+# This provides the best user experience:
+#   import pecos as pc
+#   arr = pc.array([1, 2, 3])        # Common operations - flat and convenient
+#   norm = pc.linalg.norm(arr)       # Specialized operations - organized
+#   one = pc.i64(1)                  # Data types - flat for convenience
+# Import the Rust num module directly from pecos_rslib
+# ============================================================================
+# Top-level: Common numerical functions (like NumPy's flat namespace)
+# ============================================================================
+# Array creation and manipulation
+# Mathematical functions (element-wise operations)
+# Statistical functions
+# Comparison and logical functions
+# Data types - import scalar type classes directly (NumPy-like API)
+# This allows: pc.i64(42) and def foo(x: pc.i64) just like np.int64(42) and def foo(x: np.int64)
+# Mathematical constants
+from pecos_rslib import (
+    Array,  # Array type with generic dtype support (Array[f64], etc.)
+    Complex,
+    Float,
+    Inexact,
+    Integer,
+    Numeric,
+    Pauli,  # Quantum Pauli operators (I, X, Y, Z)
+    PauliString,  # Multi-qubit Pauli operators
+    SignedInteger,
+    UnsignedInteger,
+    abs,  # Absolute value  # noqa: A004
+    all,  # All elements true  # noqa: A004
+    allclose,  # Approximate equality (arrays)
+    any,  # Any element true  # noqa: A004
+    array,  # Array creation
+    complex64,
+    complex128,
+    cos,  # Cosine
+    dtypes,  # Keep dtypes module for dtype instances (dtypes.i64, etc.)
+    exp,  # Exponential
+    f32,
+    f64,
+    i8,
+    i16,
+    i32,
+    i64,
+    isclose,  # Approximate equality (element-wise)
+    isnan,  # Check for NaN
+    ln,  # Natural logarithm
+    log,  # Logarithm with base
+    max,  # Maximum value  # noqa: A004
+    mean,  # Mean/average
+    min,  # Minimum value  # noqa: A004
+    num,
+    power,  # Power function
+    sin,  # Sine
+    sqrt,  # Square root
+    std,  # Standard deviation
+    sum,  # Sum  # noqa: A004
+    u8,
+    u16,
+    u32,
+    u64,
+    where,  # Conditional selection
+)
 
-# Register num and its submodules in sys.modules under the pecos namespace
-# The num module itself provides polymorphic wrappers
-sys.modules["pecos.num"] = num
-sys.modules["pecos.num.stats"] = num.stats
-sys.modules["pecos.num.math"] = num.math
-sys.modules["pecos.num.compare"] = num.compare
-sys.modules["pecos.num.array"] = num.array
-sys.modules["pecos.num.optimize"] = num.optimize
-sys.modules["pecos.num.polynomial"] = num.polynomial
-sys.modules["pecos.num.curve_fit"] = num.curve_fit
-sys.modules["pecos.num.random"] = num.random
-sys.modules["pecos.num.linalg"] = num.linalg
+# Note: Mathematical constants (pi, e, tau, frac_pi_2, sqrt_2, ln_2, etc.) are NOT imported
+# They are only available via dtype namespaces: pc.f64.pi, pc.f64.frac_pi_2, etc.
+# This makes precision explicit and supports future f32, complex constants
+# Polynomial and optimization functions (commonly used, so at top level)
+from pecos_rslib.num import (
+    Poly1d,  # Polynomial evaluation
+    arange,  # Range arrays
+    brentq,  # Brent's root finding
+    ceil,  # Ceiling function
+    curve_fit,  # Non-linear curve fitting
+    delete,  # Delete elements
+    diag,  # Diagonal extraction
+    floor,  # Floor function
+    linspace,  # Linearly spaced arrays
+    newton,  # Newton-Raphson root finding
+    ones,  # Arrays of ones
+    polyfit,  # Polynomial fitting
+    round,  # Rounding  # noqa: A004
+    zeros,  # Arrays of zeros
+)
+
+# Type hints for arrays and scalars
+from pecos import types
+
+# ============================================================================
+# Structured submodules: Specialized functionality (like NumPy's submodules)
+# ============================================================================
+
+# Linear algebra: pecos.linalg.norm(), pecos.linalg.svd()
+linalg = num.linalg
+
+# Random number generation: pecos.random.randint(), pecos.random.normal()
+random = num.random
+
+# Optimization: pecos.optimize.brentq(), pecos.optimize.newton()
+optimize = num.optimize
+
+# Polynomial operations: pecos.polynomial.polyfit(), pecos.polynomial.Poly1d
+polynomial = num.polynomial
+
+# Statistics: pecos.stats.* (if we add more advanced stats functions)
+stats = num.stats
+
+# Mathematical functions: pecos.math.* (less common functions)
+math = num.math
+
+# Comparison functions: pecos.compare.* (advanced comparisons)
+compare = num.compare
+
+# Note: pecos.num namespace has been removed
+# Everything is now directly under pecos for a cleaner API:
+#   - pecos.array() instead of pecos.num.array()
+#   - pecos.linalg.norm() instead of pecos.num.linalg.norm()
+#
+# This follows the principle: "flat is better than nested" for the main namespace
 
 # These imports come after sys.modules setup - this is intentional
 from pecos import (  # noqa: E402
@@ -114,11 +224,22 @@ __all__ = [
     "circuit_converters",
     "circuit_runners",
     "circuits",
+    "complex64",
+    "complex128",
     "decoders",
+    # Keep dtypes module for dtype instances
+    "dtypes",
     "engines",
     "error_models",
+    "f32",
+    "f64",
     "frontends",
     "get_guppy_backends",
+    # Scalar type classes (NumPy-like API)
+    "i8",
+    "i16",
+    "i32",
+    "i64",
     "misc",
     "num",  # Numerical computing module from pecos_rslib
     "protocols",
@@ -128,4 +249,9 @@ __all__ = [
     "sim",
     "simulators",
     "tools",
+    "types",  # Type hints for arrays
+    "u8",
+    "u16",
+    "u32",
+    "u64",
 ]

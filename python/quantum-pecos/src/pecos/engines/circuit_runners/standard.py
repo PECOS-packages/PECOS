@@ -23,8 +23,8 @@ import os
 import struct
 from typing import TYPE_CHECKING
 
+import pecos as pc
 from pecos.misc.std_output import StdOutput
-from pecos.num import random
 
 if TYPE_CHECKING:
     from typing import Any
@@ -55,7 +55,7 @@ class Standard:
             self.seed = None
 
         if self.seed:
-            random.seed(self.seed)
+            pc.random.seed(self.seed)
 
     @staticmethod
     def run(

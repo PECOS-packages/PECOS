@@ -6,12 +6,19 @@ produce statistically equivalent results to numpy's implementations.
 """
 
 import time
+import pytest
+
+# Skip entire module if scipy/numpy not available
+pytest.importorskip("scipy")
+pytest.importorskip("numpy")
 
 import numpy as np
-import pytest
 from scipy import stats
 
-from pecos.num import random as pecos_random
+import pecos as pc
+
+# Mark all tests in this module as requiring numpy
+pytestmark = pytest.mark.numpy
 
 
 class TestRandomComparison:
@@ -20,7 +27,7 @@ class TestRandomComparison:
     def test_random_output_shape(self):
         """Test that output shapes match numpy."""
         for size in [1, 10, 100, 1000]:
-            pecos_vals = pecos_random.random(size)
+            pecos_vals = pc.random.random(size)
             numpy_vals = np.random.random(size)
 
             assert pecos_vals.shape == numpy_vals.shape
@@ -28,7 +35,7 @@ class TestRandomComparison:
 
     def test_random_output_type(self):
         """Test that output type matches numpy."""
-        pecos_vals = pecos_random.random(100)
+        pecos_vals = pc.random.random(100)
         numpy_vals = np.random.random(100)
 
         assert isinstance(pecos_vals, np.ndarray)
@@ -36,13 +43,13 @@ class TestRandomComparison:
 
     def test_random_range(self):
         """Test that all values are in [0, 1) like numpy."""
-        vals = pecos_random.random(10000)
+        vals = pc.random.random(10000)
         assert np.all(vals >= 0.0)
         assert np.all(vals < 1.0)
 
     def test_random_statistical_mean(self):
         """Test that mean is approximately 0.5 (uniform distribution)."""
-        vals = pecos_random.random(10000)
+        vals = pc.random.random(10000)
         mean = np.mean(vals)
 
         # For uniform [0, 1), theoretical mean = 0.5
@@ -51,7 +58,7 @@ class TestRandomComparison:
 
     def test_random_statistical_variance(self):
         """Test that variance matches uniform [0, 1) distribution."""
-        vals = pecos_random.random(10000)
+        vals = pc.random.random(10000)
         variance = np.var(vals)
 
         # For uniform [0, 1), theoretical variance = 1/12 ≈ 0.0833
@@ -62,7 +69,7 @@ class TestRandomComparison:
 
     def test_random_uniformity_ks_test(self):
         """Test uniformity using Kolmogorov-Smirnov test."""
-        vals = pecos_random.random(1000)
+        vals = pc.random.random(1000)
 
         # KS test against uniform [0, 1) distribution
         ks_statistic, p_value = stats.kstest(vals, "uniform")
@@ -73,7 +80,7 @@ class TestRandomComparison:
 
     def test_random_chi_square_uniformity(self):
         """Test uniformity using chi-square goodness-of-fit test."""
-        vals = pecos_random.random(10000)
+        vals = pc.random.random(10000)
 
         # Divide [0, 1) into 10 bins
         num_bins = 10
@@ -95,7 +102,7 @@ class TestRandintComparison:
     def test_randint_array_shape(self):
         """Test that output shapes match numpy."""
         for size in [1, 10, 100]:
-            pecos_vals = pecos_random.randint(0, 10, size)
+            pecos_vals = pc.random.randint(0, 10, size)
             numpy_vals = np.random.randint(0, 10, size)
 
             assert pecos_vals.shape == numpy_vals.shape
@@ -103,7 +110,7 @@ class TestRandintComparison:
 
     def test_randint_array_type(self):
         """Test that output type matches numpy."""
-        pecos_vals = pecos_random.randint(0, 10, 100)
+        pecos_vals = pc.random.randint(0, 10, 100)
         numpy_vals = np.random.randint(0, 10, 100)
 
         assert isinstance(pecos_vals, np.ndarray)
@@ -111,7 +118,7 @@ class TestRandintComparison:
 
     def test_randint_scalar_type(self):
         """Test that scalar output is Python int like numpy."""
-        pecos_val = pecos_random.randint(0, 10)
+        pecos_val = pc.random.randint(0, 10)
         numpy_val = np.random.randint(0, 10)
 
         assert isinstance(pecos_val, int)
@@ -119,20 +126,20 @@ class TestRandintComparison:
 
     def test_randint_range(self):
         """Test that values are in correct range [low, high)."""
-        vals = pecos_random.randint(5, 15, 1000)
+        vals = pc.random.randint(5, 15, 1000)
         assert np.all(vals >= 5)
         assert np.all(vals < 15)
 
     def test_randint_negative_range(self):
         """Test that negative ranges work like numpy."""
-        vals = pecos_random.randint(-10, 10, 1000)
+        vals = pc.random.randint(-10, 10, 1000)
         assert np.all(vals >= -10)
         assert np.all(vals < 10)
 
     def test_randint_uniformity(self):
         """Test that randint produces uniform distribution."""
         low, high = 0, 10
-        vals = pecos_random.randint(low, high, 10000)
+        vals = pc.random.randint(low, high, 10000)
 
         # Count occurrences of each value
         unique, counts = np.unique(vals, return_counts=True)
@@ -151,7 +158,7 @@ class TestRandintComparison:
         """Test [0, n) behavior when only one argument provided."""
         # NumPy: np.random.randint(10) gives [0, 10)
         # Our API: randint(10, None) gives [0, 10)
-        vals = pecos_random.randint(10, None, 100)
+        vals = pc.random.randint(10, None, 100)
         assert np.all(vals >= 0)
         assert np.all(vals < 10)
 
@@ -162,7 +169,7 @@ class TestChoiceComparison:
     def test_choice_scalar_type(self):
         """Test that scalar choice returns correct type."""
         items = ["X", "Y", "Z"]
-        sample = pecos_random.choice(items)
+        sample = pc.random.choice(items)
 
         assert isinstance(sample, str)
         assert sample in items
@@ -171,13 +178,13 @@ class TestChoiceComparison:
         """Test that array choice returns correct length."""
         items = [1, 2, 3, 4, 5]
         for size in [1, 5, 10, 100]:
-            samples = pecos_random.choice(items, size)
+            samples = pc.random.choice(items, size)
             assert len(samples) == size
 
     def test_choice_all_valid(self):
         """Test that all samples are from the original array."""
         items = ["A", "B", "C"]
-        samples = pecos_random.choice(items, 1000)
+        samples = pc.random.choice(items, 1000)
 
         for sample in samples:
             assert sample in items
@@ -185,7 +192,7 @@ class TestChoiceComparison:
     def test_choice_with_replacement_allows_duplicates(self):
         """Test that choice with replacement can produce duplicates."""
         items = ["X", "Y", "Z"]
-        samples = pecos_random.choice(items, 100, replace=True)
+        samples = pc.random.choice(items, 100, replace=True)
 
         # With replacement and 100 samples from 3 items, we SHOULD see duplicates
         unique_count = len(set(samples))
@@ -194,7 +201,7 @@ class TestChoiceComparison:
     def test_choice_without_replacement_no_duplicates(self):
         """Test that choice without replacement produces no duplicates."""
         items = [1, 2, 3, 4, 5]
-        samples = pecos_random.choice(items, 5, replace=False)
+        samples = pc.random.choice(items, 5, replace=False)
 
         # Without replacement, all samples should be unique
         assert len(set(samples)) == 5
@@ -205,17 +212,17 @@ class TestChoiceComparison:
         items = [1, 2, 3]
 
         with pytest.raises(ValueError, match="Cannot take larger sample"):
-            pecos_random.choice(items, 5, replace=False)
+            pc.random.choice(items, 5, replace=False)
 
     def test_choice_empty_array_error(self):
         """Test that choice from empty array raises error."""
         with pytest.raises(ValueError, match="Cannot sample from empty"):
-            pecos_random.choice([], 5)
+            pc.random.choice([], 5)
 
     def test_choice_uniformity(self):
         """Test that choice samples uniformly from array."""
         items = [0, 1, 2, 3, 4]
-        samples = pecos_random.choice(items, 10000)
+        samples = pc.random.choice(items, 10000)
 
         # Count occurrences
         unique, counts = np.unique(samples, return_counts=True)
@@ -233,7 +240,7 @@ class TestChoiceComparison:
     def test_choice_with_numpy_array(self):
         """Test that choice works with numpy arrays like numpy.random.choice."""
         items = np.array([10, 20, 30, 40, 50])
-        samples = pecos_random.choice(items, 100)
+        samples = pc.random.choice(items, 100)
 
         for sample in samples:
             assert sample in items
@@ -250,7 +257,7 @@ class TestPerformanceComparison:
         # Time our implementation
         start = time.perf_counter()
         for _ in range(10):
-            pecos_random.random(size)
+            pc.random.random(size)
         pecos_time = time.perf_counter() - start
 
         # Time numpy
@@ -274,7 +281,7 @@ class TestPerformanceComparison:
         # Time our implementation
         start = time.perf_counter()
         for _ in range(10):
-            pecos_random.randint(0, 100, size)
+            pc.random.randint(0, 100, size)
         pecos_time = time.perf_counter() - start
 
         # Time numpy
@@ -298,7 +305,7 @@ class TestPerformanceComparison:
         # Time our implementation
         start = time.perf_counter()
         for _ in range(10):
-            pecos_random.choice(items, size)
+            pc.random.choice(items, size)
         pecos_time = time.perf_counter() - start
 
         # Time numpy

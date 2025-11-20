@@ -23,12 +23,12 @@ import itertools as it
 from itertools import combinations, product
 from typing import TYPE_CHECKING, TypeVar
 
+import pecos as pc
 from pecos.circuits import LogicalCircuit, QuantumCircuit
 from pecos.decoders import MWPM2D
 from pecos.engines.circuit_runners import Standard
 from pecos.error_models.parent_class_error_gen import ErrorCircuits
 from pecos.misc.stabilizer_funcs import circ2set, find_stab, op_commutes, remove_stab
-from pecos.num import floor
 from pecos.simulators import SparseSimPy
 
 if TYPE_CHECKING:
@@ -93,7 +93,7 @@ def t_errors_check(
         logical_gate(QuantumCircuit): The logical gate circuit to test (None for error correction only).
         syn_extract(QuantumCircuit): The syndrome extraction circuit to use.
         decoder: The decoder instance for error correction.
-        t_weight: The maximum weight of errors to check (typically floor((distance-1)/2)).
+        t_weight: The maximum weight of errors to check (typically pc.floor((distance-1)/2)).
         error_set: Custom set of errors to check (if None, all Pauli errors are checked).
         verbose: If True, prints detailed information about failures.
         data_errors: If True, includes errors on data qubits.
@@ -114,7 +114,7 @@ def t_errors_check(
         qudit_set.update(qecc.ancilla_qudit_set)
 
     if t_weight is None:
-        t_weight = floor((qecc.distance - 1) / 2)
+        t_weight = pc.floor((qecc.distance - 1) / 2)
 
     if error_set is None:
         error_set = {"X", "Y", "Z"}
@@ -239,7 +239,7 @@ def fault_check(
         qecc: The quantum error correcting code instance.
         logical_gate(QuantumCircuit): The logical gate circuit to test (None for error correction only).
         decoder: The decoder instance for error correction.
-        t_weight: The maximum weight of errors to check (typically floor((distance-1)/2)).
+        t_weight: The maximum weight of errors to check (typically pc.floor((distance-1)/2)).
         error_set: Custom set of errors to check (if None, all Pauli errors are checked).
         verbose: If True, prints detailed information about failures.
         data_errors: If True, includes errors on data qubits.
@@ -260,7 +260,7 @@ def fault_check(
         qudit_set.update(qecc.ancilla_qudit_set)
 
     if t_weight is None:
-        t_weight = floor((qecc.distance - 1) / 2)
+        t_weight = pc.floor((qecc.distance - 1) / 2)
 
     if error_set is None:
         error_set = {"X", "Y", "Z"}

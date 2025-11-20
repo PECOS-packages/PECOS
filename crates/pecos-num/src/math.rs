@@ -1964,6 +1964,72 @@ pub const LOG2_E: f64 = std::f64::consts::LOG2_E;
 /// log₁₀(e) ≈ 0.43429448190325182765112891891660508
 pub const LOG10_E: f64 = std::f64::consts::LOG10_E;
 
+// ============================================================================
+// f32 Mathematical Constants
+// ============================================================================
+//
+// Single-precision (32-bit) floating point constants from Rust's std library.
+// These provide precise f32 values for users who need single-precision constants.
+//
+// Usage: pc.f32.pi, pc.f32.frac_pi_2, etc.
+
+/// Archimedes' constant (π) - f32 precision
+///
+/// π ≈ 3.14159265 (32-bit precision)
+pub const PI_F32: f32 = std::f32::consts::PI;
+
+/// The full circle constant (τ) - f32 precision
+///
+/// τ = 2π ≈ 6.28318530 (32-bit precision)
+pub const TAU_F32: f32 = std::f32::consts::TAU;
+
+/// Euler's number (e) - f32 precision
+///
+/// e ≈ 2.71828182 (32-bit precision)
+pub const E_F32: f32 = std::f32::consts::E;
+
+/// π/2 ≈ 1.57079632 (32-bit precision)
+pub const FRAC_PI_2_F32: f32 = std::f32::consts::FRAC_PI_2;
+
+/// π/3 ≈ 1.04719755 (32-bit precision)
+pub const FRAC_PI_3_F32: f32 = std::f32::consts::FRAC_PI_3;
+
+/// π/4 ≈ 0.78539816 (32-bit precision)
+pub const FRAC_PI_4_F32: f32 = std::f32::consts::FRAC_PI_4;
+
+/// π/6 ≈ 0.52359877 (32-bit precision)
+pub const FRAC_PI_6_F32: f32 = std::f32::consts::FRAC_PI_6;
+
+/// π/8 ≈ 0.39269908 (32-bit precision)
+pub const FRAC_PI_8_F32: f32 = std::f32::consts::FRAC_PI_8;
+
+/// 1/π ≈ 0.31830988 (32-bit precision)
+pub const FRAC_1_PI_F32: f32 = std::f32::consts::FRAC_1_PI;
+
+/// 2/π ≈ 0.63661977 (32-bit precision)
+pub const FRAC_2_PI_F32: f32 = std::f32::consts::FRAC_2_PI;
+
+/// 2/√π ≈ 1.12837916 (32-bit precision)
+pub const FRAC_2_SQRT_PI_F32: f32 = std::f32::consts::FRAC_2_SQRT_PI;
+
+/// √2 ≈ 1.41421356 (32-bit precision)
+pub const SQRT_2_F32: f32 = std::f32::consts::SQRT_2;
+
+/// 1/√2 ≈ 0.70710678 (32-bit precision)
+pub const FRAC_1_SQRT_2_F32: f32 = std::f32::consts::FRAC_1_SQRT_2;
+
+/// ln(2) ≈ 0.69314718 (32-bit precision)
+pub const LN_2_F32: f32 = std::f32::consts::LN_2;
+
+/// ln(10) ≈ 2.30258509 (32-bit precision)
+pub const LN_10_F32: f32 = std::f32::consts::LN_10;
+
+/// log₂(e) ≈ 1.44269504 (32-bit precision)
+pub const LOG2_E_F32: f32 = std::f32::consts::LOG2_E;
+
+/// log₁₀(e) ≈ 0.43429448 (32-bit precision)
+pub const LOG10_E_F32: f32 = std::f32::consts::LOG10_E;
+
 #[cfg(test)]
 mod tests {
     use super::*;

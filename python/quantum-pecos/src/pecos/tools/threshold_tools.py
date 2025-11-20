@@ -23,15 +23,12 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING
 
-import numpy as np
-
-from pecos import circuits
+import pecos as pc
 from pecos.decoders import MWPM2D
 from pecos.engines import circuit_runners
 from pecos.error_models import XModel
 from pecos.misc.threshold_curve import func as default_func
 from pecos.misc.threshold_curve import threshold_fit as default_fit
-from pecos.num import array, mean
 from pecos.qeccs import Surface4444
 from pecos.simulators import SparseSimPy
 
@@ -39,8 +36,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from typing import TypedDict
 
-    from numpy.typing import NDArray
-
+    from pecos import Array, f64
     from pecos.circuits import LogicalCircuit, QuantumCircuit
     from pecos.engines.circuit_runners import Standard
     from pecos.protocols import Decoder, ErrorGenerator, QECCProtocol, SimulatorProtocol
@@ -48,42 +44,42 @@ if TYPE_CHECKING:
 
     ThresholdFitFunc = Callable[
         [
-            tuple[NDArray[np.float64], NDArray[np.float64]],  # x = (p, dist)
+            tuple[Array[f64], Array[f64]],  # x = (p, dist)
             float,  # pth
             float,  # v0
             float,  # a
             float,  # b
             float,  # c
         ],
-        float | NDArray[np.float64],
+        float | Array[f64],
     ]
 
     ThresholdFitter = Callable[
         [
-            NDArray[np.float64] | list[float],  # plist
-            NDArray[np.float64] | list[float],  # dlist
-            NDArray[np.float64] | list[float],  # plog
+            Array[f64] | list[float],  # plist
+            Array[f64] | list[float],  # dlist
+            Array[f64] | list[float],  # plog
             ThresholdFitFunc,  # func
-            NDArray[np.float64] | list[float],  # p0
+            Array[f64] | list[float],  # p0
         ],
-        tuple[NDArray[np.float64], NDArray[np.float64]],
+        tuple[Array[f64], Array[f64]],
     ]
 
     class ThresholdResult(TypedDict):
         """Result from threshold calculations."""
 
         distances: Sequence[int]
-        ps_physical: NDArray[np.float64]
-        p_logical: NDArray[np.float64]
+        ps_physical: Array[f64]
+        p_logical: Array[f64]
 
     class ThresholdCalcResult(TypedDict):
         """Result from threshold calculations with fitting."""
 
-        plist: NDArray[np.float64]
-        dlist: NDArray[np.float64]
-        plog: NDArray[np.float64]
-        opt: NDArray[np.float64]
-        std: NDArray[np.float64]
+        plist: Array[f64]
+        dlist: Array[f64]
+        plog: Array[f64]
+        opt: Array[f64]
+        std: Array[f64]
 
 
 def threshold_code_capacity(
@@ -156,14 +152,14 @@ def threshold_code_capacity(
         msg = f'Mode "{mode}" is not handled!'
         raise Exception(msg)
 
-    plist = array(ps * len(ds))
+    plist = pc.array(ps * len(ds))
 
     """
     dlist = []
     for d in ds:
         for p in ps:
             dlist.append(d)
-    dlist = array(dlist)
+    dlist = pc.array(dlist)
     """
 
     plog = []
@@ -191,7 +187,7 @@ def threshold_code_capacity(
 
             plog.append(logical_error_rate)
 
-    plog = array(plog)
+    plog = pc.array(plog)
 
     return {"distances": ds, "ps_physical": plist, "p_logical": plog}
 
@@ -260,10 +256,10 @@ def threshold_code_capacity_calc(
         msg = f'Mode "{mode}" is not handled!'
         raise Exception(msg)
 
-    plist = array(ps * len(ds))
+    plist = pc.array(ps * len(ds))
 
     dlist = [d for d in ds for _p in ps]
-    dlist = array(dlist)
+    dlist = pc.array(dlist)
 
     plog = []
     for d in ds:
@@ -289,7 +285,7 @@ def threshold_code_capacity_calc(
 
             plog.append(logical_error_rate)
 
-    plog = array(plog)
+    plog = pc.array(plog)
 
     results = threshold_fit(plist, dlist, plog, func, p0)
 
@@ -345,7 +341,7 @@ def codecapacity_logical_rate(
         circuit_runner = circuit_runners.TimingRunner(seed=seed)
 
     # Syndrome extraction
-    syn_extract = circuits.LogicalCircuit(suppress_warning=True)
+    syn_extract = pc.circuits.LogicalCircuit(suppress_warning=True)
     syn_extract.append(qecc.gate("I", num_syn_extract=1))
 
     # Choosing basis
@@ -358,7 +354,7 @@ def codecapacity_logical_rate(
         raise Exception(msg)
 
     # init circuit
-    initzero = circuits.LogicalCircuit(suppress_warning=True)
+    initzero = pc.circuits.LogicalCircuit(suppress_warning=True)
     instr_symbol = f"ideal init {basis}"
     gate = qecc.gate(instr_symbol)
     initzero.append(gate)
@@ -460,15 +456,15 @@ def codecapacity_logical_rate2(
         circuit_runner = circuit_runners.TimingRunner(seed=seed)
 
     # Syndrome extraction
-    syn_extract = circuits.LogicalCircuit(suppress_warning=True)
+    syn_extract = pc.circuits.LogicalCircuit(suppress_warning=True)
     syn_extract.append(qecc.gate("I", num_syn_extract=1))
 
     # init logical |0> circuit
-    initzero = circuits.LogicalCircuit(suppress_warning=True)
+    initzero = pc.circuits.LogicalCircuit(suppress_warning=True)
     initzero.append(qecc.gate("ideal init |0>"))
 
     # init logical |+> circuit
-    initplus = circuits.LogicalCircuit(suppress_warning=True)
+    initplus = pc.circuits.LogicalCircuit(suppress_warning=True)
     initplus.append(qecc.gate("ideal init |+>"))
 
     logical_ops_zero = qecc.instruction("instr_init_zero").logical_stabs[0]["Z"]
@@ -589,7 +585,7 @@ def codecapacity_logical_rate3(
 
     if init_circuit is None:
         # init circuit
-        init_circuit = circuits.LogicalCircuit(suppress_warning=True)
+        init_circuit = pc.circuits.LogicalCircuit(suppress_warning=True)
 
         # Choosing basis
         if basis is None or basis == "zero":
@@ -624,7 +620,7 @@ def codecapacity_logical_rate3(
         logical_ops = init_logical_ops
 
     # Syndrome extraction
-    syn_extract = circuits.LogicalCircuit(suppress_warning=True)
+    syn_extract = pc.circuits.LogicalCircuit(suppress_warning=True)
     syn_extract.append(qecc.gate("I", num_syn_extract=1))
 
     run_durations = []
@@ -674,8 +670,8 @@ def codecapacity_logical_rate3(
     if verbose:
         print(f"\nTotal number of runs: {sum(run_durations)}")
 
-    run_durations = array(run_durations)
-    duration_mean = mean(run_durations)
+    run_durations = pc.array(run_durations)
+    duration_mean = pc.mean(run_durations)
 
     logical_rate = 1.0 / duration_mean
 

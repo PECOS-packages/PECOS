@@ -46,12 +46,16 @@ use crate::pauli_bindings::{Pauli, PauliString};
 #[derive(Clone)]
 pub enum ArrayData {
     Bool(ArrayD<bool>),
-    Int8(ArrayD<i8>),
-    Int16(ArrayD<i16>),
-    Int32(ArrayD<i32>),
-    Int64(ArrayD<i64>),
-    Float32(ArrayD<f32>),
-    Float64(ArrayD<f64>),
+    I8(ArrayD<i8>),
+    I16(ArrayD<i16>),
+    I32(ArrayD<i32>),
+    I64(ArrayD<i64>),
+    U8(ArrayD<u8>),
+    U16(ArrayD<u16>),
+    U32(ArrayD<u32>),
+    U64(ArrayD<u64>),
+    F32(ArrayD<f32>),
+    F64(ArrayD<f64>),
     Complex64(ArrayD<num_complex::Complex<f32>>),
     Complex128(ArrayD<num_complex::Complex<f64>>),
     Pauli(ArrayD<Pauli>),
@@ -70,12 +74,16 @@ impl ArrayData {
     fn dtype(&self) -> DType {
         match self {
             ArrayData::Bool(_) => DType::Bool,
-            ArrayData::Int8(_) => DType::I8,
-            ArrayData::Int16(_) => DType::I16,
-            ArrayData::Int32(_) => DType::I32,
-            ArrayData::Int64(_) => DType::I64,
-            ArrayData::Float32(_) => DType::F32,
-            ArrayData::Float64(_) => DType::F64,
+            ArrayData::I8(_) => DType::I8,
+            ArrayData::I16(_) => DType::I16,
+            ArrayData::I32(_) => DType::I32,
+            ArrayData::I64(_) => DType::I64,
+            ArrayData::U8(_) => DType::U8,
+            ArrayData::U16(_) => DType::U16,
+            ArrayData::U32(_) => DType::U32,
+            ArrayData::U64(_) => DType::U64,
+            ArrayData::F32(_) => DType::F32,
+            ArrayData::F64(_) => DType::F64,
             ArrayData::Complex64(_) => DType::Complex64,
             ArrayData::Complex128(_) => DType::Complex128,
             ArrayData::Pauli(_) => DType::Pauli,
@@ -87,12 +95,16 @@ impl ArrayData {
     fn shape(&self) -> &[usize] {
         match self {
             ArrayData::Bool(arr) => arr.shape(),
-            ArrayData::Int8(arr) => arr.shape(),
-            ArrayData::Int16(arr) => arr.shape(),
-            ArrayData::Int32(arr) => arr.shape(),
-            ArrayData::Int64(arr) => arr.shape(),
-            ArrayData::Float32(arr) => arr.shape(),
-            ArrayData::Float64(arr) => arr.shape(),
+            ArrayData::I8(arr) => arr.shape(),
+            ArrayData::I16(arr) => arr.shape(),
+            ArrayData::I32(arr) => arr.shape(),
+            ArrayData::I64(arr) => arr.shape(),
+            ArrayData::U8(arr) => arr.shape(),
+            ArrayData::U16(arr) => arr.shape(),
+            ArrayData::U32(arr) => arr.shape(),
+            ArrayData::U64(arr) => arr.shape(),
+            ArrayData::F32(arr) => arr.shape(),
+            ArrayData::F64(arr) => arr.shape(),
             ArrayData::Complex64(arr) => arr.shape(),
             ArrayData::Complex128(arr) => arr.shape(),
             ArrayData::Pauli(arr) => arr.shape(),
@@ -124,12 +136,16 @@ pub struct Array {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ElemType {
     Bool,
-    Int8,
-    Int16,
-    Int32,
-    Int64,
-    Float32,
-    Float64,
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+    F32,
+    F64,
     Complex64,
     Complex128,
     Pauli,
@@ -197,23 +213,35 @@ impl Array {
             ArrayData::Bool(arr) => Self {
                 data: ArrayData::Bool(arr.clone()),
             },
-            ArrayData::Int8(arr) => Self {
-                data: ArrayData::Int8(arr.clone()),
+            ArrayData::I8(arr) => Self {
+                data: ArrayData::I8(arr.clone()),
             },
-            ArrayData::Int16(arr) => Self {
-                data: ArrayData::Int16(arr.clone()),
+            ArrayData::I16(arr) => Self {
+                data: ArrayData::I16(arr.clone()),
             },
-            ArrayData::Int32(arr) => Self {
-                data: ArrayData::Int32(arr.clone()),
+            ArrayData::I32(arr) => Self {
+                data: ArrayData::I32(arr.clone()),
             },
-            ArrayData::Int64(arr) => Self {
-                data: ArrayData::Int64(arr.clone()),
+            ArrayData::I64(arr) => Self {
+                data: ArrayData::I64(arr.clone()),
             },
-            ArrayData::Float32(arr) => Self {
-                data: ArrayData::Float32(arr.clone()),
+            ArrayData::U8(arr) => Self {
+                data: ArrayData::U8(arr.clone()),
             },
-            ArrayData::Float64(arr) => Self {
-                data: ArrayData::Float64(arr.clone()),
+            ArrayData::U16(arr) => Self {
+                data: ArrayData::U16(arr.clone()),
+            },
+            ArrayData::U32(arr) => Self {
+                data: ArrayData::U32(arr.clone()),
+            },
+            ArrayData::U64(arr) => Self {
+                data: ArrayData::U64(arr.clone()),
+            },
+            ArrayData::F32(arr) => Self {
+                data: ArrayData::F32(arr.clone()),
+            },
+            ArrayData::F64(arr) => Self {
+                data: ArrayData::F64(arr.clone()),
             },
             ArrayData::Complex64(arr) => Self {
                 data: ArrayData::Complex64(arr.clone()),
@@ -263,12 +291,16 @@ impl Array {
     ) -> bool {
         match &self.data {
             ArrayData::Bool(arr) => arr.iter().all(|&x| x),
-            ArrayData::Int8(arr) => arr.iter().all(|&x| x != 0),
-            ArrayData::Int16(arr) => arr.iter().all(|&x| x != 0),
-            ArrayData::Int32(arr) => arr.iter().all(|&x| x != 0),
-            ArrayData::Int64(arr) => arr.iter().all(|&x| x != 0),
-            ArrayData::Float32(arr) => arr.iter().all(|&x| x != 0.0),
-            ArrayData::Float64(arr) => arr.iter().all(|&x| x != 0.0),
+            ArrayData::I8(arr) => arr.iter().all(|&x| x != 0),
+            ArrayData::I16(arr) => arr.iter().all(|&x| x != 0),
+            ArrayData::I32(arr) => arr.iter().all(|&x| x != 0),
+            ArrayData::I64(arr) => arr.iter().all(|&x| x != 0),
+            ArrayData::U8(arr) => arr.iter().all(|&x| x != 0),
+            ArrayData::U16(arr) => arr.iter().all(|&x| x != 0),
+            ArrayData::U32(arr) => arr.iter().all(|&x| x != 0),
+            ArrayData::U64(arr) => arr.iter().all(|&x| x != 0),
+            ArrayData::F32(arr) => arr.iter().all(|&x| x != 0.0),
+            ArrayData::F64(arr) => arr.iter().all(|&x| x != 0.0),
             ArrayData::Complex64(arr) => arr.iter().all(|&x| x.re != 0.0 || x.im != 0.0),
             ArrayData::Complex128(arr) => arr.iter().all(|&x| x.re != 0.0 || x.im != 0.0),
             ArrayData::Pauli(_) | ArrayData::PauliString(_) => {
@@ -297,22 +329,34 @@ impl Array {
                     data: ArrayData::Bool(arr.clone()),
                 },
                 DType::I8 => Self {
-                    data: ArrayData::Int8(arr.mapv(i8::from)),
+                    data: ArrayData::I8(arr.mapv(i8::from)),
                 },
                 DType::I16 => Self {
-                    data: ArrayData::Int16(arr.mapv(i16::from)),
+                    data: ArrayData::I16(arr.mapv(i16::from)),
                 },
                 DType::I32 => Self {
-                    data: ArrayData::Int32(arr.mapv(i32::from)),
+                    data: ArrayData::I32(arr.mapv(i32::from)),
                 },
                 DType::I64 => Self {
-                    data: ArrayData::Int64(arr.mapv(i64::from)),
+                    data: ArrayData::I64(arr.mapv(i64::from)),
+                },
+                DType::U8 => Self {
+                    data: ArrayData::U8(arr.mapv(u8::from)),
+                },
+                DType::U16 => Self {
+                    data: ArrayData::U16(arr.mapv(u16::from)),
+                },
+                DType::U32 => Self {
+                    data: ArrayData::U32(arr.mapv(u32::from)),
+                },
+                DType::U64 => Self {
+                    data: ArrayData::U64(arr.mapv(u64::from)),
                 },
                 DType::F32 => Self {
-                    data: ArrayData::Float32(arr.mapv(|x| if x { 1.0f32 } else { 0.0f32 })),
+                    data: ArrayData::F32(arr.mapv(|x| if x { 1.0f32 } else { 0.0f32 })),
                 },
                 DType::F64 => Self {
-                    data: ArrayData::Float64(arr.mapv(|x| if x { 1.0f64 } else { 0.0f64 })),
+                    data: ArrayData::F64(arr.mapv(|x| if x { 1.0f64 } else { 0.0f64 })),
                 },
                 DType::Complex64 => Self {
                     data: ArrayData::Complex64(
@@ -327,27 +371,39 @@ impl Array {
                 DType::Pauli => panic!("Cannot convert to Pauli type"),
                 DType::PauliString => panic!("Cannot convert to PauliString type"),
             },
-            ArrayData::Int8(arr) => match target_dtype {
+            ArrayData::I8(arr) => match target_dtype {
                 DType::Bool => Self {
                     data: ArrayData::Bool(arr.mapv(|x| x != 0)),
                 },
                 DType::I8 => Self {
-                    data: ArrayData::Int8(arr.clone()),
+                    data: ArrayData::I8(arr.clone()),
                 },
                 DType::I16 => Self {
-                    data: ArrayData::Int16(arr.mapv(i16::from)),
+                    data: ArrayData::I16(arr.mapv(i16::from)),
                 },
                 DType::I32 => Self {
-                    data: ArrayData::Int32(arr.mapv(i32::from)),
+                    data: ArrayData::I32(arr.mapv(i32::from)),
                 },
                 DType::I64 => Self {
-                    data: ArrayData::Int64(arr.mapv(i64::from)),
+                    data: ArrayData::I64(arr.mapv(i64::from)),
+                },
+                DType::U8 => Self {
+                    data: ArrayData::U8(arr.mapv(|x| x as u8)),
+                },
+                DType::U16 => Self {
+                    data: ArrayData::U16(arr.mapv(|x| x as u16)),
+                },
+                DType::U32 => Self {
+                    data: ArrayData::U32(arr.mapv(|x| x as u32)),
+                },
+                DType::U64 => Self {
+                    data: ArrayData::U64(arr.mapv(|x| x as u64)),
                 },
                 DType::F32 => Self {
-                    data: ArrayData::Float32(arr.mapv(f32::from)),
+                    data: ArrayData::F32(arr.mapv(f32::from)),
                 },
                 DType::F64 => Self {
-                    data: ArrayData::Float64(arr.mapv(f64::from)),
+                    data: ArrayData::F64(arr.mapv(f64::from)),
                 },
                 DType::Complex64 => Self {
                     data: ArrayData::Complex64(arr.mapv(|x| Complex::new(f32::from(x), 0.0f32))),
@@ -358,27 +414,39 @@ impl Array {
                 DType::Pauli => panic!("Cannot convert to Pauli type"),
                 DType::PauliString => panic!("Cannot convert to PauliString type"),
             },
-            ArrayData::Int16(arr) => match target_dtype {
+            ArrayData::I16(arr) => match target_dtype {
                 DType::Bool => Self {
                     data: ArrayData::Bool(arr.mapv(|x| x != 0)),
                 },
                 DType::I8 => Self {
-                    data: ArrayData::Int8(arr.mapv(|x| x as i8)),
+                    data: ArrayData::I8(arr.mapv(|x| x as i8)),
                 },
                 DType::I16 => Self {
-                    data: ArrayData::Int16(arr.clone()),
+                    data: ArrayData::I16(arr.clone()),
                 },
                 DType::I32 => Self {
-                    data: ArrayData::Int32(arr.mapv(i32::from)),
+                    data: ArrayData::I32(arr.mapv(i32::from)),
                 },
                 DType::I64 => Self {
-                    data: ArrayData::Int64(arr.mapv(i64::from)),
+                    data: ArrayData::I64(arr.mapv(i64::from)),
+                },
+                DType::U8 => Self {
+                    data: ArrayData::U8(arr.mapv(|x| x as u8)),
+                },
+                DType::U16 => Self {
+                    data: ArrayData::U16(arr.mapv(|x| x as u16)),
+                },
+                DType::U32 => Self {
+                    data: ArrayData::U32(arr.mapv(|x| x as u32)),
+                },
+                DType::U64 => Self {
+                    data: ArrayData::U64(arr.mapv(|x| x as u64)),
                 },
                 DType::F32 => Self {
-                    data: ArrayData::Float32(arr.mapv(f32::from)),
+                    data: ArrayData::F32(arr.mapv(f32::from)),
                 },
                 DType::F64 => Self {
-                    data: ArrayData::Float64(arr.mapv(f64::from)),
+                    data: ArrayData::F64(arr.mapv(f64::from)),
                 },
                 DType::Complex64 => Self {
                     data: ArrayData::Complex64(arr.mapv(|x| Complex::new(f32::from(x), 0.0f32))),
@@ -389,27 +457,39 @@ impl Array {
                 DType::Pauli => panic!("Cannot convert to Pauli type"),
                 DType::PauliString => panic!("Cannot convert to PauliString type"),
             },
-            ArrayData::Int32(arr) => match target_dtype {
+            ArrayData::I32(arr) => match target_dtype {
                 DType::Bool => Self {
                     data: ArrayData::Bool(arr.mapv(|x| x != 0)),
                 },
                 DType::I8 => Self {
-                    data: ArrayData::Int8(arr.mapv(|x| x as i8)),
+                    data: ArrayData::I8(arr.mapv(|x| x as i8)),
                 },
                 DType::I16 => Self {
-                    data: ArrayData::Int16(arr.mapv(|x| x as i16)),
+                    data: ArrayData::I16(arr.mapv(|x| x as i16)),
                 },
                 DType::I32 => Self {
-                    data: ArrayData::Int32(arr.clone()),
+                    data: ArrayData::I32(arr.clone()),
                 },
                 DType::I64 => Self {
-                    data: ArrayData::Int64(arr.mapv(i64::from)),
+                    data: ArrayData::I64(arr.mapv(i64::from)),
+                },
+                DType::U8 => Self {
+                    data: ArrayData::U8(arr.mapv(|x| x as u8)),
+                },
+                DType::U16 => Self {
+                    data: ArrayData::U16(arr.mapv(|x| x as u16)),
+                },
+                DType::U32 => Self {
+                    data: ArrayData::U32(arr.mapv(|x| x as u32)),
+                },
+                DType::U64 => Self {
+                    data: ArrayData::U64(arr.mapv(|x| x as u64)),
                 },
                 DType::F32 => Self {
-                    data: ArrayData::Float32(arr.mapv(|x| x as f32)),
+                    data: ArrayData::F32(arr.mapv(|x| x as f32)),
                 },
                 DType::F64 => Self {
-                    data: ArrayData::Float64(arr.mapv(f64::from)),
+                    data: ArrayData::F64(arr.mapv(f64::from)),
                 },
                 DType::Complex64 => Self {
                     data: ArrayData::Complex64(arr.mapv(|x| Complex::new(x as f32, 0.0f32))),
@@ -420,27 +500,39 @@ impl Array {
                 DType::Pauli => panic!("Cannot convert to Pauli type"),
                 DType::PauliString => panic!("Cannot convert to PauliString type"),
             },
-            ArrayData::Int64(arr) => match target_dtype {
+            ArrayData::I64(arr) => match target_dtype {
                 DType::Bool => Self {
                     data: ArrayData::Bool(arr.mapv(|x| x != 0)),
                 },
                 DType::I8 => Self {
-                    data: ArrayData::Int8(arr.mapv(|x| x as i8)),
+                    data: ArrayData::I8(arr.mapv(|x| x as i8)),
                 },
                 DType::I16 => Self {
-                    data: ArrayData::Int16(arr.mapv(|x| x as i16)),
+                    data: ArrayData::I16(arr.mapv(|x| x as i16)),
                 },
                 DType::I32 => Self {
-                    data: ArrayData::Int32(arr.mapv(|x| x as i32)),
+                    data: ArrayData::I32(arr.mapv(|x| x as i32)),
                 },
                 DType::I64 => Self {
-                    data: ArrayData::Int64(arr.clone()),
+                    data: ArrayData::I64(arr.clone()),
+                },
+                DType::U8 => Self {
+                    data: ArrayData::U8(arr.mapv(|x| x as u8)),
+                },
+                DType::U16 => Self {
+                    data: ArrayData::U16(arr.mapv(|x| x as u16)),
+                },
+                DType::U32 => Self {
+                    data: ArrayData::U32(arr.mapv(|x| x as u32)),
+                },
+                DType::U64 => Self {
+                    data: ArrayData::U64(arr.mapv(|x| x as u64)),
                 },
                 DType::F32 => Self {
-                    data: ArrayData::Float32(arr.mapv(|x| x as f32)),
+                    data: ArrayData::F32(arr.mapv(|x| x as f32)),
                 },
                 DType::F64 => Self {
-                    data: ArrayData::Float64(arr.mapv(|x| x as f64)),
+                    data: ArrayData::F64(arr.mapv(|x| x as f64)),
                 },
                 DType::Complex64 => Self {
                     data: ArrayData::Complex64(arr.mapv(|x| Complex::new(x as f32, 0.0f32))),
@@ -451,27 +543,211 @@ impl Array {
                 DType::Pauli => panic!("Cannot convert to Pauli type"),
                 DType::PauliString => panic!("Cannot convert to PauliString type"),
             },
-            ArrayData::Float32(arr) => match target_dtype {
+            ArrayData::U8(arr) => match target_dtype {
+                DType::Bool => Self {
+                    data: ArrayData::Bool(arr.mapv(|x| x != 0)),
+                },
+                DType::I8 => Self {
+                    data: ArrayData::I8(arr.mapv(|x| x as i8)),
+                },
+                DType::I16 => Self {
+                    data: ArrayData::I16(arr.mapv(i16::from)),
+                },
+                DType::I32 => Self {
+                    data: ArrayData::I32(arr.mapv(i32::from)),
+                },
+                DType::I64 => Self {
+                    data: ArrayData::I64(arr.mapv(i64::from)),
+                },
+                DType::U8 => Self {
+                    data: ArrayData::U8(arr.clone()),
+                },
+                DType::U16 => Self {
+                    data: ArrayData::U16(arr.mapv(u16::from)),
+                },
+                DType::U32 => Self {
+                    data: ArrayData::U32(arr.mapv(u32::from)),
+                },
+                DType::U64 => Self {
+                    data: ArrayData::U64(arr.mapv(u64::from)),
+                },
+                DType::F32 => Self {
+                    data: ArrayData::F32(arr.mapv(f32::from)),
+                },
+                DType::F64 => Self {
+                    data: ArrayData::F64(arr.mapv(f64::from)),
+                },
+                DType::Complex64 => Self {
+                    data: ArrayData::Complex64(arr.mapv(|x| Complex::new(f32::from(x), 0.0f32))),
+                },
+                DType::Complex128 => Self {
+                    data: ArrayData::Complex128(arr.mapv(|x| Complex::new(f64::from(x), 0.0f64))),
+                },
+                DType::Pauli => panic!("Cannot convert to Pauli type"),
+                DType::PauliString => panic!("Cannot convert to PauliString type"),
+            },
+            ArrayData::U16(arr) => match target_dtype {
+                DType::Bool => Self {
+                    data: ArrayData::Bool(arr.mapv(|x| x != 0)),
+                },
+                DType::I8 => Self {
+                    data: ArrayData::I8(arr.mapv(|x| x as i8)),
+                },
+                DType::I16 => Self {
+                    data: ArrayData::I16(arr.mapv(|x| x as i16)),
+                },
+                DType::I32 => Self {
+                    data: ArrayData::I32(arr.mapv(i32::from)),
+                },
+                DType::I64 => Self {
+                    data: ArrayData::I64(arr.mapv(i64::from)),
+                },
+                DType::U8 => Self {
+                    data: ArrayData::U8(arr.mapv(|x| x as u8)),
+                },
+                DType::U16 => Self {
+                    data: ArrayData::U16(arr.clone()),
+                },
+                DType::U32 => Self {
+                    data: ArrayData::U32(arr.mapv(u32::from)),
+                },
+                DType::U64 => Self {
+                    data: ArrayData::U64(arr.mapv(u64::from)),
+                },
+                DType::F32 => Self {
+                    data: ArrayData::F32(arr.mapv(f32::from)),
+                },
+                DType::F64 => Self {
+                    data: ArrayData::F64(arr.mapv(f64::from)),
+                },
+                DType::Complex64 => Self {
+                    data: ArrayData::Complex64(arr.mapv(|x| Complex::new(f32::from(x), 0.0f32))),
+                },
+                DType::Complex128 => Self {
+                    data: ArrayData::Complex128(arr.mapv(|x| Complex::new(f64::from(x), 0.0f64))),
+                },
+                DType::Pauli => panic!("Cannot convert to Pauli type"),
+                DType::PauliString => panic!("Cannot convert to PauliString type"),
+            },
+            ArrayData::U32(arr) => match target_dtype {
+                DType::Bool => Self {
+                    data: ArrayData::Bool(arr.mapv(|x| x != 0)),
+                },
+                DType::I8 => Self {
+                    data: ArrayData::I8(arr.mapv(|x| x as i8)),
+                },
+                DType::I16 => Self {
+                    data: ArrayData::I16(arr.mapv(|x| x as i16)),
+                },
+                DType::I32 => Self {
+                    data: ArrayData::I32(arr.mapv(|x| x as i32)),
+                },
+                DType::I64 => Self {
+                    data: ArrayData::I64(arr.mapv(i64::from)),
+                },
+                DType::U8 => Self {
+                    data: ArrayData::U8(arr.mapv(|x| x as u8)),
+                },
+                DType::U16 => Self {
+                    data: ArrayData::U16(arr.mapv(|x| x as u16)),
+                },
+                DType::U32 => Self {
+                    data: ArrayData::U32(arr.clone()),
+                },
+                DType::U64 => Self {
+                    data: ArrayData::U64(arr.mapv(u64::from)),
+                },
+                DType::F32 => Self {
+                    data: ArrayData::F32(arr.mapv(|x| x as f32)),
+                },
+                DType::F64 => Self {
+                    data: ArrayData::F64(arr.mapv(f64::from)),
+                },
+                DType::Complex64 => Self {
+                    data: ArrayData::Complex64(arr.mapv(|x| Complex::new(x as f32, 0.0f32))),
+                },
+                DType::Complex128 => Self {
+                    data: ArrayData::Complex128(arr.mapv(|x| Complex::new(f64::from(x), 0.0f64))),
+                },
+                DType::Pauli => panic!("Cannot convert to Pauli type"),
+                DType::PauliString => panic!("Cannot convert to PauliString type"),
+            },
+            ArrayData::U64(arr) => match target_dtype {
+                DType::Bool => Self {
+                    data: ArrayData::Bool(arr.mapv(|x| x != 0)),
+                },
+                DType::I8 => Self {
+                    data: ArrayData::I8(arr.mapv(|x| x as i8)),
+                },
+                DType::I16 => Self {
+                    data: ArrayData::I16(arr.mapv(|x| x as i16)),
+                },
+                DType::I32 => Self {
+                    data: ArrayData::I32(arr.mapv(|x| x as i32)),
+                },
+                DType::I64 => Self {
+                    data: ArrayData::I64(arr.mapv(|x| x as i64)),
+                },
+                DType::U8 => Self {
+                    data: ArrayData::U8(arr.mapv(|x| x as u8)),
+                },
+                DType::U16 => Self {
+                    data: ArrayData::U16(arr.mapv(|x| x as u16)),
+                },
+                DType::U32 => Self {
+                    data: ArrayData::U32(arr.mapv(|x| x as u32)),
+                },
+                DType::U64 => Self {
+                    data: ArrayData::U64(arr.clone()),
+                },
+                DType::F32 => Self {
+                    data: ArrayData::F32(arr.mapv(|x| x as f32)),
+                },
+                DType::F64 => Self {
+                    data: ArrayData::F64(arr.mapv(|x| x as f64)),
+                },
+                DType::Complex64 => Self {
+                    data: ArrayData::Complex64(arr.mapv(|x| Complex::new(x as f32, 0.0f32))),
+                },
+                DType::Complex128 => Self {
+                    data: ArrayData::Complex128(arr.mapv(|x| Complex::new(x as f64, 0.0f64))),
+                },
+                DType::Pauli => panic!("Cannot convert to Pauli type"),
+                DType::PauliString => panic!("Cannot convert to PauliString type"),
+            },
+            ArrayData::F32(arr) => match target_dtype {
                 DType::Bool => Self {
                     data: ArrayData::Bool(arr.mapv(|x| x != 0.0)),
                 },
                 DType::I8 => Self {
-                    data: ArrayData::Int8(arr.mapv(|x| x as i8)),
+                    data: ArrayData::I8(arr.mapv(|x| x as i8)),
                 },
                 DType::I16 => Self {
-                    data: ArrayData::Int16(arr.mapv(|x| x as i16)),
+                    data: ArrayData::I16(arr.mapv(|x| x as i16)),
                 },
                 DType::I32 => Self {
-                    data: ArrayData::Int32(arr.mapv(|x| x as i32)),
+                    data: ArrayData::I32(arr.mapv(|x| x as i32)),
                 },
                 DType::I64 => Self {
-                    data: ArrayData::Int64(arr.mapv(|x| x as i64)),
+                    data: ArrayData::I64(arr.mapv(|x| x as i64)),
+                },
+                DType::U8 => Self {
+                    data: ArrayData::U8(arr.mapv(|x| x as u8)),
+                },
+                DType::U16 => Self {
+                    data: ArrayData::U16(arr.mapv(|x| x as u16)),
+                },
+                DType::U32 => Self {
+                    data: ArrayData::U32(arr.mapv(|x| x as u32)),
+                },
+                DType::U64 => Self {
+                    data: ArrayData::U64(arr.mapv(|x| x as u64)),
                 },
                 DType::F32 => Self {
-                    data: ArrayData::Float32(arr.clone()),
+                    data: ArrayData::F32(arr.clone()),
                 },
                 DType::F64 => Self {
-                    data: ArrayData::Float64(arr.mapv(f64::from)),
+                    data: ArrayData::F64(arr.mapv(f64::from)),
                 },
                 DType::Complex64 => Self {
                     data: ArrayData::Complex64(arr.mapv(|x| Complex::new(x, 0.0f32))),
@@ -482,27 +758,39 @@ impl Array {
                 DType::Pauli => panic!("Cannot convert to Pauli type"),
                 DType::PauliString => panic!("Cannot convert to PauliString type"),
             },
-            ArrayData::Float64(arr) => match target_dtype {
+            ArrayData::F64(arr) => match target_dtype {
                 DType::Bool => Self {
                     data: ArrayData::Bool(arr.mapv(|x| x != 0.0)),
                 },
                 DType::I8 => Self {
-                    data: ArrayData::Int8(arr.mapv(|x| x as i8)),
+                    data: ArrayData::I8(arr.mapv(|x| x as i8)),
                 },
                 DType::I16 => Self {
-                    data: ArrayData::Int16(arr.mapv(|x| x as i16)),
+                    data: ArrayData::I16(arr.mapv(|x| x as i16)),
                 },
                 DType::I32 => Self {
-                    data: ArrayData::Int32(arr.mapv(|x| x as i32)),
+                    data: ArrayData::I32(arr.mapv(|x| x as i32)),
                 },
                 DType::I64 => Self {
-                    data: ArrayData::Int64(arr.mapv(|x| x as i64)),
+                    data: ArrayData::I64(arr.mapv(|x| x as i64)),
+                },
+                DType::U8 => Self {
+                    data: ArrayData::U8(arr.mapv(|x| x as u8)),
+                },
+                DType::U16 => Self {
+                    data: ArrayData::U16(arr.mapv(|x| x as u16)),
+                },
+                DType::U32 => Self {
+                    data: ArrayData::U32(arr.mapv(|x| x as u32)),
+                },
+                DType::U64 => Self {
+                    data: ArrayData::U64(arr.mapv(|x| x as u64)),
                 },
                 DType::F32 => Self {
-                    data: ArrayData::Float32(arr.mapv(|x| x as f32)),
+                    data: ArrayData::F32(arr.mapv(|x| x as f32)),
                 },
                 DType::F64 => Self {
-                    data: ArrayData::Float64(arr.clone()),
+                    data: ArrayData::F64(arr.clone()),
                 },
                 DType::Complex64 => Self {
                     data: ArrayData::Complex64(arr.mapv(|x| Complex::new(x as f32, 0.0f32))),
@@ -518,22 +806,34 @@ impl Array {
                     data: ArrayData::Bool(arr.mapv(|x| x.re != 0.0)),
                 },
                 DType::I8 => Self {
-                    data: ArrayData::Int8(arr.mapv(|x| x.re as i8)),
+                    data: ArrayData::I8(arr.mapv(|x| x.re as i8)),
                 },
                 DType::I16 => Self {
-                    data: ArrayData::Int16(arr.mapv(|x| x.re as i16)),
+                    data: ArrayData::I16(arr.mapv(|x| x.re as i16)),
                 },
                 DType::I32 => Self {
-                    data: ArrayData::Int32(arr.mapv(|x| x.re as i32)),
+                    data: ArrayData::I32(arr.mapv(|x| x.re as i32)),
                 },
                 DType::I64 => Self {
-                    data: ArrayData::Int64(arr.mapv(|x| x.re as i64)),
+                    data: ArrayData::I64(arr.mapv(|x| x.re as i64)),
+                },
+                DType::U8 => Self {
+                    data: ArrayData::U8(arr.mapv(|x| x.re as u8)),
+                },
+                DType::U16 => Self {
+                    data: ArrayData::U16(arr.mapv(|x| x.re as u16)),
+                },
+                DType::U32 => Self {
+                    data: ArrayData::U32(arr.mapv(|x| x.re as u32)),
+                },
+                DType::U64 => Self {
+                    data: ArrayData::U64(arr.mapv(|x| x.re as u64)),
                 },
                 DType::F32 => Self {
-                    data: ArrayData::Float32(arr.mapv(|x| x.re)),
+                    data: ArrayData::F32(arr.mapv(|x| x.re)),
                 },
                 DType::F64 => Self {
-                    data: ArrayData::Float64(arr.mapv(|x| f64::from(x.re))),
+                    data: ArrayData::F64(arr.mapv(|x| f64::from(x.re))),
                 },
                 DType::Complex64 => Self {
                     data: ArrayData::Complex64(arr.clone()),
@@ -551,22 +851,34 @@ impl Array {
                     data: ArrayData::Bool(arr.mapv(|x| x.re != 0.0)),
                 },
                 DType::I8 => Self {
-                    data: ArrayData::Int8(arr.mapv(|x| x.re as i8)),
+                    data: ArrayData::I8(arr.mapv(|x| x.re as i8)),
                 },
                 DType::I16 => Self {
-                    data: ArrayData::Int16(arr.mapv(|x| x.re as i16)),
+                    data: ArrayData::I16(arr.mapv(|x| x.re as i16)),
                 },
                 DType::I32 => Self {
-                    data: ArrayData::Int32(arr.mapv(|x| x.re as i32)),
+                    data: ArrayData::I32(arr.mapv(|x| x.re as i32)),
                 },
                 DType::I64 => Self {
-                    data: ArrayData::Int64(arr.mapv(|x| x.re as i64)),
+                    data: ArrayData::I64(arr.mapv(|x| x.re as i64)),
+                },
+                DType::U8 => Self {
+                    data: ArrayData::U8(arr.mapv(|x| x.re as u8)),
+                },
+                DType::U16 => Self {
+                    data: ArrayData::U16(arr.mapv(|x| x.re as u16)),
+                },
+                DType::U32 => Self {
+                    data: ArrayData::U32(arr.mapv(|x| x.re as u32)),
+                },
+                DType::U64 => Self {
+                    data: ArrayData::U64(arr.mapv(|x| x.re as u64)),
                 },
                 DType::F32 => Self {
-                    data: ArrayData::Float32(arr.mapv(|x| x.re as f32)),
+                    data: ArrayData::F32(arr.mapv(|x| x.re as f32)),
                 },
                 DType::F64 => Self {
-                    data: ArrayData::Float64(arr.mapv(|x| x.re)),
+                    data: ArrayData::F64(arr.mapv(|x| x.re)),
                 },
                 DType::Complex64 => Self {
                     data: ArrayData::Complex64(
@@ -647,12 +959,16 @@ impl Array {
         // NumPy will handle dtype conversion if needed when called from np.asarray()
         match &self.data {
             ArrayData::Bool(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::Int8(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::Int16(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::Int32(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::Int64(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::Float32(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::Float64(arr) => Ok(arr.to_pyarray(py).unbind().into()),
+            ArrayData::I8(arr) => Ok(arr.to_pyarray(py).unbind().into()),
+            ArrayData::I16(arr) => Ok(arr.to_pyarray(py).unbind().into()),
+            ArrayData::I32(arr) => Ok(arr.to_pyarray(py).unbind().into()),
+            ArrayData::I64(arr) => Ok(arr.to_pyarray(py).unbind().into()),
+            ArrayData::U8(arr) => Ok(arr.to_pyarray(py).unbind().into()),
+            ArrayData::U16(arr) => Ok(arr.to_pyarray(py).unbind().into()),
+            ArrayData::U32(arr) => Ok(arr.to_pyarray(py).unbind().into()),
+            ArrayData::U64(arr) => Ok(arr.to_pyarray(py).unbind().into()),
+            ArrayData::F32(arr) => Ok(arr.to_pyarray(py).unbind().into()),
+            ArrayData::F64(arr) => Ok(arr.to_pyarray(py).unbind().into()),
             ArrayData::Complex64(arr) => Ok(arr.to_pyarray(py).unbind().into()),
             ArrayData::Complex128(arr) => Ok(arr.to_pyarray(py).unbind().into()),
             ArrayData::Pauli(arr) => {
@@ -763,27 +1079,43 @@ impl Array {
                     let val: bool = value.extract()?;
                     arr[idx_usize] = val;
                 }
-                ArrayData::Int8(arr) => {
+                ArrayData::I8(arr) => {
                     let val: i8 = value.extract()?;
                     arr[idx_usize] = val;
                 }
-                ArrayData::Int16(arr) => {
+                ArrayData::I16(arr) => {
                     let val: i16 = value.extract()?;
                     arr[idx_usize] = val;
                 }
-                ArrayData::Int32(arr) => {
+                ArrayData::I32(arr) => {
                     let val: i32 = value.extract()?;
                     arr[idx_usize] = val;
                 }
-                ArrayData::Int64(arr) => {
+                ArrayData::I64(arr) => {
                     let val: i64 = value.extract()?;
                     arr[idx_usize] = val;
                 }
-                ArrayData::Float32(arr) => {
+                ArrayData::U8(arr) => {
+                    let val: u8 = value.extract()?;
+                    arr[idx_usize] = val;
+                }
+                ArrayData::U16(arr) => {
+                    let val: u16 = value.extract()?;
+                    arr[idx_usize] = val;
+                }
+                ArrayData::U32(arr) => {
+                    let val: u32 = value.extract()?;
+                    arr[idx_usize] = val;
+                }
+                ArrayData::U64(arr) => {
+                    let val: u64 = value.extract()?;
+                    arr[idx_usize] = val;
+                }
+                ArrayData::F32(arr) => {
                     let val: f32 = value.extract()?;
                     arr[idx_usize] = val;
                 }
-                ArrayData::Float64(arr) => {
+                ArrayData::F64(arr) => {
                     let val: f64 = value.extract()?;
                     arr[idx_usize] = val;
                 }
@@ -1002,6 +1334,146 @@ impl Array {
         self.binary_op_reverse(other, py, f64::powf, "power")
     }
 
+    /// Absolute value: abs(self)
+    fn __abs__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        use num_complex::ComplexFloat;
+
+        match &self.data {
+            ArrayData::Bool(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+                "abs() operation not supported on boolean arrays",
+            )),
+            ArrayData::F64(arr) => {
+                let result = arr.abs();
+                Ok(Py::new(
+                    py,
+                    Array {
+                        data: ArrayData::F64(result),
+                    },
+                )?
+                .into_any())
+            }
+            ArrayData::F32(arr) => {
+                // Convert to f64 for consistency
+                let result = arr.mapv(|v| f64::from(v.abs()));
+                Ok(Py::new(
+                    py,
+                    Array {
+                        data: ArrayData::F64(result),
+                    },
+                )?
+                .into_any())
+            }
+            ArrayData::I8(arr) => {
+                let result = arr.mapv(|v| f64::from(v.abs()));
+                Ok(Py::new(
+                    py,
+                    Array {
+                        data: ArrayData::F64(result),
+                    },
+                )?
+                .into_any())
+            }
+            ArrayData::I16(arr) => {
+                let result = arr.mapv(|v| f64::from(v.abs()));
+                Ok(Py::new(
+                    py,
+                    Array {
+                        data: ArrayData::F64(result),
+                    },
+                )?
+                .into_any())
+            }
+            ArrayData::I32(arr) => {
+                let result = arr.mapv(|v| f64::from(v.abs()));
+                Ok(Py::new(
+                    py,
+                    Array {
+                        data: ArrayData::F64(result),
+                    },
+                )?
+                .into_any())
+            }
+            ArrayData::I64(arr) => {
+                #[allow(clippy::cast_precision_loss)]
+                let result = arr.mapv(|v| v.abs() as f64);
+                Ok(Py::new(
+                    py,
+                    Array {
+                        data: ArrayData::F64(result),
+                    },
+                )?
+                .into_any())
+            }
+            ArrayData::U8(arr) => {
+                let result = arr.mapv(f64::from);
+                Ok(Py::new(
+                    py,
+                    Array {
+                        data: ArrayData::F64(result),
+                    },
+                )?
+                .into_any())
+            }
+            ArrayData::U16(arr) => {
+                let result = arr.mapv(f64::from);
+                Ok(Py::new(
+                    py,
+                    Array {
+                        data: ArrayData::F64(result),
+                    },
+                )?
+                .into_any())
+            }
+            ArrayData::U32(arr) => {
+                let result = arr.mapv(f64::from);
+                Ok(Py::new(
+                    py,
+                    Array {
+                        data: ArrayData::F64(result),
+                    },
+                )?
+                .into_any())
+            }
+            ArrayData::U64(arr) => {
+                #[allow(clippy::cast_precision_loss)]
+                let result = arr.mapv(|v| v as f64);
+                Ok(Py::new(
+                    py,
+                    Array {
+                        data: ArrayData::F64(result),
+                    },
+                )?
+                .into_any())
+            }
+            ArrayData::Complex64(arr) => {
+                let result = arr.mapv(|v| f64::from(v.abs()));
+                Ok(Py::new(
+                    py,
+                    Array {
+                        data: ArrayData::F64(result),
+                    },
+                )?
+                .into_any())
+            }
+            ArrayData::Complex128(arr) => {
+                let result = arr.mapv(num_complex::ComplexFloat::abs);
+                Ok(Py::new(
+                    py,
+                    Array {
+                        data: ArrayData::F64(result),
+                    },
+                )?
+                .into_any())
+            }
+            ArrayData::Pauli(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+                "abs() operation not supported on Pauli arrays",
+            )),
+            ArrayData::PauliString(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+                "abs() operation not supported on PauliString arrays",
+            )),
+        }
+    }
+
     /// Greater than: self > other
     fn __gt__(&self, other: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.comparison_op(
@@ -1096,38 +1568,72 @@ impl Array {
         ))
     }
 
-    /// Parse dtype from Python (string or `DType` object) to `ElemType`
+    /// Parse dtype from Python (string, `DType` object, or scalar class) to `ElemType`
     fn parse_dtype(dtype: &Bound<'_, PyAny>) -> PyResult<ElemType> {
         use crate::dtypes::DType;
 
         // Try to extract as string first
         if let Ok(s) = dtype.extract::<String>() {
             let dtype_obj = DType::from_str(&s)?;
-            return Self::dtype_to_elemtype(&dtype_obj);
+            return Self::dtype_to_elemtype(dtype_obj);
         }
 
         // Try to extract as DType object
         if let Ok(dtype_obj) = dtype.extract::<DType>() {
-            return Self::dtype_to_elemtype(&dtype_obj);
+            return Self::dtype_to_elemtype(dtype_obj);
+        }
+
+        // Try to match scalar class types (NumPy compatibility)
+        // Check if it's a Python type/class by checking for __name__ attribute
+        if let Ok(type_obj) = dtype.cast::<pyo3::types::PyType>()
+            && let Ok(name) = type_obj.name()
+        {
+            let name_str = name.to_string();
+            // Match on the scalar class names
+            let dtype_obj = match name_str.as_str() {
+                "i8" | "int8" => DType::I8,
+                "i16" | "int16" => DType::I16,
+                "i32" | "int32" => DType::I32,
+                "i64" | "int64" | "int" => DType::I64, // Python's int -> i64
+                "u8" | "uint8" => DType::U8,
+                "u16" | "uint16" => DType::U16,
+                "u32" | "uint32" => DType::U32,
+                "u64" | "uint64" => DType::U64,
+                "f32" | "float32" => DType::F32,
+                "f64" | "float64" | "float" => DType::F64, // Python's float -> f64
+                "complex64" => DType::Complex64,
+                "complex128" | "complex" => DType::Complex128, // Python's complex -> complex128
+                "bool" => DType::Bool,
+                _ => {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        "Unknown scalar type: {name_str}"
+                    )));
+                }
+            };
+            return Self::dtype_to_elemtype(dtype_obj);
         }
 
         Err(pyo3::exceptions::PyTypeError::new_err(
-            "dtype must be a string or DType object",
+            "dtype must be a string, DType object, or scalar class (e.g., i64, f64)",
         ))
     }
 
     /// Convert `DType` to `ElemType`
-    fn dtype_to_elemtype(dtype: &DType) -> PyResult<ElemType> {
+    fn dtype_to_elemtype(dtype: DType) -> PyResult<ElemType> {
         use crate::dtypes::DType;
 
         match dtype {
             DType::Bool => Ok(ElemType::Bool),
-            DType::I8 => Ok(ElemType::Int8),
-            DType::I16 => Ok(ElemType::Int16),
-            DType::I32 => Ok(ElemType::Int32),
-            DType::I64 => Ok(ElemType::Int64),
-            DType::F32 => Ok(ElemType::Float32),
-            DType::F64 => Ok(ElemType::Float64),
+            DType::I8 => Ok(ElemType::I8),
+            DType::I16 => Ok(ElemType::I16),
+            DType::I32 => Ok(ElemType::I32),
+            DType::I64 => Ok(ElemType::I64),
+            DType::U8 => Ok(ElemType::U8),
+            DType::U16 => Ok(ElemType::U16),
+            DType::U32 => Ok(ElemType::U32),
+            DType::U64 => Ok(ElemType::U64),
+            DType::F32 => Ok(ElemType::F32),
+            DType::F64 => Ok(ElemType::F64),
             DType::Complex64 => Ok(ElemType::Complex64),
             DType::Complex128 => Ok(ElemType::Complex128),
             DType::Pauli => Ok(ElemType::Pauli),
@@ -1141,12 +1647,16 @@ impl Array {
 
         match elemtype {
             ElemType::Bool => Ok(DType::Bool),
-            ElemType::Int8 => Ok(DType::I8),
-            ElemType::Int16 => Ok(DType::I16),
-            ElemType::Int32 => Ok(DType::I32),
-            ElemType::Int64 => Ok(DType::I64),
-            ElemType::Float32 => Ok(DType::F32),
-            ElemType::Float64 => Ok(DType::F64),
+            ElemType::I8 => Ok(DType::I8),
+            ElemType::I16 => Ok(DType::I16),
+            ElemType::I32 => Ok(DType::I32),
+            ElemType::I64 => Ok(DType::I64),
+            ElemType::U8 => Ok(DType::U8),
+            ElemType::U16 => Ok(DType::U16),
+            ElemType::U32 => Ok(DType::U32),
+            ElemType::U64 => Ok(DType::U64),
+            ElemType::F32 => Ok(DType::F32),
+            ElemType::F64 => Ok(DType::F64),
             ElemType::Complex64 => Ok(DType::Complex64),
             ElemType::Complex128 => Ok(DType::Complex128),
             ElemType::Pauli => Ok(DType::Pauli),
@@ -1159,8 +1669,6 @@ impl Array {
         data: &Bound<'_, PyAny>,
         dtype: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-
-
         // Determine shape and element type
         let shape = Self::infer_shape(data)?;
         let ndim = shape.len();
@@ -1176,7 +1684,7 @@ impl Array {
             Self::parse_dtype(dt)?
         } else {
             // Use Int64 as default for auto-detection, will promote to float/complex if needed
-            ElemType::Int64
+            ElemType::I64
         };
 
         // Flatten and collect all elements
@@ -1209,60 +1717,100 @@ impl Array {
                     data: ArrayData::Bool(arr),
                 })
             }
-            ElemType::Int8 => {
+            ElemType::I8 => {
                 // Convert i64 to i8
                 let flat_i8: Vec<i8> = flat_i64.iter().map(|&x| x as i8).collect();
                 let arr = ArrayD::from_shape_vec(shape, flat_i8).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
                 Ok(Self {
-                    data: ArrayData::Int8(arr),
+                    data: ArrayData::I8(arr),
                 })
             }
-            ElemType::Int16 => {
+            ElemType::I16 => {
                 // Convert i64 to i16
                 let flat_i16: Vec<i16> = flat_i64.iter().map(|&x| x as i16).collect();
                 let arr = ArrayD::from_shape_vec(shape, flat_i16).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
                 Ok(Self {
-                    data: ArrayData::Int16(arr),
+                    data: ArrayData::I16(arr),
                 })
             }
-            ElemType::Int32 => {
+            ElemType::I32 => {
                 // Convert i64 to i32
                 let flat_i32: Vec<i32> = flat_i64.iter().map(|&x| x as i32).collect();
                 let arr = ArrayD::from_shape_vec(shape, flat_i32).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
                 Ok(Self {
-                    data: ArrayData::Int32(arr),
+                    data: ArrayData::I32(arr),
                 })
             }
-            ElemType::Int64 => {
+            ElemType::I64 => {
                 let arr = ArrayD::from_shape_vec(shape, flat_i64).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
                 Ok(Self {
-                    data: ArrayData::Int64(arr),
+                    data: ArrayData::I64(arr),
                 })
             }
-            ElemType::Float32 => {
+            ElemType::U8 => {
+                // Convert i64 to u8
+                let flat_u8: Vec<u8> = flat_i64.iter().map(|&x| x as u8).collect();
+                let arr = ArrayD::from_shape_vec(shape, flat_u8).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                })?;
+                Ok(Self {
+                    data: ArrayData::U8(arr),
+                })
+            }
+            ElemType::U16 => {
+                // Convert i64 to u16
+                let flat_u16: Vec<u16> = flat_i64.iter().map(|&x| x as u16).collect();
+                let arr = ArrayD::from_shape_vec(shape, flat_u16).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                })?;
+                Ok(Self {
+                    data: ArrayData::U16(arr),
+                })
+            }
+            ElemType::U32 => {
+                // Convert i64 to u32
+                let flat_u32: Vec<u32> = flat_i64.iter().map(|&x| x as u32).collect();
+                let arr = ArrayD::from_shape_vec(shape, flat_u32).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                })?;
+                Ok(Self {
+                    data: ArrayData::U32(arr),
+                })
+            }
+            ElemType::U64 => {
+                // Convert i64 to u64
+                let flat_u64: Vec<u64> = flat_i64.iter().map(|&x| x as u64).collect();
+                let arr = ArrayD::from_shape_vec(shape, flat_u64).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
+                })?;
+                Ok(Self {
+                    data: ArrayData::U64(arr),
+                })
+            }
+            ElemType::F32 => {
                 // Convert f64 to f32
                 let flat_f32: Vec<f32> = flat_f64.iter().map(|&x| x as f32).collect();
                 let arr = ArrayD::from_shape_vec(shape, flat_f32).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
                 Ok(Self {
-                    data: ArrayData::Float32(arr),
+                    data: ArrayData::F32(arr),
                 })
             }
-            ElemType::Float64 => {
+            ElemType::F64 => {
                 let arr = ArrayD::from_shape_vec(shape, flat_f64).map_err(|e| {
                     pyo3::exceptions::PyValueError::new_err(format!("Shape error: {e}"))
                 })?;
                 Ok(Self {
-                    data: ArrayData::Float64(arr),
+                    data: ArrayData::F64(arr),
                 })
             }
             ElemType::Complex64 => {
@@ -1379,45 +1927,68 @@ impl Array {
                         *elem_type = ElemType::Bool;
                     }
                 }
-                ArrayData::Int8(ndarray) => {
+                ArrayData::I8(ndarray) => {
                     for val in ndarray {
                         flat_i64.push(i64::from(*val));
                     }
                 }
-                ArrayData::Int16(ndarray) => {
+                ArrayData::I16(ndarray) => {
                     for val in ndarray {
                         flat_i64.push(i64::from(*val));
                     }
                 }
-                ArrayData::Int32(ndarray) => {
+                ArrayData::I32(ndarray) => {
                     for val in ndarray {
                         flat_i64.push(i64::from(*val));
                     }
                 }
-                ArrayData::Int64(ndarray) => {
+                ArrayData::I64(ndarray) => {
                     for val in ndarray {
                         flat_i64.push(*val);
                     }
                 }
-                ArrayData::Float32(ndarray) => {
+                ArrayData::U8(ndarray) => {
+                    for val in ndarray {
+                        flat_i64.push(i64::from(*val));
+                    }
+                }
+                ArrayData::U16(ndarray) => {
+                    for val in ndarray {
+                        flat_i64.push(i64::from(*val));
+                    }
+                }
+                ArrayData::U32(ndarray) => {
+                    for val in ndarray {
+                        flat_i64.push(i64::from(*val));
+                    }
+                }
+                ArrayData::U64(ndarray) => {
+                    for val in ndarray {
+                        flat_i64.push(*val as i64);
+                    }
+                }
+                ArrayData::F32(ndarray) => {
                     for val in ndarray {
                         flat_f64.push(f64::from(*val));
                     }
                     if !explicit_dtype {
-                        *elem_type = ElemType::Float64;
+                        *elem_type = ElemType::F64;
                     }
                 }
-                ArrayData::Float64(ndarray) => {
+                ArrayData::F64(ndarray) => {
                     for val in ndarray {
                         flat_f64.push(*val);
                     }
                     if !explicit_dtype {
-                        *elem_type = ElemType::Float64;
+                        *elem_type = ElemType::F64;
                     }
                 }
                 ArrayData::Complex64(ndarray) => {
                     for val in ndarray {
-                        flat_complex.push(num_complex::Complex::new(f64::from(val.re), f64::from(val.im)));
+                        flat_complex.push(num_complex::Complex::new(
+                            f64::from(val.re),
+                            f64::from(val.im),
+                        ));
                     }
                     if !explicit_dtype {
                         *elem_type = ElemType::Complex128;
@@ -1519,11 +2090,18 @@ impl Array {
                     flat_bool.push(val != 0.0);
                 }
             }
-            ElemType::Int8 | ElemType::Int16 | ElemType::Int32 | ElemType::Int64 => {
+            ElemType::I8
+            | ElemType::I16
+            | ElemType::I32
+            | ElemType::I64
+            | ElemType::U8
+            | ElemType::U16
+            | ElemType::U32
+            | ElemType::U64 => {
                 let val = data.extract::<i64>()?;
                 flat_i64.push(val);
             }
-            ElemType::Float32 | ElemType::Float64 => {
+            ElemType::F32 | ElemType::F64 => {
                 let val = data.extract::<f64>()?;
                 flat_f64.push(val);
             }
@@ -1580,10 +2158,7 @@ impl Array {
             flat_bool.push(val);
         } else if data.is_instance_of::<pyo3::types::PyComplex>() {
             // Found complex - promote if needed
-            if matches!(
-                *elem_type,
-                ElemType::Float64 | ElemType::Int64 | ElemType::Bool
-            ) {
+            if matches!(*elem_type, ElemType::F64 | ElemType::I64 | ElemType::Bool) {
                 Self::promote_type_to_complex(
                     elem_type,
                     flat_complex,
@@ -1606,7 +2181,7 @@ impl Array {
                     ElemType::Complex128 | ElemType::Complex64 => {
                         flat_complex.push(num_complex::Complex::new(ival as f64, 0.0));
                     }
-                    ElemType::Float64 | ElemType::Float32 => {
+                    ElemType::F64 | ElemType::F32 => {
                         flat_f64.push(ival as f64);
                     }
                     ElemType::Bool => {
@@ -1614,7 +2189,7 @@ impl Array {
                     }
                     _ => {
                         // First value or already in int mode
-                        *elem_type = ElemType::Int64;
+                        *elem_type = ElemType::I64;
                         flat_i64.push(ival);
                     }
                 }
@@ -1623,13 +2198,13 @@ impl Array {
 
             // Try as float
             if let Ok(val) = data.extract::<f64>() {
-                if matches!(*elem_type, ElemType::Int64) {
+                if matches!(*elem_type, ElemType::I64) {
                     Self::promote_type_to_float(elem_type, flat_f64, flat_i64)?;
                 }
                 if *elem_type == ElemType::Complex128 {
                     flat_complex.push(num_complex::Complex::new(val, 0.0));
                 } else {
-                    *elem_type = ElemType::Float64;
+                    *elem_type = ElemType::F64;
                     flat_f64.push(val);
                 }
                 return Ok(());
@@ -1652,13 +2227,13 @@ impl Array {
         flat_f64: &mut Vec<f64>,
     ) -> PyResult<()> {
         match elem_type {
-            ElemType::Int64 => {
+            ElemType::I64 => {
                 for &i in flat_i64.iter() {
                     flat_bool.push(i != 0);
                 }
                 flat_i64.clear();
             }
-            ElemType::Float64 => {
+            ElemType::F64 => {
                 for &f in flat_f64.iter() {
                     flat_bool.push(f != 0.0);
                 }
@@ -1680,7 +2255,7 @@ impl Array {
             flat_f64.push(i as f64);
         }
         flat_i64.clear();
-        *elem_type = ElemType::Float64;
+        *elem_type = ElemType::F64;
         Ok(())
     }
 
@@ -1693,13 +2268,13 @@ impl Array {
         flat_bool: &mut Vec<bool>,
     ) -> PyResult<()> {
         match elem_type {
-            ElemType::Float64 => {
+            ElemType::F64 => {
                 for &f in flat_f64.iter() {
                     flat_complex.push(num_complex::Complex::new(f, 0.0));
                 }
                 flat_f64.clear();
             }
-            ElemType::Int64 => {
+            ElemType::I64 => {
                 for &i in flat_i64.iter() {
                     flat_complex.push(num_complex::Complex::new(i as f64, 0.0));
                 }
@@ -1726,14 +2301,14 @@ impl Array {
         if let Ok(arr) = array.cast::<PyArrayDyn<f64>>() {
             let ndarray = arr.to_owned_array();
             return Ok(Self {
-                data: ArrayData::Float64(ndarray),
+                data: ArrayData::F64(ndarray),
             });
         }
 
         if let Ok(arr) = array.cast::<PyArrayDyn<i64>>() {
             let ndarray = arr.to_owned_array();
             return Ok(Self {
-                data: ArrayData::Int64(ndarray),
+                data: ArrayData::I64(ndarray),
             });
         }
 
@@ -1747,28 +2322,28 @@ impl Array {
         if let Ok(arr) = array.cast::<PyArrayDyn<f32>>() {
             let ndarray = arr.to_owned_array();
             return Ok(Self {
-                data: ArrayData::Float32(ndarray),
+                data: ArrayData::F32(ndarray),
             });
         }
 
         if let Ok(arr) = array.cast::<PyArrayDyn<i32>>() {
             let ndarray = arr.to_owned_array();
             return Ok(Self {
-                data: ArrayData::Int32(ndarray),
+                data: ArrayData::I32(ndarray),
             });
         }
 
         if let Ok(arr) = array.cast::<PyArrayDyn<i16>>() {
             let ndarray = arr.to_owned_array();
             return Ok(Self {
-                data: ArrayData::Int16(ndarray),
+                data: ArrayData::I16(ndarray),
             });
         }
 
         if let Ok(arr) = array.cast::<PyArrayDyn<i8>>() {
             let ndarray = arr.to_owned_array();
             return Ok(Self {
-                data: ArrayData::Int8(ndarray),
+                data: ArrayData::I8(ndarray),
             });
         }
 
@@ -1794,13 +2369,13 @@ impl Array {
     /// Create a new `Array` from a typed ndarray
     pub fn from_array_i64(arr: ArrayD<i64>) -> Self {
         Self {
-            data: ArrayData::Int64(arr),
+            data: ArrayData::I64(arr),
         }
     }
 
     pub fn from_array_f64(arr: ArrayD<f64>) -> Self {
         Self {
-            data: ArrayData::Float64(arr),
+            data: ArrayData::F64(arr),
         }
     }
 
@@ -1810,27 +2385,51 @@ impl Array {
         }
     }
 
+    pub fn from_array_u64(arr: ArrayD<u64>) -> Self {
+        Self {
+            data: ArrayData::U64(arr),
+        }
+    }
+
+    pub fn from_array_u32(arr: ArrayD<u32>) -> Self {
+        Self {
+            data: ArrayData::U32(arr),
+        }
+    }
+
+    pub fn from_array_u16(arr: ArrayD<u16>) -> Self {
+        Self {
+            data: ArrayData::U16(arr),
+        }
+    }
+
+    pub fn from_array_u8(arr: ArrayD<u8>) -> Self {
+        Self {
+            data: ArrayData::U8(arr),
+        }
+    }
+
     pub fn from_array_f32(arr: ArrayD<f32>) -> Self {
         Self {
-            data: ArrayData::Float32(arr),
+            data: ArrayData::F32(arr),
         }
     }
 
     pub fn from_array_i32(arr: ArrayD<i32>) -> Self {
         Self {
-            data: ArrayData::Int32(arr),
+            data: ArrayData::I32(arr),
         }
     }
 
     pub fn from_array_i16(arr: ArrayD<i16>) -> Self {
         Self {
-            data: ArrayData::Int16(arr),
+            data: ArrayData::I16(arr),
         }
     }
 
     pub fn from_array_i8(arr: ArrayD<i8>) -> Self {
         Self {
-            data: ArrayData::Int8(arr),
+            data: ArrayData::I8(arr),
         }
     }
 
@@ -1903,62 +2502,102 @@ impl Array {
                 ArrayData::Bool(_) => Err(pyo3::exceptions::PyTypeError::new_err(
                     "Arithmetic operations not supported on boolean arrays",
                 )),
-                ArrayData::Int8(arr) => {
+                ArrayData::I8(arr) => {
                     let result = arr.mapv(|x| op(f64::from(x), scalar) as i8);
                     Ok(Py::new(
                         py,
                         Array {
-                            data: ArrayData::Int8(result),
+                            data: ArrayData::I8(result),
                         },
                     )?
                     .into_any())
                 }
-                ArrayData::Int16(arr) => {
+                ArrayData::I16(arr) => {
                     let result = arr.mapv(|x| op(f64::from(x), scalar) as i16);
                     Ok(Py::new(
                         py,
                         Array {
-                            data: ArrayData::Int16(result),
+                            data: ArrayData::I16(result),
                         },
                     )?
                     .into_any())
                 }
-                ArrayData::Int32(arr) => {
+                ArrayData::I32(arr) => {
                     let result = arr.mapv(|x| op(f64::from(x), scalar) as i32);
                     Ok(Py::new(
                         py,
                         Array {
-                            data: ArrayData::Int32(result),
+                            data: ArrayData::I32(result),
                         },
                     )?
                     .into_any())
                 }
-                ArrayData::Int64(arr) => {
+                ArrayData::I64(arr) => {
                     let result = arr.mapv(|x| op(x as f64, scalar) as i64);
                     Ok(Py::new(
                         py,
                         Array {
-                            data: ArrayData::Int64(result),
+                            data: ArrayData::I64(result),
                         },
                     )?
                     .into_any())
                 }
-                ArrayData::Float32(arr) => {
+                ArrayData::U8(arr) => {
+                    let result = arr.mapv(|x| op(f64::from(x), scalar) as u8);
+                    Ok(Py::new(
+                        py,
+                        Array {
+                            data: ArrayData::U8(result),
+                        },
+                    )?
+                    .into_any())
+                }
+                ArrayData::U16(arr) => {
+                    let result = arr.mapv(|x| op(f64::from(x), scalar) as u16);
+                    Ok(Py::new(
+                        py,
+                        Array {
+                            data: ArrayData::U16(result),
+                        },
+                    )?
+                    .into_any())
+                }
+                ArrayData::U32(arr) => {
+                    let result = arr.mapv(|x| op(f64::from(x), scalar) as u32);
+                    Ok(Py::new(
+                        py,
+                        Array {
+                            data: ArrayData::U32(result),
+                        },
+                    )?
+                    .into_any())
+                }
+                ArrayData::U64(arr) => {
+                    let result = arr.mapv(|x| op(x as f64, scalar) as u64);
+                    Ok(Py::new(
+                        py,
+                        Array {
+                            data: ArrayData::U64(result),
+                        },
+                    )?
+                    .into_any())
+                }
+                ArrayData::F32(arr) => {
                     let result = arr.mapv(|x| op(f64::from(x), scalar) as f32);
                     Ok(Py::new(
                         py,
                         Array {
-                            data: ArrayData::Float32(result),
+                            data: ArrayData::F32(result),
                         },
                     )?
                     .into_any())
                 }
-                ArrayData::Float64(arr) => {
+                ArrayData::F64(arr) => {
                     let result = arr.mapv(|x| op(x, scalar));
                     Ok(Py::new(
                         py,
                         Array {
-                            data: ArrayData::Float64(result),
+                            data: ArrayData::F64(result),
                         },
                     )?
                     .into_any())
@@ -2107,7 +2746,7 @@ impl Array {
             let other_data = &other_array.borrow().data;
 
             match (&self.data, other_data) {
-                (ArrayData::Float64(a), ArrayData::Float64(b)) => {
+                (ArrayData::F64(a), ArrayData::F64(b)) => {
                     // Compute broadcast shape
                     let broadcast_shape = Self::broadcast_shape(a.shape(), b.shape())
                         .map_err(pyo3::exceptions::PyValueError::new_err)?;
@@ -2145,12 +2784,12 @@ impl Array {
                     Ok(Py::new(
                         py,
                         Array {
-                            data: ArrayData::Float64(result_arr),
+                            data: ArrayData::F64(result_arr),
                         },
                     )?
                     .into_any())
                 }
-                (ArrayData::Int64(a), ArrayData::Int64(b)) => {
+                (ArrayData::I64(a), ArrayData::I64(b)) => {
                     // Compute broadcast shape
                     let broadcast_shape = Self::broadcast_shape(a.shape(), b.shape())
                         .map_err(pyo3::exceptions::PyValueError::new_err)?;
@@ -2188,7 +2827,7 @@ impl Array {
                     Ok(Py::new(
                         py,
                         Array {
-                            data: ArrayData::Int64(result_arr),
+                            data: ArrayData::I64(result_arr),
                         },
                     )?
                     .into_any())
@@ -2249,7 +2888,7 @@ impl Array {
             let other_arr = np_arr.to_owned_array();
 
             match &self.data {
-                ArrayData::Float64(a) => {
+                ArrayData::F64(a) => {
                     // Compute broadcast shape
                     let broadcast_shape = Self::broadcast_shape(a.shape(), other_arr.shape())
                         .map_err(pyo3::exceptions::PyValueError::new_err)?;
@@ -2288,7 +2927,7 @@ impl Array {
                     Ok(Py::new(
                         py,
                         Array {
-                            data: ArrayData::Float64(result_arr),
+                            data: ArrayData::F64(result_arr),
                         },
                     )?
                     .into_any())
@@ -2323,62 +2962,102 @@ impl Array {
                 ArrayData::Bool(_) => Err(pyo3::exceptions::PyTypeError::new_err(
                     "Arithmetic operations not supported on boolean arrays",
                 )),
-                ArrayData::Int8(arr) => {
+                ArrayData::I8(arr) => {
                     let result = arr.mapv(|x| op(scalar, f64::from(x)) as i8);
                     Ok(Py::new(
                         py,
                         Array {
-                            data: ArrayData::Int8(result),
+                            data: ArrayData::I8(result),
                         },
                     )?
                     .into_any())
                 }
-                ArrayData::Int16(arr) => {
+                ArrayData::I16(arr) => {
                     let result = arr.mapv(|x| op(scalar, f64::from(x)) as i16);
                     Ok(Py::new(
                         py,
                         Array {
-                            data: ArrayData::Int16(result),
+                            data: ArrayData::I16(result),
                         },
                     )?
                     .into_any())
                 }
-                ArrayData::Int32(arr) => {
+                ArrayData::I32(arr) => {
                     let result = arr.mapv(|x| op(scalar, f64::from(x)) as i32);
                     Ok(Py::new(
                         py,
                         Array {
-                            data: ArrayData::Int32(result),
+                            data: ArrayData::I32(result),
                         },
                     )?
                     .into_any())
                 }
-                ArrayData::Int64(arr) => {
+                ArrayData::I64(arr) => {
                     let result = arr.mapv(|x| op(scalar, x as f64) as i64);
                     Ok(Py::new(
                         py,
                         Array {
-                            data: ArrayData::Int64(result),
+                            data: ArrayData::I64(result),
                         },
                     )?
                     .into_any())
                 }
-                ArrayData::Float32(arr) => {
+                ArrayData::U8(arr) => {
+                    let result = arr.mapv(|x| op(scalar, f64::from(x)) as u8);
+                    Ok(Py::new(
+                        py,
+                        Array {
+                            data: ArrayData::U8(result),
+                        },
+                    )?
+                    .into_any())
+                }
+                ArrayData::U16(arr) => {
+                    let result = arr.mapv(|x| op(scalar, f64::from(x)) as u16);
+                    Ok(Py::new(
+                        py,
+                        Array {
+                            data: ArrayData::U16(result),
+                        },
+                    )?
+                    .into_any())
+                }
+                ArrayData::U32(arr) => {
+                    let result = arr.mapv(|x| op(scalar, f64::from(x)) as u32);
+                    Ok(Py::new(
+                        py,
+                        Array {
+                            data: ArrayData::U32(result),
+                        },
+                    )?
+                    .into_any())
+                }
+                ArrayData::U64(arr) => {
+                    let result = arr.mapv(|x| op(scalar, x as f64) as u64);
+                    Ok(Py::new(
+                        py,
+                        Array {
+                            data: ArrayData::U64(result),
+                        },
+                    )?
+                    .into_any())
+                }
+                ArrayData::F32(arr) => {
                     let result = arr.mapv(|x| op(scalar, f64::from(x)) as f32);
                     Ok(Py::new(
                         py,
                         Array {
-                            data: ArrayData::Float32(result),
+                            data: ArrayData::F32(result),
                         },
                     )?
                     .into_any())
                 }
-                ArrayData::Float64(arr) => {
+                ArrayData::F64(arr) => {
                     let result = arr.mapv(|x| op(scalar, x));
                     Ok(Py::new(
                         py,
                         Array {
-                            data: ArrayData::Float64(result),
+                            data: ArrayData::F64(result),
                         },
                     )?
                     .into_any())
@@ -2445,27 +3124,43 @@ impl Array {
                 ArrayData::Bool(_) => Err(pyo3::exceptions::PyTypeError::new_err(
                     "Comparison operations with numeric scalars not supported on boolean arrays",
                 )),
-                ArrayData::Int8(arr) => {
+                ArrayData::I8(arr) => {
                     let result = arr.mapv(|x| op(f64::from(x), scalar));
                     Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
                 }
-                ArrayData::Int16(arr) => {
+                ArrayData::I16(arr) => {
                     let result = arr.mapv(|x| op(f64::from(x), scalar));
                     Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
                 }
-                ArrayData::Int32(arr) => {
+                ArrayData::I32(arr) => {
                     let result = arr.mapv(|x| op(f64::from(x), scalar));
                     Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
                 }
-                ArrayData::Int64(arr) => {
+                ArrayData::I64(arr) => {
                     let result = arr.mapv(|x| op(x as f64, scalar));
                     Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
                 }
-                ArrayData::Float32(arr) => {
+                ArrayData::U8(arr) => {
                     let result = arr.mapv(|x| op(f64::from(x), scalar));
                     Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
                 }
-                ArrayData::Float64(arr) => {
+                ArrayData::U16(arr) => {
+                    let result = arr.mapv(|x| op(f64::from(x), scalar));
+                    Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
+                }
+                ArrayData::U32(arr) => {
+                    let result = arr.mapv(|x| op(f64::from(x), scalar));
+                    Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
+                }
+                ArrayData::U64(arr) => {
+                    let result = arr.mapv(|x| op(x as f64, scalar));
+                    Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
+                }
+                ArrayData::F32(arr) => {
+                    let result = arr.mapv(|x| op(f64::from(x), scalar));
+                    Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
+                }
+                ArrayData::F64(arr) => {
                     let result = arr.mapv(|x| op(x, scalar));
                     Ok(Py::new(py, Array::from_array_f64(result))?.into_any())
                 }
@@ -2551,7 +3246,7 @@ impl Array {
                     ));
                 }
             }
-            ArrayData::Int8(arr) => {
+            ArrayData::I8(arr) => {
                 let slice = Slice::from(start..stop);
                 let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<i8>() {
@@ -2565,7 +3260,7 @@ impl Array {
                     ));
                 }
             }
-            ArrayData::Int16(arr) => {
+            ArrayData::I16(arr) => {
                 let slice = Slice::from(start..stop);
                 let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<i16>() {
@@ -2579,7 +3274,7 @@ impl Array {
                     ));
                 }
             }
-            ArrayData::Int32(arr) => {
+            ArrayData::I32(arr) => {
                 let slice = Slice::from(start..stop);
                 let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<i32>() {
@@ -2593,7 +3288,7 @@ impl Array {
                     ));
                 }
             }
-            ArrayData::Int64(arr) => {
+            ArrayData::I64(arr) => {
                 let slice = Slice::from(start..stop);
                 let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<i64>() {
@@ -2607,7 +3302,63 @@ impl Array {
                     ));
                 }
             }
-            ArrayData::Float32(arr) => {
+            ArrayData::U8(arr) => {
+                let slice = Slice::from(start..stop);
+                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                if let Ok(scalar_val) = value.extract::<u8>() {
+                    view.fill(scalar_val);
+                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<u8>>() {
+                    let np_arr = arr_val.to_owned_array();
+                    view.assign(&np_arr);
+                } else {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "Value must be a scalar or array matching the slice shape and dtype",
+                    ));
+                }
+            }
+            ArrayData::U16(arr) => {
+                let slice = Slice::from(start..stop);
+                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                if let Ok(scalar_val) = value.extract::<u16>() {
+                    view.fill(scalar_val);
+                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<u16>>() {
+                    let np_arr = arr_val.to_owned_array();
+                    view.assign(&np_arr);
+                } else {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "Value must be a scalar or array matching the slice shape and dtype",
+                    ));
+                }
+            }
+            ArrayData::U32(arr) => {
+                let slice = Slice::from(start..stop);
+                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                if let Ok(scalar_val) = value.extract::<u32>() {
+                    view.fill(scalar_val);
+                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<u32>>() {
+                    let np_arr = arr_val.to_owned_array();
+                    view.assign(&np_arr);
+                } else {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "Value must be a scalar or array matching the slice shape and dtype",
+                    ));
+                }
+            }
+            ArrayData::U64(arr) => {
+                let slice = Slice::from(start..stop);
+                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                if let Ok(scalar_val) = value.extract::<u64>() {
+                    view.fill(scalar_val);
+                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<u64>>() {
+                    let np_arr = arr_val.to_owned_array();
+                    view.assign(&np_arr);
+                } else {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "Value must be a scalar or array matching the slice shape and dtype",
+                    ));
+                }
+            }
+            ArrayData::F32(arr) => {
                 let slice = Slice::from(start..stop);
                 let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<f32>() {
@@ -2621,7 +3372,7 @@ impl Array {
                     ));
                 }
             }
-            ArrayData::Float64(arr) => {
+            ArrayData::F64(arr) => {
                 let slice = Slice::from(start..stop);
                 let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<f64>() {
@@ -2750,7 +3501,7 @@ impl Array {
                     ));
                 }
             }
-            ArrayData::Int8(arr) => {
+            ArrayData::I8(arr) => {
                 if let Ok(scalar_val) = value.extract::<i8>() {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
@@ -2774,7 +3525,7 @@ impl Array {
                     ));
                 }
             }
-            ArrayData::Int16(arr) => {
+            ArrayData::I16(arr) => {
                 if let Ok(scalar_val) = value.extract::<i16>() {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
@@ -2798,7 +3549,7 @@ impl Array {
                     ));
                 }
             }
-            ArrayData::Int32(arr) => {
+            ArrayData::I32(arr) => {
                 if let Ok(scalar_val) = value.extract::<i32>() {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
@@ -2822,7 +3573,7 @@ impl Array {
                     ));
                 }
             }
-            ArrayData::Int64(arr) => {
+            ArrayData::I64(arr) => {
                 if let Ok(scalar_val) = value.extract::<i64>() {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
@@ -2846,7 +3597,103 @@ impl Array {
                     ));
                 }
             }
-            ArrayData::Float32(arr) => {
+            ArrayData::U8(arr) => {
+                if let Ok(scalar_val) = value.extract::<u8>() {
+                    for &idx in &indices {
+                        arr[idx] = scalar_val;
+                    }
+                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<u8>>() {
+                    let np_arr = arr_val.readonly();
+                    let np_slice = np_arr.as_array();
+                    if np_slice.len() != indices.len() {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "Shape mismatch: cannot assign array of length {} to slice of length {}",
+                            np_slice.len(),
+                            indices.len()
+                        )));
+                    }
+                    for (i, &idx) in indices.iter().enumerate() {
+                        arr[idx] = np_slice[i];
+                    }
+                } else {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "Value must be a scalar or array matching the slice shape and dtype",
+                    ));
+                }
+            }
+            ArrayData::U16(arr) => {
+                if let Ok(scalar_val) = value.extract::<u16>() {
+                    for &idx in &indices {
+                        arr[idx] = scalar_val;
+                    }
+                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<u16>>() {
+                    let np_arr = arr_val.readonly();
+                    let np_slice = np_arr.as_array();
+                    if np_slice.len() != indices.len() {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "Shape mismatch: cannot assign array of length {} to slice of length {}",
+                            np_slice.len(),
+                            indices.len()
+                        )));
+                    }
+                    for (i, &idx) in indices.iter().enumerate() {
+                        arr[idx] = np_slice[i];
+                    }
+                } else {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "Value must be a scalar or array matching the slice shape and dtype",
+                    ));
+                }
+            }
+            ArrayData::U32(arr) => {
+                if let Ok(scalar_val) = value.extract::<u32>() {
+                    for &idx in &indices {
+                        arr[idx] = scalar_val;
+                    }
+                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<u32>>() {
+                    let np_arr = arr_val.readonly();
+                    let np_slice = np_arr.as_array();
+                    if np_slice.len() != indices.len() {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "Shape mismatch: cannot assign array of length {} to slice of length {}",
+                            np_slice.len(),
+                            indices.len()
+                        )));
+                    }
+                    for (i, &idx) in indices.iter().enumerate() {
+                        arr[idx] = np_slice[i];
+                    }
+                } else {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "Value must be a scalar or array matching the slice shape and dtype",
+                    ));
+                }
+            }
+            ArrayData::U64(arr) => {
+                if let Ok(scalar_val) = value.extract::<u64>() {
+                    for &idx in &indices {
+                        arr[idx] = scalar_val;
+                    }
+                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<u64>>() {
+                    let np_arr = arr_val.readonly();
+                    let np_slice = np_arr.as_array();
+                    if np_slice.len() != indices.len() {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "Shape mismatch: cannot assign array of length {} to slice of length {}",
+                            np_slice.len(),
+                            indices.len()
+                        )));
+                    }
+                    for (i, &idx) in indices.iter().enumerate() {
+                        arr[idx] = np_slice[i];
+                    }
+                } else {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "Value must be a scalar or array matching the slice shape and dtype",
+                    ));
+                }
+            }
+            ArrayData::F32(arr) => {
                 if let Ok(scalar_val) = value.extract::<f32>() {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
@@ -2870,7 +3717,7 @@ impl Array {
                     ));
                 }
             }
-            ArrayData::Float64(arr) => {
+            ArrayData::F64(arr) => {
                 if let Ok(scalar_val) = value.extract::<f64>() {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
@@ -3019,12 +3866,16 @@ impl Array {
         // Apply fancy indexing based on dtype
         let result_data = match &self.data {
             ArrayData::Bool(arr) => ArrayData::Bool(impl_fancy_indexing!(arr)),
-            ArrayData::Int8(arr) => ArrayData::Int8(impl_fancy_indexing!(arr)),
-            ArrayData::Int16(arr) => ArrayData::Int16(impl_fancy_indexing!(arr)),
-            ArrayData::Int32(arr) => ArrayData::Int32(impl_fancy_indexing!(arr)),
-            ArrayData::Int64(arr) => ArrayData::Int64(impl_fancy_indexing!(arr)),
-            ArrayData::Float32(arr) => ArrayData::Float32(impl_fancy_indexing!(arr)),
-            ArrayData::Float64(arr) => ArrayData::Float64(impl_fancy_indexing!(arr)),
+            ArrayData::I8(arr) => ArrayData::I8(impl_fancy_indexing!(arr)),
+            ArrayData::I16(arr) => ArrayData::I16(impl_fancy_indexing!(arr)),
+            ArrayData::I32(arr) => ArrayData::I32(impl_fancy_indexing!(arr)),
+            ArrayData::I64(arr) => ArrayData::I64(impl_fancy_indexing!(arr)),
+            ArrayData::U8(arr) => ArrayData::U8(impl_fancy_indexing!(arr)),
+            ArrayData::U16(arr) => ArrayData::U16(impl_fancy_indexing!(arr)),
+            ArrayData::U32(arr) => ArrayData::U32(impl_fancy_indexing!(arr)),
+            ArrayData::U64(arr) => ArrayData::U64(impl_fancy_indexing!(arr)),
+            ArrayData::F32(arr) => ArrayData::F32(impl_fancy_indexing!(arr)),
+            ArrayData::F64(arr) => ArrayData::F64(impl_fancy_indexing!(arr)),
             ArrayData::Complex64(arr) => ArrayData::Complex64(impl_fancy_indexing!(arr)),
             ArrayData::Complex128(arr) => ArrayData::Complex128(impl_fancy_indexing!(arr)),
             ArrayData::Pauli(arr) => ArrayData::Pauli(impl_fancy_indexing!(arr)),
@@ -3074,7 +3925,7 @@ impl Array {
                     data: ArrayData::Bool(result),
                 })
             }
-            ArrayData::Int8(arr) => {
+            ArrayData::I8(arr) => {
                 let mut result = arr.clone();
                 for (axis, start, stop, step) in slices {
                     if step < 0 {
@@ -3101,10 +3952,10 @@ impl Array {
                     }
                 }
                 Ok(Array {
-                    data: ArrayData::Int8(result),
+                    data: ArrayData::I8(result),
                 })
             }
-            ArrayData::Int16(arr) => {
+            ArrayData::I16(arr) => {
                 let mut result = arr.clone();
                 for (axis, start, stop, step) in slices {
                     if step < 0 {
@@ -3131,10 +3982,10 @@ impl Array {
                     }
                 }
                 Ok(Array {
-                    data: ArrayData::Int16(result),
+                    data: ArrayData::I16(result),
                 })
             }
-            ArrayData::Int32(arr) => {
+            ArrayData::I32(arr) => {
                 let mut result = arr.clone();
                 for (axis, start, stop, step) in slices {
                     if step < 0 {
@@ -3161,10 +4012,10 @@ impl Array {
                     }
                 }
                 Ok(Array {
-                    data: ArrayData::Int32(result),
+                    data: ArrayData::I32(result),
                 })
             }
-            ArrayData::Int64(arr) => {
+            ArrayData::I64(arr) => {
                 let mut result = arr.clone();
                 for (axis, start, stop, step) in slices {
                     if step < 0 {
@@ -3191,25 +4042,19 @@ impl Array {
                     }
                 }
                 Ok(Array {
-                    data: ArrayData::Int64(result),
+                    data: ArrayData::I64(result),
                 })
             }
-            ArrayData::Float32(arr) => {
+            ArrayData::U8(arr) => {
                 let mut result = arr.clone();
                 for (axis, start, stop, step) in slices {
                     if step < 0 {
-                        // ndarray's Slice doesn't match NumPy for negative steps (see issue #312)
-                        // We need to manually implement NumPy's behavior:
-                        // 1. Slice forward [stop+1, start+1] with step=1
-                        // 2. Reverse the axis
-                        // 3. Apply step magnitude if > 1
                         let actual_start = if stop == -1 { 0 } else { stop + 1 };
                         let actual_end = start + 1;
                         let slice_info = Slice::new(actual_start, Some(actual_end), 1);
                         result = result.slice_axis(Axis(axis), slice_info).to_owned();
                         result.invert_axis(Axis(axis));
 
-                        // Now apply step magnitude if it's not -1
                         let step_magnitude = step.abs();
                         if step_magnitude > 1 {
                             let slice_stepped = Slice::new(0, None, step_magnitude);
@@ -3221,10 +4066,82 @@ impl Array {
                     }
                 }
                 Ok(Array {
-                    data: ArrayData::Float32(result),
+                    data: ArrayData::U8(result),
                 })
             }
-            ArrayData::Float64(arr) => {
+            ArrayData::U16(arr) => {
+                let mut result = arr.clone();
+                for (axis, start, stop, step) in slices {
+                    if step < 0 {
+                        let actual_start = if stop == -1 { 0 } else { stop + 1 };
+                        let actual_end = start + 1;
+                        let slice_info = Slice::new(actual_start, Some(actual_end), 1);
+                        result = result.slice_axis(Axis(axis), slice_info).to_owned();
+                        result.invert_axis(Axis(axis));
+
+                        let step_magnitude = step.abs();
+                        if step_magnitude > 1 {
+                            let slice_stepped = Slice::new(0, None, step_magnitude);
+                            result = result.slice_axis(Axis(axis), slice_stepped).to_owned();
+                        }
+                    } else {
+                        let slice_info = Slice::new(start, Some(stop), step);
+                        result = result.slice_axis(Axis(axis), slice_info).to_owned();
+                    }
+                }
+                Ok(Array {
+                    data: ArrayData::U16(result),
+                })
+            }
+            ArrayData::U32(arr) => {
+                let mut result = arr.clone();
+                for (axis, start, stop, step) in slices {
+                    if step < 0 {
+                        let actual_start = if stop == -1 { 0 } else { stop + 1 };
+                        let actual_end = start + 1;
+                        let slice_info = Slice::new(actual_start, Some(actual_end), 1);
+                        result = result.slice_axis(Axis(axis), slice_info).to_owned();
+                        result.invert_axis(Axis(axis));
+
+                        let step_magnitude = step.abs();
+                        if step_magnitude > 1 {
+                            let slice_stepped = Slice::new(0, None, step_magnitude);
+                            result = result.slice_axis(Axis(axis), slice_stepped).to_owned();
+                        }
+                    } else {
+                        let slice_info = Slice::new(start, Some(stop), step);
+                        result = result.slice_axis(Axis(axis), slice_info).to_owned();
+                    }
+                }
+                Ok(Array {
+                    data: ArrayData::U32(result),
+                })
+            }
+            ArrayData::U64(arr) => {
+                let mut result = arr.clone();
+                for (axis, start, stop, step) in slices {
+                    if step < 0 {
+                        let actual_start = if stop == -1 { 0 } else { stop + 1 };
+                        let actual_end = start + 1;
+                        let slice_info = Slice::new(actual_start, Some(actual_end), 1);
+                        result = result.slice_axis(Axis(axis), slice_info).to_owned();
+                        result.invert_axis(Axis(axis));
+
+                        let step_magnitude = step.abs();
+                        if step_magnitude > 1 {
+                            let slice_stepped = Slice::new(0, None, step_magnitude);
+                            result = result.slice_axis(Axis(axis), slice_stepped).to_owned();
+                        }
+                    } else {
+                        let slice_info = Slice::new(start, Some(stop), step);
+                        result = result.slice_axis(Axis(axis), slice_info).to_owned();
+                    }
+                }
+                Ok(Array {
+                    data: ArrayData::U64(result),
+                })
+            }
+            ArrayData::F32(arr) => {
                 let mut result = arr.clone();
                 for (axis, start, stop, step) in slices {
                     if step < 0 {
@@ -3251,7 +4168,37 @@ impl Array {
                     }
                 }
                 Ok(Array {
-                    data: ArrayData::Float64(result),
+                    data: ArrayData::F32(result),
+                })
+            }
+            ArrayData::F64(arr) => {
+                let mut result = arr.clone();
+                for (axis, start, stop, step) in slices {
+                    if step < 0 {
+                        // ndarray's Slice doesn't match NumPy for negative steps (see issue #312)
+                        // We need to manually implement NumPy's behavior:
+                        // 1. Slice forward [stop+1, start+1] with step=1
+                        // 2. Reverse the axis
+                        // 3. Apply step magnitude if > 1
+                        let actual_start = if stop == -1 { 0 } else { stop + 1 };
+                        let actual_end = start + 1;
+                        let slice_info = Slice::new(actual_start, Some(actual_end), 1);
+                        result = result.slice_axis(Axis(axis), slice_info).to_owned();
+                        result.invert_axis(Axis(axis));
+
+                        // Now apply step magnitude if it's not -1
+                        let step_magnitude = step.abs();
+                        if step_magnitude > 1 {
+                            let slice_stepped = Slice::new(0, None, step_magnitude);
+                            result = result.slice_axis(Axis(axis), slice_stepped).to_owned();
+                        }
+                    } else {
+                        let slice_info = Slice::new(start, Some(stop), step);
+                        result = result.slice_axis(Axis(axis), slice_info).to_owned();
+                    }
+                }
+                Ok(Array {
+                    data: ArrayData::F64(result),
                 })
             }
             ArrayData::Complex64(arr) => {
@@ -3374,12 +4321,16 @@ impl Array {
     fn format_array(&self) -> String {
         match &self.data {
             ArrayData::Bool(arr) => Self::format_array_typed(arr, "bool"),
-            ArrayData::Float64(arr) => Self::format_array_typed(arr, "float64"),
-            ArrayData::Float32(arr) => Self::format_array_typed(arr, "float32"),
-            ArrayData::Int64(arr) => Self::format_array_typed(arr, "int64"),
-            ArrayData::Int32(arr) => Self::format_array_typed(arr, "int32"),
-            ArrayData::Int16(arr) => Self::format_array_typed(arr, "int16"),
-            ArrayData::Int8(arr) => Self::format_array_typed(arr, "int8"),
+            ArrayData::F64(arr) => Self::format_array_typed(arr, "float64"),
+            ArrayData::F32(arr) => Self::format_array_typed(arr, "float32"),
+            ArrayData::I64(arr) => Self::format_array_typed(arr, "int64"),
+            ArrayData::I32(arr) => Self::format_array_typed(arr, "int32"),
+            ArrayData::I16(arr) => Self::format_array_typed(arr, "int16"),
+            ArrayData::I8(arr) => Self::format_array_typed(arr, "int8"),
+            ArrayData::U64(arr) => Self::format_array_typed(arr, "uint64"),
+            ArrayData::U32(arr) => Self::format_array_typed(arr, "uint32"),
+            ArrayData::U16(arr) => Self::format_array_typed(arr, "uint16"),
+            ArrayData::U8(arr) => Self::format_array_typed(arr, "uint8"),
             ArrayData::Complex64(arr) => Self::format_array_complex_f32(arr),
             ArrayData::Complex128(arr) => Self::format_array_complex_f64(arr),
             ArrayData::Pauli(arr) => Self::format_array_pauli(arr),
@@ -3587,33 +4538,52 @@ impl Array {
                 let val = *arr.first().unwrap();
                 Ok(PyBool::new(py, val).to_owned().into_any().unbind())
             }
-            ArrayData::Int8(arr) => {
+            ArrayData::I8(arr) => {
                 let val = i64::from(*arr.first().unwrap());
                 Ok(PyInt::new(py, val).clone().into_any().unbind())
             }
-            ArrayData::Int16(arr) => {
+            ArrayData::I16(arr) => {
                 let val = i64::from(*arr.first().unwrap());
                 Ok(PyInt::new(py, val).clone().into_any().unbind())
             }
-            ArrayData::Int32(arr) => {
+            ArrayData::I32(arr) => {
                 let val = i64::from(*arr.first().unwrap());
                 Ok(PyInt::new(py, val).clone().into_any().unbind())
             }
-            ArrayData::Int64(arr) => {
+            ArrayData::I64(arr) => {
                 let val = *arr.first().unwrap();
                 Ok(PyInt::new(py, val).clone().into_any().unbind())
             }
-            ArrayData::Float32(arr) => {
+            ArrayData::U8(arr) => {
+                let val = u64::from(*arr.first().unwrap());
+                Ok(PyInt::new(py, val).clone().into_any().unbind())
+            }
+            ArrayData::U16(arr) => {
+                let val = u64::from(*arr.first().unwrap());
+                Ok(PyInt::new(py, val).clone().into_any().unbind())
+            }
+            ArrayData::U32(arr) => {
+                let val = u64::from(*arr.first().unwrap());
+                Ok(PyInt::new(py, val).clone().into_any().unbind())
+            }
+            ArrayData::U64(arr) => {
+                let val = *arr.first().unwrap();
+                Ok(PyInt::new(py, val).clone().into_any().unbind())
+            }
+            ArrayData::F32(arr) => {
                 let val = f64::from(*arr.first().unwrap());
                 Ok(PyFloat::new(py, val).clone().into_any().unbind())
             }
-            ArrayData::Float64(arr) => {
+            ArrayData::F64(arr) => {
                 let val = *arr.first().unwrap();
                 Ok(PyFloat::new(py, val).clone().into_any().unbind())
             }
             ArrayData::Complex64(arr) => {
                 let val = arr.first().unwrap();
-                Ok(pyo3::types::PyComplex::from_doubles(py, f64::from(val.re), f64::from(val.im)).into())
+                Ok(
+                    pyo3::types::PyComplex::from_doubles(py, f64::from(val.re), f64::from(val.im))
+                        .into(),
+                )
             }
             ArrayData::Complex128(arr) => {
                 let val = arr.first().unwrap();
@@ -3748,12 +4718,16 @@ impl Array {
         // Apply the operation to each dtype variant
         match &self.data {
             ArrayData::Bool(arr) => apply_mixed_indexing_impl!(arr, Bool),
-            ArrayData::Float64(arr) => apply_mixed_indexing_impl!(arr, Float64),
-            ArrayData::Float32(arr) => apply_mixed_indexing_impl!(arr, Float32),
-            ArrayData::Int64(arr) => apply_mixed_indexing_impl!(arr, Int64),
-            ArrayData::Int32(arr) => apply_mixed_indexing_impl!(arr, Int32),
-            ArrayData::Int16(arr) => apply_mixed_indexing_impl!(arr, Int16),
-            ArrayData::Int8(arr) => apply_mixed_indexing_impl!(arr, Int8),
+            ArrayData::F64(arr) => apply_mixed_indexing_impl!(arr, F64),
+            ArrayData::F32(arr) => apply_mixed_indexing_impl!(arr, F32),
+            ArrayData::I64(arr) => apply_mixed_indexing_impl!(arr, I64),
+            ArrayData::I32(arr) => apply_mixed_indexing_impl!(arr, I32),
+            ArrayData::I16(arr) => apply_mixed_indexing_impl!(arr, I16),
+            ArrayData::I8(arr) => apply_mixed_indexing_impl!(arr, I8),
+            ArrayData::U64(arr) => apply_mixed_indexing_impl!(arr, U64),
+            ArrayData::U32(arr) => apply_mixed_indexing_impl!(arr, U32),
+            ArrayData::U16(arr) => apply_mixed_indexing_impl!(arr, U16),
+            ArrayData::U8(arr) => apply_mixed_indexing_impl!(arr, U8),
             ArrayData::Complex128(arr) => apply_mixed_indexing_impl!(arr, Complex128),
             ArrayData::Complex64(arr) => apply_mixed_indexing_impl!(arr, Complex64),
             ArrayData::Pauli(arr) => apply_mixed_indexing_impl!(arr, Pauli),
@@ -3968,28 +4942,28 @@ impl Array {
         // Apply the operation to each dtype variant
         match &mut self.data {
             ArrayData::Bool(arr) => apply_mixed_indexing_assignment_impl!(arr, bool, Bool),
-            ArrayData::Float64(arr) => apply_mixed_indexing_assignment_impl!(arr, f64, Float64),
-            ArrayData::Float32(arr) => apply_mixed_indexing_assignment_impl!(arr, f32, Float32),
-            ArrayData::Int64(arr) => apply_mixed_indexing_assignment_impl!(arr, i64, Int64),
-            ArrayData::Int32(arr) => apply_mixed_indexing_assignment_impl!(arr, i32, Int32),
-            ArrayData::Int16(arr) => apply_mixed_indexing_assignment_impl!(arr, i16, Int16),
-            ArrayData::Int8(arr) => apply_mixed_indexing_assignment_impl!(arr, i8, Int8),
+            ArrayData::F64(arr) => apply_mixed_indexing_assignment_impl!(arr, f64, Float64),
+            ArrayData::F32(arr) => apply_mixed_indexing_assignment_impl!(arr, f32, Float32),
+            ArrayData::I64(arr) => apply_mixed_indexing_assignment_impl!(arr, i64, Int64),
+            ArrayData::I32(arr) => apply_mixed_indexing_assignment_impl!(arr, i32, Int32),
+            ArrayData::I16(arr) => apply_mixed_indexing_assignment_impl!(arr, i16, Int16),
+            ArrayData::I8(arr) => apply_mixed_indexing_assignment_impl!(arr, i8, Int8),
+            ArrayData::U64(arr) => apply_mixed_indexing_assignment_impl!(arr, u64, Uint64),
+            ArrayData::U32(arr) => apply_mixed_indexing_assignment_impl!(arr, u32, Uint32),
+            ArrayData::U16(arr) => apply_mixed_indexing_assignment_impl!(arr, u16, Uint16),
+            ArrayData::U8(arr) => apply_mixed_indexing_assignment_impl!(arr, u8, Uint8),
             ArrayData::Complex128(arr) => {
                 apply_mixed_indexing_assignment_impl!(arr, num_complex::Complex<f64>, Complex128)
             }
             ArrayData::Complex64(arr) => {
                 apply_mixed_indexing_assignment_impl!(arr, num_complex::Complex<f32>, Complex64)
             }
-            ArrayData::Pauli(_) => {
-                Err(pyo3::exceptions::PyNotImplementedError::new_err(
-                    "Mixed integer/slice indexing assignment not yet implemented for Pauli arrays",
-                ))
-            }
-            ArrayData::PauliString(_) => {
-                Err(pyo3::exceptions::PyNotImplementedError::new_err(
-                    "Mixed integer/slice indexing assignment not yet implemented for PauliString arrays",
-                ))
-            }
+            ArrayData::Pauli(_) => Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "Mixed integer/slice indexing assignment not yet implemented for Pauli arrays",
+            )),
+            ArrayData::PauliString(_) => Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "Mixed integer/slice indexing assignment not yet implemented for PauliString arrays",
+            )),
         }
     }
 

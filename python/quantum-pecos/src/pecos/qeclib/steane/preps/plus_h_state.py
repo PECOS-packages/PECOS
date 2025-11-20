@@ -15,7 +15,7 @@ fault-tolerant distillation and verification protocols.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.num import pi
+import pecos as pc
 from pecos.qeclib import qubit
 from pecos.qeclib.generic.check_1flag import Check1Flag
 from pecos.qeclib.steane.preps.encoding_circ import EncodingCircuit
@@ -74,7 +74,7 @@ class PrepHStateFT(Block):
         # ----------------------------------------
         self.extend(
             qubit.Prep(d[6]),
-            qubit.RY[pi / 4](d[6]),
+            qubit.RY[pc.f64.frac_pi_4](d[6]),
             EncodingCircuit(d),
         )
 

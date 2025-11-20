@@ -327,6 +327,123 @@ where
     })
 }
 
+/// Assert that all elements in two arrays are close within specified tolerances.
+///
+/// Drop-in replacement for `numpy.testing.assert_allclose()`. Panics with a detailed
+/// error message if any elements are not close according to the tolerance check:
+/// `|a - b| <= (atol + rtol * |b|)`
+///
+/// # Arguments
+///
+/// * `a` - First array
+/// * `b` - Second array
+/// * `rtol` - Relative tolerance (default: 1e-7)
+/// * `atol` - Absolute tolerance (default: 0.0)
+/// * `equal_nan` - If true, NaNs in the same position are considered equal (default: false)
+///
+/// # Panics
+///
+/// Panics if arrays are not close, providing detailed information about:
+/// - Shape mismatches
+/// - Maximum absolute difference
+/// - Maximum relative difference
+/// - Number of mismatched elements
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::prelude::*;
+///
+/// // These should pass
+/// let a = array![1.0, 2.0, 3.0];
+/// let b = array![1.00001, 2.00001, 3.00001];
+/// assert_allclose(&a, &b, 1e-4, 1e-8, false);
+/// ```
+///
+/// ```should_panic
+/// use pecos_num::prelude::*;
+///
+/// // This should panic with detailed error
+/// let a = array![1.0, 2.0, 3.0];
+/// let c = array![1.0, 2.0, 10.0];
+/// assert_allclose(&a, &c, 1e-5, 1e-8, false);
+/// ```
+pub fn assert_allclose<S1, S2, D>(
+    a: &ArrayBase<S1, D>,
+    b: &ArrayBase<S2, D>,
+    rtol: f64,
+    atol: f64,
+    equal_nan: bool,
+) where
+    S1: Data<Elem = f64>,
+    S2: Data<Elem = f64>,
+    D: Dimension,
+{
+    // Check shapes first
+    assert!(
+        a.shape() == b.shape(),
+        "Arrays have different shapes: a.shape={:?}, b.shape={:?}",
+        a.shape(),
+        b.shape()
+    );
+
+    // Compute element-wise differences
+    let mut max_abs_diff: f64 = 0.0;
+    let mut max_rel_diff: f64 = 0.0;
+    let mut mismatch_count: usize = 0;
+    let mut first_mismatch_values: Option<(f64, f64)> = None;
+
+    // Check all elements
+    for (a_val, b_val) in a.iter().zip(b.iter()) {
+        // Handle NaN case
+        if equal_nan && a_val.is_nan() && b_val.is_nan() {
+            continue;
+        }
+
+        // Check if values are close
+        if !a_val.isclose(b_val, rtol, atol) {
+            let abs_diff = (a_val - b_val).abs();
+            let rel_diff = if b_val.abs() > 0.0_f64 {
+                abs_diff / b_val.abs()
+            } else {
+                abs_diff
+            };
+
+            max_abs_diff = max_abs_diff.max(abs_diff);
+            max_rel_diff = max_rel_diff.max(rel_diff);
+            mismatch_count += 1;
+
+            // Store first mismatch for detailed error message
+            if first_mismatch_values.is_none() {
+                first_mismatch_values = Some((*a_val, *b_val));
+            }
+        }
+    }
+
+    // If there are mismatches, panic with detailed error message
+    if mismatch_count > 0 {
+        let (first_a, first_b) = first_mismatch_values.unwrap();
+
+        panic!(
+            "\nNot equal to tolerance rtol={}, atol={}\n\
+             Mismatched elements: {} / {}\n\
+             Max absolute difference: {}\n\
+             Max relative difference: {}\n\
+             First mismatch values:\n\
+             \ta = {}\n\
+             \tb = {}",
+            rtol,
+            atol,
+            mismatch_count,
+            a.len(),
+            max_abs_diff,
+            max_rel_diff,
+            first_a,
+            first_b
+        );
+    }
+}
+
 /// Check if two arrays are equal element-wise.
 ///
 /// Drop-in replacement for `numpy.array_equal(a1, a2, equal_nan=False)`.

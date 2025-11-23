@@ -17,10 +17,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import networkx as nx
+import pecos
 
 if TYPE_CHECKING:
     from pecos.protocols import LogicalInstructionProtocol
+    from pecos.typing import GraphProtocol, Node, Path
 
 
 def precompute(instr: LogicalInstructionProtocol) -> dict[str, Any]:
@@ -89,14 +90,13 @@ def code_surface4444medial(instr: LogicalInstructionProtocol) -> dict[str, Any]:
     return decoder_data
 
 
-def compute_all_shortest_paths(graph: nx.Graph) -> dict[Any, dict[Any, list[Any]]]:
-    """Compute all shortest paths in a graph, handling NetworkX API changes.
+def compute_all_shortest_paths(graph: GraphProtocol) -> dict[Node, dict[Node, Path]]:
+    """Compute all shortest paths in a graph.
 
-    This function will explicitly generate the all-pairs shortest paths
-    to be compatible with different NetworkX versions.
+    This function will explicitly generate the all-pairs shortest paths.
 
     Args:
-        graph: NetworkX graph
+        graph: A graph object with nodes() and single_source_shortest_path() methods
 
     Returns:
         Dictionary of dictionaries with path[source][target] = list of nodes in path
@@ -105,7 +105,7 @@ def compute_all_shortest_paths(graph: nx.Graph) -> dict[Any, dict[Any, list[Any]
     all_paths = {}
     for source in graph.nodes():
         # For each source, get paths to all targets
-        source_paths = nx.single_source_shortest_path(graph, source)
+        source_paths = graph.single_source_shortest_path(source)
         all_paths[source] = source_paths
 
     return all_paths
@@ -141,12 +141,12 @@ def surface4444_identity(instr: LogicalInstructionProtocol) -> dict[str, Any]:
     # Create a dictionary to store precomputed information that will be used for decoding
     info = {
         "X": {
-            "dist_graph": nx.Graph(),
+            "dist_graph": pecos.graph.MappedGraph(),
             "closest_virt": {},
             "virtual_edge_data": virtual_edge_data_x,
         },
         "Z": {
-            "dist_graph": nx.Graph(),
+            "dist_graph": pecos.graph.MappedGraph(),
             "closest_virt": {},
             "virtual_edge_data": virtual_edge_data_z,
         },
@@ -169,8 +169,8 @@ def surface4444_identity(instr: LogicalInstructionProtocol) -> dict[str, Any]:
 
     # Temporary graphs that will store the direct syndrome-to-syndrome edges. This will be used to create the fully
     # connected, distance graph.
-    temp_graph_x = nx.Graph()
-    temp_graph_z = nx.Graph()
+    temp_graph_x = pecos.graph.MappedGraph()
+    temp_graph_z = pecos.graph.MappedGraph()
 
     # Assume the QECC uses checks
     # add edges based on checks
@@ -266,20 +266,22 @@ def surface4444medial_identity(instr: LogicalInstructionProtocol) -> dict[str, A
     virtual_edge_data_z = {}
 
     # Create a dictionary to store precomputed information that will be used for decoding
-    {
+    info = {
         "X": {
-            "dist_graph": nx.Graph(),  # syndrome-to-syndrome, fully-connected graph
-            "closest_virt": {},  # The closest virtual node to each syndrome
+            "dist_graph": pecos.graph.MappedGraph(),
+            "closest_virt": {},
             "virtual_edge_data": virtual_edge_data_x,
         },
         "Z": {
-            "dist_graph": nx.Graph(),
+            "dist_graph": pecos.graph.MappedGraph(),
             "closest_virt": {},
             "virtual_edge_data": virtual_edge_data_z,
         },
     }
 
     # Record what data qudits the syndrome to syndrome edges correspond to.
+    edges_x = {}
+    edges_z = {}
 
     # The sides of the QECC patch
     sides = qecc.sides  # t, r, b, l
@@ -294,8 +296,8 @@ def surface4444medial_identity(instr: LogicalInstructionProtocol) -> dict[str, A
 
     # Temporary graphs that will store the direct syndrome-to-syndrome edges. This will be used to create the fully
     # connected, distance graph.
-    nx.Graph()
-    nx.Graph()
+    temp_graph_x = pecos.graph.MappedGraph()
+    temp_graph_z = pecos.graph.MappedGraph()
 
     # Assume the QECC uses checks
     # add edges based on checks
@@ -382,6 +384,18 @@ def surface4444medial_identity(instr: LogicalInstructionProtocol) -> dict[str, A
                 msg = f'side_label "{side_label}" not understood!'
                 raise Exception(msg)
 
+    return invert_data(
+        info,
+        d2edge_x,
+        d2edge_z,
+        edges_x,
+        edges_z,
+        temp_graph_x,
+        temp_graph_z,
+        virt_x,
+        virt_z,
+    )
+
 
 def invert_data(
     info: dict[str, Any],
@@ -389,8 +403,8 @@ def invert_data(
     d2edge_z: dict[Any, list[Any]],
     edges_x: dict[tuple[Any, Any], Any],
     edges_z: dict[tuple[Any, Any], Any],
-    temp_graph_x: nx.Graph,
-    temp_graph_z: nx.Graph,
+    temp_graph_x: GraphProtocol,
+    temp_graph_z: GraphProtocol,
     virt_x: set[Any],
     virt_z: set[Any],
 ) -> dict[str, Any]:

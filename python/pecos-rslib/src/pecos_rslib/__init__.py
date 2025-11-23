@@ -29,6 +29,7 @@ from pecos_rslib._pecos_rslib import (
     ByteMessage,
     ByteMessageBuilder,
     dtypes,  # Rust-backed dtype system  # noqa: F401 - re-exported in __all__
+    graph,  # Graph algorithms (MWPM decoder)
     ir,  # llvmlite-compatible LLVM IR module
     num,  # Numerical computing functions (scipy.optimize replacements)
     Pauli,  # Quantum Pauli operators (I, X, Y, Z)
@@ -151,6 +152,7 @@ sys.modules["pecos_rslib.num.optimize"] = num.optimize
 sys.modules["pecos_rslib.num.polynomial"] = num.polynomial
 sys.modules["pecos_rslib.num.curve_fit"] = num.curve_fit
 sys.modules["pecos_rslib.num.random"] = num.random
+sys.modules["pecos_rslib.graph"] = graph
 
 # stats is exported from num_wrapper (which re-exports num.stats)
 
@@ -559,6 +561,8 @@ __all__ = [
     "binding",
     # Numerical computing (scipy.optimize replacements)
     "num",
+    # Graph algorithms (MWPM decoder)
+    "graph",
     # Numerical functions from num_wrapper
     "mean",
     "sum",

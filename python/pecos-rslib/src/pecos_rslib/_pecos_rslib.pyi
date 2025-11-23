@@ -301,6 +301,213 @@ class QasmSimulation:
 # QasmSimulationBuilder has been removed - use sim() API instead
 # See sim() function for the modern approach to quantum simulations
 
+class MappedGraph:
+    """A graph data structure with support for arbitrary hashable node identifiers.
+
+    This class provides a NetworkX-compatible API for graph operations with
+    maximum weight perfect matching capabilities. Nodes can be any hashable
+    type (strings, integers, tuples, etc.).
+
+    The graph is undirected and supports weighted edges for use with matching
+    algorithms in quantum error correction decoders.
+
+    Example:
+        >>> from pecos_rslib.graph import MappedGraph
+        >>> g = MappedGraph()
+        >>> g.add_edge("v1", "v2", weight=-10.0)
+        >>> g.add_edge("v2", "v3", weight=-5.0)
+        >>> print(g.nodes())
+        ["v1", "v2", "v3"]
+        >>> matching = g.max_weight_matching(max_cardinality=True)
+        >>> print(matching)
+        {"v1": "v2", "v2": "v1"}
+    """
+
+    def __init__(self) -> None:
+        """Create a new empty MappedGraph."""
+
+    def add_edge(
+        self,
+        a: object,
+        b: object,
+        weight: float | None = None,
+        **kwargs: object,
+    ) -> None:
+        """Add an edge between nodes a and b.
+
+        If the nodes do not exist, they will be created. Edge attributes
+        (including weight) can be provided as keyword arguments.
+
+        Args:
+            a: First node identifier (must be hashable)
+            b: Second node identifier (must be hashable)
+            weight: Optional edge weight (defaults to 1.0 if not specified)
+            **kwargs: Additional edge attributes to store (e.g., syn_path, data_path)
+
+        Example:
+            >>> g = MappedGraph()
+            >>> g.add_edge("a", "b", weight=-10.0, data_path=[1, 2, 3])
+        """
+
+    def nodes(self) -> list[object]:
+        """Return a list of all nodes in the graph.
+
+        Returns:
+            List of node identifiers in insertion order.
+
+        Example:
+            >>> g = MappedGraph()
+            >>> g.add_edge("a", "b")
+            >>> g.add_edge("b", "c")
+            >>> print(g.nodes())
+            ["a", "b", "c"]
+        """
+
+    def edges(self) -> list[tuple[object, object]]:
+        """Return a list of all edges in the graph.
+
+        Returns:
+            List of (node1, node2) tuples representing edges.
+
+        Example:
+            >>> g = MappedGraph()
+            >>> g.add_edge("a", "b")
+            >>> g.add_edge("b", "c")
+            >>> print(g.edges())
+            [("a", "b"), ("b", "c")]
+        """
+
+    def node_count(self) -> int:
+        """Return the number of nodes in the graph.
+
+        Returns:
+            Number of nodes.
+
+        Example:
+            >>> g = MappedGraph()
+            >>> g.add_edge("a", "b")
+            >>> print(g.node_count())
+            2
+        """
+
+    def edge_count(self) -> int:
+        """Return the number of edges in the graph.
+
+        Returns:
+            Number of edges.
+
+        Example:
+            >>> g = MappedGraph()
+            >>> g.add_edge("a", "b")
+            >>> g.add_edge("b", "c")
+            >>> print(g.edge_count())
+            2
+        """
+
+    def max_weight_matching(
+        self, max_cardinality: bool = False, weight_multiplier: float = 1000.0
+    ) -> dict[object, object]:
+        """Compute the maximum weight perfect matching of the graph.
+
+        Uses the Blossom algorithm to find a maximum weight matching.
+        Weights are interpreted as negative distances (higher weight = better match).
+
+        The matching algorithm internally uses integer weights. Float weights are
+        converted by multiplying by weight_multiplier and casting to integers.
+
+        Args:
+            max_cardinality: If True, prioritize maximum cardinality over weight.
+                           If False, prioritize maximum weight.
+            weight_multiplier: Multiplier for converting float weights to integers.
+                             Default is 1000.0 (preserves 3 decimal places).
+                             Use 1.0 if weights are already integers.
+                             Use higher values (10000.0+) for more decimal precision.
+
+        Returns:
+            Dictionary mapping nodes to their matched partners. Each edge
+            appears twice (both directions).
+
+        Example:
+            >>> g = MappedGraph()
+            >>> g.add_edge("a", "b", weight=-10.0)
+            >>> g.add_edge("c", "d", weight=-5.0)
+            >>> matching = g.max_weight_matching(max_cardinality=True)
+            >>> print(matching)
+            {"a": "b", "b": "a", "c": "d", "d": "c"}
+
+            >>> # For integer weights, use weight_multiplier=1.0
+            >>> g2 = MappedGraph()
+            >>> g2.add_edge("x", "y", weight=-5)
+            >>> g2.add_edge("z", "w", weight=-10)
+            >>> matching2 = g2.max_weight_matching(max_cardinality=True, weight_multiplier=1.0)
+        """
+
+    def get_edge_data(self, a: object, b: object) -> dict[str, object]:
+        """Get the attributes dictionary for an edge.
+
+        Args:
+            a: First node identifier
+            b: Second node identifier
+
+        Returns:
+            Dictionary of edge attributes (including 'weight' and any custom attributes).
+
+        Raises:
+            KeyError: If the edge does not exist.
+
+        Example:
+            >>> g = MappedGraph()
+            >>> g.add_edge("a", "b", weight=-10.0, data_path=[1, 2])
+            >>> attrs = g.get_edge_data("a", "b")
+            >>> print(attrs["weight"])
+            -10.0
+            >>> print(attrs["data_path"])
+            [1, 2]
+        """
+
+    def subgraph(self, nodes: list[object]) -> MappedGraph:
+        """Create a subgraph containing only the specified nodes.
+
+        The subgraph includes all edges between the specified nodes.
+
+        Args:
+            nodes: List of node identifiers to include in the subgraph.
+
+        Returns:
+            A new MappedGraph containing only the specified nodes and their edges.
+
+        Example:
+            >>> g = MappedGraph()
+            >>> g.add_edge("a", "b", weight=-10.0)
+            >>> g.add_edge("b", "c", weight=-5.0)
+            >>> subg = g.subgraph(["a", "b"])
+            >>> print(subg.nodes())
+            ["a", "b"]
+            >>> print(subg.edge_count())
+            1
+        """
+
+    def single_source_shortest_path(self, source: object) -> dict[object, list[object]]:
+        """Compute shortest paths from source to all reachable nodes.
+
+        Uses breadth-first search to find unweighted shortest paths.
+
+        Args:
+            source: Source node identifier.
+
+        Returns:
+            Dictionary mapping target nodes to paths. Each path is a list
+            of nodes from source to target (inclusive).
+
+        Example:
+            >>> g = MappedGraph()
+            >>> g.add_edge("a", "b")
+            >>> g.add_edge("b", "c")
+            >>> paths = g.single_source_shortest_path("a")
+            >>> print(paths["c"])
+            ["a", "b", "c"]
+        """
+
 # Module functions
 def run_qasm(
     qasm: str,

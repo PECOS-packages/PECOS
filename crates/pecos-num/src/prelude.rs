@@ -98,6 +98,9 @@ pub use num_complex::{Complex, Complex32, Complex64};
 // Note: sum() for slices removed - use .iter().sum() directly (idiomatic Rust)
 pub use crate::array::{arange, delete, diag, linspace, ones, sum_axis, zeros};
 
+// Re-export graph algorithms
+pub use crate::graph::{self, Graph};
+
 // Re-export mathematical constants (f64)
 pub use crate::math::{
     E, FRAC_1_PI, FRAC_1_SQRT_2, FRAC_2_PI, FRAC_2_SQRT_PI, FRAC_PI_2, FRAC_PI_3, FRAC_PI_4,

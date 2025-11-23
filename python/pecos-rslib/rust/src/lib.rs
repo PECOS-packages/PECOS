@@ -22,6 +22,7 @@ mod cpp_sparse_sim_bindings;
 mod dtypes;
 mod engine_bindings;
 mod engine_builders;
+mod graph_bindings;
 mod noise_helpers;
 mod num_bindings;
 mod pauli_bindings;
@@ -164,6 +165,9 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register Pauli types (quantum operators)
     pauli_bindings::register_pauli_types(m)?;
+
+    // Register graph module (graph algorithms for MWPM)
+    graph_bindings::register_graph_module(m)?;
 
     // Register program types
     m.add_class::<PyQasmProgram>()?;

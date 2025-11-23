@@ -22,8 +22,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import networkx as nx
-
 from pecos.circuits import QuantumCircuit
 from pecos.decoders.mwpm2d import precomputing
 
@@ -100,7 +98,7 @@ class MWPM2D:
 
             active_syn = set(syndromes)
             # Get the real graph
-            real_graph = nx.Graph(distance_graph.subgraph(active_syn))
+            real_graph = distance_graph.subgraph(list(active_syn))
             active_syn = set(real_graph.nodes())
 
             # Add virtual nodes
@@ -118,23 +116,9 @@ class MWPM2D:
                     if vi != vj:
                         real_graph.add_edge(vi, vj, weight=0)
 
-            # Find a matching
-            # Handle different NetworkX versions
-            try:
-                # For NetworkX >= 2.5
-                matching_edges = nx.algorithms.matching.max_weight_matching(
-                    real_graph,
-                    maxcardinality=True,
-                )
-                # Convert to a list of tuples if it's a set of frozen sets (NetworkX 2.5+)
-                if isinstance(matching_edges, set):
-                    matching_edges = list(matching_edges)
-            except (TypeError, AttributeError):
-                # For older NetworkX versions
-                matching_edges = nx.max_weight_matching(
-                    real_graph,
-                    maxcardinality=True,
-                )
+            # Find a matching using pecos.graph
+            matching = real_graph.max_weight_matching(max_cardinality=True)
+            matching_edges = list(matching.items())
 
             matching = {n1: n2 for n2, n1 in matching_edges}
             matching.update(dict(matching_edges))

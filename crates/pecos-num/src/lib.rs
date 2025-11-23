@@ -34,6 +34,7 @@
 pub mod array;
 pub mod compare;
 pub mod curve_fit;
+pub mod graph;
 pub mod linalg;
 pub mod math;
 pub mod optimize;

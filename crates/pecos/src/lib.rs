@@ -470,6 +470,40 @@ pub mod compare {
     pub use pecos_num::compare::*;
 }
 
+/// Graph algorithms for quantum error correction
+///
+/// This module provides graph data structures and algorithms for quantum error
+/// correction, particularly the MWPM (Minimum Weight Perfect Matching) decoder.
+///
+/// # Main Types
+///
+/// - **`Graph`** - Undirected graph with weighted edges
+///
+/// # Available Functions
+///
+/// - **`max_weight_matching()`** - Compute maximum weight matching (used in MWPM decoder)
+///
+/// # Example
+///
+/// ```rust
+/// use pecos::graph::Graph;
+///
+/// let mut graph = Graph::new();
+/// let n0 = graph.add_node();
+/// let n1 = graph.add_node();
+/// let n2 = graph.add_node();
+/// let n3 = graph.add_node();
+///
+/// graph.add_edge(n0, n1, 10.0);
+/// graph.add_edge(n2, n3, 20.0);
+///
+/// let matching = graph.max_weight_matching(false);
+/// assert_eq!(matching.len(), 4); // Two pairs, each appearing twice
+/// ```
+pub mod graph {
+    pub use pecos_num::graph::*;
+}
+
 // ============================================================================
 // Top-level re-exports for convenience and backward compatibility
 // ============================================================================

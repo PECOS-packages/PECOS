@@ -30,6 +30,7 @@ except PackageNotFoundError:
 import sys
 from typing import NoReturn
 
+# Graph algorithms
 # ============================================================================
 # NumPy-style Numerical Computing API (Hybrid Flat + Structured)
 # ============================================================================
@@ -78,6 +79,7 @@ from pecos_rslib import (
     exp,  # Exponential
     f32,
     f64,
+    graph,
     i8,
     i16,
     i32,

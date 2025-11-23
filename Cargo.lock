@@ -1581,7 +1581,10 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash 0.1.5",
+ "rayon",
  "serde",
 ]
 
@@ -1986,6 +1989,7 @@ checksum = "6717a8d2a5a929a1a2eb43a12812498ed141a0bcfb7e8f7844fbdbe4303bba9f"
 dependencies = [
  "equivalent",
  "hashbrown 0.16.0",
+ "rayon",
  "serde",
  "serde_core",
 ]
@@ -2414,6 +2418,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "rawpointer",
+ "rayon",
 ]
 
 [[package]]
@@ -2807,6 +2812,7 @@ dependencies = [
  "peroxide",
  "rand 0.9.2",
  "roots",
+ "rustworkx-core",
 ]
 
 [[package]]
@@ -3543,6 +3549,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand_pcg"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b48ac3f7ffaab7fac4d2376632268aa5f89abdb55f7ebf8f4d11fffccb2320f7"
+dependencies = [
+ "rand_core 0.9.3",
+]
+
+[[package]]
 name = "rawpointer"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3556,6 +3571,17 @@ checksum = "368f01d005bf8fd9b1206fb6fa653e6c4a81ceb1466406b81792d87c5677a58f"
 dependencies = [
  "either",
  "rayon-core",
+]
+
+[[package]]
+name = "rayon-cond"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2964d0cf57a3e7a06e8183d14a8b527195c706b7983549cd5462d5aa3747438f"
+dependencies = [
+ "either",
+ "itertools 0.14.0",
+ "rayon",
 ]
 
 [[package]]
@@ -3843,6 +3869,27 @@ name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+
+[[package]]
+name = "rustworkx-core"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aaeee6f84153fd6f62507fc22bfe9499c8485075b44186dcbb918166ef75116f"
+dependencies = [
+ "fixedbitset 0.5.7",
+ "foldhash 0.1.5",
+ "hashbrown 0.15.5",
+ "indexmap 2.12.0",
+ "ndarray",
+ "num-traits",
+ "petgraph 0.8.3",
+ "priority-queue",
+ "rand 0.9.2",
+ "rand_distr",
+ "rand_pcg",
+ "rayon",
+ "rayon-cond",
+]
 
 [[package]]
 name = "ryu"

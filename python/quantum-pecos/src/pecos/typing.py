@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Protocol, TypedDict
 
 # JSON-like types for gate parameters and metadata
 JSONValue = str | int | float | bool | dict[str, "JSONValue"] | list["JSONValue"] | None
@@ -127,3 +127,56 @@ class LogicalOpInfo(TypedDict):
     X: set[int]
     Z: set[int]
     equiv_ops: tuple[str, ...]
+
+
+# Graph protocol types
+# Node identifiers can be any hashable type (str, int, tuple, etc.)
+Node = object
+# Edges are represented as tuples of two nodes
+Edge = tuple[Node, Node]
+# Paths are lists of nodes
+Path = list[Node]
+
+
+class GraphProtocol(Protocol):
+    """Protocol for graph objects used in decoder precomputation and algorithms.
+
+    This protocol defines the interface that graph implementations must provide
+    to be compatible with PECOS decoders and graph algorithms.
+    """
+
+    def nodes(self) -> list[Node]:
+        """Return list of nodes in the graph.
+
+        Returns:
+            List of node identifiers in the graph.
+        """
+        ...
+
+    def add_edge(
+        self,
+        a: Node,
+        b: Node,
+        weight: float | None = None,
+        **kwargs: object,
+    ) -> None:
+        """Add an edge between nodes a and b.
+
+        Args:
+            a: First node identifier.
+            b: Second node identifier.
+            weight: Optional edge weight.
+            **kwargs: Additional edge attributes.
+        """
+        ...
+
+    def single_source_shortest_path(self, source: Node) -> dict[Node, Path]:
+        """Compute shortest paths from source to all other nodes.
+
+        Args:
+            source: Source node identifier.
+
+        Returns:
+            Dictionary mapping target nodes to paths (list of nodes from source to target).
+        """
+        ...

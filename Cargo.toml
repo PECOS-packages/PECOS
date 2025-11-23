@@ -10,6 +10,7 @@ members = [
 # By default, exclude decoder crates from workspace operations to avoid heavy C++ dependencies
 default-members = [
     "crates/pecos-core",
+    "crates/pecos-num",
     "crates/pecos-engines",
     "crates/pecos-qsim",
     "crates/pecos-qasm",
@@ -50,22 +51,13 @@ keywords = ["scientific", "quantum", "QEC"]
 categories = ["science", "simulation"]
 
 [workspace.dependencies]
-thiserror = "2"
-rand = "0.9"
-rand_chacha = "0.9"
 pyo3 = { version = "0.27", features = ["extension-module"] }
 pyo3-build-config = { version = "0.27", features = ["resolve-config"] }
 rayon = "1"
 clap = { version = "4", features = ["derive"] }
-log = "0.4"
-env_logger = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 parking_lot = "0.12"
-num-complex = "0.4"
-num-traits = "0.2"
-num-bigint = { version = "0.4", features = ["serde"] }
-bitvec = { version = "1", features = ["serde"] }
 criterion = "0.7"
 libloading = "0.8"
 libc = "0.2"
@@ -83,14 +75,6 @@ cc = "1"
 ron = "0.11"
 tket = "0.16"
 tket-qsystem = { version = "0.22", default-features = false }
-ndarray = "0.16"
-anyhow = "1"
-
-# Numerical computing dependencies (for pecos-num)
-peroxide = "0.40"
-roots = "0.0.8"
-levenberg-marquardt = "0.15"
-nalgebra = "0.34"
 cxx = "1.0.187"
 cxx-build = "1.0.187"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
@@ -105,6 +89,30 @@ inkwell = "0.6"
 bincode = "2"
 tracing = "0.1"
 cargo_metadata = "0.23"
+xz2 = "0.1"
+sevenz-rust = "0.6"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Numerical computing
+peroxide = "0.40"
+roots = "0.0.8"
+levenberg-marquardt = "0.15"
+nalgebra = "0.34"
+rustworkx-core = "0.17"
+num-complex = "0.4"
+num-traits = "0.2"
+num-bigint = { version = "0.4", features = ["serde"] }
+bitvec = { version = "1", features = ["serde"] }
+ndarray = "0.16"
+rand = "0.9"
+rand_chacha = "0.9"
 
 # Windows workaround: Disable zstd-sys legacy feature to avoid MSVC ICE
 # MSVC 14.43 has an internal compiler error (C1001) when compiling zstd_v06.c
@@ -119,7 +127,7 @@ pecos-phir-json = { version = "0.1.1", path = "crates/pecos-phir-json" }
 pecos-engines = { version = "0.1.1", path = "crates/pecos-engines" }
 pecos-phir = { version = "0.1.1", path = "crates/pecos-phir" }
 pecos-qec = { version = "0.1.1", path = "crates/pecos-qec" }
-pecos-rng = { version = "0.1.0", path = "crates/pecos-rng" }
+pecos-rng = { version = "0.1.1", path = "crates/pecos-rng" }
 pecos = { version = "0.1.1", path = "crates/pecos" }
 pecos-cli = { version = "0.1.1", path = "crates/pecos-cli" }
 pecos-qis-ffi = { version = "0.1.1", path = "crates/pecos-qis-ffi" }

@@ -30,7 +30,10 @@ pub use crate::polynomial::{Poly1d, PolynomialError, polyfit, polyfit_with_cov};
 pub use crate::random;
 
 // Re-export statistical functions
-pub use crate::stats::{mean, mean_axis, std, std_axis};
+pub use crate::stats::{
+    jackknife_resamples, jackknife_stats, jackknife_stats_axis, jackknife_weighted, mean,
+    mean_axis, std, std_axis, weighted_mean,
+};
 
 // Re-export mathematical traits (use these for polymorphism!)
 pub use crate::math::{

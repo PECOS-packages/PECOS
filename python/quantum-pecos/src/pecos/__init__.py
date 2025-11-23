@@ -70,6 +70,7 @@ from pecos_rslib import (
     allclose,  # Approximate equality (arrays)
     any,  # Any element true  # noqa: A004
     array,  # Array creation
+    array_equal,  # Array equality
     complex64,
     complex128,
     cos,  # Cosine

@@ -1875,6 +1875,200 @@ fn std(values: Vec<f64>, ddof: usize) -> f64 {
     pecos::prelude::std(&values, ddof)
 }
 
+/// Calculate weighted mean from (value, weight) pairs.
+///
+/// Drop-in replacement for the `wt_mean()` function in PECOS sampling.py.
+///
+/// # Arguments
+///
+/// * `data` - List of (value, weight) tuples
+///
+/// # Returns
+///
+/// The weighted mean: `sum(value * weight) / sum(weight)`.
+/// Returns `NaN` if data is empty or total weight is zero.
+///
+/// # Examples
+///
+/// ```python
+/// from pecos_rslib._pecos_rslib.num import weighted_mean
+///
+/// # Fidelity measurements with shot counts
+/// data = [(0.98, 100.0), (0.94, 500.0), (0.96, 200.0)]
+/// avg = weighted_mean(data)  # Returns 0.95
+/// ```
+#[allow(clippy::needless_pass_by_value)]
+#[pyfunction]
+fn weighted_mean(data: Vec<(f64, f64)>) -> f64 {
+    pecos::prelude::weighted_mean(&data)
+}
+
+/// Generate jackknife resamples from 1D data.
+///
+/// Drop-in replacement for `astropy.stats.jackknife_resampling`.
+/// Generates n deterministic samples of size n-1 by leaving out one observation at a time.
+///
+/// # Arguments
+///
+/// * `data` - Original 1D sample
+///
+/// # Returns
+///
+/// 2D array where each row is a jackknife resample (shape: n × n-1)
+///
+/// # Examples
+///
+/// ```python
+/// from pecos_rslib._pecos_rslib.num import jackknife_resamples
+///
+/// data = [1.0, 2.0, 3.0, 4.0, 5.0]
+/// resamples = jackknife_resamples(data)
+/// # resamples[0] = [2.0, 3.0, 4.0, 5.0]  (removed 1.0)
+/// # resamples[1] = [1.0, 3.0, 4.0, 5.0]  (removed 2.0)
+/// # ...
+/// ```
+#[allow(clippy::needless_pass_by_value)]
+#[pyfunction]
+fn jackknife_resamples(py: Python<'_>, data: Vec<f64>) -> Bound<'_, PyArray2<f64>> {
+    let resamples = pecos::prelude::jackknife_resamples(&data);
+    PyArray::from_owned_array(py, resamples)
+}
+
+/// Compute jackknife statistics from leave-one-out estimates.
+///
+/// Given parameter estimates from jackknife resamples, calculate the mean and standard error.
+///
+/// # Arguments
+///
+/// * `estimates` - Parameter estimates from each jackknife resample
+///
+/// # Returns
+///
+/// Tuple of (`mean_estimate`, `standard_error`)
+///
+/// # Examples
+///
+/// ```python
+/// from pecos_rslib._pecos_rslib.num import jackknife_resamples, jackknife_stats
+/// import numpy as np
+///
+/// data = [1.5, 1.6, 1.4, 1.5, 1.7]
+/// resamples = jackknife_resamples(data)
+/// estimates = [np.mean(resamples[i]) for i in range(len(resamples))]
+/// jack_mean, jack_se = jackknife_stats(estimates)
+/// ```
+#[allow(clippy::needless_pass_by_value)]
+#[pyfunction]
+fn jackknife_stats(estimates: Vec<f64>) -> (f64, f64) {
+    pecos::prelude::jackknife_stats(&estimates)
+}
+
+/// Compute jackknife statistics along an axis of a 2D array.
+///
+/// Given a 2D array where each row contains parameter estimates from one jackknife
+/// resample (with multiple parameters per resample), compute the jackknife mean
+/// and standard error for each parameter.
+///
+/// This is useful for threshold curve fitting where you fit multiple parameters
+/// (pth, v0, a, b, c, ...) for each jackknife resample and need statistics on
+/// all parameters simultaneously.
+///
+/// # Arguments
+///
+/// * `estimates` - 2D array where:
+///   - `axis=0`: Each row is one jackknife resample, columns are different parameters
+///   - `axis=1`: Each column is one jackknife resample, rows are different parameters
+/// * `axis` - The axis along which to compute statistics (0 or 1)
+///
+/// # Returns
+///
+/// Tuple of (`mean_estimates`, `standard_errors`) where each is a 1D array with
+/// one element per parameter.
+///
+/// # Examples
+///
+/// ```python
+/// from pecos_rslib._pecos_rslib.num import jackknife_stats_axis
+/// import numpy as np
+///
+/// # 3 jackknife resamples × 2 parameters
+/// # Each row is estimates from one resample: [param1, param2]
+/// estimates = np.array([
+///     [1.5, 10.0],  # Resample 1 estimates
+///     [1.6, 10.5],  # Resample 2 estimates
+///     [1.4, 9.5],   # Resample 3 estimates
+/// ])
+///
+/// # Compute stats for each parameter (down columns)
+/// means, stds = jackknife_stats_axis(estimates, axis=0)
+/// # means[0] = jackknife mean of parameter 1
+/// # means[1] = jackknife mean of parameter 2
+/// ```
+#[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
+#[pyfunction]
+fn jackknife_stats_axis(
+    py: Python<'_>,
+    estimates: &Bound<'_, PyAny>,
+    axis: usize,
+) -> PyResult<(Py<PyArray1<f64>>, Py<PyArray1<f64>>)> {
+    // Handle both PECOS Arrays and numpy arrays
+    // If it's a PECOS Array, call __array__() to convert to numpy
+    let array_to_use =
+        if estimates.hasattr("__array__")? && !estimates.is_instance_of::<PyArray2<f64>>() {
+            // It's a PECOS Array - call __array__() to get numpy array
+            estimates.call_method0("__array__")?
+        } else {
+            // It's already a numpy array or compatible type
+            estimates.clone()
+        };
+
+    let estimates_array: PyReadonlyArray2<f64> = array_to_use.extract()?;
+    let estimates_view = estimates_array.as_array();
+    let (means, stds) = pecos::prelude::jackknife_stats_axis(&estimates_view, Axis(axis));
+    Ok((
+        PyArray1::from_array(py, &means).unbind(),
+        PyArray1::from_array(py, &stds).unbind(),
+    ))
+}
+
+/// Jackknife resampling for weighted data with bias correction.
+///
+/// Drop-in replacement for the `jackknife()` function in PECOS sampling.py.
+/// Handles weighted data (e.g., fidelity measurements with shot counts).
+///
+/// # Arguments
+///
+/// * `data` - List of (value, weight) tuples (e.g., [(fidelity, `shot_count`), ...])
+///
+/// # Returns
+///
+/// Tuple of (`corrected_estimate`, `standard_error`)
+///
+/// # Special Cases
+///
+/// For a single data point, returns binomial error estimate:
+/// - Estimate = value
+/// - Error = sqrt(p * (1-p) / weight) where p = 1 - value
+///
+/// # Examples
+///
+/// ```python
+/// from pecos_rslib._pecos_rslib.num import jackknife_weighted
+///
+/// # Multiple fidelity measurements with shot counts
+/// data = [(0.98, 100.0), (0.94, 500.0), (0.96, 200.0)]
+/// corrected, std_err = jackknife_weighted(data)
+///
+/// # Single measurement (uses binomial error)
+/// single = [(0.95, 1000.0)]
+/// estimate, error = jackknife_weighted(single)
+/// ```
+#[allow(clippy::needless_pass_by_value)]
+#[pyfunction]
+fn jackknife_weighted(data: Vec<(f64, f64)>) -> (f64, f64) {
+    pecos::prelude::jackknife_weighted(&data)
+}
+
 /// Extract the diagonal elements from a 2D array.
 ///
 /// This is a drop-in replacement for `numpy.diag()` when extracting diagonal elements.
@@ -4510,6 +4704,11 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let stats_module = PyModule::new(m.py(), "stats")?;
     stats_module.add_function(wrap_pyfunction!(mean, &stats_module)?)?;
     stats_module.add_function(wrap_pyfunction!(self::std, &stats_module)?)?;
+    stats_module.add_function(wrap_pyfunction!(weighted_mean, &stats_module)?)?;
+    stats_module.add_function(wrap_pyfunction!(jackknife_resamples, &stats_module)?)?;
+    stats_module.add_function(wrap_pyfunction!(jackknife_stats, &stats_module)?)?;
+    stats_module.add_function(wrap_pyfunction!(jackknife_stats_axis, &stats_module)?)?;
+    stats_module.add_function(wrap_pyfunction!(jackknife_weighted, &stats_module)?)?;
     num_module.add_submodule(&stats_module)?;
 
     // Create math submodule

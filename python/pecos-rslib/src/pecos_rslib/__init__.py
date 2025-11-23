@@ -97,6 +97,7 @@ from pecos_rslib.num_wrapper import (  # Enhanced num module with axis support
     nan,
     # Submodules
     random,
+    stats,  # Wrapped stats module with PECOS Array support
 )
 from pecos_rslib.rscoin_toss import CoinToss
 from pecos_rslib.rspauli_prop import PauliPropRs
@@ -140,7 +141,9 @@ num.where = num.where_
 
 # Register submodules in sys.modules so Python can find them
 sys.modules["pecos_rslib.num"] = num
-sys.modules["pecos_rslib.num.stats"] = num.stats
+sys.modules["pecos_rslib.num.stats"] = (
+    stats  # stats from num_wrapper (same as num.stats)
+)
 sys.modules["pecos_rslib.num.math"] = num.math
 sys.modules["pecos_rslib.num.compare"] = num.compare
 sys.modules["pecos_rslib.num.array"] = num.array
@@ -148,6 +151,8 @@ sys.modules["pecos_rslib.num.optimize"] = num.optimize
 sys.modules["pecos_rslib.num.polynomial"] = num.polynomial
 sys.modules["pecos_rslib.num.curve_fit"] = num.curve_fit
 sys.modules["pecos_rslib.num.random"] = num.random
+
+# stats is exported from num_wrapper (which re-exports num.stats)
 
 # HUGR compilation functions - explicit, no automatic fallback
 try:
@@ -607,6 +612,7 @@ __all__ = [
     "nan",
     # Numerical submodules
     "random",
+    "stats",
     # QuEST simulators
     "QuestStateVec",
     "QuestDensityMatrix",

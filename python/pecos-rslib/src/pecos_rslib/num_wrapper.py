@@ -389,6 +389,17 @@ log10_e_f32 = _num_core.LOG10_E_F32
 random = _num_core.random
 linalg = _num_core.linalg
 
+# Jackknife resampling functions - direct imports from Rust
+# These don't need Python wrappers - Rust handles PECOS Arrays directly
+weighted_mean = _num_core.stats.weighted_mean
+jackknife_resamples = _num_core.stats.jackknife_resamples
+jackknife_stats = _num_core.stats.jackknife_stats
+jackknife_stats_axis = _num_core.stats.jackknife_stats_axis
+jackknife_weighted = _num_core.stats.jackknife_weighted
+
+# Re-export stats module directly - no wrapper needed
+stats = _num_core.stats
+
 
 __all__ = [
     # Functions
@@ -426,6 +437,11 @@ __all__ = [
     "any",  # Boolean OR reduction
     "where",
     "std",
+    "weighted_mean",
+    "jackknife_resamples",
+    "jackknife_stats",
+    "jackknife_stats_axis",
+    "jackknife_weighted",
     "brentq",
     "newton",
     "polyfit",
@@ -460,4 +476,5 @@ __all__ = [
     # Submodules
     "random",
     "linalg",
+    "stats",
 ]

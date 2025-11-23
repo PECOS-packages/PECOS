@@ -268,6 +268,62 @@ def threshold_fit(
     return popt, stdev
 
 
+def _jackknife_threshold_core(
+    plist: Array[f64] | list[float],
+    dlist: Array[f64] | list[float],
+    plog: Array[f64] | list[float],
+    func: Callable[..., float | Array[f64]],
+    p0: Array[f64] | list[float],
+    maxfev: int,
+    resample_indices: list[list[int]],
+    *,
+    verbose: bool = True,
+    verbose_labels: list[str] | None = None,
+) -> tuple[Array[f64], Array[f64]]:
+    """Core jackknife resampling implementation for threshold fitting.
+
+    Args:
+        plist: List of probability values.
+        dlist: List of distance values.
+        plog: List of logical error probabilities.
+        func: Fitting function to use.
+        p0: Initial parameter guess.
+        maxfev: Maximum function evaluations.
+        resample_indices: List of index lists, each specifying which indices to include in that resample.
+        verbose: If True, print progress information.
+        verbose_labels: Optional labels for verbose output.
+
+    Returns:
+        Tuple of (mean_parameters, std_parameters).
+    """
+    opt_list = []
+
+    for i, indices in enumerate(resample_indices):
+        p_copy = plist[indices]
+        plog_copy = plog[indices]
+        dlist_copy = dlist[indices]
+
+        result = threshold_fit(p_copy, dlist_copy, plog_copy, func, p0, maxfev)
+        opt_list.append(result[0].tolist())
+
+        if verbose and verbose_labels:
+            print(verbose_labels[i])
+            print("parameter values:", result[0])
+            print(f"parameter stds: {result[1]}\n")
+
+    # Convert to PECOS array for jackknife_stats_axis
+    opt_array = pc.array(opt_list)
+
+    # Use pecos-num jackknife_stats_axis to compute stats for all parameters at once
+    # axis=0 means compute stats down columns (each column is a parameter)
+    means, stds = pc.stats.jackknife_stats_axis(opt_array, axis=0)
+
+    print(f"Mean: {means}")
+    print(f"Std: {stds}")
+
+    return means, stds
+
+
 def jackknife_pd(
     plist: Array[f64] | list[float],
     dlist: Array[f64] | list[float],
@@ -280,6 +336,8 @@ def jackknife_pd(
 ) -> tuple[Array[f64], Array[f64]]:
     """Perform jackknife resampling for parameter and distance data.
 
+    Uses leave-one-out resampling where each data point (p, d, plog) is removed in turn.
+
     Args:
         plist: List of probability values.
         dlist: List of distance values.
@@ -290,32 +348,32 @@ def jackknife_pd(
         verbose: If True, print progress information.
 
     Returns:
-        Tuple of (optimized_parameters, covariance_matrices).
+        Tuple of (mean_parameters, std_parameters).
     """
-    opt_list = []
-    cov_list = []
-    for i in range(len(plog)):
-        p_copy = pc.delete(plist, i)
-        plog_copy = pc.delete(plog, i)
-        dlist_copy = pc.delete(dlist, i)
+    n = len(plog)
+    plist = pc.array(plist)
+    dlist = pc.array(dlist)
+    plog = pc.array(plog)
 
-        result = threshold_fit(p_copy, dlist_copy, plog_copy, func, p0, maxfev)
-        opt_list.append(result[0])
-        cov_list.append(result[1])
+    # Generate leave-one-out resample indices
+    resample_indices = [list(range(i)) + list(range(i + 1, n)) for i in range(n)]
 
-        if verbose:
-            print(f"removed index: {i}")
-            print(f"p = {plist[i]}, d = {dlist[i]}")
-            print("parameter values:", result[0])
-            print(f"parameter stds: {result[1]}\n")
+    # Generate verbose labels
+    verbose_labels = [
+        f"removed index: {i}\np = {plist[i]}, d = {dlist[i]}" for i in range(n)
+    ]
 
-    est = pc.mean(opt_list, axis=0)
-    stds = pc.std(opt_list, axis=0)
-
-    print(f"Mean: {est}")
-    print(f"Std: {stds}")
-
-    return est, stds
+    return _jackknife_threshold_core(
+        plist,
+        dlist,
+        plog,
+        func,
+        p0,
+        maxfev,
+        resample_indices,
+        verbose=verbose,
+        verbose_labels=verbose_labels if verbose else None,
+    )
 
 
 def jackknife_p(
@@ -342,31 +400,33 @@ def jackknife_p(
     Returns:
         Tuple of (mean_parameters, std_parameters).
     """
-    opt_list = []
-    cov_list = []
-    uplist = sorted(set(plist))
-    for p in uplist:
-        mask = plist != p
-        p_copy = plist[mask]
-        plog_copy = plog[mask]
-        dlist_copy = dlist[mask]
+    plist = pc.array(plist)
+    dlist = pc.array(dlist)
+    plog = pc.array(plog)
 
-        result = threshold_fit(p_copy, dlist_copy, plog_copy, func, p0, maxfev)
-        opt_list.append(result[0])
-        cov_list.append(result[1])
+    uplist = sorted(set(plist.tolist()))
 
-        if verbose:
-            print(f"removed p: {p}")
-            print("parameter values:", result[0])
-            print(f"parameter stds: {result[1]}\n")
+    # Generate resample indices for each unique p value
+    resample_indices = []
+    verbose_labels = []
 
-    est = pc.mean(opt_list, axis=0)
-    stds = pc.std(opt_list, axis=0)
+    for p_val in uplist:
+        mask = plist != p_val
+        indices = pc.where(mask)[0].tolist()
+        resample_indices.append(indices)
+        verbose_labels.append(f"removed p: {p_val}")
 
-    print(f"Mean: {est}")
-    print(f"Std: {stds}")
-
-    return est, stds
+    return _jackknife_threshold_core(
+        plist,
+        dlist,
+        plog,
+        func,
+        p0,
+        maxfev,
+        resample_indices,
+        verbose=verbose,
+        verbose_labels=verbose_labels if verbose else None,
+    )
 
 
 def jackknife_d(
@@ -393,32 +453,33 @@ def jackknife_d(
     Returns:
         Tuple of (mean_parameters, std_parameters).
     """
-    opt_list = []
-    cov_list = []
+    plist = pc.array(plist)
+    dlist = pc.array(dlist)
+    plog = pc.array(plog)
 
-    udlist = sorted(set(dlist))
-    for d in udlist:
-        mask = dlist != d
-        p_copy = plist[mask]
-        plog_copy = plog[mask]
-        dlist_copy = dlist[mask]
+    udlist = sorted(set(dlist.tolist()))
 
-        result = threshold_fit(p_copy, dlist_copy, plog_copy, func, p0, maxfev)
-        opt_list.append(result[0])
-        cov_list.append(result[1])
+    # Generate resample indices for each unique d value
+    resample_indices = []
+    verbose_labels = []
 
-        if verbose:
-            print(f"removed d: {d}")
-            print("parameter values:", result[0])
-            print(f"parameter stds: {result[1]}\n")
+    for d_val in udlist:
+        mask = dlist != d_val
+        indices = pc.where(mask)[0].tolist()
+        resample_indices.append(indices)
+        verbose_labels.append(f"removed d: {d_val}")
 
-    est = pc.mean(opt_list, axis=0)
-    stds = pc.std(opt_list, axis=0)
-
-    print(f"Mean: {est}")
-    print(f"Std: {stds}")
-
-    return est, stds
+    return _jackknife_threshold_core(
+        plist,
+        dlist,
+        plog,
+        func,
+        p0,
+        maxfev,
+        resample_indices,
+        verbose=verbose,
+        verbose_labels=verbose_labels if verbose else None,
+    )
 
 
 def get_est(

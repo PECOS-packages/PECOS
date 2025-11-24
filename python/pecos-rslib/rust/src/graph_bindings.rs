@@ -15,15 +15,60 @@
 //! This module provides Python bindings for graph data structures and algorithms,
 //! particularly for MWPM (Minimum Weight Perfect Matching) used in quantum error correction.
 
-use pecos::graph::{
-    EdgeAttribute as RustEdgeAttribute, Graph as RustGraph, MappedGraph as RustMappedGraph,
-};
+use pecos::graph::{Attribute as RustAttribute, Graph as RustGraph};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::collections::BTreeMap;
 
-/// Type alias for edge list return type to reduce complexity
-type PyEdgeList = Vec<(Py<PyAny>, Py<PyAny>, f64)>;
+/// Helper function to convert Python values to Attribute enum.
+fn python_value_to_attribute(value: &Bound<'_, PyAny>, key: &str) -> PyResult<RustAttribute> {
+    if let Ok(b) = value.extract::<bool>() {
+        Ok(RustAttribute::Bool(b))
+    } else if let Ok(i) = value.extract::<i64>() {
+        Ok(RustAttribute::Int(i))
+    } else if let Ok(f) = value.extract::<f64>() {
+        Ok(RustAttribute::Float(f))
+    } else if let Ok(v) = value.extract::<Vec<i64>>() {
+        Ok(RustAttribute::IntList(v))
+    } else if let Ok(v) = value.extract::<Vec<String>>() {
+        Ok(RustAttribute::StringList(v))
+    } else if let Ok(s) = value.extract::<String>() {
+        Ok(RustAttribute::String(s))
+    } else {
+        // Fallback to JSON
+        let py = value.py();
+        let json_module = py.import("json")?;
+        let json_str: String = json_module.getattr("dumps")?.call1((value,))?.extract()?;
+
+        match serde_json::from_str(&json_str) {
+            Ok(json_value) => Ok(RustAttribute::Json(json_value)),
+            Err(e) => Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
+                "Failed to convert edge attribute '{key}' to JSON: {e}"
+            ))),
+        }
+    }
+}
+
+/// Helper function to convert Attribute to Python values.
+fn attribute_to_python(py: Python<'_>, attr: &RustAttribute) -> PyResult<Py<PyAny>> {
+    Ok(match attr {
+        RustAttribute::Float(f) => f.into_pyobject(py)?.into_any().unbind(),
+        RustAttribute::Int(i) => i.into_pyobject(py)?.into_any().unbind(),
+        RustAttribute::String(s) => s.into_pyobject(py)?.into_any().unbind(),
+        RustAttribute::Bool(b) => b.into_pyobject(py)?.as_any().clone().unbind(),
+        RustAttribute::IntList(v) => v.into_pyobject(py)?.into_any().unbind(),
+        RustAttribute::StringList(v) => v.into_pyobject(py)?.into_any().unbind(),
+        RustAttribute::Json(json_value) => {
+            let json_str = serde_json::to_string(json_value).unwrap();
+            let json_module = py.import("json")?;
+            json_module
+                .getattr("loads")?
+                .call1((json_str,))?
+                .into_any()
+                .unbind()
+        }
+    })
+}
 
 /// Python wrapper for the Rust Graph type.
 ///
@@ -72,6 +117,37 @@ impl PyGraph {
         }
     }
 
+    /// Helper method to resolve and validate a node index.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - Integer node ID
+    ///
+    /// # Returns
+    ///
+    /// The node index
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the node index is out of bounds or not an integer
+    fn resolve_node_id(&self, node: &Bound<'_, PyAny>) -> PyResult<usize> {
+        let idx = node.extract::<usize>().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Node identifier must be an integer (node ID)",
+            )
+        })?;
+
+        // Validate node exists
+        if idx >= self.inner.node_count() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Node index {idx} out of bounds (graph has {} nodes)",
+                self.inner.node_count()
+            )));
+        }
+
+        Ok(idx)
+    }
+
     /// Creates a new graph with pre-allocated capacity.
     ///
     /// # Arguments
@@ -98,90 +174,26 @@ impl PyGraph {
         self.inner.add_node()
     }
 
-    /// Adds an edge between two nodes with optional weight and attributes.
+    /// Adds an edge between two nodes with default weight of 1.0.
     ///
-    /// This method supports NetworkX-style edge addition with keyword arguments.
-    ///
-    /// # Arguments
-    ///
-    /// * `a` - Index of the first node
-    /// * `b` - Index of the second node
-    /// * `weight` - Optional weight of the edge (defaults to 1.0)
-    /// * `**kwargs` - Additional edge attributes
+    /// Use `set_weight()` and `edge_attrs()` to configure the edge after creation.
     ///
     /// # Examples
     ///
     /// ```python
-    /// graph.add_edge(0, 1, weight=5.0)
-    /// graph.add_edge(0, 1, weight=5.0, data_path=[1, 2, 3])
+    /// graph.add_edge(0, 1)
+    /// graph.set_weight(0, 1, 5.0)
+    /// graph.edge_attrs(0, 1)["data_path"] = [1, 2, 3]
     /// ```
-    #[pyo3(signature = (a, b, weight=None, **kwargs))]
-    fn add_edge(
-        &mut self,
-        a: usize,
-        b: usize,
-        weight: Option<f64>,
-        kwargs: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<()> {
-        use pecos::graph::EdgeAttribute;
+    fn add_edge(&mut self, a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyResult<()> {
+        // Use helper to resolve node IDs
+        let node_a = self.resolve_node_id(a)?;
+        let node_b = self.resolve_node_id(b)?;
 
-        // Create edge data from kwargs
-        let mut edge_data = pecos::graph::EdgeData::new();
+        // Create edge data with default weight (1.0 is the default)
+        let edge_data = pecos::graph::EdgeAttrs::new();
 
-        // Add weight (use provided weight, or from kwargs, or default to 1.0)
-        let final_weight = if let Some(w) = weight {
-            w
-        } else if let Some(kw) = kwargs {
-            if let Some(w) = kw.get_item("weight")? {
-                w.extract::<f64>().unwrap_or(1.0)
-            } else {
-                1.0
-            }
-        } else {
-            1.0
-        };
-        edge_data.set("weight", EdgeAttribute::Float(final_weight));
-
-        // Add other attributes from kwargs
-        if let Some(kw) = kwargs {
-            for (key, value) in kw.iter() {
-                let key_str: String = key.extract()?;
-
-                // Skip "weight" as we already handled it
-                if key_str == "weight" {
-                    continue;
-                }
-
-                // Try to convert value to EdgeAttribute
-                // Check bool first because bool can be extracted as float (True -> 1.0)
-                if let Ok(b) = value.extract::<bool>() {
-                    edge_data.set(&key_str, EdgeAttribute::Bool(b));
-                } else if let Ok(i) = value.extract::<i64>() {
-                    edge_data.set(&key_str, EdgeAttribute::Int(i));
-                } else if let Ok(f) = value.extract::<f64>() {
-                    edge_data.set(&key_str, EdgeAttribute::Float(f));
-                } else if let Ok(v) = value.extract::<Vec<i64>>() {
-                    edge_data.set(&key_str, EdgeAttribute::IntList(v));
-                } else if let Ok(s) = value.extract::<String>() {
-                    edge_data.set(&key_str, EdgeAttribute::String(s));
-                } else {
-                    // Unsupported attribute type - provide helpful error
-                    let type_name = value
-                        .get_type()
-                        .name()
-                        .ok()
-                        .and_then(|n| n.to_str().ok().map(std::string::ToString::to_string))
-                        .unwrap_or_else(|| "<unknown>".to_string());
-                    return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-                        "Unsupported edge attribute type for key '{key_str}'. \
-                         Supported types: bool, int, float, str, list[int]. \
-                         Got type: {type_name}"
-                    )));
-                }
-            }
-        }
-
-        self.inner.add_edge_with_data(a, b, edge_data);
+        self.inner.add_edge_with_data(node_a, node_b, edge_data);
         Ok(())
     }
 
@@ -204,6 +216,34 @@ impl PyGraph {
         self.inner.nodes()
     }
 
+    /// Check if a node exists in the graph.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - The node index to check
+    ///
+    /// # Returns
+    ///
+    /// True if the node exists, False otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// g = Graph()
+    /// n0 = g.add_node()
+    /// assert g.has_node(n0)
+    /// assert not g.has_node(999)
+    /// ```
+    fn has_node(&self, node: usize) -> bool {
+        node < self.inner.node_count()
+    }
+
+    // TODO: Add remove_node to Rust Graph API
+    // /// Remove a node and all its connected edges from the graph.
+    // fn remove_node(&mut self, node: usize) {
+    //     self.inner.remove_node(node);
+    // }
+
     /// Computes the maximum weight matching of the graph.
     ///
     /// This function finds a matching (set of edges with no common vertices) that
@@ -219,6 +259,47 @@ impl PyGraph {
     /// A dictionary mapping node indices to their matched partners.
     fn max_weight_matching(&self, max_cardinality: bool) -> BTreeMap<usize, usize> {
         self.inner.max_weight_matching(max_cardinality)
+    }
+
+    /// Compute maximum weight perfect matching with configurable weight precision.
+    ///
+    /// This is the same as `max_weight_matching` but allows you to control the
+    /// float-to-integer conversion multiplier.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_cardinality` - If True, prioritize maximum cardinality over maximum weight
+    /// * `weight_multiplier` - Multiplier for converting float weights to integers.
+    ///                         Default is 1000.0 (preserves 3 decimal places).
+    ///                         Use 1.0 if weights are already integers.
+    ///                         Use higher values (10000.0+) for more decimal precision.
+    ///
+    /// # Returns
+    ///
+    /// A dictionary mapping node indices to their matched partners.
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// # For integer weights, use weight_multiplier=1.0
+    /// g = Graph()
+    /// n0, n1, n2, n3 = [g.add_node() for _ in range(4)]
+    /// g.add_edge(n0, n1)
+    /// e1 = g.find_edge(n0, n1)
+    /// g.set_edge_weight(e1, -5.0)
+    /// g.add_edge(n2, n3)
+    /// e2 = g.find_edge(n2, n3)
+    /// g.set_edge_weight(e2, -10.0)
+    /// matching = g.max_weight_matching_with_precision(True, 1.0)
+    /// ```
+    #[pyo3(signature = (max_cardinality, weight_multiplier = 1000.0))]
+    fn max_weight_matching_with_precision(
+        &self,
+        max_cardinality: bool,
+        weight_multiplier: f64,
+    ) -> BTreeMap<usize, usize> {
+        self.inner
+            .max_weight_matching_with_precision(max_cardinality, weight_multiplier)
     }
 
     /// Returns a list of all edges as (source, target, weight) tuples.
@@ -239,31 +320,147 @@ impl PyGraph {
     ///
     /// # Returns
     ///
-    /// A dictionary with edge attributes if an edge exists, None otherwise.
+    /// A dictionary with edge weight and attributes if an edge exists, None otherwise.
+    /// The dictionary includes "weight" as a key with the edge weight value.
     fn get_edge_data(&self, py: Python<'_>, a: usize, b: usize) -> Option<Py<PyAny>> {
-        self.inner.get_edge_data(a, b).map(|edge_data| {
+        self.inner.get_edge_data(a, b).map(|edge_attrs| {
             let dict = PyDict::new(py);
-            for (key, value) in edge_data.attributes() {
+
+            // Add weight as a first-class dictionary item
+            dict.set_item("weight", edge_attrs.weight()).unwrap();
+
+            // Add all other attributes
+            for (key, value) in edge_attrs.attrs() {
                 match value {
-                    RustEdgeAttribute::Float(f) => {
+                    RustAttribute::Float(f) => {
                         dict.set_item(key, f).unwrap();
                     }
-                    RustEdgeAttribute::Int(i) => {
+                    RustAttribute::Int(i) => {
                         dict.set_item(key, i).unwrap();
                     }
-                    RustEdgeAttribute::String(s) => {
+                    RustAttribute::String(s) => {
                         dict.set_item(key, s.as_str()).unwrap();
                     }
-                    RustEdgeAttribute::Bool(b) => {
+                    RustAttribute::Bool(b) => {
                         dict.set_item(key, b).unwrap();
                     }
-                    RustEdgeAttribute::IntList(v) => {
+                    RustAttribute::IntList(v) => {
                         dict.set_item(key, v.clone()).unwrap();
+                    }
+                    RustAttribute::StringList(v) => {
+                        dict.set_item(key, v.clone()).unwrap();
+                    }
+                    RustAttribute::Json(json_value) => {
+                        // Convert JSON back to Python using json.loads()
+                        let json_str = serde_json::to_string(json_value).unwrap();
+                        let json_module = py.import("json").unwrap();
+                        let py_obj = json_module
+                            .getattr("loads")
+                            .unwrap()
+                            .call1((json_str,))
+                            .unwrap();
+                        dict.set_item(key, py_obj).unwrap();
                     }
                 }
             }
             dict.into()
         })
+    }
+
+    /// Gets a mutable view of edge attributes between two nodes.
+    ///
+    /// Returns an `EdgeAttrsView` that provides dict-like access to edge attributes,
+    /// allowing you to read and write attributes directly.
+    ///
+    /// # Arguments
+    ///
+    /// * `a` - Index of the first node
+    /// * `b` - Index of the second node
+    ///
+    /// # Returns
+    ///
+    /// An `EdgeAttrsView` object with dict-like interface.
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// graph = Graph()
+    /// n0 = graph.add_node()
+    /// n1 = graph.add_node()
+    /// graph.add_edge(n0, n1)
+    ///
+    /// # Get mutable view and set attributes
+    /// attrs = graph.edge_attrs(n0, n1)
+    /// attrs['label'] = 'boundary'
+    /// attrs['data_path'] = [1, 2, 3]
+    ///
+    /// # Read attributes
+    /// label = attrs['label']
+    /// ```
+    fn edge_attrs(slf: Py<Self>, a: usize, b: usize) -> PyEdgeAttrsView {
+        PyEdgeAttrsView {
+            graph: slf,
+            node_a: a,
+            node_b: b,
+        }
+    }
+
+    /// Returns a `NodeAttrsView` for accessing node attributes.
+    ///
+    /// Returns a mutable view into the node's attributes that provides dict-like
+    /// access similar to Python dicts.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - The node index
+    ///
+    /// # Returns
+    ///
+    /// A `NodeAttrsView` object with dict-like interface.
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// graph = Graph()
+    /// n0 = graph.add_node()
+    ///
+    /// # Get mutable view and set attributes
+    /// attrs = graph.node_attrs(n0)
+    /// attrs["x"] = 1.0
+    /// attrs["y"] = 2.0
+    /// attrs["type"] = "data"
+    ///
+    /// # Read attributes
+    /// x_val = attrs["x"]
+    /// ```
+    fn node_attrs(slf: Py<Self>, node: usize) -> PyNodeAttrsView {
+        PyNodeAttrsView { graph: slf, node }
+    }
+
+    /// Returns a `GraphAttrsView` for accessing graph-level attributes.
+    ///
+    /// Returns a mutable view into the graph's global attributes that provides
+    /// dict-like access similar to Python dicts.
+    ///
+    /// # Returns
+    ///
+    /// A `GraphAttrsView` object with dict-like interface.
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// graph = Graph()
+    ///
+    /// # Get mutable view and set attributes
+    /// attrs = graph.attrs()
+    /// attrs["distance"] = 5
+    /// attrs["code_type"] = "surface_code"
+    ///
+    /// # Read attributes
+    /// distance = attrs["distance"]
+    /// ```
+    fn attrs(slf: Py<Self>) -> PyGraphAttrsView {
+        PyGraphAttrsView { graph: slf }
     }
 
     /// Creates a subgraph containing only the specified nodes.
@@ -296,6 +493,158 @@ impl PyGraph {
         self.inner.single_source_shortest_path(source)
     }
 
+    /// Computes shortest path distances from a source node using Dijkstra's algorithm.
+    ///
+    /// This method only computes distances, not the actual paths. It's more efficient than
+    /// `single_source_shortest_path()` if you don't need to reconstruct the paths.
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - The source node index
+    ///
+    /// # Returns
+    ///
+    /// A dictionary mapping each reachable node to its distance from the source.
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// graph = Graph()
+    /// n0 = graph.add_node()
+    /// n1 = graph.add_node()
+    /// n2 = graph.add_node()
+    /// graph.add_edge(n0, n1)
+    /// graph.set_weight(n0, n1, 1.0)
+    /// graph.add_edge(n1, n2)
+    /// graph.set_weight(n1, n2, 2.0)
+    ///
+    /// distances = graph.shortest_path_distances(n0)
+    /// assert distances[n0] == 0.0
+    /// assert distances[n1] == 1.0
+    /// assert distances[n2] == 3.0
+    /// ```
+    fn shortest_path_distances(&self, source: usize) -> BTreeMap<usize, f64> {
+        self.inner.shortest_path_distances(source)
+    }
+
+    /// Finds the edge ID between two nodes.
+    ///
+    /// # Arguments
+    ///
+    /// * `a` - Index of the first node
+    /// * `b` - Index of the second node
+    ///
+    /// # Returns
+    ///
+    /// The edge index if an edge exists between the nodes, None otherwise.
+    fn find_edge(&self, a: usize, b: usize) -> Option<usize> {
+        self.inner.find_edge(a, b)
+    }
+
+    /// Gets the endpoints (node pair) of an edge by its edge ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `edge_id` - The edge index
+    ///
+    /// # Returns
+    ///
+    /// A tuple (source, target) with the node indices, or None if the edge doesn't exist.
+    fn edge_endpoints(&self, edge_id: usize) -> Option<(usize, usize)> {
+        self.inner.edge_endpoints(edge_id)
+    }
+
+    /// Gets the weight of an edge by its edge ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `edge_id` - The edge index
+    ///
+    /// # Returns
+    ///
+    /// The weight of the edge.
+    fn edge_weight(&self, edge_id: usize) -> f64 {
+        self.inner.edge_weight(edge_id)
+    }
+
+    /// Sets the weight of an edge by its edge ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `edge_id` - The edge index
+    /// * `weight` - The new weight value
+    fn set_edge_weight(&mut self, edge_id: usize, weight: f64) {
+        self.inner.set_edge_weight(edge_id, weight);
+    }
+
+    /// Sets the weight of an edge between two nodes (NetworkX-style).
+    ///
+    /// This is a convenience method that finds the edge and sets its weight.
+    ///
+    /// # Arguments
+    ///
+    /// * `a` - First node (integer ID)
+    /// * `b` - Second node (integer ID)
+    /// * `weight` - The new weight value
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// graph.add_edge(n0, n1)
+    /// graph.set_weight(n0, n1, 5.0)  # No need to find edge ID!
+    ///
+    /// # Works with labels too
+    /// graph.set_weight("v1", "v2", 3.0)
+    /// ```
+    fn set_weight(
+        &mut self,
+        a: &Bound<'_, PyAny>,
+        b: &Bound<'_, PyAny>,
+        weight: f64,
+    ) -> PyResult<()> {
+        let node_a = self.resolve_node_id(a)?;
+        let node_b = self.resolve_node_id(b)?;
+        self.inner.set_weight(node_a, node_b, weight);
+        Ok(())
+    }
+
+    /// Gets the weight of an edge between two nodes (NetworkX-style).
+    ///
+    /// # Arguments
+    ///
+    /// * `a` - First node (integer ID)
+    /// * `b` - Second node (integer ID)
+    ///
+    /// # Returns
+    ///
+    /// The weight of the edge, or None if the edge doesn't exist.
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// graph.add_edge(n0, n1)
+    /// graph.set_weight(n0, n1, 5.0)
+    /// weight = graph.get_weight(n0, n1)  # Returns 5.0
+    /// ```
+    fn get_weight(&self, a: &Bound<'_, PyAny>, b: &Bound<'_, PyAny>) -> PyResult<Option<f64>> {
+        let node_a = self.resolve_node_id(a)?;
+        let node_b = self.resolve_node_id(b)?;
+        Ok(self.inner.get_weight(node_a, node_b))
+    }
+
+    /// Removes an edge by its edge ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `edge_id` - The edge index to remove
+    ///
+    /// # Returns
+    ///
+    /// True if the edge was removed, False otherwise (edge didn't exist).
+    fn remove_edge(&mut self, edge_id: usize) -> bool {
+        self.inner.remove_edge(edge_id).is_some()
+    }
+
     /// Returns a string representation of the graph.
     fn __repr__(&self) -> String {
         format!(
@@ -306,375 +655,475 @@ impl PyGraph {
     }
 }
 
-/// Node ID type that supports both integers and strings.
-#[derive(Debug, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
-enum NodeId {
-    Int(i64),
-    Str(String),
+/// Mutable view into edge attributes that provides dict-like access.
+///
+/// This class holds a reference to the graph and edge endpoints, allowing
+/// mutations to be written back to the graph.
+#[pyclass(name = "EdgeAttrsView", module = "pecos_rslib.graph")]
+pub struct PyEdgeAttrsView {
+    graph: Py<PyGraph>,
+    node_a: usize,
+    node_b: usize,
 }
 
-impl NodeId {
-    /// Converts a Python object to a `NodeId`.
-    fn from_py(obj: &Bound<'_, PyAny>) -> PyResult<Self> {
-        use pyo3::types::PyAnyMethods;
+#[pymethods]
+impl PyEdgeAttrsView {
+    fn __setitem__(&self, py: Python<'_>, key: String, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut graph = self.graph.borrow_mut(py);
 
-        if let Ok(i) = obj.extract::<i64>() {
-            Ok(NodeId::Int(i))
-        } else if let Ok(s) = obj.extract::<String>() {
-            Ok(NodeId::Str(s))
+        // Convert Python value to Attribute
+        let attr = python_value_to_attribute(value, &key)?;
+
+        // Get mutable access to edge attributes
+        if let Some(attrs) = graph.inner.edge_attrs_mut(self.node_a, self.node_b) {
+            attrs.insert(key, attr);
+            Ok(())
         } else {
-            Err(pyo3::exceptions::PyTypeError::new_err(
-                "Node ID must be an integer or string",
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                "Edge does not exist",
             ))
         }
     }
 
-    /// Converts a `NodeId` to a Python object.
-    fn to_py(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        match self {
-            NodeId::Int(i) => Ok((*i).into_pyobject(py)?.into_any().unbind()),
-            NodeId::Str(s) => Ok(s.as_str().into_pyobject(py)?.into_any().unbind()),
-        }
-    }
-}
+    fn __getitem__(&self, py: Python<'_>, key: String) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
 
-/// Python wrapper for `MappedGraph` with NetworkX-style node IDs.
-///
-/// This class provides NetworkX-compatible graph functionality where nodes
-/// can be identified by either integers or strings, unlike Graph which only
-/// supports integer indices.
-///
-/// # Examples (Python)
-///
-/// ```python
-/// import pecos_rslib
-///
-/// # Create a graph with string node IDs
-/// graph = pecos_rslib.graph.MappedGraph()
-///
-/// # Add edges with string nodes
-/// graph.add_edge('v1', 'v2', weight=5.0, data_path=[1, 2, 3])
-/// graph.add_edge('v2', 'v3', weight=3.0)
-/// graph.add_edge(0, 'v1', weight=2.0)  # Mixed types work too
-///
-/// # Compute maximum weight matching
-/// matching = graph.max_weight_matching()
-/// ```
-#[pyclass(name = "MappedGraph", module = "pecos_rslib.graph")]
-#[derive(Clone)]
-pub struct PyMappedGraph {
-    /// The underlying Rust mapped graph
-    inner: RustMappedGraph<NodeId>,
-}
-
-#[pymethods]
-impl PyMappedGraph {
-    /// Creates a new empty mapped graph.
-    ///
-    /// # Returns
-    ///
-    /// A new empty `MappedGraph` instance.
-    #[new]
-    fn new() -> Self {
-        Self {
-            inner: RustMappedGraph::new(),
+        if let Some(attrs) = graph.inner.edge_attrs(self.node_a, self.node_b) {
+            if let Some(attr) = attrs.get(&key) {
+                attribute_to_python(py, attr)
+            } else {
+                Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(key))
+            }
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                "Edge does not exist",
+            ))
         }
     }
 
-    /// Creates a new mapped graph with pre-allocated capacity.
+    #[pyo3(signature = (key, default=None))]
+    fn get(
+        &self,
+        py: Python<'_>,
+        key: &str,
+        default: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+
+        if let Some(attrs) = graph.inner.edge_attrs(self.node_a, self.node_b) {
+            if let Some(attr) = attrs.get(key) {
+                attribute_to_python(py, attr)
+            } else if let Some(def) = default {
+                Ok(def.clone().unbind())
+            } else {
+                Ok(py.None())
+            }
+        } else if let Some(def) = default {
+            Ok(def.clone().unbind())
+        } else {
+            Ok(py.None())
+        }
+    }
+
+    /// Insert a key-value pair into edge attributes (chainable).
+    ///
+    /// This method allows for method chaining, similar to Rust's `BTreeMap` insert.
     ///
     /// # Arguments
     ///
-    /// * `nodes` - Expected number of nodes
-    /// * `edges` - Expected number of edges
+    /// * `key` - The attribute name
+    /// * `value` - The attribute value
     ///
     /// # Returns
     ///
-    /// A new `MappedGraph` instance with pre-allocated capacity.
-    #[staticmethod]
-    fn with_capacity(nodes: usize, edges: usize) -> Self {
-        Self {
-            inner: RustMappedGraph::with_capacity(nodes, edges),
-        }
-    }
-
-    /// Adds an edge between two nodes with optional weight and attributes.
-    ///
-    /// Nodes can be integers or strings and will be added automatically if they don't exist.
-    ///
-    /// # Arguments
-    ///
-    /// * `a` - Node ID (integer or string) for the first node
-    /// * `b` - Node ID (integer or string) for the second node
-    /// * `weight` - Optional weight of the edge (defaults to 1.0)
-    /// * `**kwargs` - Additional edge attributes
+    /// Returns self for chaining.
     ///
     /// # Examples
     ///
     /// ```python
-    /// graph.add_edge('v1', 'v2', weight=5.0)
-    /// graph.add_edge(0, 1, weight=5.0, data_path=[1, 2, 3])
-    /// graph.add_edge('v1', 0, data_path=[1, 2, 3])  # Mixed types
+    /// # Chainable style
+    /// attrs = graph.edge_attrs(n0, n1)
+    /// attrs.insert("weight", 5.0).insert("label", "boundary").insert("path", [1, 2, 3])
+    ///
+    /// # Or dict-like style
+    /// attrs["weight"] = 5.0
     /// ```
-    #[pyo3(signature = (a, b, weight=None, **kwargs))]
-    fn add_edge(
-        &mut self,
-        a: &Bound<'_, PyAny>,
-        b: &Bound<'_, PyAny>,
-        weight: Option<f64>,
-        kwargs: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<()> {
-        use pecos::graph::EdgeAttribute;
+    fn insert(
+        slf: Py<Self>,
+        py: Python<'_>,
+        key: String,
+        value: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<Self>> {
+        // Extract needed data before moving slf
+        let (graph_ref, node_a, node_b) = {
+            let view = slf.borrow(py);
+            (view.graph.clone_ref(py), view.node_a, view.node_b)
+        };
 
-        // Convert Python objects to NodeIds
-        let node_a = NodeId::from_py(a)?;
-        let node_b = NodeId::from_py(b)?;
+        let mut graph = graph_ref.borrow_mut(py);
 
-        // Create edge data from kwargs
-        let mut edge_data = pecos::graph::EdgeData::new();
+        // Convert Python value to Attribute
+        let attr = python_value_to_attribute(value, &key)?;
 
-        // Add weight (use provided weight, or from kwargs, or default to 1.0)
-        let final_weight = if let Some(w) = weight {
-            w
-        } else if let Some(kw) = kwargs {
-            if let Some(w) = kw.get_item("weight")? {
-                w.extract::<f64>().unwrap_or(1.0)
+        // Get mutable access to edge attributes
+        if let Some(attrs) = graph.inner.edge_attrs_mut(node_a, node_b) {
+            attrs.insert(key, attr);
+            drop(graph); // Release the borrow before returning
+            Ok(slf)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                "Edge does not exist",
+            ))
+        }
+    }
+
+    /// Update multiple attributes from a dict (dict-like interface).
+    ///
+    /// This method updates the edge attributes with key-value pairs from the provided dict,
+    /// similar to Python's `dict.update()` method.
+    ///
+    /// # Arguments
+    ///
+    /// * `items` - A dictionary or iterable of key-value pairs
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// # From a dict
+    /// attrs = graph.edge_attrs(n0, n1)
+    /// attrs.update({"weight": 5.0, "label": "boundary", "path": [1, 2, 3]})
+    ///
+    /// # Can also update from another EdgeAttrsView or any dict-like object
+    /// other_attrs = graph.edge_attrs(n2, n3)
+    /// attrs.update(other_attrs)
+    /// ```
+    fn update(&self, py: Python<'_>, items: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut graph = self.graph.borrow_mut(py);
+
+        if let Some(attrs) = graph.inner.edge_attrs_mut(self.node_a, self.node_b) {
+            // Try to iterate over items
+            // First try treating it as a dict with .items()
+            if let Ok(dict_items) = items.call_method0("items") {
+                for item in dict_items.try_iter()? {
+                    let pair = item?;
+                    let tuple: pyo3::Bound<pyo3::types::PyTuple> = pair.cast_into()?;
+                    if tuple.len() != 2 {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Expected key-value pairs",
+                        ));
+                    }
+                    let key: String = tuple.get_item(0)?.extract()?;
+                    let value = tuple.get_item(1)?;
+                    let attr = python_value_to_attribute(&value, &key)?;
+                    attrs.insert(key, attr);
+                }
             } else {
-                1.0
+                // Otherwise try iterating directly (for sequences of tuples)
+                for item in items.try_iter()? {
+                    let pair = item?;
+                    let tuple: pyo3::Bound<pyo3::types::PyTuple> = pair.cast_into()?;
+                    if tuple.len() != 2 {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Expected key-value pairs",
+                        ));
+                    }
+                    let key: String = tuple.get_item(0)?.extract()?;
+                    let value = tuple.get_item(1)?;
+                    let attr = python_value_to_attribute(&value, &key)?;
+                    attrs.insert(key, attr);
+                }
+            }
+            Ok(())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                "Edge does not exist",
+            ))
+        }
+    }
+}
+
+/// Mutable view into node attributes that provides dict-like access.
+///
+/// This is returned by `Graph.node_attrs(node)` and provides a Python dict-like interface
+/// for accessing and modifying attributes of a specific node.
+#[pyclass(name = "NodeAttrsView", module = "pecos_rslib.graph")]
+pub struct PyNodeAttrsView {
+    graph: Py<PyGraph>,
+    node: usize,
+}
+
+#[pymethods]
+impl PyNodeAttrsView {
+    /// Set an attribute value (dict-like interface).
+    fn __setitem__(&self, py: Python<'_>, key: String, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut graph = self.graph.borrow_mut(py);
+
+        if let Some(attrs) = graph.inner.node_attrs_mut(self.node) {
+            let attr = python_value_to_attribute(value, &key)?;
+            attrs.insert(key, attr);
+            Ok(())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                "Node does not exist",
+            ))
+        }
+    }
+
+    /// Get an attribute value (dict-like interface).
+    fn __getitem__(&self, py: Python<'_>, key: String) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+
+        if let Some(attrs) = graph.inner.node_attrs(self.node) {
+            if let Some(attr) = attrs.get(&key) {
+                attribute_to_python(py, attr)
+            } else {
+                Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(key))
             }
         } else {
-            1.0
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                "Node does not exist",
+            ))
+        }
+    }
+
+    /// Delete an attribute (dict-like interface).
+    fn __delitem__(&self, py: Python<'_>, key: String) -> PyResult<()> {
+        let mut graph = self.graph.borrow_mut(py);
+
+        if let Some(attrs) = graph.inner.node_attrs_mut(self.node) {
+            if attrs.remove(&key).is_some() {
+                Ok(())
+            } else {
+                Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(key))
+            }
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                "Node does not exist",
+            ))
+        }
+    }
+
+    /// Check if an attribute exists (dict-like interface).
+    fn __contains__(&self, py: Python<'_>, key: &str) -> bool {
+        let graph = self.graph.borrow(py);
+
+        if let Some(attrs) = graph.inner.node_attrs(self.node) {
+            attrs.contains_key(key)
+        } else {
+            false
+        }
+    }
+
+    /// Get an attribute with an optional default value.
+    #[pyo3(signature = (key, default=None))]
+    fn get(&self, py: Python<'_>, key: &str, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+
+        if let Some(attrs) = graph.inner.node_attrs(self.node) {
+            if let Some(attr) = attrs.get(key) {
+                attribute_to_python(py, attr)
+            } else {
+                Ok(default.unwrap_or_else(|| py.None()))
+            }
+        } else {
+            Ok(default.unwrap_or_else(|| py.None()))
+        }
+    }
+
+    /// Insert an attribute and return self for chaining.
+    fn insert(
+        slf: Py<Self>,
+        py: Python<'_>,
+        key: String,
+        value: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<Self>> {
+        let node = {
+            let view = slf.borrow(py);
+            view.node
         };
-        edge_data.set("weight", EdgeAttribute::Float(final_weight));
 
-        // Add other attributes from kwargs
-        if let Some(kw) = kwargs {
-            for (key, value) in kw.iter() {
-                let key_str: String = key.extract()?;
+        {
+            let view = slf.borrow(py);
+            let mut graph = view.graph.borrow_mut(py);
 
-                // Skip "weight" as we already handled it
-                if key_str == "weight" {
-                    continue;
-                }
-
-                // Try to convert value to EdgeAttribute
-                // Check bool first because bool can be extracted as float (True -> 1.0)
-                if let Ok(b) = value.extract::<bool>() {
-                    edge_data.set(&key_str, EdgeAttribute::Bool(b));
-                } else if let Ok(i) = value.extract::<i64>() {
-                    edge_data.set(&key_str, EdgeAttribute::Int(i));
-                } else if let Ok(f) = value.extract::<f64>() {
-                    edge_data.set(&key_str, EdgeAttribute::Float(f));
-                } else if let Ok(v) = value.extract::<Vec<i64>>() {
-                    edge_data.set(&key_str, EdgeAttribute::IntList(v));
-                } else if let Ok(s) = value.extract::<String>() {
-                    edge_data.set(&key_str, EdgeAttribute::String(s));
-                } else {
-                    // Unsupported attribute type - provide helpful error
-                    let type_name = value
-                        .get_type()
-                        .name()
-                        .ok()
-                        .and_then(|n| n.to_str().ok().map(std::string::ToString::to_string))
-                        .unwrap_or_else(|| "<unknown>".to_string());
-                    return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-                        "Unsupported edge attribute type for key '{key_str}'. \
-                         Supported types: bool, int, float, str, list[int]. \
-                         Got type: {type_name}"
-                    )));
-                }
+            if let Some(attrs) = graph.inner.node_attrs_mut(node) {
+                let attr = python_value_to_attribute(value, &key)?;
+                attrs.insert(key, attr);
+            } else {
+                return Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                    "Node does not exist",
+                ));
             }
         }
 
-        self.inner.add_edge_with_data(node_a, node_b, edge_data);
+        Ok(slf)
+    }
+
+    /// Update multiple attributes from a dict or iterable of key-value pairs.
+    fn update(&self, py: Python<'_>, items: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut graph = self.graph.borrow_mut(py);
+
+        if let Some(attrs) = graph.inner.node_attrs_mut(self.node) {
+            // Try to iterate over items
+            // First try treating it as a dict with .items()
+            if let Ok(dict_items) = items.call_method0("items") {
+                for item in dict_items.try_iter()? {
+                    let pair = item?;
+                    let tuple: pyo3::Bound<pyo3::types::PyTuple> = pair.cast_into()?;
+                    if tuple.len() != 2 {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Expected key-value pairs",
+                        ));
+                    }
+                    let key: String = tuple.get_item(0)?.extract()?;
+                    let value = tuple.get_item(1)?;
+                    let attr = python_value_to_attribute(&value, &key)?;
+                    attrs.insert(key, attr);
+                }
+            } else {
+                // Otherwise try iterating directly (for sequences of tuples)
+                for item in items.try_iter()? {
+                    let pair = item?;
+                    let tuple: pyo3::Bound<pyo3::types::PyTuple> = pair.cast_into()?;
+                    if tuple.len() != 2 {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Expected key-value pairs",
+                        ));
+                    }
+                    let key: String = tuple.get_item(0)?.extract()?;
+                    let value = tuple.get_item(1)?;
+                    let attr = python_value_to_attribute(&value, &key)?;
+                    attrs.insert(key, attr);
+                }
+            }
+            Ok(())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                "Node does not exist",
+            ))
+        }
+    }
+}
+
+/// Mutable view into graph-level attributes that provides dict-like access.
+///
+/// This is returned by `Graph.attrs()` and provides a Python dict-like interface
+/// for accessing and modifying graph-level attributes.
+#[pyclass(name = "GraphAttrsView", module = "pecos_rslib.graph")]
+pub struct PyGraphAttrsView {
+    graph: Py<PyGraph>,
+}
+
+#[pymethods]
+impl PyGraphAttrsView {
+    /// Set an attribute value (dict-like interface).
+    fn __setitem__(&self, py: Python<'_>, key: String, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut graph = self.graph.borrow_mut(py);
+        let attrs = graph.inner.attrs_mut();
+        let attr = python_value_to_attribute(value, &key)?;
+        attrs.insert(key, attr);
         Ok(())
     }
 
-    /// Returns the number of nodes in the graph.
-    fn node_count(&self) -> usize {
-        self.inner.node_count()
-    }
+    /// Get an attribute value (dict-like interface).
+    fn __getitem__(&self, py: Python<'_>, key: String) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+        let attrs = graph.inner.attrs();
 
-    /// Returns the number of edges in the graph.
-    fn edge_count(&self) -> usize {
-        self.inner.edge_count()
-    }
-
-    /// Returns a list of all node IDs in the graph.
-    ///
-    /// # Returns
-    ///
-    /// A list containing all node IDs (integers or strings).
-    fn nodes(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
-        self.inner.nodes().iter().map(|n| n.to_py(py)).collect()
-    }
-
-    /// Computes the maximum weight matching of the graph.
-    ///
-    /// # Arguments
-    ///
-    /// * `max_cardinality` - If True, prioritize maximum cardinality over maximum weight
-    /// * `weight_multiplier` - Optional multiplier for float-to-integer weight conversion (default: 1000.0)
-    ///
-    /// # Returns
-    ///
-    /// A dictionary mapping node IDs to their matched partners.
-    #[pyo3(signature = (max_cardinality=false, weight_multiplier=1000.0))]
-    fn max_weight_matching(
-        &self,
-        py: Python<'_>,
-        max_cardinality: bool,
-        weight_multiplier: f64,
-    ) -> PyResult<Py<PyDict>> {
-        let matching = self
-            .inner
-            .max_weight_matching_with_precision(max_cardinality, weight_multiplier);
-        let dict = PyDict::new(py);
-
-        for (k, v) in matching {
-            dict.set_item(k.to_py(py)?, v.to_py(py)?)?;
+        if let Some(attr) = attrs.get(&key) {
+            attribute_to_python(py, attr)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(key))
         }
-
-        Ok(dict.unbind())
     }
 
-    /// Returns a list of all edges as (source, target, weight) tuples.
-    ///
-    /// # Returns
-    ///
-    /// A list of tuples (source, target, weight) for all edges in the graph.
-    fn edges(&self, py: Python<'_>) -> PyResult<PyEdgeList> {
-        self.inner
-            .edges()
-            .into_iter()
-            .map(|(a, b, w)| Ok((a.to_py(py)?, b.to_py(py)?, w)))
-            .collect()
+    /// Delete an attribute (dict-like interface).
+    fn __delitem__(&self, py: Python<'_>, key: String) -> PyResult<()> {
+        let mut graph = self.graph.borrow_mut(py);
+        let attrs = graph.inner.attrs_mut();
+
+        if attrs.remove(&key).is_some() {
+            Ok(())
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(key))
+        }
     }
 
-    /// Gets the edge data between two nodes.
-    ///
-    /// # Arguments
-    ///
-    /// * `a` - ID of the first node
-    /// * `b` - ID of the second node
-    ///
-    /// # Returns
-    ///
-    /// A dictionary with edge attributes if an edge exists, None otherwise.
-    fn get_edge_data(
-        &self,
+    /// Check if an attribute exists (dict-like interface).
+    fn __contains__(&self, py: Python<'_>, key: &str) -> bool {
+        let graph = self.graph.borrow(py);
+        let attrs = graph.inner.attrs();
+        attrs.contains_key(key)
+    }
+
+    /// Get an attribute with an optional default value.
+    #[pyo3(signature = (key, default=None))]
+    fn get(&self, py: Python<'_>, key: &str, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+        let attrs = graph.inner.attrs();
+
+        if let Some(attr) = attrs.get(key) {
+            attribute_to_python(py, attr)
+        } else {
+            Ok(default.unwrap_or_else(|| py.None()))
+        }
+    }
+
+    /// Insert an attribute and return self for chaining.
+    fn insert(
+        slf: Py<Self>,
         py: Python<'_>,
-        a: &Bound<'_, PyAny>,
-        b: &Bound<'_, PyAny>,
-    ) -> PyResult<Option<Py<PyAny>>> {
-        let node_a = NodeId::from_py(a)?;
-        let node_b = NodeId::from_py(b)?;
+        key: String,
+        value: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<Self>> {
+        {
+            let view = slf.borrow(py);
+            let mut graph = view.graph.borrow_mut(py);
+            let attrs = graph.inner.attrs_mut();
+            let attr = python_value_to_attribute(value, &key)?;
+            attrs.insert(key, attr);
+        }
+        Ok(slf)
+    }
 
-        Ok(self.inner.get_edge_data(&node_a, &node_b).map(|edge_data| {
-            let dict = PyDict::new(py);
-            for (key, value) in edge_data.attributes() {
-                match value {
-                    RustEdgeAttribute::Float(f) => {
-                        dict.set_item(key, f).unwrap();
-                    }
-                    RustEdgeAttribute::Int(i) => {
-                        dict.set_item(key, i).unwrap();
-                    }
-                    RustEdgeAttribute::String(s) => {
-                        dict.set_item(key, s.as_str()).unwrap();
-                    }
-                    RustEdgeAttribute::Bool(b) => {
-                        dict.set_item(key, b).unwrap();
-                    }
-                    RustEdgeAttribute::IntList(v) => {
-                        dict.set_item(key, v.clone()).unwrap();
-                    }
+    /// Update multiple attributes from a dict or iterable of key-value pairs.
+    fn update(&self, py: Python<'_>, items: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut graph = self.graph.borrow_mut(py);
+        let attrs = graph.inner.attrs_mut();
+
+        // Try to iterate over items
+        // First try treating it as a dict with .items()
+        if let Ok(dict_items) = items.call_method0("items") {
+            for item in dict_items.try_iter()? {
+                let pair = item?;
+                let tuple: pyo3::Bound<pyo3::types::PyTuple> = pair.cast_into()?;
+                if tuple.len() != 2 {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "Expected key-value pairs",
+                    ));
                 }
+                let key: String = tuple.get_item(0)?.extract()?;
+                let value = tuple.get_item(1)?;
+                let attr = python_value_to_attribute(&value, &key)?;
+                attrs.insert(key, attr);
             }
-            dict.into()
-        }))
-    }
-
-    /// Creates a subgraph containing only the specified nodes.
-    ///
-    /// # Arguments
-    ///
-    /// * `nodes` - A list of node IDs to include in the subgraph
-    ///
-    /// # Returns
-    ///
-    /// A new `MappedGraph` containing only the specified nodes and edges between them.
-    fn subgraph(&self, nodes: Bound<'_, PyAny>) -> PyResult<Self> {
-        use pyo3::types::PyList;
-
-        // Use downcast to get the type name before attempting cast
-        let type_name = nodes
-            .get_type()
-            .name()
-            .ok()
-            .and_then(|n| n.to_str().ok().map(std::string::ToString::to_string))
-            .unwrap_or_else(|| "<unknown>".to_string());
-
-        // Use cast_into to convert Bound<PyAny> to Bound<PyList>
-        let py_list = nodes.cast_into::<PyList>().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-                "Expected a list of nodes, got {type_name}: {e}"
-            ))
-        })?;
-
-        // Convert each element to NodeId with helpful error messages
-        let node_ids: Result<Vec<NodeId>, PyErr> = py_list
-            .iter()
-            .enumerate()
-            .map(|(idx, item)| {
-                NodeId::from_py(&item).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "Failed to convert node at index {idx} to a valid node identifier: {e}"
-                    ))
-                })
-            })
-            .collect();
-        let node_ids = node_ids?;
-
-        Ok(Self {
-            inner: self.inner.subgraph(&node_ids),
-        })
-    }
-
-    /// Computes single-source shortest paths using Dijkstra's algorithm.
-    ///
-    /// # Arguments
-    ///
-    /// * `source` - The source node ID
-    ///
-    /// # Returns
-    ///
-    /// A dictionary mapping each reachable node to a list of node IDs representing
-    /// the shortest path from the source to that node.
-    fn single_source_shortest_path(
-        &self,
-        py: Python<'_>,
-        source: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyDict>> {
-        let source_id = NodeId::from_py(source)?;
-        let paths = self.inner.single_source_shortest_path(&source_id);
-
-        let dict = PyDict::new(py);
-        for (target, path) in paths {
-            let path_list: Result<Vec<Py<PyAny>>, _> = path.iter().map(|n| n.to_py(py)).collect();
-            dict.set_item(target.to_py(py)?, path_list?)?;
+        } else {
+            // Otherwise try iterating directly (for sequences of tuples)
+            for item in items.try_iter()? {
+                let pair = item?;
+                let tuple: pyo3::Bound<pyo3::types::PyTuple> = pair.cast_into()?;
+                if tuple.len() != 2 {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "Expected key-value pairs",
+                    ));
+                }
+                let key: String = tuple.get_item(0)?.extract()?;
+                let value = tuple.get_item(1)?;
+                let attr = python_value_to_attribute(&value, &key)?;
+                attrs.insert(key, attr);
+            }
         }
-
-        Ok(dict.unbind())
-    }
-
-    /// Returns a string representation of the graph.
-    fn __repr__(&self) -> String {
-        format!(
-            "MappedGraph(nodes={}, edges={})",
-            self.inner.node_count(),
-            self.inner.edge_count()
-        )
+        Ok(())
     }
 }
 
@@ -683,15 +1132,23 @@ impl PyMappedGraph {
 /// This function is called from the main module registration to expose the graph
 /// functionality to Python. This creates a `graph` submodule accessible as `pecos_rslib.graph`.
 pub fn register_graph_module(parent_module: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Create graph submodule
+    // Create a graph submodule
     let graph_module = PyModule::new(parent_module.py(), "graph")?;
 
-    // Add the Graph and MappedGraph classes to the graph submodule
+    // Add classes to the graph submodule
+    graph_module.add_class::<PyEdgeAttrsView>()?;
+    graph_module.add_class::<PyNodeAttrsView>()?;
+    graph_module.add_class::<PyGraphAttrsView>()?;
     graph_module.add_class::<PyGraph>()?;
-    graph_module.add_class::<PyMappedGraph>()?;
 
-    // Add the graph module to the parent module
+    // Add the submodule to the parent module
     parent_module.add_submodule(&graph_module)?;
+
+    // Also add classes to parent module for direct import (e.g., from pecos_rslib import Graph)
+    parent_module.add_class::<PyEdgeAttrsView>()?;
+    parent_module.add_class::<PyNodeAttrsView>()?;
+    parent_module.add_class::<PyGraphAttrsView>()?;
+    parent_module.add_class::<PyGraph>()?;
 
     Ok(())
 }

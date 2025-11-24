@@ -40,5 +40,9 @@ log.workspace = true
 # Graph algorithms (for MWPM decoder and other graph operations)
 rustworkx-core.workspace = true
 
+# Serialization (for JSON attribute support in graphs)
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
 [lints]
 workspace = true

@@ -515,13 +515,53 @@ impl RsStateVec {
     #[allow(clippy::items_after_statements)] // Use statements for type imports are clearer when near usage
     fn vector(&self, py: Python<'_>) -> PyResult<Py<Array>> {
         // Convert the state vector to a 1D complex ndarray
-        use numpy::ndarray::Array1;
+        use ndarray::Array1;
         let state = self.inner.state();
         let complex_array: Vec<num_complex::Complex64> = state.to_vec();
         let nd_array = Array1::from(complex_array);
 
         // Create ArrayData from the ndarray
         use crate::pecos_array::ArrayData;
+        let array_data = ArrayData::Complex128(nd_array.into_dyn());
+
+        // Create Array and wrap it as a Python object
+        let pecos_array = Array::new(array_data);
+        Py::new(py, pecos_array)
+    }
+
+    /// Get state vector with big-endian qubit ordering (PECOS convention)
+    ///
+    /// Converts the state vector from little-endian (Rust/hardware convention) to
+    /// big-endian (PECOS convention) by reversing the bit order of indices.
+    ///
+    /// This is significantly faster than doing the conversion in Python as it:
+    /// 1. Uses Rust's built-in `reverse_bits()` (often a single CPU instruction)
+    /// 2. Avoids Python string formatting and parsing
+    /// 3. Performs all indexing operations in contiguous Rust memory
+    fn vector_big_endian(&self, py: Python<'_>) -> PyResult<Py<Array>> {
+        use crate::pecos_array::ArrayData;
+        use ndarray::Array1;
+
+        let state = self.inner.state();
+        let num_qubits = self.inner.num_qubits();
+        let length = state.len();
+
+        // Pre-allocate result vector
+        let mut reordered = Vec::with_capacity(length);
+        reordered.resize(length, num_complex::Complex64::new(0.0, 0.0));
+
+        // Compute bit-reversed indices and reorder
+        // This is much faster than Python's string-based approach
+        for (idx, &value) in state.iter().enumerate() {
+            // Reverse the bits and shift to keep only num_qubits bits
+            // The cast is intentional - num_qubits is always small (< 64)
+            #[allow(clippy::cast_possible_truncation)]
+            let reversed_idx = idx.reverse_bits() >> (usize::BITS - num_qubits as u32);
+            reordered[reversed_idx] = value;
+        }
+
+        // Convert to ndarray
+        let nd_array = Array1::from(reordered);
         let array_data = ArrayData::Complex128(nd_array.into_dyn());
 
         // Create Array and wrap it as a Python object

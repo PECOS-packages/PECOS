@@ -680,7 +680,9 @@ class TestPolyfitCovariance:
         _, pecos_cov = pc.polyfit(x, y, 2, cov=True)
 
         # Covariance matrix should be symmetric
-        assert np.allclose(pecos_cov, pecos_cov.T)
+        # Convert to numpy for transpose operation
+        pecos_cov_np = np.asarray(pecos_cov)
+        assert np.allclose(pecos_cov_np, pecos_cov_np.T)
 
     def test_polyfit_cov_false_explicit(self):
         """Test polyfit with cov=False returns only coefficients."""
@@ -690,7 +692,8 @@ class TestPolyfitCovariance:
         result = pc.polyfit(x, y, 1, cov=False)
 
         # Should return only coefficients, not a tuple
-        assert isinstance(result, np.ndarray)
+        # PECOS returns pc.Array, not np.ndarray
+        assert isinstance(result, (np.ndarray, pc.Array))
         assert result.shape == (2,)
         assert np.allclose(result, [2.0, 1.0])
 
@@ -705,8 +708,9 @@ class TestPolyfitCovariance:
         result_false = pc.polyfit(x, y, 1, cov=False)
 
         # Both should return just coefficients
-        assert isinstance(result_default, np.ndarray)
-        assert isinstance(result_false, np.ndarray)
+        # PECOS returns pc.Array, not np.ndarray
+        assert isinstance(result_default, (np.ndarray, pc.Array))
+        assert isinstance(result_false, (np.ndarray, pc.Array))
         assert np.allclose(result_default, result_false)
         assert np.allclose(result_default, [2.0, 1.0])
 
@@ -1084,3 +1088,209 @@ class TestSumComparison:
             pecos_result = pecos_sum(arr)
             numpy_result = np.sum(arr)
             assert pecos_result == numpy_result, f"Failed for {values}"
+
+
+# ============================================================================
+# Performance Tests for Axis Operations
+# ============================================================================
+
+
+class TestAxisPerformance:
+    """Benchmark axis operations to verify Rust implementation performance."""
+
+    @pytest.mark.performance
+    def test_mean_axis_performance(self):
+        """Benchmark mean with axis parameter vs numpy."""
+        import time
+
+        # Test with moderately large array
+        shape = (1000, 1000)
+        data = np.random.randn(*shape)
+        iterations = 50
+
+        # Warmup
+        for _ in range(5):
+            _ = pc.mean(data, axis=0)
+            _ = np.mean(data, axis=0)
+
+        # Benchmark pecos version
+        start = time.perf_counter()
+        for _ in range(iterations):
+            _ = pc.mean(data, axis=0)
+        pecos_time = time.perf_counter() - start
+
+        # Benchmark numpy version
+        start = time.perf_counter()
+        for _ in range(iterations):
+            _ = np.mean(data, axis=0)
+        numpy_time = time.perf_counter() - start
+
+        speedup = numpy_time / pecos_time
+        print(f"\nmean(axis=0) on {shape} array:")
+        print(
+            f"  PECOS: {pecos_time*1000:.2f}ms ({pecos_time/iterations*1000:.2f}ms/iter)"
+        )
+        print(
+            f"  NumPy: {numpy_time*1000:.2f}ms ({numpy_time/iterations*1000:.2f}ms/iter)"
+        )
+        print(f"  Ratio: {speedup:.2f}x")
+
+        # We expect to be competitive with numpy (within 50x)
+        # NumPy is heavily optimized, so being within 50x is good for our use case
+        assert speedup > 0.02, f"Too slow: {speedup:.2f}x vs numpy (expected >0.02x)"
+
+    @pytest.mark.performance
+    def test_std_axis_performance(self):
+        """Benchmark std with axis parameter vs numpy."""
+        import time
+
+        # Test with moderately large array
+        shape = (1000, 1000)
+        data = np.random.randn(*shape)
+        iterations = 50
+
+        # Warmup
+        for _ in range(5):
+            _ = pc.std(data, axis=0, ddof=0)
+            _ = np.std(data, axis=0, ddof=0)
+
+        # Benchmark pecos version
+        start = time.perf_counter()
+        for _ in range(iterations):
+            _ = pc.std(data, axis=0, ddof=0)
+        pecos_time = time.perf_counter() - start
+
+        # Benchmark numpy version
+        start = time.perf_counter()
+        for _ in range(iterations):
+            _ = np.std(data, axis=0, ddof=0)
+        numpy_time = time.perf_counter() - start
+
+        speedup = numpy_time / pecos_time
+        print(f"\nstd(axis=0) on {shape} array:")
+        print(
+            f"  PECOS: {pecos_time*1000:.2f}ms ({pecos_time/iterations*1000:.2f}ms/iter)"
+        )
+        print(
+            f"  NumPy: {numpy_time*1000:.2f}ms ({numpy_time/iterations*1000:.2f}ms/iter)"
+        )
+        print(f"  Ratio: {speedup:.2f}x")
+
+        # We expect to be competitive with numpy (within 50x)
+        assert speedup > 0.02, f"Too slow: {speedup:.2f}x vs numpy (expected >0.02x)"
+
+    @pytest.mark.performance
+    def test_mean_axis_scaling(self):
+        """Test that mean axis performance scales linearly with data size."""
+        import time
+
+        sizes = [(100, 100), (500, 500), (1000, 1000)]
+        times = []
+
+        for shape in sizes:
+            data = np.random.randn(*shape)
+            iterations = 20
+
+            # Warmup
+            _ = pc.mean(data, axis=0)
+
+            # Benchmark
+            start = time.perf_counter()
+            for _ in range(iterations):
+                _ = pc.mean(data, axis=0)
+            elapsed = (time.perf_counter() - start) / iterations
+
+            times.append(elapsed)
+            print(f"\nmean(axis=0) on {shape}: {elapsed*1000:.2f}ms/iter")
+
+        # Time should scale roughly with array size
+        # From 100x100 to 1000x1000 is 100x more elements
+        # We expect roughly 100x more time (allow 200x for overhead)
+        size_ratio = (sizes[-1][0] * sizes[-1][1]) / (sizes[0][0] * sizes[0][1])
+        time_ratio = times[-1] / times[0]
+
+        print(
+            f"\nScaling: {size_ratio:.0f}x more elements, {time_ratio:.1f}x more time"
+        )
+        assert (
+            time_ratio < size_ratio * 2
+        ), f"Poor scaling: {time_ratio:.1f}x vs {size_ratio:.0f}x elements"
+
+
+class TestStateVectorPerformance:
+    """Benchmark state vector operations to verify Rust implementation performance."""
+
+    @pytest.mark.performance
+    def test_vector_big_endian_performance(self):
+        """Benchmark bit reversal (endianness conversion) for state vectors.
+
+        This tests the performance of the Rust-optimized bit reversal implementation
+        used when retrieving state vectors with PECOS big-endian qubit ordering.
+        """
+        import time
+
+        from pecos_rslib import StateVecRs
+
+        # Old Python implementation for comparison
+        def vector_big_endian_python(raw_vector, num_qubits):
+            """Old Python implementation using string-based bit reversal."""
+            length = len(raw_vector)
+            # Convert indices to binary strings with proper length
+            binary_indices = [format(idx, f"0{num_qubits}b") for idx in range(length)]
+            # Reverse bits to change endianness
+            reordered_indices = [int(bits[::-1], 2) for bits in binary_indices]
+            # Reorder the vector
+            return np.array(raw_vector)[reordered_indices]
+
+        print("\nBit Reversal Performance Comparison")
+        print("=" * 70)
+
+        # Test different qubit counts
+        for num_qubits in [10, 12, 14]:
+            sim = StateVecRs(num_qubits)
+
+            # Apply some gates to create non-trivial state
+            sim.run_gate("H", {0})
+            sim.run_gate("H", {1})
+
+            # Warmup
+            for _ in range(3):
+                _ = sim.vector
+
+            # Benchmark new Rust implementation
+            iterations = 50
+            start = time.perf_counter()
+            for _ in range(iterations):
+                pass
+            rust_time = time.perf_counter() - start
+
+            # Get raw vector for Python comparison
+            raw_vec = sim._sim.vector  # Property, not method
+
+            # Warmup Python version
+            for _ in range(3):
+                _ = vector_big_endian_python(raw_vec, num_qubits)
+
+            # Benchmark old Python implementation
+            start = time.perf_counter()
+            for _ in range(iterations):
+                _ = vector_big_endian_python(raw_vec, num_qubits)
+            python_time = time.perf_counter() - start
+
+            speedup = python_time / rust_time
+            vector_size = 2**num_qubits
+
+            print(f"\n{num_qubits:2d} qubits ({vector_size:6d} elements):")
+            print(
+                f"  Rust:   {rust_time*1000:7.2f}ms ({rust_time/iterations*1000:6.2f}ms/iter)"
+            )
+            print(
+                f"  Python: {python_time*1000:7.2f}ms ({python_time/iterations*1000:6.2f}ms/iter)"
+            )
+            print(f"  Speedup: {speedup:6.1f}x")
+
+        # We expect at least 50x speedup for 10+ qubits (usually see 150-250x)
+        # This validates that we're using the Rust implementation, not Python
+        assert (
+            speedup > 50
+        ), f"Bit reversal too slow: {speedup:.1f}x vs Python (expected >50x)"

@@ -26,7 +26,32 @@ measure q -> c;
 
 Now, let's run this code using PECOS's simple `run_qasm` function:
 
-=== "Rust"
+=== ":fontawesome-brands-python: Python"
+
+    ```python
+    from pecos.rslib import run_qasm, DepolarizingNoise
+
+    # Define the Bell state QASM code
+    qasm_code = """
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    """
+
+    # Simple simulation
+    results = run_qasm(qasm_code, shots=1000)
+
+    # With configuration
+    results = run_qasm(
+        qasm_code, shots=1000, noise_model=DepolarizingNoise(p=0.01), seed=42
+    )
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     use pecos_qasm::prelude::*;
@@ -71,64 +96,11 @@ Now, let's run this code using PECOS's simple `run_qasm` function:
     )?;
     ```
 
-=== "Python"
-
-    ```python
-    from pecos.rslib import run_qasm, DepolarizingNoise
-
-    # Define the Bell state QASM code
-    qasm_code = """
-        OPENQASM 2.0;
-        include "qelib1.inc";
-        qreg q[2];
-        creg c[2];
-        h q[0];
-        cx q[0], q[1];
-        measure q -> c;
-    """
-
-    # Simple simulation
-    results = run_qasm(qasm_code, shots=1000)
-
-    # With configuration
-    results = run_qasm(
-        qasm_code, shots=1000, noise_model=DepolarizingNoise(p=0.01), seed=42
-    )
-    ```
-
 ## Using the Builder API
 
 For more complex simulations or when you need finer control, you can use the builder-style API. This approach offers more flexibility, including the ability to automatically use all available CPU cores with `auto_workers()`, which isn't available in the simple `run_qasm` function:
 
-=== "Rust"
-
-    ```rust
-    use pecos_qasm::prelude::*;
-
-    // Define the Bell state QASM code (as above)
-    let qasm_code = r#"
-        OPENQASM 2.0;
-        include "qelib1.inc";
-        qreg q[2];
-        creg c[2];
-        h q[0];
-        cx q[0], q[1];
-        measure q -> c;
-    "#;
-
-    // Simple simulation with builder pattern
-    let results = qasm_sim(qasm_code).run(1000)?;
-
-    // With more configuration options
-    let results = qasm_sim(qasm_code)
-        .seed(42)
-        .noise(DepolarizingNoiseModel::builder().with_uniform_probability(0.01))
-        .workers(4)        // Explicitly set number of threads
-        // .auto_workers() // Or use all available CPU cores
-        .run(1000)?;
-    ```
-
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     from pecos.rslib import qasm_sim, DepolarizingNoise
@@ -158,12 +130,51 @@ For more complex simulations or when you need finer control, you can use the bui
     )
     ```
 
+=== ":fontawesome-brands-rust: Rust"
+
+    ```rust
+    use pecos_qasm::prelude::*;
+
+    // Define the Bell state QASM code (as above)
+    let qasm_code = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    "#;
+
+    // Simple simulation with builder pattern
+    let results = qasm_sim(qasm_code).run(1000)?;
+
+    // With more configuration options
+    let results = qasm_sim(qasm_code)
+        .seed(42)
+        .noise(DepolarizingNoiseModel::builder().with_uniform_probability(0.01))
+        .workers(4)        // Explicitly set number of threads
+        // .auto_workers() // Or use all available CPU cores
+        .run(1000)?;
+    ```
+
 ## Running Multiple Shots
 
 Real quantum computers run circuits multiple times ("shots") to build up statistics. PECOS simulates this behavior and
 lets you build the experiment once and rerun it multiple times:
 
-=== "Rust"
+=== ":fontawesome-brands-python: Python"
+
+    ```python
+    # Build once, run multiple times
+    sim = qasm_sim(qasm).seed(42).noise(DepolarizingNoise(p=0.01)).workers(4).build()
+
+    # Run with different shot counts
+    results_100 = sim.run(100)
+    results_1000 = sim.run(1000)
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     let sim = qasm_sim(qasm_code)
@@ -179,24 +190,34 @@ lets you build the experiment once and rerun it multiple times:
     let results_1000 = sim.run(1000)?;
     ```
 
-=== "Python"
-
-    ```python
-    # Build once, run multiple times
-    sim = qasm_sim(qasm).seed(42).noise(DepolarizingNoise(p=0.01)).workers(4).build()
-
-    # Run with different shot counts
-    results_100 = sim.run(100)
-    results_1000 = sim.run(1000)
-    ```
-
 ## Adding Noise to Your Simulations
 
 Real quantum computers are noisy. PECOS helps you understand how noise affects your circuits by providing several noise models.
 
 ### Common Noise Types
 
-=== "Rust"
+=== ":fontawesome-brands-python: Python"
+
+    ```python
+    # No noise (ideal simulation)
+    PassThroughNoise()
+
+    # Standard depolarizing
+    DepolarizingNoise(p=0.01)
+
+    # Custom depolarizing per operation type
+    DepolarizingCustomNoise(
+        p_prep=0.001,  # State preparation error
+        p_meas=0.002,  # Measurement error
+        p1=0.003,  # Single-qubit gate error
+        p2=0.004,  # Two-qubit gate error
+    )
+
+    # Biased depolarizing (asymmetric error distribution)
+    BiasedDepolarizingNoise(p=0.01)
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     // No noise (ideal simulation)
@@ -218,51 +239,11 @@ Real quantum computers are noisy. PECOS helps you understand how noise affects y
         .with_uniform_probability(0.01)
     ```
 
-=== "Python"
-
-    ```python
-    # No noise (ideal simulation)
-    PassThroughNoise()
-
-    # Standard depolarizing
-    DepolarizingNoise(p=0.01)
-
-    # Custom depolarizing per operation type
-    DepolarizingCustomNoise(
-        p_prep=0.001,  # State preparation error
-        p_meas=0.002,  # Measurement error
-        p1=0.003,  # Single-qubit gate error
-        p2=0.004,  # Two-qubit gate error
-    )
-
-    # Biased depolarizing (asymmetric error distribution)
-    BiasedDepolarizingNoise(p=0.01)
-    ```
-
 ### Creating Custom Noise Models
 
 For research or to match specific hardware characteristics, you can create detailed noise models:
 
-=== "Rust"
-
-    ```rust
-    use pecos_engines::noise::GeneralNoiseModel;
-
-    let noise = GeneralNoiseModel::builder()
-        .with_prep_probability(0.001)      // State prep error
-        .with_meas_0_probability(0.005)    // Measurement error |0> → |1>
-        .with_meas_1_probability(0.01)     // Measurement error |1> → |0>
-        .with_p1_probability(0.0001)       // Single-qubit gate error
-        .with_p2_probability(0.01)         // Two-qubit gate error
-        .with_idle_linear_rate(0.0001)     // Idle noise rate
-        .with_seed(42);                    // Deterministic noise
-
-    // Use with either API
-    let results = qasm_sim(qasm).noise(noise).run(1000)?;
-    let results = run_qasm(qasm, 1000, noise, None, None, None)?
-    ```
-
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     from pecos.rslib import GeneralNoiseModelBuilder
@@ -294,6 +275,25 @@ For research or to match specific hardware characteristics, you can create detai
     )
     ```
 
+=== ":fontawesome-brands-rust: Rust"
+
+    ```rust
+    use pecos_engines::noise::GeneralNoiseModel;
+
+    let noise = GeneralNoiseModel::builder()
+        .with_prep_probability(0.001)      // State prep error
+        .with_meas_0_probability(0.005)    // Measurement error |0> → |1>
+        .with_meas_1_probability(0.01)     // Measurement error |1> → |0>
+        .with_p1_probability(0.0001)       // Single-qubit gate error
+        .with_p2_probability(0.01)         // Two-qubit gate error
+        .with_idle_linear_rate(0.0001)     // Idle noise rate
+        .with_seed(42);                    // Deterministic noise
+
+    // Use with either API
+    let results = qasm_sim(qasm).noise(noise).run(1000)?;
+    let results = run_qasm(qasm, 1000, noise, None, None, None)?
+    ```
+
 The builder provides many configuration options including idle noise rates, leakage probabilities,
 Pauli error models, and more. For a comprehensive guide to using noise model builders, see the
 [Noise Model Builders Guide](noise-model-builders.md).
@@ -302,7 +302,19 @@ Pauli error models, and more. For a comprehensive guide to using noise model bui
 
 PECOS provides different engines optimized for different types of circuits:
 
-=== "Rust"
+=== ":fontawesome-brands-python: Python"
+
+    ```python
+    from pecos_rslib import quantum, qasm_engine
+
+    # Sparse stabilizer (default, efficient for Clifford circuits)
+    engine = qasm_engine().qubits(num_qubits).quantum(quantum.sparse_stabilizer())
+
+    # State vector (for non-Clifford circuits)
+    engine = qasm_engine().qubits(num_qubits).quantum(quantum.state_vector())
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     use pecos_engines::{sparse_stabilizer, state_vector};
@@ -316,44 +328,11 @@ PECOS provides different engines optimized for different types of circuits:
     .quantum(state_vector())
     ```
 
-=== "Python"
-
-    ```python
-    from pecos_rslib import quantum, qasm_engine
-
-    # Sparse stabilizer (default, efficient for Clifford circuits)
-    engine = qasm_engine().qubits(num_qubits).quantum(quantum.sparse_stabilizer())
-
-    # State vector (for non-Clifford circuits)
-    engine = qasm_engine().qubits(num_qubits).quantum(quantum.state_vector())
-    ```
-
 ## Understanding Your Results
 
 Simulation results come back as measurement outcomes for each shot. These can be processed in different ways depending on your needs:
 
-=== "Rust"
-
-    ```rust
-    let shot_vec = qasm_sim(qasm).run(1000)?;
-
-    // Convert to ShotMap for columnar access
-    let shot_map = shot_vec.try_as_shot_map()?;
-
-    // Access measurement results by register name
-    let c_values = shot_map.try_bits_as_u64("c")?;
-    // Returns Vec<u64> where each value is the decimal encoding
-
-    // Or get results as binary strings
-    let results = qasm_sim(qasm)
-        .with_binary_string_format()
-        .run(1000)?;
-    let shot_map = results.try_as_shot_map()?;
-    let binary_values = shot_map.try_bits_as_binary("c")?;
-    // Returns Vec<String> where each string is like "00", "11", etc.
-    ```
-
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     results = run_qasm(qasm, shots=1000)
@@ -388,13 +367,60 @@ Simulation results come back as measurement outcomes for each shot. These can be
 
     For large registers (>64 qubits), integer results are automatically converted to Python's arbitrary-precision integers.
 
+=== ":fontawesome-brands-rust: Rust"
+
+    ```rust
+    let shot_vec = qasm_sim(qasm).run(1000)?;
+
+    // Convert to ShotMap for columnar access
+    let shot_map = shot_vec.try_as_shot_map()?;
+
+    // Access measurement results by register name
+    let c_values = shot_map.try_bits_as_u64("c")?;
+    // Returns Vec<u64> where each value is the decimal encoding
+
+    // Or get results as binary strings
+    let results = qasm_sim(qasm)
+        .with_binary_string_format()
+        .run(1000)?;
+    let shot_map = results.try_as_shot_map()?;
+    let binary_values = shot_map.try_bits_as_binary("c")?;
+    // Returns Vec<String> where each string is like "00", "11", etc.
+    ```
+
 ## Practical Examples
 
 ### Example 1: Studying Noise Effects on Bell States
 
 This example shows how noise affects quantum entanglement:
 
-=== "Rust"
+=== ":fontawesome-brands-python: Python"
+
+    ```python
+    from pecos.rslib import run_qasm, qasm_sim, DepolarizingNoise
+    from collections import Counter
+
+    qasm = """
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    """
+
+    # Build simulation with depolarizing noise
+    sim = qasm_sim(qasm).seed(42).workers(4).noise(DepolarizingNoise(p=0.01)).build()
+
+    # Run multiple times
+    for shots in [100, 1000, 10000]:
+        results = sim.run(shots)
+        print(f"Results for {shots} shots:")
+        print(f"Counts: {Counter(results['c'])}")
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     use pecos_qasm::prelude::*;
@@ -427,32 +453,6 @@ This example shows how noise affects quantum entanglement:
 
         Ok(())
     }
-    ```
-
-=== "Python"
-
-    ```python
-    from pecos.rslib import run_qasm, qasm_sim, DepolarizingNoise
-    from collections import Counter
-
-    qasm = """
-        OPENQASM 2.0;
-        include "qelib1.inc";
-        qreg q[2];
-        creg c[2];
-        h q[0];
-        cx q[0], q[1];
-        measure q -> c;
-    """
-
-    # Build simulation with depolarizing noise
-    sim = qasm_sim(qasm).seed(42).workers(4).noise(DepolarizingNoise(p=0.01)).build()
-
-    # Run multiple times
-    for shots in [100, 1000, 10000]:
-        results = sim.run(shots)
-        print(f"Results for {shots} shots:")
-        print(f"Counts: {Counter(results['c'])}")
     ```
 
 ### Example 2: Simulating a Noisy Quantum Algorithm
@@ -502,7 +502,19 @@ fn advanced_noise_example() -> Result<(), PecosError> {
 
 If you're running the same circuit with different parameters:
 
-=== "Rust"
+=== ":fontawesome-brands-python: Python"
+
+    ```python
+    # Parse once
+    sim = qasm_sim(qasm).build()
+
+    # Run many times
+    for noise_level in [0.001, 0.01, 0.1]:
+        results = sim.noise(DepolarizingNoise(p=noise_level)).run(1000)
+        analyze_results(results)
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     // Parse once
@@ -517,36 +529,11 @@ If you're running the same circuit with different parameters:
     }
     ```
 
-=== "Python"
-
-    ```python
-    # Parse once
-    sim = qasm_sim(qasm).build()
-
-    # Run many times
-    for noise_level in [0.001, 0.01, 0.1]:
-        results = sim.noise(DepolarizingNoise(p=noise_level)).run(1000)
-        analyze_results(results)
-    ```
-
 ### Parallel Execution
 
 For many shots, you can use multiple CPU cores to speed up simulation:
 
-=== "Rust"
-
-    ```rust
-    // Single threaded (default for run_qasm)
-    let results = qasm_sim(qasm).workers(1).run(100000)?;
-
-    // Explicit thread count
-    let results = qasm_sim(qasm).workers(4).run(100000)?;
-
-    // Automatically use all available cores
-    let results = qasm_sim(qasm).auto_workers().run(100000)?;
-    ```
-
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     # Default is single-threaded for run_qasm
@@ -559,6 +546,19 @@ For many shots, you can use multiple CPU cores to speed up simulation:
     results = qasm_sim(qasm).auto_workers().run(100000)
     ```
 
+=== ":fontawesome-brands-rust: Rust"
+
+    ```rust
+    // Single threaded (default for run_qasm)
+    let results = qasm_sim(qasm).workers(1).run(100000)?;
+
+    // Explicit thread count
+    let results = qasm_sim(qasm).workers(4).run(100000)?;
+
+    // Automatically use all available cores
+    let results = qasm_sim(qasm).auto_workers().run(100000)?;
+    ```
+
 ### Choosing the Right Engine
 
 - **For Clifford circuits** (H, S, CNOT, measurements): Use `SparseStabilizer` - it's exponentially faster
@@ -569,15 +569,7 @@ For many shots, you can use multiple CPU cores to speed up simulation:
 
 ### Handling Errors
 
-=== "Rust"
-
-    All methods return `Result<T, PecosError>`:
-
-    - `build()` - Can fail during QASM parsing
-    - `run()` - Can fail during simulation execution
-    - `try_as_shot_map()` - Can fail during result conversion
-
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     The API raises `RuntimeError` for invalid operations:
     ```python
@@ -586,6 +578,14 @@ For many shots, you can use multiple CPU cores to speed up simulation:
     except RuntimeError as e:
         print(f"Error: {e}")
     ```
+
+=== ":fontawesome-brands-rust: Rust"
+
+    All methods return `Result<T, PecosError>`:
+
+    - `build()` - Can fail during QASM parsing
+    - `run()` - Can fail during simulation execution
+    - `try_as_shot_map()` - Can fail during result conversion
 
 ### Additional Python Utilities
 
@@ -609,7 +609,7 @@ These functions are useful for dynamically listing available options in applicat
 
 For applications that need to store or share simulation configurations, the builder pattern supports loading settings from dictionaries:
 
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     from pecos.rslib import qasm_sim
@@ -736,19 +736,19 @@ For detailed information about GeneralNoiseFactory, see the [GeneralNoiseFactory
 
 PECOS automatically handles circuits with more than 64 qubits:
 
-=== "Rust"
-
-    ```rust
-    // Results automatically use BigUint for large registers
-    let values = shot_map.try_bits_as_biguint("large_reg")?;
-    ```
-
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     # Results automatically converted to Python big integers
     results = run_qasm(qasm_large, shots=10)
     # results["c"] will contain Python arbitrary-precision integers
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
+
+    ```rust
+    // Results automatically use BigUint for large registers
+    let values = shot_map.try_bits_as_biguint("large_reg")?;
     ```
 
 ## Next Steps

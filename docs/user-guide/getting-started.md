@@ -4,7 +4,7 @@ This guide will help you get up and running with PECOS quickly, whether you're u
 
 ## Installation
 
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     To install the main Python package for general usage:
 
@@ -29,104 +29,50 @@ This guide will help you get up and running with PECOS quickly, whether you're u
     pip install quantum-pecos==X.Y.Z.devN  # Replace with actual version number
     ```
 
-=== "Rust"
+=== ":fontawesome-brands-rust: Rust"
 
     To use PECOS in your Rust project, add the following to your `Cargo.toml`:
 
     ```toml
     [dependencies]
-    pecos-core = "0.1.x"  # Replace with the latest version
-    # Add other PECOS crates as needed:
-    # pecos-engines = "0.1.x"
-    # pecos-qsim = "0.1.x"
+    pecos = "0.1.x"  # Replace with the latest version
+    ```
+
+    The `pecos` crate is a metacrate that re-exports functionality from all PECOS crates.
+
+    For specific functionality, you can alternatively depend on individual crates:
+
+    ```toml
+    [dependencies]
+    pecos-core = "0.1.x"
+    pecos-engines = "0.1.x"
+    pecos-qsim = "0.1.x"
+    # etc.
     ```
 
 ## Optional Dependencies
 
-### LLVM for QIS Support
+### LLVM for QIS Support (Rust Only)
 
-LLVM version 14 is required for LLVM IR execution with QIS (Quantum Instruction Set) support.
+!!! note "Python Users"
+    **Python users can skip this section.** Pre-built Python wheels already include LLVM support, so no additional setup is required.
 
-**Setup Steps:**
+For **Rust users building from source**, LLVM version 14 is optional and only needed for QIS (Quantum Instruction Set) with LLVM IR/QIR execution support.
 
-**Option 1 - Use pecos-llvm installer (recommended for all platforms):**
+**Quick Setup (Recommended):**
 
 ```bash
 # Install LLVM 14.0.6 to ~/.pecos/llvm/ (~400MB, ~5 minutes)
 cargo run -p pecos-llvm-utils --bin pecos-llvm -- install
 
-# Build PECOS
-cargo build
+# Build PECOS with LLVM support
+cargo build --features llvm
 ```
 
-The installer automatically configures PECOS after installation.
+The `pecos-llvm install` command automatically downloads, installs, and configures LLVM for your platform.
 
-**Option 2 - Manual installation:**
-
-1. **Install LLVM 14** for your platform:
-
-   === "macOS"
-       ```bash
-       brew install llvm@14
-       ```
-       Works on both Intel and Apple Silicon Macs.
-
-   === "Linux (Debian/Ubuntu)"
-       ```bash
-       sudo apt update
-       sudo apt install llvm-14 llvm-14-dev
-       ```
-
-   === "Linux (Fedora/RHEL)"
-       ```bash
-       sudo dnf install llvm14 llvm14-devel
-       ```
-
-   === "Linux (Arch)"
-       ```bash
-       yay -S llvm14  # May need to build from AUR
-       ```
-
-   === "Windows"
-       !!! warning "Windows LLVM Requirement"
-           The official LLVM Windows installer (`LLVM-*.exe`) is **toolchain-only** and lacks required development files (`llvm-config.exe` and headers). You need a **full development package**.
-
-       **Recommended: Use pecos-llvm installer** (see Option 1 above)
-
-       **For system-wide installation:**
-
-       Download a full development package from community sources:
-
-       - [bitgate/llvm-windows-full-builds](https://github.com/bitgate/llvm-windows-full-builds) (recommended)
-       - [vovkos/llvm-package-windows](https://github.com/vovkos/llvm-package-windows)
-
-       Extract to a location like `C:\LLVM` or `C:\Program Files\LLVM-14`, then set:
-       ```cmd
-       set LLVM_SYS_140_PREFIX=C:\LLVM
-       ```
-
-2. **Configure PECOS** to detect your LLVM installation:
-   ```bash
-   cargo run -p pecos-llvm-utils --bin pecos-llvm -- configure
-   ```
-
-3. **Build PECOS**:
-   ```bash
-   cargo build
-   ```
-
-**Check LLVM Status:**
-
-```bash
-cargo run -p pecos-llvm-utils --bin pecos-llvm -- check
-cargo run -p pecos-llvm-utils --bin pecos-llvm -- version
-```
-
-!!! warning
-    PECOS's LLVM IR implementation is currently only compatible with LLVM version 14.x.
-
-!!! note
-    The `.cargo/config.toml` file is auto-generated and machine-specific. It's in `.gitignore` and should not be committed.
+!!! info "Detailed Setup Instructions"
+    For complete LLVM installation options, system package manager instructions, troubleshooting, and CLI reference, see the [LLVM Setup Guide](llvm-setup.md).
 
 ### Simulators with Special Requirements
 
@@ -145,14 +91,14 @@ Some simulators from `pecos.simulators` require external packages:
 
 Verify your installation:
 
-=== "Python"
+=== ":fontawesome-brands-python: Python"
     ```python
     import pecos
 
     print(pecos.__version__)
     ```
 
-=== "Rust"
+=== ":fontawesome-brands-rust: Rust"
     Create a simple Rust program and run:
 
     ```rust

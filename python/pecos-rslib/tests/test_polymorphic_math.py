@@ -33,29 +33,27 @@ class TestExpPolymorphic:
         assert abs(result - (-1.0 + 0j)) < 1e-10
 
     def test_exp_array_float(self):
-        """Test exp with float array input."""
+        """Test exp with float array input returns Array."""
         arr = np.array([0.0, 1.0, 2.0])
         result = exp(arr)
-        assert isinstance(result, np.ndarray)
-        assert result.dtype == np.float64
+        assert isinstance(result, Array)
+        assert str(result.dtype) == "float64"
         expected = np.array([1.0, math.e, math.e**2])
         assert np.allclose(result, expected)
 
     def test_exp_array_complex(self):
-        """Test exp with complex array input."""
+        """Test exp with complex array input returns Array."""
         arr = np.array([0 + 0j, 1j * math.pi, 2 + 0j])
         result = exp(arr)
-        assert isinstance(result, np.ndarray)
-        assert result.dtype == np.complex128
+        assert isinstance(result, Array)
         # exp(0) = 1, exp(iπ) = -1, exp(2) = e^2
         expected = np.array([1.0 + 0j, -1.0 + 0j, math.e**2 + 0j])
         assert np.allclose(result, expected, atol=1e-10)
 
     def test_exp_list_input(self):
-        """Test exp with list input (requires explicit numpy array conversion)."""
-        # Lists need to be converted to numpy arrays first
-        result = exp(np.array([0.0, 1.0, 2.0]))
-        assert isinstance(result, np.ndarray)
+        """Test exp accepts list input and returns Array."""
+        result = exp([0.0, 1.0, 2.0])
+        assert isinstance(result, Array)
         expected = np.array([1.0, math.e, math.e**2])
         assert np.allclose(result, expected)
 
@@ -80,38 +78,35 @@ class TestCosPolymorphic:
         result_pi = cos(math.pi)
         assert abs(result_pi - (-1.0)) < 1e-10
 
-    def test_cos_scalar_float_only(self):
-        """Test cos only supports float scalars (not complex)."""
-        # cos/sin currently only support float, not complex
-        # Complex support could be added in future if needed
-        with pytest.raises(
-            TypeError, match="cos\\(\\) argument must be float or array"
-        ):
-            cos(0 + 0j)
+    def test_cos_scalar_complex(self):
+        """Test cos supports complex scalars."""
+        # cos now supports complex numbers via ComplexFloat trait
+        result = cos(0 + 0j)
+        assert isinstance(result, complex)
+        assert abs(result - 1.0) < 1e-10
 
     def test_cos_array_float(self):
-        """Test cos with float array input."""
+        """Test cos with float array input returns Array."""
         arr = np.array([0.0, math.pi / 2, math.pi])
         result = cos(arr)
-        assert isinstance(result, np.ndarray)
-        assert result.dtype == np.float64
+        assert isinstance(result, Array)
+        assert str(result.dtype) == "float64"
         expected = np.array([1.0, 0.0, -1.0])
         assert np.allclose(result, expected, atol=1e-10)
 
-    def test_cos_array_float_only(self):
-        """Test cos only supports float arrays (not complex arrays)."""
-        # cos/sin currently only support float arrays
+    def test_cos_array_complex(self):
+        """Test cos supports complex arrays."""
         arr_complex = np.array([0 + 0j, math.pi + 0j])
-        with pytest.raises(
-            TypeError, match="cos\\(\\) argument must be float or array"
-        ):
-            cos(arr_complex)
+        result = cos(arr_complex)
+        assert isinstance(result, Array)
+        # cos(0) = 1, cos(π) = -1
+        assert abs(result[0] - 1.0) < 1e-10
+        assert abs(result[1] - (-1.0)) < 1e-10
 
     def test_cos_list_input(self):
-        """Test cos requires numpy arrays (not lists)."""
-        # Lists must be converted to numpy arrays first
-        result = cos(np.array([0.0, math.pi / 2, math.pi]))
-        assert isinstance(result, np.ndarray)
+        """Test cos accepts list input and returns Array."""
+        result = cos([0.0, math.pi / 2, math.pi])
+        assert isinstance(result, Array)
         expected = np.array([1.0, 0.0, -1.0])
         assert np.allclose(result, expected, atol=1e-10)
 
@@ -136,35 +131,36 @@ class TestSinPolymorphic:
         result_pi2 = sin(math.pi / 2)
         assert abs(result_pi2 - 1.0) < 1e-10
 
-    def test_sin_scalar_float_only(self):
-        """Test sin only supports float scalars (not complex)."""
-        # sin/cos currently only support float, not complex
-        with pytest.raises(
-            TypeError, match="sin\\(\\) argument must be float or array"
-        ):
-            sin(0 + 0j)
+    def test_sin_scalar_complex(self):
+        """Test sin supports complex scalars."""
+        # sin now supports complex numbers via ComplexFloat trait
+        result = sin(0 + 0j)
+        assert isinstance(result, complex)
+        assert abs(result) < 1e-10
 
     def test_sin_array_float(self):
-        """Test sin with float array input."""
+        """Test sin with float array input returns Array."""
         arr = np.array([0.0, math.pi / 2, math.pi])
         result = sin(arr)
-        assert isinstance(result, np.ndarray)
-        assert result.dtype == np.float64
+        assert isinstance(result, Array)
+        # Array.dtype returns a dtype object, check string representation
+        assert str(result.dtype) == "float64"
         expected = np.array([0.0, 1.0, 0.0])
         assert np.allclose(result, expected, atol=1e-10)
 
-    def test_sin_array_float_only(self):
-        """Test sin only supports float arrays (not complex arrays)."""
+    def test_sin_array_complex(self):
+        """Test sin supports complex arrays."""
         arr_complex = np.array([0 + 0j, math.pi / 2 + 0j])
-        with pytest.raises(
-            TypeError, match="sin\\(\\) argument must be float or array"
-        ):
-            sin(arr_complex)
+        result = sin(arr_complex)
+        assert isinstance(result, Array)
+        # Verify it computes correctly for complex input
+        assert abs(result[0]) < 1e-10  # sin(0) = 0
+        assert abs(result[1] - 1.0) < 1e-10  # sin(π/2) = 1
 
     def test_sin_list_input(self):
-        """Test sin requires numpy arrays (not lists)."""
-        result = sin(np.array([0.0, math.pi / 2, math.pi]))
-        assert isinstance(result, np.ndarray)
+        """Test sin accepts list input and returns Array."""
+        result = sin([0.0, math.pi / 2, math.pi])
+        assert isinstance(result, Array)
         expected = np.array([0.0, 1.0, 0.0])
         assert np.allclose(result, expected, atol=1e-10)
 
@@ -172,7 +168,8 @@ class TestSinPolymorphic:
         """Test sin preserves 2D array shape."""
         arr = np.array([[0.0, math.pi / 2], [math.pi, 2 * math.pi]])
         result = sin(arr)
-        assert result.shape == (2, 2)
+        # Array.shape returns a list, NumPy returns tuple
+        assert result.shape == [2, 2] or result.shape == (2, 2)
         expected = np.sin(arr)
         assert np.allclose(result, expected, atol=1e-10)
 
@@ -205,8 +202,7 @@ class TestIsNanPolymorphic:
         """Test isnan with float array."""
         arr = np.array([1.0, float("nan"), 3.0])
         result = isnan(arr)
-        assert isinstance(result, np.ndarray)
-        assert result.dtype == bool
+        # isnan returns BoolArrayView (bool array view)
         expected = np.array([False, True, False])
         assert array_equal(result, expected)
 
@@ -214,15 +210,14 @@ class TestIsNanPolymorphic:
         """Test isnan with complex array."""
         arr = np.array([1.0 + 0j, complex(float("nan"), 0), 3.0 + 0j])
         result = isnan(arr)
-        assert isinstance(result, np.ndarray)
-        assert result.dtype == bool
+        # isnan returns BoolArrayView (bool array view)
         expected = np.array([False, True, False])
         assert array_equal(result, expected)
 
     def test_isnan_list_input(self):
-        """Test isnan requires numpy arrays (not lists)."""
-        result = isnan(np.array([1.0, float("nan"), 3.0]))
-        assert isinstance(result, np.ndarray)
+        """Test isnan accepts list input."""
+        result = isnan([1.0, float("nan"), 3.0])
+        # isnan returns BoolArrayView (bool array view)
         expected = np.array([False, True, False])
         assert array_equal(result, expected)
 
@@ -230,7 +225,7 @@ class TestIsNanPolymorphic:
         """Test isnan preserves 2D array shape."""
         arr = np.array([[1.0, float("nan")], [3.0, 4.0]])
         result = isnan(arr)
-        assert result.shape == (2, 2)
+        assert result.shape == [2, 2] or result.shape == (2, 2)
         expected = np.array([[False, True], [False, False]])
         assert array_equal(result, expected)
 
@@ -362,8 +357,8 @@ class TestRealWorldUseCases:
         # Simulate some computation results with potential NaNs
         results = np.array([0.95, 0.98, float("nan"), 0.97, 0.96])
 
-        # Filter out NaN values
-        valid_mask = ~isnan(results)
+        # Filter out NaN values - convert to NumPy for indexing
+        valid_mask = ~np.array(isnan(results))
         valid_results = results[valid_mask]
 
         assert len(valid_results) == 4

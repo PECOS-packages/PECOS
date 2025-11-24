@@ -29,7 +29,7 @@ Advanced belief propagation and ordered statistics decoding algorithms for LDPC 
 
 ## Installation and Setup
 
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     Install PECOS with decoder support:
 
@@ -45,7 +45,7 @@ Advanced belief propagation and ordered statistics decoding algorithms for LDPC 
         Decoder availability in Python depends on the specific Python package.
         Some decoders may only be available through the Rust interface.
 
-=== "Rust"
+=== ":fontawesome-brands-rust: Rust"
 
     Add decoder dependencies to your `Cargo.toml`:
 
@@ -77,7 +77,7 @@ Advanced belief propagation and ordered statistics decoding algorithms for LDPC 
 
 Before using decoders, you need a quantum error correction code. Here are common examples:
 
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     import pecos
@@ -106,7 +106,7 @@ Before using decoders, you need a quantum error correction code. Here are common
     hx, hz = create_surface_code(distance)
     ```
 
-=== "Rust"
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     use pecos_decoders::{CssCode, SparseMatrix};
@@ -128,7 +128,7 @@ Before using decoders, you need a quantum error correction code. Here are common
 
 ### Using LDPC Decoders
 
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     import pecos.decoders as decoders
@@ -150,7 +150,7 @@ Before using decoders, you need a quantum error correction code. Here are common
     print(f"Iterations: {result.iterations}")
     ```
 
-=== "Rust"
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     use pecos_decoders::{BpOsdDecoder, Decoder};
@@ -180,7 +180,7 @@ Before using decoders, you need a quantum error correction code. Here are common
 
 Combines belief propagation with ordered statistics decoding post-processing.
 
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     decoder = decoders.BpOsdDecoder(hx, hz)
@@ -188,7 +188,7 @@ Combines belief propagation with ordered statistics decoding post-processing.
     decoder.set_osd_order(10)
     ```
 
-=== "Rust"
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     let mut decoder = BpOsdDecoder::new(css_code);
@@ -200,7 +200,7 @@ Combines belief propagation with ordered statistics decoding post-processing.
 
 Localized version of OSD for better scaling with large codes.
 
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     decoder = decoders.BpLsdDecoder(hx, hz)
@@ -208,7 +208,7 @@ Localized version of OSD for better scaling with large codes.
     decoder.set_lsd_order(10)
     ```
 
-=== "Rust"
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     let mut decoder = BpLsdDecoder::new(css_code);
@@ -220,7 +220,7 @@ Localized version of OSD for better scaling with large codes.
 
 Combines belief propagation with union-find algorithm.
 
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     decoder = decoders.BeliefFindDecoder(hx, hz)
@@ -228,7 +228,7 @@ Combines belief propagation with union-find algorithm.
     decoder.set_max_bp_iterations(10)
     ```
 
-=== "Rust"
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     let mut decoder = BeliefFindDecoder::new(css_code);
@@ -240,7 +240,7 @@ Combines belief propagation with union-find algorithm.
 
 Fast bit-flipping decoder suitable for real-time applications.
 
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     decoder = decoders.FlipDecoder(hx, hz)
@@ -248,7 +248,7 @@ Fast bit-flipping decoder suitable for real-time applications.
     decoder.set_schedule("parallel")
     ```
 
-=== "Rust"
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     let mut decoder = FlipDecoder::new(css_code);
@@ -260,14 +260,14 @@ Fast bit-flipping decoder suitable for real-time applications.
 
 Graph-based decoder using union-find data structure.
 
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     decoder = decoders.UnionFindDecoder(hx, hz)
     decoder.set_uf_method("inversion")
     ```
 
-=== "Rust"
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     let mut decoder = UnionFindDecoder::new(css_code);
@@ -280,7 +280,7 @@ Graph-based decoder using union-find data structure.
 
 Use log-likelihood ratios for improved decoding performance.
 
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     decoder = decoders.SoftInfoBpDecoder(hx, hz)
@@ -290,7 +290,7 @@ Use log-likelihood ratios for improved decoding performance.
     result = decoder.decode_with_llrs(syndrome, llrs)
     ```
 
-=== "Rust"
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     let mut decoder = SoftInfoBpDecoder::new(css_code);
@@ -304,7 +304,7 @@ Use log-likelihood ratios for improved decoding performance.
 
 Decode multiple syndromes efficiently.
 
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     # Multiple syndromes
@@ -319,7 +319,7 @@ Decode multiple syndromes efficiently.
         print(f"Syndrome {i}: {result.correction}")
     ```
 
-=== "Rust"
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     use pecos_decoders::BatchDecoder;
@@ -340,7 +340,7 @@ Decode multiple syndromes efficiently.
 
 #### Parallel Decoding
 
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     decoder = decoders.BpOsdDecoder(hx, hz)
@@ -348,7 +348,7 @@ Decode multiple syndromes efficiently.
     decoder.set_num_threads(4)  # Set thread count
     ```
 
-=== "Rust"
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     let mut decoder = BpOsdDecoder::new(css_code);
@@ -360,7 +360,7 @@ Decode multiple syndromes efficiently.
 
 For large codes, use sparse representations:
 
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     # Use sparse matrices for large codes
@@ -371,7 +371,7 @@ For large codes, use sparse representations:
     decoder = decoders.BpOsdDecoder(hx_sparse, hz_sparse)
     ```
 
-=== "Rust"
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     // Sparse matrices are used by default
@@ -381,7 +381,7 @@ For large codes, use sparse representations:
 
 ## Error Handling
 
-=== "Python"
+=== ":fontawesome-brands-python: Python"
 
     ```python
     try:
@@ -392,7 +392,7 @@ For large codes, use sparse representations:
         print(f"Decoding failed: {e}")
     ```
 
-=== "Rust"
+=== ":fontawesome-brands-rust: Rust"
 
     ```rust
     match decoder.decode(&syndrome) {

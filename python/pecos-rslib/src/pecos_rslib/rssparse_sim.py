@@ -21,7 +21,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, NoReturn
 
-from pecos_rslib._pecos_rslib import SparseSim as RustSparseSim
+from pecos_rslib._pecos_rslib import (
+    SparseSim as RustSparseSim,
+    adjust_tableau_string as _adjust_tableau_string_rust,
+)
 
 # Gate bindings require consistent interfaces even if not all parameters are used.
 
@@ -77,12 +80,13 @@ class SparseSimRs:
         output = {}
 
         if params.get("simulate_gate", True) and locations:
-            for location in locations:
-                if params.get("angles") and len(params["angles"]) == 1:
-                    params.update({"angle": params["angles"][0]})
-                elif "angle" in params and "angles" not in params:
-                    params["angles"] = (params["angle"],)
+            # Normalize parameters once before loop (not per location)
+            if params.get("angles") and len(params["angles"]) == 1:
+                params.update({"angle": params["angles"][0]})
+            elif "angle" in params and "angles" not in params:
+                params["angles"] = (params["angle"],)
 
+            for location in locations:
                 if symbol in self.bindings:
                     results = self.bindings[symbol](self, location, **params)
                 else:
@@ -280,6 +284,8 @@ def adjust_tableau_string(line: str, *, is_stab: bool) -> str:
     """Adjust the tableau string to ensure the sign part always takes up two spaces
     and convert 'Y' to 'W'. For destabilizers, always use two spaces for the sign.
 
+    This is a thin wrapper around the Rust implementation that always converts Y to W.
+
     Args:
         line (str): A single line from the tableau string.
         is_stab (bool): True if this is a stabilizer, False if destabilizer.
@@ -287,22 +293,8 @@ def adjust_tableau_string(line: str, *, is_stab: bool) -> str:
     Returns:
         str: The adjusted line with proper spacing for signs and 'W' instead of 'Y'.
     """
-    if is_stab:
-        if line.startswith("+i"):
-            adjusted = " i" + line[2:]
-        elif line.startswith("-i"):
-            adjusted = "-i" + line[2:]
-        elif line.startswith("+"):
-            adjusted = "  " + line[1:]
-        elif line.startswith("-"):
-            adjusted = " -" + line[1:]
-        else:
-            adjusted = "  " + line  # Default case, shouldn't happen with correct input
-    else:
-        # For destabilizers, always use two spaces for the sign
-        adjusted = "  " + line[1:]
-
-    return adjusted.replace("Y", "W")
+    # Call Rust implementation with print_y=False (always convert Y to W)
+    return _adjust_tableau_string_rust(line, is_stab=is_stab, print_y=False)
 
 
 # Define the gate dictionary

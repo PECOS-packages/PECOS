@@ -18,7 +18,7 @@
 //! across scalars, complex numbers, and arrays.
 
 use ndarray::{Array, ArrayBase, Data, Dimension};
-use num_complex::{Complex, Complex64};
+use num_complex::{Complex, Complex32, Complex64};
 
 // ============================================================================
 // Trait Definitions
@@ -916,13 +916,23 @@ impl Abs for f64 {
     }
 }
 
-/// Calculate absolute value (magnitude) for complex scalars.
+/// Calculate absolute value (magnitude) for Complex64 scalars.
 impl Abs for Complex64 {
     type Output = f64;
 
     #[inline]
     fn abs(&self) -> f64 {
         Complex64::norm(*self)
+    }
+}
+
+/// Calculate absolute value (magnitude) for Complex32 scalars.
+impl Abs for Complex32 {
+    type Output = f32;
+
+    #[inline]
+    fn abs(&self) -> f32 {
+        Complex32::norm(*self)
     }
 }
 
@@ -1240,7 +1250,11 @@ where
 ///
 /// This generic implementation works for any element type that implements Abs.
 /// For arrays of floats, returns array of floats. For arrays of complex numbers,
-/// returns array of f64 (magnitudes).
+/// returns array of magnitudes (f64/f32).
+///
+/// Note: For complex arrays, this implementation explicitly uses the `Abs` trait
+/// implementations for Complex64/Complex32, which correctly use `.norm()` to compute
+/// the magnitude of each complex number element.
 impl<S, D, T> Abs for ArrayBase<S, D>
 where
     S: Data<Elem = T>,
@@ -1251,7 +1265,7 @@ where
 
     #[inline]
     fn abs(&self) -> Array<T::Output, D> {
-        self.mapv(|x| x.abs())
+        self.mapv(|x| Abs::abs(&x))
     }
 }
 

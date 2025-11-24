@@ -165,10 +165,6 @@ debug = true           # Include debug info
 incremental = true     # Enable incremental compilation
 split-debuginfo = "unpacked"  # Faster linking on supported platforms
 
-[profile.dev.build-override]
-opt-level = 0          # No optimization for build scripts too
-debug = false          # No debug info for build scripts
-
 # For tests, use no optimization for fastest compilation
 [profile.test]
 opt-level = 0          # No optimization for fastest compilation

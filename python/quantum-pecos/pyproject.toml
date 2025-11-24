@@ -22,7 +22,7 @@ authors = [
 maintainers =[
     {name = "Ciaran Ryan-Anderson", email = "ciaranra@gmail.com"},
 ]
-description = """PECOS is a library for the evaluation, study, and design of QEC protocols. It also provides the ability to study and evaluate the performance advanced hybrid quantum/classical compute execution models."""
+description = """PECOS is a library for the evaluation, study, and design of quantum error correction protocols."""
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE"}

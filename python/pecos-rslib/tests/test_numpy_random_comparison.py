@@ -38,7 +38,7 @@ class TestRandomComparison:
         pecos_vals = pc.random.random(100)
         numpy_vals = np.random.random(100)
 
-        assert isinstance(pecos_vals, np.ndarray)
+        assert isinstance(pecos_vals, pc.Array)
         assert pecos_vals.dtype == numpy_vals.dtype
 
     def test_random_range(self):
@@ -113,7 +113,7 @@ class TestRandintComparison:
         pecos_vals = pc.random.randint(0, 10, 100)
         numpy_vals = np.random.randint(0, 10, 100)
 
-        assert isinstance(pecos_vals, np.ndarray)
+        assert isinstance(pecos_vals, pc.Array)
         assert pecos_vals.dtype == numpy_vals.dtype
 
     def test_randint_scalar_type(self):

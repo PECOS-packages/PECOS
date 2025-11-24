@@ -75,6 +75,7 @@ from pecos_rslib import (
     complex64,
     complex128,
     cos,  # Cosine
+    cosh,  # Hyperbolic cosine
     dtypes,  # Keep dtypes module for dtype instances (dtypes.i64, etc.)
     exp,  # Exponential
     f32,
@@ -94,9 +95,12 @@ from pecos_rslib import (
     num,
     power,  # Power function
     sin,  # Sine
+    sinh,  # Hyperbolic sine
     sqrt,  # Square root
     std,  # Standard deviation
     sum,  # Sum  # noqa: A004
+    tan,  # Tangent
+    tanh,  # Hyperbolic tangent
     u8,
     u16,
     u32,

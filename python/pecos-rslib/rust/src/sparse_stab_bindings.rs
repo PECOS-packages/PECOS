@@ -341,3 +341,80 @@ impl SparseSim {
         }
     }
 }
+
+/// Adjust tableau string formatting for display.
+///
+/// This function adjusts the sign/phase prefix to always take up 2 characters
+/// and optionally converts Y operators to W based on the `print_y` parameter.
+///
+/// # Arguments
+///
+/// * `line` - A single line from the tableau string
+/// * `is_stab` - True if this is a stabilizer (shows phases), False if destabilizer (hides phases)
+/// * `print_y` - If True, show Y operators as Y. If False, show as W.
+///
+/// # Returns
+///
+/// The adjusted line with proper spacing and Y/W formatting
+///
+/// # Example
+///
+/// ```python
+/// from pecos_rslib import adjust_tableau_string
+///
+/// # Stabilizer with imaginary phase
+/// line = "+iXYZ"
+/// adjusted = adjust_tableau_string(line, is_stab=True, print_y=True)
+/// # Returns: " iXYZ" (space added for consistent 2-char prefix)
+///
+/// # Destabilizer (phase stripped)
+/// line = "+iXYZ"
+/// adjusted = adjust_tableau_string(line, is_stab=False, print_y=True)
+/// # Returns: "  XYZ" (phase stripped, 2 spaces added)
+///
+/// # Y to W conversion
+/// line = "+XYZ"
+/// adjusted = adjust_tableau_string(line, is_stab=True, print_y=False)
+/// # Returns: "  XWZ" (Y converted to W)
+/// ```
+#[pyfunction]
+#[pyo3(signature = (line, is_stab, print_y=true))]
+pub fn adjust_tableau_string(line: &str, is_stab: bool, print_y: bool) -> String {
+    // First handle the sign formatting
+    let adjusted = if is_stab {
+        // For stabilizers, format the phase/sign with 2-char prefix
+        if let Some(stripped) = line.strip_prefix("+i") {
+            format!(" i{stripped}")
+        } else if let Some(stripped) = line.strip_prefix("-i") {
+            format!("-i{stripped}")
+        } else if let Some(stripped) = line.strip_prefix('i') {
+            format!(" i{stripped}")
+        } else if let Some(stripped) = line.strip_prefix('+') {
+            format!("  {stripped}")
+        } else if let Some(stripped) = line.strip_prefix('-') {
+            format!(" -{stripped}")
+        } else {
+            format!("  {line}")
+        }
+    } else {
+        // For destabilizers, strip all signs and add 2 spaces
+        if let Some(stripped) = line.strip_prefix("+i").or_else(|| line.strip_prefix("-i")) {
+            format!("  {stripped}")
+        } else if let Some(stripped) = line
+            .strip_prefix('i')
+            .or_else(|| line.strip_prefix('+'))
+            .or_else(|| line.strip_prefix('-'))
+        {
+            format!("  {stripped}")
+        } else {
+            format!("  {line}")
+        }
+    };
+
+    // Handle Y vs W conversion based on print_y parameter
+    if print_y {
+        adjusted
+    } else {
+        adjusted.replace('Y', "W")
+    }
+}

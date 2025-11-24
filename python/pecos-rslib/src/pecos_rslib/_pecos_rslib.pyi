@@ -508,6 +508,441 @@ class MappedGraph:
             ["a", "b", "c"]
         """
 
+class Graph:
+    """Integer-indexed graph data structure for quantum error correction decoding.
+
+    This class provides a high-performance graph with integer node IDs and
+    a method-based API for edge construction and attribute management. It supports
+    named nodes (with string labels) alongside integer IDs.
+
+    The API follows a Rust-inspired pattern where edges are created first, then
+    configured using separate method calls with edge IDs rather than kwargs.
+
+    Example:
+        >>> from pecos_rslib.graph import Graph
+        >>> g = Graph()
+        >>> n0 = g.add_node()  # Returns 0
+        >>> n1 = g.add_node()  # Returns 1
+        >>> g.add_edge(n0, n1)
+        >>> edge_id = g.find_edge(n0, n1)
+        >>> g.set_edge_weight(edge_id, 5.0)
+        >>> g.set_edge_attr(edge_id, "data_path", [1, 2, 3])
+    """
+
+    def __init__(self) -> None:
+        """Create a new empty Graph."""
+
+    def add_node(self) -> int:
+        """Add a new node with an automatically assigned integer ID.
+
+        Returns:
+            The integer ID of the newly created node.
+
+        Example:
+            >>> g = Graph()
+            >>> n0 = g.add_node()  # Returns 0
+            >>> n1 = g.add_node()  # Returns 1
+        """
+
+    def add_named_node(self, label: str) -> int:
+        """Add a new node with a string label.
+
+        Args:
+            label: String label for the node.
+
+        Returns:
+            The integer ID of the newly created node.
+
+        Example:
+            >>> g = Graph()
+            >>> v1 = g.add_named_node("virtual_1")
+            >>> print(v1)  # Prints the integer ID
+        """
+
+    def node_by_label(self, label: str) -> int | None:
+        """Look up a node's integer ID by its string label.
+
+        Args:
+            label: The string label to search for.
+
+        Returns:
+            The integer node ID, or None if not found.
+
+        Example:
+            >>> g = Graph()
+            >>> v1 = g.add_named_node("virtual_1")
+            >>> node_id = g.node_by_label("virtual_1")
+            >>> print(node_id == v1)
+            True
+        """
+
+    def get_label(self, node: int) -> str | None:
+        """Get the string label for a node ID.
+
+        Args:
+            node: The integer node ID.
+
+        Returns:
+            The string label, or None if the node has no label.
+
+        Example:
+            >>> g = Graph()
+            >>> v1 = g.add_named_node("virtual_1")
+            >>> label = g.get_label(v1)
+            >>> print(label)
+            virtual_1
+        """
+
+    def add_edge(self, a: int | str, b: int | str) -> None:
+        """Add an edge between two nodes with default weight of 1.0.
+
+        Use set_edge_weight() and set_edge_attr() to configure the edge after creation.
+        Nodes can be specified by integer IDs or string labels.
+
+        Args:
+            a: First node (integer ID or string label).
+            b: Second node (integer ID or string label).
+
+        Example:
+            >>> g = Graph()
+            >>> n0 = g.add_node()
+            >>> n1 = g.add_node()
+            >>> g.add_edge(n0, n1)
+            >>> edge_id = g.find_edge(n0, n1)
+            >>> g.set_edge_weight(edge_id, 5.0)
+            >>> g.set_edge_attr(edge_id, "data_path", [1, 2, 3])
+        """
+
+    def find_edge(self, a: int | str, b: int | str) -> int | None:
+        """Find an edge by its source and destination nodes.
+
+        Args:
+            a: First node (integer ID or string label).
+            b: Second node (integer ID or string label).
+
+        Returns:
+            The integer edge ID, or None if the edge doesn't exist.
+
+        Example:
+            >>> g = Graph()
+            >>> n0, n1 = g.add_node(), g.add_node()
+            >>> g.add_edge(n0, n1)
+            >>> edge_id = g.find_edge(n0, n1)
+            >>> print(edge_id)
+            0
+        """
+
+    def edge_weight(self, edge_id: int) -> float | None:
+        """Get the weight of an edge by edge ID (low-level API).
+
+        For most use cases, prefer `get_weight(a, b)` which uses node pairs.
+
+        Args:
+            edge_id: The integer edge ID.
+
+        Returns:
+            The edge weight, or None if the edge doesn't exist.
+
+        Example:
+            >>> edge_id = g.find_edge(n0, n1)
+            >>> weight = g.edge_weight(edge_id)
+            >>> print(weight)
+            5.0
+        """
+
+    def set_edge_weight(self, edge_id: int, weight: float) -> None:
+        """Set the weight of an edge by edge ID (low-level API).
+
+        For most use cases, prefer `set_weight(a, b, weight)` which uses node pairs.
+
+        Args:
+            edge_id: The integer edge ID.
+            weight: The new weight value.
+
+        Example:
+            >>> edge_id = g.find_edge(n0, n1)
+            >>> g.set_edge_weight(edge_id, 10.0)
+        """
+
+    def set_weight(self, a: int | str, b: int | str, weight: float) -> None:
+        """Set the weight of an edge between two nodes (NetworkX-style).
+
+        This is the recommended way to set edge weights - no edge ID lookup needed!
+
+        Args:
+            a: First node (integer ID or string label)
+            b: Second node (integer ID or string label)
+            weight: The new weight value
+
+        Example:
+            >>> g.add_edge(n0, n1)
+            >>> g.set_weight(n0, n1, 5.0)  # Much simpler!
+
+            >>> # Works with labels too
+            >>> g.set_weight("v1", "v2", 3.0)
+        """
+
+    def get_weight(self, a: int | str, b: int | str) -> float | None:
+        """Get the weight of an edge between two nodes (NetworkX-style).
+
+        This is the recommended way to get edge weights - no edge ID lookup needed!
+
+        Args:
+            a: First node (integer ID or string label)
+            b: Second node (integer ID or string label)
+
+        Returns:
+            The edge weight, or None if the edge doesn't exist.
+
+        Example:
+            >>> weight = g.get_weight(n0, n1)
+            >>> if weight is not None:
+            ...     print(f"Weight: {weight}")
+        """
+
+    def edge_attr(self, edge_id: int, key: str) -> object:
+        """Get a custom attribute value from an edge by edge ID (low-level API).
+
+        For most use cases, prefer `get_attr(a, b, key)` which uses node pairs.
+
+        Args:
+            edge_id: The integer edge ID.
+            key: The attribute key.
+
+        Returns:
+            The attribute value, or None if not found.
+
+        Example:
+            >>> edge_id = g.find_edge(n0, n1)
+            >>> data_path = g.edge_attr(edge_id, "data_path")
+            >>> print(data_path)
+            [1, 2, 3]
+        """
+
+    def set_edge_attr(self, edge_id: int, key: str, value: object) -> None:
+        """Set a custom attribute on an edge by edge ID (low-level API).
+
+        For most use cases, prefer `set_attr(a, b, key, value)` which uses node pairs.
+
+        Args:
+            edge_id: The integer edge ID.
+            key: The attribute key.
+            value: The attribute value (int, float, str, bool, list[int], list[float]).
+
+        Example:
+            >>> edge_id = g.find_edge(n0, n1)
+            >>> g.set_edge_attr(edge_id, "label", "boundary")
+            >>> g.set_edge_attr(edge_id, "data_path", [1, 2, 3])
+        """
+
+    def remove_edge_attr(self, edge_id: int, key: str) -> object:
+        """Remove a custom attribute from an edge by edge ID (low-level API).
+
+        For most use cases, prefer `remove_attr(a, b, key)` which uses node pairs.
+
+        Args:
+            edge_id: The integer edge ID.
+            key: The attribute key to remove.
+
+        Returns:
+            The removed value, or None if the attribute didn't exist.
+
+        Example:
+            >>> edge_id = g.find_edge(n0, n1)
+            >>> old_value = g.remove_edge_attr(edge_id, "old_attr")
+        """
+
+    def set_attr(self, a: int | str, b: int | str, key: str, value: object) -> None:
+        """Set an attribute on an edge between two nodes (NetworkX-style).
+
+        This is the recommended way to set edge attributes - no edge ID lookup needed!
+
+        Args:
+            a: First node (integer ID or string label)
+            b: Second node (integer ID or string label)
+            key: The attribute key
+            value: The attribute value (int, float, str, bool, list[int], list[str], or any JSON-serializable type)
+
+        Example:
+            >>> g.add_edge(n0, n1)
+            >>> g.set_attr(n0, n1, "label", "boundary")
+            >>> g.set_attr(n0, n1, "syn_path", [1, 2, 3])
+
+            >>> # Works with labels too
+            >>> g.set_attr("v1", "v2", "custom", "value")
+        """
+
+    def get_attr(self, a: int | str, b: int | str, key: str) -> object:
+        """Get an attribute from an edge between two nodes (NetworkX-style).
+
+        This is the recommended way to get edge attributes - no edge ID lookup needed!
+
+        Args:
+            a: First node (integer ID or string label)
+            b: Second node (integer ID or string label)
+            key: The attribute key
+
+        Returns:
+            The attribute value, or None if not found.
+
+        Example:
+            >>> label = g.get_attr(n0, n1, "label")
+            >>> if label is not None:
+            ...     print(f"Label: {label}")
+        """
+
+    def remove_attr(self, a: int | str, b: int | str, key: str) -> object:
+        """Remove an attribute from an edge between two nodes (NetworkX-style).
+
+        This is the recommended way to remove edge attributes - no edge ID lookup needed!
+
+        Args:
+            a: First node (integer ID or string label)
+            b: Second node (integer ID or string label)
+            key: The attribute key to remove
+
+        Returns:
+            The removed value, or None if the attribute didn't exist.
+
+        Example:
+            >>> g.set_attr(n0, n1, "temp", "value")
+            >>> removed = g.remove_attr(n0, n1, "temp")
+            >>> print(removed)  # "value"
+        """
+
+    def get_edge_data(self, a: int | str, b: int | str) -> dict[str, object]:
+        """Get all attributes for an edge as a dictionary.
+
+        This is a convenience method for reading multiple edge attributes at once.
+
+        Args:
+            a: First node (integer ID or string label).
+            b: Second node (integer ID or string label).
+
+        Returns:
+            Dictionary of all edge attributes including 'weight'.
+
+        Example:
+            >>> g.add_edge(n0, n1)
+            >>> edge_id = g.find_edge(n0, n1)
+            >>> g.set_edge_weight(edge_id, 5.0)
+            >>> g.set_edge_attr(edge_id, "label", "test")
+            >>> data = g.get_edge_data(n0, n1)
+            >>> print(data)
+            {"weight": 5.0, "label": "test"}
+        """
+
+    def remove_edge(self, edge_id: int) -> bool:
+        """Remove an edge from the graph.
+
+        Args:
+            edge_id: The integer edge ID.
+
+        Returns:
+            True if the edge was removed, False if it didn't exist.
+
+        Example:
+            >>> edge_id = g.find_edge(n0, n1)
+            >>> was_removed = g.remove_edge(edge_id)
+        """
+
+    def has_node(self, node: int) -> bool:
+        """Check if a node exists in the graph.
+
+        Args:
+            node: The integer node ID.
+
+        Returns:
+            True if the node exists, False otherwise.
+
+        Example:
+            >>> g = Graph()
+            >>> n0 = g.add_node()
+            >>> print(g.has_node(n0))
+            True
+            >>> print(g.has_node(999))
+            False
+        """
+
+    def remove_node(self, node: int) -> None:
+        """Remove a node and all its connected edges from the graph.
+
+        Args:
+            node: The integer node ID.
+
+        Example:
+            >>> g = Graph()
+            >>> n0 = g.add_node()
+            >>> g.remove_node(n0)
+        """
+
+    def nodes(self) -> list[int]:
+        """Return a list of all node IDs in the graph.
+
+        Returns:
+            List of integer node IDs.
+
+        Example:
+            >>> g = Graph()
+            >>> n0 = g.add_node()
+            >>> n1 = g.add_node()
+            >>> print(g.nodes())
+            [0, 1]
+        """
+
+    def edges(self) -> list[tuple[int, int, float]]:
+        """Return a list of all edges with their weights.
+
+        Returns:
+            List of (source, destination, weight) tuples.
+
+        Example:
+            >>> g = Graph()
+            >>> n0, n1 = g.add_node(), g.add_node()
+            >>> g.add_edge(n0, n1)
+            >>> edge_id = g.find_edge(n0, n1)
+            >>> g.set_edge_weight(edge_id, 5.0)
+            >>> print(g.edges())
+            [(0, 1, 5.0)]
+        """
+
+    def max_weight_matching(
+        self, max_cardinality: bool = False, weight_multiplier: float = 1000.0
+    ) -> dict[int, int]:
+        """Compute the maximum weight perfect matching of the graph.
+
+        Uses the Blossom algorithm to find a maximum weight matching.
+        Weights are interpreted as negative distances (higher weight = better match).
+
+        The matching algorithm internally uses integer weights. Float weights are
+        converted by multiplying by weight_multiplier and casting to integers.
+
+        Args:
+            max_cardinality: If True, prioritize maximum cardinality over weight.
+                           If False, prioritize maximum weight.
+            weight_multiplier: Multiplier for converting float weights to integers.
+                             Default is 1000.0 (preserves 3 decimal places).
+                             Use 1.0 if weights are already integers.
+                             Use higher values (10000.0+) for more decimal precision.
+
+        Returns:
+            Dictionary mapping node IDs to their matched partners. Each edge
+            appears twice (both directions).
+
+        Example:
+            >>> g = Graph()
+            >>> n0, n1, n2, n3 = [g.add_node() for _ in range(4)]
+            >>> g.add_edge(n0, n1)
+            >>> e1 = g.find_edge(n0, n1)
+            >>> g.set_edge_weight(e1, -10.0)
+            >>> g.add_edge(n2, n3)
+            >>> e2 = g.find_edge(n2, n3)
+            >>> g.set_edge_weight(e2, -5.0)
+            >>> matching = g.max_weight_matching(max_cardinality=True)
+            >>> print(matching)
+            {0: 1, 1: 0, 2: 3, 3: 2}
+        """
+
 # Module functions
 def run_qasm(
     qasm: str,

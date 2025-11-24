@@ -17,22 +17,22 @@ theme:
   icon:
     repo: fontawesome/brands/github
   font:
-    text: Roboto
-    code: Roboto Mono
+    text: Proxima Nova
+    code: Source Code Pro
   palette:
   - media: '(prefers-color-scheme: light)'
     scheme: default
     primary: custom
     accent: deep orange
     toggle:
-      icon: material/toggle-switch-off-outline
+      icon: material/brightness-7
       name: Switch to dark mode
   - media: '(prefers-color-scheme: dark)'
     scheme: slate
     primary: custom
     accent: deep orange
     toggle:
-      icon: material/toggle-switch
+      icon: material/brightness-4
       name: Switch to light mode
   features:
   - navigation.tracking
@@ -40,16 +40,18 @@ theme:
   - navigation.footer
   - navigation.top
   - toc.follow
-  - toc.integrate
   - content.code.copy
   - content.code.annotate
+  - content.tabs.link
   - search.highlight
   - search.suggest
   - search.share
 nav:
-- User Guide:
-  - Introduction: README.md
+- Using PECOS:
+  - README.md
   - user-guide/getting-started.md
+  - user-guide/llvm-setup.md
+  - user-guide/graph-api.md
   - user-guide/qasm-simulation.md
   - user-guide/noise-model-builders.md
   - user-guide/general-noise-factory.md
@@ -69,8 +71,14 @@ markdown_extensions:
 - pymdownx.superfences
 - pymdownx.tabbed:
     alternate_style: true
+- pymdownx.emoji:
+    emoji_index: !!python/name:material.extensions.emoji.twemoji
+    emoji_generator: !!python/name:material.extensions.emoji.to_svg
 - pymdownx.arithmatex:
     generic: true
+- toc:
+    permalink: true
+    toc_depth: 2
 - tables
 - footnotes
 - pymdownx.details

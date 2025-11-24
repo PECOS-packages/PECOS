@@ -22,7 +22,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from pecos_rslib._pecos_rslib import CppSparseSim as CppRustSparseSim
+from pecos_rslib._pecos_rslib import (
+    CppSparseSim as CppRustSparseSim,
+    adjust_tableau_string,
+)
 
 if TYPE_CHECKING:
     from pecos.circuits import QuantumCircuit
@@ -87,12 +90,13 @@ class CppSparseSimRs:
         output = {}
 
         if params.get("simulate_gate", True) and locations:
-            for location in locations:
-                if params.get("angles") and len(params["angles"]) == 1:
-                    params.update({"angle": params["angles"][0]})
-                elif "angle" in params and "angles" not in params:
-                    params["angles"] = (params["angle"],)
+            # Normalize parameters once before loop (not per location)
+            if params.get("angles") and len(params["angles"]) == 1:
+                params.update({"angle": params["angles"][0]})
+            elif "angle" in params and "angles" not in params:
+                params["angles"] = (params["angle"],)
 
+            for location in locations:
                 if symbol in self.bindings:
                     results = self.bindings[symbol](self, location, **params)
                 else:
@@ -386,50 +390,8 @@ def _init_to_minus_i(sim: Any, qubit: int) -> None:
     return
 
 
-def adjust_tableau_string(line: str, *, is_stab: bool, print_y: bool = True) -> str:
-    """Adjust the tableau string to ensure the sign part always takes up two spaces
-    and handle Y vs W display based on print_y parameter.
-
-    Args:
-        line (str): A single line from the tableau string.
-        is_stab (bool): True if this is a stabilizer, False if destabilizer.
-        print_y (bool): If True, show Y operators as Y. If False, show as W with proper phase.
-
-    Returns:
-        str: The adjusted line with proper spacing and Y/W formatting.
-    """
-    # First handle the sign formatting
-    if is_stab:
-        if line.startswith("+i"):
-            adjusted = " i" + line[2:]
-        elif line.startswith("-i"):
-            adjusted = "-i" + line[2:]
-        elif line.startswith("i"):
-            adjusted = " i" + line[1:]  # Handle bare imaginary (no + or -)
-        elif line.startswith("+"):
-            adjusted = "  " + line[1:]
-        elif line.startswith("-"):
-            adjusted = " -" + line[1:]
-        else:
-            adjusted = "  " + line  # Default case, shouldn't happen with correct input
-    else:
-        # For destabilizers, strip all signs (no phases shown)
-        # Remove any sign prefix (+, -, +i, -i, i) and add two spaces
-        if line.startswith("+i") or line.startswith("-i"):
-            adjusted = "  " + line[2:]  # Strip 2 chars for imaginary signs
-        elif line.startswith("i"):
-            adjusted = "  " + line[1:]  # Strip 1 char for bare imaginary
-        elif line.startswith("+") or line.startswith("-"):
-            adjusted = "  " + line[1:]  # Strip 1 char for real signs
-        else:
-            adjusted = "  " + line  # No sign to strip
-
-    # Handle Y vs W conversion based on print_y parameter
-    if not print_y:
-        # Simply replace Y with W - the phase is already correct from C++
-        adjusted = adjusted.replace("Y", "W")
-
-    return adjusted
+# adjust_tableau_string is now imported from Rust (see import at top of file)
+# The Rust implementation is significantly faster for batch tableau processing
 
 
 # Define the gate dictionary - reuse the same mappings as SparseSim

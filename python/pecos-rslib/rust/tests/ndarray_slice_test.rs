@@ -1,6 +1,6 @@
 //! Test to understand ndarray's Slice behavior with negative steps
 
-use numpy::ndarray::{Array1, Axis, Slice, s};
+use ndarray::{Array1, Axis, Slice, s};
 
 #[test]
 fn test_ndarray_negative_step_slicing() {

@@ -494,8 +494,8 @@ pub mod compare {
 /// let n2 = graph.add_node();
 /// let n3 = graph.add_node();
 ///
-/// graph.add_edge(n0, n1, 10.0);
-/// graph.add_edge(n2, n3, 20.0);
+/// graph.add_edge(n0, n1).weight(10.0);
+/// graph.add_edge(n2, n3).weight(20.0);
 ///
 /// let matching = graph.max_weight_matching(false);
 /// assert_eq!(matching.len(), 4); // Two pairs, each appearing twice

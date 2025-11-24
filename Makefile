@@ -326,16 +326,15 @@ decoder-cache-clean: ## Clean decoder download cache
 
 .PHONY: pytest
 pytest:  ## Run tests on the Python package (excluding numpy and optional deps). ASSUMES: previous build command
-	@echo "Running core tests without NumPy/SciPy..."
-	@$(ADD_LLVM_TO_PATH) uv run pytest ./python/quantum-pecos/tests/ --doctest-modules -m "not optional_dependency and not numpy"
 	@$(ADD_LLVM_TO_PATH) uv run pytest ./python/pecos-rslib/tests/ -m "not performance and not numpy"
+	@$(ADD_LLVM_TO_PATH) uv run pytest ./python/quantum-pecos/tests/ --doctest-modules -m "not optional_dependency and not numpy"
 	@$(ADD_LLVM_TO_PATH) uv run pytest ./python/slr-tests/ -m "not optional_dependency and not numpy"
 
 .PHONY: pytest-numpy
 pytest-numpy:  ## Run NumPy/SciPy compatibility tests. ASSUMES: previous build command
 	@echo "Running NumPy/SciPy compatibility tests..."
-	@$(ADD_LLVM_TO_PATH) uv run --group numpy-compat pytest ./python/quantum-pecos/tests/ --doctest-modules -m "numpy and not performance"
 	@$(ADD_LLVM_TO_PATH) uv run --group numpy-compat pytest ./python/pecos-rslib/tests/ -m "numpy and not performance"
+	@$(ADD_LLVM_TO_PATH) uv run --group numpy-compat pytest ./python/quantum-pecos/tests/ --doctest-modules -m "numpy and not performance"
 	@echo "NumPy/SciPy compatibility tests completed successfully"
 
 .PHONY: pytest-perf
@@ -349,7 +348,7 @@ pytest-dep: ## Run tests on the Python package only for optional dependencies. A
 
 .PHONY: pytest-all
 pytest-all: pytest pytest-numpy ## Run all tests (core + numpy compat) on the Python package. ASSUMES: previous build command
-	@echo "All Python tests completed (core + NumPy compatibility)"
+	@echo "All Python tests completed (core + NumPy/SciPy compatibility)"
 
 # .PHONY: pytest-doc
 # pydoctest:  ## Run doctests with pytest. ASSUMES: A build command was ran previously. ASSUMES: previous build command

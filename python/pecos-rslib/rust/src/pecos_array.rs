@@ -33,8 +33,8 @@
 #![allow(clippy::unnecessary_wraps)] // PyResult is required for Python error handling
 #![allow(clippy::needless_pass_by_value)] // PyO3 requires passing Bound by value
 
+use ndarray::{ArrayD, Axis, IxDyn, Slice};
 use num_complex::{Complex32, Complex64};
-use numpy::ndarray::{ArrayD, Axis, IxDyn, Slice};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyFloat, PyInt, PySequence, PySlice, PySliceIndices, PyTuple};
 
@@ -934,64 +934,175 @@ impl Array {
         self.format_array()
     }
 
-    /// Implement __array__ method for numpy compatibility
-    /// This allows numpy to convert `Array` to numpy.ndarray via `np.asarray()`
-    ///
-    /// Parameters:
-    /// - dtype: Optional dtype for type conversion (supports both strings and `DType` enum)
-    /// - copy: Optional boolean for copy semantics (True forces copy, False allows view)
-    ///
-    /// Note: Currently copy parameter is not fully honored - always returns a view since
-    /// `to_pyarray()` already creates a view of the Rust array. Full copy support would
-    /// require additional implementation.
-    #[pyo3(signature = (_dtype=None, _copy=None, **_kwargs))]
-    fn __array__(
-        &self,
-        py: Python<'_>,
-        _dtype: Option<&Bound<'_, PyAny>>,
-        _copy: Option<&Bound<'_, PyAny>>,
-        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
-    ) -> PyResult<Py<PyAny>> {
-        use numpy::ToPyArray;
+    /// Implement __`array_interface`__ property for `NumPy` compatibility
+    /// This allows `NumPy` to consume our arrays via zero-copy protocol
+    #[getter]
+    fn __array_interface__(&self, py: Python<'_>) -> PyResult<Py<pyo3::types::PyDict>> {
+        use pyo3::types::PyDict;
 
-        // __array__() is for NumPy interop only - it just returns a NumPy array view
-        // It ignores dtype and copy parameters for now
-        // NumPy will handle dtype conversion if needed when called from np.asarray()
+        let dict = PyDict::new(py);
+
+        // Set shape (must be a tuple for NumPy)
+        let shape: Vec<usize> = self.data.shape().to_vec();
+        let shape_tuple = pyo3::types::PyTuple::new(py, &shape)?;
+        dict.set_item("shape", shape_tuple)?;
+
+        // Set typestr and data pointer based on the dtype
         match &self.data {
-            ArrayData::Bool(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::I8(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::I16(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::I32(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::I64(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::U8(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::U16(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::U32(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::U64(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::F32(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::F64(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::Complex64(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::Complex128(arr) => Ok(arr.to_pyarray(py).unbind().into()),
-            ArrayData::Pauli(arr) => {
-                // Convert to NumPy object array
-                let numpy = py.import("numpy")?;
-                let py_list: Vec<Py<PyAny>> = arr
+            ArrayData::Bool(arr) => {
+                dict.set_item("typestr", "|b1")?;
+                dict.set_item("data", (arr.as_ptr() as usize, false))?;
+                let strides: Vec<isize> = arr
+                    .strides()
                     .iter()
-                    .map(|p| Py::new(py, *p).unwrap().into_any())
+                    .map(|&s| s * std::mem::size_of::<bool>() as isize)
                     .collect();
-                let np_arr = numpy.call_method1("array", (py_list,))?;
-                Ok(np_arr.unbind())
+                let strides_tuple = pyo3::types::PyTuple::new(py, &strides)?;
+                dict.set_item("strides", strides_tuple)?;
             }
-            ArrayData::PauliString(arr) => {
-                // Convert to NumPy object array
-                let numpy = py.import("numpy")?;
-                let py_list: Vec<Py<PyAny>> = arr
+            ArrayData::I8(arr) => {
+                dict.set_item("typestr", "i1")?;
+                dict.set_item("data", (arr.as_ptr() as usize, false))?;
+                let strides: Vec<isize> = arr
+                    .strides()
                     .iter()
-                    .map(|p| Py::new(py, p.clone()).unwrap().into_any())
+                    .map(|&s| s * std::mem::size_of::<i8>() as isize)
                     .collect();
-                let np_arr = numpy.call_method1("array", (py_list,))?;
-                Ok(np_arr.unbind())
+                let strides_tuple = pyo3::types::PyTuple::new(py, &strides)?;
+                dict.set_item("strides", strides_tuple)?;
+            }
+            ArrayData::I16(arr) => {
+                dict.set_item("typestr", "<i2")?;
+                dict.set_item("data", (arr.as_ptr() as usize, false))?;
+                let strides: Vec<isize> = arr
+                    .strides()
+                    .iter()
+                    .map(|&s| s * std::mem::size_of::<i16>() as isize)
+                    .collect();
+                let strides_tuple = pyo3::types::PyTuple::new(py, &strides)?;
+                dict.set_item("strides", strides_tuple)?;
+            }
+            ArrayData::I32(arr) => {
+                dict.set_item("typestr", "<i4")?;
+                dict.set_item("data", (arr.as_ptr() as usize, false))?;
+                let strides: Vec<isize> = arr
+                    .strides()
+                    .iter()
+                    .map(|&s| s * std::mem::size_of::<i32>() as isize)
+                    .collect();
+                let strides_tuple = pyo3::types::PyTuple::new(py, &strides)?;
+                dict.set_item("strides", strides_tuple)?;
+            }
+            ArrayData::I64(arr) => {
+                dict.set_item("typestr", "<i8")?;
+                dict.set_item("data", (arr.as_ptr() as usize, false))?;
+                let strides: Vec<isize> = arr
+                    .strides()
+                    .iter()
+                    .map(|&s| s * std::mem::size_of::<i64>() as isize)
+                    .collect();
+                let strides_tuple = pyo3::types::PyTuple::new(py, &strides)?;
+                dict.set_item("strides", strides_tuple)?;
+            }
+            ArrayData::U8(arr) => {
+                dict.set_item("typestr", "u1")?;
+                dict.set_item("data", (arr.as_ptr() as usize, false))?;
+                let strides: Vec<isize> = arr
+                    .strides()
+                    .iter()
+                    .map(|&s| s * std::mem::size_of::<u8>() as isize)
+                    .collect();
+                let strides_tuple = pyo3::types::PyTuple::new(py, &strides)?;
+                dict.set_item("strides", strides_tuple)?;
+            }
+            ArrayData::U16(arr) => {
+                dict.set_item("typestr", "<u2")?;
+                dict.set_item("data", (arr.as_ptr() as usize, false))?;
+                let strides: Vec<isize> = arr
+                    .strides()
+                    .iter()
+                    .map(|&s| s * std::mem::size_of::<u16>() as isize)
+                    .collect();
+                let strides_tuple = pyo3::types::PyTuple::new(py, &strides)?;
+                dict.set_item("strides", strides_tuple)?;
+            }
+            ArrayData::U32(arr) => {
+                dict.set_item("typestr", "<u4")?;
+                dict.set_item("data", (arr.as_ptr() as usize, false))?;
+                let strides: Vec<isize> = arr
+                    .strides()
+                    .iter()
+                    .map(|&s| s * std::mem::size_of::<u32>() as isize)
+                    .collect();
+                let strides_tuple = pyo3::types::PyTuple::new(py, &strides)?;
+                dict.set_item("strides", strides_tuple)?;
+            }
+            ArrayData::U64(arr) => {
+                dict.set_item("typestr", "<u8")?;
+                dict.set_item("data", (arr.as_ptr() as usize, false))?;
+                let strides: Vec<isize> = arr
+                    .strides()
+                    .iter()
+                    .map(|&s| s * std::mem::size_of::<u64>() as isize)
+                    .collect();
+                let strides_tuple = pyo3::types::PyTuple::new(py, &strides)?;
+                dict.set_item("strides", strides_tuple)?;
+            }
+            ArrayData::F32(arr) => {
+                dict.set_item("typestr", "<f4")?;
+                dict.set_item("data", (arr.as_ptr() as usize, false))?;
+                let strides: Vec<isize> = arr
+                    .strides()
+                    .iter()
+                    .map(|&s| s * std::mem::size_of::<f32>() as isize)
+                    .collect();
+                let strides_tuple = pyo3::types::PyTuple::new(py, &strides)?;
+                dict.set_item("strides", strides_tuple)?;
+            }
+            ArrayData::F64(arr) => {
+                dict.set_item("typestr", "<f8")?;
+                dict.set_item("data", (arr.as_ptr() as usize, false))?;
+                let strides: Vec<isize> = arr
+                    .strides()
+                    .iter()
+                    .map(|&s| s * std::mem::size_of::<f64>() as isize)
+                    .collect();
+                let strides_tuple = pyo3::types::PyTuple::new(py, &strides)?;
+                dict.set_item("strides", strides_tuple)?;
+            }
+            ArrayData::Complex64(arr) => {
+                dict.set_item("typestr", "<c8")?;
+                dict.set_item("data", (arr.as_ptr() as usize, false))?;
+                let strides: Vec<isize> = arr
+                    .strides()
+                    .iter()
+                    .map(|&s| s * std::mem::size_of::<num_complex::Complex32>() as isize)
+                    .collect();
+                let strides_tuple = pyo3::types::PyTuple::new(py, &strides)?;
+                dict.set_item("strides", strides_tuple)?;
+            }
+            ArrayData::Complex128(arr) => {
+                dict.set_item("typestr", "<c16")?;
+                dict.set_item("data", (arr.as_ptr() as usize, false))?;
+                let strides: Vec<isize> = arr
+                    .strides()
+                    .iter()
+                    .map(|&s| s * std::mem::size_of::<num_complex::Complex64>() as isize)
+                    .collect();
+                let strides_tuple = pyo3::types::PyTuple::new(py, &strides)?;
+                dict.set_item("strides", strides_tuple)?;
+            }
+            ArrayData::Pauli(_) | ArrayData::PauliString(_) => {
+                return Err(pyo3::exceptions::PyTypeError::new_err(
+                    "Pauli and PauliString arrays cannot be converted to NumPy via __array_interface__ (use __array__() method instead)",
+                ));
             }
         }
+
+        // Set protocol version
+        dict.set_item("version", 3)?;
+
+        Ok(dict.into())
     }
 
     /// Implement __setitem__ for slice assignment support
@@ -2294,76 +2405,88 @@ impl Array {
 
     /// Try to create Array from `NumPy` array
     fn try_from_numpy(array: &Bound<'_, PyAny>) -> PyResult<Self> {
-        use numpy::{PyArrayDyn, PyArrayMethods};
+        use crate::array_buffer;
+        use pyo3::types::PyDict;
 
-        // Try to extract as each dtype in order of likelihood
-        // Start with float64 as it's most common
-        if let Ok(arr) = array.cast::<PyArrayDyn<f64>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::F64(ndarray),
-            });
+        // Get __array_interface__ dict from the Python object
+        // IMPORTANT: Always use Python's builtin getattr() instead of PyO3's .getattr()
+        // because PyO3's getattr doesn't correctly handle data descriptors in abi3 mode.
+        // NumPy's __array_interface__ is implemented as a data descriptor.
+        //
+        // We cannot use py.import("builtins").getattr("getattr") because .getattr() has the
+        // bug we're trying to work around. Instead, we use eval to directly access the function.
+        let py = array.py();
+        let getattr_fn = py.eval(c"getattr", None, None)?;
+        let array_iface = getattr_fn.call1((array, "__array_interface__"))?;
+        let interface: &Bound<'_, PyDict> = &array_iface.cast_into::<PyDict>()?;
+
+        // Extract typestr to determine dtype
+        let typestr = interface.get_item("typestr")?.ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("Missing 'typestr' in __array_interface__")
+        })?;
+        let typestr_str: &str = typestr.extract()?;
+
+        // Try to extract based on dtype
+        // Support little-endian (<), big-endian (>), and native (=) byte orders
+        match typestr_str {
+            "<f8" | ">f8" | "=f8" => {
+                let ndarray = array_buffer::extract_f64_array(array)?;
+                Ok(Self {
+                    data: ArrayData::F64(ndarray),
+                })
+            }
+            "<i8" | ">i8" | "=i8" => {
+                let ndarray = array_buffer::extract_i64_array(array)?;
+                Ok(Self {
+                    data: ArrayData::I64(ndarray),
+                })
+            }
+            "<c16" | ">c16" | "=c16" => {
+                let ndarray = array_buffer::extract_complex64_array(array)?;
+                Ok(Self {
+                    data: ArrayData::Complex128(ndarray),
+                })
+            }
+            "<f4" | ">f4" | "=f4" => {
+                let ndarray = array_buffer::extract_f32_array(array)?;
+                Ok(Self {
+                    data: ArrayData::F32(ndarray),
+                })
+            }
+            "<i4" | ">i4" | "=i4" => {
+                let ndarray = array_buffer::extract_i32_array(array)?;
+                Ok(Self {
+                    data: ArrayData::I32(ndarray),
+                })
+            }
+            "<i2" | ">i2" | "=i2" => {
+                let ndarray = array_buffer::extract_i16_array(array)?;
+                Ok(Self {
+                    data: ArrayData::I16(ndarray),
+                })
+            }
+            "|i1" | "i1" | "=i1" | "<i1" | ">i1" => {
+                let ndarray = array_buffer::extract_i8_array(array)?;
+                Ok(Self {
+                    data: ArrayData::I8(ndarray),
+                })
+            }
+            "<c8" | ">c8" | "=c8" => {
+                let ndarray = array_buffer::extract_complex32_array(array)?;
+                Ok(Self {
+                    data: ArrayData::Complex64(ndarray),
+                })
+            }
+            "|b1" | "=b1" | "?1" => {
+                let ndarray = array_buffer::extract_bool_array(array)?;
+                Ok(Self {
+                    data: ArrayData::Bool(ndarray),
+                })
+            }
+            _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "Unsupported dtype: {typestr_str}. Expected one of: f64, i64, complex128, f32, i32, i16, i8, complex64, bool"
+            ))),
         }
-
-        if let Ok(arr) = array.cast::<PyArrayDyn<i64>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::I64(ndarray),
-            });
-        }
-
-        if let Ok(arr) = array.cast::<PyArrayDyn<num_complex::Complex<f64>>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::Complex128(ndarray),
-            });
-        }
-
-        if let Ok(arr) = array.cast::<PyArrayDyn<f32>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::F32(ndarray),
-            });
-        }
-
-        if let Ok(arr) = array.cast::<PyArrayDyn<i32>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::I32(ndarray),
-            });
-        }
-
-        if let Ok(arr) = array.cast::<PyArrayDyn<i16>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::I16(ndarray),
-            });
-        }
-
-        if let Ok(arr) = array.cast::<PyArrayDyn<i8>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::I8(ndarray),
-            });
-        }
-
-        if let Ok(arr) = array.cast::<PyArrayDyn<num_complex::Complex<f32>>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::Complex64(ndarray),
-            });
-        }
-
-        if let Ok(arr) = array.cast::<PyArrayDyn<bool>>() {
-            let ndarray = arr.to_owned_array();
-            return Ok(Self {
-                data: ArrayData::Bool(ndarray),
-            });
-        }
-
-        Err(pyo3::exceptions::PyTypeError::new_err(
-            "Input must be a numpy array with a supported dtype",
-        ))
     }
 
     /// Create a new `Array` from a typed ndarray
@@ -2492,7 +2615,6 @@ impl Array {
     where
         F: Fn(f64, f64) -> f64 + Copy,
     {
-        use numpy::{PyArrayDyn, PyArrayMethods};
         use pyo3::types::PyComplex;
 
         // Try to extract as f64 scalar first
@@ -2883,9 +3005,8 @@ impl Array {
                     "Unsupported dtype combination for {op_name}"
                 ))),
             }
-        } else if let Ok(np_arr) = other.cast::<PyArrayDyn<f64>>() {
+        } else if let Ok(other_arr) = crate::array_buffer::extract_f64_array(other) {
             // Numpy array operation
-            let other_arr = np_arr.to_owned_array();
 
             match &self.data {
                 ArrayData::F64(a) => {
@@ -3227,18 +3348,15 @@ impl Array {
         stop: usize,
         value: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        use numpy::{PyArrayDyn, PyArrayMethods};
-
         // Apply 1D slice assignment based on data type
         // Use ndarray's slice_mut() with Slice::from() for unit-step slicing
         match &mut self.data {
             ArrayData::Bool(arr) => {
                 let slice = Slice::from(start..stop);
-                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                let mut view = arr.slice_mut(ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<bool>() {
                     view.fill(scalar_val);
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<bool>>() {
-                    let np_arr = arr_val.to_owned_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_bool_array(value) {
                     view.assign(&np_arr);
                 } else {
                     return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -3248,11 +3366,10 @@ impl Array {
             }
             ArrayData::I8(arr) => {
                 let slice = Slice::from(start..stop);
-                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                let mut view = arr.slice_mut(ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<i8>() {
                     view.fill(scalar_val);
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<i8>>() {
-                    let np_arr = arr_val.to_owned_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_i8_array(value) {
                     view.assign(&np_arr);
                 } else {
                     return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -3262,11 +3379,10 @@ impl Array {
             }
             ArrayData::I16(arr) => {
                 let slice = Slice::from(start..stop);
-                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                let mut view = arr.slice_mut(ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<i16>() {
                     view.fill(scalar_val);
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<i16>>() {
-                    let np_arr = arr_val.to_owned_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_i16_array(value) {
                     view.assign(&np_arr);
                 } else {
                     return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -3276,11 +3392,10 @@ impl Array {
             }
             ArrayData::I32(arr) => {
                 let slice = Slice::from(start..stop);
-                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                let mut view = arr.slice_mut(ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<i32>() {
                     view.fill(scalar_val);
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<i32>>() {
-                    let np_arr = arr_val.to_owned_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_i32_array(value) {
                     view.assign(&np_arr);
                 } else {
                     return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -3290,11 +3405,10 @@ impl Array {
             }
             ArrayData::I64(arr) => {
                 let slice = Slice::from(start..stop);
-                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                let mut view = arr.slice_mut(ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<i64>() {
                     view.fill(scalar_val);
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<i64>>() {
-                    let np_arr = arr_val.to_owned_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_i64_array(value) {
                     view.assign(&np_arr);
                 } else {
                     return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -3304,11 +3418,10 @@ impl Array {
             }
             ArrayData::U8(arr) => {
                 let slice = Slice::from(start..stop);
-                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                let mut view = arr.slice_mut(ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<u8>() {
                     view.fill(scalar_val);
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<u8>>() {
-                    let np_arr = arr_val.to_owned_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_u8_array(value) {
                     view.assign(&np_arr);
                 } else {
                     return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -3318,11 +3431,10 @@ impl Array {
             }
             ArrayData::U16(arr) => {
                 let slice = Slice::from(start..stop);
-                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                let mut view = arr.slice_mut(ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<u16>() {
                     view.fill(scalar_val);
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<u16>>() {
-                    let np_arr = arr_val.to_owned_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_u16_array(value) {
                     view.assign(&np_arr);
                 } else {
                     return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -3332,11 +3444,10 @@ impl Array {
             }
             ArrayData::U32(arr) => {
                 let slice = Slice::from(start..stop);
-                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                let mut view = arr.slice_mut(ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<u32>() {
                     view.fill(scalar_val);
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<u32>>() {
-                    let np_arr = arr_val.to_owned_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_u32_array(value) {
                     view.assign(&np_arr);
                 } else {
                     return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -3346,11 +3457,10 @@ impl Array {
             }
             ArrayData::U64(arr) => {
                 let slice = Slice::from(start..stop);
-                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                let mut view = arr.slice_mut(ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<u64>() {
                     view.fill(scalar_val);
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<u64>>() {
-                    let np_arr = arr_val.to_owned_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_u64_array(value) {
                     view.assign(&np_arr);
                 } else {
                     return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -3360,11 +3470,10 @@ impl Array {
             }
             ArrayData::F32(arr) => {
                 let slice = Slice::from(start..stop);
-                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                let mut view = arr.slice_mut(ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<f32>() {
                     view.fill(scalar_val);
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<f32>>() {
-                    let np_arr = arr_val.to_owned_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_f32_array(value) {
                     view.assign(&np_arr);
                 } else {
                     return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -3374,11 +3483,10 @@ impl Array {
             }
             ArrayData::F64(arr) => {
                 let slice = Slice::from(start..stop);
-                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                let mut view = arr.slice_mut(ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<f64>() {
                     view.fill(scalar_val);
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<f64>>() {
-                    let np_arr = arr_val.to_owned_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_f64_array(value) {
                     view.assign(&np_arr);
                 } else {
                     return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -3388,11 +3496,10 @@ impl Array {
             }
             ArrayData::Complex64(arr) => {
                 let slice = Slice::from(start..stop);
-                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                let mut view = arr.slice_mut(ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<num_complex::Complex<f32>>() {
                     view.fill(scalar_val);
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<num_complex::Complex<f32>>>() {
-                    let np_arr = arr_val.to_owned_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_complex32_array(value) {
                     view.assign(&np_arr);
                 } else {
                     return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -3402,11 +3509,10 @@ impl Array {
             }
             ArrayData::Complex128(arr) => {
                 let slice = Slice::from(start..stop);
-                let mut view = arr.slice_mut(numpy::ndarray::s![slice]);
+                let mut view = arr.slice_mut(ndarray::s![slice]);
                 if let Ok(scalar_val) = value.extract::<num_complex::Complex<f64>>() {
                     view.fill(scalar_val);
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<num_complex::Complex<f64>>>() {
-                    let np_arr = arr_val.to_owned_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_complex64_array(value) {
                     view.assign(&np_arr);
                 } else {
                     return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -3445,8 +3551,6 @@ impl Array {
         step: isize,
         value: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        use numpy::{PyArrayDyn, PyArrayMethods};
-
         // Handle unit-step case efficiently using existing method
         if step == 1 {
             let start_usize = start.max(0) as usize;
@@ -3483,8 +3587,7 @@ impl Array {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
                     }
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<bool>>() {
-                    let np_arr = arr_val.to_owned_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_bool_array(value) {
                     if np_arr.len() != indices.len() {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "Array length {} does not match slice length {}",
@@ -3506,9 +3609,8 @@ impl Array {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
                     }
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<i8>>() {
-                    let np_arr = arr_val.readonly();
-                    let np_slice = np_arr.as_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_i8_array(value) {
+                    let np_slice = np_arr.view();
                     if np_slice.len() != indices.len() {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "Shape mismatch: cannot assign array of length {} to slice of length {}",
@@ -3530,9 +3632,8 @@ impl Array {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
                     }
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<i16>>() {
-                    let np_arr = arr_val.readonly();
-                    let np_slice = np_arr.as_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_i16_array(value) {
+                    let np_slice = np_arr.view();
                     if np_slice.len() != indices.len() {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "Shape mismatch: cannot assign array of length {} to slice of length {}",
@@ -3554,9 +3655,8 @@ impl Array {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
                     }
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<i32>>() {
-                    let np_arr = arr_val.readonly();
-                    let np_slice = np_arr.as_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_i32_array(value) {
+                    let np_slice = np_arr.view();
                     if np_slice.len() != indices.len() {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "Shape mismatch: cannot assign array of length {} to slice of length {}",
@@ -3578,9 +3678,8 @@ impl Array {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
                     }
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<i64>>() {
-                    let np_arr = arr_val.readonly();
-                    let np_slice = np_arr.as_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_i64_array(value) {
+                    let np_slice = np_arr.view();
                     if np_slice.len() != indices.len() {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "Shape mismatch: cannot assign array of length {} to slice of length {}",
@@ -3602,9 +3701,8 @@ impl Array {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
                     }
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<u8>>() {
-                    let np_arr = arr_val.readonly();
-                    let np_slice = np_arr.as_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_u8_array(value) {
+                    let np_slice = np_arr.view();
                     if np_slice.len() != indices.len() {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "Shape mismatch: cannot assign array of length {} to slice of length {}",
@@ -3626,9 +3724,8 @@ impl Array {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
                     }
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<u16>>() {
-                    let np_arr = arr_val.readonly();
-                    let np_slice = np_arr.as_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_u16_array(value) {
+                    let np_slice = np_arr.view();
                     if np_slice.len() != indices.len() {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "Shape mismatch: cannot assign array of length {} to slice of length {}",
@@ -3650,9 +3747,8 @@ impl Array {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
                     }
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<u32>>() {
-                    let np_arr = arr_val.readonly();
-                    let np_slice = np_arr.as_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_u32_array(value) {
+                    let np_slice = np_arr.view();
                     if np_slice.len() != indices.len() {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "Shape mismatch: cannot assign array of length {} to slice of length {}",
@@ -3674,9 +3770,8 @@ impl Array {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
                     }
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<u64>>() {
-                    let np_arr = arr_val.readonly();
-                    let np_slice = np_arr.as_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_u64_array(value) {
+                    let np_slice = np_arr.view();
                     if np_slice.len() != indices.len() {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "Shape mismatch: cannot assign array of length {} to slice of length {}",
@@ -3698,9 +3793,8 @@ impl Array {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
                     }
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<f32>>() {
-                    let np_arr = arr_val.readonly();
-                    let np_slice = np_arr.as_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_f32_array(value) {
+                    let np_slice = np_arr.view();
                     if np_slice.len() != indices.len() {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "Shape mismatch: cannot assign array of length {} to slice of length {}",
@@ -3722,9 +3816,8 @@ impl Array {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
                     }
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<f64>>() {
-                    let np_arr = arr_val.readonly();
-                    let np_slice = np_arr.as_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_f64_array(value) {
+                    let np_slice = np_arr.view();
                     if np_slice.len() != indices.len() {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "Shape mismatch: cannot assign array of length {} to slice of length {}",
@@ -3746,9 +3839,8 @@ impl Array {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
                     }
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<Complex32>>() {
-                    let np_arr = arr_val.readonly();
-                    let np_slice = np_arr.as_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_complex32_array(value) {
+                    let np_slice = np_arr.view();
                     if np_slice.len() != indices.len() {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "Shape mismatch: cannot assign array of length {} to slice of length {}",
@@ -3770,9 +3862,8 @@ impl Array {
                     for &idx in &indices {
                         arr[idx] = scalar_val;
                     }
-                } else if let Ok(arr_val) = value.cast::<PyArrayDyn<Complex64>>() {
-                    let np_arr = arr_val.readonly();
-                    let np_slice = np_arr.as_array();
+                } else if let Ok(np_arr) = crate::array_buffer::extract_complex64_array(value) {
+                    let np_slice = np_arr.view();
                     if np_slice.len() != indices.len() {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "Shape mismatch: cannot assign array of length {} to slice of length {}",
@@ -4744,15 +4835,13 @@ impl Array {
         shape: &[usize],
         value: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        use numpy::{PyArrayDyn, PyArrayMethods};
-
         // Macro to generate the mixed indexing assignment logic for each dtype
         macro_rules! apply_mixed_indexing_assignment_impl {
             ($arr:expr, $dtype:ty, $variant:ident) => {{
                 // Strategy: Convert integers to single-element slices, then use slice_each_axis_mut
                 // This avoids the borrow checker issues with chaining mutable slices
 
-                use numpy::ndarray::SliceInfoElem;
+                use ndarray::SliceInfoElem;
 
                 // Build slice info elements for each axis
                 let mut slice_infos: Vec<SliceInfoElem> = Vec::new();
@@ -4837,9 +4926,9 @@ impl Array {
                     if let Ok(scalar_val) = value.extract::<$dtype>() {
                         // Scalar assignment - iterate over all target indices
                         Self::assign_to_mixed_indices($arr, &ranges, scalar_val);
-                    } else if let Ok(arr_val) = value.cast::<PyArrayDyn<$dtype>>() {
-                        let np_arr = arr_val.to_owned_array();
-
+                    } else if let Ok(np_arr) =
+                        Self::extract_array_for_dtype::<$dtype>(value, stringify!($variant))
+                    {
                         // Check shape compatibility
                         if np_arr.shape() != result_shape.as_slice() {
                             return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -4914,9 +5003,9 @@ impl Array {
                         // Scalar assignment - iterate over all target indices
                         // Generate all combinations of indices
                         Self::assign_to_mixed_indices($arr, &ranges, scalar_val);
-                    } else if let Ok(arr_val) = value.cast::<PyArrayDyn<$dtype>>() {
-                        let np_arr = arr_val.to_owned_array();
-
+                    } else if let Ok(np_arr) =
+                        Self::extract_array_for_dtype::<$dtype>(value, stringify!($variant))
+                    {
                         // Check shape compatibility
                         if np_arr.shape() != result_shape.as_slice() {
                             return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -4967,15 +5056,109 @@ impl Array {
         }
     }
 
+    // Helper method: Extract array from Python based on dtype variant name
+    fn extract_array_for_dtype<T: Clone>(
+        value: &Bound<'_, PyAny>,
+        variant: &str,
+    ) -> PyResult<ndarray::ArrayD<T>> {
+        use crate::array_buffer;
+
+        // Map variant name to appropriate extraction function
+        match variant {
+            "Bool" => {
+                let arr = array_buffer::extract_bool_array(value)?;
+                // SAFETY: We know T is bool based on the macro invocation
+                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
+                std::mem::forget(arr);
+                Ok(transmuted)
+            }
+            "Float64" => {
+                let arr = array_buffer::extract_f64_array(value)?;
+                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
+                std::mem::forget(arr);
+                Ok(transmuted)
+            }
+            "Float32" => {
+                let arr = array_buffer::extract_f32_array(value)?;
+                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
+                std::mem::forget(arr);
+                Ok(transmuted)
+            }
+            "Int64" => {
+                let arr = array_buffer::extract_i64_array(value)?;
+                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
+                std::mem::forget(arr);
+                Ok(transmuted)
+            }
+            "Int32" => {
+                let arr = array_buffer::extract_i32_array(value)?;
+                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
+                std::mem::forget(arr);
+                Ok(transmuted)
+            }
+            "Int16" => {
+                let arr = array_buffer::extract_i16_array(value)?;
+                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
+                std::mem::forget(arr);
+                Ok(transmuted)
+            }
+            "Int8" => {
+                let arr = array_buffer::extract_i8_array(value)?;
+                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
+                std::mem::forget(arr);
+                Ok(transmuted)
+            }
+            "Uint64" => {
+                let arr = array_buffer::extract_u64_array(value)?;
+                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
+                std::mem::forget(arr);
+                Ok(transmuted)
+            }
+            "Uint32" => {
+                let arr = array_buffer::extract_u32_array(value)?;
+                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
+                std::mem::forget(arr);
+                Ok(transmuted)
+            }
+            "Uint16" => {
+                let arr = array_buffer::extract_u16_array(value)?;
+                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
+                std::mem::forget(arr);
+                Ok(transmuted)
+            }
+            "Uint8" => {
+                let arr = array_buffer::extract_u8_array(value)?;
+                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
+                std::mem::forget(arr);
+                Ok(transmuted)
+            }
+            "Complex128" => {
+                let arr = array_buffer::extract_complex64_array(value)?;
+                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
+                std::mem::forget(arr);
+                Ok(transmuted)
+            }
+            "Complex64" => {
+                let arr = array_buffer::extract_complex32_array(value)?;
+                let transmuted = unsafe { std::mem::transmute_copy(&arr) };
+                std::mem::forget(arr);
+                Ok(transmuted)
+            }
+            _ => Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "Unsupported dtype variant for array extraction: {variant}"
+            ))),
+        }
+    }
+
     // Helper method: Assign a scalar value to all indices specified by ranges
     fn assign_to_mixed_indices<T: Clone>(
-        arr: &mut numpy::ndarray::ArrayD<T>,
+        arr: &mut ndarray::ArrayD<T>,
         ranges: &[Vec<usize>],
         value: T,
     ) {
         // Recursively iterate through all combinations of indices
         fn assign_recursive<T: Clone>(
-            arr: &mut numpy::ndarray::ArrayD<T>,
+            arr: &mut ndarray::ArrayD<T>,
             ranges: &[Vec<usize>],
             current_indices: &mut Vec<usize>,
             value: &T,
@@ -5000,19 +5183,19 @@ impl Array {
 
     // Helper method: Assign array values to indices specified by ranges
     fn assign_array_to_mixed_indices<T: Clone>(
-        arr: &mut numpy::ndarray::ArrayD<T>,
+        arr: &mut ndarray::ArrayD<T>,
         ranges: &[Vec<usize>],
         integer_axes: &[usize],
-        source: &numpy::ndarray::ArrayD<T>,
+        source: &ndarray::ArrayD<T>,
     ) -> PyResult<()> {
-        use numpy::ndarray::IxDyn;
+        use ndarray::IxDyn;
 
         // Recursively iterate through all combinations of indices
         fn assign_array_recursive<T: Clone>(
-            arr: &mut numpy::ndarray::ArrayD<T>,
+            arr: &mut ndarray::ArrayD<T>,
             ranges: &[Vec<usize>],
             integer_axes: &[usize],
-            source: &numpy::ndarray::ArrayD<T>,
+            source: &ndarray::ArrayD<T>,
             current_target_indices: &mut Vec<usize>,
             current_source_indices: &mut Vec<usize>,
         ) {

@@ -29,7 +29,7 @@ wasm = ["pecos/wasm"]
 pecos = { workspace = true, features = ["llvm", "wasm"] }
 
 pyo3 = { workspace=true, features = ["extension-module", "abi3-py310", "generate-import-lib", "num-complex"] }
-numpy = "0.27"
+ndarray.workspace = true
 num-complex.workspace = true
 parking_lot.workspace = true
 regex.workspace = true
@@ -43,6 +43,8 @@ inkwell = { workspace = true, features = ["llvm14-0"] }
 
 [build-dependencies]
 pyo3-build-config.workspace = true
+
+[dev-dependencies]
 
 [lints]
 workspace = true

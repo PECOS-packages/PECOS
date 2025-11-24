@@ -63,26 +63,11 @@ def mean(a: ArrayLike, axis: int | None = None) -> float | np.ndarray:
         flat = arr.ravel()
         return _num_core.mean(flat.tolist())
 
-    # For specified axis, use numpy's axis handling
-    # Move the specified axis to the end, then compute mean for each
-    arr_moved = np.moveaxis(arr, axis, -1)
-    original_shape = arr_moved.shape
+    # Use Rust's native axis implementation for massive performance improvement
+    result = _num_core.mean_axis(arr, axis)
 
-    # Reshape to 2D: (all other dims, axis dim)
-    arr_2d = arr_moved.reshape(-1, original_shape[-1])
-
-    # Compute mean for each row using our Rust implementation
-    means = np.array([_num_core.mean(row.tolist()) for row in arr_2d])
-
-    # Reshape back to original shape (minus the averaged axis)
-    result_shape = original_shape[:-1]
-    if result_shape:
-        means = means.reshape(result_shape)
-    else:
-        # If result is scalar, return as float
-        means = float(means)
-
-    return means
+    # Convert to numpy array for consistency with numpy.mean behavior
+    return np.asarray(result)
 
 
 def std(a: ArrayLike, axis: int | None = None, ddof: int = 0) -> float | np.ndarray:
@@ -139,26 +124,11 @@ def std(a: ArrayLike, axis: int | None = None, ddof: int = 0) -> float | np.ndar
         flat = arr.ravel()
         return _num_core.std(flat.tolist(), ddof)
 
-    # For specified axis, use numpy's axis handling
-    # Move the specified axis to the end, then compute std for each
-    arr_moved = np.moveaxis(arr, axis, -1)
-    original_shape = arr_moved.shape
+    # Use Rust's native axis implementation for massive performance improvement
+    result = _num_core.std_axis(arr, axis, ddof)
 
-    # Reshape to 2D: (all other dims, axis dim)
-    arr_2d = arr_moved.reshape(-1, original_shape[-1])
-
-    # Compute std for each row using our Rust implementation
-    stds = np.array([_num_core.std(row.tolist(), ddof) for row in arr_2d])
-
-    # Reshape back to original shape (minus the averaged axis)
-    result_shape = original_shape[:-1]
-    if result_shape:
-        stds = stds.reshape(result_shape)
-    else:
-        # If result is scalar, return as float
-        stds = float(stds)
-
-    return stds
+    # Convert to numpy array for consistency with numpy.std behavior
+    return np.asarray(result)
 
 
 # sum() is now fully polymorphic in Rust - no Python wrapper needed!
@@ -238,71 +208,10 @@ delete = _num_core.delete
 floor = _num_core.floor
 ceil = _num_core.ceil
 round = _num_core.round
-
-
-def arange(start, stop=None, step=1):
-    """Return evenly spaced values within a given interval.
-
-    Drop-in replacement for `numpy.arange()`.
-
-    Values are generated in the half-open interval `[start, stop)` with the given step.
-    This function mimics NumPy's dtype inference behavior:
-    - If all arguments are integers, returns int64 array
-    - If any argument is a float, returns float64 array
-
-    Args:
-        start: Start of interval (inclusive). If `stop` is None, this becomes the stop
-               and start is set to 0.
-        stop: End of interval (exclusive). Optional.
-        step: Spacing between values. Default is 1.
-
-    Returns:
-        Array of evenly spaced values with dtype matching NumPy's behavior.
-
-    Examples:
-        >>> from pecos.num import arange
-        >>>
-        >>> # All integers → int64
-        >>> arange(0, 10)
-        array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])  # dtype: int64
-        >>>
-        >>> # Any float → float64
-        >>> arange(0.0, 10)
-        array([0., 1., 2., 3., 4., 5., 6., 7., 8., 9.])  # dtype: float64
-        >>>
-        >>> # Single argument (like range)
-        >>> arange(5)
-        array([0, 1, 2, 3, 4])  # dtype: int64
-    """
-    # Handle single-argument case (like range)
-    if stop is None:
-        stop = start
-        start = 0
-
-    # Check if all arguments are integers to match NumPy's dtype inference
-    # NumPy rule: all integers → int64, any float → float64
-    # Use Python's built-in int/float types only (no numpy types)
-    all_ints = (
-        isinstance(start, int)
-        and not isinstance(start, bool)
-        and isinstance(stop, int)
-        and not isinstance(stop, bool)
-        and isinstance(step, int)
-        and not isinstance(step, bool)
-    )
-
-    # Convert to floats for Rust function (which expects f64)
-    result = _num_core.arange(float(start), float(stop), float(step))
-
-    # Apply NumPy's dtype inference rule
-    if all_ints:
-        # Convert to int64 to match NumPy behavior
-        #  We use the __array__() interface which returns a numpy array
-        arr = np.asarray(result)
-        return arr.astype(np.int64)
-    else:
-        # Keep as float64
-        return result
+# arange() now handles dtype inference in Rust - no Python wrapper needed!
+# The Rust implementation checks if all arguments are integers and returns
+# int64 or float64 accordingly, matching NumPy's behavior exactly.
+arange = _num_core.arange
 
 
 # Re-export functions that are fully polymorphic in Rust (no wrappers needed)

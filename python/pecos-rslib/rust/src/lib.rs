@@ -16,6 +16,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+mod array_buffer;
 mod byte_message_bindings;
 mod coin_toss_bindings;
 mod cpp_sparse_sim_bindings;
@@ -74,6 +75,7 @@ fn clear_jit_cache() {
 
 /// A Python module implemented in Rust.
 #[pymodule]
+#[allow(clippy::too_many_lines)] // Module initialization legitimately needs many lines
 fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Note: Rust logging is controlled via RUST_LOG environment variable (e.g., RUST_LOG=debug)
     // We don't use pyo3-log because it interferes with Python's logging.basicConfig() in tests
@@ -142,6 +144,21 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<QuestDensityMatrix>()?;
     m.add_class::<Array>()?;
 
+    // Register array buffer view types (for NumPy interop)
+    m.add_class::<array_buffer::F64ArrayView>()?;
+    m.add_class::<array_buffer::F32ArrayView>()?;
+    m.add_class::<array_buffer::I64ArrayView>()?;
+    m.add_class::<array_buffer::I32ArrayView>()?;
+    m.add_class::<array_buffer::I16ArrayView>()?;
+    m.add_class::<array_buffer::I8ArrayView>()?;
+    m.add_class::<array_buffer::U64ArrayView>()?;
+    m.add_class::<array_buffer::U32ArrayView>()?;
+    m.add_class::<array_buffer::U16ArrayView>()?;
+    m.add_class::<array_buffer::U8ArrayView>()?;
+    m.add_class::<array_buffer::BoolArrayView>()?;
+    m.add_class::<array_buffer::Complex64ArrayView>()?;
+    m.add_class::<array_buffer::Complex32ArrayView>()?;
+
     // Register the unified sim() function
     sim::register_sim_module(m)?;
 
@@ -193,6 +210,10 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Utility functions
     m.add_function(wrap_pyfunction!(clear_jit_cache, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        sparse_stab_bindings::adjust_tableau_string,
+        m
+    )?)?;
 
     // Array creation function (NumPy-like interface, no NumPy dependency)
     m.add_function(wrap_pyfunction!(pecos_array::array, m)?)?;

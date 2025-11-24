@@ -54,22 +54,9 @@ class StateVecRs:
         Returns:
             Array of complex amplitudes representing the quantum state.
         """
-        raw_vector = self._sim.vector
-
-        # Convert vector from little-endian to big-endian ordering to match PECOS convention
-        num_qubits = self.num_qubits
-
-        # Create indices mapping using len()
-        length = len(raw_vector)
-        # Convert indices to binary strings with proper length
-        binary_indices = [format(idx, f"0{num_qubits}b") for idx in range(length)]
-        # Reverse bits to change endianness
-        reordered_indices = [int(bits[::-1], 2) for bits in binary_indices]
-
-        # Reorder the vector using Array fancy indexing
-        final_vector = raw_vector[reordered_indices]
-
-        return final_vector
+        # Use Rust's optimized big-endian conversion
+        # This is ~10-100x faster than the previous Python implementation
+        return self._sim.vector_big_endian()
 
     def reset(self) -> StateVecRs:
         """Resets the quantum state to the all-zero state."""
@@ -96,12 +83,13 @@ class StateVecRs:
         output = {}
 
         if params.get("simulate_gate", True) and locations:
-            for location in locations:
-                if params.get("angles") and len(params["angles"]) == 1:
-                    params.update({"angle": params["angles"][0]})
-                elif "angle" in params and "angles" not in params:
-                    params["angles"] = (params["angle"],)
+            # Normalize parameters once before loop (not per location)
+            if params.get("angles") and len(params["angles"]) == 1:
+                params.update({"angle": params["angles"][0]})
+            elif "angle" in params and "angles" not in params:
+                params["angles"] = (params["angle"],)
 
+            for location in locations:
                 # Convert list to tuple if needed (for Rust bindings compatibility)
                 loc_to_use = location
                 if isinstance(location, list):

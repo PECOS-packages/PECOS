@@ -24,12 +24,12 @@ from typing import Any, NoReturn
 
 # Import all modules at the top to avoid E402 errors
 from pecos_rslib._pecos_rslib import (
+    adjust_tableau_string,  # Tableau formatting utility (Rust-optimized)
     array,  # Array creation function (no NumPy dependency)
     binding,  # llvmlite-compatible binding module for bitcode
     ByteMessage,
     ByteMessageBuilder,
     dtypes,  # Rust-backed dtype system  # noqa: F401 - re-exported in __all__
-    graph,  # Graph algorithms (MWPM decoder)
     ir,  # llvmlite-compatible LLVM IR module
     num,  # Numerical computing functions (scipy.optimize replacements)
     Pauli,  # Quantum Pauli operators (I, X, Y, Z)
@@ -41,8 +41,25 @@ from pecos_rslib._pecos_rslib import (
     ShotVec,
     SparseStabEngineRs,
     StateVecEngineRs,
+    # Graph classes
+    Graph,
+    graph,  # Graph submodule
 )
 from pecos_rslib.cppsparse_sim import CppSparseSimRs
+from pecos_rslib.rscoin_toss import CoinToss
+from pecos_rslib.rspauli_prop import PauliPropRs
+from pecos_rslib.rssparse_sim import SparseSimRs
+from pecos_rslib.rsstate_vec import StateVecRs
+from pecos_rslib.typing import (
+    Array,
+    Complex,
+    Float,
+    Inexact,
+    Integer,
+    Numeric,
+    SignedInteger,
+    UnsignedInteger,
+)
 from pecos_rslib.num_wrapper import (  # Enhanced num module with axis support
     # Functions
     mean,
@@ -100,20 +117,10 @@ from pecos_rslib.num_wrapper import (  # Enhanced num module with axis support
     random,
     stats,  # Wrapped stats module with PECOS Array support
 )
-from pecos_rslib.rscoin_toss import CoinToss
-from pecos_rslib.rspauli_prop import PauliPropRs
-from pecos_rslib.rssparse_sim import SparseSimRs
-from pecos_rslib.rsstate_vec import StateVecRs
-from pecos_rslib.typing import (
-    Array,
-    Complex,
-    Float,
-    Inexact,
-    Integer,
-    Numeric,
-    SignedInteger,
-    UnsignedInteger,
-)
+
+# Graph module is registered as a submodule in Rust (see graph_bindings.rs)
+# Register in sys.modules for proper import support
+sys.modules["pecos_rslib.graph"] = graph
 
 # Import scalar type classes directly from dtypes submodule for NumPy-like API
 # This allows: pc.i64(42) and def foo(x: pc.i64) just like np.int64(42) and def foo(x: np.int64)
@@ -152,7 +159,7 @@ sys.modules["pecos_rslib.num.optimize"] = num.optimize
 sys.modules["pecos_rslib.num.polynomial"] = num.polynomial
 sys.modules["pecos_rslib.num.curve_fit"] = num.curve_fit
 sys.modules["pecos_rslib.num.random"] = num.random
-sys.modules["pecos_rslib.graph"] = graph
+# Note: graph module is created synthetically above (no graph.py file needed)
 
 # stats is exported from num_wrapper (which re-exports num.stats)
 
@@ -562,7 +569,10 @@ __all__ = [
     # Numerical computing (scipy.optimize replacements)
     "num",
     # Graph algorithms (MWPM decoder)
-    "graph",
+    "graph",  # Graph module
+    "Graph",  # Graph class
+    # Utility functions
+    "adjust_tableau_string",  # Tableau formatting utility
     # Numerical functions from num_wrapper
     "mean",
     "sum",

@@ -20,3 +20,5 @@ class Language(Enum):
     QIRBC = 2
     GUPPY = 3
     HUGR = 4
+    STIM = 5
+    QUANTUM_CIRCUIT = 6

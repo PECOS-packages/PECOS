@@ -23,6 +23,9 @@ class ArrayAccessInfo:
 
     # Track full array accesses
     full_array_accesses: list[int] = field(default_factory=list)
+    
+    # Track if passed to blocks
+    passed_to_blocks: bool = False
 
     # Track operations between accesses
     has_operations_between: bool = False
@@ -79,6 +82,12 @@ class ArrayAccessInfo:
         # If we have conditional access, need unpacking
         if self.has_conditionals_between:
             return True
+        
+        # For quantum arrays, if we have individual element measurements (consumed),
+        # we need unpacking to avoid MoveOutOfSubscriptError
+        if not self.is_classical and self.elements_consumed:
+            # Individual measurements on quantum arrays require unpacking
+            return True
 
         # If not all elements are accessed together, need unpacking
         return bool(not self.all_elements_accessed)
@@ -91,6 +100,8 @@ class UnpackingPlan:
     arrays_to_unpack: dict[str, ArrayAccessInfo] = field(default_factory=dict)
     unpack_at_start: set[str] = field(default_factory=set)
     renamed_variables: dict[str, str] = field(default_factory=dict)
+    # Store all analyzed arrays, including those that don't need unpacking
+    all_analyzed_arrays: dict[str, ArrayAccessInfo] = field(default_factory=dict)
 
 
 class IRAnalyzer:
@@ -101,6 +112,7 @@ class IRAnalyzer:
         self.position_counter = 0
         self.in_conditional = False
         self.reserved_names = {"result", "array", "quantum", "guppy", "owned"}
+        self.has_nested_blocks = False
 
     def analyze_block(
         self,
@@ -113,7 +125,7 @@ class IRAnalyzer:
         # Reset state
         self.array_info.clear()
         self.position_counter = 0
-
+        
         # First, collect array information from variables
         self._collect_array_info(block, variable_context)
 
@@ -122,12 +134,31 @@ class IRAnalyzer:
             for op in block.ops:
                 self._analyze_operation(op)
                 self.position_counter += 1
-
+        
         # Determine which arrays need unpacking
-        for array_name, info in self.array_info.items():
-            if info.needs_unpacking:
-                plan.arrays_to_unpack[array_name] = info
-                plan.unpack_at_start.add(array_name)
+        # Special case: if we have nested blocks but @owned parameters, we must unpack
+        # because @owned parameters require unpacking to access elements
+        must_unpack_for_owned = (
+            hasattr(self, 'has_nested_blocks_with_owned') and 
+            self.has_nested_blocks_with_owned
+        )
+        
+        # Store all analyzed arrays in the plan
+        plan.all_analyzed_arrays = self.array_info.copy()
+        
+        if not self.has_nested_blocks or must_unpack_for_owned:
+            for array_name, info in self.array_info.items():
+                should_unpack = info.needs_unpacking
+                
+                # Force unpacking for @owned parameters even with nested blocks
+                if (must_unpack_for_owned and 
+                    hasattr(self, 'expected_owned_params') and 
+                    array_name in self.expected_owned_params):
+                    should_unpack = True
+                    
+                if should_unpack:
+                    plan.arrays_to_unpack[array_name] = info
+                    plan.unpack_at_start.add(array_name)
 
         # Check for variable name conflicts
         self._check_name_conflicts(block, plan)
@@ -181,7 +212,17 @@ class IRAnalyzer:
         elif hasattr(op, "qargs"):
             self._analyze_quantum_operation(op)
         elif hasattr(op, "ops"):
-            # Nested block
+            # Check if this is a nested Block
+            if hasattr(op, "__class__"):
+                from pecos.slr import Block as SlrBlock
+                try:
+                    if issubclass(op.__class__, SlrBlock):
+                        # Mark that we have nested blocks
+                        self.has_nested_blocks = True
+                except:
+                    pass
+            
+            # Nested block - recurse into its operations
             for nested_op in op.ops:
                 self._analyze_operation(nested_op)
 

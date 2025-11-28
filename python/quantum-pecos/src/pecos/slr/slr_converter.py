@@ -21,27 +21,36 @@ except ImportError:
     QIRGenerator = None
 
 try:
-    from pecos.slr.gen_codes.guppy.ir_generator import (
-        IRGuppyGenerator as GuppyGenerator,
-    )
+    from pecos.slr.gen_codes.guppy import IRGuppyGenerator
 except ImportError:
-    GuppyGenerator = None
+    IRGuppyGenerator = None
+
+try:
+    from pecos.slr.gen_codes.gen_stim import StimGenerator
+except ImportError:
+    StimGenerator = None
+
+try:
+    from pecos.slr.gen_codes.gen_quantum_circuit import QuantumCircuitGenerator
+except ImportError:
+    QuantumCircuitGenerator = None
 
 
 class SlrConverter:
 
-    def __init__(self, block, *, optimize_parallel: bool = True):
+    def __init__(self, block=None, *, optimize_parallel: bool = True):
         """Initialize the SLR converter.
 
         Args:
-            block: The SLR block to convert
+            block: The SLR block to convert (optional for using from_* methods)
             optimize_parallel: Whether to apply ParallelOptimizer transformation (default: True).
                              Only affects blocks containing Parallel() statements.
         """
         self._block = block
+        self._optimize_parallel = optimize_parallel
 
-        # Apply transformations if requested
-        if optimize_parallel:
+        # Apply transformations if requested and block is provided
+        if block is not None and optimize_parallel:
             optimizer = ParallelOptimizer()
             self._block = optimizer.transform(self._block)
 
@@ -62,11 +71,16 @@ class SlrConverter:
             generator = QIRGenerator()
         elif target == Language.GUPPY:
             self._check_guppy_imported()
-            generator = GuppyGenerator()
+            generator = IRGuppyGenerator()
         elif target == Language.HUGR:
             # HUGR is handled specially in the hugr() method
             msg = "Use the hugr() method directly to compile to HUGR"
             raise ValueError(msg)
+        elif target == Language.STIM:
+            self._check_stim_imported()
+            generator = StimGenerator()
+        elif target == Language.QUANTUM_CIRCUIT:
+            generator = QuantumCircuitGenerator()
         else:
             msg = f"Code gen target '{target}' is not supported."
             raise NotImplementedError(msg)
@@ -105,10 +119,10 @@ class SlrConverter:
 
     @staticmethod
     def _check_guppy_imported():
-        if GuppyGenerator is None:
+        if IRGuppyGenerator is None:
             msg = (
-                "Trying to compile to Guppy without the GuppyGenerator. "
-                "Make sure gen_guppy.py is available."
+                "Trying to compile to Guppy without the IRGuppyGenerator. "
+                "Make sure ir_generator.py is available."
             )
             raise Exception(msg)
 
@@ -129,7 +143,7 @@ class SlrConverter:
         self._check_guppy_imported()
 
         # First generate Guppy code
-        generator = GuppyGenerator()
+        generator = IRGuppyGenerator()
         generator.generate_block(self._block)
 
         # Then compile to HUGR
@@ -141,3 +155,111 @@ class SlrConverter:
 
         compiler = HugrCompiler(generator)
         return compiler.compile_to_hugr()
+
+    @staticmethod
+    def _check_stim_imported():
+        if StimGenerator is None:
+            msg = (
+                "Trying to compile to Stim without the StimGenerator. "
+                "Make sure gen_stim.py is available."
+            )
+            raise Exception(msg)
+        # Also check if stim itself is available
+        import importlib.util
+
+        if importlib.util.find_spec("stim") is None:
+            msg = (
+                "Stim is not installed. To use Stim conversion features, install with:\n"
+                "  pip install quantum-pecos[stim]\n"
+                "or:\n"
+                "  pip install stim"
+            )
+            raise ImportError(msg)
+
+    def stim(self):
+        """Generate a Stim circuit from the SLR block.
+
+        Returns:
+            stim.Circuit: The generated Stim circuit
+        """
+        if self._block is None:
+            msg = "No SLR block to convert. Use from_* methods first or provide block to constructor."
+            raise ValueError(msg)
+        self._check_stim_imported()
+        generator = StimGenerator()
+        generator.generate_block(self._block)
+        return generator.get_circuit()
+
+    def quantum_circuit(self):
+        """Generate a PECOS QuantumCircuit from the SLR block.
+
+        Returns:
+            QuantumCircuit: The generated QuantumCircuit object
+        """
+        if self._block is None:
+            msg = "No SLR block to convert. Use from_* methods first or provide block to constructor."
+            raise ValueError(msg)
+        generator = QuantumCircuitGenerator()
+        generator.generate_block(self._block)
+        return generator.get_circuit()
+
+    # ===== Conversion TO SLR from other formats =====
+
+    @classmethod
+    def from_stim(cls, circuit, *, optimize_parallel: bool = True):
+        """Convert a Stim circuit to SLR format.
+
+        Args:
+            circuit: A Stim circuit object
+            optimize_parallel: Whether to apply ParallelOptimizer transformation
+
+        Returns:
+            Block: The converted SLR block (Main object)
+
+        Note:
+            - Stim's measurement record and detector/observable annotations are preserved as comments
+            - Noise operations are converted to comments (SLR typically handles noise differently)
+            - Some Stim-specific features may not have direct SLR equivalents
+        """
+        try:
+            from pecos.slr.converters.from_stim import stim_to_slr
+        except ImportError as e:
+            msg = "Failed to import stim_to_slr converter"
+            raise ImportError(msg) from e
+
+        slr_block = stim_to_slr(circuit)
+        if optimize_parallel:
+            from pecos.slr.transforms.parallel_optimizer import ParallelOptimizer
+
+            optimizer = ParallelOptimizer()
+            slr_block = optimizer.transform(slr_block)
+        return slr_block
+
+    @classmethod
+    def from_quantum_circuit(cls, qc, *, optimize_parallel: bool = True):
+        """Convert a PECOS QuantumCircuit to SLR format.
+
+        Args:
+            qc: A PECOS QuantumCircuit object
+            optimize_parallel: Whether to apply ParallelOptimizer transformation
+
+        Returns:
+            Block: The converted SLR block (Main object)
+
+        Note:
+            - QuantumCircuit's parallel gate structure is preserved
+            - Assumes standard gate names from PECOS
+        """
+        try:
+            from pecos.slr.converters.from_quantum_circuit import quantum_circuit_to_slr
+        except ImportError as e:
+            msg = "Failed to import quantum_circuit_to_slr converter"
+            raise ImportError(msg) from e
+
+        slr_block = quantum_circuit_to_slr(qc)
+        if optimize_parallel:
+            from pecos.slr.transforms.parallel_optimizer import ParallelOptimizer
+
+            optimizer = ParallelOptimizer()
+            slr_block = optimizer.transform(slr_block)
+        return slr_block

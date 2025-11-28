@@ -28,7 +28,7 @@ class TestHugrCompilation:
         hugr = SlrConverter(prog).hugr()
         assert hugr is not None
         assert hasattr(hugr, "__class__")
-        assert "ModulePointer" in str(type(hugr))
+        assert "Package" in str(type(hugr))
 
     def test_partial_consumption_compiles(self) -> None:
         """Test partial consumption pattern compiles to HUGR."""

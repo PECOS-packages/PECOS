@@ -57,6 +57,9 @@ guppy = [
     "guppylang>=0.21.0",  # Install guppylang first
     "selene-sim~=0.2.0",  # Then selene-sim (dependency of guppylang)
 ]
+stim = [
+    "stim>=1.12.0",  # For Stim circuit conversion and interoperability
+]
 visualization = [
     "matplotlib>=2.2.0",
     "plotly~=5.9.0",
@@ -64,6 +67,7 @@ visualization = [
 all = [
     "quantum-pecos[visualization]",
     "quantum-pecos[guppy]",
+    "quantum-pecos[stim]",
 ]
 
 # CUDA dependencies. See docs/user-guide/cuda-setup.md for detailed installation instructions

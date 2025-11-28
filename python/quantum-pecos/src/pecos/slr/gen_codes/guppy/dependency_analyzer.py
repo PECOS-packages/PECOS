@@ -113,6 +113,9 @@ class DependencyAnalyzer:
             for cout in op.cout:
                 if hasattr(cout, "reg") and hasattr(cout.reg, "sym"):
                     used_vars.add(cout.reg.sym)
+                elif hasattr(cout, "sym"):
+                    # Direct CReg reference
+                    used_vars.add(cout.sym)
 
         # Check condition (for If blocks)
         if hasattr(op, "cond"):

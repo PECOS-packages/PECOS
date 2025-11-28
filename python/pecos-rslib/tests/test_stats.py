@@ -1265,7 +1265,7 @@ class TestStateVectorPerformance:
             rust_time = time.perf_counter() - start
 
             # Get raw vector for Python comparison
-            raw_vec = sim._sim.vector  # Property, not method
+            raw_vec = sim.vector  # Property, not method
 
             # Warmup Python version
             for _ in range(3):

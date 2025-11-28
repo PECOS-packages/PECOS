@@ -119,7 +119,7 @@ def check_measurement(
     state = 0
     for q, value in results.items():
         state += value * 2 ** (sim.num_qubits - 1 - q)
-    final_vector = pc.zeros(shape=(2**sim.num_qubits,))
+    final_vector = pc.zeros(shape=(2**sim.num_qubits,), dtype=pc.dtypes.complex128)
     final_vector[state] = 1
 
     abs_values_vector = [pc.abs(x) for x in sim.vector]
@@ -188,7 +188,7 @@ def test_init(simulator: str) -> None:
     qc = QuantumCircuit()
     qc.append({"Init": {0, 1, 2, 3}})
 
-    final_vector = pc.zeros(shape=(2**4,))
+    final_vector = pc.zeros(shape=(2**4,), dtype=pc.dtypes.complex128)
     final_vector[0] = 1
 
     verify(simulator, qc, final_vector)
@@ -231,7 +231,7 @@ def test_comp_basis_circ_and_measure(simulator: str) -> None:
     # Step 1
     qc.append({"X": {0, 2}})  # |0000> -> |1010>
 
-    final_vector = pc.zeros(shape=(2**4,))
+    final_vector = pc.zeros(shape=(2**4,), dtype=pc.dtypes.complex128)
     final_vector[10] = 1  # |1010>
 
     # Run the circuit and compare results
@@ -245,7 +245,7 @@ def test_comp_basis_circ_and_measure(simulator: str) -> None:
     # Step 2
     qc.append({"CX": {(2, 1)}})  # |1010> -> |1110>
 
-    final_vector = pc.zeros(shape=(2**4,))
+    final_vector = pc.zeros(shape=(2**4,), dtype=pc.dtypes.complex128)
     final_vector[14] = 1  # |1110>
 
     # Run the circuit and compare results for Step 2

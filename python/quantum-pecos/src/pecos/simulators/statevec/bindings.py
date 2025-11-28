@@ -35,8 +35,8 @@ def get_bindings(state: StateVec) -> dict:
     Returns:
         Dictionary mapping gate symbols to their implementations.
     """
-    # Get reference to backend's internal simulator for efficiency
-    sim = state.backend._sim
+    # Get reference to backend simulator for efficiency
+    sim = state.backend
 
     return {
         # Single-qubit gates

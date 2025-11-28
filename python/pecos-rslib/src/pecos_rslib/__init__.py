@@ -29,6 +29,7 @@ from pecos_rslib._pecos_rslib import (
     binding,  # llvmlite-compatible binding module for bitcode
     ByteMessage,
     ByteMessageBuilder,
+    CppSparseSim,  # Pure Rust CppSparseSim (direct from Rust)
     dtypes,  # Rust-backed dtype system  # noqa: F401 - re-exported in __all__
     ir,  # llvmlite-compatible LLVM IR module
     num,  # Numerical computing functions (scipy.optimize replacements)
@@ -36,20 +37,25 @@ from pecos_rslib._pecos_rslib import (
     PauliString,  # Multi-qubit Pauli operators
     QuestDensityMatrix,
     QuestStateVec,
+    RsStateVec,  # Pure Rust state vector simulator (direct from Rust)
     RsWasmForeignObject,
     ShotMap,
     ShotVec,
+    SparseSim,  # Pure Rust sparse stabilizer simulator (direct from Rust)
     SparseStabEngineRs,
     StateVecEngineRs,
     # Graph classes
     Graph,
     graph,  # Graph submodule
 )
-from pecos_rslib.cppsparse_sim import CppSparseSimRs
+# Create backwards-compatible aliases - Python wrappers now point directly to Rust implementations
+# This eliminates the need for Python wrapper files while maintaining API compatibility
+CppSparseSimRs = CppSparseSim  # Alias for backwards compatibility
+SparseSimRs = SparseSim  # Alias for backwards compatibility
+StateVecRs = RsStateVec  # Alias for backwards compatibility
+
 from pecos_rslib.rscoin_toss import CoinToss
 from pecos_rslib.rspauli_prop import PauliPropRs
-from pecos_rslib.rssparse_sim import SparseSimRs
-from pecos_rslib.rsstate_vec import StateVecRs
 from pecos_rslib.typing import (
     Array,
     Complex,
@@ -550,7 +556,10 @@ __all__ = [
     # Core simulators
     "SparseSimRs",
     "CppSparseSimRs",
+    "CppSparseSim",  # Pure Rust CppSparseSim
+    "SparseSim",  # Pure Rust SparseSim
     "StateVecRs",
+    "RsStateVec",  # Pure Rust state vector simulator
     "CoinToss",
     "PauliPropRs",
     "ByteMessage",

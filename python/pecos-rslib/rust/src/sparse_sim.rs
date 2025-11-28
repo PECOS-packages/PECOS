@@ -12,7 +12,7 @@
 
 use pecos::prelude::*;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{IntoPyDict, PyAny, PyDict, PySet, PyTuple};
 
 #[pyclass(module = "pecos_rslib._pecos_rslib")]
 pub struct SparseSim {
@@ -281,8 +281,9 @@ impl SparseSim {
         }
     }
 
+    /// Internal gate dispatcher (tuple-based) - for internal use
     #[pyo3(signature = (symbol, location, params=None))]
-    fn run_gate(
+    fn run_gate_internal(
         &mut self,
         symbol: &str,
         location: &Bound<'_, PyTuple>,
@@ -298,6 +299,18 @@ impl SparseSim {
                 "Gate location must be specified for either 1 or 2 qubits",
             )),
         }
+    }
+
+    /// High-level run_gate that accepts a set of locations (Python wrapper compatible)
+    #[pyo3(signature = (symbol, locations, **params))]
+    fn run_gate(
+        &mut self,
+        symbol: &str,
+        locations: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyDict>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyDict>> {
+        self.run_gate_highlevel(symbol, locations, params, py)
     }
 
     fn stab_tableau(&self) -> String {
@@ -348,5 +361,140 @@ impl SparseSim {
 
             stab_lines
         }
+    }
+
+    /// High-level run_gate method that accepts a set of locations
+    #[pyo3(signature = (symbol, locations, **params))]
+    fn run_gate_highlevel(
+        &mut self,
+        symbol: &str,
+        locations: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyDict>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyDict>> {
+        let output = PyDict::new(py);
+
+        // Check if simulate_gate is False
+        if let Some(p) = params {
+            if let Ok(Some(sg)) = p.get_item("simulate_gate") {
+                if let Ok(false) = sg.extract::<bool>() {
+                    return Ok(output.into());
+                }
+            }
+        }
+
+        // Convert locations to a vector
+        let locations_set: &Bound<'_, PySet> = locations.downcast()?;
+
+        for location in locations_set.iter() {
+            // Convert location to tuple
+            let loc_tuple: Bound<'_, PyTuple> = if location.is_instance_of::<PyTuple>() {
+                location.downcast()?.clone()
+            } else {
+                // Single qubit - wrap in tuple
+                PyTuple::new(py, &[location.clone()])?
+            };
+
+            // Call the underlying run_gate_internal
+            let result = self.run_gate_internal(symbol, &loc_tuple, params)?;
+
+            // Only add to output if result is Some (non-zero measurement)
+            if let Some(value) = result {
+                output.set_item(location, value)?;
+            }
+        }
+
+        Ok(output.into())
+    }
+
+    /// Execute a quantum circuit
+    #[pyo3(signature = (circuit, removed_locations=None))]
+    fn run_circuit(
+        &mut self,
+        circuit: &Bound<'_, PyAny>,
+        removed_locations: Option<&Bound<'_, PySet>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyDict>> {
+        let results = PyDict::new(py);
+
+        // Iterate over circuit items
+        for item in circuit.call_method0("items")?.try_iter()? {
+            let item = item?;
+            let tuple: &Bound<'_, PyTuple> = item.downcast()?;
+
+            let symbol: String = tuple.get_item(0)?.extract()?;
+            let locations_item = tuple.get_item(1)?;
+            let locations: &Bound<'_, PySet> = locations_item.downcast()?;
+            let params_item = tuple.get_item(2)?;
+            let params: &Bound<'_, PyDict> = params_item.downcast()?;
+
+            // Subtract removed_locations if provided
+            let final_locations = if let Some(removed) = removed_locations {
+                locations.call_method1("__sub__", (removed,))?
+            } else {
+                locations.clone().into_any()
+            };
+
+            // Run the gate
+            let gate_results = self.run_gate_highlevel(&symbol, &final_locations, Some(params), py)?;
+
+            // Update results
+            results.call_method1("update", (gate_results,))?;
+        }
+
+        Ok(results.into())
+    }
+
+    /// Add faults by running a circuit
+    #[pyo3(signature = (circuit, removed_locations=None))]
+    fn add_faults(
+        &mut self,
+        circuit: &Bound<'_, PyAny>,
+        removed_locations: Option<&Bound<'_, PySet>>,
+        py: Python<'_>,
+    ) -> PyResult<()> {
+        self.run_circuit(circuit, removed_locations, py)?;
+        Ok(())
+    }
+
+    #[getter]
+    fn bindings(slf: PyRef<'_, Self>) -> PyResult<Py<PyAny>> {
+        let py = slf.py();
+        // Import the GateBindingsDict class from Python
+        let simulator_utils = py.import("pecos_rslib._simulator_utils")?;
+        let gate_bindings_class = simulator_utils.getattr("GateBindingsDict")?;
+
+        // Create an instance with self as the simulator
+        let bindings = gate_bindings_class.call1((slf,))?;
+
+        Ok(bindings.into())
+    }
+
+    #[getter]
+    fn stabs(slf: PyRef<'_, Self>) -> PyResult<Py<PyAny>> {
+        let py = slf.py();
+        // Import the TableauWrapper class from Python
+        let simulator_utils = py.import("pecos_rslib._simulator_utils")?;
+        let tableau_wrapper_class = simulator_utils.getattr("TableauWrapper")?;
+
+        // Create an instance with self as the simulator and is_stab=True
+        let kwargs = [("is_stab", true)].into_py_dict(py)?;
+        let wrapper = tableau_wrapper_class.call((slf,), Some(&kwargs))?;
+
+        Ok(wrapper.into())
+    }
+
+    #[getter]
+    fn destabs(slf: PyRef<'_, Self>) -> PyResult<Py<PyAny>> {
+        let py = slf.py();
+        // Import the TableauWrapper class from Python
+        let simulator_utils = py.import("pecos_rslib._simulator_utils")?;
+        let tableau_wrapper_class = simulator_utils.getattr("TableauWrapper")?;
+
+        // Create an instance with self as the simulator and is_stab=False
+        let kwargs = [("is_stab", false)].into_py_dict(py)?;
+        let wrapper = tableau_wrapper_class.call((slf,), Some(&kwargs))?;
+
+        Ok(wrapper.into())
     }
 }

@@ -12,7 +12,7 @@ use pecos::prelude::*;
 // the License.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{IntoPyDict, PyAny, PyDict, PySet, PyTuple};
 
 #[pyclass]
 pub struct SparseSim {
@@ -32,6 +32,11 @@ impl SparseSim {
         self.inner.reset();
     }
 
+    #[getter]
+    fn num_qubits(&self) -> usize {
+        self.inner.num_qubits()
+    }
+
     #[allow(clippy::too_many_lines)]
     #[pyo3(signature = (symbol, location, params=None))]
     fn run_1q_gate(
@@ -41,6 +46,9 @@ impl SparseSim {
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
         match symbol {
+            // No-op gates
+            "I" => Ok(None),
+            // Pauli gates
             "X" => {
                 self.inner.x(location);
                 Ok(None)
@@ -199,6 +207,142 @@ impl SparseSim {
                 };
                 Ok(Some(u8::from(result.outcome)))
             }
+            // Gate aliases - alternative names for common gates
+            "Q" | "SqrtX" => {
+                self.inner.sx(location);
+                Ok(None)
+            }
+            "Qd" | "SqrtXd" | "SqrtXdg" => {
+                self.inner.sxdg(location);
+                Ok(None)
+            }
+            "R" | "SqrtY" => {
+                self.inner.sy(location);
+                Ok(None)
+            }
+            "Rd" | "SqrtYd" | "SqrtYdg" => {
+                self.inner.sydg(location);
+                Ok(None)
+            }
+            "S" | "SqrtZ" => {
+                self.inner.sz(location);
+                Ok(None)
+            }
+            "Sd" | "SqrtZd" | "SqrtZdg" => {
+                self.inner.szdg(location);
+                Ok(None)
+            }
+            "H1" | "H+z+x" => {
+                self.inner.h(location);
+                Ok(None)
+            }
+            "H-z-x" => {
+                self.inner.h2(location);
+                Ok(None)
+            }
+            "H+y-z" => {
+                self.inner.h3(location);
+                Ok(None)
+            }
+            "H-y-z" => {
+                self.inner.h4(location);
+                Ok(None)
+            }
+            "H-x+y" => {
+                self.inner.h5(location);
+                Ok(None)
+            }
+            "H-x-y" => {
+                self.inner.h6(location);
+                Ok(None)
+            }
+            "F1" => {
+                self.inner.f(location);
+                Ok(None)
+            }
+            "F1d" | "F1dg" => {
+                self.inner.fdg(location);
+                Ok(None)
+            }
+            "F2d" => {
+                self.inner.f2dg(location);
+                Ok(None)
+            }
+            "F3d" => {
+                self.inner.f3dg(location);
+                Ok(None)
+            }
+            "F4d" => {
+                self.inner.f4dg(location);
+                Ok(None)
+            }
+            // Initialization aliases
+            "Init" | "Init +Z" | "init |0>" | "leak" | "leak |0>" | "unleak |0>" => {
+                // Check if forced_outcome parameter is provided
+                // If so, do forced measurement + correction (matches old Python behavior)
+                if let Some(params) = params
+                    && let Ok(Some(forced_item)) = params.get_item("forced_outcome")
+                {
+                    let forced_int: i32 = forced_item.extract()?;
+                    if forced_int != -1 {
+                        // Use forced measurement approach
+                        let forced_value = forced_int != 0;
+                        let result = self.inner.mz_forced(location, forced_value);
+                        // If measured |1>, flip to |0>
+                        if result.outcome {
+                            self.inner.x(location);
+                        }
+                        return Ok(None);
+                    }
+                }
+                // No forced_outcome or forced_outcome==-1, use native preparation
+                self.inner.pz(location);
+                Ok(None)
+            }
+            "Init -Z" | "init |1>" | "leak |1>" | "unleak |1>" => {
+                self.inner.pnz(location);
+                Ok(None)
+            }
+            "Init +X" | "init |+>" => {
+                self.inner.px(location);
+                Ok(None)
+            }
+            "Init -X" | "init |->" => {
+                self.inner.pnx(location);
+                Ok(None)
+            }
+            "Init +Y" | "init |+i>" => {
+                self.inner.py(location);
+                Ok(None)
+            }
+            "Init -Y" | "init |-i>" => {
+                self.inner.pny(location);
+                Ok(None)
+            }
+            // Measurement aliases
+            "Measure" | "measure Z" | "Measure +Z" => {
+                // Check if forced_outcome parameter is provided
+                if let Some(params) = params
+                    && let Ok(Some(forced_item)) = params.get_item("forced_outcome")
+                {
+                    // Has forced_outcome, use forced measurement
+                    let forced_int: i32 = forced_item.extract()?;
+                    let forced_value = forced_int != 0;
+                    let result = self.inner.mz_forced(location, forced_value);
+                    return Ok(Some(u8::from(result.outcome)));
+                }
+                // No forced_outcome, use regular measurement
+                let result = self.inner.mz(location);
+                Ok(Some(u8::from(result.outcome)))
+            }
+            "Measure +X" => {
+                let result = self.inner.mx(location);
+                Ok(Some(u8::from(result.outcome)))
+            }
+            "Measure +Y" => {
+                let result = self.inner.my(location);
+                Ok(Some(u8::from(result.outcome)))
+            }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Unsupported single-qubit gate",
             )),
@@ -266,14 +410,49 @@ impl SparseSim {
                 self.inner.g(q1, q2);
                 Ok(None)
             }
+            // Two-qubit gate aliases
+            "II" => Ok(None), // Two-qubit identity - no operation
+            "CNOT" => {
+                self.inner.cx(q1, q2);
+                Ok(None)
+            }
+            "G" => {
+                self.inner.g(q1, q2);
+                Ok(None)
+            }
+            "SqrtXX" => {
+                self.inner.sxx(q1, q2);
+                Ok(None)
+            }
+            "SqrtXXd" | "SqrtXXdg" => {
+                self.inner.sxxdg(q1, q2);
+                Ok(None)
+            }
+            "SqrtYY" => {
+                self.inner.syy(q1, q2);
+                Ok(None)
+            }
+            "SqrtYYd" | "SqrtYYdg" => {
+                self.inner.syydg(q1, q2);
+                Ok(None)
+            }
+            "SqrtZZ" => {
+                self.inner.szz(q1, q2);
+                Ok(None)
+            }
+            "SqrtZZd" | "SqrtZZdg" => {
+                self.inner.szzdg(q1, q2);
+                Ok(None)
+            }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Unsupported two-qubit gate",
             )),
         }
     }
 
+    /// Internal gate dispatcher (tuple-based) - for internal use
     #[pyo3(signature = (symbol, location, params=None))]
-    fn run_gate(
+    fn run_gate_internal(
         &mut self,
         symbol: &str,
         location: &Bound<'_, PyTuple>,
@@ -289,6 +468,18 @@ impl SparseSim {
                 "Gate location must be specified for either 1 or 2 qubits",
             )),
         }
+    }
+
+    /// High-level run_gate that accepts a set of locations (Python wrapper compatible)
+    #[pyo3(signature = (symbol, locations, **params))]
+    fn run_gate(
+        &mut self,
+        symbol: &str,
+        locations: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyDict>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyDict>> {
+        self.run_gate_highlevel(symbol, locations, params, py)
     }
 
     fn stab_tableau(&self) -> String {
@@ -339,6 +530,141 @@ impl SparseSim {
 
             stab_lines
         }
+    }
+
+    /// High-level run_gate method that accepts a set of locations
+    #[pyo3(signature = (symbol, locations, **params))]
+    fn run_gate_highlevel(
+        &mut self,
+        symbol: &str,
+        locations: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyDict>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyDict>> {
+        let output = PyDict::new(py);
+
+        // Check if simulate_gate is False
+        if let Some(p) = params {
+            if let Ok(Some(sg)) = p.get_item("simulate_gate") {
+                if let Ok(false) = sg.extract::<bool>() {
+                    return Ok(output.into());
+                }
+            }
+        }
+
+        // Convert locations to a vector
+        let locations_set: &Bound<'_, PySet> = locations.downcast()?;
+
+        for location in locations_set.iter() {
+            // Convert location to tuple
+            let loc_tuple: Bound<'_, PyTuple> = if location.is_instance_of::<PyTuple>() {
+                location.downcast()?.clone()
+            } else {
+                // Single qubit - wrap in tuple
+                PyTuple::new(py, &[location.clone()])?
+            };
+
+            // Call the underlying run_gate_internal
+            let result = self.run_gate_internal(symbol, &loc_tuple, params)?;
+
+            // Only add to output if result is Some (non-zero measurement)
+            if let Some(value) = result {
+                output.set_item(location, value)?;
+            }
+        }
+
+        Ok(output.into())
+    }
+
+    /// Execute a quantum circuit
+    #[pyo3(signature = (circuit, removed_locations=None))]
+    fn run_circuit(
+        &mut self,
+        circuit: &Bound<'_, PyAny>,
+        removed_locations: Option<&Bound<'_, PySet>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyDict>> {
+        let results = PyDict::new(py);
+
+        // Iterate over circuit items
+        for item in circuit.call_method0("items")?.try_iter()? {
+            let item = item?;
+            let tuple: &Bound<'_, PyTuple> = item.downcast()?;
+
+            let symbol: String = tuple.get_item(0)?.extract()?;
+            let locations_item = tuple.get_item(1)?;
+            let locations: &Bound<'_, PySet> = locations_item.downcast()?;
+            let params_item = tuple.get_item(2)?;
+            let params: &Bound<'_, PyDict> = params_item.downcast()?;
+
+            // Subtract removed_locations if provided
+            let final_locations = if let Some(removed) = removed_locations {
+                locations.call_method1("__sub__", (removed,))?
+            } else {
+                locations.clone().into_any()
+            };
+
+            // Run the gate
+            let gate_results = self.run_gate_highlevel(&symbol, &final_locations, Some(params), py)?;
+
+            // Update results
+            results.call_method1("update", (gate_results,))?;
+        }
+
+        Ok(results.into())
+    }
+
+    /// Add faults by running a circuit
+    #[pyo3(signature = (circuit, removed_locations=None))]
+    fn add_faults(
+        &mut self,
+        circuit: &Bound<'_, PyAny>,
+        removed_locations: Option<&Bound<'_, PySet>>,
+        py: Python<'_>,
+    ) -> PyResult<()> {
+        self.run_circuit(circuit, removed_locations, py)?;
+        Ok(())
+    }
+
+    #[getter]
+    fn bindings(slf: PyRef<'_, Self>) -> PyResult<Py<PyAny>> {
+        let py = slf.py();
+        // Import the GateBindingsDict class from Python
+        let simulator_utils = py.import("pecos_rslib._simulator_utils")?;
+        let gate_bindings_class = simulator_utils.getattr("GateBindingsDict")?;
+
+        // Create an instance with self as the simulator
+        let bindings = gate_bindings_class.call1((slf,))?;
+
+        Ok(bindings.into())
+    }
+
+    #[getter]
+    fn stabs(slf: PyRef<'_, Self>) -> PyResult<Py<PyAny>> {
+        let py = slf.py();
+        // Import the TableauWrapper class from Python
+        let simulator_utils = py.import("pecos_rslib._simulator_utils")?;
+        let tableau_wrapper_class = simulator_utils.getattr("TableauWrapper")?;
+
+        // Create an instance with self as the simulator and is_stab=True
+        let kwargs = [("is_stab", true)].into_py_dict(py)?;
+        let wrapper = tableau_wrapper_class.call((slf,), Some(&kwargs))?;
+
+        Ok(wrapper.into())
+    }
+
+    #[getter]
+    fn destabs(slf: PyRef<'_, Self>) -> PyResult<Py<PyAny>> {
+        let py = slf.py();
+        // Import the TableauWrapper class from Python
+        let simulator_utils = py.import("pecos_rslib._simulator_utils")?;
+        let tableau_wrapper_class = simulator_utils.getattr("TableauWrapper")?;
+
+        // Create an instance with self as the simulator and is_stab=False
+        let kwargs = [("is_stab", false)].into_py_dict(py)?;
+        let wrapper = tableau_wrapper_class.call((slf,), Some(&kwargs))?;
+
+        Ok(wrapper.into())
     }
 }
 

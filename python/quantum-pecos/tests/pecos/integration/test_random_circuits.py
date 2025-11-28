@@ -84,9 +84,7 @@ def run_circuit_test(
         measurements = []
         for _i, state_sim in enumerate(state_sims):
             pc.random.seed(seed)
-            verbose = (
-                seed == 32 and state_sim.__name__ == "CppSparseSimRs"
-            )  # Debug failing case
+            verbose = False  # Can set to True for debugging
             meas = run_a_circuit(
                 num_qubits,
                 state_sim,
@@ -94,21 +92,11 @@ def run_circuit_test(
                 _test_seed=seed,
                 verbose=verbose,
             )
-            if seed == 32:
-                # print(
-                #     f"Simulator {i} ({state_sim.__name__}): {meas[:20]}...",
-                # )  # Show first 20 measurements
-                pass
             measurements.append(meas)
 
         meas0 = measurements[0]
         for _i, meas in enumerate(measurements[1:], 1):
             if meas0 != meas:
-                # print("seed=", seed)
-                # print("Simulator 0 measurements:", meas0)
-                # print(f"Simulator {i} measurements:", meas)
-                # print(f"Simulator types: {[type(s).__name__ for s in state_sims]}")
-                # print(circuit)
                 return False
 
     return True

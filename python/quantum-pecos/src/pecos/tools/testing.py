@@ -67,13 +67,6 @@ def assert_allclose(
         diff = pc.abs(actual - desired)
         max_diff = float(pc.max(diff))
 
-        # Find where the arrays differ
-        threshold = atol + rtol * pc.abs(desired)
-        mismatch = diff > threshold
-
-        # Count mismatches
-        n_mismatch = int(pc.sum(mismatch))
-
         # Build error message
         msg_parts = []
         if err_msg:
@@ -82,25 +75,33 @@ def assert_allclose(
         msg_parts.append(
             f"Arrays are not close (rtol={rtol}, atol={atol})",
         )
-        msg_parts.append(f"Mismatched elements: {n_mismatch} / {len(actual)}")
         msg_parts.append(f"Max absolute difference: {max_diff}")
 
-        if verbose and n_mismatch > 0:
-            # Show some examples of mismatched values
-            # Find indices of mismatches
-            mismatch_indices = pc.where(mismatch)[0]
-            n_show = min(5, len(mismatch_indices))  # Show up to 5 examples
+        # Show a few example differences if verbose
+        if verbose:
+            # Convert to lists for element-wise comparison (PECOS arrays don't support > operator yet)
+            diff_list = [float(d) for d in diff]
+            abs_desired_list = [float(abs(d)) for d in desired]
 
-            msg_parts.append("Examples of mismatched values:")
-            for i in range(n_show):
-                idx = int(mismatch_indices[i])
-                msg_parts.append(
-                    f"  Index {idx}: actual={actual[idx]}, desired={desired[idx]}, "
-                    f"diff={diff[idx]}",
-                )
+            # Find mismatches
+            mismatches = []
+            for i, (d, ad) in enumerate(zip(diff_list, abs_desired_list)):
+                if d > atol + rtol * ad:
+                    mismatches.append((i, actual[i], desired[i], d))
+                    if len(mismatches) >= 5:  # Show up to 5 examples
+                        break
 
-            if n_mismatch > n_show:
-                msg_parts.append(f"  ... and {n_mismatch - n_show} more mismatches")
+            if mismatches:
+                # Count total mismatches
+                n_total_mismatches = sum(1 for d, ad in zip(diff_list, abs_desired_list) if d > atol + rtol * ad)
+                msg_parts.append(f"Mismatched elements: {n_total_mismatches} / {len(actual)}")
+                msg_parts.append("Examples of mismatched values:")
+                for idx, act_val, des_val, diff_val in mismatches:
+                    msg_parts.append(
+                        f"  Index {idx}: actual={act_val}, desired={des_val}, diff={diff_val}",
+                    )
+                if n_total_mismatches > len(mismatches):
+                    msg_parts.append(f"  ... and {n_total_mismatches - len(mismatches)} more mismatches")
 
         raise AssertionError("\n".join(msg_parts))
 
@@ -133,35 +134,7 @@ def assert_array_equal(
         >>> y = pc.array([1, 2, 3])
         >>> assert_array_equal(x, y)
     """
-    if not pc.array_equal(actual, desired):
-        # Find where the arrays differ
-        mismatch = actual != desired
-        n_mismatch = int(pc.sum(mismatch))
-
-        # Build error message
-        msg_parts = []
-        if err_msg:
-            msg_parts.append(err_msg)
-
-        msg_parts.append("Arrays are not equal")
-        msg_parts.append(f"Mismatched elements: {n_mismatch} / {len(actual)}")
-
-        if verbose and n_mismatch > 0:
-            # Show some examples of mismatched values
-            mismatch_indices = pc.where(mismatch)[0]
-            n_show = min(5, len(mismatch_indices))  # Show up to 5 examples
-
-            msg_parts.append("Examples of mismatched values:")
-            for i in range(n_show):
-                idx = int(mismatch_indices[i])
-                msg_parts.append(
-                    f"  Index {idx}: actual={actual[idx]}, desired={desired[idx]}",
-                )
-
-            if n_mismatch > n_show:
-                msg_parts.append(f"  ... and {n_mismatch - n_show} more mismatches")
-
-        raise AssertionError("\n".join(msg_parts))
+    assert_allclose(actual, desired, rtol=0, atol=0, err_msg=err_msg, verbose=verbose)
 
 
 def assert_array_less(
@@ -189,30 +162,31 @@ def assert_array_less(
         >>> y = pc.array([2, 3, 4])
         >>> assert_array_less(x, y)
     """
-    if not pc.all(x < y):
-        # Find where the condition is violated
-        violation = x >= y
-        n_violations = int(pc.sum(violation))
+    # Convert to lists for comparison (PECOS arrays don't support < operator yet)
+    x_list = [float(val) for val in x]
+    y_list = [float(val) for val in y]
 
+    violations = [(i, xv, yv) for i, (xv, yv) in enumerate(zip(x_list, y_list)) if xv >= yv]
+
+    if violations:
         # Build error message
         msg_parts = []
         if err_msg:
             msg_parts.append(err_msg)
 
         msg_parts.append("Arrays do not satisfy x < y")
-        msg_parts.append(f"Violations: {n_violations} / {len(x)}")
+        msg_parts.append(f"Violations: {len(violations)} / {len(x)}")
 
-        if verbose and n_violations > 0:
+        if verbose and violations:
             # Show some examples
-            violation_indices = pc.where(violation)[0]
-            n_show = min(5, len(violation_indices))
+            n_show = min(5, len(violations))
 
             msg_parts.append("Examples of violations:")
             for i in range(n_show):
-                idx = int(violation_indices[i])
-                msg_parts.append(f"  Index {idx}: x={x[idx]}, y={y[idx]}")
+                idx, xv, yv = violations[i]
+                msg_parts.append(f"  Index {idx}: x={xv}, y={yv}")
 
-            if n_violations > n_show:
-                msg_parts.append(f"  ... and {n_violations - n_show} more violations")
+            if len(violations) > n_show:
+                msg_parts.append(f"  ... and {len(violations) - n_show} more violations")
 
         raise AssertionError("\n".join(msg_parts))

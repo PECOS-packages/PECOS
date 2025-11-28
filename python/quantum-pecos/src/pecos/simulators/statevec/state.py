@@ -55,7 +55,7 @@ class StateVec:
         Returns:
             Array of complex amplitudes representing the quantum state.
         """
-        return pc.array(self.backend.vector, dtype=pc.dtypes.complex128)
+        return self.backend.vector_big_endian()
 
     def reset(self) -> StateVec:
         """Resets the quantum state to the all-zero state."""

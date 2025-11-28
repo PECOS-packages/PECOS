@@ -44,6 +44,7 @@ mod sparse_stab_bindings;
 mod sparse_stab_engine_bindings;
 mod state_vec_bindings;
 mod state_vec_engine_bindings;
+mod wasm_program_bindings;
 #[cfg(feature = "wasm")]
 mod wasm_foreign_object_bindings;
 
@@ -191,6 +192,7 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyQisProgram>()?;
     m.add_class::<PyHugrProgram>()?;
     m.add_class::<PyPhirJsonProgram>()?;
+    wasm_program_bindings::register_wasm_programs(m)?;
 
     // Register engine builder functions
     m.add_function(wrap_pyfunction!(engine_builders::qasm_engine, m)?)?;

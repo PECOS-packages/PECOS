@@ -1,4 +1,43 @@
-"""Builder for converting SLR operations to IR."""
+"""Builder for converting SLR operations to IR.
+
+IMPORTANT LIMITATION - Partial Consumption in Loops:
+====================================================
+
+The current implementation returns ONLY unconsumed array elements from functions.
+This works correctly for most patterns, but has a known limitation with certain
+verification loop patterns (e.g., Steane code).
+
+WORKING PATTERN (Partial Consumption):
+--------------------------------------
+def process_qubits(q: array[quantum.qubit, 4] @owned) -> array[quantum.qubit, 2]:
+    # Measures q[0] and q[2], returns q[1] and q[3]
+    # Return type correctly reflects only unconsumed elements
+
+PROBLEMATIC PATTERN (Verification Ancillas in Loops):
+-----------------------------------------------------
+def verify(ancilla: array[qubit, 3] @owned) -> tuple[array[qubit, 2], ...]:
+    # Measures ancilla[0], creates fresh qubit at ancilla[0]
+    # Returns ONLY ancilla[1] and ancilla[2] (unconsumed elements)
+    # Fresh qubit is NOT returned (it's an automatic replacement for linearity)
+
+# In calling function:
+for _ in range(2):
+    ancilla_returned = verify(ancilla)  # ERROR: Returns size 2, needs size 3
+
+WHY THIS HAPPENS:
+- Automatic qubit replacements (lines 2966-2977) are created for Guppy's linear
+  type system, not for meaningful quantum operations
+- The replacement qubit is not semantically part of the verification result
+- Only unconsumed elements (ancilla[1], ancilla[2]) are returned
+- This creates a size mismatch in subsequent loop iterations
+
+ARCHITECTURAL SOLUTIONS:
+- Don't use partial consumption for verification ancillas that need reuse
+- Use separate ancilla qubits instead of array elements for verification
+- Or restructure the verification pattern to avoid the loop issue
+
+See tests/slr-tests/guppy/test_partial_array_returns.py for correct usage patterns.
+"""
 
 from __future__ import annotations
 
@@ -79,7 +118,10 @@ class IRBuilder:
         # Track arrays that have been refreshed by function calls
         # Maps original array name -> fresh returned name
         self.refreshed_arrays = {}
-        
+        # Track which function refreshed each array
+        # Maps original array name -> function name that refreshed it
+        self.refreshed_by_function = {}
+
         # Track conditionally consumed variables (e.g., in if blocks)
         # Maps original variable -> conditionally consumed version
         self.conditional_fresh_vars = {}
@@ -199,6 +241,10 @@ class IRBuilder:
         module.functions.append(main_func)
         # Store refreshed arrays for main function
         module.refreshed_arrays["main"] = self.refreshed_arrays.copy()
+        # Also store which functions refreshed each array in main
+        if not hasattr(module, 'refreshed_by_function_map'):
+            module.refreshed_by_function_map = {}
+        module.refreshed_by_function_map["main"] = self.refreshed_by_function.copy()
 
         # Generate helper functions for structs
         for prefix, info in self.struct_info.items():
@@ -224,6 +270,10 @@ class IRBuilder:
                     self.generated_functions.add(func_info[1])
                     # Store refreshed arrays for this function
                     module.refreshed_arrays[func_info[1]] = self.refreshed_arrays.copy()
+                    # Also store which functions refreshed each array
+                    if not hasattr(module, 'refreshed_by_function_map'):
+                        module.refreshed_by_function_map = {}
+                    module.refreshed_by_function_map[func_info[1]] = self.refreshed_by_function.copy()
                 # Check if building this function added more pending functions
                 # Add any new pending functions, avoiding duplicates
                 for new_func in self.pending_functions:
@@ -236,7 +286,158 @@ class IRBuilder:
                         all_pending.append(new_func)
                 self.pending_functions = []
 
+        # SECOND PASS: Correct return types for functions that return values from other functions
+        # This is needed because nested functions are built after their parents
+        self._correct_return_types_from_called_functions(module)
+
         return module
+
+    def _correct_return_types_from_called_functions(self, module):
+        """Correct return types for functions that return values from other functions.
+
+        This is a second pass needed because nested functions are built after their parents,
+        so when calculating the parent's return type, the nested function's return type
+        isn't available yet.
+        """
+
+        # For each function, check if it needs return type correction
+        for func in module.functions:
+            if func.name == "main":
+                continue  # Skip main function
+
+
+            # Check if this function has refreshed_by_function mappings
+            if func.name not in module.refreshed_arrays:
+                continue
+
+            func_refreshed_arrays = module.refreshed_arrays[func.name]
+            if not func_refreshed_arrays:
+                continue
+
+            # We need to check if this function's return type should be corrected
+            # by looking at which functions refreshed its arrays
+            # For now, we'll use a simpler approach: check if the return type
+            # involves arrays that were refreshed by other functions
+
+            # Parse the current return type
+            current_return_type = func.return_type
+            if current_return_type == "None":
+                continue  # Procedural function, no correction needed
+
+
+            # Get the refreshed_by_function mapping for this function
+            if not hasattr(module, 'refreshed_by_function_map'):
+                continue
+            if func.name not in module.refreshed_by_function_map:
+                continue
+
+            func_refreshed_by_function = module.refreshed_by_function_map[func.name]
+            if not func_refreshed_by_function:
+                continue
+
+
+            # For functions returning tuples, we need to check each element
+            if current_return_type.startswith("tuple["):
+                import re
+                tuple_match = re.match(r"tuple\[(.*)\]", current_return_type)
+                if tuple_match:
+                    # Get parameter names from function params (quantum arrays only)
+                    param_names = [p[0] for p in func.params if "array[quantum.qubit," in p[1]]
+
+
+                    # For each quantum parameter, check if it was refreshed by a function
+                    corrected_types = []
+                    for param_name in param_names:
+                        if param_name in func_refreshed_by_function:
+                            called_func_name = func_refreshed_by_function[param_name]
+
+                            # Look up the called function's return type
+                            if called_func_name in self.function_return_types:
+                                called_return_type = self.function_return_types[called_func_name]
+
+                                # If the called function returns a tuple, extract the type for this param
+                                if called_return_type.startswith("tuple["):
+                                    tuple_match2 = re.match(r"tuple\[(.*)\]", called_return_type)
+                                    if tuple_match2:
+                                        called_types_str = tuple_match2.group(1)
+                                        # Parse the types (handling nested brackets)
+                                        types_list = []
+                                        bracket_depth = 0
+                                        current_type = ""
+                                        for char in called_types_str:
+                                            if char == '[':
+                                                bracket_depth += 1
+                                                current_type += char
+                                            elif char == ']':
+                                                bracket_depth -= 1
+                                                current_type += char
+                                            elif char == ',' and bracket_depth == 0:
+                                                types_list.append(current_type.strip())
+                                                current_type = ""
+                                            else:
+                                                current_type += char
+                                        if current_type:
+                                            types_list.append(current_type.strip())
+
+                                        # Find which position this param is in
+                                        param_idx = param_names.index(param_name)
+                                        if param_idx < len(types_list):
+                                            corrected_types.append(types_list[param_idx])
+                                        else:
+                                            # Fallback: use current type
+                                            corrected_types.append(None)
+                                    else:
+                                        corrected_types.append(None)
+                                else:
+                                    # Single return - use it directly if this is the only param
+                                    if len(param_names) == 1:
+                                        corrected_types.append(called_return_type)
+                                    else:
+                                        corrected_types.append(None)
+                            else:
+                                corrected_types.append(None)
+                        else:
+                            corrected_types.append(None)
+
+                    # If we have corrections, update the function's return type
+                    if any(ct is not None for ct in corrected_types):
+                        # Parse current types
+                        current_types_str = tuple_match.group(1)
+                        current_types_list = []
+                        bracket_depth = 0
+                        current_type = ""
+                        for char in current_types_str:
+                            if char == '[':
+                                bracket_depth += 1
+                                current_type += char
+                            elif char == ']':
+                                bracket_depth -= 1
+                                current_type += char
+                            elif char == ',' and bracket_depth == 0:
+                                current_types_list.append(current_type.strip())
+                                current_type = ""
+                            else:
+                                current_type += char
+                        if current_type:
+                            current_types_list.append(current_type.strip())
+
+                        # Apply corrections
+                        new_types = []
+                        for i, corrected in enumerate(corrected_types):
+                            if corrected is not None:
+                                new_types.append(corrected)
+                            elif i < len(current_types_list):
+                                new_types.append(current_types_list[i])
+                            else:
+                                # Something went wrong, skip correction
+                                new_types = None
+                                break
+
+                        if new_types:
+                            new_return_type = f"tuple[{', '.join(new_types)}]"
+                            func.return_type = new_return_type
+                            # Also update the registry
+                            self.function_return_types[func.name] = new_return_type
 
     def build_main_function(self, block: SLRBlock) -> Function:
         """Build the main function."""
@@ -245,6 +446,7 @@ class IRBuilder:
         
         # Reset function-local state
         self.refreshed_arrays = {}
+        self.refreshed_by_function = {}
         self.conditional_fresh_vars = {}
         self.array_remapping = {}  # Reset array remapping for main function
 
@@ -320,7 +522,32 @@ class IRBuilder:
         # Track unpacked vars for main
         self.unpacked_vars = {}
 
-        # Add unpacking statements at the start if needed
+        # First pass: determine which quantum arrays will be unpacked
+        will_unpack_quantum = set()
+        for array_name in self.plan.unpack_at_start:
+            if array_name in self.plan.arrays_to_unpack:
+                info = self.plan.arrays_to_unpack[array_name]
+
+                # Skip struct fields
+                is_struct_field = False
+                if self.struct_info:
+                    for prefix, struct_info in self.struct_info.items():
+                        if array_name in struct_info.get("var_names", {}).values():
+                            is_struct_field = True
+                            break
+
+                if is_struct_field:
+                    continue
+
+                # Skip dynamically allocated arrays
+                if hasattr(self, "dynamic_allocations") and array_name in self.dynamic_allocations:
+                    continue
+
+                # Mark quantum arrays that will be unpacked
+                if not info.is_classical:
+                    will_unpack_quantum.add(array_name)
+
+        # Second pass: actually unpack arrays
         for array_name in self.plan.unpack_at_start:
             if array_name in self.plan.arrays_to_unpack:
                 info = self.plan.arrays_to_unpack[array_name]
@@ -344,16 +571,13 @@ class IRBuilder:
                     )
                     continue
 
-                # For dynamically allocated arrays, we still need to unpack if the analyzer says so
-                # This happens when there are selective measurements/operations
+                # For dynamically allocated arrays, skip unpacking - qubits are allocated on first use
                 if (
                     hasattr(self, "dynamic_allocations")
                     and array_name in self.dynamic_allocations
                 ):
-                    # Add comment explaining why we're unpacking a dynamic array
-                    self.current_block.statements.append(
-                        Comment(f"Unpack {array_name} for individual access"),
-                    )
+                    # Don't unpack - the array doesn't exist, qubits are allocated individually
+                    continue
                 elif not info.is_classical:
                     # Regular unpacking for quantum arrays
                     self.current_block.statements.append(
@@ -361,11 +585,24 @@ class IRBuilder:
                     )
                     self._add_array_unpacking(array_name, info.size)
                 else:
-                    # Skip unpacking classical arrays in main to avoid linearity violations
-                    # Classical arrays can be accessed directly and passed to functions
-                    self.current_block.statements.append(
-                        Comment(f"Skip unpacking classical array {array_name} - not needed for linearity"),
+                    # For classical arrays, unpack if any quantum array is unpacked
+                    # This ensures consistent variable naming patterns
+                    should_unpack_classical = (
+                        len(will_unpack_quantum) > 0
+                        or (hasattr(self, "dynamic_allocations") and len(self.dynamic_allocations) > 0)
                     )
+                    if should_unpack_classical:
+                        # Unpack classical array to support quantum unpacking pattern
+                        self.current_block.statements.append(
+                            Comment(f"Unpack {array_name} for individual measurement results"),
+                        )
+                        self._add_array_unpacking(array_name, info.size)
+                    else:
+                        # Skip unpacking classical arrays in main to avoid linearity violations
+                        # Classical arrays can be accessed directly and passed to functions
+                        self.current_block.statements.append(
+                            Comment(f"Skip unpacking classical array {array_name} - not needed for linearity"),
+                        )
 
         # Add operations
         if hasattr(block, "ops"):
@@ -390,6 +627,7 @@ class IRBuilder:
         
         # Reset function-local state
         self.refreshed_arrays = {}
+        self.refreshed_by_function = {}
         self.conditional_fresh_vars = {}
         self.array_remapping = {}  # Reset array remapping for each function
         
@@ -461,9 +699,16 @@ class IRBuilder:
             
             # Analyze consumption - this will help determine @owned parameters
             consumed_params = self._analyze_consumed_parameters(sample_block)
+            # Also analyze which arrays have subscript access - they also need @owned
+            subscripted_params = self._analyze_subscript_access(sample_block)
+            # Store for later use in @owned determination
+            self.subscripted_params = subscripted_params
+        else:
+            # No ops - initialize empty set
+            self.subscripted_params = set()
 
         analyzer = IRAnalyzer()
-        
+
         # Pass information about expected @owned parameters to the analyzer
         analyzer.expected_owned_params = consumed_params
         analyzer.has_nested_blocks_with_owned = (
@@ -867,14 +1112,15 @@ class IRBuilder:
         # Store whether this is a procedural block for measurement logic
         self.current_function_is_procedural = is_procedural_block
         
-        # Process params and add @owned annotations (now that we know if it's procedural)  
+        # Process params and add @owned annotations (now that we know if it's procedural)
         # HYBRID OWNERSHIP: Smart @owned annotation based on function type and consumption
         processed_params = []
+        import sys
         for param_name, param_type in params:
             if "array[quantum.qubit," in param_type:
                 # Determine if this parameter should be @owned based on consumption analysis
                 should_be_owned = False
-                
+
                 if is_procedural_block:
                     # For procedural blocks, be selective with @owned
                     # Only use @owned if the parameter is truly consumed (measured) and not reused
@@ -887,18 +1133,36 @@ class IRBuilder:
                     else:
                         should_be_owned = param_name in consumed_params
                 else:
-                    # For functional blocks that return quantum arrays, parameters should be @owned
-                    # since they're consuming the input and returning a modified version
-                    if has_nested_blocks:
-                        # Special case: if this function calls other functions that might consume the parameter,
-                        # it should be @owned. This includes functions like prep_encoding_ft_zero that pass
-                        # parameters to other functions with @owned annotations.
-                        # For safety, if a functional block returns quantum arrays, make all quantum params @owned
-                        should_be_owned = True  # Conservative: all quantum params are @owned for functional blocks
-                    else:
-                        # For non-nested functional blocks, assume quantum params need @owned
-                        # This handles cases like process_qubits where input is consumed and modified
+                    # For functional blocks that return quantum arrays, check if parameter is actually consumed
+                    # In Guppy's linear type system:
+                    # - @owned: parameter is consumed by the function
+                    # - non-@owned: parameter is borrowed and must be returned
+                    # IMPORTANT: In Guppy, subscripting an array (c_a[0]) marks it as used
+                    # So ANY element access requires @owned annotation to avoid MoveOutOfSubscriptError
+                    if param_name in consumed_in_function:
+                        # ANY consumption requires @owned (not just full consumption)
+                        # This is because subscripting marks the array as used
+                        consumed_indices = consumed_in_function[param_name]
+                        should_be_owned = len(consumed_indices) > 0
+                    elif hasattr(self, 'subscripted_params') and param_name in self.subscripted_params:
+                        # Array has subscript access (c_d[0]) which requires @owned
                         should_be_owned = True
+                        import sys
+                    else:
+                        # Check if there's element access even without consumption
+                        # (e.g., gates applied to elements)
+                        # Arrays in arrays_to_unpack need @owned
+                        should_be_owned = param_name in block_plan.arrays_to_unpack
+                        if should_be_owned:
+                            import sys
+                        else:
+                            # Last resort: if parameter is used in the function at all, it likely needs @owned
+                            # In Guppy, any use of an array parameter in a functional block requires @owned
+                            # because the generated IR will likely subscript it
+                            # Check if the parameter appears in deps (it's used in the function)
+                            if param_name in deps["quantum"]:
+                                should_be_owned = True
+                                import sys
                 
                 if should_be_owned:
                     param_type = f"{param_type} @owned"
@@ -1016,6 +1280,58 @@ class IRBuilder:
                         include_array = not in_struct or is_excluded_ancilla
 
                     if include_array:
+                        # PRIORITY 1: Check if this array was refreshed by a function call
+                        # If so, use the called function's return type instead of consumption analysis
+                        if hasattr(self, 'refreshed_arrays') and name in self.refreshed_arrays:
+                            fresh_var_name = self.refreshed_arrays[name]
+                            # Find which function call produced this fresh variable
+                            # by looking at the refreshed_by_function mapping
+                            if hasattr(self, 'refreshed_by_function') and name in self.refreshed_by_function:
+                                called_func_name = self.refreshed_by_function[name]
+                                # Look up that function's return type
+                                if called_func_name in self.function_return_types:
+                                    called_func_return = self.function_return_types[called_func_name]
+                                    # If it returns a tuple, extract the type for this array
+                                    if called_func_return.startswith("tuple["):
+                                        # Parse tuple to find the type for this array
+                                        import re
+                                        tuple_match = re.match(r"tuple\[(.*)\]", called_func_return)
+                                        if tuple_match:
+                                            return_types_str = tuple_match.group(1)
+                                            # Split by comma but handle nested brackets
+                                            types_list = []
+                                            bracket_depth = 0
+                                            current_type = ""
+                                            for char in return_types_str:
+                                                if char == '[':
+                                                    bracket_depth += 1
+                                                    current_type += char
+                                                elif char == ']':
+                                                    bracket_depth -= 1
+                                                    current_type += char
+                                                elif char == ',' and bracket_depth == 0:
+                                                    types_list.append(current_type.strip())
+                                                    current_type = ""
+                                                else:
+                                                    current_type += char
+                                            if current_type:
+                                                types_list.append(current_type.strip())
+
+                                            # Find which position this array is in the function's parameters
+                                            quantum_param_names = [n for n, pt in params if "array[quantum.qubit," in pt]
+                                            if name in quantum_param_names:
+                                                param_idx = quantum_param_names.index(name)
+                                                if param_idx < len(types_list):
+                                                    # Use the return type from the called function
+                                                    new_type = types_list[param_idx]
+                                                    quantum_returns.append((name, new_type))
+                                                    continue  # Skip consumption analysis
+                                    else:
+                                        # Single return - use it directly
+                                        quantum_returns.append((name, called_func_return))
+                                        continue  # Skip consumption analysis
+
+                        # PRIORITY 2: Use consumption analysis if array wasn't refreshed by a function
                         # Check if any elements remain unconsumed for ALL arrays
                         if name in consumed_in_function:
                             # Extract array size from type
@@ -1034,29 +1350,50 @@ class IRBuilder:
                                 ):
                                     replaced_indices = self.replaced_qubits[name]
 
-                                # Replaced qubits are NOT consumed - they're replaced with fresh qubits
-                                # So the array size remains the same
-                                # Only count qubits that are consumed WITHOUT replacement
-                                consumed_without_replacement = consumed_indices - replaced_indices
-                                remaining_count = original_size - len(consumed_without_replacement)
+                                # Check if this parameter was fully consumed (all elements measured)
+                                # If fully consumed, don't return it even if qubits were replaced
+                                # Replacement is internal to maintain linearity, not to make parameter returnable
+                                fully_consumed = len(consumed_indices) == original_size
 
-                                # For @owned parameters, always return the array even if fully consumed
-                                # because @owned functions follow functional semantics where parameters are returned
-                                if remaining_count > 0:
-                                    # Some qubits remain - return array with correct size
-                                    if remaining_count < original_size:
-                                        # Partial consumption WITHOUT replacement - return array with reduced size
-                                        new_type = f"array[quantum.qubit, {remaining_count}]"
-                                    else:
-                                        # No consumption or all consumed were replaced - return original array type
-                                        new_type = ptype.replace(" @owned", "")
-                                    quantum_returns.append((name, new_type))
-                                elif "@owned" in ptype:
-                                    # All qubits consumed but @owned function - special case
-                                    # This should be rare but handle gracefully
-                                    new_type = "array[quantum.qubit, 0]"
-                                    quantum_returns.append((name, new_type))
-                                # If all consumed and not @owned, don't add to returns
+                                if fully_consumed:
+                                    # All qubits were measured - don't return this parameter
+                                    # Even if replaced, the parameter is considered consumed
+                                    pass  # Don't add to quantum_returns
+                                else:
+                                    # Not fully consumed - return the array
+                                    # Determine how many qubits will actually be returned
+                                    # This depends on:
+                                    # 1. Whether this will be a single or multiple return
+                                    # 2. Whether consumed qubits were replaced
+
+                                    # Count how many quantum arrays will likely be returned
+                                    # (This is a heuristic - we're building quantum_returns as we go)
+                                    num_quantum_params = 0
+                                    for n, pt in params:
+                                        if "array[quantum.qubit," in pt:
+                                            # Check if this array is part of a struct
+                                            in_struct = False
+                                            if isinstance(self.struct_info, dict):
+                                                if n in self.struct_info.values():
+                                                    in_struct = True
+                                            if not in_struct:
+                                                num_quantum_params += 1
+
+                                    # For both single and multiple returns with partial consumption:
+                                    # Return ONLY unconsumed elements
+                                    # Automatic replacements (for linearity) are not returned
+                                    # Matches return statement generation at lines 1399-1419 and 1598-1623
+                                    remaining_count = original_size - len(consumed_indices)
+
+                                    if remaining_count > 0:
+                                        # Some qubits remain - return array with correct size
+                                        if remaining_count < original_size:
+                                            # Partial consumption - return array with reduced size
+                                            new_type = f"array[quantum.qubit, {remaining_count}]"
+                                        else:
+                                            # No consumption - return original type
+                                            new_type = ptype.replace(" @owned", "")
+                                        quantum_returns.append((name, new_type))
                         else:
                             # No consumption tracked - return full array
                             # Remove @owned annotation from return type
@@ -1084,25 +1421,42 @@ class IRBuilder:
                                 original_size = int(original_match.group(1))
                                 consumed_indices = consumed_in_function[name]
 
-                                # Build array with ALL elements (consumed ones are replaced with fresh qubits)
-                                all_elements = []
+                                # Build array with ONLY unconsumed elements
+                                # Automatic replacements are for linearity, not meaningful returns
+                                #
+                                # DESIGN DECISION: Return only unconsumed elements
+                                # This matches the semantics of partial consumption where only
+                                # elements that were NOT consumed (measured/reset) are returned.
+                                #
+                                # Automatic qubit replacements (created at lines 3005-3016 for
+                                # Guppy's linear type system) are NOT included in returns because:
+                                # 1. They're created automatically to satisfy linearity constraints
+                                # 2. They're not semantically part of the quantum operation result
+                                # 3. Including them would break partial consumption semantics
+                                #
+                                # KNOWN LIMITATION: This creates a type mismatch for verification
+                                # ancilla patterns where a qubit is measured, replaced, and the
+                                # function is called again in a loop. See module docstring for
+                                # details and solutions.
+                                elements_to_return = []
                                 for i in range(original_size):
-                                    if name in self.unpacked_vars:
-                                        # Use unpacked element name (which may be a fresh qubit if consumed)
-                                        element_name = self.unpacked_vars[name][i]
-                                        all_elements.append(
-                                            VariableRef(element_name),
-                                        )
-                                    else:
-                                        # Use array indexing
-                                        all_elements.append(
-                                            ArrayAccess(array_name=name, index=i),
-                                        )
+                                    if i not in consumed_indices:
+                                        if name in self.unpacked_vars:
+                                            # Use unpacked element name
+                                            element_name = self.unpacked_vars[name][i]
+                                            elements_to_return.append(
+                                                VariableRef(element_name),
+                                            )
+                                        else:
+                                            # Use array indexing
+                                            elements_to_return.append(
+                                                ArrayAccess(array_name=name, index=i),
+                                            )
 
-                                # Create array construction with all elements
+                                # Create array construction
                                 array_expr = FunctionCall(
                                     func_name="array",
-                                    args=all_elements,
+                                    args=elements_to_return,
                                 )
                                 body.statements.append(
                                     ReturnStatement(value=array_expr),
@@ -1251,27 +1605,56 @@ class IRBuilder:
                             else:
                                 # Array was unpacked - check if elements are still available for reconstruction
                                 element_names = self.unpacked_vars[name]
-                                
+
                                 # For arrays with size 0 in return type, create empty arrays instead of reconstructing
                                 if "array[quantum.qubit, 0]" in ptype:
                                     # All elements consumed - create empty quantum array using generator expression
                                     # Create custom expression for: array(quantum.qubit() for _ in range(0))
-                                    
+
                                     class EmptyArrayExpression(Expression):
                                         def analyze(self, context):
                                             pass  # No analysis needed for empty array
-                                        
+
                                         def render(self, context):
                                             return ["array(quantum.qubit() for _ in range(0))"]
-                                    
+
                                     empty_array = EmptyArrayExpression()
                                     return_exprs.append(empty_array)
                                 else:
-                                    # Standard reconstruction from elements
-                                    array_construction = self._create_array_reconstruction(
-                                        element_names,
-                                    )
-                                    return_exprs.append(array_construction)
+                                    # Check if this array has partial consumption
+                                    if name in consumed_in_function:
+                                        consumed_indices = consumed_in_function[name]
+
+                                        # Build array with ONLY unconsumed elements
+                                        # Automatic replacements are for linearity, not meaningful returns
+                                        # See single return path (lines 1424-1440) for detailed rationale
+                                        elements_to_return = []
+                                        for i in range(len(element_names)):
+                                            if i not in consumed_indices:
+                                                element_name = element_names[i]
+                                                elements_to_return.append(VariableRef(element_name))
+
+                                        if elements_to_return:
+                                            # Create array from unconsumed elements
+                                            array_construction = FunctionCall(
+                                                func_name="array",
+                                                args=elements_to_return,
+                                            )
+                                            return_exprs.append(array_construction)
+                                        else:
+                                            # All elements consumed - use empty array
+                                            class EmptyArrayExpression(Expression):
+                                                def analyze(self, context):
+                                                    pass
+                                                def render(self, context):
+                                                    return ["array(quantum.qubit() for _ in range(0))"]
+                                            return_exprs.append(EmptyArrayExpression())
+                                    else:
+                                        # No consumption or not tracked - standard reconstruction from all elements
+                                        array_construction = self._create_array_reconstruction(
+                                            element_names,
+                                        )
+                                        return_exprs.append(array_construction)
                         elif name in struct_reconstruction:
                             # Struct was decomposed - but check if it was also refreshed by function calls
                             if hasattr(self, 'refreshed_arrays') and name in self.refreshed_arrays:
@@ -1347,11 +1730,6 @@ class IRBuilder:
                             # Check if this is an @owned struct that needs reconstruction
                             if (hasattr(self, "owned_structs") and name in self.owned_structs 
                                 and name in self.struct_info):
-                                # DEBUG: Check if @owned struct reconstruction is triggered
-                                if self.current_function_name and 'steane_prep_zero_verify' in self.current_function_name:
-                                    import sys
-                                    print(f"DEBUG: @owned struct reconstruction for {name}", file=sys.stderr)
-                                
                                 # @owned struct needs reconstruction from decomposed variables
                                 struct_info = self.struct_info[name]
                                 
@@ -1516,7 +1894,7 @@ class IRBuilder:
                     if not hasattr(self, 'decomposed_ancilla_arrays'):
                         self.decomposed_ancilla_arrays = {}
                     self.decomposed_ancilla_arrays[var_name] = [f"{var_name}_{i}" for i in range(size)]
-                    
+
                     # Add a function to reconstruct the array when needed for function calls
                     # This creates: c_a = array(c_a_0, c_a_1, c_a_2)
                     self.current_block.statements.append(
@@ -1532,6 +1910,11 @@ class IRBuilder:
                         value=reconstruct_expr,
                     )
                     self.current_block.statements.append(reconstruct_assignment)
+
+                    # Track that this array has been reconstructed - use the variable directly, not individual qubits
+                    if not hasattr(self, 'reconstructed_arrays'):
+                        self.reconstructed_arrays = set()
+                    self.reconstructed_arrays.add(var_name)
                 else:
                     # For other ancillas, don't pre-allocate array
                     reason = recommendation.get("reason", "ancilla pattern")
@@ -1578,6 +1961,10 @@ class IRBuilder:
                 self.current_block.statements.append(
                     Comment(f"Qubits from {var_name} will be allocated locally"),
                 )
+                # Track that this is dynamically allocated
+                if not hasattr(self, "dynamic_allocations"):
+                    self.dynamic_allocations = set()
+                self.dynamic_allocations.add(var.sym)
             elif decision and decision.strategy == AllocationStrategy.FUNCTION_SCOPED:
                 # Mixed strategy - pre-allocate some, allocate others locally
                 # But only if the array doesn't need unpacking
@@ -1649,7 +2036,7 @@ class IRBuilder:
                     if not hasattr(self, 'decomposed_ancilla_arrays'):
                         self.decomposed_ancilla_arrays = {}
                     self.decomposed_ancilla_arrays[var_name] = [f"{var_name}_{i}" for i in range(size)]
-                    
+
                     # Add a function to reconstruct the array when needed for function calls
                     # This creates: c_a = array(c_a_0, c_a_1, c_a_2)
                     self.current_block.statements.append(
@@ -1665,6 +2052,11 @@ class IRBuilder:
                         value=reconstruct_expr,
                     )
                     self.current_block.statements.append(reconstruct_assignment)
+
+                    # Track that this array has been reconstructed - use the variable directly, not individual qubits
+                    if not hasattr(self, 'reconstructed_arrays'):
+                        self.reconstructed_arrays = set()
+                    self.reconstructed_arrays.add(var_name)
                 else:
                     # Check if this ancilla array was already decomposed into individual qubits
                     if (hasattr(self, 'decomposed_ancilla_arrays') and 
@@ -1812,9 +2204,64 @@ class IRBuilder:
             if len(measured_indices) > 0:
                 consumed_params.add(array_name)
         
-        # print(f"DEBUG _analyze_consumed_parameters: consumed_params = {consumed_params}")
-        # print(f"DEBUG _analyze_consumed_parameters: element_measurements = {element_measurements}")
         return consumed_params
+
+    def _analyze_subscript_access(self, block) -> set[str]:
+        """Analyze which quantum arrays have subscript access in a block.
+
+        In Guppy, any subscript access (c_d[0]) marks the array as used,
+        requiring @owned annotation to avoid MoveOutOfSubscriptError.
+
+        Returns:
+            set of array names that have subscript access
+        """
+        subscripted_arrays = set()
+
+        if not hasattr(block, "ops"):
+            return subscripted_arrays
+
+        # Recursively analyze all operations
+        def analyze_ops(ops_list):
+            for op in ops_list:
+                # Check for any quantum operation with indexed arguments
+                if hasattr(op, "qargs"):
+                    for qarg in op.qargs:
+                        # Check for indexed access (e.g., q[0])
+                        if hasattr(qarg, "reg") and hasattr(qarg.reg, "sym"):
+                            array_name = qarg.reg.sym
+                            subscripted_arrays.add(array_name)
+                        # Also check for register-wide operations that will be converted to loops
+                        # (e.g., qubit.H(q) becomes for i in range(7): quantum.h(q[i]))
+                        elif hasattr(qarg, "sym") and hasattr(qarg, "elems") and len(qarg.elems) > 1:
+                            # This is a register-wide operation - will use subscripts
+                            array_name = qarg.sym
+                            subscripted_arrays.add(array_name)
+                        # else: qarg doesn't match expected patterns
+
+                # Check for classical array subscripts too
+                if hasattr(op, "cargs"):
+                    for carg in op.cargs:
+                        if hasattr(carg, "reg") and hasattr(carg.reg, "sym"):
+                            # This is classical, skip for now
+                            pass
+
+                # Check nested blocks
+                if hasattr(op, "__class__") and hasattr(op.__class__, "__bases__"):
+                    from pecos.slr import Block as SlrBlock
+                    try:
+                        if issubclass(op.__class__, SlrBlock):
+                            if hasattr(op, "ops"):
+                                analyze_ops(op.ops)
+                    except:
+                        pass
+
+        analyze_ops(block.ops)
+        # DEBUG
+        if subscripted_arrays:
+            import sys
+            # Try to get block name from context
+            block_name = getattr(block, '__class__', type(block)).__name__
+        return subscripted_arrays
 
     def _analyze_block_element_usage(self, block) -> dict:
         """Analyze which specific array elements are consumed vs returned by a block.
@@ -2512,9 +2959,10 @@ class IRBuilder:
             # with a fresh qubit to maintain array structure for returns
             meas_stmt = Measurement(qubit=qubit_ref, target=target_ref)
 
-            # If we're in a function with unpacked variables, replace measured qubit
-            # But only if we're not in main (main doesn't return arrays)
-            # AND only if this function will return quantum arrays
+            # Check if we need to replace this qubit after measurement
+            # Replacement is needed when:
+            # 1. Function returns quantum arrays (not main), OR
+            # 2. The qubit is reused after consumption (detected by allocation optimizer)
             is_main = (
                 hasattr(self, "current_function_name")
                 and self.current_function_name == "main"
@@ -2522,14 +2970,30 @@ class IRBuilder:
             # Check if function returns quantum arrays (use pre-determined flag)
             # But for procedural blocks, don't replace qubits even if they return arrays
             returns_quantum = (
-                hasattr(self, 'current_function_returns_quantum') and 
+                hasattr(self, 'current_function_returns_quantum') and
                 self.current_function_returns_quantum and
                 not getattr(self, 'current_function_is_procedural', False)
             )
-            
+
+            # Check if this qubit is marked as reused after consumption
+            needs_replacement_for_reuse = False
             if (
-                not is_main
-                and returns_quantum  # Only replace if function returns quantum arrays
+                hasattr(self, "allocation_decisions")
+                and hasattr(qarg, "reg")
+                and hasattr(qarg.reg, "sym")
+                and hasattr(qarg, "index")
+            ):
+                array_name = qarg.reg.sym
+                qubit_index = qarg.index
+                decision = self.allocation_decisions.get(array_name)
+                if decision and qubit_index in decision.reused_elements:
+                    needs_replacement_for_reuse = True
+
+            # Replace qubit if needed
+            should_replace = (not is_main and returns_quantum) or needs_replacement_for_reuse
+
+            if (
+                should_replace
                 and hasattr(self, "unpacked_vars")
                 and hasattr(qarg, "reg")
                 and hasattr(qarg.reg, "sym")
@@ -2607,12 +3071,6 @@ class IRBuilder:
                 if hasattr(self, "unpacked_vars") and array_name in self.unpacked_vars:
                     # It was unpacked after being refreshed - use unpacked variables
                     element_names = self.unpacked_vars[array_name]
-                    # DEBUG: Enable this to debug unpacking issues
-                    if False and array_name == 'q' and hasattr(qarg, 'index') and qarg.index == 1:
-                        print(f"DEBUG: Found unpacked vars for {array_name}: {element_names}")
-                        print(f"DEBUG: Checking index {qarg.index} < {len(element_names)}: {qarg.index < len(element_names)}")
-                        if qarg.index < len(element_names):
-                            print(f"DEBUG: element_names[{qarg.index}] = {element_names[qarg.index]}")
                     if qarg.index < len(element_names) and element_names[qarg.index] is not None:
                         return VariableRef(element_names[qarg.index])
                 
@@ -3337,26 +3795,72 @@ class IRBuilder:
                         if not is_struct_field:
                             # Not in a struct - check if array was unpacked
                             if hasattr(self, "unpacked_vars") and array_name in self.unpacked_vars:
-                                # Array was unpacked - apply gate to each unpacked element
+                                # Array was unpacked - but for register-wide operations,
+                                # we should generate a loop instead of unrolling
+                                #
+                                # DESIGN DECISION: Loop generation for register-wide operations
+                                # When qubit.H(q) is applied to a full register, it should generate
+                                # a loop even if q was unpacked. This keeps the code concise and
+                                # matches the user's intent of a register-wide operation.
+                                #
+                                # We need to reconstruct the array from unpacked elements first,
+                                # then use array indexing in the loop.
                                 element_names = self.unpacked_vars[array_name]
-                                for i in range(min(qarg.size, len(element_names))):
-                                    elem_var = VariableRef(element_names[i])
-                                    call = FunctionCall(
-                                        func_name=func_name,
-                                        args=[elem_var],
-                                    )
-                                    # Create expression statement wrapper
-                                    class ExpressionStatement(Statement):
-                                        def __init__(self, expr):
-                                            self.expr = expr
 
-                                        def analyze(self, context):
-                                            self.expr.analyze(context)
+                                # First, reconstruct the array from unpacked elements
+                                # q = array(q_0, q_1, q_2, q_3)
+                                array_elements = [VariableRef(name) for name in element_names[:qarg.size]]
+                                array_reconstruction = Assignment(
+                                    target=VariableRef(array_name),
+                                    value=FunctionCall(
+                                        func_name="array",
+                                        args=array_elements,
+                                    ),
+                                )
+                                stmts.append(array_reconstruction)
 
-                                        def render(self, context):
-                                            return self.expr.render(context)
+                                # Now generate a loop that operates on the reconstructed array
+                                loop_var = "i"
+                                body_block = Block()
 
-                                    stmts.append(ExpressionStatement(call))
+                                elem_ref = ArrayAccess(
+                                    array=VariableRef(array_name),
+                                    index=VariableRef(loop_var),
+                                )
+                                call = FunctionCall(func_name=func_name, args=[elem_ref])
+
+                                # Create expression statement wrapper
+                                class ExpressionStatement(Statement):
+                                    def __init__(self, expr):
+                                        self.expr = expr
+
+                                    def analyze(self, context):
+                                        self.expr.analyze(context)
+
+                                    def render(self, context):
+                                        return self.expr.render(context)
+
+                                body_block.statements.append(ExpressionStatement(call))
+
+                                # Create for loop
+                                range_call = FunctionCall(
+                                    func_name="range",
+                                    args=[Literal(0), Literal(qarg.size)],
+                                )
+                                for_stmt = ForStatement(
+                                    loop_var=loop_var,
+                                    iterable=range_call,
+                                    body=body_block,
+                                )
+                                stmts.append(for_stmt)
+
+                                # After the loop, unpack the array again to maintain unpacked state
+                                # This ensures subsequent operations can still use the unpacked vars
+                                unpacking = ArrayUnpack(
+                                    targets=element_names[:qarg.size],
+                                    source=array_name,
+                                )
+                                stmts.append(unpacking)
                             else:
                                 # Array not unpacked - generate a loop
                                 loop_var = "i"
@@ -4876,8 +5380,8 @@ class IRBuilder:
         return "_".join(sorted(ops_summary)) if ops_summary else "empty"
 
     def _generate_function_call(self, func_name: str, block) -> Statement:
-        from pecos.slr.gen_codes.guppy.ir import Assignment, VariableRef
         """Generate a function call for a block."""
+        from pecos.slr.gen_codes.guppy.ir import Assignment, VariableRef
         # Analyze block dependencies to determine arguments
         deps = self._analyze_block_dependencies(block)
 
@@ -4991,7 +5495,49 @@ class IRBuilder:
 
             # For procedural functions (borrow), we can't use unpacked arrays - they need the original array
             # For consuming functions (@owned), reconstruct the array from unpacked elements
-            if hasattr(self, "unpacked_vars") and actual_var in self.unpacked_vars:
+            # Also handle dynamically allocated arrays and decomposed ancilla arrays
+            if hasattr(self, "decomposed_ancilla_arrays") and var in self.decomposed_ancilla_arrays:
+                # Check if the array has already been reconstructed into a variable
+                if hasattr(self, "reconstructed_arrays") and var in self.reconstructed_arrays:
+                    # Check if it was unpacked AFTER reconstruction
+                    if hasattr(self, "unpacked_vars") and actual_var in self.unpacked_vars:
+                        # Array was unpacked after reconstruction - need to reconstruct again
+                        # First check if there's a refreshed version from a previous function call
+                        if hasattr(self, 'refreshed_arrays') and var in self.refreshed_arrays:
+                            refreshed_name = self.refreshed_arrays[var]
+                            args.append(VariableRef(refreshed_name))
+                            quantum_args.append(var)
+                        else:
+                            # Reconstruct from unpacked elements
+                            element_names = self.unpacked_vars[actual_var]
+                            array_construction = self._create_array_construction(element_names)
+                            args.append(array_construction)
+                            quantum_args.append(var)
+                    else:
+                        # Use the reconstructed array variable directly (not unpacked)
+                        args.append(VariableRef(actual_var))
+                        quantum_args.append(var)
+                else:
+                    # This array was decomposed into individual qubits - reconstruct it
+                    element_names = self.decomposed_ancilla_arrays[var]
+                    array_construction = self._create_array_construction(element_names)
+                    args.append(array_construction)
+                    quantum_args.append(var)
+            elif hasattr(self, "dynamic_allocations") and var in self.dynamic_allocations:
+                # Dynamically allocated - construct array from individual qubits
+                # Get the size from context
+                var_info = self.context.lookup_variable(var)
+                if var_info and var_info.size:
+                    size = var_info.size
+                    element_names = [f"{var}_{i}" for i in range(size)]
+                    array_construction = self._create_array_construction(element_names)
+                    args.append(array_construction)
+                    quantum_args.append(var)
+                else:
+                    # Fallback - just pass the variable (will likely error)
+                    args.append(VariableRef(actual_var))
+                    quantum_args.append(actual_var)
+            elif hasattr(self, "unpacked_vars") and actual_var in self.unpacked_vars:
                 # Check if this array has been refreshed by a previous function call
                 if hasattr(self, 'refreshed_arrays') and var in self.refreshed_arrays:
                     # Array was refreshed (e.g., c_a -> c_a_fresh) - use the fresh version directly
@@ -5218,8 +5764,9 @@ class IRBuilder:
         except:
             pass
         
+        import sys
         if (function_consumes or is_nested_block) and hasattr(self, "consumed_arrays"):
-            
+
             # Check function signature for @owned parameters
             owned_params = set()
             
@@ -5241,10 +5788,11 @@ class IRBuilder:
             
             # Try to find the function definition in the current module (future improvement)
             # [Previous function definition lookup code can be restored later if needed]
-            
-            
+
             for arg in quantum_args:
                 if isinstance(arg, str):
+                    in_owned = arg in owned_params
+                    not_returned = arg not in returned_quantum_args
                     # Check if this argument corresponds to an @owned parameter (always consumed)
                     # OR if it's not returned (consumed and not returned)
                     if arg in owned_params or arg not in returned_quantum_args:
@@ -5294,27 +5842,20 @@ class IRBuilder:
             # Check if the function returns a tuple by looking up its return type
             func_return_type = self.function_return_types.get(func_name, "")
             returns_tuple = func_return_type.startswith("tuple[")
-            
-            # Force tuple unpacking if function has multiple quantum args (likely returns tuple)
-            force_tuple_unpacking = len(quantum_args) > 1
-            
-            if len(returned_quantum_args) == 1 and not returns_tuple and not force_tuple_unpacking:
-                # Single return - use a fresh variable name to avoid PlaceNotUsedError
-                # The original name is used as an argument to the call, so we need a new name for the result
+
+            # Don't force tuple unpacking based on argument count - use actual return type
+            # A function can take multiple args but return only one (e.g., consume some, return others)
+
+            if len(returned_quantum_args) == 1 and not returns_tuple:
+                # Single return - assign back to the same variable name
+                # In Guppy's linear type system, reassigning to the same name shadows the old binding
                 name = returned_quantum_args[0]
-                
-                # Generate a fresh variable name for the returned value
-                if name.startswith('_') and name.endswith('_array'):
-                    # For reconstructed arrays like _q_array, use _q_returned
-                    base_name = name[1:].replace('_array', '')
-                    fresh_name = f"_{base_name}_returned"
-                else:
-                    # For regular arrays, add _returned suffix
-                    fresh_name = f"{name}_returned"
-                
-                fresh_name = self._get_unique_var_name(fresh_name)
-                assignment = Assignment(target=VariableRef(fresh_name), value=call)
+
+                # Use the original variable name for the assignment
+                # This is valid in Guppy: data = func(data, ...) shadows the old binding
+                assignment = Assignment(target=VariableRef(name), value=call)
                 statements.append(assignment)
+                fresh_name = name
                 
                 # Update context for returned variable
                 self._update_context_for_returned_variable(name, fresh_name)
@@ -5336,6 +5877,10 @@ class IRBuilder:
                 
                 # Track this array as refreshed by function call
                 self.refreshed_arrays[name] = fresh_name
+                # Track which function refreshed this array
+                if not hasattr(self, 'refreshed_by_function'):
+                    self.refreshed_by_function = {}
+                self.refreshed_by_function[name] = func_name
 
                 # If this is a struct, decompose it to avoid field access issues
                 if name in self.struct_info:
@@ -5562,6 +6107,10 @@ class IRBuilder:
                             if not hasattr(self, 'refreshed_arrays'):
                                 self.refreshed_arrays = {}
                             self.refreshed_arrays[arg] = fresh_name
+                            # Track which function refreshed this array
+                            if not hasattr(self, 'refreshed_by_function'):
+                                self.refreshed_by_function = {}
+                            self.refreshed_by_function[arg] = func_name
                         else:
                             # Safe to use the original name
                             fresh_targets.append(arg)
@@ -5593,6 +6142,10 @@ class IRBuilder:
                                 self.refreshed_arrays = {}
                             # Always update the mapping for return handling
                             self.refreshed_arrays[original_name] = fresh_name
+                            # Track which function refreshed this array
+                            if not hasattr(self, 'refreshed_by_function'):
+                                self.refreshed_by_function = {}
+                            self.refreshed_by_function[original_name] = func_name
                 
                 # Check if any of the returned variables are structs and decompose them immediately
                 for var_name in fresh_targets:
@@ -5699,6 +6252,10 @@ class IRBuilder:
                                     elif original_name not in self.refreshed_arrays:
                                         # Safe to update - first assignment
                                         self.refreshed_arrays[original_name] = fresh_name
+                                        # Track which function refreshed this array
+                                        if not hasattr(self, 'refreshed_by_function'):
+                                            self.refreshed_by_function = {}
+                                        self.refreshed_by_function[original_name] = func_name
                                         self._update_context_for_returned_variable(original_name, fresh_name)
                     else:
                         # For functions that return different arrays (like prep_zero_verify),
@@ -5785,6 +6342,49 @@ class IRBuilder:
                         info = self.plan.arrays_to_unpack[array_name]
                         self._add_array_unpacking(array_name, info.size)
 
+            # Check if current function is procedural (returns None) and add discards for unused quantum arrays
+            is_in_procedural = getattr(self, 'current_function_is_procedural', False)
+            if is_in_procedural and len(statements) == 1:
+                # This is a procedural function with a single assignment (likely the last operation)
+                # Check if we have an unused quantum array to discard
+                # This happens when a procedural function calls a function that returns an array
+                # but doesn't use the result
+                stmt = statements[0]
+                if isinstance(stmt, Assignment):
+                    # Check if this is an assignment to a quantum array
+                    target_name = None
+                    if hasattr(stmt.target, 'name'):
+                        target_name = stmt.target.name
+
+                    # Check if this is a quantum array by checking:
+                    # 1. If it's in returned_quantum_args (passed as quantum param)
+                    # 2. Or if func_name returns a quantum array (if we know the return type)
+                    is_quantum_array = target_name in returned_quantum_args
+
+                    if not is_quantum_array and func_name in self.function_return_types:
+                        return_type = self.function_return_types[func_name]
+                        is_quantum_array = "array[quantum.qubit," in return_type
+
+                    if target_name and is_quantum_array:
+                        # This is a quantum array that was assigned but may not be used
+                        # Add a discard statement for it
+                        discard_call = FunctionCall(
+                            func_name="quantum.discard_array",
+                            args=[VariableRef(target_name)]
+                        )
+
+                        # Define ExpressionStatement locally if not already defined
+                        class ExpressionStatement(Statement):
+                            def __init__(self, expr):
+                                self.expr = expr
+                            def analyze(self, context):
+                                return []
+                            def render(self, context):
+                                return self.expr.render(context)
+
+                        statements.append(Comment(f"Discard unused {target_name}"))
+                        statements.append(ExpressionStatement(discard_call))
+
             # Return block with all statements
             if len(statements) == 1:
                 return statements[0]
@@ -5829,17 +6429,17 @@ class IRBuilder:
 
     def _analyze_quantum_resource_flow(self, block) -> tuple[dict[str, set[int]], dict[str, set[int]]]:
         """Analyze which quantum resources are consumed vs. live in a block.
-        
+
         Returns:
             consumed_qubits: dict mapping qreg names to sets of consumed indices
             live_qubits: dict mapping qreg names to sets of live indices
         """
         consumed_qubits = {}
         live_qubits = {}
-        
+
         # Track all quantum variables used
         all_quantum_vars = set()
-        
+
         if hasattr(block, 'ops'):
             for op in block.ops:
                 # Check for measurements that consume qubits
@@ -5890,18 +6490,27 @@ class IRBuilder:
         # We need to know the actual size of arrays to determine what's live
         # Get size information from the block's variable definitions
         array_sizes = {}
-        if hasattr(block, 'q') and hasattr(block.q, 'size'):
-            array_sizes[block.q.sym] = block.q.size
-        if hasattr(block, 'c') and hasattr(block.c, 'size'):
-            array_sizes[block.c.sym] = block.c.size
-            
+
+        # Check all attributes of the block for QReg/CReg definitions
+        for attr_name in dir(block):
+            if not attr_name.startswith('_'):  # Skip private attributes
+                try:
+                    attr = getattr(block, attr_name, None)
+                    if attr and hasattr(attr, 'size') and hasattr(attr, 'sym'):
+                        array_sizes[attr.sym] = attr.size
+                        # Add to all_quantum_vars if it's a quantum register
+                        if hasattr(attr, '__class__') and 'QReg' in attr.__class__.__name__:
+                            all_quantum_vars.add(attr.sym)
+                except:
+                    pass
+
         # Also check variable context if available
         if hasattr(self, 'context') and self.context:
             for var_name in all_quantum_vars:
                 var_info = self.context.lookup_variable(var_name)
                 if var_info and var_info.size:
                     array_sizes[var_name] = var_info.size
-        
+
         for var_name in all_quantum_vars:
             if var_name not in consumed_qubits:
                 # Variable is used but not consumed - it's fully live
@@ -5912,50 +6521,53 @@ class IRBuilder:
                 # Check if only partially consumed
                 consumed_indices = consumed_qubits[var_name]
                 size = array_sizes.get(var_name, 2)  # Default to 2 if unknown
-                
+
                 # Any indices not consumed are live
                 live_indices = set(range(size)) - consumed_indices
                 if live_indices:
                     live_qubits[var_name] = live_indices
-        
+
         return consumed_qubits, live_qubits
 
     def _should_function_be_procedural(self, func_name: str, block, params, has_live_qubits: bool) -> bool:
         """
         Smart detection to determine if a function should be procedural (return None)
         vs functional (return tuple of quantum arrays).
-        
+
         Functions should be procedural if they:
         1. Primarily do terminal operations (measurements without further quantum operations)
         2. Are not used in patterns where quantum returns are needed afterward
         3. Would cause PlaceNotUsedError issues with tuple returns
-        
+
         Functions should be functional if they:
         1. Their quantum returns are needed for subsequent operations in the calling scope
         2. They are part of partial consumption patterns
         """
-        
+
         # Pattern-based detection for known procedural functions
+        # BUT: only if they don't have live qubits
         procedural_patterns = [
             "syndrome_extraction",  # Terminal syndrome measurement blocks
-            "measure_ancillas",     # Ancilla measurement blocks that are terminal
             "cleanup",              # Cleanup operations
             "discard",              # Discard operations
         ]
-        
+
         # Check if this is an inner block that will be called by outer blocks
         # Inner blocks should NOT be procedural to avoid consumption issues
         if "inner" in func_name.lower():
             return False
-        
-        for pattern in procedural_patterns:
-            if pattern in func_name.lower():
-                # These are good candidates for procedural
-                return True
+
+        # Only apply pattern matching if there are no live qubits
+        # Functions with live qubits should return them, regardless of name
+        if not has_live_qubits:
+            for pattern in procedural_patterns:
+                if pattern in func_name.lower():
+                    # These are good candidates for procedural
+                    return True
         
         # Functions with quantum parameters but no live qubits are good candidates for procedural
         has_quantum_params = any("array[quantum.qubit," in param[1] for param in params if len(param) == 2)
-        
+
         if has_quantum_params and not has_live_qubits:
             # This is a terminal function - good candidate for procedural
             return True
@@ -5964,7 +6576,7 @@ class IRBuilder:
         if hasattr(block, "ops"):
             measurement_count = 0
             gate_count = 0
-            
+
             for op in block.ops:
                 if hasattr(op, "__class__"):
                     op_name = op.__class__.__name__
@@ -5972,12 +6584,13 @@ class IRBuilder:
                         measurement_count += 1
                     elif hasattr(op, "name") or any(gate in str(op) for gate in ["H", "X", "Y", "Z", "CX", "CZ"]):
                         gate_count += 1
-            
+
             # If mostly measurements with no quantum gates, good candidate for procedural
             # But be conservative - only if no gates at all or very few
-            if measurement_count > 0 and gate_count == 0:
+            # AND only if there are no live qubits to return (partial consumption must return live qubits)
+            if measurement_count > 0 and gate_count == 0 and not has_live_qubits:
                 return True
-        
+
         # CONSERVATIVE: Default to functional approach unless clearly terminal
         # This avoids breaking partial consumption patterns
         return False
@@ -6459,12 +7072,19 @@ class IRBuilder:
 
                     if value_ref is None:
                         # Check if this array was unpacked
-                        if (var_name in self.plan.arrays_to_unpack or 
+                        if (var_name in self.plan.arrays_to_unpack or
                             (hasattr(self, "unpacked_vars") and actual_name in self.unpacked_vars)):
                             # Array was unpacked - must reconstruct from elements for linearity
                             if hasattr(self, "unpacked_vars") and actual_name in self.unpacked_vars:
                                 element_names = self.unpacked_vars[actual_name]
-                                value_ref = self._create_array_reconstruction(element_names)
+                                # Reconstruct the array and assign it back to the original variable
+                                reconstruction_expr = self._create_array_reconstruction(element_names)
+                                reconstruction_stmt = Assignment(
+                                    target=VariableRef(actual_name),
+                                    value=reconstruction_expr,
+                                )
+                                self.current_block.statements.append(reconstruction_stmt)
+                                value_ref = VariableRef(actual_name)
                             else:
                                 # Fallback: use original array if unpacked_vars not available
                                 value_ref = VariableRef(actual_name)
@@ -6643,6 +7263,7 @@ class IRBuilder:
                         hasattr(self, "consumed_arrays")
                         and var.sym in self.consumed_arrays
                     )
+
                     was_consumed_by_measurement = (
                         hasattr(self, "consumed_resources")
                         and var.sym in self.consumed_resources
@@ -6653,7 +7274,9 @@ class IRBuilder:
                     )
 
                     # Handle partially consumed arrays
-                    if len(consumed_indices) > 0 and len(consumed_indices) < var.size:
+                    # BUT: Skip if the whole array was consumed by an @owned function
+                    if (len(consumed_indices) > 0 and len(consumed_indices) < var.size
+                        and not was_consumed_by_function):
                         # Array was partially consumed - need to discard entire array
                         if var_name not in cleaned_up_arrays:
                             self.current_block.statements.append(
@@ -6728,16 +7351,6 @@ class IRBuilder:
                                     remapped_consumed = True
                             
                             # Check if array was consumed by an @owned function call or by measurements
-                            # Debug logging
-                            if var.sym == 'c_d' and self.current_function_name == 'main':
-                                import sys
-                                print(f"DEBUG: Checking if c_d was consumed:", file=sys.stderr)
-                                if hasattr(self, 'consumed_resources'):
-                                    print(f"  consumed_resources = {self.consumed_resources}", file=sys.stderr)
-                                if hasattr(self, 'consumed_arrays'):
-                                    print(f"  consumed_arrays = {self.consumed_arrays}", file=sys.stderr)
-                                print(f"  var.sym = {var.sym}, var_name = {var_name}", file=sys.stderr)
-                            
                             array_consumed = (
                                 (hasattr(self, 'consumed_arrays') and 
                                  (var.sym in self.consumed_arrays or var_name in self.consumed_arrays)) or
@@ -6746,7 +7359,18 @@ class IRBuilder:
                             )
                             
                             
-                            if var_name not in cleaned_up_arrays and not array_consumed and not remapped_consumed:
+                            # Also check if this is a reconstructed array that was passed to a function
+                            is_reconstructed = (hasattr(self, "reconstructed_arrays") and
+                                              var_name in self.reconstructed_arrays)
+
+                            import sys
+                            if var.sym == "c_a":
+                                if hasattr(self, "consumed_arrays"):
+                                    print(f"  consumed_arrays={self.consumed_arrays}", file=sys.stderr)
+                                if hasattr(self, "reconstructed_arrays"):
+                                    print(f"  reconstructed_arrays={self.reconstructed_arrays}", file=sys.stderr)
+
+                            if var_name not in cleaned_up_arrays and not array_consumed and not remapped_consumed and not is_reconstructed:
                                 # Check if this array has been unpacked or remapped
                                 # If so, we can't discard the original name
                                 if hasattr(self, 'unpacked_vars') and var_name in self.unpacked_vars:
@@ -6829,8 +7453,15 @@ class IRBuilder:
         return False
 
     def _track_consumed_qubits(self, op, consumed: dict[str, set[int]]) -> None:
-        """Track which qubits are consumed by an operation."""
+        """Track which qubits are consumed by an operation or block."""
         op_type = type(op).__name__
+
+        # Handle Block types - recurse into their operations
+        if hasattr(op, "ops") and op_type not in ["Measure", "If", "Else", "While"]:
+            # This is a custom Block - analyze its operations
+            for nested_op in op.ops:
+                self._track_consumed_qubits(nested_op, consumed)
+            return
 
         if op_type == "Measure" and hasattr(op, "qargs") and op.qargs:
             for qarg in op.qargs:
@@ -6926,7 +7557,6 @@ class IRBuilder:
     def _add_results(self, block) -> None:
         """Add result() calls for classical registers."""
         # Debug: Uncomment to see unpacked_vars state
-        # print(f"DEBUG: _add_results called, unpacked_vars: {getattr(self, 'unpacked_vars', {})}")
         if hasattr(block, "vars"):
             for var in block.vars:
                 if type(var).__name__ == "CReg":

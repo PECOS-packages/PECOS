@@ -43,7 +43,8 @@ class TestLinearityPatterns:
 
         # Function should return the modified qubits
         assert "-> array[quantum.qubit, 3]:" in guppy_code
-        assert "return q" in guppy_code
+        # Array is unpacked for element access, then reconstructed for return
+        assert ("return q" in guppy_code or "return array(q_0, q_1, q_2)" in guppy_code)
 
         # Main should capture the returned qubits
         assert "q = test_linearity_patterns_prepare_ghz(q)" in guppy_code
@@ -85,8 +86,8 @@ class TestLinearityPatterns:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Should handle conditional consumption
-        assert "if flag[0]:" in guppy_code
+        # Should handle conditional consumption (with unpacking, flag[0] becomes flag_0)
+        assert ("if flag[0]:" in guppy_code or "if flag_0:" in guppy_code)
 
         # TODO: Future enhancement - automatic cleanup in else branch
         # Currently, conditional consumption may leave resources unconsumed
@@ -251,7 +252,8 @@ class TestResourceManagement:
 
         # Function should return data but not ancilla
         assert "-> array[quantum.qubit, 1]:" in guppy_code
-        assert "return data" in guppy_code
+        # Array may be unpacked for element access, then reconstructed for return
+        assert ("return data" in guppy_code or "return array(data_" in guppy_code)
 
     def test_all_paths_consume_resources(self) -> None:
         """Test that all execution paths consume quantum resources."""
@@ -274,8 +276,8 @@ class TestResourceManagement:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Both branches should consume q[1]
-        assert "if flag[0]:" in guppy_code
+        # Both branches should consume q[1] (with unpacking, flag[0] becomes flag_0)
+        assert ("if flag[0]:" in guppy_code or "if flag_0:" in guppy_code)
         assert "else:" in guppy_code
 
         # TODO: Else branch generation for resource consumption
@@ -283,4 +285,4 @@ class TestResourceManagement:
         # This means not all paths consume resources
 
         # For now, just verify the structure is generated
-        assert "if flag[0]:" in guppy_code
+        assert ("if flag[0]:" in guppy_code or "if flag_0:" in guppy_code)

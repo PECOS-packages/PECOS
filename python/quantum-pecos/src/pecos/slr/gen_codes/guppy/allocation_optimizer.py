@@ -57,6 +57,9 @@ class AllocationDecision:
     local_elements: set[int] = field(
         default_factory=set,
     )  # Which elements to allocate locally
+    reused_elements: set[int] = field(
+        default_factory=set,
+    )  # Which elements are reused after consumption (need replacement)
     reasons: list[str] = field(default_factory=list)
 
 
@@ -163,6 +166,11 @@ class AllocationOptimizer:
                     and index in self.qubit_usage[array_name]
                 ):
                     usage = self.qubit_usage[array_name][index]
+
+                    # Check if this qubit was already consumed (measured)
+                    # If so, this is a reuse after consumption
+                    if usage.consumption_line is not None and usage.consumption_line < self.current_line:
+                        usage.reused_after_consumption = True
 
                     # Update first/last use
                     if usage.first_use_line == float("inf"):
@@ -280,14 +288,20 @@ class AllocationOptimizer:
                     f"Elements {local_candidates} can be allocated locally",
                 )
             else:
-                # Full local allocation - disable for now until implementation is complete
-                decision.strategy = AllocationStrategy.PRE_ALLOCATE
+                # Full local allocation
+                decision.strategy = AllocationStrategy.LOCAL_ALLOCATE
+                decision.local_elements = local_candidates
                 decision.reasons.append(
-                    "All elements are short-lived and consumed early (local allocation not fully implemented)",
+                    "All elements are short-lived and consumed early",
                 )
 
         # Additional heuristics
-        if any(usage.reused_after_consumption for usage in elements.values()):
+        # Track which elements are reused after consumption (need replacement)
+        for index, usage in elements.items():
+            if usage.reused_after_consumption:
+                decision.reused_elements.add(index)
+
+        if decision.reused_elements:
             decision.strategy = AllocationStrategy.PRE_ALLOCATE
             decision.reasons.append("Some elements are reused after consumption")
             decision.local_elements.clear()

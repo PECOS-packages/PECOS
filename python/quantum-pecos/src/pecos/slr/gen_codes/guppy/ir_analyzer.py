@@ -70,18 +70,20 @@ class ArrayAccessInfo:
         if not self.has_individual_access:
             return False
 
-        # Don't unpack if only one element is accessed - use direct indexing instead
-        # This avoids the PlaceNotUsedError when we unpack all but only use one
-        if len(self.element_accesses) == 1:
-            return False
-
         # If we have operations between measurements, need unpacking
+        # (e.g., measure then use - requires qubit replacement)
         if self.has_operations_between:
             return True
 
         # If we have conditional access, need unpacking
         if self.has_conditionals_between:
             return True
+
+        # Don't unpack if only one element is accessed - use direct indexing instead
+        # This avoids the PlaceNotUsedError when we unpack all but only use one
+        # But only if we don't have operations/conditionals between (checked above)
+        if len(self.element_accesses) == 1:
+            return False
         
         # For quantum arrays, if we have individual element measurements (consumed),
         # we need unpacking to avoid MoveOutOfSubscriptError

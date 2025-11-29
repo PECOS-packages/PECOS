@@ -35,14 +35,18 @@ def test_conditional_resource_balancing() -> None:
     # print(code)
 
     # Both branches should exist
-    assert "if flag[0]:" in code
+    # With unpacking, flag[0] becomes flag_0
+    assert ("if flag[0]:" in code or "if flag_0:" in code)
     assert "else:" in code
 
     # Check measurements in branches
     lines = code.split("\n")
 
     # Find the if and else blocks
-    if_idx = next(i for i, line in enumerate(lines) if "if flag[0]:" in line)
+    # Support both array access and unpacked variable
+    if_idx = next((i for i, line in enumerate(lines) if ("if flag[0]:" in line or "if flag_0:" in line)), -1)
+    if if_idx == -1:
+        raise AssertionError("Could not find if statement")
     else_idx = next(i for i, line in enumerate(lines) if line.strip() == "else:")
 
     # Check that both branches have measurements
@@ -108,7 +112,8 @@ def test_function_scope_returns() -> None:
     code = gen.get_output()
 
     # With dynamic allocation, only q_0 is allocated and measured, no cleanup needed for q_1
-    # Check that the measurement happened correctly
-    assert "c[0] = quantum.measure(q_0)" in code or "c_0 = quantum.measure(q_0)" in code
+    # Check that the measurement happened correctly (may be q_0, q_0_local, or c_0)
+    assert ("c[0] = quantum.measure(q_0)" in code or "c_0 = quantum.measure(q_0)" in code
+            or "c[0] = quantum.measure(q_0_local)" in code or "c_0 = quantum.measure(q_0_local)" in code)
     # Check that result is generated
     assert 'result("c", c)' in code

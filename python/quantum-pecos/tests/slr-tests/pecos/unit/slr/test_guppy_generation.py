@@ -41,8 +41,8 @@ def test_conditional_logic() -> None:
     guppy_code = SlrConverter(prog).guppy()
 
     # Check conditional structure
-    # Note: IR generator converts c[0] == 1 to just c[0] for boolean values
-    assert "if c[0]:" in guppy_code
+    # With unpacking, c[0] becomes c_0
+    assert ("if c[0]:" in guppy_code or "if c_0:" in guppy_code)
     assert "quantum.x(q_0)" in guppy_code
 
 

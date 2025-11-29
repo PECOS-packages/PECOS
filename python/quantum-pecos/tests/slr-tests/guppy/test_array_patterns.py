@@ -31,11 +31,12 @@ class TestArrayUnpacking:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Should unpack array
-        assert "# Unpack q for individual access" in guppy_code
-        assert "q_0, q_1, q_2, q_3 = q" in guppy_code
+        # With dynamic allocation, qubits are allocated individually
+        # Check that individual qubit variables are used
+        assert "q_0" in guppy_code
+        assert "q_1" in guppy_code
 
-        # Should use unpacked variables
+        # Should use individual qubit variables
         assert "quantum.measure(q_0)" in guppy_code
         assert "quantum.h(q_1)" in guppy_code
 

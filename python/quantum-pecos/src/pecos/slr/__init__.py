@@ -16,14 +16,19 @@ from pecos.slr.main import Main
 from pecos.slr.main import (
     Main as SLR,
 )
-from pecos.slr.misc import Barrier, Comment, Parallel, Permute
+from pecos.slr.misc import Barrier, Comment, Parallel, Permute, Return
 from pecos.slr.slr_converter import SlrConverter
+from pecos.slr.types import Array
+from pecos.slr.types import Bit as BitType
+from pecos.slr.types import Qubit as QubitType
 from pecos.slr.vars import Bit, CReg, QReg, Qubit, Vars
 
 __all__ = [
     "SLR",
+    "Array",
     "Barrier",
     "Bit",
+    "BitType",
     "Block",
     "CReg",
     "Comment",
@@ -34,7 +39,9 @@ __all__ = [
     "Permute",
     "QReg",
     "Qubit",
+    "QubitType",
     "Repeat",
+    "Return",
     "SlrConverter",
     "Vars",
     "While",

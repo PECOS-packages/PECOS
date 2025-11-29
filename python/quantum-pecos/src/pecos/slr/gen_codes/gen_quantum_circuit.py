@@ -202,6 +202,9 @@ class QuantumCircuitGenerator(Generator):
         if op_class == "Comment":
             # Comments don't appear in QuantumCircuit
             pass
+        elif op_class == "Return":
+            # Return is metadata for type checking, not a QuantumCircuit operation
+            pass
         elif op_class == "Barrier":
             self._flush_tick()
         elif op_class == "Permute":

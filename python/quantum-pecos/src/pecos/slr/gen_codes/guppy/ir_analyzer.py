@@ -31,6 +31,10 @@ class ArrayAccessInfo:
     has_operations_between: bool = False
     has_conditionals_between: bool = False
 
+    # NEW: Track which specific elements are conditionally accessed
+    # This is more precise than the boolean flag above
+    conditionally_accessed_elements: set[int] = field(default_factory=set)
+
     # Consumption info
     elements_consumed: set[int] = field(default_factory=set)
     fully_consumed: bool = False
@@ -48,51 +52,14 @@ class ArrayAccessInfo:
 
     @property
     def needs_unpacking(self) -> bool:
-        """Determine if this array needs unpacking."""
-        # Classical arrays (CReg) can be unpacked if they have individual element access
-        # and are not used in result() as a full array
-        if self.is_classical:
-            # Check if used in result() as full array
-            # For now, we'll allow unpacking for classical arrays with element access
-            if not self.element_accesses:
-                return False
-            # If we have multiple element accesses, unpack for cleaner code
-            if len(self.element_accesses) > 1:
-                return True
+        """Determine if this array needs unpacking.
 
-        # If there's a full array measurement, don't unpack
-        # Even if there are individual element accesses for gates
-        if self.full_array_accesses:
-            return False
+        This uses a rule-based decision tree for clearer, more maintainable logic.
+        See unpacking_rules.py for the detailed decision tree implementation.
+        """
+        from pecos.slr.gen_codes.guppy.unpacking_rules import should_unpack_array
 
-        # Need unpacking if we have individual element access
-        # and can't use measure_array
-        if not self.has_individual_access:
-            return False
-
-        # If we have operations between measurements, need unpacking
-        # (e.g., measure then use - requires qubit replacement)
-        if self.has_operations_between:
-            return True
-
-        # If we have conditional access, need unpacking
-        if self.has_conditionals_between:
-            return True
-
-        # Don't unpack if only one element is accessed - use direct indexing instead
-        # This avoids the PlaceNotUsedError when we unpack all but only use one
-        # But only if we don't have operations/conditionals between (checked above)
-        if len(self.element_accesses) == 1:
-            return False
-
-        # For quantum arrays, if we have individual element measurements (consumed),
-        # we need unpacking to avoid MoveOutOfSubscriptError
-        if not self.is_classical and self.elements_consumed:
-            # Individual measurements on quantum arrays require unpacking
-            return True
-
-        # If not all elements are accessed together, need unpacking
-        return bool(not self.all_elements_accessed)
+        return should_unpack_array(self)
 
 
 @dataclass
@@ -131,11 +98,20 @@ class IRAnalyzer:
         # First, collect array information from variables
         self._collect_array_info(block, variable_context)
 
+        # Perform data flow analysis to get precise information
+        from pecos.slr.gen_codes.guppy.data_flow import DataFlowAnalyzer
+
+        data_flow_analyzer = DataFlowAnalyzer()
+        data_flow = data_flow_analyzer.analyze(block, variable_context)
+
         # Analyze operations to determine access patterns
         if hasattr(block, "ops"):
             for op in block.ops:
                 self._analyze_operation(op)
                 self.position_counter += 1
+
+        # Update array info with data flow analysis results
+        self._integrate_data_flow(data_flow)
 
         # Determine which arrays need unpacking
         # Special case: if we have nested blocks but @owned parameters, we must unpack
@@ -361,3 +337,41 @@ class IRAnalyzer:
                     # Need to rename this variable
                     new_name = f"{var.sym}_reg"
                     plan.renamed_variables[var.sym] = new_name
+
+    def _integrate_data_flow(self, data_flow) -> None:
+        """Integrate data flow analysis results into array access info.
+
+        This provides more precise information about operations between accesses,
+        reducing false positives from the heuristic analysis.
+
+        Args:
+            data_flow: DataFlowAnalysis from the data flow analyzer
+        """
+        from pecos.slr.gen_codes.guppy.data_flow import DataFlowAnalysis
+
+        if not isinstance(data_flow, DataFlowAnalysis):
+            return
+
+        # For each array element in the data flow analysis
+        for (array_name, index), flow_info in data_flow.element_flows.items():
+            if array_name in self.array_info:
+                info = self.array_info[array_name]
+
+                # Update has_operations_between with precise data flow information
+                # Only set to True if THIS SPECIFIC element is used after its own measurement
+                if flow_info.has_use_after_consumption():
+                    # Mark that THIS array has operations between for THIS element
+                    # This is more precise than the heuristic which marks the whole array
+                    info.has_operations_between = True
+
+        # Also check conditional accesses from data flow
+        for array_name, index in data_flow.conditional_accesses:
+            if array_name in self.array_info:
+                info = self.array_info[array_name]
+                # NEW: Track the specific element that is conditionally accessed
+                info.conditionally_accessed_elements.add(index)
+
+                # Keep the old flag for backward compatibility
+                # But now we have more precise information in conditionally_accessed_elements
+                if index in info.element_accesses:
+                    info.has_conditionals_between = True

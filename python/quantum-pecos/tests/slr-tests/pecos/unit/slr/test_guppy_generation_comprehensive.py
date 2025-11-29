@@ -38,13 +38,14 @@ def test_quantum_teleportation() -> None:
     # Check key elements
     # IR generator uses dynamic allocation for single-element arrays
     assert "quantum.h(epr_0)" in guppy_code
-    assert "quantum.cx(epr_0, bob[0])" in guppy_code
+    # bob is unpacked because it's used in conditional blocks (improved behavior)
+    assert "quantum.cx(epr_0, bob_0)" in guppy_code
     assert "c_0 = quantum.measure(alice_0)" in guppy_code
     assert "c_1 = quantum.measure(epr_0)" in guppy_code
     assert "if c_1:" in guppy_code
-    assert "quantum.x(bob[0])" in guppy_code
+    assert "quantum.x(bob_0)" in guppy_code
     assert "if c_0:" in guppy_code
-    assert "quantum.z(bob[0])" in guppy_code
+    assert "quantum.z(bob_0)" in guppy_code
 
 
 def test_syndrome_extraction_pattern() -> None:

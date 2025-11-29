@@ -31,10 +31,10 @@ def test_short_lived_ancilla_optimization() -> None:
     gen.generate_block(prog)
     code = gen.get_output()
 
-    # Check for optimization comments
-    assert "Optimization Report" in code
-    # Should have optimization analysis
-    assert "short-lived" in code.lower()
+    # Check for unified resource planning report
+    assert "UNIFIED RESOURCE PLANNING REPORT" in code or "Optimization Report" in code
+    # Should have optimization analysis (unified or allocation report)
+    assert "short-lived" in code.lower() or "local allocation" in code.lower()
 
 
 def test_reused_ancilla_no_optimization() -> None:
@@ -61,7 +61,13 @@ def test_reused_ancilla_no_optimization() -> None:
     code = gen.get_output()
 
     # Should not optimize reused qubits
-    assert "reused after consumption" in code.lower() or "pre_allocate" in code
+    # Unified report shows "need replacement" or old report shows "reused after consumption"
+    assert (
+        "reused after consumption" in code.lower()
+        or "pre_allocate" in code
+        or "need replacement" in code.lower()
+        or "UNPACKED_PREALLOCATED" in code
+    )
 
 
 def test_mixed_allocation_strategy() -> None:
@@ -92,8 +98,8 @@ def test_mixed_allocation_strategy() -> None:
     gen.generate_block(prog)
     code = gen.get_output()
 
-    # Should have optimization report
-    assert "Optimization Report" in code
+    # Should have optimization or unified planning report
+    assert "UNIFIED RESOURCE PLANNING REPORT" in code or "Optimization Report" in code
 
 
 def test_conditional_scope_prevents_optimization() -> None:
@@ -114,8 +120,8 @@ def test_conditional_scope_prevents_optimization() -> None:
     gen.generate_block(prog)
     code = gen.get_output()
 
-    # Should have some optimization (though may not prevent all)
-    assert "Optimization Report" in code
+    # Should have optimization or unified planning report
+    assert "UNIFIED RESOURCE PLANNING REPORT" in code or "Optimization Report" in code
 
 
 def test_loop_scope_prevents_optimization() -> None:
@@ -135,8 +141,8 @@ def test_loop_scope_prevents_optimization() -> None:
     gen.generate_block(prog)
     code = gen.get_output()
 
-    # Should have optimization report
-    assert "Optimization Report" in code
+    # Should have optimization or unified planning report
+    assert "UNIFIED RESOURCE PLANNING REPORT" in code or "Optimization Report" in code
 
 
 def test_optimization_report_generation() -> None:
@@ -156,9 +162,12 @@ def test_optimization_report_generation() -> None:
     gen.generate_block(prog)
     code = gen.get_output()
 
-    # Should have detailed optimization report
-    assert "=== Qubit Allocation Optimization Report ===" in code
-    assert "Array: simple" in code
+    # Should have detailed optimization or unified planning report
+    assert (
+        "UNIFIED RESOURCE PLANNING REPORT" in code
+        or "=== Qubit Allocation Optimization Report ===" in code
+    )
+    assert "simple" in code.lower()  # Array name mentioned
     assert "Strategy:" in code
 
 

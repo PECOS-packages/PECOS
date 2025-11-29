@@ -188,6 +188,9 @@ class StimGenerator(Generator):
         if op_class == "Comment":
             # Comments can't be directly added via API
             pass
+        elif op_class == "Return":
+            # Return is metadata for type checking, not a Stim operation
+            pass
         elif op_class == "Barrier":
             self.circuit.append("TICK")
         elif op_class == "Permute":

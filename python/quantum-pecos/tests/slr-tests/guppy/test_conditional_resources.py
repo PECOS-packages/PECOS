@@ -124,8 +124,11 @@ def test_nested_conditionals() -> None:
 
     guppy = SlrConverter(prog).guppy()
 
-    # Check that unpacking happened
-    assert "q_0, q_1, q_2 = q" in guppy
+    # With dynamic allocation optimization, qubits are allocated on demand
+    # Check that qubits are allocated locally rather than pre-allocated
+    assert "q_0 = quantum.qubit()" in guppy
+    assert "q_1 = quantum.qubit()" in guppy
+    assert "q_2 = quantum.qubit()" in guppy
 
     # Check that all branches have proper structure
     # Should have else branches to balance resources
@@ -133,19 +136,13 @@ def test_nested_conditionals() -> None:
     else_count = sum(1 for line in lines if line.strip() == "else:")
     assert else_count >= 1  # At least one else for resource balancing
 
-    # Verify no unconsumed qubits at end of main
-    # (they should be consumed in branches)
-    for i, line in enumerate(lines):
-        if "# Consume remaining qubits" in line:
-            # Check how many measurements follow
-            remaining_measures = 0
-            for j in range(i + 1, len(lines)):
-                if "quantum.measure" in lines[j]:
-                    remaining_measures += 1
-                elif lines[j].strip() and not lines[j].startswith("#"):
-                    break
-            # With proper conditional handling, minimal cleanup at end
-            assert remaining_measures <= 2
+    # With dynamic allocation, else blocks should allocate fresh qubits for balancing
+    # Check that else blocks consume resources properly
+    assert "_q_1 = quantum.qubit()" in guppy or "_q_2 = quantum.qubit()" in guppy
+
+    # Should compile to HUGR without errors
+    hugr = SlrConverter(prog).hugr()
+    assert hugr is not None
 
 
 def test_no_else_with_unconsumed_resources() -> None:
@@ -168,26 +165,13 @@ def test_no_else_with_unconsumed_resources() -> None:
     assert "else:" in guppy
 
     # The else block should consume q[1]
-    lines = guppy.split("\n")
-    in_else = False
-    else_has_measure = False
-    for line in lines:
-        if line.strip() == "else:":
-            in_else = True
-        elif in_else and "quantum.measure" in line:
-            else_has_measure = True
-            break
-        elif (
-            in_else
-            and line.strip()
-            and not line.strip().startswith("#")
-            and line.strip() != "pass"
-        ):
-            # Left else block
-            in_else = False
+    # With dynamic allocation, else block allocates fresh qubit and measures it
+    assert "_q_1 = quantum.qubit()" in guppy
+    assert "_ = quantum.measure(_q_1)" in guppy
 
-    # Either else has measure or pass (if consumed elsewhere)
-    assert else_has_measure or "pass" in guppy
+    # Should compile to HUGR without errors
+    hugr = SlrConverter(prog).hugr()
+    assert hugr is not None
 
 
 @pytest.mark.optional_dependency

@@ -161,5 +161,7 @@ def test_while_loop_quantum_resource_handling() -> None:
 
     # Check that measurements are properly handled
     assert "while " in code
-    assert "quantum.measure(ancilla[0])" in code or "quantum.measure(ancilla_0)" in code
+    # With dynamic allocation, ancilla is allocated locally in the loop
+    assert "ancilla_0_local = quantum.qubit()" in code
+    assert "quantum.measure(ancilla_0_local)" in code
     assert "quantum.measure_array(q)" in code

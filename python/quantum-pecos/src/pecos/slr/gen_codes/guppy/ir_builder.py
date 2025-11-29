@@ -47,11 +47,11 @@ if TYPE_CHECKING:
     from pecos.slr import Block as SLRBlock
     from pecos.slr.gen_codes.guppy.ir import IRNode
     from pecos.slr.gen_codes.guppy.ir_analyzer import UnpackingPlan
+    from pecos.slr.gen_codes.guppy.unified_resource_planner import (
+        UnifiedResourceAnalysis,
+    )
 
-from pecos.slr.gen_codes.guppy.allocation_optimizer import (
-    AllocationOptimizer,
-    AllocationStrategy,
-)
+# AllocationOptimizer removed - now using UnifiedResourceAnalysis directly
 from pecos.slr.gen_codes.guppy.ir import (
     ArrayAccess,
     ArrayUnpack,
@@ -105,14 +105,15 @@ class IRBuilder:
         self,
         unpacking_plan: UnpackingPlan,
         *,
+        unified_analysis: UnifiedResourceAnalysis | None = None,
         include_optimization_report: bool = False,
     ):
         self.plan = unpacking_plan
+        self.unified_analysis = unified_analysis
         self.context = ScopeContext()
         self.scope_manager = ScopeManager()
         self.current_block: Block | None = None
-        self.allocation_optimizer = AllocationOptimizer()
-        self.allocation_decisions = {}
+        # AllocationOptimizer removed - using UnifiedResourceAnalysis directly
         self.include_optimization_report = include_optimization_report
 
         # Track arrays that have been refreshed by function calls
@@ -201,10 +202,8 @@ class IRBuilder:
         # Collect all existing variable names to avoid conflicts
         self._collect_var_names(main_block)
 
-        # First, analyze allocation patterns
-        self.allocation_decisions = self.allocation_optimizer.analyze_program(
-            main_block,
-        )
+        # Allocation analysis now comes from UnifiedResourceAnalysis
+        # (passed via unified_analysis parameter)
 
         # Analyze qubit usage to identify ancillas
         qubit_analyzer = QubitUsageAnalyzer()
@@ -235,10 +234,9 @@ class IRBuilder:
             module.imports.extend(struct_defs)
 
         # Add optimization report as comments (only if requested)
-        if self.include_optimization_report and self.allocation_decisions:
-            report = self.allocation_optimizer.generate_optimization_report(
-                self.allocation_decisions,
-            )
+        if self.include_optimization_report and self.unified_analysis:
+            # Use unified resource planning report (comprehensive)
+            report = self.unified_analysis.get_report()
             module.imports.extend(
                 [
                     "",
@@ -360,7 +358,13 @@ class IRBuilder:
                     corrected_types = []
                     for param_name in param_names:
                         if param_name in func_refreshed_by_function:
-                            called_func_name = func_refreshed_by_function[param_name]
+                            func_info = func_refreshed_by_function[param_name]
+                            # Extract function name from the dict (or handle legacy string format)
+                            called_func_name = (
+                                func_info["function"]
+                                if isinstance(func_info, dict)
+                                else func_info  # Legacy string format
+                            )
 
                             # Look up the called function's return type
                             if called_func_name in self.function_return_types:
@@ -668,6 +672,8 @@ class IRBuilder:
         self.array_remapping = {}  # Reset array remapping for each function
         # Reset parameter_unpacked_arrays for each function
         self.parameter_unpacked_arrays = set()
+        # Reset explicitly_reset_qubits for each function to prevent cross-contamination
+        self.explicitly_reset_qubits = {}
 
         # Handle different formats of func_info
         if len(func_info) == 3:
@@ -1299,16 +1305,32 @@ class IRBuilder:
 
         # Now convert operations (can use will_return_quantum flag)
         if hasattr(sample_block, "ops"):
-            for op in sample_block.ops:
+            # Store block reference for look-ahead in operation conversion
+            # This enables measurement+Prep pattern detection in _convert_operation
+            self.current_block_ops = sample_block.ops
+            for op_index, op in enumerate(sample_block.ops):
+                # Store current operation index for look-ahead
+                self.current_op_index = op_index
                 stmt = self._convert_operation(op)
                 if stmt:
                     body.statements.append(stmt)
+            # Clear after processing
+            self.current_block_ops = None
+            self.current_op_index = None
 
         # Fix linearity issues: add fresh qubit allocations after consuming operations
         self._fix_post_consuming_linearity_issues(body)
 
         # Fix unused fresh variables in conditional execution paths
         self._fix_unused_fresh_variables(body)
+
+        # Save the current variable remapping (includes changes from Prep operations)
+        # BEFORE restoring previous mapping, as we need it for return statement generation
+        self.function_var_remapping = (
+            self.variable_remapping.copy()
+            if hasattr(self, "variable_remapping")
+            else {}
+        )
 
         # Restore previous remapping
         self.var_remapping = prev_var_remapping
@@ -1404,7 +1426,13 @@ class IRBuilder:
                                 hasattr(self, "refreshed_by_function")
                                 and name in self.refreshed_by_function
                             ):
-                                called_func_name = self.refreshed_by_function[name]
+                                func_info = self.refreshed_by_function[name]
+                                # Extract function name from the dict (or handle legacy string format)
+                                called_func_name = (
+                                    func_info["function"]
+                                    if isinstance(func_info, dict)
+                                    else func_info  # Legacy string format
+                                )
                                 # Look up that function's return type
                                 if called_func_name in self.function_return_types:
                                     called_func_return = self.function_return_types[
@@ -1627,6 +1655,15 @@ class IRBuilder:
                                             # unpacked elements available
                                             # So we use the original index 'i' directly!
                                             element_name = self.unpacked_vars[name][i]
+                                            # Apply variable remapping if element was
+                                            # reassigned (e.g., Prep after Measure)
+                                            if hasattr(self, "function_var_remapping"):
+                                                element_name = (
+                                                    self.function_var_remapping.get(
+                                                        element_name,
+                                                        element_name,
+                                                    )
+                                                )
                                             elements_to_return.append(
                                                 VariableRef(element_name),
                                             )
@@ -1649,13 +1686,33 @@ class IRBuilder:
                         # CRITICAL: Also check consumed_in_function here!
                         # The earlier check (line 1548) might have failed due to return type detection issues
                         if name in consumed_in_function:
-                            # Partial consumption - return only unconsumed elements
+                            # Partial consumption - return unconsumed + explicitly reset elements
                             consumed_indices = consumed_in_function[name]
                             element_names = self.unpacked_vars[name]
-                            # Filter out consumed indices
+
+                            # Get explicitly reset indices
+                            explicitly_reset_indices = set()
+                            if (
+                                hasattr(self, "explicitly_reset_qubits")
+                                and name in self.explicitly_reset_qubits
+                            ):
+                                explicitly_reset_indices = self.explicitly_reset_qubits[
+                                    name
+                                ]
+
+                            # Filter: include unconsumed OR explicitly reset
                             elements_to_return = []
                             for i, elem_name in enumerate(element_names):
-                                if i not in consumed_indices:
+                                if (
+                                    i not in consumed_indices
+                                    or i in explicitly_reset_indices
+                                ):
+                                    # Apply variable remapping if element was reassigned (e.g., Prep after Measure)
+                                    if hasattr(self, "function_var_remapping"):
+                                        elem_name = self.function_var_remapping.get(
+                                            elem_name,
+                                            elem_name,
+                                        )
                                     elements_to_return.append(VariableRef(elem_name))
                             array_construction = FunctionCall(
                                 func_name="array",
@@ -1901,6 +1958,18 @@ class IRBuilder:
                                                 or i in explicitly_reset_indices
                                             ):
                                                 element_name = element_names[i]
+                                                # Apply variable remapping if element was reassigned
+                                                # Use function_var_remapping which includes Prep changes
+                                                if hasattr(
+                                                    self,
+                                                    "function_var_remapping",
+                                                ):
+                                                    element_name = (
+                                                        self.function_var_remapping.get(
+                                                            element_name,
+                                                            element_name,
+                                                        )
+                                                    )
                                                 elements_to_return.append(
                                                     VariableRef(element_name),
                                                 )
@@ -2158,8 +2227,10 @@ class IRBuilder:
             # Check allocation recommendation for this array
             recommendation = self.allocation_recommendations.get(var.sym, {})
 
-            # Check allocation decision for this array
-            decision = self.allocation_decisions.get(var.sym)
+            # Get resource plan from unified analysis if available
+            resource_plan = None
+            if self.unified_analysis:
+                resource_plan = self.unified_analysis.get_plan(var.sym)
 
             # Check if this array needs unpacking (selective measurements)
             needs_unpacking = var.sym in self.plan.arrays_to_unpack
@@ -2171,19 +2242,16 @@ class IRBuilder:
             # But only if it doesn't need unpacking for selective measurements
             # AND not used in full array ops
             # AND not a function parameter in current function
-            # AND the final allocation decision agrees with dynamic allocation
+            # AND the unified resource plan agrees with dynamic allocation
             is_function_parameter = hasattr(self, "current_function_params") and any(
                 param_name == var.sym for param_name, _ in self.current_function_params
             )
 
-            # Use the allocation decision if available, otherwise fall back to recommendation
+            # Use the unified resource plan if available, otherwise fall back to recommendation
             should_use_dynamic = False
-            if decision:
-                # Decision overrides recommendation
-                # LOCAL_ALLOCATE means dynamic allocation (allocate when first used)
-                should_use_dynamic = (
-                    decision.strategy == AllocationStrategy.LOCAL_ALLOCATE
-                )
+            if resource_plan:
+                # Resource plan from unified analysis (authoritative)
+                should_use_dynamic = resource_plan.uses_dynamic_allocation
             else:
                 # Fall back to recommendation
                 should_use_dynamic = recommendation.get("allocation") == "dynamic"
@@ -2298,64 +2366,66 @@ class IRBuilder:
                         if not hasattr(self, "dynamic_allocations"):
                             self.dynamic_allocations = set()
                         self.dynamic_allocations.add(var.sym)
-            elif decision and decision.strategy == AllocationStrategy.LOCAL_ALLOCATE:
-                # Don't pre-allocate - will be allocated when first used
-                self.current_block.statements.append(
-                    Comment(f"Qubits from {var_name} will be allocated locally"),
-                )
-                # Track that this is dynamically allocated
-                if not hasattr(self, "dynamic_allocations"):
-                    self.dynamic_allocations = set()
-                self.dynamic_allocations.add(var.sym)
-            elif decision and decision.strategy == AllocationStrategy.FUNCTION_SCOPED:
-                # Mixed strategy - pre-allocate some, allocate others locally
-                # But only if the array doesn't need unpacking
-                if needs_unpacking:
-                    # Can't use FUNCTION_SCOPED with unpacking - fall back to full pre-allocation
-                    init_expr = FunctionCall(
-                        func_name="array",
-                        args=[
-                            FunctionCall(
-                                func_name="quantum.qubit() for _ in range",
-                                args=[Literal(size)],
+            elif resource_plan and resource_plan.uses_dynamic_allocation:
+                # Check if all elements are local (full dynamic allocation)
+                if len(resource_plan.elements_to_allocate_locally) == size:
+                    # Don't pre-allocate - all will be allocated when first used
+                    self.current_block.statements.append(
+                        Comment(f"Qubits from {var_name} will be allocated locally"),
+                    )
+                    # Track that this is dynamically allocated
+                    if not hasattr(self, "dynamic_allocations"):
+                        self.dynamic_allocations = set()
+                    self.dynamic_allocations.add(var.sym)
+                else:
+                    # Mixed strategy - pre-allocate some, allocate others locally
+                    # But only if the array doesn't need unpacking
+                    if needs_unpacking:
+                        # Can't use mixed allocation with unpacking - fall back to full pre-allocation
+                        init_expr = FunctionCall(
+                            func_name="array",
+                            args=[
+                                FunctionCall(
+                                    func_name="quantum.qubit() for _ in range",
+                                    args=[Literal(size)],
+                                ),
+                            ],
+                        )
+                        assignment = Assignment(
+                            target=VariableRef(var_name),
+                            value=init_expr,
+                        )
+                        self.current_block.statements.append(assignment)
+                        self.current_block.statements.append(
+                            Comment(
+                                f"Note: Full pre-allocation used because {var_name} needs unpacking",
                             ),
-                        ],
-                    )
-                    assignment = Assignment(
-                        target=VariableRef(var_name),
-                        value=init_expr,
-                    )
-                    self.current_block.statements.append(assignment)
+                        )
+                    elif size - len(resource_plan.elements_to_allocate_locally) > 0:
+                        pre_alloc_size = size - len(
+                            resource_plan.elements_to_allocate_locally,
+                        )
+                        init_expr = FunctionCall(
+                            func_name="array",
+                            args=[
+                                FunctionCall(
+                                    func_name="quantum.qubit() for _ in range",
+                                    args=[Literal(pre_alloc_size)],
+                                ),
+                            ],
+                        )
+                        assignment = Assignment(
+                            target=VariableRef(var_name),
+                            value=init_expr,
+                        )
+                        self.current_block.statements.append(assignment)
+
                     self.current_block.statements.append(
                         Comment(
-                            f"Note: Full pre-allocation used because {var_name} needs unpacking",
+                            f"Elements {sorted(resource_plan.elements_to_allocate_locally)} of "
+                            f"{var_name} will be allocated locally",
                         ),
                     )
-                elif decision.original_size - len(decision.local_elements) > 0:
-                    pre_alloc_size = decision.original_size - len(
-                        decision.local_elements,
-                    )
-                    init_expr = FunctionCall(
-                        func_name="array",
-                        args=[
-                            FunctionCall(
-                                func_name="quantum.qubit() for _ in range",
-                                args=[Literal(pre_alloc_size)],
-                            ),
-                        ],
-                    )
-                    assignment = Assignment(
-                        target=VariableRef(var_name),
-                        value=init_expr,
-                    )
-                    self.current_block.statements.append(assignment)
-
-                self.current_block.statements.append(
-                    Comment(
-                        f"Elements {sorted(decision.local_elements)} of "
-                        f"{var_name} will be allocated locally",
-                    ),
-                )
             else:
                 # Check if this is an ancilla array that should be decomposed
                 if hasattr(self, "ancilla_qubits") and var_name in self.ancilla_qubits:
@@ -2867,9 +2937,13 @@ class IRBuilder:
         """Create an array reconstruction expression for returns: array([q_0, q_1])"""
 
         # Apply variable remapping to get the latest names
-        remapped_element_names = [
-            self.variable_remapping.get(elem, elem) for elem in element_names
-        ]
+        # Use function_var_remapping if available (includes Prep changes)
+        remapping = (
+            self.function_var_remapping
+            if hasattr(self, "function_var_remapping")
+            else self.variable_remapping if hasattr(self, "variable_remapping") else {}
+        )
+        remapped_element_names = [remapping.get(elem, elem) for elem in element_names]
 
         class ArrayReconstructionExpression(Expression):
             def __init__(self, elements):
@@ -3017,6 +3091,10 @@ class IRBuilder:
             return self._convert_set_operation(op)
         if op_type == "Barrier":
             # Barriers are just synchronization points, ignore in Guppy
+            return None
+        if op_type == "Return":
+            # Return is metadata for type checking and block analysis
+            # The actual return handling is done by the function generation code
             return None
 
         # Unknown operation
@@ -3361,18 +3439,21 @@ class IRBuilder:
             # - Function returns only the qubits that weren't consumed
             #
             # Check if this qubit is marked as needing replacement due to reuse
-            # (e.g., allocation optimizer detected it's used again after consumption)
+            # (e.g., unified analysis detected it's used again after consumption)
             needs_replacement_for_reuse = False
             if (
-                hasattr(self, "allocation_decisions")
+                self.unified_analysis
                 and hasattr(qarg, "reg")
                 and hasattr(qarg.reg, "sym")
                 and hasattr(qarg, "index")
             ):
                 array_name = qarg.reg.sym
                 qubit_index = qarg.index
-                decision = self.allocation_decisions.get(array_name)
-                if decision and qubit_index in decision.reused_elements:
+                resource_plan = self.unified_analysis.get_plan(array_name)
+                if (
+                    resource_plan
+                    and qubit_index in resource_plan.elements_requiring_replacement
+                ):
                     # CRITICAL: Check if the next operation is a Prep on this same qubit
                     # If so, skip measurement replacement - let Prep handle it
                     next_op_is_prep_on_same_qubit = False
@@ -3612,7 +3693,10 @@ class IRBuilder:
 
                 # Check if we already have a variable for this array element
                 if array_index_key in self.allocated_qubit_vars:
-                    return VariableRef(self.allocated_qubit_vars[array_index_key])
+                    var_name = self.allocated_qubit_vars[array_index_key]
+                    # Apply variable remapping if exists (for Prep operations)
+                    var_name = self.variable_remapping.get(var_name, var_name)
+                    return VariableRef(var_name)
 
                 # Create a new variable name for this specific array element
                 ancilla_var = self._get_unique_var_name(original_array, qarg.index)
@@ -3620,13 +3704,20 @@ class IRBuilder:
                 # Record the mapping and allocate the qubit
                 self.allocated_qubit_vars[array_index_key] = ancilla_var
 
+                # Also track in allocated_ancillas for cleanup
+                if not hasattr(self, "allocated_ancillas"):
+                    self.allocated_ancillas = set()
+                self.allocated_ancillas.add(ancilla_var)
+
                 alloc_stmt = Assignment(
                     target=VariableRef(ancilla_var),
                     value=FunctionCall(func_name="quantum.qubit", args=[]),
                 )
                 self.current_block.statements.append(alloc_stmt)
 
-                return VariableRef(ancilla_var)
+                # Apply variable remapping if exists (for Prep operations)
+                var_name = self.variable_remapping.get(ancilla_var, ancilla_var)
+                return VariableRef(var_name)
 
             # Check if this variable is part of a struct and has been unpacked
             if hasattr(self, "var_remapping") and original_array in self.var_remapping:
@@ -3707,8 +3798,13 @@ class IRBuilder:
                             return VariableRef(var_name)
 
                 # Check if this element should be allocated locally
-                decision = self.allocation_decisions.get(original_array)
-                if decision and qarg.index in decision.local_elements:
+                resource_plan = None
+                if self.unified_analysis:
+                    resource_plan = self.unified_analysis.get_plan(original_array)
+                if (
+                    resource_plan
+                    and qarg.index in resource_plan.elements_to_allocate_locally
+                ):
                     # This element should be allocated locally
                     local_var_name = f"{original_array}_{qarg.index}_local"
 
@@ -3725,6 +3821,11 @@ class IRBuilder:
                         )
                         self.current_block.statements.append(alloc_stmt)
 
+                    # Apply variable remapping if exists (for Prep operations)
+                    local_var_name = self.variable_remapping.get(
+                        local_var_name,
+                        local_var_name,
+                    )
                     return VariableRef(local_var_name)
 
                 # Array element access
@@ -3752,6 +3853,11 @@ class IRBuilder:
                                     original_array,
                                     qarg.index,
                                 )
+                            # Apply variable remapping if exists (for Prep operations)
+                            unpacked_name = self.variable_remapping.get(
+                                unpacked_name,
+                                unpacked_name,
+                            )
                             return VariableRef(unpacked_name)
 
                 # Not unpacked or inside function, use array access
@@ -4477,6 +4583,7 @@ class IRBuilder:
                                 "sym",
                             ):
                                 array_name = meas_qarg.reg.sym
+                                # Check both unpacked vars and locally allocated vars
                                 if (
                                     hasattr(self, "unpacked_vars")
                                     and array_name in self.unpacked_vars
@@ -4490,6 +4597,21 @@ class IRBuilder:
                                             # Same qubit - skip discard
                                             skip_discard = True
                                             break
+                                # Also check if this is a locally allocated qubit (two patterns)
+                                elif hasattr(meas_qarg, "index"):
+                                    qubit_index = meas_qarg.index
+                                    # Pattern 1: {array}_{index}_local (from line 3712)
+                                    local_var_name = f"{array_name}_{qubit_index}_local"
+                                    # Pattern 2: {array}_{index} (from UNPACKED_MIXED with local allocation)
+                                    unpacked_var_name = f"{array_name}_{qubit_index}"
+
+                                    if target.name in (
+                                        local_var_name,
+                                        unpacked_var_name,
+                                    ):
+                                        # This is the same qubit that was measured - skip discard
+                                        skip_discard = True
+                                        break
 
                 # CRITICAL: Use discard-then-allocate pattern for reset
                 # Pattern: quantum.discard(q); q = quantum.qubit()
@@ -4510,6 +4632,11 @@ class IRBuilder:
 
                     # Add remapping so subsequent operations use the new name
                     self.variable_remapping[old_name] = new_name
+
+                    # Track the new variable for cleanup
+                    if not hasattr(self, "allocated_ancillas"):
+                        self.allocated_ancillas = set()
+                    self.allocated_ancillas.add(new_name)
 
                     # Allocate to the new variable
                     fresh_target = VariableRef(new_name)
@@ -4800,6 +4927,30 @@ class IRBuilder:
                                         value=meas_expr,
                                     ),
                                 )
+                        elif (
+                            hasattr(self, "dynamic_allocations")
+                            and res_name in self.dynamic_allocations
+                        ):
+                            # For dynamic allocations, allocate a fresh qubit and measure it
+                            # Always allocate a fresh qubit for consumption (for linearity balancing)
+                            var_name = self._get_unique_var_name(res_name, idx)
+                            block.statements.append(
+                                Assignment(
+                                    target=VariableRef(var_name),
+                                    value=FunctionCall(
+                                        func_name="quantum.qubit",
+                                        args=[],
+                                    ),
+                                ),
+                            )
+                            # Measure the qubit
+                            meas_expr = FunctionCall(
+                                func_name="quantum.measure",
+                                args=[VariableRef(var_name)],
+                            )
+                            block.statements.append(
+                                Assignment(target=VariableRef("_"), value=meas_expr),
+                            )
                         else:
                             # Use array indexing
                             meas_expr = FunctionCall(
@@ -5918,6 +6069,10 @@ class IRBuilder:
         original_block_name = getattr(block, "block_name", block_name)
         original_block_module = getattr(block, "block_module", block_type.__module__)
 
+        # If we're in a loop, check if we need to restore array sizes before this call
+        if self.scope_manager.is_in_loop():
+            self._restore_array_sizes_for_block_call(block)
+
         # Check if this is a core block that should be inlined
         if original_block_name in self.CORE_BLOCKS:
             # Inline core blocks
@@ -6252,27 +6407,49 @@ class IRBuilder:
                         args.append(VariableRef(actual_var))
                         quantum_args.append(var)
                 else:
-                    # This array was decomposed into individual qubits - reconstruct it
-                    element_names = self.decomposed_ancilla_arrays[var]
-                    array_construction = self._create_array_construction(element_names)
-                    args.append(array_construction)
-                    quantum_args.append(var)
+                    # This array was decomposed into individual qubits
+                    # Check if there's a refreshed version from a previous function call
+                    if (
+                        hasattr(self, "refreshed_arrays")
+                        and var in self.refreshed_arrays
+                    ):
+                        # Use the refreshed array from previous function call
+                        refreshed_name = self.refreshed_arrays[var]
+                        args.append(VariableRef(refreshed_name))
+                        quantum_args.append(var)
+                    else:
+                        # Reconstruct from decomposed elements
+                        element_names = self.decomposed_ancilla_arrays[var]
+                        array_construction = self._create_array_construction(
+                            element_names,
+                        )
+                        args.append(array_construction)
+                        quantum_args.append(var)
             elif (
                 hasattr(self, "dynamic_allocations") and var in self.dynamic_allocations
             ):
-                # Dynamically allocated - construct array from individual qubits
-                # Get the size from context
-                var_info = self.context.lookup_variable(var)
-                if var_info and var_info.size:
-                    size = var_info.size
-                    element_names = [f"{var}_{i}" for i in range(size)]
-                    array_construction = self._create_array_construction(element_names)
-                    args.append(array_construction)
+                # Dynamically allocated - check if there's a refreshed version first
+                if hasattr(self, "refreshed_arrays") and var in self.refreshed_arrays:
+                    # Use the refreshed array from previous function call
+                    refreshed_name = self.refreshed_arrays[var]
+                    args.append(VariableRef(refreshed_name))
                     quantum_args.append(var)
                 else:
-                    # Fallback - just pass the variable (will likely error)
-                    args.append(VariableRef(actual_var))
-                    quantum_args.append(actual_var)
+                    # Dynamically allocated - construct array from individual qubits
+                    # Get the size from context
+                    var_info = self.context.lookup_variable(var)
+                    if var_info and var_info.size:
+                        size = var_info.size
+                        element_names = [f"{var}_{i}" for i in range(size)]
+                        array_construction = self._create_array_construction(
+                            element_names,
+                        )
+                        args.append(array_construction)
+                        quantum_args.append(var)
+                    else:
+                        # Fallback - just pass the variable (will likely error)
+                        args.append(VariableRef(actual_var))
+                        quantum_args.append(actual_var)
             elif hasattr(self, "unpacked_vars") and actual_var in self.unpacked_vars:
                 # Array was unpacked (either from parameter or return value)
                 # OPTIMIZATION: If we're using ALL unpacked elements AND the array variable exists,
@@ -6742,10 +6919,13 @@ class IRBuilder:
 
                 # Track this array as refreshed by function call
                 self.refreshed_arrays[name] = fresh_name
-                # Track which function refreshed this array
+                # Track which function refreshed this array and its position (0 for single return)
                 if not hasattr(self, "refreshed_by_function"):
                     self.refreshed_by_function = {}
-                self.refreshed_by_function[name] = func_name
+                self.refreshed_by_function[name] = {
+                    "function": func_name,
+                    "position": 0,
+                }
 
                 # If this is a struct, decompose it to avoid field access issues
                 if name in self.struct_info:
@@ -7059,7 +7239,7 @@ class IRBuilder:
                     # Standard tuple assignment - but check if we need to avoid borrowed variables
                     # OR if variables were unpacked before the call
                     fresh_targets = []
-                    for arg in quantum_args:
+                    for arg_idx, arg in enumerate(quantum_args):
                         # CRITICAL: Check if this parameter was already unpacked before the call
                         # If so, we MUST use a fresh variable name (can't assign to consumed variable)
                         # This is the same issue we fixed for single returns
@@ -7140,10 +7320,13 @@ class IRBuilder:
                             if not hasattr(self, "refreshed_arrays"):
                                 self.refreshed_arrays = {}
                             self.refreshed_arrays[arg] = fresh_name
-                            # Track which function refreshed this array
+                            # Track which function refreshed this array and its position in return tuple
                             if not hasattr(self, "refreshed_by_function"):
                                 self.refreshed_by_function = {}
-                            self.refreshed_by_function[arg] = func_name
+                            self.refreshed_by_function[arg] = {
+                                "function": func_name,
+                                "position": arg_idx,
+                            }
 
                             # Also track in fresh_return_vars for cleanup in procedural functions
                             if was_unpacked:
@@ -7185,10 +7368,13 @@ class IRBuilder:
                                 self.refreshed_arrays = {}
                             # Always update the mapping for return handling
                             self.refreshed_arrays[original_name] = fresh_name
-                            # Track which function refreshed this array
+                            # Track which function refreshed this array and its position in return tuple
                             if not hasattr(self, "refreshed_by_function"):
                                 self.refreshed_by_function = {}
-                            self.refreshed_by_function[original_name] = func_name
+                            self.refreshed_by_function[original_name] = {
+                                "function": func_name,
+                                "position": i,
+                            }
 
                             # Also track in fresh_return_vars for cleanup in procedural functions
                             # All fresh variables from tuple returns need cleanup tracking
@@ -7323,12 +7509,13 @@ class IRBuilder:
                                         self.refreshed_arrays[original_name] = (
                                             fresh_name
                                         )
-                                        # Track which function refreshed this array
+                                        # Track which function refreshed this array and its position in return tuple
                                         if not hasattr(self, "refreshed_by_function"):
                                             self.refreshed_by_function = {}
-                                        self.refreshed_by_function[original_name] = (
-                                            func_name
-                                        )
+                                        self.refreshed_by_function[original_name] = {
+                                            "function": func_name,
+                                            "position": i,
+                                        }
                                         self._update_context_for_returned_variable(
                                             original_name,
                                             fresh_name,
@@ -8218,16 +8405,26 @@ class IRBuilder:
 
                     if value_ref is None:
                         # Check if this array was unpacked
-                        if var_name in self.plan.arrays_to_unpack or (
+                        # Check both var_name (original) and actual_name (renamed)
+                        is_unpacked = var_name in self.plan.arrays_to_unpack or (
                             hasattr(self, "unpacked_vars")
-                            and actual_name in self.unpacked_vars
-                        ):
+                            and (
+                                var_name in self.unpacked_vars
+                                or actual_name in self.unpacked_vars
+                            )
+                        )
+
+                        if is_unpacked:
                             # Array was unpacked - must reconstruct from elements for linearity
-                            if (
-                                hasattr(self, "unpacked_vars")
-                                and actual_name in self.unpacked_vars
-                            ):
-                                element_names = self.unpacked_vars[actual_name]
+                            element_names = None
+                            if hasattr(self, "unpacked_vars"):
+                                # Try original name first, then renamed name
+                                if var_name in self.unpacked_vars:
+                                    element_names = self.unpacked_vars[var_name]
+                                elif actual_name in self.unpacked_vars:
+                                    element_names = self.unpacked_vars[actual_name]
+
+                            if element_names:
                                 # Reconstruct the array and assign it back to the original variable
                                 reconstruction_expr = self._create_array_reconstruction(
                                     element_names,
@@ -8487,6 +8684,9 @@ class IRBuilder:
 
                                 # Check which individual qubits were allocated and not consumed
                                 if hasattr(self, "allocated_ancillas"):
+                                    # Track which variables we've already discarded to avoid duplicates
+                                    discarded_vars = set()
+
                                     # Discard each allocated ancilla that belongs to this qreg
                                     # We need to check all allocated ancillas that start with the qreg name
                                     for ancilla_var in list(self.allocated_ancillas):
@@ -8495,9 +8695,22 @@ class IRBuilder:
                                         if ancilla_var.startswith(
                                             (f"{var.sym}_", f"_{var.sym}_"),
                                         ):
+                                            # Apply variable remapping if exists (for Prep operations)
+                                            var_to_discard = (
+                                                self.variable_remapping.get(
+                                                    ancilla_var,
+                                                    ancilla_var,
+                                                )
+                                            )
+
+                                            # Skip if we've already discarded this variable
+                                            if var_to_discard in discarded_vars:
+                                                continue
+                                            discarded_vars.add(var_to_discard)
+
                                             discard_stmt = FunctionCall(
                                                 func_name="quantum.discard",
-                                                args=[VariableRef(ancilla_var)],
+                                                args=[VariableRef(var_to_discard)],
                                             )
 
                                             # Create expression statement wrapper
@@ -8910,17 +9123,26 @@ class IRBuilder:
 
                     if value_ref is None:
                         # Check if this array was unpacked
-                        # debug removed
-                        if var_name in self.plan.arrays_to_unpack or (
+                        # Check both var_name (original) and actual_name (renamed)
+                        is_unpacked = var_name in self.plan.arrays_to_unpack or (
                             hasattr(self, "unpacked_vars")
-                            and actual_name in self.unpacked_vars
-                        ):
+                            and (
+                                var_name in self.unpacked_vars
+                                or actual_name in self.unpacked_vars
+                            )
+                        )
+
+                        if is_unpacked:
                             # Array was unpacked - must reconstruct from elements for linearity
-                            if (
-                                hasattr(self, "unpacked_vars")
-                                and actual_name in self.unpacked_vars
-                            ):
-                                element_names = self.unpacked_vars[actual_name]
+                            element_names = None
+                            if hasattr(self, "unpacked_vars"):
+                                # Try original name first, then renamed name
+                                if var_name in self.unpacked_vars:
+                                    element_names = self.unpacked_vars[var_name]
+                                elif actual_name in self.unpacked_vars:
+                                    element_names = self.unpacked_vars[actual_name]
+
+                            if element_names:
                                 value_ref = self._create_array_reconstruction(
                                     element_names,
                                 )
@@ -9326,3 +9548,373 @@ class IRBuilder:
                 var_info.is_struct_field = True
                 var_info.struct_name = prefix
                 var_info.field_name = suffix
+
+    def _restore_array_sizes_for_block_call(self, block) -> None:
+        """Restore array sizes before a function call in a loop.
+
+        When a function returns a smaller array than it receives (e.g., consuming qubits),
+        and that result is used in a loop to call the same function again, we need to
+        restore the array size by allocating fresh qubits before the next call.
+
+        This implements the user's guidance: "We could prepare them right before we need them"
+        """
+
+        # Check if this is a block that will become a function call
+        if not hasattr(block, "ops") or not hasattr(block, "vars"):
+            return
+
+        # Analyze the block to get array size information
+        from pecos.slr.gen_codes.guppy.ir_analyzer import IRAnalyzer
+
+        analyzer = IRAnalyzer()
+        analyzer.analyze_block(block, self.context.variables)
+
+        # Analyze what this block needs
+        deps = self._analyze_block_dependencies(block)
+
+        # Determine what function this block will call
+        func_name = self._get_function_name_for_block(block)
+
+        # Check quantum arrays that this block uses
+        for var in deps["quantum"] & deps["reads"]:
+            # Skip struct variables
+            if any(
+                var in info["var_names"].values() for info in self.struct_info.values()
+            ):
+                continue
+
+            # Check if we have a refreshed version from a previous function call
+            actual_var = var
+            if hasattr(self, "refreshed_arrays") and var in self.refreshed_arrays:
+                actual_var = self.refreshed_arrays[var]
+
+            # Get the expected size from the original variable context
+            expected_size = None
+            if var in self.context.variables:
+                var_info = self.context.variables[var]
+                if hasattr(var_info, "size"):
+                    expected_size = var_info.size
+
+            if expected_size is None:
+                continue  # Couldn't determine expected size
+
+            # Check the actual current size if the array is unpacked
+            actual_size = None
+            if hasattr(self, "unpacked_vars") and actual_var in self.unpacked_vars:
+                actual_size = len(self.unpacked_vars[actual_var])
+            if actual_size is None and actual_var != var:
+                # This is a refreshed array from a function return
+                # Try to determine its size from the upcoming function call's return type
+                actual_size = self._infer_current_array_size_from_fresh_var(
+                    var,
+                    actual_var,
+                    func_name,
+                    expected_size,
+                )
+
+            # If we have a size mismatch, restore the array size
+            if actual_size is not None and actual_size < expected_size:
+                self._insert_array_size_restoration(
+                    var,
+                    actual_var,
+                    actual_size,
+                    expected_size,
+                )
+
+    def _get_function_name_for_block(self, block) -> str | None:
+        """Determine what function name a block will call when converted."""
+        # The block has a name attribute that corresponds to the function
+        if hasattr(block, "name"):
+            return block.name
+        # If block has a __class__ attribute with the name
+        if hasattr(block, "__class__"):
+            return block.__class__.__name__.lower()
+        return None
+
+    def _infer_current_array_size_from_fresh_var(
+        self,
+        var: str,
+        actual_var: str,  # noqa: ARG002
+        func_name: str | None,  # noqa: ARG002
+        expected_size: int,
+    ) -> int | None:
+        """Infer the current size of a refreshed array by checking what function produced it.
+
+        This looks at refreshed_by_function to find what function was called to produce actual_var,
+        then looks up that function's return type to determine the actual size.
+        """
+        import re
+
+        # Check if we've tracked which function call produced this refreshed variable
+        if (
+            not hasattr(self, "refreshed_by_function")
+            or var not in self.refreshed_by_function
+        ):
+            # No information about which function produced this variable
+            # This happens on the first iteration of a loop before any calls
+            return expected_size
+
+        func_info = self.refreshed_by_function[var]
+        # Extract function name and position
+        if isinstance(func_info, dict):
+            called_func_name = func_info["function"]
+            return_position = func_info.get("position", 0)
+        else:
+            called_func_name = func_info  # Legacy string format
+            return_position = 0
+
+        # Get the return type for this function
+        # Try multiple sources: function_return_types, function_info
+        return_type = None
+
+        if (
+            hasattr(self, "function_return_types")
+            and called_func_name in self.function_return_types
+        ):
+            return_type = self.function_return_types[called_func_name]
+        elif hasattr(self, "function_info") and called_func_name in self.function_info:
+            func_info_entry = self.function_info[called_func_name]
+            if "return_type" in func_info_entry:
+                return_type = func_info_entry["return_type"]
+
+        if return_type is None and hasattr(self, "pending_functions"):
+            # Check pending functions - they haven't been built yet but we can analyze their blocks
+            for pending_block, pending_name, _pending_sig in self.pending_functions:
+                if pending_name == called_func_name:
+                    # Analyze the pending block to determine its return type
+                    return_type = self._infer_return_type_from_block(pending_block)
+                    break
+
+        if return_type is None:
+            return expected_size
+
+        # Parse the return type to extract array sizes
+        # Return type could be:
+        # - "array[quantum.qubit, N]" for single return
+        # - "tuple[array[quantum.qubit, N1], array[quantum.qubit, N2], ...]" for multiple returns
+
+        # Check if it's a tuple return
+        if return_type.startswith("tuple["):
+            # Extract all array sizes from the tuple
+            # Pattern: array[quantum.qubit, SIZE]
+            array_pattern = r"array\[quantum\.qubit,\s*(\d+)\]"
+            matches = re.findall(array_pattern, return_type)
+
+            if return_position < len(matches):
+                return int(matches[return_position])
+        else:
+            # Single return value
+            match = re.search(r"array\[quantum\.qubit,\s*(\d+)\]", return_type)
+            if match:
+                return int(match.group(1))
+
+        # If we can't determine the size, assume it's the same as expected (no restoration needed)
+        return expected_size
+
+    def _infer_return_type_from_block(self, block) -> str | None:
+        """Analyze a block to infer its return type.
+
+        Priority order:
+        1. If both block_returns annotation AND Return() statement exist, use them together
+           for precise variable-to-type mapping
+        2. If only block_returns annotation exists, use positional sizes
+        3. Fall back to analyzing block.vars and context (old behavior)
+
+        Returns:
+            A Guppy type string like "array[quantum.qubit, 2]" or
+            "tuple[array[quantum.qubit, 2], array[quantum.qubit, 7]]"
+        """
+        # BEST CASE: Both annotation and Return() statement exist
+        if hasattr(block, "__slr_return_type__") and hasattr(block, "get_return_vars"):
+            return_vars = block.get_return_vars()
+            if return_vars:
+                # We have explicit Return(var1, var2, ...) statement
+                # Combine with annotation for robust type checking
+                sizes = block.__slr_return_type__
+                if len(return_vars) == len(sizes):
+                    # Perfect match - we know which variable has which size
+                    return_types = [f"array[quantum.qubit, {size}]" for size in sizes]
+                    if len(return_types) == 1:
+                        return return_types[0]
+                    return f"tuple[{', '.join(return_types)}]"
+                # Mismatch - validation should have caught this, but proceed with annotation
+
+        # SECOND BEST: Just the annotation (positional sizes)
+        if hasattr(block, "__slr_return_type__"):
+            sizes = block.__slr_return_type__
+            return_types = [f"array[quantum.qubit, {size}]" for size in sizes]
+            if len(return_types) == 1:
+                return return_types[0]
+            return f"tuple[{', '.join(return_types)}]"
+
+        # FALLBACK: Try to infer from Return() statement variables
+        if hasattr(block, "get_return_vars"):
+            return_vars = block.get_return_vars()
+            if return_vars:
+                return self._infer_types_from_return_vars(return_vars)
+
+        # OLD FALLBACK: Try to infer from vars and context
+        if not hasattr(block, "vars") or not block.vars:
+            return None
+
+        # Get the return variables from block.vars
+        return_vars = (
+            block.vars if isinstance(block.vars, list | tuple) else [block.vars]
+        )
+        return self._infer_types_from_return_vars(return_vars)
+
+    def _infer_types_from_return_vars(self, return_vars) -> str | None:
+        """Infer Guppy types from a list of return variables by looking them up in context.
+
+        Args:
+            return_vars: List of variables to infer types for
+
+        Returns:
+            A Guppy type string or None if types couldn't be inferred
+        """
+        # For each return variable, determine its type and size
+        return_types = []
+        for var in return_vars:
+            var_name = var.sym if hasattr(var, "sym") else str(var)
+
+            # Check if the Vars object itself has size information
+            if hasattr(var, "size"):
+                size = var.size
+                return_types.append(f"array[quantum.qubit, {size}]")
+                continue
+
+            # Check if this is a quantum array in context
+            if var_name in self.context.variables:
+                var_info = self.context.variables[var_name]
+                if hasattr(var_info, "size"):
+                    # This is a quantum array
+                    size = var_info.size
+                    return_types.append(f"array[quantum.qubit, {size}]")
+                # else: Not a quantum array, skip for now
+
+        if not return_types:
+            return None
+
+        if len(return_types) == 1:
+            return return_types[0]
+        return f"tuple[{', '.join(return_types)}]"
+
+    def _infer_refreshed_array_size(
+        self,
+        var: str,
+        actual_var: str,  # noqa: ARG002
+        expected_size: int,
+    ) -> int | None:
+        """Infer the size of a refreshed array from function return types.
+
+        When a function returns a smaller array than it received, we need to know
+        the actual returned size. This method looks up the function call that
+        produced the refreshed array and extracts the size from its return type.
+        """
+        import re
+
+        # Check if we've tracked which function call produced this refreshed variable
+        if (
+            not hasattr(self, "refreshed_by_function")
+            or var not in self.refreshed_by_function
+        ):
+            # No information about which function produced this variable
+            return expected_size
+
+        func_info = self.refreshed_by_function[var]
+        func_name = func_info.get("function")
+        return_position = func_info.get(
+            "position",
+            0,
+        )  # Which element in the return tuple
+
+        # Get the return type for this function
+        if (
+            not hasattr(self, "function_return_types")
+            or func_name not in self.function_return_types
+        ):
+            return expected_size
+
+        return_type = self.function_return_types[func_name]
+
+        # Parse the return type to extract array sizes
+        # Return type could be:
+        # - "array[quantum.qubit, N]" for single return
+        # - "tuple[array[quantum.qubit, N1], array[quantum.qubit, N2], ...]" for multiple returns
+
+        # Check if it's a tuple return
+        if return_type.startswith("tuple["):
+            # Extract all array sizes from the tuple
+            # Pattern: array[quantum.qubit, SIZE]
+            array_pattern = r"array\[quantum\.qubit,\s*(\d+)\]"
+            matches = re.findall(array_pattern, return_type)
+
+            if return_position < len(matches):
+                return int(matches[return_position])
+        else:
+            # Single return value
+            match = re.search(r"array\[quantum\.qubit,\s*(\d+)\]", return_type)
+            if match:
+                return int(match.group(1))
+
+        # If we can't determine the size, assume it's the same as expected (no restoration needed)
+        return expected_size
+
+    def _insert_array_size_restoration(
+        self,
+        var: str,
+        actual_var: str,
+        actual_size: int,
+        expected_size: int,
+    ) -> None:
+        """Insert code to restore an array to its expected size by allocating fresh qubits."""
+        from pecos.slr.gen_codes.guppy.ir import (
+            Assignment,
+            Comment,
+            FunctionCall,
+            VariableRef,
+        )
+
+        num_to_allocate = expected_size - actual_size
+
+        self.current_block.statements.append(
+            Comment(f"Restore {var} array size from {actual_size} to {expected_size}"),
+        )
+
+        # Unpack the current smaller array
+        if hasattr(self, "unpacked_vars") and actual_var in self.unpacked_vars:
+            current_elements = self.unpacked_vars[actual_var]
+        else:
+            # Create unpacking statement
+            current_elements = [f"{actual_var}_{i}" for i in range(actual_size)]
+            unpack_targets = ", ".join(current_elements)
+            self.current_block.statements.append(
+                Assignment(
+                    target=VariableRef(unpack_targets),
+                    value=VariableRef(actual_var),
+                ),
+            )
+
+        # Allocate fresh qubits
+        new_elements = []
+        for i in range(num_to_allocate):
+            fresh_var = self._get_unique_var_name(f"{var}_allocated_{actual_size + i}")
+            self.current_block.statements.append(
+                Assignment(
+                    target=VariableRef(fresh_var),
+                    value=FunctionCall(func_name="quantum.qubit", args=[]),
+                ),
+            )
+            new_elements.append(fresh_var)
+
+        # Reconstruct the full-size array and reassign to the actual_var (fresh variable)
+        # This ensures the variable stays consistently defined throughout the loop
+        all_elements = current_elements + new_elements
+
+        array_construction = self._create_array_construction(all_elements)
+        self.current_block.statements.append(
+            Assignment(
+                target=VariableRef(actual_var),
+                value=array_construction,
+            ),
+        )

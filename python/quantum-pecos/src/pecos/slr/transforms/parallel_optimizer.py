@@ -90,6 +90,8 @@ class ParallelOptimizer:
                 new_block.block_name = block.block_name
             if hasattr(block, "block_module"):
                 new_block.block_module = block.block_module
+            if hasattr(block, "__slr_return_type__"):
+                new_block.__slr_return_type__ = block.__slr_return_type__
         else:
             # For non-Block types, don't transform them
             # They may have specific initialization requirements

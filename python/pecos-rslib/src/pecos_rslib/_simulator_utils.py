@@ -17,7 +17,9 @@ dictionary that enables backwards compatibility while delegating to Rust impleme
 
 from __future__ import annotations
 
-from pecos_rslib._pecos_rslib import adjust_tableau_string as _adjust_tableau_string_rust
+from pecos_rslib._pecos_rslib import (
+    adjust_tableau_string as _adjust_tableau_string_rust,
+)
 
 
 class TableauWrapper:
@@ -108,6 +110,7 @@ class GateBindingsDict(dict):
         Returns:
             A lambda function that executes the gate on the simulator.
         """
+
         # Create a lambda that delegates to run_gate
         # This handles both 1q and 2q gates automatically
         def gate_lambda(sim, location, **params):

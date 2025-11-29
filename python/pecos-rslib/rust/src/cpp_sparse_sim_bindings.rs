@@ -95,11 +95,11 @@ impl CppSparseSim {
                 self.inner.h6(location);
                 Ok(None)
             }
-            "F" => {
+            "F" | "F1" => {
                 self.inner.f(location);
                 Ok(None)
             }
-            "Fdg" => {
+            "Fdg" | "F1d" => {
                 self.inner.fdg(location);
                 Ok(None)
             }
@@ -107,7 +107,7 @@ impl CppSparseSim {
                 self.inner.f2(location);
                 Ok(None)
             }
-            "F2dg" => {
+            "F2dg" | "F2d" => {
                 self.inner.f2dg(location);
                 Ok(None)
             }
@@ -115,7 +115,7 @@ impl CppSparseSim {
                 self.inner.f3(location);
                 Ok(None)
             }
-            "F3dg" => {
+            "F3dg" | "F3d" => {
                 self.inner.f3dg(location);
                 Ok(None)
             }
@@ -123,43 +123,19 @@ impl CppSparseSim {
                 self.inner.f4(location);
                 Ok(None)
             }
-            "F4dg" => {
+            "F4dg" | "F4d" => {
                 self.inner.f4dg(location);
-                Ok(None)
-            }
-            "SX" => {
-                self.inner.sx(location);
-                Ok(None)
-            }
-            "SXdg" => {
-                self.inner.sxdg(location);
-                Ok(None)
-            }
-            "SY" => {
-                self.inner.sy(location);
-                Ok(None)
-            }
-            "SYdg" => {
-                self.inner.sydg(location);
-                Ok(None)
-            }
-            "SZ" => {
-                self.inner.sz(location);
-                Ok(None)
-            }
-            "SZdg" => {
-                self.inner.szdg(location);
                 Ok(None)
             }
             "MZ" => {
                 let result = self.inner.mz(location);
                 Ok(Some(u8::from(result.outcome)))
             }
-            "MX" => {
+            "MX" | "Measure +X" => {
                 let result = self.inner.mx(location);
                 Ok(Some(u8::from(result.outcome)))
             }
-            "MY" => {
+            "MY" | "Measure +Y" => {
                 let result = self.inner.my(location);
                 Ok(Some(u8::from(result.outcome)))
             }
@@ -185,48 +161,28 @@ impl CppSparseSim {
             }
             // Gate aliases - alternative names for common gates
             "I" => Ok(None), // Identity gate - no operation
-            "Q" | "SqrtX" => {
+            "Q" | "SX" | "SqrtX" => {
                 self.inner.sx(location);
                 Ok(None)
             }
-            "Qd" | "SqrtXdg" => {
+            "Qd" | "SXdg" | "SqrtXdg" => {
                 self.inner.sxdg(location);
                 Ok(None)
             }
-            "R" | "SqrtY" => {
+            "R" | "SY" | "SqrtY" => {
                 self.inner.sy(location);
                 Ok(None)
             }
-            "Rd" | "SqrtYdg" => {
+            "Rd" | "SYdg" | "SqrtYdg" => {
                 self.inner.sydg(location);
                 Ok(None)
             }
-            "S" | "SqrtZ" => {
+            "S" | "SZ" | "SqrtZ" => {
                 self.inner.sz(location);
                 Ok(None)
             }
-            "Sd" | "SqrtZdg" => {
+            "Sd" | "SZdg" | "SqrtZdg" => {
                 self.inner.szdg(location);
-                Ok(None)
-            }
-            "F1" => {
-                self.inner.f(location);
-                Ok(None)
-            }
-            "F1d" => {
-                self.inner.fdg(location);
-                Ok(None)
-            }
-            "F2d" => {
-                self.inner.f2dg(location);
-                Ok(None)
-            }
-            "F3d" => {
-                self.inner.f3dg(location);
-                Ok(None)
-            }
-            "F4d" => {
-                self.inner.f4dg(location);
                 Ok(None)
             }
             "Measure" | "Measure +Z" | "measure Z" => {
@@ -242,14 +198,6 @@ impl CppSparseSim {
                 }
                 // No forced_outcome, use regular measurement
                 let result = self.inner.mz(location);
-                Ok(Some(u8::from(result.outcome)))
-            }
-            "Measure +X" => {
-                let result = self.inner.mx(location);
-                Ok(Some(u8::from(result.outcome)))
-            }
-            "Measure +Y" => {
-                let result = self.inner.my(location);
                 Ok(Some(u8::from(result.outcome)))
             }
             "Init" | "init |0>" => {
@@ -342,7 +290,7 @@ impl CppSparseSim {
         let q1: usize = location.get_item(0)?.extract()?;
         let q2: usize = location.get_item(1)?.extract()?;
         match symbol {
-            "CX" => {
+            "CX" | "CNOT" => {
                 self.inner.cx(q1, q2);
                 Ok(None)
             }
@@ -358,32 +306,20 @@ impl CppSparseSim {
                 self.inner.swap(q1, q2);
                 Ok(None)
             }
-            "G2" => {
+            "G2" | "G" => {
                 self.inner.g2(q1, q2);
                 Ok(None)
             }
-            "SXX" => {
+            "SXX" | "SqrtXX" => {
                 self.inner.sxx(q1, q2);
                 Ok(None)
             }
-            "SXXdg" => {
+            "SXXdg" | "SqrtXXdg" => {
                 self.inner.sxxdg(q1, q2);
                 Ok(None)
             }
             // Gate aliases - alternative names for two-qubit gates
             "II" => Ok(None), // Two-qubit identity - no operation
-            "CNOT" => {
-                self.inner.cx(q1, q2);
-                Ok(None)
-            }
-            "G" => {
-                self.inner.g2(q1, q2);
-                Ok(None)
-            }
-            "SqrtXX" => {
-                self.inner.sxx(q1, q2);
-                Ok(None)
-            }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "Unsupported two-qubit gate: {symbol}"
             ))),
@@ -409,7 +345,7 @@ impl CppSparseSim {
         }
     }
 
-    /// High-level run_gate that accepts a set of locations (Python wrapper compatible)
+    /// High-level `run_gate` that accepts a set of locations (Python wrapper compatible)
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate(
         &mut self,
@@ -471,7 +407,7 @@ impl CppSparseSim {
         self.inner.pny(qubit);
     }
 
-    /// High-level run_gate method that accepts a set of locations
+    /// High-level `run_gate` method that accepts a set of locations
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate_highlevel(
         &mut self,
@@ -483,24 +419,23 @@ impl CppSparseSim {
         let output = PyDict::new(py);
 
         // Check if simulate_gate is False
-        if let Some(p) = params {
-            if let Ok(Some(sg)) = p.get_item("simulate_gate") {
-                if let Ok(false) = sg.extract::<bool>() {
-                    return Ok(output.into());
-                }
-            }
+        if let Some(p) = params
+            && let Ok(Some(sg)) = p.get_item("simulate_gate")
+            && let Ok(false) = sg.extract::<bool>()
+        {
+            return Ok(output.into());
         }
 
         // Convert locations to a vector
-        let locations_set: &Bound<'_, PySet> = locations.downcast()?;
+        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
 
         for location in locations_set.iter() {
             // Convert location to tuple
             let loc_tuple: Bound<'_, PyTuple> = if location.is_instance_of::<PyTuple>() {
-                location.downcast()?.clone()
+                location.clone().cast_into()?
             } else {
                 // Single qubit - wrap in tuple
-                PyTuple::new(py, &[location.clone()])?
+                PyTuple::new(py, std::slice::from_ref(&location))?
             };
 
             // Call the underlying run_gate_internal
@@ -528,13 +463,13 @@ impl CppSparseSim {
         // Iterate over circuit items
         for item in circuit.call_method0("items")?.try_iter()? {
             let item = item?;
-            let tuple: &Bound<'_, PyTuple> = item.downcast()?;
+            let tuple: Bound<PyTuple> = item.clone().cast_into()?;
 
             let symbol: String = tuple.get_item(0)?.extract()?;
             let locations_item = tuple.get_item(1)?;
-            let locations: &Bound<'_, PySet> = locations_item.downcast()?;
+            let locations: Bound<PySet> = locations_item.clone().cast_into()?;
             let params_item = tuple.get_item(2)?;
-            let params: &Bound<'_, PyDict> = params_item.downcast()?;
+            let params: Bound<PyDict> = params_item.clone().cast_into()?;
 
             // Subtract removed_locations if provided
             let final_locations = if let Some(removed) = removed_locations {
@@ -544,7 +479,8 @@ impl CppSparseSim {
             };
 
             // Run the gate
-            let gate_results = self.run_gate_highlevel(&symbol, &final_locations, Some(params), py)?;
+            let gate_results =
+                self.run_gate_highlevel(&symbol, &final_locations, Some(&params), py)?;
 
             // Update results
             results.call_method1("update", (gate_results,))?;
@@ -620,10 +556,12 @@ impl CppSparseSim {
 
         // Get raw tableaus
         let stabs_raw = self.inner.stab_tableau();
-        let adjust_fn = py.import("pecos_rslib._pecos_rslib")?.getattr("adjust_tableau_string")?;
+        let adjust_fn = py
+            .import("pecos_rslib._pecos_rslib")?
+            .getattr("adjust_tableau_string")?;
 
         // Process stabilizers
-        let stabs_lines: Vec<&str> = stabs_raw.trim().split('\n').collect();
+        let stabs_lines: Vec<&str> = stabs_raw.lines().collect();
         let mut stabs_formatted = Vec::new();
         for line in stabs_lines {
             let adjusted = adjust_fn.call1((line, true, print_y))?;
@@ -633,7 +571,7 @@ impl CppSparseSim {
         if print_destabs {
             // Process destabilizers
             let destabs_raw = self.inner.destab_tableau();
-            let destabs_lines: Vec<&str> = destabs_raw.trim().split('\n').collect();
+            let destabs_lines: Vec<&str> = destabs_raw.lines().collect();
             let mut destabs_formatted = Vec::new();
             for line in destabs_lines {
                 let adjusted = adjust_fn.call1((line, false, print_y))?;
@@ -643,24 +581,24 @@ impl CppSparseSim {
             if verbose {
                 println!("Stabilizers:");
                 for line in &stabs_formatted {
-                    println!("{}", line);
+                    println!("{line}");
                 }
                 println!("Destabilizers:");
                 for line in &destabs_formatted {
-                    println!("{}", line);
+                    println!("{line}");
                 }
             }
 
             // Return tuple of (stabs, destabs) - convert to Python lists first, then tuple
             let stabs_list = PyList::new(py, stabs_formatted)?;
             let destabs_list = PyList::new(py, destabs_formatted)?;
-            let tuple = PyTuple::new(py, &[stabs_list.as_any(), destabs_list.as_any()])?;
+            let tuple = PyTuple::new(py, [stabs_list.as_any(), destabs_list.as_any()])?;
             Ok(tuple.into())
         } else {
             if verbose {
                 println!("Stabilizers:");
                 for line in &stabs_formatted {
-                    println!("{}", line);
+                    println!("{line}");
                 }
             }
             // Return just stabs as a list

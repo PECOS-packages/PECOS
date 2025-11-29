@@ -169,7 +169,10 @@ class AllocationOptimizer:
 
                     # Check if this qubit was already consumed (measured)
                     # If so, this is a reuse after consumption
-                    if usage.consumption_line is not None and usage.consumption_line < self.current_line:
+                    if (
+                        usage.consumption_line is not None
+                        and usage.consumption_line < self.current_line
+                    ):
                         usage.reused_after_consumption = True
 
                     # Update first/last use

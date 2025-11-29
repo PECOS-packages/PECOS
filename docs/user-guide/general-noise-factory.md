@@ -1,4 +1,4 @@
-# GeneralNoiseFactory: Configuration-Based Noise Models
+# Noise Model Configuration
 
 The `GeneralNoiseFactory` provides a flexible, dictionary-based approach to creating quantum noise models in PECOS. It maps configuration keys to `GeneralNoiseModelBuilder` methods, enabling JSON/dict-based noise model creation with type safety and validation.
 

@@ -54,7 +54,7 @@ class IRPostProcessor:
     def process_module(self, module: Module, context: ScopeContext) -> None:
         """Process a module and all its functions."""
         self.current_scope = context
-        
+
         # Store refreshed arrays from module
         self.refreshed_arrays = module.refreshed_arrays
 
@@ -69,11 +69,11 @@ class IRPostProcessor:
         """Process a function."""
         # Track current function
         self.current_function = func.name
-        
+
         # Initialize unpacked arrays for this function if not exists
         if func.name not in self.unpacked_arrays_by_function:
             self.unpacked_arrays_by_function[func.name] = {}
-        
+
         # Create function scope
         func_context = ScopeContext(parent=parent_context)
 
@@ -99,7 +99,9 @@ class IRPostProcessor:
             if isinstance(stmt, ArrayUnpack):
                 # Record unpacking info for the current function
                 if self.current_function:
-                    self.unpacked_arrays_by_function[self.current_function][stmt.source] = stmt.targets
+                    self.unpacked_arrays_by_function[self.current_function][
+                        stmt.source
+                    ] = stmt.targets
                 # Also update the context
                 var = context.lookup_variable(stmt.source)
                 if var:
@@ -214,9 +216,11 @@ class IRPostProcessor:
         if array_name and isinstance(node.index, int):
             # Check if this array was refreshed by a function call
             # If so, we should NOT convert to unpacked variable names
-            if (self.current_function and 
-                self.current_function in self.refreshed_arrays and
-                array_name in self.refreshed_arrays[self.current_function]):
+            if (
+                self.current_function
+                and self.current_function in self.refreshed_arrays
+                and array_name in self.refreshed_arrays[self.current_function]
+            ):
                 # Array was refreshed, keep as ArrayAccess with force_array_syntax
                 node.force_array_syntax = True
                 # Process array and index if needed
@@ -225,7 +229,7 @@ class IRPostProcessor:
                 if isinstance(node.index, IRNode):
                     node.index = self._process_node(node.index, context)
                 return node
-            
+
             # Look up variable info
             var = context.lookup_variable(array_name)
             if var and var.is_unpacked and node.index < len(var.unpacked_names):
@@ -234,7 +238,10 @@ class IRPostProcessor:
                 return VariableRef(var.unpacked_names[node.index])
 
             # Also check our function-specific tracking
-            if self.current_function and self.current_function in self.unpacked_arrays_by_function:
+            if (
+                self.current_function
+                and self.current_function in self.unpacked_arrays_by_function
+            ):
                 func_unpacked = self.unpacked_arrays_by_function[self.current_function]
                 if array_name in func_unpacked:
                     unpacked_names = func_unpacked[array_name]

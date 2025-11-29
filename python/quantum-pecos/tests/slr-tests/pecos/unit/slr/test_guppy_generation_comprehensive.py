@@ -130,13 +130,13 @@ def test_parameterized_circuit() -> None:
 
     # Check parameterized behavior
     # Classical arrays may or may not be unpacked depending on quantum array strategy
-    assert ("params_0 = True" in guppy_code or "params[0] = True" in guppy_code)
-    assert ("params_1 = False" in guppy_code or "params[1] = False" in guppy_code)
-    assert ("params_2 = True" in guppy_code or "params[2] = True" in guppy_code)
+    assert "params_0 = True" in guppy_code or "params[0] = True" in guppy_code
+    assert "params_1 = False" in guppy_code or "params[1] = False" in guppy_code
+    assert "params_2 = True" in guppy_code or "params[2] = True" in guppy_code
     # Conditionals may use unpacked or array access
-    assert ("if params_0:" in guppy_code or "if params[0]:" in guppy_code)
-    assert ("if params_1:" in guppy_code or "if params[1]:" in guppy_code)
-    assert ("if not params_1:" in guppy_code or "if not params[1]:" in guppy_code)
+    assert "if params_0:" in guppy_code or "if params[0]:" in guppy_code
+    assert "if params_1:" in guppy_code or "if params[1]:" in guppy_code
+    assert "if not params_1:" in guppy_code or "if not params[1]:" in guppy_code
     assert "results = quantum.measure_array(q)" in guppy_code
     # Multi-qubit measurement handling is different in IR generator
     # It generates TODO comments for partial measurements in conditionals
@@ -226,9 +226,9 @@ def test_complex_boolean_expressions() -> None:
 
     # Check that boolean operations are present
     # Classical arrays may or may not be unpacked depending on quantum array strategy
-    assert ("c_3 = " in guppy_code or "c[3] = " in guppy_code)
-    assert ("c_4 = " in guppy_code or "c[4] = " in guppy_code)
-    assert ("c_5 = " in guppy_code or "c[5] = " in guppy_code)
+    assert "c_3 = " in guppy_code or "c[3] = " in guppy_code
+    assert "c_4 = " in guppy_code or "c[4] = " in guppy_code
+    assert "c_5 = " in guppy_code or "c[5] = " in guppy_code
     assert "if" in guppy_code
 
     # Boolean operations should be present
@@ -300,9 +300,12 @@ def test_grover_decomposition() -> None:
 
     # Check CCX decomposition
     # Ancilla may use unpacked variables or array access
-    assert ("quantum.h(ancilla_0)" in guppy_code or "quantum.h(ancilla[0])" in guppy_code)
-    assert ("quantum.t(ancilla_0)" in guppy_code or "quantum.t(ancilla[0])" in guppy_code)
-    assert ("quantum.tdg(ancilla_0)" in guppy_code or "quantum.tdg(ancilla[0])" in guppy_code)
+    assert "quantum.h(ancilla_0)" in guppy_code or "quantum.h(ancilla[0])" in guppy_code
+    assert "quantum.t(ancilla_0)" in guppy_code or "quantum.t(ancilla[0])" in guppy_code
+    assert (
+        "quantum.tdg(ancilla_0)" in guppy_code
+        or "quantum.tdg(ancilla[0])" in guppy_code
+    )
 
     # Check diffusion operator
     assert "for i in range(0, 2):" in guppy_code  # Register operations with loops

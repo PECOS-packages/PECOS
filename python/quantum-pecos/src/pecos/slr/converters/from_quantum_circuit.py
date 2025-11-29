@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pecos.qeclib import qubit
-from pecos.slr import CReg, Main, QReg
+from pecos.slr import Barrier, Comment, CReg, Main, Parallel, QReg
 
 if TYPE_CHECKING:
     from pecos.circuits.quantum_circuit import QuantumCircuit
@@ -35,26 +35,24 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
         - QuantumCircuit's parallel gate structure is preserved
         - Assumes standard gate names from PECOS
     """
-    from pecos.slr import Barrier, Parallel
-
     # Determine number of qubits from the circuit
     max_qubit = -1
     for tick in qc:
         if hasattr(tick, "items"):
             # Dictionary-like format
-            for gate_symbol, locations, params in tick.items():
+            for _gate_symbol, locations, _params in tick.items():
                 for loc in locations:
                     max_qubit = (
-                        max(max_qubit, max(loc))
+                        max(max_qubit, *loc)
                         if isinstance(loc, tuple)
                         else max(max_qubit, loc)
                     )
         else:
             # Tuple format
-            gate_symbol, locations, params = tick
+            gate_symbol, locations, _params = tick
             for loc in locations:
                 max_qubit = (
-                    max(max_qubit, max(loc))
+                    max(max_qubit, *loc)
                     if isinstance(loc, tuple)
                     else max(max_qubit, loc)
                 )
@@ -79,7 +77,7 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
         tick = qc[tick_idx]
         if hasattr(tick, "items"):
             # Dictionary-like format
-            for gate_symbol, locations, params in tick.items():
+            for gate_symbol, locations, _params in tick.items():
                 # Handle various measurement formats in PECOS
                 if gate_symbol.upper() in [
                     "M",
@@ -98,7 +96,7 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
                     measurement_count += len(locations)
         else:
             # Tuple format
-            gate_symbol, locations, params = tick
+            gate_symbol, locations, _params = tick
             if gate_symbol.upper() in ["M", "MZ", "MX", "MY", "MEASURE"]:
                 has_measurements = True
                 measurement_count += len(locations)
@@ -127,7 +125,7 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
         # Handle different tick formats
         if hasattr(tick, "items"):
             # Dictionary-like format
-            for gate_symbol, locations, params in tick.items():
+            for gate_symbol, locations, _params in tick.items():
                 gate_ops = _convert_gate_set(
                     gate_symbol,
                     locations,
@@ -142,7 +140,7 @@ def quantum_circuit_to_slr(qc: QuantumCircuit) -> Main:
                     current_measurement += len(locations)
         else:
             # Tuple format (symbol, locations, params)
-            gate_symbol, locations, params = tick
+            gate_symbol, locations, _params = tick
             gate_ops = _convert_gate_set(
                 gate_symbol,
                 locations,
@@ -184,8 +182,6 @@ def _convert_gate_set(gate_symbol, locations, q, c, measurement_offset):
     Returns:
         List of SLR operations
     """
-    from pecos.slr import Comment
-
     ops = []
     gate_upper = gate_symbol.upper()
 

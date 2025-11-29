@@ -85,7 +85,7 @@ def assert_allclose(
 
             # Find mismatches
             mismatches = []
-            for i, (d, ad) in enumerate(zip(diff_list, abs_desired_list)):
+            for i, (d, ad) in enumerate(zip(diff_list, abs_desired_list, strict=False)):
                 if d > atol + rtol * ad:
                     mismatches.append((i, actual[i], desired[i], d))
                     if len(mismatches) >= 5:  # Show up to 5 examples
@@ -93,15 +93,23 @@ def assert_allclose(
 
             if mismatches:
                 # Count total mismatches
-                n_total_mismatches = sum(1 for d, ad in zip(diff_list, abs_desired_list) if d > atol + rtol * ad)
-                msg_parts.append(f"Mismatched elements: {n_total_mismatches} / {len(actual)}")
+                n_total_mismatches = sum(
+                    1
+                    for d, ad in zip(diff_list, abs_desired_list, strict=False)
+                    if d > atol + rtol * ad
+                )
+                msg_parts.append(
+                    f"Mismatched elements: {n_total_mismatches} / {len(actual)}",
+                )
                 msg_parts.append("Examples of mismatched values:")
                 for idx, act_val, des_val, diff_val in mismatches:
                     msg_parts.append(
                         f"  Index {idx}: actual={act_val}, desired={des_val}, diff={diff_val}",
                     )
                 if n_total_mismatches > len(mismatches):
-                    msg_parts.append(f"  ... and {n_total_mismatches - len(mismatches)} more mismatches")
+                    msg_parts.append(
+                        f"  ... and {n_total_mismatches - len(mismatches)} more mismatches",
+                    )
 
         raise AssertionError("\n".join(msg_parts))
 
@@ -166,7 +174,11 @@ def assert_array_less(
     x_list = [float(val) for val in x]
     y_list = [float(val) for val in y]
 
-    violations = [(i, xv, yv) for i, (xv, yv) in enumerate(zip(x_list, y_list)) if xv >= yv]
+    violations = [
+        (i, xv, yv)
+        for i, (xv, yv) in enumerate(zip(x_list, y_list, strict=False))
+        if xv >= yv
+    ]
 
     if violations:
         # Build error message
@@ -187,6 +199,8 @@ def assert_array_less(
                 msg_parts.append(f"  Index {idx}: x={xv}, y={yv}")
 
             if len(violations) > n_show:
-                msg_parts.append(f"  ... and {len(violations) - n_show} more violations")
+                msg_parts.append(
+                    f"  ... and {len(violations) - n_show} more violations",
+                )
 
         raise AssertionError("\n".join(msg_parts))

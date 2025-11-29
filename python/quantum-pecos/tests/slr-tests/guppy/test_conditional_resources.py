@@ -58,7 +58,7 @@ def test_if_else_different_measurements() -> None:
     # With dynamic allocation, no explicit linearity comment needed
     # Each branch allocates and measures its own qubit
     # With unpacking, flag[0] becomes flag_0
-    assert ("if flag[0]:" in guppy or "if flag_0:" in guppy)
+    assert "if flag[0]:" in guppy or "if flag_0:" in guppy
     assert "else:" in guppy
 
     # Check that all qubits are measured

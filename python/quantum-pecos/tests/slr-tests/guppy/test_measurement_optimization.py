@@ -54,7 +54,10 @@ class TestMeasurementOptimization:
         assert "q_1" in guppy_code
 
         # Should use individual qubit variables
-        assert "c_0 = quantum.measure(q_0)" in guppy_code or "quantum.measure(q_0)" in guppy_code
+        assert (
+            "c_0 = quantum.measure(q_0)" in guppy_code
+            or "quantum.measure(q_0)" in guppy_code
+        )
         assert "quantum.cx(q_1, q_2)" in guppy_code
 
     def test_block_all_measurements_together(self) -> None:
@@ -303,4 +306,9 @@ class TestComplexPatterns:
         # Should have conditionals for corrections
         # With unpacking, uses individual syndrome variables
         assert "if syndrome[0]:" in guppy_code or "if syndrome_0:" in guppy_code
-        assert "quantum.x(data[0])" in guppy_code or "quantum.x(data_0)" in guppy_code
+        # Return values from functions may use _ret suffix when unpacked
+        assert (
+            "quantum.x(data[0])" in guppy_code
+            or "quantum.x(data_0)" in guppy_code
+            or "quantum.x(data_0_ret)" in guppy_code
+        )

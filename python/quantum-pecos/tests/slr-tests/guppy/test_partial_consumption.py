@@ -171,13 +171,15 @@ class TestPartialConsumption:
         # Check function is generated
         assert "stabilizer_measurement" in guppy_code
         # Array may be unpacked for element access, then reconstructed for return
-        assert ("return data" in guppy_code or "return array(data_" in guppy_code)
+        assert "return data" in guppy_code or "return array(data_" in guppy_code
 
         # Check function call captures returned resources
         # With dynamic allocation, ancilla is constructed as array(ancilla_0)
         assert (
-            "data = test_partial_consumption_stabilizer_measurement(ancilla, data, syndrome)" in guppy_code
-            or "data = test_partial_consumption_stabilizer_measurement(array(ancilla_0), data, syndrome)" in guppy_code
+            "data = test_partial_consumption_stabilizer_measurement(ancilla, data, syndrome)"
+            in guppy_code
+            or "data = test_partial_consumption_stabilizer_measurement(array(ancilla_0), data, syndrome)"
+            in guppy_code
         )
 
         # Should measure ancilla
@@ -251,7 +253,9 @@ class TestPartialConsumption:
         has_unpacking = "q_0, q_1, q_2 = q" in guppy_code
         has_local_alloc = "q_0 = quantum.qubit()" in guppy_code
 
-        assert has_unpacking or has_local_alloc, "Should use either unpacking or local allocation"
+        assert (
+            has_unpacking or has_local_alloc
+        ), "Should use either unpacking or local allocation"
 
         # Gates should use unpacked names (q_1)
         assert "quantum.x(q_1)" in guppy_code

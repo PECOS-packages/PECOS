@@ -92,9 +92,9 @@ def test_ir_conditional_resources() -> None:
     code = gen.get_output()
 
     # Should have conditional structure (with unpacking, flag[0] becomes flag_0)
-    assert ("if flag[0]:" in code or "if flag_0:" in code)
+    assert "if flag[0]:" in code or "if flag_0:" in code
     # With unpacking, q[1] becomes q_1
-    assert ("quantum.measure(q[1])" in code or "quantum.measure(q_1)" in code)
+    assert "quantum.measure(q[1])" in code or "quantum.measure(q_1)" in code
     # Should generate valid code
     assert "result(" in code
 

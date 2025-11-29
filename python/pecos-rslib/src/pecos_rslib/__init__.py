@@ -48,12 +48,6 @@ from pecos_rslib._pecos_rslib import (
     Graph,
     graph,  # Graph submodule
 )
-# Create backwards-compatible aliases - Python wrappers now point directly to Rust implementations
-# This eliminates the need for Python wrapper files while maintaining API compatibility
-CppSparseSimRs = CppSparseSim  # Alias for backwards compatibility
-SparseSimRs = SparseSim  # Alias for backwards compatibility
-StateVecRs = RsStateVec  # Alias for backwards compatibility
-
 from pecos_rslib.rscoin_toss import CoinToss
 from pecos_rslib.rspauli_prop import PauliPropRs
 from pecos_rslib.typing import (
@@ -123,6 +117,12 @@ from pecos_rslib.num_wrapper import (  # Enhanced num module with axis support
     random,
     stats,  # Wrapped stats module with PECOS Array support
 )
+
+# Create backwards-compatible aliases - Python wrappers now point directly to Rust implementations
+# This eliminates the need for Python wrapper files while maintaining API compatibility
+CppSparseSimRs = CppSparseSim  # Alias for backwards compatibility
+SparseSimRs = SparseSim  # Alias for backwards compatibility
+StateVecRs = RsStateVec  # Alias for backwards compatibility
 
 # Graph module is registered as a submodule in Rust (see graph_bindings.rs)
 # Register in sys.modules for proper import support

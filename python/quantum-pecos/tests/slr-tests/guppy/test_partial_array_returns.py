@@ -41,7 +41,7 @@ def test_function_returns_unconsumed_qubits() -> None:
     # Check function signature
     assert "-> array[quantum.qubit, 2]:" in guppy
     # Array may be unpacked for element access, then reconstructed for return
-    assert ("return data" in guppy or "return array(data_" in guppy)
+    assert "return data" in guppy or "return array(data_" in guppy
 
     # Check function call captures return
     assert "data = test_partial_array_returns_measure_ancillas" in guppy
@@ -86,7 +86,11 @@ def test_partial_array_return() -> None:
 
     # The function should return array with q[0] and q[2]
     # After unpacking, returns array(q_0, q_2)
-    assert ("array(q[0], q[2])" in guppy or "array(_q_0, _q_2)" in guppy or "array(q_0, q_2)" in guppy)
+    assert (
+        "array(q[0], q[2])" in guppy
+        or "array(_q_0, _q_2)" in guppy
+        or "array(q_0, q_2)" in guppy
+    )
 
 
 def test_multiple_partial_returns() -> None:
@@ -207,7 +211,7 @@ def test_qec_pattern_with_partial_returns() -> None:
     # Should return data array since ancilla is consumed
     assert "-> array[quantum.qubit, 3]:" in guppy
     # Array may be unpacked for element access, then reconstructed for return
-    assert ("return data" in guppy or "return array(data_" in guppy)
+    assert "return data" in guppy or "return array(data_" in guppy
 
     # Main should capture returned data
     assert "data = test_partial_array_returns_stabilizer_round(ancilla, data" in guppy

@@ -1,9 +1,21 @@
-from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+"""Test partial array consumption in SLR."""
+
 from pecos.qeclib import qubit
 from pecos.qeclib.qubit.measures import Measure
+from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+
 
 class MeasureAncillas(Block):
-    def __init__(self, data, ancilla, syndrome):
+    """Block for measuring ancilla qubits."""
+
+    def __init__(self, data: QReg, ancilla: QReg, syndrome: CReg) -> None:
+        """Initialize measurement block.
+
+        Args:
+            data: Data qubit register
+            ancilla: Ancilla qubit register
+            syndrome: Syndrome measurement register
+        """
         super().__init__()
         self.data = data
         self.ancilla = ancilla
@@ -12,6 +24,7 @@ class MeasureAncillas(Block):
             qubit.CX(data[0], ancilla[0]),
             Measure(ancilla) > syndrome,
         ]
+
 
 prog = Main(
     data := QReg("data", 2),

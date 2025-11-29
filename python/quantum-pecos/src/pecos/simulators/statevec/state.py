@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib import StateVecRs
 
-import pecos as pc
 from pecos.simulators.statevec.bindings import get_bindings
 
 if TYPE_CHECKING:

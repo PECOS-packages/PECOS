@@ -112,7 +112,7 @@ class HugrCompiler:
                 # print("DEBUG: Generated Guppy code:")
                 # print(guppy_code)
                 # print("="*50)
-                
+
                 # Use the new API: func.compile() instead of guppy.compile(func)
                 return main_func.compile()
             except (AttributeError, TypeError, ValueError, RuntimeError) as e:

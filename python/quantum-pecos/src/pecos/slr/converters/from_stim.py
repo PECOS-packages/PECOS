@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pecos.qeclib import qubit
-from pecos.slr import CReg, Main, QReg, Repeat
+from pecos.slr import Comment, CReg, Main, QReg, Repeat
 
 if TYPE_CHECKING:
     import stim
@@ -36,6 +36,7 @@ def stim_to_slr(circuit: stim.Circuit) -> Main:
         - Noise operations are converted to comments (SLR typically handles noise differently)
         - Some Stim-specific features may not have direct SLR equivalents
     """
+    import stim  # noqa: F401, PLC0415, RUF100 - Lazy import for optional dependency, used for isinstance checks
 
     # Determine the number of qubits needed
     num_qubits = circuit.num_qubits
@@ -88,7 +89,7 @@ def _convert_instruction(instruction, q, c, measurement_offset):
     Returns:
         List of SLR operations
     """
-    import stim
+    import stim  # noqa: F401, PLC0415, RUF100 - Lazy import for optional dependency, used for isinstance checks
 
     ops = []
 
@@ -142,8 +143,6 @@ def _map_gate(gate_name, targets, args, q, c, measurement_offset):
     Returns:
         List of SLR operations
     """
-    from pecos.slr import Comment
-
     ops = []
 
     # Extract qubit indices from targets

@@ -23,7 +23,7 @@ class ArrayAccessInfo:
 
     # Track full array accesses
     full_array_accesses: list[int] = field(default_factory=list)
-    
+
     # Track if passed to blocks
     passed_to_blocks: bool = False
 
@@ -84,7 +84,7 @@ class ArrayAccessInfo:
         # But only if we don't have operations/conditionals between (checked above)
         if len(self.element_accesses) == 1:
             return False
-        
+
         # For quantum arrays, if we have individual element measurements (consumed),
         # we need unpacking to avoid MoveOutOfSubscriptError
         if not self.is_classical and self.elements_consumed:
@@ -127,7 +127,7 @@ class IRAnalyzer:
         # Reset state
         self.array_info.clear()
         self.position_counter = 0
-        
+
         # First, collect array information from variables
         self._collect_array_info(block, variable_context)
 
@@ -136,28 +136,30 @@ class IRAnalyzer:
             for op in block.ops:
                 self._analyze_operation(op)
                 self.position_counter += 1
-        
+
         # Determine which arrays need unpacking
         # Special case: if we have nested blocks but @owned parameters, we must unpack
         # because @owned parameters require unpacking to access elements
         must_unpack_for_owned = (
-            hasattr(self, 'has_nested_blocks_with_owned') and 
-            self.has_nested_blocks_with_owned
+            hasattr(self, "has_nested_blocks_with_owned")
+            and self.has_nested_blocks_with_owned
         )
-        
+
         # Store all analyzed arrays in the plan
         plan.all_analyzed_arrays = self.array_info.copy()
-        
+
         if not self.has_nested_blocks or must_unpack_for_owned:
             for array_name, info in self.array_info.items():
                 should_unpack = info.needs_unpacking
-                
+
                 # Force unpacking for @owned parameters even with nested blocks
-                if (must_unpack_for_owned and 
-                    hasattr(self, 'expected_owned_params') and 
-                    array_name in self.expected_owned_params):
+                if (
+                    must_unpack_for_owned
+                    and hasattr(self, "expected_owned_params")
+                    and array_name in self.expected_owned_params
+                ):
                     should_unpack = True
-                    
+
                 if should_unpack:
                     plan.arrays_to_unpack[array_name] = info
                     plan.unpack_at_start.add(array_name)
@@ -217,13 +219,15 @@ class IRAnalyzer:
             # Check if this is a nested Block
             if hasattr(op, "__class__"):
                 from pecos.slr import Block as SlrBlock
+
                 try:
                     if issubclass(op.__class__, SlrBlock):
                         # Mark that we have nested blocks
                         self.has_nested_blocks = True
-                except:
+                except (TypeError, AttributeError):
+                    # Not a class or doesn't have expected attributes
                     pass
-            
+
             # Nested block - recurse into its operations
             for nested_op in op.ops:
                 self._analyze_operation(nested_op)

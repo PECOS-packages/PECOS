@@ -47,19 +47,21 @@ class ScopeContext:
     variables: dict[str, VariableInfo] = field(default_factory=dict)
     unpacked_arrays: dict[str, list[str]] = field(default_factory=dict)
     consumed_resources: set[str] = field(default_factory=set)
-    refreshed_arrays: dict[str, str] = field(default_factory=dict)  # original_name -> fresh_name
+    refreshed_arrays: dict[str, str] = field(
+        default_factory=dict,
+    )  # original_name -> fresh_name
 
     def lookup_variable(self, name: str) -> VariableInfo | None:
         """Look up a variable in this scope or parent scopes."""
         if name in self.variables:
             return self.variables[name]
-            
+
         # Check if this variable was refreshed by a function call
         if name in self.refreshed_arrays:
             fresh_name = self.refreshed_arrays[name]
             if fresh_name in self.variables:
                 return self.variables[fresh_name]
-        
+
         if self.parent:
             return self.parent.lookup_variable(name)
         return None
@@ -162,15 +164,6 @@ class VariableRef(IRNode):
     """Reference to a variable."""
 
     name: str
-    
-    def __post_init__(self):
-        """Debug problematic variable creation."""
-        if self.name == "q_1":
-            import traceback
-            print(f"WARNING: Creating VariableRef('q_1') - this may be problematic!")
-            print("Creation stack:")
-            for line in traceback.format_stack()[-6:-1]:
-                print(f"  {line.strip()}")
 
     def analyze(self, context: ScopeContext) -> None:
         """Check variable exists."""
@@ -179,20 +172,7 @@ class VariableRef(IRNode):
     def render(self, context: ScopeContext) -> list[str]:
         """Render variable reference."""
         var = context.lookup_variable(self.name)
-        
-        # Debug problematic variable reference
-        if "q_1" in self.name or self.name == "q":
-            print(f"DEBUG: VariableRef.render('{self.name}')")
-            print(f"  var from context: {var}")
-            if var:
-                print(f"  var.name: {var.name}")
-                print(f"  var.is_unpacked: {getattr(var, 'is_unpacked', None)}")
-                print(f"  var.unpacked_names: {getattr(var, 'unpacked_names', None)}")
-            import traceback
-            print("  Call stack:")
-            for line in traceback.format_stack()[-4:-1]:
-                print(f"    {line.strip()}")
-        
+
         if var:
             return [var.name]  # Use potentially renamed name
         return [self.name]
@@ -679,7 +659,9 @@ class Module(IRNode):
 
     imports: list[str] = field(default_factory=list)
     functions: list[Function] = field(default_factory=list)
-    refreshed_arrays: dict[str, set[str]] = field(default_factory=dict)  # function_name -> set of refreshed array names
+    refreshed_arrays: dict[str, set[str]] = field(
+        default_factory=dict,
+    )  # function_name -> set of refreshed array names
 
     def analyze(self, context: ScopeContext) -> None:
         for func in self.functions:

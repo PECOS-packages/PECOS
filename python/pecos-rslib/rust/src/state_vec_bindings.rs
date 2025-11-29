@@ -12,7 +12,7 @@ use pecos::prelude::*;
 // the License.
 
 use pyo3::prelude::*;
-use pyo3::types::{IntoPyDict, PyAny, PyDict, PySet, PyTuple};
+use pyo3::types::{PyAny, PyDict, PySet, PyTuple};
 
 use crate::pecos_array::Array;
 
@@ -187,35 +187,35 @@ impl RsStateVec {
                 Ok(None)
             }
 
-            "H" => {
+            "H" | "H1" | "H+z+x" => {
                 self.inner.h(location);
                 Ok(None)
             }
-            "H2" => {
+            "H2" | "H-z-x" => {
                 self.inner.h2(location);
                 Ok(None)
             }
-            "H3" => {
+            "H3" | "H+y-z" => {
                 self.inner.h3(location);
                 Ok(None)
             }
-            "H4" => {
+            "H4" | "H-y-z" => {
                 self.inner.h4(location);
                 Ok(None)
             }
-            "H5" => {
+            "H5" | "H-x+y" => {
                 self.inner.h5(location);
                 Ok(None)
             }
-            "H6" => {
+            "H6" | "H-x-y" => {
                 self.inner.h6(location);
                 Ok(None)
             }
-            "F" => {
+            "F" | "F1" => {
                 self.inner.f(location);
                 Ok(None)
             }
-            "Fdg" => {
+            "Fdg" | "F1d" | "F1dg" => {
                 self.inner.fdg(location);
                 Ok(None)
             }
@@ -223,7 +223,7 @@ impl RsStateVec {
                 self.inner.f2(location);
                 Ok(None)
             }
-            "F2dg" => {
+            "F2dg" | "F2d" => {
                 self.inner.f2dg(location);
                 Ok(None)
             }
@@ -231,7 +231,7 @@ impl RsStateVec {
                 self.inner.f3(location);
                 Ok(None)
             }
-            "F3dg" => {
+            "F3dg" | "F3d" => {
                 self.inner.f3dg(location);
                 Ok(None)
             }
@@ -239,176 +239,71 @@ impl RsStateVec {
                 self.inner.f4(location);
                 Ok(None)
             }
-            "F4dg" => {
+            "F4dg" | "F4d" => {
                 self.inner.f4dg(location);
                 Ok(None)
             }
-            "SX" => {
-                self.inner.sx(location);
-                Ok(None)
+            "MZ" | "Measure" | "Measure +Z" | "measure Z" => {
+                let result = self.inner.mz(location);
+                Ok(Some(u8::from(result.outcome)))
             }
-            "SXdg" => {
-                self.inner.sxdg(location);
-                Ok(None)
+            "MX" | "Measure +X" => {
+                let result = self.inner.mx(location);
+                Ok(Some(u8::from(result.outcome)))
             }
-            "SY" => {
-                self.inner.sy(location);
-                Ok(None)
-            }
-            "SYdg" => {
-                self.inner.sydg(location);
-                Ok(None)
-            }
-            "SZ" => {
-                self.inner.sz(location);
-                Ok(None)
-            }
-            "SZdg" => {
-                self.inner.szdg(location);
-                Ok(None)
-            }
-            "PZ" => {
-                self.inner.pz(location);
-                Ok(None)
-            }
-            "PX" => {
-                self.inner.px(location);
-                Ok(None)
-            }
-            "PY" => {
-                self.inner.py(location);
-                Ok(None)
-            }
-            "PnZ" => {
-                self.inner.pnz(location);
-                Ok(None)
-            }
-            "PnX" => {
-                self.inner.pnx(location);
-                Ok(None)
-            }
-            "PnY" => {
-                self.inner.pny(location);
-                Ok(None)
-            }
-            "MZ" | "MX" | "MY" => {
-                let result = match symbol {
-                    "MZ" => self.inner.mz(location),
-                    "MX" => self.inner.mx(location),
-                    "MY" => self.inner.my(location),
-                    _ => unreachable!(),
-                };
+            "MY" | "Measure +Y" => {
+                let result = self.inner.my(location);
                 Ok(Some(u8::from(result.outcome)))
             }
             // Gate aliases - alternative names for common gates
             "I" => Ok(None), // Identity gate - no operation
-            "H1" => {
-                self.inner.h(location);
-                Ok(None)
-            }
-            "H+z+x" => {
-                self.inner.h(location);
-                Ok(None)
-            }
-            "H-z-x" => {
-                self.inner.h2(location);
-                Ok(None)
-            }
-            "H+y-z" => {
-                self.inner.h3(location);
-                Ok(None)
-            }
-            "H-y-z" => {
-                self.inner.h4(location);
-                Ok(None)
-            }
-            "H-x+y" => {
-                self.inner.h5(location);
-                Ok(None)
-            }
-            "H-x-y" => {
-                self.inner.h6(location);
-                Ok(None)
-            }
-            "Q" | "SqrtX" => {
+            "Q" | "SX" | "SqrtX" => {
                 self.inner.sx(location);
                 Ok(None)
             }
-            "Qd" | "SqrtXd" => {
+            "Qd" | "SXdg" | "SqrtXd" => {
                 self.inner.sxdg(location);
                 Ok(None)
             }
-            "R" | "SqrtY" => {
+            "R" | "SY" | "SqrtY" => {
                 self.inner.sy(location);
                 Ok(None)
             }
-            "Rd" | "SqrtYd" => {
+            "Rd" | "SYdg" | "SqrtYd" => {
                 self.inner.sydg(location);
                 Ok(None)
             }
-            "S" | "SqrtZ" => {
+            "S" | "SZ" | "SqrtZ" => {
                 self.inner.sz(location);
                 Ok(None)
             }
-            "Sd" | "SqrtZd" => {
+            "Sd" | "SZdg" | "SqrtZd" => {
                 self.inner.szdg(location);
                 Ok(None)
             }
-            "F1" => {
-                self.inner.f(location);
-                Ok(None)
-            }
-            "F1d" => {
-                self.inner.fdg(location);
-                Ok(None)
-            }
-            "F2d" => {
-                self.inner.f2dg(location);
-                Ok(None)
-            }
-            "F3d" => {
-                self.inner.f3dg(location);
-                Ok(None)
-            }
-            "F4d" => {
-                self.inner.f4dg(location);
-                Ok(None)
-            }
-            "Init" | "Init +Z" | "init |0>" | "leak" | "leak |0>" | "unleak |0>" => {
+            "Init" | "Init +Z" | "init |0>" | "leak" | "leak |0>" | "unleak |0>" | "PZ" => {
                 self.inner.pz(location);
                 Ok(None)
             }
-            "Init -Z" | "init |1>" | "leak |1>" | "unleak |1>" => {
+            "Init -Z" | "init |1>" | "leak |1>" | "unleak |1>" | "PnZ" => {
                 self.inner.pnz(location);
                 Ok(None)
             }
-            "Init +X" | "init |+>" => {
+            "Init +X" | "init |+>" | "PX" => {
                 self.inner.px(location);
                 Ok(None)
             }
-            "Init -X" | "init |->" => {
+            "Init -X" | "init |->" | "PnX" => {
                 self.inner.pnx(location);
                 Ok(None)
             }
-            "Init +Y" | "init |+i>" => {
+            "Init +Y" | "init |+i>" | "PY" => {
                 self.inner.py(location);
                 Ok(None)
             }
-            "Init -Y" | "init |-i>" => {
+            "Init -Y" | "init |-i>" | "PnY" => {
                 self.inner.pny(location);
                 Ok(None)
-            }
-            "Measure" | "Measure +Z" | "measure Z" => {
-                let result = self.inner.mz(location);
-                Ok(Some(u8::from(result.outcome)))
-            }
-            "Measure +X" => {
-                let result = self.inner.mx(location);
-                Ok(Some(u8::from(result.outcome)))
-            }
-            "Measure +Y" => {
-                let result = self.inner.my(location);
-                Ok(Some(u8::from(result.outcome)))
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Unsupported single-qubit gate",
@@ -441,7 +336,7 @@ impl RsStateVec {
         let q2: usize = location.get_item(1)?.extract()?;
 
         match symbol {
-            "CX" => {
+            "CX" | "CNOT" => {
                 self.inner.cx(q1, q2);
                 Ok(None)
             }
@@ -453,27 +348,27 @@ impl RsStateVec {
                 self.inner.cz(q1, q2);
                 Ok(None)
             }
-            "SXX" => {
+            "SXX" | "SqrtXX" => {
                 self.inner.sxx(q1, q2);
                 Ok(None)
             }
-            "SXXdg" => {
+            "SXXdg" | "SqrtXXd" | "SqrtXXdg" => {
                 self.inner.sxxdg(q1, q2);
                 Ok(None)
             }
-            "SYY" => {
+            "SYY" | "SqrtYY" => {
                 self.inner.syy(q1, q2);
                 Ok(None)
             }
-            "SYYdg" => {
+            "SYYdg" | "SqrtYYd" | "SqrtYYdg" => {
                 self.inner.syydg(q1, q2);
                 Ok(None)
             }
-            "SZZ" => {
+            "SZZ" | "SqrtZZ" => {
                 self.inner.szz(q1, q2);
                 Ok(None)
             }
-            "SZZdg" => {
+            "SZZdg" | "SqrtZZd" | "SqrtZZdg" => {
                 self.inner.szzdg(q1, q2);
                 Ok(None)
             }
@@ -481,7 +376,7 @@ impl RsStateVec {
                 self.inner.swap(q1, q2);
                 Ok(None)
             }
-            "G2" => {
+            "G2" | "G" => {
                 self.inner.g(q1, q2);
                 Ok(None)
             }
@@ -591,38 +486,6 @@ impl RsStateVec {
             }
             // Gate aliases - alternative names for two-qubit gates
             "II" => Ok(None), // Two-qubit identity - no operation
-            "CNOT" => {
-                self.inner.cx(q1, q2);
-                Ok(None)
-            }
-            "G" => {
-                self.inner.g(q1, q2);
-                Ok(None)
-            }
-            "SqrtXX" => {
-                self.inner.sxx(q1, q2);
-                Ok(None)
-            }
-            "SqrtXXd" => {
-                self.inner.sxxdg(q1, q2);
-                Ok(None)
-            }
-            "SqrtYY" => {
-                self.inner.syy(q1, q2);
-                Ok(None)
-            }
-            "SqrtYYd" => {
-                self.inner.syydg(q1, q2);
-                Ok(None)
-            }
-            "SqrtZZ" => {
-                self.inner.szz(q1, q2);
-                Ok(None)
-            }
-            "SqrtZZd" => {
-                self.inner.szzdg(q1, q2);
-                Ok(None)
-            }
             "R2XXYYZZ" => {
                 // Alias for RZZRYYRXX - same gate, different name
                 if let Some(params) = params {
@@ -687,7 +550,7 @@ impl RsStateVec {
         }
     }
 
-    /// High-level run_gate that accepts a set of locations (Python wrapper compatible)
+    /// High-level `run_gate` that accepts a set of locations (Python wrapper compatible)
     ///
     /// This is the main API that matches the Python wrapper behavior
     #[pyo3(signature = (symbol, locations, **params))]
@@ -765,7 +628,7 @@ impl RsStateVec {
         self.inner.num_qubits()
     }
 
-    /// High-level run_gate method that accepts a set of locations
+    /// High-level `run_gate` method that accepts a set of locations
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate_highlevel(
         &mut self,
@@ -777,24 +640,23 @@ impl RsStateVec {
         let output = PyDict::new(py);
 
         // Check if simulate_gate is False
-        if let Some(p) = params {
-            if let Ok(Some(sg)) = p.get_item("simulate_gate") {
-                if let Ok(false) = sg.extract::<bool>() {
-                    return Ok(output.into());
-                }
-            }
+        if let Some(p) = params
+            && let Ok(Some(sg)) = p.get_item("simulate_gate")
+            && let Ok(false) = sg.extract::<bool>()
+        {
+            return Ok(output.into());
         }
 
         // Convert locations to a vector
-        let locations_set: &Bound<'_, PySet> = locations.downcast()?;
+        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
 
         for location in locations_set.iter() {
             // Convert location to tuple
             let loc_tuple: Bound<'_, PyTuple> = if location.is_instance_of::<PyTuple>() {
-                location.downcast()?.clone()
+                location.clone().cast_into()?
             } else {
                 // Single qubit - wrap in tuple
-                PyTuple::new(py, &[location.clone()])?
+                PyTuple::new(py, std::slice::from_ref(&location))?
             };
 
             // Call the underlying run_gate_internal
@@ -822,13 +684,13 @@ impl RsStateVec {
         // Iterate over circuit items
         for item in circuit.call_method0("items")?.try_iter()? {
             let item = item?;
-            let tuple: &Bound<'_, PyTuple> = item.downcast()?;
+            let tuple: Bound<PyTuple> = item.clone().cast_into()?;
 
             let symbol: String = tuple.get_item(0)?.extract()?;
             let locations_item = tuple.get_item(1)?;
-            let locations: &Bound<'_, PySet> = locations_item.downcast()?;
+            let locations: Bound<PySet> = locations_item.clone().cast_into()?;
             let params_item = tuple.get_item(2)?;
-            let params: &Bound<'_, PyDict> = params_item.downcast()?;
+            let params: Bound<PyDict> = params_item.clone().cast_into()?;
 
             // Subtract removed_locations if provided
             let final_locations = if let Some(removed) = removed_locations {
@@ -838,7 +700,8 @@ impl RsStateVec {
             };
 
             // Run the gate
-            let gate_results = self.run_gate_highlevel(&symbol, &final_locations, Some(params), py)?;
+            let gate_results =
+                self.run_gate_highlevel(&symbol, &final_locations, Some(&params), py)?;
 
             // Update results
             results.call_method1("update", (gate_results,))?;

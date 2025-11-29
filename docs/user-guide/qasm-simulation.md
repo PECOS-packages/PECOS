@@ -1,4 +1,4 @@
-# Running QASM Simulations with PECOS
+# QASM Simulations
 
 This guide will walk you through running quantum circuit simulations using PECOS's QASM interface. Whether you're simulating ideal quantum circuits or studying the effects of noise, PECOS provides the tools you need.
 

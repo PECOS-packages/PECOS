@@ -79,5 +79,5 @@ def test_ir_handles_conditionals() -> None:
     code = gen.get_output()
 
     # Check conditional structure (with unpacking, flag[0] becomes flag_0)
-    assert ("if flag[0]:" in code or "if flag_0:" in code)
+    assert "if flag[0]:" in code or "if flag_0:" in code
     assert "quantum.x(q_1)" in code

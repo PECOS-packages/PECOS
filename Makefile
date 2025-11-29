@@ -328,7 +328,6 @@ decoder-cache-clean: ## Clean decoder download cache
 pytest:  ## Run tests on the Python package (excluding numpy and optional deps). ASSUMES: previous build command
 	@$(ADD_LLVM_TO_PATH) uv run pytest ./python/pecos-rslib/tests/ -m "not performance and not numpy"
 	@$(ADD_LLVM_TO_PATH) uv run pytest ./python/quantum-pecos/tests/ --doctest-modules -m "not optional_dependency and not numpy"
-	@$(ADD_LLVM_TO_PATH) uv run pytest ./python/slr-tests/ -m "not optional_dependency and not numpy"
 
 .PHONY: pytest-numpy
 pytest-numpy:  ## Run NumPy/SciPy compatibility tests. ASSUMES: previous build command

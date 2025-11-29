@@ -42,7 +42,7 @@ def test_conditional_logic() -> None:
 
     # Check conditional structure
     # With unpacking, c[0] becomes c_0
-    assert ("if c[0]:" in guppy_code or "if c_0:" in guppy_code)
+    assert "if c[0]:" in guppy_code or "if c_0:" in guppy_code
     assert "quantum.x(q_0)" in guppy_code
 
 
@@ -228,10 +228,10 @@ def test_steane_encoding_circuit_pattern() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Check Prep operations generate reset calls
-    # IR generator uses a loop for consecutive resets
+    # Check Prep operations generate fresh qubit allocations
+    # IR generator uses a loop for consecutive Prep operations
     assert "for i in range(0, 6):" in guppy_code
-    assert "quantum.reset(q[i])" in guppy_code
+    assert "quantum.qubit()" in guppy_code  # Fresh qubit allocation (Prep operation)
 
     # Check single CX operations
     assert "quantum.cx(q[6], q[5])" in guppy_code
@@ -269,15 +269,17 @@ def test_reset_operations() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Check reset operations are generated
-    assert "quantum.reset(q[0])" in guppy_code
-    # IR generator uses a loop for consecutive resets q[1] and q[2]
+    # Check Prep operations generate fresh qubit allocations
+    # Individual Prep with assignment
+    assert "q[0] = quantum.qubit()" in guppy_code
+    # IR generator uses a loop for consecutive Prep operations q[1] and q[2]
     assert "for i in range(1, 3):" in guppy_code
-    assert "quantum.reset(q[i])" in guppy_code
+    assert "quantum.qubit()" in guppy_code
 
-    # Count reset occurrences (one single + one in loop)
-    reset_count = guppy_code.count("quantum.reset")
-    assert reset_count == 2  # q[0] once, q[i] once in loop
+    # Count quantum.qubit() occurrences (one for q[0], one in loop for q[i])
+    # Note: Prep allocates fresh qubits
+    qubit_count = guppy_code.count("quantum.qubit()")
+    assert qubit_count == 2  # q[0] once with assignment, q[i] once in loop
 
 
 def test_permute_operations() -> None:

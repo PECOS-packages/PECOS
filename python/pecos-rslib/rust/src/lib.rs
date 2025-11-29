@@ -44,9 +44,9 @@ mod sparse_stab_bindings;
 mod sparse_stab_engine_bindings;
 mod state_vec_bindings;
 mod state_vec_engine_bindings;
-mod wasm_program_bindings;
 #[cfg(feature = "wasm")]
 mod wasm_foreign_object_bindings;
+mod wasm_program_bindings;
 
 // Note: hugr_bindings module is currently disabled - conflicts with pecos-qis-interface due to duplicate symbols
 

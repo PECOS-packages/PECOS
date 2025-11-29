@@ -72,7 +72,13 @@ def test_mixed_individual_and_register_wide() -> None:
 
 
 def test_loop_in_function() -> None:
-    """Test loop generation inside a function block."""
+    """Test register-wide operations in a function block.
+
+    Note: With Guppy's linear type system and @owned arrays, we can't use
+    loops with array indexing (q[i]) because that would cause MoveOutOfSubscriptError.
+    Instead, we unpack the array and apply operations to individual elements.
+    This generates unrolled code, which is the correct behavior for @owned arrays.
+    """
 
     class ApplyHadamards(Block):
         def __init__(self, q: QReg) -> None:
@@ -91,13 +97,25 @@ def test_loop_in_function() -> None:
 
     guppy_code = SlrConverter(prog).guppy()
 
-    # Function should contain a loop
+    # Function should be created
     assert (
         "def test_loop_generation_apply_hadamards" in guppy_code
         or "def apply_hadamards" in guppy_code
     )
-    assert "for i in range(0, 4):" in guppy_code
-    assert "quantum.h(q[i])" in guppy_code
+
+    # With @owned arrays, we unpack and unroll instead of using loops
+    # Verify the function unpacks the array
+    assert "q_0, q_1, q_2, q_3 = q" in guppy_code
+
+    # Verify H is applied to all elements (unrolled)
+    assert "quantum.h(q_0)" in guppy_code
+    assert "quantum.h(q_1)" in guppy_code
+    assert "quantum.h(q_2)" in guppy_code
+    assert "quantum.h(q_3)" in guppy_code
+
+    # Verify it compiles to HUGR (the real test of correctness)
+    hugr = SlrConverter(prog).hugr()
+    assert hugr is not None
 
 
 def test_different_gates_separate_loops() -> None:

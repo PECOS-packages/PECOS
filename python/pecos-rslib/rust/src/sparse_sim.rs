@@ -301,7 +301,7 @@ impl SparseSim {
         }
     }
 
-    /// High-level run_gate that accepts a set of locations (Python wrapper compatible)
+    /// High-level `run_gate` that accepts a set of locations (Python wrapper compatible)
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate(
         &mut self,
@@ -363,7 +363,7 @@ impl SparseSim {
         }
     }
 
-    /// High-level run_gate method that accepts a set of locations
+    /// High-level `run_gate` method that accepts a set of locations
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate_highlevel(
         &mut self,
@@ -375,24 +375,23 @@ impl SparseSim {
         let output = PyDict::new(py);
 
         // Check if simulate_gate is False
-        if let Some(p) = params {
-            if let Ok(Some(sg)) = p.get_item("simulate_gate") {
-                if let Ok(false) = sg.extract::<bool>() {
-                    return Ok(output.into());
-                }
-            }
+        if let Some(p) = params
+            && let Ok(Some(sg)) = p.get_item("simulate_gate")
+            && let Ok(false) = sg.extract::<bool>()
+        {
+            return Ok(output.into());
         }
 
         // Convert locations to a vector
-        let locations_set: &Bound<'_, PySet> = locations.downcast()?;
+        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
 
         for location in locations_set.iter() {
             // Convert location to tuple
             let loc_tuple: Bound<'_, PyTuple> = if location.is_instance_of::<PyTuple>() {
-                location.downcast()?.clone()
+                location.clone().cast_into()?
             } else {
                 // Single qubit - wrap in tuple
-                PyTuple::new(py, &[location.clone()])?
+                PyTuple::new(py, std::slice::from_ref(&location))?
             };
 
             // Call the underlying run_gate_internal
@@ -420,13 +419,13 @@ impl SparseSim {
         // Iterate over circuit items
         for item in circuit.call_method0("items")?.try_iter()? {
             let item = item?;
-            let tuple: &Bound<'_, PyTuple> = item.downcast()?;
+            let tuple: Bound<PyTuple> = item.clone().cast_into()?;
 
             let symbol: String = tuple.get_item(0)?.extract()?;
             let locations_item = tuple.get_item(1)?;
-            let locations: &Bound<'_, PySet> = locations_item.downcast()?;
+            let locations: Bound<PySet> = locations_item.clone().cast_into()?;
             let params_item = tuple.get_item(2)?;
-            let params: &Bound<'_, PyDict> = params_item.downcast()?;
+            let params: Bound<PyDict> = params_item.clone().cast_into()?;
 
             // Subtract removed_locations if provided
             let final_locations = if let Some(removed) = removed_locations {
@@ -436,7 +435,8 @@ impl SparseSim {
             };
 
             // Run the gate
-            let gate_results = self.run_gate_highlevel(&symbol, &final_locations, Some(params), py)?;
+            let gate_results =
+                self.run_gate_highlevel(&symbol, &final_locations, Some(&params), py)?;
 
             // Update results
             results.call_method1("update", (gate_results,))?;

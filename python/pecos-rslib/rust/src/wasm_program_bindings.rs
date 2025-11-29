@@ -12,7 +12,7 @@
 
 //! Python bindings for WebAssembly programs.
 //!
-//! This module provides PyO3 bindings for WASM and WAT program types, enabling Python code
+//! This module provides `PyO3` bindings for WASM and WAT program types, enabling Python code
 //! to work with WebAssembly programs for quantum simulation.
 
 use pyo3::prelude::*;
@@ -32,7 +32,7 @@ impl PyWasmProgram {
     /// Create a new WASM program from bytes.
     ///
     /// Args:
-    ///     wasm_bytes: The compiled WASM bytecode
+    ///     `wasm_bytes`: The compiled WASM bytecode
     #[new]
     fn new(wasm_bytes: Vec<u8>) -> Self {
         PyWasmProgram { wasm_bytes }
@@ -41,10 +41,10 @@ impl PyWasmProgram {
     /// Create a WASM program from bytes (class method).
     ///
     /// Args:
-    ///     wasm_bytes: The compiled WASM bytecode
+    ///     `wasm_bytes`: The compiled WASM bytecode
     ///
     /// Returns:
-    ///     WasmProgram: A new WASM program instance
+    ///     `WasmProgram`: A new WASM program instance
     #[classmethod]
     fn from_bytes(_cls: &Bound<'_, PyType>, wasm_bytes: Vec<u8>) -> Self {
         PyWasmProgram { wasm_bytes }
@@ -89,7 +89,7 @@ impl PyWatProgram {
     ///     source: The WAT source code
     ///
     /// Returns:
-    ///     WatProgram: A new WAT program instance
+    ///     `WatProgram`: A new WAT program instance
     #[classmethod]
     fn from_string(_cls: &Bound<'_, PyType>, source: String) -> Self {
         PyWatProgram { source }
@@ -105,7 +105,7 @@ impl PyWatProgram {
         } else {
             self.source.clone()
         };
-        format!("WatProgram('{}')", preview)
+        format!("WatProgram('{preview}')")
     }
 }
 

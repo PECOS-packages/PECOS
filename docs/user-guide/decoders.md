@@ -1,4 +1,4 @@
-# Quantum Error Correction Decoders
+# Decoders
 
 PECOS provides access to LDPC (Low-Density Parity-Check) quantum error correction decoders through both Python and Rust APIs. These decoders can be used to correct errors in quantum LDPC codes, surface codes, and other stabilizer codes.
 

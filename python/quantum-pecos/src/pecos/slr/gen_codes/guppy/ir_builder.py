@@ -3520,8 +3520,84 @@ class IRBuilder:
 
             return meas_stmt
 
-        # TODO: Handle multi-qubit measurements
-        return Comment("TODO: Multi-qubit measurement")
+        # Handle multi-qubit measurements by generating multiple single-qubit measurements
+        if len(meas.qargs) > 1:
+            # Verify we have corresponding classical outputs
+            if not hasattr(meas, "cout") or not meas.cout:
+                # No classical outputs specified - generate measurements without targets
+                measurements = []
+                for qarg in meas.qargs:
+                    qubit_ref = self._convert_qubit_ref(qarg)
+
+                    # Track resource consumption for each qubit
+                    if (
+                        hasattr(qarg, "reg")
+                        and hasattr(qarg.reg, "sym")
+                        and hasattr(qarg, "index")
+                    ):
+                        array_name = qarg.reg.sym
+                        qubit_index = qarg.index
+                        self.scope_manager.track_resource_usage(
+                            array_name,
+                            {qubit_index},
+                            consumed=True,
+                        )
+
+                        # Also track globally for conditional resource balancing
+                        if not hasattr(self, "consumed_resources"):
+                            self.consumed_resources = {}
+                        if array_name not in self.consumed_resources:
+                            self.consumed_resources[array_name] = set()
+                        self.consumed_resources[array_name].add(qubit_index)
+
+                    meas_stmt = Measurement(qubit=qubit_ref, target=None)
+                    measurements.append(meas_stmt)
+
+                return Block(statements=measurements)
+
+            # Multi-qubit measurement with classical outputs
+            if len(meas.cout) != len(meas.qargs):
+                # Mismatch between number of qubits and classical outputs
+                return Comment(
+                    f"ERROR: Multi-qubit measurement has {len(meas.qargs)} qubits but {len(meas.cout)} classical outputs",
+                )
+
+            # Generate one measurement statement for each qubit-bit pair
+            measurements = []
+            for qarg, cout in zip(meas.qargs, meas.cout):
+                qubit_ref = self._convert_qubit_ref(qarg)
+                target_ref = self._convert_bit_ref(cout, is_assignment_target=False)
+
+                # Track resource consumption for each qubit
+                if (
+                    hasattr(qarg, "reg")
+                    and hasattr(qarg.reg, "sym")
+                    and hasattr(qarg, "index")
+                ):
+                    array_name = qarg.reg.sym
+                    qubit_index = qarg.index
+                    self.scope_manager.track_resource_usage(
+                        array_name,
+                        {qubit_index},
+                        consumed=True,
+                    )
+
+                    # Also track globally for conditional resource balancing
+                    if not hasattr(self, "consumed_resources"):
+                        self.consumed_resources = {}
+                    if array_name not in self.consumed_resources:
+                        self.consumed_resources[array_name] = set()
+                    self.consumed_resources[array_name].add(qubit_index)
+
+                # Generate measurement statement
+                meas_stmt = Measurement(qubit=qubit_ref, target=target_ref)
+                measurements.append(meas_stmt)
+
+            # Return a block containing all the measurements
+            return Block(statements=measurements)
+
+        # Shouldn't reach here, but just in case
+        return Comment(f"Unhandled measurement with {len(meas.qargs)} qubits")
 
     def _convert_qubit_ref(self, qarg) -> IRNode:
         """Convert a qubit reference to IR."""

@@ -24,6 +24,8 @@ from pecos.qeclib.steane.syn_extract.three_parallel_flagging import (
     ThreeParallelFlaggingZXX,
 )
 from pecos.slr import Bit, Block, Comment, CReg, If, QReg, Repeat
+from pecos.slr.misc import Return
+from pecos.slr.types import Array, QubitType
 
 
 class PrepHStateFT(Block):
@@ -32,12 +34,18 @@ class PrepHStateFT(Block):
     By using an encoding circuit to prepare logical|+H>, measuring the logical
     Hadamard with a flag, doing a QED round, and post-selecting based on non-trivial measurements.
 
+    Returns:
+        array[qubit, 7]: The data register containing the prepared |+H> state.
+
     Arguments:
         d: Data qubits (size 7)
         a: Axillary qubits (size 2)
         out: Measurement outputs (size 2). out[0] is the Measure H result and out[1] is the flag result.
         reject: Whether the procedure failed and should be rejected. 0 it is good, 1 prep failed.
     """
+
+    # Declare return type: returns the data qubit register
+    block_returns = (Array[QubitType, 7],)
 
     def __init__(
         self,
@@ -135,6 +143,8 @@ class PrepHStateFT(Block):
         self.extend(
             reject.set(out[0] | out[1] | flags[0] | flags[1] | flags[2]),
             # Reject on the results of the `reject` bit. 0 is good. 1 means the prep failed.
+            # Explicitly declare return value
+            Return(d),
         )
 
 
@@ -144,12 +154,18 @@ class PrepHStateFTRUS(Block):
     By using an encoding circuit to prepare logical|+H>, measuring the logical
     Hadamard with a flag, doing a QED round, and post-selecting based on non-trivial measurements.
 
+    Returns:
+        array[qubit, 7]: The data register containing the prepared |+H> state.
+
     Arguments:
         d: Data qubits (size 7)
         a: Axillary qubits (size 2)
         out: Measurement outputs (size 2). out[0] is the Measure H result and out[1] is the flag result.
         reject: Whether the procedure failed and should be rejected. 0 it is good, 1 prep failed.
     """
+
+    # Declare return type: returns the data qubit register
+    block_returns = (Array[QubitType, 7],)
 
     def __init__(
         self,
@@ -211,3 +227,6 @@ class PrepHStateFTRUS(Block):
 
         if limit == 1:
             self.extend(Comment())
+
+        # Explicitly declare return value
+        self.extend(Return(d))

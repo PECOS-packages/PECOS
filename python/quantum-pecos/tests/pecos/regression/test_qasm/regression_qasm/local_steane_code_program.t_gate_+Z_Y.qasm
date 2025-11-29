@@ -129,7 +129,6 @@ if(sin_verify_prep[0] == 1) cx sin_d[1], sin_a[0];
 if(sin_verify_prep[0] == 1) cx sin_d[3], sin_a[0];
 if(sin_verify_prep[0] == 1) measure sin_a[0] -> sin_verify_prep[0];
 
-
 saux_scratch = 0;
 reset saux_d[6];
 ry(0.7853981633974483) saux_d[6];
@@ -939,7 +938,6 @@ if(sin_verify_prep[0] == 1) cx sin_d[5], sin_a[0];
 if(sin_verify_prep[0] == 1) cx sin_d[1], sin_a[0];
 if(sin_verify_prep[0] == 1) cx sin_d[3], sin_a[0];
 if(sin_verify_prep[0] == 1) measure sin_a[0] -> sin_verify_prep[0];
-
 
 // Transversal Logical CX
 barrier sin_d, saux_d;

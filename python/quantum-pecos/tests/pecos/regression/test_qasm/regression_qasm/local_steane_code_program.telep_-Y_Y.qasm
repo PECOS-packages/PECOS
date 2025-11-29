@@ -144,7 +144,6 @@ if(smid_verify_prep[0] == 1) cx smid_d[3], smid_a[0];
 if(smid_verify_prep[0] == 1) measure smid_a[0] -> smid_verify_prep[0];
 
 
-
 barrier sout_d[0], sout_d[1], sout_d[2], sout_d[3], sout_d[4], sout_d[5], sout_d[6], sout_a[0];
 
 reset sout_d[0];
@@ -239,7 +238,6 @@ if(sout_verify_prep[0] == 1) cx sout_d[5], sout_a[0];
 if(sout_verify_prep[0] == 1) cx sout_d[1], sout_a[0];
 if(sout_verify_prep[0] == 1) cx sout_d[3], sout_a[0];
 if(sout_verify_prep[0] == 1) measure sout_a[0] -> sout_verify_prep[0];
-
 
 barrier smid_d, sout_d;
 // Logical H

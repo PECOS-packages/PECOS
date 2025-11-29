@@ -26,7 +26,14 @@ from pecos.slr.types import Array, QubitType
 
 
 class PrepEncodingNonFTZero(Block):
-    """Represents the non-fault-tolerant encoding circuit for the Steane code."""
+    """Represents the non-fault-tolerant encoding circuit for the Steane code.
+
+    Returns:
+        array[qubit, 7]: The encoded 7-qubit register.
+    """
+
+    # Declare return type: returns the encoded qubit register
+    block_returns = (Array[QubitType, 7],)
 
     def __init__(self, q: QReg) -> None:
         """Initialize PrepEncodingNonFTZero block for non-fault-tolerant zero state preparation.
@@ -58,6 +65,8 @@ class PrepEncodingNonFTZero(Block):
                 (q[4], q[1]),
                 (q[3], q[2]),
             ),
+            # Explicitly declare return value
+            Return(q),
         )
 
 
@@ -214,7 +223,14 @@ class PrepRUS(Block):
 
 
 class LogZeroRot(Block):
-    """Rotate logical |0> to appropriate Pauli state."""
+    """Rotate logical |0> to appropriate Pauli state.
+
+    Returns:
+        array[qubit, 7]: The rotated 7-qubit register in the target Pauli eigenstate.
+    """
+
+    # Declare return type: returns the rotated qubit register
+    block_returns = (Array[QubitType, 7],)
 
     def __init__(self, q: QReg, state: str) -> None:
         """Initialize LogZeroRot block to rotate logical |0> to target Pauli state.
@@ -255,3 +271,6 @@ class LogZeroRot(Block):
             case _:
                 msg = f"Unsupported init state '{state}'"
                 raise Exception(msg)
+
+        # Explicitly declare return value
+        self.extend(Return(q))

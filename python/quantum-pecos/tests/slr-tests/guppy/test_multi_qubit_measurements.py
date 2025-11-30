@@ -1,7 +1,5 @@
 """Test multi-qubit measurement support in Guppy IR builder."""
 
-import pytest
-
 from pecos.qeclib import qubit
 from pecos.slr import Block, CReg, QReg
 from pecos.slr.slr_converter import SlrConverter
@@ -20,7 +18,8 @@ class MultiQubitMeasureWithOutputs(Block):
         super().__init__()
         self.extend(
             # Multi-qubit measurement with classical outputs
-            qubit.Measure(q[0], q[1], q[2]) > (c[0], c[1], c[2]),
+            qubit.Measure(q[0], q[1], q[2])
+            > (c[0], c[1], c[2]),
         )
 
 

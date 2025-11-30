@@ -1,7 +1,6 @@
 """Test Return() statement validation and diagnostics."""
 
 import pytest
-
 from pecos.slr import Block, QReg
 from pecos.slr.misc import Return
 from pecos.slr.types import Array, QubitType
@@ -13,6 +12,7 @@ class BlockWithBoth(Block):
     block_returns = (Array[QubitType, 7],)
 
     def __init__(self, q: QReg) -> None:
+        """Initialize block with return statement."""
         super().__init__()
         self.extend(Return(q))
 
@@ -22,7 +22,8 @@ class BlockWithAnnotationOnly(Block):
 
     block_returns = (Array[QubitType, 7],)
 
-    def __init__(self, q: QReg) -> None:
+    def __init__(self, q: QReg) -> None:  # noqa: ARG002
+        """Initialize block without return statement."""
         super().__init__()
 
 
@@ -30,6 +31,7 @@ class BlockWithReturnOnly(Block):
     """Block with Return() but no block_returns annotation."""
 
     def __init__(self, q: QReg) -> None:
+        """Initialize block with return but no annotation."""
         super().__init__()
         self.extend(Return(q))
 
@@ -37,7 +39,8 @@ class BlockWithReturnOnly(Block):
 class BlockWithNeither(Block):
     """Block with neither annotation nor Return() statement."""
 
-    def __init__(self, q: QReg) -> None:
+    def __init__(self, q: QReg) -> None:  # noqa: ARG002
+        """Initialize procedural block."""
         super().__init__()
 
 
@@ -65,8 +68,8 @@ class TestReturnValidation:
         q = QReg("q", 7)
         a = QReg("a", 2)
 
+        block = MismatchedBlock(q, a)
         with pytest.raises(TypeError) as exc_info:
-            block = MismatchedBlock(q, a)
             block.validate_return_annotation()
 
         assert "Return statement has 2 variables" in str(exc_info.value)

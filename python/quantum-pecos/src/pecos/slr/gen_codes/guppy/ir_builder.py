@@ -3559,7 +3559,8 @@ class IRBuilder:
             if len(meas.cout) != len(meas.qargs):
                 # Mismatch between number of qubits and classical outputs
                 return Comment(
-                    f"ERROR: Multi-qubit measurement has {len(meas.qargs)} qubits but {len(meas.cout)} classical outputs",
+                    f"ERROR: Multi-qubit measurement has {len(meas.qargs)} qubits "
+                    f"but {len(meas.cout)} classical outputs",
                 )
 
             # Generate one measurement statement for each qubit-bit pair

@@ -199,13 +199,17 @@ class Block(Node):
             >>> should_annotate, reason = block.check_return_annotation_recommended()
             >>> if should_annotate:
             ...     print(f"Consider adding Return() statement: {reason}")
+            ...
         """
         has_annotation = hasattr(self, "__slr_return_type__")
         has_return = self.get_return_statement() is not None
 
         # Already fully annotated - great!
         if has_annotation and has_return:
-            return (False, "Block already has both block_returns and Return() statement")
+            return (
+                False,
+                "Block already has both block_returns and Return() statement",
+            )
 
         # Check if block has vars that suggest it returns something
         # Note: self.vars is a Vars object, need to check if it has any variables
@@ -214,19 +218,21 @@ class Block(Node):
             if not has_annotation and not has_return:
                 return (
                     True,
-                    f"Block has {var_count} variable(s) in self.vars but no Return() statement or block_returns annotation",
+                    f"Block has {var_count} variable(s) in self.vars but no Return() "
+                    "statement or block_returns annotation",
                 )
             if has_annotation and not has_return:
                 return (
                     True,
-                    f"Block has block_returns annotation but no Return() statement - add Return() for explicit variable mapping",
+                    "Block has block_returns annotation but no Return() statement - "
+                    "add Return() for explicit variable mapping",
                 )
             if has_return and not has_annotation:
                 return (
                     True,
-                    f"Block has Return() statement but no block_returns annotation - add block_returns for type declaration",
+                    "Block has Return() statement but no block_returns annotation - "
+                    "add block_returns for type declaration",
                 )
 
         # No obvious signs this block returns anything
         return (False, "Block appears to be procedural (no return values)")
-

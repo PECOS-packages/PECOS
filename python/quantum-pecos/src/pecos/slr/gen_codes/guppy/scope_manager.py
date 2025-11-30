@@ -8,6 +8,10 @@ from enum import Enum
 
 from pecos.slr.gen_codes.guppy.ir import ResourceState, ScopeContext
 
+# Maximum array size fallback when actual size cannot be determined from context
+# This is a conservative upper bound to ensure all indices are covered
+_MAX_ARRAY_SIZE_FALLBACK = 1000
+
 
 class ScopeType(Enum):
     """Type of scope."""
@@ -196,9 +200,9 @@ class ScopeManager:
                     if var_info and var_info.size:
                         then_consumed[res_name] = set(range(var_info.size))
                     else:
-                        then_consumed[res_name] = set(range(1000))  # Fallback
+                        then_consumed[res_name] = set(range(_MAX_ARRAY_SIZE_FALLBACK))
                 else:
-                    then_consumed[res_name] = set(range(1000))  # Fallback
+                    then_consumed[res_name] = set(range(_MAX_ARRAY_SIZE_FALLBACK))
             elif usage.indices:
                 then_consumed[res_name] = usage.indices
 
@@ -213,9 +217,11 @@ class ScopeManager:
                         if var_info and var_info.size:
                             else_consumed[res_name] = set(range(var_info.size))
                         else:
-                            else_consumed[res_name] = set(range(1000))  # Fallback
+                            else_consumed[res_name] = set(
+                                range(_MAX_ARRAY_SIZE_FALLBACK),
+                            )
                     else:
-                        else_consumed[res_name] = set(range(1000))  # Fallback
+                        else_consumed[res_name] = set(range(_MAX_ARRAY_SIZE_FALLBACK))
                 elif usage.indices:
                     else_consumed[res_name] = usage.indices
 
@@ -232,6 +238,8 @@ class ScopeManager:
                 else_indices - then_indices
                 missing_in_else = then_indices - else_indices
 
+                # For now, we track indices missing in else branch
+                # (consumed in then but not else)
                 if missing_in_else:
                     unbalanced[res_name] = missing_in_else
 

@@ -31,10 +31,10 @@ def test_simple_classical_function_definition() -> None:
 def test_quantum_function() -> None:
     """Test quantum function compilation and execution."""
     try:
+        from _pecos_rslib import state_vector
         from guppylang.decorator import guppy
         from guppylang.std.quantum import h, measure, qubit
         from pecos.frontends.guppy_api import sim
-        from pecos_rslib import state_vector
 
         @guppy
         def quantum_coin() -> bool:

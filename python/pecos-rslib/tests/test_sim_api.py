@@ -1,7 +1,7 @@
 """Tests for the modern sim() API."""
 
 import pytest
-from pecos_rslib import (
+from _pecos_rslib import (
     biased_depolarizing_noise,
     depolarizing_noise,
     general_noise,
@@ -9,8 +9,8 @@ from pecos_rslib import (
     sparse_stabilizer,
     state_vector,
 )
-from pecos_rslib._pecos_rslib import QasmProgram
-from pecos_rslib.sim import sim
+from _pecos_rslib import QasmProgram
+from _pecos_rslib import sim
 
 
 class TestSimAPI:

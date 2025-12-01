@@ -5,10 +5,10 @@ This example shows how the namespace modules make the API more discoverable
 and organized.
 """
 
-import pecos_rslib
+import _pecos_rslib
 
 # Import namespace modules for Example 3 demonstration
-from pecos_rslib import engines, noise, quantum
+from _pecos_rslib import engines, noise, quantum
 
 
 def explore_namespaces() -> None:
@@ -17,30 +17,30 @@ def explore_namespaces() -> None:
     print("=" * 50)
 
     # Engines namespace
-    print("\n1. ENGINES namespace (pecos_rslib.engines):")
+    print("\n1. ENGINES namespace (_pecos_rslib.engines):")
     print("   Available engine builders:")
-    for item in dir(pecos_rslib.engines):
+    for item in dir(_pecos_rslib.engines):
         if not item.startswith("_"):
             print(f"     - engines.{item}")
 
     # Noise namespace
-    print("\n2. NOISE namespace (pecos_rslib.noise):")
+    print("\n2. NOISE namespace (_pecos_rslib.noise):")
     print("   Available noise model builders:")
-    for item in dir(pecos_rslib.noise):
+    for item in dir(_pecos_rslib.noise):
         if not item.startswith("_"):
             print(f"     - noise.{item}")
 
     # Quantum namespace
-    print("\n3. QUANTUM namespace (pecos_rslib.quantum):")
+    print("\n3. QUANTUM namespace (_pecos_rslib.quantum):")
     print("   Available quantum engine builders:")
-    for item in dir(pecos_rslib.quantum):
+    for item in dir(_pecos_rslib.quantum):
         if not item.startswith("_"):
             print(f"     - quantum.{item}")
 
     # Programs namespace
-    print("\n4. PROGRAMS namespace (pecos_rslib.programs):")
+    print("\n4. PROGRAMS namespace (_pecos_rslib.programs):")
     print("   Available program types:")
-    for item in dir(pecos_rslib.programs):
+    for item in dir(_pecos_rslib.programs):
         if not item.startswith("_") and item[0].isupper():
             print(f"     - programs.{item}")
 
@@ -52,28 +52,28 @@ def namespace_usage_examples() -> None:
 
     # Example 1: Using engines namespace
     print("\n1. Creating different engines:")
-    print("   qasm_eng = pecos_rslib.engines.qasm()")
-    print("   llvm_eng = pecos_rslib.engines.llvm()")
-    print("   selene_eng = pecos_rslib.engines.selene()")
+    print("   qasm_eng = _pecos_rslib.engines.qasm()")
+    print("   llvm_eng = _pecos_rslib.engines.llvm()")
+    print("   selene_eng = _pecos_rslib.engines.selene()")
 
     # Example 2: Using noise namespace
     print("\n2. Creating noise models:")
-    print("   simple_noise = pecos_rslib.noise.general()")
-    print("   depol_noise = pecos_rslib.noise.depolarizing()")
-    print("   biased_noise = pecos_rslib.noise.biased_depolarizing()")
+    print("   simple_noise = _pecos_rslib.noise.general()")
+    print("   depol_noise = _pecos_rslib.noise.depolarizing()")
+    print("   biased_noise = _pecos_rslib.noise.biased_depolarizing()")
 
     # Example 3: Using quantum namespace
     print("\n3. Creating quantum engines:")
-    print("   state_vec = pecos_rslib.quantum.state_vector()")
-    print("   sparse_stab = pecos_rslib.quantum.sparse_stabilizer()")
-    print("   # Alias: pecos_rslib.quantum.sparse_stab()")
+    print("   state_vec = _pecos_rslib.quantum.state_vector()")
+    print("   sparse_stab = _pecos_rslib.quantum.sparse_stabilizer()")
+    print("   # Alias: _pecos_rslib.quantum.sparse_stab()")
 
     # Example 4: Complete workflow
     print("\n4. Complete workflow with namespaces:")
     print(
         """
     # Import what you need
-    from pecos_rslib import engines, noise, quantum, programs
+    from _pecos_rslib import engines, noise, quantum, programs
 
     # Create program
     prog = programs.QasmProgram.from_string(qasm_code)
@@ -98,7 +98,7 @@ def run_example_simulations() -> None:
     print("=" * 50)
 
     # Simple Bell state program
-    bell_state = pecos_rslib.programs.QasmProgram.from_string(
+    bell_state = _pecos_rslib.programs.QasmProgram.from_string(
         """
     OPENQASM 2.0;
     include "qelib1.inc";
@@ -114,10 +114,10 @@ def run_example_simulations() -> None:
     # Example 1: State vector simulation
     print("\n1. State vector simulation:")
     results = (
-        pecos_rslib.engines.qasm()
+        _pecos_rslib.engines.qasm()
         .program(bell_state)
         .to_sim()
-        .quantum_engine(pecos_rslib.quantum.state_vector())
+        .quantum_engine(_pecos_rslib.quantum.state_vector())
         .run(1000)
     )
     print(f"   Ran 1000 shots, got {len(results)} results")
@@ -125,12 +125,12 @@ def run_example_simulations() -> None:
     # Example 2: Sparse stabilizer with noise
     print("\n2. Sparse stabilizer with depolarizing noise:")
     results = (
-        pecos_rslib.engines.qasm()
+        _pecos_rslib.engines.qasm()
         .program(bell_state)
         .to_sim()
-        .quantum_engine(pecos_rslib.quantum.sparse_stabilizer())
+        .quantum_engine(_pecos_rslib.quantum.sparse_stabilizer())
         .noise(
-            pecos_rslib.noise.depolarizing()
+            _pecos_rslib.noise.depolarizing()
             .with_prep_probability(0.001)
             .with_meas_probability(0.001)
             .with_p1_probability(0.002)
@@ -160,12 +160,12 @@ def compare_with_direct_imports() -> None:
 
     print("\nOld style (direct imports):")
     print(
-        "  from pecos_rslib import qasm_engine, sparse_stabilizer, depolarizing_noise",
+        "  from _pecos_rslib import qasm_engine, sparse_stabilizer, depolarizing_noise",
     )
     print("  # Less organized, harder to discover related functions")
 
     print("\nNew style (namespace imports):")
-    print("  from pecos_rslib import engines, quantum, noise")
+    print("  from _pecos_rslib import engines, quantum, noise")
     print("  # Organized, discoverable, clear categories")
 
     print("\nBenefit: IDE autocomplete shows related functions:")

@@ -11,12 +11,12 @@
 
 """Test all one-qubit gates."""
 
-from pecos.simulators import CppSparseSimRs, SparseSimPy, SparseSimRs
+from pecos.simulators import SparseSim, SparseSimCpp, SparseSimPy
 
 states = [
     SparseSimPy,
-    SparseSimRs,
-    CppSparseSimRs,
+    SparseSim,
+    SparseSimCpp,
 ]
 
 
@@ -56,7 +56,7 @@ def gate_test(gate_symbol: str, stab_dict: dict[str, list[str]]) -> None:
 
 
 def destab_test(
-    state: SparseSimPy | SparseSimRs,
+    state: SparseSimPy | SparseSim,
     init_destab: str,
     stab_dict: dict[str, list[str]],
 ) -> None:

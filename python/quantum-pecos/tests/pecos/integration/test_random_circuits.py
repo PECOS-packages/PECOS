@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 import pecos as pc
-from pecos.simulators import CppSparseSimRs, SparseSimPy, SparseSimRs
+from pecos.simulators import SparseSim, SparseSimCpp, SparseSimPy
 
 
 def test_random_circuits() -> None:
@@ -60,8 +60,8 @@ def test_random_circuits() -> None:
         pass
 
     state_sims.append(SparseSimPy)
-    state_sims.append(SparseSimRs)
-    state_sims.append(CppSparseSimRs)
+    state_sims.append(SparseSim)
+    state_sims.append(SparseSimCpp)
 
     assert run_circuit_test(state_sims, num_qubits=10, circuit_depth=50)
 
@@ -141,14 +141,14 @@ def run_a_circuit(
     state = state_rep(num_qubits)
     measurements = []
 
-    if isinstance(state, SparseSimRs | CppSparseSimRs):
+    if isinstance(state, SparseSim | SparseSimCpp):
         state.bindings["measure Z"] = state.bindings["MZForced"]
         state.bindings["init |0>"] = state.bindings.get(
             "PZForced",
             state.bindings.get("init |0>"),
         )
         # Don't set seed for C++ simulator - use numpy random for forced outcomes instead
-        # if isinstance(state, CppSparseSimRs) and hasattr(state, 'set_seed') and test_seed is not None:
+        # if isinstance(state, SparseSimCpp) and hasattr(state, 'set_seed') and test_seed is not None:
         #     # Use the test seed directly for C++ RNG
         #     state.set_seed(test_seed)
 
@@ -156,13 +156,13 @@ def run_a_circuit(
         m = -1
         if element == "measure Z":
             if (
-                verbose and isinstance(state, CppSparseSimRs) and i == 26
+                verbose and isinstance(state, SparseSimCpp) and i == 26
             ):  # Debug the 27th operation
                 pass
                 # print(f"\n[DEBUG] Op {i}: {element} on qubit {q}, forcing outcome to 0")
             m = state.run_gate(element, {q}, forced_outcome=0)
             m = m.get(q, 0)
-            if verbose and isinstance(state, CppSparseSimRs) and i == 26:
+            if verbose and isinstance(state, SparseSimCpp) and i == 26:
                 pass
                 # print(f"[DEBUG] Result: {m}\n")
             measurements.append(m)

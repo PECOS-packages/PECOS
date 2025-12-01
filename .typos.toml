@@ -20,3 +20,5 @@ Expec = "Expec"
 arange = "arange"
 # Common variable name prefix for ndarray
 nd = "nd"
+# delocate is a macOS wheel repair tool (delocate-wheel command)
+delocate = "delocate"

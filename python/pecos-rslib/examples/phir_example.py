@@ -7,7 +7,7 @@ via MLIR infrastructure.
 
 import json
 
-from pecos_rslib import (
+from _pecos_rslib import (
     PhirCompiler,
     compile_and_execute_via_phir,
     compile_hugr_via_phir,

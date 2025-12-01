@@ -36,8 +36,8 @@ except ImportError:
     GUPPY_AVAILABLE = False
 
 try:
+    from _pecos_rslib import state_vector
     from pecos.frontends.guppy_api import sim
-    from pecos_rslib import state_vector
 
     PECOS_AVAILABLE = True
 except ImportError:

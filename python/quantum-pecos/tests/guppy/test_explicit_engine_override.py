@@ -1,10 +1,10 @@
 """Test explicit engine override using .classical() method with sim() API."""
 
 import pytest
+from _pecos_rslib import qasm_engine, qis_engine
 from guppylang import guppy
 from guppylang.std.quantum import cx, h, measure, qubit
-from pecos_rslib import qasm_engine, qis_engine
-from pecos_rslib.sim_wrapper import sim
+from pecos.frontends.guppy_api import sim
 
 
 def test_guppy_with_explicit_qis_override() -> None:
@@ -22,7 +22,7 @@ def test_guppy_with_explicit_qis_override() -> None:
 
     # Test 1: Default auto-detection (should use QIS engine for HUGR)
     # Use state vector to avoid stabilizer issues with decomposed gates
-    from pecos_rslib import state_vector
+    from _pecos_rslib import state_vector
 
     results_auto = (
         sim(bell_state).quantum(state_vector()).qubits(2).run(100).to_binary_dict()
@@ -61,7 +61,7 @@ def test_qasm_with_explicit_override() -> None:
     """Test QASM program with explicit qasm_engine() override."""
     import os
 
-    from pecos_rslib import QasmProgram
+    from _pecos_rslib import QasmProgram
 
     # Set include path for QASM parser
     os.environ["PECOS_QASM_INCLUDES"] = (
@@ -101,7 +101,7 @@ measure q[1] -> c[1];"""
 
 def test_invalid_engine_override_rejected() -> None:
     """Test that invalid engine overrides are properly rejected."""
-    from pecos_rslib import QasmProgram, QisProgram
+    from _pecos_rslib import QasmProgram, QisProgram
 
     # QASM program should reject non-QASM engines
     qasm_program = QasmProgram.from_string("OPENQASM 3.0; qubit q;")
@@ -121,10 +121,10 @@ def test_invalid_engine_override_rejected() -> None:
 
 def test_engine_override_with_noise() -> None:
     """Test that noise models work with explicit engine overrides."""
+    from _pecos_rslib import depolarizing_noise
     from guppylang import guppy
     from guppylang.std.builtins import result
     from guppylang.std.quantum import h, measure, qubit
-    from pecos_rslib import depolarizing_noise
 
     @guppy
     def simple_h() -> None:
@@ -134,7 +134,7 @@ def test_engine_override_with_noise() -> None:
 
     # Test with explicit engine and noise
     # Use state vector to avoid stabilizer issues with decomposed gates
-    from pecos_rslib import state_vector
+    from _pecos_rslib import state_vector
 
     noise = depolarizing_noise().with_uniform_probability(0.1)
     results = (

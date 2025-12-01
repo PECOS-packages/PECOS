@@ -1,6 +1,6 @@
 """Test suite for rotation extension support."""
 
-import pecos_rslib
+import _pecos_rslib
 from guppylang import guppy
 from guppylang.std.quantum import measure, pi, qubit, rz
 
@@ -19,7 +19,7 @@ class TestRotationExtension:
             return measure(q)
 
         hugr = test_angle_ops.compile()
-        output = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        output = _pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
 
         # Should compile successfully with angle arithmetic
         assert "___rz" in output
@@ -36,7 +36,7 @@ class TestRotationExtension:
             return measure(q)
 
         hugr = test_multi_angles.compile()
-        output = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        output = _pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
 
         # Should have multiple RZ calls
         rz_calls = output.count("tail call void @___rz")
@@ -52,7 +52,7 @@ class TestRotationExtension:
             return measure(q)
 
         hugr = test_rotation_compat.compile()
-        pecos_out = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        pecos_out = _pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
 
         # Should compile successfully
         assert "___rz" in pecos_out
@@ -70,7 +70,7 @@ class TestRotationExtension:
             return measure(q)
 
         hugr = test_complex_angles.compile()
-        output = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        output = _pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
 
         # Should handle complex angle expressions
         assert "___rz" in output
@@ -87,8 +87,8 @@ class TestRotationExtension:
 
         hugr = simple_rotation.compile()
         try:
-            pecos_out = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
-            selene_out = pecos_rslib.compile_hugr_to_llvm_selene(hugr.to_bytes())
+            pecos_out = _pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+            selene_out = _pecos_rslib.compile_hugr_to_llvm_selene(hugr.to_bytes())
 
             # Both should compile successfully
             assert "___rz" in pecos_out

@@ -8,7 +8,7 @@ use pecos_qis_core::qis_interface::{InterfaceError, ProgramFormat, QisInterface}
 use pecos_qis_ffi_types::OperationCollector;
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::NamedTempFile;
 
@@ -16,6 +16,141 @@ use tempfile::NamedTempFile;
 type ResetInterfaceFn = unsafe extern "C" fn();
 type GetOperationsFn = unsafe extern "C" fn() -> *mut OperationCollector;
 type CallQmainFn = unsafe extern "C" fn(extern "C" fn(u64) -> u64) -> u64;
+
+/// Derive the project target directory from the compile-time embedded Helios path.
+///
+/// The compile-time path looks like:
+/// `/path/to/project/target/release/build/pecos-qis-selene-HASH/out/libhelios_selene_interface.a`
+///
+/// We want to extract `/path/to/project/target` so we can search for other build hashes.
+fn get_helios_target_dir() -> Option<PathBuf> {
+    let compile_time_path = PathBuf::from(env!("HELIOS_LIB_PATH"));
+    // Go up from: lib -> out -> pecos-qis-selene-HASH -> build -> release/debug -> target
+    compile_time_path
+        .parent() // out/
+        .and_then(|p| p.parent()) // pecos-qis-selene-HASH/
+        .and_then(|p| p.parent()) // build/
+        .and_then(|p| p.parent()) // release or debug
+        .and_then(|p| p.parent()) // target/
+        .map(std::path::Path::to_path_buf)
+}
+
+/// Search for the Helios library in a target directory
+fn search_helios_in_target(target_dir: &Path, lib_name: &str) -> Option<PathBuf> {
+    for profile in ["release", "debug"] {
+        let build_dir = target_dir.join(profile).join("build");
+        if build_dir.exists()
+            && let Ok(entries) = std::fs::read_dir(&build_dir)
+        {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("pecos-qis-selene-") {
+                    let lib_path = entry.path().join("out").join(lib_name);
+                    if lib_path.exists() {
+                        debug!("Found Helios library at: {}", lib_path.display());
+                        return Some(lib_path);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Find the Helios interface library with the following priority:
+/// 1. Runtime `HELIOS_LIB_PATH` environment variable (explicit override)
+/// 2. Embedded path from build time (compile-time `HELIOS_LIB_PATH`)
+/// 3. Search target directory derived from compile-time path (handles hash changes)
+/// 4. Search target directory relative to current working directory
+/// 5. Search relative to the executable
+///
+/// Returns the path to `libhelios_selene_interface.a` or an error with helpful suggestions.
+fn find_helios_lib() -> Result<PathBuf, InterfaceError> {
+    const LIB_NAME: &str = "libhelios_selene_interface.a";
+
+    // 1. Check runtime environment variable (explicit override)
+    if let Ok(path_str) = std::env::var("HELIOS_LIB_PATH") {
+        let path = PathBuf::from(&path_str);
+        if path.exists() {
+            debug!(
+                "Using Helios library from HELIOS_LIB_PATH env var: {}",
+                path.display()
+            );
+            return Ok(path);
+        }
+        warn!(
+            "HELIOS_LIB_PATH is set to '{path_str}' but file does not exist, searching other locations..."
+        );
+    }
+
+    // 2. Check compile-time embedded path
+    let compile_time_path = PathBuf::from(env!("HELIOS_LIB_PATH"));
+    if compile_time_path.exists() {
+        debug!(
+            "Using Helios library from compile-time path: {}",
+            compile_time_path.display()
+        );
+        return Ok(compile_time_path);
+    }
+
+    // 3. Search target directory derived from compile-time path
+    // This handles cases where the build hash changed but the target dir is the same
+    if let Some(target_dir) = get_helios_target_dir()
+        && let Some(path) = search_helios_in_target(&target_dir, LIB_NAME)
+    {
+        return Ok(path);
+    }
+
+    // 4. Search target directory relative to current working directory
+    let mut candidate_paths = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        let target_dir = cwd.join("target");
+        if let Some(path) = search_helios_in_target(&target_dir, LIB_NAME) {
+            return Ok(path);
+        }
+    }
+
+    // 5. Search relative to executable
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(exe_dir) = exe_path.parent()
+    {
+        // Check same directory as executable
+        candidate_paths.push(exe_dir.join(LIB_NAME));
+        // Check lib subdirectory
+        candidate_paths.push(exe_dir.join("lib").join(LIB_NAME));
+        // Check parent directory (for bundled installations)
+        if let Some(parent) = exe_dir.parent() {
+            candidate_paths.push(parent.join("lib").join(LIB_NAME));
+        }
+    }
+
+    // Try each candidate
+    for path in &candidate_paths {
+        if path.exists() {
+            debug!("Found Helios library at: {}", path.display());
+            return Ok(path.clone());
+        }
+    }
+
+    // Nothing found - provide helpful error message
+    let searched_locations = candidate_paths
+        .iter()
+        .map(|p| format!("  - {}", p.display()))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    Err(InterfaceError::LoadError(format!(
+        "Could not find Helios interface library ({LIB_NAME}).\n\n\
+        The compile-time path no longer exists:\n  {}\n\n\
+        This usually happens after a partial rebuild. To fix this:\n\
+        1. Run: cargo clean -p pecos-qis-selene\n\
+        2. Rebuild: cargo build --release\n\n\
+        Or set HELIOS_LIB_PATH environment variable to the library location.\n\n\
+        Searched locations:\n{searched_locations}",
+        compile_time_path.display()
+    )))
+}
 
 /// Find an LLVM tool with the following priority:
 /// 1. Embedded path from build time (`PECOS_LLVM_BIN_PATH`)
@@ -357,11 +492,9 @@ impl QisHeliosInterface {
     /// Link the program with Helios interface to create a shared library
     #[allow(clippy::too_many_lines)]
     fn create_shared_library(&mut self) -> Result<PathBuf, InterfaceError> {
-        // Get the Helios library path from environment, or use compile-time default
-        let helios_lib_path = std::env::var("HELIOS_LIB_PATH").unwrap_or_else(|_| {
-            // Fall back to compile-time path set by build.rs
-            env!("HELIOS_LIB_PATH").to_string()
-        });
+        // Find the Helios library using robust search
+        let helios_lib_path = find_helios_lib()?;
+        let helios_lib_path = helios_lib_path.to_string_lossy().to_string();
 
         // Create temporary files for the program
         let mut program_file = NamedTempFile::new()

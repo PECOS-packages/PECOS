@@ -1,5 +1,5 @@
 """
-Comparison tests between pecos_rslib.num.random and numpy.random.
+Comparison tests between _pecos_rslib.num.random and numpy.random.
 
 This module tests that our Rust implementations of numpy.random functions
 produce statistically equivalent results to numpy's implementations.
@@ -69,6 +69,8 @@ class TestRandomComparison:
 
     def test_random_uniformity_ks_test(self):
         """Test uniformity using Kolmogorov-Smirnov test."""
+        # Use a fixed seed for deterministic test behavior
+        pc.random.seed(42)
         vals = pc.random.random(1000)
 
         # KS test against uniform [0, 1) distribution
@@ -80,6 +82,8 @@ class TestRandomComparison:
 
     def test_random_chi_square_uniformity(self):
         """Test uniformity using chi-square goodness-of-fit test."""
+        # Use a fixed seed for deterministic test behavior
+        pc.random.seed(123)
         vals = pc.random.random(10000)
 
         # Divide [0, 1) into 10 bins

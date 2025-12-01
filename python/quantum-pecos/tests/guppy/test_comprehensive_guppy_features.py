@@ -5,7 +5,6 @@ the full spectrum of Guppy language capabilities, from basic quantum operations
 to advanced classical-quantum hybrid programs.
 """
 
-import contextlib
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -37,8 +36,8 @@ except ImportError:
     GUPPY_AVAILABLE = False
 
 try:
+    from _pecos_rslib import check_rust_hugr_availability, state_vector
     from pecos.frontends.guppy_api import sim
-    from pecos_rslib import check_rust_hugr_availability, state_vector
 
     PECOS_FRONTEND_AVAILABLE = True
 except ImportError:
@@ -61,7 +60,7 @@ def get_guppy_backends() -> dict[str, Any]:
 
 
 try:
-    from pecos_rslib import HUGR_LLVM_PIPELINE_AVAILABLE
+    from _pecos_rslib import HUGR_LLVM_PIPELINE_AVAILABLE
 except ImportError:
     HUGR_LLVM_PIPELINE_AVAILABLE = False
 
@@ -176,12 +175,6 @@ def pipeline_tester() -> GuppyPipelineTest:
     """Fixture providing the pipeline testing helper."""
     import gc
 
-    import pecos_rslib
-
-    # Force cleanup before test
-    with contextlib.suppress(Exception):
-        pecos_rslib.clear_jit_cache()
-
     # Force garbage collection to clean up any lingering resources
     gc.collect()
 
@@ -189,10 +182,6 @@ def pipeline_tester() -> GuppyPipelineTest:
     tester = GuppyPipelineTest()
 
     yield tester
-
-    # Force cleanup after test
-    with contextlib.suppress(Exception):
-        pecos_rslib.clear_jit_cache()
 
     # Force garbage collection to clean up test resources
     gc.collect()

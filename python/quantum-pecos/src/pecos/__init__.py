@@ -30,42 +30,10 @@ except PackageNotFoundError:
 import sys
 from typing import NoReturn
 
-# Graph algorithms
-# ============================================================================
-# NumPy-style Numerical Computing API (Hybrid Flat + Structured)
-# ============================================================================
-#
-# PECOS follows NumPy's organization:
-#   - Common functions at top level: pecos.array(), pecos.sin(), pecos.mean()
-#   - Specialized functions in submodules: pecos.linalg.norm(), pecos.random.randint()
-#
-# This provides the best user experience:
-#   import pecos as pc
-#   arr = pc.array([1, 2, 3])        # Common operations - flat and convenient
-#   norm = pc.linalg.norm(arr)       # Specialized operations - organized
-#   one = pc.i64(1)                  # Data types - flat for convenience
-# Import the Rust num module directly from pecos_rslib
-# ============================================================================
-# Top-level: Common numerical functions (like NumPy's flat namespace)
-# ============================================================================
-# Array creation and manipulation
-# Mathematical functions (element-wise operations)
-# Statistical functions
-# Comparison and logical functions
-# Data types - import scalar type classes directly (NumPy-like API)
-# This allows: pc.i64(42) and def foo(x: pc.i64) just like np.int64(42) and def foo(x: np.int64)
-# Mathematical constants
-from pecos_rslib import (
+from _pecos_rslib import (
     Array,  # Array type with generic dtype support (Array[f64], etc.)
-    Complex,
-    Float,
-    Inexact,
-    Integer,
-    Numeric,
     Pauli,  # Quantum Pauli operators (I, X, Y, Z)
     PauliString,  # Multi-qubit Pauli operators
-    SignedInteger,
-    UnsignedInteger,
     abs,  # Absolute value  # noqa: A004
     all,  # All elements true  # noqa: A004
     allclose,  # Approximate equality (arrays)
@@ -112,7 +80,7 @@ from pecos_rslib import (
 # They are only available via dtype namespaces: pc.f64.pi, pc.f64.frac_pi_2, etc.
 # This makes precision explicit and supports future f32, complex constants
 # Polynomial and optimization functions (commonly used, so at top level)
-from pecos_rslib.num import (
+from _pecos_rslib.num import (
     Poly1d,  # Polynomial evaluation
     arange,  # Range arrays
     brentq,  # Brent's root finding
@@ -130,7 +98,51 @@ from pecos_rslib.num import (
 )
 
 # Type hints for arrays and scalars
-from pecos import types
+from pecos import typing
+
+# Graph algorithms
+# ============================================================================
+# NumPy-style Numerical Computing API (Hybrid Flat + Structured)
+# ============================================================================
+#
+# PECOS follows NumPy's organization:
+#   - Common functions at top level: pecos.array(), pecos.sin(), pecos.mean()
+#   - Specialized functions in submodules: pecos.linalg.norm(), pecos.random.randint()
+#
+# This provides the best user experience:
+#   import pecos as pc
+#   arr = pc.array([1, 2, 3])        # Common operations - flat and convenient
+#   norm = pc.linalg.norm(arr)       # Specialized operations - organized
+#   one = pc.i64(1)                  # Data types - flat for convenience
+# Import the Rust num module directly from _pecos_rslib
+# ============================================================================
+# Top-level: Common numerical functions (like NumPy's flat namespace)
+# ============================================================================
+# Array creation and manipulation
+# Mathematical functions (element-wise operations)
+# Statistical functions
+# Comparison and logical functions
+# Data types - import scalar type classes directly (NumPy-like API)
+# This allows: pc.i64(42) and def foo(x: pc.i64) just like np.int64(42) and def foo(x: np.int64)
+# Mathematical constants
+# Type aliases for numeric types (from pecos.typing, not pecos_rslib)
+from pecos.typing import (
+    # Also export runtime type tuples for isinstance checks
+    COMPLEX_TYPES,
+    FLOAT_TYPES,
+    INEXACT_TYPES,
+    INTEGER_TYPES,
+    NUMERIC_TYPES,
+    SIGNED_INTEGER_TYPES,
+    UNSIGNED_INTEGER_TYPES,
+    Complex,
+    Float,
+    Inexact,
+    Integer,
+    Numeric,
+    SignedInteger,
+    UnsignedInteger,
+)
 
 # ============================================================================
 # Structured submodules: Specialized functionality (like NumPy's submodules)
@@ -175,7 +187,6 @@ from pecos import (  # noqa: E402
     misc,
     protocols,
     qeccs,
-    rslib,
     simulators,
     tools,
 )
@@ -208,20 +219,6 @@ except ImportError:
         return {"guppy_available": False, "rust_backend": False}
 
 
-# Import Selene Bridge Plugin (with graceful fallback)
-try:
-    from pecos.selene_plugins.simulators import PecosBridgePlugin
-
-    SELENE_BRIDGE_AVAILABLE = True
-except ImportError:
-    SELENE_BRIDGE_AVAILABLE = False
-    PecosBridgePlugin = None
-
-    def get_guppy_backends() -> dict[str, object]:
-        """Stub for get_guppy_backends when Guppy integration is not available."""
-        return {"guppy_available": False, "error": "Guppy integration not available"}
-
-
 __all__ = [
     "GUPPY_INTEGRATION_AVAILABLE",
     "BinArray",
@@ -248,15 +245,14 @@ __all__ = [
     "i32",
     "i64",
     "misc",
-    "num",  # Numerical computing module from pecos_rslib
+    "num",  # Numerical computing module from _pecos_rslib
     "protocols",
     "qeccs",
-    "rslib",
     # Guppy integration
     "sim",
     "simulators",
     "tools",
-    "types",  # Type hints for arrays
+    "typing",  # Type hints for arrays and scalars
     "u8",
     "u16",
     "u32",

@@ -8,14 +8,11 @@ guppylang = pytest.importorskip("guppylang")
 
 def test_guppy_to_selene_pipeline() -> None:
     """Test that Guppy programs can be compiled to Selene Interface and executed."""
-    # Try to import sim
+    # Import Guppy-aware sim from pecos.frontends
     try:
-        from pecos_rslib.sim import sim
+        from pecos.frontends.guppy_api import sim
     except ImportError:
-        try:
-            from pecos.frontends.guppy_api import sim
-        except ImportError:
-            pytest.skip("sim() function not available")
+        pytest.skip("sim() function not available")
 
     # Simple Guppy program that creates a Bell state
     from guppylang import guppy
@@ -38,7 +35,7 @@ def test_guppy_to_selene_pipeline() -> None:
         # 1. Detect Guppy function
         # 2. Compile to HUGR via Python-side Selene compilation
         # 3. Execute with SeleneSimpleRuntimeEngine
-        from pecos_rslib import state_vector
+        from _pecos_rslib import state_vector
 
         result = sim(bell_state).qubits(2).quantum(state_vector()).run(10)
 
@@ -75,7 +72,8 @@ def test_guppy_to_selene_pipeline() -> None:
 def test_guppy_hadamard_compilation() -> None:
     """Test that Hadamard gate is compiled correctly."""
     try:
-        from pecos_rslib import sim, state_vector
+        from _pecos_rslib import state_vector
+        from pecos.frontends.guppy_api import sim
     except ImportError:
         pytest.skip("sim() not available")
 
@@ -111,7 +109,8 @@ def test_guppy_hadamard_compilation() -> None:
 def test_guppy_cnot_compilation() -> None:
     """Test that CNOT gate is compiled correctly."""
     try:
-        from pecos_rslib import sim, state_vector
+        from _pecos_rslib import state_vector
+        from pecos.frontends.guppy_api import sim
     except ImportError:
         pytest.skip("sim() not available")
 

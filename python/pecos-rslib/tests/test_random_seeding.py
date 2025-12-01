@@ -1,14 +1,14 @@
 """
 Tests for random number seeding and reproducibility.
 
-Ensures that pecos_rslib.num.random.seed() provides reproducibility
+Ensures that _pecos_rslib.num.random.seed() provides reproducibility
 compatible with numpy.random.seed().
 """
 
 import numpy as np
 import pytest
 
-from pecos_rslib import array_equal, random as pecos_random
+from _pecos_rslib import array_equal, random as pecos_random
 
 
 class TestSeedReproducibility:

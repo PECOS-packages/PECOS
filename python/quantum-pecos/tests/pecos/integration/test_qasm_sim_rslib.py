@@ -7,14 +7,14 @@ class TestQasmSimRslib:
     """Test QASM simulation functionality using pecos_rslib imports."""
 
     def test_import_qasm_engine(self) -> None:
-        """Test that we can import qasm_engine from pecos_rslib."""
-        from pecos_rslib import qasm_engine
+        """Test that we can import qasm_engine from _pecos_rslib."""
+        from _pecos_rslib import qasm_engine
 
         assert callable(qasm_engine)
 
     def test_import_noise_models(self) -> None:
-        """Test that we can import noise models from pecos_rslib."""
-        from pecos_rslib import (
+        """Test that we can import noise models from _pecos_rslib."""
+        from _pecos_rslib import (
             GeneralNoiseModelBuilder,
             biased_depolarizing_noise,
             depolarizing_noise,
@@ -26,8 +26,8 @@ class TestQasmSimRslib:
         assert GeneralNoiseModelBuilder() is not None
 
     def test_import_utilities(self) -> None:
-        """Test that we can import utility functions from pecos_rslib."""
-        from pecos_rslib import sparse_stabilizer, state_vector
+        """Test that we can import utility functions from _pecos_rslib."""
+        from _pecos_rslib import sparse_stabilizer, state_vector
 
         # Test quantum engine builders
         assert callable(state_vector)
@@ -35,8 +35,7 @@ class TestQasmSimRslib:
 
     def test_basic_simulation(self) -> None:
         """Test basic QASM simulation using pecos_rslib imports."""
-        from pecos_rslib import qasm_engine
-        from pecos_rslib.programs import QasmProgram
+        from _pecos_rslib import QasmProgram, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -68,8 +67,7 @@ class TestQasmSimRslib:
 
     def test_simulation_with_noise(self) -> None:
         """Test QASM simulation with noise using pecos_rslib imports."""
-        from pecos_rslib import depolarizing_noise, qasm_engine
-        from pecos_rslib.programs import QasmProgram
+        from _pecos_rslib import QasmProgram, depolarizing_noise, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -101,12 +99,12 @@ class TestQasmSimRslib:
 
     def test_builder_pattern(self) -> None:
         """Test the builder pattern using pecos_rslib imports."""
-        from pecos_rslib import (
+        from _pecos_rslib import (
+            QasmProgram,
             biased_depolarizing_noise,
             qasm_engine,
             sparse_stabilizer,
         )
-        from pecos_rslib.programs import QasmProgram
 
         qasm = """
         OPENQASM 2.0;
@@ -153,8 +151,7 @@ class TestQasmSimRslib:
 
     def test_binary_string_format(self) -> None:
         """Test binary string format output using pecos_rslib imports."""
-        from pecos_rslib import qasm_engine
-        from pecos_rslib.programs import QasmProgram
+        from _pecos_rslib import QasmProgram, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -184,8 +181,7 @@ class TestQasmSimRslib:
 
     def test_auto_workers(self) -> None:
         """Test auto_workers functionality using pecos_rslib imports."""
-        from pecos_rslib import qasm_engine
-        from pecos_rslib.programs import QasmProgram
+        from _pecos_rslib import QasmProgram, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -213,8 +209,12 @@ class TestQasmSimRslib:
 
     def test_run_direct_pattern(self) -> None:
         """Test running simulations directly using pecos_rslib imports."""
-        from pecos_rslib import depolarizing_noise, qasm_engine, state_vector
-        from pecos_rslib.programs import QasmProgram
+        from _pecos_rslib import (
+            QasmProgram,
+            depolarizing_noise,
+            qasm_engine,
+            state_vector,
+        )
 
         qasm = """
         OPENQASM 2.0;
@@ -247,8 +247,7 @@ class TestQasmSimRslib:
 
     def test_large_register(self) -> None:
         """Test simulation with large quantum registers using pecos_rslib imports."""
-        from pecos_rslib import qasm_engine
-        from pecos_rslib.programs import QasmProgram
+        from _pecos_rslib import QasmProgram, qasm_engine
 
         qasm = """
         OPENQASM 2.0;

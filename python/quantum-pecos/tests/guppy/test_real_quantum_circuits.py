@@ -1,11 +1,11 @@
 """Test real quantum circuits through the Guppy->HUGR->Selene->ByteMessage pipeline."""
 
 import pytest
+from _pecos_rslib import state_vector
 from guppylang import guppy
 from guppylang.std.angles import angle
 from guppylang.std.quantum import cx, h, measure, qubit, ry, rz, x, z
 from pecos.frontends.guppy_api import sim
-from pecos_rslib import state_vector
 
 pytestmark = pytest.mark.optional_dependency
 

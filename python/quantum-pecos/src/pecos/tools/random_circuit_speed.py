@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence
 
     from pecos.protocols import SimulatorProtocol
-    from pecos.types import Array
+    from pecos.typing import Array
 
 
 def random_circuit_speed(

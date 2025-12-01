@@ -17,10 +17,12 @@ and fault propagation simulators.
 # specific language governing permissions and limitations under the License.
 
 # Rust version of simulators
-from pecos_rslib import CoinToss, CppSparseSimRs, SparseSimRs
-from pecos_rslib import SparseSimRs as SparseSim
+from _pecos_rslib import SparseSim, SparseSimCpp
 
 from pecos.simulators import sim_class_types
+
+# Coin toss simulator (uses Rust backend)
+from pecos.simulators.cointoss import CoinToss
 
 # Ignores quantum gates, coin toss for measurements
 from pecos.simulators.default_simulator import DefaultSimulator
@@ -58,6 +60,3 @@ try:
 except ImportError:
     CuStateVec = None
     MPS = None
-
-
-# Note: Selene Bridge Plugin moved to pecos.selene_plugins.simulators

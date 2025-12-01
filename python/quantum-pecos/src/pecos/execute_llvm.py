@@ -19,7 +19,7 @@ def compile_module_to_string(hugr_bytes: bytes) -> str:
         RuntimeError: If compilation fails
     """
     try:
-        from pecos_rslib import compile_hugr_to_llvm_rust
+        from _pecos_rslib import compile_hugr_to_llvm_rust
 
         return compile_hugr_to_llvm_rust(hugr_bytes, None)
     except ImportError as e:
@@ -82,7 +82,7 @@ def is_available() -> bool:
     # Check Rust backend
     import importlib.util
 
-    if importlib.util.find_spec("pecos_rslib.compile_hugr_to_llvm_rust") is not None:
+    if importlib.util.find_spec("_pecos_rslib.compile_hugr_to_llvm_rust") is not None:
         return True
 
     try:

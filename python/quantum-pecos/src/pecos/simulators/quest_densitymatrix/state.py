@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos_rslib import QuestDensityMatrix as RustQuestDensityMatrix
+from _pecos_rslib import QuestDensityMatrix as RustQuestDensityMatrix
 
 from pecos.simulators.quest_densitymatrix.bindings import get_bindings
 

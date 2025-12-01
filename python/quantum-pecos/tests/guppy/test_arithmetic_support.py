@@ -1,9 +1,9 @@
 """Test arithmetic and boolean type support in Guppy->Selene pipeline."""
 
+from _pecos_rslib import state_vector
 from guppylang import guppy
 from guppylang.std.quantum import h, measure, qubit
 from pecos.frontends.guppy_api import sim
-from pecos_rslib import state_vector
 
 
 def test_integer_arithmetic() -> None:

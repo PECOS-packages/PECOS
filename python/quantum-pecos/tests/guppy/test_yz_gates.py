@@ -1,9 +1,9 @@
 """Test Y and Z gates specifically."""
 
+from _pecos_rslib import state_vector
 from guppylang import guppy
 from guppylang.std.quantum import measure, qubit, x, y, z
 from pecos.frontends.guppy_api import sim
-from pecos_rslib import state_vector
 
 
 def test_y_gate_only() -> None:

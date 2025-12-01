@@ -15,13 +15,13 @@ except ImportError:
     GUPPY_AVAILABLE = False
 
 try:
-    from pecos.frontends.guppy_api import sim
-    from pecos_rslib import (
+    from _pecos_rslib import (
         biased_depolarizing_noise,
         depolarizing_noise,
         general_noise,
         state_vector,
     )
+    from pecos.frontends.guppy_api import sim
 except ImportError:
     pass
 

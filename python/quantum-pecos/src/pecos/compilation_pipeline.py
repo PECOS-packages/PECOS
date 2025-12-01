@@ -10,7 +10,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from pecos.hugr_types import HugrTypeError
+from pecos.errors import HugrTypeError
 
 
 # Step 1: Guppy -> HUGR
@@ -185,7 +185,7 @@ def compile_hugr_to_llvm(
     """
     # Try to use PECOS's HUGR to LLVM compiler
     try:
-        from pecos_rslib import compile_hugr_to_llvm_rust
+        from _pecos_rslib import compile_hugr_to_llvm_rust
 
         rust_backend_available = True
     except ImportError:
@@ -237,7 +237,7 @@ def execute_llvm(
         RuntimeError: If execution fails
     """
     try:
-        from pecos_rslib import execute_llvm
+        from _pecos_rslib import execute_llvm
     except ImportError as err:
         msg = "LLVM execution backend not available"
         raise ImportError(msg) from err

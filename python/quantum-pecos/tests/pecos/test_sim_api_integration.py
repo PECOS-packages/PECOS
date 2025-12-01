@@ -13,12 +13,13 @@ except ImportError:
     SIM_API_AVAILABLE = False
 
 try:
-    from pecos_rslib import sparse_stabilizer, state_vector
-    from pecos_rslib.programs import (
+    from _pecos_rslib import (
         HugrProgram,
         PhirJsonProgram,
         QasmProgram,
         QisProgram,
+        sparse_stabilizer,
+        state_vector,
     )
 
     PECOS_RSLIB_AVAILABLE = True

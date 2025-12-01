@@ -3,14 +3,14 @@
 
 def test_import_ir_module():
     """Test that the ir module can be imported."""
-    from pecos_rslib import ir
+    from _pecos_rslib import ir
 
     assert ir is not None
 
 
 def test_create_module():
     """Test creating an LLVM module."""
-    from pecos_rslib import ir
+    from _pecos_rslib import ir
 
     module = ir.Module("test_module")
     assert module is not None
@@ -19,7 +19,7 @@ def test_create_module():
 
 def test_module_context_and_types():
     """Test accessing module context and creating types."""
-    from pecos_rslib import ir
+    from _pecos_rslib import ir
 
     module = ir.Module("test_module")
     ctx = module.context
@@ -38,7 +38,7 @@ def test_module_context_and_types():
 
 def test_create_function():
     """Test creating a function."""
-    from pecos_rslib import ir
+    from _pecos_rslib import ir
 
     module = ir.Module("test_module")
     ctx = module.context
@@ -55,7 +55,7 @@ def test_create_function():
 
 def test_create_basic_block_and_builder():
     """Test creating basic blocks and IRBuilder."""
-    from pecos_rslib import ir
+    from _pecos_rslib import ir
 
     module = ir.Module("test_module")
     ctx = module.context
@@ -75,7 +75,7 @@ def test_create_basic_block_and_builder():
 
 def test_build_add_instruction():
     """Test building arithmetic instructions."""
-    from pecos_rslib import ir
+    from _pecos_rslib import ir
 
     module = ir.Module("test_module")
     ctx = module.context
@@ -97,7 +97,7 @@ def test_build_add_instruction():
 
 def test_generate_llvm_ir():
     """Test generating LLVM IR as a string."""
-    from pecos_rslib import ir
+    from _pecos_rslib import ir
 
     module = ir.Module("test_module")
     ctx = module.context

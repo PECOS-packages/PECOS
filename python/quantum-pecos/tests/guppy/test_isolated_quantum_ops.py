@@ -37,8 +37,8 @@ try:
 except ImportError:
     GUPPY_AVAILABLE = False
 
+from _pecos_rslib import state_vector
 from pecos.frontends.guppy_api import sim
-from pecos_rslib import state_vector
 
 
 @pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")

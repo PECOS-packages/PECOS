@@ -14,15 +14,15 @@ except ImportError:
     GUPPY_AVAILABLE = False
 
 try:
+    from _pecos_rslib import state_vector
     from pecos.frontends.guppy_api import sim
-    from pecos_rslib import state_vector
 
     PECOS_API_AVAILABLE = True
 except ImportError:
     PECOS_API_AVAILABLE = False
 
 try:
-    from pecos_rslib import compile_hugr_to_llvm
+    from _pecos_rslib import compile_hugr_to_llvm
 
     HUGR_LLVM_AVAILABLE = True
 except ImportError:
@@ -271,7 +271,7 @@ class TestSimAPI:
             return measure(q)
 
         try:
-            from pecos_rslib import depolarizing_noise
+            from _pecos_rslib import depolarizing_noise
 
             # Create depolarizing noise model with 10% error probability
             noise_model = depolarizing_noise().with_uniform_probability(0.1)

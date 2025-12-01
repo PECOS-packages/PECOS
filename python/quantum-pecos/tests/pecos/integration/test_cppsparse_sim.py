@@ -12,12 +12,12 @@
 """Integration tests for C++ sparse simulator via Rust bindings."""
 
 import pytest
-from pecos.simulators import CppSparseSimRs
+from pecos.simulators import SparseSimCpp
 
 
 def test_basic_gates() -> None:
     """Test basic gate operations without checking tableaus."""
-    sim = CppSparseSimRs(2)
+    sim = SparseSimCpp(2)
 
     # Test single qubit gates
     sim.run_gate("X", {0})
@@ -37,7 +37,7 @@ def test_basic_gates() -> None:
 
 def test_measurements() -> None:
     """Test measurement operations."""
-    sim = CppSparseSimRs(3)
+    sim = SparseSimCpp(3)
 
     # Measure in computational basis (should get 0)
     result = sim.run_gate("MZ", {0})
@@ -57,7 +57,7 @@ def test_measurements() -> None:
 
 def test_bell_state() -> None:
     """Test creating and measuring Bell states."""
-    sim = CppSparseSimRs(2)
+    sim = SparseSimCpp(2)
 
     # Create |00> + |11> Bell state
     sim.run_gate("H", {0})
@@ -71,7 +71,7 @@ def test_bell_state() -> None:
 
 def test_ghz_state() -> None:
     """Test creating and measuring GHZ states."""
-    sim = CppSparseSimRs(3)
+    sim = SparseSimCpp(3)
 
     # Create |000> + |111> GHZ state
     sim.run_gate("H", {0})
@@ -87,7 +87,7 @@ def test_ghz_state() -> None:
 
 def test_circuit_execution() -> None:
     """Test running a simple circuit."""
-    sim = CppSparseSimRs(4)
+    sim = SparseSimCpp(4)
 
     # Define a simple circuit
     circuit = [
@@ -107,7 +107,7 @@ def test_circuit_execution() -> None:
 
 def test_reset() -> None:
     """Test reset functionality."""
-    sim = CppSparseSimRs(2)
+    sim = SparseSimCpp(2)
 
     # Apply some gates
     sim.run_gate("X", {0})
@@ -127,7 +127,7 @@ def test_reset() -> None:
 @pytest.mark.parametrize("num_qubits", [1, 2, 3, 5, 10])
 def test_various_sizes(num_qubits: int) -> None:
     """Test simulator with various numbers of qubits."""
-    sim = CppSparseSimRs(num_qubits)
+    sim = SparseSimCpp(num_qubits)
 
     # Apply some gates
     for i in range(num_qubits):

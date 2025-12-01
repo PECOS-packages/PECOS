@@ -21,5 +21,5 @@ except ImportError:
     # matplotlib is optional - only needed for visualization tests
     pass
 
-# Note: llvmlite functionality is now always available via Rust (pecos_rslib.ir and pecos_rslib.binding)
+# Note: llvmlite functionality is now always available via Rust (_pecos_rslib.ir and _pecos_rslib.binding)
 # No need for conditional test skipping

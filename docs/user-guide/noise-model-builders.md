@@ -306,6 +306,5 @@ builder = (
 
 ## Next Steps
 
-- For configuration-based noise models, see [GeneralNoiseFactory](general-noise-factory.md)
 - For performance optimization, see [QASM Simulation Guide](qasm-simulation.md)
 - For the complete API reference, see the [API Documentation](../api/api-reference.md)

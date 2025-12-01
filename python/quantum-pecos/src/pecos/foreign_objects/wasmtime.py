@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos_rslib._pecos_rslib import RsWasmForeignObject
+from _pecos_rslib import RsWasmForeignObject
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

@@ -3,10 +3,10 @@
 from collections import Counter
 
 import pytest
-from pecos_rslib import (
+from _pecos_rslib import (
     sim,
 )
-from pecos_rslib._pecos_rslib import (
+from _pecos_rslib import (
     QasmProgram,
     biased_depolarizing_noise,
     depolarizing_noise,

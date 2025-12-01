@@ -258,21 +258,6 @@ For research or to match specific hardware characteristics, you can create detai
         .with_p2_probability(0.01)  # Two-qubit gate error
         .with_seed(42)
     )  # Deterministic noise
-
-    # Or use GeneralNoiseFactory for dict/JSON configuration
-    from pecos.rslib import GeneralNoiseFactory
-
-    factory = GeneralNoiseFactory()
-    noise = factory.create_from_dict(
-        {
-            "p_prep": 0.001,
-            "p_meas_0": 0.005,
-            "p_meas_1": 0.01,
-            "p1": 0.0001,
-            "p2": 0.01,
-            "seed": 42,
-        }
-    )
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -699,36 +684,6 @@ config = {
 config = {"noise": {"type": "BiasedDepolarizingNoise", "p": 0.01}}
 sim = qasm_sim(qasm_code).config(config).build()
 ```
-
-### Advanced Noise Configuration with GeneralNoiseFactory
-
-For complex noise models with many parameters, PECOS provides the `GeneralNoiseFactory` which offers:
-- Dictionary/JSON-based configuration with validation
-- Custom parameter mappings and terminology
-- Safety features like override warnings
-- Comprehensive documentation of available parameters
-
-```python
-from pecos.rslib import GeneralNoiseFactory
-
-# Create noise from dictionary configuration
-factory = GeneralNoiseFactory()
-noise = factory.create_from_dict(
-    {
-        "seed": 42,
-        "p1": 0.001,
-        "p2": 0.01,
-        "scale": 1.2,  # Scale all errors by 20%
-        "noiseless_gates": ["H", "MEASURE"],
-        "p1_pauli": {"X": 0.5, "Y": 0.3, "Z": 0.2},
-    }
-)
-
-# Use in simulation
-results = qasm_sim(qasm).noise(noise).run(1000)
-```
-
-For detailed information about GeneralNoiseFactory, see the [GeneralNoiseFactory Guide](general-noise-factory.md).
 
 ## Working with Large Circuits
 

@@ -6,7 +6,7 @@ that compile to QIR for execution on PECOS.
 
 from typing import Any
 
-from pecos.frontends.guppy_api import sim
+from pecos.frontends.guppy_api import guppy_to_hugr, sim
 from pecos.frontends.guppy_frontend import GuppyFrontend
 
 
@@ -18,7 +18,7 @@ def get_guppy_backends() -> dict[str, Any]:
         import guppylang
 
         result["guppy_available"] = True
-        from pecos_rslib import check_rust_hugr_availability
+        from _pecos_rslib import check_rust_hugr_availability
 
         rust_available, msg = check_rust_hugr_availability()
         result["rust_backend"] = rust_available
@@ -31,5 +31,6 @@ def get_guppy_backends() -> dict[str, Any]:
 __all__ = [
     "GuppyFrontend",
     "get_guppy_backends",
+    "guppy_to_hugr",
     "sim",
 ]

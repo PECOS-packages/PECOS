@@ -13,7 +13,7 @@
 
 """Tests for the SparseStabEngineRs Python bindings."""
 
-from pecos_rslib import ByteMessage, SparseStabEngineRs
+from _pecos_rslib import ByteMessage, SparseStabEngineRs
 
 
 def test_simulator_creation() -> None:

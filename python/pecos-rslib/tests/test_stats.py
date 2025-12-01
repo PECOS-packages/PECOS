@@ -1229,7 +1229,7 @@ class TestStateVectorPerformance:
         """
         import time
 
-        from pecos_rslib import StateVecRs
+        from _pecos_rslib import StateVec
 
         # Old Python implementation for comparison
         def vector_big_endian_python(raw_vector, num_qubits):
@@ -1247,7 +1247,7 @@ class TestStateVectorPerformance:
 
         # Test different qubit counts
         for num_qubits in [10, 12, 14]:
-            sim = StateVecRs(num_qubits)
+            sim = StateVec(num_qubits)
 
             # Apply some gates to create non-trivial state
             sim.run_gate("H", {0})

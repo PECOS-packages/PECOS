@@ -4,7 +4,7 @@ This example shows how to use the namespace modules for better discoverability
 and cleaner code organization.
 """
 
-import pecos_rslib
+import _pecos_rslib
 
 
 def main() -> None:
@@ -13,21 +13,21 @@ def main() -> None:
 
     # 1. Using the engines namespace
     print("\n1. Engine builders via namespace:")
-    print("   pecos_rslib.engines.qasm()")
-    print("   pecos_rslib.engines.llvm()")
-    print("   pecos_rslib.engines.selene()")
+    print("   _pecos_rslib.engines.qasm()")
+    print("   _pecos_rslib.engines.llvm()")
+    print("   _pecos_rslib.engines.selene()")
 
     # 2. Using the quantum namespace
     print("\n2. Quantum engine builders via namespace:")
-    print("   pecos_rslib.quantum.state_vector()")
-    print("   pecos_rslib.quantum.sparse_stabilizer()")
-    print("   pecos_rslib.quantum.sparse_stab()  # alias")
+    print("   _pecos_rslib.quantum.state_vector()")
+    print("   _pecos_rslib.quantum.sparse_stabilizer()")
+    print("   _pecos_rslib.quantum.sparse_stab()  # alias")
 
     # 3. Using the noise namespace
     print("\n3. Noise model builders via namespace:")
-    print("   pecos_rslib.noise.general()")
-    print("   pecos_rslib.noise.depolarizing()")
-    print("   pecos_rslib.noise.biased_depolarizing()")
+    print("   _pecos_rslib.noise.general()")
+    print("   _pecos_rslib.noise.depolarizing()")
+    print("   _pecos_rslib.noise.biased_depolarizing()")
 
     # 4. Complete example: Bell state with noise
     print("\n4. Running a complete example:")
@@ -46,11 +46,11 @@ def main() -> None:
     """
 
     # Create program
-    program = pecos_rslib.programs.QasmProgram.from_string(qasm_code)
+    program = _pecos_rslib.programs.QasmProgram.from_string(qasm_code)
 
     # Configure depolarizing noise
     noise_model = (
-        pecos_rslib.noise.depolarizing()
+        _pecos_rslib.noise.depolarizing()
         .with_prep_probability(0.001)  # State preparation errors
         .with_meas_probability(0.005)  # Measurement errors
         .with_p1_probability(0.002)  # Single-qubit gate errors
@@ -59,12 +59,12 @@ def main() -> None:
 
     # Run simulation using namespace API
     results = (
-        pecos_rslib.engines.qasm()
+        _pecos_rslib.engines.qasm()
         .program(program)
         .to_sim()
         .seed(42)  # For reproducibility
         .workers(4)  # Use 4 threads
-        .quantum_engine(pecos_rslib.quantum.sparse_stabilizer())
+        .quantum_engine(_pecos_rslib.quantum.sparse_stabilizer())
         .noise(noise_model)
         .run(1000)
     )
@@ -74,13 +74,13 @@ def main() -> None:
 
     # 5. Alternative: Direct imports still work
     print("\n5. Direct imports are still available:")
-    print("   from pecos_rslib import qasm_engine, sparse_stabilizer")
+    print("   from _pecos_rslib import qasm_engine, sparse_stabilizer")
 
     # 6. Class-based instantiation
     print("\n6. Direct class instantiation:")
-    print("   builder = pecos_rslib.engines.QasmEngineBuilder()")
-    print("   quantum = pecos_rslib.quantum.StateVectorBuilder()")
-    print("   noise = pecos_rslib.noise.GeneralNoiseModelBuilder()")
+    print("   builder = _pecos_rslib.engines.QasmEngineBuilder()")
+    print("   quantum = _pecos_rslib.quantum.StateVectorBuilder()")
+    print("   noise = _pecos_rslib.noise.GeneralNoiseModelBuilder()")
 
 
 if __name__ == "__main__":

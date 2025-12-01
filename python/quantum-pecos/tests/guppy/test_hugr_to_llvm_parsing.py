@@ -6,9 +6,9 @@ import pytest
 def test_hugr_to_llvm_compilation() -> None:
     """Test actual HUGR to LLVM compilation in Rust."""
     try:
+        from _pecos_rslib import compile_hugr_to_llvm
         from guppylang import guppy
         from guppylang.std.quantum import cx, h, measure, qubit
-        from pecos_rslib import compile_hugr_to_llvm
     except ImportError as e:
         pytest.skip(f"Required imports not available: {e}")
 
@@ -54,9 +54,9 @@ def test_hugr_to_llvm_compilation() -> None:
 def test_simple_hadamard_circuit() -> None:
     """Test simple Hadamard circuit compilation."""
     try:
+        from _pecos_rslib import compile_hugr_to_llvm
         from guppylang import guppy
         from guppylang.std.quantum import h, measure, qubit
-        from pecos_rslib import compile_hugr_to_llvm
     except ImportError as e:
         pytest.skip(f"Required imports not available: {e}")
 

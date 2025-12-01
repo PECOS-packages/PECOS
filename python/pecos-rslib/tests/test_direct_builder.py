@@ -3,11 +3,11 @@
 from collections import Counter
 
 import pytest
-from pecos_rslib._pecos_rslib import (
+from _pecos_rslib import (
     GeneralNoiseModelBuilder,
     QasmProgram,
 )
-from pecos_rslib.sim import sim
+from _pecos_rslib import sim
 
 
 class TestDirectBuilder:

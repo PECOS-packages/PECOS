@@ -1,0 +1,50 @@
+[package]
+name = "pecos-rslib"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Allows running Rust code in Python."
+publish = false
+
+[lib]
+name = "_pecos_rslib"
+crate-type = ["cdylib", "rlib"]
+# Skip doc tests as they won't work properly in this setup
+doctest = false
+# Skip unit tests as well - all testing should be done through Python
+test = false
+
+[features]
+default = ["wasm"]
+wasm = ["pecos/wasm"]
+
+[dependencies]
+# Use the pecos metacrate which includes all simulators and runtimes by default
+# Enable llvm and wasm features for full Python functionality
+pecos = { workspace = true, features = ["llvm", "wasm"] }
+
+pyo3 = { workspace=true, features = ["extension-module", "abi3-py310", "generate-import-lib", "num-complex"] }
+ndarray.workspace = true
+num-complex.workspace = true
+parking_lot.workspace = true
+regex.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+log.workspace = true
+libc.workspace = true
+
+# Inkwell for LLVM types (needed for llvmlite bindings)
+inkwell = { workspace = true, features = ["llvm14-0"] }
+
+[build-dependencies]
+pyo3-build-config.workspace = true
+
+[dev-dependencies]
+
+[lints]
+workspace = true

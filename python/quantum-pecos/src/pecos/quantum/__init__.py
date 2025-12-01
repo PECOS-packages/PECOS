@@ -44,18 +44,20 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos import Integer
+from pecos.typing import INTEGER_TYPES
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-# Import Pauli types from pecos_rslib
+    from pecos.typing import Integer
+
+# Import Pauli types from _pecos_rslib
 try:
-    from pecos_rslib import Pauli, PauliString
+    from _pecos_rslib import Pauli, PauliString
 except ImportError as e:
     # Provide helpful error message if Rust bindings not built
     msg = (
-        f"Failed to import Pauli types from pecos_rslib: {e}\n"
+        f"Failed to import Pauli types from _pecos_rslib: {e}\n"
         "Make sure pecos_rslib is properly installed with: uv sync"
     )
     raise ImportError(msg) from e
@@ -110,7 +112,7 @@ def pauli_string(
         >>> print(ps)  # -i*Z_0
     """
     # Convert phase to integer code
-    if isinstance(phase, int | Integer):
+    if isinstance(phase, (int, *INTEGER_TYPES)):
         if phase == 1:
             phase_code = 0  # +1
         elif phase == -1:

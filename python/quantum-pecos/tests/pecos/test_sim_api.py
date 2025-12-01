@@ -1,14 +1,14 @@
 """Test the new sim(program) API."""
 
-from pecos_rslib import (
+from _pecos_rslib import (
     QasmProgram,
     QisProgram,
     depolarizing_noise,
     qasm_engine,
+    sim,
     sparse_stabilizer,
     state_vector,
 )
-from pecos_rslib.sim import sim
 
 
 def test_sim_with_qasm_program() -> None:

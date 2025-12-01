@@ -6,7 +6,7 @@ import pytest
 def test_hugr_compilation_with_support() -> None:
     """Test that compilation works when HUGR support IS available."""
     try:
-        from pecos_rslib import compile_hugr_to_llvm_rust, check_rust_hugr_availability
+        from _pecos_rslib import compile_hugr_to_llvm_rust, check_rust_hugr_availability
 
         available, message = check_rust_hugr_availability()
         assert available, f"HUGR support should be available but got: {message}"
@@ -31,7 +31,7 @@ def test_hugr_version_compatibility() -> None:
     try:
         import json
 
-        from pecos_rslib import compile_hugr_to_llvm_rust, check_rust_hugr_availability
+        from _pecos_rslib import compile_hugr_to_llvm_rust, check_rust_hugr_availability
 
         available, message = check_rust_hugr_availability()
         if not available:
@@ -83,7 +83,7 @@ def test_hugr_arithmetic_extension_handling() -> None:
     try:
         import json
 
-        from pecos_rslib import compile_hugr_to_llvm_rust, check_rust_hugr_availability
+        from _pecos_rslib import compile_hugr_to_llvm_rust, check_rust_hugr_availability
 
         available, message = check_rust_hugr_availability()
         if not available:

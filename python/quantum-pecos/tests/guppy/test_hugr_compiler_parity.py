@@ -33,7 +33,7 @@ try:
 except ImportError:
     SELENE_AVAILABLE = False
 
-from pecos_rslib import compile_hugr_to_llvm_rust as rust_compile
+from _pecos_rslib import compile_hugr_to_llvm_rust as rust_compile
 
 
 def normalize_llvm_ir(llvm_ir: str) -> list[str]:

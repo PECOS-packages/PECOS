@@ -11,12 +11,12 @@
 
 """Test all one-qubit gates."""
 
-from pecos.simulators import CppSparseSimRs, SparseSimPy, SparseSimRs
+from pecos.simulators import SparseSim, SparseSimCpp, SparseSimPy
 
 states = [
     SparseSimPy,
-    SparseSimRs,
-    CppSparseSimRs,
+    SparseSim,
+    SparseSimCpp,
 ]
 
 

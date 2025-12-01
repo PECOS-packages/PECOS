@@ -24,13 +24,14 @@ from typing import TYPE_CHECKING, Any
 
 from pecos.reps.pyphir import PyPHIR, signed_data_types, unsigned_data_types
 from pecos.reps.pyphir import types as pt
-from pecos.types import PhirModel
+from pecos.typing import PhirModel
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable, Sequence
 
-    from pecos import Integer, QuantumCircuit
+    from pecos import QuantumCircuit
     from pecos.protocols import ForeignObjectProtocol
+    from pecos.typing import Integer
 
 
 def version2tuple(v: str) -> tuple[int, ...]:

@@ -1,31 +1,81 @@
-"""Unified API for Guppy programs following the sim(program) pattern."""
+"""Unified API for Guppy programs following the sim(program) pattern.
 
+This module handles Guppy program detection and compilation. For non-Guppy programs,
+users can also import sim directly from _pecos_rslib for a simpler path.
+"""
+
+import gc
+import logging
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, Union
 
 if TYPE_CHECKING:
-    from pecos_rslib import SimBuilder
-    from pecos_rslib.noise import (
-        BiasedDepolarizingNoise,
-        DepolarizingNoise,
-        GeneralNoise,
-        PassThroughNoise,
-    )
-    from pecos_rslib.quantum import (
+    from _pecos_rslib import (
+        BiasedDepolarizingNoiseModelBuilder,
+        DepolarizingNoiseModelBuilder,
+        GeneralNoiseModelBuilder,
+        HugrProgram,
+        PhirJsonEngineBuilder,
+        QasmEngineBuilder,
+        QasmProgram,
+        QisEngineBuilder,
+        QisProgram,
+        ShotVec,
+        SimBuilder,
         SparseStabilizerEngineBuilder,
         StateVectorEngineBuilder,
     )
-    from pecos_rslib.sim_wrapper import ProgramType
 
     NoiseModelType = (
-        PassThroughNoise | DepolarizingNoise | BiasedDepolarizingNoise | GeneralNoise
+        GeneralNoiseModelBuilder
+        | DepolarizingNoiseModelBuilder
+        | BiasedDepolarizingNoiseModelBuilder
     )
     QuantumEngineType = StateVectorEngineBuilder | SparseStabilizerEngineBuilder
+    ClassicalEngineType = QasmEngineBuilder | QisEngineBuilder | PhirJsonEngineBuilder
 
-from pecos_rslib.sim_wrapper import sim as sim_wrapper
+logger = logging.getLogger(__name__)
 
-__all__ = ["GuppySimBuilderWrapper", "sim"]
+
+class GuppyFunction(Protocol):
+    """Protocol for Guppy-decorated functions."""
+
+    def compile(self) -> dict: ...
+
+
+ProgramType = Union[
+    GuppyFunction,
+    "QasmProgram",
+    "QisProgram",
+    "HugrProgram",
+    bytes,
+    str,
+]
+
+__all__ = ["GuppySimBuilderWrapper", "guppy_to_hugr", "sim"]
+
+
+class SimResultWrapper(dict):
+    """Wrapper for simulation results that provides dict-like access and conversion methods.
+
+    Inherits from dict to pass isinstance(results, dict) checks, but also provides
+    .to_binary_dict() for binary string format.
+    """
+
+    def __init__(self, shot_vec: "ShotVec") -> None:
+        """Initialize with underlying ShotVec object."""
+        self._shot_vec = shot_vec
+        # Initialize dict with the regular results
+        super().__init__(shot_vec.to_dict())
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return results as a dictionary with integer values."""
+        return dict(self)
+
+    def to_binary_dict(self) -> dict[str, Any]:
+        """Return results as a dictionary with binary string values."""
+        return self._shot_vec.to_binary_dict()
 
 
 class GuppySimBuilderWrapper:
@@ -56,6 +106,11 @@ class GuppySimBuilderWrapper:
     ) -> "GuppySimBuilderWrapper":
         """Set quantum engine."""
         new_builder = self._builder.quantum(engine)
+        return GuppySimBuilderWrapper(new_builder)
+
+    def classical(self, engine: "ClassicalEngineType") -> "GuppySimBuilderWrapper":
+        """Set classical engine."""
+        new_builder = self._builder.classical(engine)
         return GuppySimBuilderWrapper(new_builder)
 
     def noise(self, noise_model: "NoiseModelType") -> "GuppySimBuilderWrapper":
@@ -101,19 +156,109 @@ class GuppySimBuilderWrapper:
         # The Rust builder doesn't need explicit building, so we just return self
         return self
 
-    def run(self, shots: int) -> dict[str, Any]:
-        """Run simulation and convert results to expected format."""
+    def run(self, shots: int) -> SimResultWrapper:
+        """Run simulation and return results.
+
+        Returns:
+            SimResultWrapper that provides dict-like access plus .to_dict() and .to_binary_dict().
+        """
         # Call the underlying run method which returns PyShotVec
         shot_vec = self._builder.run(shots)
-        # Convert to dictionary format
-        return shot_vec.to_dict()
+        # Wrap for convenience
+        return SimResultWrapper(shot_vec)
 
 
-def sim(program: "ProgramType") -> GuppySimBuilderWrapper:
+def _is_guppy_function(obj: object) -> bool:
+    """Check if an object is a Guppy-decorated function."""
+    return (
+        hasattr(obj, "_guppy_compiled")
+        or hasattr(obj, "compile")
+        or str(type(obj)).find("GuppyFunctionDefinition") != -1
+    )
+
+
+def _sim_with_guppy_detection(program: ProgramType) -> object:
+    """Internal sim() that handles Guppy program detection.
+
+    This function:
+    1. Detects Guppy functions and compiles them to HUGR format
+    2. Passes all programs (including HugrProgram) to the Rust sim()
+    3. Rust handles HUGR->QIS conversion internally
+
+    Args:
+        program: The program to simulate (Guppy function, HugrProgram, QasmProgram, etc.)
+
+    Returns:
+        SimBuilder instance from Rust
+    """
+    import _pecos_rslib
+
+    # Check if this is a HugrProgram - pass it directly to Rust
+    if type(program).__name__ == "HugrProgram":
+        logger.info(
+            "Detected HugrProgram, passing directly to Rust for HUGR->QIS conversion",
+        )
+        # Keep program as HugrProgram - Rust will handle the conversion internally
+
+    elif _is_guppy_function(program):
+        logger.info("Detected Guppy function, compiling to HUGR format")
+
+        # Compile Guppy → HUGR
+        hugr_package = program.compile()
+        logger.info("Compiled Guppy function to HUGR package")
+
+        # Convert HUGR package to binary format for Rust
+        # to_bytes() is the standard binary encoding (uses envelope with format 0x02)
+        hugr_bytes = hugr_package.to_bytes()
+
+        # Create HugrProgram - Rust will handle HUGR->QIS conversion
+        hugr_program = _pecos_rslib.HugrProgram.from_bytes(hugr_bytes)
+        logger.info(
+            "Created HugrProgram, passing to Rust sim() for HUGR->QIS conversion",
+        )
+
+        program = hugr_program
+
+    # Pass to Rust sim() which handles all fallback logic
+    logger.info("Using Rust sim() for program type: %s", type(program))
+    result = _pecos_rslib.sim(program)
+
+    # Force garbage collection to clean up any lingering engine resources
+    gc.collect()
+
+    return result
+
+
+def guppy_to_hugr(guppy_func: GuppyFunction) -> bytes:
+    """Convert a Guppy function to HUGR bytes.
+
+    This function compiles a Guppy quantum program to HUGR format, which can then
+    be executed by HUGR-compatible engines like Selene.
+
+    Args:
+        guppy_func: A function decorated with @guppy
+
+    Returns:
+        HUGR program as bytes
+
+    Raises:
+        ImportError: If guppylang is not available
+        ValueError: If the function is not a Guppy function
+        RuntimeError: If compilation fails
+    """
+    from pecos.compilation_pipeline import compile_guppy_to_hugr
+
+    return compile_guppy_to_hugr(guppy_func)
+
+
+def sim(program: ProgramType) -> GuppySimBuilderWrapper:
     """Create a simulation builder for a program.
 
     This function detects the program type and creates the appropriate builder.
-    For Guppy functions, it uses the Python-side Selene compilation pipeline.
+    For Guppy functions, it compiles them to HUGR format first.
+
+    For non-Guppy programs, you can also import sim directly from _pecos_rslib
+    for a simpler path with slightly lower overhead.
 
     Args:
         program: A Guppy function or other supported program type
@@ -124,7 +269,7 @@ def sim(program: "ProgramType") -> GuppySimBuilderWrapper:
     Example:
         from guppylang import guppy
         from pecos.frontends.guppy_api import sim
-        from pecos_rslib import state_vector
+        from _pecos_rslib import state_vector
 
         @guppy
         def bell_state() -> tuple[bool, bool]:
@@ -140,9 +285,8 @@ def sim(program: "ProgramType") -> GuppySimBuilderWrapper:
         # Explicitly use state vector for non-Clifford gates
         results = sim(bell_state).qubits(2).quantum(state_vector()).run(1000)
     """
-    # Pass all programs to sim_wrapper for proper detection and routing
-    # This handles all program types including Guppy functions with Python-side Selene compilation
-    builder = sim_wrapper(program)
+    # Use the Guppy-aware sim function
+    builder = _sim_with_guppy_detection(program)
 
     # Wrap the builder for compatibility
     return GuppySimBuilderWrapper(builder)

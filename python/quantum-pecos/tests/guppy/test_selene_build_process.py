@@ -196,9 +196,8 @@ class TestSeleneBuildProcess:
         2. sim(QisProgram) → PECOS execution (for direct simulation)
         """
         try:
+            from _pecos_rslib import QisProgram, state_vector
             from pecos.frontends.guppy_api import sim
-            from pecos_rslib import state_vector
-            from pecos_rslib.programs import QisProgram
         except ImportError as e:
             pytest.skip(f"QisProgram or sim API not available: {e}")
 
@@ -291,9 +290,8 @@ class TestSeleneBuildProcess:
     def test_qis_program_with_comments(self) -> None:
         """Test that QIS programs with comments are properly handled."""
         try:
+            from _pecos_rslib import QisProgram, state_vector
             from pecos.frontends.guppy_api import sim
-            from pecos_rslib import state_vector
-            from pecos_rslib.programs import QisProgram
         except ImportError as e:
             pytest.skip(f"QisProgram or sim API not available: {e}")
 
@@ -354,9 +352,8 @@ class TestSeleneBuildProcess:
     def test_qis_edge_cases(self) -> None:
         """Test QIS programs with edge cases like empty lines, multiple spaces, etc."""
         try:
+            from _pecos_rslib import QisProgram, state_vector
             from pecos.frontends.guppy_api import sim
-            from pecos_rslib import state_vector
-            from pecos_rslib.programs import QisProgram
         except ImportError as e:
             pytest.skip(f"QisProgram or sim API not available: {e}")
 
@@ -412,9 +409,8 @@ class TestSeleneBuildProcess:
         multiple times with the same seed.
         """
         try:
+            from _pecos_rslib import QisProgram, state_vector
             from pecos.frontends.guppy_api import sim
-            from pecos_rslib import state_vector
-            from pecos_rslib.programs import QisProgram
         except ImportError as e:
             pytest.skip(f"Required imports not available: {e}")
 

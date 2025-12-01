@@ -25,7 +25,7 @@ import pecos as pc
 from pecos.reps.pyphir import unsigned_data_types
 
 if TYPE_CHECKING:
-    from pecos import Integer
+    from pecos.typing import Integer
 
 
 class BinArray:

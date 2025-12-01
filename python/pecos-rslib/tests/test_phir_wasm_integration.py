@@ -9,9 +9,9 @@ import os
 import tempfile
 
 
-from pecos_rslib import phir_json_engine
-from pecos_rslib._pecos_rslib import PhirJsonProgram
-from pecos_rslib.sim import sim
+from _pecos_rslib import phir_json_engine
+from _pecos_rslib import PhirJsonProgram
+from _pecos_rslib import sim
 
 
 def test_phir_wasm_basic_ffcall() -> None:
@@ -252,7 +252,7 @@ def test_phir_wasm_with_quantum_ops() -> None:
         engine = phir_json_engine().wasm(wasm_path).program(prog)
 
         # Need to specify quantum engine for quantum operations
-        from pecos_rslib import state_vector
+        from _pecos_rslib import state_vector
 
         results = sim(prog).classical(engine).quantum(state_vector()).run(10).to_dict()
 

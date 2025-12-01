@@ -14,7 +14,7 @@
 import json
 from pathlib import Path
 
-from pecos.types import PhirModel
+from pecos.typing import PhirModel
 
 this_dir = Path(__file__).parent
 

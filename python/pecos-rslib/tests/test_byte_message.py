@@ -12,7 +12,7 @@
 
 """Tests for the ByteMessage Python bindings."""
 
-from pecos_rslib import ByteMessage, ByteMessageBuilder
+from _pecos_rslib import ByteMessage, ByteMessageBuilder
 
 
 def test_byte_message_builder_basic() -> None:

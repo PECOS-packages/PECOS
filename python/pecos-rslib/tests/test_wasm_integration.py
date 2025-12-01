@@ -3,9 +3,9 @@
 import os
 import tempfile
 
-from pecos_rslib import qasm_engine
-from pecos_rslib._pecos_rslib import QasmProgram
-from pecos_rslib.sim import sim
+from _pecos_rslib import qasm_engine
+from _pecos_rslib import QasmProgram
+from _pecos_rslib import sim
 
 
 def test_qasm_wasm_basic_classical() -> None:

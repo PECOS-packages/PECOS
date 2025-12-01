@@ -1,8 +1,8 @@
 """Core quantum operations tests - simplified version."""
 
 import pytest
+from _pecos_rslib import state_vector
 from pecos.frontends.guppy_api import sim
-from pecos_rslib import state_vector
 
 
 def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, ...]]:

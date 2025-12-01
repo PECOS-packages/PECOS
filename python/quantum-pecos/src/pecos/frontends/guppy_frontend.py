@@ -22,7 +22,7 @@ except ImportError:
 
 # Try to import Rust backend
 try:
-    from pecos_rslib import (
+    from _pecos_rslib import (
         RUST_HUGR_AVAILABLE,
         check_rust_hugr_availability,
         compile_hugr_to_llvm_rust,

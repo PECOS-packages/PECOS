@@ -15,6 +15,8 @@ handling, including base exceptions and specialized errors for simulators,
 WASM integration, and classical coprocessor operations.
 """
 
+import re
+
 
 class PECOSError(Exception):
     """Base exception raised by PECOS."""
@@ -38,3 +40,51 @@ class MissingCCOPError(WasmError):
 
 class WasmRuntimeError(WasmError):
     """Indicates a runtime WASM error."""
+
+
+class HugrTypeError(PECOSError):
+    """Error raised when HUGR compilation encounters unsupported types."""
+
+    def __init__(self, original_error: str) -> None:
+        """Initialize HugrTypeError with the original error message."""
+        self.original_error = original_error
+        self.unsupported_type = self._extract_type(original_error)
+        super().__init__(self._create_message())
+
+    @staticmethod
+    def _extract_type(error: str) -> str | None:
+        """Extract the unsupported type from the error message."""
+        # Pattern: "Unknown type: int(6)" or "Unknown type: bool"
+        match = re.search(r"Unknown type: (\w+)(?:\((\d+)\))?", error)
+        if match:
+            type_name = match.group(1)
+            width = match.group(2)
+            if width:
+                return f"{type_name}({width})"
+            return type_name
+        return None
+
+    def _create_message(self) -> str:
+        """Create a helpful error message."""
+        base_msg = f"HUGR compilation failed: {self.original_error}"
+
+        if self.unsupported_type:
+            if self.unsupported_type.startswith("int"):
+                return (
+                    f"{base_msg}\n\n"
+                    "Classical integer types are not yet supported in the HUGR→LLVM compiler.\n"
+                    "Workarounds:\n"
+                    "1. Use quantum operations that return measurement results (bool)\n"
+                    "2. Perform classical computations outside the Guppy function\n"
+                    "3. Wait for future updates to support classical types"
+                )
+            if self.unsupported_type == "bool":
+                return (
+                    f"{base_msg}\n\n"
+                    "Direct boolean returns are not yet fully supported.\n"
+                    "Workarounds:\n"
+                    "1. Return measurement results from quantum operations\n"
+                    "2. Use the function for quantum state preparation only"
+                )
+
+        return base_msg

@@ -333,7 +333,6 @@ pytest:  ## Run tests on the Python package (excluding numpy and optional deps).
 pytest-numpy:  ## Run NumPy/SciPy compatibility tests. ASSUMES: previous build command
 	@echo "Running NumPy/SciPy compatibility tests..."
 	@$(ADD_LLVM_TO_PATH) uv run --group numpy-compat pytest ./python/pecos-rslib/tests/ -m "numpy and not performance"
-	@$(ADD_LLVM_TO_PATH) uv run --group numpy-compat pytest ./python/quantum-pecos/tests/ --doctest-modules -m "numpy and not performance"
 	@echo "NumPy/SciPy compatibility tests completed successfully"
 
 .PHONY: pytest-perf

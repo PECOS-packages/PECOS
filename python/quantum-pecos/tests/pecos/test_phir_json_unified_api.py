@@ -1,6 +1,6 @@
 """Test the PHIR JSON unified API Python bindings."""
 
-from pecos_rslib import PhirJsonProgram, phir_json_engine
+from _pecos_rslib import PhirJsonProgram, phir_json_engine
 
 
 def test_phir_json_program_creation() -> None:

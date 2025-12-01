@@ -7,8 +7,8 @@ enabling custom classical computations within quantum circuits.
 import os
 import tempfile
 
-from pecos_rslib import qasm_engine, sim
-from pecos_rslib.programs import QasmProgram
+from _pecos_rslib import qasm_engine, sim
+from _pecos_rslib.programs import QasmProgram
 
 
 def create_math_wat() -> str:

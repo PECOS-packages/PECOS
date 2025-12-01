@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos_rslib import PauliPropRs
+from _pecos_rslib import PauliProp as PauliPropRs
 
 from pecos.simulators.gate_syms import alt_symbols
 from pecos.simulators.pauliprop import bindings

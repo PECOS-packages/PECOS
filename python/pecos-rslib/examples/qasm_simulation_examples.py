@@ -8,14 +8,14 @@ noise models and quantum engines.
 import time
 from collections import Counter
 
-from pecos_rslib import (
+from _pecos_rslib import (
     biased_depolarizing_noise,
     depolarizing_noise,
     qasm_engine,
     sparse_stabilizer,
     state_vector,
 )
-from pecos_rslib.programs import QasmProgram
+from _pecos_rslib.programs import QasmProgram
 
 
 def example_bell_state() -> None:

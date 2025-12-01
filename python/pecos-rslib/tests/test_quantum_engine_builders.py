@@ -1,15 +1,14 @@
 """Tests for quantum engine builders in the unified API."""
 
 import pytest
-from pecos_rslib import (
+from _pecos_rslib import (
     SparseStabilizerEngineBuilder,
     StateVectorEngineBuilder,
     sparse_stab,
     sparse_stabilizer,
     state_vector,
-)
-from pecos_rslib.programs import QisProgram, QasmProgram
-from pecos_rslib.sim import (
+    QisProgram,
+    QasmProgram,
     depolarizing_noise,
     qasm_engine,
 )
@@ -161,8 +160,8 @@ attributes #0 = { "EntryPoint" }
 """
 
         try:
-            # Import sim wrapper which has automatic JIT interface selection
-            from pecos_rslib.sim_wrapper import sim
+            # Import sim directly from _pecos_rslib (Rust implementation)
+            from _pecos_rslib import sim
 
             # Create QIS program and run with quantum engine
             # Need to specify number of qubits (1 qubit in this test)

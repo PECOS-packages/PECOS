@@ -112,10 +112,10 @@ class TestGuppyLLVMPipeline:
     def test_bell_state_execution(self) -> None:
         """Test Bell state creation and measurement correlation."""
         try:
+            from _pecos_rslib import state_vector
             from guppylang import guppy
             from guppylang.std.quantum import cx, h, measure, qubit
             from pecos.frontends import sim
-            from pecos_rslib import state_vector
         except ImportError as e:
             pytest.skip(f"Required modules not available: {e}")
 
@@ -227,10 +227,10 @@ class TestGuppyLLVMPipeline:
 def test_superposition_statistics(n_qubits: int, expected_avg: float) -> None:
     """Test that qubits in superposition give expected statistics."""
     try:
+        from _pecos_rslib import state_vector
         from guppylang import guppy
         from guppylang.std.quantum import h, measure, qubit
         from pecos.frontends import sim
-        from pecos_rslib import state_vector
     except ImportError as e:
         pytest.skip(f"Required modules not available: {e}")
 

@@ -47,8 +47,8 @@ class TestPythonSideCompilation:
     def test_hugr_pass_through_compilation(self, bell_pair_circuit: object) -> None:
         """Test the HUGR pass-through path (Guppy → HUGR → Rust)."""
         try:
+            from _pecos_rslib import state_vector
             from pecos.frontends.guppy_api import sim
-            from pecos_rslib import state_vector
         except ImportError as e:
             pytest.skip(f"Required modules not available: {e}")
 

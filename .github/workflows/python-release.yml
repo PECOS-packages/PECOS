@@ -135,7 +135,10 @@ jobs:
           CIBW_BEFORE_ALL_WINDOWS: |
             rustup update
             curl -LO https://github.com/PLC-lang/llvm-package-windows/releases/download/v14.0.6/LLVM-14.0.6-win64.7z
+            if [ ! -f "LLVM-14.0.6-win64.7z" ]; then echo "LLVM download failed"; exit 1; fi
             7z x LLVM-14.0.6-win64.7z "-oC:\\LLVM" -y
+            if [ ! -d "C:\\LLVM\\bin" ]; then echo "LLVM extraction failed"; exit 1; fi
+            ls -la "C:\\LLVM"
           CIBW_BEFORE_BUILD_WINDOWS: "pip install delvewheel"
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
             delvewheel repair -w {dest_dir} {wheel} &&

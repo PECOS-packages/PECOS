@@ -56,7 +56,10 @@ pub fn download_cached(info: &DownloadInfo) -> Result<Vec<u8>> {
 
     for attempt in 1..=max_retries {
         if attempt > 1 {
-            println!("cargo:warning=Retry attempt {}/{} for {}", attempt, max_retries, info.name);
+            println!(
+                "cargo:warning=Retry attempt {}/{} for {}",
+                attempt, max_retries, info.name
+            );
             // Wait a bit before retrying
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
@@ -78,20 +81,16 @@ pub fn download_cached(info: &DownloadInfo) -> Result<Vec<u8>> {
                             fs::write(&cache_file, &data)?;
                             println!("cargo:warning=Cached to {}", cache_file.display());
                             return Ok(data);
-                        } else {
-                            last_error = "SHA256 verification failed".to_string();
-                            continue;
                         }
+                        last_error = "SHA256 verification failed".to_string();
                     }
                     Err(e) => {
                         last_error = format!("Failed to read response body: {e}");
-                        continue;
                     }
                 }
             }
             Err(e) => {
                 last_error = format!("Request failed: {e}");
-                continue;
             }
         }
     }

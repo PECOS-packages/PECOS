@@ -39,31 +39,67 @@ pub fn download_cached(info: &DownloadInfo) -> Result<Vec<u8>> {
         }
     }
 
-    // Download fresh
+    // Download fresh with timeout and retry logic
     println!("cargo:warning=Downloading {} (will be cached)", info.name);
-    let response =
-        reqwest::blocking::get(&info.url).map_err(|e| BuildError::Http(e.to_string()))?;
 
-    if !response.status().is_success() {
-        return Err(BuildError::Download(format!(
-            "Failed with status: {}",
-            response.status()
-        )));
+    // Create a client with proper timeout settings for large files
+    // Large files like Boost (>100MB) need longer timeouts in CI environments
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(300)) // 5 minute timeout
+        .connect_timeout(std::time::Duration::from_secs(30)) // 30 second connect timeout
+        .build()
+        .map_err(|e| BuildError::Http(e.to_string()))?;
+
+    // Try download with retries
+    let max_retries = 3;
+    let mut last_error = String::new();
+
+    for attempt in 1..=max_retries {
+        if attempt > 1 {
+            println!("cargo:warning=Retry attempt {}/{} for {}", attempt, max_retries, info.name);
+            // Wait a bit before retrying
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+
+        match client.get(&info.url).send() {
+            Ok(response) => {
+                if !response.status().is_success() {
+                    last_error = format!("Failed with status: {}", response.status());
+                    continue;
+                }
+
+                match response.bytes() {
+                    Ok(bytes) => {
+                        let data = bytes.to_vec();
+
+                        // Verify integrity before returning
+                        if verify_sha256(&data, info.sha256).is_ok() {
+                            // Save to cache
+                            fs::write(&cache_file, &data)?;
+                            println!("cargo:warning=Cached to {}", cache_file.display());
+                            return Ok(data);
+                        } else {
+                            last_error = "SHA256 verification failed".to_string();
+                            continue;
+                        }
+                    }
+                    Err(e) => {
+                        last_error = format!("Failed to read response body: {e}");
+                        continue;
+                    }
+                }
+            }
+            Err(e) => {
+                last_error = format!("Request failed: {e}");
+                continue;
+            }
+        }
     }
 
-    let data = response
-        .bytes()
-        .map_err(|e| BuildError::Http(e.to_string()))?
-        .to_vec();
-
-    // Verify integrity
-    verify_sha256(&data, info.sha256)?;
-
-    // Save to cache
-    fs::write(&cache_file, &data)?;
-    println!("cargo:warning=Cached to {}", cache_file.display());
-
-    Ok(data)
+    Err(BuildError::Download(format!(
+        "Failed to download {} after {} attempts: {}",
+        info.name, max_retries, last_error
+    )))
 }
 
 /// Verify SHA256 hash of data

@@ -96,49 +96,34 @@ jobs:
           CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"
           # Linux configuration
           CIBW_ENVIRONMENT_LINUX: >
-            PATH=$HOME/.cargo/bin:/tmp/llvm/bin:$PATH
-            LLVM_SYS_140_PREFIX=/tmp/llvm
+            PATH=$HOME/.cargo/bin:$HOME/.pecos/llvm/bin:$PATH
+            LLVM_SYS_140_PREFIX=$HOME/.pecos/llvm
           CIBW_BEFORE_ALL_LINUX: |
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             dnf install libffi-devel -y
-            mkdir -p /tmp/llvm
-            if [ "$(uname -m)" = "x86_64" ]; then
-                curl -LO https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-x86_64-linux-gnu-rhel-8.4.tar.xz
-                tar xf clang+llvm-14.0.6-x86_64-linux-gnu-rhel-8.4.tar.xz -C /tmp/llvm --strip-components=1
-            else
-                dnf install ncurses-compat-libs ncurses-devel -y
-                curl -LO https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-aarch64-linux-gnu.tar.xz
-                tar xf clang+llvm-14.0.6-aarch64-linux-gnu.tar.xz -C /tmp/llvm --strip-components=1
-            fi
+            cargo run --release -p pecos-llvm-utils --bin pecos-llvm -- install --force
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
           # macOS configuration
           CIBW_ENVIRONMENT_MACOS: >
-            PATH=/tmp/llvm/bin:$PATH
-            LLVM_SYS_140_PREFIX=/tmp/llvm
+            PATH=$HOME/.pecos/llvm/bin:$PATH
+            LLVM_SYS_140_PREFIX=$HOME/.pecos/llvm
             MACOSX_DEPLOYMENT_TARGET=13.2
           CIBW_BEFORE_ALL_MACOS: |
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             rustup update
-            if [ "$(uname -m)" = "arm64" ]; then ARCH_PREFIX=arm64-apple-darwin22.3.0; else ARCH_PREFIX=x86_64-apple-darwin; fi
-            curl -LO https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.6/clang+llvm-14.0.6-$ARCH_PREFIX.tar.xz
-            mkdir -p /tmp/llvm
-            tar xf clang+llvm-14.0.6-$ARCH_PREFIX.tar.xz -C /tmp/llvm --strip-components=1
+            cargo run --release -p pecos-llvm-utils --bin pecos-llvm -- install --force
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
-            DYLD_LIBRARY_PATH=/tmp/llvm/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} &&
+            DYLD_LIBRARY_PATH=$HOME/.pecos/llvm/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} &&
             pipx run abi3audit --strict --report {wheel}
           # Windows configuration
           CIBW_ENVIRONMENT_WINDOWS: >
-            PATH="C:\\LLVM\\bin;$PATH"
-            LLVM_SYS_140_PREFIX="C:\\LLVM"
+            PATH="$HOME/.pecos/llvm/bin;$PATH"
+            LLVM_SYS_140_PREFIX="$HOME/.pecos/llvm"
           CIBW_BEFORE_ALL_WINDOWS: |
             rustup update
-            curl -LO https://github.com/PLC-lang/llvm-package-windows/releases/download/v14.0.6/LLVM-14.0.6-win64.7z
-            if [ ! -f "LLVM-14.0.6-win64.7z" ]; then echo "LLVM download failed"; exit 1; fi
-            7z x LLVM-14.0.6-win64.7z "-oC:\\LLVM" -y
-            if [ ! -d "C:\\LLVM\\bin" ]; then echo "LLVM extraction failed"; exit 1; fi
-            ls -la "C:\\LLVM"
+            cargo run --release -p pecos-llvm-utils --bin pecos-llvm -- install --force
           CIBW_BEFORE_BUILD_WINDOWS: "pip install delvewheel"
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
             delvewheel repair -w {dest_dir} {wheel} &&

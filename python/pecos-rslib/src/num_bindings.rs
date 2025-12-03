@@ -1706,6 +1706,13 @@ fn array_equal(a: Bound<'_, PyAny>, b: Bound<'_, PyAny>, equal_nan: bool) -> PyR
                 }
                 return Ok(a_data.iter().zip(b_data.iter()).all(|(a, b)| a == b));
             }
+            (ArrayData::I32(a_data), ArrayData::I32(b_data)) => {
+                // For integers, just check shape and exact equality
+                if a_data.shape() != b_data.shape() {
+                    return Ok(false);
+                }
+                return Ok(a_data.iter().zip(b_data.iter()).all(|(a, b)| a == b));
+            }
             (ArrayData::F64(a_data), ArrayData::F64(b_data)) => {
                 return Ok(rust_array_equal(a_data, b_data, equal_nan));
             }
@@ -1744,9 +1751,20 @@ fn array_equal(a: Bound<'_, PyAny>, b: Bound<'_, PyAny>, equal_nan: bool) -> PyR
             return Ok(a_data.iter().zip(b_view.iter()).all(|(a, b)| a == b));
         }
 
-        // Try to match with NumPy int array
+        // Try to match with NumPy int64 array
         if let Ok(b_array) = array_buffer::extract_i64_array(&b)
             && let ArrayData::I64(a_data) = &a_ref.data
+        {
+            let b_view = b_array.view();
+            if a_data.shape() != b_view.shape() {
+                return Ok(false);
+            }
+            return Ok(a_data.iter().zip(b_view.iter()).all(|(a, b)| a == b));
+        }
+
+        // Try to match with NumPy int32 array
+        if let Ok(b_array) = array_buffer::extract_i32_array(&b)
+            && let ArrayData::I32(a_data) = &a_ref.data
         {
             let b_view = b_array.view();
             if a_data.shape() != b_view.shape() {
@@ -1785,9 +1803,20 @@ fn array_equal(a: Bound<'_, PyAny>, b: Bound<'_, PyAny>, equal_nan: bool) -> PyR
             return Ok(a_view.iter().zip(b_data.iter()).all(|(a, b)| a == b));
         }
 
-        // Try to match with NumPy int array
+        // Try to match with NumPy int64 array
         if let Ok(a_array) = array_buffer::extract_i64_array(&a)
             && let ArrayData::I64(b_data) = &b_ref.data
+        {
+            let a_view = a_array.view();
+            if a_view.shape() != b_data.shape() {
+                return Ok(false);
+            }
+            return Ok(a_view.iter().zip(b_data.iter()).all(|(a, b)| a == b));
+        }
+
+        // Try to match with NumPy int32 array
+        if let Ok(a_array) = array_buffer::extract_i32_array(&a)
+            && let ArrayData::I32(b_data) = &b_ref.data
         {
             let a_view = a_array.view();
             if a_view.shape() != b_data.shape() {

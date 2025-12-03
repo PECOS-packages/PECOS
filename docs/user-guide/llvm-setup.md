@@ -299,4 +299,3 @@ LLVM_SYS_140_PREFIX = { value = "/path/to/llvm", force = true }
 ## See Also
 
 - [Getting Started Guide](getting-started.md) - Main installation guide
-- [QIS Documentation](qis.md) - Using QIS with LLVM IR/QIR execution

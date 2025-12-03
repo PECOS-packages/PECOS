@@ -26,7 +26,7 @@ For developers who want to contribute or modify PECOS:
    cargo build
    ```
 
-   For detailed installation instructions for all platforms (macOS, Linux, Windows), see the [**LLVM Setup Guide**](../user-guide/getting-started.md#llvm-for-qis-support) in the Getting Started documentation.
+   For detailed installation instructions for all platforms (macOS, Linux, Windows), see the [**LLVM Setup Guide**](../user-guide/llvm-setup.md).
 
 5. You may wish to explicitly activate the environment for development. To do so:
 

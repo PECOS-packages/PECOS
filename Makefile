@@ -120,9 +120,12 @@ build-cuda: installreqs ## Compile and install for development with CUDA support
 docs-build:  ## Clean, install deps, and build documentation
 	@uv run mkdocs build --clean
 
-.PHONY: docs-serve
-docs-serve:  ## Serve documentation (for  other ports add... -dev-addr=127.0.0.1:9000)
-	@uv run mkdocs serve
+.PHONY: docs
+docs:  ## Serve documentation and open in browser (PORT=9000 to change port)
+	@uv run mkdocs serve -a 127.0.0.1:$(or $(PORT),8000) 2>&1 | while IFS= read -r line; do \
+		echo "$$line"; \
+		case "$$line" in *"Serving on"*) xdg-open http://127.0.0.1:$(or $(PORT),8000)/PECOS/ 2>/dev/null ;; esac; \
+	done
 
 .PHONY: docs-test
 docs-test:  ## Test all code examples in documentation

@@ -54,7 +54,6 @@ nav:
   - user-guide/graph-api.md
   - user-guide/qasm-simulation.md
   - user-guide/noise-model-builders.md
-  - user-guide/general-noise-factory.md
   - user-guide/decoders.md
 - API:
   - api/api-reference.md

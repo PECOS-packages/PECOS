@@ -14,7 +14,7 @@ pub use pecos_core::{IndexableElement, VecSet};
 
 pub use crate::{
     arbitrary_rotation_gateable::ArbitraryRotationGateable,
-    clifford_gateable::CliffordGateable,
+    clifford_gateable::{CliffordGateable, MeasurementResult},
     coin_toss::CoinToss,
     pauli_prop::{PauliProp, StdPauliProp},
     quantum_simulator::QuantumSimulator,

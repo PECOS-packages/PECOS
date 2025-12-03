@@ -432,6 +432,5 @@ For large codes, use sparse representations:
 
 ## See Also
 
-- [DECODERS.md](../../DECODERS.md) - Detailed decoder documentation
-- [Quantum Error Correction Guide](qec.md) - QEC fundamentals
-- [Examples](../examples/decoder-examples.md) - More decoder examples
+- [Getting Started Guide](getting-started.md) - Main installation guide
+- [LLVM Setup Guide](llvm-setup.md) - For building with LLVM support

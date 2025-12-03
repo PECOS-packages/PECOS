@@ -41,8 +41,8 @@ jobs:
         dotnet: true
         # Remove Haskell runtime
         haskell: true
-        # Remove large packages (saves ~5.3GB)
-        large-packages: true
+        # Don't remove large packages - may include libffi and other build deps
+        large-packages: false
         # Remove Docker images (saves space)
         docker-images: true
         # Keep tool-cache as we may need some tools

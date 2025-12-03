@@ -31,6 +31,25 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
+    - name: Free Disk Space (Ubuntu)
+      if: runner.os == 'Linux'
+      uses: jlumbroso/free-disk-space@main
+      with:
+        # Remove Android tools (saves ~14GB)
+        android: true
+        # Remove .NET runtime (saves ~2.7GB)
+        dotnet: true
+        # Remove Haskell runtime
+        haskell: true
+        # Remove large packages (saves ~5.3GB)
+        large-packages: true
+        # Remove Docker images (saves space)
+        docker-images: true
+        # Keep tool-cache as we may need some tools
+        tool-cache: false
+        # Remove swap storage (saves ~4GB)
+        swap-storage: true
+
     - uses: actions/checkout@v4
 
     - name: Set up Python ${{ matrix.python-version }}

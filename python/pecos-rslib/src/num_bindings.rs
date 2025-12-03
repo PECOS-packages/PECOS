@@ -35,7 +35,7 @@ use num_complex::Complex64;
 //     IntoPyArray, PyArray, PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2,
 // };
 use pyo3::conversion::IntoPyObjectExt;
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
@@ -790,11 +790,17 @@ fn randint(
         {
             // On Windows, check bounds to ensure values fit in i32
             let low_i32 = i32::try_from(low).map_err(|_| {
-                PyValueError::new_err(format!("low value {} out of range for int32", low))
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "low value {} out of range for int32",
+                    low
+                ))
             })?;
             let high_i32 = if let Some(h) = high {
                 Some(i32::try_from(h).map_err(|_| {
-                    PyValueError::new_err(format!("high value {} out of range for int32", h))
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "high value {} out of range for int32",
+                        h
+                    ))
                 })?)
             } else {
                 None

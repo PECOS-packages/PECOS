@@ -1,5 +1,7 @@
 """Testing module for the RNG Model."""
 
+import sys
+
 import pecos as pc
 from pecos.engines.cvm.rng_model import RNGModel
 
@@ -45,8 +47,12 @@ def test_multiple_bounded_rand() -> None:
     rng = RNGModel(shot_id=0)
     rng.set_seed(42)
 
+    # Use platform-appropriate upper bound for randint
+    # Windows: i32 max (2^31 - 1), Unix: i64 max
+    max_bound = 2**31 if sys.platform == "win32" else 2**32
+
     for _ in range(100):
-        random_bound = int(pc.random.randint(1, 2**32, 1)[0])
+        random_bound = int(pc.random.randint(1, max_bound, 1)[0])
         rng.set_bound(random_bound)
         random_number = rng.rng_random()
         assert 0 <= random_number < random_bound

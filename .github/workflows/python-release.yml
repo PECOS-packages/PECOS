@@ -185,7 +185,7 @@ jobs:
           echo "Testing abi3 wheel with Python ${{ matrix.python-version }}"
           python --version
           pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl
-          python -c 'import pecos_rslib; print(f"pecos_rslib version: {pecos_rslib.__version__}")'
+          python -c 'import _pecos_rslib; print(f"_pecos_rslib version: {_pecos_rslib.__version__}")'
           python -c 'import sys; print(f"Python version: {sys.version}")'
 
   build_sdist_quantum_pecos:

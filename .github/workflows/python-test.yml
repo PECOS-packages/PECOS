@@ -24,6 +24,7 @@ defaults:
 jobs:
   python-test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -279,103 +280,24 @@ jobs:
           # Set explicit library path to ONLY include system directories
           export LIBRARY_PATH=/usr/lib
 
-          # DEBUG: Show what environment variables are set
-          echo "=== Environment variables that affect linking ==="
-          env | grep -E "LIBRARY|DYLD|PKG_CONFIG|HOMEBREW|PATH" | sort
-
-          # DEBUG: Check what libraries are in Homebrew paths
-          echo "=== Checking for libunwind in Homebrew locations ==="
-          ls -la /usr/local/lib/libunwind* 2>&1 || echo "No libunwind in /usr/local/lib"
-          ls -la /opt/homebrew/lib/libunwind* 2>&1 || echo "No libunwind in /opt/homebrew/lib"
-
-          # DEBUG: Check system libunwind
-          echo "=== System libunwind ==="
-          ls -la /usr/lib/system/libunwind* 2>&1 || echo "No libunwind in /usr/lib/system"
-          ls -la /usr/lib/libunwind* 2>&1 || echo "No libunwind in /usr/lib"
-
-          # DEBUG: Check if LLVM itself has libunwind references
-          echo "=== Checking LLVM libraries for libunwind references ==="
-          echo "LLVM dylib files:"
-          ls -lh /tmp/llvm/lib/*.dylib 2>&1 | head -10 || echo "No dylib files found"
-
-          # Check ALL LLVM dylibs for libunwind references
-          echo ""
-          echo "Checking each LLVM library for libunwind:"
-          for lib in /tmp/llvm/lib/*.dylib; do
-            if [ -f "$lib" ]; then
-              libname=$(basename "$lib")
-              if otool -L "$lib" 2>/dev/null | grep -q "libunwind"; then
-                echo "  [WARNING] $libname HAS libunwind reference:"
-                otool -L "$lib" | grep libunwind
-              fi
-            fi
-          done
-          echo "Done checking LLVM libraries"
-
-          # Check what libc++ the system has
-          echo ""
-          echo "=== System C++ library ==="
-          ls -lh /usr/lib/libc++* 2>&1 | head -5 || echo "No libc++ in /usr/lib"
-
-          # Check if clang has any default library search paths configured
-          echo ""
-          echo "=== Clang default library search paths ==="
-          /tmp/llvm/bin/clang -Xlinker -v 2>&1 | grep -A 20 "Library search" || echo "Could not get search paths"
-
-          echo ""
-          echo "=== RUSTFLAGS: $RUSTFLAGS ==="
-          echo "=== LIBRARY_PATH: $LIBRARY_PATH ==="
+          echo "macOS environment configured for build (LIBRARY_PATH=/usr/lib)"
         fi
 
-        # Build with verbose cargo output to see linker commands
+        # Build the project
         echo ""
         echo "=== Starting build ==="
-        if [[ "${{ runner.os }}" == "macOS" ]]; then
-          # Enable verbose cargo output to see full linker commands
-          CARGO_LOG=cargo::core::compiler::fingerprint=info make build 2>&1 | tee /tmp/build.log
-        else
-          make build 2>&1 | tee /tmp/build.log
-        fi
+        make build
 
-        # After build, check if the extension has the bad reference
+        # After build, verify the extension module on macOS
         if [[ "${{ runner.os }}" == "macOS" ]]; then
-          echo ""
-          echo "=== Checking built extension module ==="
-          # After conversion to pure Rust, the extension is now in site-packages
           EXT_MODULE=$(find .venv/lib -name "_pecos_rslib*.so" 2>/dev/null | head -1)
           if [ -n "$EXT_MODULE" ]; then
-            echo "Found: $EXT_MODULE"
-            echo ""
-            echo "=== ALL dependencies of extension module ==="
-            otool -L "$EXT_MODULE"
-
-            echo ""
-            echo "=== Checking for problematic @rpath reference ==="
-            if otool -L "$EXT_MODULE" | grep "@rpath/libunwind"; then
-              echo "❌ ERROR: Still has @rpath/libunwind reference!"
-
-              echo ""
-              echo "=== Let's trace where this comes from ==="
-              echo "Dependencies that might be the source:"
-              otool -L "$EXT_MODULE" | grep -v "$EXT_MODULE" | grep "\.dylib" | while read -r line; do
-                dep=$(echo "$line" | awk '{print $1}')
-                if [ -f "$dep" ] || [ -L "$dep" ]; then
-                  echo ""
-                  echo "Checking $dep:"
-                  otool -L "$dep" 2>/dev/null | grep -i unwind || echo "  No libunwind reference"
-                fi
-              done
-
-              echo ""
-              echo "=== Last 100 lines of build log (looking for linking commands) ==="
-              tail -100 /tmp/build.log | grep -B 2 -A 2 "linking\|rustc.*cdylib\|-L"
-
+            if otool -L "$EXT_MODULE" | grep -q "@rpath/libunwind"; then
+              echo "ERROR: Extension has @rpath/libunwind reference"
+              otool -L "$EXT_MODULE"
               exit 1
-            else
-              echo "[OK] No @rpath/libunwind reference found"
             fi
-          else
-            echo "[WARNING] Could not find extension module to check"
+            echo "macOS extension module built successfully"
           fi
         fi
 

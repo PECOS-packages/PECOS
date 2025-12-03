@@ -19,8 +19,9 @@
 //! assigns each measurement a unique index and tracks which measurements contribute to
 //! each stabilizer's sign via XOR (symmetric difference).
 //!
-//! Every measurement receives a unique index. Use the `is_deterministic` field in the
-//! result to distinguish deterministic from non-deterministic measurements if needed.
+//! The measurement outcome is represented as: `{measurement_indices} ^ flip`
+//! - `measurement_indices`: Set of measurement indices whose outcomes XOR together
+//! - `flip`: Boolean indicating whether to flip the result (from unitary gate phases)
 
 use crate::QuantumSimulator;
 use crate::sign_algebra::{SignAlgebra, SymbolicSign};
@@ -34,14 +35,21 @@ pub type StdSymbolicSparseStab = SymbolicSparseStab<VecSet<usize>, usize>;
 
 /// Result of a symbolic measurement.
 ///
-/// Instead of a concrete 0/1 outcome, this contains the set of measurement indices
-/// whose outcomes XOR together to determine this measurement's result.
+/// The outcome is represented as: `XOR(measurement_outcomes[i] for i in outcome) XOR flip`
+///
+/// For example:
+/// - `outcome = {}, flip = false`: deterministic 0
+/// - `outcome = {}, flip = true`: deterministic 1
+/// - `outcome = {0}, flip = false`: same as measurement 0
+/// - `outcome = {0}, flip = true`: opposite of measurement 0
+/// - `outcome = {0, 2}, flip = false`: XOR of measurements 0 and 2
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SymbolicMeasurementResult {
-    /// The set of measurement indices whose outcomes XOR to give this result.
-    /// Empty set means the result is deterministically 0.
-    /// A set containing just this measurement's index means it's non-deterministic.
+    /// The set of measurement indices whose outcomes XOR together.
+    /// Empty set means no measurement dependency (outcome is just `flip`).
     pub outcome: BTreeSet<usize>,
+    /// Whether to flip the XOR result (accumulated from unitary gate phases).
+    pub flip: bool,
     /// Whether this measurement was deterministic (outcome determined by prior measurements).
     pub is_deterministic: bool,
     /// The index assigned to this measurement.
@@ -146,22 +154,40 @@ where
     }
 
     /// Utility that creates a string representation of generators with symbolic signs.
+    ///
+    /// Format: `{measurement_indices} ^ flip PauliString`
+    /// - `{measurement_indices}`: Set of measurement indices whose outcomes XOR together
+    /// - `flip`: 0 or 1 indicating whether to flip the result (from unitary phases)
+    ///
+    /// Examples:
+    /// - `{} ^ 0 ZII`: Identity sign, no flip (deterministic 0)
+    /// - `{} ^ 1 ZII`: Identity sign, flipped (deterministic 1)
+    /// - `{0} ^ 0 XIZ`: Depends on measurement 0, no flip
+    /// - `{0,1} ^ 1 XIZ`: XOR of measurements 0,1, flipped
     fn tableau_string(num_qubits: usize, gens: &SymbolicGens<T, E>) -> String {
         use std::fmt::Write;
 
         let mut result = String::new();
         for i in 0..num_qubits {
-            // Format the symbolic sign
+            let gen_e = E::from_index(i);
+
+            // Compute the flip from signs_minus and signs_i
+            // For stabilizers, we only care about the minus component
+            // (imaginary components should cancel out in valid stabilizer states)
+            let has_minus = gens.signs_minus.contains(&gen_e);
+            let flip = u8::from(has_minus);
+
+            // Format the symbolic sign with flip
             let sign = &gens.signs[i];
             if sign.measurements.is_empty() {
-                result.push_str("{} ");
+                let _ = write!(result, "{{}} ^ {flip} ");
             } else {
                 let indices: Vec<String> = sign
                     .measurements
                     .iter()
                     .map(std::string::ToString::to_string)
                     .collect();
-                let _ = write!(result, "{{{}}} ", indices.join(","));
+                let _ = write!(result, "{{{}}} ^ {flip} ", indices.join(","));
             }
 
             // Format the Pauli string
@@ -193,39 +219,46 @@ where
     }
 
     // ==================== Gate Operations ====================
-    // These are largely the same as SparseStab, but without sign updates
-    // (symbolic signs don't change under Clifford gates - only under measurement)
+    // Same as SparseStab, tracking phase changes via signs_minus/signs_i
 
     /// Pauli X gate. X -> X, Z -> -Z
-    /// For symbolic simulation, we don't track the phase flip.
     #[inline]
-    pub fn x(&mut self, _q: E) -> &mut Self {
-        // In symbolic simulation, X gate doesn't change the measurement dependencies
-        // The phase flip on Z doesn't matter because we only track measurement indices
+    pub fn x(&mut self, q: E) -> &mut Self {
+        let qu = q.to_index();
+        self.stabs.signs_minus ^= &self.stabs.col_z[qu];
         self
     }
 
     /// Pauli Y gate. X -> -X, Z -> -Z
     #[inline]
-    pub fn y(&mut self, _q: E) -> &mut Self {
-        // Same as X - phase flips don't affect symbolic signs
+    pub fn y(&mut self, q: E) -> &mut Self {
+        let qu = q.to_index();
+        for i in self.stabs.col_x[qu].symmetric_difference(&self.stabs.col_z[qu]) {
+            self.stabs.signs_minus ^= i;
+        }
         self
     }
 
     /// Pauli Z gate. X -> -X, Z -> Z
     #[inline]
-    pub fn z(&mut self, _q: E) -> &mut Self {
-        // Same as X - phase flips don't affect symbolic signs
+    pub fn z(&mut self, q: E) -> &mut Self {
+        self.stabs.signs_minus ^= &self.stabs.col_x[q.to_index()];
         self
     }
 
-    /// Sqrt of Z gate (S gate).
+    /// Sqrt of Z gate (S gate). X -> Y, Z -> Z
     #[inline]
     pub fn sz(&mut self, q: E) -> &mut Self {
         let qu = q.to_index();
 
-        // Update the Pauli structure (X -> Y, Z -> Z)
-        // but ignore the phase changes for symbolic simulation
+        // X -> i: track phase changes
+        // i * i = -1, so if already has i, add minus and remove i
+        for i in self.stabs.signs_i.intersection(&self.stabs.col_x[qu]) {
+            self.stabs.signs_minus ^= i;
+        }
+        self.stabs.signs_i ^= &self.stabs.col_x[qu];
+
+        // Update the Pauli structure (X -> Y means add Z component)
         for g in [&mut self.stabs, &mut self.destabs] {
             g.col_z[qu] ^= &g.col_x[qu];
 
@@ -237,12 +270,17 @@ where
         self
     }
 
-    /// Hadamard gate. X -> Z, Z -> X
+    /// Hadamard gate. X -> Z, Z -> X, Y -> -Y
     #[inline]
     pub fn h(&mut self, q: E) -> &mut Self {
         let qu = q.to_index();
 
-        // Swap X and Z for this qubit (no phase tracking needed)
+        // Y -> -Y: add minus for generators that have both X and Z on this qubit
+        for i in self.stabs.col_x[qu].intersection(&self.stabs.col_z[qu]) {
+            self.stabs.signs_minus ^= i;
+        }
+
+        // Swap X and Z for this qubit
         for g in [&mut self.stabs, &mut self.destabs] {
             for i in g.col_x[qu].difference(&g.col_z[qu]) {
                 let iu = i.to_index();
@@ -339,7 +377,9 @@ where
     }
 
     /// Handle a deterministic measurement.
-    /// The outcome is determined by `XORing` the signs of destabilizers that have X on this qubit.
+    /// The outcome is determined by combining:
+    /// 1. XOR of measurement dependencies from contributing stabilizers
+    /// 2. Phase flip from `signs_minus` and `signs_i` (same logic as `SparseStab`)
     fn deterministic_meas(&mut self, q: E) -> SymbolicMeasurementResult {
         let qu = q.to_index();
 
@@ -347,8 +387,34 @@ where
         let index = self.measurement_counter;
         self.measurement_counter += 1;
 
-        // XOR together the signs of all destabilizers that have X on qubit q
-        // These are the destabilizers that anti-commute with Z_q
+        // --- Phase flip calculation (from SparseStab) ---
+        // Count minuses from destabilizers that anti-commute with Z_q
+        let mut num_minuses = self.destabs.col_x[qu]
+            .intersection(&self.stabs.signs_minus)
+            .count();
+
+        let num_is = self.destabs.col_x[qu]
+            .intersection(&self.stabs.signs_i)
+            .count();
+
+        // Account for Pauli multiplication phases
+        let mut cumulative_x = T::new();
+        for row in self.destabs.col_x[qu].iter() {
+            let rowu = row.to_index();
+            num_minuses += self.stabs.row_z[rowu].intersection(&cumulative_x).count();
+            cumulative_x ^= &self.stabs.row_x[rowu];
+        }
+
+        if num_is & 3 != 0 {
+            // num_is % 4 != 0
+            num_minuses += 1;
+        }
+
+        let flip = num_minuses & 1 != 0; // num_minuses % 2 != 0 (is odd)
+
+        // --- Measurement dependencies ---
+        // XOR together the symbolic signs of all stabilizers corresponding to destabilizers
+        // that have X on qubit q
         let mut result_sign = SymbolicSign::empty();
 
         for row in self.destabs.col_x[qu].iter() {
@@ -358,6 +424,7 @@ where
 
         SymbolicMeasurementResult {
             outcome: result_sign.measurements,
+            flip,
             is_deterministic: true,
             index,
         }
@@ -396,14 +463,53 @@ where
         let removed_row_x = self.stabs.row_x[id_usize].clone();
         let removed_row_z = self.stabs.row_z[id_usize].clone();
 
+        // --- Phase tracking for anticommuting stabilizers (from SparseStab) ---
+        // If removed stabilizer has minus sign, propagate to others
+        if self.stabs.signs_minus.contains(&id) {
+            self.stabs.signs_minus ^= &anticom_stabs_col;
+        }
+
+        // Handle imaginary component propagation
+        if self.stabs.signs_i.contains(&id) {
+            self.stabs.signs_i.remove(&id);
+
+            let gens_common: Vec<_> = self
+                .stabs
+                .signs_i
+                .intersection(&anticom_stabs_col)
+                .copied()
+                .collect();
+            let gens_only_stabs: Vec<_> = anticom_stabs_col
+                .difference(&self.stabs.signs_i)
+                .copied()
+                .collect();
+
+            for i in gens_common {
+                self.stabs.signs_minus ^= &i;
+                self.stabs.signs_i.remove(&i);
+            }
+
+            for i in gens_only_stabs {
+                self.stabs.signs_i.insert(i);
+            }
+        }
+
         // Multiply all other anticommuting stabilizers by the removed one
-        // This includes multiplying their signs (XOR of measurement indices)
+        // This includes both measurement dependencies AND phase from Pauli multiplication
         let removed_sign = self.stabs.signs[id_usize].clone();
         for g in anticom_stabs_col.iter() {
             let gen_usize = g.to_index();
 
-            // Multiply the signs
+            // Multiply the symbolic measurement signs (XOR)
             self.stabs.signs[gen_usize].multiply_assign(&removed_sign);
+
+            // Track phase from Pauli multiplication
+            let num_minuses = removed_row_z
+                .intersection(&self.stabs.row_x[gen_usize])
+                .count();
+            if num_minuses & 1 != 0 {
+                self.stabs.signs_minus ^= g;
+            }
 
             // Update the Pauli structure
             self.stabs.row_x[gen_usize] ^= &removed_row_x;
@@ -439,7 +545,10 @@ where
         self.stabs.row_z[id_usize].insert(q);
 
         // Set the sign of the new stabilizer to this measurement's index
+        // Also clear any phase tracking for this stabilizer (fresh start)
         self.stabs.signs[id_usize] = SymbolicSign::single(measurement_index);
+        self.stabs.signs_minus.remove(&id);
+        self.stabs.signs_i.remove(&id);
 
         // Update destabilizers
         for i in self.destabs.row_x[id_usize].iter() {
@@ -475,12 +584,14 @@ where
         self.destabs.row_x[id_usize] = removed_row_x;
         self.destabs.row_z[id_usize] = removed_row_z;
 
-        // The outcome is just this measurement's index
+        // The outcome is just this measurement's index, with no flip
+        // (the measurement result is "fresh" - no accumulated phase)
         let mut outcome = BTreeSet::new();
         outcome.insert(measurement_index);
 
         SymbolicMeasurementResult {
             outcome,
+            flip: false,
             is_deterministic: false,
             index: measurement_index,
         }
@@ -651,5 +762,129 @@ mod tests {
         sim.h(0);
         let r1 = sim.mz(0);
         assert!(!r1.is_deterministic);
+    }
+
+    #[test]
+    fn test_x_gate_flip() {
+        // User's example: start with |0⟩, apply X to flip to |1⟩
+        // The stabilizer goes from +Z to -Z, so outcome should be {} ^ 1
+        let mut sim = StdSymbolicSparseStab::new(1);
+
+        // Initial state: stabilized by +Z
+        assert_eq!(sim.stab_tableau(), "{} ^ 0 Z\n");
+
+        // Apply X: stabilizer becomes -Z
+        sim.x(0);
+        assert_eq!(sim.stab_tableau(), "{} ^ 1 Z\n");
+
+        // Measure - should be deterministic 1 (empty set XOR 1 = 1)
+        let r = sim.mz(0);
+        assert!(r.is_deterministic);
+        assert!(r.outcome.is_empty()); // No measurement dependencies
+        assert!(r.flip); // Flip is true, so result is 1
+    }
+
+    #[test]
+    fn test_y_gate_flip() {
+        // Y gate: X -> -X, Z -> -Z
+        let mut sim = StdSymbolicSparseStab::new(1);
+
+        // Apply Y: +Z becomes -Z
+        sim.y(0);
+        assert_eq!(sim.stab_tableau(), "{} ^ 1 Z\n");
+
+        let r = sim.mz(0);
+        assert!(r.is_deterministic);
+        assert!(r.outcome.is_empty());
+        assert!(r.flip);
+    }
+
+    #[test]
+    fn test_z_gate_no_flip() {
+        // Z gate: X -> -X, Z -> Z (no change to Z stabilizer)
+        let mut sim = StdSymbolicSparseStab::new(1);
+
+        // Initial state: +Z
+        assert_eq!(sim.stab_tableau(), "{} ^ 0 Z\n");
+
+        // Apply Z: +Z stays +Z
+        sim.z(0);
+        assert_eq!(sim.stab_tableau(), "{} ^ 0 Z\n");
+
+        let r = sim.mz(0);
+        assert!(r.is_deterministic);
+        assert!(r.outcome.is_empty());
+        assert!(!r.flip); // No flip
+    }
+
+    #[test]
+    fn test_double_x_cancels() {
+        // X X = I, so two X gates should cancel
+        let mut sim = StdSymbolicSparseStab::new(1);
+
+        sim.x(0);
+        assert_eq!(sim.stab_tableau(), "{} ^ 1 Z\n");
+
+        sim.x(0);
+        assert_eq!(sim.stab_tableau(), "{} ^ 0 Z\n");
+
+        let r = sim.mz(0);
+        assert!(r.is_deterministic);
+        assert!(r.outcome.is_empty());
+        assert!(!r.flip);
+    }
+
+    #[test]
+    fn test_hadamard_then_measure() {
+        // H on |0⟩ gives |+⟩ which is non-deterministic
+        let mut sim = StdSymbolicSparseStab::new(1);
+
+        // H transforms Z stabilizer to X stabilizer
+        sim.h(0);
+        assert_eq!(sim.stab_tableau(), "{} ^ 0 X\n");
+
+        // Measure - non-deterministic, no flip since no accumulated phase
+        let r = sim.mz(0);
+        assert!(!r.is_deterministic);
+        assert!(r.outcome.contains(&0));
+        assert!(!r.flip);
+    }
+
+    #[test]
+    fn test_flip_propagates_through_bell() {
+        // Create Bell state with an X gate first to introduce a flip
+        let mut sim = StdSymbolicSparseStab::new(2);
+
+        // Apply X to qubit 0 first, then create Bell state
+        sim.x(0).h(0).cx(0, 1);
+
+        // Measure qubit 0
+        let r0 = sim.mz(0);
+        assert!(!r0.is_deterministic);
+        assert!(r0.outcome.contains(&0));
+        // The X gate introduces a flip that should propagate
+        // Note: The exact flip value depends on how phases propagate through H and CX
+
+        // Measure qubit 1 - should be correlated with qubit 0
+        let r1 = sim.mz(1);
+        assert!(r1.is_deterministic);
+        assert_eq!(r0.outcome, r1.outcome);
+    }
+
+    #[test]
+    fn test_tableau_format() {
+        let mut sim = StdSymbolicSparseStab::new(2);
+
+        // Initial state
+        let tableau = sim.stab_tableau();
+        assert!(tableau.contains("{} ^ 0"));
+        assert!(tableau.contains("ZI"));
+        assert!(tableau.contains("IZ"));
+
+        // After X on qubit 0
+        sim.x(0);
+        let tableau = sim.stab_tableau();
+        assert!(tableau.contains("{} ^ 1 ZI")); // First stabilizer gets flipped
+        assert!(tableau.contains("{} ^ 0 IZ")); // Second stabilizer unchanged
     }
 }

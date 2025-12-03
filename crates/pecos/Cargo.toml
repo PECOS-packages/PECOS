@@ -43,7 +43,7 @@ pecos-qulacs = { workspace = true, optional = true }
 pecos-wasm = { workspace = true, optional = true }
 
 [features]
-default = ["selene", "qasm", "phir", "wasm", "all-simulators"]
+default = ["qasm", "phir", "wasm", "all-simulators"]
 qasm = []
 llvm = ["pecos-qis-core/llvm", "pecos-llvm", "pecos-hugr-qis", "pecos-hugr-qis?/llvm"]
 phir = []

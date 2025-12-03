@@ -13,7 +13,11 @@
 //! Symbolic generators for stabilizer states with measurement-indexed signs.
 //!
 //! This module provides [`SymbolicGens`], a variant of the generator storage that tracks
-//! stabilizer signs as sets of measurement indices rather than concrete phases.
+//! stabilizer signs in two parts:
+//! 1. **Measurement dependencies** (`signs`): Sets of measurement indices that XOR together
+//! 2. **Phase flips** (`signs_minus`, `signs_i`): Traditional phase tracking from unitary gates
+//!
+//! The final measurement outcome is: `XOR(measurement_outcomes) XOR phase_flip`
 
 use crate::sign_algebra::{SignAlgebra, SymbolicSign};
 use core::fmt::Debug;
@@ -22,9 +26,12 @@ use pecos_core::{IndexableElement, Set};
 
 /// Generators for symbolic stabilizer simulation.
 ///
-/// Similar to [`Gens`](crate::Gens), but instead of storing signs as `signs_minus`/`signs_i` sets,
-/// each generator has its own [`SymbolicSign`] representing the set of measurement indices
-/// that XOR together to determine the sign.
+/// Tracks stabilizer signs in two parts:
+/// 1. **Measurement dependencies** (`signs`): Per-generator sets of measurement indices
+/// 2. **Phase tracking** (`signs_minus`, `signs_i`): Traditional phase from unitary gates
+///
+/// The final sign is: `{measurement_deps} ^ phase_flip` where `phase_flip` is computed
+/// from `signs_minus` and `signs_i`.
 #[derive(Clone, Debug)]
 pub struct SymbolicGens<T, E>
 where
@@ -42,6 +49,10 @@ where
     pub row_z: Vec<T>,
     /// Symbolic signs for each generator: signs[gen] = set of measurement indices
     pub signs: Vec<SymbolicSign>,
+    /// Traditional phase tracking: generators with a minus sign (from unitaries)
+    pub signs_minus: T,
+    /// Traditional phase tracking: generators with an imaginary component (from unitaries)
+    pub signs_i: T,
     _marker: PhantomData<E>,
 }
 
@@ -61,6 +72,8 @@ where
             row_x: vec![T::new(); num_qubits],
             row_z: vec![T::new(); num_qubits],
             signs: vec![SymbolicSign::empty(); num_qubits],
+            signs_minus: T::new(),
+            signs_i: T::new(),
             _marker: PhantomData,
         }
     }
@@ -80,6 +93,8 @@ where
         self.row_x.clear();
         self.row_z.clear();
         self.signs.clear();
+        self.signs_minus.clear();
+        self.signs_i.clear();
     }
 
     /// Initialize all generators as Z operators (stabilizers start as `Z_i` for each qubit).
@@ -91,6 +106,7 @@ where
         self.row_x = vec![T::new(); self.num_qubits];
         self.row_z = new_index_set::<T, E>(self.num_qubits);
         self.signs = vec![SymbolicSign::empty(); self.num_qubits];
+        // signs_minus and signs_i are already cleared
     }
 
     /// Initialize all generators as X operators (destabilizers start as `X_i` for each qubit).
@@ -102,6 +118,7 @@ where
         self.row_x = new_index_set::<T, E>(self.num_qubits);
         self.row_z = vec![T::new(); self.num_qubits];
         self.signs = vec![SymbolicSign::empty(); self.num_qubits];
+        // signs_minus and signs_i are already cleared
     }
 
     /// Multiply the sign of generator `target` by the sign of generator `source`.

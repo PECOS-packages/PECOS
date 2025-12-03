@@ -783,8 +783,19 @@ fn randint(
 
     if let Some(n) = size {
         // Return array
-        let result = pecos::prelude::random::randint(low, high, n);
-        Ok(Py::new(py, Array::from_array_i64(result.into_dyn()))?.into_any())
+        // Match NumPy's platform-dependent dtype behavior:
+        // - Windows: int32 (C long is 32-bit on Windows even on 64-bit systems)
+        // - Unix: int64 (C long is 64-bit on 64-bit Unix systems)
+        #[cfg(target_os = "windows")]
+        {
+            let result = pecos::prelude::random::randint(low as i32, high.map(|h| h as i32), n);
+            Ok(Py::new(py, Array::from_array_i32(result.into_dyn()))?.into_any())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let result = pecos::prelude::random::randint(low, high, n);
+            Ok(Py::new(py, Array::from_array_i64(result.into_dyn()))?.into_any())
+        }
     } else {
         // Return scalar
         let result = pecos::prelude::random::randint_scalar(low, high);

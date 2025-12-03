@@ -296,7 +296,8 @@ jobs:
         if [[ "${{ runner.os }}" == "macOS" ]]; then
           echo ""
           echo "=== Checking built extension module ==="
-          EXT_MODULE=$(find python/pecos-rslib/src/pecos_rslib -name "_pecos_rslib*.so" | head -1)
+          # After conversion to pure Rust, the extension is now in site-packages
+          EXT_MODULE=$(find .venv/lib -name "_pecos_rslib*.so" 2>/dev/null | head -1)
           if [ -n "$EXT_MODULE" ]; then
             echo "Found: $EXT_MODULE"
             echo ""

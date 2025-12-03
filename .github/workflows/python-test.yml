@@ -50,6 +50,32 @@ jobs:
         # Remove swap storage (saves ~4GB)
         swap-storage: true
 
+    - name: Free Disk Space (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Write-Host "Disk space before cleanup:"
+        Get-PSDrive C | Select-Object Used,Free
+
+        # Remove Android SDK (saves ~9GB)
+        Write-Host "Removing Android SDK..."
+        Remove-Item -Path "C:\Android" -Recurse -Force -ErrorAction SilentlyContinue
+
+        # Remove .NET runtime and libraries (saves ~2GB)
+        Write-Host "Removing .NET..."
+        Remove-Item -Path "C:\Program Files\dotnet" -Recurse -Force -ErrorAction SilentlyContinue
+
+        # Remove CodeQL (saves ~5GB)
+        Write-Host "Removing CodeQL..."
+        Remove-Item -Path "C:\hostedtoolcache\CodeQL" -Recurse -Force -ErrorAction SilentlyContinue
+
+        # Remove large packages
+        Write-Host "Removing large packages..."
+        Remove-Item -Path "C:\ProgramData\chocolatey" -Recurse -Force -ErrorAction SilentlyContinue
+
+        Write-Host "Disk space after cleanup:"
+        Get-PSDrive C | Select-Object Used,Free
+
     - uses: actions/checkout@v4
 
     - name: Set up Python ${{ matrix.python-version }}

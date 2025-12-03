@@ -791,15 +791,13 @@ fn randint(
             // On Windows, check bounds to ensure values fit in i32
             let low_i32 = i32::try_from(low).map_err(|_| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "low value {} out of range for int32",
-                    low
+                    "low value {low} out of range for int32"
                 ))
             })?;
             let high_i32 = if let Some(h) = high {
                 Some(i32::try_from(h).map_err(|_| {
                     PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "high value {} out of range for int32",
-                        h
+                        "high value {h} out of range for int32"
                     ))
                 })?)
             } else {

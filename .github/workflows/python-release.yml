@@ -119,11 +119,12 @@ jobs:
             pipx run abi3audit --strict --report {wheel}
           # Windows configuration
           CIBW_ENVIRONMENT_WINDOWS: >
-            PATH="$HOME/.pecos/llvm/bin;$PATH"
-            LLVM_SYS_140_PREFIX="$HOME/.pecos/llvm"
+            PATH="C:\\Users\\runneradmin\\.pecos\\llvm\\bin;$PATH"
+            LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\llvm"
           CIBW_BEFORE_ALL_WINDOWS: |
             rustup update
             cargo run --release -p pecos-llvm-utils --bin pecos-llvm -- install --force
+            ls -la "C:\\Users\\runneradmin\\.pecos\\llvm" || echo "LLVM not installed"
           CIBW_BEFORE_BUILD_WINDOWS: "pip install delvewheel"
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
             delvewheel repair -w {dest_dir} {wheel} &&

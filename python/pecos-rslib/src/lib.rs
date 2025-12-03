@@ -327,5 +327,8 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // (pecos.typing module) as they are Python TypeAlias constructs, not Rust types.
     // The .pyi stub file provides type information for static type checkers.
 
+    // Add __version__ attribute
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+
     Ok(())
 }

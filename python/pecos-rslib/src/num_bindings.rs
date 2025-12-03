@@ -783,8 +783,34 @@ fn randint(
 
     if let Some(n) = size {
         // Return array
-        let result = pecos::prelude::random::randint(low, high, n);
-        Ok(Py::new(py, Array::from_array_i64(result.into_dyn()))?.into_any())
+        // Match NumPy's platform-dependent dtype behavior:
+        // - Windows: int32 (C long is 32-bit on Windows even on 64-bit systems)
+        // - Unix: int64 (C long is 64-bit on 64-bit Unix systems)
+        #[cfg(target_os = "windows")]
+        {
+            // On Windows, check bounds to ensure values fit in i32
+            let low_i32 = i32::try_from(low).map_err(|_| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "low value {low} out of range for int32"
+                ))
+            })?;
+            let high_i32 = if let Some(h) = high {
+                Some(i32::try_from(h).map_err(|_| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "high value {h} out of range for int32"
+                    ))
+                })?)
+            } else {
+                None
+            };
+            let result = pecos::prelude::random::randint(low_i32, high_i32, n);
+            Ok(Py::new(py, Array::from_array_i32(result.into_dyn()))?.into_any())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let result = pecos::prelude::random::randint(low, high, n);
+            Ok(Py::new(py, Array::from_array_i64(result.into_dyn()))?.into_any())
+        }
     } else {
         // Return scalar
         let result = pecos::prelude::random::randint_scalar(low, high);
@@ -1695,6 +1721,13 @@ fn array_equal(a: Bound<'_, PyAny>, b: Bound<'_, PyAny>, equal_nan: bool) -> PyR
                 }
                 return Ok(a_data.iter().zip(b_data.iter()).all(|(a, b)| a == b));
             }
+            (ArrayData::I32(a_data), ArrayData::I32(b_data)) => {
+                // For integers, just check shape and exact equality
+                if a_data.shape() != b_data.shape() {
+                    return Ok(false);
+                }
+                return Ok(a_data.iter().zip(b_data.iter()).all(|(a, b)| a == b));
+            }
             (ArrayData::F64(a_data), ArrayData::F64(b_data)) => {
                 return Ok(rust_array_equal(a_data, b_data, equal_nan));
             }
@@ -1733,9 +1766,20 @@ fn array_equal(a: Bound<'_, PyAny>, b: Bound<'_, PyAny>, equal_nan: bool) -> PyR
             return Ok(a_data.iter().zip(b_view.iter()).all(|(a, b)| a == b));
         }
 
-        // Try to match with NumPy int array
+        // Try to match with NumPy int64 array
         if let Ok(b_array) = array_buffer::extract_i64_array(&b)
             && let ArrayData::I64(a_data) = &a_ref.data
+        {
+            let b_view = b_array.view();
+            if a_data.shape() != b_view.shape() {
+                return Ok(false);
+            }
+            return Ok(a_data.iter().zip(b_view.iter()).all(|(a, b)| a == b));
+        }
+
+        // Try to match with NumPy int32 array
+        if let Ok(b_array) = array_buffer::extract_i32_array(&b)
+            && let ArrayData::I32(a_data) = &a_ref.data
         {
             let b_view = b_array.view();
             if a_data.shape() != b_view.shape() {
@@ -1774,9 +1818,20 @@ fn array_equal(a: Bound<'_, PyAny>, b: Bound<'_, PyAny>, equal_nan: bool) -> PyR
             return Ok(a_view.iter().zip(b_data.iter()).all(|(a, b)| a == b));
         }
 
-        // Try to match with NumPy int array
+        // Try to match with NumPy int64 array
         if let Ok(a_array) = array_buffer::extract_i64_array(&a)
             && let ArrayData::I64(b_data) = &b_ref.data
+        {
+            let a_view = a_array.view();
+            if a_view.shape() != b_data.shape() {
+                return Ok(false);
+            }
+            return Ok(a_view.iter().zip(b_data.iter()).all(|(a, b)| a == b));
+        }
+
+        // Try to match with NumPy int32 array
+        if let Ok(a_array) = array_buffer::extract_i32_array(&a)
+            && let ArrayData::I32(b_data) = &b_ref.data
         {
             let a_view = a_array.view();
             if a_view.shape() != b_data.shape() {

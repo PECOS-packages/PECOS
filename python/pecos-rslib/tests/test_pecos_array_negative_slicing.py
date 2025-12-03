@@ -19,7 +19,7 @@ class TestPecosArrayNegativeSlicing:
 
         pa_result_np = np.asarray(pa_result)
         np.testing.assert_array_equal(pa_result_np, np_result)
-        print(f"✅ arr[::-1]: {pa_result_np} == {np_result}")
+        print(f"arr[::-1]: {pa_result_np} == {np_result}")
 
     def test_reverse_from_index(self):
         """Test: arr[3::-1] - reverse from index 3 to beginning."""
@@ -31,7 +31,7 @@ class TestPecosArrayNegativeSlicing:
 
         pa_result_np = np.asarray(pa_result)
         np.testing.assert_array_equal(pa_result_np, np_result)
-        print(f"✅ arr[3::-1]: {pa_result_np} == {np_result}")
+        print(f"arr[3::-1]: {pa_result_np} == {np_result}")
 
     def test_reverse_with_negative_start(self):
         """Test: arr[-1::-1] - reverse from last element."""
@@ -43,7 +43,7 @@ class TestPecosArrayNegativeSlicing:
 
         pa_result_np = np.asarray(pa_result)
         np.testing.assert_array_equal(pa_result_np, np_result)
-        print(f"✅ arr[-1::-1]: {pa_result_np} == {np_result}")
+        print(f"arr[-1::-1]: {pa_result_np} == {np_result}")
 
     def test_reverse_with_explicit_stop_negative_5(self):
         """Test: arr[3:-5:-1] - should give full reverse (stop becomes -1 sentinel)."""
@@ -55,7 +55,7 @@ class TestPecosArrayNegativeSlicing:
 
         pa_result_np = np.asarray(pa_result)
         np.testing.assert_array_equal(pa_result_np, np_result)
-        print(f"✅ arr[3:-5:-1]: {pa_result_np} == {np_result}")
+        print(f"arr[3:-5:-1]: {pa_result_np} == {np_result}")
 
     def test_reverse_with_explicit_stop_negative_100(self):
         """Test: arr[3:-100:-1] - very negative stop, should give full reverse."""
@@ -67,7 +67,7 @@ class TestPecosArrayNegativeSlicing:
 
         pa_result_np = np.asarray(pa_result)
         np.testing.assert_array_equal(pa_result_np, np_result)
-        print(f"✅ arr[3:-100:-1]: {pa_result_np} == {np_result}")
+        print(f"arr[3:-100:-1]: {pa_result_np} == {np_result}")
 
     def test_reverse_partial_stop_negative_2(self):
         """Test: arr[3:-2:-1] - partial reverse (stop at index 2)."""
@@ -79,7 +79,7 @@ class TestPecosArrayNegativeSlicing:
 
         pa_result_np = np.asarray(pa_result)
         np.testing.assert_array_equal(pa_result_np, np_result)
-        print(f"✅ arr[3:-2:-1]: {pa_result_np} == {np_result} (should be [3.0])")
+        print(f"arr[3:-2:-1]: {pa_result_np} == {np_result} (should be [3.0])")
 
     def test_reverse_partial_stop_negative_3(self):
         """Test: arr[3:-3:-1] - partial reverse (stop at index 1)."""
@@ -91,7 +91,7 @@ class TestPecosArrayNegativeSlicing:
 
         pa_result_np = np.asarray(pa_result)
         np.testing.assert_array_equal(pa_result_np, np_result)
-        print(f"✅ arr[3:-3:-1]: {pa_result_np} == {np_result} (should be [3.0, 2.0])")
+        print(f"arr[3:-3:-1]: {pa_result_np} == {np_result} (should be [3.0, 2.0])")
 
     def test_reverse_partial_stop_negative_4(self):
         """Test: arr[3:-4:-1] - partial reverse (stop at index 0)."""
@@ -104,7 +104,7 @@ class TestPecosArrayNegativeSlicing:
         pa_result_np = np.asarray(pa_result)
         np.testing.assert_array_equal(pa_result_np, np_result)
         print(
-            f"✅ arr[3:-4:-1]: {pa_result_np} == {np_result} (should be [3.0, 2.0, 1.0])"
+            f"arr[3:-4:-1]: {pa_result_np} == {np_result} (should be [3.0, 2.0, 1.0])"
         )
 
     def test_reverse_empty_stop_negative_1(self):
@@ -117,7 +117,7 @@ class TestPecosArrayNegativeSlicing:
 
         pa_result_np = np.asarray(pa_result)
         np.testing.assert_array_equal(pa_result_np, np_result)
-        print(f"✅ arr[3:-1:-1]: {pa_result_np} == {np_result} (should be empty)")
+        print(f"arr[3:-1:-1]: {pa_result_np} == {np_result} (should be empty)")
 
     def test_reverse_with_step_minus_2(self):
         """Test: arr[::-2] - reverse with step -2."""
@@ -129,9 +129,7 @@ class TestPecosArrayNegativeSlicing:
 
         pa_result_np = np.asarray(pa_result)
         np.testing.assert_array_equal(pa_result_np, np_result)
-        print(
-            f"✅ arr[::-2]: {pa_result_np} == {np_result} (should be [4.0, 2.0, 0.0])"
-        )
+        print(f"arr[::-2]: {pa_result_np} == {np_result} (should be [4.0, 2.0, 0.0])")
 
 
 if __name__ == "__main__":

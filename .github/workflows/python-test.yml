@@ -24,6 +24,7 @@ defaults:
 jobs:
   python-test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -31,6 +32,51 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
+    - name: Free Disk Space (Ubuntu)
+      if: runner.os == 'Linux'
+      uses: jlumbroso/free-disk-space@main
+      with:
+        # Remove Android tools (saves ~14GB)
+        android: true
+        # Remove .NET runtime (saves ~2.7GB)
+        dotnet: true
+        # Remove Haskell runtime
+        haskell: true
+        # Don't remove large packages - may include libffi and other build deps
+        large-packages: false
+        # Remove Docker images (saves space)
+        docker-images: true
+        # Keep tool-cache as we may need some tools
+        tool-cache: false
+        # Remove swap storage (saves ~4GB)
+        swap-storage: true
+
+    - name: Free Disk Space (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Write-Host "Disk space before cleanup:"
+        Get-PSDrive C | Select-Object Used,Free
+
+        # Remove Android SDK (saves ~9GB)
+        Write-Host "Removing Android SDK..."
+        Remove-Item -Path "C:\Android" -Recurse -Force -ErrorAction SilentlyContinue
+
+        # Remove .NET runtime and libraries (saves ~2GB)
+        Write-Host "Removing .NET..."
+        Remove-Item -Path "C:\Program Files\dotnet" -Recurse -Force -ErrorAction SilentlyContinue
+
+        # Remove CodeQL (saves ~5GB)
+        Write-Host "Removing CodeQL..."
+        Remove-Item -Path "C:\hostedtoolcache\CodeQL" -Recurse -Force -ErrorAction SilentlyContinue
+
+        # Remove large packages
+        Write-Host "Removing large packages..."
+        Remove-Item -Path "C:\ProgramData\chocolatey" -Recurse -Force -ErrorAction SilentlyContinue
+
+        Write-Host "Disk space after cleanup:"
+        Get-PSDrive C | Select-Object Used,Free
+
     - uses: actions/checkout@v4
 
     - name: Set up Python ${{ matrix.python-version }}
@@ -95,9 +141,6 @@ jobs:
       shell: pwsh
       run: |
         # Ensure LLVM environment variable is available
-        Write-Host "LLVM_SYS_140_PREFIX: $env:LLVM_SYS_140_PREFIX"
-        Write-Host "LLVM_PATH: $env:LLVM_PATH"
-
         # If LLVM_SYS_140_PREFIX is not set but LLVM_PATH is, use LLVM_PATH
         if (-not $env:LLVM_SYS_140_PREFIX -and $env:LLVM_PATH) {
           Write-Host "Setting LLVM_SYS_140_PREFIX from LLVM_PATH"
@@ -120,16 +163,7 @@ jobs:
           $env:PATH = "$llvmBinDir;$env:PATH"
           # Update PATH for future steps
           "$llvmBinDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          Write-Host "Added LLVM bin to PATH: $llvmBinDir"
         }
-
-        # Verify LLVM installation
-        Write-Host "Checking for llvm-config..."
-        Get-Command llvm-config -ErrorAction SilentlyContinue || Write-Host "llvm-config not found in PATH"
-
-        # List LLVM directory contents
-        Write-Host "LLVM directory contents:"
-        Get-ChildItem $env:LLVM_SYS_140_PREFIX -ErrorAction SilentlyContinue | Select-Object Name
 
         # Find MSVC link.exe and create cargo config
         $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -139,8 +173,6 @@ jobs:
                     Select-Object -First 1 -ExpandProperty FullName
 
         if ($linkPath) {
-          Write-Host "Found MSVC link.exe at: $linkPath"
-
           # Create .cargo directory and config in multiple locations
           # Create in root
           New-Item -ItemType Directory -Force -Path .cargo | Out-Null
@@ -174,10 +206,6 @@ jobs:
             $configContent | Out-File -FilePath "$cargoHome\config.toml" -Encoding UTF8
           }
 
-          Write-Host "Created cargo configs with LLVM_SYS_140_PREFIX=$escapedLLVMPath"
-          Write-Host "Root .cargo\config.toml:"
-          Get-Content .cargo\config.toml
-          Write-Host "User cargo config appended to: $cargoHome\config.toml"
         } else {
           Write-Error "Could not find MSVC link.exe"
           exit 1
@@ -234,102 +262,22 @@ jobs:
           # Set explicit library path to ONLY include system directories
           export LIBRARY_PATH=/usr/lib
 
-          # DEBUG: Show what environment variables are set
-          echo "=== Environment variables that affect linking ==="
-          env | grep -E "LIBRARY|DYLD|PKG_CONFIG|HOMEBREW|PATH" | sort
-
-          # DEBUG: Check what libraries are in Homebrew paths
-          echo "=== Checking for libunwind in Homebrew locations ==="
-          ls -la /usr/local/lib/libunwind* 2>&1 || echo "No libunwind in /usr/local/lib"
-          ls -la /opt/homebrew/lib/libunwind* 2>&1 || echo "No libunwind in /opt/homebrew/lib"
-
-          # DEBUG: Check system libunwind
-          echo "=== System libunwind ==="
-          ls -la /usr/lib/system/libunwind* 2>&1 || echo "No libunwind in /usr/lib/system"
-          ls -la /usr/lib/libunwind* 2>&1 || echo "No libunwind in /usr/lib"
-
-          # DEBUG: Check if LLVM itself has libunwind references
-          echo "=== Checking LLVM libraries for libunwind references ==="
-          echo "LLVM dylib files:"
-          ls -lh /tmp/llvm/lib/*.dylib 2>&1 | head -10 || echo "No dylib files found"
-
-          # Check ALL LLVM dylibs for libunwind references
-          echo ""
-          echo "Checking each LLVM library for libunwind:"
-          for lib in /tmp/llvm/lib/*.dylib; do
-            if [ -f "$lib" ]; then
-              libname=$(basename "$lib")
-              if otool -L "$lib" 2>/dev/null | grep -q "libunwind"; then
-                echo "  [WARNING] $libname HAS libunwind reference:"
-                otool -L "$lib" | grep libunwind
-              fi
-            fi
-          done
-          echo "Done checking LLVM libraries"
-
-          # Check what libc++ the system has
-          echo ""
-          echo "=== System C++ library ==="
-          ls -lh /usr/lib/libc++* 2>&1 | head -5 || echo "No libc++ in /usr/lib"
-
-          # Check if clang has any default library search paths configured
-          echo ""
-          echo "=== Clang default library search paths ==="
-          /tmp/llvm/bin/clang -Xlinker -v 2>&1 | grep -A 20 "Library search" || echo "Could not get search paths"
-
-          echo ""
-          echo "=== RUSTFLAGS: $RUSTFLAGS ==="
-          echo "=== LIBRARY_PATH: $LIBRARY_PATH ==="
+          echo "macOS environment configured for build (LIBRARY_PATH=/usr/lib)"
         fi
 
-        # Build with verbose cargo output to see linker commands
-        echo ""
-        echo "=== Starting build ==="
-        if [[ "${{ runner.os }}" == "macOS" ]]; then
-          # Enable verbose cargo output to see full linker commands
-          CARGO_LOG=cargo::core::compiler::fingerprint=info make build 2>&1 | tee /tmp/build.log
-        else
-          make build 2>&1 | tee /tmp/build.log
-        fi
+        # Build the project
+        make build
 
-        # After build, check if the extension has the bad reference
+        # After build, verify the extension module on macOS
         if [[ "${{ runner.os }}" == "macOS" ]]; then
-          echo ""
-          echo "=== Checking built extension module ==="
-          EXT_MODULE=$(find python/pecos-rslib/src/pecos_rslib -name "_pecos_rslib*.so" | head -1)
+          EXT_MODULE=$(find .venv/lib -name "_pecos_rslib*.so" 2>/dev/null | head -1)
           if [ -n "$EXT_MODULE" ]; then
-            echo "Found: $EXT_MODULE"
-            echo ""
-            echo "=== ALL dependencies of extension module ==="
-            otool -L "$EXT_MODULE"
-
-            echo ""
-            echo "=== Checking for problematic @rpath reference ==="
-            if otool -L "$EXT_MODULE" | grep "@rpath/libunwind"; then
-              echo "❌ ERROR: Still has @rpath/libunwind reference!"
-
-              echo ""
-              echo "=== Let's trace where this comes from ==="
-              echo "Dependencies that might be the source:"
-              otool -L "$EXT_MODULE" | grep -v "$EXT_MODULE" | grep "\.dylib" | while read -r line; do
-                dep=$(echo "$line" | awk '{print $1}')
-                if [ -f "$dep" ] || [ -L "$dep" ]; then
-                  echo ""
-                  echo "Checking $dep:"
-                  otool -L "$dep" 2>/dev/null | grep -i unwind || echo "  No libunwind reference"
-                fi
-              done
-
-              echo ""
-              echo "=== Last 100 lines of build log (looking for linking commands) ==="
-              tail -100 /tmp/build.log | grep -B 2 -A 2 "linking\|rustc.*cdylib\|-L"
-
+            if otool -L "$EXT_MODULE" | grep -q "@rpath/libunwind"; then
+              echo "ERROR: Extension has @rpath/libunwind reference"
+              otool -L "$EXT_MODULE"
               exit 1
-            else
-              echo "[OK] No @rpath/libunwind reference found"
             fi
-          else
-            echo "[WARNING] Could not find extension module to check"
+            echo "macOS extension module built successfully"
           fi
         fi
 

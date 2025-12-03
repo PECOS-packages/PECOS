@@ -36,7 +36,7 @@ def test_simple_bell_state() -> None:
     assert hugr is not None
     assert hasattr(hugr, "modules")
 
-    print("✓ Bell state: Clean translation and HUGR compilation")
+    print("Bell state: Clean translation and HUGR compilation")
 
 
 def test_simple_reset() -> None:
@@ -69,7 +69,7 @@ def test_simple_reset() -> None:
     hugr = SlrConverter(prog).hugr()
     assert hugr is not None
 
-    print("✓ Reset: Functional reset with correct assignment")
+    print("Reset: Functional reset with correct assignment")
 
 
 def test_simple_function_with_return() -> None:
@@ -110,7 +110,7 @@ def test_simple_function_with_return() -> None:
     hugr = SlrConverter(prog).hugr()
     assert hugr is not None
 
-    print("✓ Function return: Proper signature and capture")
+    print("Function return: Proper signature and capture")
 
 
 def test_simple_measurement_then_reset() -> None:
@@ -148,7 +148,7 @@ def test_simple_measurement_then_reset() -> None:
     hugr = SlrConverter(prog).hugr()
     assert hugr is not None
 
-    print("✓ Measure-reset: Explicit reset returned correctly")
+    print("Measure-reset: Explicit reset returned correctly")
 
 
 def test_simple_two_qubit_gate() -> None:
@@ -177,7 +177,7 @@ def test_simple_two_qubit_gate() -> None:
     hugr = SlrConverter(prog).hugr()
     assert hugr is not None
 
-    print("✓ Two-qubit gates: Correct order preserved")
+    print("Two-qubit gates: Correct order preserved")
 
 
 def test_simple_loop_pattern() -> None:
@@ -201,7 +201,7 @@ def test_simple_loop_pattern() -> None:
     hugr = SlrConverter(prog).hugr()
     assert hugr is not None
 
-    print("✓ Loop generation: Clean for loop")
+    print("Loop generation: Clean for loop")
 
 
 def test_simple_partial_consumption() -> None:
@@ -240,7 +240,7 @@ def test_simple_partial_consumption() -> None:
     hugr = SlrConverter(prog).hugr()
     assert hugr is not None
 
-    print("✓ Partial consumption: Returns only unconsumed qubits")
+    print("Partial consumption: Returns only unconsumed qubits")
 
 
 def test_simple_explicit_reset_in_loop() -> None:
@@ -278,7 +278,7 @@ def test_simple_explicit_reset_in_loop() -> None:
     hugr = SlrConverter(prog).hugr()
     assert hugr is not None
 
-    print("✓ Explicit reset in loop: Maintains array size correctly")
+    print("Explicit reset in loop: Maintains array size correctly")
 
 
 def test_simple_multi_qubit_operations() -> None:
@@ -312,7 +312,7 @@ def test_simple_multi_qubit_operations() -> None:
     hugr = SlrConverter(prog).hugr()
     assert hugr is not None
 
-    print("✓ Multiple operations: All present and ordered")
+    print("Multiple operations: All present and ordered")
 
 
 def test_simple_ghz_state() -> None:
@@ -340,7 +340,7 @@ def test_simple_ghz_state() -> None:
     hugr = SlrConverter(prog).hugr()
     assert hugr is not None
 
-    print("✓ GHZ state: Clean 3-qubit entanglement")
+    print("GHZ state: Clean 3-qubit entanglement")
 
 
 if __name__ == "__main__":
@@ -355,4 +355,4 @@ if __name__ == "__main__":
     test_simple_explicit_reset_in_loop()
     test_simple_multi_qubit_operations()
     test_simple_ghz_state()
-    print("\n✅ All simple SLR-to-Guppy tests passed!")
+    print("\nAll simple SLR-to-Guppy tests passed!")

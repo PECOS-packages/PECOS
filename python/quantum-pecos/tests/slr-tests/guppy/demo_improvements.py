@@ -48,9 +48,9 @@ def demo_scenario(name: str, prog: Main, variables: dict) -> None:
             print(f"  Decision tree says unpack: {requires_unpacking_decision}")
 
             if requires_unpacking_decision:
-                print("  ✓ WILL be unpacked")
+                print("  WILL be unpacked")
             else:
-                print("  ✗ Will NOT be unpacked")
+                print("  Will NOT be unpacked")
 
 
 def main() -> None:
@@ -89,8 +89,8 @@ def main() -> None:
         {"data": data, "ancilla": ancilla, "syndrome": syndrome},
     )
 
-    print("\n✓ BEFORE: Would unpack 'data' (false positive)")
-    print("✓ AFTER: 'data' NOT unpacked (correct!)")
+    print("\nBEFORE: Would unpack 'data' (false positive)")
+    print("AFTER: 'data' NOT unpacked (correct!)")
 
     # Scenario 2: Partial Conditional (Element-level precision!)
     print("\n" + "=" * 70)
@@ -113,8 +113,8 @@ def main() -> None:
 
     demo_scenario("Partial Conditional Access", prog2, {"q": q, "c": c})
 
-    print("\n✓ BEFORE: Would mark ALL elements as conditional")
-    print("✓ AFTER: Only q[3] marked as conditional (precise!)")
+    print("\nBEFORE: Would mark ALL elements as conditional")
+    print("AFTER: Only q[3] marked as conditional (precise!)")
 
     # Scenario 3: Measure-Prep-Use (Replacement tracked!)
     print("\n" + "=" * 70)
@@ -132,8 +132,8 @@ def main() -> None:
 
     demo_scenario("Measure-Prep-Use Pattern", prog3, {"q": q, "c": c})
 
-    print("\n✓ BEFORE: Would unpack 'q' (false positive)")
-    print("✓ AFTER: 'q' NOT unpacked because of Prep (correct!)")
+    print("\nBEFORE: Would unpack 'q' (false positive)")
+    print("AFTER: 'q' NOT unpacked because of Prep (correct!)")
 
     # Scenario 4: Different Element Usage (Element-level tracking!)
     print("\n" + "=" * 70)
@@ -150,8 +150,8 @@ def main() -> None:
 
     demo_scenario("Different Element Usage", prog4, {"q": q, "c": c})
 
-    print("\n✓ BEFORE: Would unpack 'q' (operation after measurement)")
-    print("✓ AFTER: 'q' NOT unpacked (different elements!)")
+    print("\nBEFORE: Would unpack 'q' (operation after measurement)")
+    print("AFTER: 'q' NOT unpacked (different elements!)")
 
     print("\n" + "=" * 70)
     print("DEMONSTRATION COMPLETE")

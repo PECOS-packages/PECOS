@@ -141,9 +141,6 @@ jobs:
       shell: pwsh
       run: |
         # Ensure LLVM environment variable is available
-        Write-Host "LLVM_SYS_140_PREFIX: $env:LLVM_SYS_140_PREFIX"
-        Write-Host "LLVM_PATH: $env:LLVM_PATH"
-
         # If LLVM_SYS_140_PREFIX is not set but LLVM_PATH is, use LLVM_PATH
         if (-not $env:LLVM_SYS_140_PREFIX -and $env:LLVM_PATH) {
           Write-Host "Setting LLVM_SYS_140_PREFIX from LLVM_PATH"
@@ -166,16 +163,7 @@ jobs:
           $env:PATH = "$llvmBinDir;$env:PATH"
           # Update PATH for future steps
           "$llvmBinDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          Write-Host "Added LLVM bin to PATH: $llvmBinDir"
         }
-
-        # Verify LLVM installation
-        Write-Host "Checking for llvm-config..."
-        Get-Command llvm-config -ErrorAction SilentlyContinue || Write-Host "llvm-config not found in PATH"
-
-        # List LLVM directory contents
-        Write-Host "LLVM directory contents:"
-        Get-ChildItem $env:LLVM_SYS_140_PREFIX -ErrorAction SilentlyContinue | Select-Object Name
 
         # Find MSVC link.exe and create cargo config
         $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -185,8 +173,6 @@ jobs:
                     Select-Object -First 1 -ExpandProperty FullName
 
         if ($linkPath) {
-          Write-Host "Found MSVC link.exe at: $linkPath"
-
           # Create .cargo directory and config in multiple locations
           # Create in root
           New-Item -ItemType Directory -Force -Path .cargo | Out-Null
@@ -220,10 +206,6 @@ jobs:
             $configContent | Out-File -FilePath "$cargoHome\config.toml" -Encoding UTF8
           }
 
-          Write-Host "Created cargo configs with LLVM_SYS_140_PREFIX=$escapedLLVMPath"
-          Write-Host "Root .cargo\config.toml:"
-          Get-Content .cargo\config.toml
-          Write-Host "User cargo config appended to: $cargoHome\config.toml"
         } else {
           Write-Error "Could not find MSVC link.exe"
           exit 1
@@ -284,8 +266,6 @@ jobs:
         fi
 
         # Build the project
-        echo ""
-        echo "=== Starting build ==="
         make build
 
         # After build, verify the extension module on macOS

@@ -48,8 +48,8 @@ def test_multiple_bounded_rand() -> None:
     rng.set_seed(42)
 
     # Use platform-appropriate upper bound for randint
-    # Windows: i32 max (2^31 - 1), Unix: i64 max
-    max_bound = 2**31 if sys.platform == "win32" else 2**32
+    # Windows: i32 max is 2^31 - 1 (2147483647), Unix: i64 allows 2^32
+    max_bound = 2**31 - 1 if sys.platform == "win32" else 2**32
 
     for _ in range(100):
         random_bound = int(pc.random.randint(1, max_bound, 1)[0])

@@ -129,9 +129,7 @@ class TestPecosArrayNegativeSlicing:
 
         pa_result_np = np.asarray(pa_result)
         np.testing.assert_array_equal(pa_result_np, np_result)
-        print(
-            f"arr[::-2]: {pa_result_np} == {np_result} (should be [4.0, 2.0, 0.0])"
-        )
+        print(f"arr[::-2]: {pa_result_np} == {np_result} (should be [4.0, 2.0, 0.0])")
 
 
 if __name__ == "__main__":

@@ -788,7 +788,18 @@ fn randint(
         // - Unix: int64 (C long is 64-bit on 64-bit Unix systems)
         #[cfg(target_os = "windows")]
         {
-            let result = pecos::prelude::random::randint(low as i32, high.map(|h| h as i32), n);
+            // On Windows, check bounds to ensure values fit in i32
+            let low_i32 = i32::try_from(low).map_err(|_| {
+                PyValueError::new_err(format!("low value {} out of range for int32", low))
+            })?;
+            let high_i32 = if let Some(h) = high {
+                Some(i32::try_from(h).map_err(|_| {
+                    PyValueError::new_err(format!("high value {} out of range for int32", h))
+                })?)
+            } else {
+                None
+            };
+            let result = pecos::prelude::random::randint(low_i32, high_i32, n);
             Ok(Py::new(py, Array::from_array_i32(result.into_dyn()))?.into_any())
         }
         #[cfg(not(target_os = "windows"))]

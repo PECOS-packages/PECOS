@@ -43,6 +43,16 @@ pub type StdSymbolicSparseStab = SymbolicSparseStab<VecSet<usize>, usize>;
 /// - `outcome = {0}, flip = false`: same as measurement 0
 /// - `outcome = {0}, flip = true`: opposite of measurement 0
 /// - `outcome = {0, 2}, flip = false`: XOR of measurements 0 and 2
+///
+/// # Display Format
+///
+/// The `Display` implementation formats results as `m{index}^m{dep1}^m{dep2}^...={flip}`:
+/// - `m5=0`: measurement 5 is deterministic 0
+/// - `m5=1`: measurement 5 is deterministic 1
+/// - `m5^m2=0`: measurement 5 equals measurement 2
+/// - `m5^m3^m1=1`: measurement 5 equals `m3 XOR m1 XOR 1`
+///
+/// Dependencies are ordered from largest to smallest index.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SymbolicMeasurementResult {
     /// The set of measurement indices whose outcomes XOR together.
@@ -54,6 +64,166 @@ pub struct SymbolicMeasurementResult {
     pub is_deterministic: bool,
     /// The index assigned to this measurement.
     pub index: usize,
+}
+
+impl std::fmt::Display for SymbolicMeasurementResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Start with this measurement's index
+        write!(f, "m{}", self.index)?;
+
+        if self.is_deterministic {
+            // Add dependencies in reverse order (largest to smallest)
+            for &dep in self.outcome.iter().rev() {
+                write!(f, "^m{dep}")?;
+            }
+            // Add the flip value
+            write!(f, "={}", u8::from(self.flip))
+        } else {
+            // Non-deterministic: show as random/unknown
+            write!(f, "=?")
+        }
+    }
+}
+
+/// History of all measurements performed during simulation.
+///
+/// The index in the history equals the measurement index assigned to that measurement.
+/// Provides methods to filter by deterministic/non-deterministic status.
+#[derive(Clone, Debug, Default)]
+pub struct MeasurementHistory {
+    measurements: Vec<SymbolicMeasurementResult>,
+}
+
+impl MeasurementHistory {
+    /// Create a new empty measurement history.
+    #[inline]
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            measurements: Vec::new(),
+        }
+    }
+
+    /// Add a measurement result to the history.
+    #[inline]
+    pub fn push(&mut self, result: SymbolicMeasurementResult) {
+        self.measurements.push(result);
+    }
+
+    /// Clear all measurements from the history.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.measurements.clear();
+    }
+
+    /// Returns the number of measurements in the history.
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.measurements.len()
+    }
+
+    /// Returns true if the history is empty.
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.measurements.is_empty()
+    }
+
+    /// Returns a reference to the measurement at the given index.
+    #[inline]
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<&SymbolicMeasurementResult> {
+        self.measurements.get(index)
+    }
+
+    /// Returns the full list of measurements as a slice.
+    #[inline]
+    #[must_use]
+    pub fn as_slice(&self) -> &[SymbolicMeasurementResult] {
+        &self.measurements
+    }
+
+    /// Returns an iterator over all measurements.
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = &SymbolicMeasurementResult> {
+        self.measurements.iter()
+    }
+
+    /// Returns only the deterministic measurements.
+    ///
+    /// Each result contains its measurement index in the `index` field.
+    #[inline]
+    #[must_use]
+    pub fn deterministic(&self) -> Vec<&SymbolicMeasurementResult> {
+        self.measurements
+            .iter()
+            .filter(|m| m.is_deterministic)
+            .collect()
+    }
+
+    /// Returns only the non-deterministic measurements.
+    ///
+    /// Each result contains its measurement index in the `index` field.
+    #[inline]
+    #[must_use]
+    pub fn nondeterministic(&self) -> Vec<&SymbolicMeasurementResult> {
+        self.measurements
+            .iter()
+            .filter(|m| !m.is_deterministic)
+            .collect()
+    }
+
+    /// Formats all measurements as a bracketed list.
+    ///
+    /// Example: `[m0^m0=0, m1^m0=0, m2=0]`
+    #[must_use]
+    pub fn format_all(&self) -> String {
+        let formatted: Vec<String> = self.measurements.iter().map(ToString::to_string).collect();
+        format!("[{}]", formatted.join(", "))
+    }
+
+    /// Formats only deterministic measurements as a bracketed list.
+    ///
+    /// Example: `[m1^m0=0, m2=0]`
+    #[must_use]
+    pub fn format_deterministic(&self) -> String {
+        let formatted: Vec<String> = self
+            .measurements
+            .iter()
+            .filter(|m| m.is_deterministic)
+            .map(ToString::to_string)
+            .collect();
+        format!("[{}]", formatted.join(", "))
+    }
+
+    /// Formats only non-deterministic measurements as a bracketed list.
+    ///
+    /// Example: `[m0^m0=0, m3^m3=0]`
+    #[must_use]
+    pub fn format_nondeterministic(&self) -> String {
+        let formatted: Vec<String> = self
+            .measurements
+            .iter()
+            .filter(|m| !m.is_deterministic)
+            .map(ToString::to_string)
+            .collect();
+        format!("[{}]", formatted.join(", "))
+    }
+}
+
+impl std::fmt::Display for MeasurementHistory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.format_all())
+    }
+}
+
+impl std::ops::Index<usize> for MeasurementHistory {
+    type Output = SymbolicMeasurementResult;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.measurements[index]
+    }
 }
 
 /// A symbolic stabilizer simulator that tracks measurement dependencies.
@@ -103,6 +273,8 @@ where
     destabs: SymbolicGens<T, E>,
     /// Counter for assigning unique indices to measurements
     measurement_counter: usize,
+    /// History of all measurements performed.
+    measurement_history: MeasurementHistory,
 }
 
 impl<T, E> SymbolicSparseStab<T, E>
@@ -119,6 +291,7 @@ where
             stabs: SymbolicGens::<T, E>::new(num_qubits),
             destabs: SymbolicGens::<T, E>::new(num_qubits),
             measurement_counter: 0,
+            measurement_history: MeasurementHistory::new(),
         };
         sim.reset();
         sim
@@ -136,6 +309,35 @@ where
     #[must_use]
     pub fn measurement_count(&self) -> usize {
         self.measurement_counter
+    }
+
+    /// Returns a reference to the measurement history.
+    ///
+    /// The history provides methods to access all measurements, or filter by
+    /// deterministic/non-deterministic status.
+    ///
+    /// # Example
+    /// ```rust
+    /// use pecos_qsim::symbolic_sparse_stab::StdSymbolicSparseStab;
+    ///
+    /// let mut sim = StdSymbolicSparseStab::new(2);
+    /// sim.h(0).cx(0, 1);
+    /// sim.mz(0);
+    /// sim.mz(1);
+    ///
+    /// let history = sim.measurement_history();
+    /// assert_eq!(history.len(), 2);
+    ///
+    /// // Get deterministic measurements (each result has its index in result.index)
+    /// let det = history.deterministic();
+    /// for result in det {
+    ///     println!("Measurement {}: {:?}", result.index, result.outcome);
+    /// }
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn measurement_history(&self) -> &MeasurementHistory {
+        &self.measurement_history
     }
 
     /// Produces a textual representation of the stabilizer tableau with symbolic signs.
@@ -215,6 +417,7 @@ where
         self.stabs.init_all_z();
         self.destabs.init_all_x();
         self.measurement_counter = 0;
+        self.measurement_history.clear();
         self
     }
 
@@ -367,13 +570,18 @@ where
     pub fn mz(&mut self, q: E) -> SymbolicMeasurementResult {
         let qu = q.to_index();
 
-        if self.stabs.col_x[qu].is_empty() {
+        let result = if self.stabs.col_x[qu].is_empty() {
             // Deterministic measurement
             self.deterministic_meas(q)
         } else {
             // Non-deterministic measurement
             self.nondeterministic_meas(q)
-        }
+        };
+
+        // Record in measurement history
+        self.measurement_history.push(result.clone());
+
+        result
     }
 
     /// Handle a deterministic measurement.
@@ -886,5 +1094,199 @@ mod tests {
         let tableau = sim.stab_tableau();
         assert!(tableau.contains("{} ^ 1 ZI")); // First stabilizer gets flipped
         assert!(tableau.contains("{} ^ 0 IZ")); // Second stabilizer unchanged
+    }
+
+    #[test]
+    fn test_measurement_history() {
+        let mut sim = StdSymbolicSparseStab::new(3);
+
+        // Initially no measurements
+        assert!(sim.measurement_history().is_empty());
+
+        // Create GHZ state and measure
+        sim.h(0).cx(0, 1).cx(1, 2);
+
+        let r0 = sim.mz(0);
+        assert_eq!(sim.measurement_history().len(), 1);
+        assert_eq!(sim.measurement_history()[0], r0);
+
+        let r1 = sim.mz(1);
+        assert_eq!(sim.measurement_history().len(), 2);
+        assert_eq!(sim.measurement_history()[1], r1);
+
+        let r2 = sim.mz(2);
+        assert_eq!(sim.measurement_history().len(), 3);
+        assert_eq!(sim.measurement_history()[2], r2);
+
+        // Check indices match positions
+        assert_eq!(sim.measurement_history()[0].index, 0);
+        assert_eq!(sim.measurement_history()[1].index, 1);
+        assert_eq!(sim.measurement_history()[2].index, 2);
+
+        // Check deterministic filtering
+        let det = sim.measurement_history().deterministic();
+        let nondet = sim.measurement_history().nondeterministic();
+
+        // First measurement is non-deterministic, others are deterministic
+        assert_eq!(nondet.len(), 1);
+        assert_eq!(det.len(), 2);
+        // The result contains its own index
+        assert_eq!(nondet[0].index, 0);
+        assert!(!nondet[0].is_deterministic);
+    }
+
+    #[test]
+    fn test_measurement_history_reset() {
+        let mut sim = StdSymbolicSparseStab::new(2);
+
+        sim.h(0);
+        sim.mz(0);
+        sim.mz(1);
+        assert_eq!(sim.measurement_history().len(), 2);
+
+        // Reset should clear history
+        sim.reset();
+        assert!(sim.measurement_history().is_empty());
+        assert_eq!(sim.measurement_count(), 0);
+    }
+
+    #[test]
+    fn test_display_format() {
+        // Test deterministic 0: m0=0
+        let r = SymbolicMeasurementResult {
+            outcome: BTreeSet::new(),
+            flip: false,
+            is_deterministic: true,
+            index: 0,
+        };
+        assert_eq!(format!("{r}"), "m0=0");
+
+        // Test deterministic 1: m1=1
+        let r = SymbolicMeasurementResult {
+            outcome: BTreeSet::new(),
+            flip: true,
+            is_deterministic: true,
+            index: 1,
+        };
+        assert_eq!(format!("{r}"), "m1=1");
+
+        // Test single dependency: m2^m0=0
+        let mut outcome = BTreeSet::new();
+        outcome.insert(0);
+        let r = SymbolicMeasurementResult {
+            outcome,
+            flip: false,
+            is_deterministic: true,
+            index: 2,
+        };
+        assert_eq!(format!("{r}"), "m2^m0=0");
+
+        // Test multiple dependencies (should be largest to smallest): m5^m3^m1=1
+        let mut outcome = BTreeSet::new();
+        outcome.insert(1);
+        outcome.insert(3);
+        let r = SymbolicMeasurementResult {
+            outcome,
+            flip: true,
+            is_deterministic: true,
+            index: 5,
+        };
+        assert_eq!(format!("{r}"), "m5^m3^m1=1");
+
+        // Test non-deterministic: m0=?
+        let mut outcome = BTreeSet::new();
+        outcome.insert(0);
+        let r = SymbolicMeasurementResult {
+            outcome,
+            flip: false,
+            is_deterministic: false,
+            index: 0,
+        };
+        assert_eq!(format!("{r}"), "m0=?");
+    }
+
+    #[test]
+    fn test_display_in_simulation() {
+        let mut sim = StdSymbolicSparseStab::new(2);
+
+        // Deterministic 0
+        let r = sim.mz(0);
+        assert_eq!(format!("{r}"), "m0=0");
+
+        sim.reset();
+
+        // Apply X for deterministic 1
+        sim.x(0);
+        let r = sim.mz(0);
+        assert_eq!(format!("{r}"), "m0=1");
+
+        sim.reset();
+
+        // Bell state
+        sim.h(0).cx(0, 1);
+        let r0 = sim.mz(0);
+        let r1 = sim.mz(1);
+
+        // r0 is non-deterministic
+        assert_eq!(format!("{r0}"), "m0=?");
+        // r1 is deterministic, depends on m0
+        assert_eq!(format!("{r1}"), "m1^m0=0");
+    }
+
+    #[test]
+    fn test_history_formatting() {
+        let mut sim = StdSymbolicSparseStab::new(3);
+
+        // Create GHZ state: first measurement non-deterministic, rest deterministic
+        sim.h(0).cx(0, 1).cx(1, 2);
+        sim.mz(0); // non-det
+        sim.mz(1); // det
+        sim.mz(2); // det
+
+        let history = sim.measurement_history();
+
+        // Test format_all (also tests Display)
+        assert_eq!(history.format_all(), "[m0=?, m1^m0=0, m2^m0=0]");
+        assert_eq!(format!("{history}"), "[m0=?, m1^m0=0, m2^m0=0]");
+
+        // Test format_deterministic
+        assert_eq!(history.format_deterministic(), "[m1^m0=0, m2^m0=0]");
+
+        // Test format_nondeterministic
+        assert_eq!(history.format_nondeterministic(), "[m0=?]");
+
+        // Test Debug format shows struct fields
+        let r = &history[0];
+        let debug_str = format!("{r:?}");
+        assert!(debug_str.contains("outcome"));
+        assert!(debug_str.contains("flip"));
+        assert!(debug_str.contains("is_deterministic"));
+        assert!(debug_str.contains("index"));
+    }
+
+    #[test]
+    fn test_history_formatting_empty() {
+        let sim = StdSymbolicSparseStab::new(2);
+        let history = sim.measurement_history();
+
+        assert_eq!(history.format_all(), "[]");
+        assert_eq!(history.format_deterministic(), "[]");
+        assert_eq!(history.format_nondeterministic(), "[]");
+        assert_eq!(format!("{history}"), "[]");
+    }
+
+    #[test]
+    fn test_history_formatting_with_flips() {
+        let mut sim = StdSymbolicSparseStab::new(2);
+
+        // Apply X to get flip=1, then measure
+        sim.x(0);
+        sim.mz(0); // det with flip=1
+        sim.mz(1); // det with flip=0
+
+        let history = sim.measurement_history();
+        assert_eq!(history.format_all(), "[m0=1, m1=0]");
+        assert_eq!(history.format_deterministic(), "[m0=1, m1=0]");
+        assert_eq!(history.format_nondeterministic(), "[]");
     }
 }

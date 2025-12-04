@@ -504,6 +504,36 @@ pub mod graph {
     pub use pecos_num::graph::*;
 }
 
+/// Quantum simulation implementations
+///
+/// This module provides low-level quantum simulation implementations and utilities
+/// from pecos-qsim, including stabilizer simulators, state vectors, and measurement
+/// samplers.
+///
+/// # Available Types
+///
+/// - **Simulators**: `SparseStab`, `StateVec`, `SymbolicSparseStab`
+/// - **Measurement Sampling**: `ShotSampler`, `ColumnarSampler`
+/// - **Utilities**: `CliffordGateable`, `ArbitraryRotationGateable`
+///
+/// # Example
+///
+/// ```rust
+/// use pecos::qsim::measurement_sampler::{ShotSampler, ColumnarSampler};
+/// use pecos::prelude::*;
+///
+/// let mut sim = StdSymbolicSparseStab::new(2);
+/// sim.h(0).cx(0, 1);
+/// sim.mz(0);
+/// sim.mz(1);
+///
+/// let sampler = ColumnarSampler::new(sim.measurement_history());
+/// let samples = sampler.sample_with_thread_rng(1000);
+/// ```
+pub mod qsim {
+    pub use pecos_qsim::*;
+}
+
 // ============================================================================
 // Top-level re-exports for convenience and backward compatibility
 // ============================================================================

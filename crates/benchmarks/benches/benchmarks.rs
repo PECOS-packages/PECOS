@@ -15,14 +15,16 @@ use criterion::{Criterion, criterion_group, criterion_main};
 mod modules {
     pub mod element_ops;
     // TODO: pub mod hadamard_ops;
+    pub mod measurement_sampling;
     // TODO: pub mod pauli_ops;
     pub mod set_ops;
 }
 
-use modules::{element_ops, set_ops};
+use modules::{element_ops, measurement_sampling, set_ops};
 
 fn all_benchmarks(c: &mut Criterion) {
     element_ops::benchmarks(c);
+    measurement_sampling::benchmarks(c);
     set_ops::benchmarks(c);
     // TODO: pauli_ops::benchmarks(c);
     // TODO: hadamard_ops::benchmarks(c);

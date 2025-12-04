@@ -16,11 +16,14 @@ pub use crate::{
     arbitrary_rotation_gateable::ArbitraryRotationGateable,
     clifford_gateable::{CliffordGateable, MeasurementResult},
     coin_toss::CoinToss,
+    measurement_sampler::{ColumnarSampler, MeasurementSampler, SampleResult, ShotSampler},
     pauli_prop::{PauliProp, StdPauliProp},
     quantum_simulator::QuantumSimulator,
     sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign},
     sparse_stab::{SparseStab, StdSparseStab},
     stabilizer_tableau::StabilizerTableauSimulator,
     state_vec::StateVec,
-    symbolic_sparse_stab::{StdSymbolicSparseStab, SymbolicMeasurementResult, SymbolicSparseStab},
+    symbolic_sparse_stab::{
+        MeasurementHistory, StdSymbolicSparseStab, SymbolicMeasurementResult, SymbolicSparseStab,
+    },
 };

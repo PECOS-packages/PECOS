@@ -47,7 +47,8 @@
 //! ```
 
 use crate::symbolic_sparse_stab::MeasurementHistory;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
+use rand::rngs::SmallRng;
 
 // ============================================================================
 // Common types
@@ -159,7 +160,109 @@ impl MeasurementKind {
 
         measurements
     }
+
+    /// Validate a sequence of measurement kinds for correctness.
+    ///
+    /// Checks that:
+    /// - All dependency indices are within bounds (< current index)
+    /// - No duplicate dependencies within a single Computed measurement
+    /// - Dependencies form a valid DAG (no forward references)
+    ///
+    /// Returns `Ok(())` if valid, or `Err` with a description of the first error found.
+    pub fn validate_sequence(measurements: &[Self]) -> Result<(), MeasurementValidationError> {
+        for (idx, kind) in measurements.iter().enumerate() {
+            match kind {
+                MeasurementKind::Fixed(_) | MeasurementKind::Random => {}
+                MeasurementKind::Copy(src) | MeasurementKind::CopyFlipped(src) => {
+                    if *src >= idx {
+                        return Err(MeasurementValidationError::ForwardReference {
+                            measurement_idx: idx,
+                            dependency_idx: *src,
+                        });
+                    }
+                }
+                MeasurementKind::Computed { deps, .. } => {
+                    // Check for empty deps (should use Fixed instead)
+                    if deps.is_empty() {
+                        return Err(MeasurementValidationError::EmptyDependencies {
+                            measurement_idx: idx,
+                        });
+                    }
+                    // Check for forward references
+                    for &dep in deps {
+                        if dep >= idx {
+                            return Err(MeasurementValidationError::ForwardReference {
+                                measurement_idx: idx,
+                                dependency_idx: dep,
+                            });
+                        }
+                    }
+                    // Check for duplicates
+                    let mut seen = std::collections::HashSet::new();
+                    for &dep in deps {
+                        if !seen.insert(dep) {
+                            return Err(MeasurementValidationError::DuplicateDependency {
+                                measurement_idx: idx,
+                                dependency_idx: dep,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
+
+/// Error type for measurement sequence validation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MeasurementValidationError {
+    /// A measurement references a dependency that comes after it (invalid DAG).
+    ForwardReference {
+        measurement_idx: usize,
+        dependency_idx: usize,
+    },
+    /// A Computed measurement has duplicate dependencies.
+    DuplicateDependency {
+        measurement_idx: usize,
+        dependency_idx: usize,
+    },
+    /// A Computed measurement has no dependencies (should be Fixed instead).
+    EmptyDependencies { measurement_idx: usize },
+}
+
+impl std::fmt::Display for MeasurementValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ForwardReference {
+                measurement_idx,
+                dependency_idx,
+            } => {
+                write!(
+                    f,
+                    "Measurement {measurement_idx} has forward reference to {dependency_idx}"
+                )
+            }
+            Self::DuplicateDependency {
+                measurement_idx,
+                dependency_idx,
+            } => {
+                write!(
+                    f,
+                    "Measurement {measurement_idx} has duplicate dependency {dependency_idx}"
+                )
+            }
+            Self::EmptyDependencies { measurement_idx } => {
+                write!(
+                    f,
+                    "Measurement {measurement_idx} is Computed but has no dependencies"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for MeasurementValidationError {}
 
 // ============================================================================
 // Shot-by-shot sampler (row-major computation, column-major output)
@@ -262,6 +365,15 @@ impl ShotSampler {
         self.sample_raw(shots, &mut rng)
     }
 
+    /// Generate multiple shots using a fast non-cryptographic RNG.
+    ///
+    /// Uses `SmallRng` for faster bulk random number generation.
+    #[must_use]
+    pub fn sample_raw_fast(&self, shots: usize) -> Vec<Vec<u64>> {
+        let mut rng = SmallRng::from_rng(&mut rand::rng());
+        self.sample_raw(shots, &mut rng)
+    }
+
     /// Sample and return a `SampleResult` for convenient access.
     #[must_use]
     pub fn sample_to_result<R: Rng>(&self, shots: usize, rng: &mut R) -> SampleResult {
@@ -273,6 +385,13 @@ impl ShotSampler {
     #[must_use]
     pub fn sample_to_result_with_thread_rng(&self, shots: usize) -> SampleResult {
         let mut rng = rand::rng();
+        self.sample_to_result(shots, &mut rng)
+    }
+
+    /// Sample and return a `SampleResult` using a fast non-cryptographic RNG.
+    #[must_use]
+    pub fn sample_to_result_fast(&self, shots: usize) -> SampleResult {
+        let mut rng = SmallRng::from_rng(&mut rand::rng());
         self.sample_to_result(shots, &mut rng)
     }
 }
@@ -383,8 +502,13 @@ impl ColumnarSampler {
                     columns[*src].clone()
                 }
                 MeasurementKind::CopyFlipped(src) => {
-                    // Clone and NOT the column
-                    columns[*src].iter().map(|w| !w).collect()
+                    // Clone and NOT the column - use index loop for better SIMD
+                    let src_col = &columns[*src];
+                    let mut result = vec![0u64; num_words];
+                    for i in 0..num_words {
+                        result[i] = !src_col[i];
+                    }
+                    result
                 }
                 MeasurementKind::Computed { deps, flip } => {
                     Self::compute_xor_column(&columns, deps, *flip, num_words)
@@ -400,6 +524,20 @@ impl ColumnarSampler {
     #[must_use]
     pub fn sample_raw_with_thread_rng(&self, shots: usize) -> Vec<Vec<u64>> {
         let mut rng = rand::rng();
+        self.sample_raw(shots, &mut rng)
+    }
+
+    /// Sample directly to raw u64 columns using a fast non-cryptographic RNG.
+    ///
+    /// This uses `SmallRng` which is faster than the thread-local RNG for
+    /// bulk random number generation, but produces lower quality randomness.
+    /// Suitable for Monte Carlo sampling where cryptographic randomness
+    /// is not required.
+    ///
+    /// The RNG is seeded from the thread-local RNG for convenience.
+    #[must_use]
+    pub fn sample_raw_fast(&self, shots: usize) -> Vec<Vec<u64>> {
+        let mut rng = SmallRng::from_rng(&mut rand::rng());
         self.sample_raw(shots, &mut rng)
     }
 }
@@ -611,6 +749,13 @@ impl ColumnarSampler {
     #[must_use]
     pub fn sample_to_result_with_thread_rng(&self, shots: usize) -> SampleResult {
         let mut rng = rand::rng();
+        self.sample_to_result(shots, &mut rng)
+    }
+
+    /// Sample and return a `SampleResult` using a fast non-cryptographic RNG.
+    #[must_use]
+    pub fn sample_to_result_fast(&self, shots: usize) -> SampleResult {
+        let mut rng = SmallRng::from_rng(&mut rand::rng());
         self.sample_to_result(shots, &mut rng)
     }
 }
@@ -1321,5 +1466,717 @@ mod tests {
         for (w0, w1) in raw[0].iter().zip(raw[1].iter()) {
             assert_eq!(*w1, !*w0, "Column 1 should be bitwise NOT of column 0");
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Tests verifying samples satisfy measurement equations
+    // -------------------------------------------------------------------------
+
+    /// Helper function to verify that all samples satisfy the measurement equations.
+    ///
+    /// For each shot, verifies:
+    /// - Fixed(v): result == v
+    /// - Random: no constraint (any value is valid)
+    /// - Copy(src): result == samples[src]
+    /// - CopyFlipped(src): result == !samples[src]
+    /// - Computed { deps, flip }: result == flip ^ XOR(samples[d] for d in deps)
+    fn verify_samples_satisfy_equations(
+        measurements: &[MeasurementKind],
+        result: &SampleResult,
+    ) {
+        for shot in 0..result.shots() {
+            for (m_idx, kind) in measurements.iter().enumerate() {
+                let actual = result.get(shot, m_idx);
+                match kind {
+                    MeasurementKind::Fixed(expected) => {
+                        assert_eq!(
+                            actual, *expected,
+                            "Shot {shot}, measurement {m_idx}: Fixed({expected}) but got {actual}"
+                        );
+                    }
+                    MeasurementKind::Random => {
+                        // Any value is valid for random measurements
+                    }
+                    MeasurementKind::Copy(src) => {
+                        let src_val = result.get(shot, *src);
+                        assert_eq!(
+                            actual, src_val,
+                            "Shot {shot}, measurement {m_idx}: Copy({src}) expected {src_val} but got {actual}"
+                        );
+                    }
+                    MeasurementKind::CopyFlipped(src) => {
+                        let src_val = result.get(shot, *src);
+                        assert_eq!(
+                            actual, !src_val,
+                            "Shot {shot}, measurement {m_idx}: CopyFlipped({src}) expected {} but got {actual}",
+                            !src_val
+                        );
+                    }
+                    MeasurementKind::Computed { deps, flip } => {
+                        let mut expected = *flip;
+                        for &dep in deps {
+                            expected ^= result.get(shot, dep);
+                        }
+                        assert_eq!(
+                            actual, expected,
+                            "Shot {shot}, measurement {m_idx}: Computed(deps={:?}, flip={flip}) expected {expected} but got {actual}",
+                            deps
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_equations_fixed_values() {
+        let measurements = vec![
+            MeasurementKind::Fixed(false),
+            MeasurementKind::Fixed(true),
+            MeasurementKind::Fixed(false),
+            MeasurementKind::Fixed(true),
+        ];
+
+        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
+        let columnar_sampler = ColumnarSampler::from_measurements(measurements.clone());
+
+        let shot_result = shot_sampler.sample_to_result_with_thread_rng(1000);
+        let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(1000);
+
+        verify_samples_satisfy_equations(&measurements, &shot_result);
+        verify_samples_satisfy_equations(&measurements, &columnar_result);
+    }
+
+    #[test]
+    fn test_equations_copy_chain() {
+        // m0 = random, m1 = m0, m2 = m1, m3 = m2
+        let measurements = vec![
+            MeasurementKind::Random,
+            MeasurementKind::Copy(0),
+            MeasurementKind::Copy(1),
+            MeasurementKind::Copy(2),
+        ];
+
+        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
+        let columnar_sampler = ColumnarSampler::from_measurements(measurements.clone());
+
+        let shot_result = shot_sampler.sample_to_result_with_thread_rng(1000);
+        let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(1000);
+
+        verify_samples_satisfy_equations(&measurements, &shot_result);
+        verify_samples_satisfy_equations(&measurements, &columnar_result);
+    }
+
+    #[test]
+    fn test_equations_copy_flipped_chain() {
+        // m0 = random, m1 = !m0, m2 = !m1 (= m0), m3 = !m2 (= !m0)
+        let measurements = vec![
+            MeasurementKind::Random,
+            MeasurementKind::CopyFlipped(0),
+            MeasurementKind::CopyFlipped(1),
+            MeasurementKind::CopyFlipped(2),
+        ];
+
+        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
+        let columnar_sampler = ColumnarSampler::from_measurements(measurements.clone());
+
+        let shot_result = shot_sampler.sample_to_result_with_thread_rng(1000);
+        let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(1000);
+
+        verify_samples_satisfy_equations(&measurements, &shot_result);
+        verify_samples_satisfy_equations(&measurements, &columnar_result);
+
+        // Additionally verify the expected pattern: m0, !m0, m0, !m0
+        for shot in 0..1000 {
+            let m0 = shot_result.get(shot, 0);
+            assert_eq!(shot_result.get(shot, 1), !m0);
+            assert_eq!(shot_result.get(shot, 2), m0);
+            assert_eq!(shot_result.get(shot, 3), !m0);
+        }
+    }
+
+    #[test]
+    fn test_equations_xor_dependencies() {
+        // m0, m1, m2 = random
+        // m3 = m0 ^ m1
+        // m4 = m0 ^ m1 ^ m2
+        // m5 = m0 ^ m1 ^ m2 ^ true (flip)
+        let measurements = vec![
+            MeasurementKind::Random,
+            MeasurementKind::Random,
+            MeasurementKind::Random,
+            MeasurementKind::Computed {
+                deps: vec![0, 1],
+                flip: false,
+            },
+            MeasurementKind::Computed {
+                deps: vec![0, 1, 2],
+                flip: false,
+            },
+            MeasurementKind::Computed {
+                deps: vec![0, 1, 2],
+                flip: true,
+            },
+        ];
+
+        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
+        let columnar_sampler = ColumnarSampler::from_measurements(measurements.clone());
+
+        let shot_result = shot_sampler.sample_to_result_with_thread_rng(1000);
+        let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(1000);
+
+        verify_samples_satisfy_equations(&measurements, &shot_result);
+        verify_samples_satisfy_equations(&measurements, &columnar_result);
+
+        // Additionally verify specific relationships
+        for shot in 0..1000 {
+            let m0 = shot_result.get(shot, 0);
+            let m1 = shot_result.get(shot, 1);
+            let m2 = shot_result.get(shot, 2);
+
+            assert_eq!(shot_result.get(shot, 3), m0 ^ m1);
+            assert_eq!(shot_result.get(shot, 4), m0 ^ m1 ^ m2);
+            assert_eq!(shot_result.get(shot, 5), !(m0 ^ m1 ^ m2));
+        }
+    }
+
+    #[test]
+    fn test_equations_mixed_types() {
+        // A realistic mix of all measurement types
+        let measurements = vec![
+            MeasurementKind::Fixed(false),        // m0 = 0
+            MeasurementKind::Fixed(true),         // m1 = 1
+            MeasurementKind::Random,              // m2 = ?
+            MeasurementKind::Random,              // m3 = ?
+            MeasurementKind::Copy(2),             // m4 = m2
+            MeasurementKind::CopyFlipped(3),      // m5 = !m3
+            MeasurementKind::Computed {           // m6 = m2 ^ m3
+                deps: vec![2, 3],
+                flip: false,
+            },
+            MeasurementKind::Computed {           // m7 = m0 ^ m1 ^ m2 ^ true = 1 ^ m2
+                deps: vec![0, 1, 2],
+                flip: true,
+            },
+        ];
+
+        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
+        let columnar_sampler = ColumnarSampler::from_measurements(measurements.clone());
+
+        let shot_result = shot_sampler.sample_to_result_with_thread_rng(1000);
+        let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(1000);
+
+        verify_samples_satisfy_equations(&measurements, &shot_result);
+        verify_samples_satisfy_equations(&measurements, &columnar_result);
+    }
+
+    #[test]
+    fn test_equations_random_generated_history() {
+        // Test with randomly generated measurement histories
+        let mut rng = rand::rng();
+
+        for _ in 0..10 {
+            // Generate random histories with various parameters
+            let measurements = MeasurementKind::generate_random(50, 0.2, 0.1, 4, &mut rng);
+
+            let shot_sampler = ShotSampler::from_measurements(measurements.clone());
+            let columnar_sampler = ColumnarSampler::from_measurements(measurements.clone());
+
+            let shot_result = shot_sampler.sample_to_result_with_thread_rng(100);
+            let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(100);
+
+            verify_samples_satisfy_equations(&measurements, &shot_result);
+            verify_samples_satisfy_equations(&measurements, &columnar_result);
+        }
+    }
+
+    #[test]
+    fn test_equations_large_dependency_chain() {
+        // Test a long chain of dependencies to catch any ordering bugs
+        // m0 = random
+        // m1 = m0, m2 = m0 ^ m1, m3 = m0 ^ m1 ^ m2, etc.
+        let mut measurements = vec![MeasurementKind::Random];
+        for i in 1..20 {
+            measurements.push(MeasurementKind::Computed {
+                deps: (0..i).collect(),
+                flip: i % 2 == 0,
+            });
+        }
+
+        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
+        let columnar_sampler = ColumnarSampler::from_measurements(measurements.clone());
+
+        let shot_result = shot_sampler.sample_to_result_with_thread_rng(100);
+        let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(100);
+
+        verify_samples_satisfy_equations(&measurements, &shot_result);
+        verify_samples_satisfy_equations(&measurements, &columnar_result);
+    }
+
+    #[test]
+    fn test_equations_samplers_produce_same_structure() {
+        // Verify both samplers produce results satisfying the same equations
+        // (they won't have the same random values, but structure must match)
+        let measurements = vec![
+            MeasurementKind::Fixed(true),
+            MeasurementKind::Random,
+            MeasurementKind::Copy(1),
+            MeasurementKind::CopyFlipped(1),
+            MeasurementKind::Computed {
+                deps: vec![1, 2],
+                flip: false,
+            },
+        ];
+
+        // Use seeded RNG for reproducibility within each sampler
+        let mut rng = rand::rng();
+
+        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
+        let columnar_sampler = ColumnarSampler::from_measurements(measurements.clone());
+
+        // Each sampler independently satisfies equations
+        let shot_result = shot_sampler.sample_to_result(1000, &mut rng);
+        verify_samples_satisfy_equations(&measurements, &shot_result);
+
+        let columnar_result = columnar_sampler.sample_to_result(1000, &mut rng);
+        verify_samples_satisfy_equations(&measurements, &columnar_result);
+    }
+
+    // -------------------------------------------------------------------------
+    // Tests for MeasurementKind validation
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_valid_sequence() {
+        let measurements = vec![
+            MeasurementKind::Fixed(true),
+            MeasurementKind::Random,
+            MeasurementKind::Copy(0),
+            MeasurementKind::CopyFlipped(1),
+            MeasurementKind::Computed {
+                deps: vec![0, 1, 2],
+                flip: false,
+            },
+        ];
+        assert!(MeasurementKind::validate_sequence(&measurements).is_ok());
+    }
+
+    #[test]
+    fn test_validate_empty_sequence() {
+        assert!(MeasurementKind::validate_sequence(&[]).is_ok());
+    }
+
+    #[test]
+    fn test_validate_forward_reference_copy() {
+        let measurements = vec![
+            MeasurementKind::Random,
+            MeasurementKind::Copy(2), // Forward reference!
+            MeasurementKind::Random,
+        ];
+        assert_eq!(
+            MeasurementKind::validate_sequence(&measurements),
+            Err(MeasurementValidationError::ForwardReference {
+                measurement_idx: 1,
+                dependency_idx: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn test_validate_forward_reference_copy_flipped() {
+        let measurements = vec![
+            MeasurementKind::CopyFlipped(0), // Self-reference is also forward!
+        ];
+        assert_eq!(
+            MeasurementKind::validate_sequence(&measurements),
+            Err(MeasurementValidationError::ForwardReference {
+                measurement_idx: 0,
+                dependency_idx: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn test_validate_forward_reference_computed() {
+        let measurements = vec![
+            MeasurementKind::Random,
+            MeasurementKind::Random,
+            MeasurementKind::Computed {
+                deps: vec![0, 5], // 5 is out of bounds
+                flip: false,
+            },
+        ];
+        assert_eq!(
+            MeasurementKind::validate_sequence(&measurements),
+            Err(MeasurementValidationError::ForwardReference {
+                measurement_idx: 2,
+                dependency_idx: 5,
+            })
+        );
+    }
+
+    #[test]
+    fn test_validate_duplicate_dependency() {
+        let measurements = vec![
+            MeasurementKind::Random,
+            MeasurementKind::Random,
+            MeasurementKind::Computed {
+                deps: vec![0, 1, 0], // Duplicate 0!
+                flip: false,
+            },
+        ];
+        assert_eq!(
+            MeasurementKind::validate_sequence(&measurements),
+            Err(MeasurementValidationError::DuplicateDependency {
+                measurement_idx: 2,
+                dependency_idx: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn test_validate_empty_dependencies() {
+        let measurements = vec![
+            MeasurementKind::Random,
+            MeasurementKind::Computed {
+                deps: vec![], // Empty deps!
+                flip: true,
+            },
+        ];
+        assert_eq!(
+            MeasurementKind::validate_sequence(&measurements),
+            Err(MeasurementValidationError::EmptyDependencies {
+                measurement_idx: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn test_validate_generated_histories_are_valid() {
+        // Verify that generate_random always produces valid sequences
+        let mut rng = rand::rng();
+        for _ in 0..100 {
+            let measurements = MeasurementKind::generate_random(50, 0.3, 0.2, 5, &mut rng);
+            assert!(
+                MeasurementKind::validate_sequence(&measurements).is_ok(),
+                "Generated history should always be valid"
+            );
+        }
+    }
+
+    #[test]
+    fn test_validation_error_display() {
+        let err = MeasurementValidationError::ForwardReference {
+            measurement_idx: 3,
+            dependency_idx: 5,
+        };
+        assert_eq!(
+            err.to_string(),
+            "Measurement 3 has forward reference to 5"
+        );
+
+        let err = MeasurementValidationError::DuplicateDependency {
+            measurement_idx: 2,
+            dependency_idx: 0,
+        };
+        assert_eq!(
+            err.to_string(),
+            "Measurement 2 has duplicate dependency 0"
+        );
+
+        let err = MeasurementValidationError::EmptyDependencies {
+            measurement_idx: 1,
+        };
+        assert_eq!(
+            err.to_string(),
+            "Measurement 1 is Computed but has no dependencies"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // More elaborate correlation tests for generated histories
+    // -------------------------------------------------------------------------
+
+    /// Verifies parity constraints: for any subset of measurements that XOR to a
+    /// constant (e.g., syndrome measurements), the samples should respect that.
+    #[test]
+    fn test_elaborate_parity_constraints() {
+        // Create a history where certain combinations are constrained:
+        // m0, m1, m2 = random
+        // m3 = m0 ^ m1 (parity of m0, m1)
+        // m4 = m1 ^ m2 (parity of m1, m2)
+        // m5 = m0 ^ m2 (parity of m0, m2)
+        // Then: m3 ^ m4 ^ m5 = (m0^m1) ^ (m1^m2) ^ (m0^m2) = 0 (always!)
+        let measurements = vec![
+            MeasurementKind::Random,
+            MeasurementKind::Random,
+            MeasurementKind::Random,
+            MeasurementKind::Computed {
+                deps: vec![0, 1],
+                flip: false,
+            },
+            MeasurementKind::Computed {
+                deps: vec![1, 2],
+                flip: false,
+            },
+            MeasurementKind::Computed {
+                deps: vec![0, 2],
+                flip: false,
+            },
+        ];
+
+        let sampler = ColumnarSampler::from_measurements(measurements.clone());
+        let result = sampler.sample_to_result_with_thread_rng(10000);
+
+        verify_samples_satisfy_equations(&measurements, &result);
+
+        // Verify the derived parity constraint: m3 ^ m4 ^ m5 = 0
+        for shot in 0..10000 {
+            let m3 = result.get(shot, 3);
+            let m4 = result.get(shot, 4);
+            let m5 = result.get(shot, 5);
+            assert!(
+                !(m3 ^ m4 ^ m5),
+                "Shot {shot}: m3^m4^m5 should always be 0, got m3={m3}, m4={m4}, m5={m5}"
+            );
+        }
+
+        // Also verify using raw column XOR
+        let raw = sampler.sample_raw_with_thread_rng(10000);
+        for word_idx in 0..raw[0].len() {
+            let xor = raw[3][word_idx] ^ raw[4][word_idx] ^ raw[5][word_idx];
+            assert_eq!(xor, 0, "Column XOR should be 0 at word {word_idx}");
+        }
+    }
+
+    #[test]
+    fn test_elaborate_chain_parity() {
+        // Create a chain where each measurement depends on the previous
+        // m0 = random
+        // m1 = m0 ^ flip1, m2 = m1 ^ flip2, ...
+        // Then m_n depends on m0 and the parity of all flips
+        let n = 10;
+        let mut measurements = vec![MeasurementKind::Random];
+        let mut expected_total_flip = false;
+        for i in 1..n {
+            let flip = i % 3 == 0; // flip every 3rd
+            if flip {
+                expected_total_flip = !expected_total_flip;
+            }
+            measurements.push(MeasurementKind::Computed {
+                deps: vec![i - 1],
+                flip,
+            });
+        }
+
+        let sampler = ColumnarSampler::from_measurements(measurements.clone());
+        let result = sampler.sample_to_result_with_thread_rng(1000);
+
+        verify_samples_satisfy_equations(&measurements, &result);
+
+        // Verify: m_last = m0 ^ expected_total_flip
+        for shot in 0..1000 {
+            let m0 = result.get(shot, 0);
+            let m_last = result.get(shot, n - 1);
+            assert_eq!(
+                m_last,
+                m0 ^ expected_total_flip,
+                "Shot {shot}: m_last should equal m0 ^ {expected_total_flip}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_elaborate_syndrome_pattern() {
+        // Simulate a simple syndrome measurement pattern:
+        // d0, d1, d2, d3 = data qubits (random)
+        // s0 = d0 ^ d1 (syndrome between d0, d1)
+        // s1 = d1 ^ d2 (syndrome between d1, d2)
+        // s2 = d2 ^ d3 (syndrome between d2, d3)
+        // In error-free case, all syndromes should be independent random values
+        // But d0 ^ d1 ^ d2 ^ d3 ^ s0 ^ s1 ^ s2 has interesting properties
+        let measurements = vec![
+            MeasurementKind::Random, // d0
+            MeasurementKind::Random, // d1
+            MeasurementKind::Random, // d2
+            MeasurementKind::Random, // d3
+            MeasurementKind::Computed {
+                deps: vec![0, 1],
+                flip: false,
+            }, // s0
+            MeasurementKind::Computed {
+                deps: vec![1, 2],
+                flip: false,
+            }, // s1
+            MeasurementKind::Computed {
+                deps: vec![2, 3],
+                flip: false,
+            }, // s2
+        ];
+
+        let sampler = ColumnarSampler::from_measurements(measurements.clone());
+        let result = sampler.sample_to_result_with_thread_rng(10000);
+
+        verify_samples_satisfy_equations(&measurements, &result);
+
+        // Verify: d0 ^ d3 = s0 ^ s1 ^ s2
+        // Because: s0 ^ s1 ^ s2 = (d0^d1) ^ (d1^d2) ^ (d2^d3) = d0 ^ d3
+        for shot in 0..10000 {
+            let d0 = result.get(shot, 0);
+            let d3 = result.get(shot, 3);
+            let s0 = result.get(shot, 4);
+            let s1 = result.get(shot, 5);
+            let s2 = result.get(shot, 6);
+
+            assert_eq!(
+                d0 ^ d3,
+                s0 ^ s1 ^ s2,
+                "Shot {shot}: d0^d3 should equal s0^s1^s2"
+            );
+        }
+    }
+
+    #[test]
+    fn test_elaborate_multi_level_dependencies() {
+        // Test dependencies that span multiple levels:
+        // Level 0: m0, m1, m2, m3 (random)
+        // Level 1: m4 = m0^m1, m5 = m2^m3
+        // Level 2: m6 = m4^m5 = m0^m1^m2^m3
+        // Level 3: m7 = m6 ^ flip = !(m0^m1^m2^m3)
+        let measurements = vec![
+            MeasurementKind::Random, // m0
+            MeasurementKind::Random, // m1
+            MeasurementKind::Random, // m2
+            MeasurementKind::Random, // m3
+            MeasurementKind::Computed {
+                deps: vec![0, 1],
+                flip: false,
+            }, // m4 = m0^m1
+            MeasurementKind::Computed {
+                deps: vec![2, 3],
+                flip: false,
+            }, // m5 = m2^m3
+            MeasurementKind::Computed {
+                deps: vec![4, 5],
+                flip: false,
+            }, // m6 = m4^m5
+            MeasurementKind::Computed {
+                deps: vec![6],
+                flip: true,
+            }, // m7 = !m6
+        ];
+
+        let sampler = ColumnarSampler::from_measurements(measurements.clone());
+        let result = sampler.sample_to_result_with_thread_rng(1000);
+
+        verify_samples_satisfy_equations(&measurements, &result);
+
+        // Verify multi-level dependencies
+        for shot in 0..1000 {
+            let m0 = result.get(shot, 0);
+            let m1 = result.get(shot, 1);
+            let m2 = result.get(shot, 2);
+            let m3 = result.get(shot, 3);
+            let m6 = result.get(shot, 6);
+            let m7 = result.get(shot, 7);
+
+            assert_eq!(m6, m0 ^ m1 ^ m2 ^ m3, "Shot {shot}: m6 = m0^m1^m2^m3");
+            assert_eq!(m7, !(m0 ^ m1 ^ m2 ^ m3), "Shot {shot}: m7 = !(m0^m1^m2^m3)");
+        }
+    }
+
+    #[test]
+    fn test_elaborate_statistical_independence() {
+        // Verify that independent random measurements are statistically uncorrelated
+        // m0 = random, m1 = random (independent)
+        // XOR of independent fair coins should also be fair
+        let measurements = vec![MeasurementKind::Random, MeasurementKind::Random];
+
+        let sampler = ColumnarSampler::from_measurements(measurements);
+        let result = sampler.sample_to_result_with_thread_rng(100_000);
+
+        // Count joint occurrences
+        let mut count_00 = 0;
+        let mut count_01 = 0;
+        let mut count_10 = 0;
+        let mut count_11 = 0;
+
+        for shot in 0..100_000 {
+            match (result.get(shot, 0), result.get(shot, 1)) {
+                (false, false) => count_00 += 1,
+                (false, true) => count_01 += 1,
+                (true, false) => count_10 += 1,
+                (true, true) => count_11 += 1,
+            }
+        }
+
+        // Each combination should be ~25% with some tolerance
+        let expected = 25_000.0;
+        let tolerance = 1000.0; // ~4% tolerance
+
+        assert!(
+            (count_00 as f64 - expected).abs() < tolerance,
+            "00 count {count_00} too far from {expected}"
+        );
+        assert!(
+            (count_01 as f64 - expected).abs() < tolerance,
+            "01 count {count_01} too far from {expected}"
+        );
+        assert!(
+            (count_10 as f64 - expected).abs() < tolerance,
+            "10 count {count_10} too far from {expected}"
+        );
+        assert!(
+            (count_11 as f64 - expected).abs() < tolerance,
+            "11 count {count_11} too far from {expected}"
+        );
+    }
+
+    #[test]
+    fn test_elaborate_perfect_correlation() {
+        // Verify that Copy produces perfect correlation
+        let measurements = vec![MeasurementKind::Random, MeasurementKind::Copy(0)];
+
+        let sampler = ColumnarSampler::from_measurements(measurements);
+        let result = sampler.sample_to_result_with_thread_rng(10_000);
+
+        // Count joint occurrences - should only see 00 and 11
+        let mut count_same = 0;
+        let mut count_different = 0;
+
+        for shot in 0..10_000 {
+            if result.get(shot, 0) == result.get(shot, 1) {
+                count_same += 1;
+            } else {
+                count_different += 1;
+            }
+        }
+
+        assert_eq!(count_same, 10_000, "All shots should have m0 == m1");
+        assert_eq!(count_different, 0, "No shots should have m0 != m1");
+    }
+
+    #[test]
+    fn test_elaborate_perfect_anticorrelation() {
+        // Verify that CopyFlipped produces perfect anticorrelation
+        let measurements = vec![MeasurementKind::Random, MeasurementKind::CopyFlipped(0)];
+
+        let sampler = ColumnarSampler::from_measurements(measurements);
+        let result = sampler.sample_to_result_with_thread_rng(10_000);
+
+        // Count joint occurrences - should only see 01 and 10
+        let mut count_same = 0;
+        let mut count_different = 0;
+
+        for shot in 0..10_000 {
+            if result.get(shot, 0) == result.get(shot, 1) {
+                count_same += 1;
+            } else {
+                count_different += 1;
+            }
+        }
+
+        assert_eq!(count_same, 0, "No shots should have m0 == m1");
+        assert_eq!(count_different, 10_000, "All shots should have m0 != m1");
     }
 }

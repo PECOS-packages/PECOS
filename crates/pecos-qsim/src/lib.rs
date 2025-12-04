@@ -42,4 +42,7 @@ pub use symbolic_gens::SymbolicGens;
 pub use symbolic_sparse_stab::{
     MeasurementHistory, StdSymbolicSparseStab, SymbolicMeasurementResult, SymbolicSparseStab,
 };
-pub use measurement_sampler::{MeasurementSampler, SampleResult};
+pub use measurement_sampler::{
+    ColumnarSampler, MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,
+    ShotSampler,
+};

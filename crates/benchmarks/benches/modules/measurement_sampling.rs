@@ -227,6 +227,12 @@ fn bench_realistic_qec<M: Measurement>(c: &mut Criterion<M>) {
             &num_measurements,
             |b, _| b.iter(|| black_box(columnar_sampler.sample_raw_with_thread_rng(shots))),
         );
+
+        group.bench_with_input(
+            BenchmarkId::new("columnar_fast", num_measurements),
+            &num_measurements,
+            |b, _| b.iter(|| black_box(columnar_sampler.sample_raw_fast(shots))),
+        );
     }
 
     group.finish();

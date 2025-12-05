@@ -47,6 +47,7 @@
 //! ```
 
 use crate::symbolic_sparse_stab::MeasurementHistory;
+use pecos_core::{Bit, Bits};
 use rand::{Rng, SeedableRng};
 use rand::rngs::SmallRng;
 
@@ -598,8 +599,6 @@ impl SampleResult {
 
     /// Get the measurement result for a specific shot and measurement.
     ///
-    /// This is equivalent to `result[(shot, measurement)]` using index syntax.
-    ///
     /// # Arguments
     /// * `shot` - The shot/sample index (0 to `shots()-1`)
     /// * `measurement` - The measurement index (0 to `num_measurements()-1`)
@@ -608,13 +607,13 @@ impl SampleResult {
     /// Panics if `shot >= self.shots()` or `measurement >= self.num_measurements()`.
     #[inline]
     #[must_use]
-    pub fn get(&self, shot: usize, measurement: usize) -> bool {
+    pub fn get(&self, shot: usize, measurement: usize) -> Bit {
         debug_assert!(shot < self.shots, "shot index out of bounds");
         debug_assert!(measurement < self.columns.len(), "measurement index out of bounds");
 
         let word_idx = shot / 64;
         let bit_idx = shot % 64;
-        (self.columns[measurement][word_idx] >> bit_idx) & 1 == 1
+        Bit((self.columns[measurement][word_idx] >> bit_idx) & 1 != 0)
     }
 
     /// Get the measurement result, returning `None` if out of bounds.
@@ -624,7 +623,7 @@ impl SampleResult {
     /// * `measurement` - The measurement index
     #[inline]
     #[must_use]
-    pub fn try_get(&self, shot: usize, measurement: usize) -> Option<bool> {
+    pub fn try_get(&self, shot: usize, measurement: usize) -> Option<Bit> {
         if shot >= self.shots || measurement >= self.columns.len() {
             return None;
         }
@@ -694,11 +693,56 @@ impl SampleResult {
         self.shots - self.count_ones(measurement)
     }
 
-    /// Iterate over shots, yielding each shot's measurements as a `Vec<bool>`.
+    /// Get all measurement results for a single shot.
     ///
-    /// Note: This allocates a new `Vec<bool>` for each shot. For bulk access,
+    /// Returns a `Bits` collection where `result[m]` is the value for measurement `m`.
+    /// The `Bits` type displays as a binary string (e.g., "01101").
+    ///
+    /// # Arguments
+    /// * `shot` - The shot/sample index (0 to `shots()-1`)
+    ///
+    /// # Panics
+    /// Panics if `shot >= self.shots()`.
+    #[must_use]
+    pub fn shot(&self, shot: usize) -> Bits {
+        assert!(shot < self.shots, "shot index out of bounds");
+        let word_idx = shot / 64;
+        let bit_idx = shot % 64;
+        let mask = 1u64 << bit_idx;
+
+        self.columns
+            .iter()
+            .map(|col| Bit((col[word_idx] & mask) != 0))
+            .collect()
+    }
+
+    /// Format a single shot as a binary string (e.g., "01101").
+    ///
+    /// Each character represents one measurement: '0' or '1'.
+    ///
+    /// # Arguments
+    /// * `shot` - The shot/sample index (0 to `shots()-1`)
+    ///
+    /// # Panics
+    /// Panics if `shot >= self.shots()`.
+    #[must_use]
+    pub fn format_shot(&self, shot: usize) -> String {
+        assert!(shot < self.shots, "shot index out of bounds");
+        let word_idx = shot / 64;
+        let bit_idx = shot % 64;
+        let mask = 1u64 << bit_idx;
+
+        self.columns
+            .iter()
+            .map(|col| if (col[word_idx] & mask) != 0 { '1' } else { '0' })
+            .collect()
+    }
+
+    /// Iterate over shots, yielding each shot's measurements as a `Bits` collection.
+    ///
+    /// Note: This allocates a new `Bits` for each shot. For bulk access,
     /// consider working with columns directly.
-    pub fn iter_shots(&self) -> impl Iterator<Item = Vec<bool>> + '_ {
+    pub fn iter_shots(&self) -> impl Iterator<Item = Bits> + '_ {
         (0..self.shots).map(|shot| {
             let word_idx = shot / 64;
             let bit_idx = shot % 64;
@@ -706,16 +750,18 @@ impl SampleResult {
 
             self.columns
                 .iter()
-                .map(|col| (col[word_idx] & mask) != 0)
+                .map(|col| Bit((col[word_idx] & mask) != 0))
                 .collect()
         })
     }
 }
 
 impl std::ops::Index<(usize, usize)> for SampleResult {
-    type Output = bool;
+    type Output = Bit;
 
     /// Index into sample results using `result[(shot, measurement)]` syntax.
+    ///
+    /// Returns a reference to a static `Bit::ZERO` or `Bit::ONE`.
     ///
     /// # Arguments
     /// * `shot` - The shot/sample index (0 to `shots()-1`)
@@ -725,14 +771,14 @@ impl std::ops::Index<(usize, usize)> for SampleResult {
     /// Panics if indices are out of bounds.
     ///
     /// # Note
-    /// Due to Rust's `Index` trait requirements, this returns a reference to a
-    /// static bool. For the actual value, use `result.get(shot, measurement)`.
+    /// Due to Rust's `Index` trait requirements, this returns a reference.
+    /// For a direct value, use `result.get(shot, measurement)`.
     #[inline]
     fn index(&self, (shot, measurement): (usize, usize)) -> &Self::Output {
-        if self.get(shot, measurement) {
-            &true
+        if *self.get(shot, measurement) {
+            &Bit::ONE
         } else {
-            &false
+            &Bit::ZERO
         }
     }
 }
@@ -789,7 +835,7 @@ mod tests {
         let result = sampler.sample_to_result_with_thread_rng(100);
 
         for shot in 0..100 {
-            assert!(!result.get(shot, 0), "Expected all measurements to be 0");
+            assert!(!*result.get(shot, 0), "Expected all measurements to be 0");
         }
     }
 
@@ -802,7 +848,7 @@ mod tests {
         let result = sampler.sample_to_result_with_thread_rng(100);
 
         for shot in 0..100 {
-            assert!(!result.get(shot, 0), "Expected all measurements to be 0");
+            assert!(!*result.get(shot, 0), "Expected all measurements to be 0");
         }
     }
 
@@ -820,7 +866,7 @@ mod tests {
         let result = sampler.sample_to_result_with_thread_rng(100);
 
         for shot in 0..100 {
-            assert!(result.get(shot, 0), "Expected all measurements to be 1");
+            assert!(*result.get(shot, 0), "Expected all measurements to be 1");
         }
     }
 
@@ -834,7 +880,7 @@ mod tests {
         let result = sampler.sample_to_result_with_thread_rng(100);
 
         for shot in 0..100 {
-            assert!(result.get(shot, 0), "Expected all measurements to be 1");
+            assert!(*result.get(shot, 0), "Expected all measurements to be 1");
         }
     }
 
@@ -1009,8 +1055,8 @@ mod tests {
         let result = sampler.sample_to_result_with_thread_rng(1000);
 
         for shot in 0..1000 {
-            assert!(!result.get(shot, 0), "Syndrome S0 should be 0");
-            assert!(!result.get(shot, 1), "Syndrome S1 should be 0");
+            assert!(result.get(shot, 0).is_zero(), "Syndrome S0 should be 0");
+            assert!(result.get(shot, 1).is_zero(), "Syndrome S1 should be 0");
             assert_eq!(result.get(shot, 2), result.get(shot, 3), "Data qubits should be correlated");
             assert_eq!(result.get(shot, 3), result.get(shot, 4), "Data qubits should be correlated");
         }
@@ -1033,8 +1079,8 @@ mod tests {
         let result = sampler.sample_to_result_with_thread_rng(1000);
 
         for shot in 0..1000 {
-            assert!(!result.get(shot, 0), "Syndrome S0 should be 0");
-            assert!(!result.get(shot, 1), "Syndrome S1 should be 0");
+            assert!(result.get(shot, 0).is_zero(), "Syndrome S0 should be 0");
+            assert!(result.get(shot, 1).is_zero(), "Syndrome S1 should be 0");
             assert_eq!(result.get(shot, 2), result.get(shot, 3), "Data qubits should be correlated");
             assert_eq!(result.get(shot, 3), result.get(shot, 4), "Data qubits should be correlated");
         }
@@ -1365,8 +1411,8 @@ mod tests {
         let result = sampler.sample_to_result_with_thread_rng(100);
 
         for (shot_idx, row) in result.iter_shots().enumerate() {
-            assert!(row[0], "m0 should be 1 at shot {shot_idx}");
-            assert!(!row[1], "m1 should be 0 at shot {shot_idx}");
+            assert!(row[0].is_one(), "m0 should be 1 at shot {shot_idx}");
+            assert!(row[1].is_zero(), "m1 should be 0 at shot {shot_idx}");
         }
     }
 
@@ -1385,6 +1431,32 @@ mod tests {
         // Out of bounds
         assert!(result.try_get(10, 0).is_none()); // shot out of bounds
         assert!(result.try_get(0, 1).is_none()); // measurement out of bounds
+    }
+
+    #[test]
+    fn test_sample_result_shot_and_format() {
+        let mut sim = StdSymbolicSparseStab::new(3);
+        sim.x(0); // m0 = 1
+        sim.mz(0);
+        sim.mz(1); // m1 = 0
+        sim.x(2);
+        sim.mz(2); // m2 = 1
+
+        let sampler = ColumnarSampler::new(sim.measurement_history());
+        let result = sampler.sample_to_result_with_thread_rng(10);
+
+        // All shots should be the same (deterministic)
+        for shot_idx in 0..10 {
+            // Test shot() method
+            let bits = result.shot(shot_idx);
+            assert_eq!(bits.len(), 3);
+            assert!(bits[0].is_one(), "m0 should be 1");
+            assert!(bits[1].is_zero(), "m1 should be 0");
+            assert!(bits[2].is_one(), "m2 should be 1");
+
+            // Test format_shot() method
+            assert_eq!(result.format_shot(shot_idx), "101");
+        }
     }
 
     #[test]
@@ -1506,10 +1578,10 @@ mod tests {
                     }
                     MeasurementKind::CopyFlipped(src) => {
                         let src_val = result.get(shot, *src);
+                        let expected = !src_val;
                         assert_eq!(
-                            actual, !src_val,
-                            "Shot {shot}, measurement {m_idx}: CopyFlipped({src}) expected {} but got {actual}",
-                            !src_val
+                            actual, expected,
+                            "Shot {shot}, measurement {m_idx}: CopyFlipped({src}) expected {expected} but got {actual}"
                         );
                     }
                     MeasurementKind::Computed { deps, flip } => {
@@ -1930,14 +2002,14 @@ mod tests {
 
         verify_samples_satisfy_equations(&measurements, &result);
 
-        // Verify the derived parity constraint: m3 ^ m4 ^ m5 = 0
+        // Verify the derived parity constraint: m3 ^ m4 ^ m5 = false
         for shot in 0..10000 {
             let m3 = result.get(shot, 3);
             let m4 = result.get(shot, 4);
             let m5 = result.get(shot, 5);
             assert!(
-                !(m3 ^ m4 ^ m5),
-                "Shot {shot}: m3^m4^m5 should always be 0, got m3={m3}, m4={m4}, m5={m5}"
+                (m3 ^ m4 ^ m5).is_zero(),
+                "Shot {shot}: m3^m4^m5 should always be false, got m3={m3}, m4={m4}, m5={m5}"
             );
         }
 
@@ -2103,10 +2175,10 @@ mod tests {
 
         for shot in 0..100_000 {
             match (result.get(shot, 0), result.get(shot, 1)) {
-                (false, false) => count_00 += 1,
-                (false, true) => count_01 += 1,
-                (true, false) => count_10 += 1,
-                (true, true) => count_11 += 1,
+                (Bit::ZERO, Bit::ZERO) => count_00 += 1,
+                (Bit::ZERO, Bit::ONE) => count_01 += 1,
+                (Bit::ONE, Bit::ZERO) => count_10 += 1,
+                (Bit::ONE, Bit::ONE) => count_11 += 1,
             }
         }
 

@@ -11,6 +11,7 @@
 // the License.
 
 pub mod angle;
+pub mod bit;
 pub mod bitvec;
 pub mod element;
 pub mod errors;
@@ -24,6 +25,7 @@ pub mod rng;
 pub mod sets;
 
 pub use angle::{Angle, Angle8, Angle16, Angle32, Angle64, Angle128, LossyInto};
+pub use bit::{Bit, Bits};
 pub use element::{Element, IndexableElement};
 pub use phase::quarter_phase::QuarterPhase;
 pub use phase::sign::Sign;

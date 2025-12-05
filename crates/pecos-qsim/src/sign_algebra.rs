@@ -20,7 +20,7 @@
 //! simulator to be generic over the sign type.
 
 use core::fmt::Debug;
-use std::collections::BTreeSet;
+use pecos_core::BitSet;
 
 /// Trait for sign algebras used in stabilizer simulation.
 ///
@@ -198,15 +198,25 @@ impl SignAlgebra for PhaseSign {
 pub struct SymbolicSign {
     /// Set of measurement indices whose outcomes XOR together to give this sign.
     /// Empty set = +1 (deterministic 0 outcome).
-    pub measurements: BTreeSet<usize>,
+    /// Uses `BitSet` for O(words) XOR operations instead of O(n+m) with `BTreeSet`.
+    pub measurements: BitSet,
 }
 
 impl SymbolicSign {
     /// Create a new symbolic sign with the given measurement indices.
     #[inline]
     #[must_use]
-    pub fn new(measurements: BTreeSet<usize>) -> Self {
+    pub fn new(measurements: BitSet) -> Self {
         Self { measurements }
+    }
+
+    /// Create a new symbolic sign from a `BTreeSet` (for compatibility).
+    #[inline]
+    #[must_use]
+    pub fn from_btree_set(measurements: &std::collections::BTreeSet<usize>) -> Self {
+        Self {
+            measurements: BitSet::from_btree_set(measurements),
+        }
     }
 
     /// Create an empty (identity) symbolic sign.
@@ -214,7 +224,7 @@ impl SymbolicSign {
     #[must_use]
     pub fn empty() -> Self {
         Self {
-            measurements: BTreeSet::new(),
+            measurements: BitSet::new(),
         }
     }
 
@@ -222,14 +232,14 @@ impl SymbolicSign {
     #[inline]
     #[must_use]
     pub fn single(measurement_index: usize) -> Self {
-        let mut measurements = BTreeSet::new();
-        measurements.insert(measurement_index);
-        Self { measurements }
+        Self {
+            measurements: BitSet::single(measurement_index),
+        }
     }
 }
 
 impl SignAlgebra for SymbolicSign {
-    type Outcome = BTreeSet<usize>;
+    type Outcome = BitSet;
 
     #[inline]
     fn identity() -> Self {
@@ -239,22 +249,16 @@ impl SignAlgebra for SymbolicSign {
     #[inline]
     fn multiply(&self, other: &Self) -> Self {
         // XOR / symmetric difference of the measurement sets
-        let measurements: BTreeSet<usize> = self
-            .measurements
-            .symmetric_difference(&other.measurements)
-            .copied()
-            .collect();
-        Self { measurements }
+        // BitSet provides O(words) XOR instead of O(n+m) for BTreeSet
+        Self {
+            measurements: &self.measurements ^ &other.measurements,
+        }
     }
 
     #[inline]
     fn multiply_assign(&mut self, other: &Self) {
-        // In-place symmetric difference
-        for &idx in &other.measurements {
-            if !self.measurements.remove(&idx) {
-                self.measurements.insert(idx);
-            }
-        }
+        // In-place symmetric difference using BitSet's ^= operator
+        self.measurements ^= &other.measurements;
     }
 
     #[inline]
@@ -265,7 +269,7 @@ impl SignAlgebra for SymbolicSign {
     }
 
     #[inline]
-    fn to_outcome(&self) -> BTreeSet<usize> {
+    fn to_outcome(&self) -> BitSet {
         self.measurements.clone()
     }
 
@@ -341,8 +345,8 @@ mod tests {
         // {0} * {1} = {0, 1}
         let result = s1.multiply(&s2);
         assert_eq!(result.measurements.len(), 2);
-        assert!(result.measurements.contains(&0));
-        assert!(result.measurements.contains(&1));
+        assert!(result.measurements.contains(0));
+        assert!(result.measurements.contains(1));
 
         // {0} * {0} = {} (XOR cancels)
         let result = s1.multiply(&s3);
@@ -351,14 +355,14 @@ mod tests {
         // {} * {0} = {0}
         let result = SymbolicSign::empty().multiply(&s1);
         assert_eq!(result.measurements.len(), 1);
-        assert!(result.measurements.contains(&0));
+        assert!(result.measurements.contains(0));
     }
 
     #[test]
     fn test_symbolic_sign_from_measurement() {
         let sign = SymbolicSign::from_measurement(42, true);
         assert_eq!(sign.measurements.len(), 1);
-        assert!(sign.measurements.contains(&42));
+        assert!(sign.measurements.contains(42));
 
         // Outcome is ignored for symbolic signs
         let sign2 = SymbolicSign::from_measurement(42, false);

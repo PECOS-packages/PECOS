@@ -31,6 +31,10 @@ pub use clifford_gateable::{CliffordGateable, MeasurementResult};
 pub use coin_toss::CoinToss;
 pub use gens::Gens;
 // pub use paulis::Paulis;
+pub use measurement_sampler::{
+    MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,
+    SequentialMeasurementSampler,
+};
 pub use pauli_prop::{PauliProp, StdPauliProp};
 pub use pecos_core::VecSet;
 pub use quantum_simulator::QuantumSimulator;
@@ -41,8 +45,4 @@ pub use state_vec::StateVec;
 pub use symbolic_gens::SymbolicGens;
 pub use symbolic_sparse_stab::{
     MeasurementHistory, StdSymbolicSparseStab, SymbolicMeasurementResult, SymbolicSparseStab,
-};
-pub use measurement_sampler::{
-    ColumnarSampler, MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,
-    ShotSampler,
 };

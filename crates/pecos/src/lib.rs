@@ -513,13 +513,13 @@ pub mod graph {
 /// # Available Types
 ///
 /// - **Simulators**: `SparseStab`, `StateVec`, `SymbolicSparseStab`
-/// - **Measurement Sampling**: `ShotSampler`, `ColumnarSampler`
+/// - **Measurement Sampling**: `MeasurementSampler`
 /// - **Utilities**: `CliffordGateable`, `ArbitraryRotationGateable`
 ///
 /// # Example
 ///
 /// ```rust
-/// use pecos::qsim::measurement_sampler::{ShotSampler, ColumnarSampler};
+/// use pecos::qsim::measurement_sampler::MeasurementSampler;
 /// use pecos::prelude::*;
 ///
 /// let mut sim = StdSymbolicSparseStab::new(2);
@@ -527,8 +527,8 @@ pub mod graph {
 /// sim.mz(0);
 /// sim.mz(1);
 ///
-/// let sampler = ColumnarSampler::new(sim.measurement_history());
-/// let samples = sampler.sample_with_thread_rng(1000);
+/// let sampler = MeasurementSampler::new(sim.measurement_history());
+/// let samples = sampler.sample(1000);
 /// ```
 pub mod qsim {
     pub use pecos_qsim::*;

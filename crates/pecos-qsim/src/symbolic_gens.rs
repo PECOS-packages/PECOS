@@ -212,17 +212,17 @@ mod tests {
         // Multiply sign[2] by sign[0]: {} * {0} = {0}
         gens.multiply_signs(2, 0);
         assert_eq!(gens.signs[2].measurements.len(), 1);
-        assert!(gens.signs[2].measurements.contains(&0));
+        assert!(gens.signs[2].measurements.contains(0));
 
         // Multiply sign[2] by sign[1]: {0} * {1} = {0, 1}
         gens.multiply_signs(2, 1);
         assert_eq!(gens.signs[2].measurements.len(), 2);
-        assert!(gens.signs[2].measurements.contains(&0));
-        assert!(gens.signs[2].measurements.contains(&1));
+        assert!(gens.signs[2].measurements.contains(0));
+        assert!(gens.signs[2].measurements.contains(1));
 
         // Multiply sign[2] by sign[0] again: {0, 1} * {0} = {1}
         gens.multiply_signs(2, 0);
         assert_eq!(gens.signs[2].measurements.len(), 1);
-        assert!(gens.signs[2].measurements.contains(&1));
+        assert!(gens.signs[2].measurements.contains(1));
     }
 }

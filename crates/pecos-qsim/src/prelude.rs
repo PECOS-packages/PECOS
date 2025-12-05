@@ -16,7 +16,7 @@ pub use crate::{
     arbitrary_rotation_gateable::ArbitraryRotationGateable,
     clifford_gateable::{CliffordGateable, MeasurementResult},
     coin_toss::CoinToss,
-    measurement_sampler::{ColumnarSampler, MeasurementSampler, SampleResult, ShotSampler},
+    measurement_sampler::{MeasurementSampler, SampleResult, SequentialMeasurementSampler},
     pauli_prop::{PauliProp, StdPauliProp},
     quantum_simulator::QuantumSimulator,
     sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign},

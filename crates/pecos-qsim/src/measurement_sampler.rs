@@ -14,8 +14,8 @@
 //!
 //! This module provides two sampler implementations:
 //!
-//! - [`ShotSampler`]: Processes one shot at a time (row-major computation)
-//! - [`ColumnarSampler`]: Processes one measurement at a time across all shots (column-major)
+//! - [`SequentialMeasurementSampler`]: Processes one shot at a time (row-major computation)
+//! - [`MeasurementSampler`]: Processes one measurement at a time across all shots (column-major)
 //!
 //! Both samplers output data in column-major format (`Vec<Vec<u64>>`) or as [`SampleResult`]
 //! for efficient storage and bulk operations. The columnar approach is generally faster
@@ -26,7 +26,7 @@
 //!
 //! ```rust
 //! use pecos_qsim::symbolic_sparse_stab::StdSymbolicSparseStab;
-//! use pecos_qsim::measurement_sampler::{ShotSampler, ColumnarSampler};
+//! use pecos_qsim::measurement_sampler::{SequentialMeasurementSampler, MeasurementSampler};
 //!
 //! // Create a Bell state and measure
 //! let mut sim = StdSymbolicSparseStab::new(2);
@@ -35,12 +35,15 @@
 //! sim.mz(1);
 //!
 //! // Using shot-by-shot sampler
-//! let sampler = ShotSampler::new(sim.measurement_history());
-//! let result = sampler.sample_to_result_with_thread_rng(1000);
+//! let sampler = SequentialMeasurementSampler::new(sim.measurement_history());
+//! let result = sampler.sample(1000);
 //!
 //! // Using columnar sampler (faster for many shots)
-//! let sampler = ColumnarSampler::new(sim.measurement_history());
-//! let result = sampler.sample_to_result_with_thread_rng(1000);
+//! let sampler = MeasurementSampler::new(sim.measurement_history());
+//! let result = sampler.sample(1000);
+//!
+//! // For reproducible results, use a seed
+//! let result = sampler.sample_with_seed(1000, 42);
 //!
 //! // Access individual bits
 //! let m0_shot0 = result.get(0, 0);
@@ -48,8 +51,8 @@
 
 use crate::symbolic_sparse_stab::MeasurementHistory;
 use pecos_core::{Bit, Bits};
-use rand::{Rng, SeedableRng};
 use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
 
 // ============================================================================
 // Common types
@@ -90,7 +93,7 @@ impl MeasurementKind {
                     MeasurementKind::Fixed(result.flip)
                 } else if result.outcome.len() == 1 {
                     // Single dependency = copy or negation
-                    let src = *result.outcome.iter().next().unwrap();
+                    let src = result.outcome.iter().next().unwrap();
                     if result.flip {
                         MeasurementKind::CopyFlipped(src)
                     } else {
@@ -98,7 +101,7 @@ impl MeasurementKind {
                     }
                 } else {
                     MeasurementKind::Computed {
-                        deps: result.outcome.iter().copied().collect(),
+                        deps: result.outcome.iter().collect(),
                         flip: result.flip,
                     }
                 }
@@ -269,21 +272,21 @@ impl std::error::Error for MeasurementValidationError {}
 // Shot-by-shot sampler (row-major computation, column-major output)
 // ============================================================================
 
-/// Shot-by-shot sampler that processes one complete shot at a time.
+/// Sequential measurement sampler that processes one complete shot at a time.
 ///
 /// This sampler iterates through all measurements for each shot before moving
 /// to the next shot. The output is stored in column-major format (`Vec<Vec<u64>>`)
 /// for efficient bulk operations.
 ///
-/// For large numbers of shots, [`ColumnarSampler`] is typically faster due to
-/// better SIMD utilization and batched random number generation.
+/// For most use cases, prefer [`MeasurementSampler`] which uses a faster
+/// columnar algorithm with better SIMD utilization and batched random number generation.
 #[derive(Clone, Debug)]
-pub struct ShotSampler {
+pub struct SequentialMeasurementSampler {
     /// Preprocessed measurement classifications
     measurements: Vec<MeasurementKind>,
 }
 
-impl ShotSampler {
+impl SequentialMeasurementSampler {
     /// Create a new sampler from a measurement history.
     #[must_use]
     pub fn new(history: &MeasurementHistory) -> Self {
@@ -318,7 +321,7 @@ impl ShotSampler {
             return vec![Vec::new(); self.measurements.len()];
         }
 
-        let num_words = (shots + 63) / 64;
+        let num_words = shots.div_ceil(64);
         let num_measurements = self.measurements.len();
 
         // Initialize columns with zeros
@@ -359,65 +362,94 @@ impl ShotSampler {
         columns
     }
 
-    /// Generate multiple shots using the default RNG.
-    #[must_use]
-    pub fn sample_raw_with_thread_rng(&self, shots: usize) -> Vec<Vec<u64>> {
-        let mut rng = rand::rng();
-        self.sample_raw(shots, &mut rng)
-    }
-
-    /// Generate multiple shots using a fast non-cryptographic RNG.
+    /// Sample measurement outcomes and return a [`SampleResult`].
     ///
-    /// Uses `SmallRng` for faster bulk random number generation.
+    /// This is the primary sampling method. Uses a fast non-cryptographic RNG
+    /// (`SmallRng`) for high performance.
+    ///
+    /// # Arguments
+    /// * `shots` - Number of measurement shots to generate
+    ///
+    /// # Returns
+    /// A [`SampleResult`] containing the sampled measurement outcomes.
     #[must_use]
-    pub fn sample_raw_fast(&self, shots: usize) -> Vec<Vec<u64>> {
+    pub fn sample(&self, shots: usize) -> SampleResult {
         let mut rng = SmallRng::from_rng(&mut rand::rng());
-        self.sample_raw(shots, &mut rng)
+        self.sample_with_rng(shots, &mut rng)
     }
 
-    /// Sample and return a `SampleResult` for convenient access.
+    /// Sample measurement outcomes with a specific seed for reproducibility.
+    ///
+    /// # Arguments
+    /// * `shots` - Number of measurement shots to generate
+    /// * `seed` - Seed for the random number generator
+    ///
+    /// # Returns
+    /// A [`SampleResult`] containing the sampled measurement outcomes.
     #[must_use]
-    pub fn sample_to_result<R: Rng>(&self, shots: usize, rng: &mut R) -> SampleResult {
+    pub fn sample_with_seed(&self, shots: usize, seed: u64) -> SampleResult {
+        let mut rng = SmallRng::seed_from_u64(seed);
+        self.sample_with_rng(shots, &mut rng)
+    }
+
+    /// Sample measurement outcomes with a custom random number generator.
+    ///
+    /// # Arguments
+    /// * `shots` - Number of measurement shots to generate
+    /// * `rng` - Random number generator to use
+    ///
+    /// # Returns
+    /// A [`SampleResult`] containing the sampled measurement outcomes.
+    #[must_use]
+    pub fn sample_with_rng<R: Rng>(&self, shots: usize, rng: &mut R) -> SampleResult {
         let columns = self.sample_raw(shots, rng);
         SampleResult::new(columns, shots)
-    }
-
-    /// Sample and return a `SampleResult` using the default RNG.
-    #[must_use]
-    pub fn sample_to_result_with_thread_rng(&self, shots: usize) -> SampleResult {
-        let mut rng = rand::rng();
-        self.sample_to_result(shots, &mut rng)
-    }
-
-    /// Sample and return a `SampleResult` using a fast non-cryptographic RNG.
-    #[must_use]
-    pub fn sample_to_result_fast(&self, shots: usize) -> SampleResult {
-        let mut rng = SmallRng::from_rng(&mut rand::rng());
-        self.sample_to_result(shots, &mut rng)
     }
 }
 
 // ============================================================================
-// Columnar sampler (column-major, SIMD-friendly, optimized for large shot counts)
+// MeasurementSampler (column-major, SIMD-friendly, optimized for large shot counts)
 // ============================================================================
 
-/// Columnar sampler that processes one measurement at a time across all shots.
+/// High-performance measurement sampler using a columnar algorithm.
 ///
-/// This sampler processes all shots for measurement 0, then all shots for
-/// measurement 1, etc. This enables:
+/// This is the recommended sampler for generating measurement outcomes from
+/// a symbolic measurement history. It processes all shots for measurement 0,
+/// then all shots for measurement 1, etc. This enables:
 /// - Batched random number generation (generate 64 random bits at once)
 /// - SIMD-friendly XOR operations on entire columns (operating on u64 words)
 /// - Better cache locality for large shot counts
 ///
 /// Internally uses `Vec<u64>` for columns to maximize performance.
-/// Generally faster than [`ShotSampler`] for large numbers of shots (>100).
+///
+/// # Example
+///
+/// ```
+/// use pecos_qsim::prelude::*;
+/// use pecos_qsim::measurement_sampler::MeasurementSampler;
+///
+/// // Create a Bell state and measure
+/// let mut sim = StdSymbolicSparseStab::new(2);
+/// sim.h(0).cx(0, 1);
+/// sim.mz(0);
+/// sim.mz(1);
+///
+/// // Sample 1000 shots from the measurement history
+/// let sampler = MeasurementSampler::new(sim.measurement_history());
+/// let result = sampler.sample(1000);
+///
+/// // Access individual outcomes
+/// for shot in 0..5 {
+///     println!("Shot {}: q0={}, q1={}", shot, result.get(shot, 0), result.get(shot, 1));
+/// }
+/// ```
 #[derive(Clone, Debug)]
-pub struct ColumnarSampler {
+pub struct MeasurementSampler {
     /// Preprocessed measurement classifications
     measurements: Vec<MeasurementKind>,
 }
 
-impl ColumnarSampler {
+impl MeasurementSampler {
     /// Create a new sampler from a measurement history.
     #[must_use]
     pub fn new(history: &MeasurementHistory) -> Self {
@@ -452,7 +484,7 @@ impl ColumnarSampler {
         column
     }
 
-    /// Compute a column by XORing dependency columns using u64 operations.
+    /// Compute a column by `XORing` dependency columns using u64 operations.
     #[inline]
     fn compute_xor_column(
         columns: &[Vec<u64>],
@@ -488,58 +520,41 @@ impl ColumnarSampler {
             return vec![Vec::new(); self.measurements.len()];
         }
 
-        let num_words = (shots + 63) / 64;
-        let mut columns: Vec<Vec<u64>> = Vec::with_capacity(self.measurements.len());
+        let num_words = shots.div_ceil(64);
+        let num_measurements = self.measurements.len();
+
+        // Pre-allocate all columns at once (single allocation for the outer vec)
+        let mut columns: Vec<Vec<u64>> = Vec::with_capacity(num_measurements);
 
         for kind in &self.measurements {
-            let column = match kind {
+            match kind {
                 MeasurementKind::Fixed(value) => {
                     let fill = if *value { !0u64 } else { 0u64 };
-                    vec![fill; num_words]
+                    columns.push(vec![fill; num_words]);
                 }
-                MeasurementKind::Random => Self::generate_random_column(num_words, rng),
+                MeasurementKind::Random => {
+                    columns.push(Self::generate_random_column(num_words, rng));
+                }
                 MeasurementKind::Copy(src) => {
-                    // Just clone the source column - no computation needed
-                    columns[*src].clone()
+                    // Clone the source column
+                    columns.push(columns[*src].clone());
                 }
                 MeasurementKind::CopyFlipped(src) => {
-                    // Clone and NOT the column - use index loop for better SIMD
-                    let src_col = &columns[*src];
+                    // Clone and NOT the column - index loop for better SIMD
                     let mut result = vec![0u64; num_words];
+                    let src_col = &columns[*src];
                     for i in 0..num_words {
                         result[i] = !src_col[i];
                     }
-                    result
+                    columns.push(result);
                 }
                 MeasurementKind::Computed { deps, flip } => {
-                    Self::compute_xor_column(&columns, deps, *flip, num_words)
+                    columns.push(Self::compute_xor_column(&columns, deps, *flip, num_words));
                 }
-            };
-            columns.push(column);
+            }
         }
 
         columns
-    }
-
-    /// Sample directly to raw u64 columns using the default RNG.
-    #[must_use]
-    pub fn sample_raw_with_thread_rng(&self, shots: usize) -> Vec<Vec<u64>> {
-        let mut rng = rand::rng();
-        self.sample_raw(shots, &mut rng)
-    }
-
-    /// Sample directly to raw u64 columns using a fast non-cryptographic RNG.
-    ///
-    /// This uses `SmallRng` which is faster than the thread-local RNG for
-    /// bulk random number generation, but produces lower quality randomness.
-    /// Suitable for Monte Carlo sampling where cryptographic randomness
-    /// is not required.
-    ///
-    /// The RNG is seeded from the thread-local RNG for convenience.
-    #[must_use]
-    pub fn sample_raw_fast(&self, shots: usize) -> Vec<Vec<u64>> {
-        let mut rng = SmallRng::from_rng(&mut rand::rng());
-        self.sample_raw(shots, &mut rng)
     }
 }
 
@@ -564,7 +579,7 @@ impl ColumnarSampler {
 /// # Example
 ///
 /// ```rust
-/// use pecos_qsim::measurement_sampler::{ColumnarSampler, SampleResult};
+/// use pecos_qsim::measurement_sampler::{MeasurementSampler, SampleResult};
 /// use pecos_qsim::symbolic_sparse_stab::StdSymbolicSparseStab;
 ///
 /// let mut sim = StdSymbolicSparseStab::new(2);
@@ -572,8 +587,8 @@ impl ColumnarSampler {
 /// sim.mz(0);
 /// sim.mz(1);
 ///
-/// let sampler = ColumnarSampler::new(sim.measurement_history());
-/// let result = sampler.sample_to_result_with_thread_rng(1000);
+/// let sampler = MeasurementSampler::new(sim.measurement_history());
+/// let result = sampler.sample(1000);
 ///
 /// // Access individual bits
 /// let m0_shot0 = result.get(0, 0);
@@ -609,7 +624,10 @@ impl SampleResult {
     #[must_use]
     pub fn get(&self, shot: usize, measurement: usize) -> Bit {
         debug_assert!(shot < self.shots, "shot index out of bounds");
-        debug_assert!(measurement < self.columns.len(), "measurement index out of bounds");
+        debug_assert!(
+            measurement < self.columns.len(),
+            "measurement index out of bounds"
+        );
 
         let word_idx = shot / 64;
         let bit_idx = shot % 64;
@@ -734,7 +752,13 @@ impl SampleResult {
 
         self.columns
             .iter()
-            .map(|col| if (col[word_idx] & mask) != 0 { '1' } else { '0' })
+            .map(|col| {
+                if (col[word_idx] & mask) != 0 {
+                    '1'
+                } else {
+                    '0'
+                }
+            })
             .collect()
     }
 
@@ -783,35 +807,77 @@ impl std::ops::Index<(usize, usize)> for SampleResult {
     }
 }
 
-impl ColumnarSampler {
-    /// Sample and return a `SampleResult` for convenient access.
+impl MeasurementSampler {
+    // ========================================================================
+    // Primary API - simple and ergonomic
+    // ========================================================================
+
+    /// Sample measurement outcomes and return a [`SampleResult`].
+    ///
+    /// This is the primary sampling method. Uses a fast non-cryptographic RNG
+    /// internally for good performance.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_qsim::prelude::*;
+    /// use pecos_qsim::measurement_sampler::MeasurementSampler;
+    ///
+    /// let mut sim = StdSymbolicSparseStab::new(2);
+    /// sim.h(0).cx(0, 1);
+    /// sim.mz(0);
+    /// sim.mz(1);
+    ///
+    /// let sampler = MeasurementSampler::new(sim.measurement_history());
+    /// let result = sampler.sample(1000);
+    ///
+    /// // Both qubits should always have the same outcome (Bell state)
+    /// assert_eq!(result.get(0, 0), result.get(0, 1));
+    /// ```
     #[must_use]
-    pub fn sample_to_result<R: Rng>(&self, shots: usize, rng: &mut R) -> SampleResult {
+    pub fn sample(&self, shots: usize) -> SampleResult {
+        let mut rng = SmallRng::from_rng(&mut rand::rng());
+        self.sample_with_rng(shots, &mut rng)
+    }
+
+    /// Sample measurement outcomes with a specific seed for reproducibility.
+    ///
+    /// Use this when you need deterministic, reproducible results (e.g., for
+    /// testing or debugging).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_qsim::prelude::*;
+    /// use pecos_qsim::measurement_sampler::MeasurementSampler;
+    ///
+    /// let mut sim = StdSymbolicSparseStab::new(2);
+    /// sim.h(0).cx(0, 1);
+    /// sim.mz(0);
+    /// sim.mz(1);
+    ///
+    /// let sampler = MeasurementSampler::new(sim.measurement_history());
+    ///
+    /// // Same seed produces same results
+    /// let result1 = sampler.sample_with_seed(1000, 42);
+    /// let result2 = sampler.sample_with_seed(1000, 42);
+    /// assert_eq!(result1.get(0, 0), result2.get(0, 0));
+    /// ```
+    #[must_use]
+    pub fn sample_with_seed(&self, shots: usize, seed: u64) -> SampleResult {
+        let mut rng = SmallRng::seed_from_u64(seed);
+        self.sample_with_rng(shots, &mut rng)
+    }
+
+    /// Sample measurement outcomes with a custom RNG.
+    ///
+    /// Use this when you need full control over the random number generator.
+    #[must_use]
+    pub fn sample_with_rng<R: Rng>(&self, shots: usize, rng: &mut R) -> SampleResult {
         let columns = self.sample_raw(shots, rng);
         SampleResult::new(columns, shots)
     }
-
-    /// Sample and return a `SampleResult` using the default RNG.
-    #[must_use]
-    pub fn sample_to_result_with_thread_rng(&self, shots: usize) -> SampleResult {
-        let mut rng = rand::rng();
-        self.sample_to_result(shots, &mut rng)
-    }
-
-    /// Sample and return a `SampleResult` using a fast non-cryptographic RNG.
-    #[must_use]
-    pub fn sample_to_result_fast(&self, shots: usize) -> SampleResult {
-        let mut rng = SmallRng::from_rng(&mut rand::rng());
-        self.sample_to_result(shots, &mut rng)
-    }
 }
-
-// ============================================================================
-// Type alias for backwards compatibility
-// ============================================================================
-
-/// Alias for [`ShotSampler`] for backwards compatibility.
-pub type MeasurementSampler = ShotSampler;
 
 // ============================================================================
 // Tests
@@ -831,8 +897,8 @@ mod tests {
         let mut sim = StdSymbolicSparseStab::new(1);
         sim.mz(0);
 
-        let sampler = ShotSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(100);
+        let sampler = SequentialMeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(100);
 
         for shot in 0..100 {
             assert!(!*result.get(shot, 0), "Expected all measurements to be 0");
@@ -844,8 +910,8 @@ mod tests {
         let mut sim = StdSymbolicSparseStab::new(1);
         sim.mz(0);
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(100);
+        let sampler = MeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(100);
 
         for shot in 0..100 {
             assert!(!*result.get(shot, 0), "Expected all measurements to be 0");
@@ -862,8 +928,8 @@ mod tests {
         sim.x(0);
         sim.mz(0);
 
-        let sampler = ShotSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(100);
+        let sampler = SequentialMeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(100);
 
         for shot in 0..100 {
             assert!(*result.get(shot, 0), "Expected all measurements to be 1");
@@ -876,8 +942,8 @@ mod tests {
         sim.x(0);
         sim.mz(0);
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(100);
+        let sampler = MeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(100);
 
         for shot in 0..100 {
             assert!(*result.get(shot, 0), "Expected all measurements to be 1");
@@ -894,8 +960,8 @@ mod tests {
         sim.h(0);
         sim.mz(0);
 
-        let sampler = ShotSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(1000);
+        let sampler = SequentialMeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(1000);
 
         let ones = result.count_ones(0);
         assert!(
@@ -910,8 +976,8 @@ mod tests {
         sim.h(0);
         sim.mz(0);
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(1000);
+        let sampler = MeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(1000);
 
         let ones = result.count_ones(0);
         assert!(
@@ -931,8 +997,8 @@ mod tests {
         sim.mz(0);
         sim.mz(1);
 
-        let sampler = ShotSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(1000);
+        let sampler = SequentialMeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(1000);
 
         for shot in 0..1000 {
             assert_eq!(
@@ -943,7 +1009,10 @@ mod tests {
         }
 
         let ones = result.count_ones(0);
-        assert!(ones > 400 && ones < 600, "Expected roughly 50/50 for first qubit");
+        assert!(
+            ones > 400 && ones < 600,
+            "Expected roughly 50/50 for first qubit"
+        );
     }
 
     #[test]
@@ -953,8 +1022,8 @@ mod tests {
         sim.mz(0);
         sim.mz(1);
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(1000);
+        let sampler = MeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(1000);
 
         for shot in 0..1000 {
             assert_eq!(
@@ -965,7 +1034,10 @@ mod tests {
         }
 
         let ones = result.count_ones(0);
-        assert!(ones > 400 && ones < 600, "Expected roughly 50/50 for first qubit");
+        assert!(
+            ones > 400 && ones < 600,
+            "Expected roughly 50/50 for first qubit"
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -980,12 +1052,20 @@ mod tests {
         sim.mz(1);
         sim.mz(2);
 
-        let sampler = ShotSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(1000);
+        let sampler = SequentialMeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(1000);
 
         for shot in 0..1000 {
-            assert_eq!(result.get(shot, 0), result.get(shot, 1), "GHZ measurements must be correlated");
-            assert_eq!(result.get(shot, 1), result.get(shot, 2), "GHZ measurements must be correlated");
+            assert_eq!(
+                result.get(shot, 0),
+                result.get(shot, 1),
+                "GHZ measurements must be correlated"
+            );
+            assert_eq!(
+                result.get(shot, 1),
+                result.get(shot, 2),
+                "GHZ measurements must be correlated"
+            );
         }
     }
 
@@ -997,12 +1077,20 @@ mod tests {
         sim.mz(1);
         sim.mz(2);
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(1000);
+        let sampler = MeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(1000);
 
         for shot in 0..1000 {
-            assert_eq!(result.get(shot, 0), result.get(shot, 1), "GHZ measurements must be correlated");
-            assert_eq!(result.get(shot, 1), result.get(shot, 2), "GHZ measurements must be correlated");
+            assert_eq!(
+                result.get(shot, 0),
+                result.get(shot, 1),
+                "GHZ measurements must be correlated"
+            );
+            assert_eq!(
+                result.get(shot, 1),
+                result.get(shot, 2),
+                "GHZ measurements must be correlated"
+            );
         }
     }
 
@@ -1013,11 +1101,11 @@ mod tests {
     #[test]
     fn test_empty_history_shot() {
         let sim = StdSymbolicSparseStab::new(2);
-        let sampler = ShotSampler::new(sim.measurement_history());
+        let sampler = SequentialMeasurementSampler::new(sim.measurement_history());
 
         assert_eq!(sampler.num_measurements(), 0);
 
-        let result = sampler.sample_to_result_with_thread_rng(10);
+        let result = sampler.sample(10);
         assert_eq!(result.shots(), 10);
         assert_eq!(result.num_measurements(), 0);
     }
@@ -1025,11 +1113,11 @@ mod tests {
     #[test]
     fn test_empty_history_columnar() {
         let sim = StdSymbolicSparseStab::new(2);
-        let sampler = ColumnarSampler::new(sim.measurement_history());
+        let sampler = MeasurementSampler::new(sim.measurement_history());
 
         assert_eq!(sampler.num_measurements(), 0);
 
-        let result = sampler.sample_to_result_with_thread_rng(10);
+        let result = sampler.sample(10);
         assert_eq!(result.shots(), 10);
         assert_eq!(result.num_measurements(), 0);
     }
@@ -1051,14 +1139,22 @@ mod tests {
         sim.mz(1);
         sim.mz(2);
 
-        let sampler = ShotSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(1000);
+        let sampler = SequentialMeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(1000);
 
         for shot in 0..1000 {
             assert!(result.get(shot, 0).is_zero(), "Syndrome S0 should be 0");
             assert!(result.get(shot, 1).is_zero(), "Syndrome S1 should be 0");
-            assert_eq!(result.get(shot, 2), result.get(shot, 3), "Data qubits should be correlated");
-            assert_eq!(result.get(shot, 3), result.get(shot, 4), "Data qubits should be correlated");
+            assert_eq!(
+                result.get(shot, 2),
+                result.get(shot, 3),
+                "Data qubits should be correlated"
+            );
+            assert_eq!(
+                result.get(shot, 3),
+                result.get(shot, 4),
+                "Data qubits should be correlated"
+            );
         }
     }
 
@@ -1075,14 +1171,22 @@ mod tests {
         sim.mz(1);
         sim.mz(2);
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(1000);
+        let sampler = MeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(1000);
 
         for shot in 0..1000 {
             assert!(result.get(shot, 0).is_zero(), "Syndrome S0 should be 0");
             assert!(result.get(shot, 1).is_zero(), "Syndrome S1 should be 0");
-            assert_eq!(result.get(shot, 2), result.get(shot, 3), "Data qubits should be correlated");
-            assert_eq!(result.get(shot, 3), result.get(shot, 4), "Data qubits should be correlated");
+            assert_eq!(
+                result.get(shot, 2),
+                result.get(shot, 3),
+                "Data qubits should be correlated"
+            );
+            assert_eq!(
+                result.get(shot, 3),
+                result.get(shot, 4),
+                "Data qubits should be correlated"
+            );
         }
     }
 
@@ -1095,11 +1199,11 @@ mod tests {
         sim.mz(1);
         sim.mz(2);
 
-        let shot_sampler = ShotSampler::new(sim.measurement_history());
-        let columnar_sampler = ColumnarSampler::new(sim.measurement_history());
+        let sequential_sampler = SequentialMeasurementSampler::new(sim.measurement_history());
+        let sampler = MeasurementSampler::new(sim.measurement_history());
 
-        let shot_result = shot_sampler.sample_to_result_with_thread_rng(10000);
-        let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(10000);
+        let shot_result = sequential_sampler.sample(10000);
+        let columnar_result = sampler.sample(10000);
 
         // Both should maintain GHZ correlations
         for shot in 0..10000 {
@@ -1130,8 +1234,8 @@ mod tests {
             sim.mz(i);
         }
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(100_000);
+        let sampler = MeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(100_000);
 
         assert_eq!(result.shots(), 100_000);
         assert_eq!(result.num_measurements(), 10);
@@ -1141,9 +1245,7 @@ mod tests {
             let ones = result.count_ones(m);
             assert!(
                 ones > 48_000 && ones < 52_000,
-                "Measurement {} should be ~50/50, got {} ones",
-                m,
-                ones
+                "Measurement {m} should be ~50/50, got {ones} ones"
             );
         }
     }
@@ -1156,14 +1258,14 @@ mod tests {
         sim.mz(0);
         sim.mz(1);
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
+        let sampler = MeasurementSampler::new(sim.measurement_history());
         let shots = 1000;
-        let raw_columns = sampler.sample_raw_with_thread_rng(shots);
+        let raw_columns = sampler.sample_raw(shots, &mut rand::rng());
 
         assert_eq!(raw_columns.len(), 2); // 2 measurements
 
         // Check correlations in raw format
-        let num_words = (shots + 63) / 64;
+        let num_words = shots.div_ceil(64);
         for word_idx in 0..num_words {
             // For a Bell state, column 0 XOR column 1 should be all zeros
             assert_eq!(
@@ -1183,14 +1285,14 @@ mod tests {
         sim.mz(1);
         sim.mz(2);
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
+        let sampler = MeasurementSampler::new(sim.measurement_history());
         let shots = 1_000_000;
-        let raw_columns = sampler.sample_raw_with_thread_rng(shots);
+        let raw_columns = sampler.sample_raw(shots, &mut rand::rng());
 
         assert_eq!(raw_columns.len(), 3);
 
         // Verify GHZ correlations: all three columns should be identical
-        let num_words = (shots + 63) / 64;
+        let num_words = shots.div_ceil(64);
         for word_idx in 0..num_words {
             assert_eq!(
                 raw_columns[0][word_idx], raw_columns[1][word_idx],
@@ -1203,7 +1305,10 @@ mod tests {
         }
 
         // Count ones to verify ~50% distribution
-        let total_ones: u64 = raw_columns[0].iter().map(|w| w.count_ones() as u64).sum();
+        let total_ones: u64 = raw_columns[0]
+            .iter()
+            .map(|w| u64::from(w.count_ones()))
+            .sum();
         let expected = shots as f64 / 2.0;
         let tolerance = (shots as f64 * 0.01) as u64; // 1% tolerance
         assert!(
@@ -1230,19 +1335,20 @@ mod tests {
         for (i, m) in measurements.iter().enumerate() {
             if let MeasurementKind::Computed { deps, .. } = m {
                 for &dep in deps {
-                    assert!(dep < i, "Dependency {} should be < current index {}", dep, i);
+                    assert!(dep < i, "Dependency {dep} should be < current index {i}");
                 }
                 assert!(deps.len() <= 3, "Should have at most 3 dependencies");
             }
         }
 
         // Create samplers and verify they work
-        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
-        let columnar_sampler = ColumnarSampler::from_measurements(measurements);
+        let sequential_sampler =
+            SequentialMeasurementSampler::from_measurements(measurements.clone());
+        let sampler = MeasurementSampler::from_measurements(measurements);
 
         let shots = 1000;
-        let shot_result = shot_sampler.sample_to_result_with_thread_rng(shots);
-        let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(shots);
+        let shot_result = sequential_sampler.sample(shots);
+        let columnar_result = sampler.sample(shots);
 
         assert_eq!(shot_result.shots(), shots);
         assert_eq!(columnar_result.shots(), shots);
@@ -1258,8 +1364,8 @@ mod tests {
         // Mostly computed measurements with up to 4 dependencies (realistic)
         let measurements = MeasurementKind::generate_random(50, 0.1, 0.1, 4, &mut rng);
 
-        let sampler = ColumnarSampler::from_measurements(measurements);
-        let raw = sampler.sample_raw_with_thread_rng(100_000);
+        let sampler = MeasurementSampler::from_measurements(measurements);
+        let raw = sampler.sample_raw(100_000, &mut rand::rng());
 
         // Just verify it doesn't crash and produces reasonable output
         assert_eq!(raw.len(), 50);
@@ -1275,27 +1381,29 @@ mod tests {
 
         // 200 measurements - well beyond 64
         let num_measurements = 200;
-        let measurements = MeasurementKind::generate_random(num_measurements, 0.1, 0.1, 3, &mut rng);
+        let measurements =
+            MeasurementKind::generate_random(num_measurements, 0.1, 0.1, 3, &mut rng);
 
-        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
-        let columnar_sampler = ColumnarSampler::from_measurements(measurements);
+        let sequential_sampler =
+            SequentialMeasurementSampler::from_measurements(measurements.clone());
+        let sampler = MeasurementSampler::from_measurements(measurements);
 
         let shots = 1000;
 
         // Test shot sampler
-        let shot_result = shot_sampler.sample_to_result_with_thread_rng(shots);
+        let shot_result = sequential_sampler.sample(shots);
         assert_eq!(shot_result.shots(), shots);
         assert_eq!(shot_result.num_measurements(), num_measurements);
 
         // Test columnar sampler
-        let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(shots);
+        let columnar_result = sampler.sample(shots);
         assert_eq!(columnar_result.shots(), shots);
         assert_eq!(columnar_result.num_measurements(), num_measurements);
 
         // Test raw columnar output
-        let raw = columnar_sampler.sample_raw_with_thread_rng(shots);
+        let raw = sampler.sample_raw(shots, &mut rand::rng());
         assert_eq!(raw.len(), num_measurements); // 200 columns
-        let expected_words = (shots + 63) / 64;
+        let expected_words = shots.div_ceil(64);
         for col in &raw {
             assert_eq!(col.len(), expected_words);
         }
@@ -1313,24 +1421,31 @@ mod tests {
             sim.mz(i);
         }
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
+        let sampler = MeasurementSampler::new(sim.measurement_history());
 
         // Test various shot counts around the 64-bit boundary
         for shots in [63, 64, 65, 127, 128, 129, 1000, 10_000] {
-            let raw = sampler.sample_raw_with_thread_rng(shots);
+            let raw = sampler.sample_raw(shots, &mut rand::rng());
 
             assert_eq!(raw.len(), 5, "Should have 5 measurement columns");
 
-            let expected_words = (shots + 63) / 64;
+            let expected_words = shots.div_ceil(64);
             for col in &raw {
-                assert_eq!(col.len(), expected_words, "Wrong word count for {shots} shots");
+                assert_eq!(
+                    col.len(),
+                    expected_words,
+                    "Wrong word count for {shots} shots"
+                );
             }
 
             // Verify GHZ correlation: all columns should be identical
             for word_idx in 0..expected_words {
                 let first = raw[0][word_idx];
                 for col in &raw[1..] {
-                    assert_eq!(col[word_idx], first, "GHZ correlation broken at word {word_idx}");
+                    assert_eq!(
+                        col[word_idx], first,
+                        "GHZ correlation broken at word {word_idx}"
+                    );
                 }
             }
         }
@@ -1347,8 +1462,8 @@ mod tests {
         sim.mz(0);
         sim.mz(1);
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(1000);
+        let sampler = MeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(1000);
 
         assert_eq!(result.shots(), 1000);
         assert_eq!(result.num_measurements(), 2);
@@ -1369,9 +1484,9 @@ mod tests {
         sim.h(0);
         sim.mz(0);
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
+        let sampler = MeasurementSampler::new(sim.measurement_history());
         let shots = 10_000;
-        let result = sampler.sample_to_result_with_thread_rng(shots);
+        let result = sampler.sample(shots);
 
         let ones = result.count_ones(0);
         let zeros = result.count_zeros(0);
@@ -1389,8 +1504,8 @@ mod tests {
         sim.mz(1);
         sim.mz(2);
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(100);
+        let sampler = MeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(100);
 
         // Verify iter_shots matches direct access
         for (shot, row) in result.iter_shots().enumerate() {
@@ -1407,8 +1522,8 @@ mod tests {
         sim.mz(0);
         sim.mz(1); // Deterministic 0
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(100);
+        let sampler = MeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(100);
 
         for (shot_idx, row) in result.iter_shots().enumerate() {
             assert!(row[0].is_one(), "m0 should be 1 at shot {shot_idx}");
@@ -1421,8 +1536,8 @@ mod tests {
         let mut sim = StdSymbolicSparseStab::new(1);
         sim.mz(0);
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(10);
+        let sampler = MeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(10);
 
         // Valid access
         assert!(result.try_get(0, 0).is_some());
@@ -1442,8 +1557,8 @@ mod tests {
         sim.x(2);
         sim.mz(2); // m2 = 1
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(10);
+        let sampler = MeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(10);
 
         // All shots should be the same (deterministic)
         for shot_idx in 0..10 {
@@ -1466,8 +1581,8 @@ mod tests {
         sim.mz(0);
         sim.mz(1);
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(1000);
+        let sampler = MeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(1000);
 
         let col0 = result.column(0);
         let col1 = result.column(1);
@@ -1487,8 +1602,8 @@ mod tests {
         sim.mz(0);
         sim.mz(1);
 
-        let sampler = ColumnarSampler::new(sim.measurement_history());
-        let result = sampler.sample_to_result_with_thread_rng(100);
+        let sampler = MeasurementSampler::new(sim.measurement_history());
+        let result = sampler.sample(100);
 
         // Test index syntax result[(shot, measurement)]
         for shot in 0..100 {
@@ -1505,16 +1620,14 @@ mod tests {
     fn test_copy_flipped_optimization() {
         // Create a measurement that is the negation of another:
         // m0 = random, m1 = !m0
-        let measurements = vec![
-            MeasurementKind::Random,
-            MeasurementKind::CopyFlipped(0),
-        ];
+        let measurements = vec![MeasurementKind::Random, MeasurementKind::CopyFlipped(0)];
 
-        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
-        let columnar_sampler = ColumnarSampler::from_measurements(measurements);
+        let sequential_sampler =
+            SequentialMeasurementSampler::from_measurements(measurements.clone());
+        let sampler = MeasurementSampler::from_measurements(measurements);
 
         // Test shot sampler
-        let shot_result = shot_sampler.sample_to_result_with_thread_rng(1000);
+        let shot_result = sequential_sampler.sample(1000);
         for shot in 0..1000 {
             assert_ne!(
                 shot_result.get(shot, 0),
@@ -1524,7 +1637,7 @@ mod tests {
         }
 
         // Test columnar sampler
-        let result = columnar_sampler.sample_to_result_with_thread_rng(1000);
+        let result = sampler.sample(1000);
         for shot in 0..1000 {
             assert_ne!(
                 result.get(shot, 0),
@@ -1534,7 +1647,7 @@ mod tests {
         }
 
         // Verify raw columns are bitwise NOT of each other
-        let raw = columnar_sampler.sample_raw_with_thread_rng(1000);
+        let raw = sampler.sample_raw(1000, &mut rand::rng());
         for (w0, w1) in raw[0].iter().zip(raw[1].iter()) {
             assert_eq!(*w1, !*w0, "Column 1 should be bitwise NOT of column 0");
         }
@@ -1552,10 +1665,7 @@ mod tests {
     /// - Copy(src): result == samples[src]
     /// - CopyFlipped(src): result == !samples[src]
     /// - Computed { deps, flip }: result == flip ^ XOR(samples[d] for d in deps)
-    fn verify_samples_satisfy_equations(
-        measurements: &[MeasurementKind],
-        result: &SampleResult,
-    ) {
+    fn verify_samples_satisfy_equations(measurements: &[MeasurementKind], result: &SampleResult) {
         for shot in 0..result.shots() {
             for (m_idx, kind) in measurements.iter().enumerate() {
                 let actual = result.get(shot, m_idx);
@@ -1591,8 +1701,7 @@ mod tests {
                         }
                         assert_eq!(
                             actual, expected,
-                            "Shot {shot}, measurement {m_idx}: Computed(deps={:?}, flip={flip}) expected {expected} but got {actual}",
-                            deps
+                            "Shot {shot}, measurement {m_idx}: Computed(deps={deps:?}, flip={flip}) expected {expected} but got {actual}"
                         );
                     }
                 }
@@ -1609,11 +1718,12 @@ mod tests {
             MeasurementKind::Fixed(true),
         ];
 
-        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
-        let columnar_sampler = ColumnarSampler::from_measurements(measurements.clone());
+        let sequential_sampler =
+            SequentialMeasurementSampler::from_measurements(measurements.clone());
+        let sampler = MeasurementSampler::from_measurements(measurements.clone());
 
-        let shot_result = shot_sampler.sample_to_result_with_thread_rng(1000);
-        let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(1000);
+        let shot_result = sequential_sampler.sample(1000);
+        let columnar_result = sampler.sample(1000);
 
         verify_samples_satisfy_equations(&measurements, &shot_result);
         verify_samples_satisfy_equations(&measurements, &columnar_result);
@@ -1629,11 +1739,12 @@ mod tests {
             MeasurementKind::Copy(2),
         ];
 
-        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
-        let columnar_sampler = ColumnarSampler::from_measurements(measurements.clone());
+        let sequential_sampler =
+            SequentialMeasurementSampler::from_measurements(measurements.clone());
+        let sampler = MeasurementSampler::from_measurements(measurements.clone());
 
-        let shot_result = shot_sampler.sample_to_result_with_thread_rng(1000);
-        let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(1000);
+        let shot_result = sequential_sampler.sample(1000);
+        let columnar_result = sampler.sample(1000);
 
         verify_samples_satisfy_equations(&measurements, &shot_result);
         verify_samples_satisfy_equations(&measurements, &columnar_result);
@@ -1649,11 +1760,12 @@ mod tests {
             MeasurementKind::CopyFlipped(2),
         ];
 
-        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
-        let columnar_sampler = ColumnarSampler::from_measurements(measurements.clone());
+        let sequential_sampler =
+            SequentialMeasurementSampler::from_measurements(measurements.clone());
+        let sampler = MeasurementSampler::from_measurements(measurements.clone());
 
-        let shot_result = shot_sampler.sample_to_result_with_thread_rng(1000);
-        let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(1000);
+        let shot_result = sequential_sampler.sample(1000);
+        let columnar_result = sampler.sample(1000);
 
         verify_samples_satisfy_equations(&measurements, &shot_result);
         verify_samples_satisfy_equations(&measurements, &columnar_result);
@@ -1691,11 +1803,12 @@ mod tests {
             },
         ];
 
-        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
-        let columnar_sampler = ColumnarSampler::from_measurements(measurements.clone());
+        let sequential_sampler =
+            SequentialMeasurementSampler::from_measurements(measurements.clone());
+        let sampler = MeasurementSampler::from_measurements(measurements.clone());
 
-        let shot_result = shot_sampler.sample_to_result_with_thread_rng(1000);
-        let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(1000);
+        let shot_result = sequential_sampler.sample(1000);
+        let columnar_result = sampler.sample(1000);
 
         verify_samples_satisfy_equations(&measurements, &shot_result);
         verify_samples_satisfy_equations(&measurements, &columnar_result);
@@ -1716,27 +1829,30 @@ mod tests {
     fn test_equations_mixed_types() {
         // A realistic mix of all measurement types
         let measurements = vec![
-            MeasurementKind::Fixed(false),        // m0 = 0
-            MeasurementKind::Fixed(true),         // m1 = 1
-            MeasurementKind::Random,              // m2 = ?
-            MeasurementKind::Random,              // m3 = ?
-            MeasurementKind::Copy(2),             // m4 = m2
-            MeasurementKind::CopyFlipped(3),      // m5 = !m3
-            MeasurementKind::Computed {           // m6 = m2 ^ m3
+            MeasurementKind::Fixed(false),   // m0 = 0
+            MeasurementKind::Fixed(true),    // m1 = 1
+            MeasurementKind::Random,         // m2 = ?
+            MeasurementKind::Random,         // m3 = ?
+            MeasurementKind::Copy(2),        // m4 = m2
+            MeasurementKind::CopyFlipped(3), // m5 = !m3
+            MeasurementKind::Computed {
+                // m6 = m2 ^ m3
                 deps: vec![2, 3],
                 flip: false,
             },
-            MeasurementKind::Computed {           // m7 = m0 ^ m1 ^ m2 ^ true = 1 ^ m2
+            MeasurementKind::Computed {
+                // m7 = m0 ^ m1 ^ m2 ^ true = 1 ^ m2
                 deps: vec![0, 1, 2],
                 flip: true,
             },
         ];
 
-        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
-        let columnar_sampler = ColumnarSampler::from_measurements(measurements.clone());
+        let sequential_sampler =
+            SequentialMeasurementSampler::from_measurements(measurements.clone());
+        let sampler = MeasurementSampler::from_measurements(measurements.clone());
 
-        let shot_result = shot_sampler.sample_to_result_with_thread_rng(1000);
-        let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(1000);
+        let shot_result = sequential_sampler.sample(1000);
+        let columnar_result = sampler.sample(1000);
 
         verify_samples_satisfy_equations(&measurements, &shot_result);
         verify_samples_satisfy_equations(&measurements, &columnar_result);
@@ -1751,11 +1867,12 @@ mod tests {
             // Generate random histories with various parameters
             let measurements = MeasurementKind::generate_random(50, 0.2, 0.1, 4, &mut rng);
 
-            let shot_sampler = ShotSampler::from_measurements(measurements.clone());
-            let columnar_sampler = ColumnarSampler::from_measurements(measurements.clone());
+            let sequential_sampler =
+                SequentialMeasurementSampler::from_measurements(measurements.clone());
+            let sampler = MeasurementSampler::from_measurements(measurements.clone());
 
-            let shot_result = shot_sampler.sample_to_result_with_thread_rng(100);
-            let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(100);
+            let shot_result = sequential_sampler.sample(100);
+            let columnar_result = sampler.sample(100);
 
             verify_samples_satisfy_equations(&measurements, &shot_result);
             verify_samples_satisfy_equations(&measurements, &columnar_result);
@@ -1775,11 +1892,12 @@ mod tests {
             });
         }
 
-        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
-        let columnar_sampler = ColumnarSampler::from_measurements(measurements.clone());
+        let sequential_sampler =
+            SequentialMeasurementSampler::from_measurements(measurements.clone());
+        let sampler = MeasurementSampler::from_measurements(measurements.clone());
 
-        let shot_result = shot_sampler.sample_to_result_with_thread_rng(100);
-        let columnar_result = columnar_sampler.sample_to_result_with_thread_rng(100);
+        let shot_result = sequential_sampler.sample(100);
+        let columnar_result = sampler.sample(100);
 
         verify_samples_satisfy_equations(&measurements, &shot_result);
         verify_samples_satisfy_equations(&measurements, &columnar_result);
@@ -1803,14 +1921,15 @@ mod tests {
         // Use seeded RNG for reproducibility within each sampler
         let mut rng = rand::rng();
 
-        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
-        let columnar_sampler = ColumnarSampler::from_measurements(measurements.clone());
+        let sequential_sampler =
+            SequentialMeasurementSampler::from_measurements(measurements.clone());
+        let sampler = MeasurementSampler::from_measurements(measurements.clone());
 
         // Each sampler independently satisfies equations
-        let shot_result = shot_sampler.sample_to_result(1000, &mut rng);
+        let shot_result = sequential_sampler.sample_with_rng(1000, &mut rng);
         verify_samples_satisfy_equations(&measurements, &shot_result);
 
-        let columnar_result = columnar_sampler.sample_to_result(1000, &mut rng);
+        let columnar_result = sampler.sample_with_rng(1000, &mut rng);
         verify_samples_satisfy_equations(&measurements, &columnar_result);
     }
 
@@ -1917,9 +2036,7 @@ mod tests {
         ];
         assert_eq!(
             MeasurementKind::validate_sequence(&measurements),
-            Err(MeasurementValidationError::EmptyDependencies {
-                measurement_idx: 1,
-            })
+            Err(MeasurementValidationError::EmptyDependencies { measurement_idx: 1 })
         );
     }
 
@@ -1942,23 +2059,15 @@ mod tests {
             measurement_idx: 3,
             dependency_idx: 5,
         };
-        assert_eq!(
-            err.to_string(),
-            "Measurement 3 has forward reference to 5"
-        );
+        assert_eq!(err.to_string(), "Measurement 3 has forward reference to 5");
 
         let err = MeasurementValidationError::DuplicateDependency {
             measurement_idx: 2,
             dependency_idx: 0,
         };
-        assert_eq!(
-            err.to_string(),
-            "Measurement 2 has duplicate dependency 0"
-        );
+        assert_eq!(err.to_string(), "Measurement 2 has duplicate dependency 0");
 
-        let err = MeasurementValidationError::EmptyDependencies {
-            measurement_idx: 1,
-        };
+        let err = MeasurementValidationError::EmptyDependencies { measurement_idx: 1 };
         assert_eq!(
             err.to_string(),
             "Measurement 1 is Computed but has no dependencies"
@@ -1997,8 +2106,8 @@ mod tests {
             },
         ];
 
-        let sampler = ColumnarSampler::from_measurements(measurements.clone());
-        let result = sampler.sample_to_result_with_thread_rng(10000);
+        let sampler = MeasurementSampler::from_measurements(measurements.clone());
+        let result = sampler.sample(10000);
 
         verify_samples_satisfy_equations(&measurements, &result);
 
@@ -2014,7 +2123,7 @@ mod tests {
         }
 
         // Also verify using raw column XOR
-        let raw = sampler.sample_raw_with_thread_rng(10000);
+        let raw = sampler.sample_raw(10000, &mut rand::rng());
         for word_idx in 0..raw[0].len() {
             let xor = raw[3][word_idx] ^ raw[4][word_idx] ^ raw[5][word_idx];
             assert_eq!(xor, 0, "Column XOR should be 0 at word {word_idx}");
@@ -2041,8 +2150,8 @@ mod tests {
             });
         }
 
-        let sampler = ColumnarSampler::from_measurements(measurements.clone());
-        let result = sampler.sample_to_result_with_thread_rng(1000);
+        let sampler = MeasurementSampler::from_measurements(measurements.clone());
+        let result = sampler.sample(1000);
 
         verify_samples_satisfy_equations(&measurements, &result);
 
@@ -2086,8 +2195,8 @@ mod tests {
             }, // s2
         ];
 
-        let sampler = ColumnarSampler::from_measurements(measurements.clone());
-        let result = sampler.sample_to_result_with_thread_rng(10000);
+        let sampler = MeasurementSampler::from_measurements(measurements.clone());
+        let result = sampler.sample(10000);
 
         verify_samples_satisfy_equations(&measurements, &result);
 
@@ -2138,8 +2247,8 @@ mod tests {
             }, // m7 = !m6
         ];
 
-        let sampler = ColumnarSampler::from_measurements(measurements.clone());
-        let result = sampler.sample_to_result_with_thread_rng(1000);
+        let sampler = MeasurementSampler::from_measurements(measurements.clone());
+        let result = sampler.sample(1000);
 
         verify_samples_satisfy_equations(&measurements, &result);
 
@@ -2164,8 +2273,8 @@ mod tests {
         // XOR of independent fair coins should also be fair
         let measurements = vec![MeasurementKind::Random, MeasurementKind::Random];
 
-        let sampler = ColumnarSampler::from_measurements(measurements);
-        let result = sampler.sample_to_result_with_thread_rng(100_000);
+        let sampler = MeasurementSampler::from_measurements(measurements);
+        let result = sampler.sample(100_000);
 
         // Count joint occurrences
         let mut count_00 = 0;
@@ -2187,19 +2296,19 @@ mod tests {
         let tolerance = 1000.0; // ~4% tolerance
 
         assert!(
-            (count_00 as f64 - expected).abs() < tolerance,
+            (f64::from(count_00) - expected).abs() < tolerance,
             "00 count {count_00} too far from {expected}"
         );
         assert!(
-            (count_01 as f64 - expected).abs() < tolerance,
+            (f64::from(count_01) - expected).abs() < tolerance,
             "01 count {count_01} too far from {expected}"
         );
         assert!(
-            (count_10 as f64 - expected).abs() < tolerance,
+            (f64::from(count_10) - expected).abs() < tolerance,
             "10 count {count_10} too far from {expected}"
         );
         assert!(
-            (count_11 as f64 - expected).abs() < tolerance,
+            (f64::from(count_11) - expected).abs() < tolerance,
             "11 count {count_11} too far from {expected}"
         );
     }
@@ -2209,8 +2318,8 @@ mod tests {
         // Verify that Copy produces perfect correlation
         let measurements = vec![MeasurementKind::Random, MeasurementKind::Copy(0)];
 
-        let sampler = ColumnarSampler::from_measurements(measurements);
-        let result = sampler.sample_to_result_with_thread_rng(10_000);
+        let sampler = MeasurementSampler::from_measurements(measurements);
+        let result = sampler.sample(10_000);
 
         // Count joint occurrences - should only see 00 and 11
         let mut count_same = 0;
@@ -2233,8 +2342,8 @@ mod tests {
         // Verify that CopyFlipped produces perfect anticorrelation
         let measurements = vec![MeasurementKind::Random, MeasurementKind::CopyFlipped(0)];
 
-        let sampler = ColumnarSampler::from_measurements(measurements);
-        let result = sampler.sample_to_result_with_thread_rng(10_000);
+        let sampler = MeasurementSampler::from_measurements(measurements);
+        let result = sampler.sample(10_000);
 
         // Count joint occurrences - should only see 01 and 10
         let mut count_same = 0;

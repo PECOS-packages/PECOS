@@ -12,7 +12,9 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos::prelude::*;
-use pecos::qsim::measurement_sampler::{ColumnarSampler, MeasurementKind, ShotSampler};
+use pecos::qsim::measurement_sampler::{
+    MeasurementKind, MeasurementSampler, SequentialMeasurementSampler,
+};
 use std::hint::black_box;
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
@@ -22,6 +24,7 @@ pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
     bench_scaling_shots(c);
     bench_scaling_measurements(c);
     bench_realistic_qec(c);
+    bench_multi_round_qec(c);
 }
 
 /// Benchmark sampling from a Bell state (2 qubits, 2 measurements, 1 random + 1 computed)
@@ -35,21 +38,21 @@ fn bench_bell_state<M: Measurement>(c: &mut Criterion<M>) {
     sim.mz(1);
     let history = sim.measurement_history().clone();
 
-    let shot_sampler = ShotSampler::new(&history);
-    let columnar_sampler = ColumnarSampler::new(&history);
+    let sequential_sampler = SequentialMeasurementSampler::new(&history);
+    let sampler = MeasurementSampler::new(&history);
 
     for shots in [100, 1_000, 10_000, 100_000] {
         group.throughput(Throughput::Elements(shots as u64));
 
-        group.bench_with_input(BenchmarkId::new("shot_sampler", shots), &shots, |b, &shots| {
-            b.iter(|| black_box(shot_sampler.sample_raw_with_thread_rng(shots)))
-        });
-
         group.bench_with_input(
-            BenchmarkId::new("columnar_sampler", shots),
+            BenchmarkId::new("sequential_sampler", shots),
             &shots,
-            |b, &shots| b.iter(|| black_box(columnar_sampler.sample_raw_with_thread_rng(shots))),
+            |b, &shots| b.iter(|| black_box(sequential_sampler.sample(shots))),
         );
+
+        group.bench_with_input(BenchmarkId::new("sampler", shots), &shots, |b, &shots| {
+            b.iter(|| black_box(sampler.sample(shots)));
+        });
     }
 
     group.finish();
@@ -66,21 +69,21 @@ fn bench_ghz_state<M: Measurement>(c: &mut Criterion<M>) {
     sim.mz(2);
     let history = sim.measurement_history().clone();
 
-    let shot_sampler = ShotSampler::new(&history);
-    let columnar_sampler = ColumnarSampler::new(&history);
+    let sequential_sampler = SequentialMeasurementSampler::new(&history);
+    let sampler = MeasurementSampler::new(&history);
 
     for shots in [100, 1_000, 10_000, 100_000] {
         group.throughput(Throughput::Elements(shots as u64));
 
-        group.bench_with_input(BenchmarkId::new("shot_sampler", shots), &shots, |b, &shots| {
-            b.iter(|| black_box(shot_sampler.sample_raw_with_thread_rng(shots)))
-        });
-
         group.bench_with_input(
-            BenchmarkId::new("columnar_sampler", shots),
+            BenchmarkId::new("sequential_sampler", shots),
             &shots,
-            |b, &shots| b.iter(|| black_box(columnar_sampler.sample_raw_with_thread_rng(shots))),
+            |b, &shots| b.iter(|| black_box(sequential_sampler.sample(shots))),
         );
+
+        group.bench_with_input(BenchmarkId::new("sampler", shots), &shots, |b, &shots| {
+            b.iter(|| black_box(sampler.sample(shots)));
+        });
     }
 
     group.finish();
@@ -100,21 +103,21 @@ fn bench_many_random_measurements<M: Measurement>(c: &mut Criterion<M>) {
     }
     let history = sim.measurement_history().clone();
 
-    let shot_sampler = ShotSampler::new(&history);
-    let columnar_sampler = ColumnarSampler::new(&history);
+    let sequential_sampler = SequentialMeasurementSampler::new(&history);
+    let sampler = MeasurementSampler::new(&history);
 
     for shots in [100, 1_000, 10_000, 100_000] {
         group.throughput(Throughput::Elements(shots as u64));
 
-        group.bench_with_input(BenchmarkId::new("shot_sampler", shots), &shots, |b, &shots| {
-            b.iter(|| black_box(shot_sampler.sample_raw_with_thread_rng(shots)))
-        });
-
         group.bench_with_input(
-            BenchmarkId::new("columnar_sampler", shots),
+            BenchmarkId::new("sequential_sampler", shots),
             &shots,
-            |b, &shots| b.iter(|| black_box(columnar_sampler.sample_raw_with_thread_rng(shots))),
+            |b, &shots| b.iter(|| black_box(sequential_sampler.sample(shots))),
         );
+
+        group.bench_with_input(BenchmarkId::new("sampler", shots), &shots, |b, &shots| {
+            b.iter(|| black_box(sampler.sample(shots)));
+        });
     }
 
     group.finish();
@@ -135,21 +138,21 @@ fn bench_scaling_shots<M: Measurement>(c: &mut Criterion<M>) {
     }
     let history = sim.measurement_history().clone();
 
-    let shot_sampler = ShotSampler::new(&history);
-    let columnar_sampler = ColumnarSampler::new(&history);
+    let sequential_sampler = SequentialMeasurementSampler::new(&history);
+    let sampler = MeasurementSampler::new(&history);
 
     for shots in [1_000, 10_000, 100_000, 1_000_000] {
         group.throughput(Throughput::Elements(shots as u64));
 
-        group.bench_with_input(BenchmarkId::new("shot_sampler", shots), &shots, |b, &shots| {
-            b.iter(|| black_box(shot_sampler.sample_raw_with_thread_rng(shots)))
-        });
-
         group.bench_with_input(
-            BenchmarkId::new("columnar_sampler", shots),
+            BenchmarkId::new("sequential_sampler", shots),
             &shots,
-            |b, &shots| b.iter(|| black_box(columnar_sampler.sample_raw_with_thread_rng(shots))),
+            |b, &shots| b.iter(|| black_box(sequential_sampler.sample(shots))),
         );
+
+        group.bench_with_input(BenchmarkId::new("sampler", shots), &shots, |b, &shots| {
+            b.iter(|| black_box(sampler.sample(shots)));
+        });
     }
 
     group.finish();
@@ -172,21 +175,21 @@ fn bench_scaling_measurements<M: Measurement>(c: &mut Criterion<M>) {
         }
         let history = sim.measurement_history().clone();
 
-        let shot_sampler = ShotSampler::new(&history);
-        let columnar_sampler = ColumnarSampler::new(&history);
+        let sequential_sampler = SequentialMeasurementSampler::new(&history);
+        let sampler = MeasurementSampler::new(&history);
 
         group.throughput(Throughput::Elements(num_measurements as u64 * shots as u64));
 
         group.bench_with_input(
-            BenchmarkId::new("shot_sampler", num_measurements),
+            BenchmarkId::new("sequential_sampler", num_measurements),
             &num_measurements,
-            |b, _| b.iter(|| black_box(shot_sampler.sample_raw_with_thread_rng(shots))),
+            |b, _| b.iter(|| black_box(sequential_sampler.sample(shots))),
         );
 
         group.bench_with_input(
-            BenchmarkId::new("columnar_sampler", num_measurements),
+            BenchmarkId::new("sampler", num_measurements),
             &num_measurements,
-            |b, _| b.iter(|| black_box(columnar_sampler.sample_raw_with_thread_rng(shots))),
+            |b, _| b.iter(|| black_box(sampler.sample(shots))),
         );
     }
 
@@ -210,30 +213,78 @@ fn bench_realistic_qec<M: Measurement>(c: &mut Criterion<M>) {
         random::seed(42);
         let measurements = generate_qec_like_measurements(num_measurements);
 
-        let shot_sampler = ShotSampler::from_measurements(measurements.clone());
-        let columnar_sampler = ColumnarSampler::from_measurements(measurements);
+        let sequential_sampler =
+            SequentialMeasurementSampler::from_measurements(measurements.clone());
+        let sampler = MeasurementSampler::from_measurements(measurements);
 
         let shots = 100_000;
         group.throughput(Throughput::Elements(num_measurements as u64 * shots as u64));
 
         group.bench_with_input(
-            BenchmarkId::new("shot_sampler", num_measurements),
+            BenchmarkId::new("sequential_sampler", num_measurements),
             &num_measurements,
-            |b, _| b.iter(|| black_box(shot_sampler.sample_raw_with_thread_rng(shots))),
+            |b, _| b.iter(|| black_box(sequential_sampler.sample(shots))),
         );
 
         group.bench_with_input(
-            BenchmarkId::new("columnar_sampler", num_measurements),
+            BenchmarkId::new("sampler", num_measurements),
             &num_measurements,
-            |b, _| b.iter(|| black_box(columnar_sampler.sample_raw_with_thread_rng(shots))),
-        );
-
-        group.bench_with_input(
-            BenchmarkId::new("columnar_fast", num_measurements),
-            &num_measurements,
-            |b, _| b.iter(|| black_box(columnar_sampler.sample_raw_fast(shots))),
+            |b, _| b.iter(|| black_box(sampler.sample(shots))),
         );
     }
+
+    group.finish();
+}
+
+/// Benchmark multi-round QEC with sparse cross-round dependencies.
+///
+/// This tests the realistic scenario where:
+/// - Multiple syndrome extraction rounds are performed
+/// - Dependencies can span from early rounds to late rounds
+/// - Creates sparse `BitSet` patterns like {0, 100, 500, 900} for measurement 950
+fn bench_multi_round_qec<M: Measurement>(c: &mut Criterion<M>) {
+    use pecos::random;
+
+    let mut group = c.benchmark_group("Measurement Sampling - Multi-Round QEC");
+
+    // Test: 1000 measurements over 10 rounds (100 per round)
+    // Dependencies span across rounds, creating sparse patterns
+    let num_measurements = 1000;
+    let num_rounds = 10;
+
+    random::seed(42);
+    let measurements = generate_qec_measurements_with_rounds(num_measurements, num_rounds);
+
+    let sequential_sampler = SequentialMeasurementSampler::from_measurements(measurements.clone());
+    let sampler = MeasurementSampler::from_measurements(measurements);
+
+    let shots = 100_000;
+    group.throughput(Throughput::Elements(num_measurements as u64 * shots as u64));
+
+    group.bench_function("sequential_sampler/10_rounds", |b| {
+        b.iter(|| black_box(sequential_sampler.sample(shots)));
+    });
+
+    group.bench_function("sampler/10_rounds", |b| {
+        b.iter(|| black_box(sampler.sample(shots)));
+    });
+
+    // Also test with more rounds (sparser dependencies)
+    let num_rounds_50 = 50;
+    random::seed(42);
+    let measurements_50 = generate_qec_measurements_with_rounds(num_measurements, num_rounds_50);
+
+    let sequential_sampler_50 =
+        SequentialMeasurementSampler::from_measurements(measurements_50.clone());
+    let sampler_50 = MeasurementSampler::from_measurements(measurements_50);
+
+    group.bench_function("sequential_sampler/50_rounds", |b| {
+        b.iter(|| black_box(sequential_sampler_50.sample(shots)));
+    });
+
+    group.bench_function("sampler/50_rounds", |b| {
+        b.iter(|| black_box(sampler_50.sample(shots)));
+    });
 
     group.finish();
 }
@@ -242,28 +293,62 @@ fn bench_realistic_qec<M: Measurement>(c: &mut Criterion<M>) {
 ///
 /// Pattern: 10% random, 5% fixed, rest computed with 1-3 deps
 fn generate_qec_like_measurements(num_measurements: usize) -> Vec<MeasurementKind> {
+    generate_qec_measurements_with_rounds(num_measurements, 1)
+}
+
+/// Generate multi-round QEC measurement patterns.
+///
+/// Simulates `num_rounds` of syndrome extraction where:
+/// - Each round has `measurements_per_round` measurements
+/// - ~10% of each round's measurements are non-deterministic (random)
+/// - Later rounds can depend on measurements from ANY earlier round
+///   (simulating stabilizer measurements that correlate across rounds)
+///
+/// This creates realistic sparse dependency patterns where measurement 950
+/// might depend on measurements {0, 100, 200, ...} spanning many rounds.
+fn generate_qec_measurements_with_rounds(
+    num_measurements: usize,
+    num_rounds: usize,
+) -> Vec<MeasurementKind> {
     use pecos::random;
 
+    let measurements_per_round = num_measurements / num_rounds.max(1);
     let mut measurements = Vec::with_capacity(num_measurements);
 
     for i in 0..num_measurements {
+        let current_round = i / measurements_per_round.max(1);
         let r: f64 = random::random(1)[0];
+
         let kind = if r < 0.10 {
-            // 10% random
+            // 10% random (non-deterministic syndrome measurements)
             MeasurementKind::Random
         } else if i == 0 || r < 0.15 {
-            // 5% fixed (of total) - 0.10 to 0.15
+            // 5% fixed
             let flip: bool = random::random(1)[0] > 0.5;
             MeasurementKind::Fixed(flip)
         } else {
-            // Computed from earlier measurements (1-3 deps)
+            // Computed from earlier measurements
+            // Key insight: dependencies can span multiple rounds
             let max_deps = 3.min(i);
-            let num_deps = 1 + (random::randint(0, Some(max_deps as i64), 1)[0] as usize % max_deps);
+            let num_deps =
+                1 + (random::randint(0, Some(max_deps as i64), 1)[0] as usize % max_deps);
 
-            // Pick random earlier indices
             let mut deps: Vec<usize> = Vec::with_capacity(num_deps);
-            for _ in 0..num_deps {
-                let dep = random::randint(0, Some(i as i64), 1)[0] as usize;
+
+            // For multi-round scenarios, prefer dependencies from:
+            // 1. Same position in previous rounds (simulating repeated stabilizer measurement)
+            // 2. Random earlier measurements
+            for d in 0..num_deps {
+                let dep = if current_round > 0 && d == 0 && measurements_per_round > 0 {
+                    // First dep: same stabilizer from a previous round
+                    let prev_round = random::randint(0, Some(current_round as i64), 1)[0] as usize;
+                    let pos_in_round = i % measurements_per_round;
+                    (prev_round * measurements_per_round + pos_in_round).min(i.saturating_sub(1))
+                } else {
+                    // Other deps: random earlier measurement
+                    random::randint(0, Some(i as i64), 1)[0] as usize
+                };
+
                 if !deps.contains(&dep) {
                     deps.push(dep);
                 }

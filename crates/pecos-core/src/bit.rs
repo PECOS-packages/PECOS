@@ -115,13 +115,13 @@ impl Bit {
 
 impl std::fmt::Display for Bit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0 as u8)
+        write!(f, "{}", u8::from(self.0))
     }
 }
 
 impl std::fmt::Debug for Bit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0 as u8)
+        write!(f, "{}", u8::from(self.0))
     }
 }
 
@@ -166,7 +166,7 @@ impl From<u8> for Bit {
 impl From<Bit> for u8 {
     #[inline]
     fn from(bit: Bit) -> Self {
-        bit.0 as u8
+        u8::from(bit.0)
     }
 }
 
@@ -180,7 +180,7 @@ impl From<i32> for Bit {
 impl From<Bit> for i32 {
     #[inline]
     fn from(bit: Bit) -> Self {
-        bit.0 as i32
+        i32::from(bit.0)
     }
 }
 
@@ -194,7 +194,7 @@ impl From<usize> for Bit {
 impl From<Bit> for usize {
     #[inline]
     fn from(bit: Bit) -> Self {
-        bit.0 as usize
+        usize::from(bit.0)
     }
 }
 
@@ -610,7 +610,7 @@ impl Bits {
 impl std::fmt::Display for Bits {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for bit in self.0.iter().rev() {
-            write!(f, "{}", bit)?;
+            write!(f, "{bit}")?;
         }
         Ok(())
     }
@@ -619,7 +619,7 @@ impl std::fmt::Display for Bits {
 // Debug also as binary string for consistency
 impl std::fmt::Debug for Bits {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "\"{}\"", self)
+        write!(f, "\"{self}\"")
     }
 }
 
@@ -630,7 +630,10 @@ impl Bits {
     /// on the right (standard binary notation).
     #[must_use]
     pub fn format_lsb_left(&self) -> String {
-        self.0.iter().map(|b| if b.is_one() { '1' } else { '0' }).collect()
+        self.0
+            .iter()
+            .map(|b| if b.is_one() { '1' } else { '0' })
+            .collect()
     }
 }
 
@@ -818,7 +821,7 @@ mod tests {
     fn test_vec_debug() {
         let bits = vec![Bit::ONE, Bit::ZERO, Bit::ONE, Bit::ONE, Bit::ZERO];
         // Debug format shows [1, 0, 1, 1, 0] instead of [true, false, ...]
-        assert_eq!(format!("{:?}", bits), "[1, 0, 1, 1, 0]");
+        assert_eq!(format!("{bits:?}"), "[1, 0, 1, 1, 0]");
     }
 
     #[test]
@@ -847,14 +850,14 @@ mod tests {
         // bits[0]=1, bits[1]=0, bits[2]=1, bits[3]=1, bits[4]=0
         // displays as "01101" (reading left-to-right: bits[4], bits[3], bits[2], bits[1], bits[0])
         let bits = Bits::new(vec![Bit::ONE, Bit::ZERO, Bit::ONE, Bit::ONE, Bit::ZERO]);
-        assert_eq!(format!("{}", bits), "01101");
+        assert_eq!(format!("{bits}"), "01101");
     }
 
     #[test]
     fn test_bits_debug() {
         // bits[0]=1, bits[1]=0, bits[2]=1 -> "101" (bits[2], bits[1], bits[0])
         let bits = Bits::new(vec![Bit::ONE, Bit::ZERO, Bit::ONE]);
-        assert_eq!(format!("{:?}", bits), "\"101\"");
+        assert_eq!(format!("{bits:?}"), "\"101\"");
     }
 
     #[test]
@@ -863,12 +866,12 @@ mod tests {
         let bits = Bits::new(vec![Bit::ONE, Bit::ZERO, Bit::ONE]);
         assert_eq!(bits.format_lsb_left(), "101");
         // Compare with Display which shows index 0 on the right
-        assert_eq!(format!("{}", bits), "101"); // Same in this case (palindrome)
+        assert_eq!(format!("{bits}"), "101"); // Same in this case (palindrome)
 
         // Non-palindrome case
         let bits2 = Bits::new(vec![Bit::ONE, Bit::ONE, Bit::ZERO]);
-        assert_eq!(bits2.format_lsb_left(), "110");  // index order: [0]=1, [1]=1, [2]=0
-        assert_eq!(format!("{}", bits2), "011");     // binary order: [2]=0, [1]=1, [0]=1
+        assert_eq!(bits2.format_lsb_left(), "110"); // index order: [0]=1, [1]=1, [2]=0
+        assert_eq!(format!("{bits2}"), "011"); // binary order: [2]=0, [1]=1, [0]=1
     }
 
     #[test]
@@ -917,7 +920,7 @@ mod tests {
         // bits[0]=1, bits[1]=0 -> displays as "01" (LSB on right)
         let vec = vec![Bit::ONE, Bit::ZERO];
         let bits: Bits = vec.into();
-        assert_eq!(format!("{}", bits), "01");
+        assert_eq!(format!("{bits}"), "01");
     }
 
     #[test]
@@ -925,7 +928,7 @@ mod tests {
         // bits[0]=true, bits[1]=false, bits[2]=true -> "101" (palindrome)
         let bools = vec![true, false, true];
         let bits: Bits = bools.into();
-        assert_eq!(format!("{}", bits), "101");
+        assert_eq!(format!("{bits}"), "101");
     }
 
     #[test]
@@ -947,6 +950,6 @@ mod tests {
         // bits[0]=1, bits[1]=0, bits[2]=1 -> "101" (palindrome)
         let vec = vec![Bit::ONE, Bit::ZERO, Bit::ONE];
         let bits: Bits = vec.into_iter().collect();
-        assert_eq!(format!("{}", bits), "101");
+        assert_eq!(format!("{bits}"), "101");
     }
 }

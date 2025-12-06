@@ -53,6 +53,7 @@ use crate::symbolic_sparse_stab::MeasurementHistory;
 use pecos_core::{Bit, Bits};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
+use wide::u64x4;
 
 // ============================================================================
 // Common types
@@ -315,6 +316,7 @@ impl SequentialMeasurementSampler {
     ///
     /// Returns column-major data: `columns[measurement][word]` where
     /// bit `i` of word `w` corresponds to shot `w*64 + i`.
+    #[inline]
     #[must_use]
     pub fn sample_raw<R: Rng>(&self, shots: usize, rng: &mut R) -> Vec<Vec<u64>> {
         if self.measurements.is_empty() || shots == 0 {
@@ -372,6 +374,7 @@ impl SequentialMeasurementSampler {
     ///
     /// # Returns
     /// A [`SampleResult`] containing the sampled measurement outcomes.
+    #[inline]
     #[must_use]
     pub fn sample(&self, shots: usize) -> SampleResult {
         let mut rng = SmallRng::from_rng(&mut rand::rng());
@@ -386,6 +389,7 @@ impl SequentialMeasurementSampler {
     ///
     /// # Returns
     /// A [`SampleResult`] containing the sampled measurement outcomes.
+    #[inline]
     #[must_use]
     pub fn sample_with_seed(&self, shots: usize, seed: u64) -> SampleResult {
         let mut rng = SmallRng::seed_from_u64(seed);
@@ -400,6 +404,7 @@ impl SequentialMeasurementSampler {
     ///
     /// # Returns
     /// A [`SampleResult`] containing the sampled measurement outcomes.
+    #[inline]
     #[must_use]
     pub fn sample_with_rng<R: Rng>(&self, shots: usize, rng: &mut R) -> SampleResult {
         let columns = self.sample_raw(shots, rng);
@@ -474,39 +479,24 @@ impl MeasurementSampler {
         self.measurements.len()
     }
 
-    /// Generate a column of random bits as Vec<u64>.
+    /// Convert a SIMD column to a u64 column via zero-copy transmute.
     #[inline]
-    fn generate_random_column<R: Rng>(num_words: usize, rng: &mut R) -> Vec<u64> {
-        let mut column = Vec::with_capacity(num_words);
-        for _ in 0..num_words {
-            column.push(rng.random::<u64>());
-        }
-        column
-    }
+    fn simd_column_to_u64_vec(simd_col: Vec<u64x4>, num_words: usize) -> Vec<u64> {
+        // Safety: u64x4 is repr(C) and contains exactly 4 u64s in order.
+        // We're converting Vec<u64x4> to Vec<u64> with 4x the length.
+        let simd_len = simd_col.len();
+        let u64_capacity = simd_len * 4;
 
-    /// Compute a column by `XORing` dependency columns using u64 operations.
-    #[inline]
-    fn compute_xor_column(
-        columns: &[Vec<u64>],
-        deps: &[usize],
-        flip: bool,
-        num_words: usize,
-    ) -> Vec<u64> {
-        // Start with all zeros or all ones depending on flip
-        let mut result = if flip {
-            vec![!0u64; num_words]
-        } else {
-            vec![0u64; num_words]
-        };
+        // Convert Vec<u64x4> to Vec<u64> without copying
+        let mut simd_col = std::mem::ManuallyDrop::new(simd_col);
+        let ptr = simd_col.as_mut_ptr().cast::<u64>();
 
-        // XOR each dependency column - this is very SIMD-friendly
-        for &dep_idx in deps {
-            let dep_column = &columns[dep_idx];
-            for (r, &d) in result.iter_mut().zip(dep_column.iter()) {
-                *r ^= d;
-            }
-        }
+        // Safety: u64x4 has same alignment as u64 (or stricter), and we're
+        // reinterpreting the memory as a flat array of u64s.
+        let mut result = unsafe { Vec::from_raw_parts(ptr, u64_capacity, u64_capacity) };
 
+        // Truncate to the actual number of words needed
+        result.truncate(num_words);
         result
     }
 
@@ -514,6 +504,9 @@ impl MeasurementSampler {
     ///
     /// Returns a vector of columns where each column is a `Vec<u64>` representing
     /// all shots for one measurement. Bit `i` of word `w` corresponds to shot `w*64 + i`.
+    ///
+    /// Internally uses SIMD operations for better performance.
+    #[inline]
     #[must_use]
     pub fn sample_raw<R: Rng>(&self, shots: usize, rng: &mut R) -> Vec<Vec<u64>> {
         if self.measurements.is_empty() || shots == 0 {
@@ -521,35 +514,112 @@ impl MeasurementSampler {
         }
 
         let num_words = shots.div_ceil(64);
+
+        // Use SIMD internally, then convert to Vec<u64>
+        let simd_columns = self.sample_raw_simd(shots, rng);
+
+        // Convert each SIMD column to u64 via zero-copy transmute
+        simd_columns
+            .into_iter()
+            .map(|col| Self::simd_column_to_u64_vec(col, num_words))
+            .collect()
+    }
+
+    // ========================================================================
+    // SIMD-native API for advanced users
+    // ========================================================================
+    //
+    // These methods work with u64x4 (256-bit SIMD) columns directly.
+    // Each u64x4 holds 4 u64s = 256 bits = 256 shots.
+    // Use these for maximum performance when you can consume SIMD data directly.
+
+    /// Generate a SIMD column of random bits.
+    #[inline]
+    fn generate_random_column_simd<R: Rng>(num_simd_words: usize, rng: &mut R) -> Vec<u64x4> {
+        let mut column = Vec::with_capacity(num_simd_words);
+        for _ in 0..num_simd_words {
+            column.push(u64x4::new([
+                rng.random::<u64>(),
+                rng.random::<u64>(),
+                rng.random::<u64>(),
+                rng.random::<u64>(),
+            ]));
+        }
+        column
+    }
+
+    /// Compute a SIMD column by XORing dependency columns.
+    #[inline]
+    fn compute_xor_column_simd(
+        columns: &[Vec<u64x4>],
+        deps: &[usize],
+        flip: bool,
+        num_simd_words: usize,
+    ) -> Vec<u64x4> {
+        let init = if flip {
+            u64x4::splat(!0u64)
+        } else {
+            u64x4::splat(0u64)
+        };
+        let mut result = vec![init; num_simd_words];
+
+        for &dep_idx in deps {
+            let dep_column = &columns[dep_idx];
+            for (r, d) in result.iter_mut().zip(dep_column.iter()) {
+                *r ^= *d;
+            }
+        }
+
+        result
+    }
+
+    /// Sample directly to SIMD-native u64x4 columns (internal implementation).
+    ///
+    /// Returns a vector of columns where each column is a `Vec<u64x4>`.
+    /// Each `u64x4` holds 4 u64s (256 bits = 256 shots).
+    #[inline]
+    fn sample_raw_simd<R: Rng>(&self, shots: usize, rng: &mut R) -> Vec<Vec<u64x4>> {
+        if self.measurements.is_empty() || shots == 0 {
+            return vec![Vec::new(); self.measurements.len()];
+        }
+
+        let num_words = shots.div_ceil(64);
+        let num_simd_words = num_words.div_ceil(4);
         let num_measurements = self.measurements.len();
 
-        // Pre-allocate all columns at once (single allocation for the outer vec)
-        let mut columns: Vec<Vec<u64>> = Vec::with_capacity(num_measurements);
+        let mut columns: Vec<Vec<u64x4>> = Vec::with_capacity(num_measurements);
 
         for kind in &self.measurements {
             match kind {
                 MeasurementKind::Fixed(value) => {
-                    let fill = if *value { !0u64 } else { 0u64 };
-                    columns.push(vec![fill; num_words]);
+                    let fill = if *value {
+                        u64x4::splat(!0u64)
+                    } else {
+                        u64x4::splat(0u64)
+                    };
+                    columns.push(vec![fill; num_simd_words]);
                 }
                 MeasurementKind::Random => {
-                    columns.push(Self::generate_random_column(num_words, rng));
+                    columns.push(Self::generate_random_column_simd(num_simd_words, rng));
                 }
                 MeasurementKind::Copy(src) => {
-                    // Clone the source column
                     columns.push(columns[*src].clone());
                 }
                 MeasurementKind::CopyFlipped(src) => {
-                    // Clone and NOT the column - index loop for better SIMD
-                    let mut result = vec![0u64; num_words];
                     let src_col = &columns[*src];
-                    for i in 0..num_words {
-                        result[i] = !src_col[i];
+                    let mut result = Vec::with_capacity(num_simd_words);
+                    for v in src_col {
+                        result.push(!*v);
                     }
                     columns.push(result);
                 }
                 MeasurementKind::Computed { deps, flip } => {
-                    columns.push(Self::compute_xor_column(&columns, deps, *flip, num_words));
+                    columns.push(Self::compute_xor_column_simd(
+                        &columns,
+                        deps,
+                        *flip,
+                        num_simd_words,
+                    ));
                 }
             }
         }
@@ -834,6 +904,7 @@ impl MeasurementSampler {
     /// // Both qubits should always have the same outcome (Bell state)
     /// assert_eq!(result.get(0, 0), result.get(0, 1));
     /// ```
+    #[inline]
     #[must_use]
     pub fn sample(&self, shots: usize) -> SampleResult {
         let mut rng = SmallRng::from_rng(&mut rand::rng());
@@ -863,6 +934,7 @@ impl MeasurementSampler {
     /// let result2 = sampler.sample_with_seed(1000, 42);
     /// assert_eq!(result1.get(0, 0), result2.get(0, 0));
     /// ```
+    #[inline]
     #[must_use]
     pub fn sample_with_seed(&self, shots: usize, seed: u64) -> SampleResult {
         let mut rng = SmallRng::seed_from_u64(seed);
@@ -872,6 +944,7 @@ impl MeasurementSampler {
     /// Sample measurement outcomes with a custom RNG.
     ///
     /// Use this when you need full control over the random number generator.
+    #[inline]
     #[must_use]
     pub fn sample_with_rng<R: Rng>(&self, shots: usize, rng: &mut R) -> SampleResult {
         let columns = self.sample_raw(shots, rng);

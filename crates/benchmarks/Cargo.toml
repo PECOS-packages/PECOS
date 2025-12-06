@@ -13,6 +13,7 @@ publish = false
 [dev-dependencies]
 criterion.workspace = true
 pecos.workspace = true
+rand.workspace = true
 
 [[bench]]
 name = "benchmarks"

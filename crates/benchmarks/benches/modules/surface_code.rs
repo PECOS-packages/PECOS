@@ -20,12 +20,14 @@
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos::prelude::*;
 use pecos::qsim::measurement_sampler::{MeasurementSampler, SequentialMeasurementSampler};
+use rand::Rng;
 use std::hint::black_box;
 
 pub fn benchmarks<M: Measurement>(c: &mut Criterion<M>) {
     bench_surface_code_simulation(c);
     bench_surface_code_sampling(c);
     bench_surface_code_shot_scaling(c);
+    bench_simd_vs_scalar(c);
 }
 
 /// Surface code parameters for a given distance.
@@ -257,6 +259,64 @@ fn bench_surface_code_shot_scaling<M: Measurement>(c: &mut Criterion<M>) {
             |b, &shots| b.iter(|| black_box(sampler.sample(shots))),
         );
     }
+
+    group.finish();
+}
+
+/// Benchmark comparing SIMD-native vs scalar APIs.
+///
+/// This isolates the SIMD processing time from the conversion overhead.
+fn bench_simd_vs_scalar<M: Measurement>(c: &mut Criterion<M>) {
+    use rand::rngs::SmallRng;
+    use rand::SeedableRng;
+
+    let mut group = c.benchmark_group("SIMD vs Scalar");
+
+    // Use d=11, 5 rounds as a representative workload
+    let params = SurfaceCodeParams::new(11);
+    let rounds = 5;
+    let sim = simulate_surface_code(&params, rounds);
+    let history = sim.measurement_history().clone();
+    let num_measurements = history.len();
+
+    let sampler = MeasurementSampler::new(&history);
+    let shots = 100_000;
+
+    group.throughput(Throughput::Elements(num_measurements as u64 * shots as u64));
+
+    // Regular API: sample() returns SampleResult (uses SmallRng internally)
+    group.bench_with_input(BenchmarkId::new("sample", "d11_r5"), &(), |b, _| {
+        b.iter(|| black_box(sampler.sample(shots)));
+    });
+
+    // sample_with_rng: should be identical to sample() but with explicit RNG
+    group.bench_with_input(BenchmarkId::new("sample_with_rng", "d11_r5"), &(), |b, _| {
+        b.iter(|| {
+            let mut rng = SmallRng::from_rng(&mut rand::rng());
+            black_box(sampler.sample_with_rng(shots, &mut rng))
+        });
+    });
+
+    // Raw API with SmallRng seeded from ThreadRng (exactly like sample())
+    group.bench_with_input(BenchmarkId::new("sample_raw_from_threadrng", "d11_r5"), &(), |b, _| {
+        b.iter(|| {
+            let mut rng = SmallRng::from_rng(&mut rand::rng());
+            black_box(sampler.sample_raw(shots, &mut rng))
+        });
+    });
+
+    // Raw API with SmallRng seeded from u64
+    group.bench_with_input(BenchmarkId::new("sample_raw_seed_u64", "d11_r5"), &(), |b, _| {
+        b.iter(|| {
+            let mut rng = SmallRng::seed_from_u64(42);
+            black_box(sampler.sample_raw(shots, &mut rng))
+        });
+    });
+
+    // Also test with ThreadRng for comparison
+    group.bench_with_input(BenchmarkId::new("sample_raw_threadrng", "d11_r5"), &(), |b, _| {
+        b.iter(|| black_box(sampler.sample_raw(shots, &mut rand::rng())));
+    });
 
     group.finish();
 }

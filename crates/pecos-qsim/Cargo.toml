@@ -15,6 +15,7 @@ pecos-core.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
 num-complex.workspace = true
+wide.workspace = true
 
 [lints]
 workspace = true

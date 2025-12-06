@@ -113,6 +113,7 @@ bitvec = { version = "1", features = ["serde"] }
 ndarray = "0.16"
 rand = "0.9"
 rand_chacha = "0.9"
+wide = "0.7"
 
 # Windows workaround: Disable zstd-sys legacy feature to avoid MSVC ICE
 # MSVC 14.43 has an internal compiler error (C1001) when compiling zstd_v06.c

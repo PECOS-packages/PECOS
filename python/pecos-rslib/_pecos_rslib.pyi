@@ -147,6 +147,158 @@ complex128: type[ScalarComplex128]
 # in quantum-pecos (pecos.typing module) as they are Python TypeAlias constructs.
 
 # =============================================================================
+# BitInt Type (Drop-in replacement for BinArray)
+# =============================================================================
+class BitInt:
+    """Fixed-width integer type with explicit bit width.
+
+    A Rust-backed implementation of BinArray with equivalent functionality.
+    Supports both signed and unsigned operations on fixed-width integers.
+
+    Examples:
+        >>> b = BitInt(8, 5)    # 8-bit integer with value 5
+        >>> b = BitInt("1010")  # 4-bit integer from binary string (value 10)
+        >>> b = BitInt(8)       # 8-bit integer with value 0
+    """
+
+    @property
+    def size(self) -> int:
+        """Number of bits in this integer."""
+        ...
+
+    @property
+    def dtype(self) -> type:
+        """Data type (default: i64)."""
+        ...
+
+    @overload
+    def __init__(
+        self,
+        binary_str: str,
+        value: int = 0,
+        signed: bool | None = None,
+        dtype: type | None = None,
+    ) -> None:
+        """Create from binary string (e.g., '1010').
+
+        When created from binary string, defaults to unsigned unless
+        signed=True or dtype=pc.i64 etc. is specified.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        size: int,
+        value: int = 0,
+        signed: bool | None = None,
+        dtype: type | None = None,
+    ) -> None:
+        """Create from size and value.
+
+        When created from size and value, defaults to signed (for BinArray
+        compatibility) unless signed=False or dtype=pc.u64 etc. is specified.
+        """
+        ...
+
+    def __init__(
+        self,
+        size: str | int,
+        value: int = 0,
+        signed: bool | None = None,
+        dtype: type | None = None,
+    ) -> None: ...
+    def __repr__(self) -> str: ...
+    def __str__(self) -> str: ...
+    def __int__(self) -> int: ...
+    def __len__(self) -> int: ...
+    def __hash__(self) -> int: ...
+
+    def to_binary_str(
+        self, reverse_bits: bool = False, separator: str | None = None
+    ) -> str:
+        """Get binary string with configurable bit ordering.
+
+        Args:
+            reverse_bits: If True, reverse bit order (LSB on left instead of right).
+                          If False (default), use standard notation (MSB on left).
+            separator: Optional separator between bits (e.g., " " or "_").
+
+        Returns:
+            Binary string representation.
+
+        Examples:
+            >>> b = BitInt("1010")  # value 10
+            >>> b.to_binary_str()  # Standard: MSB first
+            "1010"
+            >>> b.to_binary_str(reverse_bits=True)  # Reversed: LSB first
+            "0101"
+            >>> b.to_binary_str(separator=" ")
+            "1 0 1 0"
+        """
+        ...
+
+    # Indexing
+    def __getitem__(self, index: int) -> int:
+        """Get bit at index (0 = LSB)."""
+        ...
+
+    def __setitem__(self, index: int, value: int) -> None:
+        """Set bit at index (0 = LSB)."""
+        ...
+
+    # Comparison operators
+    def __eq__(self, other: object) -> bool: ...
+    def __ne__(self, other: object) -> bool: ...
+    def __lt__(self, other: BitInt | int | str) -> bool: ...
+    def __le__(self, other: BitInt | int | str) -> bool: ...
+    def __gt__(self, other: BitInt | int | str) -> bool: ...
+    def __ge__(self, other: BitInt | int | str) -> bool: ...
+
+    # Bitwise operators
+    def __and__(self, other: BitInt | int | str) -> BitInt: ...
+    def __rand__(self, other: BitInt | int | str) -> BitInt: ...
+    def __or__(self, other: BitInt | int | str) -> BitInt: ...
+    def __ror__(self, other: BitInt | int | str) -> BitInt: ...
+    def __xor__(self, other: BitInt | int | str) -> BitInt: ...
+    def __rxor__(self, other: BitInt | int | str) -> BitInt: ...
+    def __invert__(self) -> BitInt: ...
+    def __lshift__(self, other: BitInt | int) -> BitInt: ...
+    def __rlshift__(self, other: int) -> BitInt: ...
+    def __rshift__(self, other: BitInt | int) -> BitInt: ...
+    def __rrshift__(self, other: int) -> BitInt: ...
+
+    # Arithmetic operators
+    def __add__(self, other: BitInt | int | str) -> BitInt: ...
+    def __radd__(self, other: BitInt | int | str) -> BitInt: ...
+    def __sub__(self, other: BitInt | int | str) -> BitInt: ...
+    def __rsub__(self, other: BitInt | int | str) -> BitInt: ...
+    def __mul__(self, other: BitInt | int | str) -> BitInt: ...
+    def __rmul__(self, other: BitInt | int | str) -> BitInt: ...
+    def __floordiv__(self, other: BitInt | int | str) -> BitInt: ...
+    def __rfloordiv__(self, other: BitInt | int | str) -> BitInt: ...
+    def __mod__(self, other: BitInt | int | str) -> BitInt: ...
+    def __rmod__(self, other: BitInt | int | str) -> BitInt: ...
+    def __neg__(self) -> BitInt: ...
+
+    # BinArray-compatible methods
+    def set(self, other: BitInt | int | str) -> None:
+        """Set value from another BitInt, int, or binary string."""
+        ...
+
+    def set_clip(self, other: BitInt | int | str) -> None:
+        """Set value, clipping to size (BinArray compatibility)."""
+        ...
+
+    def clamp(self, other: BitInt | int | str) -> None:
+        """Alias for set_clip (BinArray compatibility)."""
+        ...
+
+    def num_bits(self) -> int:
+        """Return number of bits (alias for size property)."""
+        ...
+
+# =============================================================================
 # DType System
 # =============================================================================
 class DType:

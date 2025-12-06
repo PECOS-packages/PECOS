@@ -11,7 +11,7 @@
 // the License.
 
 pub use crate::{
-    Bit, Bits, IndexableElement, Set, VecSet, bitvec,
+    Bit, BitInt, Bits, IndexableElement, Set, VecSet, bitvec,
     errors::PecosError,
     gate_type::GateType,
     gates::Gate,

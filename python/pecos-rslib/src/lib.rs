@@ -17,6 +17,7 @@
 // the License.
 
 mod array_buffer;
+mod bit_int_bindings;
 mod byte_message_bindings;
 mod coin_toss_bindings;
 mod cpp_sparse_sim_bindings;
@@ -52,6 +53,7 @@ mod wasm_program_bindings;
 
 // Note: hugr_bindings module is currently disabled - conflicts with pecos-qis-interface due to duplicate symbols
 
+use bit_int_bindings::PyBitInt;
 use byte_message_bindings::{PyByteMessage, PyByteMessageBuilder};
 use coin_toss_bindings::PyCoinToss;
 use cpp_sparse_sim_bindings::PySparseSimCpp;
@@ -142,6 +144,7 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<QuestStateVec>()?;
     m.add_class::<QuestDensityMatrix>()?;
     m.add_class::<Array>()?;
+    m.add_class::<PyBitInt>()?;
 
     // Register simulator utilities (GateBindingsDict, TableauWrapper)
     simulator_utils::register_simulator_utils(m)?;

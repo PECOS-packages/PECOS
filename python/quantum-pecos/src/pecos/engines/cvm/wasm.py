@@ -21,7 +21,8 @@ import pickle
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from pecos.engines.cvm.binarray import BinArray
+# from pecos.engines.cvm.binarray import BinArray
+from pecos import BinArray  # Drop-in replacement (BitInt from _pecos_rslib)
 from pecos.engines.cvm.sim_func import sim_exec
 from pecos.engines.cvm.wasm_vms.wasmtime import read_wasmtime
 from pecos.errors import MissingCCOPError

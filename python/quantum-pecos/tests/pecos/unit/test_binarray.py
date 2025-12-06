@@ -17,11 +17,14 @@ from typing import Final
 import pecos as pc
 from hypothesis import assume, given
 from hypothesis import strategies as st
-from pecos.engines.cvm.binarray import BinArray
+# from pecos.engines.cvm.binarray import BinArray
+from pecos import BinArray  # Drop-in replacement (BitInt from _pecos_rslib)
 
-DEFAULT_SIZE: Final = 63
-MIN: Final = -(2**DEFAULT_SIZE)
-MAX: Final = 2**DEFAULT_SIZE - 1
+# BitInt uses actual fixed-width arithmetic, unlike the original BinArray which used
+# Python's arbitrary-precision int internally with i64 dtype. Use 64 bits to match i64 range.
+DEFAULT_SIZE: Final = 64
+MIN: Final = -(2 ** (DEFAULT_SIZE - 1))  # -2^63 for signed 64-bit
+MAX: Final = 2 ** (DEFAULT_SIZE - 1) - 1  # 2^63 - 1 for signed 64-bit
 int_range = st.integers(min_value=MIN, max_value=MAX)
 
 

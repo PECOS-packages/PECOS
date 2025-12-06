@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from _pecos_rslib import RngPcg
 
-from pecos.engines.cvm.binarray import BinArray
+# from pecos.engines.cvm.binarray import BinArray
+from pecos import BinArray  # Drop-in replacement (BitInt from _pecos_rslib)
 
 
 class RNGModel:

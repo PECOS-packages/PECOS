@@ -22,7 +22,8 @@ import struct
 from typing import TYPE_CHECKING
 
 import pecos as pc
-from pecos.engines.cvm.binarray import BinArray
+# from pecos.engines.cvm.binarray import BinArray
+from pecos import BinArray  # Drop-in replacement (BitInt from _pecos_rslib)
 from pecos.engines.cvm.classical import eval_condition, eval_cop, set_output
 from pecos.engines.cvm.rng_model import RNGModel
 from pecos.engines.cvm.wasm import eval_cfunc, get_ccop

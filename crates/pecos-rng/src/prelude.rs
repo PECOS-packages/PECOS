@@ -17,5 +17,5 @@
 // Re-export RNG module
 pub use crate::rng_pcg;
 
-// Re-export PCG random type from the module
-pub use crate::rng_pcg::PCGRandom;
+// Re-export PCG random types from the module
+pub use crate::rng_pcg::{PCG64Fast, PCGRandom};

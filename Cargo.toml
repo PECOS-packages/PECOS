@@ -113,6 +113,9 @@ bitvec = { version = "1", features = ["serde"] }
 ndarray = "0.16"
 rand = "0.9"
 rand_chacha = "0.9"
+rand_xoshiro = "0.7"
+wyrand = { version = "0.3", features = ["rand_core"] }
+romu = "0.3"
 wide = "0.7"
 
 # Windows workaround: Disable zstd-sys legacy feature to avoid MSVC ICE

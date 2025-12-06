@@ -306,6 +306,11 @@ fn generate_qec_like_measurements(num_measurements: usize) -> Vec<MeasurementKin
 ///
 /// This creates realistic sparse dependency patterns where measurement 950
 /// might depend on measurements {0, 100, 200, ...} spanning many rounds.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
 fn generate_qec_measurements_with_rounds(
     num_measurements: usize,
     num_rounds: usize,
@@ -330,8 +335,9 @@ fn generate_qec_measurements_with_rounds(
             // Computed from earlier measurements
             // Key insight: dependencies can span multiple rounds
             let max_deps = 3.min(i);
-            let num_deps =
-                1 + (random::randint(0, Some(max_deps as i64), 1)[0] as usize % max_deps);
+            // Generate random number of dependencies (1 to max_deps inclusive)
+            let rand_val: f64 = random::random(1)[0];
+            let num_deps = 1 + (rand_val * max_deps as f64) as usize % max_deps;
 
             let mut deps: Vec<usize> = Vec::with_capacity(num_deps);
 
@@ -341,12 +347,14 @@ fn generate_qec_measurements_with_rounds(
             for d in 0..num_deps {
                 let dep = if current_round > 0 && d == 0 && measurements_per_round > 0 {
                     // First dep: same stabilizer from a previous round
-                    let prev_round = random::randint(0, Some(current_round as i64), 1)[0] as usize;
+                    let rand_val: f64 = random::random(1)[0];
+                    let prev_round = (rand_val * current_round as f64) as usize;
                     let pos_in_round = i % measurements_per_round;
                     (prev_round * measurements_per_round + pos_in_round).min(i.saturating_sub(1))
                 } else {
                     // Other deps: random earlier measurement
-                    random::randint(0, Some(i as i64), 1)[0] as usize
+                    let rand_val: f64 = random::random(1)[0];
+                    (rand_val * i as f64) as usize
                 };
 
                 if !deps.contains(&dep) {

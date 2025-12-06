@@ -21,8 +21,7 @@ import pickle
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-# from pecos.engines.cvm.binarray import BinArray
-from pecos import BinArray  # Drop-in replacement (BitInt from _pecos_rslib)
+from pecos import BitInt
 from pecos.engines.cvm.sim_func import sim_exec
 from pecos.engines.cvm.wasm_vms.wasmtime import read_wasmtime
 from pecos.errors import MissingCCOPError
@@ -116,7 +115,7 @@ def get_ccop(circuit: QuantumCircuit) -> CCOPObject | None:
 def eval_cfunc(
     runner: EngineRunner,
     params: dict[str, Any],
-    output: dict[str, BinArray],
+    output: dict[str, BitInt],
 ) -> None:
     """Evaluate a classical function using the coprocessor.
 
@@ -163,7 +162,7 @@ def eval_cfunc(
             if runner.debug and func.startswith("sim_"):
                 output[assign_vars[0]] = vals
             else:
-                b = BinArray(a_obj.size, int(vals))
+                b = BitInt(a_obj.size, int(vals))
                 a_obj.set(b)
 
         else:
@@ -173,7 +172,7 @@ def eval_cfunc(
                 if runner.debug and func.startswith("sim_"):
                     output[asym] = b
                 elif isinstance(b, int):
-                    bin_array = BinArray(
+                    bin_array = BitInt(
                         a_obj.size,
                         int(b),
                     )

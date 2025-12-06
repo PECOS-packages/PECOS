@@ -22,8 +22,7 @@ import struct
 from typing import TYPE_CHECKING
 
 import pecos as pc
-# from pecos.engines.cvm.binarray import BinArray
-from pecos import BinArray  # Drop-in replacement (BitInt from _pecos_rslib)
+from pecos import BitInt
 from pecos.engines.cvm.classical import eval_condition, eval_cop, set_output
 from pecos.engines.cvm.rng_model import RNGModel
 from pecos.engines.cvm.wasm import eval_cfunc, get_ccop
@@ -45,7 +44,7 @@ if TYPE_CHECKING:
             self,
             tick_circuit: QuantumCircuit,
             time: int,
-            output: dict[str, BinArray],
+            output: dict[str, BitInt],
         ) -> None:
             """Analyze a circuit at a specific time tick.
 
@@ -106,7 +105,7 @@ class HybridEngine:
         error_gen: ParentErrorModel | None = None,
         error_params: dict[str, float | dict[str, float]] | None = None,
         error_circuits: dict[int, dict[str, QuantumCircuit | set[int]]] | None = None,
-        output: dict[str, BinArray] | None = None,
+        output: dict[str, BitInt] | None = None,
         output_spec: dict[str, int] | None = None,
         circ_inspector: CircuitInspector | None = None,
     ) -> tuple[dict, dict]:
@@ -208,8 +207,8 @@ class HybridEngine:
     def run_circuit(
         self,
         state: SimulatorProtocol,
-        output: dict[str, BinArray],
-        output_export: dict[str, BinArray],
+        output: dict[str, BitInt],
+        output_export: dict[str, BitInt],
         circuit: QuantumCircuit,
         error_gen: ParentErrorModel,
         removed_locations: set[int] | None = None,
@@ -274,8 +273,8 @@ class HybridEngine:
 
                         if isinstance(val, str):
                             output_export[sym] = val
-                        elif isinstance(val, BinArray):
-                            output_export[sym] = BinArray(str(val))
+                        elif isinstance(val, BitInt):
+                            output_export[sym] = BitInt(str(val))
                         else:
                             msg = (
                                 f"This output type `{type(val)}` not handled at export!"
@@ -311,7 +310,7 @@ class HybridEngine:
     @staticmethod
     def run_gate(
         state: SimulatorProtocol,
-        output: dict[str, BinArray],
+        output: dict[str, BitInt],
         symbol: str,
         locations: set[int],
         **params: GateParams,

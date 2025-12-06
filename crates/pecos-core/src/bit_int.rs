@@ -36,9 +36,7 @@
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::ops::{
-    Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub,
-};
+use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub};
 
 /// Internal storage for `BitInt` values.
 ///
@@ -145,7 +143,10 @@ impl BitInt {
     #[allow(clippy::cast_possible_truncation)] // Size is validated below
     pub fn from_binary_str(s: &str) -> Self {
         assert!(!s.is_empty(), "Binary string must not be empty");
-        assert!(u16::try_from(s.len()).is_ok(), "Binary string too long (max 65535 chars)");
+        assert!(
+            u16::try_from(s.len()).is_ok(),
+            "Binary string too long (max 65535 chars)"
+        );
         let size = s.len() as u16;
 
         if size <= 64 {
@@ -384,11 +385,13 @@ impl BitInt {
     fn word_at(&self, index: usize) -> u64 {
         match &self.value {
             BitIntValue::Small(v) => {
-                if index == 0 { *v } else { 0 }
+                if index == 0 {
+                    *v
+                } else {
+                    0
+                }
             }
-            BitIntValue::Large(words) => {
-                words.get(index).copied().unwrap_or(0)
-            }
+            BitIntValue::Large(words) => words.get(index).copied().unwrap_or(0),
         }
     }
 
@@ -486,11 +489,10 @@ impl BitXor for &BitInt {
     fn bitxor(self, rhs: Self) -> BitInt {
         // Operate on raw values, result uses left operand's size (like BinArray)
         match &self.value {
-            BitIntValue::Small(_) => {
-                self.new_with_same_config(self.raw_u64() ^ rhs.raw_u64())
-            }
+            BitIntValue::Small(_) => self.new_with_same_config(self.raw_u64() ^ rhs.raw_u64()),
             BitIntValue::Large(words) => {
-                let result: Box<[u64]> = words.iter()
+                let result: Box<[u64]> = words
+                    .iter()
                     .enumerate()
                     .map(|(i, &w)| w ^ rhs.word_at(i))
                     .collect();
@@ -506,11 +508,10 @@ impl BitAnd for &BitInt {
     fn bitand(self, rhs: Self) -> BitInt {
         // Operate on raw values, result uses left operand's size (like BinArray)
         match &self.value {
-            BitIntValue::Small(_) => {
-                self.new_with_same_config(self.raw_u64() & rhs.raw_u64())
-            }
+            BitIntValue::Small(_) => self.new_with_same_config(self.raw_u64() & rhs.raw_u64()),
             BitIntValue::Large(words) => {
-                let result: Box<[u64]> = words.iter()
+                let result: Box<[u64]> = words
+                    .iter()
                     .enumerate()
                     .map(|(i, &w)| w & rhs.word_at(i))
                     .collect();
@@ -526,11 +527,10 @@ impl BitOr for &BitInt {
     fn bitor(self, rhs: Self) -> BitInt {
         // Operate on raw values, result uses left operand's size (like BinArray)
         match &self.value {
-            BitIntValue::Small(_) => {
-                self.new_with_same_config(self.raw_u64() | rhs.raw_u64())
-            }
+            BitIntValue::Small(_) => self.new_with_same_config(self.raw_u64() | rhs.raw_u64()),
             BitIntValue::Large(words) => {
-                let result: Box<[u64]> = words.iter()
+                let result: Box<[u64]> = words
+                    .iter()
                     .enumerate()
                     .map(|(i, &w)| w | rhs.word_at(i))
                     .collect();
@@ -545,9 +545,7 @@ impl Not for &BitInt {
 
     fn not(self) -> BitInt {
         match &self.value {
-            BitIntValue::Small(v) => {
-                self.new_with_same_config(!v)
-            }
+            BitIntValue::Small(v) => self.new_with_same_config(!v),
             BitIntValue::Large(words) => {
                 let new_words: Box<[u64]> = words.iter().map(|w| !w).collect();
                 self.new_with_same_config_large(new_words)
@@ -569,9 +567,7 @@ impl Shl<u16> for &BitInt {
         }
 
         match &self.value {
-            BitIntValue::Small(v) => {
-                self.new_with_same_config(v << rhs)
-            }
+            BitIntValue::Small(v) => self.new_with_same_config(v << rhs),
             BitIntValue::Large(words) => {
                 let word_shift = (rhs / 64) as usize;
                 let bit_shift = rhs % 64;
@@ -942,16 +938,16 @@ mod tests {
 
     #[test]
     fn test_arithmetic_add() {
-        let a = BitInt::new_unsigned(8, 100);
-        let b = BitInt::new_unsigned(8, 50);
-        let c = &a + &b;
-        assert_eq!(c.to_u64(), Some(150));
+        let left = BitInt::new_unsigned(8, 100);
+        let right = BitInt::new_unsigned(8, 50);
+        let sum = &left + &right;
+        assert_eq!(sum.to_u64(), Some(150));
 
         // Test overflow wrapping
-        let d = BitInt::new_unsigned(8, 200);
-        let e = BitInt::new_unsigned(8, 100);
-        let f = &d + &e;
-        assert_eq!(f.to_u64(), Some(44)); // (200 + 100) % 256 = 44
+        let large_left = BitInt::new_unsigned(8, 200);
+        let large_right = BitInt::new_unsigned(8, 100);
+        let overflow_sum = &large_left + &large_right;
+        assert_eq!(overflow_sum.to_u64(), Some(44)); // (200 + 100) % 256 = 44
     }
 
     #[test]

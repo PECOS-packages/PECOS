@@ -147,12 +147,12 @@ complex128: type[ScalarComplex128]
 # in quantum-pecos (pecos.typing module) as they are Python TypeAlias constructs.
 
 # =============================================================================
-# BitInt Type (Drop-in replacement for BinArray)
+# BitInt Type
 # =============================================================================
 class BitInt:
     """Fixed-width integer type with explicit bit width.
 
-    A Rust-backed implementation of BinArray with equivalent functionality.
+    A Rust-backed binary integer type for efficient fixed-width arithmetic.
     Supports both signed and unsigned operations on fixed-width integers.
 
     Examples:
@@ -196,8 +196,8 @@ class BitInt:
     ) -> None:
         """Create from size and value.
 
-        When created from size and value, defaults to signed (for BinArray
-        compatibility) unless signed=False or dtype=pc.u64 etc. is specified.
+        When created from size and value, defaults to signed
+        unless signed=False or dtype=pc.u64 etc. is specified.
         """
         ...
 
@@ -213,7 +213,6 @@ class BitInt:
     def __int__(self) -> int: ...
     def __len__(self) -> int: ...
     def __hash__(self) -> int: ...
-
     def to_binary_str(
         self, reverse_bits: bool = False, separator: str | None = None
     ) -> str:
@@ -237,7 +236,6 @@ class BitInt:
             "1 0 1 0"
         """
         ...
-
     # Indexing
     def __getitem__(self, index: int) -> int:
         """Get bit at index (0 = LSB)."""
@@ -246,7 +244,6 @@ class BitInt:
     def __setitem__(self, index: int, value: int) -> None:
         """Set bit at index (0 = LSB)."""
         ...
-
     # Comparison operators
     def __eq__(self, other: object) -> bool: ...
     def __ne__(self, other: object) -> bool: ...

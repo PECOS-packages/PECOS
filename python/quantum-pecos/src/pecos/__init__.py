@@ -28,11 +28,12 @@ except PackageNotFoundError:
 
 # PECOS namespaces
 import sys
+import warnings
 from typing import NoReturn
 
 from _pecos_rslib import (
     Array,  # Array type with generic dtype support (Array[f64], etc.)
-    BitInt as BinArray,  # Drop-in replacement for legacy BinArray
+    BitInt,  # Fixed-width binary integer type
     Pauli,  # Quantum Pauli operators (I, X, Y, Z)
     PauliString,  # Multi-qubit Pauli operators
     abs,  # Absolute value  # noqa: A004
@@ -193,8 +194,23 @@ from pecos import (  # noqa: E402
 )
 from pecos.circuits.quantum_circuit import QuantumCircuit  # noqa: E402
 from pecos.engines import circuit_runners  # noqa: E402
-# BinArray is now imported at the top from _pecos_rslib (BitInt as BinArray)
 from pecos.engines.hybrid_engine_old import HybridEngine  # noqa: E402
+
+
+def BinArray(*args, **kwargs):  # noqa: ANN002, ANN003, ANN201, N802
+    """Deprecated: Use BitInt instead.
+
+    BinArray is a deprecated alias for BitInt. It will be removed in a future version.
+    Please update your code to use BitInt directly.
+    """
+    warnings.warn(
+        "BinArray is deprecated and will be removed in a future version. "
+        "Please use BitInt instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return BitInt(*args, **kwargs)
+
 
 # Import Guppy functionality (with graceful fallback)
 try:
@@ -222,7 +238,8 @@ except ImportError:
 
 __all__ = [
     "GUPPY_INTEGRATION_AVAILABLE",
-    "BinArray",
+    "BinArray",  # Deprecated - use BitInt instead
+    "BitInt",
     "HybridEngine",
     "QuantumCircuit",
     "__version__",

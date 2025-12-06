@@ -65,14 +65,10 @@ fn extract_operand_value(obj: &Bound<'_, PyAny>) -> PyResult<u64> {
     // Try str (binary string, with optional "0b" prefix)
     if let Ok(s) = obj.extract::<String>() {
         // Strip optional "0b" or "0B" prefix
-        let s_ref = s.as_str();
-        let stripped = if s_ref.starts_with("0b") {
-            &s_ref[2..]
-        } else if s_ref.starts_with("0B") {
-            &s_ref[2..]
-        } else {
-            s_ref
-        };
+        let stripped = s
+            .strip_prefix("0b")
+            .or_else(|| s.strip_prefix("0B"))
+            .unwrap_or(&s);
 
         if stripped.chars().all(|c| c == '0' || c == '1') {
             return u64::from_str_radix(stripped, 2).map_err(|e| {
@@ -91,9 +87,9 @@ fn extract_operand_value(obj: &Bound<'_, PyAny>) -> PyResult<u64> {
     ))
 }
 
-/// Helper methods for PyBitInt that are not exposed to Python.
+/// Helper methods for `PyBitInt` that are not exposed to Python.
 impl PyBitInt {
-    /// Helper to create BitInt from operand with matching signedness to self.
+    /// Helper to create `BitInt` from operand with matching signedness to self.
     fn operand_to_bitint(&self, other: &Bound<'_, PyAny>) -> PyResult<BitInt> {
         // If other is already a PyBitInt, use it directly
         if let Ok(bit_int) = other.extract::<PyRef<PyBitInt>>() {
@@ -112,14 +108,10 @@ impl PyBitInt {
 
         // For binary strings
         if let Ok(s) = other.extract::<String>() {
-            let s_ref = s.as_str();
-            let stripped = if s_ref.starts_with("0b") {
-                &s_ref[2..]
-            } else if s_ref.starts_with("0B") {
-                &s_ref[2..]
-            } else {
-                s_ref
-            };
+            let stripped = s
+                .strip_prefix("0b")
+                .or_else(|| s.strip_prefix("0B"))
+                .unwrap_or(&s);
 
             if stripped.chars().all(|c| c == '0' || c == '1') {
                 let val = u64::from_str_radix(stripped, 2).map_err(|e| {
@@ -157,7 +149,7 @@ impl PyBitInt {
     /// Args:
     ///     size: The bit width (1 to 65535) or a binary string
     ///     value: The initial value (default: 0), ignored if size is a string
-    ///     signed: Whether to use signed semantics (default: True for BinArray compat)
+    ///     signed: Whether to use signed semantics (default: True for `BinArray` compat)
     ///     dtype: Optional dtype (pc.i64, pc.u64, etc.) to specify signedness
     ///
     /// Returns:
@@ -220,7 +212,11 @@ impl PyBitInt {
                 ))
             })?;
 
-            let size_u16 = s.len() as u16;
+            let size_u16 = u16::try_from(s.len()).map_err(|_| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Binary string exceeds maximum BitInt size (65535 bits)",
+                )
+            })?;
             let inner = if is_signed {
                 #[allow(clippy::cast_possible_wrap)]
                 BitInt::new_signed(size_u16, val as i64)
@@ -433,11 +429,7 @@ impl PyBitInt {
     /// Like `BinArray.num_bits()`.
     pub fn num_bits(&self) -> u32 {
         if let Some(v) = self.inner.to_u64() {
-            if v == 0 {
-                1
-            } else {
-                64 - v.leading_zeros()
-            }
+            if v == 0 { 1 } else { 64 - v.leading_zeros() }
         } else {
             // For large values, return the size
             u32::from(self.inner.size())
@@ -687,7 +679,7 @@ impl PyBitInt {
     /// Get the binary string representation with configurable bit ordering.
     ///
     /// Args:
-    ///     reverse_bits: If True, reverse the bit order (LSB on left instead of right).
+    ///     `reverse_bits`: If True, reverse the bit order (LSB on left instead of right).
     ///                   If False (default), use standard notation (MSB on left).
     ///     separator: Optional separator between bits (e.g., " " or "_").
     ///
@@ -696,11 +688,11 @@ impl PyBitInt {
     ///
     /// Examples:
     ///     >>> b = BitInt("1010")  # value 10
-    ///     >>> b.to_binary_str()  # Standard: MSB first
+    ///     >>> `b.to_binary_str()`  # Standard: MSB first
     ///     "1010"
-    ///     >>> b.to_binary_str(reverse_bits=True)  # Reversed: LSB first
+    ///     >>> `b.to_binary_str(reverse_bits=True)`  # Reversed: LSB first
     ///     "0101"
-    ///     >>> b.to_binary_str(separator=" ")
+    ///     >>> `b.to_binary_str(separator`=" ")
     ///     "1 0 1 0"
     #[pyo3(signature = (reverse_bits=false, separator=None))]
     pub fn to_binary_str(&self, reverse_bits: bool, separator: Option<&str>) -> String {
@@ -720,7 +712,11 @@ impl PyBitInt {
         }
 
         match separator {
-            Some(sep) => bits.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(sep),
+            Some(sep) => bits
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(sep),
             None => bits.into_iter().collect(),
         }
     }
@@ -771,7 +767,7 @@ impl PyBitInt {
                 _ => {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                         "String value must be '0' or '1'",
-                    ))
+                    ));
                 }
             }
         } else {

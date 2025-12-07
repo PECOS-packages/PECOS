@@ -1229,7 +1229,7 @@ class TestStateVectorPerformance:
         """
         import time
 
-        from _pecos_rslib import StateVec
+        from pecos_rslib import StateVec
 
         # Old Python implementation for comparison
         def vector_big_endian_python(raw_vector, num_qubits):

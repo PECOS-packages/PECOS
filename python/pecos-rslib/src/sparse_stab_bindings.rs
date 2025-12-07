@@ -550,7 +550,7 @@ impl PySparseSim {
 /// # Example
 ///
 /// ```python
-/// from _pecos_rslib import adjust_tableau_string
+/// from pecos_rslib import adjust_tableau_string
 ///
 /// # Stabilizer with imaginary phase
 /// line = "+iXYZ"

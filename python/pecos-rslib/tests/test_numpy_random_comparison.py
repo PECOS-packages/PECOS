@@ -1,5 +1,5 @@
 """
-Comparison tests between _pecos_rslib.num.random and numpy.random.
+Comparison tests between pecos_rslib.num.random and numpy.random.
 
 This module tests that our Rust implementations of numpy.random functions
 produce statistically equivalent results to numpy's implementations.

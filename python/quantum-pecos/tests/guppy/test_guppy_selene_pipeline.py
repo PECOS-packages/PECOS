@@ -35,7 +35,7 @@ def test_guppy_to_selene_pipeline() -> None:
         # 1. Detect Guppy function
         # 2. Compile to HUGR via Python-side Selene compilation
         # 3. Execute with SeleneSimpleRuntimeEngine
-        from _pecos_rslib import state_vector
+        from pecos_rslib import state_vector
 
         result = sim(bell_state).qubits(2).quantum(state_vector()).run(10)
 
@@ -72,8 +72,8 @@ def test_guppy_to_selene_pipeline() -> None:
 def test_guppy_hadamard_compilation() -> None:
     """Test that Hadamard gate is compiled correctly."""
     try:
-        from _pecos_rslib import state_vector
         from pecos.frontends.guppy_api import sim
+        from pecos_rslib import state_vector
     except ImportError:
         pytest.skip("sim() not available")
 
@@ -109,8 +109,8 @@ def test_guppy_hadamard_compilation() -> None:
 def test_guppy_cnot_compilation() -> None:
     """Test that CNOT gate is compiled correctly."""
     try:
-        from _pecos_rslib import state_vector
         from pecos.frontends.guppy_api import sim
+        from pecos_rslib import state_vector
     except ImportError:
         pytest.skip("sim() not available")
 

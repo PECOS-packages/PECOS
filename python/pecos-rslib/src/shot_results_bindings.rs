@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
 
 /// Python wrapper for `ShotVec`
-#[pyclass(name = "ShotVec", module = "_pecos_rslib")]
+#[pyclass(name = "ShotVec", module = "pecos_rslib")]
 pub struct PyShotVec {
     pub(crate) inner: ShotVec,
 }
@@ -79,7 +79,7 @@ impl PyShotVec {
 }
 
 /// Python wrapper for `ShotMap`
-#[pyclass(name = "ShotMap", module = "_pecos_rslib")]
+#[pyclass(name = "ShotMap", module = "pecos_rslib")]
 pub struct PyShotMap {
     inner: ShotMap,
 }

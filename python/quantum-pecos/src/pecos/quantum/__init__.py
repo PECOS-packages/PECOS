@@ -51,13 +51,13 @@ if TYPE_CHECKING:
 
     from pecos.typing import Integer
 
-# Import Pauli types from _pecos_rslib
+# Import Pauli types from pecos_rslib
 try:
-    from _pecos_rslib import Pauli, PauliString
+    from pecos_rslib import Pauli, PauliString
 except ImportError as e:
     # Provide helpful error message if Rust bindings not built
     msg = (
-        f"Failed to import Pauli types from _pecos_rslib: {e}\n"
+        f"Failed to import Pauli types from pecos_rslib: {e}\n"
         "Make sure pecos_rslib is properly installed with: uv sync"
     )
     raise ImportError(msg) from e

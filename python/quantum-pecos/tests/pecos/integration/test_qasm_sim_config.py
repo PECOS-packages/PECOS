@@ -8,7 +8,7 @@ class TestQasmSimStructuredConfig:
 
     def test_basic_config(self) -> None:
         """Test basic configuration without noise."""
-        from _pecos_rslib import QasmProgram, qasm_engine
+        from pecos_rslib import QasmProgram, qasm_engine
 
         qasm = """
             OPENQASM 2.0;
@@ -41,7 +41,7 @@ class TestQasmSimStructuredConfig:
 
     def test_config_with_noise(self) -> None:
         """Test configuration with noise model."""
-        from _pecos_rslib import QasmProgram, depolarizing_noise, qasm_engine
+        from pecos_rslib import QasmProgram, depolarizing_noise, qasm_engine
 
         qasm = """
             OPENQASM 2.0;
@@ -69,7 +69,7 @@ class TestQasmSimStructuredConfig:
 
     def test_full_config(self) -> None:
         """Test configuration with all options."""
-        from _pecos_rslib import (
+        from pecos_rslib import (
             QasmProgram,
             biased_depolarizing_noise,
             qasm_engine,
@@ -111,7 +111,7 @@ class TestQasmSimStructuredConfig:
 
     def test_auto_workers(self) -> None:
         """Test configuration with auto workers."""
-        from _pecos_rslib import QasmProgram, qasm_engine
+        from pecos_rslib import QasmProgram, qasm_engine
 
         qasm = """
             OPENQASM 2.0;
@@ -137,7 +137,7 @@ class TestQasmSimStructuredConfig:
 
     def test_custom_noise_config(self) -> None:
         """Test configuration with custom noise parameters."""
-        from _pecos_rslib import QasmProgram, depolarizing_noise, qasm_engine
+        from pecos_rslib import QasmProgram, depolarizing_noise, qasm_engine
 
         qasm = """
             OPENQASM 2.0;
@@ -185,7 +185,7 @@ class TestQasmSimStructuredConfig:
 
     def test_builder_pattern_serialization(self) -> None:
         """Test the new builder pattern approach."""
-        from _pecos_rslib import (
+        from pecos_rslib import (
             QasmProgram,
             depolarizing_noise,
             qasm_engine,
@@ -220,7 +220,7 @@ class TestQasmSimStructuredConfig:
 
     def test_structured_config(self) -> None:
         """Test new structured configuration approach."""
-        from _pecos_rslib import QasmProgram, general_noise, qasm_engine, state_vector
+        from pecos_rslib import QasmProgram, general_noise, qasm_engine, state_vector
 
         qasm = """
             OPENQASM 2.0;
@@ -264,7 +264,7 @@ class TestQasmSimStructuredConfig:
 
     def test_general_noise_config(self) -> None:
         """Test GeneralNoise configuration with functional API."""
-        from _pecos_rslib import QasmProgram, general_noise, qasm_engine
+        from pecos_rslib import QasmProgram, general_noise, qasm_engine
 
         qasm = """
             OPENQASM 2.0;

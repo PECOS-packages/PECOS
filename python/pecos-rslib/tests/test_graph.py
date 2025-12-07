@@ -12,7 +12,7 @@
 """Tests for graph module (MWPM decoder)."""
 
 
-import _pecos_rslib as pc
+import pecos_rslib as pc
 
 
 class TestGraphCreation:

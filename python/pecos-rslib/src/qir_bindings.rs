@@ -24,7 +24,7 @@ use pyo3::prelude::*;
 ///
 /// # Example (from Python):
 /// ```python
-/// from _pecos_rslib import QirBuilder
+/// from pecos_rslib import QirBuilder
 ///
 /// builder = QirBuilder("0.1.1")
 /// builder.create_qreg("q", 2)

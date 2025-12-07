@@ -72,15 +72,14 @@ use state_vec_engine_bindings::PyStateVecEngine;
 use wasm_foreign_object_bindings::PyWasmForeignObject;
 
 /// A Python module implemented in Rust.
-/// Named with underscore prefix to indicate it's a private implementation detail.
 /// Users should import from `pecos` (quantum-pecos) which re-exports these types
 /// with additional Python-native enhancements.
 #[pymodule]
 #[allow(clippy::too_many_lines)] // Module initialization legitimately needs many lines
-fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Note: Rust logging is controlled via RUST_LOG environment variable (e.g., RUST_LOG=debug)
     // We don't use pyo3-log because it interferes with Python's logging.basicConfig() in tests
-    log::debug!("_pecos_rslib module initializing...");
+    log::debug!("pecos_rslib module initializing...");
 
     // CRITICAL: Preload libselene_simple_runtime.so with RTLD_GLOBAL BEFORE anything else
     // This prevents conflicts with LLVM-14 when the Selene runtime is loaded later
@@ -233,7 +232,7 @@ fn _pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // =========================================================================
     // Top-level numerical function exports (NumPy-like API)
-    // These are convenience aliases for _pecos_rslib.mean instead of _pecos_rslib.num.mean
+    // These are convenience aliases for pecos_rslib.mean instead of pecos_rslib.num.mean
     // =========================================================================
     let num = m.getattr("num")?;
 

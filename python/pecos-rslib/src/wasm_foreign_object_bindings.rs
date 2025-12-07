@@ -23,10 +23,9 @@ use std::path::Path;
 
 /// Python wrapper for `WasmForeignObject`
 ///
-/// This class provides the same interface as the Python `WasmtimeObj` class,
-/// but uses the Rust implementation under the hood for better performance
-/// and thread safety.
-#[pyclass(name = "RsWasmForeignObject")]
+/// This class provides WebAssembly execution capabilities using the Rust
+/// Wasmtime runtime for better performance and thread safety.
+#[pyclass(name = "WasmForeignObject")]
 pub struct PyWasmForeignObject {
     inner: WasmForeignObject,
 }
@@ -205,8 +204,8 @@ impl PyWasmForeignObject {
         let dict = pyo3::types::PyDict::new(py);
 
         // Get the Python class for fobj_class
-        let module = py.import("_pecos_rslib")?;
-        let cls = module.getattr("RsWasmForeignObject")?;
+        let module = py.import("pecos_rslib")?;
+        let cls = module.getattr("WasmForeignObject")?;
         dict.set_item("fobj_class", cls)?;
 
         // Get WASM bytes

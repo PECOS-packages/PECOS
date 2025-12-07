@@ -1,5 +1,5 @@
 """
-Comprehensive comparison tests between _pecos_rslib.num and scipy.optimize.
+Comprehensive comparison tests between pecos_rslib.num and scipy.optimize.
 
 These tests verify that our Rust implementations produce results that match
 scipy within reasonable numerical tolerances.

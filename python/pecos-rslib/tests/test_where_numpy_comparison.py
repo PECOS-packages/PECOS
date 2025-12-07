@@ -1,4 +1,4 @@
-"""Comprehensive tests comparing _pecos_rslib.where() with numpy.where().
+"""Comprehensive tests comparing pecos_rslib.where() with numpy.where().
 
 This test suite ensures our where() implementation matches numpy's behavior
 across all parameter combinations:
@@ -9,7 +9,7 @@ across all parameter combinations:
 
 import numpy as np
 
-from _pecos_rslib import where as pecos_where
+from pecos_rslib import where as pecos_where
 
 
 class TestWhereNumPyComparison:

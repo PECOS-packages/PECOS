@@ -6,7 +6,7 @@ class TestCustomNoiseModels:
 
     def test_built_in_noise_builders(self) -> None:
         """Test that all built-in noise models have builder methods."""
-        from _pecos_rslib import (
+        from pecos_rslib import (
             GeneralNoiseModelBuilder,
             biased_depolarizing_noise,
             depolarizing_noise,
@@ -48,7 +48,7 @@ class TestCustomNoiseModels:
 
     def test_noise_builder_configuration(self) -> None:
         """Test that built-in noise models use builder configuration."""
-        from _pecos_rslib import QasmProgram, depolarizing_noise, qasm_engine
+        from pecos_rslib import QasmProgram, depolarizing_noise, qasm_engine
 
         qasm = """
             OPENQASM 2.0;
@@ -76,7 +76,7 @@ class TestCustomNoiseModels:
 
     def test_noise_builder_validation(self) -> None:
         """Test that built-in noise models work with builder pattern."""
-        from _pecos_rslib import QasmProgram, depolarizing_noise, qasm_engine
+        from pecos_rslib import QasmProgram, depolarizing_noise, qasm_engine
 
         # Valid QASM for testing
         qasm_valid = """

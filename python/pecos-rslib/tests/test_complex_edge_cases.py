@@ -1,5 +1,5 @@
 """
-Comprehensive tests for complex number edge cases in _pecos_rslib.
+Comprehensive tests for complex number edge cases in pecos_rslib.
 
 This test suite validates that all pecos.num functions work correctly with
 complex numbers, particularly for quantum computing use cases:
@@ -13,7 +13,7 @@ Based on quantum-pecos usage patterns identified in codebase analysis.
 
 import numpy as np
 
-from _pecos_rslib import Array, dtypes
+from pecos_rslib import Array, dtypes
 
 
 class TestComplexArrayCreation:
@@ -118,7 +118,7 @@ class TestComplexComparisons:
 
     def test_isclose_complex(self):
         """Test isclose with complex arrays."""
-        from _pecos_rslib.num import isclose
+        from pecos_rslib.num import isclose
 
         np_a = np.array([1 + 2j, 3 + 4j], dtype=np.complex128)
         np_b = np.array([1.00001 + 2.00001j, 3.00001 + 4.00001j], dtype=np.complex128)
@@ -136,7 +136,7 @@ class TestComplexComparisons:
 
     def test_allclose_complex(self):
         """Test allclose with complex arrays."""
-        from _pecos_rslib.num import allclose
+        from pecos_rslib.num import allclose
 
         np_a = np.array([1 + 2j, 3 + 4j], dtype=np.complex128)
         np_b = np.array([1.00001 + 2.00001j, 3.00001 + 4.00001j], dtype=np.complex128)
@@ -169,7 +169,7 @@ class TestComplexMathFunctions:
 
     def test_exp_imaginary(self):
         """Test exp with imaginary argument (e^(iθ) = cos(θ) + i*sin(θ))."""
-        from _pecos_rslib.num import pi
+        from pecos_rslib.num import pi
 
         # e^(i*pi) = -1 (Euler's identity)
         theta = pi

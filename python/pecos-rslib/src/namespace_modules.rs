@@ -28,7 +28,7 @@ pub fn register_quantum_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register in sys.modules for import statement support
     let sys = py.import("sys")?;
     let modules = sys.getattr("modules")?;
-    modules.set_item("_pecos_rslib.quantum", &quantum)?;
+    modules.set_item("pecos_rslib.quantum", &quantum)?;
 
     parent.add_submodule(&quantum)?;
     Ok(())
@@ -69,7 +69,7 @@ pub fn register_noise_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register in sys.modules
     let sys = py.import("sys")?;
     let modules = sys.getattr("modules")?;
-    modules.set_item("_pecos_rslib.noise", &noise)?;
+    modules.set_item("pecos_rslib.noise", &noise)?;
 
     parent.add_submodule(&noise)?;
     Ok(())
@@ -88,7 +88,7 @@ pub fn register_llvm_namespace_module(parent: &Bound<'_, PyModule>) -> PyResult<
     // Register in sys.modules
     let sys = py.import("sys")?;
     let modules = sys.getattr("modules")?;
-    modules.set_item("_pecos_rslib.llvm", &llvm)?;
+    modules.set_item("pecos_rslib.llvm", &llvm)?;
 
     parent.add_submodule(&llvm)?;
     Ok(())

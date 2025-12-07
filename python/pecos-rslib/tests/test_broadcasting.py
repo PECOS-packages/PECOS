@@ -1,5 +1,5 @@
 """
-Comprehensive tests for array broadcasting in _pecos_rslib.
+Comprehensive tests for array broadcasting in pecos_rslib.
 
 This module tests that our Array implementation follows NumPy's broadcasting rules:
 - Arrays with different shapes can be operated on if they are compatible
@@ -10,7 +10,7 @@ This module tests that our Array implementation follows NumPy's broadcasting rul
 import numpy as np
 import pytest
 
-from _pecos_rslib import Array
+from pecos_rslib import Array
 
 
 class TestBasicBroadcasting:

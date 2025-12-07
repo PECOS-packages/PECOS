@@ -89,14 +89,14 @@ except ImportError:
     GUPPY_AVAILABLE = False
 
 try:
-    from _pecos_rslib import (
+    from pecos.frontends.guppy_api import sim
+    from pecos_rslib import (
         biased_depolarizing_noise,
         depolarizing_noise,
         general_noise,
         sparse_stabilizer,
         state_vector,
     )
-    from pecos.frontends.guppy_api import sim
 
     PECOS_AVAILABLE = True
 except ImportError:
@@ -579,7 +579,7 @@ class TestQuantumEngines:
         true Clifford gates, unlike Guppy programs which get decomposed.
         """
         try:
-            from _pecos_rslib import QasmProgram, sparse_stabilizer
+            from pecos_rslib import QasmProgram, sparse_stabilizer
         except ImportError:
             pytest.skip("sparse_stabilizer or QasmProgram not available")
 

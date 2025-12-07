@@ -3,7 +3,7 @@
 
 import math
 
-from _pecos_rslib import QuestDensityMatrix, QuestStateVec
+from pecos_rslib import QuestDensityMatrix, QuestStateVec
 
 
 def test_quest_statevec() -> None:

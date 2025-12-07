@@ -13,7 +13,7 @@
 
 """Tests for the StateVecEngineRs Python bindings."""
 
-from _pecos_rslib import ByteMessage, StateVecEngineRs
+from pecos_rslib import ByteMessage, StateVecEngineRs
 
 
 def test_simulator_creation() -> None:

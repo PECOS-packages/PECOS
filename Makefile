@@ -499,7 +499,7 @@ clean-unix:
 	@/usr/bin/find python -name "*.so" -delete 2>/dev/null || true
 	@/usr/bin/find python -name "*.pyd" -delete 2>/dev/null || true
 	@# Clean pecos-rslib from venv to force reinstall
-	@rm -rf .venv/lib/python*/site-packages/_pecos_rslib 2>/dev/null || true
+	@rm -rf .venv/lib/python*/site-packages/pecos_rslib 2>/dev/null || true
 	@rm -rf .venv/lib/python*/site-packages/pecos_rslib*.dist-info 2>/dev/null || true
 	@# Clean all target directories in crates (in case they were built independently)
 	@/usr/bin/find crates -type d -name "target" -exec rm -rf {} + 2>/dev/null || true
@@ -528,7 +528,7 @@ clean-windows-ps:
 	@powershell -Command "Get-ChildItem -Path . -Recurse -Directory -Filter 'junit' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
 	@powershell -Command "Get-ChildItem -Path python -Recurse -File -Include '*.so','*.pyd' | Remove-Item -Force -ErrorAction SilentlyContinue"
 	@# Clean pecos-rslib from venv to force reinstall
-	@powershell -Command "Get-ChildItem -Path '.venv/lib' -Recurse -Directory -Filter '_pecos_rslib' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
+	@powershell -Command "Get-ChildItem -Path '.venv/lib' -Recurse -Directory -Filter 'pecos_rslib' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
 	@powershell -Command "Get-ChildItem -Path '.venv/lib' -Recurse -Directory -Filter 'pecos_rslib*.dist-info' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
 	@# Clean all target directories in crates
 	@powershell -Command "Get-ChildItem -Path crates -Recurse -Directory -Filter 'target' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
@@ -549,7 +549,7 @@ clean-windows-cmd:
 	-@for /f "delims=" %%d in ('dir /s /b /ad junit 2^>nul') do @rd /s /q "%%d" 2>nul
 	-@for /f "delims=" %%f in ('dir /s /b python\*.so python\*.pyd 2^>nul') do @del "%%f" 2>nul
 	-@REM Clean pecos-rslib from venv to force reinstall
-	-@for /f "delims=" %%d in ('dir /s /b /ad .venv\lib\*\site-packages\_pecos_rslib 2^>nul') do @rd /s /q "%%d" 2>nul
+	-@for /f "delims=" %%d in ('dir /s /b /ad .venv\lib\*\site-packages\pecos_rslib 2^>nul') do @rd /s /q "%%d" 2>nul
 	-@for /f "delims=" %%d in ('dir /s /b /ad .venv\lib\*\site-packages\pecos_rslib*.dist-info 2^>nul') do @rd /s /q "%%d" 2>nul
 	-@REM Clean all target directories in crates
 	-@for /f "delims=" %%d in ('dir /s /b /ad crates\target 2^>nul') do @rd /s /q "%%d" 2>nul

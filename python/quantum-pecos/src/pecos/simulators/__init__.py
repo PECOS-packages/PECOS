@@ -17,7 +17,7 @@ and fault propagation simulators.
 # specific language governing permissions and limitations under the License.
 
 # Rust version of simulators
-from _pecos_rslib import SparseSim, SparseSimCpp
+from pecos_rslib import SparseSim, SparseSimCpp
 
 from pecos.simulators import sim_class_types
 

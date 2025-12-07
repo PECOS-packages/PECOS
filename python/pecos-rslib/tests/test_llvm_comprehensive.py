@@ -6,7 +6,7 @@ import pytest
 @pytest.fixture
 def qir_module():
     """Create a QIR-like module for testing."""
-    from _pecos_rslib import ir
+    from pecos_rslib import ir
 
     module = ir.Module("qir_test")
     ctx = module.context
@@ -80,7 +80,7 @@ def test_function_creation(qir_module):
 
 def test_global_variables(qir_module):
     """Test creating global variables with initializers."""
-    from _pecos_rslib import ir
+    from pecos_rslib import ir
 
     module, ctx = qir_module
 
@@ -102,7 +102,7 @@ def test_global_variables(qir_module):
 
 def test_arithmetic_operations(qir_module):
     """Test all arithmetic operations."""
-    from _pecos_rslib import ir
+    from pecos_rslib import ir
 
     module, ctx = qir_module
 
@@ -132,7 +132,7 @@ def test_arithmetic_operations(qir_module):
 
 def test_bitwise_operations(qir_module):
     """Test all bitwise operations."""
-    from _pecos_rslib import ir
+    from pecos_rslib import ir
 
     module, ctx = qir_module
 
@@ -167,7 +167,7 @@ def test_bitwise_operations(qir_module):
 
 def test_comparison_operations(qir_module):
     """Test comparison operations."""
-    from _pecos_rslib import ir
+    from pecos_rslib import ir
 
     module, ctx = qir_module
 
@@ -197,7 +197,7 @@ def test_comparison_operations(qir_module):
 
 def test_control_flow(qir_module):
     """Test if_then and if_else control flow."""
-    from _pecos_rslib import ir
+    from pecos_rslib import ir
 
     module, ctx = qir_module
 
@@ -237,7 +237,7 @@ def test_control_flow(qir_module):
 
 def test_gep_operations(qir_module):
     """Test GEP (Get Element Pointer) operations."""
-    from _pecos_rslib import ir
+    from pecos_rslib import ir
 
     module, ctx = qir_module
 
@@ -265,7 +265,7 @@ def test_gep_operations(qir_module):
 
 def test_comments(qir_module):
     """Test adding comments to IR."""
-    from _pecos_rslib import ir
+    from pecos_rslib import ir
 
     module, ctx = qir_module
 
@@ -286,7 +286,7 @@ def test_comments(qir_module):
 
 def test_end_to_end_ir_to_bitcode(qir_module):
     """Test complete workflow from IR creation to bitcode generation."""
-    from _pecos_rslib import binding, ir
+    from pecos_rslib import binding, ir
 
     module, ctx = qir_module
 

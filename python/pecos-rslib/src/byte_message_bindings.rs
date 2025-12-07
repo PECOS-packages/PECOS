@@ -16,7 +16,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyType};
 
 /// Python wrapper for Rust `ByteMessageBuilder`
-#[pyclass(name = "ByteMessageBuilder", module = "_pecos_rslib")]
+#[pyclass(name = "ByteMessageBuilder", module = "pecos_rslib")]
 pub struct PyByteMessageBuilder {
     inner: ByteMessageBuilder,
 }
@@ -139,7 +139,7 @@ impl PyByteMessageBuilder {
 }
 
 /// Python wrapper for Rust `ByteMessage`
-#[pyclass(name = "ByteMessage", module = "_pecos_rslib")]
+#[pyclass(name = "ByteMessage", module = "pecos_rslib")]
 pub struct PyByteMessage {
     inner: ByteMessage,
 }

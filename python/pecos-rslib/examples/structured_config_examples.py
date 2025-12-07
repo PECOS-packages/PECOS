@@ -7,13 +7,13 @@ the legacy dictionary-based approach.
 
 from collections import Counter
 
-from _pecos_rslib import (
+from pecos_rslib import (
     biased_depolarizing_noise,
     depolarizing_noise,
     general_noise,
     sim,
 )
-from _pecos_rslib.quantum import state_vector
+from pecos_rslib.quantum import state_vector
 
 
 def example_basic_noise_builder() -> None:

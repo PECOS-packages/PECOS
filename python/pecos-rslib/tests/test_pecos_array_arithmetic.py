@@ -13,7 +13,7 @@ match numpy's behavior across all operand combinations:
 import numpy as np
 import pytest
 
-from _pecos_rslib import Array
+from pecos_rslib import Array
 
 
 class TestPecosArrayAddition:

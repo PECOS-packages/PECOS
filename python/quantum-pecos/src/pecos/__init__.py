@@ -31,11 +31,12 @@ import sys
 import warnings
 from typing import NoReturn
 
-from _pecos_rslib import (
+from pecos_rslib import (
     Array,  # Array type with generic dtype support (Array[f64], etc.)
     BitInt,  # Fixed-width binary integer type
     Pauli,  # Quantum Pauli operators (I, X, Y, Z)
     PauliString,  # Multi-qubit Pauli operators
+    WasmForeignObject,  # WASM foreign object for classical coprocessor
     abs,  # Absolute value  # noqa: A004
     all,  # All elements true  # noqa: A004
     allclose,  # Approximate equality (arrays)
@@ -82,7 +83,7 @@ from _pecos_rslib import (
 # They are only available via dtype namespaces: pc.f64.pi, pc.f64.frac_pi_2, etc.
 # This makes precision explicit and supports future f32, complex constants
 # Polynomial and optimization functions (commonly used, so at top level)
-from _pecos_rslib.num import (
+from pecos_rslib.num import (
     Poly1d,  # Polynomial evaluation
     arange,  # Range arrays
     brentq,  # Brent's root finding
@@ -116,7 +117,7 @@ from pecos import typing
 #   arr = pc.array([1, 2, 3])        # Common operations - flat and convenient
 #   norm = pc.linalg.norm(arr)       # Specialized operations - organized
 #   one = pc.i64(1)                  # Data types - flat for convenience
-# Import the Rust num module directly from _pecos_rslib
+# Import the Rust num module directly from pecos_rslib
 # ============================================================================
 # Top-level: Common numerical functions (like NumPy's flat namespace)
 # ============================================================================
@@ -242,6 +243,7 @@ __all__ = [
     "BitInt",
     "HybridEngine",
     "QuantumCircuit",
+    "WasmForeignObject",
     "__version__",
     "circuit_converters",
     "circuit_runners",
@@ -263,7 +265,7 @@ __all__ = [
     "i32",
     "i64",
     "misc",
-    "num",  # Numerical computing module from _pecos_rslib
+    "num",  # Numerical computing module from pecos_rslib
     "protocols",
     "qeccs",
     # Guppy integration

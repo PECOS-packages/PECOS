@@ -7,7 +7,7 @@ PECOS implements the same interface for drop-in NumPy replacement.
 import numpy as np
 import pytest
 
-from _pecos_rslib import Array, dtypes
+from pecos_rslib import Array, dtypes
 
 
 class TestDTypeTypeProperty:

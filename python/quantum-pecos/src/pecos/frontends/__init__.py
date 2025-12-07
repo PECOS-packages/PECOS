@@ -18,7 +18,7 @@ def get_guppy_backends() -> dict[str, Any]:
         import guppylang
 
         result["guppy_available"] = True
-        from _pecos_rslib import check_rust_hugr_availability
+        from pecos_rslib import check_rust_hugr_availability
 
         rust_available, msg = check_rust_hugr_availability()
         result["rust_backend"] = rust_available

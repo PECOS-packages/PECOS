@@ -1,5 +1,5 @@
 """
-Additional edge case tests for _pecos_rslib.num.random.
+Additional edge case tests for pecos_rslib.num.random.
 
 Tests for seeding, reproducibility, edge cases, and integration patterns.
 """

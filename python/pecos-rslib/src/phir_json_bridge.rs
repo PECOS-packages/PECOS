@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 // Re-exported by pecos::prelude when the phir feature is enabled
 use pecos::prelude::PhirJsonEngine as RustPhirJsonEngine;
 
-#[pyclass(module = "_pecos_rslib")]
+#[pyclass(module = "pecos_rslib")]
 #[derive(Debug)]
 pub struct PhirJsonEngine {
     // Python interpreter for test compatibility

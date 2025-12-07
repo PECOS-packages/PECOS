@@ -270,7 +270,7 @@ jobs:
 
         # After build, verify the extension module on macOS
         if [[ "${{ runner.os }}" == "macOS" ]]; then
-          EXT_MODULE=$(find .venv/lib -name "_pecos_rslib*.so" 2>/dev/null | head -1)
+          EXT_MODULE=$(find .venv/lib -name "pecos_rslib*.so" 2>/dev/null | head -1)
           if [ -n "$EXT_MODULE" ]; then
             if otool -L "$EXT_MODULE" | grep -q "@rpath/libunwind"; then
               echo "ERROR: Extension has @rpath/libunwind reference"

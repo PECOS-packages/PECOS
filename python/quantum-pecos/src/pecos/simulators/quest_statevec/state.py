@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from _pecos_rslib import QuestStateVec as RustQuestStateVec
+from pecos_rslib import QuestStateVec as RustQuestStateVec
 
 import pecos as pc
 from pecos.simulators.quest_statevec.bindings import get_bindings

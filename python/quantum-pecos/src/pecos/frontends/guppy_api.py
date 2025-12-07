@@ -1,7 +1,7 @@
 """Unified API for Guppy programs following the sim(program) pattern.
 
 This module handles Guppy program detection and compilation. For non-Guppy programs,
-users can also import sim directly from _pecos_rslib for a simpler path.
+users can also import sim directly from pecos_rslib for a simpler path.
 """
 
 import gc
@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Union
 
 if TYPE_CHECKING:
-    from _pecos_rslib import (
+    from pecos_rslib import (
         BiasedDepolarizingNoiseModelBuilder,
         DepolarizingNoiseModelBuilder,
         GeneralNoiseModelBuilder,
@@ -191,7 +191,7 @@ def _sim_with_guppy_detection(program: ProgramType) -> object:
     Returns:
         SimBuilder instance from Rust
     """
-    import _pecos_rslib
+    import pecos_rslib
 
     # Check if this is a HugrProgram - pass it directly to Rust
     if type(program).__name__ == "HugrProgram":
@@ -212,7 +212,7 @@ def _sim_with_guppy_detection(program: ProgramType) -> object:
         hugr_bytes = hugr_package.to_bytes()
 
         # Create HugrProgram - Rust will handle HUGR->QIS conversion
-        hugr_program = _pecos_rslib.HugrProgram.from_bytes(hugr_bytes)
+        hugr_program = pecos_rslib.HugrProgram.from_bytes(hugr_bytes)
         logger.info(
             "Created HugrProgram, passing to Rust sim() for HUGR->QIS conversion",
         )
@@ -221,7 +221,7 @@ def _sim_with_guppy_detection(program: ProgramType) -> object:
 
     # Pass to Rust sim() which handles all fallback logic
     logger.info("Using Rust sim() for program type: %s", type(program))
-    result = _pecos_rslib.sim(program)
+    result = pecos_rslib.sim(program)
 
     # Force garbage collection to clean up any lingering engine resources
     gc.collect()
@@ -257,7 +257,7 @@ def sim(program: ProgramType) -> GuppySimBuilderWrapper:
     This function detects the program type and creates the appropriate builder.
     For Guppy functions, it compiles them to HUGR format first.
 
-    For non-Guppy programs, you can also import sim directly from _pecos_rslib
+    For non-Guppy programs, you can also import sim directly from pecos_rslib
     for a simpler path with slightly lower overhead.
 
     Args:
@@ -269,7 +269,7 @@ def sim(program: ProgramType) -> GuppySimBuilderWrapper:
     Example:
         from guppylang import guppy
         from pecos.frontends.guppy_api import sim
-        from _pecos_rslib import state_vector
+        from pecos_rslib import state_vector
 
         @guppy
         def bell_state() -> tuple[bool, bool]:

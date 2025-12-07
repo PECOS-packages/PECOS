@@ -1,6 +1,6 @@
 """Test suite for advanced type support (futures, collections, etc)."""
 
-import _pecos_rslib
+import pecos_rslib
 from guppylang import guppy
 from guppylang.std.quantum import h, measure, qubit
 
@@ -19,7 +19,7 @@ class TestAdvancedTypes:
             return measure(q)
 
         hugr = test_measure_future.compile()
-        output = _pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        output = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
 
         # Should compile successfully
         assert "___lazy_measure" in output
@@ -39,7 +39,7 @@ class TestAdvancedTypes:
             return result1, result2
 
         hugr = test_multi_measure.compile()
-        output = _pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        output = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
 
         # Should handle multiple futures correctly
         measure_calls = output.count("___lazy_measure")
@@ -58,7 +58,7 @@ class TestAdvancedTypes:
             return measure(q)
 
         hugr = test_advanced.compile()
-        pecos_out = _pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        pecos_out = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
 
         # Should compile successfully
         assert len(pecos_out) > 100
@@ -75,8 +75,8 @@ class TestAdvancedTypes:
 
         hugr = test_compat.compile()
         try:
-            pecos_out = _pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
-            selene_out = _pecos_rslib.compile_hugr_to_llvm_selene(hugr.to_bytes())
+            pecos_out = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+            selene_out = pecos_rslib.compile_hugr_to_llvm_selene(hugr.to_bytes())
 
             # Both should handle advanced types
             assert "___lazy_measure" in pecos_out or "measure" in pecos_out.lower()
@@ -108,7 +108,7 @@ class TestAdvancedTypes:
             return r1, r2, r3
 
         hugr = test_complex.compile()
-        output = _pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        output = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
 
         # Should handle the complex program correctly
         assert "___qalloc" in output

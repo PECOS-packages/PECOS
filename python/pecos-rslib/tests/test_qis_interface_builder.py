@@ -1,7 +1,7 @@
 """Test QisInterfaceBuilder pattern - Helios and Selene Helios interfaces."""
 
 import pytest
-from _pecos_rslib import (
+from pecos_rslib import (
     qis_engine,
     qis_helios_interface,
     qis_selene_helios_interface,

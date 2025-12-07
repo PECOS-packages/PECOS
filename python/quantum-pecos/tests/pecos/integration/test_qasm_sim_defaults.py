@@ -6,7 +6,7 @@ class TestQasmSimDefaults:
 
     def test_builder_defaults(self) -> None:
         """Test and document defaults when using qasm_engine builder."""
-        from _pecos_rslib import QasmProgram, qasm_engine
+        from pecos_rslib import QasmProgram, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -35,7 +35,7 @@ class TestQasmSimDefaults:
 
     def test_run_direct_defaults(self) -> None:
         """Test and document defaults when using engine run directly."""
-        from _pecos_rslib import QasmProgram, qasm_engine
+        from pecos_rslib import QasmProgram, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -60,7 +60,7 @@ class TestQasmSimDefaults:
 
     def test_noise_model_defaults(self) -> None:
         """Test and document default parameters for noise models."""
-        from _pecos_rslib import (
+        from pecos_rslib import (
             GeneralNoiseModelBuilder,
             biased_depolarizing_noise,
             depolarizing_noise,
@@ -85,7 +85,7 @@ class TestQasmSimDefaults:
 
     def test_builder_defaults_new_api(self) -> None:
         """Test and document defaults when using new unified API."""
-        from _pecos_rslib import QasmProgram, qasm_engine
+        from pecos_rslib import QasmProgram, qasm_engine
 
         # Minimal setup - only required field
         qasm = """
@@ -112,7 +112,7 @@ class TestQasmSimDefaults:
 
     def test_no_noise_means_ideal(self) -> None:
         """Test that omitting noise results in ideal (deterministic) simulation."""
-        from _pecos_rslib import QasmProgram, qasm_engine
+        from pecos_rslib import QasmProgram, qasm_engine
 
         qasm = """
         OPENQASM 2.0;

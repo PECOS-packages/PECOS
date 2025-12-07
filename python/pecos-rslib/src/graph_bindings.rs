@@ -78,10 +78,10 @@ fn attribute_to_python(py: Python<'_>, attr: &RustAttribute) -> PyResult<Py<PyAn
 /// # Examples (Python)
 ///
 /// ```python
-/// import _pecos_rslib
+/// import pecos_rslib
 ///
 /// # Create a new graph
-/// graph = _pecos_rslib.graph.Graph()
+/// graph = pecos_rslib.graph.Graph()
 ///
 /// # Add nodes
 /// n0 = graph.add_node()
@@ -96,7 +96,7 @@ fn attribute_to_python(py: Python<'_>, attr: &RustAttribute) -> PyResult<Py<PyAn
 /// # Compute maximum weight matching
 /// matching = graph.max_weight_matching()
 /// ```
-#[pyclass(name = "Graph", module = "_pecos_rslib.graph")]
+#[pyclass(name = "Graph", module = "pecos_rslib.graph")]
 #[derive(Clone)]
 pub struct PyGraph {
     /// The underlying Rust graph
@@ -659,7 +659,7 @@ impl PyGraph {
 ///
 /// This class holds a reference to the graph and edge endpoints, allowing
 /// mutations to be written back to the graph.
-#[pyclass(name = "EdgeAttrsView", module = "_pecos_rslib.graph")]
+#[pyclass(name = "EdgeAttrsView", module = "pecos_rslib.graph")]
 pub struct PyEdgeAttrsView {
     graph: Py<PyGraph>,
     node_a: usize,
@@ -846,7 +846,7 @@ impl PyEdgeAttrsView {
 ///
 /// This is returned by `Graph.node_attrs(node)` and provides a Python dict-like interface
 /// for accessing and modifying attributes of a specific node.
-#[pyclass(name = "NodeAttrsView", module = "_pecos_rslib.graph")]
+#[pyclass(name = "NodeAttrsView", module = "pecos_rslib.graph")]
 pub struct PyNodeAttrsView {
     graph: Py<PyGraph>,
     node: usize,
@@ -1009,7 +1009,7 @@ impl PyNodeAttrsView {
 ///
 /// This is returned by `Graph.attrs()` and provides a Python dict-like interface
 /// for accessing and modifying graph-level attributes.
-#[pyclass(name = "GraphAttrsView", module = "_pecos_rslib.graph")]
+#[pyclass(name = "GraphAttrsView", module = "pecos_rslib.graph")]
 pub struct PyGraphAttrsView {
     graph: Py<PyGraph>,
 }
@@ -1130,7 +1130,7 @@ impl PyGraphAttrsView {
 /// Register the graph module with Python.
 ///
 /// This function is called from the main module registration to expose the graph
-/// functionality to Python. This creates a `graph` submodule accessible as `_pecos_rslib.graph`.
+/// functionality to Python. This creates a `graph` submodule accessible as `pecos_rslib.graph`.
 pub fn register_graph_module(parent_module: &Bound<'_, PyModule>) -> PyResult<()> {
     // Create a graph submodule
     let py = parent_module.py();
@@ -1145,12 +1145,12 @@ pub fn register_graph_module(parent_module: &Bound<'_, PyModule>) -> PyResult<()
     // Add the submodule to the parent module
     parent_module.add_submodule(&graph_module)?;
 
-    // Register in sys.modules for `import __pecos_rslib.graph` support
+    // Register in sys.modules for `import pecos_rslib.graph` support
     let sys = py.import("sys")?;
     let modules = sys.getattr("modules")?;
-    modules.set_item("_pecos_rslib.graph", &graph_module)?;
+    modules.set_item("pecos_rslib.graph", &graph_module)?;
 
-    // Also add classes to parent module for direct import (e.g., from _pecos_rslib import Graph)
+    // Also add classes to parent module for direct import (e.g., from pecos_rslib import Graph)
     parent_module.add_class::<PyEdgeAttrsView>()?;
     parent_module.add_class::<PyNodeAttrsView>()?;
     parent_module.add_class::<PyGraphAttrsView>()?;

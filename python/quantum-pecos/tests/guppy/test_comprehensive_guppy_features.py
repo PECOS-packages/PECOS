@@ -36,8 +36,8 @@ except ImportError:
     GUPPY_AVAILABLE = False
 
 try:
-    from _pecos_rslib import check_rust_hugr_availability, state_vector
     from pecos.frontends.guppy_api import sim
+    from pecos_rslib import check_rust_hugr_availability, state_vector
 
     PECOS_FRONTEND_AVAILABLE = True
 except ImportError:
@@ -60,7 +60,7 @@ def get_guppy_backends() -> dict[str, Any]:
 
 
 try:
-    from _pecos_rslib import HUGR_LLVM_PIPELINE_AVAILABLE
+    from pecos_rslib import HUGR_LLVM_PIPELINE_AVAILABLE
 except ImportError:
     HUGR_LLVM_PIPELINE_AVAILABLE = False
 

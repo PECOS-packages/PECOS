@@ -12,7 +12,7 @@ description = "Allows running Rust code in Python."
 publish = false
 
 [lib]
-name = "_pecos_rslib"
+name = "pecos_rslib"
 crate-type = ["cdylib", "rlib"]
 # Skip doc tests as they won't work properly in this setup
 doctest = false

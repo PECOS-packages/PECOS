@@ -22,7 +22,7 @@
 //!
 //! Usage in Python:
 //! ```python
-//! from __pecos_rslib.llvm import ir, binding
+//! from pecos_rslib.llvm import ir, binding
 //!
 //! module = ir.Module("my_module")
 //! # Create LLVM IR using a familiar API

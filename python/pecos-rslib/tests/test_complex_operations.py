@@ -5,8 +5,8 @@ import importlib.util
 import numpy as np
 import pytest
 
-if importlib.util.find_spec("_pecos_rslib") is None:
-    pytest.skip("_pecos_rslib not available", allow_module_level=True)
+if importlib.util.find_spec("pecos_rslib") is None:
+    pytest.skip("pecos_rslib not available", allow_module_level=True)
 
 
 class TestComplexScalars:

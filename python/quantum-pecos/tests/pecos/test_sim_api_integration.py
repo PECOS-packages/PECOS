@@ -13,7 +13,7 @@ except ImportError:
     SIM_API_AVAILABLE = False
 
 try:
-    from _pecos_rslib import (
+    from pecos_rslib import (
         HugrProgram,
         PhirJsonProgram,
         QasmProgram,

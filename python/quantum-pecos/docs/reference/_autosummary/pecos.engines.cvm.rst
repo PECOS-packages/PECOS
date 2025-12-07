@@ -33,4 +33,3 @@ pecos.engines.cvm
    pecos.engines.cvm.cvm
    pecos.engines.cvm.sim_func
    pecos.engines.cvm.wasm
-   pecos.engines.cvm.wasm_vms

@@ -1,6 +1,6 @@
 """Test suite for project_z operation."""
 
-import _pecos_rslib
+import pecos_rslib
 from guppylang import guppy
 from guppylang.std.quantum import h, project_z, qubit, x
 
@@ -19,7 +19,7 @@ class TestProjectZOperation:
             return q, result
 
         hugr = test_project_z.compile()
-        output = _pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        output = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
 
         # project_z should compile to a measurement operation
         # Since it doesn't consume the qubit, it should work like measure
@@ -36,7 +36,7 @@ class TestProjectZOperation:
             return q, result
 
         hugr = test_project_z_x.compile()
-        output = _pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        output = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
 
         # Should have both X gate operations and measurement
         assert "___rxy" in output  # X gate uses RXY
@@ -52,7 +52,7 @@ class TestProjectZOperation:
             return q, result
 
         hugr = simple_project_z.compile()
-        pecos_out = _pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        pecos_out = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
 
         # Should compile successfully and have measurement
         assert len(pecos_out) > 100  # Non-empty compilation
@@ -71,8 +71,8 @@ class TestProjectZOperation:
 
         hugr = test_project_z_compat.compile()
         try:
-            pecos_out = _pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
-            selene_out = _pecos_rslib.compile_hugr_to_llvm_selene(hugr.to_bytes())
+            pecos_out = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+            selene_out = pecos_rslib.compile_hugr_to_llvm_selene(hugr.to_bytes())
 
             # Both should compile successfully
             assert len(pecos_out) > 100
@@ -96,7 +96,7 @@ class TestProjectZOperation:
             return q1, q2, result1, result2
 
         hugr = project_z_circuit.compile()
-        output = _pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        output = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
 
         # Should have multiple allocations and measurements
         assert "___qalloc" in output

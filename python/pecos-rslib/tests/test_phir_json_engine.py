@@ -8,7 +8,7 @@ correct simulation results.
 import json
 
 import pytest
-from _pecos_rslib import PhirJsonEngine
+from pecos_rslib import PhirJsonEngine
 
 
 # Helper function to create a PhirJsonEngine instance with a simple test program

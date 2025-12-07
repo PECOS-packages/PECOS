@@ -16,10 +16,10 @@
 import os
 import sys
 
-# Add the parent directory to the path to import _pecos_rslib
+# Add the parent directory to the path to import pecos_rslib
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from _pecos_rslib import ByteMessage
+from pecos_rslib import ByteMessage
 
 
 def bell_state_example() -> None:

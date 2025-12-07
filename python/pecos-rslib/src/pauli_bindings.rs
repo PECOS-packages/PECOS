@@ -36,11 +36,11 @@ use pyo3::prelude::*;
 /// - Y = 0b11
 ///
 /// Examples:
-///     >>> from `_pecos_rslib` import Pauli
+///     >>> from `pecos_rslib` import Pauli
 ///     >>> x = Pauli.X
 ///     >>> z = Pauli.Z
 ///     >>> print(x)  # "X"
-#[pyclass(name = "Pauli", module = "_pecos_rslib", frozen)]
+#[pyclass(name = "Pauli", module = "pecos_rslib", frozen)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Pauli(RustPauli);
 
@@ -146,7 +146,7 @@ impl Pauli {
 /// are stored. For example, X on qubit 1 and Z on qubit 5 in a 10-qubit system.
 ///
 /// Examples:
-///     >>> from `_pecos_rslib` import Pauli, `PauliString`
+///     >>> from `pecos_rslib` import Pauli, `PauliString`
 ///     >>> # Create X on qubit 0, Z on qubit 1
 ///     >>> ps = `PauliString`([(Pauli.X, 0), (Pauli.Z, 1)])
 ///     >>> print(ps)  # "XZ"
@@ -154,7 +154,7 @@ impl Pauli {
 ///     >>> # Create from string (assumes sequential qubits starting at 0)
 ///     >>> ps2 = PauliString.from_str("XYZ")
 ///     >>> print(ps2)  # "XYZ"
-#[pyclass(name = "PauliString", module = "_pecos_rslib")]
+#[pyclass(name = "PauliString", module = "pecos_rslib")]
 #[derive(Debug, Clone)]
 pub struct PauliString {
     inner: RustPauliString,

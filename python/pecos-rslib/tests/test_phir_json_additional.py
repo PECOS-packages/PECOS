@@ -30,7 +30,7 @@ def test_phir_json_measurement_only() -> None:
     """Test PHIR-JSON with only measurements (no Result instruction needed)."""
     # Import here to avoid module-level skip
     try:
-        from _pecos_rslib import PhirJsonEngine
+        from pecos_rslib import PhirJsonEngine
     except ImportError:
         pytest.skip("PhirJsonEngine not available")
 
@@ -86,7 +86,7 @@ def test_phir_json_validation_requirements() -> None:
     """Test to understand PHIR-JSON validation requirements."""
     # Import here to avoid module-level skip
     try:
-        from _pecos_rslib import PhirJsonEngine
+        from pecos_rslib import PhirJsonEngine
     except ImportError:
         pytest.skip("PhirJsonEngine not available")
 

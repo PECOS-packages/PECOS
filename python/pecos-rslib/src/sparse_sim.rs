@@ -15,7 +15,7 @@ use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PySet, PyTuple};
 
-#[pyclass(module = "_pecos_rslib")]
+#[pyclass(module = "pecos_rslib")]
 pub struct SparseSim {
     inner: SparseStab<VecSet<usize>, usize>,
 }

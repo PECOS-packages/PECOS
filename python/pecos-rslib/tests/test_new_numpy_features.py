@@ -20,7 +20,7 @@ This module tests:
 
 import numpy as np
 import pytest
-from _pecos_rslib.num import array, asarray, assert_allclose, sum as pecos_sum
+from pecos_rslib.num import array, asarray, assert_allclose, sum as pecos_sum
 
 
 class TestBooleanSum:

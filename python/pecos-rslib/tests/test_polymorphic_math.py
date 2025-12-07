@@ -13,7 +13,7 @@ import math
 
 import numpy as np
 import pytest
-from _pecos_rslib import Array, array_equal, cos, exp, isclose, isnan, sin
+from pecos_rslib import Array, array_equal, cos, exp, isclose, isnan, sin
 
 
 class TestExpPolymorphic:

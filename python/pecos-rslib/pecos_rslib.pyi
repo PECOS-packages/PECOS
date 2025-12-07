@@ -1109,7 +1109,7 @@ HUGR_LLVM_PIPELINE_AVAILABLE: bool
 # =============================================================================
 # WASM
 # =============================================================================
-class RsWasmForeignObject:
+class WasmForeignObject:
     """WASM foreign object wrapper."""
 
     ...

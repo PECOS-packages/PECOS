@@ -35,7 +35,7 @@ build-backend = "maturin"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-module-name = "_pecos_rslib"
+module-name = "pecos_rslib"
 
 [dependency-groups]
 dev = [

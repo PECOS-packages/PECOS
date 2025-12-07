@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import _pecos_rslib as rslib
+import pecos_rslib as rslib
 
 import pecos as pc
 from pecos.simulators.qulacs import bindings

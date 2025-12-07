@@ -35,7 +35,7 @@ try:
 except ImportError:
     SELENE_AVAILABLE = False
 
-from _pecos_rslib import compile_hugr_to_llvm_rust as rust_compile
+from pecos_rslib import compile_hugr_to_llvm_rust as rust_compile
 
 
 def count_modules_in_hugr(hugr_str: str) -> tuple[int, list[str]]:

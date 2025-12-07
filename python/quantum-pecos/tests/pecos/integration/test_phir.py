@@ -14,12 +14,12 @@ import json
 from pathlib import Path
 
 import pytest
+from pecos import WasmForeignObject
 from pecos.classical_interpreters.phir_classical_interpreter import (
     PhirClassicalInterpreter,
 )
 from pecos.engines.hybrid_engine import HybridEngine
 from pecos.error_models.generic_error_model import GenericErrorModel
-from pecos.foreign_objects.wasmtime import WasmtimeObj
 from phir.model import PHIRModel
 from pydantic import ValidationError
 
@@ -43,7 +43,7 @@ spec_example_phir = json.load(Path.open(this_dir / "phir/spec_example.phir.json"
 
 def test_spec_example_wasmtime() -> None:
     """A random example showing that various basic aspects of PHIR is runnable by PECOS."""
-    wasm = WasmtimeObj(math_wat)
+    wasm = WasmForeignObject(math_wat)
     HybridEngine().run(
         program=spec_example_phir,
         foreign_object=wasm,
@@ -53,7 +53,7 @@ def test_spec_example_wasmtime() -> None:
 
 def test_spec_example_noisy_wasmtime() -> None:
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
-    wasm = WasmtimeObj(str(math_wat))
+    wasm = WasmForeignObject(str(math_wat))
     generic_errors = GenericErrorModel(
         error_params={
             "p1": 2e-1,
@@ -78,7 +78,7 @@ def test_spec_example_noisy_wasmtime() -> None:
 
 def test_example1_wasmtime() -> None:
     """A random example showing that various basic aspects of PHIR is runnable by PECOS."""
-    wasm = WasmtimeObj(add_wat)
+    wasm = WasmForeignObject(add_wat)
     HybridEngine().run(
         program=example1_phir,
         foreign_object=wasm,
@@ -88,7 +88,7 @@ def test_example1_wasmtime() -> None:
 
 def test_example1_noisy_wasmtime() -> None:
     """A random example showing that various basic aspects of PHIR is runnable by PECOS, with noise."""
-    wasm = WasmtimeObj(str(add_wat))
+    wasm = WasmForeignObject(str(add_wat))
     generic_errors = GenericErrorModel(
         error_params={
             "p1": 2e-1,

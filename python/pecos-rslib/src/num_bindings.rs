@@ -90,7 +90,7 @@ fn map_curve_fit_error(error: CurveFitError) -> PyErr {
 ///     `RuntimeError`: If maximum iterations exceeded
 ///
 /// Examples:
-///     >>> from `_pecos_rslib.num` import brentq
+///     >>> from `pecos_rslib.num` import brentq
 ///     >>> # Find sqrt(2) by solving x^2 - 2 = 0
 ///     >>> root = brentq(lambda x: x**2 - 2, 0, 2)
 ///     >>> abs(root - 2**0.5) < 1e-10
@@ -147,7 +147,7 @@ fn brentq(
 ///     `RuntimeError`: If maximum iterations exceeded or convergence fails
 ///
 /// Examples:
-///     >>> from `_pecos_rslib.num` import newton
+///     >>> from `pecos_rslib.num` import newton
 ///     >>> # Find sqrt(2) by solving x^2 - 2 = 0
 ///     >>> root = newton(lambda x: x**2 - 2, x0=1.0, fprime=lambda x: 2*x)
 ///     >>> abs(root - 2**0.5) < 1e-10
@@ -219,7 +219,7 @@ fn newton(
 ///     `RuntimeError`: If numerical issues during fitting
 ///
 /// Examples:
-///     >>> from `_pecos_rslib.num` import polyfit
+///     >>> from `pecos_rslib.num` import polyfit
 ///     >>> import numpy as np
 ///     >>> # Fit y = 2x + 1
 ///     >>> x = np.array([0.0, 1.0, 2.0, 3.0])
@@ -281,7 +281,7 @@ fn polyfit(
 /// This is a drop-in replacement for numpy.poly1d.
 ///
 /// Examples:
-///     >>> from `_pecos_rslib.num` import Poly1d
+///     >>> from `pecos_rslib.num` import Poly1d
 ///     >>> import numpy as np
 ///     >>> # Create polynomial: 2x^2 + 3x + 1
 ///     >>> p = Poly1d(np.array([2.0, 3.0, 1.0]))
@@ -375,7 +375,7 @@ impl Poly1d {
 ///     `RuntimeError`: If optimization fails to converge
 ///
 /// Examples:
-///     >>> from `_pecos_rslib.num` import `curve_fit`
+///     >>> from `pecos_rslib.num` import `curve_fit`
 ///     >>> import numpy as np
 ///     >>> # Example 1: Single independent variable
 ///     >>> def func(x, a, b):
@@ -739,7 +739,7 @@ fn curve_fit_tuple<'py>(
 ///     ndarray: Array of random floats in [0.0, 1.0)
 ///
 /// Examples:
-///     >>> from `_pecos_rslib.num.random` import random
+///     >>> from `pecos_rslib.num.random` import random
 ///     >>> values = random(5)
 ///     >>> len(values)
 ///     5
@@ -762,7 +762,7 @@ fn random(py: Python<'_>, size: usize) -> PyResult<Py<Array>> {
 ///     int | ndarray: Single integer or array of random integers
 ///
 /// Examples:
-///     >>> from `_pecos_rslib.num.random` import randint
+///     >>> from `pecos_rslib.num.random` import randint
 ///     >>> # Single random integer in [0, 10)
 ///     >>> val = randint(10)
 ///     >>> 0 <= val < 10
@@ -829,7 +829,7 @@ fn randint(
 ///     `seed_value`: int - The seed value (will be cast to u64)
 ///
 /// Examples:
-///     >>> from `_pecos_rslib.num.random` import seed, random
+///     >>> from `pecos_rslib.num.random` import seed, random
 ///     >>> seed(42)
 ///     >>> values1 = random(5)
 ///     >>> seed(42)
@@ -856,7 +856,7 @@ fn seed(seed_value: u64) {
 ///     Any | list: Single sample or list of samples
 ///
 /// Examples:
-///     >>> from __pecos_rslib.num.random import choice
+///     >>> from pecos_rslib.num.random import choice
 ///     >>> items = ["X", "Y", "Z"]  # Quotes are Python syntax, not Rust links
 ///     >>> # Single sample
 ///     >>> sample = choice(items)
@@ -974,7 +974,7 @@ fn choice(py: Python<'_>, a: Py<PyAny>, size: Option<usize>, replace: bool) -> P
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import random
+/// from pecos_rslib.num import random
 ///
 /// # Seed for reproducibility
 /// random.seed(42)
@@ -1014,7 +1014,7 @@ fn compare_any(size: usize, threshold: f64) -> bool {
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import random
+/// from pecos_rslib.num import random
 ///
 /// # Seed for reproducibility
 /// random.seed(42)
@@ -1051,7 +1051,7 @@ fn compare_indices(py: Python<'_>, size: usize, threshold: f64) -> PyResult<Py<P
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import mean
+/// from pecos_rslib.num import mean
 ///
 /// # Calculate mean of a list
 /// values = [1.0, 2.0, 3.0, 4.0, 5.0]
@@ -1135,7 +1135,7 @@ fn mean(py: Python<'_>, a: &Bound<'_, PyAny>, axis: Option<isize>) -> PyResult<P
 ///     bool: True if x is NaN, False otherwise
 ///
 /// Examples:
-///     >>> from `_pecos_rslib`._`pecos_rslib` import num
+///     >>> from `pecos_rslib`._`pecos_rslib` import num
 ///     >>> num.isnan(float('nan'))
 ///     True
 ///     >>> num.isnan(0.0)
@@ -1200,7 +1200,7 @@ fn isnan(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import floor
+/// from pecos_rslib.num import floor
 ///
 /// # Basic usage
 /// floor(3.7)   # Returns 3.0
@@ -1230,7 +1230,7 @@ fn floor(x: f64) -> f64 {
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import ceil
+/// from pecos_rslib.num import ceil
 ///
 /// # Basic usage
 /// ceil(3.2)   # Returns 4.0
@@ -1257,7 +1257,7 @@ fn ceil(x: f64) -> f64 {
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import round
+/// from pecos_rslib.num import round
 ///
 /// # Basic usage
 /// round(3.7)   # Returns 4.0
@@ -1291,7 +1291,7 @@ fn round(x: f64) -> f64 {
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import isclose
+/// from pecos_rslib.num import isclose
 ///
 /// # Basic usage with defaults
 /// isclose(1.0, 1.0)                           # Returns True (uses default tolerances)
@@ -1443,7 +1443,7 @@ fn isclose(
 ///
 /// ```python
 /// import numpy as np
-/// from _pecos_rslib import allclose
+/// from pecos_rslib import allclose
 ///
 /// # 1D Arrays
 /// a = np.array([1.0, 2.0, 3.0])
@@ -1678,7 +1678,7 @@ fn assert_allclose(
 ///
 /// ```python
 /// import numpy as np
-/// from __pecos_rslib.num import array_equal
+/// from pecos_rslib.num import array_equal
 ///
 /// # Equal arrays
 /// a = np.array([1.0, 2.0, 3.0])
@@ -1960,7 +1960,7 @@ fn array_equal(a: Bound<'_, PyAny>, b: Bound<'_, PyAny>, equal_nan: bool) -> PyR
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import std
+/// from pecos_rslib.num import std
 ///
 /// # Calculate population standard deviation
 /// values = [1.0, 2.0, 3.0, 4.0, 5.0]
@@ -2052,7 +2052,7 @@ fn std(
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import mean_axis
+/// from pecos_rslib.num import mean_axis
 /// import numpy as np
 ///
 /// # 2D array
@@ -2118,7 +2118,7 @@ fn mean_axis(py: Python<'_>, arr: &Bound<'_, PyAny>, axis: isize) -> PyResult<Py
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import std_axis
+/// from pecos_rslib.num import std_axis
 /// import numpy as np
 ///
 /// # 2D array
@@ -2185,7 +2185,7 @@ fn std_axis(
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import weighted_mean
+/// from pecos_rslib.num import weighted_mean
 ///
 /// # Fidelity measurements with shot counts
 /// data = [(0.98, 100.0), (0.94, 500.0), (0.96, 200.0)]
@@ -2213,7 +2213,7 @@ fn weighted_mean(data: Vec<(f64, f64)>) -> f64 {
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import jackknife_resamples
+/// from pecos_rslib.num import jackknife_resamples
 ///
 /// data = [1.0, 2.0, 3.0, 4.0, 5.0]
 /// resamples = jackknife_resamples(data)
@@ -2242,7 +2242,7 @@ fn jackknife_resamples(py: Python<'_>, data: Vec<f64>) -> PyResult<Py<Array>> {
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import jackknife_resamples, jackknife_stats
+/// from pecos_rslib.num import jackknife_resamples, jackknife_stats
 /// import numpy as np
 ///
 /// data = [1.5, 1.6, 1.4, 1.5, 1.7]
@@ -2281,7 +2281,7 @@ fn jackknife_stats(estimates: Vec<f64>) -> (f64, f64) {
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import jackknife_stats_axis
+/// from pecos_rslib.num import jackknife_stats_axis
 /// import numpy as np
 ///
 /// # 3 jackknife resamples × 2 parameters
@@ -2346,7 +2346,7 @@ fn jackknife_stats_axis(
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import jackknife_weighted
+/// from pecos_rslib.num import jackknife_weighted
 ///
 /// # Multiple fidelity measurements with shot counts
 /// data = [(0.98, 100.0), (0.94, 500.0), (0.96, 200.0)]
@@ -2378,7 +2378,7 @@ fn jackknife_weighted(data: Vec<(f64, f64)>) -> (f64, f64) {
 ///
 /// ```python
 /// import numpy as np
-/// from __pecos_rslib.num import diag
+/// from pecos_rslib.num import diag
 ///
 /// # Extract diagonal from covariance matrix
 /// cov_matrix = np.array([[0.0025, 0.0010], [0.0010, 0.0004]])
@@ -2420,7 +2420,7 @@ fn diag(
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import linspace
+/// from pecos_rslib.num import linspace
 ///
 /// # Generate 1000 points for plotting
 /// x = linspace(0.0, 1.0, 1000)
@@ -2463,7 +2463,7 @@ fn linspace(
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import arange
+/// from pecos_rslib.num import arange
 /// import numpy as np
 ///
 /// # All integers → int64 array (matches NumPy)
@@ -2558,7 +2558,7 @@ fn arange(
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import zeros
+/// from pecos_rslib.num import zeros
 ///
 /// # 1D array
 /// arr = zeros(5)  # [0.0, 0.0, 0.0, 0.0, 0.0]
@@ -2751,7 +2751,7 @@ fn zeros(
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import ones
+/// from pecos_rslib.num import ones
 ///
 /// # 1D array
 /// arr = ones(5)  # [1.0, 1.0, 1.0, 1.0, 1.0]
@@ -2962,8 +2962,8 @@ fn ones(
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import array
-/// from _pecos_rslib import dtypes
+/// from pecos_rslib.num import array
+/// from pecos_rslib import dtypes
 ///
 /// # Create float array (dtype inferred)
 /// arr = array([1.0, 2.0, 3.0])  # dtype: float64
@@ -3253,7 +3253,7 @@ fn asarray(
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import delete
+/// from pecos_rslib.num import delete
 ///
 /// # Delete from float array
 /// arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
@@ -3363,7 +3363,7 @@ fn delete(py: Python<'_>, arr: Bound<'_, PyAny>, index: usize) -> PyResult<Py<Py
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import sum
+/// from pecos_rslib.num import sum
 /// import numpy as np
 ///
 /// # List/tuple - sum all elements
@@ -4897,7 +4897,7 @@ fn abs(py: Python<'_>, x: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 /// # Examples
 ///
 /// ```python
-/// from __pecos_rslib.num import where
+/// from pecos_rslib.num import where
 ///
 /// # Simple scalar usage
 /// result = where(True, 10.0, 20.0)  # Returns 10.0
@@ -4931,7 +4931,7 @@ fn where_(condition: bool, x: f64, y: f64) -> f64 {
 ///
 /// ```python
 /// import numpy as np
-/// from __pecos_rslib.num import where_array
+/// from pecos_rslib.num import where_array
 ///
 /// # All arrays, same shape
 /// condition = np.array([True, False, True, False])
@@ -5325,21 +5325,21 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let sys = py.import("sys")?;
     let modules = sys.getattr("modules")?;
 
-    modules.set_item("_pecos_rslib.num", &num_module)?;
-    modules.set_item("_pecos_rslib.num.stats", num_module.getattr("stats")?)?;
-    modules.set_item("_pecos_rslib.num.math", num_module.getattr("math")?)?;
-    modules.set_item("_pecos_rslib.num.compare", num_module.getattr("compare")?)?;
-    modules.set_item("_pecos_rslib.num.array", num_module.getattr("array")?)?;
-    modules.set_item("_pecos_rslib.num.optimize", num_module.getattr("optimize")?)?;
+    modules.set_item("pecos_rslib.num", &num_module)?;
+    modules.set_item("pecos_rslib.num.stats", num_module.getattr("stats")?)?;
+    modules.set_item("pecos_rslib.num.math", num_module.getattr("math")?)?;
+    modules.set_item("pecos_rslib.num.compare", num_module.getattr("compare")?)?;
+    modules.set_item("pecos_rslib.num.array", num_module.getattr("array")?)?;
+    modules.set_item("pecos_rslib.num.optimize", num_module.getattr("optimize")?)?;
     modules.set_item(
-        "_pecos_rslib.num.polynomial",
+        "pecos_rslib.num.polynomial",
         num_module.getattr("polynomial")?,
     )?;
     modules.set_item(
-        "_pecos_rslib.num.curve_fit",
+        "pecos_rslib.num.curve_fit",
         num_module.getattr("curve_fit")?,
     )?;
-    modules.set_item("_pecos_rslib.num.random", num_module.getattr("random")?)?;
+    modules.set_item("pecos_rslib.num.random", num_module.getattr("random")?)?;
 
     // Add 'where' alias for where_
     num_module.setattr("where", num_module.getattr("where_")?)?;

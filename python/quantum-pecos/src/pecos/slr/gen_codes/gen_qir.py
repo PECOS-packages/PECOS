@@ -15,7 +15,7 @@ import re
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
-from _pecos_rslib.llvm import binding, ir
+from pecos_rslib.llvm import binding, ir
 
 import pecos as pc
 from pecos.qeclib.qubit import qgate_base

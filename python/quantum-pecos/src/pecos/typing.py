@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Generic, Protocol, TypeAlias, TypedDict, TypeVar
 
-import _pecos_rslib as prs
+import pecos_rslib as prs
 
 # Import external PHIR model with consistent naming
 from phir.model import PHIRModel as PhirModel
@@ -284,14 +284,14 @@ class Array(Generic[DType]):
     """Generic type for Array with dtype parameter support.
 
     This is a typing stub that enables generic type annotations for Array.
-    At runtime, use the actual Array from _pecos_rslib.
+    At runtime, use the actual Array from pecos_rslib.
 
     Type Parameters:
-        DType: The dtype of the array (from _pecos_rslib.dtypes)
+        DType: The dtype of the array (from pecos_rslib.dtypes)
 
     Examples:
         >>> from pecos.typing import Array
-        >>> from _pecos_rslib import dtypes
+        >>> from pecos_rslib import dtypes
         >>>
         >>> def get_state_vector() -> Array[dtypes.complex128]:
         ...     return array([1 + 0j, 0 + 0j], dtype=dtypes.complex128)
@@ -302,8 +302,8 @@ class Array(Generic[DType]):
         ...     return a * b
 
     Note:
-        This is a type hint only. At runtime, import Array from _pecos_rslib:
-        >>> from _pecos_rslib import Array  # Runtime usage
+        This is a type hint only. At runtime, import Array from pecos_rslib:
+        >>> from pecos_rslib import Array  # Runtime usage
         >>> from pecos.typing import Array  # Type hints only
     """
 

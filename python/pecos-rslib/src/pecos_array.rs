@@ -127,7 +127,7 @@ impl ArrayData {
 ///
 /// This struct wraps a Rust ndarray and provides numpy-like functionality
 /// without requiring numpy on the Python side.
-#[pyclass(name = "Array", module = "_pecos_rslib")]
+#[pyclass(name = "Array", module = "pecos_rslib")]
 pub struct Array {
     pub(crate) data: ArrayData,
 }
@@ -214,7 +214,7 @@ impl Array {
     /// # Examples
     ///
     /// ```python
-    /// from _pecos_rslib import Array
+    /// from pecos_rslib import Array
     /// import numpy as np
     ///
     /// arr = Array(np.array([1.0, 2.0, 3.0]))
@@ -5275,7 +5275,7 @@ impl Array {
 ///     A new Array wrapping the data
 ///
 /// Examples:
-///     >>> from `_pecos_rslib` import array, Pauli
+///     >>> from `pecos_rslib` import array, Pauli
 ///     >>> arr = array([1.0, 2.0, 3.0])
 ///     >>> `pauli_arr` = array([Pauli.X, Pauli.Y, Pauli.Z])
 #[pyfunction]

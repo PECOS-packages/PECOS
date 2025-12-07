@@ -7,7 +7,7 @@ drop-in replacement behavior.
 
 import numpy as np
 
-from _pecos_rslib import Array
+from pecos_rslib import Array
 
 
 class TestNonUnitStepSlicing1D:

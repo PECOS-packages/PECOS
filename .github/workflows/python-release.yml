@@ -57,7 +57,7 @@ jobs:
           fi
 
 
-  build_wheels_pecos_rslib:
+  build_wheelspecos_rslib:
     needs: check_pr_push
     if: needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true'
     runs-on: ${{ matrix.runner || matrix.os }}
@@ -142,10 +142,10 @@ jobs:
           path: ./wheelhouse/*.whl
 
   test_abi3_wheels:
-    needs: build_wheels_pecos_rslib
+    needs: build_wheelspecos_rslib
     if: |
       always() &&
-      needs.build_wheels_pecos_rslib.result == 'success'
+      needs.build_wheelspecos_rslib.result == 'success'
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
@@ -185,14 +185,14 @@ jobs:
           echo "Testing abi3 wheel with Python ${{ matrix.python-version }}"
           python --version
           pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl
-          python -c 'import _pecos_rslib; print(f"_pecos_rslib version: {_pecos_rslib.__version__}")'
+          python -c 'import pecos_rslib; print(f"pecos_rslib version: {pecos_rslib.__version__}")'
           python -c 'import sys; print(f"Python version: {sys.version}")'
 
   build_sdist_quantum_pecos:
-    needs: build_wheels_pecos_rslib
+    needs: build_wheelspecos_rslib
     if: |
       always() &&
-      needs.build_wheels_pecos_rslib.result == 'success'
+      needs.build_wheelspecos_rslib.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -233,10 +233,10 @@ jobs:
           path: python/quantum-pecos/dist/*.tar.gz
 
   build_wheels_quantum_pecos:
-    needs: build_wheels_pecos_rslib
+    needs: build_wheelspecos_rslib
     if: |
       always() &&
-      needs.build_wheels_pecos_rslib.result == 'success'
+      needs.build_wheelspecos_rslib.result == 'success'
     runs-on: ubuntu-latest
 
     steps:
@@ -278,9 +278,9 @@ jobs:
           path: python/quantum-pecos/dist/*.whl
 
   collect_artifacts:
-    needs: [build_wheels_pecos_rslib, build_sdist_quantum_pecos, build_wheels_quantum_pecos, test_abi3_wheels]
+    needs: [build_wheelspecos_rslib, build_sdist_quantum_pecos, build_wheels_quantum_pecos, test_abi3_wheels]
     if: |
-      needs.build_wheels_pecos_rslib.result == 'success' &&
+      needs.build_wheelspecos_rslib.result == 'success' &&
       needs.build_sdist_quantum_pecos.result == 'success' &&
       needs.build_wheels_quantum_pecos.result == 'success' &&
       needs.test_abi3_wheels.result == 'success'

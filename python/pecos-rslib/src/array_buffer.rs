@@ -780,7 +780,7 @@ fn extract_from_sequence(
 
 /// Extract f64 array from nested sequence using PECOS `array()`.
 fn extract_nested_sequence(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<ArrayD<f64>> {
-    let pecos_rslib = py.import("_pecos_rslib")?;
+    let pecos_rslib = py.import("pecos_rslib")?;
     let array_fn = pecos_rslib.getattr("array")?;
     let f64_dtype = pecos_rslib.getattr("dtypes")?.getattr("f64")?;
     let kwargs = pyo3::types::PyDict::new(py);

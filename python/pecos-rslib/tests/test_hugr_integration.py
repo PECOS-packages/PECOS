@@ -13,7 +13,7 @@ import pytest
 def test_hugr_backend_availability() -> None:
     """Test that we can check HUGR backend availability."""
     try:
-        from _pecos_rslib import RUST_HUGR_AVAILABLE, check_rust_hugr_availability
+        from pecos_rslib import RUST_HUGR_AVAILABLE, check_rust_hugr_availability
 
         available, message = check_rust_hugr_availability()
         assert isinstance(available, bool)
@@ -28,7 +28,7 @@ def test_hugr_backend_availability() -> None:
 def test_hugr_compiler_creation() -> None:
     """Test HUGR compilation functionality with the new API."""
     try:
-        from _pecos_rslib import compile_hugr_to_llvm_rust, check_rust_hugr_availability
+        from pecos_rslib import compile_hugr_to_llvm_rust, check_rust_hugr_availability
 
         # Check that HUGR support is available
         available, message = check_rust_hugr_availability()
@@ -57,7 +57,7 @@ def test_hugr_compiler_creation() -> None:
 def test_hugr_compilation_with_invalid_data() -> None:
     """Test HUGR compilation with various invalid inputs."""
     try:
-        from _pecos_rslib import compile_hugr_to_llvm_rust, check_rust_hugr_availability
+        from pecos_rslib import compile_hugr_to_llvm_rust, check_rust_hugr_availability
 
         available, message = check_rust_hugr_availability()
         if not available:
@@ -85,7 +85,7 @@ def test_hugr_compilation_with_invalid_data() -> None:
 def test_convenience_functions() -> None:
     """Test convenience functions for HUGR compilation."""
     try:
-        from _pecos_rslib import check_rust_hugr_availability, compile_hugr_to_llvm_rust
+        from pecos_rslib import check_rust_hugr_availability, compile_hugr_to_llvm_rust
 
         available, message = check_rust_hugr_availability()
         if not available:
@@ -162,7 +162,7 @@ def test_guppy_frontend_rust_backend() -> None:
     """Test that Guppy frontend can use Rust backend."""
     try:
         from pecos.frontends.guppy_frontend import GuppyFrontend
-        from _pecos_rslib import check_rust_hugr_availability
+        from pecos_rslib import check_rust_hugr_availability
 
         available, message = check_rust_hugr_availability()
         if not available:
@@ -213,7 +213,7 @@ def test_guppy_frontend_backend_selection() -> None:
 def test_hugr_compiler_with_valid_data() -> None:
     """Test HUGR compiler with semi-valid HUGR data."""
     try:
-        from _pecos_rslib import compile_hugr_to_llvm_rust, check_rust_hugr_availability
+        from pecos_rslib import compile_hugr_to_llvm_rust, check_rust_hugr_availability
 
         available, message = check_rust_hugr_availability()
         if not available:

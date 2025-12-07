@@ -540,9 +540,7 @@ impl PySparseSimCpp {
 
         // Get raw tableaus
         let stabs_raw = self.inner.stab_tableau();
-        let adjust_fn = py
-            .import("_pecos_rslib")?
-            .getattr("adjust_tableau_string")?;
+        let adjust_fn = py.import("pecos_rslib")?.getattr("adjust_tableau_string")?;
 
         // Process stabilizers
         let stabs_lines: Vec<&str> = stabs_raw.lines().collect();

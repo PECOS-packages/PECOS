@@ -30,7 +30,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyBool;
 
 /// Dtype enum representing supported data types
-#[pyclass(name = "DType", module = "__pecos_rslib.dtypes")]
+#[pyclass(name = "DType", module = "pecos_rslib.dtypes")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DType {
     /// Boolean (bool)
@@ -498,7 +498,7 @@ impl DType {
 // ============================================================================
 
 /// Rust-backed f64 scalar
-#[pyclass(name = "f64", module = "__pecos_rslib.dtypes")]
+#[pyclass(name = "f64", module = "pecos_rslib.dtypes")]
 #[derive(Debug, Clone, Copy)]
 pub struct ScalarF64 {
     value: f64,
@@ -626,7 +626,7 @@ impl ScalarF64 {
 }
 
 /// Rust-backed f32 scalar
-#[pyclass(name = "f32", module = "__pecos_rslib.dtypes")]
+#[pyclass(name = "f32", module = "pecos_rslib.dtypes")]
 #[derive(Debug, Clone, Copy)]
 pub struct ScalarF32 {
     value: f32,
@@ -753,7 +753,7 @@ impl ScalarF32 {
 }
 
 /// Rust-backed u8 scalar
-#[pyclass(name = "u8", module = "__pecos_rslib.dtypes")]
+#[pyclass(name = "u8", module = "pecos_rslib.dtypes")]
 #[derive(Debug, Clone, Copy)]
 pub struct ScalarU8 {
     value: u8,
@@ -1112,7 +1112,7 @@ impl ScalarU8 {
 }
 
 /// Rust-backed u16 scalar
-#[pyclass(name = "u16", module = "__pecos_rslib.dtypes")]
+#[pyclass(name = "u16", module = "pecos_rslib.dtypes")]
 #[derive(Debug, Clone, Copy)]
 pub struct ScalarU16 {
     value: u16,
@@ -1471,7 +1471,7 @@ impl ScalarU16 {
 }
 
 /// Rust-backed u32 scalar
-#[pyclass(name = "u32", module = "__pecos_rslib.dtypes")]
+#[pyclass(name = "u32", module = "pecos_rslib.dtypes")]
 #[derive(Debug, Clone, Copy)]
 pub struct ScalarU32 {
     value: u32,
@@ -1830,7 +1830,7 @@ impl ScalarU32 {
 }
 
 /// Rust-backed u64 scalar
-#[pyclass(name = "u64", module = "__pecos_rslib.dtypes")]
+#[pyclass(name = "u64", module = "pecos_rslib.dtypes")]
 #[derive(Debug, Clone, Copy)]
 pub struct ScalarU64 {
     value: u64,
@@ -2195,7 +2195,7 @@ impl ScalarU64 {
 }
 
 /// Rust-backed i8 scalar
-#[pyclass(name = "i8", module = "__pecos_rslib.dtypes")]
+#[pyclass(name = "i8", module = "pecos_rslib.dtypes")]
 #[derive(Debug, Clone, Copy)]
 pub struct ScalarI8 {
     value: i8,
@@ -2593,7 +2593,7 @@ impl ScalarI8 {
 }
 
 /// Rust-backed i16 scalar
-#[pyclass(name = "i16", module = "__pecos_rslib.dtypes")]
+#[pyclass(name = "i16", module = "pecos_rslib.dtypes")]
 #[derive(Debug, Clone, Copy)]
 pub struct ScalarI16 {
     value: i16,
@@ -2989,7 +2989,7 @@ impl ScalarI16 {
 }
 
 /// Rust-backed i32 scalar
-#[pyclass(name = "i32", module = "__pecos_rslib.dtypes")]
+#[pyclass(name = "i32", module = "pecos_rslib.dtypes")]
 #[derive(Debug, Clone, Copy)]
 pub struct ScalarI32 {
     value: i32,
@@ -3385,7 +3385,7 @@ impl ScalarI32 {
 }
 
 /// Rust-backed i64 scalar
-#[pyclass(name = "i64", module = "__pecos_rslib.dtypes")]
+#[pyclass(name = "i64", module = "pecos_rslib.dtypes")]
 #[derive(Debug, Clone, Copy)]
 pub struct ScalarI64 {
     value: i64,
@@ -3710,7 +3710,7 @@ impl ScalarI64 {
 }
 
 /// Rust-backed complex128 scalar
-#[pyclass(name = "complex128", module = "__pecos_rslib.dtypes")]
+#[pyclass(name = "complex128", module = "pecos_rslib.dtypes")]
 #[derive(Debug, Clone, Copy)]
 pub struct ScalarComplex128 {
     value: Complex64,

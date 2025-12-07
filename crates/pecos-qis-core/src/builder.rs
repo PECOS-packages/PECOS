@@ -75,7 +75,7 @@ impl QisEngineBuilder {
     /// Set the program to use from any supported program type
     ///
     /// This method accepts any type that can be converted to `QisInterface`,
-    /// including `QisProgram`, `HugrProgram`, etc. Panics on conversion errors.
+    /// including `Qis`, `Hugr`, etc. Panics on conversion errors.
     /// For error handling, use `try_program()` instead.
     ///
     /// # Example
@@ -127,7 +127,7 @@ impl QisEngineBuilder {
     /// Set the program to use from any supported program type (error handling version)
     ///
     /// This method accepts any type that can be converted to `QisInterface`,
-    /// including `QisProgram`, `HugrProgram`, etc. Returns a Result because
+    /// including `Qis`, `Hugr`, etc. Returns a Result because
     /// some conversions may fail (e.g., compilation errors).
     ///
     /// # Example
@@ -171,9 +171,9 @@ impl QisEngineBuilder {
             // Use the provided interface directly
             self.interface = Some(interface.clone());
         } else {
-            // For other program types (QisProgram, HugrProgram), use the builder
+            // For other program types (Qis, Hugr), use the builder
             // Also store the original program source for loading into interface implementations
-            if let Some(qis_prog) = any_program.downcast_ref::<pecos_programs::QisProgram>() {
+            if let Some(qis_prog) = any_program.downcast_ref::<pecos_programs::Qis>() {
                 // Store the LLVM IR source for later loading
                 match &qis_prog.content {
                     pecos_programs::QisContent::Ir(ir_string) => {
@@ -190,12 +190,10 @@ impl QisEngineBuilder {
             let interface = if let Some(builder) = &self.interface_builder {
                 // Use the explicitly specified interface builder
                 log::debug!("Using interface builder: {}", builder.name());
-                if let Some(qis_prog) = any_program.downcast_ref::<pecos_programs::QisProgram>() {
+                if let Some(qis_prog) = any_program.downcast_ref::<pecos_programs::Qis>() {
                     log::debug!("Building interface from QIS program");
                     builder.build_from_qis_program(qis_prog.clone())?
-                } else if let Some(hugr_prog) =
-                    any_program.downcast_ref::<pecos_programs::HugrProgram>()
-                {
+                } else if let Some(hugr_prog) = any_program.downcast_ref::<pecos_programs::Hugr>() {
                     log::debug!("Building interface from HUGR program");
                     builder.build_from_hugr_program(hugr_prog.clone())?
                 } else {

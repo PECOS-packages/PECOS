@@ -102,9 +102,18 @@ ignore = [
 [lint.per-file-ignores]
 "**/__init__.py" = ["F401"]  # imported but unused - Expected for __init__.py re-exports
 
+# Main pecos __init__.py - special case for module initialization
+"python/quantum-pecos/src/pecos/__init__.py" = [
+    "E402",     # Module level import not at top - intentional for module setup
+    "SLF001",   # Private member access - accessing _to_program() on program wrappers
+    "ANN",      # Missing annotations - legacy code with duck typing for program wrappers
+    "PLC0415",  # Import inside function - optional guppylang check
+]
+
 
 # Test files
 "python/*/tests/**/*.py" = [
+    "F401",     # Imported but unused - OK in tests for import availability checks
     "INP001",   # File is part of an implicit namespace package - OK for test directories
     "S101",     # Use of `assert` detected - Assert is standard practice in test files
     "N802",     # Function name should be lowercase - Test functions often match gate names
@@ -185,6 +194,8 @@ ignore = [
 "python/quantum-pecos/src/pecos/frontends/hugr_llvm_compiler.py" = ["S603", "S607"]  # cargo build
 "python/quantum-pecos/src/pecos/engines/selene_engine_builder.py" = ["S603", "S607", "TRY301"]  # file command
 "python/quantum-pecos/src/pecos/selene_subprocess_engine.py" = ["S603", "S607"]  # Selene subprocess
+"python/quantum-pecos/src/pecos/_compilation/guppy.py" = ["S603", "S607", "PLC0415", "TRY301"]  # HUGR/LLVM compilation tools
+"python/quantum-pecos/src/pecos/_compilation/hugr_llvm.py" = ["S603", "S607"]  # cargo build, hugr-to-llvm binary
 
 
 # Stub files (.pyi) - type stubs need flexibility

@@ -16,7 +16,7 @@ use crate::common::{PhirJsonVersion, detect_version};
 use crate::v0_1::engine::PhirJsonEngine;
 use pecos_core::errors::PecosError;
 use pecos_engines::ClassicalControlEngineBuilder;
-use pecos_programs::PhirJsonProgram;
+use pecos_programs::PhirJson;
 use std::path::{Path, PathBuf};
 
 /// Engine-specific PHIR program that stores the validated JSON and version
@@ -53,9 +53,9 @@ impl PhirJsonEngineProgram {
     }
 }
 
-// Convert from the shared PhirJsonProgram type
-impl From<PhirJsonProgram> for PhirJsonEngineProgram {
-    fn from(program: PhirJsonProgram) -> Self {
+// Convert from the shared Phir type
+impl From<PhirJson> for PhirJsonEngineProgram {
+    fn from(program: PhirJson) -> Self {
         // We need to detect the version here, but if it fails, we'll handle it later in build()
         match detect_version(&program.source) {
             Ok(version) => Self {
@@ -74,7 +74,7 @@ impl From<PhirJsonProgram> for PhirJsonEngineProgram {
 /// WebAssembly program for PHIR foreign function calls
 #[cfg(feature = "wasm")]
 #[derive(Debug, Clone)]
-pub struct PhirJsonEngineWasmProgram {
+pub struct PhirJsonEngineWasm {
     /// The WASM binary data
     pub wasm_bytes: Vec<u8>,
     /// Optional source path for debugging
@@ -82,7 +82,7 @@ pub struct PhirJsonEngineWasmProgram {
 }
 
 #[cfg(feature = "wasm")]
-impl PhirJsonEngineWasmProgram {
+impl PhirJsonEngineWasm {
     /// Create from WASM bytes
     #[must_use]
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
@@ -119,54 +119,54 @@ impl PhirJsonEngineWasmProgram {
 
 /// Trait for types that can be converted to a WASM program for PHIR
 #[cfg(feature = "wasm")]
-pub trait IntoWasmProgram {
-    /// Convert to a `PhirJsonEngineWasmProgram`
+pub trait IntoWasm {
+    /// Convert to a `PhirJsonEngineWasm`
     ///
     /// # Errors
     ///
     /// Returns an error if conversion fails
-    fn into_wasm_program(self) -> Result<PhirJsonEngineWasmProgram, PecosError>;
+    fn into_wasm_program(self) -> Result<PhirJsonEngineWasm, PecosError>;
 }
 
 #[cfg(feature = "wasm")]
-impl IntoWasmProgram for PhirJsonEngineWasmProgram {
-    fn into_wasm_program(self) -> Result<PhirJsonEngineWasmProgram, PecosError> {
+impl IntoWasm for PhirJsonEngineWasm {
+    fn into_wasm_program(self) -> Result<PhirJsonEngineWasm, PecosError> {
         Ok(self)
     }
 }
 
 #[cfg(feature = "wasm")]
-impl IntoWasmProgram for &str {
-    fn into_wasm_program(self) -> Result<PhirJsonEngineWasmProgram, PecosError> {
-        PhirJsonEngineWasmProgram::from_file(self)
+impl IntoWasm for &str {
+    fn into_wasm_program(self) -> Result<PhirJsonEngineWasm, PecosError> {
+        PhirJsonEngineWasm::from_file(self)
     }
 }
 
 #[cfg(feature = "wasm")]
-impl IntoWasmProgram for String {
-    fn into_wasm_program(self) -> Result<PhirJsonEngineWasmProgram, PecosError> {
-        PhirJsonEngineWasmProgram::from_file(self)
+impl IntoWasm for String {
+    fn into_wasm_program(self) -> Result<PhirJsonEngineWasm, PecosError> {
+        PhirJsonEngineWasm::from_file(self)
     }
 }
 
 #[cfg(feature = "wasm")]
-impl IntoWasmProgram for &String {
-    fn into_wasm_program(self) -> Result<PhirJsonEngineWasmProgram, PecosError> {
-        PhirJsonEngineWasmProgram::from_file(self)
+impl IntoWasm for &String {
+    fn into_wasm_program(self) -> Result<PhirJsonEngineWasm, PecosError> {
+        PhirJsonEngineWasm::from_file(self)
     }
 }
 
 #[cfg(feature = "wasm")]
-impl IntoWasmProgram for PathBuf {
-    fn into_wasm_program(self) -> Result<PhirJsonEngineWasmProgram, PecosError> {
-        PhirJsonEngineWasmProgram::from_file(self)
+impl IntoWasm for PathBuf {
+    fn into_wasm_program(self) -> Result<PhirJsonEngineWasm, PecosError> {
+        PhirJsonEngineWasm::from_file(self)
     }
 }
 
 #[cfg(feature = "wasm")]
-impl IntoWasmProgram for &Path {
-    fn into_wasm_program(self) -> Result<PhirJsonEngineWasmProgram, PecosError> {
-        PhirJsonEngineWasmProgram::from_file(self)
+impl IntoWasm for &Path {
+    fn into_wasm_program(self) -> Result<PhirJsonEngineWasm, PecosError> {
+        PhirJsonEngineWasm::from_file(self)
     }
 }
 
@@ -176,7 +176,7 @@ pub struct PhirJsonEngineBuilder {
     program: Option<PhirJsonEngineProgram>,
     /// WebAssembly program for foreign function calls
     #[cfg(feature = "wasm")]
-    wasm_program: Option<PhirJsonEngineWasmProgram>,
+    wasm_program: Option<PhirJsonEngineWasm>,
 }
 
 impl PhirJsonEngineBuilder {
@@ -190,7 +190,7 @@ impl PhirJsonEngineBuilder {
         }
     }
 
-    /// Set the program for this engine (accepts either `PhirJsonProgram` or `PhirJsonEngineProgram`)
+    /// Set the program for this engine (accepts either `Phir` or `PhirJsonEngineProgram`)
     #[must_use]
     pub fn program(mut self, program: impl Into<PhirJsonEngineProgram>) -> Self {
         self.program = Some(program.into());
@@ -220,12 +220,12 @@ impl PhirJsonEngineBuilder {
     /// Set the WebAssembly program for foreign function calls
     ///
     /// This method accepts:
-    /// - `PhirJsonEngineWasmProgram` - pre-loaded WASM binary
+    /// - `PhirJsonEngineWasm` - pre-loaded WASM binary
     /// - `&str` or `String` - path to a .wasm or .wat file
     /// - `PathBuf` or `&Path` - path to a .wasm or .wat file
     #[cfg(feature = "wasm")]
     #[must_use]
-    pub fn wasm(mut self, wasm: impl IntoWasmProgram) -> Self {
+    pub fn wasm(mut self, wasm: impl IntoWasm) -> Self {
         match wasm.into_wasm_program() {
             Ok(program) => {
                 self.wasm_program = Some(program);
@@ -278,7 +278,7 @@ impl ClassicalControlEngineBuilder for PhirJsonEngineBuilder {
 /// This is the entry point for the unified API pattern:
 /// ```rust
 /// use pecos_phir_json::phir_json_engine;
-/// use pecos_programs::PhirJsonProgram;
+/// use pecos_programs::PhirJson;
 /// use pecos_engines::engine_builder::ClassicalControlEngineBuilder;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -309,7 +309,7 @@ impl ClassicalControlEngineBuilder for PhirJsonEngineBuilder {
 /// }"#;
 ///
 /// let results = phir_json_engine()
-///     .program(PhirJsonProgram::from_json(json))
+///     .program(PhirJson::from_json(json))
 ///     .to_sim()
 ///     .run(100)?;
 ///
@@ -329,9 +329,9 @@ pub fn phir_json_engine() -> PhirJsonEngineBuilder {
     PhirJsonEngineBuilder::new()
 }
 
-/// Convenience conversion from `PhirJsonProgram` to builder
-impl From<PhirJsonProgram> for PhirJsonEngineBuilder {
-    fn from(program: PhirJsonProgram) -> Self {
+/// Convenience conversion from `Phir` to builder
+impl From<PhirJson> for PhirJsonEngineBuilder {
+    fn from(program: PhirJson) -> Self {
         Self::new().program(program)
     }
 }
@@ -363,7 +363,7 @@ mod tests {
             "ops": []
         }"#;
 
-        let shared_program = PhirJsonProgram::from_json(json);
+        let shared_program = PhirJson::from_json(json);
         let engine_program: PhirJsonEngineProgram = shared_program.into();
         assert_eq!(engine_program.version(), PhirJsonVersion::V0_1);
         assert_eq!(engine_program.json(), json);
@@ -381,7 +381,7 @@ mod tests {
             ]
         }"#;
 
-        let program = PhirJsonProgram::from_json(json);
+        let program = PhirJson::from_json(json);
         let builder = phir_json_engine().program(program);
 
         // Build should succeed
@@ -404,7 +404,7 @@ mod tests {
             ]
         }"#;
 
-        let program = PhirJsonProgram::from_json(json);
+        let program = PhirJson::from_json(json);
 
         // This tests that the builder can be used with .to_sim()
         let _sim_builder = phir_json_engine().program(program).to_sim();

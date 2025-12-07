@@ -38,7 +38,7 @@ except ImportError:
     print("[WARNING] Rust HUGR backend not available")
 
 try:
-    from pecos.frontends import GuppyFrontend
+    from pecos._compilation import GuppyFrontend
 
     print("[OK] PECOS Guppy frontend available")
 except ImportError:

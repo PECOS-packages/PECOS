@@ -4,7 +4,7 @@ use pecos::prelude::*;
 use pecos::qis_engine;
 use pecos::{sim, sim_builder};
 use pecos_engines::{DepolarizingNoise, sparse_stab, state_vector};
-use pecos_programs::{QasmProgram, QisProgram};
+use pecos_programs::{Qasm, Qis};
 use pecos_qasm::qasm_engine;
 
 fn main() -> Result<(), PecosError> {
@@ -13,7 +13,7 @@ fn main() -> Result<(), PecosError> {
     // The primary API: sim(program)
     println!("1. Primary API - sim(program) with automatic engine selection:");
 
-    let qasm_prog = QasmProgram::from_string(
+    let qasm_prog = Qasm::from_string(
         r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -40,7 +40,7 @@ fn main() -> Result<(), PecosError> {
     // Build once, run multiple times
     println!("\n2. Build once, run multiple times pattern:");
 
-    let qasm_prog = QasmProgram::from_string(
+    let qasm_prog = Qasm::from_string(
         r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -89,8 +89,8 @@ fn main() -> Result<(), PecosError> {
     // Override automatic engine selection
     println!("\n4. Override automatic engine selection:");
 
-    let qasm_prog = QasmProgram::from_string("OPENQASM 2.0; qreg q[1];");
-    let llvm_prog = QisProgram::from_string(
+    let qasm_prog = Qasm::from_string("OPENQASM 2.0; qreg q[1];");
+    let llvm_prog = Qis::from_string(
         r#"
         define void @main() #0 { ret void }
         attributes #0 = { "EntryPoint" }

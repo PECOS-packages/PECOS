@@ -24,7 +24,7 @@ class TestGuppyLLVMPipeline:
     def test_backend_availability(self) -> None:
         """Test that backends are properly detected."""
         try:
-            from pecos.frontends import get_guppy_backends
+            from pecos import get_guppy_backends
         except ImportError:
             pytest.skip("get_guppy_backends not available")
 
@@ -55,7 +55,7 @@ class TestGuppyLLVMPipeline:
     def test_guppy_frontend_initialization(self) -> None:
         """Test the GuppyFrontend class initialization."""
         try:
-            from pecos.frontends.guppy_frontend import GuppyFrontend
+            from pecos._compilation import GuppyFrontend
         except ImportError:
             pytest.skip("GuppyFrontend not available")
 
@@ -76,7 +76,7 @@ class TestGuppyLLVMPipeline:
         try:
             from guppylang import guppy
             from guppylang.std.quantum import h, measure, qubit
-            from pecos.frontends.guppy_frontend import GuppyFrontend
+            from pecos._compilation import GuppyFrontend
         except ImportError as e:
             pytest.skip(f"Required modules not available: {e}")
 
@@ -114,7 +114,7 @@ class TestGuppyLLVMPipeline:
         try:
             from guppylang import guppy
             from guppylang.std.quantum import cx, h, measure, qubit
-            from pecos.frontends import sim
+            from pecos import Guppy, sim
             from pecos_rslib import state_vector
         except ImportError as e:
             pytest.skip(f"Required modules not available: {e}")
@@ -130,7 +130,11 @@ class TestGuppyLLVMPipeline:
         # Execute the Bell state circuit
         try:
             result = (
-                sim(bell_state).qubits(10).quantum(state_vector()).seed(42).run(100)
+                sim(Guppy(bell_state))
+                .qubits(10)
+                .quantum(state_vector())
+                .seed(42)
+                .run(100)
             )
         except (RuntimeError, ImportError) as e:
             if "PECOS" in str(e) or "compilation" in str(e):
@@ -229,7 +233,7 @@ def test_superposition_statistics(n_qubits: int, expected_avg: float) -> None:
     try:
         from guppylang import guppy
         from guppylang.std.quantum import h, measure, qubit
-        from pecos.frontends import sim
+        from pecos import Guppy, sim
         from pecos_rslib import state_vector
     except ImportError as e:
         pytest.skip(f"Required modules not available: {e}")

@@ -19,7 +19,7 @@ fn is_gate_with_name(op: &Operation, gate_name: &str) -> bool {
     }
 }
 
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
 
 #[test]
@@ -94,7 +94,7 @@ fn test_x_gate_and_measure() {
 
     // Now test actual simulation - X gate should flip the qubit from |0⟩ to |1⟩
     let shot_vec = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)

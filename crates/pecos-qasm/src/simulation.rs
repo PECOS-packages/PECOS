@@ -5,7 +5,7 @@
 
 use crate::unified_engine_builder::qasm_engine;
 use pecos_engines::ClassicalControlEngineBuilder;
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 
 /// Create a new QASM simulation builder
 ///
@@ -16,7 +16,7 @@ use pecos_programs::QasmProgram;
 ///
 /// ```
 /// use pecos_qasm::qasm_engine;
-/// use pecos_programs::QasmProgram;
+/// use pecos_programs::Qasm;
 /// use pecos_engines::{ClassicalControlEngineBuilder, noise::DepolarizingNoiseModel};
 ///
 /// let qasm = r#"
@@ -31,7 +31,7 @@ use pecos_programs::QasmProgram;
 ///
 /// // Run with default settings (no noise)
 /// let results = qasm_engine()
-///     .program(QasmProgram::from_string(qasm))
+///     .program(Qasm::from_string(qasm))
 ///     .to_sim()
 ///     .run(100)
 ///     .unwrap();
@@ -44,7 +44,7 @@ use pecos_programs::QasmProgram;
 ///     .with_meas_probability(0.001);
 ///
 /// let results = qasm_engine()
-///     .program(QasmProgram::from_string(qasm))
+///     .program(Qasm::from_string(qasm))
 ///     .to_sim()
 ///     .seed(42)
 ///     .noise(noise_builder)
@@ -53,7 +53,5 @@ use pecos_programs::QasmProgram;
 /// ```
 #[must_use]
 pub fn qasm_sim(qasm: impl Into<String>) -> pecos_engines::SimBuilder {
-    qasm_engine()
-        .program(QasmProgram::from_string(qasm))
-        .to_sim()
+    qasm_engine().program(Qasm::from_string(qasm)).to_sim()
 }

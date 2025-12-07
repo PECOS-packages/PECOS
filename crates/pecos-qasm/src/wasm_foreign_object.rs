@@ -26,7 +26,7 @@
 //! # #[cfg(feature = "wasm")] {
 //! use pecos_qasm::qasm_engine;
 //! use pecos_engines::ClassicalControlEngineBuilder;
-//! use pecos_programs::QasmProgram;
+//! use pecos_programs::Qasm;
 //!
 //! let qasm = r#"
 //!     OPENQASM 2.0;
@@ -41,7 +41,7 @@
 //!
 //! // Run simulation with WASM module
 //! let results = qasm_engine()
-//!     .program(QasmProgram::from_string(qasm))
+//!     .program(Qasm::from_string(qasm))
 //!     .wasm("math.wasm")
 //!     .to_sim()
 //!     .run(100)

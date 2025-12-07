@@ -31,6 +31,7 @@ import sys
 import warnings
 from typing import NoReturn
 
+import pecos_rslib
 from pecos_rslib import (
     Array,  # Array type with generic dtype support (Array[f64], etc.)
     BitInt,  # Fixed-width binary integer type
@@ -51,7 +52,6 @@ from pecos_rslib import (
     exp,  # Exponential
     f32,
     f64,
-    graph,
     i8,
     i16,
     i32,
@@ -180,25 +180,26 @@ compare = num.compare
 # This follows the principle: "flat is better than nested" for the main namespace
 
 # These imports come after sys.modules setup - this is intentional
-from pecos import (  # noqa: E402
+from pecos import (
     circuit_converters,
     circuits,
     decoders,
     engines,
     error_models,
-    frontends,
+    graph,
     misc,
+    programs,
     protocols,
     qeccs,
     simulators,
     tools,
 )
-from pecos.circuits.quantum_circuit import QuantumCircuit  # noqa: E402
-from pecos.engines import circuit_runners  # noqa: E402
-from pecos.engines.hybrid_engine_old import HybridEngine  # noqa: E402
+from pecos.circuits.quantum_circuit import QuantumCircuit
+from pecos.engines import circuit_runners
+from pecos.engines.hybrid_engine_old import HybridEngine
 
 
-def BinArray(*args, **kwargs):  # noqa: ANN002, ANN003, ANN201, N802
+def BinArray(*args, **kwargs):  # noqa: N802
     """Deprecated: Use BitInt instead.
 
     BinArray is a deprecated alias for BitInt. It will be removed in a future version.
@@ -213,51 +214,291 @@ def BinArray(*args, **kwargs):  # noqa: ANN002, ANN003, ANN201, N802
     return BitInt(*args, **kwargs)
 
 
-# Import Guppy functionality (with graceful fallback)
-try:
-    from pecos.frontends import (
-        get_guppy_backends,
-        sim,
-    )
+# Import program wrappers from programs submodule for convenience
+# These can also be accessed via pecos.programs.Qasm, etc.
+from pecos.programs import Guppy, Hugr, PhirJson, ProgramWrapper, Qasm, Qis, Wasm, Wat
 
-    GUPPY_INTEGRATION_AVAILABLE = True
-except ImportError:
-    GUPPY_INTEGRATION_AVAILABLE = False
 
-    def sim(*args: object, **kwargs: object) -> NoReturn:
-        """Stub for sim when Guppy integration is not available."""
-        del args, kwargs  # Unused
-        msg = "Guppy integration not available. Install with: pip install quantum-pecos[guppy]"
-        raise ImportError(
-            msg,
-        )
+def sim(program):
+    """Create a simulation builder for a quantum program.
 
-    def get_guppy_backends() -> dict:
-        """Stub for get_guppy_backends."""
-        return {"guppy_available": False, "rust_backend": False}
+    This is the primary entry point for running quantum simulations in PECOS.
+
+    Args:
+        program: A wrapped quantum program (Guppy, Qasm, Qis, Hugr, PhirJson, Wasm, or Wat),
+                 a raw Rust program type from pecos_rslib,
+                 or a Guppy-decorated function (which will be auto-wrapped).
+
+    Returns:
+        A SimBuilder that can be configured and run.
+
+    Example:
+        >>> from pecos import sim, Qasm
+        >>> results = sim(Qasm("OPENQASM 2.0; qreg q[2]; ...")).run(1000)
+
+        >>> # Guppy functions are auto-wrapped
+        >>> @guppy
+        ... def my_circuit():
+        ...     q = qubit()
+        ...     return measure(q)
+        ...
+        >>> results = sim(my_circuit).run(100)
+    """
+    # Auto-wrap Guppy-decorated functions (they have a 'compile' method)
+    if hasattr(program, "compile") and not hasattr(program, "_to_program"):
+        program = Guppy(program)
+
+    # If it's a Python wrapper, extract the underlying Rust type
+    if hasattr(program, "_to_program"):
+        return pecos_rslib.sim(program._to_program())
+    # It's already a Rust type (from pecos_rslib), pass directly
+    return pecos_rslib.sim(program)
+
+
+# =============================================================================
+# Engine Builder Wrappers
+# =============================================================================
+# These wrap the pecos_rslib engine builders to accept Python program wrappers
+
+
+class QasmEngineBuilder:
+    """Python wrapper for QASM engine builder.
+
+    This wrapper accepts Python Qasm objects from pecos.programs.
+
+    Example:
+        >>> from pecos import qasm_engine, Qasm
+        >>> results = (
+        ...     qasm_engine()
+        ...     .program(Qasm("OPENQASM 2.0; qreg q[2]; ..."))
+        ...     .to_sim()
+        ...     .run(1000)
+        ... )
+    """
+
+    def __init__(self):
+        self._builder = pecos_rslib.qasm_engine()
+
+    def program(self, program):
+        """Set the program for this engine.
+
+        Args:
+            program: A Qasm object (from pecos.programs or pecos_rslib.programs)
+        """
+        # If it's a Python wrapper, extract the underlying Rust type
+        if hasattr(program, "_to_program"):
+            self._builder = self._builder.program(program._to_program())
+        else:
+            # It's already a Rust type
+            self._builder = self._builder.program(program)
+        return self
+
+    def wasm(self, wasm_path: str):
+        """Set the WebAssembly module for foreign function calls."""
+        self._builder = self._builder.wasm(wasm_path)
+        return self
+
+    def to_sim(self):
+        """Convert to simulation builder."""
+        return self._builder.to_sim()
+
+
+class PhirJsonEngineBuilder:
+    """Python wrapper for PHIR JSON engine builder.
+
+    This wrapper accepts Python PhirJson objects from pecos.programs.
+
+    Example:
+        >>> from pecos import phir_json_engine, PhirJson
+        >>> results = (
+        ...     phir_json_engine()
+        ...     .program(PhirJson('{"format": "PHIR/JSON", ...}'))
+        ...     .to_sim()
+        ...     .run(1000)
+        ... )
+    """
+
+    def __init__(self):
+        self._builder = pecos_rslib.phir_json_engine()
+
+    def program(self, program):
+        """Set the program for this engine.
+
+        Args:
+            program: A PhirJson object (from pecos.programs or pecos_rslib.programs)
+        """
+        # If it's a Python wrapper, extract the underlying Rust type
+        if hasattr(program, "_to_program"):
+            self._builder = self._builder.program(program._to_program())
+        else:
+            # It's already a Rust type
+            self._builder = self._builder.program(program)
+        return self
+
+    def wasm(self, wasm_path: str):
+        """Set the WebAssembly module for foreign function calls."""
+        self._builder = self._builder.wasm(wasm_path)
+        return self
+
+    def to_sim(self):
+        """Convert to simulation builder."""
+        return self._builder.to_sim()
+
+
+class QisEngineBuilder:
+    """Python wrapper for QIS engine builder.
+
+    This wrapper accepts Python Qis or Hugr objects from pecos.programs.
+
+    Example:
+        >>> from pecos import qis_engine, Qis
+        >>> results = qis_engine().program(Qis(llvm_ir_code)).to_sim().run(1000)
+    """
+
+    def __init__(self):
+        self._builder = pecos_rslib.qis_engine()
+
+    def program(self, program):
+        """Set the program for this engine.
+
+        Args:
+            program: A Qis or Hugr object (from pecos.programs or pecos_rslib.programs)
+        """
+        # If it's a Python wrapper, extract the underlying Rust type
+        if hasattr(program, "_to_program"):
+            self._builder = self._builder.program(program._to_program())
+        else:
+            # It's already a Rust type
+            self._builder = self._builder.program(program)
+        return self
+
+    def selene_runtime(self):
+        """Use Selene simple runtime."""
+        self._builder = self._builder.selene_runtime()
+        return self
+
+    def interface(self, builder):
+        """Set the interface builder."""
+        self._builder = self._builder.interface(builder)
+        return self
+
+    def to_sim(self):
+        """Convert to simulation builder."""
+        return self._builder.to_sim()
+
+
+def qasm_engine():
+    """Create a QASM engine builder.
+
+    Returns:
+        QasmEngineBuilder: A builder for QASM simulations.
+
+    Example:
+        >>> from pecos import qasm_engine, Qasm
+        >>> results = (
+        ...     qasm_engine()
+        ...     .program(Qasm("OPENQASM 2.0; qreg q[2]; ..."))
+        ...     .to_sim()
+        ...     .run(1000)
+        ... )
+    """
+    return QasmEngineBuilder()
+
+
+def phir_json_engine():
+    """Create a PHIR JSON engine builder.
+
+    Returns:
+        PhirJsonEngineBuilder: A builder for PHIR JSON simulations.
+
+    Example:
+        >>> from pecos import phir_json_engine, PhirJson
+        >>> results = (
+        ...     phir_json_engine()
+        ...     .program(PhirJson('{"format": "PHIR/JSON", ...}'))
+        ...     .to_sim()
+        ...     .run(1000)
+        ... )
+    """
+    return PhirJsonEngineBuilder()
+
+
+def qis_engine():
+    """Create a QIS engine builder.
+
+    Returns:
+        QisEngineBuilder: A builder for QIS/HUGR simulations.
+
+    Example:
+        >>> from pecos import qis_engine, Qis
+        >>> results = qis_engine().program(Qis(llvm_ir_code)).to_sim().run(1000)
+    """
+    return QisEngineBuilder()
+
+
+# Re-export noise and quantum engine builders from pecos_rslib
+# These don't need wrappers since they don't take program types
+depolarizing_noise = pecos_rslib.depolarizing_noise
+biased_depolarizing_noise = pecos_rslib.biased_depolarizing_noise
+general_noise = pecos_rslib.general_noise
+state_vector = pecos_rslib.state_vector
+sparse_stabilizer = pecos_rslib.sparse_stabilizer
+
+# Re-export noise model builder classes for direct instantiation
+GeneralNoiseModelBuilder = pecos_rslib.GeneralNoiseModelBuilder
+
+
+# Check for Guppy availability (guppylang is an optional dependency)
+def get_guppy_backends() -> dict:
+    """Get available Guppy backends.
+
+    Returns a dict with:
+        - guppy_available: True if guppylang is installed
+        - rust_backend: Always True (HUGR support is built into pecos-rslib)
+    """
+    result = {"guppy_available": False, "rust_backend": True}
+    try:
+        import guppylang
+
+        result["guppy_available"] = True
+    except ImportError:
+        pass
+    return result
 
 
 __all__ = [
-    "GUPPY_INTEGRATION_AVAILABLE",
     "BinArray",  # Deprecated - use BitInt instead
     "BitInt",
+    # Noise model builder classes
+    "GeneralNoiseModelBuilder",
+    # Program wrapper classes for sim() - also available via pecos.programs
+    "Guppy",
+    "Hugr",
     "HybridEngine",
+    "PhirJson",
+    "Qasm",
+    "Qis",
     "QuantumCircuit",
+    "Wasm",
     "WasmForeignObject",
+    "Wat",
     "__version__",
+    # Engine builders - accept Python program wrappers
+    "biased_depolarizing_noise",
     "circuit_converters",
     "circuit_runners",
     "circuits",
     "complex64",
     "complex128",
     "decoders",
+    "depolarizing_noise",
     # Keep dtypes module for dtype instances
     "dtypes",
     "engines",
     "error_models",
     "f32",
     "f64",
-    "frontends",
+    "general_noise",
     "get_guppy_backends",
     # Scalar type classes (NumPy-like API)
     "i8",
@@ -266,11 +507,18 @@ __all__ = [
     "i64",
     "misc",
     "num",  # Numerical computing module from pecos_rslib
+    # Engine builder functions
+    "phir_json_engine",
+    "programs",  # Quantum program types (Qasm, Qis, etc.)
     "protocols",
+    "qasm_engine",
     "qeccs",
+    "qis_engine",
     # Guppy integration
     "sim",
     "simulators",
+    "sparse_stabilizer",
+    "state_vector",
     "tools",
     "typing",  # Type hints for arrays and scalars
     "u8",

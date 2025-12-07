@@ -3007,7 +3007,6 @@ dependencies = [
  "parking_lot",
  "pecos",
  "pyo3",
- "pyo3-build-config",
  "regex",
  "serde_json",
  "tempfile",

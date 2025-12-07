@@ -16,7 +16,7 @@ use crate::engine_bindings::{PyEngineCommon, PyEngineWrapper, PyQuantumEngineWra
 use pyo3::prelude::*;
 
 /// Python wrapper for Rust `StateVecEngine` to execute `ByteMessage` circuits
-#[pyclass(name = "StateVecEngineRs")]
+#[pyclass(name = "StateVecEngine")]
 pub struct PyStateVecEngine {
     inner: StateVecEngine,
 }

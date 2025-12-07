@@ -11,12 +11,12 @@ use std::path::Path;
 
 /// A QASM program
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QasmProgram {
+pub struct Qasm {
     /// The QASM source code
     pub source: String,
 }
 
-impl QasmProgram {
+impl Qasm {
     /// Create a QASM program from a string
     pub fn from_string(s: impl Into<String>) -> Self {
         Self { source: s.into() }
@@ -39,7 +39,7 @@ impl QasmProgram {
     }
 }
 
-impl fmt::Display for QasmProgram {
+impl fmt::Display for Qasm {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.source)
     }
@@ -59,12 +59,12 @@ pub enum QisContent {
 /// This represents LLVM IR that uses Selene QIS functions (___qalloc, ___`lazy_measure`, etc.)
 /// as opposed to QIR functions. This is the output of HUGR compilation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QisProgram {
+pub struct Qis {
     /// The QIS content (IR text or bitcode)
     pub content: QisContent,
 }
 
-impl QisProgram {
+impl Qis {
     /// Create a QIS program from IR text
     ///
     /// Create a QIS program from LLVM IR text
@@ -114,7 +114,7 @@ impl QisProgram {
         Self::from_string(s)
     }
 
-    /// Preprocess LLVM IR without creating a `QisProgram` (for debugging)
+    /// Preprocess LLVM IR without creating a `Qis` (for debugging)
     pub fn preprocess_ir(llvm_ir: impl Into<String>) -> String {
         Self::preprocess_llvm_ir(&llvm_ir.into())
     }
@@ -202,23 +202,23 @@ impl QisProgram {
     }
 }
 
-impl fmt::Display for QisProgram {
+impl fmt::Display for Qis {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.content {
             QisContent::Ir(ir) => write!(f, "{ir}"),
-            QisContent::Bitcode(bc) => write!(f, "QisProgram(bitcode, {} bytes)", bc.len()),
+            QisContent::Bitcode(bc) => write!(f, "Qis(bitcode, {} bytes)", bc.len()),
         }
     }
 }
 
 /// A HUGR program
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HugrProgram {
+pub struct Hugr {
     /// The HUGR data (serialized bytes)
     pub hugr: Vec<u8>,
 }
 
-impl HugrProgram {
+impl Hugr {
     /// Create a HUGR program from bytes
     #[must_use]
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
@@ -248,20 +248,20 @@ impl HugrProgram {
     }
 }
 
-impl fmt::Display for HugrProgram {
+impl fmt::Display for Hugr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "HugrProgram({} bytes)", self.hugr.len())
+        write!(f, "Hugr({} bytes)", self.hugr.len())
     }
 }
 
 /// A WebAssembly program (binary .wasm format)
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WasmProgram {
+pub struct Wasm {
     /// The WASM binary data
     pub wasm: Vec<u8>,
 }
 
-impl WasmProgram {
+impl Wasm {
     /// Create a WASM program from bytes
     pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Self {
         Self { wasm: bytes.into() }
@@ -290,20 +290,20 @@ impl WasmProgram {
     }
 }
 
-impl fmt::Display for WasmProgram {
+impl fmt::Display for Wasm {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "WasmProgram({} bytes)", self.wasm.len())
+        write!(f, "Wasm({} bytes)", self.wasm.len())
     }
 }
 
 /// A WebAssembly Text program (.wat format)
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WatProgram {
+pub struct Wat {
     /// The WAT source code
     pub source: String,
 }
 
-impl WatProgram {
+impl Wat {
     /// Create a WAT program from a string
     pub fn from_string(s: impl Into<String>) -> Self {
         Self { source: s.into() }
@@ -326,7 +326,7 @@ impl WatProgram {
     }
 }
 
-impl fmt::Display for WatProgram {
+impl fmt::Display for Wat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.source)
     }
@@ -334,12 +334,12 @@ impl fmt::Display for WatProgram {
 
 /// A PHIR JSON program
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PhirJsonProgram {
+pub struct PhirJson {
     /// The PHIR JSON source code
     pub source: String,
 }
 
-impl PhirJsonProgram {
+impl PhirJson {
     /// Create a PHIR JSON program from a string
     pub fn from_string(s: impl Into<String>) -> Self {
         Self { source: s.into() }
@@ -373,7 +373,7 @@ impl PhirJsonProgram {
     }
 }
 
-impl fmt::Display for PhirJsonProgram {
+impl fmt::Display for PhirJson {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.source)
     }
@@ -381,7 +381,7 @@ impl fmt::Display for PhirJsonProgram {
 
 /// A Selene Interface Program (compiled plugin)
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SeleneInterfaceProgram {
+pub struct SeleneInterface {
     /// The compiled plugin data (shared library bytes) or executable metadata
     pub plugin: Vec<u8>,
     /// Optional: Path to the Selene executable (for pre-compiled executables)
@@ -390,7 +390,7 @@ pub struct SeleneInterfaceProgram {
     pub artifacts_path: Option<String>,
 }
 
-impl SeleneInterfaceProgram {
+impl SeleneInterface {
     /// Create a Selene Interface program from plugin bytes
     #[must_use]
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
@@ -442,9 +442,9 @@ impl SeleneInterfaceProgram {
     }
 }
 
-impl fmt::Display for SeleneInterfaceProgram {
+impl fmt::Display for SeleneInterface {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SeleneInterfaceProgram({} bytes)", self.plugin.len())
+        write!(f, "SeleneInterface({} bytes)", self.plugin.len())
     }
 }
 
@@ -452,19 +452,19 @@ impl fmt::Display for SeleneInterfaceProgram {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Program {
     /// A QASM program
-    Qasm(QasmProgram),
+    Qasm(Qasm),
     /// A QIS program (Quantum Instruction Set - LLVM IR format)
-    Qis(QisProgram),
+    Qis(Qis),
     /// A HUGR program
-    Hugr(HugrProgram),
+    Hugr(Hugr),
     /// A WebAssembly program
-    Wasm(WasmProgram),
+    Wasm(Wasm),
     /// A WebAssembly Text program
-    Wat(WatProgram),
+    Wat(Wat),
     /// A PHIR JSON program
-    PhirJson(PhirJsonProgram),
+    PhirJson(PhirJson),
     /// A Selene Interface program (compiled plugin)
-    SeleneInterface(SeleneInterfaceProgram),
+    SeleneInterface(SeleneInterface),
 }
 
 impl Program {
@@ -483,46 +483,44 @@ impl Program {
     }
 }
 
-impl From<QasmProgram> for Program {
-    fn from(program: QasmProgram) -> Self {
+impl From<Qasm> for Program {
+    fn from(program: Qasm) -> Self {
         Program::Qasm(program)
     }
 }
 
-impl From<QisProgram> for Program {
-    fn from(program: QisProgram) -> Self {
-        // Since LlvmProgram is now a type alias for QisProgram,
-        // this handles both QisProgram and LlvmProgram
+impl From<Qis> for Program {
+    fn from(program: Qis) -> Self {
         Program::Qis(program)
     }
 }
 
-impl From<HugrProgram> for Program {
-    fn from(program: HugrProgram) -> Self {
+impl From<Hugr> for Program {
+    fn from(program: Hugr) -> Self {
         Program::Hugr(program)
     }
 }
 
-impl From<WasmProgram> for Program {
-    fn from(program: WasmProgram) -> Self {
+impl From<Wasm> for Program {
+    fn from(program: Wasm) -> Self {
         Program::Wasm(program)
     }
 }
 
-impl From<WatProgram> for Program {
-    fn from(program: WatProgram) -> Self {
+impl From<Wat> for Program {
+    fn from(program: Wat) -> Self {
         Program::Wat(program)
     }
 }
 
-impl From<PhirJsonProgram> for Program {
-    fn from(program: PhirJsonProgram) -> Self {
+impl From<PhirJson> for Program {
+    fn from(program: PhirJson) -> Self {
         Program::PhirJson(program)
     }
 }
 
-impl From<SeleneInterfaceProgram> for Program {
-    fn from(program: SeleneInterfaceProgram) -> Self {
+impl From<SeleneInterface> for Program {
+    fn from(program: SeleneInterface) -> Self {
         Program::SeleneInterface(program)
     }
 }
@@ -547,74 +545,74 @@ mod tests {
     use std::io::Write;
 
     #[test]
-    fn test_qasm_program() {
+    fn test_qasm() {
         let qasm = "OPENQASM 2.0;\nqreg q[2];";
-        let program = QasmProgram::from_string(qasm);
+        let program = Qasm::from_string(qasm);
         assert_eq!(program.source(), qasm);
         assert_eq!(program.to_string(), qasm);
     }
 
     #[test]
-    fn test_qis_program() {
+    fn test_qis() {
         let ir = "define void @main() { ret void }";
-        let program = QisProgram::from_string(ir);
+        let program = Qis::from_string(ir);
         assert_eq!(program.ir(), Some(ir));
         assert_eq!(program.to_string(), ir);
 
         // Test bitcode
         let bitcode = vec![0xDE, 0xC0, 0xDE, 0xCA, 0xFE];
-        let program = QisProgram::from_bitcode(bitcode.clone());
+        let program = Qis::from_bitcode(bitcode.clone());
         assert_eq!(program.bitcode(), Some(&bitcode[..]));
         assert_eq!(program.ir(), None);
-        assert_eq!(program.to_string(), "QisProgram(bitcode, 5 bytes)");
+        assert_eq!(program.to_string(), "Qis(bitcode, 5 bytes)");
     }
 
     #[test]
-    fn test_hugr_program() {
+    fn test_hugr() {
         let bytes = vec![1, 2, 3, 4, 5];
-        let program = HugrProgram::from_bytes(bytes.clone());
+        let program = Hugr::from_bytes(bytes.clone());
         assert_eq!(program.bytes(), &bytes[..]);
-        assert_eq!(program.to_string(), "HugrProgram(5 bytes)");
+        assert_eq!(program.to_string(), "Hugr(5 bytes)");
     }
 
     #[test]
-    fn test_wasm_program() {
+    fn test_wasm() {
         let wasm_bytes = vec![0x00, 0x61, 0x73, 0x6D]; // WASM magic number
-        let program = WasmProgram::from_bytes(wasm_bytes.clone());
+        let program = Wasm::from_bytes(wasm_bytes.clone());
         assert_eq!(program.bytes(), &wasm_bytes[..]);
-        assert_eq!(program.to_string(), "WasmProgram(4 bytes)");
+        assert_eq!(program.to_string(), "Wasm(4 bytes)");
 
-        let program2 = WasmProgram::from_bytes(&wasm_bytes[..]);
+        let program2 = Wasm::from_bytes(&wasm_bytes[..]);
         assert_eq!(program2.bytes(), &wasm_bytes[..]);
     }
 
     #[test]
-    fn test_wat_program() {
+    fn test_wat() {
         let wat = "(module (func $main))";
-        let program = WatProgram::from_string(wat);
+        let program = Wat::from_string(wat);
         assert_eq!(program.source(), wat);
         assert_eq!(program.to_string(), wat);
     }
 
     #[test]
     fn test_program_enum() {
-        let qasm = QasmProgram::from_string("OPENQASM 2.0;");
+        let qasm = Qasm::from_string("OPENQASM 2.0;");
         let program: Program = qasm.into();
         assert_eq!(program.program_type(), "QASM");
 
-        let qis = QisProgram::from_string("define void @main() {}");
+        let qis = Qis::from_string("define void @main() {}");
         let program: Program = qis.into();
         assert_eq!(program.program_type(), "QIS");
 
-        let hugr = HugrProgram::from_bytes(vec![1, 2, 3]);
+        let hugr = Hugr::from_bytes(vec![1, 2, 3]);
         let program: Program = hugr.into();
         assert_eq!(program.program_type(), "HUGR");
 
-        let wasm = WasmProgram::from_bytes(vec![0x00, 0x61, 0x73, 0x6D]);
+        let wasm = Wasm::from_bytes(vec![0x00, 0x61, 0x73, 0x6D]);
         let program: Program = wasm.into();
         assert_eq!(program.program_type(), "WASM");
 
-        let wat = WatProgram::from_string("(module)");
+        let wat = Wat::from_string("(module)");
         let program: Program = wat.into();
         assert_eq!(program.program_type(), "WAT");
     }
@@ -630,7 +628,7 @@ mod tests {
         writeln!(file, "qreg q[2];")?;
         drop(file);
 
-        let qasm_program = QasmProgram::from_file(&qasm_path)?;
+        let qasm_program = Qasm::from_file(&qasm_path)?;
         assert_eq!(qasm_program.source().trim(), "OPENQASM 2.0;\nqreg q[2];");
 
         // Test QIS from file
@@ -641,7 +639,7 @@ mod tests {
         writeln!(file, "}}")?;
         drop(file);
 
-        let qis_program = QisProgram::from_file(&qis_path)?;
+        let qis_program = Qis::from_file(&qis_path)?;
         assert!(qis_program.ir().unwrap().contains("define void @main()"));
 
         // Test QIS bitcode from file
@@ -649,7 +647,7 @@ mod tests {
         let bitcode_data = vec![0xDE, 0xC0, 0xDE, 0x42, 0x01, 0x0C];
         std::fs::write(&bc_path, &bitcode_data)?;
 
-        let bc_program = QisProgram::from_file(&bc_path)?;
+        let bc_program = Qis::from_file(&bc_path)?;
         assert!(bc_program.is_bitcode());
         assert_eq!(bc_program.bitcode(), Some(&bitcode_data[..]));
 
@@ -658,7 +656,7 @@ mod tests {
         let hugr_data = vec![0xDE, 0xAD, 0xBE, 0xEF];
         std::fs::write(&hugr_path, &hugr_data)?;
 
-        let hugr_program = HugrProgram::from_file(&hugr_path)?;
+        let hugr_program = Hugr::from_file(&hugr_path)?;
         assert_eq!(hugr_program.bytes(), &hugr_data[..]);
 
         // Test WASM from file
@@ -666,7 +664,7 @@ mod tests {
         let wasm_data = vec![0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
         std::fs::write(&wasm_path, &wasm_data)?;
 
-        let wasm_program = WasmProgram::from_file(&wasm_path)?;
+        let wasm_program = Wasm::from_file(&wasm_path)?;
         assert_eq!(wasm_program.bytes(), &wasm_data[..]);
 
         // Test WAT from file
@@ -674,7 +672,7 @@ mod tests {
         let wat_content = "(module\n  (func $main)\n)";
         std::fs::write(&wat_path, wat_content)?;
 
-        let wat_program = WatProgram::from_file(&wat_path)?;
+        let wat_program = Wat::from_file(&wat_path)?;
         assert_eq!(wat_program.source(), wat_content);
 
         Ok(())

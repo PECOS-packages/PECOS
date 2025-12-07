@@ -128,7 +128,7 @@ class TestGuppyExecuteLLVM:
     def test_guppy_frontend_integration(self, simple_quantum_function: object) -> None:
         """Test GuppyFrontend integration with execute_llvm."""
         try:
-            from pecos.frontends.guppy_frontend import GuppyFrontend
+            from pecos._compilation import GuppyFrontend
         except ImportError:
             pytest.skip("GuppyFrontend not available")
 
@@ -159,7 +159,7 @@ class TestGuppyExecuteLLVM:
     def test_sim_api_available(self) -> None:
         """Test that the sim() API is available for execution."""
         try:
-            from pecos.frontends import sim
+            from pecos import Guppy, sim
         except ImportError as e:
             pytest.skip(f"sim API not available: {e}")
 

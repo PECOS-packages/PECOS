@@ -81,7 +81,7 @@ pub use parser::{ParseConfig, QASMParser};
 pub use preprocessor::Preprocessor;
 pub use program::QASMProgram;
 #[cfg(feature = "wasm")]
-pub use program::QasmEngineWasmProgram;
+pub use program::QasmEngineWasm;
 pub use unified_engine_builder::{QasmEngineBuilder, qasm_engine};
 pub use util::{count_qubits_in_file, count_qubits_in_str};
 

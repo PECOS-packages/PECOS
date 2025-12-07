@@ -10,7 +10,7 @@ class TestQasmSimComprehensive:
 
     def test_no_noise_deterministic(self) -> None:
         """Test no noise produces deterministic results."""
-        from pecos_rslib import QasmProgram, qasm_engine
+        from pecos import Qasm, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -23,7 +23,7 @@ class TestQasmSimComprehensive:
         """
 
         # Without noise, results should be deterministic
-        results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().run(100)
+        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().run(100)
         results_dict = results.to_dict()
 
         # Should always measure |11> = 3
@@ -31,7 +31,7 @@ class TestQasmSimComprehensive:
 
     def test_general_noise(self) -> None:
         """Test GeneralNoise model."""
-        from pecos_rslib import QasmProgram, general_noise, qasm_engine
+        from pecos import Qasm, general_noise, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -46,7 +46,7 @@ class TestQasmSimComprehensive:
         # GeneralNoise uses default configuration
         results = (
             qasm_engine()
-            .program(QasmProgram.from_string(qasm))
+            .program(Qasm.from_string(qasm))
             .to_sim()
             .seed(42)
             .noise(general_noise())
@@ -60,7 +60,7 @@ class TestQasmSimComprehensive:
 
     def test_state_vector_engine(self) -> None:
         """Test StateVector engine explicitly."""
-        from pecos_rslib import QasmProgram, qasm_engine, state_vector
+        from pecos import Qasm, qasm_engine, state_vector
 
         # Use a circuit with T gate (non-Clifford)
         qasm = """
@@ -76,7 +76,7 @@ class TestQasmSimComprehensive:
 
         results = (
             qasm_engine()
-            .program(QasmProgram.from_string(qasm))
+            .program(Qasm.from_string(qasm))
             .to_sim()
             .quantum(state_vector())
             .seed(42)
@@ -91,7 +91,7 @@ class TestQasmSimComprehensive:
 
     def test_sparse_stabilizer_engine(self) -> None:
         """Test SparseStabilizer engine explicitly with Clifford circuit."""
-        from pecos_rslib import QasmProgram, qasm_engine, sparse_stabilizer
+        from pecos import Qasm, qasm_engine, sparse_stabilizer
 
         # Pure Clifford circuit (using only H and CX which are natively supported)
         qasm = """
@@ -107,7 +107,7 @@ class TestQasmSimComprehensive:
 
         results = (
             qasm_engine()
-            .program(QasmProgram.from_string(qasm))
+            .program(Qasm.from_string(qasm))
             .to_sim()
             .quantum(sparse_stabilizer())
             .seed(42)
@@ -119,7 +119,7 @@ class TestQasmSimComprehensive:
 
     def test_multiple_registers(self) -> None:
         """Test circuits with multiple classical registers."""
-        from pecos_rslib import QasmProgram, qasm_engine
+        from pecos import Qasm, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -135,7 +135,7 @@ class TestQasmSimComprehensive:
         measure q[3] -> c2[1];
         """
 
-        results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().run(10)
+        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().run(10)
         results_dict = results.to_dict()
 
         assert "c1" in results_dict
@@ -149,7 +149,7 @@ class TestQasmSimComprehensive:
 
     def test_empty_circuit(self) -> None:
         """Test empty circuit (no gates, just measurements)."""
-        from pecos_rslib import QasmProgram, qasm_engine
+        from pecos import Qasm, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -159,7 +159,7 @@ class TestQasmSimComprehensive:
         measure q -> c;
         """
 
-        results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().run(100)
+        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().run(100)
 
         results_dict = results.to_dict()
         # Should always measure |00> = 0
@@ -167,7 +167,7 @@ class TestQasmSimComprehensive:
 
     def test_no_measurements(self) -> None:
         """Test circuit with no measurements."""
-        from pecos_rslib import QasmProgram, qasm_engine
+        from pecos import Qasm, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -177,14 +177,14 @@ class TestQasmSimComprehensive:
         cx q[0], q[1];
         """
 
-        results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().run(100)
+        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().run(100)
 
         # Should return empty dict when no measurements
         assert results.to_dict() == {}
 
     def test_partial_measurements(self) -> None:
         """Test measuring only some qubits."""
-        from pecos_rslib import QasmProgram, qasm_engine
+        from pecos import Qasm, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -199,7 +199,7 @@ class TestQasmSimComprehensive:
         measure q[2] -> c[1];
         """
 
-        results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().run(50)
+        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().run(50)
 
         results_dict = results.to_dict()
         assert len(results_dict["c"]) == 50
@@ -208,7 +208,7 @@ class TestQasmSimComprehensive:
 
     def test_one_shot(self) -> None:
         """Test running with just 1 shot."""
-        from pecos_rslib import QasmProgram, qasm_engine
+        from pecos import Qasm, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -220,7 +220,7 @@ class TestQasmSimComprehensive:
         measure q -> c;
         """
 
-        results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().run(1)
+        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().run(1)
 
         results_dict = results.to_dict()
         assert "c" in results_dict
@@ -229,7 +229,7 @@ class TestQasmSimComprehensive:
 
     def test_high_noise_probability(self) -> None:
         """Test with very high noise probability."""
-        from pecos_rslib import QasmProgram, depolarizing_noise, qasm_engine
+        from pecos import Qasm, depolarizing_noise, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -243,7 +243,7 @@ class TestQasmSimComprehensive:
         # With 50% depolarizing noise
         results = (
             qasm_engine()
-            .program(QasmProgram.from_string(qasm))
+            .program(Qasm.from_string(qasm))
             .to_sim()
             .seed(42)
             .noise(depolarizing_noise().with_uniform_probability(0.5))
@@ -257,9 +257,9 @@ class TestQasmSimComprehensive:
 
     def test_all_noise_models_builder(self) -> None:
         """Test all noise models through builder pattern."""
-        from pecos_rslib import (
+        from pecos import (
             GeneralNoiseModelBuilder,
-            QasmProgram,
+            Qasm,
             biased_depolarizing_noise,
             depolarizing_noise,
             qasm_engine,
@@ -288,7 +288,7 @@ class TestQasmSimComprehensive:
 
         for noise_builder in noise_builders:
             sim_builder = (
-                qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().seed(42)
+                qasm_engine().program(Qasm.from_string(qasm)).to_sim().seed(42)
             )
             if noise_builder is not None:
                 sim_builder = sim_builder.noise(noise_builder)
@@ -299,7 +299,7 @@ class TestQasmSimComprehensive:
 
     def test_binary_string_format_empty_register(self) -> None:
         """Test binary string format with empty measurements."""
-        from pecos_rslib import QasmProgram, qasm_engine
+        from pecos import Qasm, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -308,13 +308,13 @@ class TestQasmSimComprehensive:
         h q[0];
         """
 
-        results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().run(10)
+        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().run(10)
         results_dict = results.to_dict()
         assert results_dict == {}  # No measurements
 
     def test_deterministic_with_seed(self) -> None:
         """Test that same seed produces same results."""
-        from pecos_rslib import QasmProgram, depolarizing_noise, qasm_engine
+        from pecos import Qasm, depolarizing_noise, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -332,7 +332,7 @@ class TestQasmSimComprehensive:
 
         sim1 = (
             qasm_engine()
-            .program(QasmProgram.from_string(qasm))
+            .program(Qasm.from_string(qasm))
             .to_sim()
             .seed(123)
             .noise(noise1)
@@ -340,7 +340,7 @@ class TestQasmSimComprehensive:
         )
         sim2 = (
             qasm_engine()
-            .program(QasmProgram.from_string(qasm))
+            .program(Qasm.from_string(qasm))
             .to_sim()
             .seed(123)
             .noise(noise2)
@@ -356,7 +356,7 @@ class TestQasmSimComprehensive:
         # Run with different seed
         sim3 = (
             qasm_engine()
-            .program(QasmProgram.from_string(qasm))
+            .program(Qasm.from_string(qasm))
             .to_sim()
             .seed(456)
             .noise(depolarizing_noise().with_uniform_probability(0.01))
@@ -376,7 +376,7 @@ class TestQasmSimComprehensive:
 
     def test_no_noise_config(self) -> None:
         """Test building without noise."""
-        from pecos_rslib import QasmProgram, qasm_engine
+        from pecos import Qasm, qasm_engine
 
         qasm = """
             OPENQASM 2.0;
@@ -387,7 +387,7 @@ class TestQasmSimComprehensive:
             measure q[0] -> c[0];
             """
 
-        sim = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().build()
+        sim = qasm_engine().program(Qasm.from_string(qasm)).to_sim().build()
         results = sim.run(10)
 
         results_dict = results.to_dict()
@@ -396,7 +396,7 @@ class TestQasmSimComprehensive:
 
     def test_invalid_qasm_syntax(self) -> None:
         """Test handling of invalid QASM syntax."""
-        from pecos_rslib import QasmProgram, qasm_engine
+        from pecos import Qasm, qasm_engine
 
         invalid_qasm = """
         OPENQASM 2.0;
@@ -404,6 +404,6 @@ class TestQasmSimComprehensive:
         """
 
         with pytest.raises(RuntimeError):
-            qasm_engine().program(QasmProgram.from_string(invalid_qasm)).to_sim().run(
+            qasm_engine().program(Qasm.from_string(invalid_qasm)).to_sim().run(
                 10,
             )

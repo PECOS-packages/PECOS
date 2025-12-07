@@ -2,7 +2,7 @@
 
 use pecos_engines::noise::GeneralNoiseModel;
 use pecos_engines::{GateType, sim_builder, sparse_stabilizer};
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
 use std::collections::BTreeMap;
 
@@ -16,7 +16,7 @@ fn run_basic_noise_example(qasm: &str) {
         .with_meas_1_probability(0.002);
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .seed(42)
         .noise(basic_noise)
         .run(1000)
@@ -77,7 +77,7 @@ fn main() {
         .with_emission_scale(0.8);
 
     let _results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .seed(123)
         .noise(complex_noise)
         .run(500)
@@ -96,7 +96,7 @@ fn main() {
         .with_noiseless_gate(pecos_core::prelude::GateType::Measure); // Measurements have no noise
 
     let _results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .noise(selective_noise)
         .run(100)
         .unwrap();
@@ -126,7 +126,7 @@ fn main() {
 
     // Use with full simulation configuration
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .seed(456)
         .workers(2)
         .noise(full_noise)

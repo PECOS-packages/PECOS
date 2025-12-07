@@ -4,7 +4,7 @@ import pytest
 from guppylang import guppy
 from guppylang.std.angles import angle
 from guppylang.std.quantum import cx, h, measure, qubit, ry, rz, x, z
-from pecos.frontends.guppy_api import sim
+from pecos import Guppy, sim
 from pecos_rslib import state_vector
 
 pytestmark = pytest.mark.optional_dependency
@@ -30,25 +30,27 @@ def test_bell_state_preparation() -> None:
         return (m1, m2)
 
     # Run simulation with state_vector backend
-    results = sim(prepare_bell_state).qubits(2).quantum(state_vector()).run(1000)
-    assert results is not None, "Should get results"
+    shot_vec = (
+        sim(Guppy(prepare_bell_state)).qubits(2).quantum(state_vector()).run(1000)
+    )
+    assert shot_vec is not None, "Should get results"
+    results = shot_vec.to_dict()
     # Count outcomes
     both_zero = 0
     both_one = 0
     anti_correlated = 0
 
     # Results come as a dict with measurement keys
-    if isinstance(results, dict):
-        m1_list = results.get("measurement_0", [])
-        m2_list = results.get("measurement_1", [])
+    m1_list = results.get("measurement_0", [])
+    m2_list = results.get("measurement_1", [])
 
-        for m1, m2 in zip(m1_list, m2_list, strict=False):
-            if m1 == 0 and m2 == 0:
-                both_zero += 1
-            elif m1 == 1 and m2 == 1:
-                both_one += 1
-            else:
-                anti_correlated += 1
+    for m1, m2 in zip(m1_list, m2_list, strict=False):
+        if m1 == 0 and m2 == 0:
+            both_zero += 1
+        elif m1 == 1 and m2 == 1:
+            both_one += 1
+        else:
+            anti_correlated += 1
 
     # Bell state should only produce correlated outcomes
     assert (
@@ -88,28 +90,32 @@ def test_ghz_state() -> None:
         return (m1, m2, m3)
 
     # Run simulation with state_vector backend
-    results = (
-        sim(prepare_ghz_state).qubits(3).quantum(state_vector()).seed(42).run(1000)
+    shot_vec = (
+        sim(Guppy(prepare_ghz_state))
+        .qubits(3)
+        .quantum(state_vector())
+        .seed(42)
+        .run(1000)
     )
-    assert results is not None, "Should get results"
+    assert shot_vec is not None, "Should get results"
+    results = shot_vec.to_dict()
 
     # GHZ state should give either all 0s or all 1s
     all_zero = 0
     all_one = 0
     other = 0
 
-    if isinstance(results, dict):
-        m1_list = results.get("measurement_0", [])
-        m2_list = results.get("measurement_1", [])
-        m3_list = results.get("measurement_2", [])
+    m1_list = results.get("measurement_0", [])
+    m2_list = results.get("measurement_1", [])
+    m3_list = results.get("measurement_2", [])
 
-        for m1, m2, m3 in zip(m1_list, m2_list, m3_list, strict=False):
-            if m1 == 0 and m2 == 0 and m3 == 0:
-                all_zero += 1
-            elif m1 == 1 and m2 == 1 and m3 == 1:
-                all_one += 1
-            else:
-                other += 1
+    for m1, m2, m3 in zip(m1_list, m2_list, m3_list, strict=False):
+        if m1 == 0 and m2 == 0 and m3 == 0:
+            all_zero += 1
+        elif m1 == 1 and m2 == 1 and m3 == 1:
+            all_one += 1
+        else:
+            other += 1
 
     # GHZ state should only produce |000⟩ or |111⟩
     assert other == 0, f"GHZ state should not produce mixed outcomes, got {other}"
@@ -149,7 +155,11 @@ def test_quantum_phase_kickback() -> None:
 
     # Run simulation with state_vector backend
     results = (
-        sim(phase_kickback_circuit).qubits(2).quantum(state_vector()).seed(42).run(1000)
+        sim(Guppy(phase_kickback_circuit))
+        .qubits(2)
+        .quantum(state_vector())
+        .seed(42)
+        .run(1000)
     )
     assert results is not None, "Should get results"
 
@@ -159,7 +169,7 @@ def test_quantum_phase_kickback() -> None:
     target_one_count = 0
     total = 0
 
-    if isinstance(results, dict):
+    if hasattr(results, "__getitem__"):
         m1_list = results.get("measurement_0", [])
         m2_list = results.get("measurement_1", [])
 
@@ -202,7 +212,11 @@ def test_quantum_interference() -> None:
 
     # Run simulation with state_vector backend
     results = (
-        sim(quantum_interferometer).qubits(1).quantum(state_vector()).seed(42).run(1000)
+        sim(Guppy(quantum_interferometer))
+        .qubits(1)
+        .quantum(state_vector())
+        .seed(42)
+        .run(1000)
     )
     assert results is not None, "Should get results"
 
@@ -210,7 +224,7 @@ def test_quantum_interference() -> None:
     one_count = 0
     total = 0
 
-    if isinstance(results, dict):
+    if hasattr(results, "__getitem__"):
         measurements = results.get("measurement_0", [])
         for m in measurements:
             total += 1
@@ -242,7 +256,13 @@ def test_rotation_gates() -> None:
         return measure(q)
 
     # Run simulation with state_vector backend
-    results = sim(rotation_circuit).qubits(1).quantum(state_vector()).seed(42).run(1000)
+    results = (
+        sim(Guppy(rotation_circuit))
+        .qubits(1)
+        .quantum(state_vector())
+        .seed(42)
+        .run(1000)
+    )
 
     assert results is not None, "Should get results"
 
@@ -251,7 +271,7 @@ def test_rotation_gates() -> None:
     zero_count = 0
     one_count = 0
 
-    if isinstance(results, dict):
+    if hasattr(results, "__getitem__"):
         measurements = results.get("measurement_0", [])
         for m in measurements:
             if m == 0:

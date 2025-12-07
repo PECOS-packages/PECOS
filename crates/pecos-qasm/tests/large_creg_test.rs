@@ -1,5 +1,5 @@
 use pecos_engines::{Data, sim_builder};
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
 
 #[test]
@@ -28,7 +28,7 @@ fn test_large_classical_register() {
     "#;
 
     let shot_vec = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(1)
         .unwrap();
     let shot = &shot_vec.shots[0];
@@ -87,7 +87,7 @@ fn test_very_large_classical_register() {
     "#;
 
     let shot_vec = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(1)
         .unwrap();
     let shot = &shot_vec.shots[0];
@@ -124,7 +124,7 @@ fn test_classical_assignment_beyond_64_bits() {
     ";
 
     let shot_vec = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(1)
         .unwrap();
     let shot = &shot_vec.shots[0];
@@ -171,7 +171,7 @@ fn test_large_register_arithmetic() {
     ";
 
     let shot_vec = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(1)
         .unwrap();
     let shot = &shot_vec.shots[0];
@@ -209,7 +209,7 @@ fn test_register_value_assignment_limitation() {
     ";
 
     let shot_vec = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(1)
         .unwrap();
     let shot = &shot_vec.shots[0];

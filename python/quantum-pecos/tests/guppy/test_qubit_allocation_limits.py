@@ -20,7 +20,7 @@ except ImportError:
     ARRAY_AVAILABLE = False
 
 try:
-    from pecos.frontends.guppy_api import sim
+    from pecos import Guppy, sim
     from pecos_rslib import state_vector
 
     PECOS_AVAILABLE = True
@@ -44,7 +44,7 @@ class TestQubitAllocationLimits:
             return measure(q1), measure(q2), measure(q3)
 
         # Should work fine with max_qubits=5 (3 qubits needed)
-        results = sim(static_test).qubits(5).quantum(state_vector()).run(10)
+        results = sim(Guppy(static_test)).qubits(5).quantum(state_vector()).run(10)
 
         # Check we got results
         if "measurement_0" in results:
@@ -73,7 +73,11 @@ class TestQubitAllocationLimits:
 
         # Set max_qubits high enough for dynamic allocation
         results = (
-            sim(dynamic_loop_test).qubits(10).quantum(state_vector()).seed(42).run(100)
+            sim(Guppy(dynamic_loop_test))
+            .qubits(10)
+            .quantum(state_vector())
+            .seed(42)
+            .run(100)
         )
 
         # Extract measurements
@@ -128,12 +132,14 @@ class TestQubitAllocationLimits:
         error_was_expected = False
 
         try:
-            results = sim(four_qubit_program).qubits(3).quantum(state_vector()).run(10)
+            results = (
+                sim(Guppy(four_qubit_program)).qubits(3).quantum(state_vector()).run(10)
+            )
             allocation_succeeded = True
 
             # If it succeeded, verify we got some results
             # The compiler might have optimized the program
-            assert isinstance(results, dict), "Results should be a dictionary"
+            assert hasattr(results, "__getitem__"), "Results should be dict-like"
 
             # Check if we got any measurements
             # Results dict should have measurement keys
@@ -205,7 +211,11 @@ class TestQubitAllocationLimits:
 
         # Need sufficient qubits for nested allocation
         results = (
-            sim(nested_loop_test).qubits(10).quantum(state_vector()).seed(42).run(50)
+            sim(Guppy(nested_loop_test))
+            .qubits(10)
+            .quantum(state_vector())
+            .seed(42)
+            .run(50)
         )
 
         measurements = results.get("measurement_0", results.get("measurements", []))
@@ -322,7 +332,9 @@ class TestQubitAllocationLimits:
             return measure_array(qubits)
 
         # Need at least 3 qubits for the array
-        results = sim(array_test).qubits(3).quantum(state_vector()).seed(42).run(50)
+        results = (
+            sim(Guppy(array_test)).qubits(3).quantum(state_vector()).seed(42).run(50)
+        )
 
         # The result should be an array of 3 booleans for each shot
         # Results format depends on return type
@@ -384,7 +396,9 @@ class TestQubitAllocationLimits:
             return measure(q0), measure(q1), measure(q2), measure(q3)
 
         # Test with exact number of qubits needed
-        results = sim(parallel_ops).qubits(4).quantum(state_vector()).seed(42).run(100)
+        results = (
+            sim(Guppy(parallel_ops)).qubits(4).quantum(state_vector()).seed(42).run(100)
+        )
 
         if "measurement_0" in results:
             # Check all 4 measurements are present

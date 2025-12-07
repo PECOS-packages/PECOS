@@ -21,7 +21,7 @@ from pathlib import Path
 try:
     from guppylang import guppy
     from guppylang.std.quantum import cx, h, measure, qubit
-    from pecos.frontends import GuppyFrontend
+    from pecos._compilation import GuppyFrontend
 
     print("[OK] Guppy integration available")
     GUPPY_AVAILABLE = True

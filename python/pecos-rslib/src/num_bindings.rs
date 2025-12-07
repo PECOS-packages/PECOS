@@ -45,6 +45,9 @@ use crate::pecos_array::{Array, ArrayData};
 // Import array_buffer module for NumPy interop (replacing rust-numpy)
 use crate::array_buffer;
 
+// Import RngPcg for the random submodule
+use crate::pecos_rng_bindings::RngPcg;
+
 // Import numerical computing types from pecos prelude
 // Functions are accessed via pecos::prelude module
 use pecos::prelude::{
@@ -5196,8 +5199,11 @@ pub fn register_num_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     linalg_module.add_function(wrap_pyfunction!(norm, &linalg_module)?)?;
     num_module.add_submodule(&linalg_module)?;
 
-    // Create random submodule
+    // Create random submodule (following numpy.random pattern)
     let random_module = PyModule::new(m.py(), "random")?;
+    // Generator class (like numpy.random.Generator, numpy.random.PCG64)
+    random_module.add_class::<RngPcg>()?;
+    // Convenience functions (like numpy.random.random, numpy.random.seed, etc.)
     random_module.add_function(wrap_pyfunction!(seed, &random_module)?)?;
     random_module.add_function(wrap_pyfunction!(random, &random_module)?)?;
     random_module.add_function(wrap_pyfunction!(randint, &random_module)?)?;

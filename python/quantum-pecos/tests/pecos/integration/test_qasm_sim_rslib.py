@@ -1,43 +1,50 @@
-"""Integration tests for QASM simulations using pecos_rslib imports."""
+"""Integration tests for QASM simulations using pecos API."""
 
 from collections import Counter
 
+from pecos import (
+    Qasm,
+    biased_depolarizing_noise,
+    depolarizing_noise,
+    qasm_engine,
+    sparse_stabilizer,
+    state_vector,
+)
+
 
 class TestQasmSimRslib:
-    """Test QASM simulation functionality using pecos_rslib imports."""
+    """Test QASM simulation functionality using pecos imports."""
 
     def test_import_qasm_engine(self) -> None:
-        """Test that we can import qasm_engine from pecos_rslib."""
-        from pecos_rslib import qasm_engine
+        """Test that we can import qasm_engine from pecos."""
+        from pecos import qasm_engine
 
         assert callable(qasm_engine)
 
     def test_import_noise_models(self) -> None:
-        """Test that we can import noise models from pecos_rslib."""
-        from pecos_rslib import (
-            GeneralNoiseModelBuilder,
+        """Test that we can import noise models from pecos."""
+        from pecos import (
             biased_depolarizing_noise,
             depolarizing_noise,
+            general_noise,
         )
 
         # Test that we can create noise builders
         assert depolarizing_noise() is not None
         assert biased_depolarizing_noise() is not None
-        assert GeneralNoiseModelBuilder() is not None
+        assert general_noise() is not None
 
     def test_import_utilities(self) -> None:
-        """Test that we can import utility functions from pecos_rslib."""
-        from pecos_rslib import sparse_stabilizer, state_vector
+        """Test that we can import utility functions from pecos."""
+        from pecos import sparse_stabilizer, state_vector
 
         # Test quantum engine builders
         assert callable(state_vector)
         assert callable(sparse_stabilizer)
 
     def test_basic_simulation(self) -> None:
-        """Test basic QASM simulation using pecos_rslib imports."""
-        from pecos_rslib import QasmProgram, qasm_engine
-
-        qasm = """
+        """Test basic QASM simulation using pecos imports."""
+        qasm_code = """
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[2];
@@ -47,13 +54,7 @@ class TestQasmSimRslib:
         measure q -> c;
         """
 
-        results = (
-            qasm_engine()
-            .program(QasmProgram.from_string(qasm))
-            .to_sim()
-            .seed(42)
-            .run(1000)
-        )
+        results = qasm_engine().program(Qasm(qasm_code)).to_sim().seed(42).run(1000)
         results_dict = results.to_dict()
 
         assert isinstance(results_dict, dict)
@@ -66,10 +67,8 @@ class TestQasmSimRslib:
         assert all(count > 400 for count in counts.values())  # Roughly equal
 
     def test_simulation_with_noise(self) -> None:
-        """Test QASM simulation with noise using pecos_rslib imports."""
-        from pecos_rslib import QasmProgram, depolarizing_noise, qasm_engine
-
-        qasm = """
+        """Test QASM simulation with noise using pecos imports."""
+        qasm_code = """
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[1];
@@ -81,7 +80,7 @@ class TestQasmSimRslib:
         # With noise
         results = (
             qasm_engine()
-            .program(QasmProgram.from_string(qasm))
+            .program(Qasm(qasm_code))
             .to_sim()
             .seed(42)
             .noise(depolarizing_noise().with_uniform_probability(0.1))
@@ -98,15 +97,8 @@ class TestQasmSimRslib:
         assert 50 < zeros < 200  # Some bit flips due to noise
 
     def test_builder_pattern(self) -> None:
-        """Test the builder pattern using pecos_rslib imports."""
-        from pecos_rslib import (
-            QasmProgram,
-            biased_depolarizing_noise,
-            qasm_engine,
-            sparse_stabilizer,
-        )
-
-        qasm = """
+        """Test the builder pattern using pecos imports."""
+        qasm_code = """
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[3];
@@ -120,7 +112,7 @@ class TestQasmSimRslib:
         # Build once
         sim = (
             qasm_engine()
-            .program(QasmProgram.from_string(qasm))
+            .program(Qasm(qasm_code))
             .to_sim()
             .seed(42)
             .workers(2)
@@ -150,10 +142,8 @@ class TestQasmSimRslib:
         assert 7 in counts2
 
     def test_binary_string_format(self) -> None:
-        """Test binary string format output using pecos_rslib imports."""
-        from pecos_rslib import QasmProgram, qasm_engine
-
-        qasm = """
+        """Test binary string format output using pecos imports."""
+        qasm_code = """
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[3];
@@ -164,7 +154,7 @@ class TestQasmSimRslib:
         """
 
         # Test binary string format
-        results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().run(10)
+        results = qasm_engine().program(Qasm(qasm_code)).to_sim().run(10)
         results_dict = results.to_binary_dict()
 
         assert isinstance(results_dict, dict)
@@ -180,10 +170,8 @@ class TestQasmSimRslib:
         assert all(val == "101" for val in results_dict["c"])
 
     def test_auto_workers(self) -> None:
-        """Test auto_workers functionality using pecos_rslib imports."""
-        from pecos_rslib import QasmProgram, qasm_engine
-
-        qasm = """
+        """Test auto_workers functionality using pecos imports."""
+        qasm_code = """
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[2];
@@ -195,11 +183,7 @@ class TestQasmSimRslib:
 
         # This should use all available CPU cores
         results = (
-            qasm_engine()
-            .program(QasmProgram.from_string(qasm))
-            .to_sim()
-            .auto_workers()
-            .run(1000)
+            qasm_engine().program(Qasm(qasm_code)).to_sim().auto_workers().run(1000)
         )
         results_dict = results.to_dict()
 
@@ -208,15 +192,8 @@ class TestQasmSimRslib:
         assert len(results_dict["c"]) == 1000
 
     def test_run_direct_pattern(self) -> None:
-        """Test running simulations directly using pecos_rslib imports."""
-        from pecos_rslib import (
-            QasmProgram,
-            depolarizing_noise,
-            qasm_engine,
-            state_vector,
-        )
-
-        qasm = """
+        """Test running simulations directly using pecos imports."""
+        qasm_code = """
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[2];
@@ -227,14 +204,14 @@ class TestQasmSimRslib:
         """
 
         # Simple usage
-        results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().run(100)
+        results = qasm_engine().program(Qasm(qasm_code)).to_sim().run(100)
         results_dict = results.to_dict()
         assert len(results_dict["c"]) == 100
 
         # With all parameters
         results = (
             qasm_engine()
-            .program(QasmProgram.from_string(qasm))
+            .program(Qasm(qasm_code))
             .to_sim()
             .noise(depolarizing_noise().with_uniform_probability(0.01))
             .quantum(state_vector())
@@ -246,10 +223,8 @@ class TestQasmSimRslib:
         assert len(results_dict["c"]) == 100
 
     def test_large_register(self) -> None:
-        """Test simulation with large quantum registers using pecos_rslib imports."""
-        from pecos_rslib import QasmProgram, qasm_engine
-
-        qasm = """
+        """Test simulation with large quantum registers using pecos imports."""
+        qasm_code = """
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[100];
@@ -261,7 +236,7 @@ class TestQasmSimRslib:
         """
 
         # Test with default format (should handle big integers)
-        results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().run(5)
+        results = qasm_engine().program(Qasm(qasm_code)).to_sim().run(5)
         results_dict = results.to_dict()
 
         assert "c" in results_dict
@@ -273,9 +248,7 @@ class TestQasmSimRslib:
         assert all(val == expected for val in results_dict["c"])
 
         # Test with binary string format
-        results_binary = (
-            qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().run(5)
-        )
+        results_binary = qasm_engine().program(Qasm(qasm_code)).to_sim().run(5)
         results_binary_dict = results_binary.to_binary_dict()
 
         assert all(len(val) == 100 for val in results_binary_dict["c"])

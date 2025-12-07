@@ -6,7 +6,7 @@ class TestQasmSimDefaults:
 
     def test_builder_defaults(self) -> None:
         """Test and document defaults when using qasm_engine builder."""
-        from pecos_rslib import QasmProgram, qasm_engine
+        from pecos import Qasm, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -19,7 +19,7 @@ class TestQasmSimDefaults:
         """
 
         # Build with all defaults
-        sim = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().build()
+        sim = qasm_engine().program(Qasm.from_string(qasm)).to_sim().build()
 
         # Based on Rust code, the defaults are:
         # - seed: None (non-deterministic)
@@ -35,7 +35,7 @@ class TestQasmSimDefaults:
 
     def test_run_direct_defaults(self) -> None:
         """Test and document defaults when using engine run directly."""
-        from pecos_rslib import QasmProgram, qasm_engine
+        from pecos import Qasm, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -47,7 +47,7 @@ class TestQasmSimDefaults:
         """
 
         # Run with minimal parameters using new API
-        results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().run(10)
+        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().run(10)
         results_dict = results.to_dict()
 
         # Defaults for direct run:
@@ -60,7 +60,7 @@ class TestQasmSimDefaults:
 
     def test_noise_model_defaults(self) -> None:
         """Test and document default parameters for noise models."""
-        from pecos_rslib import (
+        from pecos import (
             GeneralNoiseModelBuilder,
             biased_depolarizing_noise,
             depolarizing_noise,
@@ -85,7 +85,7 @@ class TestQasmSimDefaults:
 
     def test_builder_defaults_new_api(self) -> None:
         """Test and document defaults when using new unified API."""
-        from pecos_rslib import QasmProgram, qasm_engine
+        from pecos import Qasm, qasm_engine
 
         # Minimal setup - only required field
         qasm = """
@@ -97,7 +97,7 @@ class TestQasmSimDefaults:
             measure q[0] -> c[0];
             """
 
-        sim = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().build()
+        sim = qasm_engine().program(Qasm.from_string(qasm)).to_sim().build()
         results = sim.run(10)
         results_dict = results.to_dict()
 
@@ -112,7 +112,7 @@ class TestQasmSimDefaults:
 
     def test_no_noise_means_ideal(self) -> None:
         """Test that omitting noise results in ideal (deterministic) simulation."""
-        from pecos_rslib import QasmProgram, qasm_engine
+        from pecos import Qasm, qasm_engine
 
         qasm = """
         OPENQASM 2.0;
@@ -125,7 +125,7 @@ class TestQasmSimDefaults:
         """
 
         # Build without noise specification
-        sim1 = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().build()
+        sim1 = qasm_engine().program(Qasm.from_string(qasm)).to_sim().build()
 
         # Both should produce identical deterministic results
         results1 = sim1.run(100)

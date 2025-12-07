@@ -15,7 +15,7 @@ from pecos_rslib import (
     sparse_stabilizer,
     state_vector,
 )
-from pecos_rslib.programs import QasmProgram
+from pecos_rslib.programs import Qasm
 
 
 def example_bell_state() -> None:
@@ -33,7 +33,7 @@ def example_bell_state() -> None:
     """
 
     # Run without noise
-    results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().run(1000)
+    results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().run(1000)
     results_dict = results.to_dict()
     counts = Counter(results_dict["c"])
 
@@ -51,7 +51,7 @@ def example_bell_state() -> None:
     )
     results_noisy = (
         qasm_engine()
-        .program(QasmProgram.from_string(qasm))
+        .program(Qasm.from_string(qasm))
         .to_sim()
         .seed(42)
         .noise(noise)
@@ -99,7 +99,7 @@ def example_ghz_state() -> None:
 
     results = (
         qasm_engine()
-        .program(QasmProgram.from_string(qasm))
+        .program(Qasm.from_string(qasm))
         .to_sim()
         .seed(42)
         .noise(noise)
@@ -129,9 +129,7 @@ def example_biased_depolarizing() -> None:
     """
 
     # Perfect measurements
-    results_ideal = (
-        qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().run(1000)
-    )
+    results_ideal = qasm_engine().program(Qasm.from_string(qasm)).to_sim().run(1000)
     results_ideal_dict = results_ideal.to_dict()
     ideal_counts = Counter(results_ideal_dict["c"])
 
@@ -147,7 +145,7 @@ def example_biased_depolarizing() -> None:
 
     results_biased = (
         qasm_engine()
-        .program(QasmProgram.from_string(qasm))
+        .program(Qasm.from_string(qasm))
         .to_sim()
         .seed(42)
         .noise(noise)
@@ -182,7 +180,7 @@ def example_quantum_engines() -> None:
     try:
         results_sv = (
             qasm_engine()
-            .program(QasmProgram.from_string(qasm))
+            .program(Qasm.from_string(qasm))
             .to_sim()
             .seed(42)
             .quantum_engine(state_vector())
@@ -199,7 +197,7 @@ def example_quantum_engines() -> None:
     try:
         results_stab = (
             qasm_engine()
-            .program(QasmProgram.from_string(qasm))
+            .program(Qasm.from_string(qasm))
             .to_sim()
             .seed(42)
             .quantum_engine(sparse_stabilizer())
@@ -239,7 +237,7 @@ def example_builder_pattern() -> None:
 
     sim = (
         qasm_engine()
-        .program(QasmProgram.from_string(qasm))
+        .program(Qasm.from_string(qasm))
         .to_sim()
         .seed(42)
         .noise(noise)
@@ -267,7 +265,7 @@ def example_builder_pattern() -> None:
 
     results = (
         qasm_engine()
-        .program(QasmProgram.from_string(qasm))
+        .program(Qasm.from_string(qasm))
         .to_sim()
         .noise(noise_biased)
         .run(500)
@@ -302,7 +300,7 @@ def example_large_register() -> None:
     measure q -> c;
     """
 
-    results = qasm_engine().program(QasmProgram.from_string(qasm)).to_sim().run(10)
+    results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().run(10)
     results_dict = results.to_dict()
 
     print("Large register measurements (70 qubits):")
@@ -349,7 +347,7 @@ def example_parallel_execution() -> None:
     start = time.time()
     (
         qasm_engine()
-        .program(QasmProgram.from_string(qasm))
+        .program(Qasm.from_string(qasm))
         .to_sim()
         .seed(42)
         .noise(noise)
@@ -362,7 +360,7 @@ def example_parallel_execution() -> None:
     start = time.time()
     (
         qasm_engine()
-        .program(QasmProgram.from_string(qasm))
+        .program(Qasm.from_string(qasm))
         .to_sim()
         .seed(42)
         .noise(noise)

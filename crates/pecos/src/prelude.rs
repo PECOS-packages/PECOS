@@ -27,7 +27,7 @@
 //!     h q[0];
 //!     cx q[0], q[1];
 //! "#;
-//! let program = QasmProgram::from_string(qasm_code);
+//! let program = Qasm::from_string(qasm_code);
 //!
 //! let results = sim(program)
 //!     .quantum(sparse_stabilizer())

@@ -7,7 +7,7 @@ from pecos_rslib import (
     sim,
 )
 from pecos_rslib import (
-    QasmProgram,
+    Qasm,
     biased_depolarizing_noise,
     depolarizing_noise,
     general_noise,
@@ -31,7 +31,7 @@ class TestUnifiedSimApi:
         measure q -> c;
         """
 
-        shot_vec = sim(QasmProgram.from_string(qasm)).run(100)
+        shot_vec = sim(Qasm.from_string(qasm)).run(100)
         results = shot_vec.to_dict()
         assert "c" in results
         assert len(results["c"]) == 100
@@ -51,7 +51,7 @@ class TestUnifiedSimApi:
         measure q[0] -> c[0];
         """
 
-        sim_built = sim(QasmProgram.from_string(qasm)).seed(42).build()
+        sim_built = sim(Qasm.from_string(qasm)).seed(42).build()
 
         # Run multiple times with different shots
         shot_vec1 = sim_built.run(100)
@@ -66,7 +66,7 @@ class TestUnifiedSimApi:
         assert len(results3["c"]) == 10
 
         # Check deterministic behavior with same seed
-        sim_built2 = sim(QasmProgram.from_string(qasm)).seed(42).build()
+        sim_built2 = sim(Qasm.from_string(qasm)).seed(42).build()
         shot_vec4 = sim_built2.run(100)
         results4 = shot_vec4.to_dict()
         assert results1["c"] == results4["c"]
@@ -84,7 +84,7 @@ class TestUnifiedSimApi:
         """
 
         shot_vec = (
-            sim(QasmProgram.from_string(qasm))
+            sim(Qasm.from_string(qasm))
             .seed(42)
             .workers(2)
             .quantum(sparse_stabilizer())
@@ -109,7 +109,7 @@ class TestUnifiedSimApi:
         measure q -> c;
         """
 
-        shot_vec = sim(QasmProgram.from_string(qasm)).seed(42).run(1000)
+        shot_vec = sim(Qasm.from_string(qasm)).seed(42).run(1000)
         results = shot_vec.to_dict()
 
         assert len(results["c"]) == 1000
@@ -129,13 +129,13 @@ class TestUnifiedSimApi:
         """
 
         # PassThrough (no noise)
-        shot_vec = sim(QasmProgram.from_string(qasm)).run(100)
+        shot_vec = sim(Qasm.from_string(qasm)).run(100)
         results = shot_vec.to_dict()
         assert all(val == 1 for val in results["c"])
 
         # Depolarizing
         shot_vec = (
-            sim(QasmProgram.from_string(qasm))
+            sim(Qasm.from_string(qasm))
             .seed(42)
             .noise(depolarizing_noise().with_uniform_probability(0.1))
             .run(1000)
@@ -156,7 +156,7 @@ class TestUnifiedSimApi:
         """
 
         shot_vec = (
-            sim(QasmProgram.from_string(qasm_bell))
+            sim(Qasm.from_string(qasm_bell))
             .seed(42)
             .noise(
                 depolarizing_noise()
@@ -174,7 +174,7 @@ class TestUnifiedSimApi:
 
         # Biased depolarizing model (will create some bit flips)
         shot_vec = (
-            sim(QasmProgram.from_string(qasm))
+            sim(Qasm.from_string(qasm))
             .seed(42)
             .noise(biased_depolarizing_noise().with_uniform_probability(0.2))
             .run(1000)
@@ -186,7 +186,7 @@ class TestUnifiedSimApi:
 
         # Biased depolarizing
         shot_vec = (
-            sim(QasmProgram.from_string(qasm))
+            sim(Qasm.from_string(qasm))
             .seed(42)
             .noise(biased_depolarizing_noise().with_uniform_probability(0.05))
             .run(1000)
@@ -196,7 +196,7 @@ class TestUnifiedSimApi:
         assert errors > 0
 
         # General noise
-        shot_vec = sim(QasmProgram.from_string(qasm)).noise(general_noise()).run(10)
+        shot_vec = sim(Qasm.from_string(qasm)).noise(general_noise()).run(10)
         results = shot_vec.to_dict()
         assert len(results["c"]) == 10
 
@@ -216,10 +216,7 @@ class TestUnifiedSimApi:
         # Both engines should work for Clifford circuits
         for engine in [state_vector(), sparse_stabilizer()]:
             shot_vec = (
-                sim(QasmProgram.from_string(qasm_clifford))
-                .seed(42)
-                .quantum(engine)
-                .run(100)
+                sim(Qasm.from_string(qasm_clifford)).seed(42).quantum(engine).run(100)
             )
             results = shot_vec.to_dict()
             assert len(results["c"]) == 100
@@ -237,9 +234,7 @@ class TestUnifiedSimApi:
 
         # StateVector should work
         shot_vec = (
-            sim(QasmProgram.from_string(qasm_non_clifford))
-            .quantum(state_vector())
-            .run(10)
+            sim(Qasm.from_string(qasm_non_clifford)).quantum(state_vector()).run(10)
         )
         results = shot_vec.to_dict()
         assert len(results["c"]) == 10
@@ -251,7 +246,7 @@ class TestUnifiedSimApi:
 
         with suppress(RuntimeError):
             # Expected to fail if the engine detects non-Clifford operations
-            sim(QasmProgram.from_string(qasm_non_clifford)).quantum(
+            sim(Qasm.from_string(qasm_non_clifford)).quantum(
                 sparse_stabilizer(),
             ).run(10)
 
@@ -268,19 +263,19 @@ class TestUnifiedSimApi:
         """
 
         # Same seed should give same results
-        shot_vec1 = sim(QasmProgram.from_string(qasm)).seed(123).run(100)
-        shot_vec2 = sim(QasmProgram.from_string(qasm)).seed(123).run(100)
+        shot_vec1 = sim(Qasm.from_string(qasm)).seed(123).run(100)
+        shot_vec2 = sim(Qasm.from_string(qasm)).seed(123).run(100)
         results1 = shot_vec1.to_dict()
         results2 = shot_vec2.to_dict()
         assert results1["c"] == results2["c"]
 
         # Different seeds should give different results
-        shot_vec3 = sim(QasmProgram.from_string(qasm)).seed(456).run(100)
+        shot_vec3 = sim(Qasm.from_string(qasm)).seed(456).run(100)
         results3 = shot_vec3.to_dict()
         assert results1["c"] != results3["c"]
 
         # Building with seed should maintain determinism across runs
-        sim_builder = sim(QasmProgram.from_string(qasm)).seed(789).build()
+        sim_builder = sim(Qasm.from_string(qasm)).seed(789).build()
         run1 = sim_builder.run(50)
         run2 = sim_builder.run(50)
 
@@ -310,7 +305,7 @@ class TestUnifiedSimApi:
         measure q -> c;
         """
 
-        shot_vec = sim(QasmProgram.from_string(qasm)).run(10)
+        shot_vec = sim(Qasm.from_string(qasm)).run(10)
         results = shot_vec.to_dict()
         assert len(results["c"]) == 10
 
@@ -327,11 +322,11 @@ class TestUnifiedSimApi:
         """Test error handling in builder pattern."""
         # Invalid QASM
         with pytest.raises(RuntimeError):
-            sim(QasmProgram.from_string("invalid qasm")).run(10)
+            sim(Qasm.from_string("invalid qasm")).run(10)
 
         # Build should fail on invalid QASM
         with pytest.raises(RuntimeError):
-            sim(QasmProgram.from_string("invalid qasm")).build()
+            sim(Qasm.from_string("invalid qasm")).build()
 
     def test_builder_vs_direct_api(self) -> None:
         """Test that builder and direct API give same results."""
@@ -347,7 +342,7 @@ class TestUnifiedSimApi:
 
         # Using builder pattern
         builder_shot_vec = (
-            sim(QasmProgram.from_string(qasm))
+            sim(Qasm.from_string(qasm))
             .seed(42)
             .workers(2)
             .noise(depolarizing_noise().with_uniform_probability(0.01))
@@ -358,7 +353,7 @@ class TestUnifiedSimApi:
 
         # Using alternative builder approach for comparison
         alt_shot_vec = (
-            sim(QasmProgram.from_string(qasm))
+            sim(Qasm.from_string(qasm))
             .seed(42)  # Same seed should give same results
             .workers(2)
             .noise(depolarizing_noise().with_uniform_probability(0.01))
@@ -385,7 +380,7 @@ class TestUnifiedSimApi:
         """
 
         # Test default format (integers)
-        shot_vec = sim(QasmProgram.from_string(qasm)).seed(42).run(10)
+        shot_vec = sim(Qasm.from_string(qasm)).seed(42).run(10)
         results_default = shot_vec.to_dict()
         assert "c" in results_default
         assert len(results_default["c"]) == 10
@@ -395,7 +390,7 @@ class TestUnifiedSimApi:
 
         # Test binary string format
         # Note: The unified sim() API doesn't have with_binary_string_format() - use to_binary_dict() instead
-        shot_vec = sim(QasmProgram.from_string(qasm)).seed(42).run(10)
+        shot_vec = sim(Qasm.from_string(qasm)).seed(42).run(10)
         results_binary = (
             shot_vec.to_binary_dict()
             if hasattr(shot_vec, "to_binary_dict")
@@ -437,7 +432,7 @@ class TestUnifiedSimApi:
         measure q -> c;
         """
 
-        shot_vec = sim(QasmProgram.from_string(qasm)).run(5)
+        shot_vec = sim(Qasm.from_string(qasm)).run(5)
         results = (
             shot_vec.to_binary_dict()
             if hasattr(shot_vec, "to_binary_dict")
@@ -472,7 +467,7 @@ class TestUnifiedSimApi:
         measure q -> c;
         """
 
-        sim_builder = sim(QasmProgram.from_string(qasm)).seed(42).build()
+        sim_builder = sim(Qasm.from_string(qasm)).seed(42).build()
 
         # Run multiple times
         shot_vec1 = sim_builder.run(10)

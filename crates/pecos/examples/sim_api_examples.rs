@@ -4,14 +4,13 @@ use pecos::prelude::*;
 use pecos::qis_engine;
 use pecos::{sim, sim_builder};
 use pecos_engines::{DepolarizingNoise, sim as sim_from, sparse_stab, state_vector};
-use pecos_programs::{QasmProgram, QisProgram};
+use pecos_programs::{Qasm, Qis};
 use pecos_qasm::qasm_engine;
 
 fn main() -> Result<(), PecosError> {
     // Example 1: Using sim(program) for automatic engine selection
     println!("Example 1: Automatic engine selection");
-    let qasm_prog =
-        QasmProgram::from_string("OPENQASM 2.0; qreg q[1]; h q[0]; measure q[0] -> c[0];");
+    let qasm_prog = Qasm::from_string("OPENQASM 2.0; qreg q[1]; h q[0]; measure q[0] -> c[0];");
     let results = sim(qasm_prog)
         .quantum(state_vector())
         .noise(DepolarizingNoise { p: 0.01 })
@@ -23,12 +22,12 @@ fn main() -> Result<(), PecosError> {
     println!("\nExample 2: Different program types");
 
     // QASM program
-    let qasm_prog = QasmProgram::from_string("OPENQASM 2.0; qreg q[2]; h q[0]; cx q[0],q[1];");
+    let qasm_prog = Qasm::from_string("OPENQASM 2.0; qreg q[2]; h q[0]; cx q[0],q[1];");
     let results = sim(qasm_prog).quantum(sparse_stab()).seed(42).run(100)?;
     println!("  QASM: {} shots", results.len());
 
     // LLVM program
-    let llvm_prog = QisProgram::from_string(
+    let llvm_prog = Qis::from_string(
         r#"
         declare void @__quantum__qis__h__body(i64)
 
@@ -54,8 +53,8 @@ fn main() -> Result<(), PecosError> {
 
     // Example 4: Override automatic engine selection
     println!("\nExample 4: Override engine selection");
-    let qasm_prog = QasmProgram::from_string("OPENQASM 2.0; qreg q[1]; h q[0];");
-    let llvm_prog = QisProgram::from_string(
+    let qasm_prog = Qasm::from_string("OPENQASM 2.0; qreg q[1]; h q[0];");
+    let llvm_prog = Qis::from_string(
         r#"
         declare void @__quantum__qis__h__body(i64)
         declare i32 @__quantum__qis__m__body(i64, i64)
@@ -82,7 +81,7 @@ fn main() -> Result<(), PecosError> {
 
     // Example 5: Build once, run multiple times
     println!("\nExample 5: Build once, run multiple");
-    let llvm_prog = QisProgram::from_string(
+    let llvm_prog = Qis::from_string(
         r#"
         declare void @__quantum__qis__h__body(i64)
 
@@ -110,7 +109,7 @@ fn main() -> Result<(), PecosError> {
     // Example 6: Using auto_workers()
     println!("\nExample 6: Auto workers");
     let qasm_prog =
-        QasmProgram::from_string("OPENQASM 2.0; qreg q[3]; h q[0]; cx q[0],q[1]; cx q[1],q[2];");
+        Qasm::from_string("OPENQASM 2.0; qreg q[3]; h q[0]; cx q[0],q[1]; cx q[1],q[2];");
     let results = sim(qasm_prog)
         .auto_workers() // Use all available CPU cores
         .run(1000)?;

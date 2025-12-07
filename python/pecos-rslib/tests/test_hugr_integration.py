@@ -161,7 +161,7 @@ def test_convenience_functions() -> None:
 def test_guppy_frontend_rust_backend() -> None:
     """Test that Guppy frontend can use Rust backend."""
     try:
-        from pecos.frontends.guppy_frontend import GuppyFrontend
+        from pecos._compilation import GuppyFrontend
         from pecos_rslib import check_rust_hugr_availability
 
         available, message = check_rust_hugr_availability()
@@ -188,8 +188,8 @@ def test_guppy_frontend_rust_backend() -> None:
 def test_guppy_frontend_backend_selection() -> None:
     """Test that Guppy frontend backend selection works."""
     try:
-        from pecos.frontends import get_guppy_backends
-        from pecos.frontends.guppy_frontend import GuppyFrontend
+        from pecos import get_guppy_backends
+        from pecos._compilation import GuppyFrontend
 
         frontend = GuppyFrontend()
 

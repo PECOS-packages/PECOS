@@ -4,7 +4,7 @@ use pecos_core::gate_type::GateType;
 use pecos_engines::noise::GeneralNoiseModel;
 use pecos_engines::prelude::{sparse_stabilizer, state_vector};
 use pecos_engines::sim_builder;
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
 use std::collections::BTreeMap;
 
@@ -29,7 +29,7 @@ fn test_general_noise_builder_basic() {
         .with_meas_1_probability(0.002);
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .noise(noise_builder)
         .seed(42)
         .run(1000)
@@ -74,7 +74,7 @@ fn test_general_noise_builder_with_pauli_models() {
         .with_p1_pauli_model(&p1_model);
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .noise(noise_builder)
         .seed(42)
         .run(1000)
@@ -132,7 +132,7 @@ fn test_general_noise_builder_complex_configuration() {
         .with_noiseless_gate(GateType::H);
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .noise(noise_builder)
         .seed(123)
         .workers(2)
@@ -163,7 +163,7 @@ fn test_general_noise_builder_noiseless_gates() {
         .with_noiseless_gate(GateType::Measure); // Measurement is noiseless
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .noise(noise_builder)
         .seed(42)
         .run(1000)
@@ -197,7 +197,7 @@ fn test_general_noise_builder_with_prep_errors() {
         .with_prep_probability(0.1); // 10% prep error
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .noise(noise_builder)
         .seed(42)
         .run(1000)
@@ -241,7 +241,7 @@ fn test_general_noise_builder_measurement_errors() {
         .with_meas_1_probability(0.10); // 10% chance |1> measured as |0>
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .noise(noise_builder)
         .seed(42)
         .run(1000)
@@ -301,7 +301,7 @@ fn test_general_noise_builder_chaining_all_methods() {
 
     // Should compile and run without errors
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .noise(noise_builder)
         .seed(42)
         .run(100)
@@ -335,7 +335,7 @@ fn test_general_noise_builder_with_multiple_noiseless_gates() {
         .with_noiseless_gate(GateType::Measure);
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .quantum(state_vector()) // Need StateVector for T gate
         .noise(noise_builder)
         .seed(42)
@@ -386,7 +386,7 @@ fn test_general_noise_builder_comparison_with_sim_builder() {
 
     // Test full method chaining with simulation builder
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .quantum(sparse_stabilizer())
         .noise(noise_builder)
         .seed(42)

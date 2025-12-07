@@ -48,9 +48,10 @@ numpy-compat = [  # NumPy/SciPy compatibility tests - verify compatibility with 
 
 [tool.uv]
 default-groups = ["dev", "test"]
-
-# Override dependencies to ensure correct versions
-# override-dependencies = []  # No overrides needed - use versions from guppylang/selene-sim
+# Prevent uv from caching pecos-rslib wheels - always use freshly built version
+# This fixes stale code issues when uv sync/run reinstalls cached old wheels
+# See: https://github.com/astral-sh/uv/issues/11390
+reinstall-package = ["pecos-rslib"]
 
 [tool.pytest.ini_options]
 markers = [

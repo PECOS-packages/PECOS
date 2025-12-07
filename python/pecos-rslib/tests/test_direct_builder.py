@@ -5,7 +5,7 @@ from collections import Counter
 import pytest
 from pecos_rslib import (
     GeneralNoiseModelBuilder,
-    QasmProgram,
+    Qasm,
 )
 from pecos_rslib import sim
 
@@ -36,7 +36,7 @@ class TestDirectBuilder:
         )
 
         # Use sim() with noise builder
-        prog = QasmProgram.from_string(qasm)
+        prog = Qasm.from_string(qasm)
         results = sim(prog).noise(builder).run(1000).to_dict()
 
         assert len(results["c"]) == 1000
@@ -63,7 +63,7 @@ class TestDirectBuilder:
             .with_p1_pauli_model({"X": 0.5, "Y": 0.3, "Z": 0.2})
         )
 
-        prog = QasmProgram.from_string(qasm)
+        prog = Qasm.from_string(qasm)
         results = sim(prog).noise(builder).run(1000).to_dict()
 
         # Should see some errors due to high p1 error rate
@@ -87,7 +87,7 @@ class TestDirectBuilder:
         measure q -> c;
         """
 
-        prog = QasmProgram.from_string(qasm)
+        prog = Qasm.from_string(qasm)
 
         # Create builder with fluent API
         builder = GeneralNoiseModelBuilder().with_seed(42).with_p2_probability(0.01)
@@ -128,7 +128,7 @@ class TestDirectBuilder:
         measure q -> c;
         """
 
-        prog = QasmProgram.from_string(qasm)
+        prog = Qasm.from_string(qasm)
 
         # Create builder
         builder = GeneralNoiseModelBuilder()

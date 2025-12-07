@@ -312,11 +312,11 @@ impl ProgrammedSimBuilder {
 ///
 /// ```rust,no_run
 /// use pecos::sim;
-/// use pecos_programs::QasmProgram;
+/// use pecos_programs::Qasm;
 /// use pecos_engines::{sparse_stab, DepolarizingNoise};
 ///
 /// // Automatic engine selection based on program type
-/// let qasm_prog = QasmProgram::from_string("OPENQASM 2.0; qreg q[1]; h q[0];");
+/// let qasm_prog = Qasm::from_string("OPENQASM 2.0; qreg q[1]; h q[0];");
 /// let results = sim(qasm_prog)
 ///     .quantum(sparse_stab())
 ///     .noise(DepolarizingNoise { p: 0.01 })

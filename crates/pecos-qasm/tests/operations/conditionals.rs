@@ -4,7 +4,7 @@
 use std::error::Error;
 
 use pecos_engines::ClassicalControlEngineBuilder;
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
 
 #[test]
@@ -33,7 +33,7 @@ fn test_conditional_execution() -> Result<(), Box<dyn Error>> {
 
     // Use the simulation helper instead of direct engine usage
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -84,7 +84,7 @@ fn test_simple_if() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -125,7 +125,7 @@ fn test_exact_issue() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -163,7 +163,7 @@ fn test_conditional_classical_operations() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -203,7 +203,7 @@ fn test_conditional_comparison_operators() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -238,7 +238,7 @@ fn test_nested_conditionals() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -275,7 +275,7 @@ fn test_conditional_with_barriers() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -320,7 +320,7 @@ fn test_conditional_feature_flags() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -352,7 +352,7 @@ fn test_if_with_multiple_statements() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)

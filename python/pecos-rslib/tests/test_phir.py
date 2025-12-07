@@ -18,10 +18,10 @@ def test_phir_json_engine_builder_import() -> None:
 
 
 def test_phir_json_program_import() -> None:
-    """Test that PhirJsonProgram can be imported."""
-    from pecos_rslib import PhirJsonProgram
+    """Test that PhirJson can be imported."""
+    from pecos_rslib.programs import PhirJson
 
-    assert PhirJsonProgram is not None
+    assert PhirJson is not None
 
 
 def test_phir_json_simulation_import() -> None:
@@ -48,21 +48,21 @@ def test_phir_json_engine_function() -> None:
 
 
 def test_phir_json_program_creation() -> None:
-    """Test creating PhirJsonProgram from JSON."""
-    from pecos_rslib import PhirJsonProgram
+    """Test creating PhirJson from JSON."""
+    from pecos_rslib.programs import PhirJson
 
-    # PhirJsonProgram.from_json may accept strings and parse them later
+    # PhirJson.from_json may accept strings and parse them later
     # or may validate immediately. Test what actually happens:
     from contextlib import suppress
 
     with suppress(ValueError, RuntimeError, TypeError):
         # This might not raise immediately
-        PhirJsonProgram.from_json("not json")
+        PhirJson.from_json("not json")
         # If it doesn't raise during creation, that's OK - it might fail during use
 
     # Test creating from valid-looking JSON string
     with suppress(ValueError, RuntimeError, TypeError):
-        PhirJsonProgram.from_json("{}")
+        PhirJson.from_json("{}")
         # Empty object might be accepted or rejected
 
 

@@ -36,7 +36,7 @@ except ImportError:
     GUPPY_AVAILABLE = False
 
 try:
-    from pecos.frontends.guppy_api import sim
+    from pecos import Guppy, sim
     from pecos_rslib import check_rust_hugr_availability, state_vector
 
     PECOS_FRONTEND_AVAILABLE = True
@@ -87,7 +87,7 @@ class GuppyPipelineTest:
             try:
                 # Use sim() API instead of run_guppy
                 n_qubits = kwargs.get("n_qubits", kwargs.get("max_qubits", 10))
-                builder = sim(func).qubits(n_qubits).quantum(state_vector())
+                builder = sim(Guppy(func)).qubits(n_qubits).quantum(state_vector())
                 if seed is not None:
                     builder = builder.seed(seed)
                 result_dict = builder.run(shots)

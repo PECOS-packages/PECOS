@@ -11,7 +11,7 @@
 # or implied. See the License for the specific language governing permissions and limitations under
 # the License.
 
-"""Example of running Clifford circuits using the SparseStabEngineRs."""
+"""Example of running Clifford circuits using the SparseStabEngine."""
 
 import collections
 import os
@@ -20,11 +20,11 @@ import sys
 # Add the parent directory to the path to import pecos_rslib
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from pecos_rslib import ByteMessage, SparseStabEngineRs
+from pecos_rslib import ByteMessage, SparseStabEngine
 
 
 def run_bell_state_experiment() -> None:
-    """Run a Bell state experiment using the SparseStabEngineRs."""
+    """Run a Bell state experiment using the SparseStabEngine."""
     print("==== Bell State Experiment with Clifford Simulator ====")
 
     # Create a Bell state circuit
@@ -41,7 +41,7 @@ def run_bell_state_experiment() -> None:
     print("Circuit built successfully")
 
     # Create a simulator with 2 qubits
-    simulator = SparseStabEngineRs(2)
+    simulator = SparseStabEngine(2)
     print("Created stabilizer simulator with 2 qubits")
 
     # Run the circuit once and check results
@@ -112,11 +112,11 @@ def run_bell_state_experiment() -> None:
 
 
 def run_ghz_state_experiment() -> None:
-    """Create and measure a GHZ state using the SparseStabEngineRs."""
+    """Create and measure a GHZ state using the SparseStabEngine."""
     print("\n==== GHZ State Experiment with Clifford Simulator ====")
 
     # Create a simulator with 3 qubits
-    simulator = SparseStabEngineRs(3)
+    simulator = SparseStabEngine(3)
     print("Created stabilizer simulator with 3 qubits")
 
     # Create a GHZ state circuit: |GHZ⟩ = (|000⟩ + |111⟩)/√2
@@ -178,7 +178,7 @@ def run_stabilizer_specific_circuit() -> None:
     print("\n==== Stabilizer-Specific Circuit Example ====")
 
     # Create a stabilizer simulator with 2 qubits
-    simulator = SparseStabEngineRs(2)
+    simulator = SparseStabEngine(2)
     print("Created stabilizer simulator with 2 qubits")
 
     # Create a circuit using operations specifically available in stabilizer formalism

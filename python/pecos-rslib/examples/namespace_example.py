@@ -46,7 +46,7 @@ def main() -> None:
     """
 
     # Create program
-    program = pecos_rslib.programs.QasmProgram.from_string(qasm_code)
+    program = pecos_rslib.programs.Qasm.from_string(qasm_code)
 
     # Configure depolarizing noise
     noise_model = (

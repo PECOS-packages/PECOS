@@ -4,7 +4,7 @@ import os
 import tempfile
 
 from pecos_rslib import qasm_engine
-from pecos_rslib import QasmProgram
+from pecos_rslib.programs import Qasm
 from pecos_rslib import sim
 
 
@@ -41,7 +41,7 @@ def test_qasm_wasm_basic_classical() -> None:
         result = add(a, b);
         """
 
-        prog = QasmProgram.from_string(qasm)
+        prog = Qasm.from_string(qasm)
 
         # Create engine with WASM loaded, then set the program
         engine = qasm_engine().wasm(wasm_path).program(prog)
@@ -110,7 +110,7 @@ def test_qasm_wasm_with_quantum() -> None:
         measure q -> c;
         """
 
-        prog = QasmProgram.from_string(qasm)
+        prog = Qasm.from_string(qasm)
 
         # Create engine with WASM support
         engine = qasm_engine().program(prog).wasm(wasm_path)
@@ -218,7 +218,7 @@ def test_wasm_fibonacci() -> None:
         measure q -> c;
         """
 
-        prog = QasmProgram.from_string(qasm)
+        prog = Qasm.from_string(qasm)
 
         # Create engine with WASM
         engine = qasm_engine().program(prog).wasm(wasm_path)
@@ -291,7 +291,7 @@ def test_wasm_with_multiple_functions() -> None:
         measure q -> c;
         """
 
-        prog = QasmProgram.from_string(qasm)
+        prog = Qasm.from_string(qasm)
         engine = qasm_engine().program(prog).wasm(wasm_path)
 
         results = sim(prog).classical(engine).run(10).to_dict()

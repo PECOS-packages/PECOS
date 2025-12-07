@@ -11,14 +11,14 @@
 # or implied. See the License for the specific language governing permissions and limitations under
 # the License.
 
-"""Tests for the StateVecEngineRs Python bindings."""
+"""Tests for the StateVecEngine Python bindings."""
 
-from pecos_rslib import ByteMessage, StateVecEngineRs
+from pecos_rslib import ByteMessage, StateVecEngine
 
 
 def test_simulator_creation() -> None:
-    """Test creating a StateVecEngineRs."""
-    simulator = StateVecEngineRs(2)
+    """Test creating a StateVecEngine."""
+    simulator = StateVecEngine(2)
     assert simulator is not None
 
 
@@ -33,7 +33,7 @@ def test_bell_state_correlations() -> None:
     bell_circuit = builder.build()
 
     # Create a simulator with 2 qubits
-    simulator = StateVecEngineRs(2)
+    simulator = StateVecEngine(2)
 
     # Run the circuit multiple times
     num_shots = 50
@@ -77,7 +77,7 @@ def test_simulator_reset() -> None:
     circuit = builder.build()
 
     # Create a simulator with 1 qubit
-    simulator = StateVecEngineRs(1)
+    simulator = StateVecEngine(1)
 
     # Run the circuit
     simulator.reset()

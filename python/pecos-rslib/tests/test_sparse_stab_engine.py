@@ -11,14 +11,14 @@
 # or implied. See the License for the specific language governing permissions and limitations under
 # the License.
 
-"""Tests for the SparseStabEngineRs Python bindings."""
+"""Tests for the SparseStabEngine Python bindings."""
 
-from pecos_rslib import ByteMessage, SparseStabEngineRs
+from pecos_rslib import ByteMessage, SparseStabEngine
 
 
 def test_simulator_creation() -> None:
-    """Test creating a SparseStabEngineRs."""
-    simulator = SparseStabEngineRs(2)
+    """Test creating a SparseStabEngine."""
+    simulator = SparseStabEngine(2)
     assert simulator is not None
 
 
@@ -31,7 +31,7 @@ def test_x_gate() -> None:
     circuit = builder.build()
 
     # Create a simulator with 1 qubit
-    simulator = SparseStabEngineRs(1)
+    simulator = SparseStabEngine(1)
 
     # Run the circuit
     result = simulator.process(circuit)
@@ -54,7 +54,7 @@ def test_bell_state_correlations() -> None:
     bell_circuit = builder.build()
 
     # Create a simulator with 2 qubits
-    simulator = SparseStabEngineRs(2)
+    simulator = SparseStabEngine(2)
 
     # Set a seed for reproducible results
     simulator.set_seed(42)
@@ -105,7 +105,7 @@ def test_ghz_state_correlations() -> None:
     ghz_circuit = builder.build()
 
     # Create a simulator with 3 qubits
-    simulator = SparseStabEngineRs(3)
+    simulator = SparseStabEngine(3)
 
     # Set a seed for reproducible results
     simulator.set_seed(42)
@@ -147,7 +147,7 @@ def test_simulator_reset() -> None:
     circuit = builder.build()
 
     # Create a simulator with 1 qubit
-    simulator = SparseStabEngineRs(1)
+    simulator = SparseStabEngine(1)
 
     # Run the circuit
     simulator.reset()
@@ -194,7 +194,7 @@ def test_clifford_specific_gate() -> None:
     circuit = builder.build()
 
     # Create a simulator with 2 qubits
-    simulator = SparseStabEngineRs(2)
+    simulator = SparseStabEngine(2)
 
     # Set a seed for reproducible results
     simulator.set_seed(42)

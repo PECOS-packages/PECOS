@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import pecos_rslib as rslib
+from pecos_rslib import simulators as rslib_sim
 
 import pecos as pc
 from pecos.simulators.qulacs import bindings
@@ -47,7 +47,7 @@ class Qulacs(StateVector):
 
         self.bindings = bindings.gate_dict
         self.num_qubits = num_qubits
-        self.qulacs_state = rslib.Qulacs(num_qubits, seed=seed)
+        self.qulacs_state = rslib_sim.Qulacs(num_qubits, seed=seed)
 
         self.reset()
 

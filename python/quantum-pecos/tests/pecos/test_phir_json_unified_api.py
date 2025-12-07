@@ -1,10 +1,10 @@
 """Test the PHIR JSON unified API Python bindings."""
 
-from pecos_rslib import PhirJsonProgram, phir_json_engine
+from pecos import PhirJson, phir_json_engine
 
 
 def test_phir_json_program_creation() -> None:
-    """Test creating PhirJsonProgram from string and JSON."""
+    """Test creating PhirJson from string and JSON."""
     json_str = """{
         "format": "PHIR/JSON",
         "version": "0.1.0",
@@ -16,10 +16,10 @@ def test_phir_json_program_creation() -> None:
     }"""
 
     # Test from_string
-    program1 = PhirJsonProgram.from_string(json_str)
+    program1 = PhirJson.from_string(json_str)
 
     # Test from_json (should be the same)
-    program2 = PhirJsonProgram.from_json(json_str)
+    program2 = PhirJson.from_json(json_str)
 
     # Both should work
     assert program1 is not None
@@ -39,7 +39,8 @@ def test_phir_json_engine_builder() -> None:
         ]
     }"""
 
-    program = PhirJsonProgram.from_json(json_str)
+    # Use Python PhirJson type with pecos phir_json_engine
+    program = PhirJson.from_json(json_str)
 
     # Create engine builder
     builder = phir_json_engine().program(program)
@@ -78,10 +79,10 @@ def test_phir_json_unified_api_full() -> None:
         ]
     }"""
 
-    # One-liner unified API
+    # One-liner unified API using pecos PhirJson
     result = (
         phir_json_engine()
-        .program(PhirJsonProgram.from_json(json_str))
+        .program(PhirJson.from_json(json_str))
         .to_sim()
         .seed(42)
         .run(100)

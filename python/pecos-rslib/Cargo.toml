@@ -41,10 +41,5 @@ libc.workspace = true
 # Inkwell for LLVM types (needed for llvmlite bindings)
 inkwell = { workspace = true, features = ["llvm14-0"] }
 
-[build-dependencies]
-pyo3-build-config.workspace = true
-
-[dev-dependencies]
-
 [lints]
 workspace = true

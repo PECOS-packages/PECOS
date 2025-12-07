@@ -2,7 +2,7 @@
 
 from guppylang import guppy
 from guppylang.std.quantum import h, measure, qubit
-from pecos.frontends.guppy_api import sim
+from pecos import Guppy, sim
 from pecos_rslib import state_vector
 
 
@@ -25,7 +25,7 @@ def test_integer_arithmetic() -> None:
 
     logging.basicConfig(level=logging.INFO)
 
-    sim_builder = sim(quantum_add).qubits(1).quantum(state_vector()).seed(42)
+    sim_builder = sim(Guppy(quantum_add)).qubits(1).quantum(state_vector()).seed(42)
     print(f"SimBuilder type: {type(sim_builder)}")
 
     results = sim_builder.run(10)
@@ -59,7 +59,13 @@ def test_boolean_operations() -> None:
         m2 = measure(q2)
         return m1 and not m2
 
-    results = sim(quantum_bool_logic).qubits(2).quantum(state_vector()).seed(42).run(10)
+    results = (
+        sim(Guppy(quantum_bool_logic))
+        .qubits(2)
+        .quantum(state_vector())
+        .seed(42)
+        .run(10)
+    )
 
     assert "measurement_0" in results
     assert len(results["measurement_0"]) == 10
@@ -79,7 +85,9 @@ def test_integer_comparisons() -> None:
 
         return measure(q)
 
-    results = sim(quantum_compare).qubits(1).quantum(state_vector()).seed(42).run(10)
+    results = (
+        sim(Guppy(quantum_compare)).qubits(1).quantum(state_vector()).seed(42).run(10)
+    )
 
     assert "measurement_0" in results
     measurements = results["measurement_0"]
@@ -104,7 +112,9 @@ def test_arithmetic_in_loop() -> None:
 
         return measure(q)
 
-    results = sim(quantum_loop).qubits(1).quantum(state_vector()).seed(42).run(10)
+    results = (
+        sim(Guppy(quantum_loop)).qubits(1).quantum(state_vector()).seed(42).run(10)
+    )
 
     assert "measurement_0" in results
     measurements = results["measurement_0"]
@@ -128,7 +138,9 @@ def test_chained_comparisons() -> None:
 
         return measure(q)
 
-    results = sim(quantum_chain).qubits(1).quantum(state_vector()).seed(42).run(10)
+    results = (
+        sim(Guppy(quantum_chain)).qubits(1).quantum(state_vector()).seed(42).run(10)
+    )
 
     assert "measurement_0" in results
     measurements = results["measurement_0"]
@@ -158,7 +170,11 @@ def test_arithmetic_with_measurements() -> None:
         return measure(q3)
 
     results = (
-        sim(quantum_measure_math).qubits(3).quantum(state_vector()).seed(42).run(20)
+        sim(Guppy(quantum_measure_math))
+        .qubits(3)
+        .quantum(state_vector())
+        .seed(42)
+        .run(20)
     )
 
     assert "measurement_0" in results

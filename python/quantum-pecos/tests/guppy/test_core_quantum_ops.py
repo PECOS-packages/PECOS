@@ -1,7 +1,7 @@
 """Core quantum operations tests - simplified version."""
 
 import pytest
-from pecos.frontends.guppy_api import sim
+from pecos import Guppy, sim
 from pecos_rslib import state_vector
 
 
@@ -83,7 +83,7 @@ class TestSingleQubitGates:
             x(q)
             return measure(q)
 
-        results = sim(x_test).qubits(10).quantum(state_vector()).run(10)
+        results = sim(Guppy(x_test)).qubits(10).quantum(state_vector()).run(10)
         measurements = results.get(
             "measurements",
             results.get("measurement_0", results.get("result", [])),
@@ -99,7 +99,7 @@ class TestSingleQubitGates:
             y(q)
             return measure(q)
 
-        results = sim(y_test).qubits(10).quantum(state_vector()).run(10)
+        results = sim(Guppy(y_test)).qubits(10).quantum(state_vector()).run(10)
         measurements = results.get(
             "measurements",
             results.get("measurement_0", results.get("result", [])),
@@ -115,7 +115,7 @@ class TestSingleQubitGates:
             z(q)
             return measure(q)
 
-        results = sim(z_test).qubits(10).quantum(state_vector()).run(10)
+        results = sim(Guppy(z_test)).qubits(10).quantum(state_vector()).run(10)
         measurements = results.get(
             "measurements",
             results.get("measurement_0", results.get("result", [])),
@@ -131,7 +131,7 @@ class TestSingleQubitGates:
             h(q)
             return measure(q)
 
-        results = sim(h_test).qubits(10).quantum(state_vector()).run(10)
+        results = sim(Guppy(h_test)).qubits(10).quantum(state_vector()).run(10)
         # Should see both 0 and 1
         measurements = results.get(
             "measurements",
@@ -152,7 +152,7 @@ class TestSingleQubitGates:
             s(q)  # Phase gate
             return measure(q)
 
-        results = sim(s_test).qubits(10).quantum(state_vector()).run(10)
+        results = sim(Guppy(s_test)).qubits(10).quantum(state_vector()).run(10)
         # S gate doesn't change computational basis
         measurements = results.get(
             "measurements",
@@ -170,7 +170,7 @@ class TestSingleQubitGates:
             t(q)  # π/8 gate
             return measure(q)
 
-        results = sim(t_test).qubits(10).quantum(state_vector()).run(10)
+        results = sim(Guppy(t_test)).qubits(10).quantum(state_vector()).run(10)
         # T gate doesn't change computational basis
         measurements = results.get(
             "measurements",
@@ -194,7 +194,7 @@ class TestTwoQubitGates:
             cx(q1, q2)  # Target flips
             return measure(q1), measure(q2)
 
-        results = sim(cx_test).qubits(10).quantum(state_vector()).run(10)
+        results = sim(Guppy(cx_test)).qubits(10).quantum(state_vector()).run(10)
         # Should get (True, True) for both qubits
         decoded_results = get_measurement_tuples(results, 2)
         assert all(r == (True, True) for r in decoded_results)
@@ -211,7 +211,7 @@ class TestTwoQubitGates:
             cz(q1, q2)  # Phase when both |1⟩
             return measure(q1), measure(q2)
 
-        results = sim(cz_test).qubits(10).quantum(state_vector()).run(10)
+        results = sim(Guppy(cz_test)).qubits(10).quantum(state_vector()).run(10)
         # CZ doesn't change computational basis, both qubits remain |1⟩
         decoded_results = get_measurement_tuples(results, 2)
         assert all(r == (True, True) for r in decoded_results)
@@ -227,7 +227,7 @@ class TestTwoQubitGates:
             cy(q1, q2)  # Apply Y to target
             return measure(q1), measure(q2)
 
-        results = sim(cy_test).qubits(10).quantum(state_vector()).run(10)
+        results = sim(Guppy(cy_test)).qubits(10).quantum(state_vector()).run(10)
         # CY with control=1 applies Y to target, Y|0⟩ = i|1⟩, so both measure as |1⟩
         decoded_results = get_measurement_tuples(results, 2)
         assert all(r == (True, True) for r in decoded_results)
@@ -247,7 +247,7 @@ class TestQuantumStateManagement:
             reset(q)
             return measure(q)
 
-        results = sim(reset_test).qubits(10).quantum(state_vector()).run(10)
+        results = sim(Guppy(reset_test)).qubits(10).quantum(state_vector()).run(10)
         # Reset should give |0⟩
         measurements = results.get(
             "measurements",
@@ -268,7 +268,7 @@ class TestQuantumStateManagement:
             x(q2)
             return measure(q2)
 
-        results = sim(discard_test).qubits(10).quantum(state_vector()).run(10)
+        results = sim(Guppy(discard_test)).qubits(10).quantum(state_vector()).run(10)
         measurements = results.get(
             "measurements",
             results.get("measurement_0", results.get("result", [])),
@@ -291,7 +291,9 @@ class TestQuantumCircuits:
             cx(q1, q2)
             return measure(q1), measure(q2)
 
-        results = sim(bell_test).qubits(10).quantum(state_vector()).seed(42).run(100)
+        results = (
+            sim(Guppy(bell_test)).qubits(10).quantum(state_vector()).seed(42).run(100)
+        )
         # Bell state should be correlated
         decoded = get_measurement_tuples(results, 2)
         for a, b in decoded:
@@ -310,7 +312,9 @@ class TestQuantumCircuits:
             cx(q2, q3)
             return measure(q1), measure(q2), measure(q3)
 
-        results = sim(ghz_test).qubits(10).quantum(state_vector()).seed(42).run(100)
+        results = (
+            sim(Guppy(ghz_test)).qubits(10).quantum(state_vector()).seed(42).run(100)
+        )
         # GHZ state should be all-correlated
         decoded = get_measurement_tuples(results, 3)
         for a, b, c in decoded:
@@ -330,7 +334,7 @@ class TestRotationGates:
             rx(q, pi)  # Rx(π) = X up to phase
             return measure(q)
 
-        results = sim(rx_test).qubits(10).quantum(state_vector()).run(10)
+        results = sim(Guppy(rx_test)).qubits(10).quantum(state_vector()).run(10)
         measurements = results.get(
             "measurements",
             results.get("measurement_0", results.get("result", [])),
@@ -346,7 +350,7 @@ class TestRotationGates:
             ry(q, pi)  # Ry(π) flips qubit
             return measure(q)
 
-        results = sim(ry_test).qubits(10).quantum(state_vector()).run(10)
+        results = sim(Guppy(ry_test)).qubits(10).quantum(state_vector()).run(10)
         measurements = results.get(
             "measurements",
             results.get("measurement_0", results.get("result", [])),
@@ -362,7 +366,7 @@ class TestRotationGates:
             rz(q, pi)  # Rz on |0⟩
             return measure(q)
 
-        results = sim(rz_test).qubits(10).quantum(state_vector()).run(10)
+        results = sim(Guppy(rz_test)).qubits(10).quantum(state_vector()).run(10)
         # Rz doesn't change |0⟩ measurement
         measurements = results.get(
             "measurements",
@@ -403,7 +407,7 @@ class TestControlFlow:
 
         # Test with True condition - should apply X gate
         results_true = (
-            sim(test_true_condition).qubits(10).quantum(state_vector()).run(10)
+            sim(Guppy(test_true_condition)).qubits(10).quantum(state_vector()).run(10)
         )
         measurements_true = results_true.get(
             "measurements",
@@ -415,7 +419,7 @@ class TestControlFlow:
 
         # Test with False condition - should not apply X gate
         results_false = (
-            sim(test_false_condition).qubits(10).quantum(state_vector()).run(10)
+            sim(Guppy(test_false_condition)).qubits(10).quantum(state_vector()).run(10)
         )
         measurements_false = results_false.get(
             "measurements",
@@ -438,7 +442,9 @@ class TestControlFlow:
                     count += 1
             return count
 
-        results = sim(loop_test).qubits(10).quantum(state_vector()).seed(42).run(100)
+        results = (
+            sim(Guppy(loop_test)).qubits(10).quantum(state_vector()).seed(42).run(100)
+        )
         # Should see values 0-3
         measurements = results.get(
             "measurements",

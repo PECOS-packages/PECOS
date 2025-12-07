@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 1: Build once, run multiple times with sim_builder()
     println!("Example 1: Reusable simulation with sim_builder()");
 
-    let qasm = QasmProgram::from_string(
+    let qasm = Qasm::from_string(
         r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 2: Build once, run multiple times with sim()
     println!("\nExample 2: Reusable simulation with sim() auto-selection");
 
-    let qasm2 = QasmProgram::from_string(
+    let qasm2 = Qasm::from_string(
         r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 3: Compare direct run vs build-then-run
     println!("\nExample 3: Performance comparison");
 
-    let qasm3 = QasmProgram::from_string(
+    let qasm3 = Qasm::from_string(
         r#"
         OPENQASM 2.0;
         include "qelib1.inc";

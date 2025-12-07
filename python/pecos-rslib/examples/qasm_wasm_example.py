@@ -8,7 +8,7 @@ import os
 import tempfile
 
 from pecos_rslib import qasm_engine, sim
-from pecos_rslib.programs import QasmProgram
+from pecos_rslib.programs import Qasm
 
 
 def create_math_wat() -> str:
@@ -77,9 +77,7 @@ def example_basic_wasm() -> None:
 
     try:
         # Run simulation with WASM
-        engine_builder = (
-            qasm_engine().program(QasmProgram.from_string(qasm)).wasm(wat_path)
-        )
+        engine_builder = qasm_engine().program(Qasm.from_string(qasm)).wasm(wat_path)
         results = engine_builder.to_sim().run(5)
 
         # Display results

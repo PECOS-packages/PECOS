@@ -58,7 +58,7 @@ fn test_pecos_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
             || stderr.contains("Loading interface")
             || stderr.contains("Found built Selene runtime")
             || stderr.contains("Using Selene simple runtime")
-            || stderr.contains("Building QisInterface from QisProgram using JIT compiler")
+            || stderr.contains("Building QisInterface from Qis using JIT compiler")
             || stderr.contains("JIT interface created")
             || stderr.contains("Creating QisEngine"),
         "Should show compilation or loading activity. Got stderr: {stderr}"

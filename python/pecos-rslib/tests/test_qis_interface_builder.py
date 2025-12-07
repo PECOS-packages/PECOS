@@ -5,7 +5,7 @@ from pecos_rslib import (
     qis_engine,
     qis_helios_interface,
     qis_selene_helios_interface,
-    QisProgram,
+    Qis,
 )
 
 
@@ -43,7 +43,7 @@ class TestQisInterfaceBuilder:
             declare i32 @__quantum__qis__m__body(i64, i64)
         """
 
-        qis_program = QisProgram.from_string(bell_qis)
+        qis_program = Qis.from_string(bell_qis)
         interface_builder = qis_helios_interface()
 
         # Run simulation
@@ -77,7 +77,7 @@ class TestQisInterfaceBuilder:
             declare i32 @__quantum__qis__m__body(i64, i64)
         """
 
-        qis_program = QisProgram.from_string(bell_qis)
+        qis_program = Qis.from_string(bell_qis)
         interface_builder = qis_selene_helios_interface()
 
         # Run simulation
@@ -113,7 +113,7 @@ class TestQisInterfaceBuilder:
             declare i32 @__quantum__qis__m__body(i64, i64)
         """
 
-        qis_program = QisProgram.from_string(ghz_qis)
+        qis_program = Qis.from_string(ghz_qis)
         interface_builder = qis_helios_interface()
 
         # Run simulation
@@ -148,7 +148,7 @@ class TestQisInterfaceBuilder:
             declare i32 @__quantum__qis__m__body(i64, i64)
         """
 
-        qis_program = QisProgram.from_string(ghz_qis)
+        qis_program = Qis.from_string(ghz_qis)
         interface_builder = qis_selene_helios_interface()
 
         # Run simulation
@@ -174,7 +174,7 @@ class TestQisInterfaceBuilder:
             }
             declare void @__quantum__qis__h__body(i64)
         """
-        qis_program = QisProgram.from_string(simple_qis)
+        qis_program = Qis.from_string(simple_qis)
 
         # No .interface() call - should give helpful error, not silent fallback
         with pytest.raises(RuntimeError) as exc_info:
@@ -194,7 +194,7 @@ class TestQisInterfaceBuilder:
             }
             declare void @__quantum__qis__h__body(i64)
         """
-        qis_program = QisProgram.from_string(simple_qis)
+        qis_program = Qis.from_string(simple_qis)
 
         # Explicitly select Helios
         engine = qis_engine().interface(qis_helios_interface()).program(qis_program)
@@ -212,7 +212,7 @@ class TestQisInterfaceBuilder:
             }
             declare void @__quantum__qis__h__body(i64)
         """
-        qis_program = QisProgram.from_string(simple_qis)
+        qis_program = Qis.from_string(simple_qis)
 
         # Explicitly select Selene Helios
         engine = (

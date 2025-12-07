@@ -23,7 +23,7 @@ def test_python_imports() -> None:
 
 def test_backend_detection() -> None:
     """Test backend detection functionality."""
-    from pecos.frontends import get_guppy_backends
+    from pecos import get_guppy_backends
 
     backends = get_guppy_backends()
 
@@ -41,7 +41,7 @@ def test_backend_detection() -> None:
 def test_guppy_frontend_creation() -> None:
     """Test that GuppyFrontend can be created."""
     pytest.importorskip("guppylang")
-    from pecos.frontends.guppy_frontend import GuppyFrontend
+    from pecos._compilation import GuppyFrontend
 
     # Since guppy_frontend.py is already imported with GUPPY_AVAILABLE=False,
     # we need to check if it would fail

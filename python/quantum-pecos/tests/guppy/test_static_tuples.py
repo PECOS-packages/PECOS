@@ -2,7 +2,7 @@
 
 from guppylang import guppy
 from guppylang.std.quantum import measure, qubit, x
-from pecos.frontends.guppy_api import sim
+from pecos import Guppy, sim
 from pecos_rslib import state_vector
 
 
@@ -90,7 +90,7 @@ def circuit_5_tuple() -> tuple[bool, bool, bool, bool, bool]:
 
 def test_1_tuple_return() -> None:
     """Test that 1-tuple (bool) returns work correctly."""
-    results = sim(circuit_1_tuple).qubits(1).quantum(state_vector()).run(5)
+    results = sim(Guppy(circuit_1_tuple)).qubits(1).quantum(state_vector()).run(5)
     assert "measurement_0" in results
     measurements = results["measurement_0"]
     assert len(measurements) == 5
@@ -99,7 +99,7 @@ def test_1_tuple_return() -> None:
 
 def test_2_tuple_return() -> None:
     """Test that 2-tuple returns work correctly."""
-    results = sim(circuit_2_tuple).qubits(2).quantum(state_vector()).run(5)
+    results = sim(Guppy(circuit_2_tuple)).qubits(2).quantum(state_vector()).run(5)
     assert "measurement_0" in results
     assert "measurement_1" in results
     # First qubit has X, second doesn't
@@ -109,7 +109,7 @@ def test_2_tuple_return() -> None:
 
 def test_3_tuple_return() -> None:
     """Test that 3-tuple returns work correctly."""
-    results = sim(circuit_3_tuple).qubits(3).quantum(state_vector()).run(5)
+    results = sim(Guppy(circuit_3_tuple)).qubits(3).quantum(state_vector()).run(5)
     assert "measurement_0" in results
     assert "measurement_1" in results
     assert "measurement_2" in results
@@ -121,7 +121,7 @@ def test_3_tuple_return() -> None:
 
 def test_4_tuple_return() -> None:
     """Test that 4-tuple returns work correctly."""
-    results = sim(circuit_4_tuple).qubits(4).quantum(state_vector()).run(5)
+    results = sim(Guppy(circuit_4_tuple)).qubits(4).quantum(state_vector()).run(5)
     assert "measurement_0" in results
     assert "measurement_1" in results
     assert "measurement_2" in results
@@ -135,7 +135,7 @@ def test_4_tuple_return() -> None:
 
 def test_5_tuple_return() -> None:
     """Test that 5-tuple returns work correctly."""
-    results = sim(circuit_5_tuple).qubits(5).quantum(state_vector()).run(5)
+    results = sim(Guppy(circuit_5_tuple)).qubits(5).quantum(state_vector()).run(5)
     assert "measurement_0" in results
     assert "measurement_1" in results
     assert "measurement_2" in results

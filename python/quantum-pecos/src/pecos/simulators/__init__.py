@@ -16,8 +16,8 @@ and fault propagation simulators.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-# Rust version of simulators
-from pecos_rslib import SparseSim, SparseSimCpp
+# Rust simulators (direct exports without Python wrappers)
+from pecos_rslib.simulators import SparseSim, SparseSimCpp
 
 from pecos.simulators import sim_class_types
 

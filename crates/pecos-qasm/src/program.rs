@@ -205,7 +205,7 @@ impl std::fmt::Display for QASMProgram {
 /// or WASM (binary format).
 #[cfg(feature = "wasm")]
 #[derive(Debug, Clone)]
-pub struct QasmEngineWasmProgram {
+pub struct QasmEngineWasm {
     /// The WASM binary data
     pub wasm_bytes: Vec<u8>,
     /// Optional source path for debugging
@@ -213,7 +213,7 @@ pub struct QasmEngineWasmProgram {
 }
 
 #[cfg(feature = "wasm")]
-impl QasmEngineWasmProgram {
+impl QasmEngineWasm {
     /// Create from WASM bytes
     #[must_use]
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
@@ -247,8 +247,8 @@ impl QasmEngineWasmProgram {
 
 // Implement From traits for the shared program types
 #[cfg(feature = "wasm")]
-impl From<pecos_programs::WasmProgram> for QasmEngineWasmProgram {
-    fn from(program: pecos_programs::WasmProgram) -> Self {
+impl From<pecos_programs::Wasm> for QasmEngineWasm {
+    fn from(program: pecos_programs::Wasm) -> Self {
         Self {
             wasm_bytes: program.wasm,
             source_path: None,
@@ -257,10 +257,10 @@ impl From<pecos_programs::WasmProgram> for QasmEngineWasmProgram {
 }
 
 #[cfg(feature = "wasm")]
-impl TryFrom<pecos_programs::WatProgram> for QasmEngineWasmProgram {
+impl TryFrom<pecos_programs::Wat> for QasmEngineWasm {
     type Error = PecosError;
 
-    fn try_from(program: pecos_programs::WatProgram) -> Result<Self, Self::Error> {
+    fn try_from(program: pecos_programs::Wat) -> Result<Self, Self::Error> {
         Self::from_wat(&program.source)
     }
 }

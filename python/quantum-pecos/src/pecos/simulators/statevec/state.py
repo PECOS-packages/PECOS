@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos_rslib import StateVec as StateVecRs
+from pecos_rslib.simulators import StateVec as StateVecRs
 
 from pecos.simulators.statevec.bindings import get_bindings
 

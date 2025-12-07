@@ -7,8 +7,8 @@ from pecos_rslib import (
     sparse_stab,
     sparse_stabilizer,
     state_vector,
-    QisProgram,
-    QasmProgram,
+    Qis,
+    Qasm,
     depolarizing_noise,
     qasm_engine,
 )
@@ -80,7 +80,7 @@ class TestQuantumEngineBuilders:
         # Test with state vector engine
         sim = (
             qasm_engine()
-            .program(QasmProgram.from_string(qasm))
+            .program(Qasm.from_string(qasm))
             .to_sim()
             .quantum(state_vector())
             .seed(42)
@@ -93,7 +93,7 @@ class TestQuantumEngineBuilders:
         # Test with sparse stabilizer engine
         sim2 = (
             qasm_engine()
-            .program(QasmProgram.from_string(qasm))
+            .program(Qasm.from_string(qasm))
             .to_sim()
             .quantum(sparse_stabilizer())
             .seed(42)
@@ -120,7 +120,7 @@ class TestQuantumEngineBuilders:
         # Test with state vector engine and noise
         sim = (
             qasm_engine()
-            .program(QasmProgram.from_string(qasm))
+            .program(Qasm.from_string(qasm))
             .to_sim()
             .quantum(state_vector())
             .noise(noise)
@@ -165,7 +165,7 @@ attributes #0 = { "EntryPoint" }
 
             # Create QIS program and run with quantum engine
             # Need to specify number of qubits (1 qubit in this test)
-            program = QisProgram.from_string(llvm_ir)
+            program = Qis.from_string(llvm_ir)
             results = sim(program).qubits(1).quantum(state_vector()).seed(42).run(100)
             results_dict = results.to_dict()
 

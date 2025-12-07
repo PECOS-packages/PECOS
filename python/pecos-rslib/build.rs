@@ -1,18 +1,15 @@
-/// This build script helps with `PyO3` configuration.
+/// Build script for pecos-rslib.
+///
+/// Note: When building via maturin (the recommended approach), most of this
+/// configuration is handled automatically. This build.rs primarily provides
+/// compatibility for direct `cargo build` usage on macOS.
+///
+/// See: <https://pyo3.rs/v0.23.4/building-and-distribution>
 fn main() {
-    // Ensure rebuild when build.rs itself changes
-    println!("cargo:rerun-if-changed=build.rs");
-    // Ensure rebuild when any source files change
-    println!("cargo:rerun-if-changed=src");
-    // Ensure rebuild when config files change
-    println!("cargo:rerun-if-changed=Cargo.toml");
-    println!("cargo:rerun-if-changed=pyproject.toml");
-
-    // For macOS, add required linker args for Python extension modules
+    // For macOS, add required linker args for Python extension modules.
+    // This is only needed for manual `cargo build` - maturin handles this automatically.
     #[cfg(target_os = "macos")]
     {
-        pyo3_build_config::add_extension_module_link_args();
-
         // Link against the system C++ library from dyld shared cache
         // Prioritize /usr/lib to prevent opportunistic linking to Homebrew's libunwind
         println!("cargo:rustc-link-search=native=/usr/lib");

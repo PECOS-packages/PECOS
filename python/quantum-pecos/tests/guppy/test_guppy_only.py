@@ -1,7 +1,7 @@
 """Guppy-only tests that don't require full PECOS installation."""
 
 import pytest
-from pecos.frontends import get_guppy_backends
+from pecos import get_guppy_backends
 
 
 def test_guppy_available() -> None:

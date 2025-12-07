@@ -252,7 +252,7 @@ attributes #0 = { "EntryPoint" }
     def test_python_api_availability(self) -> None:
         """Test Python API for HUGR compilation is available."""
         try:
-            from pecos.frontends import get_guppy_backends
+            from pecos import get_guppy_backends
         except ImportError as e:
             pytest.skip(f"Python API not available: {e}")
 

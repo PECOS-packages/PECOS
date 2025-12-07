@@ -5,13 +5,13 @@
 
 use pecos::sim;
 use pecos_engines::{DepolarizingNoise, sim_builder, sparse_stabilizer};
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 1: Using base sim_builder with explicit classical engine
     println!("Example 1: Base sim_builder with explicit .classical()");
-    let qasm = QasmProgram::from_string(
+    let qasm = Qasm::from_string(
         r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -34,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 2: Using convenience sim() with auto-selection
     println!("\nExample 2: Convenience sim() with auto-selection");
-    let qasm2 = QasmProgram::from_string(
+    let qasm2 = Qasm::from_string(
         r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 3: Override auto-selection with different engine
     println!("\nExample 3: Override auto-selection");
-    let qasm3 = QasmProgram::from_string(
+    let qasm3 = Qasm::from_string(
         r#"
         OPENQASM 2.0;
         include "qelib1.inc";

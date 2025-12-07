@@ -9,7 +9,7 @@ from pecos_rslib import (
     sparse_stabilizer,
     state_vector,
 )
-from pecos_rslib import QasmProgram
+from pecos_rslib.programs import Qasm
 from pecos_rslib import sim
 
 
@@ -29,7 +29,7 @@ class TestPythonicInterface:
         """
 
         # Run with minimal parameters
-        prog = QasmProgram.from_string(qasm)
+        prog = Qasm.from_string(qasm)
         results = sim(prog).run(10).to_dict()
         assert "c" in results
         assert len(results["c"]) == 10
@@ -48,7 +48,7 @@ class TestPythonicInterface:
         measure q[0] -> c[0];
         """
 
-        prog = QasmProgram.from_string(qasm)
+        prog = Qasm.from_string(qasm)
 
         # Test with StateVector engine
         results_sv = sim(prog).quantum(state_vector()).seed(42).run(100).to_dict()
@@ -73,7 +73,7 @@ class TestPythonicInterface:
         measure q[0] -> c[0];
         """
 
-        prog = QasmProgram.from_string(qasm)
+        prog = Qasm.from_string(qasm)
 
         # Test with no noise (default)
         results = sim(prog).run(100).to_dict()
@@ -105,7 +105,7 @@ class TestPythonicInterface:
         measure q -> c;
         """
 
-        prog = QasmProgram.from_string(qasm)
+        prog = Qasm.from_string(qasm)
 
         # Custom depolarizing with different error rates
         noise_builder = (
@@ -138,7 +138,7 @@ class TestPythonicInterface:
         measure q[0] -> c[0];
         """
 
-        prog = QasmProgram.from_string(qasm)
+        prog = Qasm.from_string(qasm)
 
         # Run twice with same seed
         results1 = sim(prog).seed(123).run(100).to_dict()
@@ -169,7 +169,7 @@ class TestPythonicInterface:
         measure q[3] -> c2[1];
         """
 
-        prog = QasmProgram.from_string(qasm)
+        prog = Qasm.from_string(qasm)
         results = sim(prog).run(10).to_dict()
 
         # Check both registers exist

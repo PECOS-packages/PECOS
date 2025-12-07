@@ -37,7 +37,7 @@ try:
 except ImportError:
     GUPPY_AVAILABLE = False
 
-from pecos.frontends.guppy_api import sim
+from pecos import Guppy, sim
 from pecos_rslib import state_vector
 
 
@@ -63,7 +63,7 @@ class TestIsolatedOps:
             h(q)
             return measure(q)
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         assert len(results.get("measurements", results.get("measurement_0", []))) == 10
 
     def test_single_x_gate(self) -> None:
@@ -75,7 +75,7 @@ class TestIsolatedOps:
             x(q)
             return measure(q)
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         assert all(
             r for r in results.get("measurements", results.get("measurement_0", []))
         )
@@ -89,7 +89,7 @@ class TestIsolatedOps:
             y(q)
             return measure(q)
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         assert all(
             r for r in results.get("measurements", results.get("measurement_0", []))
         )
@@ -103,7 +103,7 @@ class TestIsolatedOps:
             z(q)
             return measure(q)
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         assert all(
             not r for r in results.get("measurements", results.get("measurement_0", []))
         )
@@ -119,7 +119,7 @@ class TestIsolatedOps:
             sdg(q)
             return measure(q)
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         assert all(
             r for r in results.get("measurements", results.get("measurement_0", []))
         )
@@ -135,7 +135,7 @@ class TestIsolatedOps:
             tdg(q)
             return measure(q)
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         assert all(
             r for r in results.get("measurements", results.get("measurement_0", []))
         )
@@ -149,7 +149,7 @@ class TestIsolatedOps:
             rx(q, pi)
             return measure(q)
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
 
         assert all(
             r for r in results.get("measurements", results.get("measurement_0", []))
@@ -164,7 +164,7 @@ class TestIsolatedOps:
             ry(q, pi)
             return measure(q)
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         assert all(
             r for r in results.get("measurements", results.get("measurement_0", []))
         )
@@ -178,7 +178,7 @@ class TestIsolatedOps:
             rz(q, pi)
             return measure(q)
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         assert all(
             not r for r in results.get("measurements", results.get("measurement_0", []))
         )
@@ -194,7 +194,7 @@ class TestIsolatedOps:
             cx(q1, q2)
             return measure(q1), measure(q2)
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         # Should get (True, True) for both qubits
         assert "measurement_0" in results
         assert "measurement_1" in results
@@ -214,7 +214,7 @@ class TestIsolatedOps:
             cy(q1, q2)
             return measure(q1), measure(q2)
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         # CY with control=1 should flip target
         assert "measurement_0" in results
         assert "measurement_1" in results
@@ -235,7 +235,7 @@ class TestIsolatedOps:
             cz(q1, q2)
             return measure(q1), measure(q2)
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         # Both qubits should be |1⟩
         assert "measurement_0" in results
         assert "measurement_1" in results
@@ -254,7 +254,7 @@ class TestIsolatedOps:
             ch(q1, q2)
             return measure(q1), measure(q2)
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         # CH with control=0 does nothing
         assert "measurement_0" in results
         assert "measurement_1" in results
@@ -276,7 +276,7 @@ class TestIsolatedOps:
             toffoli(q1, q2, q3)
             return measure(q1), measure(q2), measure(q3)
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         # Both controls at |1⟩, target flips to |1⟩
         assert "measurement_0" in results
         assert "measurement_1" in results
@@ -301,7 +301,7 @@ class TestIsolatedOps:
             reset(q)
             return measure(q)
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         assert all(
             not r for r in results.get("measurements", results.get("measurement_0", []))
         )
@@ -318,7 +318,7 @@ class TestIsolatedOps:
             x(q2)
             return measure(q2)
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         assert all(
             r for r in results.get("measurements", results.get("measurement_0", []))
         )
@@ -349,7 +349,7 @@ class TestIsolatedOps:
 
             return result1, result2, result3, result4
 
-        results = sim(test).qubits(10).quantum(state_vector()).seed(42).run(10)
+        results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         # Check tuple values directly
         assert all(f"measurement_{i}" in results for i in range(4))
         measurements = list(

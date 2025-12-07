@@ -13,7 +13,7 @@
 
 from pecos.circuits import QuantumCircuit
 from pecos.simulators import PauliProp
-from pecos_rslib import PauliProp as PauliPropRs
+from pecos_rslib.simulators import PauliProp as PauliPropRs
 
 
 def test_rust_pauli_prop_basic() -> None:

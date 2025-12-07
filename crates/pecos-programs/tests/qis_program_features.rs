@@ -1,20 +1,20 @@
-//! Tests to verify all `QisProgram` features work correctly
+//! Tests to verify all `Qis` features work correctly
 
-use pecos_programs::{QisContent, QisProgram};
+use pecos_programs::{Qis, QisContent};
 
 #[test]
 fn test_qis_ir_methods() {
     let ir = "define void @main() { ret void }";
 
     // Test from_string
-    let prog1 = QisProgram::from_string(ir);
+    let prog1 = Qis::from_string(ir);
     assert!(prog1.is_ir());
     assert!(!prog1.is_bitcode());
     assert_eq!(prog1.ir(), Some(ir));
     assert_eq!(prog1.bitcode(), None);
 
     // Test from_ir (alias)
-    let prog2 = QisProgram::from_ir(ir);
+    let prog2 = Qis::from_ir(ir);
     assert_eq!(prog1, prog2);
 }
 
@@ -23,7 +23,7 @@ fn test_qis_bitcode_methods() {
     let bitcode = vec![0xDE, 0xC0, 0xDE, 0x42, 0x01, 0x0C];
 
     // Test from_bitcode
-    let prog = QisProgram::from_bitcode(bitcode.clone());
+    let prog = Qis::from_bitcode(bitcode.clone());
     assert!(!prog.is_ir());
     assert!(prog.is_bitcode());
     assert_eq!(prog.ir(), None);
@@ -39,7 +39,7 @@ fn test_qis_file_auto_detection() -> Result<(), Box<dyn std::error::Error>> {
     let ir_content = "define void @test() { ret void }";
     std::fs::write(&ll_path, ir_content)?;
 
-    let ll_prog = QisProgram::from_file(&ll_path)?;
+    let ll_prog = Qis::from_file(&ll_path)?;
     assert!(ll_prog.is_ir());
     assert_eq!(ll_prog.ir(), Some(ir_content));
 
@@ -48,7 +48,7 @@ fn test_qis_file_auto_detection() -> Result<(), Box<dyn std::error::Error>> {
     let bc_content = vec![0xDE, 0xC0, 0xDE, 0x42];
     std::fs::write(&bc_path, &bc_content)?;
 
-    let bc_prog = QisProgram::from_file(&bc_path)?;
+    let bc_prog = Qis::from_file(&bc_path)?;
     assert!(bc_prog.is_bitcode());
     assert_eq!(bc_prog.bitcode(), Some(bc_content.as_slice()));
 
@@ -56,7 +56,7 @@ fn test_qis_file_auto_detection() -> Result<(), Box<dyn std::error::Error>> {
     let no_ext_path = temp_dir.path().join("test");
     std::fs::write(&no_ext_path, ir_content)?;
 
-    let no_ext_prog = QisProgram::from_file(&no_ext_path)?;
+    let no_ext_prog = Qis::from_file(&no_ext_path)?;
     assert!(no_ext_prog.is_ir());
     assert_eq!(no_ext_prog.ir(), Some(ir_content));
 
@@ -72,7 +72,7 @@ fn test_qis_specific_file_methods() -> Result<(), Box<dyn std::error::Error>> {
     let ir_content = "define void @test() { ret void }";
     std::fs::write(&ir_path, ir_content)?;
 
-    let ir_prog = QisProgram::from_ir_file(&ir_path)?;
+    let ir_prog = Qis::from_ir_file(&ir_path)?;
     assert!(ir_prog.is_ir());
     assert_eq!(ir_prog.ir(), Some(ir_content));
 
@@ -81,7 +81,7 @@ fn test_qis_specific_file_methods() -> Result<(), Box<dyn std::error::Error>> {
     let bc_content = vec![0xBC, 0xC0, 0xDE, 0x35, 0x14];
     std::fs::write(&bc_path, &bc_content)?;
 
-    let bc_prog = QisProgram::from_bitcode_file(&bc_path)?;
+    let bc_prog = Qis::from_bitcode_file(&bc_path)?;
     assert!(bc_prog.is_bitcode());
     assert_eq!(bc_prog.bitcode(), Some(bc_content.as_slice()));
 
@@ -92,19 +92,19 @@ fn test_qis_specific_file_methods() -> Result<(), Box<dyn std::error::Error>> {
 fn test_qis_display() {
     // IR display shows the content
     let ir = "define void @main() { ret void }";
-    let ir_prog = QisProgram::from_ir(ir);
+    let ir_prog = Qis::from_ir(ir);
     assert_eq!(format!("{ir_prog}"), ir);
 
     // Bitcode display shows size info
     let bc = vec![0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE];
-    let bc_prog = QisProgram::from_bitcode(bc);
-    assert_eq!(format!("{bc_prog}"), "QisProgram(bitcode, 6 bytes)");
+    let bc_prog = Qis::from_bitcode(bc);
+    assert_eq!(format!("{bc_prog}"), "Qis(bitcode, 6 bytes)");
 }
 
 #[test]
 fn test_qis_content_enum() {
     let ir = "define void @main() {}";
-    let prog1 = QisProgram::from_ir(ir);
+    let prog1 = Qis::from_ir(ir);
 
     match &prog1.content {
         QisContent::Ir(content) => assert_eq!(content, ir),
@@ -112,7 +112,7 @@ fn test_qis_content_enum() {
     }
 
     let bc = vec![1, 2, 3, 4];
-    let prog2 = QisProgram::from_bitcode(bc.clone());
+    let prog2 = Qis::from_bitcode(bc.clone());
 
     match &prog2.content {
         QisContent::Ir(_) => panic!("Expected bitcode, got IR"),

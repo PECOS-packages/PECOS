@@ -4,7 +4,7 @@
 
 use crate::QisHeliosInterface;
 use pecos_core::errors::PecosError;
-use pecos_programs::{HugrProgram, QisContent, QisProgram};
+use pecos_programs::{Hugr, Qis, QisContent};
 use pecos_qis_core::program::QisInterfaceBuilder;
 use pecos_qis_core::qis_interface::{ProgramFormat, QisInterface};
 use pecos_qis_ffi_types::OperationCollector;
@@ -30,10 +30,7 @@ impl Default for HeliosInterfaceBuilder {
 }
 
 impl QisInterfaceBuilder for HeliosInterfaceBuilder {
-    fn build_from_qis_program(
-        &self,
-        program: QisProgram,
-    ) -> Result<OperationCollector, PecosError> {
+    fn build_from_qis_program(&self, program: Qis) -> Result<OperationCollector, PecosError> {
         let mut interface = QisHeliosInterface::new();
 
         // Load the program into the interface
@@ -66,10 +63,7 @@ impl QisInterfaceBuilder for HeliosInterfaceBuilder {
         })
     }
 
-    fn build_from_hugr_program(
-        &self,
-        program: HugrProgram,
-    ) -> Result<OperationCollector, PecosError> {
+    fn build_from_hugr_program(&self, program: Hugr) -> Result<OperationCollector, PecosError> {
         #[cfg(feature = "hugr")]
         {
             // Compile HUGR to LLVM IR using pecos-hugr-qis
@@ -79,7 +73,7 @@ impl QisInterfaceBuilder for HeliosInterfaceBuilder {
                 })?;
 
             // Create a QIS program from the compiled LLVM IR
-            let qis_program = pecos_programs::QisProgram::from_string(&llvm_ir);
+            let qis_program = pecos_programs::Qis::from_string(&llvm_ir);
 
             // Use the existing QIS program builder
             self.build_from_qis_program(qis_program)

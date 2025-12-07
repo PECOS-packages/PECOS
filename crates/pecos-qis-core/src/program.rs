@@ -1,14 +1,14 @@
 //! Program abstraction for QIS Classical Control Engine
 //!
 //! This module provides a unified program interface that allows different
-//! program types (`QisProgram`, HUGR, raw `QisInterface`) to be used with
+//! program types (`Qis`, HUGR, raw `QisInterface`) to be used with
 //! the `QisEngine` through a consistent `.program()` API.
 //!
 //! Default implementations use Selene-based interfaces with explicit
 //! error handling - no silent fallbacks are provided.
 
 use pecos_core::errors::PecosError;
-use pecos_programs::{HugrProgram, QisProgram};
+use pecos_programs::{Hugr, Qis};
 use pecos_qis_ffi_types::OperationCollector;
 use std::process::Command;
 use tempfile::NamedTempFile;
@@ -613,17 +613,13 @@ pub trait QisInterfaceBuilder: Send + Sync + dyn_clone::DynClone {
     ///
     /// # Errors
     /// Returns an error if the program cannot be built into an interface.
-    fn build_from_qis_program(&self, program: QisProgram)
-    -> Result<OperationCollector, PecosError>;
+    fn build_from_qis_program(&self, program: Qis) -> Result<OperationCollector, PecosError>;
 
     /// Build from HUGR program
     ///
     /// # Errors
     /// Returns an error if the program cannot be built into an interface.
-    fn build_from_hugr_program(
-        &self,
-        program: HugrProgram,
-    ) -> Result<OperationCollector, PecosError>;
+    fn build_from_hugr_program(&self, program: Hugr) -> Result<OperationCollector, PecosError>;
 
     /// Build from pre-built interface
     ///
@@ -648,10 +644,10 @@ pub enum InterfaceChoice {
     Auto,
 }
 
-/// Implement `IntoQisInterface` for `QisProgram`
+/// Implement `IntoQisInterface` for `Qis`
 ///
 /// Users must explicitly specify runtime and interface using the builder API.
-impl IntoQisInterface for QisProgram {
+impl IntoQisInterface for Qis {
     fn into_qis_interface(self) -> Result<OperationCollector, PecosError> {
         Err(PecosError::Processing(
             "No default QIS interface implementation available.\n\
@@ -704,10 +700,10 @@ impl IntoQisInterface for Vec<u8> {
     }
 }
 
-/// Implement `IntoQisInterface` for `HugrProgram`
+/// Implement `IntoQisInterface` for `Hugr`
 ///
 /// Users must explicitly specify a runtime and interface.
-impl IntoQisInterface for HugrProgram {
+impl IntoQisInterface for Hugr {
     fn into_qis_interface(self) -> Result<OperationCollector, PecosError> {
         Err(PecosError::Processing(
             "No default interface implementation for HUGR programs.\n\

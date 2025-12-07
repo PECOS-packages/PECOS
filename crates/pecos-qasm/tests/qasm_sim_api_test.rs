@@ -1,7 +1,7 @@
 // Tests for the new qasm_sim API
 
 use pecos_engines::{ClassicalControlEngineBuilder, sim_builder, sparse_stabilizer, state_vector};
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 use pecos_qasm::prelude::*;
 use pecos_qasm::qasm_engine;
 use std::collections::BTreeMap;
@@ -19,7 +19,7 @@ fn test_simple_run() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .run(100)
         .unwrap();
@@ -46,7 +46,7 @@ fn test_build_once_run_multiple() {
     "#;
 
     let mut sim = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .build()
@@ -77,7 +77,7 @@ fn test_with_depolarizing_noise() {
     let noise_builder = DepolarizingNoiseModel::builder().with_uniform_probability(0.1);
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .noise(noise_builder)
@@ -115,7 +115,7 @@ fn test_custom_depolarizing_noise() {
         .with_p2_probability(0.1); // High two-qubit error
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .noise(noise_builder)
@@ -150,7 +150,7 @@ fn test_biased_depolarizing_noise() {
     let noise_builder = BiasedDepolarizingNoiseModel::builder().with_uniform_probability(0.2);
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .noise(noise_builder)
@@ -184,7 +184,7 @@ fn test_state_vector_engine() {
 
     // StateVector can handle non-Clifford gates
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .qubits(2)
@@ -209,7 +209,7 @@ fn test_auto_workers() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .auto_workers()
@@ -232,12 +232,12 @@ fn test_deterministic_with_seed() {
 
     // Build two separate simulations with same seed
     let mut sim1 = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .seed(123)
         .build()
         .unwrap();
     let mut sim2 = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(123)
         .build()
@@ -272,7 +272,7 @@ fn test_full_configuration() {
     let noise_builder = BiasedDepolarizingNoiseModel::builder().with_uniform_probability(0.01);
 
     let mut sim = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(2)
@@ -301,7 +301,7 @@ fn test_passthrough_noise() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .noise(PassThroughNoiseModel::builder())
         .run(100)
@@ -332,7 +332,7 @@ fn test_general_noise() {
         .with_meas_1_probability(0.001);
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .noise(noise_builder)
         .run(10)

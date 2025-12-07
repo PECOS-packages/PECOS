@@ -20,7 +20,7 @@ pub use v0_1::setup_phir_json_v0_1_engine;
 
 // Export unified API types
 #[cfg(feature = "wasm")]
-pub use builder::{IntoWasmProgram, PhirJsonEngineWasmProgram};
+pub use builder::{IntoWasm, PhirJsonEngineWasm};
 pub use builder::{PhirJsonEngineBuilder, PhirJsonEngineProgram, phir_json_engine};
 
 use common::{PhirJsonVersion, detect_version};

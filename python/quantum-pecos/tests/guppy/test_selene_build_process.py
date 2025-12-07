@@ -189,17 +189,17 @@ class TestSeleneBuildProcess:
 
         While Selene's build() function only accepts HUGR input,
         QIS (Quantum Instruction Set) programs can be executed using
-        PECOS's sim() API with QisProgram.
+        PECOS's sim() API with Qis wrapper.
 
         The two paths are:
         1. build(HUGR) → Selene executable (for building executables)
-        2. sim(QisProgram) → PECOS execution (for direct simulation)
+        2. sim(Qis) → PECOS execution (for direct simulation)
         """
         try:
-            from pecos.frontends.guppy_api import sim
-            from pecos_rslib import QisProgram, state_vector
+            from pecos import Guppy, Qis, sim
+            from pecos_rslib import state_vector
         except ImportError as e:
-            pytest.skip(f"QisProgram or sim API not available: {e}")
+            pytest.skip(f"Qis or sim API not available: {e}")
 
         # Create Selene QIS format LLVM IR - use textwrap to avoid indentation issues
         llvm_ir = textwrap.dedent(
@@ -242,14 +242,14 @@ class TestSeleneBuildProcess:
         ).strip()
 
         try:
-            # Create QisProgram from the QIS LLVM IR string
-            program = QisProgram.from_string(llvm_ir)
+            # Create Qis program from the QIS LLVM IR string
+            program = Qis(llvm_ir)
 
             # Run using sim() API
             results = sim(program).qubits(1).quantum(state_vector()).seed(42).run(100)
 
             # Verify results
-            assert isinstance(results, dict), "Results should be a dictionary"
+            assert hasattr(results, "__getitem__"), "Results should be dict-like"
 
             # QIS returns results with key 'measurement_0'
             assert (
@@ -290,10 +290,11 @@ class TestSeleneBuildProcess:
     def test_qis_program_with_comments(self) -> None:
         """Test that QIS programs with comments are properly handled."""
         try:
-            from pecos.frontends.guppy_api import sim
-            from pecos_rslib import QisProgram, state_vector
+            from pecos import Guppy, Qis, sim
+            from pecos_rslib import state_vector
+
         except ImportError as e:
-            pytest.skip(f"QisProgram or sim API not available: {e}")
+            pytest.skip(f"Qis or sim API not available: {e}")
 
         # Create QIS with extensive comments
         llvm_ir_with_comments = textwrap.dedent(
@@ -335,11 +336,11 @@ class TestSeleneBuildProcess:
         ).strip()
 
         # Create and run program
-        program = QisProgram.from_string(llvm_ir_with_comments)
+        program = Qis(llvm_ir_with_comments)
         results = sim(program).qubits(1).quantum(state_vector()).seed(42).run(100)
 
         # Verify results
-        assert isinstance(results, dict), "Results should be a dictionary"
+        assert hasattr(results, "__getitem__"), "Results should be dict-like"
         assert "measurement_0" in results, "Results should contain 'result' key"
         measurements = results["measurement_0"]
         assert len(measurements) == 100, "Should have 100 shots"
@@ -352,10 +353,11 @@ class TestSeleneBuildProcess:
     def test_qis_edge_cases(self) -> None:
         """Test QIS programs with edge cases like empty lines, multiple spaces, etc."""
         try:
-            from pecos.frontends.guppy_api import sim
-            from pecos_rslib import QisProgram, state_vector
+            from pecos import Guppy, Qis, sim
+            from pecos_rslib import state_vector
+
         except ImportError as e:
-            pytest.skip(f"QisProgram or sim API not available: {e}")
+            pytest.skip(f"Qis or sim API not available: {e}")
 
         # QIS with various formatting edge cases
         llvm_ir_edge_cases = textwrap.dedent(
@@ -393,7 +395,7 @@ class TestSeleneBuildProcess:
         ).strip()
 
         # Should handle edge cases gracefully
-        program = QisProgram.from_string(llvm_ir_edge_cases)
+        program = Qis(llvm_ir_edge_cases)
         results = sim(program).qubits(1).quantum(state_vector()).seed(42).run(50)
 
         assert (
@@ -403,14 +405,15 @@ class TestSeleneBuildProcess:
         assert all(m == 0 for m in results["measurement_0"]), "Should measure |0⟩ as 0"
 
     def test_qis_program_consistency(self) -> None:
-        """Test that QisProgram produces consistent results for QIS format.
+        """Test that Qis produces consistent results for QIS format.
 
         Test that the same QIS LLVM IR produces consistent results when run
         multiple times with the same seed.
         """
         try:
-            from pecos.frontends.guppy_api import sim
-            from pecos_rslib import QisProgram, state_vector
+            from pecos import Guppy, Qis, sim
+            from pecos_rslib import state_vector
+
         except ImportError as e:
             pytest.skip(f"Required imports not available: {e}")
 
@@ -441,25 +444,25 @@ class TestSeleneBuildProcess:
         """,
         ).strip()
 
-        # Test with QisProgram - first run
-        qis_prog = QisProgram.from_string(qis_ir)
+        # Test with Qis - first run
+        qis_prog = Qis(qis_ir)
         qis_results_1 = (
             sim(qis_prog).qubits(1).quantum(state_vector()).seed(42).run(100)
         )
 
-        # Test with QisProgram - second run with same seed
+        # Test with Qis - second run with same seed
         qis_results_2 = (
             sim(qis_prog).qubits(1).quantum(state_vector()).seed(42).run(100)
         )
 
         # Both runs should produce identical results
-        assert "measurement_0" in qis_results_1, "QisProgram should produce results"
-        assert "measurement_0" in qis_results_2, "QisProgram should produce results"
+        assert "measurement_0" in qis_results_1, "Qis should produce results"
+        assert "measurement_0" in qis_results_2, "Qis should produce results"
 
         # With same seed, results should be identical
         assert (
             qis_results_1["measurement_0"] == qis_results_2["measurement_0"]
-        ), "QisProgram should produce identical results with same seed"
+        ), "Qis should produce identical results with same seed"
 
         # X gate should give |1⟩
         assert all(

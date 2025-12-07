@@ -9,7 +9,7 @@ use pecos_engines::ClassicalControlEngineBuilder;
 use pecos_engines::noise::IntoNoiseModel;
 use pecos_engines::quantum_engine_builder::IntoQuantumEngineBuilder;
 use pecos_engines::shot_results::ShotVec;
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 
 /// Run a QASM simulation with a simple function interface
 ///
@@ -21,9 +21,9 @@ use pecos_programs::QasmProgram;
 /// ```no_run
 /// use pecos_qasm::qasm_engine;
 /// use pecos_engines::{ClassicalControlEngineBuilder, noise::DepolarizingNoiseModel};
-/// use pecos_programs::QasmProgram;
+/// use pecos_programs::Qasm;
 /// let qasm = "OPENQASM 2.0; include \"qelib1.inc\"; qreg q[1]; creg c[1]; h q[0]; measure q[0] -> c[0];";
-/// let results = qasm_engine().program(QasmProgram::from_string(qasm)).to_sim().seed(42).run(100)?;
+/// let results = qasm_engine().program(Qasm::from_string(qasm)).to_sim().seed(42).run(100)?;
 /// # Ok::<(), pecos_core::errors::PecosError>(())
 /// ```
 ///
@@ -54,9 +54,7 @@ where
     Q::Builder: Send + 'static,
 {
     // Use the SimBuilder for conditional configuration
-    let mut builder = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
-        .to_sim();
+    let mut builder = qasm_engine().program(Qasm::from_string(qasm)).to_sim();
 
     if let Some(noise) = noise {
         builder = builder.noise(noise);

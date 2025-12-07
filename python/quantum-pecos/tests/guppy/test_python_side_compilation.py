@@ -47,7 +47,7 @@ class TestPythonSideCompilation:
     def test_hugr_pass_through_compilation(self, bell_pair_circuit: object) -> None:
         """Test the HUGR pass-through path (Guppy → HUGR → Rust)."""
         try:
-            from pecos.frontends.guppy_api import sim
+            from pecos import Guppy, sim
             from pecos_rslib import state_vector
         except ImportError as e:
             pytest.skip(f"Required modules not available: {e}")
@@ -67,7 +67,7 @@ class TestPythonSideCompilation:
             pytest.fail(f"HUGR pass-through failed: {e}")
 
         # Verify results structure
-        assert isinstance(results, dict), "Results should be a dictionary"
+        assert hasattr(results, "__getitem__"), "Results should be dict-like"
 
         # Check for measurement results
         assert (

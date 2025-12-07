@@ -6,7 +6,7 @@ import pytest
 
 # Check for required dependencies
 try:
-    from pecos.frontends.guppy_api import sim
+    from pecos import sim
 
     SIM_API_AVAILABLE = True
 except ImportError:
@@ -14,10 +14,10 @@ except ImportError:
 
 try:
     from pecos_rslib import (
-        HugrProgram,
-        PhirJsonProgram,
-        QasmProgram,
-        QisProgram,
+        Hugr,
+        PhirJson,
+        Qasm,
+        Qis,
         sparse_stabilizer,
         state_vector,
     )
@@ -53,8 +53,11 @@ class TestQASMSimulation:
         measure q[0] -> c[0];
         """
 
-        program = QasmProgram.from_string(qasm_str)
-        results = sim(program).seed(42).run(1000)
+        program = Qasm.from_string(qasm_str)
+        shot_vec = sim(program).seed(42).run(1000)
+
+        # Convert ShotVec to dict
+        results = shot_vec.to_dict()
 
         # Results is a dict with register names as keys, values are shot arrays
         assert isinstance(results, dict), "Results should be a dictionary"
@@ -87,8 +90,9 @@ class TestQASMSimulation:
         measure q[1] -> c[1];
         """
 
-        program = QasmProgram.from_string(qasm_str)
-        results = sim(program).seed(42).run(100)
+        program = Qasm.from_string(qasm_str)
+        shot_vec = sim(program).seed(42).run(100)
+        results = shot_vec.to_dict()
 
         assert "c" in results, "Results should contain register 'c'"
         assert len(results["c"]) == 100, "Should have 100 shots"
@@ -120,10 +124,11 @@ class TestQASMSimulation:
         measure q[0] -> c[0];
         """
 
-        program = QasmProgram.from_string(qasm_str)
+        program = Qasm.from_string(qasm_str)
 
         # Test chaining various configurations
-        results = sim(program).seed(42).workers(2).quantum(state_vector()).run(500)
+        shot_vec = sim(program).seed(42).workers(2).quantum(state_vector()).run(500)
+        results = shot_vec.to_dict()
 
         assert "c" in results, "Results should contain register 'c'"
         assert len(results["c"]) == 500, "Should have 500 shots"
@@ -183,10 +188,11 @@ class TestLLVMSimulation:
         """
 
         try:
-            program = QisProgram.from_string(llvm_ir)
+            program = Qis.from_string(llvm_ir)
 
             # Try to run - this might work now with proper QIR format
-            results = sim(program).qubits(1).seed(42).run(10)
+            shot_vec = sim(program).qubits(1).seed(42).run(10)
+            results = shot_vec.to_dict()
 
             # If it works, verify results
             assert isinstance(results, dict), "Results should be a dictionary"
@@ -269,8 +275,9 @@ class TestLLVMSimulation:
         """
 
         try:
-            program = QisProgram.from_string(llvm_ir)
-            results = sim(program).qubits(2).seed(42).run(50)
+            program = Qis.from_string(llvm_ir)
+            shot_vec = sim(program).qubits(2).seed(42).run(50)
+            results = shot_vec.to_dict()
 
             assert isinstance(results, dict), "Results should be a dictionary"
 
@@ -336,10 +343,11 @@ class TestHUGRSimulation:
             hugr_bytes = hugr_str.encode("utf-8")
 
         try:
-            program = HugrProgram.from_bytes(hugr_bytes)
+            program = Hugr.from_bytes(hugr_bytes)
 
             # This should route through Selene with HUGR 0.13
-            results = sim(program).qubits(1).quantum(state_vector()).seed(42).run(100)
+            shot_vec = sim(program).qubits(1).quantum(state_vector()).seed(42).run(100)
+            results = shot_vec.to_dict()
 
             # If it works, verify results
             assert isinstance(results, dict), "Results should be a dictionary"
@@ -375,7 +383,7 @@ class TestHUGRSimulation:
             elif "not supported" in error_msg:
                 pytest.skip(f"HUGR not fully supported: {e}")
             elif "unknown resource type" in error_msg and "hugrprogram" in error_msg:
-                pytest.skip(f"HugrProgram type not properly recognized by sim API: {e}")
+                pytest.skip(f"Hugr type not properly recognized by sim API: {e}")
             else:
                 # This might be a real error worth investigating
                 pytest.fail(f"Unexpected HUGR simulation error: {e}")
@@ -401,7 +409,7 @@ class TestHUGRSimulation:
             hugr_bytes = hugr_str.encode("utf-8")
 
         try:
-            program = HugrProgram.from_bytes(hugr_bytes)
+            program = Hugr.from_bytes(hugr_bytes)
 
             # Create builder - this should work with real HUGR
             builder = sim(program)
@@ -461,8 +469,9 @@ class TestPHIRSimulation:
 
         phir_str = json.dumps(phir_json)
 
-        program = PhirJsonProgram.from_string(phir_str)
-        results = sim(program).qubits(1).seed(42).run(50)
+        program = PhirJson.from_string(phir_str)
+        shot_vec = sim(program).qubits(1).seed(42).run(50)
+        results = shot_vec.to_dict()
 
         assert isinstance(results, dict), "Results should be a dictionary"
         assert "c" in results, "Results should contain register 'c'"
@@ -506,8 +515,9 @@ class TestPHIRSimulation:
 
         phir_str = json.dumps(phir_json)
 
-        program = PhirJsonProgram.from_string(phir_str)
-        results = sim(program).qubits(2).seed(42).run(100)
+        program = PhirJson.from_string(phir_str)
+        shot_vec = sim(program).qubits(2).seed(42).run(100)
+        results = shot_vec.to_dict()
 
         assert isinstance(results, dict), "Results should be a dictionary"
         assert "c" in results, "Results should contain register 'c'"
@@ -546,15 +556,17 @@ class TestSimAPIFeatures:
         measure q[0] -> c[0];
         """
 
-        program = QasmProgram.from_string(qasm_str)
+        program = Qasm.from_string(qasm_str)
 
         # Test with state vector backend
-        results_sv = sim(program).quantum(state_vector()).seed(42).run(100)
+        shot_vec_sv = sim(program).quantum(state_vector()).seed(42).run(100)
+        results_sv = shot_vec_sv.to_dict()
         assert "c" in results_sv, "State vector backend should produce results"
 
         # Test with sparse stabilizer backend
         try:
-            results_ss = sim(program).quantum(sparse_stabilizer()).seed(42).run(100)
+            shot_vec_ss = sim(program).quantum(sparse_stabilizer()).seed(42).run(100)
+            results_ss = shot_vec_ss.to_dict()
             assert "c" in results_ss, "Sparse stabilizer backend should produce results"
 
             # Results might differ between backends but both should be valid
@@ -581,7 +593,7 @@ class TestSimAPIFeatures:
         invalid_gate q[0];
         """
 
-        program = QasmProgram.from_string(invalid_qasm)
+        program = Qasm.from_string(invalid_qasm)
         with pytest.raises((RuntimeError, ValueError)) as exc_info:
             sim(program).run(10)
 
@@ -607,11 +619,13 @@ class TestSimAPIFeatures:
         measure q[1] -> c[1];
         """
 
-        program = QasmProgram.from_string(qasm_str)
+        program = Qasm.from_string(qasm_str)
 
         # Run twice with same seed
-        results1 = sim(program).seed(12345).run(50)
-        results2 = sim(program).seed(12345).run(50)
+        shot_vec1 = sim(program).seed(12345).run(50)
+        shot_vec2 = sim(program).seed(12345).run(50)
+        results1 = shot_vec1.to_dict()
+        results2 = shot_vec2.to_dict()
 
         assert "c" in results1, "First run should produce results"
         assert "c" in results2, "Second run should produce results"
@@ -620,7 +634,8 @@ class TestSimAPIFeatures:
         assert results1["c"] == results2["c"], "Same seed should give identical results"
 
         # Run with different seed
-        results3 = sim(program).seed(54321).run(50)
+        shot_vec3 = sim(program).seed(54321).run(50)
+        results3 = shot_vec3.to_dict()
 
         # Results should differ with different seed (statistically)
         assert (

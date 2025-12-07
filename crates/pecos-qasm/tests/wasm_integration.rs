@@ -1,7 +1,7 @@
 #[cfg(feature = "wasm")]
 mod wasm_tests {
     use pecos_engines::{sim_builder, state_vector};
-    use pecos_programs::QasmProgram;
+    use pecos_programs::Qasm;
     use pecos_qasm::qasm_engine;
     use std::io::Write;
     use std::path::PathBuf;
@@ -26,7 +26,7 @@ mod wasm_tests {
         let results = sim_builder()
             .classical(
                 qasm_engine()
-                    .program(QasmProgram::from_string(qasm))
+                    .program(Qasm::from_string(qasm))
                     .wasm(wat_path.to_string_lossy().to_string()),
             )
             .run(100)
@@ -126,7 +126,7 @@ mod wasm_tests {
         let result = sim_builder()
             .classical(
                 qasm_engine()
-                    .program(QasmProgram::from_string(qasm))
+                    .program(Qasm::from_string(qasm))
                     .wasm(wat_path.to_string_lossy().to_string()),
             )
             .quantum(state_vector())
@@ -158,7 +158,7 @@ mod wasm_tests {
         let result = sim_builder()
             .classical(
                 qasm_engine()
-                    .program(QasmProgram::from_string(qasm))
+                    .program(Qasm::from_string(qasm))
                     .wasm(wat_path.to_string_lossy().to_string()),
             )
             .build();
@@ -200,7 +200,7 @@ mod wasm_tests {
         let result = sim_builder()
             .classical(
                 qasm_engine()
-                    .program(QasmProgram::from_string(qasm))
+                    .program(Qasm::from_string(qasm))
                     .wasm(temp_file.path().to_string_lossy().to_string()),
             )
             .build();
@@ -237,7 +237,7 @@ mod wasm_tests {
         let results = sim_builder()
             .classical(
                 qasm_engine()
-                    .program(QasmProgram::from_string(qasm))
+                    .program(Qasm::from_string(qasm))
                     .wasm(wat_path.to_string_lossy().to_string()),
             )
             .run(1000)
@@ -325,7 +325,7 @@ mod wasm_tests {
         let result = sim_builder()
             .classical(
                 qasm_engine()
-                    .program(QasmProgram::from_string(qasm))
+                    .program(Qasm::from_string(qasm))
                     .wasm(wat_path.to_string_lossy().to_string()),
             )
             .run(1);
@@ -357,7 +357,7 @@ mod wasm_tests {
         let results = sim_builder()
             .classical(
                 qasm_engine()
-                    .program(QasmProgram::from_string(qasm))
+                    .program(Qasm::from_string(qasm))
                     .wasm(wat_path.to_string_lossy().to_string()),
             )
             .run(10)
@@ -398,7 +398,7 @@ mod wasm_tests {
         let results = sim_builder()
             .classical(
                 qasm_engine()
-                    .program(QasmProgram::from_string(qasm))
+                    .program(Qasm::from_string(qasm))
                     .wasm(wat_path.to_string_lossy().to_string()),
             )
             .run(10)
@@ -433,7 +433,7 @@ mod wasm_tests {
         let results = sim_builder()
             .classical(
                 qasm_engine()
-                    .program(QasmProgram::from_string(qasm))
+                    .program(Qasm::from_string(qasm))
                     .wasm(wat_path.to_string_lossy().to_string()),
             )
             .run(10)
@@ -469,7 +469,7 @@ mod wasm_tests {
         let results = sim_builder()
             .classical(
                 qasm_engine()
-                    .program(QasmProgram::from_string(qasm))
+                    .program(Qasm::from_string(qasm))
                     .wasm(wat_path.to_string_lossy().to_string()),
             )
             .run(1)
@@ -506,7 +506,7 @@ mod wasm_tests {
         let results = sim_builder()
             .classical(
                 qasm_engine()
-                    .program(QasmProgram::from_string(qasm))
+                    .program(Qasm::from_string(qasm))
                     .wasm(wat_path.to_string_lossy().to_string()),
             )
             .run(1000)
@@ -558,7 +558,7 @@ mod wasm_tests {
         let results = sim_builder()
             .classical(
                 qasm_engine()
-                    .program(QasmProgram::from_string(qasm))
+                    .program(Qasm::from_string(qasm))
                     .wasm(wat_path.to_string_lossy().to_string()),
             )
             .run(1)

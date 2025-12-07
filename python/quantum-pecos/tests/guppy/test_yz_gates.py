@@ -2,7 +2,7 @@
 
 from guppylang import guppy
 from guppylang.std.quantum import measure, qubit, x, y, z
-from pecos.frontends.guppy_api import sim
+from pecos import Guppy, sim
 from pecos_rslib import state_vector
 
 
@@ -15,7 +15,7 @@ def test_y_gate_only() -> None:
         y(q)
         return measure(q)
 
-    results = sim(y_only).qubits(1).quantum(state_vector()).run(5)
+    results = sim(Guppy(y_only)).qubits(1).quantum(state_vector()).run(5)
     measurements = results.get("measurements", results.get("measurement_0", []))
     assert all(val == 1 for val in measurements)  # Y|0⟩ should give |1⟩
 
@@ -29,7 +29,7 @@ def test_z_gate_only() -> None:
         z(q)
         return measure(q)
 
-    results = sim(z_only).qubits(1).quantum(state_vector()).run(5)
+    results = sim(Guppy(z_only)).qubits(1).quantum(state_vector()).run(5)
     measurements = results.get("measurements", results.get("measurement_0", []))
     assert all(val == 0 for val in measurements)  # Z|0⟩ should give |0⟩
 
@@ -49,7 +49,7 @@ def test_y_and_z_tuple() -> None:
 
         return r1, r2
 
-    results = sim(yz_tuple).qubits(2).quantum(state_vector()).run(5)
+    results = sim(Guppy(yz_tuple)).qubits(2).quantum(state_vector()).run(5)
     m1 = results.get("measurement_0", [])
     m2 = results.get("measurement_1", [])
 
@@ -77,7 +77,7 @@ def test_xyz_tuple() -> None:
 
         return r1, r2, r3
 
-    results = sim(xyz_tuple).qubits(3).quantum(state_vector()).run(5)
+    results = sim(Guppy(xyz_tuple)).qubits(3).quantum(state_vector()).run(5)
     m1 = results.get("measurement_0", [])
     m2 = results.get("measurement_1", [])
     m3 = results.get("measurement_2", [])

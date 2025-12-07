@@ -824,12 +824,12 @@ class QuestDensityMatrix:
 # =============================================================================
 # Engine Types
 # =============================================================================
-class SparseStabEngineRs:
+class SparseStabEngine:
     """Sparse stabilizer engine."""
 
     ...
 
-class StateVecEngineRs:
+class StateVecEngine:
     """State vector engine."""
 
     ...

@@ -22,20 +22,20 @@ use pyo3::types::{PyBytes, PyType};
 ///
 /// This class holds compiled WebAssembly bytecode that can be used for
 /// quantum circuit execution in WASM-based runtimes.
-#[pyclass(name = "WasmProgram")]
-pub struct PyWasmProgram {
+#[pyclass(name = "Wasm")]
+pub struct PyWasm {
     wasm_bytes: Vec<u8>,
 }
 
 #[pymethods]
-impl PyWasmProgram {
+impl PyWasm {
     /// Create a new WASM program from bytes.
     ///
     /// Args:
     ///     `wasm_bytes`: The compiled WASM bytecode
     #[new]
     fn new(wasm_bytes: Vec<u8>) -> Self {
-        PyWasmProgram { wasm_bytes }
+        PyWasm { wasm_bytes }
     }
 
     /// Create a WASM program from bytes (class method).
@@ -44,10 +44,10 @@ impl PyWasmProgram {
     ///     `wasm_bytes`: The compiled WASM bytecode
     ///
     /// Returns:
-    ///     `WasmProgram`: A new WASM program instance
+    ///     `Wasm`: A new WASM program instance
     #[classmethod]
     fn from_bytes(_cls: &Bound<'_, PyType>, wasm_bytes: Vec<u8>) -> Self {
-        PyWasmProgram { wasm_bytes }
+        PyWasm { wasm_bytes }
     }
 
     /// Get the WASM bytecode.
@@ -59,7 +59,7 @@ impl PyWasmProgram {
     }
 
     fn __repr__(&self) -> String {
-        format!("WasmProgram({} bytes)", self.wasm_bytes.len())
+        format!("Wasm({} bytes)", self.wasm_bytes.len())
     }
 }
 
@@ -67,20 +67,20 @@ impl PyWasmProgram {
 ///
 /// This class holds WAT source code (the textual representation of WASM)
 /// that can be compiled to WASM for execution.
-#[pyclass(name = "WatProgram")]
-pub struct PyWatProgram {
+#[pyclass(name = "Wat")]
+pub struct PyWat {
     source: String,
 }
 
 #[pymethods]
-impl PyWatProgram {
+impl PyWat {
     /// Create a new WAT program from source code.
     ///
     /// Args:
     ///     source: The WAT source code
     #[new]
     fn new(source: String) -> Self {
-        PyWatProgram { source }
+        PyWat { source }
     }
 
     /// Create a WAT program from a string (class method).
@@ -89,10 +89,10 @@ impl PyWatProgram {
     ///     source: The WAT source code
     ///
     /// Returns:
-    ///     `WatProgram`: A new WAT program instance
+    ///     `Wat`: A new WAT program instance
     #[classmethod]
     fn from_string(_cls: &Bound<'_, PyType>, source: String) -> Self {
-        PyWatProgram { source }
+        PyWat { source }
     }
 
     fn __str__(&self) -> &str {
@@ -105,13 +105,13 @@ impl PyWatProgram {
         } else {
             self.source.clone()
         };
-        format!("WatProgram('{preview}')")
+        format!("Wat('{preview}')")
     }
 }
 
 /// Register the WASM program types with the Python module.
 pub fn register_wasm_programs(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyWasmProgram>()?;
-    m.add_class::<PyWatProgram>()?;
+    m.add_class::<PyWasm>()?;
+    m.add_class::<PyWat>()?;
     Ok(())
 }

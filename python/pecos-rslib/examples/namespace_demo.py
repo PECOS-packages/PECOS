@@ -76,7 +76,7 @@ def namespace_usage_examples() -> None:
     from pecos_rslib import engines, noise, quantum, programs
 
     # Create program
-    prog = programs.QasmProgram.from_string(qasm_code)
+    prog = programs.Qasm.from_string(qasm_code)
 
     # Build simulation with clear namespace usage
     results = engines.qasm()\\
@@ -98,7 +98,7 @@ def run_example_simulations() -> None:
     print("=" * 50)
 
     # Simple Bell state program
-    bell_state = pecos_rslib.programs.QasmProgram.from_string(
+    bell_state = pecos_rslib.programs.Qasm.from_string(
         """
     OPENQASM 2.0;
     include "qelib1.inc";

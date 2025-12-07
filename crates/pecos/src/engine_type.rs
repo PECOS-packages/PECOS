@@ -16,7 +16,7 @@
 //! # fn main() -> Result<(), PecosError> {
 //! use pecos_qasm::qasm_engine;
 //! use pecos_engines::sim;
-//! use pecos_programs::QasmProgram;
+//! use pecos_programs::Qasm;
 //!
 //! // Compile-time engine selection - best performance
 //! let qasm_code = r#"
@@ -27,7 +27,7 @@
 //! h q[0];
 //! measure q[0] -> c[0];
 //! "#;
-//! let results = sim(qasm_engine().program(QasmProgram::from_string(qasm_code)))
+//! let results = sim(qasm_engine().program(Qasm::from_string(qasm_code)))
 //!     .seed(42)
 //!     .run(10)?;
 //!
@@ -57,7 +57,7 @@
 //! # fn main() -> Result<(), PecosError> {
 //! use pecos::{EngineType, DynamicEngineBuilder, sim_dynamic};
 //! use pecos_qasm::qasm_engine;
-//! use pecos_programs::QasmProgram;
+//! use pecos_programs::Qasm;
 //!
 //! // Runtime engine selection based on user input
 //! let user_input = "qasm";
@@ -77,7 +77,7 @@
 //! h q[0];
 //! measure q[0] -> c[0];
 //! "#;
-//! let builder = DynamicEngineBuilder::new(qasm_engine().program(QasmProgram::from_string(qasm_code)));
+//! let builder = DynamicEngineBuilder::new(qasm_engine().program(Qasm::from_string(qasm_code)));
 //!
 //! // Use the same API regardless of engine type
 //! let results = sim_dynamic(builder).seed(42).run(10)?;
@@ -149,7 +149,7 @@ impl fmt::Display for EngineType {
 /// # fn example() -> Result<(), PecosError> {
 /// use pecos::{EngineType, DynamicEngineBuilder, sim_dynamic};
 /// use pecos_qasm::qasm_engine;
-/// use pecos_programs::QasmProgram;
+/// use pecos_programs::Qasm;
 ///
 /// struct Config {
 ///     engine_type: &'static str,
@@ -159,7 +159,7 @@ impl fmt::Display for EngineType {
 /// fn create_engine_from_config(config: &Config) -> DynamicEngineBuilder {
 ///     match config.engine_type {
 ///         "qasm" => DynamicEngineBuilder::new(
-///             qasm_engine().program(QasmProgram::from_string(&config.source_code))
+///             qasm_engine().program(Qasm::from_string(&config.source_code))
 ///         ),
 ///         _ => panic!("Unknown engine type"),
 ///     }
@@ -191,7 +191,7 @@ impl fmt::Display for EngineType {
 /// use std::collections::BTreeMap;
 /// use pecos::{DynamicEngineBuilder};
 /// use pecos_qasm::qasm_engine;
-/// use pecos_programs::QasmProgram;
+/// use pecos_programs::Qasm;
 ///
 /// let mut engines = BTreeMap::new();
 /// let qasm_code = r#"
@@ -203,7 +203,7 @@ impl fmt::Display for EngineType {
 /// measure q[0] -> c[0];
 /// "#;
 /// engines.insert("qasm", DynamicEngineBuilder::new(
-///     qasm_engine().program(QasmProgram::from_string(qasm_code))
+///     qasm_engine().program(Qasm::from_string(qasm_code))
 /// ));
 ///
 /// // Select engine at runtime
@@ -280,7 +280,7 @@ impl ClassicalControlEngineBuilder for DynamicEngineBuilder {
 /// # use pecos_core::errors::PecosError;
 /// # fn example() -> Result<(), PecosError> {
 /// use pecos::{EngineType, create_engine_builder, sim_dynamic};
-/// use pecos_programs::QasmProgram;
+/// use pecos_programs::Qasm;
 ///
 /// // Create a QASM engine builder using the macro
 /// let engine = create_engine_builder!(EngineType::Qasm);

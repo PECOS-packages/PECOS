@@ -158,7 +158,7 @@ def test_advanced_gates_availability() -> None:
     # Check for Toffoli gate
     if importlib.util.find_spec("guppylang.std.quantum") is not None:
         try:
-            from guppylang.std.quantum import toffoli  # noqa: F401
+            from guppylang.std.quantum import toffoli
 
             assert True, "Toffoli gate is available"
         except (ImportError, AttributeError):
@@ -167,7 +167,7 @@ def test_advanced_gates_availability() -> None:
     # Check for CRz gate
     if importlib.util.find_spec("guppylang.std.quantum") is not None:
         try:
-            from guppylang.std.quantum import crz  # noqa: F401
+            from guppylang.std.quantum import crz
 
             assert True, "CRz gate is available"
         except (ImportError, AttributeError):

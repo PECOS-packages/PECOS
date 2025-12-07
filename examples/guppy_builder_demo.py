@@ -14,7 +14,7 @@ from guppylang.std.quantum import cx, h, measure, qubit
 
 sys.path.append("python/quantum-pecos/src")
 
-from pecos.frontends.guppy_frontend import GuppyFrontend
+from pecos._compilation import GuppyFrontend
 from pecos_rslib import selene_engine
 from pecos_rslib.programs import HugrProgram
 

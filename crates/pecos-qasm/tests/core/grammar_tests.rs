@@ -1,5 +1,5 @@
 use pecos_engines::ClassicalControlEngineBuilder;
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
 
 #[test]
@@ -18,7 +18,7 @@ fn test_bell_qasm() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -76,7 +76,7 @@ fn test_x_qasm() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -119,7 +119,7 @@ fn test_arbitrary_register_names() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -174,7 +174,7 @@ fn test_flips_multi_reg_qasm() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -226,7 +226,7 @@ fn test_basic_arthmetic_qasm() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -280,7 +280,7 @@ fn test_defaults_qasm() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -342,7 +342,7 @@ fn test_basic_if_creg_statements_qasm() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -398,7 +398,7 @@ fn test_basic_if_qreg_statements_qasm() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -458,7 +458,7 @@ fn test_cond_bell() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -512,7 +512,7 @@ fn test_classical_statement() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)

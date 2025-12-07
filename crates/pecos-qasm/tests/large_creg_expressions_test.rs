@@ -1,5 +1,5 @@
 use pecos_engines::{Data, sim_builder};
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
 
 #[test]
@@ -40,7 +40,7 @@ fn test_large_creg_bitwise_expressions() {
     "#;
 
     let shot_vec = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(1)
         .unwrap();
     let shot = &shot_vec.shots[0];
@@ -119,7 +119,7 @@ fn test_large_creg_in_quantum_conditionals() {
     "#;
 
     let shot_vec = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(1)
         .unwrap();
     let shot = &shot_vec.shots[0];
@@ -186,7 +186,7 @@ fn test_large_creg_arithmetic_expressions() {
     ";
 
     let shot_vec = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(1)
         .unwrap();
     let shot = &shot_vec.shots[0];
@@ -259,7 +259,7 @@ fn test_large_creg_comparison_expressions() {
     ";
 
     let shot_vec = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(1)
         .unwrap();
     let shot = &shot_vec.shots[0];
@@ -314,7 +314,7 @@ fn test_large_creg_shift_operations() {
     ";
 
     let shot_vec = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(1)
         .unwrap();
     let shot = &shot_vec.shots[0];
@@ -405,7 +405,7 @@ fn test_large_creg_complex_expressions() {
     "#;
 
     let shot_vec = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(1)
         .unwrap();
     let shot = &shot_vec.shots[0];
@@ -471,7 +471,7 @@ fn test_edge_cases_and_limitations() {
     ";
 
     let shot_vec = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(1)
         .unwrap();
     let shot = &shot_vec.shots[0];

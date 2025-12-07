@@ -1,5 +1,5 @@
 use pecos_engines::sim_builder;
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
 
 #[test]
@@ -22,7 +22,7 @@ fn test_uncond_reset_register() {
     "#;
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(100)
         .unwrap();
     let shot_map = results.try_as_shot_map().unwrap();
@@ -45,7 +45,7 @@ fn test_cond_reset_v1() {
     "#;
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(100)
         .unwrap();
     assert_eq!(results.len(), 100);
@@ -63,7 +63,7 @@ fn test_cond_reset_v2() {
     "#;
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(100)
         .unwrap();
     assert_eq!(results.len(), 100);
@@ -91,7 +91,7 @@ fn test_cond_reset_single_qubit() {
     "#;
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(100)
         .unwrap();
     let shot_map = results.try_as_shot_map().unwrap();
@@ -127,7 +127,7 @@ fn test_cond_reset_with_state_preparation() {
     "#;
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(100)
         .unwrap();
     // All results should be "00" since c[0] starts as 0 and reset happens
@@ -163,7 +163,7 @@ fn test_cond_reset_false_condition() {
     "#;
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(100)
         .unwrap();
     // All results should have c[1] = 1 since reset didn't happen
@@ -205,7 +205,7 @@ fn test_cond_reset_full_register_then_single_qubit() {
     "#;
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(100)
         .unwrap();
     let shot_map = results.try_as_shot_map().unwrap();
@@ -239,7 +239,7 @@ fn test_multiple_cond_resets() {
     "#;
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(100)
         .unwrap();
     // All should be reset to |0⟩
@@ -271,7 +271,7 @@ fn test_cond_reset_with_register_comparison() {
     "#;
 
     let results = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .run(100)
         .unwrap();
     let shot_map = results.try_as_shot_map().unwrap();

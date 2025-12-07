@@ -36,17 +36,21 @@ mod pecos_array;
 mod pecos_rng_bindings;
 mod phir_json_bridge;
 // mod qir_bindings;  // Removed - replaced by llvm_bindings
+mod engines_module;
 mod llvm_bindings;
+mod programs_module;
 mod quest_bindings;
 mod qulacs_bindings;
 mod shot_results_bindings;
 mod sim;
 mod simulator_utils;
+mod simulators_module;
 mod sparse_sim;
 mod sparse_stab_bindings;
 mod sparse_stab_engine_bindings;
 mod state_vec_bindings;
 mod state_vec_engine_bindings;
+mod types_module;
 #[cfg(feature = "wasm")]
 mod wasm_foreign_object_bindings;
 mod wasm_program_bindings;
@@ -57,7 +61,7 @@ use bit_int_bindings::PyBitInt;
 use byte_message_bindings::{PyByteMessage, PyByteMessageBuilder};
 use coin_toss_bindings::PyCoinToss;
 use cpp_sparse_sim_bindings::PySparseSimCpp;
-use engine_builders::{PyHugrProgram, PyPhirJsonProgram, PyQasmProgram, PyQisProgram};
+use engine_builders::{PyHugr, PyPhirJson, PyQasm, PyQis};
 use pauli_prop_bindings::PyPauliProp;
 use pecos_array::Array;
 use pecos_rng_bindings::RngPcg;
@@ -191,10 +195,10 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     graph_bindings::register_graph_module(m)?;
 
     // Register program types
-    m.add_class::<PyQasmProgram>()?;
-    m.add_class::<PyQisProgram>()?;
-    m.add_class::<PyHugrProgram>()?;
-    m.add_class::<PyPhirJsonProgram>()?;
+    m.add_class::<PyQasm>()?;
+    m.add_class::<PyQis>()?;
+    m.add_class::<PyHugr>()?;
+    m.add_class::<PyPhirJson>()?;
     wasm_program_bindings::register_wasm_programs(m)?;
 
     // Register engine builder functions
@@ -229,6 +233,18 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register namespace modules (quantum, noise, llvm) for organizational structure
     // Note: This must come after all the factory functions and classes are registered
     namespace_modules::register_namespace_modules(m)?;
+
+    // Register simulators submodule containing all quantum simulator backends
+    simulators_module::register_simulators_module(m)?;
+
+    // Register programs submodule containing all program types
+    programs_module::register_programs_module(m)?;
+
+    // Register engines submodule containing all execution engines and builders
+    engines_module::register_engines_module(m)?;
+
+    // Register types submodule containing core data types
+    types_module::register_types_module(m)?;
 
     // =========================================================================
     // Top-level numerical function exports (NumPy-like API)

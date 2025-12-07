@@ -1,5 +1,5 @@
 // Using the prelude - all common types are available with one import
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 use pecos_qasm::prelude::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     "#;
 
     let shot_vec = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .seed(42)
         .run(10)?;
     let shot_map = shot_vec.try_as_shot_map()?;

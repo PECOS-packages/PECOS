@@ -44,7 +44,7 @@ impl PyQasmEngineBuilder {
 
     /// Set the program for this engine
     #[pyo3(signature = (program))]
-    fn program(&mut self, program: &PyQasmProgram) -> PyResult<Self> {
+    fn program(&mut self, program: &PyQasm) -> PyResult<Self> {
         self.inner = self.inner.clone().program(program.inner.clone());
         Ok(self.clone())
     }
@@ -61,11 +61,9 @@ impl PyQasmEngineBuilder {
         self.inner.has_source()
     }
 
-    /// Get the `QasmProgram` from this builder (if any)
-    pub fn get_program(&self) -> Option<PyQasmProgram> {
-        self.inner
-            .get_program()
-            .map(|prog| PyQasmProgram { inner: prog })
+    /// Get the `Qasm` from this builder (if any)
+    pub fn get_program(&self) -> Option<PyQasm> {
+        self.inner.get_program().map(|prog| PyQasm { inner: prog })
     }
 
     /// Convert to simulation builder
@@ -103,8 +101,8 @@ impl PyQisEngineBuilder {
     #[pyo3(signature = (program))]
     #[allow(clippy::needless_pass_by_value)] // Py<PyAny> must be passed by value for PyO3
     fn program(&mut self, program: Py<PyAny>, py: Python) -> PyResult<Self> {
-        // Check if it's a QisProgram
-        if let Ok(qis_prog) = program.extract::<PyQisProgram>(py) {
+        // Check if it's a Qis
+        if let Ok(qis_prog) = program.extract::<PyQis>(py) {
             self.inner = self
                 .inner
                 .clone()
@@ -115,8 +113,8 @@ impl PyQisEngineBuilder {
                     ))
                 })?;
         }
-        // Check if it's a HugrProgram
-        else if let Ok(hugr_prog) = program.extract::<PyHugrProgram>(py) {
+        // Check if it's a Hugr
+        else if let Ok(hugr_prog) = program.extract::<PyHugr>(py) {
             self.inner = self
                 .inner
                 .clone()
@@ -128,7 +126,7 @@ impl PyQisEngineBuilder {
                 })?;
         } else {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "program must be either a QisProgram or HugrProgram instance",
+                "program must be either a Qis or Hugr instance",
             ));
         }
         Ok(self.clone())
@@ -181,6 +179,8 @@ impl PyQisEngineBuilder {
                 quantum_engine_builder: None,
                 noise_builder: None,
                 explicit_num_qubits: None,
+                keep_intermediate_files: false,
+                hugr_bytes: None,
             }),
         })
     }
@@ -204,7 +204,7 @@ impl PyPhirJsonEngineBuilder {
 
     /// Set the program for this engine
     #[pyo3(signature = (program))]
-    fn program(&mut self, program: &PyPhirJsonProgram) -> PyResult<Self> {
+    fn program(&mut self, program: &PyPhirJson) -> PyResult<Self> {
         self.inner = self.inner.clone().program(program.inner.clone());
         Ok(self.clone())
     }
@@ -308,6 +308,43 @@ pub struct PyQisControlSimBuilder {
     pub(crate) quantum_engine_builder: Option<Py<PyAny>>,
     pub(crate) noise_builder: Option<Py<PyAny>>,
     pub(crate) explicit_num_qubits: Option<usize>,
+    pub(crate) keep_intermediate_files: bool,
+    pub(crate) hugr_bytes: Option<Vec<u8>>,
+}
+
+/// Python wrapper for built QIS control simulation
+#[pyclass(name = "QisControlSimulation")]
+pub struct PyQisControlSimulation {
+    pub(crate) inner: Arc<Mutex<MonteCarloEngine>>,
+    /// Path to temp directory containing intermediate files (if `keep_intermediate_files` was true)
+    pub(crate) temp_dir: Option<String>,
+}
+
+#[pymethods]
+impl PyQisControlSimulation {
+    /// Run the simulation
+    pub fn run(&self, shots: usize) -> PyResult<PyShotVec> {
+        let mut engine = self.inner.lock().unwrap();
+        match engine.run(shots) {
+            Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
+            Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+        }
+    }
+
+    /// Run the simulation with specified number of workers
+    fn run_with_workers(&self, shots: usize, workers: usize) -> PyResult<PyShotVec> {
+        let mut engine = self.inner.lock().unwrap();
+        match engine.run_with_workers(shots, workers) {
+            Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
+            Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+        }
+    }
+
+    /// Get the temp directory path (if `keep_intermediate_files` was enabled)
+    #[getter]
+    fn temp_dir(&self) -> Option<String> {
+        self.temp_dir.clone()
+    }
 }
 
 /// Internal PHIR JSON simulation builder state
@@ -321,41 +358,41 @@ pub struct PyPhirJsonSimBuilder {
 }
 
 /// Python wrapper for program types
-#[pyclass(name = "QasmProgram")]
+#[pyclass(name = "Qasm")]
 #[derive(Clone)]
-pub struct PyQasmProgram {
-    pub(crate) inner: QasmProgram,
+pub struct PyQasm {
+    pub(crate) inner: Qasm,
 }
 
 #[pymethods]
-impl PyQasmProgram {
+impl PyQasm {
     #[staticmethod]
     fn from_string(source: String) -> Self {
-        PyQasmProgram {
-            inner: QasmProgram::from_string(source),
+        PyQasm {
+            inner: Qasm::from_string(source),
         }
     }
 }
 
-#[pyclass(name = "QisProgram")]
+#[pyclass(name = "Qis")]
 #[derive(Clone)]
-pub struct PyQisProgram {
-    pub(crate) inner: QisProgram,
+pub struct PyQis {
+    pub(crate) inner: Qis,
 }
 
 #[pymethods]
-impl PyQisProgram {
+impl PyQis {
     #[new]
     fn new(source: String) -> Self {
-        PyQisProgram {
-            inner: QisProgram::from_string(source),
+        PyQis {
+            inner: Qis::from_string(source),
         }
     }
 
     #[staticmethod]
     fn from_string(source: String) -> Self {
-        PyQisProgram {
-            inner: QisProgram::from_string(source),
+        PyQis {
+            inner: Qis::from_string(source),
         }
     }
 
@@ -365,22 +402,22 @@ impl PyQisProgram {
 
     #[staticmethod]
     fn preprocess_ir(llvm_ir: String) -> String {
-        QisProgram::preprocess_ir(llvm_ir)
+        Qis::preprocess_ir(llvm_ir)
     }
 }
 
-#[pyclass(name = "HugrProgram")]
+#[pyclass(name = "Hugr")]
 #[derive(Clone)]
-pub struct PyHugrProgram {
-    pub(crate) inner: HugrProgram,
+pub struct PyHugr {
+    pub(crate) inner: Hugr,
 }
 
 #[pymethods]
-impl PyHugrProgram {
+impl PyHugr {
     #[staticmethod]
     fn from_bytes(bytes: Vec<u8>) -> Self {
-        PyHugrProgram {
-            inner: HugrProgram::from_bytes(bytes),
+        PyHugr {
+            inner: Hugr::from_bytes(bytes),
         }
     }
 
@@ -390,25 +427,25 @@ impl PyHugrProgram {
     }
 }
 
-#[pyclass(name = "PhirJsonProgram")]
+#[pyclass(name = "PhirJson")]
 #[derive(Clone)]
-pub struct PyPhirJsonProgram {
-    pub(crate) inner: PhirJsonProgram,
+pub struct PyPhirJson {
+    pub(crate) inner: PhirJson,
 }
 
 #[pymethods]
-impl PyPhirJsonProgram {
+impl PyPhirJson {
     #[staticmethod]
     fn from_string(source: String) -> Self {
-        PyPhirJsonProgram {
-            inner: PhirJsonProgram::from_string(source),
+        PyPhirJson {
+            inner: PhirJson::from_string(source),
         }
     }
 
     #[staticmethod]
     fn from_json(source: String) -> Self {
-        PyPhirJsonProgram {
-            inner: PhirJsonProgram::from_json(source),
+        PyPhirJson {
+            inner: PhirJson::from_json(source),
         }
     }
 }
@@ -1117,11 +1154,12 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Built simulations
     m.add_class::<PyQasmSimulation>()?;
     m.add_class::<PyPhirJsonSimulation>()?;
+    m.add_class::<PyQisControlSimulation>()?;
 
     // Program types
-    m.add_class::<PyQasmProgram>()?;
-    m.add_class::<PyHugrProgram>()?;
-    m.add_class::<PyPhirJsonProgram>()?;
+    m.add_class::<PyQasm>()?;
+    m.add_class::<PyHugr>()?;
+    m.add_class::<PyPhirJson>()?;
 
     // Noise builders
     m.add_class::<PyGeneralNoiseModelBuilder>()?;

@@ -2,7 +2,7 @@
 //! These tests go beyond parsing and actually verify quantum circuit behavior
 
 use pecos_engines::ClassicalControlEngineBuilder;
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
 
 #[test]
@@ -20,7 +20,7 @@ fn test_bell_state_simulation() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -69,7 +69,7 @@ fn test_ghz_state_simulation() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)
@@ -126,7 +126,7 @@ fn test_phase_kickback() {
     "#;
 
     let results = qasm_engine()
-        .program(QasmProgram::from_string(qasm))
+        .program(Qasm::from_string(qasm))
         .to_sim()
         .seed(42)
         .workers(1)

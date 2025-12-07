@@ -76,6 +76,109 @@ impl PyShotVec {
     fn __len__(&self) -> usize {
         self.inner.len()
     }
+
+    /// Get values for a specific register key (dict-like access)
+    ///
+    /// Args:
+    ///     key: Name of the register
+    ///
+    /// Returns:
+    ///     list[int]: List of integer values for the register
+    ///
+    /// Raises:
+    ///     `KeyError`: If the register doesn't exist
+    fn __getitem__(&self, py: Python<'_>, key: &str) -> PyResult<Py<PyAny>> {
+        let dict = self.to_dict(py)?;
+        let dict_ref = dict.bind(py);
+        let dict_obj: &Bound<'_, PyDict> = dict_ref.cast()?;
+        if let Some(value) = dict_obj.get_item(key)? {
+            return Ok(value.unbind());
+        }
+        Err(pyo3::exceptions::PyKeyError::new_err(key.to_string()))
+    }
+
+    /// Check if a register key exists (dict-like 'in' operator)
+    ///
+    /// Args:
+    ///     key: Name of the register to check
+    ///
+    /// Returns:
+    ///     bool: True if the register exists
+    fn __contains__(&self, py: Python<'_>, key: &str) -> PyResult<bool> {
+        let dict = self.to_dict(py)?;
+        let dict_ref = dict.bind(py);
+        let dict_obj: &Bound<'_, PyDict> = dict_ref.cast()?;
+        Ok(dict_obj.get_item(key)?.is_some())
+    }
+
+    /// Get values for a register with optional default (dict-like .`get()`)
+    ///
+    /// Args:
+    ///     key: Name of the register
+    ///     default: Default value if register doesn't exist (default: None)
+    ///
+    /// Returns:
+    ///     list[int] | None: List of values or default
+    #[pyo3(signature = (key, default=None))]
+    fn get(&self, py: Python<'_>, key: &str, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
+        let dict = self.to_dict(py)?;
+        let dict_ref = dict.bind(py);
+        let dict_obj: &Bound<'_, PyDict> = dict_ref.cast()?;
+        if let Some(value) = dict_obj.get_item(key)? {
+            return Ok(value.unbind());
+        }
+        Ok(default.unwrap_or_else(|| py.None()))
+    }
+
+    /// Get all register names (dict-like .`keys()`)
+    fn keys(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        let dict = self.to_dict(py)?;
+        let dict_ref = dict.bind(py);
+        let dict_obj: &Bound<'_, PyDict> = dict_ref.cast()?;
+        let keys: Vec<String> = dict_obj
+            .keys()
+            .iter()
+            .filter_map(|k| k.extract::<String>().ok())
+            .collect();
+        Ok(keys)
+    }
+
+    /// Get all register values (dict-like .`values()`)
+    fn values(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
+        let dict = self.to_dict(py)?;
+        let dict_ref = dict.bind(py);
+        let dict_obj: &Bound<'_, PyDict> = dict_ref.cast()?;
+        let values: Vec<Py<PyAny>> = dict_obj.values().iter().map(pyo3::Bound::unbind).collect();
+        Ok(values)
+    }
+
+    /// Get all register items (dict-like .`items()`)
+    fn items(&self, py: Python<'_>) -> PyResult<Vec<(String, Py<PyAny>)>> {
+        let dict = self.to_dict(py)?;
+        let dict_ref = dict.bind(py);
+        let dict_obj: &Bound<'_, PyDict> = dict_ref.cast()?;
+        let items: Vec<(String, Py<PyAny>)> = dict_obj
+            .items()
+            .iter()
+            .filter_map(|item| {
+                let tuple = item.cast::<pyo3::types::PyTuple>().ok()?;
+                let key = tuple.get_item(0).ok()?.extract::<String>().ok()?;
+                let value = tuple.get_item(1).ok()?.unbind();
+                Some((key, value))
+            })
+            .collect();
+        Ok(items)
+    }
+
+    /// Iterate over register names (dict-like iteration)
+    ///
+    /// This makes `ShotVec` behave like a dict when iterating:
+    /// `for key in shot_vec: ...` yields register names
+    fn __iter__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let keys = self.keys(py)?;
+        let py_list = PyList::new(py, keys)?;
+        Ok(py_list.call_method0("__iter__")?.unbind())
+    }
 }
 
 /// Python wrapper for `ShotMap`

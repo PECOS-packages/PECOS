@@ -109,7 +109,7 @@ pub use runtime::{
 
 use pecos_core::errors::PecosError;
 use pecos_engines::ClassicalControlEngine;
-use pecos_programs::QisProgram;
+use pecos_programs::Qis;
 use std::path::Path;
 
 /// Setup a QIS control engine for a program file with an explicit runtime
@@ -138,7 +138,7 @@ pub fn setup_qis_engine_with_runtime(
 
     log::debug!("Loading QIS program from: {}", program_path.display());
     // Load the QIS program from file
-    let program = QisProgram::from_file(program_path)?;
+    let program = Qis::from_file(program_path)?;
 
     log::debug!("Creating QIS control engine with explicit runtime");
     let builder = qis_engine()

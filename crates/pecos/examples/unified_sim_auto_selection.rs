@@ -5,12 +5,12 @@
 
 use pecos::sim;
 use pecos_engines::{sparse_stabilizer, state_vector};
-use pecos_programs::{HugrProgram, QasmProgram, QisProgram};
+use pecos_programs::{Hugr, Qasm, Qis};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 1: QASM program automatically uses QASM engine
     println!("Example 1: QASM program -> QASM engine (automatic)");
-    let qasm_prog = QasmProgram::from_string(
+    let qasm_prog = Qasm::from_string(
         r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nExample 2: LLVM program -> LLVM engine (automatic)");
     // Note: LLVM programs require specific format with EntryPoint attribute
     // For this demo, we'll use bitcode instead
-    let _llvm_prog = QisProgram::from_bitcode(vec![0x42, 0x43]); // BC magic number
+    let _llvm_prog = Qis::from_bitcode(vec![0x42, 0x43]); // BC magic number
 
     // Note: Since this is not valid bitcode, this would fail at runtime.
     // In a real scenario, you'd use proper LLVM bitcode.
@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 3: HUGR program automatically uses Selene engine
     println!("\nExample 3: HUGR program -> Selene engine (automatic)");
     // Note: HUGR programs use serialized HUGR format
-    let _hugr_prog = HugrProgram::from_bytes(vec![0x48, 0x55, 0x47, 0x52]);
+    let _hugr_prog = Hugr::from_bytes(vec![0x48, 0x55, 0x47, 0x52]);
 
     // Note: Since this is not valid HUGR, this would fail at runtime.
     // In a real scenario, you'd use proper HUGR serialization.
@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 4: Demonstrating configuration propagation
     println!("\nExample 4: All configuration options work with auto-selection");
-    let qasm_prog2 = QasmProgram::from_string(
+    let qasm_prog2 = Qasm::from_string(
         r#"
         OPENQASM 2.0;
         include "qelib1.inc";

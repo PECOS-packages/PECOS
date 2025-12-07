@@ -270,7 +270,7 @@ class GuppyFrontend:
                 print("  [OK] Using PECOS HUGR->LLVM compiler")
 
                 # Try to import the hugr_llvm_compiler
-                from pecos.frontends.hugr_llvm_compiler import HugrLlvmCompiler
+                from pecos._compilation.hugr_llvm import HugrLlvmCompiler
 
                 compiler = HugrLlvmCompiler()
                 if compiler.is_available():
@@ -390,3 +390,58 @@ def run_guppy_on_pecos(
         return frontend.compile_and_run(func, shots)
     finally:
         frontend.cleanup()
+
+
+def guppy_to_hugr(guppy_func: Callable) -> bytes:
+    """Convert a Guppy function to HUGR bytes.
+
+    This function compiles a Guppy quantum program to HUGR format, which can then
+    be executed by HUGR-compatible engines like Selene.
+
+    Args:
+        guppy_func: A function decorated with @guppy
+
+    Returns:
+        HUGR program as bytes
+
+    Raises:
+        ImportError: If guppylang is not available
+        ValueError: If the function is not a Guppy function
+        RuntimeError: If compilation fails
+    """
+    if not GUPPY_AVAILABLE:
+        msg = "guppylang is not available. Please install guppylang."
+        raise ImportError(msg)
+
+    # Check if this is a Guppy function
+    is_guppy = (
+        hasattr(guppy_func, "_guppy_compiled")
+        or hasattr(guppy_func, "compile")
+        or str(type(guppy_func)).find("GuppyDefinition") != -1
+        or str(type(guppy_func)).find("GuppyFunctionDefinition") != -1
+    )
+
+    if not is_guppy:
+        msg = "Function must be decorated with @guppy"
+        raise ValueError(msg)
+
+    # Compile Guppy → HUGR
+    try:
+        compiled = (
+            guppy_func.compile()
+            if hasattr(guppy_func, "compile")
+            else guppy.compile(guppy_func)
+        )
+
+        if hasattr(compiled, "to_bytes"):
+            return compiled.to_bytes()
+        if hasattr(compiled, "package"):
+            return compiled.package.to_bytes()
+        if hasattr(compiled, "to_package"):
+            package = compiled.to_package()
+            return package.to_bytes()
+        msg = "Cannot serialize HUGR to binary format"
+        raise RuntimeError(msg)
+    except Exception as e:
+        msg = f"Failed to compile Guppy to HUGR: {e}"
+        raise RuntimeError(msg) from e

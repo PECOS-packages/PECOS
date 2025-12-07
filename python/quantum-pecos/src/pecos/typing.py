@@ -1,7 +1,7 @@
 # Copyright 2025 The PECOS Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
-# the License.You may obtain a copy of the License at
+# the License. You may obtain a copy of the License at
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
 #
@@ -17,6 +17,7 @@ This module provides:
 - JSON-like types for gate parameters
 - Protocol definitions for PECOS interfaces
 - Generic Array type for dtype-parameterized arrays
+- Compiled program types (CompiledHugr, CompiledQasm, etc.) for type annotations
 - PhirModel re-export for PHIR program handling
 """
 
@@ -109,24 +110,26 @@ else:
     Inexact = INEXACT_TYPES
 
 # JSON-like types for gate parameters and metadata
-JSONValue = str | int | float | bool | dict[str, "JSONValue"] | list["JSONValue"] | None
-JSONDict = dict[str, JSONValue]
-
-# Gate parameter type - used for **params in various gate operations
-GateParams = JSONDict
-
-# Simulator gate parameters - these are passed to simulator gate functions
-SimulatorGateParams = JSONDict
-
-# Simulator initialization parameters
-SimulatorInitParams = (
-    JSONDict  # Parameters for simulator initialization (e.g., MPS config)
+JSONValue: TypeAlias = (
+    str | int | float | bool | dict[str, "JSONValue"] | list["JSONValue"] | None
 )
+JSONDict: TypeAlias = dict[str, JSONValue]
 
-# QECC parameter types
-QECCParams = JSONDict  # Parameters for QECC initialization
-QECCGateParams = JSONDict  # Parameters for QECC gate operations
-QECCInstrParams = JSONDict  # Parameters for QECC instruction operations
+#: Gate parameter type - used for **params in various gate operations
+GateParams: TypeAlias = JSONDict
+
+#: Simulator gate parameters - passed to simulator gate functions
+SimulatorGateParams: TypeAlias = JSONDict
+
+#: Simulator initialization parameters (e.g., MPS config)
+SimulatorInitParams: TypeAlias = JSONDict
+
+#: Parameters for QECC initialization
+QECCParams: TypeAlias = JSONDict
+#: Parameters for QECC gate operations
+QECCGateParams: TypeAlias = JSONDict
+#: Parameters for QECC instruction operations
+QECCInstrParams: TypeAlias = JSONDict
 
 
 # Error model parameter types
@@ -201,17 +204,13 @@ class OutputDict(TypedDict, total=False):
     classical_registers: dict[str, int]
 
 
-# Logical operator types
-LogicalOperator = dict[
-    str,
-    set[int],
-]  # Maps Pauli operator ('X', 'Y', 'Z') to qubit indices
+#: Logical operator type - maps Pauli operator ('X', 'Y', 'Z') to qubit indices
+LogicalOperator: TypeAlias = dict[str, set[int]]
 
-# Gate location types
-Location = int | tuple[int, ...]  # Single qubit or multi-qubit gate location
-LocationSet = (
-    set[Location] | list[Location] | tuple[Location, ...]
-)  # Collection of locations
+#: Single qubit or multi-qubit gate location
+Location: TypeAlias = int | tuple[int, ...]
+#: Collection of gate locations
+LocationSet: TypeAlias = set[Location] | list[Location] | tuple[Location, ...]
 
 
 class LogicalOpInfo(TypedDict):
@@ -223,12 +222,12 @@ class LogicalOpInfo(TypedDict):
 
 
 # Graph protocol types
-# Node identifiers can be any hashable type (str, int, tuple, etc.)
-Node = object
-# Edges are represented as tuples of two nodes
-Edge = tuple[Node, Node]
-# Paths are lists of nodes
-Path = list[Node]
+#: Node identifier - can be any hashable type (str, int, tuple, etc.)
+Node: TypeAlias = object
+#: Edge represented as tuple of two nodes
+Edge: TypeAlias = tuple[Node, Node]
+#: Path represented as list of nodes
+Path: TypeAlias = list[Node]
 
 
 class GraphProtocol(Protocol):
@@ -273,6 +272,40 @@ class GraphProtocol(Protocol):
             Dictionary mapping target nodes to paths (list of nodes from source to target).
         """
         ...
+
+
+# =============================================================================
+# Compiled Program Types (from pecos_rslib)
+# =============================================================================
+# These are the low-level Rust program types that the simulator accepts.
+# Users typically use the Python wrapper classes (pecos.Qasm, pecos.Hugr, etc.)
+# which internally convert to these types.
+
+if TYPE_CHECKING:
+    import pecos_rslib.programs as programs_rs
+
+    #: Compiled HUGR program type from pecos_rslib
+    CompiledHugr: TypeAlias = programs_rs.Hugr
+    #: Compiled PHIR JSON program type from pecos_rslib
+    CompiledPhirJson: TypeAlias = programs_rs.PhirJson
+    #: Compiled QASM program type from pecos_rslib
+    CompiledQasm: TypeAlias = programs_rs.Qasm
+    #: Compiled QIS program type from pecos_rslib
+    CompiledQis: TypeAlias = programs_rs.Qis
+    #: Compiled WASM program type from pecos_rslib
+    CompiledWasm: TypeAlias = programs_rs.Wasm
+    #: Compiled WAT program type from pecos_rslib
+    CompiledWat: TypeAlias = programs_rs.Wat
+
+    #: Union type for any compiled program that can be passed to the simulator
+    CompiledProgram: TypeAlias = (
+        CompiledHugr
+        | CompiledQasm
+        | CompiledQis
+        | CompiledPhirJson
+        | CompiledWasm
+        | CompiledWat
+    )
 
 
 # =============================================================================
@@ -343,6 +376,13 @@ __all__ = [
     "SIGNED_INTEGER_TYPES",
     "UNSIGNED_INTEGER_TYPES",
     "Array",
+    "CompiledHugr",
+    "CompiledPhirJson",
+    "CompiledProgram",
+    "CompiledQasm",
+    "CompiledQis",
+    "CompiledWasm",
+    "CompiledWat",
     "Complex",
     "DType",
     "Edge",

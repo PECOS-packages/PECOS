@@ -23,10 +23,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from pecos_rslib.graph import Graph
-
 from pecos.circuits import QuantumCircuit
 from pecos.decoders.mwpm2d import precomputing
+from pecos.graph import Graph
 
 logger = logging.getLogger(__name__)
 

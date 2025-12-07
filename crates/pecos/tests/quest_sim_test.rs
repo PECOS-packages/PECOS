@@ -3,7 +3,7 @@
 #![cfg(feature = "quest")]
 
 use pecos::{quest_density_matrix, quest_state_vec, sim};
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 
 /// Test Quest state vector with CPU mode
 #[test]
@@ -18,7 +18,7 @@ fn test_quest_state_vec_cpu() {
         measure q -> c;
     "#;
 
-    let program = QasmProgram::from_string(qasm_code);
+    let program = Qasm::from_string(qasm_code);
 
     // Test CPU mode
     let results = sim(program)
@@ -59,7 +59,7 @@ fn test_quest_state_vec_gpu() {
         measure q -> c;
     "#;
 
-    let program = QasmProgram::from_string(qasm_code);
+    let program = Qasm::from_string(qasm_code);
 
     // Test GPU mode
     let results = sim(program)
@@ -99,7 +99,7 @@ fn test_quest_density_matrix_cpu() {
         measure q -> c;
     "#;
 
-    let program = QasmProgram::from_string(qasm_code);
+    let program = Qasm::from_string(qasm_code);
 
     // Test CPU mode
     let results = sim(program)
@@ -140,7 +140,7 @@ fn test_quest_density_matrix_gpu() {
         measure q -> c;
     "#;
 
-    let program = QasmProgram::from_string(qasm_code);
+    let program = Qasm::from_string(qasm_code);
 
     // Test GPU mode
     let results = sim(program)
@@ -187,7 +187,7 @@ fn test_quest_various_gates() {
         measure q -> c;
     "#;
 
-    let program = QasmProgram::from_string(qasm_code);
+    let program = Qasm::from_string(qasm_code);
 
     // Test with Quest state vector
     let results = sim(program)
@@ -216,7 +216,7 @@ fn test_quest_seed_parameter() {
         measure q -> c;
     "#;
 
-    let program = QasmProgram::from_string(qasm_code);
+    let program = Qasm::from_string(qasm_code);
 
     // Run with one seed
     let results1 = sim(program.clone())
@@ -279,7 +279,7 @@ fn test_quest_builder_with_qubits() {
         measure q -> c;
     "#;
 
-    let program = QasmProgram::from_string(qasm_code);
+    let program = Qasm::from_string(qasm_code);
 
     // Test that qubits() method works (though it gets overridden by program)
     let results = sim(program)
@@ -309,7 +309,7 @@ fn test_quest_cpu_and_gpu_both_work() {
         measure q -> c;
     "#;
 
-    let program = QasmProgram::from_string(qasm_code);
+    let program = Qasm::from_string(qasm_code);
 
     // Run with CPU
     let results_cpu = sim(program.clone())

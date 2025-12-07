@@ -1,5 +1,5 @@
 use pecos_engines::{ShotMap, ShotMapDisplayExt, sim_builder};
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 use pecos_qasm::qasm_engine;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Run simulation - sim_builder returns ShotVec directly
     let shot_vec = sim_builder()
-        .classical(qasm_engine().program(QasmProgram::from_string(qasm)))
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .seed(42)
         .run(20)?;
 

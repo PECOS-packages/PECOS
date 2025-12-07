@@ -11,7 +11,7 @@
 # or implied. See the License for the specific language governing permissions and limitations under
 # the License.
 
-"""Example of running a Bell state experiment using the StateVecEngineRs."""
+"""Example of running a Bell state experiment using the StateVecEngine."""
 
 import collections
 import os
@@ -20,11 +20,11 @@ import sys
 # Add the parent directory to the path to import pecos_rslib
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from pecos_rslib import ByteMessage, StateVecEngineRs
+from pecos_rslib import ByteMessage, StateVecEngine
 
 
 def run_bell_state_experiment() -> None:
-    """Run a Bell state experiment using the StateVecEngineRs."""
+    """Run a Bell state experiment using the StateVecEngine."""
     print("==== Bell State Experiment with Simulator ====")
 
     # Create a Bell state circuit
@@ -41,7 +41,7 @@ def run_bell_state_experiment() -> None:
     print("Circuit built successfully")
 
     # Create a simulator with 2 qubits
-    simulator = StateVecEngineRs(2)
+    simulator = StateVecEngine(2)
     print("Created state vector simulator with 2 qubits")
 
     # Run the circuit once and check results
@@ -112,11 +112,11 @@ def run_bell_state_experiment() -> None:
 
 
 def run_custom_experiment() -> None:
-    """Run a custom quantum experiment using the StateVecEngineRs."""
+    """Run a custom quantum experiment using the StateVecEngine."""
     print("\n==== Custom Quantum Experiment ====")
 
     # Create a simulator with 3 qubits
-    simulator = StateVecEngineRs(3)
+    simulator = StateVecEngine(3)
     print("Created state vector simulator with 3 qubits")
 
     # Create a GHZ state circuit: |GHZ⟩ = (|000⟩ + |111⟩)/√2

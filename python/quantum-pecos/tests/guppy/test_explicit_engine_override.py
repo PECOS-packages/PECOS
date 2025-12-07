@@ -3,7 +3,7 @@
 import pytest
 from guppylang import guppy
 from guppylang.std.quantum import cx, h, measure, qubit
-from pecos.frontends.guppy_api import sim
+from pecos import Guppy, sim
 from pecos_rslib import qasm_engine, qis_engine
 
 
@@ -25,14 +25,18 @@ def test_guppy_with_explicit_qis_override() -> None:
     from pecos_rslib import state_vector
 
     results_auto = (
-        sim(bell_state).quantum(state_vector()).qubits(2).run(100).to_binary_dict()
+        sim(Guppy(bell_state))
+        .quantum(state_vector())
+        .qubits(2)
+        .run(100)
+        .to_binary_dict()
     )
     assert "measurement_0" in results_auto
     assert "measurement_1" in results_auto
 
     # Test 2: Use default auto-detection (since explicit override API changed)
     results_explicit = (
-        sim(bell_state)
+        sim(Guppy(bell_state))
         .quantum(state_vector())
         .qubits(2)  # This is the correct way to set qubits
         .run(100)
@@ -61,7 +65,7 @@ def test_qasm_with_explicit_override() -> None:
     """Test QASM program with explicit qasm_engine() override."""
     import os
 
-    from pecos_rslib import QasmProgram
+    from pecos import Qasm
 
     # Set include path for QASM parser
     os.environ["PECOS_QASM_INCLUDES"] = (
@@ -78,7 +82,7 @@ cx q[0], q[1];
 measure q[0] -> c[0];
 measure q[1] -> c[1];"""
 
-    program = QasmProgram.from_string(qasm_code)
+    program = Qasm(qasm_code)
 
     # Test 1: Default auto-detection
     results_auto = sim(program).run(100).to_binary_dict()
@@ -101,16 +105,16 @@ measure q[1] -> c[1];"""
 
 def test_invalid_engine_override_rejected() -> None:
     """Test that invalid engine overrides are properly rejected."""
-    from pecos_rslib import QasmProgram, QisProgram
+    from pecos import Qasm, Qis
 
     # QASM program should reject non-QASM engines
-    qasm_program = QasmProgram.from_string("OPENQASM 3.0; qubit q;")
+    qasm_program = Qasm("OPENQASM 3.0; qubit q;")
 
     with pytest.raises(Exception, match="QasmEngineBuilder"):
         sim(qasm_program).classical(qis_engine()).run(1)
 
     # LLVM program should reject QASM engine
-    qis_program = QisProgram.from_string("define void @main() { ret void }")
+    qis_program = Qis("define void @main() { ret void }")
 
     with pytest.raises(
         Exception,
@@ -138,7 +142,7 @@ def test_engine_override_with_noise() -> None:
 
     noise = depolarizing_noise().with_uniform_probability(0.1)
     results = (
-        sim(simple_h)
+        sim(Guppy(simple_h))
         .quantum(state_vector())
         .qubits(1)  # This is the correct way to set qubits
         .noise(noise)

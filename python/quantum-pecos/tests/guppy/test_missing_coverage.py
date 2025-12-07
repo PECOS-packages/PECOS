@@ -89,7 +89,7 @@ except ImportError:
     GUPPY_AVAILABLE = False
 
 try:
-    from pecos.frontends.guppy_api import sim
+    from pecos import Guppy, sim
     from pecos_rslib import (
         biased_depolarizing_noise,
         depolarizing_noise,
@@ -129,7 +129,7 @@ class TestNoiseModels:
 
         # Test with no noise - should be deterministic
         results_ideal = (
-            sim(noisy_circuit).qubits(1).quantum(state_vector()).seed(42).run(10)
+            sim(Guppy(noisy_circuit)).qubits(1).quantum(state_vector()).seed(42).run(10)
         )
         measurements_ideal = get_measurements(results_ideal)
         ones_ideal = sum(measurements_ideal)
@@ -305,7 +305,11 @@ class TestArrayOperations:
 
         # Should run without errors
         results = (
-            sim(discard_array_test).qubits(10).quantum(state_vector()).seed(42).run(10)
+            sim(Guppy(discard_array_test))
+            .qubits(10)
+            .quantum(state_vector())
+            .seed(42)
+            .run(10)
         )
         assert all(
             r == 1 for r in get_measurements(results)
@@ -339,7 +343,11 @@ class TestArrayOperations:
             return result
 
         results = (
-            sim(array_loop_test).qubits(4).quantum(state_vector()).seed(42).run(10)
+            sim(Guppy(array_loop_test))
+            .qubits(4)
+            .quantum(state_vector())
+            .seed(42)
+            .run(10)
         )
         # Even indices (0,2) are in superposition, odd indices (1,3) are |1⟩
         # This gives us a specific pattern we can verify
@@ -388,7 +396,9 @@ class TestAdvancedControlFlow:
             return count
 
         # Run multiple times to see distribution
-        results = sim(loop_test).qubits(1).quantum(state_vector()).seed(111).run(10)
+        results = (
+            sim(Guppy(loop_test)).qubits(1).quantum(state_vector()).seed(111).run(10)
+        )
 
         # The function returns 6 measurement results (one for each iteration)
         # Each shot should have 6 measurements
@@ -563,7 +573,11 @@ class TestQuantumEngines:
 
         # Test with state vector engine (compatible with all gate decompositions)
         results = (
-            sim(clifford_circuit).qubits(1).quantum(state_vector()).seed(42).run(100)
+            sim(Guppy(clifford_circuit))
+            .qubits(1)
+            .quantum(state_vector())
+            .seed(42)
+            .run(100)
         )
         measurements = get_measurements(results)
 
@@ -579,9 +593,10 @@ class TestQuantumEngines:
         true Clifford gates, unlike Guppy programs which get decomposed.
         """
         try:
-            from pecos_rslib import QasmProgram, sparse_stabilizer
+            from pecos import Qasm
+            from pecos_rslib import sparse_stabilizer
         except ImportError:
-            pytest.skip("sparse_stabilizer or QasmProgram not available")
+            pytest.skip("sparse_stabilizer or Qasm not available")
 
         # Create a QASM program with pure Clifford gates
         qasm_str = """
@@ -595,8 +610,8 @@ class TestQuantumEngines:
         measure q[1] -> c[1];
         """
 
-        # Create QASM program using from_string method
-        program = QasmProgram.from_string(qasm_str)
+        # Create QASM program using Qasm wrapper
+        program = Qasm(qasm_str)
 
         # Test with sparse stabilizer - should work with QASM Clifford circuits
         try:
@@ -665,7 +680,11 @@ class TestQuantumErrorHandling:
 
         # Run the test with multiple shots
         results = (
-            sim(error_handling_test).qubits(2).quantum(state_vector()).seed(42).run(100)
+            sim(Guppy(error_handling_test))
+            .qubits(2)
+            .quantum(state_vector())
+            .seed(42)
+            .run(100)
         )
         measurements = get_measurements(results, expected_count=2)
 
@@ -753,7 +772,9 @@ class TestQuantumErrorHandling:
 
             return m1, m2
 
-        results = sim(reset_test).qubits(2).quantum(state_vector()).seed(42).run(10)
+        results = (
+            sim(Guppy(reset_test)).qubits(2).quantum(state_vector()).seed(42).run(10)
+        )
 
         # All results should be (1, 0) as tuples
         measurements = get_measurements(results)

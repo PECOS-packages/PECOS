@@ -87,7 +87,7 @@ def is_available() -> bool:
 
     try:
         # Check external compiler
-        from pecos.frontends.hugr_llvm_compiler import HugrLlvmCompiler
+        from pecos._compilation import HugrLlvmCompiler
 
         compiler = HugrLlvmCompiler()
         return compiler.is_available()

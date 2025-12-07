@@ -14,7 +14,7 @@ except ImportError:
     GUPPY_AVAILABLE = False
 
 try:
-    from pecos.frontends.guppy_api import sim
+    from pecos import Guppy, sim
     from pecos_rslib import state_vector
 
     PECOS_API_AVAILABLE = True
@@ -52,11 +52,15 @@ class TestSeleneHUGRCompilation:
         # The sim API handles HUGR compilation internally
         try:
             results = (
-                sim(bell_state).qubits(2).quantum(state_vector()).seed(42).run(100)
+                sim(Guppy(bell_state))
+                .qubits(2)
+                .quantum(state_vector())
+                .seed(42)
+                .run(100)
             )
 
             # Verify results structure
-            assert isinstance(results, dict), "Results should be a dictionary"
+            assert hasattr(results, "__getitem__"), "Results should be dict-like"
 
             # Check for measurement results
             if "measurement_1" in results and "measurement_2" in results:

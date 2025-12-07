@@ -21,9 +21,7 @@ import pickle
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from pecos_rslib import WasmForeignObject
-
-from pecos import BitInt
+from pecos import BitInt, WasmForeignObject
 from pecos.engines.cvm.sim_func import sim_exec, sim_funcs
 from pecos.errors import MissingCCOPError
 

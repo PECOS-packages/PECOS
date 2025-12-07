@@ -24,7 +24,7 @@ except ImportError:
     GUPPY_AVAILABLE = False
 
 try:
-    from pecos.frontends import get_guppy_backends, sim
+    from pecos import Guppy, get_guppy_backends, sim
     from pecos_rslib import state_vector
 
     PECOS_FRONTEND_AVAILABLE = True
@@ -81,7 +81,9 @@ def test_pipeline_capabilities() -> None:
         if backends.get("rust_backend", False):
             try:
                 # Use sim() API instead of run_guppy
-                result_dict = sim(test_func).qubits(10).quantum(state_vector()).run(1)
+                result_dict = (
+                    sim(Guppy(test_func)).qubits(10).quantum(state_vector()).run(1)
+                )
                 # Extract measurement result
                 if "measurements" in result_dict:
                     result_val = result_dict["measurements"][0]
@@ -108,7 +110,9 @@ def test_pipeline_capabilities() -> None:
         # PHIR pipeline no longer exists - using same sim() backend
         try:
             # Use sim() API for consistency
-            result_dict = sim(test_func).qubits(10).quantum(state_vector()).run(1)
+            result_dict = (
+                sim(Guppy(test_func)).qubits(10).quantum(state_vector()).run(1)
+            )
             # Extract measurement result
             if "measurements" in result_dict:
                 result_val = result_dict["measurements"][0]

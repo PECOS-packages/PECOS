@@ -16,7 +16,7 @@ use crate::engine_bindings::{PyEngineCommon, PyEngineWrapper, PyQuantumEngineWra
 use pyo3::prelude::*;
 
 /// Python wrapper for Rust `SparseStabEngine` to execute `ByteMessage` circuits with Clifford gates
-#[pyclass(name = "SparseStabEngineRs")]
+#[pyclass(name = "SparseStabEngine")]
 pub struct PySparseStabEngine {
     inner: SparseStabEngine,
 }

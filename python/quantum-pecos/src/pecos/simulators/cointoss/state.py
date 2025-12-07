@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos_rslib import CoinToss as RustCoinToss
+from pecos_rslib.simulators import CoinToss as RustCoinToss
 
 if TYPE_CHECKING:
     from pecos.circuits import QuantumCircuit

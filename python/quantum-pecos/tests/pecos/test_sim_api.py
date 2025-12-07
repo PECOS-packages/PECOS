@@ -1,8 +1,8 @@
 """Test the new sim(program) API."""
 
 from pecos_rslib import (
-    QasmProgram,
-    QisProgram,
+    Qasm,
+    Qis,
     depolarizing_noise,
     qasm_engine,
     sim,
@@ -23,20 +23,20 @@ def test_sim_with_qasm_program() -> None:
     """
 
     # Test auto-detection
-    results = sim(QasmProgram.from_string(qasm_code)).run(100)
+    results = sim(Qasm.from_string(qasm_code)).run(100)
     assert len(results) == 100
 
     # Test with configuration
-    results = sim(QasmProgram.from_string(qasm_code)).seed(42).workers(2).run(100)
+    results = sim(Qasm.from_string(qasm_code)).seed(42).workers(2).run(100)
     assert len(results) == 100
 
     # Test with noise
     noise_model = depolarizing_noise().with_uniform_probability(0.01)
-    results = sim(QasmProgram.from_string(qasm_code)).noise(noise_model).run(100)
+    results = sim(Qasm.from_string(qasm_code)).noise(noise_model).run(100)
     assert len(results) == 100
 
     # Test with quantum engine selection
-    results = sim(QasmProgram.from_string(qasm_code)).quantum(state_vector()).run(100)
+    results = sim(Qasm.from_string(qasm_code)).quantum(state_vector()).run(100)
     assert len(results) == 100
 
 
@@ -56,7 +56,7 @@ declare i32 @__quantum__qis__m__body(i64, i64)
 attributes #0 = { "EntryPoint" }"""
 
     # Test auto-detection
-    results = sim(QisProgram.from_string(llvm_ir)).qubits(1).run(100)
+    results = sim(Qis.from_string(llvm_ir)).qubits(1).run(100)
     assert len(results) == 100
 
 
@@ -73,8 +73,8 @@ def test_sim_with_explicit_engine_override() -> None:
 
     # Override with custom engine configuration
     # (Note: without actual WASM file this would fail, so we just test the API)
-    builder = sim(QasmProgram.from_string(qasm_code)).classical(
-        qasm_engine().program(QasmProgram.from_string(qasm_code)),
+    builder = sim(Qasm.from_string(qasm_code)).classical(
+        qasm_engine().program(Qasm.from_string(qasm_code)),
     )
 
     # This verifies the API works, even if execution would fail without WASM
@@ -96,15 +96,11 @@ def test_sim_with_different_quantum_engines() -> None:
     """
 
     # State vector backend
-    results_sv = (
-        sim(QasmProgram.from_string(qasm_code)).quantum(state_vector()).run(100)
-    )
+    results_sv = sim(Qasm.from_string(qasm_code)).quantum(state_vector()).run(100)
     assert len(results_sv) == 100
 
     # Sparse stabilizer backend (only works for Clifford circuits)
-    results_ss = (
-        sim(QasmProgram.from_string(qasm_code)).quantum(sparse_stabilizer()).run(100)
-    )
+    results_ss = sim(Qasm.from_string(qasm_code)).quantum(sparse_stabilizer()).run(100)
     assert len(results_ss) == 100
 
 
@@ -120,7 +116,7 @@ def test_sim_builder_chaining() -> None:
     """
 
     results = (
-        sim(QasmProgram.from_string(qasm_code))
+        sim(Qasm.from_string(qasm_code))
         .seed(12345)
         .workers(4)
         .noise(depolarizing_noise().with_uniform_probability(0.001))

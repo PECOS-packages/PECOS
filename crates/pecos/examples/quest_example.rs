@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         measure q -> c;
     "#;
 
-    let program = QasmProgram::from_string(qasm_code);
+    let program = Qasm::from_string(qasm_code);
 
     println!("==== Quest State Vector Simulation (CPU) ====");
     // Use Quest state vector simulator with CPU mode (default)

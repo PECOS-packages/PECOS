@@ -6,9 +6,9 @@
 use crate::engine::QASMEngine;
 use pecos_core::errors::PecosError;
 use pecos_engines::ClassicalControlEngineBuilder;
-use pecos_programs::QasmProgram;
+use pecos_programs::Qasm;
 #[cfg(feature = "wasm")]
-use pecos_programs::{WasmProgram, WatProgram};
+use pecos_programs::{Wasm, Wat};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -25,7 +25,7 @@ pub struct QasmEngineBuilder {
     allow_complex_conditionals: bool,
     /// WebAssembly program for foreign function calls
     #[cfg(feature = "wasm")]
-    wasm_program: Option<crate::QasmEngineWasmProgram>,
+    wasm_program: Option<crate::QasmEngineWasm>,
 }
 
 #[derive(Debug, Clone)]
@@ -38,50 +38,50 @@ enum QasmSource {
 
 /// Trait for types that can be converted to a WASM program
 #[cfg(feature = "wasm")]
-pub trait IntoWasmProgram {
-    /// Convert to a `QasmEngineWasmProgram`
+pub trait IntoWasm {
+    /// Convert to a `QasmEngineWasm`
     ///
     /// # Errors
     ///
     /// Returns an error if the conversion fails
-    fn into_wasm_program(self) -> Result<crate::QasmEngineWasmProgram, PecosError>;
+    fn into_wasm_program(self) -> Result<crate::QasmEngineWasm, PecosError>;
 }
 
 #[cfg(feature = "wasm")]
-impl IntoWasmProgram for WasmProgram {
-    fn into_wasm_program(self) -> Result<crate::QasmEngineWasmProgram, PecosError> {
+impl IntoWasm for Wasm {
+    fn into_wasm_program(self) -> Result<crate::QasmEngineWasm, PecosError> {
         Ok(self.into())
     }
 }
 
 #[cfg(feature = "wasm")]
-impl IntoWasmProgram for WatProgram {
-    fn into_wasm_program(self) -> Result<crate::QasmEngineWasmProgram, PecosError> {
+impl IntoWasm for Wat {
+    fn into_wasm_program(self) -> Result<crate::QasmEngineWasm, PecosError> {
         use std::convert::TryInto;
         self.try_into()
     }
 }
 
 #[cfg(feature = "wasm")]
-impl IntoWasmProgram for crate::QasmEngineWasmProgram {
-    fn into_wasm_program(self) -> Result<crate::QasmEngineWasmProgram, PecosError> {
+impl IntoWasm for crate::QasmEngineWasm {
+    fn into_wasm_program(self) -> Result<crate::QasmEngineWasm, PecosError> {
         Ok(self)
     }
 }
 
 #[cfg(feature = "wasm")]
-impl IntoWasmProgram for String {
-    fn into_wasm_program(self) -> Result<crate::QasmEngineWasmProgram, PecosError> {
+impl IntoWasm for String {
+    fn into_wasm_program(self) -> Result<crate::QasmEngineWasm, PecosError> {
         // Load from file path
         let bytes = std::fs::read(&self)
             .map_err(|e| PecosError::Input(format!("Failed to read WASM file '{self}': {e}")))?;
-        Ok(crate::QasmEngineWasmProgram::from_bytes(bytes).with_source_path(self))
+        Ok(crate::QasmEngineWasm::from_bytes(bytes).with_source_path(self))
     }
 }
 
 #[cfg(feature = "wasm")]
-impl IntoWasmProgram for &str {
-    fn into_wasm_program(self) -> Result<crate::QasmEngineWasmProgram, PecosError> {
+impl IntoWasm for &str {
+    fn into_wasm_program(self) -> Result<crate::QasmEngineWasm, PecosError> {
         self.to_string().into_wasm_program()
     }
 }
@@ -107,9 +107,9 @@ impl QasmEngineBuilder {
         self
     }
 
-    /// Set the QASM source from a `QasmProgram`
+    /// Set the QASM source from a `Qasm`
     #[must_use]
-    pub fn program(mut self, program: impl Into<QasmProgram>) -> Self {
+    pub fn program(mut self, program: impl Into<Qasm>) -> Self {
         let program = program.into();
         self.source = Some(QasmSource::String(program.source));
         self
@@ -162,14 +162,14 @@ impl QasmEngineBuilder {
         self.source.is_some()
     }
 
-    /// Get the `QasmProgram` from this builder (if any)
+    /// Get the `Qasm` from this builder (if any)
     #[must_use]
-    pub fn get_program(&self) -> Option<pecos_programs::QasmProgram> {
+    pub fn get_program(&self) -> Option<pecos_programs::Qasm> {
         match &self.source {
             Some(QasmSource::String(content)) => {
-                Some(pecos_programs::QasmProgram::from_string(content.clone()))
+                Some(pecos_programs::Qasm::from_string(content.clone()))
             }
-            Some(QasmSource::File(path)) => pecos_programs::QasmProgram::from_file(path).ok(),
+            Some(QasmSource::File(path)) => pecos_programs::Qasm::from_file(path).ok(),
             None => None,
         }
     }
@@ -177,13 +177,13 @@ impl QasmEngineBuilder {
     /// Set the WebAssembly program for foreign function calls
     ///
     /// This method accepts:
-    /// - `WasmProgram` - pre-loaded WASM binary
-    /// - `WatProgram` - WebAssembly text format (parsed by wasmtime)
-    /// - `QasmEngineWasmProgram` - engine-specific WASM program
+    /// - `Wasm` - pre-loaded WASM binary
+    /// - `Wat` - WebAssembly text format (parsed by wasmtime)
+    /// - `QasmEngineWasm` - engine-specific WASM program
     /// - `&str` or `String` - path to a .wasm or .wat file
     #[cfg(feature = "wasm")]
     #[must_use]
-    pub fn wasm(mut self, wasm: impl IntoWasmProgram) -> Self {
+    pub fn wasm(mut self, wasm: impl IntoWasm) -> Self {
         match wasm.into_wasm_program() {
             Ok(program) => {
                 self.wasm_program = Some(program);
@@ -280,8 +280,8 @@ impl ClassicalControlEngineBuilder for QasmEngineBuilder {
     }
 }
 
-impl From<QasmProgram> for QasmEngineBuilder {
-    fn from(program: QasmProgram) -> Self {
+impl From<Qasm> for QasmEngineBuilder {
+    fn from(program: Qasm) -> Self {
         Self::new().program(program)
     }
 }

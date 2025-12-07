@@ -39,7 +39,7 @@ pub fn setup_cli_engine(
 
             #[cfg(all(feature = "llvm", feature = "selene"))]
             {
-                let qis_program = QisProgram::from_file(program_path)?;
+                let qis_program = Qis::from_file(program_path)?;
 
                 // Use Selene runtime and Helios interface (default and only option)
                 debug!("Using Selene runtime and Helios interface for QIR engine");
@@ -100,7 +100,7 @@ pub fn setup_cli_engine_builder(
             debug!("Setting up QIR engine builder");
             #[cfg(all(feature = "llvm", feature = "selene"))]
             {
-                let qis_program = QisProgram::from_file(program_path)?;
+                let qis_program = Qis::from_file(program_path)?;
 
                 // Use Selene runtime and Helios interface (default and only option)
                 debug!("Using Selene runtime and Helios interface for QIR engine builder");

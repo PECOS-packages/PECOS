@@ -1,4 +1,4 @@
-# Copyright 2024 The PECOS Developers
+# Copyright 2025 The PECOS Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 # the License.You may obtain a copy of the License at
@@ -13,6 +13,20 @@
 
 This module provides testing utilities similar to NumPy's testing module,
 but using pure PECOS arrays and functions.
+
+Like numpy.testing, this module provides assertion functions for
+comparing arrays with appropriate tolerance handling.
+
+Example:
+    >>> import pecos as pc
+    >>> from pecos.testing import assert_allclose, assert_array_equal
+    >>>
+    >>> x = pc.array([1.0, 2.0, 3.0])
+    >>> y = pc.array([1.0, 2.0, 3.0])
+    >>> assert_array_equal(x, y)
+    >>>
+    >>> z = pc.array([1.0, 2.0, 3.001])
+    >>> assert_allclose(x, z, rtol=1e-2)  # Passes with relative tolerance
 """
 
 from __future__ import annotations
@@ -54,7 +68,7 @@ def assert_allclose(
 
     Examples:
         >>> import pecos as pc
-        >>> from pecos.tools.testing import assert_allclose
+        >>> from pecos.testing import assert_allclose
         >>> x = pc.array([1.0, 2.0, 3.0])
         >>> y = pc.array([1.0, 2.0, 3.0])
         >>> assert_allclose(x, y)
@@ -137,7 +151,7 @@ def assert_array_equal(
 
     Examples:
         >>> import pecos as pc
-        >>> from pecos.tools.testing import assert_array_equal
+        >>> from pecos.testing import assert_array_equal
         >>> x = pc.array([1, 2, 3])
         >>> y = pc.array([1, 2, 3])
         >>> assert_array_equal(x, y)
@@ -165,7 +179,7 @@ def assert_array_less(
 
     Examples:
         >>> import pecos as pc
-        >>> from pecos.tools.testing import assert_array_less
+        >>> from pecos.testing import assert_array_less
         >>> x = pc.array([1, 2, 3])
         >>> y = pc.array([2, 3, 4])
         >>> assert_array_less(x, y)
@@ -204,3 +218,10 @@ def assert_array_less(
                 )
 
         raise AssertionError("\n".join(msg_parts))
+
+
+__all__ = [
+    "assert_allclose",
+    "assert_array_equal",
+    "assert_array_less",
+]

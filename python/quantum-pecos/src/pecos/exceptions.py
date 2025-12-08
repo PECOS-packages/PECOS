@@ -1,4 +1,5 @@
 # Copyright 2021 The PECOS Developers
+#
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 # the License.You may obtain a copy of the License at
 #
@@ -8,12 +9,23 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Exception classes for PECOS quantum error correction framework.
+"""Exception classes for PECOS.
 
-This module defines custom exception types used throughout PECOS for error
-handling, including base exceptions and specialized errors for simulators,
-WASM integration, and classical coprocessor operations.
+This module provides a centralized location for all PECOS exception types,
+following NumPy's pattern of having a dedicated exceptions module.
+
+Example:
+    >>> from pecos.exceptions import PECOSError, GateError
+    >>>
+    >>> try:
+    ...     # Some operation that might fail
+    ...     pass
+    ... except GateError as e:
+    ...     print(f"Gate error: {e}")
+    ...
 """
+
+from __future__ import annotations
 
 import re
 
@@ -22,12 +34,40 @@ class PECOSError(Exception):
     """Base exception raised by PECOS."""
 
 
+class PECOSTypeError(TypeError):
+    """Type error in PECOS operations."""
+
+
 class ConfigurationError(PECOSError):
     """Indicates invalid configuration settings."""
 
 
 class NotSupportedGateError(PECOSError):
     """Indicates a gate not supported by a simulator."""
+
+
+class GateError(PECOSError):
+    """General gate errors."""
+
+
+class GateOverlapError(GateError):
+    """Raised when gates act on qudits that are already being acted on."""
+
+
+class CircuitError(PECOSError):
+    """Error in circuit construction or execution."""
+
+
+class SimulationError(PECOSError):
+    """Error during quantum simulation."""
+
+
+class DecoderError(PECOSError):
+    """Error in decoder operations."""
+
+
+class QECCError(PECOSError):
+    """Error in quantum error correcting code operations."""
 
 
 class WasmError(PECOSError):
@@ -54,7 +94,6 @@ class HugrTypeError(PECOSError):
     @staticmethod
     def _extract_type(error: str) -> str | None:
         """Extract the unsupported type from the error message."""
-        # Pattern: "Unknown type: int(6)" or "Unknown type: bool"
         match = re.search(r"Unknown type: (\w+)(?:\((\d+)\))?", error)
         if match:
             type_name = match.group(1)
@@ -72,7 +111,7 @@ class HugrTypeError(PECOSError):
             if self.unsupported_type.startswith("int"):
                 return (
                     f"{base_msg}\n\n"
-                    "Classical integer types are not yet supported in the HUGR→LLVM compiler.\n"
+                    "Classical integer types are not yet supported in the HUGR->LLVM compiler.\n"
                     "Workarounds:\n"
                     "1. Use quantum operations that return measurement results (bool)\n"
                     "2. Perform classical computations outside the Guppy function\n"
@@ -88,3 +127,21 @@ class HugrTypeError(PECOSError):
                 )
 
         return base_msg
+
+
+__all__ = [
+    "CircuitError",
+    "ConfigurationError",
+    "DecoderError",
+    "GateError",
+    "GateOverlapError",
+    "HugrTypeError",
+    "MissingCCOPError",
+    "NotSupportedGateError",
+    "PECOSError",
+    "PECOSTypeError",
+    "QECCError",
+    "SimulationError",
+    "WasmError",
+    "WasmRuntimeError",
+]

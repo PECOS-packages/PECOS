@@ -574,3 +574,25 @@ class QuantumBackend(Protocol):
     def sxdg_gate(self, qubit: int) -> None:
         """Apply SX dagger gate."""
         ...
+
+
+__all__ = [
+    "CCOPProtocol",
+    "CircuitInspector",
+    "CircuitRunner",
+    "ClassicalInterpreterProtocol",
+    "Decoder",
+    "EngineRunner",
+    "ErrorGenerator",
+    "ErrorModelProtocol",
+    "ForeignObjectProtocol",
+    "GuppyCallable",
+    "LogicalGateProtocol",
+    "LogicalInstructionProtocol",
+    "MachineProtocol",
+    "OpProcessorProtocol",
+    "QECCProtocol",
+    "QuantumBackend",
+    "SimulatorProtocol",
+    "SimulatorState",
+]

@@ -34,7 +34,7 @@ from pecos.simulators import (
     Qulacs,
     StateVec,
 )
-from pecos.tools.testing import assert_allclose
+from pecos.testing import assert_allclose
 
 str_to_sim = {
     "StateVec": StateVec,

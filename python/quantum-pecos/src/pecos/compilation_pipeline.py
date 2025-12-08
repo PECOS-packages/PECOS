@@ -10,7 +10,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from pecos.errors import HugrTypeError
+from pecos.exceptions import HugrTypeError
 
 
 # Step 1: Guppy -> HUGR

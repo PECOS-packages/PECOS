@@ -16,11 +16,9 @@ fault tolerance checking, threshold estimation, and performance evaluation.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.tools import fault_tolerance_checks, pseudo_threshold_tools, testing
+from pecos.tools import fault_tolerance_checks, pseudo_threshold_tools
 from pecos.tools.pseudo_threshold_tools import plot as plot_pseudo
-from pecos.tools.random_circuit_speed import random_circuit_speed
 from pecos.tools.stabilizer_verification import VerifyStabilizers
-from pecos.tools.testing import assert_allclose, assert_array_equal, assert_array_less
 from pecos.tools.threshold_tools import (
     codecapacity_logical_rate,
     codecapacity_logical_rate2,
@@ -29,3 +27,19 @@ from pecos.tools.threshold_tools import (
 )
 from pecos.tools.tool_anticommute import anticommute
 from pecos.tools.tool_collection import fault_tolerance_check
+
+__all__ = [
+    # Classes
+    "VerifyStabilizers",
+    # Functions
+    "anticommute",
+    "codecapacity_logical_rate",
+    "codecapacity_logical_rate2",
+    "codecapacity_logical_rate3",
+    "fault_tolerance_check",
+    # Submodules
+    "fault_tolerance_checks",
+    "plot_pseudo",
+    "pseudo_threshold_tools",
+    "threshold_code_capacity",
+]

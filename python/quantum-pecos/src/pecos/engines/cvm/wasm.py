@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from pecos import BitInt, WasmForeignObject
 from pecos.engines.cvm.sim_func import sim_exec, sim_funcs
-from pecos.errors import MissingCCOPError
+from pecos.exceptions import MissingCCOPError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

@@ -81,13 +81,17 @@ if TYPE_CHECKING:
 class GuppyFunction(Protocol):
     """Protocol for Guppy-decorated functions."""
 
-    def compile(self) -> "HugrPackage": ...
+    def compile(self) -> "HugrPackage":
+        """Compile the Guppy function to HUGR format."""
+        ...
 
 
 class HugrPackage(Protocol):
     """Protocol for HUGR package objects."""
 
-    def to_bytes(self) -> bytes: ...
+    def to_bytes(self) -> bytes:
+        """Serialize the HUGR package to bytes."""
+        ...
 
 
 # =============================================================================
@@ -418,7 +422,9 @@ ProgramWrapper = Guppy | Hugr | Qasm | Qis | PhirJson | Wasm | Wat
 __all__ = [
     # Program wrapper classes (primary API for sim())
     "Guppy",
+    "GuppyFunction",
     "Hugr",
+    "HugrPackage",
     "PhirJson",
     "ProgramWrapper",
     "Qasm",

@@ -1,10 +1,3 @@
-"""Performance benchmarking tools for random quantum circuits.
-
-This module provides utilities for measuring and analyzing the execution
-speed and performance characteristics of randomly generated quantum circuits,
-useful for benchmarking quantum simulators and circuit execution engines.
-"""
-
 # Copyright 2019 The PECOS Developers
 # Copyright 2018 National Technology & Engineering Solutions of Sandia, LLC (NTESS). Under the terms of Contract
 # DE-NA0003525 with NTESS, the U.S. Government retains certain rights in this software.
@@ -17,6 +10,32 @@ useful for benchmarking quantum simulators and circuit execution engines.
 # Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
+
+"""Performance benchmarking tools for random quantum circuits.
+
+This module provides utilities for measuring and analyzing the execution speed
+and performance characteristics of randomly generated quantum circuits, useful
+for benchmarking quantum simulators and circuit execution engines.
+
+Example:
+    >>> from pecos.benchmarks import random_circuit_speed, generate_circuits
+    >>> from pecos.simulators import SparseSimPy
+    >>>
+    >>> # Benchmark random circuits
+    >>> times, measurements, circuits = random_circuit_speed(
+    ...     state_sim=SparseSimPy,
+    ...     num_qubits=10,
+    ...     circuit_depth=100,
+    ...     trials=1000,
+    ... )
+    >>>
+    >>> # Generate circuits for custom benchmarking
+    >>> circuits = generate_circuits(
+    ...     num_qubits=10,
+    ...     circuit_depth=50,
+    ...     trials=100,
+    ... )
+"""
 
 from __future__ import annotations
 
@@ -195,3 +214,10 @@ def get_qubits(num_qubits: int, size: int) -> Array:
         Array of randomly selected qubit indices.
     """
     return pc.random.choice(list(range(num_qubits)), size, replace=False)
+
+
+__all__ = [
+    "generate_circuits",
+    "get_qubits",
+    "random_circuit_speed",
+]

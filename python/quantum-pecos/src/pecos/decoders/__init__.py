@@ -17,3 +17,8 @@ This package provides various decoders for quantum error correction codes.
 
 from pecos.decoders.dummy_decoder.dummy_decoder import DummyDecoder
 from pecos.decoders.mwpm2d.mwpm2d import MWPM2D
+
+__all__ = [
+    "MWPM2D",
+    "DummyDecoder",
+]

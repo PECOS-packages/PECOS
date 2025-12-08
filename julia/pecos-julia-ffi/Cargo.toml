@@ -16,9 +16,11 @@ name = "pecos_julia"
 crate-type = ["cdylib"]
 
 [dependencies]
-# PECOS - the meta crate that includes everything via its prelude
-# Enable llvm feature explicitly for full Julia functionality
-pecos = { workspace = true, features = ["llvm"] }
+# Use pecos without default features for faster compilation
+# This avoids heavy dependencies like all-simulators, wasm, qasm, phir
+# The Julia wrapper currently only needs QubitId from pecos-core (via pecos::prelude)
+# Note: Can't use workspace = true here because Cargo doesn't allow overriding default-features
+pecos = { version = "0.1.1", path = "../../crates/pecos", default-features = false }
 
 [lints]
 workspace = true

@@ -437,3 +437,4 @@ __all__ = [
 def __dir__() -> list[str]:
     """Return a clean list of public names for tab completion and dir()."""
     return __all__
+

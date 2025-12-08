@@ -238,11 +238,40 @@ impl PyGraph {
         node < self.inner.node_count()
     }
 
-    // TODO: Add remove_node to Rust Graph API
-    // /// Remove a node and all its connected edges from the graph.
-    // fn remove_node(&mut self, node: usize) {
-    //     self.inner.remove_node(node);
-    // }
+    /// Remove a node and all its connected edges from the graph.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - The index of the node to remove
+    ///
+    /// # Returns
+    ///
+    /// True if the node existed and was removed, False otherwise.
+    ///
+    /// # Important
+    ///
+    /// After removing a node, the indices of other nodes may change.
+    /// The last node in the graph will be moved to fill the gap left
+    /// by the removed node. This means node indices should not be
+    /// cached across remove operations.
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// g = Graph()
+    /// n0 = g.add_node()
+    /// n1 = g.add_node()
+    /// n2 = g.add_node()
+    /// g.add_edge(n0, n1, weight=1.0)
+    ///
+    /// # Remove n0 - this also removes the edge to n1
+    /// removed = g.remove_node(n0)
+    /// assert removed
+    /// assert g.node_count() == 2
+    /// ```
+    fn remove_node(&mut self, node: usize) -> bool {
+        self.inner.remove_node(node).is_some()
+    }
 
     /// Computes the maximum weight matching of the graph.
     ///

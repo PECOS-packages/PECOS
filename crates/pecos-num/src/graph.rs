@@ -530,6 +530,47 @@ impl Graph {
         self.graph.add_node(data).index()
     }
 
+    /// Removes a node from the graph and all edges connected to it.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - The index of the node to remove
+    ///
+    /// # Returns
+    ///
+    /// The node's data if the node existed, or `None` if the node was not found.
+    ///
+    /// # Important
+    ///
+    /// After removing a node, the indices of other nodes may change due to petgraph's
+    /// internal representation. The last node in the graph will be moved to fill the
+    /// gap left by the removed node. This means node indices should not be cached
+    /// across remove operations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pecos_num::graph::Graph;
+    ///
+    /// let mut graph = Graph::new();
+    /// let n0 = graph.add_node();
+    /// let n1 = graph.add_node();
+    /// let n2 = graph.add_node();
+    ///
+    /// // Add an edge
+    /// graph.add_edge(n0, n1);
+    ///
+    /// // Remove n0 - this also removes the edge to n1
+    /// let removed = graph.remove_node(n0);
+    /// assert!(removed.is_some());
+    ///
+    /// // Node count is now 2
+    /// assert_eq!(graph.node_count(), 2);
+    /// ```
+    pub fn remove_node(&mut self, node: usize) -> Option<NodeAttrs> {
+        self.graph.remove_node(NodeIndex::new(node))
+    }
+
     /// Gets a reference to all graph-level attributes.
     ///
     /// # Returns
@@ -1410,267 +1451,6 @@ impl Default for Graph {
     }
 }
 
-/// A graph with arbitrary node identifiers mapped to internal integer indices.
-///
-/// This wrapper around `Graph` provides NetworkX-style functionality where nodes
-/// can be identified by any hashable type (strings, integers, etc.) rather than
-/// just `usize` indices.
-///
-/// # Type Parameters
-///
-/// * `K` - The node identifier type (must be `Hash + Eq + Ord + Clone`)
-///
-/// # Examples
-///
-/// ```
-/// use pecos_num::graph::MappedGraph;
-///
-/// let mut graph = MappedGraph::<String>::new();
-/// graph.add_edge("v1".to_string(), "v2".to_string()).weight(1.0);
-/// graph.add_edge("v2".to_string(), "v3".to_string()).weight(2.0);
-/// ```
-#[derive(Debug, Clone)]
-pub struct MappedGraph<K: std::hash::Hash + Eq + Ord + Clone> {
-    /// The underlying integer-indexed graph
-    graph: Graph,
-    /// Mapping from user node IDs to internal indices
-    node_to_index: BTreeMap<K, usize>,
-    /// Mapping from internal indices to user node IDs
-    index_to_node: BTreeMap<usize, K>,
-}
-
-impl<K: std::hash::Hash + Eq + Ord + Clone> MappedGraph<K> {
-    /// Creates a new empty mapped graph.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            graph: Graph::new(),
-            node_to_index: BTreeMap::new(),
-            index_to_node: BTreeMap::new(),
-        }
-    }
-
-    /// Creates a new mapped graph with pre-allocated capacity.
-    #[must_use]
-    pub fn with_capacity(nodes: usize, edges: usize) -> Self {
-        Self {
-            graph: Graph::with_capacity(nodes, edges),
-            node_to_index: BTreeMap::new(),
-            index_to_node: BTreeMap::new(),
-        }
-    }
-
-    /// Gets or creates an internal index for a node ID.
-    fn get_or_create_index(&mut self, node: K) -> usize {
-        if let Some(&idx) = self.node_to_index.get(&node) {
-            idx
-        } else {
-            let idx = self.graph.add_node();
-            self.node_to_index.insert(node.clone(), idx);
-            self.index_to_node.insert(idx, node);
-            idx
-        }
-    }
-
-    /// Adds an edge between two nodes, returning a builder to configure attributes.
-    ///
-    /// If either node doesn't exist, it will be created automatically.
-    ///
-    /// This method returns an `EdgeBuilder` that allows configuring edge attributes
-    /// via method chaining.
-    pub fn add_edge(&mut self, a: K, b: K) -> EdgeBuilder<'_> {
-        let idx_a = self.get_or_create_index(a);
-        let idx_b = self.get_or_create_index(b);
-        self.graph.add_edge(idx_a, idx_b)
-    }
-
-    /// Adds an edge between two nodes with full edge data.
-    pub fn add_edge_with_data(&mut self, a: K, b: K, data: EdgeAttrs) {
-        let idx_a = self.get_or_create_index(a);
-        let idx_b = self.get_or_create_index(b);
-        self.graph.add_edge_with_data(idx_a, idx_b, data);
-    }
-
-    /// Returns the number of nodes in the graph.
-    #[must_use]
-    pub fn node_count(&self) -> usize {
-        self.graph.node_count()
-    }
-
-    /// Returns the number of edges in the graph.
-    #[must_use]
-    pub fn edge_count(&self) -> usize {
-        self.graph.edge_count()
-    }
-
-    /// Returns a vector of all node IDs in the graph.
-    #[must_use]
-    pub fn nodes(&self) -> Vec<K> {
-        self.index_to_node.values().cloned().collect()
-    }
-
-    /// Computes the maximum weight matching of the graph.
-    ///
-    /// Returns a map from node IDs to their matched partners.
-    #[must_use]
-    pub fn max_weight_matching(&self, max_cardinality: bool) -> BTreeMap<K, K> {
-        self.max_weight_matching_with_precision(max_cardinality, 1000.0)
-    }
-
-    /// Compute maximum weight perfect matching with configurable weight precision.
-    ///
-    /// This is the same as `max_weight_matching` but allows you to control the
-    /// float-to-integer conversion multiplier. See `Graph::max_weight_matching_with_precision`
-    /// for detailed documentation on the `weight_multiplier` parameter.
-    ///
-    /// # Arguments
-    ///
-    /// * `max_cardinality` - If true, compute maximum cardinality matching with maximum weight
-    /// * `weight_multiplier` - Multiplier for converting float weights to integers (default: 1000.0)
-    ///
-    /// # Returns
-    ///
-    /// A `BTreeMap` mapping node IDs to their matched partners.
-    #[must_use]
-    pub fn max_weight_matching_with_precision(
-        &self,
-        max_cardinality: bool,
-        weight_multiplier: f64,
-    ) -> BTreeMap<K, K> {
-        let index_matching = self
-            .graph
-            .max_weight_matching_with_precision(max_cardinality, weight_multiplier);
-
-        index_matching
-            .iter()
-            .filter_map(|(&idx_a, &idx_b)| {
-                let node_a = self.index_to_node.get(&idx_a)?;
-                let node_b = self.index_to_node.get(&idx_b)?;
-                Some((node_a.clone(), node_b.clone()))
-            })
-            .collect()
-    }
-
-    /// Returns a list of all edges as (source, target, weight) tuples.
-    #[must_use]
-    pub fn edges(&self) -> Vec<(K, K, f64)> {
-        self.graph
-            .edges()
-            .into_iter()
-            .filter_map(|(idx_a, idx_b, weight)| {
-                let node_a = self.index_to_node.get(&idx_a)?;
-                let node_b = self.index_to_node.get(&idx_b)?;
-                Some((node_a.clone(), node_b.clone(), weight))
-            })
-            .collect()
-    }
-
-    /// Gets the edge data between two nodes.
-    #[must_use]
-    pub fn get_edge_data(&self, a: &K, b: &K) -> Option<EdgeAttrs> {
-        let idx_a = self.node_to_index.get(a)?;
-        let idx_b = self.node_to_index.get(b)?;
-        self.graph.get_edge_data(*idx_a, *idx_b)
-    }
-
-    /// Creates a subgraph containing only the specified nodes.
-    #[must_use]
-    pub fn subgraph(&self, nodes: &[K]) -> Self {
-        // Get internal indices for requested nodes
-        let indices: Vec<usize> = nodes
-            .iter()
-            .filter_map(|node| self.node_to_index.get(node).copied())
-            .collect();
-
-        // Create subgraph of internal graph
-        let sub_graph = self.graph.subgraph(&indices);
-
-        // Build new mappings for subgraph nodes
-        let mut new_node_to_index = BTreeMap::new();
-        let mut new_index_to_node = BTreeMap::new();
-
-        for (new_idx, &old_idx) in indices.iter().enumerate() {
-            if let Some(node) = self.index_to_node.get(&old_idx) {
-                new_node_to_index.insert(node.clone(), new_idx);
-                new_index_to_node.insert(new_idx, node.clone());
-            }
-        }
-
-        Self {
-            graph: sub_graph,
-            node_to_index: new_node_to_index,
-            index_to_node: new_index_to_node,
-        }
-    }
-
-    /// Computes shortest path distances from a source node using Dijkstra's algorithm.
-    ///
-    /// This method only computes distances, not the actual paths.
-    #[must_use]
-    pub fn shortest_path_distances(&self, source: &K) -> BTreeMap<K, f64> {
-        let Some(&source_idx) = self.node_to_index.get(source) else {
-            return BTreeMap::new();
-        };
-
-        let index_distances = self.graph.shortest_path_distances(source_idx);
-
-        index_distances
-            .into_iter()
-            .filter_map(|(target_idx, dist)| {
-                let target = self.index_to_node.get(&target_idx)?;
-                Some((target.clone(), dist))
-            })
-            .collect()
-    }
-
-    /// Computes single-source shortest paths using Dijkstra's algorithm.
-    ///
-    /// This method computes both distances and reconstructs the actual paths.
-    /// If you only need distances, use `shortest_path_distances()` for better performance.
-    #[must_use]
-    pub fn single_source_shortest_path(&self, source: &K) -> BTreeMap<K, Vec<K>> {
-        let Some(&source_idx) = self.node_to_index.get(source) else {
-            return BTreeMap::new();
-        };
-
-        let index_paths = self.graph.single_source_shortest_path(source_idx);
-
-        index_paths
-            .into_iter()
-            .filter_map(|(target_idx, path_indices)| {
-                let target = self.index_to_node.get(&target_idx)?;
-                let path: Vec<K> = path_indices
-                    .iter()
-                    .filter_map(|&idx| self.index_to_node.get(&idx).cloned())
-                    .collect();
-                Some((target.clone(), path))
-            })
-            .collect()
-    }
-
-    /// Provides access to the underlying integer-indexed graph.
-    #[must_use]
-    pub fn as_graph(&self) -> &Graph {
-        &self.graph
-    }
-
-    /// Provides mutable access to the underlying graph.
-    ///
-    /// # Safety
-    ///
-    /// Modifying the underlying graph directly can invalidate the node mappings.
-    /// Use with caution.
-    pub fn as_graph_mut(&mut self) -> &mut Graph {
-        &mut self.graph
-    }
-}
-
-impl<K: std::hash::Hash + Eq + Ord + Clone> Default for MappedGraph<K> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::float_cmp)] // Tests use exact float literals for storage/retrieval validation
 mod tests {
@@ -1865,5 +1645,74 @@ mod tests {
 
         assert_eq!(attrs.get("a"), Some(&Attribute::Int(1)));
         assert_eq!(attrs.get("b"), Some(&Attribute::String("test".into())));
+    }
+
+    #[test]
+    fn test_remove_node_basic() {
+        let mut graph = Graph::new();
+        let _n0 = graph.add_node();
+        let n1 = graph.add_node();
+        let _n2 = graph.add_node();
+
+        assert_eq!(graph.node_count(), 3);
+
+        // Remove middle node
+        let removed = graph.remove_node(n1);
+        assert!(removed.is_some());
+        assert_eq!(graph.node_count(), 2);
+    }
+
+    #[test]
+    fn test_remove_node_with_attrs() {
+        let mut graph = Graph::new();
+        let n0 = graph.add_node();
+        graph
+            .node_attrs_mut(n0)
+            .unwrap()
+            .insert("name".to_string(), Attribute::String("first".into()));
+
+        let n1 = graph.add_node();
+        graph
+            .node_attrs_mut(n1)
+            .unwrap()
+            .insert("name".to_string(), Attribute::String("second".into()));
+
+        // Remove first node and verify attrs are returned
+        let removed = graph.remove_node(n0);
+        assert!(removed.is_some());
+        let attrs = removed.unwrap();
+        assert_eq!(attrs.get("name"), Some(&Attribute::String("first".into())));
+    }
+
+    #[test]
+    fn test_remove_node_invalid() {
+        let mut graph = Graph::new();
+        let _ = graph.add_node();
+
+        // Try to remove non-existent node
+        let removed = graph.remove_node(999);
+        assert!(removed.is_none());
+        assert_eq!(graph.node_count(), 1);
+    }
+
+    #[test]
+    fn test_remove_node_removes_edges() {
+        let mut graph = Graph::new();
+        let n0 = graph.add_node();
+        let n1 = graph.add_node();
+        let n2 = graph.add_node();
+
+        let _ = graph.add_edge(n0, n1).weight(1.0);
+        let _ = graph.add_edge(n1, n2).weight(2.0);
+        let _ = graph.add_edge(n0, n2).weight(3.0);
+
+        assert_eq!(graph.edge_count(), 3);
+
+        // Remove n1, which should remove edges (n0,n1) and (n1,n2)
+        graph.remove_node(n1);
+
+        // Only (n0, n2) should remain, but node indices may have changed
+        // After removing n1, petgraph moves the last node (n2) to index 1
+        assert_eq!(graph.edge_count(), 1);
     }
 }

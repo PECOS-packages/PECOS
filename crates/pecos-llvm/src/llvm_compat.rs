@@ -652,7 +652,7 @@ impl<'ctx> LLIRBuilder<'ctx> {
             .build_call(function, &arg_values, name)
             .map_err(|e| PecosError::Generic(format!("Failed to build call: {e}")))?;
 
-        Ok(call_site.try_as_basic_value().left().map(|v| match v {
+        Ok(call_site.try_as_basic_value().basic().map(|v| match v {
             BasicValueEnum::IntValue(i) => LLValue::Int(i),
             BasicValueEnum::PointerValue(p) => LLValue::Pointer(p),
             _ => panic!("Unsupported return value type"),

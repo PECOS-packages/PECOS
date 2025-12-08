@@ -60,6 +60,7 @@ use ndarray::{Array, Array1, ArrayBase, ArrayView2, Axis, Data, Dimension, Remov
 /// assert_eq!(diagonal, array![1.0, 4.0]);
 /// ```
 #[must_use]
+#[allow(clippy::needless_pass_by_value)] // ArrayView is a borrowed view, designed to be passed by value
 pub fn diag(matrix: ArrayView2<f64>) -> Array1<f64> {
     let (nrows, ncols) = matrix.dim();
     let diag_len = nrows.min(ncols);

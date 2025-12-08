@@ -58,8 +58,8 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 parking_lot = "0.12"
-criterion = "0.7"
-libloading = "0.8"
+criterion = "0.8"
+libloading = "0.9"
 libc = "0.2"
 bytemuck = {  version = "1", features = ["derive"] }
 bitflags = "2"
@@ -69,10 +69,10 @@ pest = "2"
 pest_derive = "2"
 tempfile = "3"
 assert_cmd = "2"
-wasmtime = { version = "38", default-features = false, features = ["cranelift", "runtime", "wat", "std"] }
+wasmtime = { version = "39", default-features = false, features = ["cranelift", "runtime", "wat", "std"] }
 wat = "1"
 cc = "1"
-ron = "0.11"
+ron = "0.12"
 tket = "0.16"
 tket-qsystem = { version = "0.22", default-features = false }
 cxx = "1.0.187"
@@ -85,7 +85,7 @@ sha2 = "0.10"
 dirs = "6"
 approx = "0.5"
 itertools = "0.14"
-inkwell = "0.6"
+inkwell = "0.7"
 bincode = "2"
 tracing = "0.1"
 cargo_metadata = "0.23"
@@ -110,13 +110,13 @@ num-complex = "0.4"
 num-traits = "0.2"
 num-bigint = { version = "0.4", features = ["serde"] }
 bitvec = { version = "1", features = ["serde"] }
-ndarray = "0.16"
+ndarray = "0.17"
 rand = "0.9"
 rand_chacha = "0.9"
 rand_xoshiro = "0.7"
 wyrand = { version = "0.3", features = ["rand_core"] }
-romu = "0.3"
-wide = "0.7"
+romu = "0.7"
+wide = "1"
 
 # Windows workaround: Disable zstd-sys legacy feature to avoid MSVC ICE
 # MSVC 14.43 has an internal compiler error (C1001) when compiling zstd_v06.c

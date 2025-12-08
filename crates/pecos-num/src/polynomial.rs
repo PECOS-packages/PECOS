@@ -87,6 +87,7 @@ impl std::error::Error for PolynomialError {}
 /// assert!((coeffs[0] - 2.0).abs() < 1e-10);  // slope
 /// assert!((coeffs[1] - 1.0).abs() < 1e-10);  // intercept
 /// ```
+#[allow(clippy::needless_pass_by_value)] // ArrayView is a borrowed view, designed to be passed by value
 pub fn polyfit(
     x: ArrayView1<f64>,
     y: ArrayView1<f64>,
@@ -176,6 +177,7 @@ pub fn polyfit(
 /// assert!((coeffs[1] - 1.0).abs() < 1e-10);  // intercept
 /// assert_eq!(cov.shape(), &[2, 2]);
 /// ```
+#[allow(clippy::needless_pass_by_value)] // ArrayView is a borrowed view, designed to be passed by value
 pub fn polyfit_with_cov(
     x: ArrayView1<f64>,
     y: ArrayView1<f64>,

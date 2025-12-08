@@ -196,6 +196,7 @@ pub struct CurveFitResult {
 /// let result = curve_fit(linear, xdata.view(), ydata.view(), p0.view(), None).unwrap();
 /// // result.params ≈ [2.0, 1.0] (for y = 2*x + 1)
 /// ```
+#[allow(clippy::needless_pass_by_value)] // ArrayView is a borrowed view, designed to be passed by value
 pub fn curve_fit<F>(
     func: F,
     xdata: ArrayView1<f64>,

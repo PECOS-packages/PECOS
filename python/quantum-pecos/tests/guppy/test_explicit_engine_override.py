@@ -28,6 +28,7 @@ def test_guppy_with_explicit_qis_override() -> None:
         sim(Guppy(bell_state))
         .quantum(state_vector())
         .qubits(2)
+        .seed(42)
         .run(100)
         .to_binary_dict()
     )
@@ -39,6 +40,7 @@ def test_guppy_with_explicit_qis_override() -> None:
         sim(Guppy(bell_state))
         .quantum(state_vector())
         .qubits(2)  # This is the correct way to set qubits
+        .seed(43)  # Different seed to verify independence
         .run(100)
         .to_binary_dict()
     )
@@ -146,6 +148,7 @@ def test_engine_override_with_noise() -> None:
         .quantum(state_vector())
         .qubits(1)  # This is the correct way to set qubits
         .noise(noise)
+        .seed(42)
         .run(1000)
         .to_binary_dict()
     )

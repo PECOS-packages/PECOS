@@ -510,7 +510,10 @@ class TestLinearTypeSystem:
         assert all(r for r in decoded_x)
 
         # Test H gate - should produce a mix of 0s and 1s
-        results_h = sim(Guppy(test_with_h)).qubits(10).quantum(state_vector()).run(100)
+        # Use seed for reproducibility
+        results_h = (
+            sim(Guppy(test_with_h)).qubits(10).quantum(state_vector()).seed(42).run(100)
+        )
         decoded_h = get_decoded_results(results_h, n_bits=1)
         # H gate should produce roughly 50/50 distribution of 0s and 1s
         zeros = sum(1 for r in decoded_h if not r)
@@ -655,7 +658,10 @@ class TestQuantumClassicalHybrid:
 
             return parity
 
-        results = sim(Guppy(parity_test)).qubits(10).quantum(state_vector()).run(10)
+        # Use seed for reproducibility and 100 shots for statistical robustness
+        results = (
+            sim(Guppy(parity_test)).qubits(10).quantum(state_vector()).seed(42).run(100)
+        )
 
         # H gates now produce proper randomness, so parity should vary
         decoded_results = get_decoded_results(results, n_bits=1)

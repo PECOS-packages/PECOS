@@ -30,8 +30,13 @@ def test_bell_state_preparation() -> None:
         return (m1, m2)
 
     # Run simulation with state_vector backend
+    # Use seed for reproducibility
     shot_vec = (
-        sim(Guppy(prepare_bell_state)).qubits(2).quantum(state_vector()).run(1000)
+        sim(Guppy(prepare_bell_state))
+        .qubits(2)
+        .quantum(state_vector())
+        .seed(42)
+        .run(1000)
     )
     assert shot_vec is not None, "Should get results"
     results = shot_vec.to_dict()

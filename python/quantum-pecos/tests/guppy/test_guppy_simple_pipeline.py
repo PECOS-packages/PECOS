@@ -42,7 +42,9 @@ def test_quantum_function() -> None:
             h(q)
             return measure(q)
 
-        result = sim(Guppy(quantum_coin)).qubits(1).quantum(state_vector()).run(10)
+        result = (
+            sim(Guppy(quantum_coin)).qubits(1).quantum(state_vector()).seed(42).run(10)
+        )
 
         # Should have measurement results
         assert "measurement_0" in result

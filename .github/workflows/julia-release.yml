@@ -80,9 +80,9 @@ jobs:
           - os: ubuntu-latest
             architecture: aarch64
             runner: ubuntu-latest
-          - os: macos-13
+          - os: macos-15-intel
             architecture: x86_64
-            runner: macos-13  # Intel Mac for x86_64
+            runner: macos-15-intel  # Intel Mac for x86_64
           - os: macos-latest
             architecture: aarch64
             runner: macos-latest  # ARM64 Mac
@@ -246,8 +246,8 @@ jobs:
           - runner: windows-latest
             os: windows-latest
             architecture: x86_64
-          - runner: macos-13
-            os: macos-13
+          - runner: macos-15-intel
+            os: macos-15-intel
             architecture: x86_64
           - runner: macos-latest
             os: macos-latest

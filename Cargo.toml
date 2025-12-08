@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "python/pecos-rslib",
     "julia/pecos-julia-ffi",
+    "go/pecos-go-ffi",
     "crates/pecos*",
     "crates/benchmarks",
 ]

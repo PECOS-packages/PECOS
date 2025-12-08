@@ -77,6 +77,13 @@ build: installreqs ## Compile and install for development
 	else \
 		echo "Julia not detected, skipping Julia build"; \
 	fi
+	@if command -v go >/dev/null 2>&1; then \
+		echo "Go detected, building Go FFI library..."; \
+		cd go/pecos-go-ffi && cargo build; \
+		echo "Go FFI library built successfully"; \
+	else \
+		echo "Go not detected, skipping Go build"; \
+	fi
 
 .PHONY: build-basic
 build-basic: installreqs ## Compile and install for development but do not include install extras
@@ -93,6 +100,13 @@ build-release: installreqs ## Build a faster version of binaries
 		echo "Julia FFI library built successfully"; \
 	else \
 		echo "Julia not detected, skipping Julia build"; \
+	fi
+	@if command -v go >/dev/null 2>&1; then \
+		echo "Go detected, building Go FFI library (release)..."; \
+		cd go/pecos-go-ffi && cargo build --release; \
+		echo "Go FFI library built successfully"; \
+	else \
+		echo "Go not detected, skipping Go build"; \
 	fi
 
 .PHONY: build-native
@@ -111,6 +125,13 @@ build-cuda: installreqs ## Compile and install for development with CUDA support
 		echo "Julia FFI library built successfully"; \
 	else \
 		echo "Julia not detected, skipping Julia build"; \
+	fi
+	@if command -v go >/dev/null 2>&1; then \
+		echo "Go detected, building Go FFI library..."; \
+		cd go/pecos-go-ffi && cargo build; \
+		echo "Go FFI library built successfully"; \
+	else \
+		echo "Go not detected, skipping Go build"; \
 	fi
 
 # Documentation
@@ -196,6 +217,12 @@ lint: fmt clippy  ## Run all quality checks / linting / reformatting (check only
 	else \
 		echo "Julia not detected, skipping Julia linting"; \
 	fi
+	@if command -v go >/dev/null 2>&1; then \
+		echo "Go detected, running Go formatting check and linting..."; \
+		$(MAKE) go-fmt-check go-lint; \
+	else \
+		echo "Go not detected, skipping Go linting"; \
+	fi
 
 .PHONY: normalize-line-endings
 normalize-line-endings:  ## Normalize line endings according to .gitattributes
@@ -232,6 +259,12 @@ lint-fix:  ## Fix all auto-fixable linting issues (Rust, Python, Julia)
 		echo "Note: Some Julia linting issues from Aqua.jl may require manual fixes."; \
 	else \
 		echo "Julia not detected, skipping Julia formatting"; \
+	fi
+	@if command -v go >/dev/null 2>&1; then \
+		echo "Fixing Go formatting..."; \
+		$(MAKE) go-fmt; \
+	else \
+		echo "Go not detected, skipping Go formatting"; \
 	fi
 	@echo ""
 	@echo "Linting fixes applied! Run 'make lint' to check for remaining issues."
@@ -364,9 +397,15 @@ test: rstest-all pytest-all ## Run all tests. ASSUMES: previous build command
 	else \
 		echo "Julia not detected, skipping Julia tests"; \
 	fi
+	@if command -v go >/dev/null 2>&1; then \
+		echo "Go detected, running Go tests..."; \
+		$(MAKE) go-test; \
+	else \
+		echo "Go not detected, skipping Go tests"; \
+	fi
 
 .PHONY: test-all
-test-all: rstest-all pytest-all ## Run all tests including Julia (warns if Julia not installed)
+test-all: rstest-all pytest-all ## Run all tests including Julia and Go (warns if not installed)
 	@if command -v julia >/dev/null 2>&1; then \
 		echo "Julia detected, running Julia tests..."; \
 		$(MAKE) julia-test; \
@@ -374,6 +413,15 @@ test-all: rstest-all pytest-all ## Run all tests including Julia (warns if Julia
 		echo ""; \
 		echo "WARNING: Julia is not installed. Skipping Julia tests."; \
 		echo "   To run Julia tests, please install Julia from https://julialang.org/downloads/"; \
+		echo ""; \
+	fi
+	@if command -v go >/dev/null 2>&1; then \
+		echo "Go detected, running Go tests..."; \
+		$(MAKE) go-test; \
+	else \
+		echo ""; \
+		echo "WARNING: Go is not installed. Skipping Go tests."; \
+		echo "   To run Go tests, please install Go from https://go.dev/dl/"; \
 		echo ""; \
 	fi
 
@@ -465,6 +513,92 @@ julia-lint: julia-build ## Run Aqua.jl quality checks on Julia code
 		cd julia/PECOS.jl && julia --project=. test/aqua_tests.jl; \
 	else \
 		echo "Julia not found. Please install Julia to run linting."; \
+		exit 1; \
+	fi
+
+# Go bindings
+# -----------
+
+.PHONY: go-build
+go-build: ## Build Go FFI library
+	@echo "Building Go FFI library..."
+	cd go/pecos-go-ffi && cargo build --release
+	@echo "Go library built at: target/release/libpecos_go.{so,dylib,dll}"
+
+.PHONY: go-build-debug
+go-build-debug: ## Build Go FFI library in debug mode
+	@echo "Building Go FFI library (debug)..."
+	cd go/pecos-go-ffi && cargo build
+	@echo "Go library built at: target/debug/libpecos_go.{so,dylib,dll}"
+
+.PHONY: go-test
+go-test: go-build ## Run Go tests (requires Go installed)
+	@echo "Running Go tests..."
+	@if command -v go >/dev/null 2>&1; then \
+		cd go/pecos && LD_LIBRARY_PATH=$$LD_LIBRARY_PATH:$(CURDIR)/target/release go test -v; \
+	else \
+		echo "Go not found. Please install Go to run tests."; \
+		exit 1; \
+	fi
+
+.PHONY: go-clean
+go-clean: ## Clean Go build artifacts
+	@echo "Cleaning Go artifacts..."
+	@rm -rf go/pecos/go.sum
+	@if command -v go >/dev/null 2>&1; then \
+		cd go/pecos && go clean -cache 2>/dev/null || true; \
+	fi
+
+.PHONY: go-info
+go-info: ## Show Go package information
+	@echo "Go Package Information:"
+	@echo "======================="
+	@echo "Package name: github.com/PECOS-packages/PECOS/go/pecos"
+	@echo "Location: go/pecos"
+	@echo "FFI library: go/pecos-go-ffi"
+	@echo ""
+	@echo "To build and test:"
+	@echo "  1. Build FFI library: make go-build"
+	@echo "  2. Run tests: make go-test"
+	@echo ""
+	@echo "To use in your Go project:"
+	@echo "  1. Set LD_LIBRARY_PATH to include target/release"
+	@echo "  2. Import: github.com/PECOS-packages/PECOS/go/pecos"
+
+.PHONY: go-fmt
+go-fmt: ## Format Go code using gofmt
+	@echo "Formatting Go code..."
+	@if command -v go >/dev/null 2>&1; then \
+		gofmt -w go/pecos/*.go; \
+	else \
+		echo "Go not found. Please install Go to format code."; \
+		exit 1; \
+	fi
+
+.PHONY: go-fmt-check
+go-fmt-check: ## Check Go code formatting without modifying files
+	@echo "Checking Go code formatting..."
+	@if command -v go >/dev/null 2>&1; then \
+		if [ -n "$$(gofmt -l go/pecos/*.go)" ]; then \
+			echo "Formatting issues found in:"; \
+			gofmt -l go/pecos/*.go; \
+			echo "Run 'make go-fmt' to fix."; \
+			exit 1; \
+		else \
+			echo "All Go code is properly formatted."; \
+		fi \
+	else \
+		echo "Go not found. Please install Go to check formatting."; \
+		exit 1; \
+	fi
+
+.PHONY: go-lint
+go-lint: ## Run Go linting with go vet
+	@echo "Running Go linting..."
+	@if command -v go >/dev/null 2>&1; then \
+		cd go/pecos && go vet ./...; \
+	else \
+		echo "Go not found. Please install Go to run linting."; \
 		exit 1; \
 	fi
 
@@ -591,11 +725,11 @@ help:  ## Show the help menu
 	@echo ""
 	@grep -E '^[a-z.A-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 	@echo ""
-	@echo "Note: Julia support is automatically detected."
-	@echo "  - 'make build' will also build Julia FFI if Julia is installed"
-	@echo "  - 'make test' will also run Julia tests if Julia is installed"
+	@echo "Note: Julia and Go support is automatically detected."
+	@echo "  - 'make build' will also build Julia/Go FFI if they are installed"
+	@echo "  - 'make test' will also run Julia/Go tests if they are installed"
 	@echo "  - 'make lint' checks code quality; 'make lint-fix' fixes issues"
-	@echo "  - Use 'make julia-info' for more Julia-specific information"
+	@echo "  - Use 'make julia-info' or 'make go-info' for more information"
 	@echo ""
 	@echo "CUDA GPU Simulator Support:"
 	@echo "  - 'make build-cuda' builds with CUDA GPU simulator support"

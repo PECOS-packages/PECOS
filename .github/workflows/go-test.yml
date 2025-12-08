@@ -1,0 +1,123 @@
+# Copyright 2025 The PECOS Developers
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
+
+name: Go test
+
+env:
+  TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
+  RUSTFLAGS: -C debuginfo=0
+  RUST_BACKTRACE: 1
+
+on:
+  push:
+    branches: [ "master", "development", "dev" ]
+  pull_request:
+    branches: [ "master", "development", "dev" ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  go-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+        go-version: ["1.21", "1.22"]  # Test on recent stable versions
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go ${{ matrix.go-version }}
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+
+    - name: Set up Rust
+      run: rustup show
+
+    - name: Cache Rust
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: go/pecos-go-ffi
+
+    - name: Set up Visual Studio environment on Windows
+      if: runner.os == 'Windows'
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Build Rust FFI library (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        cd go/pecos-go-ffi
+        cargo build --release
+
+    - name: Build Rust FFI library (Unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        # On macOS, prevent Homebrew library paths from being used during linking
+        if [[ "${{ runner.os }}" == "macOS" ]]; then
+          # CRITICAL: Prevent Homebrew library paths from being used during linking
+          # This fixes the "@rpath/libunwind.1.dylib" runtime error on macOS
+          # Reference: https://github.com/rust-lang/rust/issues/135372
+          unset LIBRARY_PATH
+          unset LD_LIBRARY_PATH
+          unset DYLD_LIBRARY_PATH
+          unset DYLD_FALLBACK_LIBRARY_PATH
+          unset PKG_CONFIG_PATH
+          export LIBRARY_PATH=/usr/lib
+
+          echo "RUSTFLAGS: $RUSTFLAGS"
+        fi
+
+        cd go/pecos-go-ffi
+        cargo build --release
+
+    - name: Run Go tests (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        cd go/pecos
+        LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${{ github.workspace }}/target/release \
+        DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH:${{ github.workspace }}/target/release \
+        go test -v
+
+    - name: Run Go tests (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $env:PATH = "${{ github.workspace }}\target\release;$env:PATH"
+        cd go/pecos
+        go test -v
+
+    - name: Check Go formatting
+      run: |
+        cd go/pecos
+        if [ -n "$(gofmt -l .)" ]; then
+          echo "Formatting issues found:"
+          gofmt -l .
+          exit 1
+        fi
+        echo "All Go code is properly formatted."
+
+    - name: Run Go vet
+      run: |
+        cd go/pecos
+        go vet ./...

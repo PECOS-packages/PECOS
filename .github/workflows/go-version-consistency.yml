@@ -1,0 +1,91 @@
+# Copyright 2025 The PECOS Developers
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
+
+name: Go version consistency
+
+on:
+  push:
+    branches: [ "master", "development", "dev" ]
+  pull_request:
+    branches: [ "master", "development", "dev" ]
+  workflow_dispatch:
+
+jobs:
+  check-go-versions:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check Go package consistency
+      run: |
+        echo "Checking Go package consistency..."
+
+        errors=0
+
+        # Check go.mod exists
+        echo "=== Checking go.mod ==="
+        if [ ! -f "go/pecos/go.mod" ]; then
+          echo "ERROR: go/pecos/go.mod not found"
+          errors=$((errors + 1))
+        else
+          echo "go.mod found"
+          cat go/pecos/go.mod
+        fi
+
+        # Check Cargo.toml for FFI
+        echo ""
+        echo "=== Checking pecos-go-ffi Cargo.toml ==="
+        if [ ! -f "go/pecos-go-ffi/Cargo.toml" ]; then
+          echo "ERROR: go/pecos-go-ffi/Cargo.toml not found"
+          errors=$((errors + 1))
+        else
+          echo "Cargo.toml found"
+
+          # Check library name
+          lib_name=$(grep -E '^\[lib\]' -A5 go/pecos-go-ffi/Cargo.toml | grep 'name' | sed 's/.*name = "\([^"]*\)".*/\1/')
+          echo "Library name: $lib_name"
+
+          if [ "$lib_name" != "pecos_go" ]; then
+            echo "ERROR: Library name should be 'pecos_go', got '$lib_name'"
+            errors=$((errors + 1))
+          fi
+
+          # Check crate-type includes cdylib
+          crate_type=$(grep -E '^\[lib\]' -A5 go/pecos-go-ffi/Cargo.toml | grep 'crate-type')
+          echo "Crate type: $crate_type"
+
+          if [[ "$crate_type" != *"cdylib"* ]]; then
+            echo "ERROR: crate-type should include 'cdylib'"
+            errors=$((errors + 1))
+          fi
+        fi
+
+        # Check module path in go.mod matches expected
+        echo ""
+        echo "=== Checking module path ==="
+        module_path=$(grep '^module' go/pecos/go.mod | sed 's/module //')
+        echo "Module path: $module_path"
+
+        expected_path="github.com/PECOS-packages/PECOS/go/pecos"
+        if [ "$module_path" != "$expected_path" ]; then
+          echo "WARNING: Module path '$module_path' doesn't match expected '$expected_path'"
+        fi
+
+        # Final result
+        echo ""
+        echo "=== Summary ==="
+
+        if [ $errors -eq 0 ]; then
+          echo "All Go package checks passed!"
+        else
+          echo "Found $errors issues!"
+          exit 1
+        fi

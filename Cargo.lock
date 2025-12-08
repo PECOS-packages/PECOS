@@ -2808,6 +2808,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-go-ffi"
+version = "0.1.0-dev0"
+dependencies = [
+ "pecos",
+]
+
+[[package]]
 name = "pecos-hugr-qis"
 version = "0.1.1"
 dependencies = [

@@ -6,6 +6,69 @@
 evaluation of quantum error-correction protocols. It also offers tools for the study and evaluation of hybrid
 quantum/classical compute execution models.
 
+## Quick Start
+
+=== "Python"
+
+    ```bash
+    pip install quantum-pecos
+    ```
+
+    ```python
+    from pecos import sim, Qasm
+
+    # Define a Bell state circuit
+    circuit = Qasm(
+        """
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    """
+    )
+
+    # Run 10 shots
+    results = sim(circuit).seed(42).run(10)
+    print(results.to_dict())  # {'c': [0, 0, 0, 3, 3, ...]}
+    # 0 = both |0⟩, 3 = both |1⟩ (always correlated!)
+    ```
+
+=== "Rust"
+
+    ```toml
+    # Cargo.toml
+    [dependencies]
+    pecos = "0.1"
+    ```
+
+    ```rust
+    use pecos::prelude::*;
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        // Define a Bell state circuit
+        let circuit = Qasm::from_string(r#"
+            OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[2];
+            creg c[2];
+            h q[0];
+            cx q[0], q[1];
+            measure q -> c;
+        "#);
+
+        // Run 10 shots
+        let results = sim(circuit).seed(42).run(10)?;
+        println!("{:?}", results);
+        // 0 = both |0⟩, 3 = both |1⟩ (always correlated!)
+        Ok(())
+    }
+    ```
+
+For more examples and detailed usage, see the [User Guide](user-guide/getting-started.md).
+
 ## Features
 
 - **Quantum Error-Correction Tools**: Advanced tools for studying quantum error-correction protocols and error models.

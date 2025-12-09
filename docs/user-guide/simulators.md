@@ -57,6 +57,7 @@ The default simulator, optimized for QEC workloads with sparse stabilizer tablea
 
     # Or explicitly select it
     from pecos.simulators import SparseSim
+
     results = sim(Qasm(circuit)).quantum(SparseSim).run(1000)
     ```
 
@@ -90,6 +91,7 @@ Pure Python reference implementation—useful for learning and debugging but slo
 
 ```python
 from pecos.simulators import SparseSimPy
+
 results = sim(Qasm(circuit)).quantum(SparseSimPy).run(100)
 ```
 
@@ -105,6 +107,7 @@ Pure Rust state vector implementation.
 
     ```python
     from pecos.simulators import StateVec
+
     results = sim(Qasm(circuit)).quantum(StateVec).run(100)
     ```
 
@@ -130,6 +133,7 @@ High-performance state vector simulator via the Qulacs C++ library.
 
 ```python
 from pecos.simulators import Qulacs
+
 results = sim(Qasm(circuit)).quantum(Qulacs).run(100)
 ```
 
@@ -145,6 +149,7 @@ State vector simulator powered by the QuEST library.
 
 ```python
 from pecos.simulators import QuestStateVec
+
 results = sim(Qasm(circuit)).quantum(QuestStateVec).run(100)
 ```
 
@@ -163,6 +168,7 @@ NVIDIA cuQuantum-powered state vector simulator.
 
 ```python
 from pecos.simulators import CuStateVec
+
 results = sim(Qasm(circuit)).quantum(CuStateVec).run(100)
 ```
 
@@ -205,6 +211,7 @@ Density matrix simulators represent mixed quantum states, enabling simulation of
 
 ```python
 from pecos.simulators import QuestDensityMatrix
+
 results = sim(Qasm(circuit)).quantum(QuestDensityMatrix).run(100)
 ```
 
@@ -306,7 +313,8 @@ The `sim()` API lets you switch simulators easily:
     from pecos import sim, Qasm
     from pecos.simulators import SparseSim, StateVec, Qulacs
 
-    circuit = Qasm("""
+    circuit = Qasm(
+        """
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[2];
@@ -314,7 +322,8 @@ The `sim()` API lets you switch simulators easily:
         h q[0];
         cx q[0], q[1];
         measure q -> c;
-    """)
+    """
+    )
 
     # Default (SparseSim for Clifford circuits)
     results = sim(circuit).run(1000)

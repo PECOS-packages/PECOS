@@ -454,26 +454,27 @@ fn test_measurement_determinism_with_seed() {
 }
 
 #[test]
-fn test_measurement_randomness_without_seed() {
-    // Test that measurements are random (different) when not using seeds
-    // Note: This test has a tiny probability of false failure if random outcomes happen to match
-    let num_trials = 10;
+fn test_measurement_randomness_with_different_seeds() {
+    // Test that measurements show randomness when using different seeds
+    // This is deterministic because we control the seeds
+    let num_trials = 30;
 
     let mut all_results = Vec::new();
 
-    for _ in 0..num_trials {
-        let mut sim = QuestStateVec::new(1);
+    for i in 0_u64..num_trials {
+        // Use different seeds for each trial to ensure different random streams
+        let mut sim: QuestStateVec = QuestStateVec::with_seed(1, 12345 + i);
         sim.h(0); // Create superposition
         let outcome = sim.mz(0);
         all_results.push(outcome.outcome);
     }
 
-    // With 10 measurements of a superposition, the probability of all being the same is 2*(1/2)^10 ≈ 0.2%
-    // So we expect at least some variation
+    // With 30 different seeds measuring a superposition, we expect variation
+    // This test is deterministic given the seeds
     let all_same = all_results.iter().all(|&x| x == all_results[0]);
     assert!(
         !all_same,
-        "Unseeded measurements should show randomness (this test has ~0.2% chance of false failure)"
+        "Measurements with different seeds should show variation in outcomes"
     );
 }
 

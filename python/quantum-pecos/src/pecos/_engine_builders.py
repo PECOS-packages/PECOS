@@ -17,12 +17,13 @@ Python program wrappers from pecos.programs.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING
 
 import pecos_rslib
 
 if TYPE_CHECKING:
     import pecos_rslib as prs
+    from typing_extensions import Self
 
     from pecos.programs import Hugr, PhirJson, Qasm, Qis
     from pecos.typing import CompiledPhirJson, CompiledQasm, CompiledQis

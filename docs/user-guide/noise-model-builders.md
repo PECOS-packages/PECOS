@@ -7,7 +7,8 @@ PECOS provides builder classes for constructing quantum noise models with a flue
 The simplest way to add noise to your QASM simulations is using the `GeneralNoiseModelBuilder`:
 
 ```python
-from pecos.rslib import qasm_sim, GeneralNoiseModelBuilder
+from pecos import sim, Qasm
+from pecos_rslib import GeneralNoiseModelBuilder
 
 # Create noise model with builder
 noise = (
@@ -17,8 +18,8 @@ noise = (
     .with_p2_probability(0.01)
 )  # Two-qubit gate error
 
-# Use directly with qasm_sim
-results = qasm_sim(qasm).noise(noise).run(1000)
+# Use with sim()
+results = sim(Qasm(qasm)).noise(noise).run(1000)
 ```
 
 ## GeneralNoiseModelBuilder
@@ -209,7 +210,8 @@ noise = (
 Here's a comprehensive example showing various builder features:
 
 ```python
-from pecos.rslib import qasm_sim, GeneralNoiseModelBuilder
+from pecos import sim, Qasm
+from pecos_rslib import GeneralNoiseModelBuilder
 from collections import Counter
 
 # QASM circuit: 3-qubit GHZ state
@@ -252,10 +254,10 @@ noise = (
 )
 
 # Run simulation
-results = qasm_sim(qasm).noise(noise).run(1000)
+results = sim(Qasm(qasm)).noise(noise).run(1000)
 
 # Analyze results
-counts = Counter(results["c"])
+counts = Counter(results.to_dict()["c"])
 print("GHZ state measurement results:")
 for state, count in counts.most_common(5):
     binary = format(state, "03b")
@@ -281,7 +283,7 @@ for state, count in counts.most_common(5):
 While builders offer maximum flexibility, PECOS also provides simpler predefined models:
 
 ```python
-from pecos.rslib import DepolarizingNoise, GeneralNoiseModelBuilder
+from pecos_rslib import DepolarizingNoise, GeneralNoiseModelBuilder
 
 # Simple depolarizing (all errors equal)
 simple = DepolarizingNoise(p=0.001)

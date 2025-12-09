@@ -461,9 +461,9 @@ fn test_measurement_randomness_with_different_seeds() {
 
     let mut all_results = Vec::new();
 
-    for i in 0..num_trials {
+    for i in 0_u64..num_trials {
         // Use different seeds for each trial to ensure different random streams
-        let mut sim: QuestStateVec = QuestStateVec::with_seed(1, 12345 + i as u64);
+        let mut sim: QuestStateVec = QuestStateVec::with_seed(1, 12345 + i);
         sim.h(0); // Create superposition
         let outcome = sim.mz(0);
         all_results.push(outcome.outcome);

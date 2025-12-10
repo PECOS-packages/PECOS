@@ -22,7 +22,7 @@ pecos-engines.workspace = true
 pecos-programs.workspace = true
 pecos-qasm.workspace = true
 pecos-phir-json.workspace = true
-pecos-qis-ffi-types.workspace = true
+#pecos-qis-ffi-types.workspace = true
 pecos-qis-core.workspace = true
 pecos-qis-selene = { workspace = true, optional = true }
 pecos-llvm = { workspace = true, optional = true }
@@ -42,26 +42,36 @@ pecos-qulacs = { workspace = true, optional = true }
 # WebAssembly foreign object support (optional)
 pecos-wasm = { workspace = true, optional = true }
 
-[features]
-default = ["qasm", "phir", "wasm", "all-simulators"]
-qasm = []
-llvm = ["pecos-qis-core/llvm", "pecos-llvm", "pecos-hugr-qis", "pecos-hugr-qis?/llvm"]
-phir = []
-selene = ["pecos-qis-selene"]
+# Decoder backends (optional)
+pecos-decoders = { workspace = true, optional = true }
 
-# WebAssembly support
+[features]
+default = ["qasm", "phir", "wasm"]
+
+# Program formats
+qasm = []
+phir = []
+
+# Heavy external dependencies
+llvm = ["pecos-qis-core/llvm", "pecos-llvm", "pecos-hugr-qis", "pecos-hugr-qis?/llvm"]
+selene = ["pecos-qis-selene"]
 wasm = ["pecos-wasm", "pecos-wasm/wasm"]
 
-# Quantum simulator backends
+# Quantum simulator backends (C++ wrappers)
 cppsparsesim = ["pecos-cppsparsesim"]
 quest = ["pecos-quest"]
 qulacs = ["pecos-qulacs"]
+all-simulators = ["cppsparsesim", "quest", "qulacs"]
 
-# Quest-specific features
+# GPU support
 gpu = ["quest", "pecos-quest/gpu"]
 
-# All simulator backends
-all-simulators = ["cppsparsesim", "quest", "qulacs"]
+# Decoder backends
+ldpc = ["pecos-decoders", "pecos-decoders/ldpc"]
+all-decoders = ["ldpc"]
+
+# Everything
+full = ["all-simulators", "all-decoders", "llvm", "selene", "wasm"]
 
 [dev-dependencies]
 tempfile.workspace = true

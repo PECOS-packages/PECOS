@@ -137,3 +137,11 @@ pub use pecos_qulacs::QulacsStateVec;
 
 #[cfg(feature = "wasm")]
 pub use pecos_wasm::{ForeignObject, WasmForeignObject};
+
+// ============================================================================
+// Decoder support
+// ============================================================================
+
+// Re-export core decoder traits (always available)
+#[cfg(any(feature = "ldpc", feature = "all-decoders"))]
+pub use pecos_decoders::{BatchDecoder, CssDecoder, Decoder, DecoderError, SoftDecoder};

@@ -42,9 +42,9 @@ For developers who want to contribute or modify PECOS:
 
 6. Build the project in editable mode
     ```sh
-   make build
+   make build-dev
    ```
-   See other build options in the `Makefile`.
+   Other build options: `make build-release` (optimized), `make build-native` (optimized for your CPU).
 
 7. Run all Python and Rust tests:
    ```sh

@@ -66,8 +66,8 @@ else
     endif
 endif
 
-.PHONY: build
-build: installreqs ## Compile and install for development
+.PHONY: build-dev
+build-dev: installreqs ## Development build (fast compile, unoptimized, with all extras)
 	@$(SETUP_LLVM); $(UNSET_CONDA) cd python/pecos-rslib/ && uv run maturin develop --uv
 	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all]"
 	@if command -v julia >/dev/null 2>&1; then \
@@ -85,13 +85,8 @@ build: installreqs ## Compile and install for development
 		echo "Go not detected, skipping Go build"; \
 	fi
 
-.PHONY: build-basic
-build-basic: installreqs ## Compile and install for development but do not include install extras
-	@$(SETUP_LLVM); $(UNSET_CONDA) cd python/pecos-rslib/ && uv run maturin develop --uv
-	@$(UNSET_CONDA) uv pip install -e ./python/quantum-pecos
-
 .PHONY: build-release
-build-release: installreqs ## Build a faster version of binaries
+build-release: installreqs ## Release build (optimized, portable)
 	@$(SETUP_LLVM); $(UNSET_CONDA) cd python/pecos-rslib/ && uv run maturin develop --uv --release
 	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all]"
 	@if command -v julia >/dev/null 2>&1; then \
@@ -110,8 +105,8 @@ build-release: installreqs ## Build a faster version of binaries
 	fi
 
 .PHONY: build-native
-build-native: installreqs ## Build a faster version of binaries with native CPU optimization
-	@$(UNSET_CONDA) cd python/pecos-rslib/ && RUSTFLAGS='-C target-cpu=native' \
+build-native: installreqs ## Release build with native CPU optimizations (fastest, not portable)
+	@$(SETUP_LLVM); $(UNSET_CONDA) cd python/pecos-rslib/ && RUSTFLAGS='-C target-cpu=native' \
 	uv run maturin develop --uv --release
 	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all]"
 
@@ -705,16 +700,16 @@ pip-install-uv:  ## Install uv using pip and create a venv. (Recommended to inst
 	uv sync
 
 .PHONY: dev
-dev: clean build test  ## Run the typical sequence of commands to check everything is running correctly
+dev: clean build-dev test  ## Run the typical sequence of commands to check everything is running correctly
 
 .PHONY: devl
 devl: dev lint  ## Run the commands to make sure everything runs + lint
 
 .PHONY: devc
-devc: clean build-cuda test  ## Run dev sequence with CUDA support (requires CUDA Toolkit 13)
+devc: clean build-cuda test  ## Run dev sequence with CUDA support (requires CUDA Toolkit)
 
 .PHONY: devcl
-devcl: devc lint  ## Run dev sequence with CUDA support + lint (requires CUDA Toolkit 13)
+devcl: devc lint  ## Run dev sequence with CUDA support + lint (requires CUDA Toolkit)
 
 # Help
 # ----
@@ -726,7 +721,7 @@ help:  ## Show the help menu
 	@grep -E '^[a-z.A-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Note: Julia and Go support is automatically detected."
-	@echo "  - 'make build' will also build Julia/Go FFI if they are installed"
+	@echo "  - 'make build-dev' will also build Julia/Go FFI if they are installed"
 	@echo "  - 'make test' will also run Julia/Go tests if they are installed"
 	@echo "  - 'make lint' checks code quality; 'make lint-fix' fixes issues"
 	@echo "  - Use 'make julia-info' or 'make go-info' for more information"

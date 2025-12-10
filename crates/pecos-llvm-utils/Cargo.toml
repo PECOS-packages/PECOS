@@ -19,7 +19,6 @@ path = "src/bin/pecos-llvm.rs"
 clap.workspace = true
 reqwest.workspace = true
 tar.workspace = true
-flate2.workspace = true
 dirs.workspace = true
 xz2.workspace = true
 sevenz-rust.workspace = true

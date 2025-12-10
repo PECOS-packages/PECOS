@@ -8,35 +8,6 @@ members = [
     "crates/benchmarks",
 ]
 
-# By default, exclude decoder crates from workspace operations to avoid heavy C++ dependencies
-default-members = [
-    "crates/pecos-core",
-    "crates/pecos-num",
-    "crates/pecos-engines",
-    "crates/pecos-qsim",
-    "crates/pecos-qasm",
-    "crates/pecos-phir",
-    "crates/pecos-qec",
-    "crates/pecos-rng",
-    "crates/pecos",
-    "crates/pecos-cli",
-    "crates/pecos-quest",
-    "python/pecos-rslib",
-    "crates/benchmarks",
-]
-
-# The decoder crates are external and have heavy C++ dependencies.
-# To work with decoders:
-#
-# Build specific decoders:
-#   cargo build --package pecos-decoders --features "ldpc"
-#
-# Build all decoders:
-#   cargo build --package pecos-decoders --all-features
-#
-# Build everything including decoders:
-#   cargo build --workspace
-
 [workspace.package]
 version = "0.1.1"
 edition = "2024"

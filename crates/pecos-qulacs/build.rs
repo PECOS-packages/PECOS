@@ -3,6 +3,7 @@ use pecos_build_utils::{
     boost_download_info, download_cached, eigen_download_info, extract_archive,
     qulacs_download_info,
 };
+use pecos_llvm_utils::find_tool;
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -183,9 +184,40 @@ fn configure_build(
     build.include("src");
     build.include(out_dir);
 
-    // Set compiler flags
-    if is_windows {
-        // Windows-specific settings
+    // Try to use clang/clang++ from PECOS-managed LLVM installation for consistent builds.
+    // - macOS: Use PECOS clang (clang is the native toolchain, works great)
+    // - Windows: Use PECOS clang-cl as fallback if MSVC isn't available (helps users
+    //   who don't have Visual Studio installed)
+    // - Linux: Use system GCC (PECOS clang can't find system GCC headers for libstdc++)
+    // Only use if CXX/CC env vars are not already set (allow user override).
+    let using_pecos_clang = if env::var("CXX").is_err() && env::var("CC").is_err() {
+        if is_windows {
+            // On Windows, try clang-cl from PECOS LLVM
+            if let Some(clang_cl_path) = find_tool("clang-cl") {
+                build.compiler(&clang_cl_path);
+                true
+            } else {
+                false
+            }
+        } else if target.contains("darwin") {
+            // On macOS, use clang++
+            if let Some(clang_path) = find_tool("clang++") {
+                build.compiler(&clang_path);
+                true
+            } else {
+                false
+            }
+        } else {
+            // On Linux, use system compiler
+            false
+        }
+    } else {
+        false
+    };
+
+    // Set compiler flags based on platform and compiler
+    if is_windows && !using_pecos_clang {
+        // MSVC-specific settings
         build.std("c++14");
         // Define Boost exception handling for Windows
         build.define("BOOST_NO_EXCEPTIONS", None);
@@ -205,19 +237,41 @@ fn configure_build(
 
         // Use standard optimization level - /bigobj should prevent compiler crashes
         build.opt_level(2); // Maximize speed optimization (/O2)
+    } else if is_windows && using_pecos_clang {
+        // clang-cl on Windows (MSVC-compatible clang)
+        build.std("c++14");
+        build.define("BOOST_NO_EXCEPTIONS", None);
+        build.define("_USE_MATH_DEFINES", None);
+        build.define("_WINDOWS", None);
+        build.define("NOMINMAX", None);
+
+        // clang-cl uses MSVC-style flags
+        build.flag("/bigobj");
+        build.flag("/EHsc");
+
+        // Optimization - clang-cl supports both MSVC and clang flags
+        build.opt_level(2);
     } else {
         build.flag_if_supported("-std=c++14");
-        build.flag_if_supported("-O3");
 
-        // On macOS with ARM (Apple Silicon), -ffast-math causes issues with Eigen's NEON code
-        // which uses infinity constants. Use a more targeted optimization instead.
-        if target.contains("darwin") && target.contains("aarch64") {
-            // Enable fast math but allow infinity and NaN
-            build.flag_if_supported("-fno-math-errno");
-            build.flag_if_supported("-fno-trapping-math");
+        // Check if this is a release build
+        let opt_level = env::var("OPT_LEVEL").unwrap_or_else(|_| "0".to_string());
+        let is_release = opt_level != "0";
+
+        if is_release {
+            // For release builds, use -O3 with workarounds for GCC 11 ICE bugs.
+            // The ICE occurs in tree-vect-loop.c during auto-vectorization of
+            // complex Boost/Eigen templates. Disabling vectorization prevents the crash.
+            build.flag_if_supported("-O3");
+            build.flag_if_supported("-fno-tree-vectorize"); // Disable vectorization that triggers ICE
         } else {
-            build.flag_if_supported("-ffast-math");
+            // For debug builds, use -O0 (cc crate default) - no optimization flags needed
+            // This ensures fastest compile times during development
         }
+
+        // Safe math optimizations (don't cause ICEs, provide modest speedup)
+        build.flag_if_supported("-fno-math-errno");
+        build.flag_if_supported("-fno-trapping-math");
 
         // Silence OpenMP pragma warnings since we intentionally don't use OpenMP
         // PECOS uses thread-level parallelism instead of OpenMP's internal parallelism
@@ -229,11 +283,12 @@ fn configure_build(
         build.flag_if_supported("-Wno-unqualified-std-cast-call"); // Qulacs move() warnings
         build.flag_if_supported("-Wno-inconsistent-missing-override"); // Qulacs override warnings
 
-        // On macOS, use the -stdlib=libc++ flag to ensure proper C++ standard library linkage
+        // On macOS, use libc++ (the system default and what PECOS clang expects)
         if target.contains("darwin") {
             build.flag("-stdlib=libc++");
             // Note: Linker flags are passed via cargo:rustc-link-arg below, not here
         }
+        // On Linux, use system default (libstdc++) - no flag needed
     }
 
     // Define preprocessor macros

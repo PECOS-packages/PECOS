@@ -13,9 +13,6 @@ categories.workspace = true
 
 [dependencies]
 pecos-core.workspace = true
-thiserror.workspace = true
-log.workspace = true
-regex.workspace = true
 
 # Inkwell for LLVM IR generation
 [dependencies.inkwell]

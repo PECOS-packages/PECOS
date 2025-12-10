@@ -24,9 +24,8 @@ default = ["wasm"]
 wasm = ["pecos/wasm"]
 
 [dependencies]
-# Use the pecos metacrate which includes all simulators and runtimes by default
-# Enable llvm and wasm features for full Python functionality
-pecos = { workspace = true, features = ["llvm", "wasm", "selene"] }
+# Use the pecos metacrate with all features needed for Python bindings
+pecos = { workspace = true, features = ["llvm", "wasm", "selene", "all-simulators"] }
 
 pyo3 = { workspace=true, features = ["extension-module", "abi3-py310", "generate-import-lib", "num-complex"] }
 ndarray.workspace = true

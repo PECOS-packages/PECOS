@@ -1,6 +1,6 @@
 [project]
 name = "pecos-workspace"
-version = "0.7.0.dev4"
+version = "0.8.0.dev0"
 dependencies = [
     # Note: guppylang is an optional dependency in quantum-pecos
     # Don't include it here as a direct dependency

@@ -504,6 +504,34 @@ pub mod graph {
     pub use pecos_num::graph::*;
 }
 
+/// Quantum error correction decoders
+///
+/// This module provides decoders for quantum error correction codes.
+///
+/// # Available Decoders (feature-gated)
+///
+/// With `ldpc` feature:
+/// - **`BpOsdDecoder`** - Belief propagation with ordered statistics decoding
+/// - **`BpLsdDecoder`** - Belief propagation with localized statistics decoding
+/// - **`UnionFindDecoder`** - Union-find decoder
+/// - **`BeliefFindDecoder`** - Belief-find decoder
+/// - **`FlipDecoder`** - Flip decoder
+/// - **`MbpDecoder`** - Modified belief propagation decoder
+/// - **`SoftInfoBpDecoder`** - Soft information BP decoder
+///
+/// # Example
+///
+/// ```rust,no_run
+/// # #[cfg(feature = "ldpc")]
+/// # {
+/// use pecos::decoders::{Decoder, BpOsdDecoder};
+/// # }
+/// ```
+#[cfg(any(feature = "ldpc", feature = "all-decoders"))]
+pub mod decoders {
+    pub use pecos_decoders::*;
+}
+
 /// Quantum simulation implementations
 ///
 /// This module provides low-level quantum simulation implementations and utilities

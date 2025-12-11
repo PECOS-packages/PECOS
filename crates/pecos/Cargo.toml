@@ -85,5 +85,9 @@ pecos-rng.workspace = true
 log.workspace = true
 serde_json.workspace = true
 
+[[example]]
+name = "quest_example"
+required-features = ["quest"]
+
 [lints]
 workspace = true

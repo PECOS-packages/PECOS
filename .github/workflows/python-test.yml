@@ -219,7 +219,7 @@ jobs:
         $env:LLVM_SYS_140_PREFIX = $env:LLVM_SYS_140_PREFIX
 
         # Build and test
-        make build-dev
+        make build-debug
         make pytest-all
 
     - name: Build and test PECOS (non-Windows)
@@ -266,7 +266,7 @@ jobs:
         fi
 
         # Build the project
-        make build-dev
+        make build-debug
 
         # After build, verify the extension module on macOS
         if [[ "${{ runner.os }}" == "macOS" ]]; then

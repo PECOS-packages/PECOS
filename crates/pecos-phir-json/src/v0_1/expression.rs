@@ -183,8 +183,7 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 
     /// Converts an expression to a string for caching
-    #[allow(clippy::only_used_in_recursion)]
-    fn expr_to_cache_key(&self, expr: &Expression) -> String {
+    fn expr_to_cache_key(expr: &Expression) -> String {
         match expr {
             Expression::Integer(val) => format!("int:{val}"),
             Expression::Variable(name) => format!("var:{name}"),
@@ -198,7 +197,7 @@ impl<'a> ExpressionEvaluator<'a> {
                         }
                         ArgItem::Integer(val) => write!(&mut key, ",int:{val}").unwrap(),
                         ArgItem::Expression(expr) => {
-                            write!(&mut key, ",expr:{}", self.expr_to_cache_key(expr)).unwrap();
+                            write!(&mut key, ",expr:{}", Self::expr_to_cache_key(expr)).unwrap();
                         }
                     }
                 }
@@ -244,7 +243,7 @@ impl<'a> ExpressionEvaluator<'a> {
         }
 
         // For complex expressions, use caching
-        let cache_key = self.expr_to_cache_key(expr);
+        let cache_key = Self::expr_to_cache_key(expr);
         if let Some(cached_value) = self.expr_cache.get(&cache_key) {
             return Ok(*cached_value);
         }

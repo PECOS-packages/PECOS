@@ -291,17 +291,19 @@ fn generate_quest_header(quest_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Get the PECOS build profile from environment
-/// Returns "dev", "release", or "native"
-fn get_pecos_profile() -> String {
-    env::var("PECOS_PROFILE").unwrap_or_else(|_| {
-        // Fall back to detecting from debug_assertions if PECOS_PROFILE not set
-        if cfg!(debug_assertions) {
-            "dev".to_string()
-        } else {
-            "release".to_string()
-        }
-    })
+/// Get the build profile from Cargo's environment
+/// Returns "debug", "release", or "native"
+///
+/// Cargo sets PROFILE env var during build script execution:
+/// - "debug" -> no C++ optimization, fast compile
+/// - "release" -> full optimization (-O3)
+/// - "native" -> full optimization + CPU-specific (-O3 -march=native)
+fn get_build_profile() -> String {
+    match env::var("PROFILE").as_deref() {
+        Ok("release") => "release".to_string(),
+        Ok("native") => "native".to_string(),
+        _ => "debug".to_string(), // debug or anything else
+    }
 }
 
 /// Main build function for `QuEST`
@@ -315,7 +317,6 @@ pub fn build() -> Result<()> {
 
     // Also rerun if the user forces a rebuild
     println!("cargo:rerun-if-env-changed=FORCE_REBUILD");
-    println!("cargo:rerun-if-env-changed=PECOS_PROFILE");
 
     // Check for GPU feature
     println!("cargo:rerun-if-env-changed=QUEST_ENABLE_GPU");
@@ -392,6 +393,14 @@ fn build_cxx_bridge(quest_dir: &Path, out_dir: &Path) {
 
     // Build the cxx bridge first to generate headers
     let mut build = cxx_build::bridge("src/bridge.rs");
+
+    // On macOS, explicitly use system clang to ensure SDK paths are correct.
+    // The PECOS LLVM clang may be in PATH but doesn't have SDK headers configured,
+    // causing "math.h file not found" errors during compilation.
+    let target = env::var("TARGET").unwrap_or_default();
+    if target.contains("darwin") && env::var("CXX").is_err() && env::var("CC").is_err() {
+        build.compiler("/usr/bin/clang++");
+    }
 
     // Determine if we're building with GPU support
     // Check if the gpu feature is enabled via CARGO_FEATURE_GPU env var
@@ -560,8 +569,8 @@ fn build_cxx_bridge(quest_dir: &Path, out_dir: &Path) {
     // This properly handles warning flags without conflicts
     build.warnings(false);
 
-    // Use PECOS_PROFILE for optimization settings
-    let profile = get_pecos_profile();
+    // Use build profile for optimization settings
+    let profile = get_build_profile();
     match profile.as_str() {
         "native" => {
             // Native profile: release optimizations + CPU-specific optimizations

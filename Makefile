@@ -74,40 +74,43 @@ else
 endif
 
 # Build profile configuration
-# Usage: make build PROFILE=dev|release|native (default: dev)
-# The PECOS_PROFILE env var is passed to build scripts so they can set appropriate
-# compiler flags for both Rust and C++ code.
-PROFILE ?= dev
+# Usage: make build PROFILE=debug|release|native (default: debug)
+# Build scripts detect the profile via Cargo's PROFILE env var.
+PROFILE ?= debug
 
 # Profile-specific Cargo/Maturin settings
-# C++ flags are handled by build scripts reading PECOS_PROFILE
+# - debug: uses default cargo (debug) profile - fast compile, no optimization
+# - release: uses --release flag - full optimization
+# - native: uses --profile native (custom profile inheriting from release) + CPU-specific opts
+#
+# For native profile, we also pass -C target-cpu=native to Rust via RUSTFLAGS.
+# Build scripts detect PROFILE=native and add -march=native for C++ code.
 ifeq ($(PROFILE),native)
     MATURIN_RELEASE_FLAG := --release
-    CARGO_RELEASE_FLAG := --release
+    CARGO_PROFILE_FLAG := --profile native
     RUSTFLAGS_EXTRA := -C target-cpu=native
     PROFILE_DESC := native (release + CPU optimizations)
 else ifeq ($(PROFILE),release)
     MATURIN_RELEASE_FLAG := --release
-    CARGO_RELEASE_FLAG := --release
+    CARGO_PROFILE_FLAG := --release
     RUSTFLAGS_EXTRA :=
     PROFILE_DESC := release (optimized)
 else
-    # dev profile (default)
+    # debug profile (default)
     MATURIN_RELEASE_FLAG :=
-    CARGO_RELEASE_FLAG :=
+    CARGO_PROFILE_FLAG :=
     RUSTFLAGS_EXTRA :=
-    PROFILE_DESC := dev (fast compile, unoptimized)
+    PROFILE_DESC := debug (fast compile, unoptimized)
 endif
 
 # Helper to build FFI crates with the correct profile
-# PECOS_PROFILE is read by build.rs scripts to set C++ compiler flags
+# Build scripts detect profile via Cargo's PROFILE env var
 define BUILD_FFI_CRATES
 	@if command -v julia >/dev/null 2>&1; then \
 		echo "Julia detected, building Julia FFI library ($(PROFILE))..."; \
 		cd julia/pecos-julia-ffi && \
-		PECOS_PROFILE=$(PROFILE) \
 		RUSTFLAGS="$$RUSTFLAGS $(RUSTFLAGS_EXTRA)" \
-		cargo build $(CARGO_RELEASE_FLAG); \
+		cargo build $(CARGO_PROFILE_FLAG); \
 		echo "Julia FFI library built successfully"; \
 	else \
 		echo "Julia not detected, skipping Julia build"; \
@@ -115,9 +118,8 @@ define BUILD_FFI_CRATES
 	@if command -v go >/dev/null 2>&1; then \
 		echo "Go detected, building Go FFI library ($(PROFILE))..."; \
 		cd go/pecos-go-ffi && \
-		PECOS_PROFILE=$(PROFILE) \
 		RUSTFLAGS="$$RUSTFLAGS $(RUSTFLAGS_EXTRA)" \
-		cargo build $(CARGO_RELEASE_FLAG); \
+		cargo build $(CARGO_PROFILE_FLAG); \
 		echo "Go FFI library built successfully"; \
 	else \
 		echo "Go not detected, skipping Go build"; \
@@ -125,29 +127,27 @@ define BUILD_FFI_CRATES
 endef
 
 .PHONY: build
-build: installreqs ## Build PECOS (use PROFILE=dev|release|native, default: dev)
+build: installreqs ## Build PECOS (use PROFILE=debug|release|native, default: debug)
 	@echo "Building with profile: $(PROFILE_DESC)"
 	@$(SETUP_LLVM); $(UNSET_CONDA) cd python/pecos-rslib/ && \
-		PECOS_PROFILE=$(PROFILE) \
 		RUSTFLAGS="$$RUSTFLAGS $(RUSTFLAGS_EXTRA)" \
 		uv run maturin develop --uv $(MATURIN_RELEASE_FLAG)
 	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all]"
 	$(BUILD_FFI_CRATES)
 
 .PHONY: build-cuda
-build-cuda: installreqs ## Build PECOS with CUDA support (use PROFILE=dev|release|native, default: dev)
+build-cuda: installreqs ## Build PECOS with CUDA support (use PROFILE=debug|release|native, default: debug)
 	@echo "Building with CUDA support, profile: $(PROFILE_DESC)"
 	@$(SETUP_LLVM); $(UNSET_CONDA) cd python/pecos-rslib/ && \
-		PECOS_PROFILE=$(PROFILE) \
 		RUSTFLAGS="$$RUSTFLAGS $(RUSTFLAGS_EXTRA)" \
 		uv run maturin develop --uv $(MATURIN_RELEASE_FLAG)
 	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all,cuda]"
 	$(BUILD_FFI_CRATES)
 
 # Convenience aliases for common build profiles
-.PHONY: build-dev
-build-dev: ## Alias for: make build PROFILE=dev
-	@$(MAKE) build PROFILE=dev
+.PHONY: build-debug
+build-debug: ## Alias for: make build PROFILE=debug
+	@$(MAKE) build PROFILE=debug
 
 .PHONY: build-release
 build-release: ## Alias for: make build PROFILE=release
@@ -157,9 +157,9 @@ build-release: ## Alias for: make build PROFILE=release
 build-native: ## Alias for: make build PROFILE=native
 	@$(MAKE) build PROFILE=native
 
-.PHONY: build-cuda-dev
-build-cuda-dev: ## Alias for: make build-cuda PROFILE=dev
-	@$(MAKE) build-cuda PROFILE=dev
+.PHONY: build-cuda-debug
+build-cuda-debug: ## Alias for: make build-cuda PROFILE=debug
+	@$(MAKE) build-cuda PROFILE=debug
 
 .PHONY: build-cuda-release
 build-cuda-release: ## Alias for: make build-cuda PROFILE=release
@@ -771,7 +771,7 @@ pip-install-uv:  ## Install uv using pip and create a venv. (Recommended to inst
 	uv sync
 
 .PHONY: dev
-dev: clean build-dev test  ## Run the typical sequence of commands to check everything is running correctly
+dev: clean build-debug test  ## Run the typical sequence of commands to check everything is running correctly
 
 .PHONY: devl
 devl: dev lint  ## Run the commands to make sure everything runs + lint
@@ -792,7 +792,7 @@ help:  ## Show the help menu
 	@grep -E '^[a-z.A-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Note: Julia and Go support is automatically detected."
-	@echo "  - 'make build-dev' will also build Julia/Go FFI if they are installed"
+	@echo "  - 'make build-debug' will also build Julia/Go FFI if they are installed"
 	@echo "  - 'make test' will also run Julia/Go tests if they are installed"
 	@echo "  - 'make lint' checks code quality; 'make lint-fix' fixes issues"
 	@echo "  - Use 'make julia-info' or 'make go-info' for more information"

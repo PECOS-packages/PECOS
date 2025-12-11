@@ -1,22 +1,23 @@
 use std::env;
 
-/// Get the PECOS build profile from environment
-/// Returns "dev", "release", or "native"
-fn get_pecos_profile() -> String {
-    env::var("PECOS_PROFILE").unwrap_or_else(|_| {
-        // Fall back to detecting from OPT_LEVEL if PECOS_PROFILE not set
-        let opt_level = env::var("OPT_LEVEL").unwrap_or_else(|_| "0".to_string());
-        if opt_level == "0" {
-            "dev".to_string()
-        } else {
-            "release".to_string()
-        }
-    })
+/// Get the build profile from Cargo's environment
+/// Returns "debug", "release", or "native"
+///
+/// Cargo sets PROFILE env var during build script execution:
+/// - "debug" -> no C++ optimization, fast compile
+/// - "release" -> full optimization (-O3)
+/// - "native" -> full optimization + CPU-specific (-O3 -march=native)
+fn get_build_profile() -> String {
+    match env::var("PROFILE").as_deref() {
+        Ok("release") => "release".to_string(),
+        Ok("native") => "native".to_string(),
+        _ => "debug".to_string(), // debug or anything else
+    }
 }
 
-/// Apply PECOS profile optimization flags to a `cc::Build`
+/// Apply profile optimization flags to a `cc::Build`
 fn apply_profile_flags(build: &mut cc::Build, target: &str) {
-    let profile = get_pecos_profile();
+    let profile = get_build_profile();
 
     if target.contains("windows") {
         // MSVC optimization flags
@@ -53,15 +54,23 @@ fn apply_profile_flags(build: &mut cc::Build, target: &str) {
 fn main() {
     // Build C++ source files
     let mut build = cc::Build::new();
+
+    // Use C++14 or newer to avoid issues with older cross-compilers
+    // that don't fully support C++11 type traits like is_trivially_move_constructible
+    let target = env::var("TARGET").unwrap_or_default();
+
+    // On macOS, explicitly use system clang to ensure SDK paths are correct.
+    // The PECOS LLVM clang may be in PATH but doesn't have SDK headers configured,
+    // causing "math.h file not found" errors during compilation.
+    if target.contains("darwin") && env::var("CXX").is_err() && env::var("CC").is_err() {
+        build.compiler("/usr/bin/clang++");
+    }
+
     build
         .cpp(true)
         .file("src/sparsesim.cpp")
         .file("src/cxx_shim.cpp")
         .include("src");
-
-    // Use C++14 or newer to avoid issues with older cross-compilers
-    // that don't fully support C++11 type traits like is_trivially_move_constructible
-    let target = env::var("TARGET").unwrap_or_default();
 
     // For cross-compilation (especially aarch64), we need at least C++14
     // to ensure type traits are available
@@ -89,6 +98,12 @@ fn main() {
     // Generate cxx bridge code with same C++ standard
     let mut bridge = cxx_build::bridge("src/lib.rs");
     bridge.file("src/cxx_shim.cpp");
+
+    // On macOS, explicitly use system clang to ensure SDK paths are correct.
+    // The PECOS LLVM clang may be in PATH but doesn't have SDK headers configured.
+    if target.contains("darwin") && env::var("CXX").is_err() && env::var("CC").is_err() {
+        bridge.compiler("/usr/bin/clang++");
+    }
 
     // Match the same C++ standard for cxx bridge
     if target.contains("aarch64") || target.contains("arm") {
@@ -130,5 +145,4 @@ fn main() {
     println!("cargo:rerun-if-changed=src/sparsesim.h");
     println!("cargo:rerun-if-changed=src/cxx_shim.cpp");
     println!("cargo:rerun-if-changed=src/cxx_shim.h");
-    println!("cargo:rerun-if-env-changed=PECOS_PROFILE");
 }

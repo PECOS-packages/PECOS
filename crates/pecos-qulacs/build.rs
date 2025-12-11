@@ -62,21 +62,21 @@ fn setup_rerun_conditions() {
     println!("cargo:rerun-if-changed=src/bridge.rs");
     println!("cargo:rerun-if-changed=src/qulacs_wrapper.cpp");
     println!("cargo:rerun-if-changed=src/qulacs_wrapper.h");
-    println!("cargo:rerun-if-env-changed=PECOS_PROFILE");
 }
 
-/// Get the PECOS build profile from environment
-/// Returns "dev", "release", or "native"
-fn get_pecos_profile() -> String {
-    env::var("PECOS_PROFILE").unwrap_or_else(|_| {
-        // Fall back to detecting from OPT_LEVEL if PECOS_PROFILE not set
-        let opt_level = env::var("OPT_LEVEL").unwrap_or_else(|_| "0".to_string());
-        if opt_level == "0" {
-            "dev".to_string()
-        } else {
-            "release".to_string()
-        }
-    })
+/// Get the build profile from Cargo's environment
+/// Returns "debug", "release", or "native"
+///
+/// Cargo sets PROFILE env var during build script execution:
+/// - "debug" -> no C++ optimization, fast compile
+/// - "release" -> full optimization (-O3)
+/// - "native" -> full optimization + CPU-specific (-O3 -march=native)
+fn get_build_profile() -> String {
+    match env::var("PROFILE").as_deref() {
+        Ok("release") => "release".to_string(),
+        Ok("native") => "native".to_string(),
+        _ => "debug".to_string(), // debug or anything else
+    }
 }
 
 fn download_and_extract_dependencies(out_dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
@@ -199,10 +199,11 @@ fn configure_build(
     build.include("src");
     build.include(out_dir);
 
-    // Try to use clang/clang++ from PECOS-managed LLVM installation for consistent builds.
-    // - macOS: Use PECOS clang (clang is the native toolchain, works great)
-    // - Windows: Use PECOS clang-cl as fallback if MSVC isn't available (helps users
-    //   who don't have Visual Studio installed)
+    // Configure the C++ compiler based on platform.
+    // - macOS: MUST use system clang (/usr/bin/clang++) which has proper SDK paths.
+    //   PECOS's bundled clang doesn't have macOS SDK headers configured (missing math.h, etc.)
+    //   and the cc crate will find PECOS clang first if it's in PATH.
+    // - Windows: Use PECOS clang-cl as fallback if MSVC isn't available
     // - Linux: Use system GCC (PECOS clang can't find system GCC headers for libstdc++)
     // Only use if CXX/CC env vars are not already set (allow user override).
     let using_pecos_clang = if env::var("CXX").is_err() && env::var("CC").is_err() {
@@ -215,15 +216,12 @@ fn configure_build(
                 false
             }
         } else if target.contains("darwin") {
-            // On macOS, use clang++
-            if let Some(clang_path) = find_tool("clang++") {
-                build.compiler(&clang_path);
-                true
-            } else {
-                false
-            }
+            // On macOS, explicitly use system clang to ensure SDK paths are correct.
+            // The PECOS LLVM clang may be in PATH but doesn't have SDK headers.
+            build.compiler("/usr/bin/clang++");
+            false
         } else {
-            // On Linux, use system compiler
+            // On Linux, use system compiler (usually GCC)
             false
         }
     } else {
@@ -269,8 +267,8 @@ fn configure_build(
     } else {
         build.flag_if_supported("-std=c++14");
 
-        // Get PECOS profile for optimization settings
-        let profile = get_pecos_profile();
+        // Get build profile for optimization settings
+        let profile = get_build_profile();
 
         match profile.as_str() {
             "native" => {

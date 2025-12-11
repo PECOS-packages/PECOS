@@ -8,17 +8,19 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Get the PECOS build profile from environment
-/// Returns "dev", "release", or "native"
-fn get_pecos_profile() -> String {
-    env::var("PECOS_PROFILE").unwrap_or_else(|_| {
-        // Fall back to detecting from debug_assertions if PECOS_PROFILE not set
-        if cfg!(debug_assertions) {
-            "dev".to_string()
-        } else {
-            "release".to_string()
-        }
-    })
+/// Get the build profile from Cargo's environment
+/// Returns "debug", "release", or "native"
+///
+/// Cargo sets PROFILE env var during build script execution:
+/// - "debug" -> no C++ optimization, fast compile
+/// - "release" -> full optimization (-O3)
+/// - "native" -> full optimization + CPU-specific (-O3 -march=native)
+fn get_build_profile() -> String {
+    match env::var("PROFILE").as_deref() {
+        Ok("release") => "release".to_string(),
+        Ok("native") => "native".to_string(),
+        _ => "debug".to_string(), // debug or anything else
+    }
 }
 
 /// Main build function for LDPC
@@ -31,7 +33,6 @@ pub fn build() -> Result<()> {
 
     // Also rerun if the user forces a rebuild
     println!("cargo:rerun-if-env-changed=FORCE_REBUILD");
-    println!("cargo:rerun-if-env-changed=PECOS_PROFILE");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
     let ldpc_dir = out_dir.join("ldpc");
@@ -250,6 +251,16 @@ fn build_cxx_bridge(ldpc_dir: &Path) -> Result<()> {
 
     // Build the cxx bridge first to generate headers
     let mut build = cxx_build::bridge("src/bridge.rs");
+
+    let target = env::var("TARGET").unwrap_or_default();
+
+    // On macOS, explicitly use system clang to ensure SDK paths are correct.
+    // The PECOS LLVM clang may be in PATH but doesn't have SDK headers configured,
+    // causing "math.h file not found" errors during compilation.
+    if target.contains("darwin") && env::var("CXX").is_err() && env::var("CC").is_err() {
+        build.compiler("/usr/bin/clang++");
+    }
+
     build
         .file("src/bridge.cpp")
         .include(&src_cpp_dir)
@@ -261,7 +272,6 @@ fn build_cxx_bridge(ldpc_dir: &Path) -> Result<()> {
 
     // Use C++17 when available, fall back to C++14 for older compilers
     // This helps with cross-compilation where older toolchains may not fully support C++17
-    let target = env::var("TARGET").unwrap_or_default();
     if target.contains("aarch64") || target.contains("arm") {
         // For ARM targets, check what's supported
         if build.is_flag_supported("-std=c++17").unwrap_or(false) {
@@ -277,8 +287,8 @@ fn build_cxx_bridge(ldpc_dir: &Path) -> Result<()> {
     // Report ccache/sccache configuration
     report_cache_config();
 
-    // Use PECOS_PROFILE for optimization settings
-    let profile = get_pecos_profile();
+    // Use build profile for optimization settings
+    let profile = get_build_profile();
     match profile.as_str() {
         "native" => {
             // Native profile: release optimizations + CPU-specific optimizations

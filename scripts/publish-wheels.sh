@@ -58,10 +58,17 @@ if [ ! -f "$ARTIFACT_FILE" ]; then
     exit 1
 fi
 
-# Check if twine is installed
-if ! command -v twine &> /dev/null; then
-    echo -e "${RED}Error: twine is not installed!${NC}"
-    echo "Install it with: pip install twine"
+# Check if uv is installed (preferred) or twine directly
+if command -v uv &> /dev/null; then
+    TWINE_CMD="uv run twine"
+    echo -e "${GREEN}Using uv to run twine${NC}"
+elif command -v twine &> /dev/null; then
+    TWINE_CMD="twine"
+    echo -e "${YELLOW}Using system twine (consider using uv)${NC}"
+else
+    echo -e "${RED}Error: Neither uv nor twine is installed!${NC}"
+    echo "Install uv with: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    echo "Or install twine with: pip install twine"
     exit 1
 fi
 
@@ -75,7 +82,11 @@ unzip -q "$ARTIFACT_FILE" -d "$TEMP_DIR"
 # Function to publish a package
 publish_package() {
     local package_name=$1
-    local package_dir="$TEMP_DIR/dist/$package_name"
+    # Try both possible locations: with and without dist/ prefix
+    local package_dir="$TEMP_DIR/$package_name"
+    if [ ! -d "$package_dir" ]; then
+        package_dir="$TEMP_DIR/dist/$package_name"
+    fi
 
     if [ ! -d "$package_dir" ]; then
         echo -e "${YELLOW}Warning: $package_name directory not found in distribution${NC}"
@@ -94,13 +105,13 @@ publish_package() {
 
     # Run twine check
     echo -e "\n${GREEN}Running twine check...${NC}"
-    if twine check "$package_dir"/* 2>&1 | grep -v "license-file"; then
+    if $TWINE_CMD check "$package_dir"/* 2>&1 | grep -v "license-file"; then
         echo -e "${GREEN}Distribution checks passed${NC}"
     else
         # Check if there are errors other than license-file
-        if twine check "$package_dir"/* 2>&1 | grep -v "license-file" | grep -q "ERROR"; then
+        if $TWINE_CMD check "$package_dir"/* 2>&1 | grep -v "license-file" | grep -q "ERROR"; then
             echo -e "${RED}Distribution checks failed${NC}"
-            echo "Run 'twine check $package_dir/*' to see details"
+            echo "Run '$TWINE_CMD check $package_dir/*' to see details"
             return 1
         else
             echo -e "${YELLOW}Only license-file warnings found (safe to ignore for maturin wheels)${NC}"
@@ -115,7 +126,7 @@ publish_package() {
         read -p "Are you sure you want to upload $package_name to PyPI? (y/N) " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            twine upload "$package_dir"/*
+            $TWINE_CMD upload "$package_dir"/*
             echo -e "${GREEN}Successfully uploaded $package_name!${NC}"
         else
             echo -e "${YELLOW}Skipped uploading $package_name${NC}"

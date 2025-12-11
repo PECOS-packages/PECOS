@@ -6,6 +6,7 @@ env:
 on:
   push:
     branches:
+      - main
       - dev
       - development
       - master
@@ -13,6 +14,7 @@ on:
       - 'py-*'
   pull_request:
     branches:
+      - main
       - dev
       - development
       - master
@@ -39,15 +41,19 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'pull_request' && github.event.action != 'closed' ||
-      github.event_name == 'push' && contains(fromJSON('["master", "dev", "development"]'), github.ref_name)
+      github.event_name == 'push' && contains(fromJSON('["main", "master", "dev", "development"]'), github.ref_name) ||
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/py-')
     outputs:
       run: ${{ steps.check.outputs.run }}
     steps:
       - name: Check if should run on PR push
         id: check
         run: |
+          # Always run on tag pushes (py-* tags trigger releases)
+          if [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref }}" == refs/tags/py-* ]]; then
+            echo "run=true" >> $GITHUB_OUTPUT
           # Always run on pushes to main branches
-          if [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref_name }}" =~ ^(master|dev|development)$ ]]; then
+          elif [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref_name }}" =~ ^(main|master|dev|development)$ ]]; then
             echo "run=true" >> $GITHUB_OUTPUT
           # For PRs, check the TRIGGER_ON_PR_PUSH setting
           elif [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ env.TRIGGER_ON_PR_PUSH }}" = "true" ]; then

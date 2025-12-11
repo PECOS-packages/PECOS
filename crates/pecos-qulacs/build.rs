@@ -3,7 +3,6 @@ use pecos_build_utils::{
     boost_download_info, download_cached, eigen_download_info, extract_archive,
     qulacs_download_info,
 };
-use pecos_llvm_utils::find_tool;
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -203,33 +202,19 @@ fn configure_build(
     // - macOS: MUST use system clang (/usr/bin/clang++) which has proper SDK paths.
     //   PECOS's bundled clang doesn't have macOS SDK headers configured (missing math.h, etc.)
     //   and the cc crate will find PECOS clang first if it's in PATH.
-    // - Windows: Use PECOS clang-cl as fallback if MSVC isn't available
+    // - Windows: Use MSVC (default). PECOS's bundled clang-cl is LLVM 14, but MSVC 2022's STL
+    //   requires Clang 19.0.0+ when using clang-cl, causing "STL1000: Unexpected compiler version".
     // - Linux: Use system GCC (PECOS clang can't find system GCC headers for libstdc++)
-    // Only use if CXX/CC env vars are not already set (allow user override).
-    let using_pecos_clang = if env::var("CXX").is_err() && env::var("CC").is_err() {
-        if is_windows {
-            // On Windows, try clang-cl from PECOS LLVM
-            if let Some(clang_cl_path) = find_tool("clang-cl") {
-                build.compiler(&clang_cl_path);
-                true
-            } else {
-                false
-            }
-        } else if target.contains("darwin") {
-            // On macOS, explicitly use system clang to ensure SDK paths are correct.
-            // The PECOS LLVM clang may be in PATH but doesn't have SDK headers.
-            build.compiler("/usr/bin/clang++");
-            false
-        } else {
-            // On Linux, use system compiler (usually GCC)
-            false
-        }
-    } else {
-        false
-    };
+    // Only override if CXX/CC env vars are not already set (allow user override).
+    if env::var("CXX").is_err() && env::var("CC").is_err() && target.contains("darwin") {
+        // On macOS, explicitly use system clang to ensure SDK paths are correct.
+        // The PECOS LLVM clang may be in PATH but doesn't have SDK headers.
+        build.compiler("/usr/bin/clang++");
+    }
+    // On Windows and Linux, use the default compiler (MSVC on Windows, GCC on Linux)
 
     // Set compiler flags based on platform and compiler
-    if is_windows && !using_pecos_clang {
+    if is_windows {
         // MSVC-specific settings
         build.std("c++14");
         // Define Boost exception handling for Windows
@@ -250,20 +235,6 @@ fn configure_build(
 
         // Use standard optimization level - /bigobj should prevent compiler crashes
         build.opt_level(2); // Maximize speed optimization (/O2)
-    } else if is_windows && using_pecos_clang {
-        // clang-cl on Windows (MSVC-compatible clang)
-        build.std("c++14");
-        build.define("BOOST_NO_EXCEPTIONS", None);
-        build.define("_USE_MATH_DEFINES", None);
-        build.define("_WINDOWS", None);
-        build.define("NOMINMAX", None);
-
-        // clang-cl uses MSVC-style flags
-        build.flag("/bigobj");
-        build.flag("/EHsc");
-
-        // Optimization - clang-cl supports both MSVC and clang flags
-        build.opt_level(2);
     } else {
         build.flag_if_supported("-std=c++14");
 

@@ -24,6 +24,7 @@ selene-runtimes = ["selene-simple-runtime", "selene-soft-rz-runtime"]
 pecos-core.workspace = true
 pecos-programs.workspace = true
 pecos-qis-ffi-types.workspace = true
+pecos-qis-ffi.workspace = true  # Ensures cdylib gets built for runtime dlopen
 pecos-qis-core = { workspace = true, features = ["llvm"] }
 pecos-hugr-qis = { workspace = true, optional = true, features = ["llvm"] }
 log.workspace = true

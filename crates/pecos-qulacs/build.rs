@@ -62,6 +62,21 @@ fn setup_rerun_conditions() {
     println!("cargo:rerun-if-changed=src/bridge.rs");
     println!("cargo:rerun-if-changed=src/qulacs_wrapper.cpp");
     println!("cargo:rerun-if-changed=src/qulacs_wrapper.h");
+    println!("cargo:rerun-if-env-changed=PECOS_PROFILE");
+}
+
+/// Get the PECOS build profile from environment
+/// Returns "dev", "release", or "native"
+fn get_pecos_profile() -> String {
+    env::var("PECOS_PROFILE").unwrap_or_else(|_| {
+        // Fall back to detecting from OPT_LEVEL if PECOS_PROFILE not set
+        let opt_level = env::var("OPT_LEVEL").unwrap_or_else(|_| "0".to_string());
+        if opt_level == "0" {
+            "dev".to_string()
+        } else {
+            "release".to_string()
+        }
+    })
 }
 
 fn download_and_extract_dependencies(out_dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
@@ -254,22 +269,32 @@ fn configure_build(
     } else {
         build.flag_if_supported("-std=c++14");
 
-        // Check if this is a release build
-        let opt_level = env::var("OPT_LEVEL").unwrap_or_else(|_| "0".to_string());
-        let is_release = opt_level != "0";
+        // Get PECOS profile for optimization settings
+        let profile = get_pecos_profile();
 
-        if is_release {
-            // For release builds, use -O3 with workarounds for GCC 11 ICE bugs.
-            // The ICE occurs in tree-vect-loop.c during auto-vectorization of
-            // complex Boost/Eigen templates. Disabling vectorization prevents the crash.
-            build.flag_if_supported("-O3");
-            build.flag_if_supported("-fno-tree-vectorize"); // Disable vectorization that triggers ICE
-        } else {
-            // For debug builds, use -O0 (cc crate default) - no optimization flags needed
-            // This ensures fastest compile times during development
+        match profile.as_str() {
+            "native" => {
+                // Native profile: release optimizations + CPU-specific optimizations
+                // Use -O3 with workarounds for GCC 11 ICE bugs.
+                build.flag_if_supported("-O3");
+                build.flag_if_supported("-fno-tree-vectorize"); // Disable vectorization that triggers ICE
+                build.flag_if_supported("-march=native"); // CPU-specific optimizations
+            }
+            "release" => {
+                // Release profile: optimized build
+                // Use -O3 with workarounds for GCC 11 ICE bugs.
+                // The ICE occurs in tree-vect-loop.c during auto-vectorization of
+                // complex Boost/Eigen templates. Disabling vectorization prevents the crash.
+                build.flag_if_supported("-O3");
+                build.flag_if_supported("-fno-tree-vectorize"); // Disable vectorization that triggers ICE
+            }
+            _ => {
+                // Dev profile: no optimization flags for fastest compile times
+            }
         }
 
         // Safe math optimizations (don't cause ICEs, provide modest speedup)
+        // Applied to all profiles
         build.flag_if_supported("-fno-math-errno");
         build.flag_if_supported("-fno-trapping-math");
 

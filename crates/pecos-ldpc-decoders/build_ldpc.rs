@@ -8,6 +8,19 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Get the PECOS build profile from environment
+/// Returns "dev", "release", or "native"
+fn get_pecos_profile() -> String {
+    env::var("PECOS_PROFILE").unwrap_or_else(|_| {
+        // Fall back to detecting from debug_assertions if PECOS_PROFILE not set
+        if cfg!(debug_assertions) {
+            "dev".to_string()
+        } else {
+            "release".to_string()
+        }
+    })
+}
+
 /// Main build function for LDPC
 pub fn build() -> Result<()> {
     // Tell Cargo when to rerun this build script
@@ -18,6 +31,7 @@ pub fn build() -> Result<()> {
 
     // Also rerun if the user forces a rebuild
     println!("cargo:rerun-if-env-changed=FORCE_REBUILD");
+    println!("cargo:rerun-if-env-changed=PECOS_PROFILE");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
     let ldpc_dir = out_dir.join("ldpc");
@@ -263,19 +277,26 @@ fn build_cxx_bridge(ldpc_dir: &Path) -> Result<()> {
     // Report ccache/sccache configuration
     report_cache_config();
 
-    // Use different optimization levels for debug vs release builds
-    if cfg!(debug_assertions) {
-        build.flag_if_supported("-O0"); // No optimization for faster compilation
-        build.flag_if_supported("-g"); // Include debug symbols
-    } else {
-        build.flag_if_supported("-O3"); // Full optimization for release
-    }
-
-    // Only use -march=native if not cross-compiling and not explicitly disabled
-    if env::var("CARGO_CFG_TARGET_ARCH").ok() == env::var("HOST_ARCH").ok()
-        && env::var("DECODER_DISABLE_NATIVE_ARCH").is_err()
-    {
-        build.flag_if_supported("-march=native");
+    // Use PECOS_PROFILE for optimization settings
+    let profile = get_pecos_profile();
+    match profile.as_str() {
+        "native" => {
+            // Native profile: release optimizations + CPU-specific optimizations
+            build.flag_if_supported("-O3");
+            // Only use -march=native if not cross-compiling
+            if env::var("CARGO_CFG_TARGET_ARCH").ok() == env::var("HOST_ARCH").ok() {
+                build.flag_if_supported("-march=native");
+            }
+        }
+        "release" => {
+            // Release profile: full optimization
+            build.flag_if_supported("-O3");
+        }
+        _ => {
+            // Dev profile: no optimization for faster compilation
+            build.flag_if_supported("-O0");
+            build.flag_if_supported("-g"); // Include debug symbols
+        }
     }
 
     // Suppress warnings from external code

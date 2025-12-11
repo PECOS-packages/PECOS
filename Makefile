@@ -4,6 +4,13 @@
 PYTHON := $(shell which python 2>/dev/null || which python3 2>/dev/null)
 SHELL=bash
 
+# FFI crates that should be excluded from workspace-wide cargo commands
+# These are built separately by maturin (Python), Julia, and Go tooling
+FFI_CRATES := pecos-rslib pecos-julia-ffi pecos-go-ffi
+
+# Generate --exclude flags for cargo commands
+CARGO_EXCLUDE_FFI := $(foreach crate,$(FFI_CRATES),--exclude $(crate))
+
 # LLVM Configuration
 # LLVM is automatically detected by build.rs files using pecos-llvm-utils
 # No manual configuration needed!
@@ -66,68 +73,101 @@ else
     endif
 endif
 
-.PHONY: build-dev
-build-dev: installreqs ## Development build (fast compile, unoptimized, with all extras)
-	@$(SETUP_LLVM); $(UNSET_CONDA) cd python/pecos-rslib/ && uv run maturin develop --uv
-	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all]"
+# Build profile configuration
+# Usage: make build PROFILE=dev|release|native (default: dev)
+# The PECOS_PROFILE env var is passed to build scripts so they can set appropriate
+# compiler flags for both Rust and C++ code.
+PROFILE ?= dev
+
+# Profile-specific Cargo/Maturin settings
+# C++ flags are handled by build scripts reading PECOS_PROFILE
+ifeq ($(PROFILE),native)
+    MATURIN_RELEASE_FLAG := --release
+    CARGO_RELEASE_FLAG := --release
+    RUSTFLAGS_EXTRA := -C target-cpu=native
+    PROFILE_DESC := native (release + CPU optimizations)
+else ifeq ($(PROFILE),release)
+    MATURIN_RELEASE_FLAG := --release
+    CARGO_RELEASE_FLAG := --release
+    RUSTFLAGS_EXTRA :=
+    PROFILE_DESC := release (optimized)
+else
+    # dev profile (default)
+    MATURIN_RELEASE_FLAG :=
+    CARGO_RELEASE_FLAG :=
+    RUSTFLAGS_EXTRA :=
+    PROFILE_DESC := dev (fast compile, unoptimized)
+endif
+
+# Helper to build FFI crates with the correct profile
+# PECOS_PROFILE is read by build.rs scripts to set C++ compiler flags
+define BUILD_FFI_CRATES
 	@if command -v julia >/dev/null 2>&1; then \
-		echo "Julia detected, building Julia FFI library..."; \
-		$(SETUP_LLVM); cd julia/pecos-julia-ffi && cargo build; \
+		echo "Julia detected, building Julia FFI library ($(PROFILE))..."; \
+		cd julia/pecos-julia-ffi && \
+		PECOS_PROFILE=$(PROFILE) \
+		RUSTFLAGS="$$RUSTFLAGS $(RUSTFLAGS_EXTRA)" \
+		cargo build $(CARGO_RELEASE_FLAG); \
 		echo "Julia FFI library built successfully"; \
 	else \
 		echo "Julia not detected, skipping Julia build"; \
 	fi
 	@if command -v go >/dev/null 2>&1; then \
-		echo "Go detected, building Go FFI library..."; \
-		cd go/pecos-go-ffi && cargo build; \
+		echo "Go detected, building Go FFI library ($(PROFILE))..."; \
+		cd go/pecos-go-ffi && \
+		PECOS_PROFILE=$(PROFILE) \
+		RUSTFLAGS="$$RUSTFLAGS $(RUSTFLAGS_EXTRA)" \
+		cargo build $(CARGO_RELEASE_FLAG); \
 		echo "Go FFI library built successfully"; \
 	else \
 		echo "Go not detected, skipping Go build"; \
 	fi
+endef
 
-.PHONY: build-release
-build-release: installreqs ## Release build (optimized, portable)
-	@$(SETUP_LLVM); $(UNSET_CONDA) cd python/pecos-rslib/ && uv run maturin develop --uv --release
+.PHONY: build
+build: installreqs ## Build PECOS (use PROFILE=dev|release|native, default: dev)
+	@echo "Building with profile: $(PROFILE_DESC)"
+	@$(SETUP_LLVM); $(UNSET_CONDA) cd python/pecos-rslib/ && \
+		PECOS_PROFILE=$(PROFILE) \
+		RUSTFLAGS="$$RUSTFLAGS $(RUSTFLAGS_EXTRA)" \
+		uv run maturin develop --uv $(MATURIN_RELEASE_FLAG)
 	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all]"
-	@if command -v julia >/dev/null 2>&1; then \
-		echo "Julia detected, building Julia FFI library (release)..."; \
-		cd julia/pecos-julia-ffi && cargo build --release; \
-		echo "Julia FFI library built successfully"; \
-	else \
-		echo "Julia not detected, skipping Julia build"; \
-	fi
-	@if command -v go >/dev/null 2>&1; then \
-		echo "Go detected, building Go FFI library (release)..."; \
-		cd go/pecos-go-ffi && cargo build --release; \
-		echo "Go FFI library built successfully"; \
-	else \
-		echo "Go not detected, skipping Go build"; \
-	fi
-
-.PHONY: build-native
-build-native: installreqs ## Release build with native CPU optimizations (fastest, not portable)
-	@$(SETUP_LLVM); $(UNSET_CONDA) cd python/pecos-rslib/ && RUSTFLAGS='-C target-cpu=native' \
-	uv run maturin develop --uv --release
-	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all]"
+	$(BUILD_FFI_CRATES)
 
 .PHONY: build-cuda
-build-cuda: installreqs ## Compile and install for development with CUDA support
-	@$(UNSET_CONDA) cd python/pecos-rslib/ && uv run maturin develop --uv
+build-cuda: installreqs ## Build PECOS with CUDA support (use PROFILE=dev|release|native, default: dev)
+	@echo "Building with CUDA support, profile: $(PROFILE_DESC)"
+	@$(SETUP_LLVM); $(UNSET_CONDA) cd python/pecos-rslib/ && \
+		PECOS_PROFILE=$(PROFILE) \
+		RUSTFLAGS="$$RUSTFLAGS $(RUSTFLAGS_EXTRA)" \
+		uv run maturin develop --uv $(MATURIN_RELEASE_FLAG)
 	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all,cuda]"
-	@if command -v julia >/dev/null 2>&1; then \
-		echo "Julia detected, building Julia FFI library..."; \
-		cd julia/pecos-julia-ffi && cargo build; \
-		echo "Julia FFI library built successfully"; \
-	else \
-		echo "Julia not detected, skipping Julia build"; \
-	fi
-	@if command -v go >/dev/null 2>&1; then \
-		echo "Go detected, building Go FFI library..."; \
-		cd go/pecos-go-ffi && cargo build; \
-		echo "Go FFI library built successfully"; \
-	else \
-		echo "Go not detected, skipping Go build"; \
-	fi
+	$(BUILD_FFI_CRATES)
+
+# Convenience aliases for common build profiles
+.PHONY: build-dev
+build-dev: ## Alias for: make build PROFILE=dev
+	@$(MAKE) build PROFILE=dev
+
+.PHONY: build-release
+build-release: ## Alias for: make build PROFILE=release
+	@$(MAKE) build PROFILE=release
+
+.PHONY: build-native
+build-native: ## Alias for: make build PROFILE=native
+	@$(MAKE) build PROFILE=native
+
+.PHONY: build-cuda-dev
+build-cuda-dev: ## Alias for: make build-cuda PROFILE=dev
+	@$(MAKE) build-cuda PROFILE=dev
+
+.PHONY: build-cuda-release
+build-cuda-release: ## Alias for: make build-cuda PROFILE=release
+	@$(MAKE) build-cuda PROFILE=release
+
+.PHONY: build-cuda-native
+build-cuda-native: ## Alias for: make build-cuda PROFILE=native
+	@$(MAKE) build-cuda PROFILE=native
 
 # Documentation
 # -------------
@@ -165,34 +205,55 @@ PECOS_QUEST_FEATURES_NO_GPU = $(shell cargo metadata --no-deps --format-version 
 
 # When CUDA is not available, we check all packages with all their features except GPU features
 # This is done by checking packages separately
+# FFI crates are checked separately to avoid redundant compilation in workspace builds
 .PHONY: check
 check:  ## Run cargo check (with GPU features only if CUDA available)
 	@if [ "$(CUDA_AVAILABLE)" = "no" ]; then \
 		echo "CUDA not detected - checking all features except GPU"; \
-		echo "Checking workspace packages (excluding those with GPU features)..."; \
-		cargo check --workspace --exclude pecos --exclude pecos-quest --all-targets --all-features; \
+		echo "Checking workspace packages (excluding FFI crates and those with GPU features)..."; \
+		cargo check --workspace $(CARGO_EXCLUDE_FFI) --exclude pecos --exclude pecos-quest --all-targets --all-features; \
 		echo "Checking pecos with all features except gpu..."; \
 		cargo check -p pecos --all-targets --features "$(PECOS_FEATURES_NO_GPU)"; \
 		echo "Checking pecos-quest with all features except gpu/cuda..."; \
 		cargo check -p pecos-quest --all-targets --features "$(PECOS_QUEST_FEATURES_NO_GPU)"; \
 	else \
 		echo "CUDA detected - checking with all features"; \
-		cargo check --workspace --all-targets --all-features; \
+		cargo check --workspace $(CARGO_EXCLUDE_FFI) --all-targets --all-features; \
+	fi
+	@echo "Checking pecos-rslib..."
+	@cargo check -p pecos-rslib --all-targets --all-features
+	@if command -v julia >/dev/null 2>&1; then \
+		echo "Checking pecos-julia-ffi..."; \
+		cargo check -p pecos-julia-ffi --all-targets --all-features; \
+	fi
+	@if command -v go >/dev/null 2>&1; then \
+		echo "Checking pecos-go-ffi..."; \
+		cargo check -p pecos-go-ffi --all-targets --all-features; \
 	fi
 
 .PHONY: clippy
 clippy:  ## Run cargo clippy (with GPU features only if CUDA available)
 	@if [ "$(CUDA_AVAILABLE)" = "no" ]; then \
 		echo "CUDA not detected - running clippy on all features except GPU"; \
-		echo "Running clippy on workspace packages (excluding those with GPU features)..."; \
-		cargo clippy --workspace --exclude pecos --exclude pecos-quest --all-targets --all-features -- -D warnings; \
+		echo "Running clippy on workspace packages (excluding FFI crates and those with GPU features)..."; \
+		cargo clippy --workspace $(CARGO_EXCLUDE_FFI) --exclude pecos --exclude pecos-quest --all-targets --all-features -- -D warnings; \
 		echo "Running clippy on pecos with all features except gpu..."; \
 		cargo clippy -p pecos --all-targets --features "$(PECOS_FEATURES_NO_GPU)" -- -D warnings; \
 		echo "Running clippy on pecos-quest with all features except gpu/cuda..."; \
 		cargo clippy -p pecos-quest --all-targets --features "$(PECOS_QUEST_FEATURES_NO_GPU)" -- -D warnings; \
 	else \
 		echo "CUDA detected - running clippy with all features"; \
-		cargo clippy --workspace --all-targets --all-features -- -D warnings; \
+		cargo clippy --workspace $(CARGO_EXCLUDE_FFI) --all-targets --all-features -- -D warnings; \
+	fi
+	@echo "Running clippy on pecos-rslib..."
+	@cargo clippy -p pecos-rslib --all-targets --all-features -- -D warnings
+	@if command -v julia >/dev/null 2>&1; then \
+		echo "Running clippy on pecos-julia-ffi..."; \
+		cargo clippy -p pecos-julia-ffi --all-targets --all-features -- -D warnings; \
+	fi
+	@if command -v go >/dev/null 2>&1; then \
+		echo "Running clippy on pecos-go-ffi..."; \
+		cargo clippy -p pecos-go-ffi --all-targets --all-features -- -D warnings; \
 	fi
 
 .PHONY: fmt
@@ -233,15 +294,25 @@ lint-fix:  ## Fix all auto-fixable linting issues (Rust, Python, Julia)
 	cargo fmt --all
 	@if [ "$(CUDA_AVAILABLE)" = "no" ]; then \
 		echo "CUDA not detected - running clippy fix on all features except GPU"; \
-		echo "Fixing workspace packages (excluding those with GPU features)..."; \
-		cargo clippy --fix --workspace --exclude pecos --exclude pecos-quest --all-targets --all-features --allow-staged --allow-dirty; \
+		echo "Fixing workspace packages (excluding FFI crates and those with GPU features)..."; \
+		cargo clippy --fix --workspace $(CARGO_EXCLUDE_FFI) --exclude pecos --exclude pecos-quest --all-targets --all-features --allow-staged --allow-dirty; \
 		echo "Fixing pecos with all features except gpu..."; \
 		cargo clippy --fix -p pecos --all-targets --features "$(PECOS_FEATURES_NO_GPU)" --allow-staged --allow-dirty; \
 		echo "Fixing pecos-quest with all features except gpu/cuda..."; \
 		cargo clippy --fix -p pecos-quest --all-targets --features "$(PECOS_QUEST_FEATURES_NO_GPU)" --allow-staged --allow-dirty; \
 	else \
 		echo "CUDA detected - running clippy fix with all features"; \
-		cargo clippy --fix --workspace --all-targets --all-features --allow-staged --allow-dirty; \
+		cargo clippy --fix --workspace $(CARGO_EXCLUDE_FFI) --all-targets --all-features --allow-staged --allow-dirty; \
+	fi
+	@echo "Fixing pecos-rslib..."
+	@cargo clippy --fix -p pecos-rslib --all-targets --all-features --allow-staged --allow-dirty
+	@if command -v julia >/dev/null 2>&1; then \
+		echo "Fixing pecos-julia-ffi..."; \
+		cargo clippy --fix -p pecos-julia-ffi --all-targets --all-features --allow-staged --allow-dirty; \
+	fi
+	@if command -v go >/dev/null 2>&1; then \
+		echo "Fixing pecos-go-ffi..."; \
+		cargo clippy --fix -p pecos-go-ffi --all-targets --all-features --allow-staged --allow-dirty; \
 	fi
 	@echo ""
 	@echo "Running pre-commit fixes..."
@@ -271,12 +342,12 @@ lint-fix:  ## Fix all auto-fixable linting issues (Rust, Python, Julia)
 rstest:  ## Run Rust tests (with GPU features only if CUDA available)
 	@if [ "$(CUDA_AVAILABLE)" = "no" ]; then \
 		echo "CUDA not detected - testing all features except GPU"; \
-		$(ADD_LLVM_TO_PATH) cargo test --workspace --release --exclude pecos-quest --exclude pecos-decoders --features llvm; \
+		$(ADD_LLVM_TO_PATH) cargo test --workspace --release $(CARGO_EXCLUDE_FFI) --exclude pecos-quest --exclude pecos-decoders --features llvm; \
 		$(ADD_LLVM_TO_PATH) cargo test -p pecos-quest --release --features cpu; \
 		$(ADD_LLVM_TO_PATH) cargo test -p pecos-decoders --release --all-features; \
 	else \
 		echo "CUDA detected - testing with all features including GPU"; \
-		$(ADD_LLVM_TO_PATH) cargo test --workspace --release --exclude pecos-quest --exclude pecos-decoders --features llvm; \
+		$(ADD_LLVM_TO_PATH) cargo test --workspace --release $(CARGO_EXCLUDE_FFI) --exclude pecos-quest --exclude pecos-decoders --features llvm; \
 		$(ADD_LLVM_TO_PATH) cargo test -p pecos-quest --release --all-features; \
 		$(ADD_LLVM_TO_PATH) cargo test -p pecos-decoders --release --all-features; \
 	fi
@@ -285,12 +356,12 @@ rstest:  ## Run Rust tests (with GPU features only if CUDA available)
 rstest-all:  ## Run Rust tests with all features (including GPU if CUDA available)
 	@if [ "$(CUDA_AVAILABLE)" = "no" ]; then \
 		echo "CUDA not detected - testing all features except GPU"; \
-		$(ADD_LLVM_TO_PATH) cargo test --workspace --exclude pecos-quest --exclude pecos-decoders --features llvm; \
+		$(ADD_LLVM_TO_PATH) cargo test --workspace $(CARGO_EXCLUDE_FFI) --exclude pecos-quest --exclude pecos-decoders --features llvm; \
 		$(ADD_LLVM_TO_PATH) cargo test -p pecos-quest --features cpu; \
 		$(ADD_LLVM_TO_PATH) cargo test -p pecos-decoders --all-features; \
 	else \
 		echo "CUDA detected - testing with all features including GPU"; \
-		$(ADD_LLVM_TO_PATH) cargo test --workspace --exclude pecos-quest --exclude pecos-decoders --features llvm; \
+		$(ADD_LLVM_TO_PATH) cargo test --workspace $(CARGO_EXCLUDE_FFI) --exclude pecos-quest --exclude pecos-decoders --features llvm; \
 		$(ADD_LLVM_TO_PATH) cargo test -p pecos-quest --all-features; \
 		$(ADD_LLVM_TO_PATH) cargo test -p pecos-decoders --all-features; \
 	fi

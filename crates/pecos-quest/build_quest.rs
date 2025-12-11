@@ -291,6 +291,19 @@ fn generate_quest_header(quest_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Get the PECOS build profile from environment
+/// Returns "dev", "release", or "native"
+fn get_pecos_profile() -> String {
+    env::var("PECOS_PROFILE").unwrap_or_else(|_| {
+        // Fall back to detecting from debug_assertions if PECOS_PROFILE not set
+        if cfg!(debug_assertions) {
+            "dev".to_string()
+        } else {
+            "release".to_string()
+        }
+    })
+}
+
 /// Main build function for `QuEST`
 pub fn build() -> Result<()> {
     // Tell Cargo when to rerun this build script
@@ -302,6 +315,7 @@ pub fn build() -> Result<()> {
 
     // Also rerun if the user forces a rebuild
     println!("cargo:rerun-if-env-changed=FORCE_REBUILD");
+    println!("cargo:rerun-if-env-changed=PECOS_PROFILE");
 
     // Check for GPU feature
     println!("cargo:rerun-if-env-changed=QUEST_ENABLE_GPU");
@@ -546,12 +560,23 @@ fn build_cxx_bridge(quest_dir: &Path, out_dir: &Path) {
     // This properly handles warning flags without conflicts
     build.warnings(false);
 
-    // Use different optimization levels for debug vs release builds
-    if cfg!(debug_assertions) {
-        build.flag_if_supported("-O0"); // No optimization for faster compilation
-        build.flag_if_supported("-g"); // Include debug symbols
-    } else {
-        build.flag_if_supported("-O3"); // Full optimization for release
+    // Use PECOS_PROFILE for optimization settings
+    let profile = get_pecos_profile();
+    match profile.as_str() {
+        "native" => {
+            // Native profile: release optimizations + CPU-specific optimizations
+            build.flag_if_supported("-O3");
+            build.flag_if_supported("-march=native");
+        }
+        "release" => {
+            // Release profile: full optimization
+            build.flag_if_supported("-O3");
+        }
+        _ => {
+            // Dev profile: no optimization for faster compilation
+            build.flag_if_supported("-O0");
+            build.flag_if_supported("-g"); // Include debug symbols
+        }
     }
 
     // Platform-specific flags

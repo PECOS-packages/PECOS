@@ -50,24 +50,34 @@ pub fn download_cached(info: &DownloadInfo) -> Result<Vec<u8>> {
         .build()
         .map_err(|e| BuildError::Http(e.to_string()))?;
 
-    // Try download with retries
-    let max_retries = 3;
+    // Try download with retries using exponential backoff
+    // Use more retries and longer delays to handle transient GitHub outages (504 errors)
+    let max_retries = 5;
+    let base_delay_secs = 10;
     let mut last_error = String::new();
 
     for attempt in 1..=max_retries {
         if attempt > 1 {
+            // Exponential backoff: 10s, 20s, 40s, 80s
+            let delay_secs = base_delay_secs * (1 << (attempt - 2));
             println!(
-                "cargo:warning=Retry attempt {}/{} for {}",
-                attempt, max_retries, info.name
+                "cargo:warning=Retry attempt {}/{} for {} (waiting {}s)",
+                attempt, max_retries, info.name, delay_secs
             );
-            // Wait a bit before retrying
-            std::thread::sleep(std::time::Duration::from_secs(2));
+            std::thread::sleep(std::time::Duration::from_secs(delay_secs));
         }
 
         match client.get(&info.url).send() {
             Ok(response) => {
-                if !response.status().is_success() {
-                    last_error = format!("Failed with status: {}", response.status());
+                let status = response.status();
+                if !status.is_success() {
+                    last_error = format!("Failed with status: {status}");
+                    // For server errors (5xx), always retry
+                    if status.is_server_error() {
+                        println!(
+                            "cargo:warning=Server error ({status}), will retry if attempts remain"
+                        );
+                    }
                     continue;
                 }
 

@@ -101,10 +101,10 @@ pub fn install_llvm(
     let temp_dir = temp_base.join("llvm");
     fs::create_dir_all(&temp_dir)?;
     let archive_path = temp_dir.join(&archive_name);
-    download_llvm(&url, &archive_path)?;
 
-    // Verify checksum
-    verify_checksum(&archive_path, &archive_name)?;
+    // Download and verify with retry on checksum failure
+    // This handles transient network issues that cause corrupted downloads
+    download_and_verify_with_retry(&url, &archive_path, &archive_name)?;
 
     // Extract
     extract_llvm(&archive_path, &llvm_dir)?;
@@ -203,10 +203,7 @@ fn get_download_url() -> Result<(String, String), Box<dyn std::error::Error>> {
     }
 }
 
-fn download_llvm(url: &str, dest: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    print!("Downloading LLVM... ");
-    io::Write::flush(&mut io::stdout())?;
-
+fn download_llvm_once(url: &str, dest: &PathBuf) -> Result<u64, Box<dyn std::error::Error>> {
     let response = reqwest::blocking::get(url)?;
     let total_size = response.content_length().unwrap_or(0);
 
@@ -238,8 +235,85 @@ fn download_llvm(url: &str, dest: &PathBuf) -> Result<(), Box<dyn std::error::Er
         }
     }
 
-    println!("\rDownloading LLVM... Done");
-    Ok(())
+    // Verify we got the expected size
+    if total_size > 0 && downloaded != total_size {
+        return Err(format!(
+            "Incomplete download: expected {total_size} bytes, got {downloaded} bytes"
+        )
+        .into());
+    }
+
+    Ok(downloaded)
+}
+
+fn download_llvm(url: &str, dest: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    print!("Downloading LLVM... ");
+    io::Write::flush(&mut io::stdout())?;
+
+    match download_llvm_once(url, dest) {
+        Ok(size) => {
+            println!("\rDownloading LLVM... Done ({} MB)", size / 1_000_000);
+            Ok(())
+        }
+        Err(e) => {
+            println!("\rDownloading LLVM... FAILED");
+            Err(e)
+        }
+    }
+}
+
+/// Download LLVM and verify its checksum, with automatic retry on failure.
+///
+/// This function handles transient network issues that may cause corrupted downloads
+/// by retrying the entire download+verify cycle up to 3 times.
+fn download_and_verify_with_retry(
+    url: &str,
+    dest: &PathBuf,
+    archive_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    const MAX_RETRIES: u32 = 3;
+
+    for attempt in 1..=MAX_RETRIES {
+        if attempt > 1 {
+            println!();
+            println!("Retry attempt {attempt}/{MAX_RETRIES}...");
+        }
+
+        // Clean up any existing partial file
+        let _ = fs::remove_file(dest);
+
+        // Download
+        if let Err(e) = download_llvm(url, dest) {
+            if attempt < MAX_RETRIES {
+                eprintln!("Download error: {e}");
+                eprintln!("Waiting 5 seconds before retry...");
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                continue;
+            }
+            return Err(e);
+        }
+
+        // Verify checksum
+        match verify_checksum(dest, archive_name) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if attempt < MAX_RETRIES {
+                    eprintln!();
+                    eprintln!(
+                        "Checksum verification failed. This may be a transient network issue."
+                    );
+                    eprintln!("Waiting 5 seconds before retry...");
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    // Clean up corrupted file
+                    let _ = fs::remove_file(dest);
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+
+    Err("Download and verification failed after all retries".into())
 }
 
 fn verify_checksum(

@@ -113,7 +113,7 @@ jobs:
 
       - name: Run tests
         run: |
-          uv run --system pytest python/selene-plugins/ -v --tb=short
+          pytest python/selene-plugins/ -v --tb=short
 
   # Build wheels for distribution
   build-wheels:

@@ -8,9 +8,9 @@ env:
 
 on:
   push:
-    branches: [ "master", "development", "dev" ]
+    branches: [ "main", "master", "development", "dev" ]
   pull_request:
-    branches: [ "master", "development", "dev" ]
+    branches: [ "main", "master", "development", "dev" ]
   workflow_dispatch:
 
 concurrency:

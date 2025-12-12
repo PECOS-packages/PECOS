@@ -7,7 +7,7 @@ env:
 
 on:
   push:
-    branches: [ "master", "development", "dev" ]
+    branches: [ "main", "master", "development", "dev" ]
     paths:
       - 'crates/**'
       - 'examples/**'
@@ -16,7 +16,7 @@ on:
       - '.github/workflows/rust-test.yml'
       - '.pre-commit-config.yaml'
   pull_request:
-    branches: [ "master", "development", "dev" ]
+    branches: [ "main", "master", "development", "dev" ]
     paths:
       - 'crates/**'
       - 'examples/**'
@@ -47,7 +47,7 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
+          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
 
       - name: Install LLVM 14.0.6 using pecos-llvm
         run: |
@@ -102,7 +102,7 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
+          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
 
       - name: Install rustfmt
         run: rustup component add rustfmt
@@ -198,7 +198,7 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
+          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
 
       - name: Install LLVM 14.0.6 using pecos-llvm (Unix)
         if: matrix.os != 'windows-latest'

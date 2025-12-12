@@ -2,11 +2,11 @@ name: Documentation Tests & Build
 
 on:
   push:
-    branches: [ master, development, dev ]
+    branches: [ main, master, development, dev ]
     paths:
       - 'docs/**'
   pull_request:
-    branches: [ master, development, dev ]
+    branches: [ main, master, development, dev ]
     paths:
       - 'docs/**'
   workflow_dispatch:

@@ -472,7 +472,7 @@ fn main() -> Result<(), PecosError> {
         }
         Commands::Run(args) => run_program(args)?,
         Commands::Info => print_info(),
-        Commands::Doctor => run_doctor()?,
+        Commands::Doctor => run_doctor(),
         Commands::Completions(args) => generate_completions(args.shell),
         Commands::Examples(args) => handle_examples(args)?,
         Commands::External(args) => run_external(args)?,
@@ -488,13 +488,25 @@ fn print_info() {
     println!();
 
     println!("Compiled Features:");
-    print_feature("qasm", cfg!(feature = "qasm"), "OpenQASM 2.0 circuit support");
+    print_feature(
+        "qasm",
+        cfg!(feature = "qasm"),
+        "OpenQASM 2.0 circuit support",
+    );
     print_feature("phir", cfg!(feature = "phir"), "PHIR/JSON program support");
     print_feature("selene", cfg!(feature = "selene"), "Selene QIS runtime");
-    print_feature("wasm", cfg!(feature = "wasm"), "WebAssembly foreign objects");
+    print_feature(
+        "wasm",
+        cfg!(feature = "wasm"),
+        "WebAssembly foreign objects",
+    );
     print_feature("llvm", cfg!(feature = "llvm"), "LLVM/QIS compilation");
     print_feature("quest", cfg!(feature = "quest"), "QuEST simulator backend");
-    print_feature("qulacs", cfg!(feature = "qulacs"), "Qulacs simulator backend");
+    print_feature(
+        "qulacs",
+        cfg!(feature = "qulacs"),
+        "Qulacs simulator backend",
+    );
     println!();
 
     println!("Simulators:");
@@ -523,7 +535,7 @@ fn print_feature(name: &str, enabled: bool, description: &str) {
 }
 
 /// Run diagnostic checks on PECOS installation
-fn run_doctor() -> Result<(), PecosError> {
+fn run_doctor() {
     println!("Checking PECOS installation...");
     println!();
 
@@ -531,25 +543,45 @@ fn run_doctor() -> Result<(), PecosError> {
     let mut warnings = Vec::new();
 
     // Check 1: Version
-    print_check("PECOS CLI", true, &format!("v{}", env!("CARGO_PKG_VERSION")));
+    print_check(
+        "PECOS CLI",
+        true,
+        &format!("v{}", env!("CARGO_PKG_VERSION")),
+    );
 
     // Check 2: QASM support
     let qasm_ok = cfg!(feature = "qasm");
-    print_check("QASM support", qasm_ok, if qasm_ok { "available" } else { "not compiled" });
+    print_check(
+        "QASM support",
+        qasm_ok,
+        if qasm_ok { "available" } else { "not compiled" },
+    );
     if !qasm_ok {
         warnings.push("QASM support not compiled. Reinstall with default features.");
     }
 
     // Check 3: PHIR support
     let phir_ok = cfg!(feature = "phir");
-    print_check("PHIR/JSON support", phir_ok, if phir_ok { "available" } else { "not compiled" });
+    print_check(
+        "PHIR/JSON support",
+        phir_ok,
+        if phir_ok { "available" } else { "not compiled" },
+    );
     if !phir_ok {
         warnings.push("PHIR support not compiled. Reinstall with default features.");
     }
 
     // Check 4: Selene runtime
     let selene_ok = cfg!(feature = "selene");
-    print_check("Selene runtime", selene_ok, if selene_ok { "available" } else { "not compiled" });
+    print_check(
+        "Selene runtime",
+        selene_ok,
+        if selene_ok {
+            "available"
+        } else {
+            "not compiled"
+        },
+    );
 
     // Check 5: LLVM/QIS support
     let llvm_ok = cfg!(feature = "llvm");
@@ -599,8 +631,6 @@ fn run_doctor() -> Result<(), PecosError> {
     } else {
         println!("Some checks failed. See above for details.");
     }
-
-    Ok(())
 }
 
 fn print_check(name: &str, ok: bool, detail: &str) {
@@ -800,15 +830,11 @@ fn handle_examples(args: &ExamplesArgs) -> Result<(), PecosError> {
             Ok(())
         }
         Some(name) => {
-            let example = EXAMPLES
-                .iter()
-                .find(|e| e.name == name)
-                .ok_or_else(|| {
-                    PecosError::Input(format!(
-                        "Unknown example '{}'. Run 'pecos examples' to list available examples.",
-                        name
-                    ))
-                })?;
+            let example = EXAMPLES.iter().find(|e| e.name == name).ok_or_else(|| {
+                PecosError::Input(format!(
+                    "Unknown example '{name}'. Run 'pecos examples' to list available examples."
+                ))
+            })?;
 
             if args.copy {
                 // Copy to current directory
@@ -862,18 +888,13 @@ fn run_external(args: &[OsString]) -> Result<(), PecosError> {
     if dev_commands.contains(&subcommand.as_str()) {
         // Try to find pecos-dev binary
         if let Ok(pecos_dev_path) = find_pecos_dev() {
-            debug!("Forwarding '{}' command to pecos-dev", subcommand);
+            debug!("Forwarding '{subcommand}' command to pecos-dev");
 
             let status = Command::new(&pecos_dev_path)
                 .arg(&subcommand)
                 .args(&remaining_args)
                 .status()
-                .map_err(|e| {
-                    PecosError::Resource(format!(
-                        "Failed to execute pecos-dev: {}",
-                        e
-                    ))
-                })?;
+                .map_err(|e| PecosError::Resource(format!("Failed to execute pecos-dev: {e}")))?;
 
             if !status.success() {
                 std::process::exit(status.code().unwrap_or(1));
@@ -882,7 +903,7 @@ fn run_external(args: &[OsString]) -> Result<(), PecosError> {
             Ok(())
         } else {
             // pecos-dev not found, show helpful message
-            eprintln!("Command '{}' requires pecos-dev.", subcommand);
+            eprintln!("Command '{subcommand}' requires pecos-dev.");
             eprintln!();
             eprintln!("Install with:");
             eprintln!("  cargo install pecos-dev");
@@ -892,7 +913,7 @@ fn run_external(args: &[OsString]) -> Result<(), PecosError> {
             std::process::exit(1);
         }
     } else {
-        eprintln!("Unknown command: {}", subcommand);
+        eprintln!("Unknown command: {subcommand}");
         eprintln!();
         eprintln!("Available commands:");
         eprintln!("  run      Run a quantum program");

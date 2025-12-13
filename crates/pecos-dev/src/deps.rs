@@ -26,11 +26,12 @@ pub fn list_dependencies() -> Vec<DependencyInfo> {
         .iter()
         .map(|(name, def)| {
             // Truncate commit hashes to 8 chars for display
-            let version = if def.version.len() > 8 && def.version.chars().all(|c| c.is_ascii_hexdigit()) {
-                def.version[..8].to_string()
-            } else {
-                def.version.clone()
-            };
+            let version =
+                if def.version.len() > 8 && def.version.chars().all(|c| c.is_ascii_hexdigit()) {
+                    def.version[..8].to_string()
+                } else {
+                    def.version.clone()
+                };
 
             DependencyInfo {
                 name: name.clone(),

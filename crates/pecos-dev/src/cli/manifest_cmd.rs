@@ -114,114 +114,123 @@ fn run_sync(dry_run: bool) -> Result<()> {
     if dry_run {
         println!("Dry run mode - no changes will be made");
         println!();
+        run_sync_dry_run(&workspace_path)
+    } else {
+        run_sync_execute(&workspace_path)
+    }
+}
+
+fn run_sync_dry_run(workspace_path: &std::path::Path) -> Result<()> {
+    let workspace = Manifest::load(workspace_path)?;
+    let workspace_dir = workspace_path.parent().unwrap();
+
+    for (crate_name, crate_config) in &workspace.crates {
+        if crate_config.dependencies.is_empty() {
+            continue;
+        }
+
+        let crate_dir = workspace_dir.join("crates").join(crate_name);
+        let crate_manifest_path = crate_dir.join("pecos.toml");
+
+        if !crate_dir.exists() {
+            println!("  [NOT FOUND] {crate_name}: crate directory not found");
+            continue;
+        }
+
+        if crate_manifest_path.exists() {
+            check_dry_run_update(&workspace, crate_name, &crate_manifest_path)?;
+        } else {
+            println!("  [WOULD CREATE] {crate_name}");
+        }
     }
 
-    // For dry run, we need to manually check what would change
-    if dry_run {
-        let workspace = Manifest::load(&workspace_path)?;
-        let workspace_dir = workspace_path.parent().unwrap();
+    Ok(())
+}
 
-        for (crate_name, crate_config) in &workspace.crates {
-            if crate_config.dependencies.is_empty() {
-                continue;
-            }
+fn check_dry_run_update(
+    workspace: &Manifest,
+    crate_name: &str,
+    crate_manifest_path: &std::path::Path,
+) -> Result<()> {
+    let existing = Manifest::load(crate_manifest_path)?;
+    let Some(new_manifest) = Manifest::generate_crate_manifest(workspace, crate_name) else {
+        return Ok(());
+    };
 
-            let crate_dir = workspace_dir.join("crates").join(crate_name);
-            let crate_manifest_path = crate_dir.join("pecos.toml");
+    let would_match = existing.dependencies.len() == new_manifest.dependencies.len()
+        && existing.dependencies.iter().all(|(name, dep)| {
+            new_manifest.dependencies.get(name).is_some_and(|new_dep| {
+                dep.version == new_dep.version
+                    && dep.url == new_dep.url
+                    && dep.sha256 == new_dep.sha256
+            })
+        });
 
-            if !crate_dir.exists() {
-                println!("  [NOT FOUND] {crate_name}: crate directory not found");
-                continue;
-            }
-
-            if crate_manifest_path.exists() {
-                // Check if it would change
-                let existing = Manifest::load(&crate_manifest_path)?;
-                let generated = Manifest::generate_crate_manifest(&workspace, crate_name);
-
-                if let Some(new_manifest) = generated {
-                    let would_match = existing.dependencies.len()
-                        == new_manifest.dependencies.len()
-                        && existing.dependencies.iter().all(|(name, dep)| {
-                            new_manifest
-                                .dependencies
-                                .get(name)
-                                .is_some_and(|new_dep| {
-                                    dep.version == new_dep.version
-                                        && dep.url == new_dep.url
-                                        && dep.sha256 == new_dep.sha256
-                                })
-                        });
-
-                    if would_match {
-                        println!("  [UP TO DATE] {crate_name}");
-                    } else {
-                        println!("  [WOULD UPDATE] {crate_name}");
-                        // Show what would change
-                        for (dep_name, dep) in &new_manifest.dependencies {
-                            if let Some(existing_dep) = existing.dependencies.get(dep_name) {
-                                if dep.version != existing_dep.version {
-                                    println!(
-                                        "    {dep_name}: {} -> {}",
-                                        existing_dep.version, dep.version
-                                    );
-                                }
-                            } else {
-                                println!("    {dep_name}: (new)");
-                            }
-                        }
-                    }
+    if would_match {
+        println!("  [UP TO DATE] {crate_name}");
+    } else {
+        println!("  [WOULD UPDATE] {crate_name}");
+        for (dep_name, dep) in &new_manifest.dependencies {
+            if let Some(existing_dep) = existing.dependencies.get(dep_name) {
+                if dep.version != existing_dep.version {
+                    println!(
+                        "    {dep_name}: {} -> {}",
+                        existing_dep.version, dep.version
+                    );
                 }
             } else {
-                println!("  [WOULD CREATE] {crate_name}");
+                println!("    {dep_name}: (new)");
             }
         }
-    } else {
-        // Actually sync
-        let results = sync_crate_manifests(&workspace_path)?;
-
-        let mut created = 0;
-        let mut updated = 0;
-        let mut up_to_date = 0;
-        let mut not_found = 0;
-
-        for result in &results {
-            match result.status {
-                SyncStatus::Created => {
-                    println!(
-                        "  [CREATED] {}: {}",
-                        result.crate_name,
-                        result.path.display()
-                    );
-                    created += 1;
-                }
-                SyncStatus::Updated => {
-                    println!(
-                        "  [UPDATED] {}: {}",
-                        result.crate_name,
-                        result.path.display()
-                    );
-                    updated += 1;
-                }
-                SyncStatus::UpToDate => {
-                    println!("  [UP TO DATE] {}", result.crate_name);
-                    up_to_date += 1;
-                }
-                SyncStatus::NotFound => {
-                    println!(
-                        "  [NOT FOUND] {}: crate directory not found",
-                        result.crate_name
-                    );
-                    not_found += 1;
-                }
-            }
-        }
-
-        println!();
-        println!(
-            "Sync complete: {created} created, {updated} updated, {up_to_date} up to date, {not_found} not found"
-        );
     }
+
+    Ok(())
+}
+
+fn run_sync_execute(workspace_path: &std::path::Path) -> Result<()> {
+    let results = sync_crate_manifests(workspace_path)?;
+
+    let mut created = 0;
+    let mut updated = 0;
+    let mut up_to_date = 0;
+    let mut not_found = 0;
+
+    for result in &results {
+        match result.status {
+            SyncStatus::Created => {
+                println!(
+                    "  [CREATED] {}: {}",
+                    result.crate_name,
+                    result.path.display()
+                );
+                created += 1;
+            }
+            SyncStatus::Updated => {
+                println!(
+                    "  [UPDATED] {}: {}",
+                    result.crate_name,
+                    result.path.display()
+                );
+                updated += 1;
+            }
+            SyncStatus::UpToDate => {
+                println!("  [UP TO DATE] {}", result.crate_name);
+                up_to_date += 1;
+            }
+            SyncStatus::NotFound => {
+                println!(
+                    "  [NOT FOUND] {}: crate directory not found",
+                    result.crate_name
+                );
+                not_found += 1;
+            }
+        }
+    }
+
+    println!();
+    println!(
+        "Sync complete: {created} created, {updated} updated, {up_to_date} up to date, {not_found} not found"
+    );
 
     Ok(())
 }
@@ -231,9 +240,7 @@ fn run_verify(deps_filter: Option<String>) -> Result<()> {
     println!();
 
     let manifest_path = Manifest::find().ok_or_else(|| {
-        crate::errors::Error::Config(
-            "pecos.toml not found. Run 'pecos deps init' first.".into(),
-        )
+        crate::errors::Error::Config("pecos.toml not found. Run 'pecos deps init' first.".into())
     })?;
 
     let manifest = Manifest::load(&manifest_path)?;

@@ -270,9 +270,7 @@ impl Manifest {
     /// Check if a crate requires LLVM
     #[must_use]
     pub fn crate_requires_llvm(&self, crate_name: &str) -> bool {
-        self.crates
-            .get(crate_name)
-            .is_some_and(|c| c.requires_llvm)
+        self.crates.get(crate_name).is_some_and(|c| c.requires_llvm)
             || self.llvm.required_by.contains(&crate_name.to_string())
     }
 
@@ -306,9 +304,10 @@ impl Manifest {
             if manifest_path.exists() {
                 // Check if this looks like a workspace manifest (has [crates.*] section)
                 if let Ok(content) = fs::read_to_string(&manifest_path)
-                    && content.contains("[crates.") {
-                        return Some(manifest_path);
-                    }
+                    && content.contains("[crates.")
+                {
+                    return Some(manifest_path);
+                }
             }
             path = path.parent()?;
         }
@@ -324,9 +323,8 @@ impl Manifest {
     ) -> Result<()> {
         // Try to find workspace manifest
         let crate_dir = crate_manifest_path.parent().unwrap_or(Path::new("."));
-        let workspace_path = match Self::find_workspace_manifest(crate_dir) {
-            Some(p) => p,
-            None => return Ok(()), // No workspace, nothing to validate
+        let Some(workspace_path) = Self::find_workspace_manifest(crate_dir) else {
+            return Ok(()); // No workspace, nothing to validate
         };
 
         // Don't validate if crate manifest IS the workspace manifest
@@ -435,6 +433,11 @@ impl Manifest {
     ///
     /// The workspace pecos.toml is embedded at compile time, providing a single
     /// source of truth for dependency versions and configurations.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the embedded `pecos.toml` cannot be parsed. This indicates a build
+    /// error since the manifest is validated at compile time.
     #[must_use]
     pub fn default_pecos() -> Self {
         // Embed the workspace pecos.toml at compile time
@@ -514,9 +517,8 @@ pub fn sync_crate_manifests(workspace_path: &Path) -> Result<Vec<SyncResult>> {
         }
 
         // Generate the crate manifest
-        let crate_manifest = match Manifest::generate_crate_manifest(&workspace, crate_name) {
-            Some(m) => m,
-            None => continue,
+        let Some(crate_manifest) = Manifest::generate_crate_manifest(&workspace, crate_name) else {
+            continue;
         };
 
         // Check if manifest already exists and matches

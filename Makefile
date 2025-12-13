@@ -48,35 +48,14 @@ install-llvm: ## Install LLVM 14 to ~/.pecos/llvm/ (required for QIR features)
 check-llvm: ## Check LLVM 14 installation status
 	@cargo run -q --release --package pecos-dev -- llvm check || true
 
-# LLVM Detection Helper
-# Auto-detect LLVM if not already set
-SETUP_LLVM = \
-	if [ -z "$$LLVM_SYS_140_PREFIX" ]; then \
-		DETECTED_LLVM=$$(cargo run -q --release -p pecos-dev -- llvm find 2>/dev/null); \
-		if [ -n "$$DETECTED_LLVM" ]; then \
-			export PECOS_LLVM="$$DETECTED_LLVM"; \
-			export LLVM_SYS_140_PREFIX="$$DETECTED_LLVM"; \
-			echo "Auto-detected LLVM at: $$LLVM_SYS_140_PREFIX"; \
-		fi; \
-	fi
-
-# Helper to unset CONDA_PREFIX and add LLVM to PATH for runtime tools
+# Helper to unset CONDA_PREFIX (prevents conda interference with builds)
+# Note: LLVM_SYS_140_PREFIX is set via .cargo/config.toml (run `pecos-dev llvm configure`)
 ifdef OS
     # Windows (running in Git Bash/MSYS)
     UNSET_CONDA = set "CONDA_PREFIX=" &&
-    ifdef LLVM_SYS_140_PREFIX
-        ADD_LLVM_TO_PATH = export PATH="$(LLVM_SYS_140_PREFIX)/bin:$$PATH" &&
-    else
-        ADD_LLVM_TO_PATH =
-    endif
 else
     # Unix/Linux/macOS
     UNSET_CONDA = unset CONDA_PREFIX &&
-    ifdef LLVM_SYS_140_PREFIX
-        ADD_LLVM_TO_PATH = export PATH="$(LLVM_SYS_140_PREFIX)/bin:$$PATH" &&
-    else
-        ADD_LLVM_TO_PATH =
-    endif
 endif
 
 # Build profile configuration
@@ -110,32 +89,16 @@ else
 endif
 
 # Helper to build FFI crates with the correct profile
-# Build scripts detect profile via Cargo's PROFILE env var
+# Uses pecos-dev julia/go build for cross-platform tool detection and building
 define BUILD_FFI_CRATES
-	@if command -v julia >/dev/null 2>&1; then \
-		echo "Julia detected, building Julia FFI library ($(PROFILE))..."; \
-		cd julia/pecos-julia-ffi && \
-		RUSTFLAGS="$$RUSTFLAGS $(RUSTFLAGS_EXTRA)" \
-		cargo build $(CARGO_PROFILE_FLAG); \
-		echo "Julia FFI library built successfully"; \
-	else \
-		echo "Julia not detected, skipping Julia build"; \
-	fi
-	@if command -v go >/dev/null 2>&1; then \
-		echo "Go detected, building Go FFI library ($(PROFILE))..."; \
-		cd go/pecos-go-ffi && \
-		RUSTFLAGS="$$RUSTFLAGS $(RUSTFLAGS_EXTRA)" \
-		cargo build $(CARGO_PROFILE_FLAG); \
-		echo "Go FFI library built successfully"; \
-	else \
-		echo "Go not detected, skipping Go build"; \
-	fi
+	@cargo run -q -p pecos-dev -- julia build --profile $(PROFILE) $(if $(RUSTFLAGS_EXTRA),--rustflags "$(RUSTFLAGS_EXTRA)") 2>/dev/null || true
+	@cargo run -q -p pecos-dev -- go build --profile $(PROFILE) $(if $(RUSTFLAGS_EXTRA),--rustflags "$(RUSTFLAGS_EXTRA)") 2>/dev/null || true
 endef
 
 .PHONY: build
 build: installreqs build-selene ## Build PECOS (use PROFILE=debug|release|native, default: debug)
 	@echo "Building with profile: $(PROFILE_DESC)"
-	@$(SETUP_LLVM); $(UNSET_CONDA) cd python/pecos-rslib/ && \
+	@$(UNSET_CONDA) cd python/pecos-rslib/ && \
 		RUSTFLAGS="$$RUSTFLAGS $(RUSTFLAGS_EXTRA)" \
 		uv run maturin develop --uv $(MATURIN_RELEASE_FLAG)
 	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all]"
@@ -145,7 +108,7 @@ build: installreqs build-selene ## Build PECOS (use PROFILE=debug|release|native
 build-selene: ## Build and install Selene plugins for development
 	@echo "Building Selene plugins..."
 	@# Build Rust libraries (with GPU support if CUDA available)
-	@if command -v nvcc >/dev/null 2>&1 || [ -n "$$CUDA_PATH" ]; then \
+	@if cargo run -q -p pecos-dev -- cuda check -q >/dev/null 2>&1; then \
 		echo "CUDA detected, building with GPU support..."; \
 		cargo build --release -p pecos-selene-quest --features gpu; \
 	else \
@@ -153,24 +116,9 @@ build-selene: ## Build and install Selene plugins for development
 		cargo build --release -p pecos-selene-quest; \
 	fi
 	@cargo build --release -p pecos-selene-qulacs -p pecos-selene-sparsestab -p pecos-selene-statevec
-	@# Copy libraries to Python package directories
+	@# Copy libraries to Python package directories (cross-platform via pecos-dev)
 	@echo "Copying libraries to Python packages..."
-	@mkdir -p python/selene-plugins/pecos-selene-quest/python/pecos_selene_quest/_dist/lib
-	@mkdir -p python/selene-plugins/pecos-selene-qulacs/python/pecos_selene_qulacs/_dist/lib
-	@mkdir -p python/selene-plugins/pecos-selene-sparsestab/python/pecos_selene_sparsestab/_dist/lib
-	@mkdir -p python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib
-	@cp target/release/libpecos_selene_quest.so python/selene-plugins/pecos-selene-quest/python/pecos_selene_quest/_dist/lib/ 2>/dev/null || \
-		cp target/release/libpecos_selene_quest.dylib python/selene-plugins/pecos-selene-quest/python/pecos_selene_quest/_dist/lib/ 2>/dev/null || \
-		cp target/release/pecos_selene_quest.dll python/selene-plugins/pecos-selene-quest/python/pecos_selene_quest/_dist/lib/ 2>/dev/null || true
-	@cp target/release/libpecos_selene_qulacs.so python/selene-plugins/pecos-selene-qulacs/python/pecos_selene_qulacs/_dist/lib/ 2>/dev/null || \
-		cp target/release/libpecos_selene_qulacs.dylib python/selene-plugins/pecos-selene-qulacs/python/pecos_selene_qulacs/_dist/lib/ 2>/dev/null || \
-		cp target/release/pecos_selene_qulacs.dll python/selene-plugins/pecos-selene-qulacs/python/pecos_selene_qulacs/_dist/lib/ 2>/dev/null || true
-	@cp target/release/libpecos_selene_sparsestab.so python/selene-plugins/pecos-selene-sparsestab/python/pecos_selene_sparsestab/_dist/lib/ 2>/dev/null || \
-		cp target/release/libpecos_selene_sparsestab.dylib python/selene-plugins/pecos-selene-sparsestab/python/pecos_selene_sparsestab/_dist/lib/ 2>/dev/null || \
-		cp target/release/pecos_selene_sparsestab.dll python/selene-plugins/pecos-selene-sparsestab/python/pecos_selene_sparsestab/_dist/lib/ 2>/dev/null || true
-	@cp target/release/libpecos_selene_statevec.so python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib/ 2>/dev/null || \
-		cp target/release/libpecos_selene_statevec.dylib python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib/ 2>/dev/null || \
-		cp target/release/pecos_selene_statevec.dll python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib/ 2>/dev/null || true
+	@cargo run -q -p pecos-dev -- selene install
 	@# Install Python packages in editable mode
 	@echo "Installing Selene plugins in editable mode..."
 	@$(UNSET_CONDA) uv pip install -e ./python/selene-plugins/pecos-selene-quest
@@ -182,7 +130,7 @@ build-selene: ## Build and install Selene plugins for development
 .PHONY: build-cuda
 build-cuda: installreqs ## Build PECOS with CUDA support (use PROFILE=debug|release|native, default: debug)
 	@echo "Building with CUDA support, profile: $(PROFILE_DESC)"
-	@$(SETUP_LLVM); $(UNSET_CONDA) cd python/pecos-rslib/ && \
+	@$(UNSET_CONDA) cd python/pecos-rslib/ && \
 		RUSTFLAGS="$$RUSTFLAGS $(RUSTFLAGS_EXTRA)" \
 		uv run maturin develop --uv $(MATURIN_RELEASE_FLAG)
 	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all,cuda]"
@@ -238,88 +186,37 @@ docs-test-working:  ## Test only working code examples in documentation
 # Linting / formatting
 # --------------------
 
-# Detect CUDA availability for GPU features
-CUDA_AVAILABLE := $(shell command -v nvcc >/dev/null 2>&1 && echo "yes" || (test -n "$$CUDA_PATH" && echo "yes" || echo "no"))
-
-# Get all features for pecos package except gpu (lazy evaluation - only computed when used)
-PECOS_FEATURES_NO_GPU = $(shell cargo metadata --no-deps --format-version 1 2>/dev/null | jq -r '.packages[] | select(.name == "pecos") | .features | keys[] | select(. | IN("gpu") | not)' | tr '\n' ',' | sed 's/,$$//' 2>/dev/null)
-
-# Get all features for pecos-quest package except gpu and cuda (lazy evaluation - only computed when used)
-PECOS_QUEST_FEATURES_NO_GPU = $(shell cargo metadata --no-deps --format-version 1 2>/dev/null | jq -r '.packages[] | select(.name == "pecos-quest") | .features | keys[] | select(. | IN("gpu", "cuda") | not)' | tr '\n' ',' | sed 's/,$$//' 2>/dev/null)
-
-# When CUDA is not available, we check all packages with all their features except GPU features
-# This is done by checking packages separately
-# FFI crates are checked separately to avoid redundant compilation in workspace builds
+# Rust check, clippy, fmt - use pecos-dev for CUDA-aware handling
 .PHONY: check
 check:  ## Run cargo check (with GPU features only if CUDA available)
-	@if [ "$(CUDA_AVAILABLE)" = "no" ]; then \
-		echo "CUDA not detected - checking all features except GPU"; \
-		echo "Checking workspace packages (excluding FFI crates and those with GPU features)..."; \
-		cargo check --workspace $(CARGO_EXCLUDE_FFI) --exclude pecos --exclude pecos-quest --all-targets --all-features; \
-		echo "Checking pecos with all features except gpu..."; \
-		cargo check -p pecos --all-targets --features "$(PECOS_FEATURES_NO_GPU)"; \
-		echo "Checking pecos-quest with all features except gpu/cuda..."; \
-		cargo check -p pecos-quest --all-targets --features "$(PECOS_QUEST_FEATURES_NO_GPU)"; \
-	else \
-		echo "CUDA detected - checking with all features"; \
-		cargo check --workspace $(CARGO_EXCLUDE_FFI) --all-targets --all-features; \
-	fi
-	@echo "Checking pecos-rslib..."
-	@cargo check -p pecos-rslib --all-targets --all-features
-	@if command -v julia >/dev/null 2>&1; then \
-		echo "Checking pecos-julia-ffi..."; \
-		cargo check -p pecos-julia-ffi --all-targets --all-features; \
-	fi
-	@if command -v go >/dev/null 2>&1; then \
-		echo "Checking pecos-go-ffi..."; \
-		cargo check -p pecos-go-ffi --all-targets --all-features; \
-	fi
+	@cargo run -q -p pecos-dev -- rust check --include-ffi
 
 .PHONY: clippy
 clippy:  ## Run cargo clippy (with GPU features only if CUDA available)
-	@if [ "$(CUDA_AVAILABLE)" = "no" ]; then \
-		echo "CUDA not detected - running clippy on all features except GPU"; \
-		echo "Running clippy on workspace packages (excluding FFI crates and those with GPU features)..."; \
-		cargo clippy --workspace $(CARGO_EXCLUDE_FFI) --exclude pecos --exclude pecos-quest --all-targets --all-features -- -D warnings; \
-		echo "Running clippy on pecos with all features except gpu..."; \
-		cargo clippy -p pecos --all-targets --features "$(PECOS_FEATURES_NO_GPU)" -- -D warnings; \
-		echo "Running clippy on pecos-quest with all features except gpu/cuda..."; \
-		cargo clippy -p pecos-quest --all-targets --features "$(PECOS_QUEST_FEATURES_NO_GPU)" -- -D warnings; \
-	else \
-		echo "CUDA detected - running clippy with all features"; \
-		cargo clippy --workspace $(CARGO_EXCLUDE_FFI) --all-targets --all-features -- -D warnings; \
-	fi
-	@echo "Running clippy on pecos-rslib..."
-	@cargo clippy -p pecos-rslib --all-targets --all-features -- -D warnings
-	@if command -v julia >/dev/null 2>&1; then \
-		echo "Running clippy on pecos-julia-ffi..."; \
-		cargo clippy -p pecos-julia-ffi --all-targets --all-features -- -D warnings; \
-	fi
-	@if command -v go >/dev/null 2>&1; then \
-		echo "Running clippy on pecos-go-ffi..."; \
-		cargo clippy -p pecos-go-ffi --all-targets --all-features -- -D warnings; \
-	fi
+	@cargo run -q -p pecos-dev -- rust clippy --include-ffi
 
 .PHONY: fmt
 fmt: ## Check Rust formatting (without fixing)
-	cargo fmt --all -- --check
+	@cargo run -q -p pecos-dev -- rust fmt --check
 
 .PHONY: fmt-fix
 fmt-fix: ## Fix Rust formatting issues
-	cargo fmt --all
+	@cargo run -q -p pecos-dev -- rust fmt
 
 .PHONY: lint
 lint: fmt clippy  ## Run all quality checks / linting / reformatting (check only)
 	uv run pre-commit run --all-files
-	@if command -v julia >/dev/null 2>&1; then \
+	@if cargo run -q -p pecos-dev -- julia check -q >/dev/null 2>&1; then \
 		echo "Julia detected, running Julia formatting check and linting..."; \
-		$(MAKE) julia-format-check julia-lint; \
+		cargo run -q -p pecos-dev -- julia fmt --check; \
+		cargo run -q -p pecos-dev -- julia lint; \
 	else \
 		echo "Julia not detected, skipping Julia linting"; \
 	fi
-	@if command -v go >/dev/null 2>&1; then \
+	@if cargo run -q -p pecos-dev -- go check -q >/dev/null 2>&1; then \
 		echo "Go detected, running Go formatting check and linting..."; \
-		$(MAKE) go-fmt-check go-lint; \
+		cargo run -q -p pecos-dev -- go fmt --check; \
+		cargo run -q -p pecos-dev -- go lint; \
 	else \
 		echo "Go not detected, skipping Go linting"; \
 	fi
@@ -333,46 +230,25 @@ normalize-line-endings:  ## Normalize line endings according to .gitattributes
 	@echo "Line endings normalized. Check 'git status' for any changes."
 
 .PHONY: lint-fix
-lint-fix:  ## Fix all auto-fixable linting issues (Rust, Python, Julia)
-	@echo "Fixing Rust formatting..."
-	cargo fmt --all
-	@if [ "$(CUDA_AVAILABLE)" = "no" ]; then \
-		echo "CUDA not detected - running clippy fix on all features except GPU"; \
-		echo "Fixing workspace packages (excluding FFI crates and those with GPU features)..."; \
-		cargo clippy --fix --workspace $(CARGO_EXCLUDE_FFI) --exclude pecos --exclude pecos-quest --all-targets --all-features --allow-staged --allow-dirty; \
-		echo "Fixing pecos with all features except gpu..."; \
-		cargo clippy --fix -p pecos --all-targets --features "$(PECOS_FEATURES_NO_GPU)" --allow-staged --allow-dirty; \
-		echo "Fixing pecos-quest with all features except gpu/cuda..."; \
-		cargo clippy --fix -p pecos-quest --all-targets --features "$(PECOS_QUEST_FEATURES_NO_GPU)" --allow-staged --allow-dirty; \
-	else \
-		echo "CUDA detected - running clippy fix with all features"; \
-		cargo clippy --fix --workspace $(CARGO_EXCLUDE_FFI) --all-targets --all-features --allow-staged --allow-dirty; \
-	fi
-	@echo "Fixing pecos-rslib..."
-	@cargo clippy --fix -p pecos-rslib --all-targets --all-features --allow-staged --allow-dirty
-	@if command -v julia >/dev/null 2>&1; then \
-		echo "Fixing pecos-julia-ffi..."; \
-		cargo clippy --fix -p pecos-julia-ffi --all-targets --all-features --allow-staged --allow-dirty; \
-	fi
-	@if command -v go >/dev/null 2>&1; then \
-		echo "Fixing pecos-go-ffi..."; \
-		cargo clippy --fix -p pecos-go-ffi --all-targets --all-features --allow-staged --allow-dirty; \
-	fi
+lint-fix:  ## Fix all auto-fixable linting issues (Rust, Python, Julia, Go)
+	@echo "Fixing Rust formatting and clippy issues..."
+	@cargo run -q -p pecos-dev -- rust fmt
+	@cargo run -q -p pecos-dev -- rust clippy --fix --include-ffi
 	@echo ""
 	@echo "Running pre-commit fixes..."
 	uv run pre-commit run --all-files || true
 	@echo ""
-	@if command -v julia >/dev/null 2>&1; then \
+	@if cargo run -q -p pecos-dev -- julia check -q >/dev/null 2>&1; then \
 		echo "Fixing Julia formatting..."; \
-		$(MAKE) julia-format; \
+		cargo run -q -p pecos-dev -- julia fmt; \
 		echo ""; \
 		echo "Note: Some Julia linting issues from Aqua.jl may require manual fixes."; \
 	else \
 		echo "Julia not detected, skipping Julia formatting"; \
 	fi
-	@if command -v go >/dev/null 2>&1; then \
+	@if cargo run -q -p pecos-dev -- go check -q >/dev/null 2>&1; then \
 		echo "Fixing Go formatting..."; \
-		$(MAKE) go-fmt; \
+		cargo run -q -p pecos-dev -- go fmt; \
 	else \
 		echo "Go not detected, skipping Go formatting"; \
 	fi
@@ -384,31 +260,11 @@ lint-fix:  ## Fix all auto-fixable linting issues (Rust, Python, Julia)
 
 .PHONY: rstest
 rstest:  ## Run Rust tests (with GPU features only if CUDA available)
-	@if [ "$(CUDA_AVAILABLE)" = "no" ]; then \
-		echo "CUDA not detected - testing all features except GPU"; \
-		$(ADD_LLVM_TO_PATH) cargo test --workspace --release $(CARGO_EXCLUDE_FFI) --exclude pecos-quest --exclude pecos-decoders --features llvm; \
-		$(ADD_LLVM_TO_PATH) cargo test -p pecos-quest --release --features cpu; \
-		$(ADD_LLVM_TO_PATH) cargo test -p pecos-decoders --release --all-features; \
-	else \
-		echo "CUDA detected - testing with all features including GPU"; \
-		$(ADD_LLVM_TO_PATH) cargo test --workspace --release $(CARGO_EXCLUDE_FFI) --exclude pecos-quest --exclude pecos-decoders --features llvm; \
-		$(ADD_LLVM_TO_PATH) cargo test -p pecos-quest --release --all-features; \
-		$(ADD_LLVM_TO_PATH) cargo test -p pecos-decoders --release --all-features; \
-	fi
+	@cargo run -q -p pecos-dev -- rust test --release
 
 .PHONY: rstest-all
 rstest-all:  ## Run Rust tests with all features (including GPU if CUDA available)
-	@if [ "$(CUDA_AVAILABLE)" = "no" ]; then \
-		echo "CUDA not detected - testing all features except GPU"; \
-		$(ADD_LLVM_TO_PATH) cargo test --workspace $(CARGO_EXCLUDE_FFI) --exclude pecos-quest --exclude pecos-decoders --features llvm; \
-		$(ADD_LLVM_TO_PATH) cargo test -p pecos-quest --features cpu; \
-		$(ADD_LLVM_TO_PATH) cargo test -p pecos-decoders --all-features; \
-	else \
-		echo "CUDA detected - testing with all features including GPU"; \
-		$(ADD_LLVM_TO_PATH) cargo test --workspace $(CARGO_EXCLUDE_FFI) --exclude pecos-quest --exclude pecos-decoders --features llvm; \
-		$(ADD_LLVM_TO_PATH) cargo test -p pecos-quest --all-features; \
-		$(ADD_LLVM_TO_PATH) cargo test -p pecos-decoders --all-features; \
-	fi
+	@cargo run -q -p pecos-dev -- rust test
 
 # Decoder-specific commands
 # -------------------------
@@ -428,7 +284,7 @@ build-decoder: ## Build specific decoder. Usage: make build-decoder DECODER=ldpc
 
 .PHONY: test-decoders
 test-decoders: ## Test all decoder crates
-	@$(ADD_LLVM_TO_PATH) cargo test --package pecos-decoders --all-features
+	@cargo test --package pecos-decoders --all-features
 
 .PHONY: test-decoder
 test-decoder: ## Test specific decoder. Usage: make test-decoder DECODER=ldpc
@@ -436,7 +292,7 @@ test-decoder: ## Test specific decoder. Usage: make test-decoder DECODER=ldpc
 		echo "Error: DECODER not specified. Usage: make test-decoder DECODER=ldpc"; \
 		exit 1; \
 	fi
-	@$(ADD_LLVM_TO_PATH) cargo test --package pecos-decoders --features $(DECODER)
+	@cargo test --package pecos-decoders --features $(DECODER)
 
 .PHONY: decoder-info
 decoder-info: ## Show available decoders and their features
@@ -448,53 +304,36 @@ decoder-info: ## Show available decoders and their features
 	@echo "See DECODERS.md for detailed documentation."
 
 .PHONY: decoder-cache-status
-decoder-cache-status: ## Show decoder download cache status
-	@CACHE_DIR="$${PECOS_CACHE_DIR:-$$HOME/.cache/pecos-decoders}"; \
-	if [ -d "$$CACHE_DIR" ]; then \
-		echo "Cache directory: $$CACHE_DIR"; \
-		echo "Contents:"; \
-		du -sh "$$CACHE_DIR"/* 2>/dev/null || echo "  (empty)"; \
-	else \
-		echo "No cache directory found at $$CACHE_DIR"; \
-		echo "Cache will be created when building decoders"; \
-	fi
+decoder-cache-status: ## Show decoder download cache status (now managed by pecos-dev)
+	@cargo run -q -p pecos-dev -- list -v
 
 .PHONY: decoder-cache-clean
-decoder-cache-clean: ## Clean decoder download cache
-	@CACHE_DIR="$${PECOS_CACHE_DIR:-$$HOME/.cache/pecos-decoders}"; \
-	if [ -d "$$CACHE_DIR" ]; then \
-		echo "Cleaning cache directory: $$CACHE_DIR"; \
-		rm -rf "$$CACHE_DIR"; \
-		echo "Cache cleaned"; \
-	else \
-		echo "No cache directory found"; \
-	fi
+decoder-cache-clean: ## Clean decoder download cache (use clean-cache for all cached archives)
+	@cargo run -q -p pecos-dev -- clean --dep ldpc --dry-run
+	@echo ""
+	@echo "To actually clean, run: cargo run -p pecos-dev -- clean --dep ldpc"
+	@echo "Or clean all cached archives: make clean-cache"
 
 .PHONY: pytest
 pytest:  ## Run tests on the Python package (excluding numpy and optional deps). ASSUMES: previous build command
-	@$(ADD_LLVM_TO_PATH) uv run pytest ./python/pecos-rslib/tests/ -m "not performance and not numpy"
-	@$(ADD_LLVM_TO_PATH) uv run pytest ./python/quantum-pecos/tests/ --doctest-modules -m "not optional_dependency and not numpy"
+	@cargo run -q -p pecos-dev -- python test
 
 .PHONY: pytest-numpy
 pytest-numpy:  ## Run NumPy/SciPy compatibility tests. ASSUMES: previous build command
-	@echo "Running NumPy/SciPy compatibility tests..."
-	@$(ADD_LLVM_TO_PATH) uv run --group numpy-compat pytest ./python/pecos-rslib/tests/ -m "numpy and not performance"
-	@echo "NumPy/SciPy compatibility tests completed successfully"
+	@cargo run -q -p pecos-dev -- python test --numpy
 
 .PHONY: pytest-perf
 pytest-perf: build-release ## Run performance tests on pecos-rslib with release build
 	@echo "Running pecos-rslib performance tests with release build..."
-	@$(ADD_LLVM_TO_PATH) uv run --group numpy-compat pytest ./python/pecos-rslib/tests/ -m "performance" -v
+	@uv run --group numpy-compat pytest ./python/pecos-rslib/tests/ -m "performance" -v
 
 .PHONY: pytest-dep
 pytest-dep: ## Run tests on the Python package only for optional dependencies. ASSUMES: previous build command
-	@$(ADD_LLVM_TO_PATH) uv run pytest ./python/quantum-pecos/tests/ --doctest-modules -m optional_dependency
+	@cargo run -q -p pecos-dev -- python test -m optional_dependency
 
 .PHONY: pytest-selene
 pytest-selene: ## Run tests for Selene plugins. ASSUMES: previous build command
-	@echo "Running Selene plugin tests..."
-	@$(ADD_LLVM_TO_PATH) uv run pytest ./python/selene-plugins/ -v
-	@echo "Selene plugin tests completed"
+	@cargo run -q -p pecos-dev -- python test --selene
 
 .PHONY: pytest-all
 pytest-all: pytest pytest-numpy pytest-selene ## Run all tests (core + numpy compat + selene) on the Python package. ASSUMES: previous build command
@@ -507,33 +346,33 @@ pytest-all: pytest pytest-numpy pytest-selene ## Run all tests (core + numpy com
 
 .PHONY: test
 test: rstest-all pytest-all ## Run all tests. ASSUMES: previous build command
-	@if command -v julia >/dev/null 2>&1; then \
+	@if cargo run -q -p pecos-dev -- julia check -q >/dev/null 2>&1; then \
 		echo "Julia detected, running Julia tests..."; \
-		$(MAKE) julia-test; \
+		cargo run -q -p pecos-dev -- julia test; \
 	else \
 		echo "Julia not detected, skipping Julia tests"; \
 	fi
-	@if command -v go >/dev/null 2>&1; then \
+	@if cargo run -q -p pecos-dev -- go check -q >/dev/null 2>&1; then \
 		echo "Go detected, running Go tests..."; \
-		$(MAKE) go-test; \
+		cargo run -q -p pecos-dev -- go test; \
 	else \
 		echo "Go not detected, skipping Go tests"; \
 	fi
 
 .PHONY: test-all
 test-all: rstest-all pytest-all ## Run all tests including Julia and Go (warns if not installed)
-	@if command -v julia >/dev/null 2>&1; then \
+	@if cargo run -q -p pecos-dev -- julia check -q >/dev/null 2>&1; then \
 		echo "Julia detected, running Julia tests..."; \
-		$(MAKE) julia-test; \
+		cargo run -q -p pecos-dev -- julia test; \
 	else \
 		echo ""; \
 		echo "WARNING: Julia is not installed. Skipping Julia tests."; \
 		echo "   To run Julia tests, please install Julia from https://julialang.org/downloads/"; \
 		echo ""; \
 	fi
-	@if command -v go >/dev/null 2>&1; then \
+	@if cargo run -q -p pecos-dev -- go check -q >/dev/null 2>&1; then \
 		echo "Go detected, running Go tests..."; \
-		$(MAKE) go-test; \
+		cargo run -q -p pecos-dev -- go test; \
 	else \
 		echo ""; \
 		echo "WARNING: Go is not installed. Skipping Go tests."; \
@@ -546,30 +385,20 @@ test-all: rstest-all pytest-all ## Run all tests including Julia and Go (warns i
 
 .PHONY: julia-build
 julia-build: ## Build Julia FFI library
-	@echo "Building Julia FFI library..."
-	cd julia/pecos-julia-ffi && cargo build --release
-	@echo "Julia library built at: target/release/libpecos_julia.{so,dylib,dll}"
+	@cargo run -q -p pecos-dev -- julia build
 
 .PHONY: julia-build-debug
 julia-build-debug: ## Build Julia FFI library in debug mode
-	@echo "Building Julia FFI library (debug)..."
-	cd julia/pecos-julia-ffi && cargo build
-	@echo "Julia library built at: target/debug/libpecos_julia.{so,dylib,dll}"
+	@cargo run -q -p pecos-dev -- julia build --profile debug
 
 .PHONY: julia-test
-julia-test: julia-build ## Run Julia tests (requires Julia installed)
-	@echo "Running Julia tests..."
-	@if command -v julia >/dev/null 2>&1; then \
-		cd julia/PECOS.jl && julia --project=. -e 'using Pkg; Pkg.instantiate(); include("test/runtests.jl")'; \
-	else \
-		echo "Julia not found. Please install Julia to run tests."; \
-		exit 1; \
-	fi
+julia-test: ## Run Julia tests (requires Julia installed)
+	@cargo run -q -p pecos-dev -- julia test
 
 .PHONY: julia-examples
 julia-examples: julia-build-debug ## Run Julia examples (requires Julia installed)
 	@echo "Running Julia examples..."
-	@if command -v julia >/dev/null 2>&1; then \
+	@if cargo run -q -p pecos-dev -- julia check -q >/dev/null 2>&1; then \
 		cd julia/PECOS.jl && julia --project=. examples/demo.jl; \
 		cd julia/PECOS.jl && julia --project=. examples/basic_usage.jl; \
 	else \
@@ -596,72 +425,44 @@ julia-info: ## Show Julia package information
 	@echo "FFI library: julia/pecos-julia-ffi"
 	@echo ""
 	@echo "To install for development:"
-	@echo "  1. Build FFI library: make julia-build"
+	@echo "  1. Build FFI library: pecos-dev julia build"
 	@echo "  2. In Julia REPL: ] add julia/PECOS.jl"
 	@echo ""
-	@echo "To run tests: make julia-test"
+	@echo "To run tests: pecos-dev julia test"
 	@echo "To run examples: make julia-examples"
 
 .PHONY: julia-format
 julia-format: ## Format Julia code using JuliaFormatter
-	@echo "Formatting Julia code..."
-	@if command -v julia >/dev/null 2>&1; then \
-		cd julia/PECOS.jl && julia -e 'using Pkg; if !haskey(Pkg.project().dependencies, "JuliaFormatter"); Pkg.add("JuliaFormatter"); end; using JuliaFormatter; format("."; verbose=true)'; \
-	else \
-		echo "Julia not found. Please install Julia to format code."; \
-		exit 1; \
-	fi
+	@cargo run -q -p pecos-dev -- julia fmt
 
 .PHONY: julia-format-check
 julia-format-check: ## Check Julia code formatting without modifying files
-	@echo "Checking Julia code formatting..."
-	@if command -v julia >/dev/null 2>&1; then \
-		cd julia/PECOS.jl && julia -e 'using Pkg; if !haskey(Pkg.project().dependencies, "JuliaFormatter"); Pkg.add("JuliaFormatter"); end; using JuliaFormatter; if !format("."; verbose=false, overwrite=false); println("Formatting issues found. Run `make julia-format` to fix."); exit(1); else println("All Julia code is properly formatted."); end'; \
-	else \
-		echo "Julia not found. Please install Julia to check formatting."; \
-		exit 1; \
-	fi
+	@cargo run -q -p pecos-dev -- julia fmt --check
 
 .PHONY: julia-lint
-julia-lint: julia-build ## Run Aqua.jl quality checks on Julia code
-	@echo "Running Julia code quality checks with Aqua.jl..."
-	@if command -v julia >/dev/null 2>&1; then \
-		cd julia/PECOS.jl && julia --project=. test/aqua_tests.jl; \
-	else \
-		echo "Julia not found. Please install Julia to run linting."; \
-		exit 1; \
-	fi
+julia-lint: ## Run Aqua.jl quality checks on Julia code
+	@cargo run -q -p pecos-dev -- julia lint
 
 # Go bindings
 # -----------
 
 .PHONY: go-build
 go-build: ## Build Go FFI library
-	@echo "Building Go FFI library..."
-	cd go/pecos-go-ffi && cargo build --release
-	@echo "Go library built at: target/release/libpecos_go.{so,dylib,dll}"
+	@cargo run -q -p pecos-dev -- go build
 
 .PHONY: go-build-debug
 go-build-debug: ## Build Go FFI library in debug mode
-	@echo "Building Go FFI library (debug)..."
-	cd go/pecos-go-ffi && cargo build
-	@echo "Go library built at: target/debug/libpecos_go.{so,dylib,dll}"
+	@cargo run -q -p pecos-dev -- go build --profile debug
 
 .PHONY: go-test
-go-test: go-build ## Run Go tests (requires Go installed)
-	@echo "Running Go tests..."
-	@if command -v go >/dev/null 2>&1; then \
-		cd go/pecos && LD_LIBRARY_PATH=$$LD_LIBRARY_PATH:$(CURDIR)/target/release go test -v; \
-	else \
-		echo "Go not found. Please install Go to run tests."; \
-		exit 1; \
-	fi
+go-test: ## Run Go tests (requires Go installed)
+	@cargo run -q -p pecos-dev -- go test
 
 .PHONY: go-clean
 go-clean: ## Clean Go build artifacts
 	@echo "Cleaning Go artifacts..."
 	@rm -rf go/pecos/go.sum
-	@if command -v go >/dev/null 2>&1; then \
+	@if cargo run -q -p pecos-dev -- go check -q >/dev/null 2>&1; then \
 		cd go/pecos && go clean -cache 2>/dev/null || true; \
 	fi
 
@@ -674,8 +475,8 @@ go-info: ## Show Go package information
 	@echo "FFI library: go/pecos-go-ffi"
 	@echo ""
 	@echo "To build and test:"
-	@echo "  1. Build FFI library: make go-build"
-	@echo "  2. Run tests: make go-test"
+	@echo "  1. Build FFI library: pecos-dev go build"
+	@echo "  2. Run tests: pecos-dev go test"
 	@echo ""
 	@echo "To use in your Go project:"
 	@echo "  1. Set LD_LIBRARY_PATH to include target/release"
@@ -683,181 +484,28 @@ go-info: ## Show Go package information
 
 .PHONY: go-fmt
 go-fmt: ## Format Go code using gofmt
-	@echo "Formatting Go code..."
-	@if command -v go >/dev/null 2>&1; then \
-		gofmt -w go/pecos/*.go; \
-	else \
-		echo "Go not found. Please install Go to format code."; \
-		exit 1; \
-	fi
+	@cargo run -q -p pecos-dev -- go fmt
 
 .PHONY: go-fmt-check
 go-fmt-check: ## Check Go code formatting without modifying files
-	@echo "Checking Go code formatting..."
-	@if command -v go >/dev/null 2>&1; then \
-		if [ -n "$$(gofmt -l go/pecos/*.go)" ]; then \
-			echo "Formatting issues found in:"; \
-			gofmt -l go/pecos/*.go; \
-			echo "Run 'make go-fmt' to fix."; \
-			exit 1; \
-		else \
-			echo "All Go code is properly formatted."; \
-		fi \
-	else \
-		echo "Go not found. Please install Go to check formatting."; \
-		exit 1; \
-	fi
+	@cargo run -q -p pecos-dev -- go fmt --check
 
 .PHONY: go-lint
 go-lint: ## Run Go linting with go vet
-	@echo "Running Go linting..."
-	@if command -v go >/dev/null 2>&1; then \
-		cd go/pecos && go vet ./...; \
-	else \
-		echo "Go not found. Please install Go to run linting."; \
-		exit 1; \
-	fi
+	@cargo run -q -p pecos-dev -- go lint
 
 # Utility
 # -------
 
 .PHONY: clean-selene-plugins
 clean-selene-plugins:  ## Clean Selene plugin build artifacts
-ifeq ($(OS),Windows_NT)
-	@if command -v rm >/dev/null 2>&1; then \
-		$(MAKE) clean-selene-plugins-unix; \
-	else \
-		powershell -Command "exit 0" > NUL 2>&1 && $(MAKE) clean-selene-plugins-windows-ps || echo "Skipping Selene plugin cleanup on Windows cmd"; \
-	fi
-else
-	$(MAKE) clean-selene-plugins-unix
-endif
-
-.PHONY: clean-selene-plugins-unix
-clean-selene-plugins-unix:
-	@# Clean selene plugins _dist directories (contains compiled Rust libraries)
-	@rm -rf python/selene-plugins/pecos-selene-quest/python/pecos_selene_quest/_dist 2>/dev/null || true
-	@rm -rf python/selene-plugins/pecos-selene-qulacs/python/pecos_selene_qulacs/_dist 2>/dev/null || true
-	@rm -rf python/selene-plugins/pecos-selene-sparsestab/python/pecos_selene_sparsestab/_dist 2>/dev/null || true
-	@rm -rf python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist 2>/dev/null || true
-	@# Clean selene plugins from venv to force reinstall
-	@rm -rf .venv/lib/python*/site-packages/pecos_selene_quest 2>/dev/null || true
-	@rm -rf .venv/lib/python*/site-packages/pecos_selene_quest*.dist-info 2>/dev/null || true
-	@rm -rf .venv/lib/python*/site-packages/pecos_selene_qulacs 2>/dev/null || true
-	@rm -rf .venv/lib/python*/site-packages/pecos_selene_qulacs*.dist-info 2>/dev/null || true
-	@rm -rf .venv/lib/python*/site-packages/pecos_selene_sparsestab 2>/dev/null || true
-	@rm -rf .venv/lib/python*/site-packages/pecos_selene_sparsestab*.dist-info 2>/dev/null || true
-	@rm -rf .venv/lib/python*/site-packages/pecos_selene_statevec 2>/dev/null || true
-	@rm -rf .venv/lib/python*/site-packages/pecos_selene_statevec*.dist-info 2>/dev/null || true
-
-.PHONY: clean-selene-plugins-windows-ps
-clean-selene-plugins-windows-ps:
-	@# Clean selene plugins _dist directories
-	@powershell -Command "if (Test-Path 'python/selene-plugins/pecos-selene-quest/python/pecos_selene_quest/_dist') { Remove-Item -Recurse -Force 'python/selene-plugins/pecos-selene-quest/python/pecos_selene_quest/_dist' }"
-	@powershell -Command "if (Test-Path 'python/selene-plugins/pecos-selene-qulacs/python/pecos_selene_qulacs/_dist') { Remove-Item -Recurse -Force 'python/selene-plugins/pecos-selene-qulacs/python/pecos_selene_qulacs/_dist' }"
-	@powershell -Command "if (Test-Path 'python/selene-plugins/pecos-selene-sparsestab/python/pecos_selene_sparsestab/_dist') { Remove-Item -Recurse -Force 'python/selene-plugins/pecos-selene-sparsestab/python/pecos_selene_sparsestab/_dist' }"
-	@powershell -Command "if (Test-Path 'python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist') { Remove-Item -Recurse -Force 'python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist' }"
-	@# Clean selene plugins from venv
-	@powershell -Command "Get-ChildItem -Path '.venv/lib' -Recurse -Directory -Filter 'pecos_selene_quest' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "Get-ChildItem -Path '.venv/lib' -Recurse -Directory -Filter 'pecos_selene_quest*.dist-info' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "Get-ChildItem -Path '.venv/lib' -Recurse -Directory -Filter 'pecos_selene_qulacs' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "Get-ChildItem -Path '.venv/lib' -Recurse -Directory -Filter 'pecos_selene_qulacs*.dist-info' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "Get-ChildItem -Path '.venv/lib' -Recurse -Directory -Filter 'pecos_selene_sparsestab' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "Get-ChildItem -Path '.venv/lib' -Recurse -Directory -Filter 'pecos_selene_sparsestab*.dist-info' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "Get-ChildItem -Path '.venv/lib' -Recurse -Directory -Filter 'pecos_selene_statevec' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "Get-ChildItem -Path '.venv/lib' -Recurse -Directory -Filter 'pecos_selene_statevec*.dist-info' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
+	@# Clean _dist directories and venv installations (cross-platform via pecos-dev)
+	@cargo run -q -p pecos-dev -- selene clean --venv || true
 
 .PHONY: clean
-clean:  ## Clean up project artifacts + ~/.pecos/cache/ and tmp/
-ifeq ($(OS),Windows_NT)
-	# Check if Unix commands are available (from Git Bash, MSYS2, etc. in PATH)
-	@if command -v rm >/dev/null 2>&1 && command -v /usr/bin/find >/dev/null 2>&1; then \
-		$(MAKE) clean-unix; \
-	else \
-		powershell -Command "exit 0" > NUL 2>&1 && $(MAKE) clean-windows-ps || $(MAKE) clean-windows-cmd; \
-	fi
-else
-	$(MAKE) clean-unix
-endif
-
-.PHONY: clean-unix
-clean-unix: clean-selene-plugins-unix clean-cache
-	@rm -rf *.egg-info
-	@rm -rf dist
-	@/usr/bin/find . -type d -name "build" -exec rm -rf {} + 2>/dev/null || true
-	@rm -rf python/docs/_build
-	@rm -rf site
-	@/usr/bin/find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
-	@/usr/bin/find . -type d -name ".ipynb_checkpoints" -exec rm -rf {} + 2>/dev/null || true
-	@rm -rf .ruff_cache/
-	@/usr/bin/find . -type d -name ".hypothesis" -exec rm -rf {} + 2>/dev/null || true
-	@/usr/bin/find . -type d -name "junit" -exec rm -rf {} + 2>/dev/null || true
-	@/usr/bin/find python -name "*.so" -delete 2>/dev/null || true
-	@/usr/bin/find python -name "*.pyd" -delete 2>/dev/null || true
-	@# Clean pecos-rslib from venv to force reinstall
-	@rm -rf .venv/lib/python*/site-packages/pecos_rslib 2>/dev/null || true
-	@rm -rf .venv/lib/python*/site-packages/pecos_rslib*.dist-info 2>/dev/null || true
-	@# Clean pecos-rslib from uv cache to prevent stale wheel reinstallation
-	@# See: https://quanttype.net/posts/2025-09-12-uv-and-maturin.html
-	@uv cache clean pecos-rslib 2>/dev/null || true
-	@# Clean all target directories in crates (in case they were built independently)
-	@/usr/bin/find crates -type d -name "target" -exec rm -rf {} + 2>/dev/null || true
-	@/usr/bin/find python -type d -name "target" -exec rm -rf {} + 2>/dev/null || true
-	@# Clean Julia artifacts
-	@rm -rf julia/PECOS.jl/Manifest.toml
-	@rm -rf julia/PECOS.jl/dev/PECOS_julia_jll/Manifest.toml
-	@rm -rf julia/PECOS.jl/dev/PECOS_julia_jll/src/Manifest.toml
-	@/usr/bin/find julia -name "*.jl.*.cov" -delete 2>/dev/null || true
-	@/usr/bin/find julia -name "*.jl.cov" -delete 2>/dev/null || true
-	@/usr/bin/find julia -name "*.jl.mem" -delete 2>/dev/null || true
-	@# Clean the root workspace target directory
-	@cargo clean
-
-.PHONY: clean-windows-ps
-clean-windows-ps: clean-selene-plugins-windows-ps
-	@powershell -Command "if (Test-Path '*.egg-info') { Remove-Item -Recurse -Force *.egg-info }"
-	@powershell -Command "if (Test-Path 'dist') { Remove-Item -Recurse -Force dist }"
-	@powershell -Command "Get-ChildItem -Path . -Recurse -Directory -Filter 'build' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "if (Test-Path 'python\docs\_build') { Remove-Item -Recurse -Force python\docs\_build }"
-	@powershell -Command "if (Test-Path 'site') { Remove-Item -Recurse -Force site }"
-	@powershell -Command "Get-ChildItem -Path . -Recurse -Directory -Filter '.pytest_cache' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "Get-ChildItem -Path . -Recurse -Directory -Filter '.ipynb_checkpoints' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "if (Test-Path '.ruff_cache') { Remove-Item -Recurse -Force .ruff_cache }"
-	@powershell -Command "Get-ChildItem -Path . -Recurse -Directory -Filter '.hypothesis' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "Get-ChildItem -Path . -Recurse -Directory -Filter 'junit' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "Get-ChildItem -Path python -Recurse -File -Include '*.so','*.pyd' | Remove-Item -Force -ErrorAction SilentlyContinue"
-	@# Clean pecos-rslib from venv to force reinstall
-	@powershell -Command "Get-ChildItem -Path '.venv/lib' -Recurse -Directory -Filter 'pecos_rslib' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "Get-ChildItem -Path '.venv/lib' -Recurse -Directory -Filter 'pecos_rslib*.dist-info' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@# Clean pecos-rslib from uv cache to prevent stale wheel reinstallation
-	@uv cache clean pecos-rslib 2>$null; exit 0
-	@# Clean all target directories in crates
-	@powershell -Command "Get-ChildItem -Path crates -Recurse -Directory -Filter 'target' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@powershell -Command "Get-ChildItem -Path python -Recurse -Directory -Filter 'target' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
-	@cargo clean
-
-.PHONY: clean-windows-cmd
-clean-windows-cmd:
-	-@if exist *.egg-info rd /s /q *.egg-info
-	-@if exist dist rd /s /q dist
-	-@if exist python\docs\_build rd /s /q python\docs\_build
-	-@if exist site rd /s /q site
-	-@if exist .ruff_cache rd /s /q .ruff_cache
-	-@for /f "delims=" %%d in ('dir /s /b /ad build 2^>nul') do @rd /s /q "%%d" 2>nul
-	-@for /f "delims=" %%d in ('dir /s /b /ad .pytest_cache 2^>nul') do @rd /s /q "%%d" 2>nul
-	-@for /f "delims=" %%d in ('dir /s /b /ad .ipynb_checkpoints 2^>nul') do @rd /s /q "%%d" 2>nul
-	-@for /f "delims=" %%d in ('dir /s /b /ad .hypothesis 2^>nul') do @rd /s /q "%%d" 2>nul
-	-@for /f "delims=" %%d in ('dir /s /b /ad junit 2^>nul') do @rd /s /q "%%d" 2>nul
-	-@for /f "delims=" %%f in ('dir /s /b python\*.so python\*.pyd 2^>nul') do @del "%%f" 2>nul
-	-@REM Clean pecos-rslib from venv to force reinstall
-	-@for /f "delims=" %%d in ('dir /s /b /ad .venv\lib\*\site-packages\pecos_rslib 2^>nul') do @rd /s /q "%%d" 2>nul
-	-@for /f "delims=" %%d in ('dir /s /b /ad .venv\lib\*\site-packages\pecos_rslib*.dist-info 2^>nul') do @rd /s /q "%%d" 2>nul
-	-@REM Clean pecos-rslib from uv cache to prevent stale wheel reinstallation
-	-@uv cache clean pecos-rslib 2>nul
-	-@REM Clean all target directories in crates
-	-@for /f "delims=" %%d in ('dir /s /b /ad crates\target 2^>nul') do @rd /s /q "%%d" 2>nul
-	-@for /f "delims=" %%d in ('dir /s /b /ad python\target 2^>nul') do @rd /s /q "%%d" 2>nul
-	-@cargo clean
+clean: clean-selene-plugins clean-cache  ## Clean up project artifacts + ~/.pecos/cache/ and tmp/
+	@# Cross-platform build artifact cleaning via pecos-dev
+	@cargo run -q -p pecos-dev -- clean build
 
 # PECOS Home Directory Cleanup
 # ----------------------------
@@ -866,15 +514,15 @@ clean-windows-cmd:
 
 .PHONY: clean-cache
 clean-cache:  ## Clean ~/.pecos/cache/ and ~/.pecos/tmp/ (downloaded archives and temp files)
-	@cargo run -q -p pecos-dev -- clean --cache
+	@cargo run -q -p pecos-dev -- clean cache
 
 .PHONY: clean-deps
 clean-deps:  ## Clean ~/.pecos/deps/, cache/, and tmp/ (extracted C++ dependencies)
-	@cargo run -q -p pecos-dev -- clean --all
+	@cargo run -q -p pecos-dev -- clean all
 
 .PHONY: clean-llvm
 clean-llvm:  ## Clean ~/.pecos/llvm/ (LLVM installation - large, slow to reinstall)
-	@cargo run -q -p pecos-dev -- clean --all --include-llvm
+	@cargo run -q -p pecos-dev -- clean all --include-llvm
 	@echo "Run 'make install-llvm' to reinstall LLVM"
 
 .PHONY: clean-all

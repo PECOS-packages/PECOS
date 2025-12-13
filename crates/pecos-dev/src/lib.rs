@@ -31,6 +31,7 @@
 //! - `PECOS_HOME`: Override the entire home directory (default: `~/.pecos/`)
 //! - `PECOS_DEPS_DIR`: Override extracted sources location (default: `$PECOS_HOME/deps/`)
 //! - `PECOS_CACHE_DIR`: Override archives location (default: `$PECOS_HOME/cache/`)
+//! - `RUST_LOG`: Set log level for build output (e.g., `info` for download progress)
 //!
 //! # Usage in Build Scripts
 //!

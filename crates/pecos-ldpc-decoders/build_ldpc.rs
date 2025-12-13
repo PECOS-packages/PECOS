@@ -1,7 +1,7 @@
 //! Build script for LDPC decoder integration
 
 use log::info;
-use pecos_dev::{Manifest, Result, download_cached, extract_archive, report_cache_config};
+use pecos_dev::{Manifest, Result, ensure_dep_ready, report_cache_config};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -64,31 +64,18 @@ pub fn build() -> Result<()> {
     println!("cargo:rerun-if-env-changed=FORCE_REBUILD");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
-    let ldpc_dir = out_dir.join("ldpc");
 
     // Always emit link directives - these are cached by Cargo
     println!("cargo:rustc-link-search=native={}", out_dir.display());
     println!("cargo:rustc-link-lib=static=ldpc-bridge");
 
-    // Download and extract LDPC source if not already present
-    if !ldpc_dir.exists() {
-        download_and_extract_ldpc(&out_dir)?;
-    }
+    // Get LDPC source (downloads to ~/.pecos/cache/, extracts to ~/.pecos/deps/)
+    let manifest = Manifest::find_and_load_validated()?;
+    let ldpc_dir = ensure_dep_ready("ldpc", &manifest)?;
 
     // Build using cxx
     build_cxx_bridge(&ldpc_dir)?;
 
-    Ok(())
-}
-
-fn download_and_extract_ldpc(out_dir: &Path) -> Result<()> {
-    // Load manifest (crate-local or workspace-level)
-    let manifest = Manifest::find_and_load_validated()?;
-    let info = manifest.get_download_info("ldpc")?;
-    let tar_gz = download_cached(&info)?;
-    extract_archive(&tar_gz, out_dir, Some("ldpc"))?;
-
-    info!("LDPC source downloaded and extracted");
     Ok(())
 }
 

@@ -36,18 +36,18 @@ pub fn download_cached(info: &DownloadInfo) -> Result<Vec<u8>> {
                 if verify_sha256(&data, &info.sha256).is_ok() {
                     return Ok(data);
                 }
-                println!("cargo:warning=Cached file corrupted, re-downloading");
+                log::warn!("Cached file corrupted, re-downloading");
                 let _ = fs::remove_file(&cache_file);
             }
             Err(e) => {
-                println!("cargo:warning=Failed to read cached file: {e}, re-downloading");
+                log::warn!("Failed to read cached file: {e}, re-downloading");
                 let _ = fs::remove_file(&cache_file);
             }
         }
     }
 
     // Download fresh with timeout and retry logic
-    println!("cargo:warning=Downloading {} (will be cached)", info.name);
+    log::info!("Downloading {} (will be cached)", info.name);
 
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
@@ -63,9 +63,12 @@ pub fn download_cached(info: &DownloadInfo) -> Result<Vec<u8>> {
     for attempt in 1..=max_retries {
         if attempt > 1 {
             let delay_secs = base_delay_secs * (1 << (attempt - 2));
-            println!(
-                "cargo:warning=Retry attempt {}/{} for {} (waiting {}s)",
-                attempt, max_retries, info.name, delay_secs
+            log::warn!(
+                "Retry attempt {}/{} for {} (waiting {}s)",
+                attempt,
+                max_retries,
+                info.name,
+                delay_secs
             );
             std::thread::sleep(std::time::Duration::from_secs(delay_secs));
         }
@@ -76,9 +79,7 @@ pub fn download_cached(info: &DownloadInfo) -> Result<Vec<u8>> {
                 if !status.is_success() {
                     last_error = format!("Failed with status: {status}");
                     if status.is_server_error() {
-                        println!(
-                            "cargo:warning=Server error ({status}), will retry if attempts remain"
-                        );
+                        log::warn!("Server error ({status}), will retry if attempts remain");
                     }
                     continue;
                 }
@@ -89,7 +90,7 @@ pub fn download_cached(info: &DownloadInfo) -> Result<Vec<u8>> {
 
                         if verify_sha256(&data, &info.sha256).is_ok() {
                             fs::write(&cache_file, &data)?;
-                            println!("cargo:warning=Cached to {}", cache_file.display());
+                            log::info!("Cached to {}", cache_file.display());
                             return Ok(data);
                         }
                         last_error = "SHA256 verification failed".to_string();

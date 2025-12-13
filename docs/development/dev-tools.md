@@ -1,6 +1,6 @@
 # Developer Tools CLI
 
-The `pecos-dev` CLI provides tools for PECOS development, including LLVM setup, dependency management, and build utilities.
+The `pecos-dev` CLI provides tools for PECOS development, including build utilities, LLVM setup, and dependency management.
 
 ## Installation
 
@@ -18,17 +18,131 @@ cargo build -p pecos-dev --release
 
 ```
 $ pecos-dev --help
-PECOS developer tools - LLVM setup, dependency management, and build utilities
+PECOS developer tools - build, test, and manage PECOS development
 
 Commands:
-  info   Show PECOS home directory info and status
-  list   List installed and cached dependencies
-  clean  Clean cached dependencies
-  llvm   LLVM management commands
-  deps   Dependency manifest management (pecos.toml)
+  rust      Rust/Cargo commands (CUDA-aware) [aliases: rs]
+  python    Python build and test commands [aliases: py]
+  cuda      CUDA availability and info
+  julia     Julia build and test commands [aliases: jl]
+  go        Go build and test commands
+  llvm      LLVM 14 management
+  selene    Selene plugin management
+  clean     Clean build artifacts and caches
+  features  Query package features
+  deps      Dependency manifest management (pecos.toml)
+  info      Show PECOS home directory info and status
+  list      List installed and cached dependencies
 ```
 
-## LLVM Management
+## Rust Commands (`rust` / `rs`)
+
+CUDA-aware cargo commands that automatically handle GPU feature detection.
+
+```bash
+# Run cargo check (automatically excludes GPU features if CUDA unavailable)
+pecos-dev rust check
+pecos-dev rs check          # short alias
+
+# Run cargo clippy
+pecos-dev rust clippy
+pecos-dev rust clippy --fix # auto-fix issues
+
+# Run cargo test
+pecos-dev rust test
+pecos-dev rust test --release
+
+# Run cargo fmt
+pecos-dev rust fmt
+pecos-dev rust fmt --check  # check only, don't modify
+
+# Include FFI crates in checks
+pecos-dev rust check --include-ffi
+pecos-dev rust clippy --include-ffi
+```
+
+When CUDA is not available, these commands automatically:
+
+- Exclude `pecos` and `pecos-quest` from workspace commands
+- Run them separately with GPU features filtered out
+
+## Python Commands (`python` / `py`)
+
+Build and test commands for Python packages.
+
+```bash
+# Check if Python/uv is available
+pecos-dev python check
+pecos-dev py check          # short alias
+
+# Build pecos-rslib and quantum-pecos
+pecos-dev python build
+pecos-dev python build --profile release
+pecos-dev python build --cuda  # with CUDA support
+
+# Run Python tests
+pecos-dev python test
+pecos-dev python test -v        # verbose
+pecos-dev python test --selene  # Selene plugin tests only
+pecos-dev python test --numpy   # NumPy/SciPy compat tests
+```
+
+## CUDA Commands (`cuda`)
+
+```bash
+# Check if CUDA/nvcc is available
+pecos-dev cuda check
+
+# Quiet mode (exit code only, for scripting)
+pecos-dev cuda check -q
+```
+
+## Julia Commands (`julia` / `jl`)
+
+```bash
+# Check if Julia is available
+pecos-dev julia check
+pecos-dev jl check          # short alias
+
+# Build Julia FFI library
+pecos-dev julia build
+pecos-dev julia build --profile release
+pecos-dev julia build --profile debug
+
+# Run Julia tests
+pecos-dev julia test
+
+# Format Julia code
+pecos-dev julia fmt
+pecos-dev julia fmt --check  # check only
+
+# Run Julia linting (Aqua.jl)
+pecos-dev julia lint
+```
+
+## Go Commands (`go`)
+
+```bash
+# Check if Go is available
+pecos-dev go check
+
+# Build Go FFI library
+pecos-dev go build
+pecos-dev go build --profile release
+pecos-dev go build --profile debug
+
+# Run Go tests
+pecos-dev go test
+
+# Format Go code
+pecos-dev go fmt
+pecos-dev go fmt --check  # check only
+
+# Run Go linting (go vet)
+pecos-dev go lint
+```
+
+## LLVM Management (`llvm`)
 
 The `llvm` subcommand helps set up LLVM 14, which is required for QIS program support.
 
@@ -46,8 +160,8 @@ Verifies if LLVM 14 is available and properly configured.
 # Automated installation (downloads pre-built binaries)
 pecos-dev llvm install
 
-# Specify installation directory
-pecos-dev llvm install --prefix ~/.local/llvm14
+# Force reinstall
+pecos-dev llvm install --force
 ```
 
 This downloads and installs LLVM 14 to the PECOS home directory (`~/.pecos/llvm/` by default).
@@ -58,13 +172,16 @@ This downloads and installs LLVM 14 to the PECOS home directory (`~/.pecos/llvm/
 pecos-dev llvm configure
 ```
 
-Updates `.cargo/config.toml` with the correct `LLVM_SYS_140_PREFIX` environment variable so Rust crates can find LLVM.
+Updates `.cargo/config.toml` with the correct `LLVM_SYS_140_PREFIX` environment variable.
 
 ### Find LLVM Path
 
 ```bash
 # Find LLVM installation
 pecos-dev llvm find
+
+# Export for shell evaluation
+pecos-dev llvm find --export
 
 # Find a specific tool
 pecos-dev llvm tool clang
@@ -85,38 +202,75 @@ Checks that all required LLVM components are present and functional.
 pecos-dev llvm version
 ```
 
-## Dependency Management
+## Selene Plugin Management (`selene`)
 
-The `deps` subcommand manages the `pecos.toml` manifest which tracks external dependencies (C++ libraries, git repositories, etc.).
+Manage Selene simulator plugins.
+
+```bash
+# List plugins and their status
+pecos-dev selene list
+
+# Install plugins (copy built libraries to Python packages)
+pecos-dev selene install
+pecos-dev selene install --profile release
+pecos-dev selene install --plugin pecos-selene-quest
+
+# Clean plugin artifacts (quiet by default)
+pecos-dev selene clean
+pecos-dev selene clean --venv     # also clean from .venv/
+pecos-dev selene clean -v         # verbose output
+```
+
+## Clean Commands (`clean`)
+
+Clean various build artifacts and caches. By default, output is quiet. Use `-v` for verbose output.
+
+```bash
+# Clean build artifacts (Python, Rust, Julia)
+pecos-dev clean build
+pecos-dev clean build -v           # verbose output
+pecos-dev clean build -vv          # more verbose
+pecos-dev clean build --dry-run    # preview what would be deleted
+pecos-dev clean build --skip-cargo # don't run cargo clean
+
+# Clean ~/.pecos/cache/ and tmp/
+pecos-dev clean cache
+pecos-dev clean cache -v           # verbose output
+
+# Clean ~/.pecos/deps/
+pecos-dev clean deps
+
+# Clean ~/.pecos/llvm/
+pecos-dev clean llvm
+
+# Clean everything (deps + cache + tmp)
+pecos-dev clean all
+pecos-dev clean all --include-llvm  # also remove LLVM
+```
+
+## Feature Queries (`features`)
+
+Query package features for build configuration.
+
+```bash
+# List all features for a package
+pecos-dev features list --package pecos
+
+# Exclude certain features
+pecos-dev features list --package pecos --exclude gpu
+
+# Output as JSON
+pecos-dev features list --package pecos-quest --json
+```
+
+## Dependency Management (`deps`)
+
+Manage the `pecos.toml` manifest which tracks external dependencies.
 
 ### Show Status
 
 ```bash
 pecos-dev deps status
-```
-
-Shows the current manifest, listing all dependencies and which crates use them:
-
-```
-Manifest Status
-===============
-
-pecos.toml: /path/to/PECOS/pecos.toml
-  Version: 1
-  LLVM: version 14 (required: true)
-
-  Crates (5):
-    pecos: none [LLVM]
-    pecos-engines: none [LLVM]
-    pecos-ldpc-decoders: stim, pymatching, ldpc, tesseract, chromobius, boost
-    pecos-quest: quest
-    pecos-qulacs: qulacs, eigen, boost
-
-  Dependencies (9):
-    boost: 1.83.0 - C++ Boost libraries
-    eigen: 3.4.0 - C++ linear algebra library
-    quest: v4.1.0 - QuEST quantum simulator
-    ...
 ```
 
 ### Initialize Manifest
@@ -125,23 +279,18 @@ pecos.toml: /path/to/PECOS/pecos.toml
 pecos-dev deps init
 ```
 
-Creates a new `pecos.toml` manifest in the current directory.
-
 ### Sync Manifests
 
 ```bash
 pecos-dev deps sync
+pecos-dev deps sync --dry-run
 ```
-
-Synchronizes crate-level `pecos.toml` files from the workspace manifest.
 
 ### Verify Dependencies
 
 ```bash
 pecos-dev deps verify
 ```
-
-Downloads dependencies and verifies their checksums match the manifest.
 
 ## Cache Management
 
@@ -151,43 +300,13 @@ Downloads dependencies and verifies their checksums match the manifest.
 pecos-dev info
 ```
 
-Displays PECOS home directory location and cached items:
-
-```
-PECOS Home Directory
-====================
-
-Location: /home/user/.pecos
-
-Directories:
-  Cache:  /home/user/.pecos/cache
-  Deps:   /home/user/.pecos/deps
-  LLVM:   /home/user/.pecos/llvm
-  Temp:   /home/user/.pecos/tmp
-
-Environment:
-  PECOS_HOME: (not set, using default)
-```
+Displays PECOS home directory location and status.
 
 ### List Cached Items
 
 ```bash
 pecos-dev list
-```
-
-Shows all installed and cached dependencies.
-
-### Clean Cache
-
-```bash
-# Clean all cached items
-pecos-dev clean
-
-# Clean only temporary files
-pecos-dev clean --temp
-
-# Clean only downloaded dependencies
-pecos-dev clean --deps
+pecos-dev list --verbose
 ```
 
 ## Environment Variables
@@ -196,6 +315,7 @@ pecos-dev clean --deps
 |----------|-------------|---------|
 | `PECOS_HOME` | PECOS cache and data directory | `~/.pecos` |
 | `LLVM_SYS_140_PREFIX` | LLVM 14 installation path | auto-detected |
+| `RUST_LOG` | Log level for build output (`info` shows download progress) | `warn` |
 
 ## Typical Workflows
 
@@ -218,17 +338,25 @@ pecos-dev llvm validate
 cargo build -p pecos --features llvm
 ```
 
-### Building with External Dependencies
+### Running Lints Before Committing
 
 ```bash
-# 1. Check what dependencies are needed
-pecos-dev deps status
+# Check code compiles
+pecos-dev rs check
 
-# 2. Verify dependencies are available
-pecos-dev deps verify
+# Run clippy
+pecos-dev rs clippy
 
-# 3. Build the crate
-cargo build -p pecos-quest
+# Check formatting
+pecos-dev rs fmt --check
+```
+
+### Building FFI Libraries
+
+```bash
+# Build Julia and Go FFI libraries
+pecos-dev julia build --profile release
+pecos-dev go build --profile release
 ```
 
 ### Cleaning Up
@@ -238,63 +366,14 @@ cargo build -p pecos-quest
 pecos-dev info
 pecos-dev list
 
+# Clean build artifacts
+pecos-dev clean build
+
 # Clean everything
-pecos-dev clean
-```
-
-## Integration with pecos CLI
-
-The `pecos` CLI forwards certain commands to `pecos-dev` if it's installed:
-
-```bash
-# These commands are forwarded to pecos-dev
-pecos llvm check      # -> pecos-dev llvm check
-pecos deps status     # -> pecos-dev deps status
-pecos info            # Shows pecos info (different from pecos-dev info)
-```
-
-If `pecos-dev` is not installed, these commands show a helpful message:
-
-```
-Command 'llvm' requires pecos-dev.
-
-Install with:
-  cargo install pecos-dev
-```
-
-## pecos.toml Format
-
-The `pecos.toml` manifest tracks external dependencies:
-
-```toml
-version = 1
-
-[llvm]
-version = "14"
-required = true
-required_by = ["pecos-engines", "pecos"]
-
-[dependencies.quest]
-version = "v4.1.0"
-repository = "https://github.com/QuEST-Kit/QuEST"
-description = "QuEST quantum simulator"
-sha256 = "abc123..."
-
-[dependencies.boost]
-version = "1.83.0"
-url = "https://archives.boost.io/release/1.83.0/source/boost_1_83_0.tar.gz"
-description = "C++ Boost libraries"
-sha256 = "def456..."
-
-[crates.pecos-quest]
-dependencies = ["quest"]
-
-[crates.pecos-qulacs]
-dependencies = ["qulacs", "eigen", "boost"]
+pecos-dev clean all
 ```
 
 ## See Also
 
 - [LLVM Setup](../user-guide/llvm-setup.md) - Detailed LLVM installation guide
-- [QIS Architecture](QIS_ARCHITECTURE.md) - QIS system design
 - [Development Guide](DEVELOPMENT.md) - Contributing to PECOS

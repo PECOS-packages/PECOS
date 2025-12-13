@@ -20,24 +20,49 @@ use crate::errors::{Error, Result};
 use std::fs;
 use std::path::PathBuf;
 
-/// Get the PECOS home directory
+/// Get the PECOS home directory path (without creating it)
 ///
 /// Returns `$PECOS_HOME` if set, otherwise `~/.pecos/`
 ///
 /// # Errors
 ///
 /// Returns an error if unable to determine the home directory
-pub fn get_pecos_home() -> Result<PathBuf> {
-    let home = if let Ok(dir) = std::env::var("PECOS_HOME") {
-        PathBuf::from(dir)
+pub fn get_pecos_home_path() -> Result<PathBuf> {
+    if let Ok(dir) = std::env::var("PECOS_HOME") {
+        Ok(PathBuf::from(dir))
     } else if let Some(home) = dirs::home_dir() {
-        home.join(".pecos")
+        Ok(home.join(".pecos"))
     } else {
-        return Err(Error::HomeDir("Could not determine home directory".into()));
-    };
+        Err(Error::HomeDir("Could not determine home directory".into()))
+    }
+}
 
+/// Get the PECOS home directory (creates if needed)
+///
+/// Returns `$PECOS_HOME` if set, otherwise `~/.pecos/`
+///
+/// # Errors
+///
+/// Returns an error if unable to determine or create the home directory
+pub fn get_pecos_home() -> Result<PathBuf> {
+    let home = get_pecos_home_path()?;
     fs::create_dir_all(&home)?;
     Ok(home)
+}
+
+/// Get the dependencies directory path (without creating it)
+///
+/// Returns `$PECOS_DEPS_DIR` if set, otherwise `$PECOS_HOME/deps/`
+///
+/// # Errors
+///
+/// Returns an error if unable to determine the path
+pub fn get_deps_dir_path() -> Result<PathBuf> {
+    if let Ok(dir) = std::env::var("PECOS_DEPS_DIR") {
+        Ok(PathBuf::from(dir))
+    } else {
+        Ok(get_pecos_home_path()?.join("deps"))
+    }
 }
 
 /// Get the dependencies directory for extracted source trees
@@ -51,17 +76,23 @@ pub fn get_pecos_home() -> Result<PathBuf> {
 ///
 /// Returns an error if unable to determine or create the deps directory
 pub fn get_deps_dir() -> Result<PathBuf> {
-    let deps_dir = if let Ok(dir) = std::env::var("PECOS_DEPS_DIR") {
-        PathBuf::from(dir)
-    } else {
-        get_pecos_home()?.join("deps")
-    };
-
+    let deps_dir = get_deps_dir_path()?;
     fs::create_dir_all(&deps_dir)?;
     Ok(deps_dir)
 }
 
-/// Get the LLVM installation directory
+/// Get the LLVM installation directory path (without creating it)
+///
+/// Returns `$PECOS_HOME/llvm/`
+///
+/// # Errors
+///
+/// Returns an error if unable to determine the path
+pub fn get_llvm_dir_path() -> Result<PathBuf> {
+    Ok(get_pecos_home_path()?.join("llvm"))
+}
+
+/// Get the LLVM installation directory (creates if needed)
 ///
 /// Returns `$PECOS_HOME/llvm/`
 ///
@@ -69,12 +100,27 @@ pub fn get_deps_dir() -> Result<PathBuf> {
 ///
 /// Returns an error if unable to determine or create the LLVM directory
 pub fn get_llvm_dir() -> Result<PathBuf> {
-    let llvm_dir = get_pecos_home()?.join("llvm");
+    let llvm_dir = get_llvm_dir_path()?;
     fs::create_dir_all(&llvm_dir)?;
     Ok(llvm_dir)
 }
 
-/// Get the cache directory for downloaded archives
+/// Get the cache directory path (without creating it)
+///
+/// Returns `$PECOS_CACHE_DIR` if set, otherwise `$PECOS_HOME/cache/`
+///
+/// # Errors
+///
+/// Returns an error if unable to determine the path
+pub fn get_cache_dir_path() -> Result<PathBuf> {
+    if let Ok(dir) = std::env::var("PECOS_CACHE_DIR") {
+        Ok(PathBuf::from(dir))
+    } else {
+        Ok(get_pecos_home_path()?.join("cache"))
+    }
+}
+
+/// Get the cache directory for downloaded archives (creates if needed)
 ///
 /// Returns `$PECOS_CACHE_DIR` if set, otherwise `$PECOS_HOME/cache/`
 ///
@@ -85,17 +131,23 @@ pub fn get_llvm_dir() -> Result<PathBuf> {
 ///
 /// Returns an error if unable to determine or create the cache directory
 pub fn get_cache_dir() -> Result<PathBuf> {
-    let cache_dir = if let Ok(dir) = std::env::var("PECOS_CACHE_DIR") {
-        PathBuf::from(dir)
-    } else {
-        get_pecos_home()?.join("cache")
-    };
-
+    let cache_dir = get_cache_dir_path()?;
     fs::create_dir_all(&cache_dir)?;
     Ok(cache_dir)
 }
 
-/// Get the temporary directory for transient files during downloads/extraction
+/// Get the temporary directory path (without creating it)
+///
+/// Returns `$PECOS_HOME/tmp/`
+///
+/// # Errors
+///
+/// Returns an error if unable to determine the path
+pub fn get_tmp_dir_path() -> Result<PathBuf> {
+    Ok(get_pecos_home_path()?.join("tmp"))
+}
+
+/// Get the temporary directory for transient files during downloads/extraction (creates if needed)
 ///
 /// Returns `$PECOS_HOME/tmp/`
 ///
@@ -106,7 +158,7 @@ pub fn get_cache_dir() -> Result<PathBuf> {
 ///
 /// Returns an error if unable to determine or create the tmp directory
 pub fn get_tmp_dir() -> Result<PathBuf> {
-    let tmp_dir = get_pecos_home()?.join("tmp");
+    let tmp_dir = get_tmp_dir_path()?;
     fs::create_dir_all(&tmp_dir)?;
     Ok(tmp_dir)
 }

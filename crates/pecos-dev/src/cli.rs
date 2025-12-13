@@ -3,17 +3,25 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::fn_params_excessive_bools)]
 
+mod clean_cmd;
+mod cuda_cmd;
+mod features_cmd;
+mod go_cmd;
 mod info;
+mod julia_cmd;
 mod list;
 mod llvm_cmd;
 mod manifest_cmd;
+mod python_cmd;
+mod rust_cmd;
+mod selene_cmd;
 
 use clap::{Parser, Subcommand};
 
 /// PECOS developer tools
 #[derive(Parser)]
 #[command(name = "pecos-dev")]
-#[command(about = "PECOS developer tools - LLVM setup, dependency management, and build utilities", long_about = None)]
+#[command(about = "PECOS developer tools - build, test, and manage PECOS development", long_about = None)]
 #[command(version)]
 pub struct Cli {
     #[command(subcommand)]
@@ -22,6 +30,69 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Rust/Cargo commands (CUDA-aware)
+    #[command(visible_alias = "rs")]
+    Rust {
+        #[command(subcommand)]
+        command: RustCommands,
+    },
+
+    /// Python build and test commands
+    #[command(visible_alias = "py")]
+    Python {
+        #[command(subcommand)]
+        command: PythonCommands,
+    },
+
+    /// CUDA availability and info
+    Cuda {
+        #[command(subcommand)]
+        command: CudaCommands,
+    },
+
+    /// Julia build and test commands
+    #[command(visible_alias = "jl")]
+    Julia {
+        #[command(subcommand)]
+        command: JuliaCommands,
+    },
+
+    /// Go build and test commands
+    Go {
+        #[command(subcommand)]
+        command: GoCommands,
+    },
+
+    /// LLVM 14 management
+    Llvm {
+        #[command(subcommand)]
+        command: LlvmCommands,
+    },
+
+    /// Selene plugin management
+    Selene {
+        #[command(subcommand)]
+        command: SeleneCommands,
+    },
+
+    /// Clean build artifacts and caches
+    Clean {
+        #[command(subcommand)]
+        command: CleanCommands,
+    },
+
+    /// Query package features
+    Features {
+        #[command(subcommand)]
+        command: FeaturesCommands,
+    },
+
+    /// Dependency manifest management (pecos.toml)
+    Deps {
+        #[command(subcommand)]
+        command: DepsCommands,
+    },
+
     /// Show PECOS home directory info and status
     Info,
 
@@ -31,54 +102,198 @@ pub enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
+}
 
-    /// Clean cached dependencies and build artifacts
-    Clean {
-        /// Clean extracted source trees (~/.pecos/deps/)
+// ============================================================================
+// Rust Commands
+// ============================================================================
+
+#[derive(Subcommand, Clone)]
+pub enum RustCommands {
+    /// Run cargo check with CUDA-aware feature handling
+    ///
+    /// If CUDA is not available, automatically excludes GPU features from
+    /// pecos and pecos-quest packages.
+    Check {
+        /// Also check FFI crates (pecos-rslib, pecos-julia-ffi, pecos-go-ffi)
         #[arg(long)]
-        deps: bool,
-
-        /// Clean downloaded archives (~/.pecos/cache/) and tmp/
-        #[arg(long)]
-        cache: bool,
-
-        /// Clean LLVM installation (~/.pecos/llvm/)
-        #[arg(long)]
-        llvm: bool,
-
-        /// Clean deps, cache, and tmp (but not LLVM)
-        #[arg(long)]
-        all: bool,
-
-        /// Also remove LLVM when using --all (shortcut for --all --llvm)
-        #[arg(long)]
-        include_llvm: bool,
-
-        /// Clean a specific dependency by name (from deps/ and cache/)
-        #[arg(long, value_name = "NAME")]
-        dep: Option<String>,
-
-        /// Clean stale archives misplaced in deps/ (from before restructuring)
-        #[arg(long)]
-        stale: bool,
-
-        /// Show what would be deleted without deleting
-        #[arg(long)]
-        dry_run: bool,
+        include_ffi: bool,
     },
 
-    /// LLVM management commands
-    Llvm {
-        #[command(subcommand)]
-        command: LlvmCommands,
+    /// Run cargo clippy with CUDA-aware feature handling
+    Clippy {
+        /// Also check FFI crates (pecos-rslib, pecos-julia-ffi, pecos-go-ffi)
+        #[arg(long)]
+        include_ffi: bool,
+
+        /// Apply clippy fixes (--fix --allow-staged --allow-dirty)
+        #[arg(long)]
+        fix: bool,
     },
 
-    /// Dependency manifest management (pecos.toml)
-    Deps {
-        #[command(subcommand)]
-        command: DepsCommands,
+    /// Run cargo test with CUDA-aware feature handling
+    Test {
+        /// Use release mode for tests
+        #[arg(long)]
+        release: bool,
+
+        /// Also test FFI crates
+        #[arg(long)]
+        include_ffi: bool,
+    },
+
+    /// Run cargo fmt
+    Fmt {
+        /// Check formatting without modifying files
+        #[arg(long)]
+        check: bool,
     },
 }
+
+// ============================================================================
+// Python Commands
+// ============================================================================
+
+#[derive(Subcommand, Clone)]
+pub enum PythonCommands {
+    /// Check if Python/uv is available
+    Check {
+        /// Suppress output (exit code only)
+        #[arg(short, long)]
+        quiet: bool,
+    },
+
+    /// Build pecos-rslib and quantum-pecos
+    ///
+    /// Uses maturin to build the Rust library and installs quantum-pecos
+    /// in editable mode.
+    Build {
+        /// Build profile (debug, release, native)
+        #[arg(long, default_value = "debug")]
+        profile: String,
+
+        /// Additional RUSTFLAGS (e.g., "-C target-cpu=native")
+        #[arg(long)]
+        rustflags: Option<String>,
+
+        /// Build with CUDA support
+        #[arg(long)]
+        cuda: bool,
+    },
+
+    /// Run Python tests with pytest
+    Test {
+        /// Pytest markers to filter tests (e.g., "not slow")
+        #[arg(short, long)]
+        markers: Option<String>,
+
+        /// Increase verbosity (-v, -vv)
+        #[arg(short, long, action = clap::ArgAction::Count)]
+        verbose: u8,
+
+        /// Run Selene plugin tests instead of core tests
+        #[arg(long)]
+        selene: bool,
+
+        /// Run NumPy/SciPy compatibility tests
+        #[arg(long)]
+        numpy: bool,
+    },
+}
+
+// ============================================================================
+// CUDA Commands
+// ============================================================================
+
+#[derive(Subcommand, Clone, Copy)]
+pub enum CudaCommands {
+    /// Check if CUDA/nvcc is available
+    Check {
+        /// Suppress output (exit code only)
+        #[arg(short, long)]
+        quiet: bool,
+    },
+}
+
+// ============================================================================
+// Julia Commands
+// ============================================================================
+
+#[derive(Subcommand)]
+pub enum JuliaCommands {
+    /// Check if Julia is available
+    Check {
+        /// Suppress output (exit code only)
+        #[arg(short, long)]
+        quiet: bool,
+    },
+
+    /// Build Julia FFI library
+    Build {
+        /// Build profile (debug, release, native)
+        #[arg(long, default_value = "release")]
+        profile: String,
+
+        /// Additional RUSTFLAGS (e.g., "-C target-cpu=native")
+        #[arg(long)]
+        rustflags: Option<String>,
+    },
+
+    /// Run Julia tests
+    Test,
+
+    /// Format Julia code
+    Fmt {
+        /// Check formatting without modifying files
+        #[arg(long)]
+        check: bool,
+    },
+
+    /// Run Julia linting (Aqua.jl)
+    Lint,
+}
+
+// ============================================================================
+// Go Commands
+// ============================================================================
+
+#[derive(Subcommand)]
+pub enum GoCommands {
+    /// Check if Go is available
+    Check {
+        /// Suppress output (exit code only)
+        #[arg(short, long)]
+        quiet: bool,
+    },
+
+    /// Build Go FFI library
+    Build {
+        /// Build profile (debug, release, native)
+        #[arg(long, default_value = "release")]
+        profile: String,
+
+        /// Additional RUSTFLAGS (e.g., "-C target-cpu=native")
+        #[arg(long)]
+        rustflags: Option<String>,
+    },
+
+    /// Run Go tests
+    Test,
+
+    /// Format Go code
+    Fmt {
+        /// Check formatting without modifying files
+        #[arg(long)]
+        check: bool,
+    },
+
+    /// Run Go linting (go vet)
+    Lint,
+}
+
+// ============================================================================
+// LLVM Commands
+// ============================================================================
 
 #[derive(Subcommand)]
 pub enum LlvmCommands {
@@ -126,6 +341,133 @@ pub enum LlvmCommands {
     },
 }
 
+// ============================================================================
+// Selene Commands
+// ============================================================================
+
+#[derive(Subcommand)]
+pub enum SeleneCommands {
+    /// Install Selene plugins by copying built libraries to Python packages
+    Install {
+        /// Specific plugin to install (default: all)
+        #[arg(short, long)]
+        plugin: Option<String>,
+
+        /// Build profile to use (debug, release, native)
+        #[arg(long, default_value = "release")]
+        profile: String,
+
+        /// Show what would be copied without copying
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Clean Selene plugin _dist directories and venv installations
+    Clean {
+        /// Specific plugin to clean (default: all)
+        #[arg(short, long)]
+        plugin: Option<String>,
+
+        /// Also clean plugins from .venv/lib/*/site-packages/
+        #[arg(long)]
+        venv: bool,
+
+        /// Show what would be deleted without deleting
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Increase verbosity (-v, -vv, -vvv)
+        #[arg(short, long, action = clap::ArgAction::Count)]
+        verbose: u8,
+    },
+
+    /// List Selene plugins and their installation status
+    List,
+}
+
+// ============================================================================
+// Clean Commands
+// ============================================================================
+
+#[derive(Subcommand, Clone, Copy)]
+pub enum CleanCommands {
+    /// Clean build artifacts (Python, Rust, Julia)
+    ///
+    /// Removes Python build artifacts, test caches, compiled extensions,
+    /// and optionally runs cargo clean.
+    Build {
+        /// Show what would be deleted without deleting
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Skip running cargo clean
+        #[arg(long)]
+        skip_cargo: bool,
+
+        /// Increase verbosity (-v, -vv, -vvv)
+        #[arg(short, long, action = clap::ArgAction::Count)]
+        verbose: u8,
+    },
+
+    /// Clean ~/.pecos/deps/ (extracted C++ dependencies)
+    Deps {
+        /// Increase verbosity (-v, -vv, -vvv)
+        #[arg(short, long, action = clap::ArgAction::Count)]
+        verbose: u8,
+    },
+
+    /// Clean ~/.pecos/cache/ and tmp/ (downloaded archives)
+    Cache {
+        /// Increase verbosity (-v, -vv, -vvv)
+        #[arg(short, long, action = clap::ArgAction::Count)]
+        verbose: u8,
+    },
+
+    /// Clean ~/.pecos/llvm/ (LLVM installation)
+    Llvm {
+        /// Increase verbosity (-v, -vv, -vvv)
+        #[arg(short, long, action = clap::ArgAction::Count)]
+        verbose: u8,
+    },
+
+    /// Clean deps, cache, and tmp (optionally including LLVM)
+    All {
+        /// Also remove LLVM installation
+        #[arg(long)]
+        include_llvm: bool,
+
+        /// Increase verbosity (-v, -vv, -vvv)
+        #[arg(short, long, action = clap::ArgAction::Count)]
+        verbose: u8,
+    },
+}
+
+// ============================================================================
+// Features Commands
+// ============================================================================
+
+#[derive(Subcommand)]
+pub enum FeaturesCommands {
+    /// List features for a package
+    List {
+        /// Package name (e.g., pecos, pecos-quest)
+        #[arg(short, long)]
+        package: String,
+
+        /// Features to exclude (comma-separated, e.g., "gpu,cuda")
+        #[arg(short, long)]
+        exclude: Option<String>,
+
+        /// Output as JSON array
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+// ============================================================================
+// Deps Commands
+// ============================================================================
+
 #[derive(Subcommand)]
 pub enum DepsCommands {
     /// Initialize a new pecos.toml manifest
@@ -139,9 +481,6 @@ pub enum DepsCommands {
     Status,
 
     /// Sync crate manifests from workspace manifest
-    ///
-    /// Updates each crate's pecos.toml to match the workspace pecos.toml.
-    /// Only affects crates listed in [crates.*] that have dependencies.
     Sync {
         /// Show what would be changed without making changes
         #[arg(long)]
@@ -156,334 +495,26 @@ pub enum DepsCommands {
     },
 }
 
+// ============================================================================
+// CLI Runner
+// ============================================================================
+
 /// Run the CLI
 pub fn run() -> crate::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Rust { command } => rust_cmd::run(&command),
+        Commands::Python { command } => python_cmd::run(&command),
+        Commands::Cuda { command } => cuda_cmd::run(command),
+        Commands::Julia { command } => julia_cmd::run(&command),
+        Commands::Go { command } => go_cmd::run(&command),
+        Commands::Llvm { command } => llvm_cmd::run(command),
+        Commands::Selene { command } => selene_cmd::run(command),
+        Commands::Clean { command } => clean_cmd::run(command),
+        Commands::Features { command } => features_cmd::run(command),
+        Commands::Deps { command } => manifest_cmd::run(command),
         Commands::Info => info::run(),
         Commands::List { verbose } => list::run(verbose),
-        Commands::Clean {
-            deps,
-            cache,
-            llvm,
-            all,
-            include_llvm,
-            dep,
-            stale,
-            dry_run,
-        } => run_clean(&CleanOptions {
-            deps,
-            cache,
-            llvm,
-            all,
-            include_llvm,
-            dep,
-            stale,
-            dry_run,
-        }),
-        Commands::Llvm { command } => llvm_cmd::run(command),
-        Commands::Deps { command } => manifest_cmd::run(command),
     }
-}
-
-/// Options for the clean command
-#[allow(clippy::struct_excessive_bools)]
-struct CleanOptions {
-    deps: bool,
-    cache: bool,
-    llvm: bool,
-    all: bool,
-    include_llvm: bool,
-    dep: Option<String>,
-    stale: bool,
-    dry_run: bool,
-}
-
-/// Get the size of a directory recursively
-fn get_dir_size(path: &std::path::Path) -> u64 {
-    if !path.exists() {
-        return 0;
-    }
-
-    let mut size = 0;
-    if path.is_file() {
-        return path.metadata().map(|m| m.len()).unwrap_or(0);
-    }
-
-    if let Ok(entries) = std::fs::read_dir(path) {
-        for entry in entries.flatten() {
-            let entry_path = entry.path();
-            if entry_path.is_dir() {
-                size += get_dir_size(&entry_path);
-            } else {
-                size += entry.metadata().map(|m| m.len()).unwrap_or(0);
-            }
-        }
-    }
-    size
-}
-
-/// Format bytes into human-readable size
-#[allow(clippy::cast_precision_loss)]
-fn format_size(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-
-    if bytes >= GB {
-        format!("{:.2} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{bytes} bytes")
-    }
-}
-
-#[allow(clippy::too_many_lines)]
-fn run_clean(opts: &CleanOptions) -> crate::Result<()> {
-    use crate::home::{get_cache_dir, get_deps_dir, get_llvm_dir, get_tmp_dir};
-    use std::fs;
-
-    let clean_deps = opts.deps || opts.all;
-    let clean_cache = opts.cache || opts.all;
-    let clean_llvm = opts.llvm || opts.include_llvm;
-    let clean_specific_dep = opts.dep.is_some();
-    let clean_stale = opts.stale;
-
-    // Check if anything to do
-    if !clean_deps && !clean_cache && !clean_llvm && !clean_specific_dep && !clean_stale {
-        println!("Nothing to clean. Options:");
-        println!("  --deps        Clean extracted sources (~/.pecos/deps/)");
-        println!("  --cache       Clean downloaded archives (~/.pecos/cache/)");
-        println!("  --llvm        Clean LLVM installation (~/.pecos/llvm/)");
-        println!("  --all         Clean deps + cache + tmp");
-        println!("  --dep <NAME>  Clean a specific dependency");
-        println!("  --stale       Clean stale archives in deps/");
-        return Ok(());
-    }
-
-    let mut total_freed: u64 = 0;
-    let dry_run = opts.dry_run;
-
-    // Clean specific dependency
-    if let Some(ref dep_name) = opts.dep {
-        total_freed += clean_specific_dependency(dep_name, dry_run)?;
-    }
-
-    // Clean stale archives in deps/
-    if clean_stale {
-        total_freed += clean_stale_archives(dry_run)?;
-    }
-
-    // Clean deps directory
-    if clean_deps {
-        let deps_dir = get_deps_dir()?;
-        if deps_dir.exists() {
-            let size = get_dir_size(&deps_dir);
-            if dry_run {
-                println!(
-                    "Would remove: {} ({})",
-                    deps_dir.display(),
-                    format_size(size)
-                );
-            } else {
-                println!("Removing: {} ({})", deps_dir.display(), format_size(size));
-                fs::remove_dir_all(&deps_dir)?;
-            }
-            total_freed += size;
-        }
-    }
-
-    // Clean cache directory
-    if clean_cache {
-        let cache_dir = get_cache_dir()?;
-        if cache_dir.exists() {
-            let size = get_dir_size(&cache_dir);
-            if dry_run {
-                println!(
-                    "Would remove: {} ({})",
-                    cache_dir.display(),
-                    format_size(size)
-                );
-            } else {
-                println!("Removing: {} ({})", cache_dir.display(), format_size(size));
-                fs::remove_dir_all(&cache_dir)?;
-            }
-            total_freed += size;
-        }
-
-        // Also clean tmp/
-        let tmp_dir = get_tmp_dir()?;
-        if tmp_dir.exists() {
-            let size = get_dir_size(&tmp_dir);
-            if dry_run {
-                println!(
-                    "Would remove: {} ({})",
-                    tmp_dir.display(),
-                    format_size(size)
-                );
-            } else {
-                println!("Removing: {} ({})", tmp_dir.display(), format_size(size));
-                fs::remove_dir_all(&tmp_dir)?;
-            }
-            total_freed += size;
-        }
-    }
-
-    // Clean LLVM directory
-    if clean_llvm {
-        let llvm_dir = get_llvm_dir()?;
-        if llvm_dir.exists() {
-            let size = get_dir_size(&llvm_dir);
-            if dry_run {
-                println!(
-                    "Would remove: {} ({})",
-                    llvm_dir.display(),
-                    format_size(size)
-                );
-            } else {
-                println!("Removing: {} ({})", llvm_dir.display(), format_size(size));
-                fs::remove_dir_all(&llvm_dir)?;
-            }
-            total_freed += size;
-        }
-    }
-
-    // Summary
-    println!();
-    if total_freed > 0 {
-        if dry_run {
-            println!("Total: {} would be freed", format_size(total_freed));
-            println!("(dry run - no files were deleted)");
-        } else {
-            println!("Done. Freed {}.", format_size(total_freed));
-        }
-    } else {
-        println!("Nothing to clean.");
-    }
-
-    Ok(())
-}
-
-/// Clean a specific dependency from deps/ and cache/
-#[allow(clippy::collapsible_if)]
-fn clean_specific_dependency(dep_name: &str, dry_run: bool) -> crate::Result<u64> {
-    use crate::home::{get_cache_dir, get_deps_dir};
-    use std::fs;
-
-    let mut total_freed: u64 = 0;
-    let deps_dir = get_deps_dir()?;
-    let cache_dir = get_cache_dir()?;
-
-    // Find matching directories in deps/
-    if deps_dir.exists() {
-        if let Ok(entries) = fs::read_dir(&deps_dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with(dep_name) && entry.path().is_dir() {
-                    let size = get_dir_size(&entry.path());
-                    if dry_run {
-                        println!(
-                            "Would remove: {} ({})",
-                            entry.path().display(),
-                            format_size(size)
-                        );
-                    } else {
-                        println!(
-                            "Removing: {} ({})",
-                            entry.path().display(),
-                            format_size(size)
-                        );
-                        fs::remove_dir_all(entry.path())?;
-                    }
-                    total_freed += size;
-                }
-            }
-        }
-    }
-
-    // Find matching archives in cache/
-    if cache_dir.exists() {
-        if let Ok(entries) = fs::read_dir(&cache_dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with(dep_name) && entry.path().is_file() {
-                    let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                    if dry_run {
-                        println!(
-                            "Would remove: {} ({})",
-                            entry.path().display(),
-                            format_size(size)
-                        );
-                    } else {
-                        println!(
-                            "Removing: {} ({})",
-                            entry.path().display(),
-                            format_size(size)
-                        );
-                        fs::remove_file(entry.path())?;
-                    }
-                    total_freed += size;
-                }
-            }
-        }
-    }
-
-    if total_freed == 0 {
-        println!("No files found matching '{dep_name}'");
-    }
-
-    Ok(total_freed)
-}
-
-/// Clean stale .tar.gz archives that are in deps/ instead of cache/
-#[allow(clippy::case_sensitive_file_extension_comparisons)]
-fn clean_stale_archives(dry_run: bool) -> crate::Result<u64> {
-    use crate::home::get_deps_dir;
-    use std::fs;
-
-    let mut total_freed: u64 = 0;
-    let deps_dir = get_deps_dir()?;
-
-    if !deps_dir.exists() {
-        return Ok(0);
-    }
-
-    let mut found_stale = false;
-    if let Ok(entries) = fs::read_dir(&deps_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            // Look for archive files that shouldn't be in deps/
-            if entry.path().is_file()
-                && (name.ends_with(".tar.gz")
-                    || name.ends_with(".tar.bz2")
-                    || name.ends_with(".tar.xz")
-                    || name.ends_with(".7z")
-                    || name.ends_with(".zip"))
-            {
-                if !found_stale {
-                    println!("Found stale archives in deps/ (should be in cache/):");
-                    found_stale = true;
-                }
-
-                let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                if dry_run {
-                    println!("  Would remove: {} ({})", name, format_size(size));
-                } else {
-                    println!("  Removing: {} ({})", name, format_size(size));
-                    fs::remove_file(entry.path())?;
-                }
-                total_freed += size;
-            }
-        }
-    }
-
-    if !found_stale {
-        println!("No stale archives found in deps/");
-    }
-
-    Ok(total_freed)
 }

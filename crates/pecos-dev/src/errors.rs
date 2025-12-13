@@ -44,6 +44,10 @@ pub enum Error {
     /// Extension error
     #[error("Extension error: {0}")]
     Extension(String),
+
+    /// Selene plugin error
+    #[error("Selene error: {0}")]
+    Selene(String),
 }
 
 /// Result type alias for dependency operations

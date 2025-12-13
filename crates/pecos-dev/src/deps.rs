@@ -110,11 +110,11 @@ pub fn ensure_dep_ready(name: &str, manifest: &Manifest) -> Result<PathBuf> {
     }
 
     // Download the archive (will be cached in ~/.pecos/cache/)
-    println!("cargo:warning=Downloading {name}...");
+    log::info!("Downloading {name}...");
     let data = download_cached(&info)?;
 
     // Extract to deps directory
-    println!("cargo:warning=Extracting {name} to {}", dep_path.display());
+    log::info!("Extracting {name} to {}", dep_path.display());
     extract_to_deps(&data, &dep_dir_name)?;
 
     Ok(dep_path)

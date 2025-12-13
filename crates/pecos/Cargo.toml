@@ -43,6 +43,7 @@ serde_json.workspace = true
 
 # CLI dependencies (optional)
 clap = { workspace = true, optional = true }
+clap_complete = { version = "4.5", optional = true }
 env_logger = { workspace = true, optional = true }
 which = { version = "8", optional = true }
 
@@ -61,7 +62,7 @@ pecos-decoders = { workspace = true, optional = true }
 default = ["qasm", "phir", "wasm", "cli"]
 
 # CLI binary (included in default for easy `cargo install pecos`)
-cli = ["dep:clap", "dep:env_logger", "dep:which", "qasm", "phir", "selene"]
+cli = ["dep:clap", "dep:clap_complete", "dep:env_logger", "dep:which", "qasm", "phir", "selene"]
 
 # Program formats
 qasm = []

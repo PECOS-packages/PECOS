@@ -3,7 +3,8 @@ use env_logger::Env;
 use log::debug;
 use pecos::prelude::*;
 use pecos::{
-    DepolarizingNoise, GeneralNoiseModelBuilder, sim_builder, sparse_stabilizer, state_vector,
+    DepolarizingNoise, GeneralNoiseModelBuilder, qasm_engine, sim_builder, sparse_stabilizer,
+    state_vector,
 };
 use std::ffi::OsString;
 use std::io::Write;
@@ -31,11 +32,62 @@ enum Commands {
     /// Compile QIS program to native code
     Compile(CompileArgs),
     /// Run quantum program (supports QIS, PHIR/JSON, and QASM formats)
+    #[command(after_help = RUN_EXAMPLES)]
     Run(RunArgs),
+    /// Show version, features, and system information
+    Info,
+    /// Check installation and diagnose common issues
+    Doctor,
+    /// Generate shell completions
+    Completions(CompletionsArgs),
+    /// Show or run example quantum circuits
+    Examples(ExamplesArgs),
 
     /// External subcommand (forwarded to pecos-dev if available)
     #[command(external_subcommand)]
     External(Vec<OsString>),
+}
+
+#[derive(Args)]
+struct ExamplesArgs {
+    /// Name of the example to show (omit to list all)
+    name: Option<String>,
+
+    /// Run the example instead of just showing it
+    #[arg(long)]
+    run: bool,
+
+    /// Copy the example to current directory
+    #[arg(long)]
+    copy: bool,
+}
+
+const RUN_EXAMPLES: &str = "\
+Examples:
+  # Run a QASM circuit with 1000 shots
+  pecos run circuit.qasm -s 1000
+
+  # Reproducible simulation with fixed seed
+  pecos run bell.phir.json -s 100 -d 42
+
+  # Use stabilizer simulator for Clifford circuits
+  pecos run clifford.qasm -S stabilizer
+
+  # Add depolarizing noise (1% error rate)
+  pecos run circuit.qasm -s 1000 -p 0.01
+
+  # Parallel execution with 4 workers
+  pecos run large_circuit.qasm -s 10000 -w 4
+
+  # Output results to file in binary format
+  pecos run circuit.qasm -s 1000 -o results.json -f binary
+";
+
+#[derive(Args)]
+struct CompletionsArgs {
+    /// Shell to generate completions for
+    #[arg(value_enum)]
+    shell: clap_complete::Shell,
 }
 
 #[derive(Args)]
@@ -419,10 +471,379 @@ fn main() -> Result<(), PecosError> {
             }
         }
         Commands::Run(args) => run_program(args)?,
+        Commands::Info => print_info(),
+        Commands::Doctor => run_doctor()?,
+        Commands::Completions(args) => generate_completions(args.shell),
+        Commands::Examples(args) => handle_examples(args)?,
         Commands::External(args) => run_external(args)?,
     }
 
     Ok(())
+}
+
+/// Print information about PECOS installation and features
+fn print_info() {
+    println!("PECOS - Quantum Error Correction Simulator");
+    println!("Version: {}", env!("CARGO_PKG_VERSION"));
+    println!();
+
+    println!("Compiled Features:");
+    print_feature("qasm", cfg!(feature = "qasm"), "OpenQASM 2.0 circuit support");
+    print_feature("phir", cfg!(feature = "phir"), "PHIR/JSON program support");
+    print_feature("selene", cfg!(feature = "selene"), "Selene QIS runtime");
+    print_feature("wasm", cfg!(feature = "wasm"), "WebAssembly foreign objects");
+    print_feature("llvm", cfg!(feature = "llvm"), "LLVM/QIS compilation");
+    print_feature("quest", cfg!(feature = "quest"), "QuEST simulator backend");
+    print_feature("qulacs", cfg!(feature = "qulacs"), "Qulacs simulator backend");
+    println!();
+
+    println!("Simulators:");
+    println!("  statevector  - Full quantum state simulation (default)");
+    println!("  stabilizer   - Efficient Clifford circuit simulation");
+    println!();
+
+    println!("Noise Models:");
+    println!("  depolarizing - Uniform error probability (default)");
+    println!("  general      - Configurable per-operation error rates");
+    println!();
+
+    println!("Documentation: https://github.com/PECOS-Developers/PECOS");
+
+    // Show hint about pecos-dev if not available
+    if which::which("pecos-dev").is_err() {
+        println!();
+        println!("Tip: Install pecos-dev for additional tools:");
+        println!("  cargo install pecos-dev");
+    }
+}
+
+fn print_feature(name: &str, enabled: bool, description: &str) {
+    let status = if enabled { "[x]" } else { "[ ]" };
+    println!("  {status} {name:8} - {description}");
+}
+
+/// Run diagnostic checks on PECOS installation
+fn run_doctor() -> Result<(), PecosError> {
+    println!("Checking PECOS installation...");
+    println!();
+
+    let mut all_ok = true;
+    let mut warnings = Vec::new();
+
+    // Check 1: Version
+    print_check("PECOS CLI", true, &format!("v{}", env!("CARGO_PKG_VERSION")));
+
+    // Check 2: QASM support
+    let qasm_ok = cfg!(feature = "qasm");
+    print_check("QASM support", qasm_ok, if qasm_ok { "available" } else { "not compiled" });
+    if !qasm_ok {
+        warnings.push("QASM support not compiled. Reinstall with default features.");
+    }
+
+    // Check 3: PHIR support
+    let phir_ok = cfg!(feature = "phir");
+    print_check("PHIR/JSON support", phir_ok, if phir_ok { "available" } else { "not compiled" });
+    if !phir_ok {
+        warnings.push("PHIR support not compiled. Reinstall with default features.");
+    }
+
+    // Check 4: Selene runtime
+    let selene_ok = cfg!(feature = "selene");
+    print_check("Selene runtime", selene_ok, if selene_ok { "available" } else { "not compiled" });
+
+    // Check 5: LLVM/QIS support
+    let llvm_ok = cfg!(feature = "llvm");
+    if llvm_ok {
+        print_check("LLVM/QIS support", true, "available");
+    } else {
+        print_check("LLVM/QIS support", false, "not compiled (optional)");
+        warnings.push("LLVM support not compiled. To enable: cargo install pecos --features llvm");
+    }
+
+    // Check 6: pecos-dev availability
+    let pecos_dev_ok = which::which("pecos-dev").is_ok();
+    if pecos_dev_ok {
+        print_check("pecos-dev tools", true, "available");
+    } else {
+        print_check("pecos-dev tools", false, "not installed (optional)");
+        warnings.push("pecos-dev not found. To install: cargo install pecos-dev");
+    }
+
+    // Check 7: Test basic circuit execution
+    print!("  ");
+    let test_result = test_basic_execution();
+    match test_result {
+        Ok(()) => {
+            print_check("Test circuit", true, "execution successful");
+        }
+        Err(e) => {
+            print_check("Test circuit", false, &format!("failed: {e}"));
+            all_ok = false;
+        }
+    }
+
+    println!();
+
+    // Print warnings
+    if !warnings.is_empty() {
+        println!("Suggestions:");
+        for warning in &warnings {
+            println!("  - {warning}");
+        }
+        println!();
+    }
+
+    // Final status
+    if all_ok {
+        println!("All checks passed! PECOS is ready to use.");
+    } else {
+        println!("Some checks failed. See above for details.");
+    }
+
+    Ok(())
+}
+
+fn print_check(name: &str, ok: bool, detail: &str) {
+    let status = if ok { "[OK]" } else { "[!!]" };
+    println!("  {status} {name}: {detail}");
+}
+
+/// Test basic circuit execution with a simple Bell state
+fn test_basic_execution() -> Result<(), PecosError> {
+    // Simple Bell state circuit in QASM
+    let qasm = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    "#;
+
+    let engine = qasm_engine().qasm(qasm.to_string());
+    let results = sim_builder()
+        .classical(engine)
+        .quantum(state_vector().qubits(2))
+        .seed(42)
+        .run(1)?;
+
+    // Verify we got a result
+    let _shot_map = results.try_as_shot_map()?;
+    // If we get here without error, the circuit executed successfully
+
+    Ok(())
+}
+
+/// Generate shell completions
+fn generate_completions(shell: clap_complete::Shell) {
+    use clap::CommandFactory;
+    use clap_complete::generate;
+
+    let mut cmd = Cli::command();
+    let name = cmd.get_name().to_string();
+    generate(shell, &mut cmd, name, &mut std::io::stdout());
+}
+
+// ============================================================================
+// Example circuits
+// ============================================================================
+
+struct Example {
+    name: &'static str,
+    description: &'static str,
+    filename: &'static str,
+    content: &'static str,
+}
+
+const EXAMPLES: &[Example] = &[
+    Example {
+        name: "bell",
+        description: "Bell state - entangle two qubits",
+        filename: "bell.qasm",
+        content: r#"// Bell State Circuit
+// Creates an entangled pair of qubits in the state (|00> + |11>)/sqrt(2)
+OPENQASM 2.0;
+include "qelib1.inc";
+
+qreg q[2];
+creg c[2];
+
+// Create superposition on first qubit
+h q[0];
+
+// Entangle with second qubit
+cx q[0], q[1];
+
+// Measure both qubits
+measure q -> c;
+"#,
+    },
+    Example {
+        name: "ghz",
+        description: "GHZ state - three-qubit entanglement",
+        filename: "ghz.qasm",
+        content: r#"// GHZ State Circuit
+// Creates the state (|000> + |111>)/sqrt(2)
+OPENQASM 2.0;
+include "qelib1.inc";
+
+qreg q[3];
+creg c[3];
+
+// Create superposition
+h q[0];
+
+// Entangle all three qubits
+cx q[0], q[1];
+cx q[1], q[2];
+
+// Measure
+measure q -> c;
+"#,
+    },
+    Example {
+        name: "teleport",
+        description: "Quantum teleportation protocol",
+        filename: "teleport.qasm",
+        content: r#"// Quantum Teleportation Circuit
+// Teleports the state of q[0] to q[2]
+OPENQASM 2.0;
+include "qelib1.inc";
+
+qreg q[3];
+creg c[3];
+
+// Prepare state to teleport (|1> state)
+x q[0];
+
+// Create Bell pair between q[1] and q[2]
+h q[1];
+cx q[1], q[2];
+
+// Bell measurement on q[0] and q[1]
+cx q[0], q[1];
+h q[0];
+
+// Measure the first two qubits
+measure q[0] -> c[0];
+measure q[1] -> c[1];
+
+// Classical corrections would be applied based on c[0] and c[1]
+// For simulation, we just measure q[2]
+measure q[2] -> c[2];
+"#,
+    },
+    Example {
+        name: "superposition",
+        description: "Simple superposition with Hadamard gate",
+        filename: "superposition.qasm",
+        content: r#"// Superposition Circuit
+// Creates equal superposition of |0> and |1>
+OPENQASM 2.0;
+include "qelib1.inc";
+
+qreg q[1];
+creg c[1];
+
+// Create superposition
+h q[0];
+
+// Measure - should give 0 or 1 with equal probability
+measure q -> c;
+"#,
+    },
+    Example {
+        name: "phase",
+        description: "Phase kickback demonstration",
+        filename: "phase.qasm",
+        content: r#"// Phase Kickback Circuit
+// Demonstrates phase kickback with controlled gates
+OPENQASM 2.0;
+include "qelib1.inc";
+
+qreg q[2];
+creg c[2];
+
+// Prepare |-> state on target qubit
+x q[1];
+h q[1];
+
+// Control qubit in superposition
+h q[0];
+
+// Controlled-Z applies phase to control qubit
+cz q[0], q[1];
+
+// Interfere and measure
+h q[0];
+measure q -> c;
+"#,
+    },
+];
+
+/// Handle the examples command
+fn handle_examples(args: &ExamplesArgs) -> Result<(), PecosError> {
+    match &args.name {
+        None => {
+            // List all examples
+            println!("Available examples:");
+            println!();
+            for ex in EXAMPLES {
+                println!("  {:12} - {}", ex.name, ex.description);
+            }
+            println!();
+            println!("Usage:");
+            println!("  pecos examples <name>        Show the example circuit");
+            println!("  pecos examples <name> --run  Run the example (100 shots)");
+            println!("  pecos examples <name> --copy Copy to current directory");
+            Ok(())
+        }
+        Some(name) => {
+            let example = EXAMPLES
+                .iter()
+                .find(|e| e.name == name)
+                .ok_or_else(|| {
+                    PecosError::Input(format!(
+                        "Unknown example '{}'. Run 'pecos examples' to list available examples.",
+                        name
+                    ))
+                })?;
+
+            if args.copy {
+                // Copy to current directory
+                std::fs::write(example.filename, example.content).map_err(|e| {
+                    PecosError::Resource(format!("Failed to write {}: {}", example.filename, e))
+                })?;
+                println!("Copied {} to {}", example.name, example.filename);
+                println!();
+                println!("Run with:");
+                println!("  pecos run {} -s 100", example.filename);
+            } else if args.run {
+                // Run the example
+                println!("Running {} example (100 shots)...", example.name);
+                println!();
+
+                let engine = qasm_engine().qasm(example.content.to_string());
+                let results = sim_builder()
+                    .classical(engine)
+                    .quantum(state_vector())
+                    .seed(42)
+                    .run(100)?;
+
+                let shot_map = results.try_as_shot_map()?;
+                println!("{}", shot_map.display().bitvec_binary());
+            } else {
+                // Show the example
+                println!("// Example: {} - {}", example.name, example.description);
+                println!("// File: {}", example.filename);
+                println!();
+                print!("{}", example.content);
+            }
+
+            Ok(())
+        }
+    }
 }
 
 /// Forward unknown commands to pecos-dev if available
@@ -520,7 +941,7 @@ mod tests {
                 assert_eq!(args.output_file, None); // Default
                 assert_eq!(args.display_format, "decimal".to_string()); // Default
             }
-            Commands::Compile(_) => panic!("Expected Run command"),
+            _ => panic!("Expected Run command"),
         }
     }
 
@@ -538,7 +959,7 @@ mod tests {
                 assert_eq!(args.output_file, None); // Default
                 assert_eq!(args.display_format, "decimal".to_string()); // Default
             }
-            Commands::Compile(_) => panic!("Expected Run command"),
+            _ => panic!("Expected Run command"),
         }
     }
 
@@ -567,7 +988,7 @@ mod tests {
                 );
                 assert_eq!(args.output_file, None); // Default
             }
-            Commands::Compile(_) => panic!("Expected Run command"),
+            _ => panic!("Expected Run command"),
         }
 
         // Test with short option
@@ -592,7 +1013,7 @@ mod tests {
                     Some("0.01,0.02,0.03,0.04,0.05".to_string())
                 );
             }
-            Commands::Compile(_) => panic!("Expected Run command"),
+            _ => panic!("Expected Run command"),
         }
     }
 

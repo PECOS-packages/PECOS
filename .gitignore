@@ -4,7 +4,7 @@ tmp/
 **/.*/settings.local.json
 
 # LLVM (extracted from archive for Windows development)
-llvm/
+/llvm/
 
 # Cargo config with machine-specific LLVM paths
 .cargo/config.toml

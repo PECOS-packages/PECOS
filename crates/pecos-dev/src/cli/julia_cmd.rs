@@ -190,12 +190,32 @@ fn run_fmt(check: bool) -> Result<()> {
         println!("Formatting Julia code...");
     }
 
-    let julia_code = if check {
-        r#"
+    // First, ensure JuliaFormatter is installed in the default environment
+    // (not the project environment, to avoid modifying Project.toml)
+    let install_formatter = r#"
         using Pkg
+        # Install to default environment, not project
+        Pkg.activate()
         if !haskey(Pkg.project().dependencies, "JuliaFormatter")
             Pkg.add("JuliaFormatter")
         end
+        "#;
+
+    let install_status = Command::new("julia")
+        .args(["-e", install_formatter])
+        .current_dir(&julia_pkg)
+        .status();
+
+    if !matches!(install_status, Ok(s) if s.success()) {
+        return Err(Error::Config(
+            "Failed to install JuliaFormatter".to_string(),
+        ));
+    }
+
+    // Now run the formatter using JuliaFormatter from default env
+    // but operating on the project directory
+    let julia_code = if check {
+        r#"
         using JuliaFormatter
         if !format("."; verbose=false, overwrite=false)
             println("Formatting issues found. Run 'pecos-dev julia fmt' to fix.")
@@ -206,17 +226,13 @@ fn run_fmt(check: bool) -> Result<()> {
         "#
     } else {
         r#"
-        using Pkg
-        if !haskey(Pkg.project().dependencies, "JuliaFormatter")
-            Pkg.add("JuliaFormatter")
-        end
         using JuliaFormatter
         format("."; verbose=true)
         "#
     };
 
     let status = Command::new("julia")
-        .args(["--project=.", "-e", julia_code])
+        .args(["-e", julia_code])
         .current_dir(&julia_pkg)
         .status();
 

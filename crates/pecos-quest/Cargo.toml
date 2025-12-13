@@ -28,7 +28,7 @@ rand.workspace = true
 rand_chacha.workspace = true
 
 [build-dependencies]
-pecos-build-utils.workspace = true
+pecos-deps.workspace = true
 cxx-build.workspace = true
 log.workspace = true
 env_logger.workspace = true

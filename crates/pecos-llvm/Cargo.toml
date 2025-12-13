@@ -23,7 +23,7 @@ features = ["llvm14-0"]
 default = []
 
 [build-dependencies]
-pecos-llvm-utils.workspace = true
+pecos-deps.workspace = true
 
 [lints]
 workspace = true

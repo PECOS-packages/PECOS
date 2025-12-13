@@ -1,9 +1,7 @@
 //! Build script for LDPC decoder integration
 
 use log::info;
-use pecos_build_utils::{
-    Result, download_cached, extract_archive, ldpc_download_info, report_cache_config,
-};
+use pecos_deps::{Manifest, Result, download_cached, extract_archive, report_cache_config};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -84,7 +82,9 @@ pub fn build() -> Result<()> {
 }
 
 fn download_and_extract_ldpc(out_dir: &Path) -> Result<()> {
-    let info = ldpc_download_info();
+    // Load manifest (crate-local or workspace-level)
+    let manifest = Manifest::find_and_load_validated()?;
+    let info = manifest.get_download_info("ldpc")?;
     let tar_gz = download_cached(&info)?;
     extract_archive(&tar_gz, out_dir, Some("ldpc"))?;
 

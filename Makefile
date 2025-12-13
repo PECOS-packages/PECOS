@@ -12,8 +12,9 @@ FFI_CRATES := pecos-rslib pecos-julia-ffi pecos-go-ffi
 CARGO_EXCLUDE_FFI := $(foreach crate,$(FFI_CRATES),--exclude $(crate))
 
 # LLVM Configuration
-# LLVM is automatically detected by build.rs files using pecos-llvm-utils
-# No manual configuration needed!
+# LLVM 14 is required for QIR/LLVM IR features (pecos-llvm, pecos-engines with llvm feature)
+# Run 'make install-llvm' to download and install LLVM 14 to ~/.pecos/llvm/
+# Run 'make check-llvm' to verify installation status
 
 # Requirements
 # ------------
@@ -35,18 +36,23 @@ installreqs: ## Install Python project requirements to root .venv
 		uv sync --project .; \
 	fi
 
-# Building development environments
-# ---------------------------------
+# LLVM Setup
+# ----------
+
+.PHONY: install-llvm
+install-llvm: ## Install LLVM 14 to ~/.pecos/llvm/ (required for QIR features)
+	@echo "Installing LLVM 14..."
+	@cargo run --release --package pecos-deps -- llvm install
 
 .PHONY: check-llvm
 check-llvm: ## Check LLVM 14 installation status
-	@cargo run -q --release --package pecos-llvm-utils --bin pecos-llvm -- check || true
+	@cargo run -q --release --package pecos-deps -- llvm check || true
 
 # LLVM Detection Helper
 # Auto-detect LLVM if not already set
 SETUP_LLVM = \
 	if [ -z "$$LLVM_SYS_140_PREFIX" ]; then \
-		DETECTED_LLVM=$$(cargo run -q --release -p pecos-llvm-utils --bin pecos-llvm -- find 2>/dev/null); \
+		DETECTED_LLVM=$$(cargo run -q --release -p pecos-deps -- llvm find 2>/dev/null); \
 		if [ -n "$$DETECTED_LLVM" ]; then \
 			export PECOS_LLVM="$$DETECTED_LLVM"; \
 			export LLVM_SYS_140_PREFIX="$$DETECTED_LLVM"; \
@@ -762,7 +768,7 @@ clean-selene-plugins-windows-ps:
 	@powershell -Command "Get-ChildItem -Path '.venv/lib' -Recurse -Directory -Filter 'pecos_selene_statevec*.dist-info' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
 
 .PHONY: clean
-clean:  ## Clean up caches and build artifacts
+clean:  ## Clean up project artifacts + ~/.pecos/cache/ and tmp/
 ifeq ($(OS),Windows_NT)
 	# Check if Unix commands are available (from Git Bash, MSYS2, etc. in PATH)
 	@if command -v rm >/dev/null 2>&1 && command -v /usr/bin/find >/dev/null 2>&1; then \
@@ -775,7 +781,7 @@ else
 endif
 
 .PHONY: clean-unix
-clean-unix: clean-selene-plugins-unix
+clean-unix: clean-selene-plugins-unix clean-cache
 	@rm -rf *.egg-info
 	@rm -rf dist
 	@/usr/bin/find . -type d -name "build" -exec rm -rf {} + 2>/dev/null || true
@@ -852,6 +858,54 @@ clean-windows-cmd:
 	-@for /f "delims=" %%d in ('dir /s /b /ad crates\target 2^>nul') do @rd /s /q "%%d" 2>nul
 	-@for /f "delims=" %%d in ('dir /s /b /ad python\target 2^>nul') do @rd /s /q "%%d" 2>nul
 	-@cargo clean
+
+# PECOS Home Directory Cleanup
+# ----------------------------
+# These targets clean the ~/.pecos/ directory which contains external dependencies
+
+.PHONY: clean-cache
+clean-cache:  ## Clean ~/.pecos/cache/ and ~/.pecos/tmp/ (build artifacts and temp files)
+	@echo "Cleaning PECOS cache and temp directories..."
+	@PECOS_HOME="$${PECOS_HOME:-$$HOME/.pecos}"; \
+	if [ -d "$$PECOS_HOME/cache" ]; then \
+		echo "  Removing $$PECOS_HOME/cache/"; \
+		rm -rf "$$PECOS_HOME/cache"; \
+	fi; \
+	if [ -d "$$PECOS_HOME/tmp" ]; then \
+		echo "  Removing $$PECOS_HOME/tmp/"; \
+		rm -rf "$$PECOS_HOME/tmp"; \
+	fi
+	@echo "PECOS cache cleaned"
+
+.PHONY: clean-deps
+clean-deps: clean-cache  ## Clean ~/.pecos/deps/, cache/, and tmp/ (downloaded C++ dependencies)
+	@echo "Cleaning PECOS dependencies..."
+	@PECOS_HOME="$${PECOS_HOME:-$$HOME/.pecos}"; \
+	if [ -d "$$PECOS_HOME/deps" ]; then \
+		echo "  Removing $$PECOS_HOME/deps/"; \
+		rm -rf "$$PECOS_HOME/deps"; \
+	fi
+	@echo "PECOS dependencies cleaned (will be re-downloaded on next build)"
+
+.PHONY: clean-llvm
+clean-llvm:  ## Clean ~/.pecos/llvm/ (LLVM installation - large, slow to reinstall)
+	@echo "Cleaning PECOS LLVM installation..."
+	@PECOS_HOME="$${PECOS_HOME:-$$HOME/.pecos}"; \
+	if [ -d "$$PECOS_HOME/llvm" ]; then \
+		echo "  Removing $$PECOS_HOME/llvm/ (~400MB)"; \
+		rm -rf "$$PECOS_HOME/llvm"; \
+		echo "  Run 'cargo run -p pecos-deps -- llvm install' to reinstall"; \
+	else \
+		echo "  No LLVM installation found"; \
+	fi
+
+.PHONY: clean-all
+clean-all: clean clean-deps  ## Clean project artifacts + deps (but not LLVM)
+	@echo "Full clean completed (LLVM preserved)"
+
+.PHONY: clean-everything
+clean-everything: clean clean-deps clean-llvm  ## Clean everything including LLVM (nuclear option)
+	@echo "Everything cleaned including LLVM"
 
 .PHONY: pip-install-uv
 pip-install-uv:  ## Install uv using pip and create a venv. (Recommended to instead follow: https://docs.astral.sh/uv/getting-started/installation/

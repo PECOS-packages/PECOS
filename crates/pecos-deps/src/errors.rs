@@ -1,10 +1,10 @@
-//! Error types for build scripts
+//! Error types for dependency management
 
 use thiserror::Error;
 
-/// Build script error type
+/// Error type for dependency operations
 #[derive(Error, Debug)]
-pub enum BuildError {
+pub enum Error {
     /// IO error
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -28,7 +28,19 @@ pub enum BuildError {
     /// SHA256 verification error
     #[error("SHA256 mismatch: expected {expected}, got {actual}")]
     Sha256Mismatch { expected: String, actual: String },
+
+    /// Home directory error
+    #[error("Home directory error: {0}")]
+    HomeDir(String),
+
+    /// LLVM error
+    #[error("LLVM error: {0}")]
+    Llvm(String),
+
+    /// Configuration error
+    #[error("Configuration error: {0}")]
+    Config(String),
 }
 
-/// Result type alias for build scripts
-pub type Result<T> = std::result::Result<T, BuildError>;
+/// Result type alias for dependency operations
+pub type Result<T> = std::result::Result<T, Error>;

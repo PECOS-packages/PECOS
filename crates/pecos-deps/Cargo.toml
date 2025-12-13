@@ -1,0 +1,55 @@
+[package]
+name = "pecos-deps"
+version.workspace = true
+edition.workspace = true
+description = "Dependency management for PECOS - handles external C++ libraries and LLVM"
+readme.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords = ["quantum", "llvm", "build-utils", "dependencies"]
+categories = ["development-tools::build-utils"]
+
+[[bin]]
+name = "pecos-deps"
+path = "src/bin/pecos-deps.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+cli = ["dep:clap", "dep:env_logger"]
+
+[dependencies]
+# CLI (optional)
+clap = { workspace = true, optional = true }
+env_logger = { workspace = true, optional = true }
+
+# Directory management
+dirs.workspace = true
+
+# Downloading
+reqwest.workspace = true
+
+# Checksums
+sha2.workspace = true
+
+# Archive extraction
+tar.workspace = true
+flate2.workspace = true
+bzip2.workspace = true
+xz2.workspace = true
+sevenz-rust.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Logging
+log.workspace = true
+
+# Serialization (for manifest files)
+serde = { workspace = true, features = ["derive"] }
+toml = "0.8"
+
+[lints]
+workspace = true

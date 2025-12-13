@@ -118,8 +118,7 @@ pecos-hugr-qis = { version = "0.1.1", path = "crates/pecos-hugr-qis" }
 pecos-llvm = { version = "0.1.1", path = "crates/pecos-llvm" }
 pecos-rslib = { version = "0.1.1", path = "python/pecos-rslib" }
 pecos-wasm = { version = "0.1.1", path = "crates/pecos-wasm" }
-pecos-build-utils = { version = "0.1.1", path = "crates/pecos-build-utils" }
-pecos-llvm-utils = { version = "0.1.1", path = "crates/pecos-llvm-utils" }
+pecos-deps = { version = "0.1.1", path = "crates/pecos-deps", default-features = false }
 pecos-num = { version = "0.1.1", path = "crates/pecos-num" }
 
 # Decoder crates

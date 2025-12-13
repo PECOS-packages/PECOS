@@ -1,9 +1,7 @@
 //! Build script for `QuEST` integration
 
 use log::{debug, info};
-use pecos_build_utils::{
-    Result, download_cached, extract_archive, quest_download_info, report_cache_config,
-};
+use pecos_deps::{Manifest, Result, download_cached, extract_archive, report_cache_config};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -373,7 +371,9 @@ pub fn build() -> Result<()> {
 }
 
 fn download_and_extract_quest(out_dir: &Path) -> Result<()> {
-    let info = quest_download_info();
+    // Load manifest (crate-local or workspace-level, with validation)
+    let manifest = Manifest::find_and_load_validated()?;
+    let info = manifest.get_download_info("quest")?;
     let tar_gz = download_cached(&info)?;
 
     // Extract archive to "extracted" subdirectory

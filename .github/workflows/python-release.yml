@@ -108,7 +108,7 @@ jobs:
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
             dnf install libffi-devel -y
-            cargo run --release -p pecos-llvm-utils --bin pecos-llvm -- install --force
+            cargo run --release -p pecos-deps -- llvm install --force
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
@@ -121,7 +121,7 @@ jobs:
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
             rustup update
-            cargo run --release -p pecos-llvm-utils --bin pecos-llvm -- install --force
+            cargo run --release -p pecos-deps -- llvm install --force
             # Create a codesign wrapper that strips DYLD_LIBRARY_PATH to prevent
             # crashes on macOS 15 when bundled libc++ conflicts with system libc++
             mkdir -p $HOME/.pecos/bin
@@ -135,10 +135,10 @@ jobs:
             PATH="C:\\Users\\runneradmin\\.pecos\\llvm\\bin;$PATH"
             LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\llvm"
           CIBW_BEFORE_ALL_WINDOWS: >
-            echo "=== Installing LLVM using pecos-llvm-utils ===" &&
+            echo "=== Installing LLVM using pecos-deps ===" &&
             rustup update &&
             echo "=== Running pecos-llvm install ===" &&
-            cargo run --release -p pecos-llvm-utils --bin pecos-llvm -- install --force &&
+            cargo run --release -p pecos-deps -- llvm install --force &&
             echo "=== Checking LLVM installation ===" &&
             (test -d "C:\\Users\\runneradmin\\.pecos\\llvm" && echo "LLVM directory exists" && ls -la "C:\\Users\\runneradmin\\.pecos\\llvm" && (ls -la "C:\\Users\\runneradmin\\.pecos\\llvm\\bin" || echo "bin directory not found")) || (echo "ERROR: LLVM directory not found!" && exit 1) &&
             echo "=== Verifying LLVM_SYS_140_PREFIX ===" &&

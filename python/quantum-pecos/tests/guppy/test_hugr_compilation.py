@@ -135,12 +135,12 @@ attributes #0 = { "EntryPoint" }
             llvm_file = Path(f.name)
 
         try:
-            # Find llvm-as - check PATH first, then use pecos-llvm-utils
+            # Find llvm-as - check PATH first, then use pecos-deps
             llvm_as_path = shutil.which("llvm-as")
             print(f"DEBUG: llvm-as in PATH: {llvm_as_path}")
 
             if not llvm_as_path:
-                # Use pecos-llvm-utils to find the tool
+                # Use pecos-deps to find the tool
                 cargo_path = shutil.which("cargo")
                 print(f"DEBUG: cargo found at: {cargo_path}")
                 if cargo_path:
@@ -153,10 +153,9 @@ attributes #0 = { "EntryPoint" }
                                 "-q",
                                 "--release",
                                 "-p",
-                                "pecos-llvm-utils",
-                                "--bin",
-                                "pecos-llvm",
+                                "pecos-deps",
                                 "--",
+                                "llvm",
                                 "tool",
                                 "llvm-as",
                             ],

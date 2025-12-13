@@ -22,7 +22,7 @@ For developers who want to contribute or modify PECOS:
 
    **Quick setup:**
    ```sh
-   cargo run -p pecos-llvm-utils --bin pecos-llvm -- install
+   cargo run -p pecos-deps -- llvm install
    cargo build
    ```
 
@@ -66,8 +66,37 @@ Before pull requests are merged, they must pass linting and the test.
 
 Note: For the Rust side of the project, you can use `cargo` to run tests, benchmarks, formatting, etc.
 
+## PECOS Home Directory
+
+PECOS uses `~/.pecos/` to store external dependencies and build artifacts that cannot be managed through Cargo.toml:
+
+```
+~/.pecos/
+├── llvm/       # LLVM-14 installation (for QIR/LLVM IR execution)
+├── deps/       # Downloaded C++ dependencies (Stim, QuEST, Qulacs, etc.)
+└── cache/      # Build artifacts and intermediate files
+```
+
+### Environment Variables
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `PECOS_HOME` | Override entire home directory | `~/.pecos/` |
+| `PECOS_DEPS_DIR` | Override deps location | `$PECOS_HOME/deps/` |
+| `PECOS_CACHE_DIR` | Override cache location | `$PECOS_HOME/cache/` |
+
+These can be set via shell environment or in `.cargo/config.toml`:
+
+```toml
+[env]
+PECOS_HOME = { value = "/custom/path", force = true }
+```
+
+For more details, see [PECOS Home Directory Plan](PECOS_HOME_PLAN.md).
+
 ## Development Guides
 
 For specific development topics, see:
 
 - [Parallel Blocks and Optimization](parallel-blocks-and-optimization.md) - Guide to using and extending the Parallel block construct and optimizer
+- [PECOS Home Directory Plan](PECOS_HOME_PLAN.md) - External dependency management architecture

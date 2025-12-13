@@ -1,10 +1,19 @@
 //! Archive extraction utilities
 
-use crate::errors::{BuildError, Result};
+use crate::errors::{Error, Result};
+use crate::home::get_tmp_dir;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Extract a tar.gz or tar.bz2 archive and emit rerun-if-changed for all extracted files
+/// Extract a tar.gz or tar.bz2 archive
+///
+/// Automatically detects archive format by magic bytes and extracts to the specified directory.
+///
+/// # Arguments
+///
+/// * `data` - The archive data bytes
+/// * `out_dir` - Directory to extract into
+/// * `expected_dir_name` - Optional name for the extracted directory (defaults to "extracted")
 ///
 /// # Errors
 ///
@@ -16,7 +25,7 @@ pub fn extract_archive(
 ) -> Result<PathBuf> {
     use tar::Archive;
 
-    // Try to detect if this is gzip or bzip2 by checking magic bytes
+    // Detect archive format by magic bytes
     let mut archive = if data.len() >= 3 && data[0] == 0x1f && data[1] == 0x8b && data[2] == 0x08 {
         // gzip magic bytes
         use flate2::read::GzDecoder;
@@ -28,20 +37,15 @@ pub fn extract_archive(
         let tar = BzDecoder::new(data);
         Archive::new(Box::new(tar) as Box<dyn std::io::Read>)
     } else {
-        return Err(BuildError::Archive(
+        return Err(Error::Archive(
             "Unknown archive format - not gzip or bzip2".to_string(),
         ));
     };
 
-    // Extract to temporary directory first
-    // On Windows, use a shorter path to avoid MAX_PATH issues with deeply nested archives like Boost
-    let temp_dir = if cfg!(windows) {
-        // Use Windows temp directory with a short name to minimize path length
-        let temp_root = std::env::temp_dir();
-        temp_root.join(format!("p{}", std::process::id()))
-    } else {
-        out_dir.join(format!("extract_temp_{}", std::process::id()))
-    };
+    // Extract to temporary directory first under ~/.pecos/tmp/
+    // This keeps all PECOS files in one place and makes cleanup easier
+    let pecos_tmp = get_tmp_dir()?;
+    let temp_dir = pecos_tmp.join(format!("extract_{}", std::process::id()));
     fs::create_dir_all(&temp_dir)?;
 
     // Configure archive for Windows compatibility
@@ -54,19 +58,21 @@ pub fn extract_archive(
     let extracted_dir = entries
         .filter_map(std::result::Result::ok)
         .find(|e| e.file_type().ok().is_some_and(|t| t.is_dir()))
-        .ok_or_else(|| BuildError::Archive("No directory found in archive".to_string()))?
+        .ok_or_else(|| Error::Archive("No directory found in archive".to_string()))?
         .path();
 
     // Move to final location
     let final_name = expected_dir_name.unwrap_or("extracted");
     let final_dir = out_dir.join(final_name);
 
+    // Ensure parent directory exists
+    fs::create_dir_all(out_dir)?;
+
     if final_dir.exists() {
         fs::remove_dir_all(&final_dir)?;
     }
 
     // On Windows, use copy instead of rename to avoid path length issues
-    // fs::rename can fail when destination path is too long on Windows
     #[cfg(windows)]
     {
         copy_dir_all(&extracted_dir, &final_dir)?;

@@ -1,8 +1,5 @@
 use log::warn;
-use pecos_build_utils::{
-    boost_download_info, download_cached, eigen_download_info, extract_archive,
-    qulacs_download_info,
-};
+use pecos_deps::{Manifest, download_cached, extract_archive};
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -110,10 +107,24 @@ fn get_build_profile() -> String {
 }
 
 fn download_and_extract_dependencies(out_dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
+    // Load manifest (crate-local or workspace-level, with validation)
+    let manifest =
+        Manifest::find_and_load_validated().expect("pecos.toml not found or validation failed");
+
     // Download all dependencies
-    let qulacs_data = download_cached(&qulacs_download_info()).expect("Failed to download Qulacs");
-    let eigen_data = download_cached(&eigen_download_info()).expect("Failed to download Eigen");
-    let boost_data = download_cached(&boost_download_info()).expect("Failed to download Boost");
+    let qulacs_info = manifest
+        .get_download_info("qulacs")
+        .expect("qulacs not in manifest");
+    let eigen_info = manifest
+        .get_download_info("eigen")
+        .expect("eigen not in manifest");
+    let boost_info = manifest
+        .get_download_info("boost")
+        .expect("boost not in manifest");
+
+    let qulacs_data = download_cached(&qulacs_info).expect("Failed to download Qulacs");
+    let eigen_data = download_cached(&eigen_info).expect("Failed to download Eigen");
+    let boost_data = download_cached(&boost_info).expect("Failed to download Boost");
 
     // Extract archives
     let qulacs_path =

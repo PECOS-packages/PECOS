@@ -1,40 +1,47 @@
 //! Download utilities with caching and integrity verification
 
-use crate::cache::get_cache_dir;
-use crate::errors::{BuildError, Result};
+use crate::errors::{Error, Result};
+use crate::home::get_deps_dir;
 use std::fs;
 
 /// Download info with URL and expected SHA256
 pub struct DownloadInfo {
-    pub url: String,
-    pub sha256: &'static str,
+    /// Name of the dependency
     pub name: String,
+    /// Version string (used for cache naming)
+    pub version: String,
+    /// URL to download from
+    pub url: String,
+    /// Expected SHA256 hash
+    pub sha256: String,
 }
 
 /// Download a file with caching and integrity verification
+///
+/// Downloads are cached in `~/.pecos/deps/` and verified with SHA256.
 ///
 /// # Errors
 ///
 /// Returns an error if unable to download the file or if verification fails
 pub fn download_cached(info: &DownloadInfo) -> Result<Vec<u8>> {
-    let cache_dir = get_cache_dir()?;
-    let cache_file = cache_dir.join(format!("{}-{}.tar.gz", info.name, &info.sha256[..8]));
+    let deps_dir = get_deps_dir()?;
+    // Use version for cache naming (truncate to 12 chars for commits)
+    let version_short = &info.version[..12.min(info.version.len())];
+    let cache_file = deps_dir.join(format!("{}-{}.tar.gz", info.name, version_short));
 
     // Check if we have a valid cached file
     if cache_file.exists() {
-        // Try to read the cached file
         match fs::read(&cache_file) {
             Ok(data) => {
-                // Verify integrity
-                if verify_sha256(&data, info.sha256).is_ok() {
+                if verify_sha256(&data, &info.sha256).is_ok() {
                     return Ok(data);
                 }
                 println!("cargo:warning=Cached file corrupted, re-downloading");
-                let _ = fs::remove_file(&cache_file); // Ignore removal errors
+                let _ = fs::remove_file(&cache_file);
             }
             Err(e) => {
                 println!("cargo:warning=Failed to read cached file: {e}, re-downloading");
-                let _ = fs::remove_file(&cache_file); // Try to remove unreadable file
+                let _ = fs::remove_file(&cache_file);
             }
         }
     }
@@ -42,23 +49,19 @@ pub fn download_cached(info: &DownloadInfo) -> Result<Vec<u8>> {
     // Download fresh with timeout and retry logic
     println!("cargo:warning=Downloading {} (will be cached)", info.name);
 
-    // Create a client with proper timeout settings for large files
-    // Large files like Boost (>100MB) need longer timeouts in CI environments
     let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(300)) // 5 minute timeout
-        .connect_timeout(std::time::Duration::from_secs(30)) // 30 second connect timeout
+        .timeout(std::time::Duration::from_secs(300))
+        .connect_timeout(std::time::Duration::from_secs(30))
         .build()
-        .map_err(|e| BuildError::Http(e.to_string()))?;
+        .map_err(|e| Error::Http(e.to_string()))?;
 
     // Try download with retries using exponential backoff
-    // Use more retries and longer delays to handle transient GitHub outages (504 errors)
     let max_retries = 5;
     let base_delay_secs = 10;
     let mut last_error = String::new();
 
     for attempt in 1..=max_retries {
         if attempt > 1 {
-            // Exponential backoff: 10s, 20s, 40s, 80s
             let delay_secs = base_delay_secs * (1 << (attempt - 2));
             println!(
                 "cargo:warning=Retry attempt {}/{} for {} (waiting {}s)",
@@ -72,7 +75,6 @@ pub fn download_cached(info: &DownloadInfo) -> Result<Vec<u8>> {
                 let status = response.status();
                 if !status.is_success() {
                     last_error = format!("Failed with status: {status}");
-                    // For server errors (5xx), always retry
                     if status.is_server_error() {
                         println!(
                             "cargo:warning=Server error ({status}), will retry if attempts remain"
@@ -85,9 +87,7 @@ pub fn download_cached(info: &DownloadInfo) -> Result<Vec<u8>> {
                     Ok(bytes) => {
                         let data = bytes.to_vec();
 
-                        // Verify integrity before returning
-                        if verify_sha256(&data, info.sha256).is_ok() {
-                            // Save to cache
+                        if verify_sha256(&data, &info.sha256).is_ok() {
                             fs::write(&cache_file, &data)?;
                             println!("cargo:warning=Cached to {}", cache_file.display());
                             return Ok(data);
@@ -105,7 +105,7 @@ pub fn download_cached(info: &DownloadInfo) -> Result<Vec<u8>> {
         }
     }
 
-    Err(BuildError::Download(format!(
+    Err(Error::Download(format!(
         "Failed to download {} after {} attempts: {}",
         info.name, max_retries, last_error
     )))
@@ -123,7 +123,7 @@ fn verify_sha256(data: &[u8], expected: &str) -> Result<String> {
     if actual == expected {
         Ok(actual)
     } else {
-        Err(BuildError::Sha256Mismatch {
+        Err(Error::Sha256Mismatch {
             expected: expected.to_string(),
             actual,
         })
@@ -163,15 +163,13 @@ pub fn download_all_cached(downloads: Vec<DownloadInfo>) -> Result<Vec<(String, 
         })
         .collect();
 
-    // Wait for all downloads
     for handle in handles {
         handle.join().unwrap();
     }
 
-    // Check for errors
     let errors = errors.lock().unwrap();
     if !errors.is_empty() {
-        return Err(BuildError::Download(format!(
+        return Err(Error::Download(format!(
             "Download failures:\n{}",
             errors.join("\n")
         )));

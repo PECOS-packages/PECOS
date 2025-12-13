@@ -1,18 +1,17 @@
-//! PECOS command-line interface and dependency management
+//! PECOS development tools and dependency management
 //!
 //! This crate provides:
 //!
-//! - The `pecos` CLI binary for dependency management and extension discovery
+//! - The `pecos-dev` CLI binary for dependency management
 //! - Tools for managing external dependencies (LLVM 14, C++ libraries)
 //! - Build script utilities for downloading and extracting dependencies
 //!
 //! # CLI Usage
 //!
 //! ```bash
-//! pecos llvm install       # Install LLVM 14 to ~/.pecos/llvm/
-//! pecos llvm check         # Check LLVM installation status
-//! pecos deps sync          # Sync crate manifests from workspace
-//! pecos run foo.qir        # Run quantum program (via pecos-run extension)
+//! pecos-dev llvm install   # Install LLVM 14 to ~/.pecos/llvm/
+//! pecos-dev llvm check     # Check LLVM installation status
+//! pecos-dev deps sync      # Sync crate manifests from workspace
 //! ```
 //!
 //! # PECOS Home Directory
@@ -21,40 +20,40 @@
 //!
 //! ```text
 //! ~/.pecos/
-//! ├── llvm/       # LLVM installations
-//! ├── deps/       # Downloaded C++ dependencies
-//! ├── cache/      # Build artifacts
+//! ├── cache/      # Downloaded archives (tar.gz, etc.)
+//! ├── deps/       # Extracted source trees (ready for building)
+//! ├── llvm/       # LLVM installation
 //! └── tmp/        # Temporary files during downloads/extraction
 //! ```
 //!
 //! # Environment Variables
 //!
 //! - `PECOS_HOME`: Override the entire home directory (default: `~/.pecos/`)
-//! - `PECOS_DEPS_DIR`: Override deps location (default: `$PECOS_HOME/deps/`)
-//! - `PECOS_CACHE_DIR`: Override cache location (default: `$PECOS_HOME/cache/`)
+//! - `PECOS_DEPS_DIR`: Override extracted sources location (default: `$PECOS_HOME/deps/`)
+//! - `PECOS_CACHE_DIR`: Override archives location (default: `$PECOS_HOME/cache/`)
 //!
 //! # Usage in Build Scripts
 //!
-//! Build scripts read dependency information from `pecos.toml`:
+//! Build scripts should use `ensure_dep_ready()` for dependency management:
 //!
 //! ```ignore
-//! use pecos_cli::{Manifest, download_cached, extract_archive};
+//! use pecos_dev::{Manifest, ensure_dep_ready};
 //!
 //! fn main() {
 //!     // Load manifest
-//!     // Search order:
-//!     // 1. CARGO_MANIFEST_DIR/pecos.toml (crate-local, included in published crate)
-//!     // 2. Walk up directory tree (workspace-level, for developers)
-//!     let manifest = Manifest::find_and_load()
+//!     let manifest = Manifest::find_and_load_validated()
 //!         .expect("pecos.toml not found");
 //!
-//!     // Get download info for a dependency
-//!     let info = manifest.get_download_info("quest")
-//!         .expect("quest not defined");
+//!     // Ensure dependency is downloaded and extracted to ~/.pecos/deps/
+//!     // This persists across `cargo clean` for faster rebuilds
+//!     let qulacs_path = ensure_dep_ready("qulacs", &manifest)
+//!         .expect("Failed to get qulacs");
+//!     let eigen_path = ensure_dep_ready("eigen", &manifest)
+//!         .expect("Failed to get eigen");
 //!
-//!     // Download (cached) and extract
-//!     let data = download_cached(&info).expect("Download failed");
-//!     extract_archive(&data, &out_dir, None).expect("Extract failed");
+//!     // Use the paths in your build
+//!     build.include(&qulacs_path.join("src"));
+//!     build.include(&eigen_path);
 //! }
 //! ```
 //!
@@ -73,9 +72,10 @@ pub mod manifest;
 pub mod cli;
 
 // Re-export main types for convenience
+pub use deps::ensure_dep_ready;
 pub use download::{DownloadInfo, download_all_cached, download_cached};
 pub use errors::{Error, Result};
-pub use extract::extract_archive;
+pub use extract::{extract_archive, extract_to_deps};
 pub use home::{get_cache_dir, get_deps_dir, get_llvm_dir, get_pecos_home, get_tmp_dir};
 pub use manifest::Manifest;
 

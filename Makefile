@@ -862,49 +862,27 @@ clean-windows-cmd:
 # PECOS Home Directory Cleanup
 # ----------------------------
 # These targets clean the ~/.pecos/ directory which contains external dependencies
+# Uses pecos-dev for cross-platform support (macOS, Linux, Windows)
 
 .PHONY: clean-cache
-clean-cache:  ## Clean ~/.pecos/cache/ and ~/.pecos/tmp/ (build artifacts and temp files)
-	@echo "Cleaning PECOS cache and temp directories..."
-	@PECOS_HOME="$${PECOS_HOME:-$$HOME/.pecos}"; \
-	if [ -d "$$PECOS_HOME/cache" ]; then \
-		echo "  Removing $$PECOS_HOME/cache/"; \
-		rm -rf "$$PECOS_HOME/cache"; \
-	fi; \
-	if [ -d "$$PECOS_HOME/tmp" ]; then \
-		echo "  Removing $$PECOS_HOME/tmp/"; \
-		rm -rf "$$PECOS_HOME/tmp"; \
-	fi
-	@echo "PECOS cache cleaned"
+clean-cache:  ## Clean ~/.pecos/cache/ and ~/.pecos/tmp/ (downloaded archives and temp files)
+	@cargo run -q -p pecos-dev -- clean --cache
 
 .PHONY: clean-deps
-clean-deps: clean-cache  ## Clean ~/.pecos/deps/, cache/, and tmp/ (downloaded C++ dependencies)
-	@echo "Cleaning PECOS dependencies..."
-	@PECOS_HOME="$${PECOS_HOME:-$$HOME/.pecos}"; \
-	if [ -d "$$PECOS_HOME/deps" ]; then \
-		echo "  Removing $$PECOS_HOME/deps/"; \
-		rm -rf "$$PECOS_HOME/deps"; \
-	fi
-	@echo "PECOS dependencies cleaned (will be re-downloaded on next build)"
+clean-deps:  ## Clean ~/.pecos/deps/, cache/, and tmp/ (extracted C++ dependencies)
+	@cargo run -q -p pecos-dev -- clean --all
 
 .PHONY: clean-llvm
 clean-llvm:  ## Clean ~/.pecos/llvm/ (LLVM installation - large, slow to reinstall)
-	@echo "Cleaning PECOS LLVM installation..."
-	@PECOS_HOME="$${PECOS_HOME:-$$HOME/.pecos}"; \
-	if [ -d "$$PECOS_HOME/llvm" ]; then \
-		echo "  Removing $$PECOS_HOME/llvm/ (~400MB)"; \
-		rm -rf "$$PECOS_HOME/llvm"; \
-		echo "  Run 'cargo run -p pecos-dev -- llvm install' to reinstall"; \
-	else \
-		echo "  No LLVM installation found"; \
-	fi
+	@cargo run -q -p pecos-dev -- clean --all --include-llvm
+	@echo "Run 'make install-llvm' to reinstall LLVM"
 
 .PHONY: clean-all
-clean-all: clean clean-deps  ## Clean project artifacts + deps (but not LLVM)
+clean-all: clean-deps clean  ## Clean project artifacts + deps (but not LLVM)
 	@echo "Full clean completed (LLVM preserved)"
 
 .PHONY: clean-everything
-clean-everything: clean clean-deps clean-llvm  ## Clean everything including LLVM (nuclear option)
+clean-everything: clean-llvm clean-all  ## Clean everything including LLVM (nuclear option)
 	@echo "Everything cleaned including LLVM"
 
 .PHONY: pip-install-uv
@@ -914,14 +892,18 @@ pip-install-uv:  ## Install uv using pip and create a venv. (Recommended to inst
 	@echo "Creating venv and installing dependencies..."
 	uv sync
 
+.PHONY: pre-check
+pre-check:  ## Verify LLVM configuration before building
+	@cargo run -q -p pecos-dev -- llvm check
+
 .PHONY: dev
-dev: clean build-debug test  ## Run the typical sequence of commands to check everything is running correctly
+dev: pre-check clean build-debug test  ## Run the typical sequence of commands to check everything is running correctly
 
 .PHONY: devl
 devl: dev lint  ## Run the commands to make sure everything runs + lint
 
 .PHONY: devc
-devc: clean build-cuda test  ## Run dev sequence with CUDA support (requires CUDA Toolkit)
+devc: pre-check clean build-cuda test  ## Run dev sequence with CUDA support (requires CUDA Toolkit)
 
 .PHONY: devcl
 devcl: devc lint  ## Run dev sequence with CUDA support + lint (requires CUDA Toolkit)

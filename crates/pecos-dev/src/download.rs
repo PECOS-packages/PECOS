@@ -1,7 +1,7 @@
 //! Download utilities with caching and integrity verification
 
 use crate::errors::{Error, Result};
-use crate::home::get_deps_dir;
+use crate::home::get_cache_dir;
 use std::fs;
 
 /// Download info with URL and expected SHA256
@@ -18,16 +18,16 @@ pub struct DownloadInfo {
 
 /// Download a file with caching and integrity verification
 ///
-/// Downloads are cached in `~/.pecos/deps/` and verified with SHA256.
+/// Downloads are cached in `~/.pecos/cache/` and verified with SHA256.
 ///
 /// # Errors
 ///
 /// Returns an error if unable to download the file or if verification fails
 pub fn download_cached(info: &DownloadInfo) -> Result<Vec<u8>> {
-    let deps_dir = get_deps_dir()?;
+    let cache_dir = get_cache_dir()?;
     // Use version for cache naming (truncate to 12 chars for commits)
     let version_short = &info.version[..12.min(info.version.len())];
-    let cache_file = deps_dir.join(format!("{}-{}.tar.gz", info.name, version_short));
+    let cache_file = cache_dir.join(format!("{}-{}.tar.gz", info.name, version_short));
 
     // Check if we have a valid cached file
     if cache_file.exists() {

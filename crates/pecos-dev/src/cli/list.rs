@@ -37,9 +37,9 @@ pub fn run(verbose: bool) -> Result<()> {
     }
     println!();
 
-    // List installed/cached dependencies
+    // List extracted sources and cached archives
     if verbose {
-        println!("Cached Dependencies:");
+        println!("Extracted Sources (~/.pecos/deps/):");
         if let Ok(deps_dir) = get_deps_dir() {
             if deps_dir.exists() {
                 let mut found = false;
@@ -60,13 +60,13 @@ pub fn run(verbose: bool) -> Result<()> {
         }
         println!();
 
-        println!("Build Cache:");
+        println!("Downloaded Archives (~/.pecos/cache/):");
         if let Ok(cache_dir) = get_cache_dir() {
             if cache_dir.exists() {
                 let mut found = false;
                 if let Ok(entries) = fs::read_dir(&cache_dir) {
                     for entry in entries.flatten() {
-                        if entry.path().is_dir() {
+                        if entry.path().is_file() {
                             println!("  {}", entry.file_name().to_string_lossy());
                             found = true;
                         }

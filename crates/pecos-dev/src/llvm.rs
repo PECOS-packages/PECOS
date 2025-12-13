@@ -10,6 +10,26 @@ use crate::errors::{Error, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Determine the best command prefix for running pecos-dev commands.
+///
+/// Returns the appropriate command prefix based on what's available:
+/// - `"pecos-dev"` if the pecos-dev CLI is installed
+/// - `"cargo run -p pecos-dev --"` as fallback
+#[must_use]
+pub fn get_pecos_dev_command() -> &'static str {
+    // Check if pecos-dev is in PATH
+    if Command::new("pecos-dev")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        return "pecos-dev";
+    }
+
+    // Fall back to cargo run
+    "cargo run -p pecos-dev --"
+}
+
 /// LLVM version required by PECOS
 pub const REQUIRED_VERSION: &str = "14";
 
@@ -226,35 +246,42 @@ pub fn find_cargo_project_root() -> Option<PathBuf> {
 
 /// Print a helpful error message when LLVM 14 is not found
 pub fn print_llvm_not_found_error() {
+    let cmd = get_pecos_dev_command();
+
     eprintln!("\n═══════════════════════════════════════════════════════════════");
     eprintln!("ERROR: LLVM 14 not found!");
     eprintln!("═══════════════════════════════════════════════════════════════");
     eprintln!();
     eprintln!("PECOS requires LLVM version 14 for QIS program execution.");
     eprintln!();
-    eprintln!("To install LLVM 14:");
+    eprintln!("Option 1 - Install LLVM 14 for PECOS (recommended):");
     eprintln!();
-    eprintln!("  Automated installation (all platforms):");
-    eprintln!("    cargo run -p pecos-dev -- llvm install");
+    eprintln!("    {cmd} llvm install");
     eprintln!();
 
     #[cfg(target_os = "macos")]
     {
-        eprintln!("  Or install via Homebrew:");
+        eprintln!("Option 2 - Use system LLVM via Homebrew:");
+        eprintln!();
         eprintln!("    brew install llvm@14");
+        eprintln!("    {cmd} llvm configure");
+        eprintln!();
     }
 
     #[cfg(target_os = "linux")]
     {
-        eprintln!("  Or install via package manager:");
+        eprintln!("Option 2 - Use system LLVM via package manager:");
+        eprintln!();
         eprintln!("    sudo apt install llvm-14  # Debian/Ubuntu");
+        eprintln!("    {cmd} llvm configure");
+        eprintln!();
     }
 
     #[cfg(target_os = "windows")]
     {
-        eprintln!("  For Windows, use the automated installer above.");
+        eprintln!("For Windows, use the PECOS installer (Option 1) above.");
+        eprintln!();
     }
 
-    eprintln!();
     eprintln!("═══════════════════════════════════════════════════════════════\n");
 }

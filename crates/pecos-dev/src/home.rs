@@ -4,17 +4,17 @@
 //!
 //! ```text
 //! ~/.pecos/
-//! ├── llvm/       # LLVM installations
-//! ├── deps/       # Downloaded external dependencies (Stim, QuEST, etc.)
-//! ├── cache/      # Build artifacts and intermediate files
+//! ├── cache/      # Downloaded archives (tar.gz, 7z, etc.)
+//! ├── deps/       # Extracted & patched sources (ready to build)
+//! ├── llvm/       # LLVM installation
 //! └── tmp/        # Temporary files during downloads/extraction
 //! ```
 //!
 //! # Environment Variables
 //!
 //! - `PECOS_HOME`: Override the entire home directory (default: `~/.pecos/`)
-//! - `PECOS_DEPS_DIR`: Override just the deps location (default: `$PECOS_HOME/deps/`)
-//! - `PECOS_CACHE_DIR`: Override just the cache location (default: `$PECOS_HOME/cache/`)
+//! - `PECOS_CACHE_DIR`: Override the cache/archives location (default: `$PECOS_HOME/cache/`)
+//! - `PECOS_DEPS_DIR`: Override the extracted sources location (default: `$PECOS_HOME/deps/`)
 
 use crate::errors::{Error, Result};
 use std::fs;
@@ -40,11 +40,12 @@ pub fn get_pecos_home() -> Result<PathBuf> {
     Ok(home)
 }
 
-/// Get the dependencies directory for downloaded external libraries
+/// Get the dependencies directory for extracted source trees
 ///
 /// Returns `$PECOS_DEPS_DIR` if set, otherwise `$PECOS_HOME/deps/`
 ///
-/// This is where external C++ dependencies like Stim, `QuEST`, Qulacs, etc. are stored.
+/// This is where extracted and patched source trees are stored, ready for building.
+/// Each dependency gets its own subdirectory: `deps/<name>-<version>/`
 ///
 /// # Errors
 ///
@@ -73,9 +74,12 @@ pub fn get_llvm_dir() -> Result<PathBuf> {
     Ok(llvm_dir)
 }
 
-/// Get the persistent cache directory for build artifacts
+/// Get the cache directory for downloaded archives
 ///
 /// Returns `$PECOS_CACHE_DIR` if set, otherwise `$PECOS_HOME/cache/`
+///
+/// This is where downloaded archives (tar.gz, 7z, etc.) are stored before extraction.
+/// Archives are kept for faster re-extraction if deps/ is cleaned.
 ///
 /// # Errors
 ///

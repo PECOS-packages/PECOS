@@ -1,5 +1,5 @@
 use log::warn;
-use pecos_dev::{Manifest, download_cached, extract_archive};
+use pecos_dev::{Manifest, ensure_dep_ready};
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -13,8 +13,8 @@ fn main() {
     let target = env::var("TARGET").unwrap_or_default();
     let is_windows = target.contains("windows");
 
-    // Download and extract dependencies
-    let (qulacs_path, eigen_path, boost_path) = download_and_extract_dependencies(&out_dir);
+    // Ensure dependencies are downloaded and extracted to ~/.pecos/deps/
+    let (qulacs_path, eigen_path, boost_path) = download_and_extract_dependencies();
 
     // Build our wrapper with actual Qulacs
     let mut build = cxx_build::bridge("src/bridge.rs");
@@ -106,33 +106,16 @@ fn get_build_profile() -> String {
     }
 }
 
-fn download_and_extract_dependencies(out_dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
+fn download_and_extract_dependencies() -> (PathBuf, PathBuf, PathBuf) {
     // Load manifest (crate-local or workspace-level, with validation)
     let manifest =
         Manifest::find_and_load_validated().expect("pecos.toml not found or validation failed");
 
-    // Download all dependencies
-    let qulacs_info = manifest
-        .get_download_info("qulacs")
-        .expect("qulacs not in manifest");
-    let eigen_info = manifest
-        .get_download_info("eigen")
-        .expect("eigen not in manifest");
-    let boost_info = manifest
-        .get_download_info("boost")
-        .expect("boost not in manifest");
-
-    let qulacs_data = download_cached(&qulacs_info).expect("Failed to download Qulacs");
-    let eigen_data = download_cached(&eigen_info).expect("Failed to download Eigen");
-    let boost_data = download_cached(&boost_info).expect("Failed to download Boost");
-
-    // Extract archives
-    let qulacs_path =
-        extract_archive(&qulacs_data, out_dir, Some("qulacs")).expect("Failed to extract Qulacs");
-    let eigen_path =
-        extract_archive(&eigen_data, out_dir, Some("eigen")).expect("Failed to extract Eigen");
-    let boost_path =
-        extract_archive(&boost_data, out_dir, Some("boost")).expect("Failed to extract Boost");
+    // Ensure dependencies are downloaded and extracted to ~/.pecos/deps/
+    // This persists across `cargo clean` for faster rebuilds
+    let qulacs_path = ensure_dep_ready("qulacs", &manifest).expect("Failed to get Qulacs");
+    let eigen_path = ensure_dep_ready("eigen", &manifest).expect("Failed to get Eigen");
+    let boost_path = ensure_dep_ready("boost", &manifest).expect("Failed to get Boost");
 
     (qulacs_path, eigen_path, boost_path)
 }

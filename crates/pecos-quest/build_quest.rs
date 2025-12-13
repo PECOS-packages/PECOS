@@ -1,7 +1,7 @@
 //! Build script for `QuEST` integration
 
 use log::{debug, info};
-use pecos_dev::{Manifest, Result, download_cached, extract_archive, report_cache_config};
+use pecos_dev::{Manifest, Result, ensure_dep_ready, report_cache_config};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -353,16 +353,13 @@ pub fn build() -> Result<()> {
     println!("cargo:rerun-if-env-changed=CUDACXX");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
-    let quest_dir = out_dir.join("quest");
 
     // Always emit link directives - these are cached by Cargo
     println!("cargo:rustc-link-search=native={}", out_dir.display());
     println!("cargo:rustc-link-lib=static=quest-bridge");
 
-    // Download and extract QuEST source if not already present
-    if !quest_dir.exists() {
-        download_and_extract_quest(&out_dir)?;
-    }
+    // Get QuEST source from ~/.pecos/deps/ (persists across cargo clean)
+    let quest_dir = get_quest_source()?;
 
     // Build using cxx
     build_cxx_bridge(&quest_dir, &out_dir);
@@ -370,51 +367,36 @@ pub fn build() -> Result<()> {
     Ok(())
 }
 
-fn download_and_extract_quest(out_dir: &Path) -> Result<()> {
-    // Load manifest (crate-local or workspace-level, with validation)
+/// Get `QuEST` source directory, downloading and extracting if needed
+///
+/// Returns the path to the `quest/` subdirectory within the extracted archive.
+/// Also applies patches for CUDA 13 compatibility and generates quest.h header.
+fn get_quest_source() -> Result<PathBuf> {
+    // Load manifest and get QuEST dependency
     let manifest = Manifest::find_and_load_validated()?;
-    let info = manifest.get_download_info("quest")?;
-    let tar_gz = download_cached(&info)?;
 
-    // Extract archive to "extracted" subdirectory
-    let extracted_dir = out_dir.join("extracted");
-    extract_archive(&tar_gz, &extracted_dir, None)?;
+    // ensure_dep_ready downloads to ~/.pecos/cache/ and extracts to ~/.pecos/deps/
+    let deps_path = ensure_dep_ready("quest", &manifest)?;
 
-    // The archive extracts with an additional "extracted" directory level
-    // The quest source is inside extracted/extracted/quest/
-    let quest_source_dir = extracted_dir.join("extracted").join("quest");
-    let quest_dir = out_dir.join("quest");
+    // The QuEST archive extracts as: deps/quest-<version>/quest/
+    // (contains quest/ subdirectory with actual source)
+    let quest_dir = deps_path.join("quest");
 
-    if quest_source_dir.exists() && !quest_dir.exists() {
-        // Use copy-recursive instead of rename to handle cross-filesystem moves
-        copy_dir_recursive(&quest_source_dir, &quest_dir)?;
-
-        // Apply CUDA 13 compatibility patches
-        patch_quest_for_cuda13(&quest_dir)?;
-
-        // Generate quest.h from quest.h.in (QuEST v4.1.0 requirement)
-        generate_quest_header(&quest_dir)?;
+    if !quest_dir.exists() {
+        return Err(pecos_dev::Error::Archive(format!(
+            "QuEST source directory not found at: {}",
+            quest_dir.display()
+        )));
     }
 
-    info!("QuEST source downloaded and extracted");
-    Ok(())
-}
+    // Apply CUDA 13 compatibility patches (idempotent)
+    patch_quest_for_cuda13(&quest_dir)?;
 
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
-    fs::create_dir_all(dst)?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let entry_path = entry.path();
-        let file_name = entry.file_name();
-        let dst_path = dst.join(file_name);
+    // Generate quest.h from quest.h.in (idempotent - only runs if template exists)
+    generate_quest_header(&quest_dir)?;
 
-        if entry_path.is_dir() {
-            copy_dir_recursive(&entry_path, &dst_path)?;
-        } else {
-            fs::copy(&entry_path, &dst_path)?;
-        }
-    }
-    Ok(())
+    info!("Using QuEST source from {}", quest_dir.display());
+    Ok(quest_dir)
 }
 
 #[allow(clippy::too_many_lines)]

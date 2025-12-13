@@ -4,9 +4,11 @@
 
 use crate::Result;
 use crate::cli::LlvmCommands;
-use crate::llvm::config::auto_configure_llvm;
+use crate::llvm::config::{auto_configure_llvm, validate_llvm_config};
 use crate::llvm::installer::install_llvm;
-use crate::llvm::{find_llvm_14, find_tool, get_llvm_version, get_repo_root_from_manifest};
+use crate::llvm::{
+    find_llvm_14, find_tool, get_llvm_version, get_pecos_dev_command, get_repo_root_from_manifest,
+};
 
 /// Run an LLVM subcommand
 pub fn run(command: LlvmCommands) -> Result<()> {
@@ -37,13 +39,23 @@ fn run_check(quiet: bool) -> Result<()> {
             if let Ok(version) = get_llvm_version(&llvm_path) {
                 println!("Version: {version}");
             }
+
+            // Validate configuration
+            let validation = validate_llvm_config();
+            validation.print_warnings();
+
+            // Exit with error if config is unhealthy (would cause build failures)
+            if !validation.is_healthy() && validation.configured_path.is_some() {
+                std::process::exit(1);
+            }
         }
         Ok(())
     } else {
         if !quiet {
+            let cmd = get_pecos_dev_command();
             eprintln!("LLVM 14 not found");
             eprintln!();
-            eprintln!("Install with: pecos llvm install");
+            eprintln!("Install with: `{cmd} llvm install`");
         }
         std::process::exit(1);
     }

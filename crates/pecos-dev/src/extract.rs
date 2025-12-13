@@ -1,7 +1,11 @@
 //! Archive extraction utilities
+//!
+//! Provides functions for extracting archives to various locations:
+//! - `extract_archive()` - Extract to a specified directory (for legacy/custom use)
+//! - `extract_to_deps()` - Extract to `~/.pecos/deps/` (recommended for build scripts)
 
 use crate::errors::{Error, Result};
-use crate::home::get_tmp_dir;
+use crate::home::{get_deps_dir, get_tmp_dir};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -104,4 +108,26 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Extract an archive to `~/.pecos/deps/<dir_name>/`
+///
+/// This is the recommended extraction function for build scripts.
+/// Archives are extracted to a persistent location that survives `cargo clean`.
+///
+/// # Arguments
+///
+/// * `data` - The archive data bytes
+/// * `dir_name` - Name for the extracted directory (e.g., "qulacs-abc123")
+///
+/// # Returns
+///
+/// The path to the extracted directory (`~/.pecos/deps/<dir_name>/`)
+///
+/// # Errors
+///
+/// Returns an error if extraction fails
+pub fn extract_to_deps(data: &[u8], dir_name: &str) -> Result<PathBuf> {
+    let deps_dir = get_deps_dir()?;
+    extract_archive(data, &deps_dir, Some(dir_name))
 }

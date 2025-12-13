@@ -347,13 +347,26 @@ fn extract_7z(archive: &PathBuf, dest: &PathBuf) -> Result<()> {
         .ok_or_else(|| Error::Archive("Invalid destination path".into()))?;
     fs::create_dir_all(extract_to)?;
 
+    // Track the top-level directory name from the archive
+    let mut top_level_dir: Option<String> = None;
+
     reader
         .for_each_entries(|entry, reader| {
+            let entry_name = entry.name();
+
+            // Capture the top-level directory name
+            if top_level_dir.is_none()
+                && let Some(first_component) = entry_name.split('/').next()
+                && !first_component.is_empty()
+            {
+                top_level_dir = Some(first_component.to_string());
+            }
+
             if entry.is_directory() {
-                let dir_path = extract_to.join(entry.name());
+                let dir_path = extract_to.join(entry_name);
                 fs::create_dir_all(&dir_path).ok();
             } else {
-                let file_path = extract_to.join(entry.name());
+                let file_path = extract_to.join(entry_name);
                 if let Some(parent) = file_path.parent() {
                     fs::create_dir_all(parent).ok();
                 }
@@ -364,8 +377,24 @@ fn extract_7z(archive: &PathBuf, dest: &PathBuf) -> Result<()> {
         })
         .map_err(|e| Error::Archive(e.to_string()))?;
 
-    // Move extracted contents to dest
-    fs::create_dir_all(dest)?;
+    // Rename extracted top-level directory to dest
+    if let Some(top_dir) = top_level_dir {
+        let extracted_dir = extract_to.join(&top_dir);
+        if extracted_dir.exists() && !dest.exists() {
+            fs::rename(&extracted_dir, dest)?;
+        } else if extracted_dir.exists() && dest.exists() {
+            // If dest already exists, move contents
+            for entry in fs::read_dir(&extracted_dir)? {
+                let entry = entry?;
+                let dest_path = dest.join(entry.file_name());
+                fs::rename(entry.path(), dest_path)?;
+            }
+            fs::remove_dir_all(&extracted_dir)?;
+        }
+    } else {
+        // No top-level directory, files extracted directly
+        fs::create_dir_all(dest)?;
+    }
 
     Ok(())
 }

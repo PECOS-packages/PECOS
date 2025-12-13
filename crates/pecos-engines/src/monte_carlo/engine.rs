@@ -276,7 +276,7 @@ impl MonteCarloEngine {
 
         // Create a dedicated thread pool for this simulation to avoid contention
         // with global Rayon thread pool when multiple simulations run concurrently.
-        // CRITICAL: For QIR operations, we need to ensure each test gets its own
+        // CRITICAL: For QIS programs, we need to ensure each test gets its own
         // isolated thread pool to prevent TLS conflicts during library cleanup.
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(num_workers)

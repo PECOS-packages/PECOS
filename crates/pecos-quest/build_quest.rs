@@ -1,7 +1,7 @@
 //! Build script for `QuEST` integration
 
 use log::{debug, info};
-use pecos_deps::{Manifest, Result, download_cached, extract_archive, report_cache_config};
+use pecos_dev::{Manifest, Result, download_cached, extract_archive, report_cache_config};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};

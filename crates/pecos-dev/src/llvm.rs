@@ -230,12 +230,12 @@ pub fn print_llvm_not_found_error() {
     eprintln!("ERROR: LLVM 14 not found!");
     eprintln!("═══════════════════════════════════════════════════════════════");
     eprintln!();
-    eprintln!("PECOS requires LLVM version 14 for LLVM IR/QIR execution features.");
+    eprintln!("PECOS requires LLVM version 14 for QIS program execution.");
     eprintln!();
     eprintln!("To install LLVM 14:");
     eprintln!();
     eprintln!("  Automated installation (all platforms):");
-    eprintln!("    cargo run -p pecos-deps --bin pecos-deps -- llvm install");
+    eprintln!("    cargo run -p pecos-dev -- llvm install");
     eprintln!();
 
     #[cfg(target_os = "macos")]

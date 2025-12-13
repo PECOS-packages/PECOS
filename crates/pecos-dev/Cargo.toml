@@ -1,19 +1,19 @@
 [package]
-name = "pecos-deps"
+name = "pecos-dev"
 version.workspace = true
 edition.workspace = true
-description = "Dependency management for PECOS - handles external C++ libraries and LLVM"
+description = "PECOS developer tools - LLVM setup, dependency management, and build utilities"
 readme.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
 license.workspace = true
-keywords = ["quantum", "llvm", "build-utils", "dependencies"]
-categories = ["development-tools::build-utils"]
+keywords = ["quantum", "llvm", "build-utils", "dependencies", "cli"]
+categories = ["development-tools::build-utils", "command-line-utilities"]
 
 [[bin]]
-name = "pecos-deps"
-path = "src/bin/pecos-deps.rs"
+name = "pecos-dev"
+path = "src/bin/pecos-dev.rs"
 required-features = ["cli"]
 
 [features]

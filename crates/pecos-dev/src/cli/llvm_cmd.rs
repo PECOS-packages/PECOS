@@ -43,7 +43,7 @@ fn run_check(quiet: bool) -> Result<()> {
         if !quiet {
             eprintln!("LLVM 14 not found");
             eprintln!();
-            eprintln!("Install with: pecos-deps llvm install");
+            eprintln!("Install with: pecos llvm install");
         }
         std::process::exit(1);
     }

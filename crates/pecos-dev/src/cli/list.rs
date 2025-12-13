@@ -26,7 +26,7 @@ pub fn run(verbose: bool) -> Result<()> {
         }
     } else {
         println!("  Status: Not found");
-        println!("  Install with: pecos-deps llvm install");
+        println!("  Install with: pecos llvm install");
     }
     println!();
 

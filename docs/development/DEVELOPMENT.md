@@ -22,7 +22,7 @@ For developers who want to contribute or modify PECOS:
 
    **Quick setup:**
    ```sh
-   cargo run -p pecos-deps -- llvm install
+   cargo run -p pecos-dev -- llvm install
    cargo build
    ```
 

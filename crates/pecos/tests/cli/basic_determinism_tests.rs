@@ -7,7 +7,7 @@
 ///    should produce identical results
 ///
 /// 2. File Format Determinism: Testing across different file formats
-///    (PHIR, QASM, QIR) to ensure consistent behavior
+///    (PHIR, QASM, QIS) to ensure consistent behavior
 ///
 /// 3. Cross-Model Consistency: Verifying that different noise models
 ///    work properly and produce consistent results when configured identically

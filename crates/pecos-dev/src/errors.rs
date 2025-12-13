@@ -40,6 +40,10 @@ pub enum Error {
     /// Configuration error
     #[error("Configuration error: {0}")]
     Config(String),
+
+    /// Extension error
+    #[error("Extension error: {0}")]
+    Extension(String),
 }
 
 /// Result type alias for dependency operations

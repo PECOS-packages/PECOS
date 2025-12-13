@@ -1,10 +1,19 @@
-//! Dependency management for PECOS
+//! PECOS command-line interface and dependency management
 //!
-//! This crate provides tools for managing external dependencies that cannot be
-//! handled through Cargo.toml, including:
+//! This crate provides:
 //!
-//! - LLVM 14 (for QIR/LLVM IR execution)
-//! - C++ libraries (Stim, `QuEST`, Qulacs, etc.)
+//! - The `pecos` CLI binary for dependency management and extension discovery
+//! - Tools for managing external dependencies (LLVM 14, C++ libraries)
+//! - Build script utilities for downloading and extracting dependencies
+//!
+//! # CLI Usage
+//!
+//! ```bash
+//! pecos llvm install       # Install LLVM 14 to ~/.pecos/llvm/
+//! pecos llvm check         # Check LLVM installation status
+//! pecos deps sync          # Sync crate manifests from workspace
+//! pecos run foo.qir        # Run quantum program (via pecos-run extension)
+//! ```
 //!
 //! # PECOS Home Directory
 //!
@@ -29,7 +38,7 @@
 //! Build scripts read dependency information from `pecos.toml`:
 //!
 //! ```ignore
-//! use pecos_deps::{Manifest, download_cached, extract_archive};
+//! use pecos_cli::{Manifest, download_cached, extract_archive};
 //!
 //! fn main() {
 //!     // Load manifest

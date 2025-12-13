@@ -9,7 +9,7 @@ use std::path::Path;
 
 /// Sets up a classical engine for the CLI based on the program type
 ///
-/// This function handles all engine types including QIR, PHIR, and QASM.
+/// This function handles all engine types including QIS, PHIR, and QASM.
 pub fn setup_cli_engine(
     program_path: &Path,
     _shots: Option<usize>,
@@ -34,15 +34,15 @@ pub fn setup_cli_engine(
     let program_type = detect_program_type(program_path)?;
 
     match program_type {
-        ProgramType::QIR => {
-            debug!("Setting up QIR engine");
+        ProgramType::QIS => {
+            debug!("Setting up QIS engine");
 
             #[cfg(all(feature = "llvm", feature = "selene"))]
             {
                 let qis_program = Qis::from_file(program_path)?;
 
-                // Use Selene runtime and Helios interface (default and only option)
-                debug!("Using Selene runtime and Helios interface for QIR engine");
+                // Use Selene runtime and Helios interface
+                debug!("Using Selene runtime and Helios interface for QIS engine");
                 let selene_runtime = selene_simple_runtime().map_err(|e| {
                     PecosError::Generic(format!("Failed to load Selene runtime: {e}"))
                 })?;
@@ -58,7 +58,7 @@ pub fn setup_cli_engine(
             #[cfg(all(feature = "llvm", not(feature = "selene")))]
             {
                 Err(PecosError::Input(
-                    "Selene support is required for QIR programs but not compiled in.\n\
+                    "Selene support is required for QIS programs but not compiled in.\n\
                      Please rebuild with --features selene"
                         .to_string(),
                 ))
@@ -66,7 +66,7 @@ pub fn setup_cli_engine(
             #[cfg(not(feature = "llvm"))]
             {
                 Err(PecosError::Input(
-                    "LLVM support not compiled in".to_string(),
+                    "QIS support not compiled in. Please rebuild with --features llvm".to_string(),
                 ))
             }
         }
@@ -96,14 +96,14 @@ pub fn setup_cli_engine_builder(
     let program_type = detect_program_type(program_path)?;
 
     match program_type {
-        ProgramType::QIR => {
-            debug!("Setting up QIR engine builder");
+        ProgramType::QIS => {
+            debug!("Setting up QIS engine builder");
             #[cfg(all(feature = "llvm", feature = "selene"))]
             {
                 let qis_program = Qis::from_file(program_path)?;
 
-                // Use Selene runtime and Helios interface (default and only option)
-                debug!("Using Selene runtime and Helios interface for QIR engine builder");
+                // Use Selene runtime and Helios interface
+                debug!("Using Selene runtime and Helios interface for QIS engine builder");
                 let selene_runtime = selene_simple_runtime().map_err(|e| {
                     PecosError::Generic(format!("Failed to load Selene runtime: {e}"))
                 })?;
@@ -118,7 +118,7 @@ pub fn setup_cli_engine_builder(
             #[cfg(all(feature = "llvm", not(feature = "selene")))]
             {
                 Err(PecosError::Input(
-                    "Selene support is required for QIR programs but not compiled in.\n\
+                    "Selene support is required for QIS programs but not compiled in.\n\
                      Please rebuild with --features selene"
                         .to_string(),
                 ))
@@ -126,7 +126,7 @@ pub fn setup_cli_engine_builder(
             #[cfg(not(feature = "llvm"))]
             {
                 Err(PecosError::Input(
-                    "LLVM support not compiled in".to_string(),
+                    "QIS support not compiled in. Please rebuild with --features llvm".to_string(),
                 ))
             }
         }

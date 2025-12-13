@@ -5,8 +5,12 @@ use pecos::prelude::*;
 use pecos::{
     DepolarizingNoise, GeneralNoiseModelBuilder, sim_builder, sparse_stabilizer, state_vector,
 };
+use std::ffi::OsString;
 use std::io::Write;
+use std::path::PathBuf;
+use std::process::Command;
 
+#[path = "engine_setup.rs"]
 mod engine_setup;
 use engine_setup::{setup_cli_engine, setup_cli_engine_builder};
 
@@ -14,7 +18,7 @@ use engine_setup::{setup_cli_engine, setup_cli_engine_builder};
 #[command(
     name = "pecos",
     version = env!("CARGO_PKG_VERSION"),
-    about = "A quantum error correction simulator",
+    about = "PECOS - Quantum Error Correction Simulator",
     long_about = None
 )]
 struct Cli {
@@ -24,10 +28,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Compile QIR program to native code
+    /// Compile QIS program to native code
     Compile(CompileArgs),
-    /// Run quantum program (supports QIR, PHIR/JSON, and QASM formats)
+    /// Run quantum program (supports QIS, PHIR/JSON, and QASM formats)
     Run(RunArgs),
+
+    /// External subcommand (forwarded to pecos-dev if available)
+    #[command(external_subcommand)]
+    External(Vec<OsString>),
 }
 
 #[derive(Args)]
@@ -261,7 +269,7 @@ fn run_program(args: &RunArgs) -> Result<(), PecosError> {
 
     // For QIS programs, we need to detect the number of qubits from the quantum circuit
     // We'll do this by temporarily building the engine to inspect it
-    let num_qubits = if program_type == ProgramType::QIR {
+    let num_qubits = if program_type == ProgramType::QIS {
         // Build a test simulation to detect qubits from the quantum circuit itself
         // Use a minimal test run to let the simulation auto-detect the required qubits
         debug!("Auto-detecting qubit count for QIS program...");
@@ -352,8 +360,8 @@ fn run_program(args: &RunArgs) -> Result<(), PecosError> {
             std::fs::write(file_path, results_str)
                 .map_err(|e| PecosError::Resource(format!("Failed to write output file: {e}")))?;
 
-            // For QIR, ensure file is fully written before potential segfault
-            if program_type == ProgramType::QIR {
+            // For QIS programs, ensure file is fully written before potential segfault
+            if program_type == ProgramType::QIS {
                 // Force sync to disk
                 if let Ok(file) = std::fs::OpenOptions::new().write(true).open(file_path) {
                     let _ = file.sync_all();
@@ -383,7 +391,7 @@ fn main() -> Result<(), PecosError> {
     // The real fix for TLS segfaults is in the QirLibrary Drop implementation
     // and proper thread pool management in MonteCarloEngine
 
-    // For QIR programs, disable stdout buffering to ensure output is captured before segfault
+    // For QIS programs, disable stdout buffering to ensure output is captured before segfault
     let _ = io::stdout().flush();
 
     let cli = Cli::parse();
@@ -396,7 +404,7 @@ fn main() -> Result<(), PecosError> {
             let program_type = detect_program_type(&program_path)?;
 
             match program_type {
-                ProgramType::QIR => {
+                ProgramType::QIS => {
                     // For compilation, we need the actual engine not a builder
                     let engine = setup_cli_engine(&program_path, None, args.jit)?;
                     // The compile method should already return a properly formatted PecosError::Compilation
@@ -411,9 +419,77 @@ fn main() -> Result<(), PecosError> {
             }
         }
         Commands::Run(args) => run_program(args)?,
+        Commands::External(args) => run_external(args)?,
     }
 
     Ok(())
+}
+
+/// Forward unknown commands to pecos-dev if available
+fn run_external(args: &[OsString]) -> Result<(), PecosError> {
+    if args.is_empty() {
+        return Err(PecosError::Input("No command specified".to_string()));
+    }
+
+    // First argument is the subcommand name
+    let subcommand = args[0].to_string_lossy().to_string();
+    let remaining_args: Vec<&OsString> = args.iter().skip(1).collect();
+
+    // Known pecos-dev commands
+    let dev_commands = ["llvm", "deps", "info", "clean", "list"];
+
+    if dev_commands.contains(&subcommand.as_str()) {
+        // Try to find pecos-dev binary
+        if let Ok(pecos_dev_path) = find_pecos_dev() {
+            debug!("Forwarding '{}' command to pecos-dev", subcommand);
+
+            let status = Command::new(&pecos_dev_path)
+                .arg(&subcommand)
+                .args(&remaining_args)
+                .status()
+                .map_err(|e| {
+                    PecosError::Resource(format!(
+                        "Failed to execute pecos-dev: {}",
+                        e
+                    ))
+                })?;
+
+            if !status.success() {
+                std::process::exit(status.code().unwrap_or(1));
+            }
+
+            Ok(())
+        } else {
+            // pecos-dev not found, show helpful message
+            eprintln!("Command '{}' requires pecos-dev.", subcommand);
+            eprintln!();
+            eprintln!("Install with:");
+            eprintln!("  cargo install pecos-dev");
+            eprintln!();
+            eprintln!("Or build from source:");
+            eprintln!("  cargo build -p pecos-dev");
+            std::process::exit(1);
+        }
+    } else {
+        eprintln!("Unknown command: {}", subcommand);
+        eprintln!();
+        eprintln!("Available commands:");
+        eprintln!("  run      Run a quantum program");
+        eprintln!("  compile  Compile a QIS program");
+        eprintln!();
+        eprintln!("Developer commands (requires pecos-dev):");
+        eprintln!("  llvm     LLVM management");
+        eprintln!("  deps     Dependency manifest management");
+        eprintln!("  info     Show PECOS home directory info");
+        eprintln!("  clean    Clean cached dependencies");
+        eprintln!("  list     List installed dependencies");
+        std::process::exit(1);
+    }
+}
+
+/// Find pecos-dev binary in PATH
+fn find_pecos_dev() -> Result<PathBuf, ()> {
+    which::which("pecos-dev").map_err(|_| ())
 }
 
 #[cfg(test)]

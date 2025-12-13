@@ -1,4 +1,4 @@
-//! CLI implementation for pecos-deps
+//! CLI implementation for pecos-dev
 
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::fn_params_excessive_bools)]
@@ -10,10 +10,10 @@ mod manifest_cmd;
 
 use clap::{Parser, Subcommand};
 
-/// PECOS dependency management tool
+/// PECOS developer tools
 #[derive(Parser)]
-#[command(name = "pecos-deps")]
-#[command(about = "Manage PECOS external dependencies", long_about = None)]
+#[command(name = "pecos-dev")]
+#[command(about = "PECOS developer tools - LLVM setup, dependency management, and build utilities", long_about = None)]
 #[command(version)]
 pub struct Cli {
     #[command(subcommand)]
@@ -61,10 +61,10 @@ pub enum Commands {
         command: LlvmCommands,
     },
 
-    /// Manifest file management (pecos.toml)
-    Manifest {
+    /// Dependency manifest management (pecos.toml)
+    Deps {
         #[command(subcommand)]
-        command: ManifestCommands,
+        command: DepsCommands,
     },
 }
 
@@ -115,7 +115,7 @@ pub enum LlvmCommands {
 }
 
 #[derive(Subcommand)]
-pub enum ManifestCommands {
+pub enum DepsCommands {
     /// Initialize a new pecos.toml manifest
     Init {
         /// Overwrite existing manifest
@@ -159,7 +159,7 @@ pub fn run() -> crate::Result<()> {
             dry_run,
         } => run_clean(deps, cache, all, include_llvm, dry_run),
         Commands::Llvm { command } => llvm_cmd::run(command),
-        Commands::Manifest { command } => manifest_cmd::run(command),
+        Commands::Deps { command } => manifest_cmd::run(command),
     }
 }
 

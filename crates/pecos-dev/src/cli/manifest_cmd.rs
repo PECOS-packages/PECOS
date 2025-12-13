@@ -1,21 +1,21 @@
-//! Implementation of manifest subcommands
+//! Implementation of deps subcommands
 
 #![allow(clippy::unnecessary_wraps)]
 #![allow(clippy::needless_pass_by_value)]
 
 use crate::Result;
-use crate::cli::ManifestCommands;
+use crate::cli::DepsCommands;
 use crate::download::download_cached;
 use crate::manifest::{Manifest, SyncStatus, generate_manifest, sync_crate_manifests};
 use std::path::PathBuf;
 
-/// Run a manifest subcommand
-pub fn run(command: ManifestCommands) -> Result<()> {
+/// Run a deps subcommand
+pub fn run(command: DepsCommands) -> Result<()> {
     match command {
-        ManifestCommands::Init { force } => run_init(force),
-        ManifestCommands::Status => run_status(),
-        ManifestCommands::Sync { dry_run } => run_sync(dry_run),
-        ManifestCommands::Verify { deps } => run_verify(deps),
+        DepsCommands::Init { force } => run_init(force),
+        DepsCommands::Status => run_status(),
+        DepsCommands::Sync { dry_run } => run_sync(dry_run),
+        DepsCommands::Verify { deps } => run_verify(deps),
     }
 }
 
@@ -83,7 +83,7 @@ fn run_status() -> Result<()> {
         }
     } else {
         println!("pecos.toml: not found");
-        println!("  Run 'pecos-deps manifest init' to create one.");
+        println!("  Run 'pecos deps init' to create one.");
     }
 
     Ok(())
@@ -232,7 +232,7 @@ fn run_verify(deps_filter: Option<String>) -> Result<()> {
 
     let manifest_path = Manifest::find().ok_or_else(|| {
         crate::errors::Error::Config(
-            "pecos.toml not found. Run 'pecos-deps manifest init' first.".into(),
+            "pecos.toml not found. Run 'pecos deps init' first.".into(),
         )
     })?;
 

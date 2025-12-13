@@ -13,8 +13,8 @@
 //! If the build fails, just run the commands shown in the error message. Typically:
 //!
 //! ```bash
-//! cargo run -p pecos-deps -- llvm install
-//! export PECOS_LLVM=$(cargo run -p pecos-deps -- llvm find)
+//! cargo run -p pecos-dev -- llvm install
+//! export PECOS_LLVM=$(cargo run -p pecos-dev -- llvm find)
 //! export LLVM_SYS_140_PREFIX="$PECOS_LLVM"
 //! cargo build
 //! ```

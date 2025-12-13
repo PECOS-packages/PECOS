@@ -42,17 +42,17 @@ installreqs: ## Install Python project requirements to root .venv
 .PHONY: install-llvm
 install-llvm: ## Install LLVM 14 to ~/.pecos/llvm/ (required for QIR features)
 	@echo "Installing LLVM 14..."
-	@cargo run --release --package pecos-deps -- llvm install
+	@cargo run --release --package pecos-dev -- llvm install
 
 .PHONY: check-llvm
 check-llvm: ## Check LLVM 14 installation status
-	@cargo run -q --release --package pecos-deps -- llvm check || true
+	@cargo run -q --release --package pecos-dev -- llvm check || true
 
 # LLVM Detection Helper
 # Auto-detect LLVM if not already set
 SETUP_LLVM = \
 	if [ -z "$$LLVM_SYS_140_PREFIX" ]; then \
-		DETECTED_LLVM=$$(cargo run -q --release -p pecos-deps -- llvm find 2>/dev/null); \
+		DETECTED_LLVM=$$(cargo run -q --release -p pecos-dev -- llvm find 2>/dev/null); \
 		if [ -n "$$DETECTED_LLVM" ]; then \
 			export PECOS_LLVM="$$DETECTED_LLVM"; \
 			export LLVM_SYS_140_PREFIX="$$DETECTED_LLVM"; \
@@ -894,7 +894,7 @@ clean-llvm:  ## Clean ~/.pecos/llvm/ (LLVM installation - large, slow to reinsta
 	if [ -d "$$PECOS_HOME/llvm" ]; then \
 		echo "  Removing $$PECOS_HOME/llvm/ (~400MB)"; \
 		rm -rf "$$PECOS_HOME/llvm"; \
-		echo "  Run 'cargo run -p pecos-deps -- llvm install' to reinstall"; \
+		echo "  Run 'cargo run -p pecos-dev -- llvm install' to reinstall"; \
 	else \
 		echo "  No LLVM installation found"; \
 	fi

@@ -13,7 +13,7 @@
 //! When building in a workspace context, the crate-level `pecos.toml` is validated
 //! against the workspace-level `pecos.toml` to ensure they stay in sync. If they
 //! differ, the build fails with a helpful error message suggesting to run
-//! `pecos-deps manifest sync`.
+//! `pecos deps sync`.
 //!
 //! # Structure
 //!
@@ -378,7 +378,7 @@ impl Manifest {
                  Crate manifest: {}\n\
                  Workspace manifest: {}\n\n\
                  Mismatches:\n{}\n\n\
-                 Run 'cargo run -p pecos-deps -- manifest sync' to update crate manifests from workspace.",
+                 Run 'cargo run -p pecos-dev -- deps sync' to update crate manifests from workspace.",
                 crate_manifest_path.display(),
                 workspace_path.display(),
                 mismatches.join("\n")
@@ -431,187 +431,18 @@ impl Manifest {
         Some(crate_manifest)
     }
 
-    /// Create a default manifest with PECOS crate configurations
+    /// Create a default manifest by parsing the embedded workspace pecos.toml
+    ///
+    /// The workspace pecos.toml is embedded at compile time, providing a single
+    /// source of truth for dependency versions and configurations.
     #[must_use]
     pub fn default_pecos() -> Self {
-        use crate::deps::{
-            BOOST_SHA256, BOOST_VERSION, CHROMOBIUS_COMMIT, CHROMOBIUS_SHA256, EIGEN_SHA256,
-            EIGEN_VERSION, LDPC_COMMIT, LDPC_SHA256, PYMATCHING_COMMIT, PYMATCHING_SHA256,
-            QUEST_SHA256, QUEST_VERSION, QULACS_SHA256, QULACS_VERSION, STIM_COMMIT, STIM_SHA256,
-            TESSERACT_COMMIT, TESSERACT_SHA256,
-        };
+        // Embed the workspace pecos.toml at compile time
+        const WORKSPACE_MANIFEST: &str = include_str!("../../../pecos.toml");
 
-        let mut crates = BTreeMap::new();
-        let mut dependencies = BTreeMap::new();
-
-        // Per-crate configurations
-        crates.insert(
-            "pecos-quest".to_string(),
-            CrateConfig {
-                dependencies: vec!["quest".to_string()],
-                requires_llvm: false,
-            },
-        );
-
-        crates.insert(
-            "pecos-qulacs".to_string(),
-            CrateConfig {
-                dependencies: vec!["qulacs".to_string(), "eigen".to_string()],
-                requires_llvm: false,
-            },
-        );
-
-        crates.insert(
-            "pecos-ldpc-decoders".to_string(),
-            CrateConfig {
-                dependencies: vec![
-                    "stim".to_string(),
-                    "pymatching".to_string(),
-                    "ldpc".to_string(),
-                    "tesseract".to_string(),
-                    "chromobius".to_string(),
-                    "boost".to_string(),
-                ],
-                requires_llvm: false,
-            },
-        );
-
-        crates.insert(
-            "pecos-engines".to_string(),
-            CrateConfig {
-                dependencies: vec![],
-                requires_llvm: true,
-            },
-        );
-
-        crates.insert(
-            "pecos-cli".to_string(),
-            CrateConfig {
-                dependencies: vec![],
-                requires_llvm: true,
-            },
-        );
-
-        // Dependency definitions
-        dependencies.insert(
-            "stim".to_string(),
-            DependencyDef {
-                version: STIM_COMMIT.to_string(),
-                url: Some(format!(
-                    "https://github.com/quantumlib/Stim/archive/{STIM_COMMIT}.tar.gz"
-                )),
-                sha256: Some(STIM_SHA256.to_string()),
-                description: Some("Stabilizer simulator for QEC".to_string()),
-            },
-        );
-
-        dependencies.insert(
-            "pymatching".to_string(),
-            DependencyDef {
-                version: PYMATCHING_COMMIT.to_string(),
-                url: Some(format!(
-                    "https://github.com/oscarhiggott/PyMatching/archive/{PYMATCHING_COMMIT}.tar.gz"
-                )),
-                sha256: Some(PYMATCHING_SHA256.to_string()),
-                description: Some("MWPM decoder".to_string()),
-            },
-        );
-
-        dependencies.insert(
-            "ldpc".to_string(),
-            DependencyDef {
-                version: LDPC_COMMIT.to_string(),
-                url: Some(format!(
-                    "https://github.com/quantumgizmos/ldpc/archive/{LDPC_COMMIT}.tar.gz"
-                )),
-                sha256: Some(LDPC_SHA256.to_string()),
-                description: Some("LDPC decoders".to_string()),
-            },
-        );
-
-        dependencies.insert(
-            "tesseract".to_string(),
-            DependencyDef {
-                version: TESSERACT_COMMIT.to_string(),
-                url: Some(format!(
-                    "https://github.com/quantumlib/tesseract-decoder/archive/{TESSERACT_COMMIT}.tar.gz"
-                )),
-                sha256: Some(TESSERACT_SHA256.to_string()),
-                description: Some("Tesseract decoder".to_string()),
-            },
-        );
-
-        dependencies.insert(
-            "chromobius".to_string(),
-            DependencyDef {
-                version: CHROMOBIUS_COMMIT.to_string(),
-                url: Some(format!(
-                    "https://github.com/quantumlib/chromobius/archive/{CHROMOBIUS_COMMIT}.tar.gz"
-                )),
-                sha256: Some(CHROMOBIUS_SHA256.to_string()),
-                description: Some("Color code decoder".to_string()),
-            },
-        );
-
-        dependencies.insert(
-            "quest".to_string(),
-            DependencyDef {
-                version: QUEST_VERSION.to_string(),
-                url: Some(format!(
-                    "https://github.com/QuEST-Kit/QuEST/archive/refs/tags/{QUEST_VERSION}.tar.gz"
-                )),
-                sha256: Some(QUEST_SHA256.to_string()),
-                description: Some("QuEST quantum simulator".to_string()),
-            },
-        );
-
-        dependencies.insert(
-            "qulacs".to_string(),
-            DependencyDef {
-                version: QULACS_VERSION.to_string(),
-                url: Some(format!(
-                    "https://github.com/qulacs/qulacs/archive/v{QULACS_VERSION}.tar.gz"
-                )),
-                sha256: Some(QULACS_SHA256.to_string()),
-                description: Some("Qulacs quantum simulator".to_string()),
-            },
-        );
-
-        dependencies.insert(
-            "eigen".to_string(),
-            DependencyDef {
-                version: EIGEN_VERSION.to_string(),
-                url: Some(format!(
-                    "https://gitlab.com/libeigen/eigen/-/archive/{EIGEN_VERSION}/eigen-{EIGEN_VERSION}.tar.gz"
-                )),
-                sha256: Some(EIGEN_SHA256.to_string()),
-                description: Some("C++ linear algebra library".to_string()),
-            },
-        );
-
-        let boost_version_underscore = BOOST_VERSION.replace('.', "_");
-        dependencies.insert(
-            "boost".to_string(),
-            DependencyDef {
-                version: BOOST_VERSION.to_string(),
-                url: Some(format!(
-                    "https://archives.boost.io/release/{BOOST_VERSION}/source/boost_{boost_version_underscore}.tar.bz2"
-                )),
-                sha256: Some(BOOST_SHA256.to_string()),
-                description: Some("C++ Boost libraries".to_string()),
-            },
-        );
-
-        Self {
-            version: 1,
-            llvm: LlvmConfig {
-                version: "14".to_string(),
-                required: true,
-                required_by: vec!["pecos-engines".to_string(), "pecos-cli".to_string()],
-            },
-            crates,
-            dependencies,
-        }
+        // Parse the embedded manifest
+        toml::from_str(WORKSPACE_MANIFEST)
+            .expect("Failed to parse embedded pecos.toml - this is a build error")
     }
 }
 
@@ -706,7 +537,7 @@ pub fn sync_crate_manifests(workspace_path: &Path) -> Result<Vec<SyncResult>> {
             let header = format!(
                 "# PECOS dependency manifest for {crate_name}\n\
                  # This file is included in the published crate package\n\
-                 # Generated by: cargo run -p pecos-deps -- manifest sync\n\n"
+                 # Generated by: cargo run -p pecos-dev -- deps sync\n\n"
             );
             let content = toml::to_string_pretty(&crate_manifest)
                 .map_err(|e| Error::Config(format!("Failed to serialize manifest: {e}")))?;
@@ -772,7 +603,7 @@ mod tests {
         assert_eq!(quest_deps.len(), 1);
 
         let qulacs_deps = manifest.get_crate_dependencies("pecos-qulacs");
-        assert_eq!(qulacs_deps.len(), 2);
+        assert_eq!(qulacs_deps.len(), 3); // qulacs, eigen, boost
 
         let ldpc_deps = manifest.get_crate_dependencies("pecos-ldpc-decoders");
         assert!(ldpc_deps.len() >= 5);
@@ -783,7 +614,7 @@ mod tests {
         let manifest = Manifest::default_pecos();
 
         assert!(manifest.crate_requires_llvm("pecos-engines"));
-        assert!(manifest.crate_requires_llvm("pecos-cli"));
+        assert!(manifest.crate_requires_llvm("pecos"));
         assert!(!manifest.crate_requires_llvm("pecos-quest"));
     }
 

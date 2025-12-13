@@ -68,28 +68,28 @@ fn run_pecos(config: PecosTestConfig) -> Result<String, Box<dyn std::error::Erro
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Special handling for QIR files which may segfault during cleanup
-    let is_qir = config.file_path.extension().and_then(|s| s.to_str()) == Some("ll");
+    // Special handling for QIS files which may segfault during cleanup
+    let is_qis = config.file_path.extension().and_then(|s| s.to_str()) == Some("ll");
 
-    // For QIR files, check if we got valid output even if the process exited with error
-    if is_qir && !output.status.success() {
-        // QIR has a known segfault issue during cleanup
+    // For QIS files, check if we got valid output even if the process exited with error
+    if is_qis && !output.status.success() {
+        // QIS programs have a known segfault issue during cleanup
         // Check if we still got valid JSON output before the segfault
         if stdout.trim().starts_with('{') && stdout.trim().ends_with('}') {
             // We have valid JSON output despite the segfault
-            log::debug!("Note: QIR process segfaulted during cleanup but produced valid output");
+            log::debug!("Note: QIS process segfaulted during cleanup but produced valid output");
             return Ok(stdout.to_string());
         }
         // No valid output, this is a real failure
         return Err(Box::new(PecosError::Resource(format!(
-            "QIR execution failed for file '{}': exit_code={:?}, stderr='{}', stdout='{}'",
+            "QIS execution failed for file '{}': exit_code={:?}, stderr='{}', stdout='{}'",
             config.file_path.display(),
             output.status.code(),
             stderr,
             stdout
         ))));
     } else if !output.status.success() {
-        // Provide more context about the error for non-QIR files
+        // Provide more context about the error for non-QIS files
         return Err(Box::new(PecosError::Resource(format!(
             "PECOS run failed for file '{}' with settings (shots={}, workers={}, model={}, noise={}, seed={}): stderr='{}', stdout='{}', exit_code={:?}",
             config.file_path.display(),

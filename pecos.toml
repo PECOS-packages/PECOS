@@ -5,10 +5,10 @@ version = "14"
 required = true
 required_by = [
     "pecos-engines",
-    "pecos-cli",
+    "pecos",
 ]
 
-[crates.pecos-cli]
+[crates.pecos]
 dependencies = []
 requires_llvm = true
 

@@ -10,10 +10,17 @@ keywords.workspace = true
 categories.workspace = true
 readme = "../../README.md"
 description = "A crate for evaluating and exploring quantum error correction."
+# Disable auto-discovery of binaries (we only want pecos binary, not engine_setup helper module)
+autobins = false
 
 [lib]
 doctest = true
 test = true
+
+[[bin]]
+name = "pecos"
+path = "src/bin/pecos.rs"
+required-features = ["cli"]
 
 [dependencies]
 pecos-core.workspace = true
@@ -34,6 +41,11 @@ log.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
 
+# CLI dependencies (optional)
+clap = { workspace = true, optional = true }
+env_logger = { workspace = true, optional = true }
+which = { version = "8", optional = true }
+
 # Quantum simulator backends (optional - for Python bindings and advanced users)
 pecos-cppsparsesim = { workspace = true, optional = true }
 pecos-quest = { workspace = true, optional = true }
@@ -46,7 +58,10 @@ pecos-wasm = { workspace = true, optional = true }
 pecos-decoders = { workspace = true, optional = true }
 
 [features]
-default = ["qasm", "phir", "wasm"]
+default = ["qasm", "phir", "wasm", "cli"]
+
+# CLI binary (included in default for easy `cargo install pecos`)
+cli = ["dep:clap", "dep:env_logger", "dep:which", "qasm", "phir", "selene"]
 
 # Program formats
 qasm = []

@@ -1,5 +1,5 @@
 use log::warn;
-use pecos_deps::{Manifest, download_cached, extract_archive};
+use pecos_dev::{Manifest, download_cached, extract_archive};
 use std::env;
 use std::path::{Path, PathBuf};
 

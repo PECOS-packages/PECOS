@@ -170,12 +170,16 @@ fn get_download_url() -> Result<(String, String)> {
 }
 
 fn download_and_verify_with_retry(url: &str, dest: &PathBuf, archive_name: &str) -> Result<()> {
-    const MAX_RETRIES: u32 = 3;
+    const MAX_RETRIES: u32 = 5;
+    const BASE_DELAY_SECS: u64 = 10;
 
     for attempt in 1..=MAX_RETRIES {
         if attempt > 1 {
+            // Exponential backoff: 10s, 20s, 40s, 80s
+            let delay_secs = BASE_DELAY_SECS * (1 << (attempt - 2));
             println!();
-            println!("Retry attempt {attempt}/{MAX_RETRIES}...");
+            println!("Retry attempt {attempt}/{MAX_RETRIES} (waiting {delay_secs}s)...");
+            std::thread::sleep(std::time::Duration::from_secs(delay_secs));
         }
 
         let _ = fs::remove_file(dest);
@@ -183,11 +187,21 @@ fn download_and_verify_with_retry(url: &str, dest: &PathBuf, archive_name: &str)
         if let Err(e) = download_llvm(url, dest) {
             if attempt < MAX_RETRIES {
                 eprintln!("Download error: {e}");
-                eprintln!("Waiting 5 seconds before retry...");
-                std::thread::sleep(std::time::Duration::from_secs(5));
                 continue;
             }
             return Err(e);
+        }
+
+        // Check for empty downloads (CDN/rate limit issues)
+        let file_size = fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+        if file_size == 0 {
+            if attempt < MAX_RETRIES {
+                eprintln!("Download returned empty file (possible CDN issue)");
+                continue;
+            }
+            return Err(Error::Llvm(
+                "Download returned empty file after all retries".into(),
+            ));
         }
 
         match verify_checksum(dest, archive_name) {
@@ -196,7 +210,6 @@ fn download_and_verify_with_retry(url: &str, dest: &PathBuf, archive_name: &str)
                 if attempt < MAX_RETRIES {
                     eprintln!();
                     eprintln!("Checksum verification failed. Retrying...");
-                    std::thread::sleep(std::time::Duration::from_secs(5));
                     let _ = fs::remove_file(dest);
                     continue;
                 }

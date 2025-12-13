@@ -76,6 +76,7 @@ fn run_cargo_command(args: &[&str]) -> bool {
 }
 
 /// Run cargo check with CUDA-aware feature handling
+#[allow(clippy::too_many_lines)]
 fn run_check(include_ffi: bool) -> Result<()> {
     let cuda_available = is_cuda_available();
 
@@ -111,6 +112,8 @@ fn run_check(include_ffi: bool) -> Result<()> {
             "--all-features",
             "--exclude=pecos",
             "--exclude=pecos-quest",
+            // benchmarks depends on pecos, and --all-features enables pecos/gpu
+            "--exclude=benchmarks",
         ];
 
         let exclude_flags: Vec<String> = FFI_CRATES
@@ -238,6 +241,8 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
             "--all-features",
             "--exclude=pecos",
             "--exclude=pecos-quest",
+            // benchmarks depends on pecos, and --all-features enables pecos/gpu
+            "--exclude=benchmarks",
         ];
         args.extend(&fix_args);
 

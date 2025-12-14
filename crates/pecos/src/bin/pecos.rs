@@ -570,7 +570,11 @@ impl InfoPrinter {
 
         // Title and version
         info_lines.push(self.bold("PECOS - Quantum Error Correction Simulator"));
-        info_lines.push(format!("{} {}", self.cyan("Version:"), env!("CARGO_PKG_VERSION")));
+        info_lines.push(format!(
+            "{} {}",
+            self.cyan("Version:"),
+            env!("CARGO_PKG_VERSION")
+        ));
         info_lines.push(String::new());
 
         // Program Formats
@@ -588,8 +592,16 @@ impl InfoPrinter {
 
         // Simulators
         info_lines.push(self.cyan("Simulators:"));
-        info_lines.push(format!("  {} StateVector {}", self.green("[x]"), self.dim("(built-in)")));
-        info_lines.push(format!("  {} Stabilizer {}", self.green("[x]"), self.dim("(built-in)")));
+        info_lines.push(format!(
+            "  {} StateVector {}",
+            self.green("[x]"),
+            self.dim("(built-in)")
+        ));
+        info_lines.push(format!(
+            "  {} Stabilizer {}",
+            self.green("[x]"),
+            self.dim("(built-in)")
+        ));
         let (line, missing) = self.capability("QuEST", cfg!(feature = "quest"));
         info_lines.push(format!("  {line}"));
         has_missing |= missing;

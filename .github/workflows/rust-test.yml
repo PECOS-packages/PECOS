@@ -77,7 +77,8 @@ jobs:
         run: |
           echo "Running clippy with all features (including LLVM)..."
           # Exclude crates with GPU features that require CUDA
-          cargo clippy --workspace --exclude pecos --exclude pecos-quest --exclude pecos-selene-quest --all-targets --all-features -- -D warnings
+          # benchmarks depends on pecos, and --all-features enables pecos/gpu which requires CUDA
+          cargo clippy --workspace --exclude pecos --exclude pecos-quest --exclude pecos-selene-quest --exclude benchmarks --all-targets --all-features -- -D warnings
           echo "Running clippy on pecos with all non-GPU features..."
           cargo clippy -p pecos --all-targets --features "llvm,selene,qasm,phir,all-simulators" -- -D warnings
           echo "Running clippy on pecos-quest with CPU features only..."

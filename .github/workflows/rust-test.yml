@@ -49,6 +49,20 @@ jobs:
         with:
           save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
 
+      - name: Install CUDA Toolkit
+        run: |
+          echo "Installing CUDA Toolkit for GPU support (compile-time only, no GPU needed)..."
+          # Use pecos-dev to install CUDA to ~/.pecos/cuda/
+          cargo run --release -p pecos-dev -- cuda install
+
+          echo "Setting CUDA environment variables..."
+          export CUDA_PATH=$(cargo run -q --release -p pecos-dev -- cuda find 2>/dev/null)
+          echo "CUDA_PATH=$CUDA_PATH" >> $GITHUB_ENV
+          echo "$CUDA_PATH/bin" >> $GITHUB_PATH
+
+          echo "Verifying CUDA installation..."
+          cargo run --release -p pecos-dev -- cuda check
+
       - name: Install LLVM 14.0.6 using pecos-llvm
         run: |
           echo "Installing LLVM using pecos-dev..."
@@ -75,16 +89,9 @@ jobs:
 
       - name: Run clippy
         run: |
-          echo "Running clippy with all features (including LLVM)..."
-          # Exclude crates with GPU features that require CUDA
-          # benchmarks depends on pecos, and --all-features enables pecos/gpu which requires CUDA
-          cargo clippy --workspace --exclude pecos --exclude pecos-quest --exclude pecos-selene-quest --exclude benchmarks --all-targets --all-features -- -D warnings
-          echo "Running clippy on pecos with all non-GPU features..."
-          cargo clippy -p pecos --all-targets --features "llvm,selene,qasm,phir,all-simulators" -- -D warnings
-          echo "Running clippy on pecos-quest with CPU features only..."
-          cargo clippy -p pecos-quest --all-targets --features "cpu" -- -D warnings
-          echo "Running clippy on pecos-selene-quest without GPU..."
-          cargo clippy -p pecos-selene-quest --all-targets -- -D warnings
+          echo "Running clippy with all features (including LLVM and GPU)..."
+          # With CUDA Toolkit installed, we can now build with GPU features
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   rust-lint-no-llvm:
     runs-on: ubuntu-latest
@@ -240,6 +247,21 @@ jobs:
         with:
           arch: x64
 
+      - name: Install CUDA Toolkit (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          echo "Installing CUDA Toolkit for GPU support (compile-time only, no GPU needed)..."
+          # Use pecos-dev to install CUDA to ~/.pecos/cuda/
+          cargo run --release -p pecos-dev -- cuda install
+
+          echo "Setting CUDA environment variables..."
+          export CUDA_PATH=$(cargo run -q --release -p pecos-dev -- cuda find 2>/dev/null)
+          echo "CUDA_PATH=$CUDA_PATH" >> $GITHUB_ENV
+          echo "$CUDA_PATH/bin" >> $GITHUB_PATH
+
+          echo "Verifying CUDA installation..."
+          cargo run --release -p pecos-dev -- cuda check
+
       - name: Compile tests (macOS)
         if: matrix.os == 'macos-latest'
         run: |
@@ -259,8 +281,15 @@ jobs:
           cargo test --no-run -p pecos-quest --features cpu
           cargo test --no-run -p pecos-decoders --all-features
 
-      - name: Compile tests (Linux/Windows)
-        if: matrix.os != 'macos-latest'
+      - name: Compile tests (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          # With CUDA Toolkit installed, we can compile with CUDA features
+          cargo test --no-run --workspace --exclude pecos-decoders --features llvm,cuda
+          cargo test --no-run -p pecos-decoders --all-features
+
+      - name: Compile tests (Windows)
+        if: matrix.os == 'windows-latest'
         run: |
           cargo test --no-run --workspace --exclude pecos-quest --exclude pecos-decoders --features llvm
           cargo test --no-run -p pecos-quest --features cpu
@@ -286,8 +315,9 @@ jobs:
       - name: Run tests (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          cargo test --workspace --exclude pecos-quest --exclude pecos-decoders --features llvm
-          cargo test -p pecos-quest --features cpu
+          # With CUDA Toolkit installed, we can test with CUDA features
+          # Note: GPU tests will detect no actual GPU at runtime and skip GPU-specific tests
+          cargo test --workspace --exclude pecos-decoders --features llvm,cuda
           cargo test -p pecos-decoders --all-features
 
       - name: Run tests (Windows)

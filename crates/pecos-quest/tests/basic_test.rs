@@ -292,26 +292,91 @@ fn test_gpu_acceleration_status() {
     println!("  Number of amplitudes: {}", qureg_info.num_amps);
     println!("  Is density matrix: {}", qureg_info.is_density_matrix);
 
-    // When built with --features gpu, GPU should be enabled
-    #[cfg(feature = "gpu")]
-    {
-        assert!(
-            env_info.is_gpu_accelerated,
-            "GPU feature enabled but QuEST reports GPU acceleration is OFF. \
-             This means GPU compilation succeeded but runtime GPU detection failed. \
-             Check that CUDA runtime libraries are available."
-        );
-        println!("\nSUCCESS: QuEST is using GPU acceleration!");
-    }
+    // The direct QuestStateVec wrapper always uses CPU mode.
+    // For GPU acceleration, use the engine builder with .with_gpu().
+    // This is because the CUDA backend is loaded at runtime via dlopen,
+    // allowing a single binary to work on systems with and without CUDA.
+    assert!(
+        !env_info.is_gpu_accelerated,
+        "QuestStateVec should use CPU mode. GPU acceleration is only available \
+         via the engine builder with .with_gpu()."
+    );
+    println!("\nINFO: QuestStateVec uses CPU mode (as expected)");
+    println!("      For GPU acceleration, use quest_state_vec().with_gpu()");
+}
 
-    // When built without gpu feature, should be CPU-only
-    #[cfg(not(feature = "gpu"))]
-    {
-        assert!(
-            !env_info.is_gpu_accelerated,
-            "GPU feature disabled but QuEST reports GPU acceleration is ON. \
-             This should not happen."
-        );
-        println!("\nINFO: QuEST is running on CPU (GPU feature not enabled)");
+/// Test the CUDA engine through the builder interface
+#[cfg(feature = "cuda")]
+#[test]
+fn test_cuda_engine_builder() {
+    use pecos_engines::{Engine, QuantumEngineBuilder, byte_message::ByteMessage};
+    use pecos_quest::quest_state_vec;
+
+    println!("\n=== Testing CUDA engine builder ===");
+
+    // Test CPU mode first
+    let mut cpu_builder = quest_state_vec().qubits(2);
+    let mut cpu_engine = cpu_builder.build().expect("Failed to build CPU engine");
+    println!("CPU engine created successfully");
+
+    // Create a Bell state circuit: H(0), CNOT(0,1), measure both
+    let mut msg_builder = ByteMessage::quantum_operations_builder();
+    msg_builder.add_h(&[0]);
+    msg_builder.add_cx(&[0], &[1]);
+    msg_builder.add_measurements(&[0, 1]);
+    let msg = msg_builder.build();
+
+    let result = cpu_engine.process(msg.clone()).expect("CPU process failed");
+    let outcomes = result.outcomes().expect("Failed to get outcomes");
+    println!("CPU measurement outcomes: {outcomes:?}");
+
+    // Verify Bell state outcomes (both qubits should match)
+    assert!(
+        outcomes.len() == 2,
+        "Expected 2 measurement outcomes, got {}",
+        outcomes.len()
+    );
+    assert_eq!(
+        outcomes[0], outcomes[1],
+        "Bell state outcomes should match: got {outcomes:?}"
+    );
+
+    // Now test GPU mode
+    println!("\n=== Testing GPU mode ===");
+    let mut gpu_builder = quest_state_vec().qubits(2).with_gpu();
+    match gpu_builder.build() {
+        Ok(mut gpu_engine) => {
+            println!("GPU engine created successfully!");
+
+            // Reset and run the same circuit
+            gpu_engine.reset().expect("Reset failed");
+
+            let mut msg_builder = ByteMessage::quantum_operations_builder();
+            msg_builder.add_h(&[0]);
+            msg_builder.add_cx(&[0], &[1]);
+            msg_builder.add_measurements(&[0, 1]);
+            let msg = msg_builder.build();
+
+            let result = gpu_engine.process(msg).expect("GPU process failed");
+            let outcomes = result.outcomes().expect("Failed to get outcomes");
+            println!("GPU measurement outcomes: {outcomes:?}");
+
+            // Verify Bell state outcomes
+            assert!(
+                outcomes.len() == 2,
+                "Expected 2 measurement outcomes, got {}",
+                outcomes.len()
+            );
+            assert_eq!(
+                outcomes[0], outcomes[1],
+                "Bell state outcomes should match: got {outcomes:?}"
+            );
+
+            println!("\nSUCCESS: CUDA engine works correctly!");
+        }
+        Err(e) => {
+            println!("GPU engine build failed (expected if CUDA not available): {e}");
+            // Not a failure - CUDA may not be available at runtime
+        }
     }
 }

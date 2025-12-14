@@ -2994,7 +2994,9 @@ dependencies = [
  "approx 0.5.1",
  "cxx",
  "cxx-build",
+ "dirs",
  "env_logger",
+ "libloading 0.9.0",
  "log",
  "num-complex",
  "pecos-core",
@@ -3038,6 +3040,7 @@ dependencies = [
 name = "pecos-rslib"
 version = "0.1.1"
 dependencies = [
+ "dirs",
  "inkwell 0.7.1",
  "libc",
  "log",

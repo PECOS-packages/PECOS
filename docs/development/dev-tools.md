@@ -257,7 +257,7 @@ Query package features for build configuration.
 pecos-dev features list --package pecos
 
 # Exclude certain features
-pecos-dev features list --package pecos --exclude gpu
+pecos-dev features list --package pecos --exclude cuda
 
 # Output as JSON
 pecos-dev features list --package pecos-quest --json

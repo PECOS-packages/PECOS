@@ -22,6 +22,7 @@ test = false
 [features]
 default = ["wasm"]
 wasm = ["pecos/wasm"]
+cuda = ["pecos/cuda"]
 
 [dependencies]
 # Use the pecos metacrate with all features needed for Python bindings
@@ -36,6 +37,7 @@ serde_json.workspace = true
 tempfile.workspace = true
 log.workspace = true
 libc.workspace = true
+dirs.workspace = true
 
 # Inkwell for LLVM types (needed for llvmlite bindings)
 inkwell = { workspace = true, features = ["llvm14-0"] }

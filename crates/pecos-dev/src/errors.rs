@@ -37,6 +37,10 @@ pub enum Error {
     #[error("LLVM error: {0}")]
     Llvm(String),
 
+    /// CUDA error
+    #[error("CUDA error: {0}")]
+    Cuda(String),
+
     /// Configuration error
     #[error("Configuration error: {0}")]
     Config(String),

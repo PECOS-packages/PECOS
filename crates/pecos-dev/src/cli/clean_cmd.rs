@@ -17,10 +17,12 @@ pub fn run(command: super::CleanCommands) -> Result<()> {
         super::CleanCommands::Deps { verbose } => run_deps(verbose),
         super::CleanCommands::Cache { verbose } => run_cache(verbose),
         super::CleanCommands::Llvm { verbose } => run_llvm(verbose),
+        super::CleanCommands::Cuda { verbose } => run_cuda(verbose),
         super::CleanCommands::All {
             include_llvm,
+            include_cuda,
             verbose,
-        } => run_all(include_llvm, verbose),
+        } => run_all(include_llvm, include_cuda, verbose),
     }
 }
 
@@ -279,8 +281,42 @@ fn clean_llvm_internal(verbose: u8) -> Result<bool> {
     }
 }
 
+/// Clean ~/.pecos/cuda/
+fn run_cuda(verbose: u8) -> Result<()> {
+    let cleaned = clean_cuda_internal(verbose)?;
+    if !cleaned {
+        if verbose >= 1 {
+            println!("Nothing to clean (CUDA directory does not exist)");
+        } else {
+            println!("Nothing to clean");
+        }
+    }
+    Ok(())
+}
+
+/// Internal helper that cleans CUDA and returns whether anything was cleaned
+fn clean_cuda_internal(verbose: u8) -> Result<bool> {
+    use crate::cuda::get_pecos_cuda_dir;
+
+    if let Some(cuda_dir) = get_pecos_cuda_dir()
+        && cuda_dir.exists()
+    {
+        if verbose >= 1 {
+            println!("Removing: {}", cuda_dir.display());
+        }
+        fs::remove_dir_all(&cuda_dir)?;
+        if verbose >= 1 {
+            println!("Done. Run 'pecos-dev cuda install' to reinstall CUDA.");
+        } else {
+            println!("Cleaned ~/.pecos/cuda/");
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 /// Clean everything
-fn run_all(include_llvm: bool, verbose: u8) -> Result<()> {
+fn run_all(include_llvm: bool, include_cuda: bool, verbose: u8) -> Result<()> {
     use crate::home::{get_cache_dir_path, get_deps_dir_path, get_llvm_dir_path, get_tmp_dir_path};
 
     let deps_dir = get_deps_dir_path()?;
@@ -326,6 +362,18 @@ fn run_all(include_llvm: bool, verbose: u8) -> Result<()> {
             fs::remove_dir_all(&llvm_dir)?;
             cleaned.push("llvm");
         }
+    }
+
+    // Clean CUDA if requested
+    if include_cuda
+        && let Some(cuda_dir) = crate::cuda::get_pecos_cuda_dir()
+        && cuda_dir.exists()
+    {
+        if verbose >= 1 {
+            println!("Removing: {}", cuda_dir.display());
+        }
+        fs::remove_dir_all(&cuda_dir)?;
+        cleaned.push("cuda");
     }
 
     // Summary

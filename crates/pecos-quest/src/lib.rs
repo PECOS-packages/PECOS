@@ -23,6 +23,8 @@ use thiserror::Error;
 pub mod bridge;
 use bridge::ffi;
 
+pub mod cuda_loader;
+
 pub mod quantum_engine;
 pub use quantum_engine::{
     QuestDensityMatrixEngine, QuestDensityMatrixEngineBuilder, QuestStateVecEngine,

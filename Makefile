@@ -48,6 +48,26 @@ install-llvm: ## Install LLVM 14 to ~/.pecos/llvm/ (required for QIR features)
 check-llvm: ## Check LLVM 14 installation status
 	@cargo run -q --release --package pecos-dev -- llvm check || true
 
+# CUDA Setup
+# ----------
+# CUDA Toolkit is required for GPU support (pecos-quest, selene-quest with GPU)
+# Run 'make install-cuda' to download and install CUDA to ~/.pecos/cuda/
+# Run 'make check-cuda' to verify installation status
+# Note: This installs compile-time dependencies only - no GPU hardware needed
+
+.PHONY: install-cuda
+install-cuda: ## Install CUDA Toolkit to ~/.pecos/cuda/ (for GPU support, no GPU needed)
+	@echo "Installing CUDA Toolkit..."
+	@cargo run --release --package pecos-dev -- cuda install
+
+.PHONY: check-cuda
+check-cuda: ## Check CUDA installation status (local or system)
+	@cargo run -q --release --package pecos-dev -- cuda check || true
+
+.PHONY: validate-cuda
+validate-cuda: ## Validate CUDA installation integrity
+	@cargo run -q --release --package pecos-dev -- cuda validate
+
 # Helper to unset CONDA_PREFIX (prevents conda interference with builds)
 # Note: LLVM_SYS_140_PREFIX is set via .cargo/config.toml (run `pecos-dev llvm configure`)
 ifdef OS
@@ -110,7 +130,7 @@ build-selene: ## Build and install Selene plugins for development
 	@# Build Rust libraries (with GPU support if CUDA available)
 	@if cargo run -q -p pecos-dev -- cuda check -q >/dev/null 2>&1; then \
 		echo "CUDA detected, building with GPU support..."; \
-		cargo build --release -p pecos-selene-quest --features gpu; \
+		cargo build --release -p pecos-selene-quest --features cuda; \
 	else \
 		echo "CUDA not detected, building CPU-only..."; \
 		cargo build --release -p pecos-selene-quest; \
@@ -193,11 +213,13 @@ check:  ## Run cargo check (with GPU features only if CUDA available)
 
 .PHONY: clippy
 clippy:  ## Run cargo clippy (with GPU features only if CUDA available)
-	@cargo run -q -p pecos-dev -- rust clippy --include-ffi
+	@echo "==> Running clippy via pecos-dev..."
+	cargo run -p pecos-dev -- rust clippy --include-ffi
 
 .PHONY: fmt
 fmt: ## Check Rust formatting (without fixing)
-	@cargo run -q -p pecos-dev -- rust fmt --check
+	@echo "==> Running fmt check via pecos-dev..."
+	cargo run -p pecos-dev -- rust fmt --check
 
 .PHONY: fmt-fix
 fmt-fix: ## Fix Rust formatting issues
@@ -205,6 +227,7 @@ fmt-fix: ## Fix Rust formatting issues
 
 .PHONY: lint
 lint: fmt clippy  ## Run all quality checks / linting / reformatting (check only)
+	@echo "==> Running pre-commit..."
 	uv run pre-commit run --all-files
 	@if cargo run -q -p pecos-dev -- julia check -q >/dev/null 2>&1; then \
 		echo "Julia detected, running Julia formatting check and linting..."; \
@@ -525,13 +548,18 @@ clean-llvm:  ## Clean ~/.pecos/llvm/ (LLVM installation - large, slow to reinsta
 	@cargo run -q -p pecos-dev -- clean all --include-llvm
 	@echo "Run 'make install-llvm' to reinstall LLVM"
 
+.PHONY: clean-cuda
+clean-cuda:  ## Clean ~/.pecos/cuda/ (CUDA installation - large, slow to reinstall)
+	@cargo run -q -p pecos-dev -- clean cuda
+	@echo "Run 'make install-cuda' to reinstall CUDA"
+
 .PHONY: clean-all
 clean-all: clean-deps clean  ## Clean project artifacts + deps (but not LLVM)
 	@echo "Full clean completed (LLVM preserved)"
 
 .PHONY: clean-everything
-clean-everything: clean-llvm clean-all  ## Clean everything including LLVM (nuclear option)
-	@echo "Everything cleaned including LLVM"
+clean-everything: clean-llvm clean-cuda clean-all  ## Clean everything including LLVM and CUDA (nuclear option)
+	@echo "Everything cleaned including LLVM and CUDA"
 
 .PHONY: pip-install-uv
 pip-install-uv:  ## Install uv using pip and create a venv. (Recommended to instead follow: https://docs.astral.sh/uv/getting-started/installation/
@@ -572,7 +600,8 @@ help:  ## Show the help menu
 	@echo "  - Use 'make julia-info' or 'make go-info' for more information"
 	@echo ""
 	@echo "CUDA GPU Simulator Support:"
+	@echo "  - 'make install-cuda' downloads CUDA Toolkit to ~/.pecos/cuda/"
+	@echo "  - 'make check-cuda' shows CUDA installation status"
 	@echo "  - 'make build-cuda' builds with CUDA GPU simulator support"
 	@echo "  - 'make devc' runs full dev cycle with CUDA support"
-	@echo "  - 'make devcl' runs dev + linting with CUDA support"
-	@echo "  - Requires: CUDA Toolkit 13 (see docs/user-guide/cuda-setup.md)"
+	@echo "  - No GPU hardware needed - CUDA is for compile-time only"

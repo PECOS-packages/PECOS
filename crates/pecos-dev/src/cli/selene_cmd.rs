@@ -13,6 +13,8 @@ struct SelenePlugin {
     lib_name: &'static str,
     /// Python package directory relative to repo root
     python_pkg_path: &'static str,
+    /// Additional libraries to copy (e.g., CUDA backend)
+    extra_libs: &'static [&'static str],
 }
 
 /// All known Selene plugins
@@ -21,21 +23,26 @@ const PLUGINS: &[SelenePlugin] = &[
         crate_name: "pecos-selene-quest",
         lib_name: "pecos_selene_quest",
         python_pkg_path: "python/selene-plugins/pecos-selene-quest/python/pecos_selene_quest",
+        // CUDA backend library for GPU acceleration (built when --features cuda is used)
+        extra_libs: &["pecos_quest_cuda"],
     },
     SelenePlugin {
         crate_name: "pecos-selene-qulacs",
         lib_name: "pecos_selene_qulacs",
         python_pkg_path: "python/selene-plugins/pecos-selene-qulacs/python/pecos_selene_qulacs",
+        extra_libs: &[],
     },
     SelenePlugin {
         crate_name: "pecos-selene-sparsestab",
         lib_name: "pecos_selene_sparsestab",
         python_pkg_path: "python/selene-plugins/pecos-selene-sparsestab/python/pecos_selene_sparsestab",
+        extra_libs: &[],
     },
     SelenePlugin {
         crate_name: "pecos-selene-statevec",
         lib_name: "pecos_selene_statevec",
         python_pkg_path: "python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec",
+        extra_libs: &[],
     },
 ];
 
@@ -96,7 +103,7 @@ fn get_target_dir(repo_root: &Path, profile: &str) -> PathBuf {
 }
 
 /// Install Selene plugins by copying compiled libraries to Python package directories
-#[allow(clippy::collapsible_if)]
+#[allow(clippy::collapsible_if, clippy::too_many_lines)]
 fn run_install(plugin: Option<String>, profile: &str, dry_run: bool) -> Result<()> {
     let repo_root = get_repo_root()?;
     let target_dir = get_target_dir(&repo_root, profile);
@@ -154,7 +161,7 @@ fn run_install(plugin: Option<String>, profile: &str, dry_run: bool) -> Result<(
             continue;
         }
 
-        // Copy the library
+        // Copy the main library
         match fs::copy(&src, &dest) {
             Ok(bytes) => {
                 println!(
@@ -172,6 +179,41 @@ fn run_install(plugin: Option<String>, profile: &str, dry_run: bool) -> Result<(
                     dest.display()
                 );
                 failed += 1;
+            }
+        }
+
+        // Copy extra libraries (e.g., CUDA backend) if they exist
+        for extra_lib in p.extra_libs {
+            let extra_filename = get_lib_filename(extra_lib);
+            let extra_src = target_dir.join(&extra_filename);
+            let extra_dest = dest_dir.join(&extra_filename);
+
+            if extra_src.exists() {
+                if dry_run {
+                    println!(
+                        "Would copy: {} -> {}",
+                        extra_src.display(),
+                        extra_dest.display()
+                    );
+                } else {
+                    match fs::copy(&extra_src, &extra_dest) {
+                        Ok(bytes) => {
+                            println!(
+                                "  + {}: {} ({} bytes)",
+                                extra_lib,
+                                extra_dest.display(),
+                                bytes
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "  Warning: Failed to copy {} to {}: {e}",
+                                extra_src.display(),
+                                extra_dest.display()
+                            );
+                        }
+                    }
+                }
             }
         }
     }

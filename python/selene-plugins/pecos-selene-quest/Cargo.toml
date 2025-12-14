@@ -24,7 +24,7 @@ selene-core = { git = "https://github.com/CQCL/selene.git", rev = "1794e8d1dba26
 
 [features]
 default = []
-gpu = ["pecos-quest/gpu"]
+cuda = ["pecos-quest/cuda"]
 
 [lints]
 workspace = true

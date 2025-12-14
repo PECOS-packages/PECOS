@@ -14,8 +14,7 @@ description = "QuEST quantum simulator wrapper for PECOS"
 [features]
 default = ["cpu"]
 cpu = []
-gpu = ["cuda"]
-cuda = []  # Actual CUDA support
+cuda = []  # NVIDIA CUDA support
 
 [dependencies]
 thiserror.workspace = true
@@ -26,12 +25,16 @@ pecos-engines.workspace = true
 num-complex.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
+libloading.workspace = true
+log.workspace = true
+dirs.workspace = true
 
 [build-dependencies]
 pecos-dev.workspace = true
 cxx-build.workspace = true
 log.workspace = true
 env_logger.workspace = true
+dirs.workspace = true
 
 [dev-dependencies]
 approx.workspace = true

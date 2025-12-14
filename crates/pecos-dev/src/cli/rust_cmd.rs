@@ -20,16 +20,9 @@ pub fn run(command: &super::RustCommands) -> Result<()> {
     }
 }
 
-/// Check if CUDA is available
+/// Check if CUDA is available (local ~/.pecos/cuda/ or system)
 fn is_cuda_available() -> bool {
-    // Check for nvcc first
-    if let Ok(output) = Command::new("nvcc").args(["--version"]).output()
-        && output.status.success()
-    {
-        return true;
-    }
-    // Check CUDA_PATH environment variable
-    std::env::var("CUDA_PATH").is_ok()
+    crate::cuda::is_cuda_available()
 }
 
 /// Check if a tool is available
@@ -112,7 +105,9 @@ fn run_check(include_ffi: bool) -> Result<()> {
             "--all-features",
             "--exclude=pecos",
             "--exclude=pecos-quest",
-            // benchmarks depends on pecos, and --all-features enables pecos/gpu
+            // pecos-selene-quest has cuda feature that enables pecos-quest/cuda
+            "--exclude=pecos-selene-quest",
+            // benchmarks depends on pecos, and --all-features enables pecos/cuda
             "--exclude=benchmarks",
         ];
 
@@ -128,19 +123,34 @@ fn run_check(include_ffi: bool) -> Result<()> {
             return Err(Error::Config("cargo check (workspace) failed".to_string()));
         }
 
-        println!("Checking pecos with all features except gpu...");
-        let pecos_features = get_features_excluding("pecos", "gpu")?;
+        println!("Checking pecos with all features except cuda...");
+        let pecos_features = get_features_excluding("pecos", "cuda")?;
         let features_arg = format!("--features={pecos_features}");
         if !run_cargo_command(&["check", "-p", "pecos", "--all-targets", &features_arg]) {
             return Err(Error::Config("cargo check (pecos) failed".to_string()));
         }
 
-        println!("Checking pecos-quest with all features except gpu/cuda...");
-        let quest_features = get_features_excluding("pecos-quest", "gpu,cuda")?;
+        println!("Checking pecos-quest with all features except cuda...");
+        let quest_features = get_features_excluding("pecos-quest", "cuda")?;
         let features_arg = format!("--features={quest_features}");
         if !run_cargo_command(&["check", "-p", "pecos-quest", "--all-targets", &features_arg]) {
             return Err(Error::Config(
                 "cargo check (pecos-quest) failed".to_string(),
+            ));
+        }
+
+        println!("Checking pecos-selene-quest without cuda...");
+        let selene_quest_features = get_features_excluding("pecos-selene-quest", "cuda")?;
+        let features_arg = format!("--features={selene_quest_features}");
+        if !run_cargo_command(&[
+            "check",
+            "-p",
+            "pecos-selene-quest",
+            "--all-targets",
+            &features_arg,
+        ]) {
+            return Err(Error::Config(
+                "cargo check (pecos-selene-quest) failed".to_string(),
             ));
         }
     }
@@ -229,10 +239,10 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
             return Err(Error::Config("cargo clippy failed".to_string()));
         }
     } else {
-        println!("CUDA not detected - running clippy on all features except GPU");
+        println!("CUDA not detected - running clippy on all features except CUDA");
 
         println!(
-            "Running clippy on workspace packages (excluding FFI crates and those with GPU features)..."
+            "Running clippy on workspace packages (excluding FFI crates and those with CUDA features)..."
         );
         let mut args: Vec<&str> = vec![
             "clippy",
@@ -241,7 +251,9 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
             "--all-features",
             "--exclude=pecos",
             "--exclude=pecos-quest",
-            // benchmarks depends on pecos, and --all-features enables pecos/gpu
+            // pecos-selene-quest has cuda feature that enables pecos-quest/cuda
+            "--exclude=pecos-selene-quest",
+            // benchmarks depends on pecos, and --all-features enables pecos/cuda
             "--exclude=benchmarks",
         ];
         args.extend(&fix_args);
@@ -260,8 +272,8 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
             return Err(Error::Config("cargo clippy (workspace) failed".to_string()));
         }
 
-        println!("Running clippy on pecos with all features except gpu...");
-        let pecos_features = get_features_excluding("pecos", "gpu")?;
+        println!("Running clippy on pecos with all features except cuda...");
+        let pecos_features = get_features_excluding("pecos", "cuda")?;
         let features_arg = format!("--features={pecos_features}");
         let mut args: Vec<&str> = vec!["clippy", "-p", "pecos", "--all-targets", &features_arg];
         args.extend(&fix_args);
@@ -270,8 +282,8 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
             return Err(Error::Config("cargo clippy (pecos) failed".to_string()));
         }
 
-        println!("Running clippy on pecos-quest with all features except gpu/cuda...");
-        let quest_features = get_features_excluding("pecos-quest", "gpu,cuda")?;
+        println!("Running clippy on pecos-quest with all features except cuda...");
+        let quest_features = get_features_excluding("pecos-quest", "cuda")?;
         let features_arg = format!("--features={quest_features}");
         let mut args: Vec<&str> = vec![
             "clippy",
@@ -285,6 +297,24 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
         if !run_cargo_command(&args) {
             return Err(Error::Config(
                 "cargo clippy (pecos-quest) failed".to_string(),
+            ));
+        }
+
+        println!("Running clippy on pecos-selene-quest without cuda...");
+        let selene_quest_features = get_features_excluding("pecos-selene-quest", "cuda")?;
+        let features_arg = format!("--features={selene_quest_features}");
+        let mut args: Vec<&str> = vec![
+            "clippy",
+            "-p",
+            "pecos-selene-quest",
+            "--all-targets",
+            &features_arg,
+        ];
+        args.extend(&fix_args);
+        args.extend(&["--", "-D", "warnings"]);
+        if !run_cargo_command(&args) {
+            return Err(Error::Config(
+                "cargo clippy (pecos-selene-quest) failed".to_string(),
             ));
         }
     }

@@ -206,13 +206,39 @@ pub enum PythonCommands {
 // CUDA Commands
 // ============================================================================
 
-#[derive(Subcommand, Clone, Copy)]
+#[derive(Subcommand, Clone)]
 pub enum CudaCommands {
-    /// Check if CUDA/nvcc is available
+    /// Download and install CUDA Toolkit to ~/.pecos/cuda/
+    Install {
+        /// Force reinstall even if already present
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Check if CUDA is available (local or system)
     Check {
         /// Suppress output (exit code only)
         #[arg(short, long)]
         quiet: bool,
+    },
+
+    /// Find CUDA installation path
+    Find {
+        /// Print export command for shell evaluation
+        #[arg(long)]
+        export: bool,
+    },
+
+    /// Show CUDA version information
+    Version,
+
+    /// Remove local CUDA installation (~/.pecos/cuda/)
+    Uninstall,
+
+    /// Validate CUDA installation integrity
+    Validate {
+        /// Path to CUDA installation (uses detected path if not specified)
+        path: Option<String>,
     },
 }
 
@@ -431,11 +457,22 @@ pub enum CleanCommands {
         verbose: u8,
     },
 
-    /// Clean deps, cache, and tmp (optionally including LLVM)
+    /// Clean ~/.pecos/cuda/ (CUDA installation)
+    Cuda {
+        /// Increase verbosity (-v, -vv, -vvv)
+        #[arg(short, long, action = clap::ArgAction::Count)]
+        verbose: u8,
+    },
+
+    /// Clean deps, cache, and tmp (optionally including LLVM and CUDA)
     All {
         /// Also remove LLVM installation
         #[arg(long)]
         include_llvm: bool,
+
+        /// Also remove CUDA installation
+        #[arg(long)]
+        include_cuda: bool,
 
         /// Increase verbosity (-v, -vv, -vvv)
         #[arg(short, long, action = clap::ArgAction::Count)]

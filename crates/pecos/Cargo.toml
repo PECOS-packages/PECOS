@@ -79,8 +79,8 @@ quest = ["pecos-quest"]
 qulacs = ["pecos-qulacs"]
 all-simulators = ["cppsparsesim", "quest", "qulacs"]
 
-# GPU support
-gpu = ["quest", "pecos-quest/gpu"]
+# NVIDIA CUDA support
+cuda = ["quest", "pecos-quest/cuda"]
 
 # Decoder backends
 ldpc = ["pecos-decoders", "pecos-decoders/ldpc"]

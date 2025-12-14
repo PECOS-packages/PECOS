@@ -34,8 +34,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ones = measurements.iter().filter(|&&x| x == 3).count();
     println!("Results: |00⟩: {zeros}, |11⟩: {ones}");
 
-    // Demonstrate GPU mode (only works if compiled with --features gpu)
-    #[cfg(feature = "gpu")]
+    // Demonstrate GPU mode (only works if compiled with --features cuda)
+    #[cfg(feature = "cuda")]
     {
         println!("\n==== Quest State Vector Simulation (GPU) ====");
         let results_gpu = sim(program.clone())
@@ -51,10 +51,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Results: |00⟩: {zeros_gpu}, |11⟩: {ones_gpu}");
     }
 
-    #[cfg(not(feature = "gpu"))]
+    #[cfg(not(feature = "cuda"))]
     {
         println!(
-            "\nNote: GPU mode not available. Compile with --features gpu to enable GPU acceleration"
+            "\nNote: GPU mode not available. Compile with --features cuda to enable GPU acceleration"
         );
     }
 

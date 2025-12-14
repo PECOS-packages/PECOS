@@ -61,6 +61,7 @@
 //! Each published crate includes its own `pecos.toml` with the dependencies it needs,
 //! so crates.io users automatically get the correct versions.
 
+pub mod cuda;
 pub mod deps;
 pub mod download;
 pub mod errors;

@@ -71,11 +71,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux x86_64 with CUDA support
           - os: ubuntu-latest
             architecture: x86_64
+            cibw_archs: x86_64
+            cuda_feature: "--features cuda"
+            install_cuda: true
+          # Linux aarch64 without CUDA (CUDA not available for aarch64 in manylinux)
           - os: ubuntu-latest
             architecture: aarch64
             runner: ubuntu-latest
+            cibw_archs: aarch64
+            cuda_feature: ""
+            install_cuda: false
           - os: macos-14
             architecture: aarch64
           - os: macos-15-intel
@@ -98,16 +106,27 @@ jobs:
           # Build configuration
           CIBW_BUILD: "cp310-*"
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux*"
+          CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs }}
           CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
           CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"
-          # Linux configuration
+          # Linux configuration - CUDA support depends on matrix.install_cuda
           CIBW_ENVIRONMENT_LINUX: >
-            PATH=$HOME/.cargo/bin:$HOME/.pecos/llvm/bin:$PATH
+            PATH=$HOME/.cargo/bin:$HOME/.pecos/llvm/bin:$HOME/.pecos/cuda/bin:$PATH
             LLVM_SYS_140_PREFIX=$HOME/.pecos/llvm
+            CUDA_PATH=$HOME/.pecos/cuda
+            MATURIN_PEP517_ARGS="${{ matrix.cuda_feature }}"
           CIBW_BEFORE_ALL_LINUX: |
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
             dnf install libffi-devel -y
+            # Install CUDA Toolkit for GPU support on x86_64 (compile-time only, no GPU needed)
+            if [ "${{ matrix.install_cuda }}" = "true" ]; then
+              echo "Installing CUDA Toolkit for GPU support using pecos-dev..."
+              cargo run --release -p pecos-dev -- cuda install
+              cargo run --release -p pecos-dev -- cuda check
+            else
+              echo "Skipping CUDA installation (GPU support not enabled for this build)"
+            fi
             cargo run --release -p pecos-dev -- llvm install --force
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair -w {dest_dir} {wheel} &&

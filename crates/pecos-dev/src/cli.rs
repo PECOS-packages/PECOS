@@ -93,8 +93,9 @@ pub enum Commands {
         command: DepsCommands,
     },
 
-    /// Show PECOS home directory info and status
-    Info,
+    /// Show system tools and project info
+    #[command(name = "sys-info")]
+    SysInfo,
 
     /// List installed and cached dependencies
     List {
@@ -514,7 +515,7 @@ pub fn run() -> crate::Result<()> {
         Commands::Clean { command } => clean_cmd::run(command),
         Commands::Features { command } => features_cmd::run(command),
         Commands::Deps { command } => manifest_cmd::run(command),
-        Commands::Info => info::run(),
+        Commands::SysInfo => info::run(),
         Commands::List { verbose } => list::run(verbose),
     }
 }

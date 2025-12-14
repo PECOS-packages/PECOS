@@ -481,57 +481,169 @@ fn main() -> Result<(), PecosError> {
     Ok(())
 }
 
-/// Print information about PECOS installation and features
+/// Print information about PECOS installation and capabilities (neofetch style)
 fn print_info() {
-    println!("PECOS - Quantum Error Correction Simulator");
-    println!("Version: {}", env!("CARGO_PKG_VERSION"));
-    println!();
+    use std::io::IsTerminal;
 
-    println!("Compiled Features:");
-    print_feature(
-        "qasm",
-        cfg!(feature = "qasm"),
-        "OpenQASM 2.0 circuit support",
-    );
-    print_feature("phir", cfg!(feature = "phir"), "PHIR/JSON program support");
-    print_feature("selene", cfg!(feature = "selene"), "Selene QIS runtime");
-    print_feature(
-        "wasm",
-        cfg!(feature = "wasm"),
-        "WebAssembly foreign objects",
-    );
-    print_feature("llvm", cfg!(feature = "llvm"), "LLVM/QIS compilation");
-    print_feature("quest", cfg!(feature = "quest"), "QuEST simulator backend");
-    print_feature(
-        "qulacs",
-        cfg!(feature = "qulacs"),
-        "Qulacs simulator backend",
-    );
-    println!();
-
-    println!("Simulators:");
-    println!("  statevector  - Full quantum state simulation (default)");
-    println!("  stabilizer   - Efficient Clifford circuit simulation");
-    println!();
-
-    println!("Noise Models:");
-    println!("  depolarizing - Uniform error probability (default)");
-    println!("  general      - Configurable per-operation error rates");
-    println!();
-
-    println!("Documentation: https://github.com/PECOS-Developers/PECOS");
-
-    // Show hint about pecos-dev if not available
-    if which::which("pecos-dev").is_err() {
-        println!();
-        println!("Tip: Install pecos-dev for additional tools:");
-        println!("  cargo install pecos-dev");
-    }
+    let use_color = std::io::stdout().is_terminal();
+    let info = InfoPrinter::new(use_color);
+    info.print();
 }
 
-fn print_feature(name: &str, enabled: bool, description: &str) {
-    let status = if enabled { "[x]" } else { "[ ]" };
-    println!("  {status} {name:8} - {description}");
+/// Helper for neofetch-style info display
+struct InfoPrinter {
+    use_color: bool,
+}
+
+impl InfoPrinter {
+    fn new(use_color: bool) -> Self {
+        Self { use_color }
+    }
+
+    // ANSI color codes
+    fn cyan(&self, s: &str) -> String {
+        if self.use_color {
+            format!("\x1b[36m{s}\x1b[0m")
+        } else {
+            s.to_string()
+        }
+    }
+
+    fn bold(&self, s: &str) -> String {
+        if self.use_color {
+            format!("\x1b[1m{s}\x1b[0m")
+        } else {
+            s.to_string()
+        }
+    }
+
+    fn green(&self, s: &str) -> String {
+        if self.use_color {
+            format!("\x1b[32m{s}\x1b[0m")
+        } else {
+            s.to_string()
+        }
+    }
+
+    fn red(&self, s: &str) -> String {
+        if self.use_color {
+            format!("\x1b[31m{s}\x1b[0m")
+        } else {
+            s.to_string()
+        }
+    }
+
+    fn dim(&self, s: &str) -> String {
+        if self.use_color {
+            format!("\x1b[2m{s}\x1b[0m")
+        } else {
+            s.to_string()
+        }
+    }
+
+    fn capability(&self, name: &str, enabled: bool) -> (String, bool) {
+        let status = if enabled {
+            self.green("[x]")
+        } else {
+            self.red("[ ]")
+        };
+        (format!("{status} {name}"), !enabled)
+    }
+
+    fn print(&self) {
+        // ASCII art logo (6 lines tall)
+        let logo = [
+            r"  ____  _____ ____ ___  ____  ",
+            r" |  _ \| ____/ ___/ _ \/ ___| ",
+            r" | |_) |  _|| |  | | | \___ \ ",
+            r" |  __/| |__| |__| |_| |___) |",
+            r" |_|   |_____\____\___/|____/ ",
+            r"                              ",
+        ];
+
+        let logo_width = 30;
+        let spacer = "  ";
+
+        // Build info lines
+        let mut info_lines: Vec<String> = Vec::new();
+        let mut has_missing = false;
+
+        // Title and version
+        info_lines.push(self.bold("PECOS - Quantum Error Correction Simulator"));
+        info_lines.push(format!("{} {}", self.cyan("Version:"), env!("CARGO_PKG_VERSION")));
+        info_lines.push(String::new());
+
+        // Program Formats
+        info_lines.push(self.cyan("Program Formats:"));
+        let (line, missing) = self.capability("QASM circuits", cfg!(feature = "qasm"));
+        info_lines.push(format!("  {line}"));
+        has_missing |= missing;
+        let (line, missing) = self.capability("PHIR/JSON programs", cfg!(feature = "phir"));
+        info_lines.push(format!("  {line}"));
+        has_missing |= missing;
+        let (line, missing) = self.capability("QIS programs", cfg!(feature = "llvm"));
+        info_lines.push(format!("  {line}"));
+        has_missing |= missing;
+        info_lines.push(String::new());
+
+        // Simulators
+        info_lines.push(self.cyan("Simulators:"));
+        info_lines.push(format!("  {} StateVector {}", self.green("[x]"), self.dim("(built-in)")));
+        info_lines.push(format!("  {} Stabilizer {}", self.green("[x]"), self.dim("(built-in)")));
+        let (line, missing) = self.capability("QuEST", cfg!(feature = "quest"));
+        info_lines.push(format!("  {line}"));
+        has_missing |= missing;
+        let (line, missing) = self.capability("Qulacs", cfg!(feature = "qulacs"));
+        info_lines.push(format!("  {line}"));
+        has_missing |= missing;
+        info_lines.push(String::new());
+
+        // Noise Models
+        info_lines.push(self.cyan("Noise Models:"));
+        info_lines.push(format!("  {} depolarizing", self.green("[x]")));
+        info_lines.push(format!("  {} general", self.green("[x]")));
+
+        // Print logo alongside info
+        let max_lines = logo.len().max(info_lines.len());
+        for i in 0..max_lines {
+            let logo_line = if i < logo.len() {
+                self.cyan(logo[i])
+            } else {
+                " ".repeat(logo_width)
+            };
+            let info_line = if i < info_lines.len() {
+                &info_lines[i]
+            } else {
+                ""
+            };
+            println!("{logo_line}{spacer}{info_line}");
+        }
+
+        println!();
+        println!(
+            "{}",
+            self.dim("Documentation: https://github.com/PECOS-Developers/PECOS")
+        );
+
+        // Suggest doctor for missing capabilities
+        if has_missing {
+            println!();
+            println!(
+                "{}",
+                self.dim("Tip: Run 'pecos doctor' to learn how to enable missing capabilities.")
+            );
+        }
+
+        // Show hint about pecos-dev if not available
+        if which::which("pecos-dev").is_err() {
+            println!();
+            println!(
+                "{}",
+                self.dim("Tip: Install pecos-dev for additional developer tools:")
+            );
+            println!("  {}", self.dim("cargo install pecos-dev"));
+        }
+    }
 }
 
 /// Run diagnostic checks on PECOS installation
@@ -882,8 +994,8 @@ fn run_external(args: &[OsString]) -> Result<(), PecosError> {
     let subcommand = args[0].to_string_lossy().to_string();
     let remaining_args: Vec<&OsString> = args.iter().skip(1).collect();
 
-    // Known pecos-dev commands
-    let dev_commands = ["llvm", "deps", "info", "clean", "list"];
+    // Known pecos-dev commands (directly forwarded)
+    let dev_commands = ["llvm", "deps", "clean", "list", "sys-info"];
 
     if dev_commands.contains(&subcommand.as_str()) {
         // Try to find pecos-dev binary
@@ -920,11 +1032,11 @@ fn run_external(args: &[OsString]) -> Result<(), PecosError> {
         eprintln!("  compile  Compile a QIS program");
         eprintln!();
         eprintln!("Developer commands (requires pecos-dev):");
-        eprintln!("  llvm     LLVM management");
-        eprintln!("  deps     Dependency manifest management");
-        eprintln!("  info     Show PECOS home directory info");
-        eprintln!("  clean    Clean cached dependencies");
-        eprintln!("  list     List installed dependencies");
+        eprintln!("  llvm      LLVM management");
+        eprintln!("  deps      Dependency manifest management");
+        eprintln!("  sys-info  Show system tools and project info");
+        eprintln!("  clean     Clean cached dependencies");
+        eprintln!("  list      List installed dependencies");
         std::process::exit(1);
     }
 }

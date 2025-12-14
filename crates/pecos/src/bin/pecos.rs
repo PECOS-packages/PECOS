@@ -439,6 +439,13 @@ fn main() -> Result<(), PecosError> {
     // Initialize logger with default "info" level if not specified
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
+    // Intercept help requests to provide dynamic help with pecos-dev commands
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 2 && (args[1] == "--help" || args[1] == "-h" || args[1] == "help") {
+        print_dynamic_help();
+        return Ok(());
+    }
+
     // Note: We let Rayon use its default global thread pool configuration
     // The real fix for TLS segfaults is in the QirLibrary Drop implementation
     // and proper thread pool management in MonteCarloEngine
@@ -799,6 +806,90 @@ fn generate_completions(shell: clap_complete::Shell) {
     generate(shell, &mut cmd, name, &mut std::io::stdout());
 }
 
+/// Print dynamic help that includes pecos-dev commands if available
+fn print_dynamic_help() {
+    use clap::CommandFactory;
+
+    // Get the base help from clap
+    let mut cmd = Cli::command();
+    let mut help_str = Vec::new();
+    cmd.write_help(&mut help_str).unwrap();
+    let help = String::from_utf8_lossy(&help_str);
+
+    // Print the base help
+    print!("{help}");
+
+    // Try to discover pecos-dev commands
+    if let Some(dev_commands) = discover_pecos_dev_commands() {
+        println!();
+        println!("Developer Commands (via pecos-dev):");
+        for (name, description) in dev_commands {
+            println!("  {name:<12} {description}");
+        }
+    } else {
+        println!();
+        println!("Tip: Install pecos-dev for developer tools: cargo install pecos-dev");
+    }
+}
+
+/// Discover available commands from pecos-dev by parsing its help output
+fn discover_pecos_dev_commands() -> Option<Vec<(String, String)>> {
+    let pecos_dev_path = which::which("pecos-dev").ok()?;
+
+    let output = Command::new(&pecos_dev_path).arg("--help").output().ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let help_text = String::from_utf8_lossy(&output.stdout);
+
+    // Parse the commands section from pecos-dev --help
+    // Format is typically:
+    // Commands:
+    //   command-name  Description text [aliases: ...]
+    let mut commands = Vec::new();
+    let mut in_commands_section = false;
+
+    for line in help_text.lines() {
+        if line.trim() == "Commands:" {
+            in_commands_section = true;
+            continue;
+        }
+
+        if in_commands_section {
+            // End of commands section (empty line or Options:)
+            if line.trim().is_empty() || line.trim() == "Options:" {
+                break;
+            }
+
+            // Parse command line: "  name  description [aliases: ...]"
+            let trimmed = line.trim();
+            if let Some((name, rest)) = trimmed.split_once(char::is_whitespace) {
+                let name = name.trim();
+                // Skip the built-in help command
+                if name == "help" {
+                    continue;
+                }
+                // Clean up description (remove alias info for cleaner display)
+                let description = rest.trim();
+                let description = if let Some(idx) = description.find("[aliases:") {
+                    description[..idx].trim()
+                } else {
+                    description
+                };
+                commands.push((name.to_string(), description.to_string()));
+            }
+        }
+    }
+
+    if commands.is_empty() {
+        None
+    } else {
+        Some(commands)
+    }
+}
+
 // ============================================================================
 // Example circuits
 // ============================================================================
@@ -1006,49 +1097,29 @@ fn run_external(args: &[OsString]) -> Result<(), PecosError> {
     let subcommand = args[0].to_string_lossy().to_string();
     let remaining_args: Vec<&OsString> = args.iter().skip(1).collect();
 
-    // Known pecos-dev commands (directly forwarded)
-    let dev_commands = ["llvm", "deps", "clean", "list", "sys-info"];
+    // Try to forward to pecos-dev if available
+    if let Ok(pecos_dev_path) = find_pecos_dev() {
+        debug!("Forwarding '{subcommand}' command to pecos-dev");
 
-    if dev_commands.contains(&subcommand.as_str()) {
-        // Try to find pecos-dev binary
-        if let Ok(pecos_dev_path) = find_pecos_dev() {
-            debug!("Forwarding '{subcommand}' command to pecos-dev");
+        let status = Command::new(&pecos_dev_path)
+            .arg(&subcommand)
+            .args(&remaining_args)
+            .status()
+            .map_err(|e| PecosError::Resource(format!("Failed to execute pecos-dev: {e}")))?;
 
-            let status = Command::new(&pecos_dev_path)
-                .arg(&subcommand)
-                .args(&remaining_args)
-                .status()
-                .map_err(|e| PecosError::Resource(format!("Failed to execute pecos-dev: {e}")))?;
-
-            if !status.success() {
-                std::process::exit(status.code().unwrap_or(1));
-            }
-
-            Ok(())
-        } else {
-            // pecos-dev not found, show helpful message
-            eprintln!("Command '{subcommand}' requires pecos-dev.");
-            eprintln!();
-            eprintln!("Install with:");
-            eprintln!("  cargo install pecos-dev");
-            eprintln!();
-            eprintln!("Or build from source:");
-            eprintln!("  cargo build -p pecos-dev");
-            std::process::exit(1);
+        if !status.success() {
+            std::process::exit(status.code().unwrap_or(1));
         }
+
+        Ok(())
     } else {
+        // pecos-dev not found
         eprintln!("Unknown command: {subcommand}");
         eprintln!();
-        eprintln!("Available commands:");
-        eprintln!("  run      Run a quantum program");
-        eprintln!("  compile  Compile a QIS program");
+        eprintln!("Run 'pecos --help' for available commands.");
         eprintln!();
-        eprintln!("Developer commands (requires pecos-dev):");
-        eprintln!("  llvm      LLVM management");
-        eprintln!("  deps      Dependency manifest management");
-        eprintln!("  sys-info  Show system tools and project info");
-        eprintln!("  clean     Clean cached dependencies");
-        eprintln!("  list      List installed dependencies");
+        eprintln!("Additional developer commands are available via pecos-dev:");
+        eprintln!("  cargo install pecos-dev");
         std::process::exit(1);
     }
 }

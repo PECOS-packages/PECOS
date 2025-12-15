@@ -63,17 +63,12 @@ jobs:
       # Install CUDA Toolkit on Linux for GPU support (compile-time only, no GPU needed)
       - name: Install CUDA Toolkit (Linux)
         if: runner.os == 'Linux'
-        run: |
-          echo "Installing CUDA Toolkit for GPU support using pecos-dev..."
-          cargo run --release -p pecos-dev -- cuda install
-
-          echo "Setting CUDA environment variables..."
-          export CUDA_PATH=$(cargo run -q --release -p pecos-dev -- cuda find 2>/dev/null)
-          echo "CUDA_PATH=$CUDA_PATH" >> $GITHUB_ENV
-          echo "$CUDA_PATH/bin" >> $GITHUB_PATH
-
-          echo "Verifying CUDA installation..."
-          cargo run --release -p pecos-dev -- cuda check
+        uses: Jimver/cuda-toolkit@v0.2.21
+        with:
+          cuda: '12.6.3'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
+          non-cuda-sub-packages: '[]'
 
       - name: Build Selene plugins
         run: |
@@ -183,17 +178,12 @@ jobs:
       # Install CUDA Toolkit on Linux for GPU support (compile-time only, no GPU needed)
       - name: Install CUDA Toolkit (Linux)
         if: runner.os == 'Linux' && matrix.plugin.name == 'pecos-selene-quest'
-        run: |
-          echo "Installing CUDA Toolkit for GPU support using pecos-dev..."
-          cargo run --release -p pecos-dev -- cuda install
-
-          echo "Setting CUDA environment variables..."
-          export CUDA_PATH=$(cargo run -q --release -p pecos-dev -- cuda find 2>/dev/null)
-          echo "CUDA_PATH=$CUDA_PATH" >> $GITHUB_ENV
-          echo "$CUDA_PATH/bin" >> $GITHUB_PATH
-
-          echo "Verifying CUDA installation..."
-          cargo run --release -p pecos-dev -- cuda check
+        uses: Jimver/cuda-toolkit@v0.2.21
+        with:
+          cuda: '12.6.3'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
+          non-cuda-sub-packages: '[]'
 
       - name: Build Rust library
         run: |

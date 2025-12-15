@@ -50,18 +50,13 @@ jobs:
           save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
 
       - name: Install CUDA Toolkit
-        run: |
-          echo "Installing CUDA Toolkit for GPU support (compile-time only, no GPU needed)..."
-          # Use pecos-dev to install CUDA to ~/.pecos/cuda/
-          cargo run --release -p pecos-dev -- cuda install
-
-          echo "Setting CUDA environment variables..."
-          export CUDA_PATH=$(cargo run -q --release -p pecos-dev -- cuda find 2>/dev/null)
-          echo "CUDA_PATH=$CUDA_PATH" >> $GITHUB_ENV
-          echo "$CUDA_PATH/bin" >> $GITHUB_PATH
-
-          echo "Verifying CUDA installation..."
-          cargo run --release -p pecos-dev -- cuda check
+        uses: Jimver/cuda-toolkit@v0.2.21
+        id: cuda-toolkit
+        with:
+          cuda: '12.6.3'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
+          non-cuda-sub-packages: '[]'
 
       - name: Install LLVM 14.0.6 using pecos-llvm
         run: |
@@ -249,18 +244,13 @@ jobs:
 
       - name: Install CUDA Toolkit (Linux)
         if: matrix.os == 'ubuntu-latest'
-        run: |
-          echo "Installing CUDA Toolkit for GPU support (compile-time only, no GPU needed)..."
-          # Use pecos-dev to install CUDA to ~/.pecos/cuda/
-          cargo run --release -p pecos-dev -- cuda install
-
-          echo "Setting CUDA environment variables..."
-          export CUDA_PATH=$(cargo run -q --release -p pecos-dev -- cuda find 2>/dev/null)
-          echo "CUDA_PATH=$CUDA_PATH" >> $GITHUB_ENV
-          echo "$CUDA_PATH/bin" >> $GITHUB_PATH
-
-          echo "Verifying CUDA installation..."
-          cargo run --release -p pecos-dev -- cuda check
+        uses: Jimver/cuda-toolkit@v0.2.21
+        id: cuda-toolkit-test
+        with:
+          cuda: '12.6.3'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
+          non-cuda-sub-packages: '[]'
 
       - name: Compile tests (macOS)
         if: matrix.os == 'macos-latest'

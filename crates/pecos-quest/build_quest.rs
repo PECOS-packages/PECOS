@@ -174,6 +174,9 @@ fn build_gpu_shared_library(cuda_path: &str, quest_dir: &Path, out_dir: &Path) -
             .arg("-DCOMPILE_MPI=0")
             .arg("-DCOMPILE_CUQUANTUM=0")
             .arg("-DFLOAT_PRECISION=2")
+            // Target compute capability 7.5 (Turing) which supports atomicAdd(double*, double)
+            // sm_75 is the minimum supported by both CUDA 12.x and 13.x
+            .arg("-arch=sm_75")
             .arg("-Xcompiler")
             .arg("-fPIC")
             .output()

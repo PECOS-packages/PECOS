@@ -55,8 +55,8 @@ jobs:
         with:
           cuda: '12.6.3'
           method: 'network'
-          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
-          non-cuda-sub-packages: '[]'
+          sub-packages: '["nvcc", "cudart-dev"]'
+          non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
 
       - name: Install LLVM 14.0.6 using pecos-llvm
         run: |
@@ -249,8 +249,8 @@ jobs:
         with:
           cuda: '12.6.3'
           method: 'network'
-          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
-          non-cuda-sub-packages: '[]'
+          sub-packages: '["nvcc", "cudart-dev"]'
+          non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
 
       - name: Compile tests (macOS)
         if: matrix.os == 'macos-latest'

@@ -29,10 +29,9 @@
 
 use anyhow::{Result, anyhow, bail};
 use num_complex::Complex64;
-use pecos_quest::{
-    ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, QuestDensityMatrix,
-    QuestStateVec,
-};
+#[cfg(feature = "cuda")]
+use pecos_quest::QuantumSimulator;
+use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuestDensityMatrix, QuestStateVec};
 use rand_chacha::ChaCha8Rng;
 use selene_core::export_simulator_plugin;
 use selene_core::simulator::SimulatorInterface;
@@ -350,18 +349,18 @@ impl QuestSimulatorInner {
         }
     }
 
+    #[cfg(feature = "cuda")]
     fn is_gpu_accelerated(&self) -> bool {
         match self {
             Self::StateVector(sim) => sim.get_env_info().is_gpu_accelerated,
             Self::DensityMatrix(sim) => sim.get_env_info().is_gpu_accelerated,
-            #[cfg(feature = "cuda")]
             Self::StateVectorGpu(sim) => sim.is_gpu_accelerated(),
-            #[cfg(feature = "cuda")]
             Self::DensityMatrixGpu(sim) => sim.is_gpu_accelerated(),
         }
     }
 
     /// Reinitialize the state to |0...0>
+    #[cfg(feature = "cuda")]
     fn reinit_zero_state(&mut self) {
         match self {
             Self::StateVector(sim) => {
@@ -370,11 +369,9 @@ impl QuestSimulatorInner {
             Self::DensityMatrix(sim) => {
                 sim.reset();
             }
-            #[cfg(feature = "cuda")]
             Self::StateVectorGpu(sim) => unsafe {
                 (sim.backend.init_zero_state)(sim.qureg_handle);
             },
-            #[cfg(feature = "cuda")]
             Self::DensityMatrixGpu(sim) => unsafe {
                 (sim.backend.init_zero_state)(sim.qureg_handle);
             },

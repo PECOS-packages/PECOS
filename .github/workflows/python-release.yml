@@ -185,7 +185,8 @@ jobs:
             --exclude ext-ms-win-ntuser-message-l1-1-0.dll
             --exclude ext-ms-win-ntuser-mouse-l1-1-0.dll
             --exclude ext-ms-win-ntuser-sysparams-ext-l1-1-0.dll
-            --exclude ext-ms-win-ntuser-uicontext-ext-l1-1-0.dll &&
+            --exclude ext-ms-win-ntuser-uicontext-ext-l1-1-0.dll
+            --exclude ext-ms-win-ntuser-private-l1-1-0.dll &&
             pipx run abi3audit --strict --report {wheel}
 
       - name: Upload wheels

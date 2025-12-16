@@ -177,6 +177,8 @@ fn build_gpu_shared_library(cuda_path: &str, quest_dir: &Path, out_dir: &Path) -
             // Target compute capability 7.5 (Turing) which supports atomicAdd(double*, double)
             // sm_75 is the minimum supported by both CUDA 12.x and 13.x
             .arg("-arch=sm_75")
+            // Allow newer GCC versions (e.g., GCC 14 in manylinux_2_28)
+            .arg("-allow-unsupported-compiler")
             .arg("-Xcompiler")
             .arg("-fPIC")
             .output()

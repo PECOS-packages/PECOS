@@ -26,7 +26,9 @@ cuda = ["pecos/cuda"]
 
 [dependencies]
 # Use the pecos metacrate with all features needed for Python bindings
-pecos = { workspace = true, features = ["llvm", "wasm", "selene", "all-simulators"] }
+# Note: default-features=false avoids the "cli" feature which pulls in "which" crate,
+# which depends on "winsafe" on Windows - causing unnecessary DLL dependencies
+pecos = { workspace = true, default-features = false, features = ["qasm", "phir", "llvm", "wasm", "selene", "all-simulators"] }
 
 pyo3 = { workspace=true, features = ["extension-module", "abi3-py310", "generate-import-lib", "num-complex"] }
 ndarray.workspace = true

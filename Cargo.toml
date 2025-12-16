@@ -108,7 +108,7 @@ pecos-engines = { version = "0.1.1", path = "crates/pecos-engines" }
 pecos-phir = { version = "0.1.1", path = "crates/pecos-phir" }
 pecos-qec = { version = "0.1.1", path = "crates/pecos-qec" }
 pecos-rng = { version = "0.1.1", path = "crates/pecos-rng" }
-pecos = { version = "0.1.1", path = "crates/pecos" }
+pecos = { version = "0.1.1", path = "crates/pecos", default-features = false }
 pecos-dev = { version = "0.1.1", path = "crates/pecos-dev", default-features = false }
 pecos-qis-ffi = { version = "0.1.1", path = "crates/pecos-qis-ffi" }
 pecos-qis-ffi-types = { version = "0.1.1", path = "crates/pecos-qis-ffi-types" }

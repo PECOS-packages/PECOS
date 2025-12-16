@@ -176,7 +176,8 @@ jobs:
           CIBW_BEFORE_BUILD_WINDOWS: "pip install delvewheel"
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
             delvewheel repair -w {dest_dir} {wheel}
-            --exclude ext-ms-win-rtcore-ntuser-synch-ext-l1-1-0.dll &&
+            --exclude ext-ms-win-rtcore-ntuser-synch-ext-l1-1-0.dll
+            --exclude ext-ms-win-rtcore-ntuser-window-ext-l1-1-0.dll &&
             pipx run abi3audit --strict --report {wheel}
 
       - name: Upload wheels

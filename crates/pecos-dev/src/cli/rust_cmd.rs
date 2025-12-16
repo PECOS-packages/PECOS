@@ -157,16 +157,27 @@ fn run_check(include_ffi: bool) -> Result<()> {
 
     if include_ffi {
         println!("Checking pecos-rslib...");
-        if !run_cargo_command(&[
-            "check",
-            "-p",
-            "pecos-rslib",
-            "--all-targets",
-            "--all-features",
-        ]) {
-            return Err(Error::Config(
-                "cargo check (pecos-rslib) failed".to_string(),
-            ));
+        // Only use --all-features if CUDA is available, otherwise exclude cuda
+        if cuda_available {
+            if !run_cargo_command(&[
+                "check",
+                "-p",
+                "pecos-rslib",
+                "--all-targets",
+                "--all-features",
+            ]) {
+                return Err(Error::Config(
+                    "cargo check (pecos-rslib) failed".to_string(),
+                ));
+            }
+        } else {
+            let rslib_features = get_features_excluding("pecos-rslib", "cuda")?;
+            let features_arg = format!("--features={rslib_features}");
+            if !run_cargo_command(&["check", "-p", "pecos-rslib", "--all-targets", &features_arg]) {
+                return Err(Error::Config(
+                    "cargo check (pecos-rslib) failed".to_string(),
+                ));
+            }
         }
 
         if is_tool_available("julia") {
@@ -321,13 +332,17 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
 
     if include_ffi {
         println!("Running clippy on pecos-rslib...");
-        let mut args: Vec<&str> = vec![
-            "clippy",
-            "-p",
-            "pecos-rslib",
-            "--all-targets",
-            "--all-features",
-        ];
+        let mut args: Vec<&str> = vec!["clippy", "-p", "pecos-rslib", "--all-targets"];
+        // Only use --all-features if CUDA is available, otherwise exclude cuda
+        if cuda_available {
+            args.push("--all-features");
+        } else {
+            let rslib_features = get_features_excluding("pecos-rslib", "cuda")?;
+            let features_arg_owned = format!("--features={rslib_features}");
+            // Need to leak the string to get a &'static str for the args vec
+            let features_arg: &'static str = Box::leak(features_arg_owned.into_boxed_str());
+            args.push(features_arg);
+        }
         args.extend(&fix_args);
         args.extend(&["--", "-D", "warnings"]);
         if !run_cargo_command(&args) {

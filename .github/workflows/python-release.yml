@@ -111,7 +111,10 @@ jobs:
           CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"
           # Linux configuration - CUDA support depends on matrix.install_cuda
           CIBW_ENVIRONMENT_LINUX: >
-            PATH=$HOME/.cargo/bin:$HOME/.pecos/llvm/bin:/usr/local/cuda-12.6/bin:$PATH
+            PATH=/opt/rh/gcc-toolset-13/root/usr/bin:$HOME/.cargo/bin:$HOME/.pecos/llvm/bin:/usr/local/cuda-12.6/bin:$PATH
+            LD_LIBRARY_PATH=/opt/rh/gcc-toolset-13/root/usr/lib64:/opt/rh/gcc-toolset-13/root/usr/lib:$LD_LIBRARY_PATH
+            CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
+            CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++
             LLVM_SYS_140_PREFIX=$HOME/.pecos/llvm
             CUDA_PATH=/usr/local/cuda-12.6
             MATURIN_PEP517_ARGS="${{ matrix.cuda_feature }}"
@@ -121,6 +124,9 @@ jobs:
             dnf install libffi-devel -y
             # Install CUDA Toolkit for GPU support on x86_64 (compile-time only, no GPU needed)
             if [ "${{ matrix.install_cuda }}" = "true" ]; then
+              echo "Installing GCC 13 (required for CUDA 12.6 compatibility)..."
+              dnf install -y gcc-toolset-13
+              source /opt/rh/gcc-toolset-13/enable
               echo "Installing CUDA Toolkit from NVIDIA repos..."
               dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
               dnf install -y cuda-nvcc-12-6 cuda-cudart-devel-12-6 libcublas-devel-12-6
@@ -128,6 +134,7 @@ jobs:
               export PATH=$CUDA_PATH/bin:$PATH
               echo "CUDA installed at $CUDA_PATH"
               nvcc --version
+              gcc --version
             else
               echo "Skipping CUDA installation (GPU support not enabled for this build)"
             fi

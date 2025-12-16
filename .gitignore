@@ -31,6 +31,10 @@ __pycache__/
 
 # C extensions
 *.so
+*.dylib
+
+# Selene plugin build artifacts
+python/selene-plugins/**/_dist/
 
 # Distribution / packaging
 .Python

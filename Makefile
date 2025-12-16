@@ -138,7 +138,7 @@ build-selene: ## Build and install Selene plugins for development
 	@cargo build --release -p pecos-selene-qulacs -p pecos-selene-sparsestab -p pecos-selene-statevec
 	@# Copy libraries to Python package directories (cross-platform via pecos-dev)
 	@echo "Copying libraries to Python packages..."
-	@cargo run -q -p pecos-dev -- selene install
+	@cargo run -p pecos-dev -- selene install
 	@# Install Python packages in editable mode
 	@echo "Installing Selene plugins in editable mode..."
 	@$(UNSET_CONDA) uv pip install -e ./python/selene-plugins/pecos-selene-quest
@@ -209,7 +209,7 @@ docs-test-working:  ## Test only working code examples in documentation
 # Rust check, clippy, fmt - use pecos-dev for CUDA-aware handling
 .PHONY: check
 check:  ## Run cargo check (with GPU features only if CUDA available)
-	@cargo run -q -p pecos-dev -- rust check --include-ffi
+	@cargo run -p pecos-dev -- rust check --include-ffi
 
 .PHONY: clippy
 clippy:  ## Run cargo clippy (with GPU features only if CUDA available)
@@ -223,7 +223,7 @@ fmt: ## Check Rust formatting (without fixing)
 
 .PHONY: fmt-fix
 fmt-fix: ## Fix Rust formatting issues
-	@cargo run -q -p pecos-dev -- rust fmt
+	@cargo run -p pecos-dev -- rust fmt
 
 .PHONY: lint
 lint: fmt clippy  ## Run all quality checks / linting / reformatting (check only)
@@ -255,8 +255,8 @@ normalize-line-endings:  ## Normalize line endings according to .gitattributes
 .PHONY: lint-fix
 lint-fix:  ## Fix all auto-fixable linting issues (Rust, Python, Julia, Go)
 	@echo "Fixing Rust formatting and clippy issues..."
-	@cargo run -q -p pecos-dev -- rust fmt
-	@cargo run -q -p pecos-dev -- rust clippy --fix --include-ffi
+	@cargo run -p pecos-dev -- rust fmt
+	@cargo run -p pecos-dev -- rust clippy --fix --include-ffi
 	@echo ""
 	@echo "Running pre-commit fixes..."
 	uv run pre-commit run --all-files || true
@@ -523,12 +523,12 @@ go-lint: ## Run Go linting with go vet
 .PHONY: clean-selene-plugins
 clean-selene-plugins:  ## Clean Selene plugin build artifacts
 	@# Clean _dist directories and venv installations (cross-platform via pecos-dev)
-	@cargo run -q -p pecos-dev -- selene clean --venv || true
+	@cargo run -p pecos-dev -- selene clean --venv || true
 
 .PHONY: clean
 clean: clean-selene-plugins clean-cache  ## Clean up project artifacts + ~/.pecos/cache/ and tmp/
 	@# Cross-platform build artifact cleaning via pecos-dev
-	@cargo run -q -p pecos-dev -- clean build
+	@cargo run -p pecos-dev -- clean build
 
 # PECOS Home Directory Cleanup
 # ----------------------------
@@ -537,20 +537,20 @@ clean: clean-selene-plugins clean-cache  ## Clean up project artifacts + ~/.peco
 
 .PHONY: clean-cache
 clean-cache:  ## Clean ~/.pecos/cache/ and ~/.pecos/tmp/ (downloaded archives and temp files)
-	@cargo run -q -p pecos-dev -- clean cache
+	@cargo run -p pecos-dev -- clean cache
 
 .PHONY: clean-deps
 clean-deps:  ## Clean ~/.pecos/deps/, cache/, and tmp/ (extracted C++ dependencies)
-	@cargo run -q -p pecos-dev -- clean all
+	@cargo run -p pecos-dev -- clean all
 
 .PHONY: clean-llvm
 clean-llvm:  ## Clean ~/.pecos/llvm/ (LLVM installation - large, slow to reinstall)
-	@cargo run -q -p pecos-dev -- clean all --include-llvm
+	@cargo run -p pecos-dev -- clean all --include-llvm
 	@echo "Run 'make install-llvm' to reinstall LLVM"
 
 .PHONY: clean-cuda
 clean-cuda:  ## Clean ~/.pecos/cuda/ (CUDA installation - large, slow to reinstall)
-	@cargo run -q -p pecos-dev -- clean cuda
+	@cargo run -p pecos-dev -- clean cuda
 	@echo "Run 'make install-cuda' to reinstall CUDA"
 
 .PHONY: clean-all

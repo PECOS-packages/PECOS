@@ -174,8 +174,25 @@ jobs:
             echo "=== Verifying LLVM_SYS_140_PREFIX ===" &&
             echo "LLVM_SYS_140_PREFIX will be set to: C:\\Users\\runneradmin\\.pecos\\llvm"
           CIBW_BEFORE_BUILD_WINDOWS: "pip install delvewheel"
+          # Note: ext-ms-* DLLs are Windows API Sets (virtual DLLs resolved at runtime).
+          # They come from the 'console' crate (via hugr-llvm -> insta -> console)
+          # which uses Windows UI APIs for terminal handling.
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
-            delvewheel repair -w {dest_dir} {wheel} &&
+            delvewheel repair -w {dest_dir} {wheel}
+            --exclude ext-ms-win-rtcore-ntuser-synch-ext-l1-1-0.dll
+            --exclude ext-ms-win-rtcore-ntuser-window-ext-l1-1-0.dll
+            --exclude ext-ms-win-ntuser-misc-l1-1-0.dll
+            --exclude ext-ms-win-ntuser-keyboard-l1-1-0.dll
+            --exclude ext-ms-win-ntuser-message-l1-1-0.dll
+            --exclude ext-ms-win-ntuser-mouse-l1-1-0.dll
+            --exclude ext-ms-win-ntuser-sysparams-ext-l1-1-0.dll
+            --exclude ext-ms-win-ntuser-uicontext-ext-l1-1-0.dll
+            --exclude ext-ms-win-ntuser-private-l1-1-0.dll
+            --exclude ext-ms-win-ntuser-windowstation-l1-1-0.dll
+            --exclude ext-ms-win-ntuser-draw-l1-1-0.dll
+            --exclude ext-ms-win-ntuser-gui-l1-1-0.dll
+            --exclude ext-ms-win-ntuser-dialogbox-l1-1-0.dll
+            --exclude ext-ms-win-ntuser-window-l1-1-0.dll &&
             pipx run abi3audit --strict --report {wheel}
 
       - name: Upload wheels

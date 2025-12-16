@@ -96,18 +96,29 @@ fn parse_features_from_metadata(json: &str, package: &str) -> Result<BTreeSet<St
     let mut features = BTreeSet::new();
 
     // First, find the "packages" array to search within
-    let Some(packages_start) = json.find("\"packages\":[") else {
+    // Handle both "packages":[...] and "packages": [...] (with optional space)
+    let packages_start = json
+        .find("\"packages\":[")
+        .or_else(|| json.find("\"packages\": ["));
+    let Some(packages_start) = packages_start else {
         return Err(Error::Config(
             "No packages array in cargo metadata".to_string(),
         ));
     };
 
-    // Find the package section - look for "name":"package" pattern with proper boundary
-    // The pattern should match "name":"package" followed by ", or "}
-    let package_pattern = format!("\"name\":\"{package}\"");
-
     // Search within the packages array
     let packages_section = &json[packages_start..];
+
+    // Find the package section - look for "name":"package" pattern with proper boundary
+    // The pattern should match "name":"package" or "name": "package" followed by ", or "}
+    // Try both with and without space after the colon
+    let package_pattern_no_space = format!("\"name\":\"{package}\"");
+    let package_pattern_space = format!("\"name\": \"{package}\"");
+    let package_pattern = if packages_section.contains(&package_pattern_no_space) {
+        package_pattern_no_space
+    } else {
+        package_pattern_space
+    };
 
     // Find the correct occurrence by checking the character after the match
     let mut search_from = 0;
@@ -127,10 +138,13 @@ fn parse_features_from_metadata(json: &str, package: &str) -> Result<BTreeSet<St
                 // Also verify this looks like a package (has "version": nearby, not "req":)
                 let context_end = (abs_pos + 200).min(packages_section.len());
                 let context = &packages_section[abs_pos..context_end];
-                // Package definitions have "version": near the start, deps have "req":
-                if context.contains("\"version\":")
-                    && !context[..50.min(context.len())].contains("\"req\":")
-                {
+                // Package definitions have "version": or "version" : near the start, deps have "req":
+                let has_version =
+                    context.contains("\"version\":") || context.contains("\"version\": ");
+                let context_start = &context[..50.min(context.len())];
+                let has_req =
+                    context_start.contains("\"req\":") || context_start.contains("\"req\": ");
+                if has_version && !has_req {
                     break abs_pos;
                 }
             }
@@ -170,13 +184,18 @@ fn parse_features_from_metadata(json: &str, package: &str) -> Result<BTreeSet<St
     let package_json = &package_obj[..obj_end];
 
     // Find the features object within this package
-    let Some(features_start) = package_json.find("\"features\":{") else {
+    // Handle both "features":{...} and "features": {...} (with optional space)
+    let (features_start, skip_len) = if let Some(pos) = package_json.find("\"features\":{") {
+        (pos, 12) // Skip "\"features\":{"
+    } else if let Some(pos) = package_json.find("\"features\": {") {
+        (pos, 13) // Skip "\"features\": {"
+    } else {
         // Package has no features
         return Ok(features);
     };
 
     // Extract the features object content
-    let features_section = &package_json[features_start + 12..]; // Skip "\"features\":{"
+    let features_section = &package_json[features_start + skip_len..];
 
     // Find matching closing brace
     let mut depth = 1;

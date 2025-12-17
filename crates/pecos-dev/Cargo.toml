@@ -51,5 +51,8 @@ log.workspace = true
 serde = { workspace = true, features = ["derive"] }
 toml = "0.8"
 
+# Cargo metadata parsing
+cargo_metadata.workspace = true
+
 [lints]
 workspace = true

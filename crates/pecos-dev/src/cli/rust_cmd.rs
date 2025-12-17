@@ -54,8 +54,9 @@ fn get_features_excluding(package: &str, exclude: &str) -> Result<String> {
         .map_err(|e| Error::Config(format!("Failed to get features for {package}: {e}")))?;
 
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(Error::Config(format!(
-            "Failed to get features for {package}"
+            "Failed to get features for {package}: {stderr}"
         )));
     }
 

@@ -2,6 +2,8 @@
 
 use crate::Result;
 use crate::errors::Error;
+use cargo_metadata::MetadataCommand;
+use std::collections::BTreeSet;
 use std::process::Command;
 
 /// FFI crates that should be excluded from workspace-wide cargo commands
@@ -35,32 +37,31 @@ fn is_tool_available(tool: &str) -> bool {
 }
 
 /// Get features for a package excluding certain features
+///
+/// Uses `cargo_metadata` directly instead of spawning a subprocess to avoid
+/// Windows file locking issues (running executable can't be replaced).
 fn get_features_excluding(package: &str, exclude: &str) -> Result<String> {
-    let output = Command::new("cargo")
-        .args([
-            "run",
-            "-q",
-            "-p",
-            "pecos-dev",
-            "--",
-            "features",
-            "list",
-            "--package",
-            package,
-            "--exclude",
-            exclude,
-        ])
-        .output()
-        .map_err(|e| Error::Config(format!("Failed to get features for {package}: {e}")))?;
+    let metadata = MetadataCommand::new()
+        .no_deps()
+        .exec()
+        .map_err(|e| Error::Config(format!("Failed to get cargo metadata: {e}")))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(Error::Config(format!(
-            "Failed to get features for {package}: {stderr}"
-        )));
-    }
+    let pkg = metadata
+        .packages
+        .iter()
+        .find(|p| p.name == package)
+        .ok_or_else(|| Error::Config(format!("Package '{package}' not found in workspace")))?;
 
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    let exclusions: BTreeSet<&str> = exclude.split(',').map(str::trim).collect();
+
+    let features: Vec<&str> = pkg
+        .features
+        .keys()
+        .map(String::as_str)
+        .filter(|f| !exclusions.contains(f))
+        .collect();
+
+    Ok(features.join(","))
 }
 
 /// Run a cargo command and return success status

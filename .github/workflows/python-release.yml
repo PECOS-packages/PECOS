@@ -71,12 +71,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64 with CUDA support
+          # Linux x86_64 with CUDA support (uses GCC Toolset 13 for CUDA compatibility)
           - os: ubuntu-latest
             architecture: x86_64
             cibw_archs: x86_64
             cuda_feature: "--features cuda"
             install_cuda: true
+            # GCC Toolset 13 paths for CUDA compatibility
+            gcc_path_prefix: "/opt/rh/gcc-toolset-13/root/usr/bin:"
+            gcc_ld_path: "/opt/rh/gcc-toolset-13/root/usr/lib64:/opt/rh/gcc-toolset-13/root/usr/lib:"
+            gcc_cc: "/opt/rh/gcc-toolset-13/root/usr/bin/gcc"
+            gcc_cxx: "/opt/rh/gcc-toolset-13/root/usr/bin/g++"
           # Linux aarch64 without CUDA - use native ARM runner for faster builds
           - os: ubuntu-24.04-arm
             architecture: aarch64
@@ -84,18 +89,41 @@ jobs:
             cibw_archs: aarch64
             cuda_feature: ""
             install_cuda: false
+            # No GCC Toolset on ARM, use system defaults
+            gcc_path_prefix: ""
+            gcc_ld_path: ""
+            gcc_cc: ""
+            gcc_cxx: ""
+          # macOS without CUDA (NVIDIA dropped macOS CUDA support in 2019)
           - os: macos-14
             architecture: aarch64
+            cuda_feature: ""
+            install_cuda: false
           - os: macos-15-intel
             architecture: x86_64
+            cuda_feature: ""
+            install_cuda: false
+          # Windows x86_64 with CUDA support
           - os: windows-2022
             architecture: x86_64
+            cuda_feature: "--features cuda"
+            install_cuda: true
 
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.sha || github.sha }}
           submodules: recursive
+
+      # Install CUDA on Windows before cibuildwheel (cibuildwheel runs on host, not in containers)
+      - name: Install CUDA Toolkit (Windows)
+        if: runner.os == 'Windows' && matrix.install_cuda
+        uses: Jimver/cuda-toolkit@v0.2.21
+        with:
+          cuda: '12.6.3'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart-dev"]'
+          non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.2.1
@@ -109,12 +137,10 @@ jobs:
           CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs }}
           CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
           CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"
-          # Linux configuration - CUDA support depends on matrix.install_cuda
+          # Linux configuration - GCC Toolset and CUDA paths are conditional via matrix variables
           CIBW_ENVIRONMENT_LINUX: >
-            PATH=/opt/rh/gcc-toolset-13/root/usr/bin:$HOME/.cargo/bin:$HOME/.pecos/llvm/bin:/usr/local/cuda-12.6/bin:$PATH
-            LD_LIBRARY_PATH=/opt/rh/gcc-toolset-13/root/usr/lib64:/opt/rh/gcc-toolset-13/root/usr/lib:$LD_LIBRARY_PATH
-            CC=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
-            CXX=/opt/rh/gcc-toolset-13/root/usr/bin/g++
+            PATH=${{ matrix.gcc_path_prefix }}$HOME/.cargo/bin:$HOME/.pecos/llvm/bin:/usr/local/cuda-12.6/bin:$PATH
+            LD_LIBRARY_PATH=${{ matrix.gcc_ld_path }}$LD_LIBRARY_PATH
             LLVM_SYS_140_PREFIX=$HOME/.pecos/llvm
             CUDA_PATH=/usr/local/cuda-12.6
             MATURIN_PEP517_ARGS="${{ matrix.cuda_feature }}"
@@ -160,10 +186,11 @@ jobs:
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
             PATH=$HOME/.pecos/bin:$PATH DYLD_LIBRARY_PATH=$HOME/.pecos/llvm/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} &&
             pipx run abi3audit --strict --report {wheel}
-          # Windows configuration
+          # Windows configuration - CUDA support via Jimver/cuda-toolkit action (installed before cibuildwheel)
           CIBW_ENVIRONMENT_WINDOWS: >
             PATH="C:\\Users\\runneradmin\\.pecos\\llvm\\bin;$PATH"
             LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\llvm"
+            MATURIN_PEP517_ARGS="${{ matrix.cuda_feature }}"
           CIBW_BEFORE_ALL_WINDOWS: >
             echo "=== Installing LLVM using pecos-dev ===" &&
             rustup update &&

@@ -24,7 +24,7 @@ const LLVM_CHECKSUMS: &[(&str, &str)] = &[
     ),
     (
         "clang+llvm-14.0.6-aarch64-linux-gnu.tar.xz",
-        "7412026be8bb8f6b4c25ef58c7a1f78ed5ea039d94f0fa633a386de9c60a6942",
+        "1a81fda984f5e607584916fdf69cf41e5385b219b983544d2c1a14950d5a65cf",
     ),
     (
         "LLVM-14.0.6-win64.7z",

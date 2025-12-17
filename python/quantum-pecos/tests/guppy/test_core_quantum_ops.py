@@ -131,7 +131,10 @@ class TestSingleQubitGates:
             h(q)
             return measure(q)
 
-        results = sim(Guppy(h_test)).qubits(10).quantum(state_vector()).run(10)
+        # Use more shots and fixed seed for stability
+        results = (
+            sim(Guppy(h_test)).qubits(10).quantum(state_vector()).seed(42).run(100)
+        )
         # Should see both 0 and 1
         measurements = results.get(
             "measurements",

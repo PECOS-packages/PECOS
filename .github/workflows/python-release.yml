@@ -77,10 +77,10 @@ jobs:
             cibw_archs: x86_64
             cuda_feature: "--features cuda"
             install_cuda: true
-          # Linux aarch64 without CUDA (CUDA not available for aarch64 in manylinux)
-          - os: ubuntu-latest
+          # Linux aarch64 without CUDA - use native ARM runner for faster builds
+          - os: ubuntu-24.04-arm
             architecture: aarch64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04-arm
             cibw_archs: aarch64
             cuda_feature: ""
             install_cuda: false

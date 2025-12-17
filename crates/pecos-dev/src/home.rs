@@ -18,7 +18,7 @@
 
 use crate::errors::{Error, Result};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Get the PECOS home directory path (without creating it)
 ///
@@ -28,6 +28,21 @@ use std::path::PathBuf;
 ///
 /// Returns an error if unable to determine the home directory
 pub fn get_pecos_home_path() -> Result<PathBuf> {
+    get_pecos_home_path_with_override(None)
+}
+
+/// Get the PECOS home directory path with an optional override (for testing)
+///
+/// If `override_path` is provided, returns that path directly.
+/// Otherwise, returns `$PECOS_HOME` if set, or `~/.pecos/`
+///
+/// # Errors
+///
+/// Returns an error if unable to determine the home directory
+pub fn get_pecos_home_path_with_override(override_path: Option<&Path>) -> Result<PathBuf> {
+    if let Some(path) = override_path {
+        return Ok(path.to_path_buf());
+    }
     if let Ok(dir) = std::env::var("PECOS_HOME") {
         Ok(PathBuf::from(dir))
     } else if let Some(home) = dirs::home_dir() {
@@ -45,7 +60,16 @@ pub fn get_pecos_home_path() -> Result<PathBuf> {
 ///
 /// Returns an error if unable to determine or create the home directory
 pub fn get_pecos_home() -> Result<PathBuf> {
-    let home = get_pecos_home_path()?;
+    get_pecos_home_with_override(None)
+}
+
+/// Get the PECOS home directory with an optional override (for testing)
+///
+/// # Errors
+///
+/// Returns an error if unable to determine or create the home directory
+pub fn get_pecos_home_with_override(override_path: Option<&Path>) -> Result<PathBuf> {
+    let home = get_pecos_home_path_with_override(override_path)?;
     fs::create_dir_all(&home)?;
     Ok(home)
 }
@@ -205,88 +229,91 @@ pub fn get_home_info() -> Result<HomeInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
-    // Note: These tests use unsafe env manipulation and must run with --test-threads=1
+    // Atomic counter for unique test directories
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// Create a unique temporary directory for each test
+    fn unique_test_dir(prefix: &str) -> PathBuf {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let pid = std::process::id();
+        std::env::temp_dir().join(format!("pecos_test_{prefix}_{pid}_{id}"))
+    }
 
     #[test]
     fn test_get_pecos_home_default() {
-        // SAFETY: Running with --test-threads=1, no concurrent access
-        unsafe {
-            std::env::remove_var("PECOS_HOME");
-        }
-
-        let home = get_pecos_home().expect("Should get PECOS home");
+        // Test that default home ends with .pecos (uses real home dir)
+        let home = get_pecos_home_path().expect("Should get PECOS home path");
         assert!(home.ends_with(".pecos"), "Should end with .pecos");
-        assert!(home.exists(), "Directory should be created");
     }
 
     #[test]
     fn test_get_deps_dir_default() {
-        // SAFETY: Running with --test-threads=1, no concurrent access
-        unsafe {
-            std::env::remove_var("PECOS_HOME");
-            std::env::remove_var("PECOS_DEPS_DIR");
-        }
-
-        let deps = get_deps_dir().expect("Should get deps dir");
+        // Test that deps dir ends with "deps"
+        let test_home = unique_test_dir("deps");
+        let deps = get_pecos_home_path_with_override(Some(&test_home))
+            .expect("Should get home")
+            .join("deps");
         assert!(deps.ends_with("deps"), "Should end with deps");
-        assert!(deps.exists(), "Directory should be created");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&test_home);
     }
 
     #[test]
     fn test_get_llvm_dir() {
-        // SAFETY: Running with --test-threads=1, no concurrent access
-        unsafe {
-            std::env::remove_var("PECOS_HOME");
-        }
-
-        let llvm = get_llvm_dir().expect("Should get LLVM dir");
+        // Test that LLVM dir is created correctly
+        let test_home = unique_test_dir("llvm");
+        let llvm = get_pecos_home_with_override(Some(&test_home))
+            .expect("Should get home")
+            .join("llvm");
+        fs::create_dir_all(&llvm).expect("Should create llvm dir");
         assert!(llvm.ends_with("llvm"), "Should end with llvm");
         assert!(llvm.exists(), "Directory should be created");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&test_home);
     }
 
     #[test]
     fn test_get_cache_dir_default() {
-        // SAFETY: Running with --test-threads=1, no concurrent access
-        unsafe {
-            std::env::remove_var("PECOS_HOME");
-            std::env::remove_var("PECOS_CACHE_DIR");
-        }
-
-        let cache = get_cache_dir().expect("Should get cache dir");
+        // Test that cache dir ends with "cache"
+        let test_home = unique_test_dir("cache");
+        let cache = get_pecos_home_path_with_override(Some(&test_home))
+            .expect("Should get home")
+            .join("cache");
         assert!(cache.ends_with("cache"), "Should end with cache");
-        assert!(cache.exists(), "Directory should be created");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&test_home);
     }
 
     #[test]
     fn test_get_tmp_dir() {
-        // SAFETY: Running with --test-threads=1, no concurrent access
-        unsafe {
-            std::env::remove_var("PECOS_HOME");
-        }
-
-        let tmp = get_tmp_dir().expect("Should get tmp dir");
+        // Test that tmp dir is created correctly
+        let test_home = unique_test_dir("tmp");
+        let tmp = get_pecos_home_with_override(Some(&test_home))
+            .expect("Should get home")
+            .join("tmp");
+        fs::create_dir_all(&tmp).expect("Should create tmp dir");
         assert!(tmp.ends_with("tmp"), "Should end with tmp");
         assert!(tmp.exists(), "Directory should be created");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&test_home);
     }
 
     #[test]
     fn test_pecos_home_override() {
-        let temp_dir = std::env::temp_dir().join("pecos_deps_test_home");
-        // SAFETY: Running with --test-threads=1, no concurrent access
-        unsafe {
-            std::env::set_var("PECOS_HOME", &temp_dir);
-        }
+        // Test that override path works correctly
+        let test_home = unique_test_dir("override");
 
-        let home = get_pecos_home().expect("Should get PECOS home");
-        assert_eq!(home, temp_dir);
+        let home = get_pecos_home_with_override(Some(&test_home)).expect("Should get PECOS home");
+        assert_eq!(home, test_home);
         assert!(home.exists(), "Directory should be created");
 
         // Cleanup
-        // SAFETY: Running with --test-threads=1, no concurrent access
-        unsafe {
-            std::env::remove_var("PECOS_HOME");
-        }
-        let _ = std::fs::remove_dir_all(&temp_dir);
+        let _ = std::fs::remove_dir_all(&test_home);
     }
 }

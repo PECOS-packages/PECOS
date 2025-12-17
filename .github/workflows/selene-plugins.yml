@@ -64,7 +64,7 @@ jobs:
       # CUDA is supported on Linux and Windows, but NOT on macOS (NVIDIA dropped support in 2019)
       - name: Install CUDA Toolkit (Linux/Windows)
         if: runner.os == 'Linux' || runner.os == 'Windows'
-        uses: Jimver/cuda-toolkit@v0.2.21
+        uses: Jimver/cuda-toolkit@v0.2.29
         with:
           cuda: '12.6.3'
           method: 'network'
@@ -186,7 +186,7 @@ jobs:
       # CUDA is supported on Linux and Windows, but NOT on macOS (NVIDIA dropped support in 2019)
       - name: Install CUDA Toolkit (Linux/Windows)
         if: (runner.os == 'Linux' || runner.os == 'Windows') && matrix.plugin.name == 'pecos-selene-quest'
-        uses: Jimver/cuda-toolkit@v0.2.21
+        uses: Jimver/cuda-toolkit@v0.2.29
         with:
           cuda: '12.6.3'
           method: 'network'

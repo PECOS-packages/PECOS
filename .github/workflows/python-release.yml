@@ -118,7 +118,7 @@ jobs:
       # Install CUDA on Windows before cibuildwheel (cibuildwheel runs on host, not in containers)
       - name: Install CUDA Toolkit (Windows)
         if: runner.os == 'Windows' && matrix.install_cuda
-        uses: Jimver/cuda-toolkit@v0.2.21
+        uses: Jimver/cuda-toolkit@v0.2.29
         with:
           cuda: '12.6.3'
           method: 'network'

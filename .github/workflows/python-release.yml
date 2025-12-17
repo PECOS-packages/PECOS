@@ -177,19 +177,7 @@ jobs:
           # (delvewheel ignores api-ms-win-* but not ext-ms-win-* which are also Windows API sets)
           CIBW_BEFORE_BUILD_WINDOWS: >
             pip install delvewheel &&
-            python -c "
-            import delvewheel._dll_list as d
-            import inspect
-            path = inspect.getfile(d)
-            content = open(path).read()
-            if 'ext-.*' not in content:
-                content = content.replace(
-                    \"re.compile('api-.*'),  # let Windows handle API sets\",
-                    \"re.compile('api-.*'),  # let Windows handle API sets\\n    re.compile('ext-.*'),  # let Windows handle extension API sets\"
-                )
-                open(path, 'w').write(content)
-                print('Patched delvewheel to ignore ext-ms-win-* DLLs')
-            "
+            python -c "import delvewheel._dll_list as d; import inspect; p=inspect.getfile(d); c=open(p).read(); open(p,'w').write(c.replace(\"re.compile('api-.*'),\",\"re.compile('api-.*'),\\n    re.compile('ext-.*'),\")) if 'ext-.*' not in c else None; print('Patched delvewheel' if 'ext-.*' not in c else 'Already patched')"
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
             delvewheel repair -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}

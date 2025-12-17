@@ -3,7 +3,7 @@ use pecos::DynamicEngineBuilder;
 #[cfg(feature = "phir")]
 use pecos::phir_json_engine;
 use pecos::prelude::*;
-#[cfg(all(feature = "llvm", feature = "selene"))]
+#[cfg(feature = "llvm")]
 use pecos::{helios_interface_builder, qis_engine, selene_simple_runtime};
 use std::path::Path;
 
@@ -37,7 +37,7 @@ pub fn setup_cli_engine(
         ProgramType::QIS => {
             debug!("Setting up QIS engine");
 
-            #[cfg(all(feature = "llvm", feature = "selene"))]
+            #[cfg(feature = "llvm")]
             {
                 let qis_program = Qis::from_file(program_path)?;
 
@@ -54,14 +54,6 @@ pub fn setup_cli_engine(
                     .build()?;
 
                 Ok(Box::new(engine))
-            }
-            #[cfg(all(feature = "llvm", not(feature = "selene")))]
-            {
-                Err(PecosError::Input(
-                    "Selene support is required for QIS programs but not compiled in.\n\
-                     Please rebuild with --features selene"
-                        .to_string(),
-                ))
             }
             #[cfg(not(feature = "llvm"))]
             {
@@ -98,7 +90,7 @@ pub fn setup_cli_engine_builder(
     match program_type {
         ProgramType::QIS => {
             debug!("Setting up QIS engine builder");
-            #[cfg(all(feature = "llvm", feature = "selene"))]
+            #[cfg(feature = "llvm")]
             {
                 let qis_program = Qis::from_file(program_path)?;
 
@@ -114,14 +106,6 @@ pub fn setup_cli_engine_builder(
                     .try_program(qis_program)?;
 
                 Ok(DynamicEngineBuilder::new(engine_builder))
-            }
-            #[cfg(all(feature = "llvm", not(feature = "selene")))]
-            {
-                Err(PecosError::Input(
-                    "Selene support is required for QIS programs but not compiled in.\n\
-                     Please rebuild with --features selene"
-                        .to_string(),
-                ))
             }
             #[cfg(not(feature = "llvm"))]
             {

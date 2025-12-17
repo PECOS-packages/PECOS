@@ -62,15 +62,16 @@ pecos-decoders = { workspace = true, optional = true }
 default = ["qasm", "phir", "wasm", "cli"]
 
 # CLI binary (included in default for easy `cargo install pecos`)
-cli = ["dep:clap", "dep:clap_complete", "dep:env_logger", "dep:which", "qasm", "phir", "selene"]
+cli = ["dep:clap", "dep:clap_complete", "dep:env_logger", "dep:which", "qasm", "phir"]
 
 # Program formats
 qasm = []
 phir = []
 
 # Heavy external dependencies
-llvm = ["pecos-qis-core/llvm", "pecos-llvm", "pecos-hugr-qis", "pecos-hugr-qis?/llvm"]
-selene = ["pecos-qis-selene"]
+# llvm: Enables LLVM-based infrastructure (Selene runtime, HUGR compilation, QIS execution)
+llvm = ["pecos-qis-core/llvm", "pecos-llvm", "pecos-hugr-qis", "pecos-hugr-qis/llvm",
+        "pecos-qis-selene", "pecos-qis-selene/hugr"]
 wasm = ["pecos-wasm", "pecos-wasm/wasm"]
 
 # Quantum simulator backends (C++ wrappers)
@@ -87,7 +88,7 @@ ldpc = ["pecos-decoders", "pecos-decoders/ldpc"]
 all-decoders = ["ldpc"]
 
 # Everything
-full = ["all-simulators", "all-decoders", "llvm", "selene", "wasm"]
+full = ["all-simulators", "all-decoders", "llvm", "wasm"]
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -703,7 +703,7 @@ fn run_doctor() {
     }
 
     // Check 4: Selene runtime
-    let selene_ok = cfg!(feature = "selene");
+    let selene_ok = cfg!(feature = "llvm");
     print_check(
         "Selene runtime",
         selene_ok,

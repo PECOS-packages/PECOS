@@ -80,7 +80,7 @@ pub use pecos_qsim::prelude::*;
 pub use pecos_qis_core::prelude::*;
 
 // Re-export Selene QIS interface when feature is enabled
-#[cfg(feature = "selene")]
+#[cfg(feature = "llvm")]
 pub use pecos_qis_selene::prelude::*;
 
 // Re-export program types prelude

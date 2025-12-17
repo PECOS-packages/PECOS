@@ -16,8 +16,10 @@ categories.workspace = true
 crate-type = ["rlib"]
 
 [features]
-default = ["hugr", "selene-runtimes"]
-hugr = ["pecos-hugr-qis"]
+default = ["selene-runtimes"]
+# HUGR compilation requires LLVM - enables compiling HUGR programs to QIS
+hugr = ["llvm", "pecos-hugr-qis", "pecos-hugr-qis?/llvm"]
+llvm = ["pecos-qis-core/llvm"]
 selene-runtimes = ["selene-simple-runtime", "selene-soft-rz-runtime"]
 
 [dependencies]
@@ -25,8 +27,8 @@ pecos-core.workspace = true
 pecos-programs.workspace = true
 pecos-qis-ffi-types.workspace = true
 pecos-qis-ffi.workspace = true  # Ensures cdylib gets built for runtime dlopen
-pecos-qis-core = { workspace = true, features = ["llvm"] }
-pecos-hugr-qis = { workspace = true, optional = true, features = ["llvm"] }
+pecos-qis-core.workspace = true
+pecos-hugr-qis = { workspace = true, optional = true }
 log.workspace = true
 libloading.workspace = true
 tempfile.workspace = true

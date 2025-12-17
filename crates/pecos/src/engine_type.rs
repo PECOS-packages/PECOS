@@ -232,7 +232,7 @@ impl DynamicEngineBuilder {
     ///
     /// This creates a default builder for the specified engine type.
     /// You'll need to configure it further with engine-specific methods.
-    #[cfg(all(feature = "qasm", feature = "llvm", feature = "selene"))]
+    #[cfg(all(feature = "qasm", feature = "llvm", feature = "llvm"))]
     #[must_use]
     pub fn from_type(engine_type: EngineType) -> Self {
         match engine_type {
@@ -333,12 +333,12 @@ macro_rules! create_engine_builder {
                 }
             }
             $crate::EngineType::Selene => {
-                #[cfg(feature = "selene")]
+                #[cfg(feature = "llvm")]
                 {
                     // Selene removed - use QIS control engine instead
                     $crate::DynamicEngineBuilder::new(pecos_qis_core::qis_engine())
                 }
-                #[cfg(not(feature = "selene"))]
+                #[cfg(not(feature = "llvm"))]
                 {
                     panic!("Selene engine not available. Enable the 'selene' feature.")
                 }

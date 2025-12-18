@@ -216,8 +216,10 @@ jobs:
           CIBW_BEFORE_BUILD_WINDOWS: >
             pip install delvewheel &&
             python -c "import delvewheel._dll_list as d,inspect,re as r;p=inspect.getfile(d);c=open(p).read();n=chr(10);open(p,'w').write(c.replace(r\"re.compile('api-.*'),\",r\"re.compile('api-.*'),\"+n+r\"    re.compile('ext-.*'),\")) if 'ext-.*' not in c else None"
+          # Note: --no-dll excludes Windows system DLLs that should not be bundled
+          # combase.dll and rmclient.dll are core Windows components that fail when bundled
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
-            delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\llvm\\bin" -w {dest_dir} {wheel} &&
+            delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\llvm\\bin" --no-dll "combase.dll;rmclient.dll" -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
 
       - name: Upload wheels

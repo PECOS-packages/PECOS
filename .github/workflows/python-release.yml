@@ -217,7 +217,7 @@ jobs:
             pip install delvewheel &&
             python -c "import delvewheel._dll_list as d,inspect,re as r;p=inspect.getfile(d);c=open(p).read();n=chr(10);open(p,'w').write(c.replace(r\"re.compile('api-.*'),\",r\"re.compile('api-.*'),\"+n+r\"    re.compile('ext-.*'),\")) if 'ext-.*' not in c else None"
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
-            delvewheel repair -w {dest_dir} {wheel} &&
+            delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\llvm\\bin" -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
 
       - name: Upload wheels
@@ -272,6 +272,38 @@ jobs:
           pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl
           python -c 'import pecos_rslib; print(f"pecos_rslib version: {pecos_rslib.__version__}")'
           python -c 'import sys; print(f"Python version: {sys.version}")'
+
+      - name: Debug DLL loading (Windows)
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "=== Listing wheel contents ==="
+          $wheelFile = Get-ChildItem -Path ./pecos-rslib-wheel/*.whl | Select-Object -First 1
+          python -m zipfile -l $wheelFile
+
+          Write-Host "`n=== Finding pecos_rslib installation ==="
+          $sitePackages = python -c "import site; print(site.getsitepackages()[0])"
+          Write-Host "Site packages: $sitePackages"
+
+          Write-Host "`n=== Listing pecos_rslib directory ==="
+          Get-ChildItem -Path "$sitePackages\pecos_rslib*" -Recurse | Select-Object FullName, Length
+
+          Write-Host "`n=== Checking DLL dependencies with dumpbin ==="
+          $pydFile = Get-ChildItem -Path "$sitePackages\pecos_rslib\*.pyd" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($pydFile) {
+            & "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\dumpbin.exe" /dependents $pydFile.FullName 2>&1 | Select-Object -First 50
+          }
+
+          Write-Host "`n=== Checking pecos_rslib.libs directory ==="
+          $libsDir = "$sitePackages\pecos_rslib.libs"
+          if (Test-Path $libsDir) {
+            Get-ChildItem -Path $libsDir | ForEach-Object {
+              Write-Host "DLL: $($_.Name)"
+              & "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\dumpbin.exe" /dependents $_.FullName 2>&1 | Select-Object -First 30
+            }
+          } else {
+            Write-Host "No pecos_rslib.libs directory found"
+          }
 
   build_sdist_quantum_pecos:
     needs: build_wheelspecos_rslib

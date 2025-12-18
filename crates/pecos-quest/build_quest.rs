@@ -91,7 +91,14 @@ fn detect_cuda_path() -> Option<String> {
 fn build_gpu_shared_library(cuda_path: &str, quest_dir: &Path, out_dir: &Path) -> Option<PathBuf> {
     info!("Building GPU shared library (libpecos_quest_cuda.so)...");
 
-    let nvcc_path = Path::new(cuda_path).join("bin").join("nvcc");
+    // nvcc executable name differs by platform
+    let nvcc_name = if cfg!(target_os = "windows") {
+        "nvcc.exe"
+    } else {
+        "nvcc"
+    };
+    let nvcc_path = Path::new(cuda_path).join("bin").join(nvcc_name);
+    info!("Using nvcc at: {}", nvcc_path.display());
     let quest_include_dir = quest_dir.join("include");
     let quest_src_dir = quest_dir.join("src");
     let gpu_dir = quest_src_dir.join("gpu");
@@ -200,12 +207,19 @@ fn build_gpu_shared_library(cuda_path: &str, quest_dir: &Path, out_dir: &Path) -
         let output = compile_cmd.output().ok()?;
 
         if !output.status.success() {
+            let stdout_str = String::from_utf8_lossy(&output.stdout);
             let stderr_str = String::from_utf8_lossy(&output.stderr);
             eprintln!(
                 "ERROR: Failed to compile {} for GPU library",
                 src_file.display()
             );
-            eprintln!("{stderr_str}");
+            eprintln!("Exit status: {:?}", output.status);
+            if !stdout_str.is_empty() {
+                eprintln!("stdout:\n{stdout_str}");
+            }
+            if !stderr_str.is_empty() {
+                eprintln!("stderr:\n{stderr_str}");
+            }
             return None;
         }
 

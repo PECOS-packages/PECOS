@@ -118,6 +118,13 @@ jobs:
           ref: ${{ inputs.sha || github.sha }}
           submodules: recursive
 
+      # Set up Visual Studio environment on Windows (required for nvcc to find cl.exe)
+      - name: Set up Visual Studio environment (Windows)
+        if: runner.os == 'Windows' && matrix.install_cuda
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       # Install CUDA on Windows before cibuildwheel (cibuildwheel runs on host, not in containers)
       # Uses specific sub-packages to avoid VS 17.3.x bug that hangs on NSight/VS Integration
       # See: https://github.com/Jimver/cuda-toolkit/issues/382

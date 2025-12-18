@@ -148,10 +148,17 @@ fn build_gpu_shared_library(cuda_path: &str, quest_dir: &Path, out_dir: &Path) -
     let mut object_files = Vec::new();
     for src_file in &source_files {
         let file_stem = src_file.file_stem()?.to_str()?;
-        let obj_file = out_dir.join(format!("gpu_{file_stem}.o"));
+        // Windows uses .obj extension, Unix uses .o
+        let obj_ext = if cfg!(target_os = "windows") {
+            "obj"
+        } else {
+            "o"
+        };
+        let obj_file = out_dir.join(format!("gpu_{file_stem}.{obj_ext}"));
 
         debug!("Compiling for GPU lib: {}", src_file.display());
-        let output = Command::new(&nvcc_path)
+        let mut compile_cmd = Command::new(&nvcc_path);
+        compile_cmd
             .arg("-c")
             .arg(src_file)
             .arg("-o")
@@ -178,11 +185,19 @@ fn build_gpu_shared_library(cuda_path: &str, quest_dir: &Path, out_dir: &Path) -
             // sm_75 is the minimum supported by both CUDA 12.x and 13.x
             .arg("-arch=sm_75")
             // Allow newer GCC versions (e.g., GCC 14 in manylinux_2_28)
-            .arg("-allow-unsupported-compiler")
-            .arg("-Xcompiler")
-            .arg("-fPIC")
-            .output()
-            .ok()?;
+            .arg("-allow-unsupported-compiler");
+
+        // Platform-specific compiler flags
+        if cfg!(target_os = "windows") {
+            // Windows/MSVC: no -fPIC needed (not applicable)
+            // Use /EHsc for C++ exception handling
+            compile_cmd.arg("-Xcompiler").arg("/EHsc");
+        } else {
+            // Unix: position-independent code for shared libraries
+            compile_cmd.arg("-Xcompiler").arg("-fPIC");
+        }
+
+        let output = compile_cmd.output().ok()?;
 
         if !output.status.success() {
             let stderr_str = String::from_utf8_lossy(&output.stderr);
@@ -215,16 +230,28 @@ fn build_gpu_shared_library(cuda_path: &str, quest_dir: &Path, out_dir: &Path) -
         .arg("-shared")
         .arg("-o")
         .arg(&gpu_lib_path)
-        .args(&object_files)
-        .arg(format!("-L{cuda_path}/lib64"))
-        .arg("-lcudart")
-        .arg("-lcublas");
+        .args(&object_files);
 
-    // Add C++ standard library
-    if cfg!(target_os = "macos") {
-        link_cmd.arg("-lc++");
+    // Platform-specific library paths and linking
+    if cfg!(target_os = "windows") {
+        // Windows: CUDA libraries are in lib\x64
+        link_cmd
+            .arg(format!("-L{cuda_path}/lib/x64"))
+            .arg("-lcudart")
+            .arg("-lcublas");
+        // Windows uses MSVC runtime, no need to explicitly link C++ stdlib
     } else {
-        link_cmd.arg("-lstdc++");
+        // Unix: CUDA libraries are in lib64
+        link_cmd
+            .arg(format!("-L{cuda_path}/lib64"))
+            .arg("-lcudart")
+            .arg("-lcublas");
+        // Add C++ standard library
+        if cfg!(target_os = "macos") {
+            link_cmd.arg("-lc++");
+        } else {
+            link_cmd.arg("-lstdc++");
+        }
     }
 
     let output = link_cmd.output().ok()?;

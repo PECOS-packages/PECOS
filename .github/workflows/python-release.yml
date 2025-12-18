@@ -82,18 +82,20 @@ jobs:
             gcc_ld_path: "/opt/rh/gcc-toolset-13/root/usr/lib64:/opt/rh/gcc-toolset-13/root/usr/lib:"
             gcc_cc: "/opt/rh/gcc-toolset-13/root/usr/bin/gcc"
             gcc_cxx: "/opt/rh/gcc-toolset-13/root/usr/bin/g++"
-          # Linux aarch64 without CUDA - use native ARM runner for faster builds
-          - os: ubuntu-24.04-arm
-            architecture: aarch64
-            runner: ubuntu-24.04-arm
-            cibw_archs: aarch64
-            cuda_feature: ""
-            install_cuda: false
-            # No GCC Toolset on ARM, use system defaults
-            gcc_path_prefix: ""
-            gcc_ld_path: ""
-            gcc_cc: ""
-            gcc_cxx: ""
+          # Linux aarch64 - DISABLED: LLVM 14 not available in manylinux_2_28 (AlmaLinux 8)
+          # The prebuilt LLVM 14 binary is incompatible with the container, and
+          # the llvm-toolset module only provides LLVM 13. Re-enable when we have
+          # a solution (custom Docker image, build from source, or inkwell LLVM 13 support)
+          # - os: ubuntu-24.04-arm
+          #   architecture: aarch64
+          #   runner: ubuntu-24.04-arm
+          #   cibw_archs: aarch64
+          #   cuda_feature: ""
+          #   install_cuda: false
+          #   gcc_path_prefix: ""
+          #   gcc_ld_path: ""
+          #   gcc_cc: ""
+          #   gcc_cxx: ""
           # macOS without CUDA (NVIDIA dropped macOS CUDA support in 2019)
           - os: macos-14
             architecture: aarch64
@@ -116,11 +118,12 @@ jobs:
           submodules: recursive
 
       # Install CUDA on Windows before cibuildwheel (cibuildwheel runs on host, not in containers)
+      # Note: Using 12.5.1 on Windows due to installer issues with 12.6.x
       - name: Install CUDA Toolkit (Windows)
         if: runner.os == 'Windows' && matrix.install_cuda
         uses: Jimver/cuda-toolkit@v0.2.29
         with:
-          cuda: '12.6.3'
+          cuda: '12.5.1'
           method: 'network'
           sub-packages: '["nvcc", "cudart-dev"]'
           non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'

@@ -62,11 +62,21 @@ jobs:
 
       # Install CUDA Toolkit for GPU support (compile-time only, no GPU needed)
       # CUDA is supported on Linux and Windows, but NOT on macOS (NVIDIA dropped support in 2019)
-      - name: Install CUDA Toolkit (Linux/Windows)
-        if: runner.os == 'Linux' || runner.os == 'Windows'
+      # Note: Using 12.5.1 on Windows due to installer issues with 12.6.x
+      - name: Install CUDA Toolkit (Linux)
+        if: runner.os == 'Linux'
         uses: Jimver/cuda-toolkit@v0.2.29
         with:
           cuda: '12.6.3'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart-dev"]'
+          non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
+
+      - name: Install CUDA Toolkit (Windows)
+        if: runner.os == 'Windows'
+        uses: Jimver/cuda-toolkit@v0.2.29
+        with:
+          cuda: '12.5.1'
           method: 'network'
           sub-packages: '["nvcc", "cudart-dev"]'
           non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
@@ -184,11 +194,21 @@ jobs:
 
       # Install CUDA Toolkit for GPU support (compile-time only, no GPU needed)
       # CUDA is supported on Linux and Windows, but NOT on macOS (NVIDIA dropped support in 2019)
-      - name: Install CUDA Toolkit (Linux/Windows)
-        if: (runner.os == 'Linux' || runner.os == 'Windows') && matrix.plugin.name == 'pecos-selene-quest'
+      # Note: Using 12.5.1 on Windows due to installer issues with 12.6.x
+      - name: Install CUDA Toolkit (Linux)
+        if: runner.os == 'Linux' && matrix.plugin.name == 'pecos-selene-quest'
         uses: Jimver/cuda-toolkit@v0.2.29
         with:
           cuda: '12.6.3'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart-dev"]'
+          non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
+
+      - name: Install CUDA Toolkit (Windows)
+        if: runner.os == 'Windows' && matrix.plugin.name == 'pecos-selene-quest'
+        uses: Jimver/cuda-toolkit@v0.2.29
+        with:
+          cuda: '12.5.1'
           method: 'network'
           sub-packages: '["nvcc", "cudart-dev"]'
           non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'

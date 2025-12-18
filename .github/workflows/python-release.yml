@@ -106,6 +106,7 @@ jobs:
             cuda_feature: ""
             install_cuda: false
           # Windows x86_64 with CUDA support
+          # Note: Uses specific sub-packages to avoid VS integration bug (see Jimver/cuda-toolkit#382)
           - os: windows-2022
             architecture: x86_64
             cuda_feature: "--features cuda"
@@ -118,15 +119,15 @@ jobs:
           submodules: recursive
 
       # Install CUDA on Windows before cibuildwheel (cibuildwheel runs on host, not in containers)
-      # Note: Using 12.5.1 on Windows due to installer issues with 12.6.x
+      # Uses specific sub-packages to avoid VS 17.3.x bug that hangs on NSight/VS Integration
+      # See: https://github.com/Jimver/cuda-toolkit/issues/382
       - name: Install CUDA Toolkit (Windows)
         if: runner.os == 'Windows' && matrix.install_cuda
         uses: Jimver/cuda-toolkit@v0.2.29
         with:
           cuda: '12.5.1'
-          method: 'network'
-          sub-packages: '["nvcc", "cudart-dev"]'
-          non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
+          method: 'local'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust"]'
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.2.1
@@ -189,7 +190,7 @@ jobs:
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
             PATH=$HOME/.pecos/bin:$PATH DYLD_LIBRARY_PATH=$HOME/.pecos/llvm/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} &&
             pipx run abi3audit --strict --report {wheel}
-          # Windows configuration - CUDA support via Jimver/cuda-toolkit action (installed before cibuildwheel)
+          # Windows configuration - CUDA via Jimver/cuda-toolkit (installed before cibuildwheel)
           CIBW_ENVIRONMENT_WINDOWS: >
             PATH="C:\\Users\\runneradmin\\.pecos\\llvm\\bin;$PATH"
             LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\llvm"

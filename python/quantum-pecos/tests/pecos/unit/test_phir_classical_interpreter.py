@@ -86,3 +86,160 @@ def test_get_bit_out_of_bounds(interpreter: PhirClassicalInterpreter) -> None:
         match=r"Bit index 1000 out of range for.*\.u64.* \(max 63\)",
     ):
         interpreter.get_bit("u64_var", 1000)
+
+
+class TestPhirClassicalInterpreterBitwiseOps:
+    """Test bitwise operations with PHIR classical interpreter.
+
+    Regression tests for issue #213: i64 shift operations with Python int.
+    """
+
+    def test_i64_lshift_with_python_int(self) -> None:
+        """Test that i64 left shift works with Python int (issue #213)."""
+        phir_program = {
+            "format": "PHIR/JSON",
+            "version": "0.1.0",
+            "ops": [
+                {
+                    "data": "cvar_define",
+                    "data_type": "i64",
+                    "variable": "a",
+                    "size": 64,
+                },
+                {"cop": "=", "args": [1], "returns": ["a"]},
+                {
+                    "cop": "=",
+                    "args": [{"cop": "<<", "args": ["a", 1]}],
+                    "returns": ["a"],
+                },
+            ],
+        }
+
+        interp = PhirClassicalInterpreter()
+        interp.init(phir_program)
+
+        for _ in interp.execute(interp.program.ops):
+            pass
+
+        result = interp.results()
+        assert int(result["a"]) == 2
+
+    def test_i64_rshift_with_python_int(self) -> None:
+        """Test that i64 right shift works with Python int."""
+        phir_program = {
+            "format": "PHIR/JSON",
+            "version": "0.1.0",
+            "ops": [
+                {
+                    "data": "cvar_define",
+                    "data_type": "i64",
+                    "variable": "a",
+                    "size": 64,
+                },
+                {"cop": "=", "args": [16], "returns": ["a"]},
+                {
+                    "cop": "=",
+                    "args": [{"cop": ">>", "args": ["a", 2]}],
+                    "returns": ["a"],
+                },
+            ],
+        }
+
+        interp = PhirClassicalInterpreter()
+        interp.init(phir_program)
+
+        for _ in interp.execute(interp.program.ops):
+            pass
+
+        result = interp.results()
+        assert int(result["a"]) == 4
+
+    def test_i64_bitwise_and_with_python_int(self) -> None:
+        """Test that i64 bitwise AND works with Python int."""
+        phir_program = {
+            "format": "PHIR/JSON",
+            "version": "0.1.0",
+            "ops": [
+                {
+                    "data": "cvar_define",
+                    "data_type": "i64",
+                    "variable": "a",
+                    "size": 64,
+                },
+                {"cop": "=", "args": [15], "returns": ["a"]},
+                {
+                    "cop": "=",
+                    "args": [{"cop": "&", "args": ["a", 7]}],
+                    "returns": ["a"],
+                },
+            ],
+        }
+
+        interp = PhirClassicalInterpreter()
+        interp.init(phir_program)
+
+        for _ in interp.execute(interp.program.ops):
+            pass
+
+        result = interp.results()
+        assert int(result["a"]) == 7
+
+    def test_i64_bitwise_or_with_python_int(self) -> None:
+        """Test that i64 bitwise OR works with Python int."""
+        phir_program = {
+            "format": "PHIR/JSON",
+            "version": "0.1.0",
+            "ops": [
+                {
+                    "data": "cvar_define",
+                    "data_type": "i64",
+                    "variable": "a",
+                    "size": 64,
+                },
+                {"cop": "=", "args": [8], "returns": ["a"]},
+                {
+                    "cop": "=",
+                    "args": [{"cop": "|", "args": ["a", 2]}],
+                    "returns": ["a"],
+                },
+            ],
+        }
+
+        interp = PhirClassicalInterpreter()
+        interp.init(phir_program)
+
+        for _ in interp.execute(interp.program.ops):
+            pass
+
+        result = interp.results()
+        assert int(result["a"]) == 10
+
+    def test_i64_bitwise_xor_with_python_int(self) -> None:
+        """Test that i64 bitwise XOR works with Python int."""
+        phir_program = {
+            "format": "PHIR/JSON",
+            "version": "0.1.0",
+            "ops": [
+                {
+                    "data": "cvar_define",
+                    "data_type": "i64",
+                    "variable": "a",
+                    "size": 64,
+                },
+                {"cop": "=", "args": [15], "returns": ["a"]},
+                {
+                    "cop": "=",
+                    "args": [{"cop": "^", "args": ["a", 5]}],
+                    "returns": ["a"],
+                },
+            ],
+        }
+
+        interp = PhirClassicalInterpreter()
+        interp.init(phir_program)
+
+        for _ in interp.execute(interp.program.ops):
+            pass
+
+        result = interp.results()
+        assert int(result["a"]) == 10

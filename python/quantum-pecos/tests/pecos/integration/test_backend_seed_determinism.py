@@ -193,7 +193,7 @@ def test_different_seeds_produce_different_results(backend: str) -> None:
     # Run with seed=42
     engine2 = HybridEngine(qsim=backend, error_model=ERROR_MODEL)
     engine2.use_seed(42)
-    results_seed42 = engine1.run(PHIR_BELL_STATE, shots=shots)
+    results_seed42 = engine2.run(PHIR_BELL_STATE, shots=shots)
 
     # Different seeds should produce different sequences
     assert (
@@ -311,3 +311,28 @@ def test_mps_determinism() -> None:
     assert (
         results1["c"] == results2["c"]
     ), "MPS: Same seed should produce identical results"
+
+
+@pytest.mark.parametrize("backend", CORE_BACKENDS)
+def test_use_seed_equivalent_to_seed_parameter(backend: str) -> None:
+    """Test that use_seed(N) + run() produces same results as run(seed=N).
+
+    This is a regression test for issue #89. Both methods of setting the seed
+    should produce identical results for the same seed value.
+    """
+    seed = 42
+    shots = 50
+
+    # Method 1: use_seed() before run()
+    engine1 = HybridEngine(qsim=backend, error_model=ERROR_MODEL)
+    engine1.use_seed(seed)
+    results_method1 = engine1.run(PHIR_BELL_STATE, shots=shots)
+
+    # Method 2: seed parameter in run()
+    engine2 = HybridEngine(qsim=backend, error_model=ERROR_MODEL)
+    results_method2 = engine2.run(PHIR_BELL_STATE, shots=shots, seed=seed)
+
+    # Both methods should produce identical results
+    assert (
+        results_method1["c"] == results_method2["c"]
+    ), f"{backend}: use_seed({seed}) + run() should produce same results as run(seed={seed})"

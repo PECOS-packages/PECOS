@@ -90,11 +90,12 @@ jobs:
           method: 'local'
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust"]'
 
-      - name: Build Selene plugins
+      - name: Build Selene plugins (Unix)
+        if: runner.os != 'Windows'
         run: |
           # Build all selene plugin Rust libraries
-          # pecos-selene-quest is built with CUDA feature on Linux and Windows (not macOS)
-          if [ "${{ runner.os }}" = "Linux" ] || [ "${{ runner.os }}" = "Windows" ]; then
+          # pecos-selene-quest is built with CUDA feature on Linux (not macOS - NVIDIA dropped CUDA support in 2019)
+          if [ "${{ runner.os }}" = "Linux" ]; then
             cargo build --release -p pecos-selene-quest --features cuda
           else
             cargo build --release -p pecos-selene-quest
@@ -103,6 +104,17 @@ jobs:
             -p pecos-selene-qulacs \
             -p pecos-selene-sparsestab \
             -p pecos-selene-statevec
+
+      # Windows: Use PowerShell to avoid Git Bash PATH conflict where Git's /usr/bin/link
+      # shadows MSVC's link.exe linker
+      - name: Build Selene plugins (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Build pecos-selene-quest with CUDA feature
+          cargo build --release -p pecos-selene-quest --features cuda
+          # Build other plugins
+          cargo build --release -p pecos-selene-qulacs -p pecos-selene-sparsestab -p pecos-selene-statevec
 
       - name: Copy libraries to Python packages (Unix)
         if: runner.os != 'Windows'
@@ -231,11 +243,12 @@ jobs:
           method: 'local'
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust"]'
 
-      - name: Build Rust library
+      - name: Build Rust library (Unix)
+        if: runner.os != 'Windows'
         run: |
-          # Build pecos-selene-quest with CUDA feature on Linux and Windows (not macOS)
+          # Build pecos-selene-quest with CUDA feature on Linux (not macOS - NVIDIA dropped CUDA support in 2019)
           if [ "${{ matrix.plugin.name }}" = "pecos-selene-quest" ]; then
-            if [ "${{ runner.os }}" = "Linux" ] || [ "${{ runner.os }}" = "Windows" ]; then
+            if [ "${{ runner.os }}" = "Linux" ]; then
               cargo build --release -p ${{ matrix.plugin.name }} --features cuda
             else
               cargo build --release -p ${{ matrix.plugin.name }}
@@ -243,6 +256,19 @@ jobs:
           else
             cargo build --release -p ${{ matrix.plugin.name }}
           fi
+
+      # Windows: Use PowerShell to avoid Git Bash PATH conflict where Git's /usr/bin/link
+      # shadows MSVC's link.exe linker
+      - name: Build Rust library (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Build pecos-selene-quest with CUDA feature
+          if ("${{ matrix.plugin.name }}" -eq "pecos-selene-quest") {
+            cargo build --release -p ${{ matrix.plugin.name }} --features cuda
+          } else {
+            cargo build --release -p ${{ matrix.plugin.name }}
+          }
 
       - name: Copy library to Python package (Unix)
         if: runner.os != 'Windows'

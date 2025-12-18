@@ -73,6 +73,13 @@ jobs:
           sub-packages: '["nvcc", "cudart-dev"]'
           non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
 
+      # Set up Visual Studio environment on Windows (required for nvcc to find cl.exe)
+      - name: Set up Visual Studio environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       # Windows CUDA: Uses specific sub-packages to avoid VS 17.3.x bug
       # See: https://github.com/Jimver/cuda-toolkit/issues/382
       - name: Install CUDA Toolkit (Windows)
@@ -206,6 +213,13 @@ jobs:
           method: 'network'
           sub-packages: '["nvcc", "cudart-dev"]'
           non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
+
+      # Set up Visual Studio environment on Windows (required for nvcc to find cl.exe)
+      - name: Set up Visual Studio environment (Windows)
+        if: runner.os == 'Windows' && matrix.plugin.name == 'pecos-selene-quest'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
       # Windows CUDA: Uses specific sub-packages to avoid VS 17.3.x bug
       # See: https://github.com/Jimver/cuda-toolkit/issues/382

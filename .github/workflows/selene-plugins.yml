@@ -61,8 +61,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       # Install CUDA Toolkit for GPU support (compile-time only, no GPU needed)
-      # CUDA is supported on Linux and Windows, but NOT on macOS (NVIDIA dropped support in 2019)
-      # Note: Using 12.5.1 on Windows due to installer issues with 12.6.x
+      # CUDA is supported on Linux only for now - Windows installer consistently fails
+      # macOS: NVIDIA dropped CUDA support in 2019
       - name: Install CUDA Toolkit (Linux)
         if: runner.os == 'Linux'
         uses: Jimver/cuda-toolkit@v0.2.29
@@ -72,20 +72,12 @@ jobs:
           sub-packages: '["nvcc", "cudart-dev"]'
           non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
 
-      - name: Install CUDA Toolkit (Windows)
-        if: runner.os == 'Windows'
-        uses: Jimver/cuda-toolkit@v0.2.29
-        with:
-          cuda: '12.5.1'
-          method: 'network'
-          sub-packages: '["nvcc", "cudart-dev"]'
-          non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
-
       - name: Build Selene plugins
         run: |
           # Build all selene plugin Rust libraries
-          # pecos-selene-quest is built with CUDA feature on Linux and Windows (not macOS)
-          if [ "${{ runner.os }}" = "Linux" ] || [ "${{ runner.os }}" = "Windows" ]; then
+          # pecos-selene-quest is built with CUDA feature on Linux only
+          # (Windows CUDA installer failing, macOS not supported by NVIDIA)
+          if [ "${{ runner.os }}" = "Linux" ]; then
             cargo build --release -p pecos-selene-quest --features cuda
           else
             cargo build --release -p pecos-selene-quest
@@ -138,12 +130,6 @@ jobs:
           Copy-Item target/release/pecos_selene_sparsestab.dll python/selene-plugins/pecos-selene-sparsestab/python/pecos_selene_sparsestab/_dist/lib/
           Copy-Item target/release/pecos_selene_statevec.dll python/selene-plugins/pecos-selene-statevec/python/pecos_selene_statevec/_dist/lib/
 
-          # Copy QuEST CUDA backend if it exists (built when --features cuda is used)
-          if (Test-Path target/release/pecos_quest_cuda.dll) {
-            Write-Host "Copying QuEST CUDA backend..."
-            Copy-Item target/release/pecos_quest_cuda.dll python/selene-plugins/pecos-selene-quest/python/pecos_selene_quest/_dist/lib/
-          }
-
       - name: Install Python packages
         run: |
           uv pip install --system -e ./python/selene-plugins/pecos-selene-quest[test]
@@ -193,8 +179,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       # Install CUDA Toolkit for GPU support (compile-time only, no GPU needed)
-      # CUDA is supported on Linux and Windows, but NOT on macOS (NVIDIA dropped support in 2019)
-      # Note: Using 12.5.1 on Windows due to installer issues with 12.6.x
+      # CUDA is supported on Linux only for now - Windows installer consistently fails
+      # macOS: NVIDIA dropped CUDA support in 2019
       - name: Install CUDA Toolkit (Linux)
         if: runner.os == 'Linux' && matrix.plugin.name == 'pecos-selene-quest'
         uses: Jimver/cuda-toolkit@v0.2.29
@@ -204,24 +190,12 @@ jobs:
           sub-packages: '["nvcc", "cudart-dev"]'
           non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
 
-      - name: Install CUDA Toolkit (Windows)
-        if: runner.os == 'Windows' && matrix.plugin.name == 'pecos-selene-quest'
-        uses: Jimver/cuda-toolkit@v0.2.29
-        with:
-          cuda: '12.5.1'
-          method: 'network'
-          sub-packages: '["nvcc", "cudart-dev"]'
-          non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
-
       - name: Build Rust library
         run: |
-          # Build pecos-selene-quest with CUDA feature on Linux and Windows (not macOS)
-          if [ "${{ matrix.plugin.name }}" = "pecos-selene-quest" ]; then
-            if [ "${{ runner.os }}" = "Linux" ] || [ "${{ runner.os }}" = "Windows" ]; then
-              cargo build --release -p ${{ matrix.plugin.name }} --features cuda
-            else
-              cargo build --release -p ${{ matrix.plugin.name }}
-            fi
+          # Build pecos-selene-quest with CUDA feature on Linux only
+          # (Windows CUDA installer failing, macOS not supported by NVIDIA)
+          if [ "${{ matrix.plugin.name }}" = "pecos-selene-quest" ] && [ "${{ runner.os }}" = "Linux" ]; then
+            cargo build --release -p ${{ matrix.plugin.name }} --features cuda
           else
             cargo build --release -p ${{ matrix.plugin.name }}
           fi

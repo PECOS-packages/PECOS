@@ -1,5 +1,12 @@
 .DEFAULT_GOAL := help
 
+# =============================================================================
+# DEPRECATED: This Makefile is deprecated in favor of the Justfile.
+# Please use `just` instead of `make` for all development commands.
+# Install just: cargo install just (or see https://github.com/casey/just)
+# Run `just --list` to see available commands.
+# =============================================================================
+
 # Try to autodetect if python3 or python is the python executable used.
 PYTHON := $(shell which python 2>/dev/null || which python3 2>/dev/null)
 SHELL=bash
@@ -117,11 +124,7 @@ endef
 
 .PHONY: build
 build: installreqs build-selene ## Build PECOS (use PROFILE=debug|release|native, default: debug)
-	@echo "Building with profile: $(PROFILE_DESC)"
-	@$(UNSET_CONDA) cd python/pecos-rslib/ && \
-		RUSTFLAGS="$$RUSTFLAGS $(RUSTFLAGS_EXTRA)" \
-		uv run maturin develop --uv $(MATURIN_RELEASE_FLAG)
-	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all]"
+	@cargo run -p pecos-dev -- python build --profile $(PROFILE)
 	$(BUILD_FFI_CRATES)
 
 .PHONY: build-selene
@@ -149,11 +152,7 @@ build-selene: ## Build and install Selene plugins for development
 
 .PHONY: build-cuda
 build-cuda: installreqs ## Build PECOS with CUDA support (use PROFILE=debug|release|native, default: debug)
-	@echo "Building with CUDA support, profile: $(PROFILE_DESC)"
-	@$(UNSET_CONDA) cd python/pecos-rslib/ && \
-		RUSTFLAGS="$$RUSTFLAGS $(RUSTFLAGS_EXTRA)" \
-		uv run maturin develop --uv $(MATURIN_RELEASE_FLAG)
-	@$(UNSET_CONDA) uv pip install -e "./python/quantum-pecos[all,cuda]"
+	@cargo run -p pecos-dev -- python build --profile $(PROFILE) --cuda
 	$(BUILD_FFI_CRATES)
 
 # Convenience aliases for common build profiles

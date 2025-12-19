@@ -7,9 +7,9 @@
 - [Python 3.10+](https://www.python.org/downloads/)
 - [Rust](https://www.rust-lang.org/tools/install) (stable toolchain)
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) - Python package manager
-- Make (optional, but recommended for workflow commands)
+- [just](https://github.com/casey/just) - Command runner (install via `cargo install just`)
 
-The Makefile and development scripts require Python/uv for cross-platform compatibility. This includes commands like `make clean`, `make build`, `make test`, etc.
+The Justfile and development scripts require Python/uv for cross-platform compatibility. This includes commands like `just clean`, `just build`, `just test`, etc.
 
 **Pure Rust development** (Rust crates only):
 
@@ -66,19 +66,19 @@ For developers who want to contribute or modify PECOS:
 
 6. Build the project in editable mode
     ```sh
-   make build
+   just build
    ```
-   Other build options: `make build-release` (optimized), `make build-native` (optimized for your CPU).
+   Other build options: `just build-release` (optimized), `just build-native` (optimized for your CPU).
 
 7. Run all Python and Rust tests:
    ```sh
-   make test
+   just test
    ```
    Note: Make sure you have run a build command before running tests.
 
 8. Run linters using pre-commit (after [installing it](https://pre-commit.com/)) to make sure all everything is properly linted/formated
    ```sh
-   make lint
+   just lint
    ```
 
 9. To deactivate your development venv:
@@ -95,15 +95,15 @@ Note: For the Rust side of the project, you can use `cargo` to run tests, benchm
 Clean commands are cross-platform (Windows, macOS, Linux):
 
 ```sh
-make clean              # Clean project build artifacts
-make clean-selene       # Clean Selene plugin artifacts only
-make clean-cache        # Clean ~/.pecos/cache/ and ~/.pecos/tmp/
-make clean-deps         # Clean ~/.pecos/deps/
-make clean-all          # Clean project + cache + deps
-make clean-everything   # Nuclear option: includes LLVM and CUDA
+just clean              # Clean project build artifacts
+just clean-selene       # Clean Selene plugin artifacts only
+just clean-cache        # Clean ~/.pecos/cache/ and ~/.pecos/tmp/
+just clean-deps         # Clean ~/.pecos/deps/
+just clean-all          # Clean project + cache + deps
+just clean-everything   # Nuclear option: includes LLVM and CUDA
 ```
 
-You can also run the cleaning script directly (useful on Windows without Make):
+You can also run the cleaning script directly:
 
 ```sh
 uv run python scripts/clean.py --help

@@ -40,24 +40,22 @@
 //! ```no_run
 //! use pecos_dev::{Manifest, ensure_dep_ready};
 //!
-//! fn main() {
-//!     // Load manifest
-//!     let manifest = Manifest::find_and_load_validated()
-//!         .expect("pecos.toml not found");
+//! // Load manifest
+//! let manifest = Manifest::find_and_load_validated()
+//!     .expect("pecos.toml not found");
 //!
-//!     // Ensure dependency is downloaded and extracted to ~/.pecos/deps/
-//!     // This persists across `cargo clean` for faster rebuilds
-//!     let qulacs_path = ensure_dep_ready("qulacs", &manifest)
-//!         .expect("Failed to get qulacs");
-//!     let eigen_path = ensure_dep_ready("eigen", &manifest)
-//!         .expect("Failed to get eigen");
+//! // Ensure dependency is downloaded and extracted to ~/.pecos/deps/
+//! // This persists across `cargo clean` for faster rebuilds
+//! let qulacs_path = ensure_dep_ready("qulacs", &manifest)
+//!     .expect("Failed to get qulacs");
+//! let eigen_path = ensure_dep_ready("eigen", &manifest)
+//!     .expect("Failed to get eigen");
 //!
-//!     // Use the paths in your build (example with cc::Build)
-//!     // build.include(&qulacs_path.join("src"));
-//!     // build.include(&eigen_path);
-//!     println!("qulacs: {}", qulacs_path.display());
-//!     println!("eigen: {}", eigen_path.display());
-//! }
+//! // Use the paths in your build (example with cc::Build)
+//! // build.include(&qulacs_path.join("src"));
+//! // build.include(&eigen_path);
+//! println!("qulacs: {}", qulacs_path.display());
+//! println!("eigen: {}", eigen_path.display());
 //! ```
 //!
 //! Each published crate includes its own `pecos.toml` with the dependencies it needs,

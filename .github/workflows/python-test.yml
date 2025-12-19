@@ -98,6 +98,9 @@ jobs:
     - name: Set up Rust
       run: rustup show
 
+    - name: Install just
+      uses: extractions/setup-just@v2
+
     - name: Cache Rust
       uses: Swatinem/rust-cache@v2
       with:
@@ -219,8 +222,8 @@ jobs:
         $env:LLVM_SYS_140_PREFIX = $env:LLVM_SYS_140_PREFIX
 
         # Build and test
-        make build-debug
-        make pytest-all
+        just build-debug
+        just pytest-all
 
     - name: Build and test PECOS (non-Windows)
       if: runner.os != 'Windows'
@@ -266,7 +269,7 @@ jobs:
         fi
 
         # Build the project
-        make build-debug
+        just build-debug
 
         # After build, verify the extension module on macOS
         if [[ "${{ runner.os }}" == "macOS" ]]; then
@@ -281,9 +284,9 @@ jobs:
           fi
         fi
 
-        make pytest-all
+        just pytest-all
 
     - name: Run linting
       run: |
         # Run all linting checks
-        make lint  # Rust checks + Python pre-commit
+        just lint  # Rust checks + Python pre-commit

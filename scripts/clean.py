@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 
-def rmtree_safe(path: Path, dry_run: bool = False) -> bool:
+def rmtree_safe(path: Path, *, dry_run: bool = False) -> bool:
     """Safely remove a directory tree, returning True if something was removed."""
     if path.exists():
         if dry_run:
@@ -36,13 +36,12 @@ def rmtree_safe(path: Path, dry_run: bool = False) -> bool:
             if not path.exists():
                 print(f"  Removed: {path}")
                 return True
-            else:
-                print(f"  Failed to remove: {path}")
+            print(f"  Failed to remove: {path}")
         return True
     return False
 
 
-def rm_safe(path: Path, dry_run: bool = False) -> bool:
+def rm_safe(path: Path, *, dry_run: bool = False) -> bool:
     """Safely remove a file, returning True if something was removed."""
     if path.exists() and path.is_file():
         if dry_run:
@@ -50,16 +49,21 @@ def rm_safe(path: Path, dry_run: bool = False) -> bool:
         else:
             try:
                 path.unlink()
-                print(f"  Removed: {path}")
-                return True
             except OSError as e:
                 print(f"  Failed to remove {path}: {e}")
+            else:
+                print(f"  Removed: {path}")
+                return True
         return True
     return False
 
 
 def find_and_remove_dirs(
-    root: Path, name: str, dry_run: bool = False, skip_venv: bool = True
+    root: Path,
+    name: str,
+    *,
+    dry_run: bool = False,
+    skip_venv: bool = True,
 ) -> int:
     """Find and remove all directories with the given name under root."""
     count = 0
@@ -77,7 +81,11 @@ def find_and_remove_dirs(
 
 
 def find_and_remove_files(
-    root: Path, pattern: str, dry_run: bool = False, skip_venv: bool = True
+    root: Path,
+    pattern: str,
+    *,
+    dry_run: bool = False,
+    skip_venv: bool = True,
 ) -> int:
     """Find and remove all files matching the pattern under root."""
     count = 0
@@ -94,7 +102,7 @@ def find_and_remove_files(
     return count
 
 
-def run_command(cmd: list[str], quiet: bool = True) -> bool:
+def run_command(cmd: list[str], *, quiet: bool = True) -> bool:
     """Run a command, returning True if successful."""
     try:
         result = subprocess.run(
@@ -103,12 +111,13 @@ def run_command(cmd: list[str], quiet: bool = True) -> bool:
             text=True,
             check=False,
         )
-        return result.returncode == 0
     except FileNotFoundError:
         return False
+    else:
+        return result.returncode == 0
 
 
-def clean_project(root: Path, dry_run: bool = False) -> None:
+def clean_project(root: Path, *, dry_run: bool = False) -> None:
     """Clean project build artifacts."""
     print("Cleaning project build artifacts...")
 
@@ -175,7 +184,7 @@ def clean_project(root: Path, dry_run: bool = False) -> None:
         print("  Would run: uv cache clean pecos-rslib")
 
 
-def clean_selene(root: Path, dry_run: bool = False) -> None:
+def clean_selene(root: Path, *, dry_run: bool = False) -> None:
     """Clean Selene plugin artifacts."""
     print("Cleaning Selene plugin artifacts...")
     selene_dir = root / "python" / "selene-plugins"
@@ -192,7 +201,9 @@ def clean_selene(root: Path, dry_run: bool = False) -> None:
 
 
 def clean_pecos_home(
-    what: str = "cache", dry_run: bool = False
+    what: str = "cache",
+    *,
+    dry_run: bool = False,
 ) -> None:
     """Clean ~/.pecos/ directories."""
     pecos_home = Path.home() / ".pecos"
@@ -215,8 +226,9 @@ def clean_pecos_home(
 
 
 def main() -> int:
+    """Entry point for the cleaning script."""
     parser = argparse.ArgumentParser(
-        description="Cross-platform cleaning script for PECOS build artifacts"
+        description="Cross-platform cleaning script for PECOS build artifacts",
     )
     parser.add_argument(
         "--cache",

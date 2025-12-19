@@ -1,18 +1,10 @@
-//! PECOS development tools and dependency management
+//! PECOS build utilities and dependency management
 //!
-//! This crate provides:
+//! This crate provides build script utilities for managing external dependencies:
 //!
-//! - The `pecos-dev` CLI binary for dependency management
-//! - Tools for managing external dependencies (LLVM 14, C++ libraries)
-//! - Build script utilities for downloading and extracting dependencies
-//!
-//! # CLI Usage
-//!
-//! ```bash
-//! pecos-dev llvm install   # Install LLVM 14 to ~/.pecos/llvm/
-//! pecos-dev llvm check     # Check LLVM installation status
-//! pecos-dev deps sync      # Sync crate manifests from workspace
-//! ```
+//! - Downloading and extracting C++ libraries (`QuEST`, Qulacs, Stim, etc.)
+//! - Managing LLVM 14 installation
+//! - Managing the `~/.pecos/` home directory
 //!
 //! # PECOS Home Directory
 //!
@@ -38,7 +30,7 @@
 //! Build scripts should use `ensure_dep_ready()` for dependency management:
 //!
 //! ```no_run
-//! use pecos_dev::{Manifest, ensure_dep_ready};
+//! use pecos_build::{Manifest, ensure_dep_ready};
 //!
 //! // Load manifest
 //! let manifest = Manifest::find_and_load_validated()
@@ -69,9 +61,6 @@ pub mod extract;
 pub mod home;
 pub mod llvm;
 pub mod manifest;
-
-#[cfg(feature = "cli")]
-pub mod cli;
 
 // Re-export main types for convenience
 pub use deps::ensure_dep_ready;

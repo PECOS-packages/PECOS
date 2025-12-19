@@ -1,7 +1,7 @@
 //! Build script for LDPC decoder integration
 
 use log::info;
-use pecos_dev::{Manifest, Result, ensure_dep_ready, report_cache_config};
+use pecos_build::{Manifest, Result, ensure_dep_ready, report_cache_config};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};

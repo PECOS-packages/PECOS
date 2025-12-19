@@ -3,10 +3,10 @@
 #![allow(clippy::unnecessary_wraps)]
 #![allow(clippy::needless_pass_by_value)]
 
-use crate::Result;
-use crate::cli::DepsCommands;
-use crate::download::download_cached;
-use crate::manifest::{Manifest, SyncStatus, generate_manifest, sync_crate_manifests};
+use super::DepsCommands;
+use pecos_build::Result;
+use pecos_build::download::download_cached;
+use pecos_build::manifest::{Manifest, SyncStatus, generate_manifest, sync_crate_manifests};
 use std::path::PathBuf;
 
 /// Run a deps subcommand
@@ -16,7 +16,22 @@ pub fn run(command: DepsCommands) -> Result<()> {
         DepsCommands::Status => run_status(),
         DepsCommands::Sync { dry_run } => run_sync(dry_run),
         DepsCommands::Verify { deps } => run_verify(deps),
+        DepsCommands::List => run_list(),
     }
+}
+
+fn run_list() -> Result<()> {
+    let deps = pecos_build::deps::list_dependencies();
+    if deps.is_empty() {
+        println!("No dependencies defined in pecos.toml");
+    } else {
+        println!("Available dependencies:");
+        println!();
+        for dep in deps {
+            println!("  {:<20} {} - {}", dep.name, dep.version, dep.description);
+        }
+    }
+    Ok(())
 }
 
 fn run_init(force: bool) -> Result<()> {
@@ -95,7 +110,7 @@ fn run_sync(dry_run: bool) -> Result<()> {
 
     // Find workspace manifest
     let workspace_path = Manifest::find().ok_or_else(|| {
-        crate::errors::Error::Config(
+        pecos_build::errors::Error::Config(
             "pecos.toml not found. Run from the PECOS workspace directory.".into(),
         )
     })?;
@@ -103,7 +118,7 @@ fn run_sync(dry_run: bool) -> Result<()> {
     // Check this is actually a workspace manifest
     let content = std::fs::read_to_string(&workspace_path)?;
     if !content.contains("[crates.") {
-        return Err(crate::errors::Error::Config(
+        return Err(pecos_build::errors::Error::Config(
             "Found pecos.toml but it doesn't appear to be a workspace manifest (no [crates.*] sections).".into(),
         ));
     }
@@ -240,7 +255,9 @@ fn run_verify(deps_filter: Option<String>) -> Result<()> {
     println!();
 
     let manifest_path = Manifest::find().ok_or_else(|| {
-        crate::errors::Error::Config("pecos.toml not found. Run 'pecos deps init' first.".into())
+        pecos_build::errors::Error::Config(
+            "pecos.toml not found. Run 'pecos deps init' first.".into(),
+        )
     })?;
 
     let manifest = Manifest::load(&manifest_path)?;

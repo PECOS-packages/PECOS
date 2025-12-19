@@ -1,7 +1,7 @@
 //! Implementation of the `go` subcommand
 
-use crate::Result;
-use crate::errors::Error;
+use pecos_build::Result;
+use pecos_build::errors::Error;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -212,7 +212,7 @@ fn run_fmt(check: bool) -> Result<()> {
                     for line in stdout.lines() {
                         eprintln!("  {line}");
                     }
-                    eprintln!("Run 'pecos-dev go fmt' to fix.");
+                    eprintln!("Run 'pecos go fmt' to fix.");
                     Err(Error::Config("Go formatting check failed".to_string()))
                 }
             }

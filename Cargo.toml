@@ -31,6 +31,8 @@ pyo3 = { version = "0.27", features = ["extension-module"] }
 pyo3-build-config = { version = "0.27", features = ["resolve-config"] }
 rayon = "1"
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4.5"
+which = "8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 parking_lot = "0.12"
@@ -109,7 +111,7 @@ pecos-phir = { version = "0.1.1", path = "crates/pecos-phir" }
 pecos-qec = { version = "0.1.1", path = "crates/pecos-qec" }
 pecos-rng = { version = "0.1.1", path = "crates/pecos-rng" }
 pecos = { version = "0.1.1", path = "crates/pecos", default-features = false }
-pecos-dev = { version = "0.1.1", path = "crates/pecos-dev", default-features = false }
+pecos-build = { version = "0.1.1", path = "crates/pecos-build", default-features = false }
 pecos-qis-ffi = { version = "0.1.1", path = "crates/pecos-qis-ffi" }
 pecos-qis-ffi-types = { version = "0.1.1", path = "crates/pecos-qis-ffi-types" }
 pecos-qis-selene = { version = "0.1.1", path = "crates/pecos-qis-selene" }
@@ -118,8 +120,8 @@ pecos-hugr-qis = { version = "0.1.1", path = "crates/pecos-hugr-qis" }
 pecos-llvm = { version = "0.1.1", path = "crates/pecos-llvm" }
 pecos-rslib = { version = "0.1.1", path = "python/pecos-rslib" }
 pecos-wasm = { version = "0.1.1", path = "crates/pecos-wasm" }
-# CLI binary is now part of pecos crate (cargo install pecos --features cli)
-# Developer tools are in pecos-dev crate (cargo install pecos-dev)
+# CLI binary is part of pecos crate (cargo install pecos)
+# Build utilities for crate build.rs are in pecos-build
 pecos-num = { version = "0.1.1", path = "crates/pecos-num" }
 
 # Decoder crates

@@ -7,7 +7,7 @@ use pecos_core::errors::PecosError;
 use pecos_engines::{ClassicalControlEngineBuilder, MonteCarloEngine, SimBuilder, sim_builder};
 use pecos_programs::Program;
 use pecos_qasm::qasm_engine;
-#[cfg(feature = "llvm")]
+#[cfg(feature = "qis")]
 use pecos_qis_core::qis_engine;
 
 /// Extension trait for `SimBuilder` to add program-based methods
@@ -66,7 +66,7 @@ impl ProgrammedSimBuilder {
                     .build(),
                 Program::Qis(qis) => {
                     // Use Selene runtime and Helios interface
-                    #[cfg(feature = "llvm")]
+                    #[cfg(feature = "qis")]
                     {
                         let selene_runtime = crate::selene_simple_runtime().map_err(|e| {
                             PecosError::Generic(format!("Failed to load Selene runtime: {e}"))
@@ -92,7 +92,7 @@ impl ProgrammedSimBuilder {
                 }
                 Program::Hugr(hugr) => {
                     // Use Selene runtime and Helios interface for HUGR programs
-                    #[cfg(feature = "llvm")]
+                    #[cfg(feature = "qis")]
                     {
                         let selene_runtime = crate::selene_simple_runtime().map_err(|e| {
                             PecosError::Generic(format!("Failed to load Selene runtime: {e}"))
@@ -156,7 +156,7 @@ impl ProgrammedSimBuilder {
                     .run(shots),
                 Program::Qis(qis) => {
                     // Use Selene runtime and Helios interface
-                    #[cfg(feature = "llvm")]
+                    #[cfg(feature = "qis")]
                     {
                         let selene_runtime = crate::selene_simple_runtime().map_err(|e| {
                             PecosError::Generic(format!("Failed to load Selene runtime: {e}"))
@@ -182,7 +182,7 @@ impl ProgrammedSimBuilder {
                 }
                 Program::Hugr(hugr) => {
                     // Use Selene runtime and Helios interface for HUGR programs
-                    #[cfg(feature = "llvm")]
+                    #[cfg(feature = "qis")]
                     {
                         let selene_runtime = crate::selene_simple_runtime().map_err(|e| {
                             PecosError::Generic(format!("Failed to load Selene runtime: {e}"))

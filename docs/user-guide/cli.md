@@ -133,12 +133,11 @@ Checking PECOS installation...
   [OK] PHIR/JSON support: available
   [OK] Selene runtime: available
   [!!] LLVM/QIS support: not compiled (optional)
-  [!!] pecos-dev tools: not installed (optional)
+  [OK] LLVM 14: 14.0.6 at /home/user/.pecos/llvm
   [OK] Test circuit: execution successful
 
 Suggestions:
   - LLVM support not compiled. To enable: cargo install pecos --features llvm
-  - pecos-dev not found. To install: cargo install pecos-dev
 
 All checks passed! PECOS is ready to use.
 ```

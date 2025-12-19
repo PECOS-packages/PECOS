@@ -1,5 +1,5 @@
 use log::warn;
-use pecos_dev::{Manifest, ensure_dep_ready};
+use pecos_build::{Manifest, ensure_dep_ready};
 use std::env;
 use std::path::{Path, PathBuf};
 

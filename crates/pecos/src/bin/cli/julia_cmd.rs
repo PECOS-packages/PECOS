@@ -1,7 +1,7 @@
 //! Implementation of the `julia` subcommand
 
-use crate::Result;
-use crate::errors::Error;
+use pecos_build::Result;
+use pecos_build::errors::Error;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -218,7 +218,7 @@ fn run_fmt(check: bool) -> Result<()> {
         r#"
         using JuliaFormatter
         if !format("."; verbose=false, overwrite=false)
-            println("Formatting issues found. Run 'pecos-dev julia fmt' to fix.")
+            println("Formatting issues found. Run 'pecos julia fmt' to fix.")
             exit(1)
         else
             println("All Julia code is properly formatted.")

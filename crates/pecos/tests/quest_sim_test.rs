@@ -1,6 +1,6 @@
 //! Tests for Quest quantum simulator integration with `sim()` API
 
-#![cfg(feature = "quest")]
+#![cfg(all(feature = "runtime", feature = "quest"))]
 
 use pecos::{quest_density_matrix, quest_state_vec, sim};
 use pecos_programs::Qasm;

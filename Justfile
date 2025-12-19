@@ -43,15 +43,15 @@ installreqs-python version:
 # Install LLVM 14 to ~/.pecos/llvm/ (required for QIR features)
 install-llvm:
     @echo "Installing LLVM 14..."
-    cargo run --release --package pecos-dev -- llvm install
+    cargo run --release -p pecos --features cli -- llvm install
 
 # Check LLVM 14 installation status
 check-llvm:
-    -cargo run -q --release --package pecos-dev -- llvm check
+    -cargo run --release -p pecos --features cli -- llvm check
 
 # Configure LLVM paths in .cargo/config.toml
 configure-llvm:
-    cargo run --release --package pecos-dev -- llvm configure
+    cargo run --release -p pecos --features cli -- llvm configure
 
 # =============================================================================
 # CUDA Setup
@@ -60,15 +60,15 @@ configure-llvm:
 # Install CUDA Toolkit to ~/.pecos/cuda/ (for GPU support, no GPU needed)
 install-cuda:
     @echo "Installing CUDA Toolkit..."
-    cargo run --release --package pecos-dev -- cuda install
+    cargo run -p pecos --features cli -- cuda install
 
 # Check CUDA installation status (local or system)
 check-cuda:
-    -cargo run -q --release --package pecos-dev -- cuda check
+    -cargo run -p pecos --features cli -- cuda check
 
 # Validate CUDA installation integrity
 validate-cuda:
-    cargo run -q --release --package pecos-dev -- cuda validate
+    cargo run -p pecos --features cli -- cuda validate
 
 # =============================================================================
 # Building
@@ -76,10 +76,10 @@ validate-cuda:
 
 # Build PECOS (profile: debug, release, native)
 build profile="debug": installreqs build-selene
-    cargo run -p pecos-dev -- python build --profile {{profile}}
+    cargo run -p pecos --features cli -- python build --profile {{profile}}
     # Build FFI crates if tools available
-    cargo run -q -p pecos-dev -- julia build --profile {{profile}} 2>/dev/null || true
-    cargo run -q -p pecos-dev -- go build --profile {{profile}} 2>/dev/null || true
+    cargo run -p pecos --features cli -- julia build --profile {{profile}} 2>/dev/null || true
+    cargo run -p pecos --features cli -- go build --profile {{profile}} 2>/dev/null || true
 
 # Build and install Selene plugins for development
 build-selene:
@@ -88,7 +88,7 @@ build-selene:
     echo "Building Selene plugins..."
 
     # Build Rust libraries (with GPU support if CUDA available)
-    if cargo run -q -p pecos-dev -- cuda check -q >/dev/null 2>&1; then
+    if cargo run -p pecos --features cli -- cuda check -q >/dev/null 2>&1; then
         echo "CUDA detected, building with GPU support..."
         cargo build --release -p pecos-selene-quest --features cuda
     else
@@ -100,7 +100,7 @@ build-selene:
 
     # Copy libraries to Python package directories
     echo "Copying libraries to Python packages..."
-    cargo run -p pecos-dev -- selene install
+    cargo run -p pecos --features cli -- selene install
 
     # Install Python packages in editable mode
     echo "Installing Selene plugins in editable mode..."
@@ -113,10 +113,10 @@ build-selene:
 
 # Build PECOS with CUDA support
 build-cuda profile="debug": installreqs
-    cargo run -p pecos-dev -- python build --profile {{profile}} --cuda
+    cargo run -p pecos --features cli -- python build --profile {{profile}} --cuda
     # Build FFI crates if tools available
-    cargo run -q -p pecos-dev -- julia build --profile {{profile}} 2>/dev/null || true
-    cargo run -q -p pecos-dev -- go build --profile {{profile}} 2>/dev/null || true
+    cargo run -p pecos --features cli -- julia build --profile {{profile}} 2>/dev/null || true
+    cargo run -p pecos --features cli -- go build --profile {{profile}} 2>/dev/null || true
 
 # Convenience aliases
 build-debug: (build "debug")
@@ -136,7 +136,7 @@ docs-build:
 
 # Serve documentation and open in browser
 docs port="8000":
-    uv run mkdocs serve -a "127.0.0.1:{{port}}"
+    cargo run -p pecos --features cli -- docs --port {{port}}
 
 # Test all code examples in documentation
 docs-test:
@@ -152,21 +152,21 @@ docs-test-working:
 
 # Run cargo check (with GPU features only if CUDA available)
 check:
-    cargo run -p pecos-dev -- rust check --include-ffi
+    cargo run -p pecos --features cli -- rust check --include-ffi
 
 # Run cargo clippy (with GPU features only if CUDA available)
 clippy:
-    @echo "==> Running clippy via pecos-dev..."
-    cargo run -p pecos-dev -- rust clippy --include-ffi
+    @echo "==> Running clippy via pecos..."
+    cargo run -p pecos --features cli -- rust clippy --include-ffi
 
 # Check Rust formatting (without fixing)
 fmt:
-    @echo "==> Running fmt check via pecos-dev..."
-    cargo run -p pecos-dev -- rust fmt --check
+    @echo "==> Running fmt check via pecos..."
+    cargo run -p pecos --features cli -- rust fmt --check
 
 # Fix Rust formatting issues
 fmt-fix:
-    cargo run -p pecos-dev -- rust fmt
+    cargo run -p pecos --features cli -- rust fmt
 
 # Run all quality checks / linting (check only)
 lint: fmt clippy
@@ -175,18 +175,18 @@ lint: fmt clippy
     echo "==> Running pre-commit..."
     uv run pre-commit run --all-files
 
-    if cargo run -q -p pecos-dev -- julia check -q >/dev/null 2>&1; then
+    if cargo run -p pecos --features cli -- julia check -q >/dev/null 2>&1; then
         echo "Julia detected, running Julia formatting check and linting..."
-        cargo run -q -p pecos-dev -- julia fmt --check
-        cargo run -q -p pecos-dev -- julia lint
+        cargo run -p pecos --features cli -- julia fmt --check
+        cargo run -p pecos --features cli -- julia lint
     else
         echo "Julia not detected, skipping Julia linting"
     fi
 
-    if cargo run -q -p pecos-dev -- go check -q >/dev/null 2>&1; then
+    if cargo run -p pecos --features cli -- go check -q >/dev/null 2>&1; then
         echo "Go detected, running Go formatting check and linting..."
-        cargo run -q -p pecos-dev -- go fmt --check
-        cargo run -q -p pecos-dev -- go lint
+        cargo run -p pecos --features cli -- go fmt --check
+        cargo run -p pecos --features cli -- go lint
     else
         echo "Go not detected, skipping Go linting"
     fi
@@ -196,25 +196,25 @@ lint-fix:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Fixing Rust formatting and clippy issues..."
-    cargo run -p pecos-dev -- rust fmt
-    cargo run -p pecos-dev -- rust clippy --fix --include-ffi
+    cargo run -p pecos --features cli -- rust fmt
+    cargo run -p pecos --features cli -- rust clippy --fix --include-ffi
     echo ""
     echo "Running pre-commit fixes..."
     uv run pre-commit run --all-files || true
     echo ""
 
-    if cargo run -q -p pecos-dev -- julia check -q >/dev/null 2>&1; then
+    if cargo run -p pecos --features cli -- julia check -q >/dev/null 2>&1; then
         echo "Fixing Julia formatting..."
-        cargo run -q -p pecos-dev -- julia fmt
+        cargo run -p pecos --features cli -- julia fmt
         echo ""
         echo "Note: Some Julia linting issues from Aqua.jl may require manual fixes."
     else
         echo "Julia not detected, skipping Julia formatting"
     fi
 
-    if cargo run -q -p pecos-dev -- go check -q >/dev/null 2>&1; then
+    if cargo run -p pecos --features cli -- go check -q >/dev/null 2>&1; then
         echo "Fixing Go formatting..."
-        cargo run -q -p pecos-dev -- go fmt
+        cargo run -p pecos --features cli -- go fmt
     else
         echo "Go not detected, skipping Go formatting"
     fi
@@ -235,19 +235,19 @@ normalize-line-endings:
 
 # Run Rust tests (with GPU features only if CUDA available)
 rstest:
-    cargo run -q -p pecos-dev -- rust test --release
+    cargo run -p pecos --features cli -- rust test --release
 
 # Run Rust tests with all features
 rstest-all:
-    cargo run -q -p pecos-dev -- rust test
+    cargo run -p pecos --features cli -- rust test
 
 # Run Python tests (excluding numpy and optional deps)
 pytest:
-    cargo run -q -p pecos-dev -- python test
+    cargo run -p pecos --features cli -- python test
 
 # Run NumPy/SciPy compatibility tests
 pytest-numpy:
-    cargo run -q -p pecos-dev -- python test --numpy
+    cargo run -p pecos --features cli -- python test --numpy
 
 # Run performance tests with release build
 pytest-perf: build-release
@@ -256,11 +256,11 @@ pytest-perf: build-release
 
 # Run tests for optional dependencies
 pytest-dep:
-    cargo run -q -p pecos-dev -- python test -m optional_dependency
+    cargo run -p pecos --features cli -- python test -m optional_dependency
 
 # Run Selene plugin tests
 pytest-selene:
-    cargo run -q -p pecos-dev -- python test --selene
+    cargo run -p pecos --features cli -- python test --selene
 
 # Run all Python tests (core + numpy compat + selene)
 pytest-all: pytest pytest-numpy pytest-selene
@@ -270,16 +270,16 @@ pytest-all: pytest pytest-numpy pytest-selene
 test: rstest-all pytest-all
     #!/usr/bin/env bash
     set -euo pipefail
-    if cargo run -q -p pecos-dev -- julia check -q >/dev/null 2>&1; then
+    if cargo run -p pecos --features cli -- julia check -q >/dev/null 2>&1; then
         echo "Julia detected, running Julia tests..."
-        cargo run -q -p pecos-dev -- julia test
+        cargo run -p pecos --features cli -- julia test
     else
         echo "Julia not detected, skipping Julia tests"
     fi
 
-    if cargo run -q -p pecos-dev -- go check -q >/dev/null 2>&1; then
+    if cargo run -p pecos --features cli -- go check -q >/dev/null 2>&1; then
         echo "Go detected, running Go tests..."
-        cargo run -q -p pecos-dev -- go test
+        cargo run -p pecos --features cli -- go test
     else
         echo "Go not detected, skipping Go tests"
     fi
@@ -288,9 +288,9 @@ test: rstest-all pytest-all
 test-all: rstest-all pytest-all
     #!/usr/bin/env bash
     set -euo pipefail
-    if cargo run -q -p pecos-dev -- julia check -q >/dev/null 2>&1; then
+    if cargo run -p pecos --features cli -- julia check -q >/dev/null 2>&1; then
         echo "Julia detected, running Julia tests..."
-        cargo run -q -p pecos-dev -- julia test
+        cargo run -p pecos --features cli -- julia test
     else
         echo ""
         echo "WARNING: Julia is not installed. Skipping Julia tests."
@@ -298,9 +298,9 @@ test-all: rstest-all pytest-all
         echo ""
     fi
 
-    if cargo run -q -p pecos-dev -- go check -q >/dev/null 2>&1; then
+    if cargo run -p pecos --features cli -- go check -q >/dev/null 2>&1; then
         echo "Go detected, running Go tests..."
-        cargo run -q -p pecos-dev -- go test
+        cargo run -p pecos --features cli -- go test
     else
         echo ""
         echo "WARNING: Go is not installed. Skipping Go tests."
@@ -339,7 +339,7 @@ decoder-info:
 
 # Show decoder download cache status
 decoder-cache-status:
-    cargo run -q -p pecos-dev -- list -v
+    cargo run -p pecos --features cli -- list -v
 
 # Clean decoder download cache (same as clean-cache)
 decoder-cache-clean: clean-cache
@@ -351,22 +351,22 @@ decoder-cache-clean: clean-cache
 
 # Build Julia FFI library
 julia-build profile="release":
-    cargo run -q -p pecos-dev -- julia build --profile {{profile}}
+    cargo run -p pecos --features cli -- julia build --profile {{profile}}
 
 # Build Julia FFI library in debug mode
 julia-build-debug:
-    cargo run -q -p pecos-dev -- julia build --profile debug
+    cargo run -p pecos --features cli -- julia build --profile debug
 
 # Run Julia tests (requires Julia installed)
 julia-test:
-    cargo run -q -p pecos-dev -- julia test
+    cargo run -p pecos --features cli -- julia test
 
 # Run Julia examples
 julia-examples: julia-build-debug
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Running Julia examples..."
-    if cargo run -q -p pecos-dev -- julia check -q >/dev/null 2>&1; then
+    if cargo run -p pecos --features cli -- julia check -q >/dev/null 2>&1; then
         cd julia/PECOS.jl && julia --project=. examples/demo.jl
         cd julia/PECOS.jl && julia --project=. examples/basic_usage.jl
     else
@@ -383,23 +383,23 @@ julia-info:
     @echo "FFI library: julia/pecos-julia-ffi"
     @echo ""
     @echo "To install for development:"
-    @echo "  1. Build FFI library: pecos-dev julia build"
+    @echo "  1. Build FFI library: pecos julia build"
     @echo "  2. In Julia REPL: ] add julia/PECOS.jl"
     @echo ""
-    @echo "To run tests: pecos-dev julia test"
+    @echo "To run tests: pecos julia test"
     @echo "To run examples: just julia-examples"
 
 # Format Julia code
 julia-format:
-    cargo run -q -p pecos-dev -- julia fmt
+    cargo run -p pecos --features cli -- julia fmt
 
 # Check Julia code formatting
 julia-format-check:
-    cargo run -q -p pecos-dev -- julia fmt --check
+    cargo run -p pecos --features cli -- julia fmt --check
 
 # Run Aqua.jl quality checks on Julia code
 julia-lint:
-    cargo run -q -p pecos-dev -- julia lint
+    cargo run -p pecos --features cli -- julia lint
 
 # Clean Julia build artifacts
 julia-clean:
@@ -416,15 +416,15 @@ julia-clean:
 
 # Build Go FFI library
 go-build profile="release":
-    cargo run -q -p pecos-dev -- go build --profile {{profile}}
+    cargo run -p pecos --features cli -- go build --profile {{profile}}
 
 # Build Go FFI library in debug mode
 go-build-debug:
-    cargo run -q -p pecos-dev -- go build --profile debug
+    cargo run -p pecos --features cli -- go build --profile debug
 
 # Run Go tests (requires Go installed)
 go-test:
-    cargo run -q -p pecos-dev -- go test
+    cargo run -p pecos --features cli -- go test
 
 # Show Go package information
 go-info:
@@ -435,8 +435,8 @@ go-info:
     @echo "FFI library: go/pecos-go-ffi"
     @echo ""
     @echo "To build and test:"
-    @echo "  1. Build FFI library: pecos-dev go build"
-    @echo "  2. Run tests: pecos-dev go test"
+    @echo "  1. Build FFI library: pecos go build"
+    @echo "  2. Run tests: pecos go test"
     @echo ""
     @echo "To use in your Go project:"
     @echo "  1. Set LD_LIBRARY_PATH to include target/release"
@@ -444,15 +444,15 @@ go-info:
 
 # Format Go code
 go-fmt:
-    cargo run -q -p pecos-dev -- go fmt
+    cargo run -p pecos --features cli -- go fmt
 
 # Check Go code formatting
 go-fmt-check:
-    cargo run -q -p pecos-dev -- go fmt --check
+    cargo run -p pecos --features cli -- go fmt --check
 
 # Run Go linting with go vet
 go-lint:
-    cargo run -q -p pecos-dev -- go lint
+    cargo run -p pecos --features cli -- go lint
 
 # Clean Go build artifacts
 go-clean:
@@ -460,7 +460,7 @@ go-clean:
     set -euo pipefail
     echo "Cleaning Go artifacts..."
     rm -f go/pecos/go.sum || true
-    if cargo run -q -p pecos-dev -- go check -q >/dev/null 2>&1; then
+    if cargo run -p pecos --features cli -- go check -q >/dev/null 2>&1; then
         cd go/pecos && go clean -cache 2>/dev/null || true
     fi
 
@@ -514,19 +514,33 @@ clean-dry-run:
 
 # Verify LLVM configuration before building
 pre-check:
-    cargo run -q -p pecos-dev -- llvm check
+    cargo run --release -p pecos --features cli -- llvm check
 
-# Full dev cycle: check -> clean -> build -> test
-dev: pre-check clean build-debug test
-
-# Dev cycle + lint
-devl: dev lint
+# Dev cycle: incremental build + test (fast, for normal development)
+dev cuda="false": pre-check (build-dev cuda) test
 
 # Dev cycle with CUDA support
-devc: pre-check clean (build-cuda "debug") test
+devc: (dev "true")
 
-# Dev cycle with CUDA + lint
-devcl: devc lint
+# Full dev cycle: clean build + test + lint (pre-merge)
+dev-full cuda="false": pre-check clean (build-dev cuda) test lint
+
+# Full dev cycle with CUDA support
+devc-full: (dev-full "true")
+
+# Internal: build for dev cycle with optional CUDA
+[private]
+build-dev cuda="false": installreqs build-selene
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "{{cuda}}" == "true" ]]; then
+        cargo run -p pecos --features cli -- python build --profile debug --cuda
+    else
+        cargo run -p pecos --features cli -- python build --profile debug
+    fi
+    # Build FFI crates if tools available
+    cargo run -p pecos --features cli -- julia build --profile debug 2>/dev/null || true
+    cargo run -p pecos --features cli -- go build --profile debug 2>/dev/null || true
 
 # Install uv using pip (prefer: https://docs.astral.sh/uv/getting-started/installation/)
 pip-install-uv:
@@ -537,8 +551,8 @@ pip-install-uv:
 
 # Show system information
 sys-info:
-    cargo run -p pecos-dev -- sys-info
+    cargo run -p pecos --features cli -- sys-info
 
 # List installed and cached dependencies
 list-deps:
-    cargo run -p pecos-dev -- list -v
+    cargo run -p pecos --features cli -- list -v

@@ -16,11 +16,9 @@ name = "pecos_go"
 crate-type = ["cdylib"]
 
 [dependencies]
-# Use pecos without default features for faster compilation
-# This avoids heavy dependencies like all-simulators, wasm, qasm, phir
-# The Go wrapper currently only needs QubitId from pecos-core (via pecos::prelude)
-# Note: Can't use workspace = true here because Cargo doesn't allow overriding default-features
-pecos = { version = "0.1.1", path = "../../crates/pecos", default-features = false }
+# Use pecos with only core feature for minimal dependencies
+# The Go wrapper currently only needs QubitId from pecos-core
+pecos = { workspace = true, default-features = false, features = ["core"] }
 
 [lints]
 workspace = true

@@ -10,24 +10,24 @@ use crate::errors::{Error, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Determine the best command prefix for running pecos-dev commands.
+/// Determine the best command prefix for running pecos CLI commands.
 ///
 /// Returns the appropriate command prefix based on what's available:
-/// - `"pecos-dev"` if the pecos-dev CLI is installed
-/// - `"cargo run -p pecos-dev --"` as fallback
+/// - `"pecos"` if the pecos CLI is installed
+/// - `"cargo run -p pecos --"` as fallback
 #[must_use]
-pub fn get_pecos_dev_command() -> &'static str {
-    // Check if pecos-dev is in PATH
-    if Command::new("pecos-dev")
+pub fn get_pecos_command() -> &'static str {
+    // Check if pecos is in PATH
+    if Command::new("pecos")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())
     {
-        return "pecos-dev";
+        return "pecos";
     }
 
     // Fall back to cargo run
-    "cargo run -p pecos-dev --"
+    "cargo run -p pecos --"
 }
 
 /// LLVM version required by PECOS
@@ -246,7 +246,7 @@ pub fn find_cargo_project_root() -> Option<PathBuf> {
 
 /// Print a helpful error message when LLVM 14 is not found
 pub fn print_llvm_not_found_error() {
-    let cmd = get_pecos_dev_command();
+    let cmd = get_pecos_command();
 
     eprintln!("\n═══════════════════════════════════════════════════════════════");
     eprintln!("ERROR: LLVM 14 not found!");

@@ -21,8 +21,10 @@ This guide will help you get up and running with PECOS quickly.
 
     ```toml
     [dependencies]
-    pecos = "0.1"
+    pecos = { version = "0.1", features = ["qasm"] }
     ```
+
+    The `qasm` feature enables QASM simulation. For PHIR support, add `phir`. See the [Rust API docs](https://docs.rs/pecos) for all available features.
 
 ## Verify Installation
 

@@ -126,7 +126,7 @@ pub fn install_cuda(force: bool) -> Result<PathBuf> {
     let version_file = cuda_dir.join("version.txt");
     fs::write(
         &version_file,
-        format!("CUDA {CUDA_VERSION}\nInstalled by pecos-dev\n"),
+        format!("CUDA {CUDA_VERSION}\nInstalled by pecos\n"),
     )?;
 
     println!();
@@ -138,7 +138,7 @@ pub fn install_cuda(force: bool) -> Result<PathBuf> {
     );
     println!();
     println!("To use this installation, you can either:");
-    println!("  1. Build with pecos-dev (automatically detected)");
+    println!("  1. Build with pecos (automatically detected)");
     println!("  2. Set environment variables:");
     println!("     export CUDA_PATH=\"{}\"", cuda_dir.display());
     println!("     export PATH=\"{}/bin:$PATH\"", cuda_dir.display());

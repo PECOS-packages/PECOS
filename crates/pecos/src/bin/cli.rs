@@ -1,102 +1,26 @@
-//! CLI implementation for pecos-dev
+//! CLI command definitions and handlers for PECOS developer tools
+//!
+//! This module contains the command definitions and implementations for all
+//! dev tool commands. The command enums are designed to be embedded in the
+//! main pecos CLI.
 
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::fn_params_excessive_bools)]
 
-mod cuda_cmd;
-mod features_cmd;
-mod go_cmd;
-mod info;
-mod julia_cmd;
-mod list;
-mod llvm_cmd;
-mod manifest_cmd;
-mod python_cmd;
-mod rust_cmd;
-mod selene_cmd;
+pub mod cuda_cmd;
+pub mod docs_cmd;
+pub mod features_cmd;
+pub mod go_cmd;
+pub mod info;
+pub mod julia_cmd;
+pub mod list;
+pub mod llvm_cmd;
+pub mod manifest_cmd;
+pub mod python_cmd;
+pub mod rust_cmd;
+pub mod selene_cmd;
 
-use clap::{Parser, Subcommand};
-
-/// PECOS developer tools
-#[derive(Parser)]
-#[command(name = "pecos-dev")]
-#[command(about = "PECOS developer tools - build, test, and manage PECOS development", long_about = None)]
-#[command(version)]
-pub struct Cli {
-    #[command(subcommand)]
-    pub command: Commands,
-}
-
-#[derive(Subcommand)]
-pub enum Commands {
-    /// Rust/Cargo commands (CUDA-aware)
-    #[command(visible_alias = "rs")]
-    Rust {
-        #[command(subcommand)]
-        command: RustCommands,
-    },
-
-    /// Python build and test commands
-    #[command(visible_alias = "py")]
-    Python {
-        #[command(subcommand)]
-        command: PythonCommands,
-    },
-
-    /// CUDA availability and info
-    Cuda {
-        #[command(subcommand)]
-        command: CudaCommands,
-    },
-
-    /// Julia build and test commands
-    #[command(visible_alias = "jl")]
-    Julia {
-        #[command(subcommand)]
-        command: JuliaCommands,
-    },
-
-    /// Go build and test commands
-    Go {
-        #[command(subcommand)]
-        command: GoCommands,
-    },
-
-    /// LLVM 14 management
-    Llvm {
-        #[command(subcommand)]
-        command: LlvmCommands,
-    },
-
-    /// Selene plugin management
-    Selene {
-        #[command(subcommand)]
-        command: SeleneCommands,
-    },
-
-    /// Query package features
-    Features {
-        #[command(subcommand)]
-        command: FeaturesCommands,
-    },
-
-    /// Dependency manifest management (pecos.toml)
-    Deps {
-        #[command(subcommand)]
-        command: DepsCommands,
-    },
-
-    /// Show system tools and project info
-    #[command(name = "sys-info")]
-    SysInfo,
-
-    /// List installed and cached dependencies
-    List {
-        /// Show detailed information
-        #[arg(short, long)]
-        verbose: bool,
-    },
-}
+use clap::Subcommand;
 
 // ============================================================================
 // Rust Commands
@@ -239,7 +163,7 @@ pub enum CudaCommands {
 // Julia Commands
 // ============================================================================
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 pub enum JuliaCommands {
     /// Check if Julia is available
     Check {
@@ -277,7 +201,7 @@ pub enum JuliaCommands {
 // Go Commands
 // ============================================================================
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 pub enum GoCommands {
     /// Check if Go is available
     Check {
@@ -312,10 +236,76 @@ pub enum GoCommands {
 }
 
 // ============================================================================
+// Selene Commands
+// ============================================================================
+
+#[derive(Subcommand, Clone)]
+pub enum SeleneCommands {
+    /// Install Selene plugins by copying built libraries to Python packages
+    Install {
+        /// Specific plugin to install (default: all)
+        #[arg(short, long)]
+        plugin: Option<String>,
+
+        /// Build profile to use (debug, release, native)
+        #[arg(long, default_value = "release")]
+        profile: String,
+
+        /// Show what would be copied without copying
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Clean Selene plugin _dist directories and venv installations
+    Clean {
+        /// Specific plugin to clean (default: all)
+        #[arg(short, long)]
+        plugin: Option<String>,
+
+        /// Also clean plugins from .venv/lib/*/site-packages/
+        #[arg(long)]
+        venv: bool,
+
+        /// Show what would be deleted without deleting
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Increase verbosity (-v, -vv, -vvv)
+        #[arg(short, long, action = clap::ArgAction::Count)]
+        verbose: u8,
+    },
+
+    /// List Selene plugins and their installation status
+    List,
+}
+
+// ============================================================================
+// Features Commands
+// ============================================================================
+
+#[derive(Subcommand, Clone)]
+pub enum FeaturesCommands {
+    /// List features for a package
+    List {
+        /// Package name (e.g., pecos, pecos-quest)
+        #[arg(short, long)]
+        package: String,
+
+        /// Features to exclude (comma-separated, e.g., "gpu,cuda")
+        #[arg(short, long)]
+        exclude: Option<String>,
+
+        /// Output as JSON array
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+// ============================================================================
 // LLVM Commands
 // ============================================================================
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 pub enum LlvmCommands {
     /// Download and install LLVM 14
     Install {
@@ -362,76 +352,10 @@ pub enum LlvmCommands {
 }
 
 // ============================================================================
-// Selene Commands
-// ============================================================================
-
-#[derive(Subcommand)]
-pub enum SeleneCommands {
-    /// Install Selene plugins by copying built libraries to Python packages
-    Install {
-        /// Specific plugin to install (default: all)
-        #[arg(short, long)]
-        plugin: Option<String>,
-
-        /// Build profile to use (debug, release, native)
-        #[arg(long, default_value = "release")]
-        profile: String,
-
-        /// Show what would be copied without copying
-        #[arg(long)]
-        dry_run: bool,
-    },
-
-    /// Clean Selene plugin _dist directories and venv installations
-    Clean {
-        /// Specific plugin to clean (default: all)
-        #[arg(short, long)]
-        plugin: Option<String>,
-
-        /// Also clean plugins from .venv/lib/*/site-packages/
-        #[arg(long)]
-        venv: bool,
-
-        /// Show what would be deleted without deleting
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Increase verbosity (-v, -vv, -vvv)
-        #[arg(short, long, action = clap::ArgAction::Count)]
-        verbose: u8,
-    },
-
-    /// List Selene plugins and their installation status
-    List,
-}
-
-// ============================================================================
-// Features Commands
-// ============================================================================
-
-#[derive(Subcommand)]
-pub enum FeaturesCommands {
-    /// List features for a package
-    List {
-        /// Package name (e.g., pecos, pecos-quest)
-        #[arg(short, long)]
-        package: String,
-
-        /// Features to exclude (comma-separated, e.g., "gpu,cuda")
-        #[arg(short, long)]
-        exclude: Option<String>,
-
-        /// Output as JSON array
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-// ============================================================================
 // Deps Commands
 // ============================================================================
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 pub enum DepsCommands {
     /// Initialize a new pecos.toml manifest
     Init {
@@ -456,27 +380,71 @@ pub enum DepsCommands {
         #[arg(short, long)]
         deps: Option<String>,
     },
+
+    /// List available dependencies
+    List,
 }
 
 // ============================================================================
-// CLI Runner
+// Command Runners
 // ============================================================================
 
-/// Run the CLI
-pub fn run() -> crate::Result<()> {
-    let cli = Cli::parse();
+/// Run a Rust subcommand
+pub fn run_rust(command: &RustCommands) -> pecos_build::Result<()> {
+    rust_cmd::run(command)
+}
 
-    match cli.command {
-        Commands::Rust { command } => rust_cmd::run(&command),
-        Commands::Python { command } => python_cmd::run(&command),
-        Commands::Cuda { command } => cuda_cmd::run(command),
-        Commands::Julia { command } => julia_cmd::run(&command),
-        Commands::Go { command } => go_cmd::run(&command),
-        Commands::Llvm { command } => llvm_cmd::run(command),
-        Commands::Selene { command } => selene_cmd::run(command),
-        Commands::Features { command } => features_cmd::run(command),
-        Commands::Deps { command } => manifest_cmd::run(command),
-        Commands::SysInfo => info::run(),
-        Commands::List { verbose } => list::run(verbose),
-    }
+/// Run a Python subcommand
+pub fn run_python(command: &PythonCommands) -> pecos_build::Result<()> {
+    python_cmd::run(command)
+}
+
+/// Run a CUDA subcommand
+pub fn run_cuda(command: CudaCommands) -> pecos_build::Result<()> {
+    cuda_cmd::run(command)
+}
+
+/// Run a Julia subcommand
+pub fn run_julia(command: &JuliaCommands) -> pecos_build::Result<()> {
+    julia_cmd::run(command)
+}
+
+/// Run a Go subcommand
+pub fn run_go(command: &GoCommands) -> pecos_build::Result<()> {
+    go_cmd::run(command)
+}
+
+/// Run a Selene subcommand
+pub fn run_selene(command: SeleneCommands) -> pecos_build::Result<()> {
+    selene_cmd::run(command)
+}
+
+/// Run a Features subcommand
+pub fn run_features(command: FeaturesCommands) -> pecos_build::Result<()> {
+    features_cmd::run(command)
+}
+
+/// Run an LLVM subcommand
+pub fn run_llvm(command: LlvmCommands) -> pecos_build::Result<()> {
+    llvm_cmd::run(command)
+}
+
+/// Run a Deps subcommand
+pub fn run_deps(command: DepsCommands) -> pecos_build::Result<()> {
+    manifest_cmd::run(command)
+}
+
+/// Run the sys-info command
+pub fn run_sys_info() -> pecos_build::Result<()> {
+    info::run()
+}
+
+/// Run the list command
+pub fn run_list(verbose: bool) -> pecos_build::Result<()> {
+    list::run(verbose)
+}
+
+/// Run the docs command
+pub fn run_docs(port: u16, no_browser: bool) -> pecos_build::Result<()> {
+    docs_cmd::run(port, no_browser)
 }

@@ -4,7 +4,7 @@
 
 use crate::errors::{Error, Result};
 use crate::llvm::{
-    find_cargo_project_root, find_llvm_14, get_pecos_dev_command, get_repo_root_from_manifest,
+    find_cargo_project_root, find_llvm_14, get_pecos_command, get_repo_root_from_manifest,
     is_valid_llvm_14,
 };
 use std::fs;
@@ -35,7 +35,7 @@ impl ConfigValidation {
     /// Print validation warnings if there are issues
     #[allow(clippy::collapsible_if)]
     pub fn print_warnings(&self) {
-        let cmd = get_pecos_dev_command();
+        let cmd = get_pecos_command();
 
         if let Some(ref configured) = self.configured_path {
             if !self.path_exists {

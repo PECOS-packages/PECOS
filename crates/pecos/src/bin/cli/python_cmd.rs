@@ -1,7 +1,7 @@
 //! Implementation of the `python` subcommand
 
-use crate::Result;
-use crate::errors::Error;
+use pecos_build::Result;
+use pecos_build::errors::Error;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;

@@ -1,18 +1,33 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use env_logger::Env;
+
+mod cli;
+use cli::{
+    CudaCommands, DepsCommands, FeaturesCommands, GoCommands, JuliaCommands, LlvmCommands,
+    PythonCommands, RustCommands, SeleneCommands,
+};
+
+// Runtime-only imports
+#[cfg(feature = "runtime")]
+use clap::Args;
+#[cfg(feature = "runtime")]
 use log::debug;
+#[cfg(feature = "runtime")]
 use pecos::prelude::*;
+#[cfg(feature = "runtime")]
 use pecos::{
     DepolarizingNoise, GeneralNoiseModelBuilder, qasm_engine, sim_builder, sparse_stabilizer,
     state_vector,
 };
-use std::ffi::OsString;
+#[cfg(feature = "runtime")]
+use pecos_build::llvm::{find_llvm_14, get_llvm_version};
+#[cfg(feature = "runtime")]
 use std::io::Write;
-use std::path::PathBuf;
-use std::process::Command;
 
+#[cfg(feature = "runtime")]
 #[path = "engine_setup.rs"]
 mod engine_setup;
+#[cfg(feature = "runtime")]
 use engine_setup::{setup_cli_engine, setup_cli_engine_builder};
 
 #[derive(Parser)]
@@ -29,25 +44,98 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    // === Runtime Commands (require 'runtime' feature) ===
+    #[cfg(feature = "runtime")]
     /// Compile QIS program to native code
     Compile(CompileArgs),
+    #[cfg(feature = "runtime")]
     /// Run quantum program (supports QIS, PHIR/JSON, and QASM formats)
     #[command(after_help = RUN_EXAMPLES)]
     Run(RunArgs),
+    #[cfg(feature = "runtime")]
     /// Show version, features, and system information
     Info,
+    #[cfg(feature = "runtime")]
     /// Check installation and diagnose common issues
     Doctor,
+    #[cfg(feature = "runtime")]
     /// Generate shell completions
     Completions(CompletionsArgs),
+    #[cfg(feature = "runtime")]
     /// Show or run example quantum circuits
     Examples(ExamplesArgs),
 
-    /// External subcommand (forwarded to pecos-dev if available)
-    #[command(external_subcommand)]
-    External(Vec<OsString>),
+    // === Dev Tool Commands (always available) ===
+    /// Rust/Cargo commands (CUDA-aware)
+    #[command(visible_alias = "rs")]
+    Rust {
+        #[command(subcommand)]
+        command: RustCommands,
+    },
+    /// Python build and test commands
+    #[command(visible_alias = "py")]
+    Python {
+        #[command(subcommand)]
+        command: PythonCommands,
+    },
+    /// CUDA availability and info
+    Cuda {
+        #[command(subcommand)]
+        command: CudaCommands,
+    },
+    /// Julia build and test commands
+    #[command(visible_alias = "jl")]
+    Julia {
+        #[command(subcommand)]
+        command: JuliaCommands,
+    },
+    /// Go build and test commands
+    Go {
+        #[command(subcommand)]
+        command: GoCommands,
+    },
+    /// LLVM 14 management (install, check, configure)
+    Llvm {
+        #[command(subcommand)]
+        command: LlvmCommands,
+    },
+    /// Selene plugin management
+    Selene {
+        #[command(subcommand)]
+        command: SeleneCommands,
+    },
+    /// Query package features
+    Features {
+        #[command(subcommand)]
+        command: FeaturesCommands,
+    },
+    /// Dependency manifest management (pecos.toml)
+    Deps {
+        #[command(subcommand)]
+        command: DepsCommands,
+    },
+    /// Show system tools and project info
+    #[command(name = "sys-info")]
+    SysInfo,
+    /// List installed and cached dependencies
+    List {
+        /// Show detailed information
+        #[arg(short, long)]
+        verbose: bool,
+    },
+    /// Serve documentation locally and open in browser
+    Docs {
+        /// Port to serve on
+        #[arg(short, long, default_value_t = 8000)]
+        port: u16,
+
+        /// Don't open browser automatically
+        #[arg(long)]
+        no_browser: bool,
+    },
 }
 
+#[cfg(feature = "runtime")]
 #[derive(Args)]
 struct ExamplesArgs {
     /// Name of the example to show (omit to list all)
@@ -62,6 +150,7 @@ struct ExamplesArgs {
     copy: bool,
 }
 
+#[cfg(feature = "runtime")]
 const RUN_EXAMPLES: &str = "\
 Examples:
   # Run a QASM circuit with 1000 shots
@@ -83,6 +172,7 @@ Examples:
   pecos run circuit.qasm -s 1000 -o results.json -f binary
 ";
 
+#[cfg(feature = "runtime")]
 #[derive(Args)]
 struct CompletionsArgs {
     /// Shell to generate completions for
@@ -90,6 +180,7 @@ struct CompletionsArgs {
     shell: clap_complete::Shell,
 }
 
+#[cfg(feature = "runtime")]
 #[derive(Args)]
 struct CompileArgs {
     /// Path to the quantum program (LLVM IR or QASM)
@@ -101,6 +192,7 @@ struct CompileArgs {
 }
 
 /// Type of quantum noise model to use for simulation
+#[cfg(feature = "runtime")]
 #[derive(PartialEq, Eq, Clone, Debug, Default)]
 enum NoiseModelType {
     /// Simple depolarizing noise model with uniform error probabilities
@@ -120,6 +212,7 @@ enum NoiseModelType {
 }
 
 /// Type of quantum simulator to use for simulation
+#[cfg(feature = "runtime")]
 #[derive(PartialEq, Eq, Clone, Debug, Default)]
 enum SimulatorType {
     /// State vector simulator (full quantum state representation)
@@ -136,6 +229,7 @@ enum SimulatorType {
     Stabilizer,
 }
 
+#[cfg(feature = "runtime")]
 impl std::str::FromStr for NoiseModelType {
     type Err = String;
 
@@ -150,6 +244,7 @@ impl std::str::FromStr for NoiseModelType {
     }
 }
 
+#[cfg(feature = "runtime")]
 impl std::str::FromStr for SimulatorType {
     type Err = String;
 
@@ -164,6 +259,7 @@ impl std::str::FromStr for SimulatorType {
     }
 }
 
+#[cfg(feature = "runtime")]
 #[derive(Args, Clone)]
 struct RunArgs {
     /// Path to the quantum program (LLVM IR, PHIR-JSON, or QASM)
@@ -226,6 +322,7 @@ struct RunArgs {
 /// For a depolarizing model, a single probability is expected: "0.01"
 /// For a general model, five probabilities are expected: "0.01,0.02,0.02,0.05,0.1"
 /// representing [prep, `meas_0`, `meas_1`, `single_qubit`, `two_qubit`]
+#[cfg(feature = "runtime")]
 fn parse_noise_probability(arg: &str) -> Result<String, String> {
     // Split string into values (either a single value or comma-separated list)
     let values: Vec<&str> = if arg.contains(',') {
@@ -262,6 +359,7 @@ fn parse_noise_probability(arg: &str) -> Result<String, String> {
 /// Extract probability values from noise specification string
 ///
 /// Handles both single value and comma-separated formats, with safe defaults
+#[cfg(feature = "runtime")]
 fn parse_noise_values(noise_str_opt: Option<&String>) -> Vec<f64> {
     // Default to 0.0 if no string provided
     let Some(noise_str) = noise_str_opt else {
@@ -282,6 +380,7 @@ fn parse_noise_values(noise_str_opt: Option<&String>) -> Vec<f64> {
 /// Parse a single probability value for depolarizing noise model
 ///
 /// Takes the first probability value if multiple are provided
+#[cfg(feature = "runtime")]
 fn parse_depolarizing_noise_probability(noise_str_opt: Option<&String>) -> f64 {
     parse_noise_values(noise_str_opt)[0] // Always has at least one value
 }
@@ -290,6 +389,7 @@ fn parse_depolarizing_noise_probability(noise_str_opt: Option<&String>) -> f64 {
 ///
 /// Returns a tuple of five probabilities: (prep, `meas_0`, `meas_1`, `single_qubit`, `two_qubit`)
 /// If a single value is provided, it's used for all five parameters
+#[cfg(feature = "runtime")]
 fn parse_general_noise_probabilities(noise_str_opt: Option<&String>) -> (f64, f64, f64, f64, f64) {
     let probs = parse_noise_values(noise_str_opt);
 
@@ -303,6 +403,7 @@ fn parse_general_noise_probabilities(noise_str_opt: Option<&String>) -> (f64, f6
 }
 
 /// Create quantum engine based on user arguments
+#[cfg(feature = "runtime")]
 fn run_program(args: &RunArgs) -> Result<(), PecosError> {
     // get_program_path now includes proper context in its errors
     let program_path = get_program_path(&args.program)?;
@@ -433,29 +534,30 @@ fn run_program(args: &RunArgs) -> Result<(), PecosError> {
     Ok(())
 }
 
-fn main() -> Result<(), PecosError> {
-    use std::io::{self, Write};
-
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logger with default "info" level if not specified
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
-    // Intercept help requests to provide dynamic help with pecos-dev commands
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() == 2 && (args[1] == "--help" || args[1] == "-h" || args[1] == "help") {
-        print_dynamic_help();
-        return Ok(());
+    #[cfg(feature = "runtime")]
+    {
+        use std::io::{self, Write};
+
+        // Intercept help requests to provide dynamic help
+        let args: Vec<String> = std::env::args().collect();
+        if args.len() == 2 && (args[1] == "--help" || args[1] == "-h" || args[1] == "help") {
+            print_dynamic_help();
+            return Ok(());
+        }
+
+        // For QIS programs, disable stdout buffering to ensure output is captured before segfault
+        let _ = io::stdout().flush();
     }
-
-    // Note: We let Rayon use its default global thread pool configuration
-    // The real fix for TLS segfaults is in the QirLibrary Drop implementation
-    // and proper thread pool management in MonteCarloEngine
-
-    // For QIS programs, disable stdout buffering to ensure output is captured before segfault
-    let _ = io::stdout().flush();
 
     let cli = Cli::parse();
 
     match &cli.command {
+        // Runtime commands (require 'runtime' feature)
+        #[cfg(feature = "runtime")]
         Commands::Compile(args) => {
             // get_program_path and detect_program_type now include proper error context
             let program_path = get_program_path(&args.program)?;
@@ -477,18 +579,37 @@ fn main() -> Result<(), PecosError> {
                 }
             }
         }
+        #[cfg(feature = "runtime")]
         Commands::Run(args) => run_program(args)?,
+        #[cfg(feature = "runtime")]
         Commands::Info => print_info(),
+        #[cfg(feature = "runtime")]
         Commands::Doctor => run_doctor(),
+        #[cfg(feature = "runtime")]
         Commands::Completions(args) => generate_completions(args.shell),
+        #[cfg(feature = "runtime")]
         Commands::Examples(args) => handle_examples(args)?,
-        Commands::External(args) => run_external(args)?,
+
+        // Dev tool commands (always available)
+        Commands::Rust { command } => cli::run_rust(command)?,
+        Commands::Python { command } => cli::run_python(command)?,
+        Commands::Cuda { command } => cli::run_cuda(command.clone())?,
+        Commands::Julia { command } => cli::run_julia(command)?,
+        Commands::Go { command } => cli::run_go(command)?,
+        Commands::Llvm { command } => cli::run_llvm(command.clone())?,
+        Commands::Selene { command } => cli::run_selene(command.clone())?,
+        Commands::Features { command } => cli::run_features(command.clone())?,
+        Commands::Deps { command } => cli::run_deps(command.clone())?,
+        Commands::SysInfo => cli::run_sys_info()?,
+        Commands::List { verbose } => cli::run_list(*verbose)?,
+        Commands::Docs { port, no_browser } => cli::run_docs(*port, *no_browser)?,
     }
 
     Ok(())
 }
 
 /// Print information about PECOS installation and capabilities (neofetch style)
+#[cfg(feature = "runtime")]
 fn print_info() {
     use std::io::IsTerminal;
 
@@ -498,10 +619,12 @@ fn print_info() {
 }
 
 /// Helper for neofetch-style info display
+#[cfg(feature = "runtime")]
 struct InfoPrinter {
     use_color: bool,
 }
 
+#[cfg(feature = "runtime")]
 impl InfoPrinter {
     fn new(use_color: bool) -> Self {
         Self { use_color }
@@ -652,20 +775,11 @@ impl InfoPrinter {
                 self.dim("Tip: Run 'pecos doctor' to learn how to enable missing capabilities.")
             );
         }
-
-        // Show hint about pecos-dev if not available
-        if which::which("pecos-dev").is_err() {
-            println!();
-            println!(
-                "{}",
-                self.dim("Tip: Install pecos-dev for additional developer tools:")
-            );
-            println!("  {}", self.dim("cargo install pecos-dev"));
-        }
     }
 }
 
 /// Run diagnostic checks on PECOS installation
+#[cfg(feature = "runtime")]
 fn run_doctor() {
     println!("Checking PECOS installation...");
     println!();
@@ -723,13 +837,17 @@ fn run_doctor() {
         warnings.push("LLVM support not compiled. To enable: cargo install pecos --features llvm");
     }
 
-    // Check 6: pecos-dev availability
-    let pecos_dev_ok = which::which("pecos-dev").is_ok();
-    if pecos_dev_ok {
-        print_check("pecos-dev tools", true, "available");
+    // Check 6: LLVM 14 installation
+    if let Some(llvm_path) = find_llvm_14(None) {
+        let version = get_llvm_version(&llvm_path).unwrap_or_else(|_| "unknown".into());
+        print_check(
+            "LLVM 14",
+            true,
+            &format!("{version} at {}", llvm_path.display()),
+        );
     } else {
-        print_check("pecos-dev tools", false, "not installed (optional)");
-        warnings.push("pecos-dev not found. To install: cargo install pecos-dev");
+        print_check("LLVM 14", false, "not found (run 'pecos llvm install')");
+        warnings.push("LLVM 14 not found. To install: pecos llvm install");
     }
 
     // Check 7: Test basic circuit execution
@@ -764,12 +882,14 @@ fn run_doctor() {
     }
 }
 
+#[cfg(feature = "runtime")]
 fn print_check(name: &str, ok: bool, detail: &str) {
     let status = if ok { "[OK]" } else { "[!!]" };
     println!("  {status} {name}: {detail}");
 }
 
 /// Test basic circuit execution with a simple Bell state
+#[cfg(feature = "runtime")]
 fn test_basic_execution() -> Result<(), PecosError> {
     // Simple Bell state circuit in QASM
     let qasm = r#"
@@ -797,6 +917,7 @@ fn test_basic_execution() -> Result<(), PecosError> {
 }
 
 /// Generate shell completions
+#[cfg(feature = "runtime")]
 fn generate_completions(shell: clap_complete::Shell) {
     use clap::CommandFactory;
     use clap_complete::generate;
@@ -806,7 +927,8 @@ fn generate_completions(shell: clap_complete::Shell) {
     generate(shell, &mut cmd, name, &mut std::io::stdout());
 }
 
-/// Print dynamic help that includes pecos-dev commands if available
+/// Print dynamic help
+#[cfg(feature = "runtime")]
 fn print_dynamic_help() {
     use clap::CommandFactory;
 
@@ -818,82 +940,13 @@ fn print_dynamic_help() {
 
     // Print the base help
     print!("{help}");
-
-    // Try to discover pecos-dev commands
-    if let Some(dev_commands) = discover_pecos_dev_commands() {
-        println!();
-        println!("Developer Commands (via pecos-dev):");
-        for (name, description) in dev_commands {
-            println!("  {name:<12} {description}");
-        }
-    } else {
-        println!();
-        println!("Tip: Install pecos-dev for developer tools: cargo install pecos-dev");
-    }
-}
-
-/// Discover available commands from pecos-dev by parsing its help output
-fn discover_pecos_dev_commands() -> Option<Vec<(String, String)>> {
-    let pecos_dev_path = which::which("pecos-dev").ok()?;
-
-    let output = Command::new(&pecos_dev_path).arg("--help").output().ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let help_text = String::from_utf8_lossy(&output.stdout);
-
-    // Parse the commands section from pecos-dev --help
-    // Format is typically:
-    // Commands:
-    //   command-name  Description text [aliases: ...]
-    let mut commands = Vec::new();
-    let mut in_commands_section = false;
-
-    for line in help_text.lines() {
-        if line.trim() == "Commands:" {
-            in_commands_section = true;
-            continue;
-        }
-
-        if in_commands_section {
-            // End of commands section (empty line or Options:)
-            if line.trim().is_empty() || line.trim() == "Options:" {
-                break;
-            }
-
-            // Parse command line: "  name  description [aliases: ...]"
-            let trimmed = line.trim();
-            if let Some((name, rest)) = trimmed.split_once(char::is_whitespace) {
-                let name = name.trim();
-                // Skip the built-in help command
-                if name == "help" {
-                    continue;
-                }
-                // Clean up description (remove alias info for cleaner display)
-                let description = rest.trim();
-                let description = if let Some(idx) = description.find("[aliases:") {
-                    description[..idx].trim()
-                } else {
-                    description
-                };
-                commands.push((name.to_string(), description.to_string()));
-            }
-        }
-    }
-
-    if commands.is_empty() {
-        None
-    } else {
-        Some(commands)
-    }
 }
 
 // ============================================================================
 // Example circuits
 // ============================================================================
 
+#[cfg(feature = "runtime")]
 struct Example {
     name: &'static str,
     description: &'static str,
@@ -901,6 +954,7 @@ struct Example {
     content: &'static str,
 }
 
+#[cfg(feature = "runtime")]
 const EXAMPLES: &[Example] = &[
     Example {
         name: "bell",
@@ -1028,6 +1082,7 @@ measure q -> c;
 ];
 
 /// Handle the examples command
+#[cfg(feature = "runtime")]
 fn handle_examples(args: &ExamplesArgs) -> Result<(), PecosError> {
     match &args.name {
         None => {
@@ -1087,49 +1142,7 @@ fn handle_examples(args: &ExamplesArgs) -> Result<(), PecosError> {
     }
 }
 
-/// Forward unknown commands to pecos-dev if available
-fn run_external(args: &[OsString]) -> Result<(), PecosError> {
-    if args.is_empty() {
-        return Err(PecosError::Input("No command specified".to_string()));
-    }
-
-    // First argument is the subcommand name
-    let subcommand = args[0].to_string_lossy().to_string();
-    let remaining_args: Vec<&OsString> = args.iter().skip(1).collect();
-
-    // Try to forward to pecos-dev if available
-    if let Ok(pecos_dev_path) = find_pecos_dev() {
-        debug!("Forwarding '{subcommand}' command to pecos-dev");
-
-        let status = Command::new(&pecos_dev_path)
-            .arg(&subcommand)
-            .args(&remaining_args)
-            .status()
-            .map_err(|e| PecosError::Resource(format!("Failed to execute pecos-dev: {e}")))?;
-
-        if !status.success() {
-            std::process::exit(status.code().unwrap_or(1));
-        }
-
-        Ok(())
-    } else {
-        // pecos-dev not found
-        eprintln!("Unknown command: {subcommand}");
-        eprintln!();
-        eprintln!("Run 'pecos --help' for available commands.");
-        eprintln!();
-        eprintln!("Additional developer commands are available via pecos-dev:");
-        eprintln!("  cargo install pecos-dev");
-        std::process::exit(1);
-    }
-}
-
-/// Find pecos-dev binary in PATH
-fn find_pecos_dev() -> Result<PathBuf, ()> {
-    which::which("pecos-dev").map_err(|_| ())
-}
-
-#[cfg(test)]
+#[cfg(all(test, feature = "runtime"))]
 mod tests {
     use super::*;
 

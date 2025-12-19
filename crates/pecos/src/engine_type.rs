@@ -323,7 +323,7 @@ macro_rules! create_engine_builder {
                 }
             }
             $crate::EngineType::Llvm => {
-                #[cfg(feature = "llvm")]
+                #[cfg(feature = "qis")]
                 {
                     $crate::DynamicEngineBuilder::new(pecos_qis_core::qis_engine())
                 }
@@ -333,7 +333,7 @@ macro_rules! create_engine_builder {
                 }
             }
             $crate::EngineType::Selene => {
-                #[cfg(feature = "llvm")]
+                #[cfg(feature = "qis")]
                 {
                     // Selene removed - use QIS control engine instead
                     $crate::DynamicEngineBuilder::new(pecos_qis_core::qis_engine())

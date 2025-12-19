@@ -4,7 +4,7 @@ fn main() {
 }
 
 fn validate_llvm() {
-    use pecos_dev::llvm::is_valid_llvm_14;
+    use pecos_build::llvm::is_valid_llvm_14;
     use std::env;
     use std::path::PathBuf;
 
@@ -26,7 +26,7 @@ fn validate_llvm() {
         eprintln!("  1. Fix the path to point to a valid LLVM 14 installation");
         eprintln!("  2. Unset it and configure LLVM:");
         eprintln!("     unset LLVM_SYS_140_PREFIX");
-        eprintln!("     cargo run -p pecos-dev -- llvm configure");
+        eprintln!("     cargo run -p pecos -- llvm configure");
         eprintln!("═══════════════════════════════════════════════════════════════\n");
         panic!("Invalid LLVM_SYS_140_PREFIX. See error message above.");
     }
@@ -45,7 +45,7 @@ fn print_llvm_not_found_error_extended() {
     eprintln!("Choose one of these installation methods:");
     eprintln!();
     eprintln!("Option 1: Use pecos-llvm installer (recommended)");
-    eprintln!("  cargo run -p pecos-dev -- llvm install");
+    eprintln!("  cargo run -p pecos -- llvm install");
     eprintln!("  cargo build");
     eprintln!();
     eprintln!("  The installer automatically configures PECOS.");
@@ -59,7 +59,7 @@ fn print_llvm_not_found_error_extended() {
         eprintln!("  brew install llvm@14");
         eprintln!();
         eprintln!("  # Configure PECOS to use it");
-        eprintln!("  cargo run -p pecos-dev -- llvm configure");
+        eprintln!("  cargo run -p pecos -- llvm configure");
         eprintln!();
         eprintln!("  # Build PECOS");
         eprintln!("  cargo build");
@@ -84,7 +84,7 @@ fn print_llvm_not_found_error_extended() {
         eprintln!("    yay -S llvm14");
         eprintln!();
         eprintln!("  Then configure and build:");
-        eprintln!("    cargo run -p pecos-dev -- llvm configure");
+        eprintln!("    cargo run -p pecos -- llvm configure");
         eprintln!("    cargo build");
         eprintln!();
     }
@@ -102,7 +102,7 @@ fn print_llvm_not_found_error_extended() {
         eprintln!();
         eprintln!("  After extracting to C:\\LLVM (or similar):");
         eprintln!("    set LLVM_SYS_140_PREFIX=C:\\LLVM");
-        eprintln!("    cargo run -p pecos-dev -- llvm configure");
+        eprintln!("    cargo run -p pecos -- llvm configure");
         eprintln!("    cargo build");
         eprintln!();
     }

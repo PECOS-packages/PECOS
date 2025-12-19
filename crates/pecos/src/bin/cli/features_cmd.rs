@@ -1,8 +1,8 @@
 //! Implementation of the `features` subcommand
 
-use crate::Result;
-use crate::errors::Error;
 use cargo_metadata::MetadataCommand;
+use pecos_build::Result;
+use pecos_build::errors::Error;
 use std::collections::BTreeSet;
 
 /// Run the features subcommand

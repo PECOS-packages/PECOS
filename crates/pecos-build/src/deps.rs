@@ -17,8 +17,8 @@
 //! Build scripts should use `ensure_dep_ready()` to get a dependency:
 //!
 //! ```no_run
-//! # use pecos_dev::{Manifest, ensure_dep_ready};
-//! # fn main() -> pecos_dev::Result<()> {
+//! # use pecos_build::{Manifest, ensure_dep_ready};
+//! # fn main() -> pecos_build::Result<()> {
 //! let manifest = Manifest::find_and_load_validated()?;
 //! let qulacs_path = ensure_dep_ready("qulacs", &manifest)?;
 //! # Ok(())
@@ -94,8 +94,8 @@ pub fn list_dependencies() -> Vec<DependencyInfo> {
 /// # Example
 ///
 /// ```no_run
-/// # use pecos_dev::{Manifest, ensure_dep_ready};
-/// # fn main() -> pecos_dev::Result<()> {
+/// # use pecos_build::{Manifest, ensure_dep_ready};
+/// # fn main() -> pecos_build::Result<()> {
 /// let manifest = Manifest::find_and_load_validated()?;
 /// let qulacs_path = ensure_dep_ready("qulacs", &manifest)?;
 /// let eigen_path = ensure_dep_ready("eigen", &manifest)?;

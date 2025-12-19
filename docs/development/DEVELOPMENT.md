@@ -7,9 +7,8 @@
 - [Python 3.10+](https://www.python.org/downloads/)
 - [Rust](https://www.rust-lang.org/tools/install) (stable toolchain)
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) - Python package manager
-- [just](https://github.com/casey/just) - Command runner (install via `cargo install just`)
-
-The Justfile and development scripts require Python/uv for cross-platform compatibility. This includes commands like `just clean`, `just build`, `just test`, etc.
+- [just](https://github.com/casey/just) - Command runner
+- [pecos](https://crates.io/crates/pecos) - PECOS dev tools CLI
 
 **Pure Rust development** (Rust crates only):
 
@@ -28,31 +27,40 @@ For developers who want to contribute or modify PECOS:
 
 1. Make sure you have [Python](https://www.python.org/downloads/) and [Rust](https://www.rust-lang.org/tools/install) installed for your system.
 
-2. Clone the repository:
+2. Install all dev tools with a single command:
+   ```sh
+   cargo install --locked uv just pecos
+   ```
+
+   This installs:
+   - `uv` - Python package manager
+   - `just` - Command runner for build tasks
+   - `pecos` - PECOS dev tools (llvm, cuda, rust, python commands)
+
+3. Clone the repository:
    ```sh
    git clone https://github.com/PECOS-packages/PECOS.git
    cd PECOS
    ```
 
-3. [Install `uv` for your system](https://docs.astral.sh/uv/getting-started/installation/).
-   And run the following at the root of the project to create a development environment, which will be stored in `.venv/`:
+4. Create the development environment:
    ```sh
    uv sync
    ```
 
-4. **LLVM 14 Setup (Required for LLVM IR/QIS Support)**
+5. **LLVM 14 Setup (Required for LLVM IR/QIS Support)**
 
    PECOS requires LLVM version 14 for LLVM IR execution features.
 
    **Quick setup:**
    ```sh
-   cargo run -p pecos-dev -- llvm install
+   pecos llvm install
    cargo build
    ```
 
    For detailed installation instructions for all platforms (macOS, Linux, Windows), see the [**LLVM Setup Guide**](../user-guide/llvm-setup.md).
 
-5. You may wish to explicitly activate the environment for development. To do so:
+6. You may wish to explicitly activate the environment for development. To do so:
 
     === "Linux/Mac"
         ```sh
@@ -138,11 +146,8 @@ These can be set via shell environment or in `.cargo/config.toml`:
 PECOS_HOME = { value = "/custom/path", force = true }
 ```
 
-For more details, see [PECOS Home Directory Plan](PECOS_HOME_PLAN.md).
-
 ## Development Guides
 
 For specific development topics, see:
 
 - [Parallel Blocks and Optimization](parallel-blocks-and-optimization.md) - Guide to using and extending the Parallel block construct and optimizer
-- [PECOS Home Directory Plan](PECOS_HOME_PLAN.md) - External dependency management architecture

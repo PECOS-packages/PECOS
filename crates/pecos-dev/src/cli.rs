@@ -3,7 +3,6 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::fn_params_excessive_bools)]
 
-mod clean_cmd;
 mod cuda_cmd;
 mod features_cmd;
 mod go_cmd;
@@ -73,12 +72,6 @@ pub enum Commands {
     Selene {
         #[command(subcommand)]
         command: SeleneCommands,
-    },
-
-    /// Clean build artifacts and caches
-    Clean {
-        #[command(subcommand)]
-        command: CleanCommands,
     },
 
     /// Query package features
@@ -413,74 +406,6 @@ pub enum SeleneCommands {
 }
 
 // ============================================================================
-// Clean Commands
-// ============================================================================
-
-#[derive(Subcommand, Clone, Copy)]
-pub enum CleanCommands {
-    /// Clean build artifacts (Python, Rust, Julia)
-    ///
-    /// Removes Python build artifacts, test caches, compiled extensions,
-    /// and optionally runs cargo clean.
-    Build {
-        /// Show what would be deleted without deleting
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Skip running cargo clean
-        #[arg(long)]
-        skip_cargo: bool,
-
-        /// Increase verbosity (-v, -vv, -vvv)
-        #[arg(short, long, action = clap::ArgAction::Count)]
-        verbose: u8,
-    },
-
-    /// Clean ~/.pecos/deps/ (extracted C++ dependencies)
-    Deps {
-        /// Increase verbosity (-v, -vv, -vvv)
-        #[arg(short, long, action = clap::ArgAction::Count)]
-        verbose: u8,
-    },
-
-    /// Clean ~/.pecos/cache/ and tmp/ (downloaded archives)
-    Cache {
-        /// Increase verbosity (-v, -vv, -vvv)
-        #[arg(short, long, action = clap::ArgAction::Count)]
-        verbose: u8,
-    },
-
-    /// Clean ~/.pecos/llvm/ (LLVM installation)
-    Llvm {
-        /// Increase verbosity (-v, -vv, -vvv)
-        #[arg(short, long, action = clap::ArgAction::Count)]
-        verbose: u8,
-    },
-
-    /// Clean ~/.pecos/cuda/ (CUDA installation)
-    Cuda {
-        /// Increase verbosity (-v, -vv, -vvv)
-        #[arg(short, long, action = clap::ArgAction::Count)]
-        verbose: u8,
-    },
-
-    /// Clean deps, cache, and tmp (optionally including LLVM and CUDA)
-    All {
-        /// Also remove LLVM installation
-        #[arg(long)]
-        include_llvm: bool,
-
-        /// Also remove CUDA installation
-        #[arg(long)]
-        include_cuda: bool,
-
-        /// Increase verbosity (-v, -vv, -vvv)
-        #[arg(short, long, action = clap::ArgAction::Count)]
-        verbose: u8,
-    },
-}
-
-// ============================================================================
 // Features Commands
 // ============================================================================
 
@@ -549,7 +474,6 @@ pub fn run() -> crate::Result<()> {
         Commands::Go { command } => go_cmd::run(&command),
         Commands::Llvm { command } => llvm_cmd::run(command),
         Commands::Selene { command } => selene_cmd::run(command),
-        Commands::Clean { command } => clean_cmd::run(command),
         Commands::Features { command } => features_cmd::run(command),
         Commands::Deps { command } => manifest_cmd::run(command),
         Commands::SysInfo => info::run(),

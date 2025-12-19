@@ -331,11 +331,8 @@ decoder-cache-status: ## Show decoder download cache status (now managed by peco
 	@cargo run -q -p pecos-dev -- list -v
 
 .PHONY: decoder-cache-clean
-decoder-cache-clean: ## Clean decoder download cache (use clean-cache for all cached archives)
-	@cargo run -q -p pecos-dev -- clean --dep ldpc --dry-run
-	@echo ""
-	@echo "To actually clean, run: cargo run -p pecos-dev -- clean --dep ldpc"
-	@echo "Or clean all cached archives: make clean-cache"
+decoder-cache-clean: clean-cache  ## Clean decoder download cache (same as clean-cache)
+	@echo "Decoder cache cleaned (part of ~/.pecos/cache/)"
 
 .PHONY: pytest
 pytest:  ## Run tests on the Python package (excluding numpy and optional deps). ASSUMES: previous build command
@@ -517,49 +514,46 @@ go-fmt-check: ## Check Go code formatting without modifying files
 go-lint: ## Run Go linting with go vet
 	@cargo run -q -p pecos-dev -- go lint
 
-# Utility
-# -------
-
-.PHONY: clean-selene-plugins
-clean-selene-plugins:  ## Clean Selene plugin build artifacts
-	@# Clean _dist directories and venv installations (cross-platform via pecos-dev)
-	@cargo run -p pecos-dev -- selene clean --venv || true
+# Cleaning
+# --------
+# Cross-platform cleaning via Python script (works on Windows, macOS, Linux)
+# Uses uv to run scripts/clean.py which handles all platforms via pathlib/shutil
 
 .PHONY: clean
-clean: clean-selene-plugins clean-cache  ## Clean up project artifacts + ~/.pecos/cache/ and tmp/
-	@# Cross-platform build artifact cleaning via pecos-dev
-	@cargo run -p pecos-dev -- clean build
+clean:  ## Clean build artifacts (cross-platform, no compilation needed)
+	@uv run python scripts/clean.py
 
-# PECOS Home Directory Cleanup
-# ----------------------------
-# These targets clean the ~/.pecos/ directory which contains external dependencies
-# Uses pecos-dev for cross-platform support (macOS, Linux, Windows)
+.PHONY: clean-selene
+clean-selene:  ## Clean Selene plugin build artifacts
+	@uv run python scripts/clean.py --selene
 
 .PHONY: clean-cache
-clean-cache:  ## Clean ~/.pecos/cache/ and ~/.pecos/tmp/ (downloaded archives and temp files)
-	@cargo run -p pecos-dev -- clean cache
+clean-cache:  ## Clean ~/.pecos/cache/ and ~/.pecos/tmp/ (downloaded archives)
+	@uv run python scripts/clean.py --cache
 
 .PHONY: clean-deps
-clean-deps:  ## Clean ~/.pecos/deps/, cache/, and tmp/ (extracted C++ dependencies)
-	@cargo run -p pecos-dev -- clean all
+clean-deps:  ## Clean ~/.pecos/deps/ (extracted C++ dependencies)
+	@uv run python scripts/clean.py --deps
 
 .PHONY: clean-llvm
 clean-llvm:  ## Clean ~/.pecos/llvm/ (LLVM installation - large, slow to reinstall)
-	@cargo run -p pecos-dev -- clean all --include-llvm
-	@echo "Run 'make install-llvm' to reinstall LLVM"
+	@uv run python scripts/clean.py --llvm
 
 .PHONY: clean-cuda
 clean-cuda:  ## Clean ~/.pecos/cuda/ (CUDA installation - large, slow to reinstall)
-	@cargo run -p pecos-dev -- clean cuda
-	@echo "Run 'make install-cuda' to reinstall CUDA"
+	@uv run python scripts/clean.py --cuda
+
+.PHONY: clean-pecos-home
+clean-pecos-home:  ## Clean ~/.pecos/ except LLVM and CUDA
+	@uv run python scripts/clean.py --cache --deps
 
 .PHONY: clean-all
-clean-all: clean-deps clean  ## Clean project artifacts + deps (but not LLVM)
-	@echo "Full clean completed (LLVM preserved)"
+clean-all:  ## Clean project artifacts + ~/.pecos/ (except LLVM/CUDA)
+	@uv run python scripts/clean.py --cache --deps
 
 .PHONY: clean-everything
-clean-everything: clean-llvm clean-cuda clean-all  ## Clean everything including LLVM and CUDA (nuclear option)
-	@echo "Everything cleaned including LLVM and CUDA"
+clean-everything:  ## Nuclear option: clean everything including LLVM and CUDA
+	@uv run python scripts/clean.py --all
 
 .PHONY: pip-install-uv
 pip-install-uv:  ## Install uv using pip and create a venv. (Recommended to instead follow: https://docs.astral.sh/uv/getting-started/installation/

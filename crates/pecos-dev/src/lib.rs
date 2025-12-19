@@ -37,7 +37,7 @@
 //!
 //! Build scripts should use `ensure_dep_ready()` for dependency management:
 //!
-//! ```ignore
+//! ```no_run
 //! use pecos_dev::{Manifest, ensure_dep_ready};
 //!
 //! fn main() {
@@ -52,9 +52,11 @@
 //!     let eigen_path = ensure_dep_ready("eigen", &manifest)
 //!         .expect("Failed to get eigen");
 //!
-//!     // Use the paths in your build
-//!     build.include(&qulacs_path.join("src"));
-//!     build.include(&eigen_path);
+//!     // Use the paths in your build (example with cc::Build)
+//!     // build.include(&qulacs_path.join("src"));
+//!     // build.include(&eigen_path);
+//!     println!("qulacs: {}", qulacs_path.display());
+//!     println!("eigen: {}", eigen_path.display());
 //! }
 //! ```
 //!

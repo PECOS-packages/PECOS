@@ -16,9 +16,13 @@
 //!
 //! Build scripts should use `ensure_dep_ready()` to get a dependency:
 //!
-//! ```ignore
+//! ```no_run
+//! # use pecos_dev::{Manifest, ensure_dep_ready};
+//! # fn main() -> pecos_dev::Result<()> {
 //! let manifest = Manifest::find_and_load_validated()?;
 //! let qulacs_path = ensure_dep_ready("qulacs", &manifest)?;
+//! # Ok(())
+//! # }
 //! ```
 
 use crate::download::download_cached;
@@ -89,10 +93,14 @@ pub fn list_dependencies() -> Vec<DependencyInfo> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// # use pecos_dev::{Manifest, ensure_dep_ready};
+/// # fn main() -> pecos_dev::Result<()> {
 /// let manifest = Manifest::find_and_load_validated()?;
 /// let qulacs_path = ensure_dep_ready("qulacs", &manifest)?;
 /// let eigen_path = ensure_dep_ready("eigen", &manifest)?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn ensure_dep_ready(name: &str, manifest: &Manifest) -> Result<PathBuf> {
     // Get download info from manifest

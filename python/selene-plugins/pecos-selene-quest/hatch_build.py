@@ -127,13 +127,13 @@ class PecosSeleneQuestBuildHook(BuildHookInterface):
         lib_name = "pecos_selene_quest"
         cargo_package = "pecos-selene-quest"
 
-        # Check if CUDA is available for GPU support
+        # Check if CUDA is available for CUDA support
         cuda_available = is_cuda_available()
         features = []
         if cuda_available:
-            features.append("gpu")
+            features.append("cuda")
             self.app.display_info(
-                f"Building {cargo_package} with GPU support (CUDA detected)...",
+                f"Building {cargo_package} with CUDA support...",
             )
         else:
             self.app.display_info(
@@ -181,6 +181,26 @@ class PecosSeleneQuestBuildHook(BuildHookInterface):
 
         self.app.display_info(f"Copying {source_lib} -> {dest_lib}")
         shutil.copy2(source_lib, dest_lib)
+
+        # Also copy the QuEST CUDA backend if it exists (built when --features cuda is used)
+        # This backend library is loaded at runtime via dlopen, allowing the wheel to work
+        # on systems both with and without NVIDIA CUDA installed.
+        cuda_backend_filename = f"{lib_prefix}pecos_quest_cuda{lib_suffix}"
+        source_cuda_backend = (
+            workspace_root / "target" / "release" / cuda_backend_filename
+        )
+        if source_cuda_backend.exists():
+            dest_cuda_backend = dest_dir / cuda_backend_filename
+            self.app.display_info(
+                f"Copying QuEST CUDA backend {source_cuda_backend} -> {dest_cuda_backend}",
+            )
+            shutil.copy2(source_cuda_backend, dest_cuda_backend)
+        elif cuda_available:
+            # CUDA was requested but backend wasn't built - this is unexpected
+            self.app.display_warning(
+                f"CUDA detected but QuEST CUDA backend not found at {source_cuda_backend}. "
+                "CUDA acceleration may not be available.",
+            )
 
         # Collect artifacts
         artifacts = []

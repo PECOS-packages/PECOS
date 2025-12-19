@@ -224,7 +224,7 @@ pub mod programs {
 /// # Example
 ///
 /// ```rust,no_run
-/// # #[cfg(feature = "selene")]
+/// # #[cfg(feature = "llvm")]
 /// # {
 /// use pecos::runtime::selene_simple_runtime;
 ///
@@ -233,7 +233,7 @@ pub mod programs {
 /// ```
 pub mod runtime {
     // Re-export Selene interface when feature is enabled
-    #[cfg(feature = "selene")]
+    #[cfg(feature = "llvm")]
     pub use pecos_qis_selene::{
         HeliosInterfaceBuilder, QisHeliosInterface, SeleneRuntime, helios_interface_builder,
         selene_runtime_auto, selene_simple_runtime,
@@ -589,7 +589,7 @@ pub use pecos_engines::{
 pub use pecos_programs::{Hugr, Program, Qasm, Qis};
 
 // Selene interface (when feature is enabled)
-#[cfg(feature = "selene")]
+#[cfg(feature = "llvm")]
 pub use pecos_qis_selene::{
     HeliosInterfaceBuilder, QisHeliosInterface, SeleneRuntime, helios_interface_builder,
     selene_runtime_auto, selene_simple_runtime,

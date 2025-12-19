@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProgramType {
-    /// Quantum Intermediate Representation (QIR)
-    QIR,
+    /// Quantum Instruction Set (QIS) program in LLVM IR format
+    QIS,
     /// PECOS High-level Intermediate Representation (PHIR)
     PHIR,
     /// Quantum Assembly Language (QASM)
@@ -20,7 +20,7 @@ pub enum ProgramType {
 /// Detects the type of program based on its file extension and content.
 ///
 /// This function examines the file extension and content to determine if the file
-/// corresponds to a QIR, PHIR, or QASM program type.
+/// corresponds to a QIS, PHIR, or QASM program type.
 ///
 /// # Parameters
 ///
@@ -62,10 +62,10 @@ pub fn detect_program_type(path: &Path) -> Result<ProgramType, PecosError> {
                 ))
             }
         }
-        Some("ll") => Ok(ProgramType::QIR),
+        Some("ll") => Ok(ProgramType::QIS),
         Some("qasm") => Ok(ProgramType::QASM),
         _ => Err(PecosError::Input(format!(
-            "Failed to detect program type: Unsupported file extension '{}'. Expected file extensions: .ll (QIR), .phir.json (PHIR-JSON), .json (PHIR-JSON with format check), or .qasm (QASM).",
+            "Failed to detect program type: Unsupported file extension '{}'. Expected file extensions: .ll (QIS), .phir.json (PHIR-JSON), .json (PHIR-JSON with format check), or .qasm (QASM).",
             path.extension()
                 .and_then(|ext| ext.to_str())
                 .unwrap_or("none")
@@ -126,7 +126,7 @@ pub fn get_program_path(program: &str) -> Result<PathBuf, PecosError> {
 /// Sets up a `ClassicalEngine` appropriate for the given program type.
 ///
 /// This function examines the program type and creates the corresponding
-/// engine (QIR, PHIR, or QASM) for the provided program path.
+/// engine (QIS, PHIR, or QASM) for the provided program path.
 ///
 /// # Parameters
 ///
@@ -156,9 +156,9 @@ pub fn setup_engine_for_program(
     );
 
     match program_type {
-        ProgramType::QIR => {
-            // Default requires Selene runtime
-            // Users should use explicit builder API if they want a different runtime
+        ProgramType::QIS => {
+            // QIS programs require a runtime implementation (e.g., Selene)
+            // Users should use explicit builder API to select their runtime
             Err(PecosError::Processing(
                 "QIS program execution requires explicit runtime selection.\n\
                 \n\

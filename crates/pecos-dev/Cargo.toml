@@ -1,0 +1,58 @@
+[package]
+name = "pecos-dev"
+version.workspace = true
+edition.workspace = true
+description = "PECOS developer tools - LLVM setup, dependency management, and build utilities"
+readme.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords = ["quantum", "llvm", "build-utils", "dependencies", "cli"]
+categories = ["development-tools::build-utils", "command-line-utilities"]
+
+[[bin]]
+name = "pecos-dev"
+path = "src/bin/pecos-dev.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+cli = ["dep:clap", "dep:env_logger"]
+
+[dependencies]
+# CLI (optional)
+clap = { workspace = true, optional = true }
+env_logger = { workspace = true, optional = true }
+
+# Directory management
+dirs.workspace = true
+
+# Downloading
+reqwest.workspace = true
+
+# Checksums
+sha2.workspace = true
+
+# Archive extraction
+tar.workspace = true
+flate2.workspace = true
+bzip2.workspace = true
+xz2.workspace = true
+sevenz-rust.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Logging
+log.workspace = true
+
+# Serialization (for manifest files)
+serde = { workspace = true, features = ["derive"] }
+toml = "0.8"
+
+# Cargo metadata parsing
+cargo_metadata.workspace = true
+
+[lints]
+workspace = true

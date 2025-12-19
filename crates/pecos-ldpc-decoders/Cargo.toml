@@ -18,7 +18,7 @@ thiserror.workspace = true
 cxx.workspace = true
 
 [build-dependencies]
-pecos-build-utils.workspace = true
+pecos-dev.workspace = true
 cxx-build.workspace = true
 log.workspace = true
 env_logger.workspace = true

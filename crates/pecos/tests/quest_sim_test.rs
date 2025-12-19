@@ -47,7 +47,7 @@ fn test_quest_state_vec_cpu() {
 
 /// Test Quest state vector with GPU mode (only runs if GPU feature enabled)
 #[test]
-#[cfg(feature = "gpu")]
+#[cfg(feature = "cuda")]
 fn test_quest_state_vec_gpu() {
     let qasm_code = r#"
         OPENQASM 2.0;
@@ -126,9 +126,10 @@ fn test_quest_density_matrix_cpu() {
     }
 }
 
-/// Test Quest density matrix with GPU mode (only runs if GPU feature enabled)
+/// Test Quest density matrix with GPU mode returns appropriate error
+/// (GPU density matrix simulation is not yet implemented in `QuEST`)
 #[test]
-#[cfg(feature = "gpu")]
+#[cfg(feature = "cuda")]
 fn test_quest_density_matrix_gpu() {
     let qasm_code = r#"
         OPENQASM 2.0;
@@ -142,29 +143,19 @@ fn test_quest_density_matrix_gpu() {
 
     let program = Qasm::from_string(qasm_code);
 
-    // Test GPU mode
-    let results = sim(program)
+    // GPU density matrix simulation is not yet implemented, so this should return an error
+    let result = sim(program)
         .quantum(quest_density_matrix().with_gpu())
         .seed(42)
-        .run(100)
-        .expect("Simulation should succeed");
+        .run(100);
 
-    assert_eq!(results.len(), 100, "Should get 100 shots");
-
-    // Verify we got Bell state results
-    let shot_map = results
-        .try_as_shot_map()
-        .expect("Should convert to shot map");
-    let measurements = shot_map
-        .try_bits_as_u64("c")
-        .expect("Should extract measurements");
-
-    for &measurement in &measurements {
-        assert!(
-            measurement == 0 || measurement == 3,
-            "Bell state should only produce |00⟩ (0) or |11⟩ (3), got {measurement}"
-        );
-    }
+    // Verify we get the expected error about GPU density matrix not being implemented
+    assert!(result.is_err(), "GPU density matrix should return an error");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("density matrix") && err_msg.contains("not yet implemented"),
+        "Error should mention density matrix GPU not implemented, got: {err_msg}"
+    );
 }
 
 /// Test that Quest works with different circuit types
@@ -296,7 +287,7 @@ fn test_quest_builder_with_qubits() {
 /// Note: Due to potential differences in RNG implementation between CPU and GPU,
 /// we verify that both modes produce valid results rather than identical results.
 #[test]
-#[cfg(feature = "gpu")]
+#[cfg(feature = "cuda")]
 #[allow(clippy::similar_names)]
 fn test_quest_cpu_and_gpu_both_work() {
     let qasm_code = r#"

@@ -1,0 +1,94 @@
+version = 1
+
+[llvm]
+version = "14"
+required = true
+required_by = [
+    "pecos-engines",
+    "pecos",
+]
+
+[crates.pecos]
+dependencies = []
+requires_llvm = true
+
+[crates.pecos-engines]
+dependencies = []
+requires_llvm = true
+
+[crates.pecos-ldpc-decoders]
+dependencies = [
+    "stim",
+    "pymatching",
+    "ldpc",
+    "tesseract",
+    "chromobius",
+    "boost",
+]
+requires_llvm = false
+
+[crates.pecos-quest]
+dependencies = ["quest"]
+requires_llvm = false
+
+[crates.pecos-qulacs]
+dependencies = [
+    "qulacs",
+    "eigen",
+    "boost",
+]
+requires_llvm = false
+
+[dependencies.boost]
+version = "1.83.0"
+url = "https://archives.boost.io/release/1.83.0/source/boost_1_83_0.tar.bz2"
+sha256 = "6478edfe2f3305127cffe8caf73ea0176c53769f4bf1585be237eb30798c3b8e"
+description = "C++ Boost libraries"
+
+[dependencies.chromobius]
+version = "35e289570fdc1d71e73582e1fd4e0c8e29298ef5"
+url = "https://github.com/quantumlib/chromobius/archive/35e289570fdc1d71e73582e1fd4e0c8e29298ef5.tar.gz"
+sha256 = "da73d819e67572065fd715db45fabb342c2a2a1e961d2609df4f9864b9836054"
+description = "Color code decoder"
+
+[dependencies.eigen]
+version = "3.4.0"
+url = "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz"
+sha256 = "8586084f71f9bde545ee7fa6d00288b264a2b7ac3607b974e54d13e7162c1c72"
+description = "C++ linear algebra library"
+
+[dependencies.ldpc]
+version = "31cf9f33872f32579af1efbe1e84552d42b03ea8"
+url = "https://github.com/quantumgizmos/ldpc/archive/31cf9f33872f32579af1efbe1e84552d42b03ea8.tar.gz"
+sha256 = "43ea9bfe543233c5f65e2dfb7966229df803040b4b26e25e99c3068eb23a797a"
+description = "LDPC decoders"
+
+[dependencies.pymatching]
+version = "2b72b2c558eec678656da20ab6c358aa123fb664"
+url = "https://github.com/oscarhiggott/PyMatching/archive/2b72b2c558eec678656da20ab6c358aa123fb664.tar.gz"
+sha256 = "1470520b66ad7899f85020664aeeadfc6e2967f0b5e19ad205829968b845cd70"
+description = "MWPM decoder"
+
+[dependencies.quest]
+version = "v4.1.0"
+url = "https://github.com/QuEST-Kit/QuEST/archive/refs/tags/v4.1.0.tar.gz"
+sha256 = "85aa95bba6457c4f4e93221f4c417d988588891a1f7cb211c307dfe81a10cadd"
+description = "QuEST quantum simulator"
+
+[dependencies.qulacs]
+version = "0.6.12"
+url = "https://github.com/qulacs/qulacs/archive/v0.6.12.tar.gz"
+sha256 = "b9e5422e0bb2b07725b0c62f7827326b5a1486facb30cf68d12b4ef119c485e9"
+description = "Qulacs quantum simulator"
+
+[dependencies.stim]
+version = "bd60b73525fd5a9b30839020eb7554ad369e4337"
+url = "https://github.com/quantumlib/Stim/archive/bd60b73525fd5a9b30839020eb7554ad369e4337.tar.gz"
+sha256 = "2a4be24295ce3018d79e08369b31e401a2d33cd8b3a75675d57dac3afd9de37d"
+description = "Stabilizer simulator for QEC"
+
+[dependencies.tesseract]
+version = "1d81f0b385b6a9de49ae361d08bd6b5dbcec1773"
+url = "https://github.com/quantumlib/tesseract-decoder/archive/1d81f0b385b6a9de49ae361d08bd6b5dbcec1773.tar.gz"
+sha256 = "0b5d8bfa63bab68ab4882510a96d7e238d598d2ba0e669a8903af142ce276892"
+description = "Tesseract decoder"

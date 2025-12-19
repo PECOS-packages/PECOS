@@ -71,23 +71,70 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux x86_64 with CUDA support (uses GCC Toolset 13 for CUDA compatibility)
           - os: ubuntu-latest
             architecture: x86_64
-          - os: ubuntu-latest
-            architecture: aarch64
-            runner: ubuntu-latest
+            cibw_archs: x86_64
+            cuda_feature: "--features cuda"
+            install_cuda: true
+            # GCC Toolset 13 paths for CUDA compatibility
+            gcc_path_prefix: "/opt/rh/gcc-toolset-13/root/usr/bin:"
+            gcc_ld_path: "/opt/rh/gcc-toolset-13/root/usr/lib64:/opt/rh/gcc-toolset-13/root/usr/lib:"
+            gcc_cc: "/opt/rh/gcc-toolset-13/root/usr/bin/gcc"
+            gcc_cxx: "/opt/rh/gcc-toolset-13/root/usr/bin/g++"
+          # Linux aarch64 - DISABLED: LLVM 14 not available in manylinux_2_28 (AlmaLinux 8)
+          # The prebuilt LLVM 14 binary is incompatible with the container, and
+          # the llvm-toolset module only provides LLVM 13. Re-enable when we have
+          # a solution (custom Docker image, build from source, or inkwell LLVM 13 support)
+          # - os: ubuntu-24.04-arm
+          #   architecture: aarch64
+          #   runner: ubuntu-24.04-arm
+          #   cibw_archs: aarch64
+          #   cuda_feature: ""
+          #   install_cuda: false
+          #   gcc_path_prefix: ""
+          #   gcc_ld_path: ""
+          #   gcc_cc: ""
+          #   gcc_cxx: ""
+          # macOS without CUDA (NVIDIA dropped macOS CUDA support in 2019)
           - os: macos-14
             architecture: aarch64
+            cuda_feature: ""
+            install_cuda: false
           - os: macos-15-intel
             architecture: x86_64
+            cuda_feature: ""
+            install_cuda: false
+          # Windows x86_64 with CUDA support
+          # Note: Uses specific sub-packages to avoid VS integration bug (see Jimver/cuda-toolkit#382)
           - os: windows-2022
             architecture: x86_64
+            cuda_feature: "--features cuda"
+            install_cuda: true
 
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.sha || github.sha }}
           submodules: recursive
+
+      # Set up Visual Studio environment on Windows (required for nvcc to find cl.exe)
+      - name: Set up Visual Studio environment (Windows)
+        if: runner.os == 'Windows' && matrix.install_cuda
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Install CUDA on Windows before cibuildwheel (cibuildwheel runs on host, not in containers)
+      # Uses specific sub-packages to avoid VS 17.3.x bug that hangs on NSight/VS Integration
+      # See: https://github.com/Jimver/cuda-toolkit/issues/382
+      - name: Install CUDA Toolkit (Windows)
+        if: runner.os == 'Windows' && matrix.install_cuda
+        uses: Jimver/cuda-toolkit@v0.2.29
+        with:
+          cuda: '12.5.1'
+          method: 'local'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust"]'
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.2.1
@@ -98,17 +145,37 @@ jobs:
           # Build configuration
           CIBW_BUILD: "cp310-*"
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux*"
+          CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs }}
           CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
           CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"
-          # Linux configuration
+          # Linux configuration - GCC Toolset and CUDA paths are conditional via matrix variables
           CIBW_ENVIRONMENT_LINUX: >
-            PATH=$HOME/.cargo/bin:$HOME/.pecos/llvm/bin:$PATH
+            PATH=${{ matrix.gcc_path_prefix }}$HOME/.cargo/bin:$HOME/.pecos/llvm/bin:/usr/local/cuda-12.6/bin:$PATH
+            LD_LIBRARY_PATH=${{ matrix.gcc_ld_path }}$LD_LIBRARY_PATH
             LLVM_SYS_140_PREFIX=$HOME/.pecos/llvm
+            CUDA_PATH=/usr/local/cuda-12.6
+            MATURIN_PEP517_ARGS="${{ matrix.cuda_feature }}"
           CIBW_BEFORE_ALL_LINUX: |
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
             dnf install libffi-devel -y
-            cargo run --release -p pecos-llvm-utils --bin pecos-llvm -- install --force
+            # Install CUDA Toolkit for GPU support on x86_64 (compile-time only, no GPU needed)
+            if [ "${{ matrix.install_cuda }}" = "true" ]; then
+              echo "Installing GCC 13 (required for CUDA 12.6 compatibility)..."
+              dnf install -y gcc-toolset-13
+              source /opt/rh/gcc-toolset-13/enable
+              echo "Installing CUDA Toolkit from NVIDIA repos..."
+              dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
+              dnf install -y cuda-nvcc-12-6 cuda-cudart-devel-12-6 libcublas-devel-12-6
+              export CUDA_PATH=/usr/local/cuda-12.6
+              export PATH=$CUDA_PATH/bin:$PATH
+              echo "CUDA installed at $CUDA_PATH"
+              nvcc --version
+              gcc --version
+            else
+              echo "Skipping CUDA installation (GPU support not enabled for this build)"
+            fi
+            cargo run --release -p pecos-dev -- llvm install --force
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
@@ -121,7 +188,7 @@ jobs:
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
             rustup update
-            cargo run --release -p pecos-llvm-utils --bin pecos-llvm -- install --force
+            cargo run --release -p pecos-dev -- llvm install --force
             # Create a codesign wrapper that strips DYLD_LIBRARY_PATH to prevent
             # crashes on macOS 15 when bundled libc++ conflicts with system libc++
             mkdir -p $HOME/.pecos/bin
@@ -130,22 +197,29 @@ jobs:
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
             PATH=$HOME/.pecos/bin:$PATH DYLD_LIBRARY_PATH=$HOME/.pecos/llvm/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} &&
             pipx run abi3audit --strict --report {wheel}
-          # Windows configuration
+          # Windows configuration - CUDA via Jimver/cuda-toolkit (installed before cibuildwheel)
           CIBW_ENVIRONMENT_WINDOWS: >
             PATH="C:\\Users\\runneradmin\\.pecos\\llvm\\bin;$PATH"
             LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\llvm"
+            MATURIN_PEP517_ARGS="${{ matrix.cuda_feature }}"
           CIBW_BEFORE_ALL_WINDOWS: >
-            echo "=== Installing LLVM using pecos-llvm-utils ===" &&
+            echo "=== Installing LLVM using pecos-dev ===" &&
             rustup update &&
             echo "=== Running pecos-llvm install ===" &&
-            cargo run --release -p pecos-llvm-utils --bin pecos-llvm -- install --force &&
+            cargo run --release -p pecos-dev -- llvm install --force &&
             echo "=== Checking LLVM installation ===" &&
             (test -d "C:\\Users\\runneradmin\\.pecos\\llvm" && echo "LLVM directory exists" && ls -la "C:\\Users\\runneradmin\\.pecos\\llvm" && (ls -la "C:\\Users\\runneradmin\\.pecos\\llvm\\bin" || echo "bin directory not found")) || (echo "ERROR: LLVM directory not found!" && exit 1) &&
             echo "=== Verifying LLVM_SYS_140_PREFIX ===" &&
             echo "LLVM_SYS_140_PREFIX will be set to: C:\\Users\\runneradmin\\.pecos\\llvm"
-          CIBW_BEFORE_BUILD_WINDOWS: "pip install delvewheel"
+          # Install delvewheel and patch it to ignore ext-ms-win-* API sets
+          # (delvewheel ignores api-ms-win-* but not ext-ms-win-* which are also Windows API sets)
+          CIBW_BEFORE_BUILD_WINDOWS: >
+            pip install delvewheel &&
+            python -c "import delvewheel._dll_list as d,inspect,re as r;p=inspect.getfile(d);c=open(p).read();n=chr(10);open(p,'w').write(c.replace(r\"re.compile('api-.*'),\",r\"re.compile('api-.*'),\"+n+r\"    re.compile('ext-.*'),\")) if 'ext-.*' not in c else None"
+          # Note: --no-dll excludes Windows system DLLs that should not be bundled
+          # combase.dll and rmclient.dll are core Windows components that fail when bundled
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
-            delvewheel repair -w {dest_dir} {wheel} &&
+            delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\llvm\\bin" --no-dll "combase.dll;rmclient.dll" -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
 
       - name: Upload wheels
@@ -200,6 +274,38 @@ jobs:
           pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl
           python -c 'import pecos_rslib; print(f"pecos_rslib version: {pecos_rslib.__version__}")'
           python -c 'import sys; print(f"Python version: {sys.version}")'
+
+      - name: Debug DLL loading (Windows)
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "=== Listing wheel contents ==="
+          $wheelFile = Get-ChildItem -Path ./pecos-rslib-wheel/*.whl | Select-Object -First 1
+          python -m zipfile -l $wheelFile
+
+          Write-Host "`n=== Finding pecos_rslib installation ==="
+          $sitePackages = python -c "import site; print(site.getsitepackages()[0])"
+          Write-Host "Site packages: $sitePackages"
+
+          Write-Host "`n=== Listing pecos_rslib directory ==="
+          Get-ChildItem -Path "$sitePackages\pecos_rslib*" -Recurse | Select-Object FullName, Length
+
+          Write-Host "`n=== Checking DLL dependencies with dumpbin ==="
+          $pydFile = Get-ChildItem -Path "$sitePackages\pecos_rslib\*.pyd" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($pydFile) {
+            & "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\dumpbin.exe" /dependents $pydFile.FullName 2>&1 | Select-Object -First 50
+          }
+
+          Write-Host "`n=== Checking pecos_rslib.libs directory ==="
+          $libsDir = "$sitePackages\pecos_rslib.libs"
+          if (Test-Path $libsDir) {
+            Get-ChildItem -Path $libsDir | ForEach-Object {
+              Write-Host "DLL: $($_.Name)"
+              & "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\dumpbin.exe" /dependents $_.FullName 2>&1 | Select-Object -First 30
+            }
+          } else {
+            Write-Host "No pecos_rslib.libs directory found"
+          }
 
   build_sdist_quantum_pecos:
     needs: build_wheelspecos_rslib

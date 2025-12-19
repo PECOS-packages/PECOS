@@ -1,10 +1,10 @@
 #!/bin/bash
-# Test script for the PECOS QIR rebuild system
+# Test script for the PECOS QIS rebuild system
 #
 # This script tests the complete rebuild system including:
 # - build.rs marker file creation
 # - Runtime library building
-# - QIR executable caching and rebuilding
+# - QIS executable caching and rebuilding
 
 set -euo pipefail
 
@@ -23,7 +23,7 @@ CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
 RUNTIME_LIB="$CARGO_HOME/pecos-llvm-runtime/libpecos_llvm_runtime.a"
 MARKER_FILE="$CARGO_HOME/pecos-llvm-runtime/.needs_rebuild"
 TEST_DIR="$PROJECT_ROOT/target/rebuild_test_$$"
-QIR_FILE="$TEST_DIR/test.ll"
+QIS_FILE="$TEST_DIR/test.ll"
 
 # Platform-specific adjustments
 if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
@@ -61,9 +61,9 @@ get_mtime() {
     fi
 }
 
-create_test_qir() {
+create_test_qis() {
     mkdir -p "$TEST_DIR"
-    cat > "$QIR_FILE" << 'EOF'
+    cat > "$QIS_FILE" << 'EOF'
 %Qubit = type opaque
 %Result = type opaque
 
@@ -142,12 +142,12 @@ test_runtime_building() {
     # Remove library
     rm -f "$RUNTIME_LIB"
 
-    # Create test QIR
-    create_test_qir
+    # Create test QIS
+    create_test_qis
 
-    log_info "Compiling QIR (should trigger runtime build)..."
-    "$PROJECT_ROOT/target/debug/pecos" compile "$QIR_FILE" || {
-        log_error "QIR compilation failed"
+    log_info "Compiling QIS (should trigger runtime build)..."
+    "$PROJECT_ROOT/target/debug/pecos" compile "$QIS_FILE" || {
+        log_error "QIS compilation failed"
         return 1
     }
 
@@ -169,15 +169,15 @@ test_runtime_building() {
     return 0
 }
 
-test_qir_caching() {
-    log_info "Testing QIR executable caching..."
+test_qis_caching() {
+    log_info "Testing QIS executable caching..."
 
-    create_test_qir
+    create_test_qis
     local OUTPUT_DIR="$TEST_DIR/build"
 
     # First compilation
-    log_info "First QIR compilation..."
-    "$PROJECT_ROOT/target/debug/pecos" compile "$QIR_FILE"
+    log_info "First QIS compilation..."
+    "$PROJECT_ROOT/target/debug/pecos" compile "$QIS_FILE"
 
     local LIB1="$OUTPUT_DIR/libtest.so"
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -194,7 +194,7 @@ test_qir_caching() {
 
     # Second compilation (no changes)
     log_info "Second compilation (should use cache)..."
-    "$PROJECT_ROOT/target/debug/pecos" compile "$QIR_FILE"
+    "$PROJECT_ROOT/target/debug/pecos" compile "$QIS_FILE"
 
     local MTIME2=$(get_mtime "$LIB1")
     if [[ "$MTIME1" == "$MTIME2" ]]; then
@@ -204,14 +204,14 @@ test_qir_caching() {
         return 1
     fi
 
-    # Modify QIR file
-    log_info "Modifying QIR file..."
-    echo "; Modified" >> "$QIR_FILE"
+    # Modify QIS file
+    log_info "Modifying QIS file..."
+    echo "; Modified" >> "$QIS_FILE"
     sleep 1
 
     # Third compilation (should rebuild)
     log_info "Third compilation (should rebuild)..."
-    "$PROJECT_ROOT/target/debug/pecos" compile "$QIR_FILE"
+    "$PROJECT_ROOT/target/debug/pecos" compile "$QIS_FILE"
 
     local MTIME3=$(get_mtime "$LIB1")
     if [[ "$MTIME3" -gt "$MTIME2" ]]; then
@@ -227,7 +227,7 @@ test_qir_caching() {
 test_source_change_flow() {
     log_info "Testing complete source change flow..."
 
-    create_test_qir
+    create_test_qis
 
     # Initial state
     rm -f "$MARKER_FILE"
@@ -256,9 +256,9 @@ test_source_change_flow() {
     # Get runtime library mtime before
     local RT_MTIME_BEFORE=$(get_mtime "$RUNTIME_LIB")
 
-    # Compile QIR (should rebuild runtime)
-    log_info "Compiling QIR (should rebuild runtime)..."
-    "$PROJECT_ROOT/target/debug/pecos" compile "$QIR_FILE"
+    # Compile QIS (should rebuild runtime)
+    log_info "Compiling QIS (should rebuild runtime)..."
+    "$PROJECT_ROOT/target/debug/pecos" compile "$QIS_FILE"
 
     local RT_MTIME_AFTER=$(get_mtime "$RUNTIME_LIB")
 
@@ -283,14 +283,14 @@ test_source_change_flow() {
 # Main test execution
 main() {
     echo "======================================"
-    echo "PECOS QIR Rebuild System Test"
+    echo "PECOS QIS Rebuild System Test"
     echo "======================================"
     echo
 
     # Build the CLI first
     log_info "Building PECOS CLI..."
     cd "$PROJECT_ROOT"
-    cargo build -p pecos-cli --quiet || {
+    cargo build -p pecos --features cli --quiet || {
         log_error "Failed to build PECOS CLI"
         exit 1
     }
@@ -323,9 +323,9 @@ main() {
     fi
 
     echo
-    echo "Test 3: QIR Executable Caching"
+    echo "Test 3: QIS Executable Caching"
     echo "------------------------------"
-    if test_qir_caching; then
+    if test_qis_caching; then
         echo -e "${GREEN}PASSED${NC}"
     else
         echo -e "${RED}FAILED${NC}"

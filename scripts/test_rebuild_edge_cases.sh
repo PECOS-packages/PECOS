@@ -43,10 +43,10 @@ log_error() {
 test_concurrent_marker_access() {
     log_test "Concurrent Marker File Access"
 
-    # Create a test QIR file
-    local QIR_FILE="$TEST_DIR/concurrent_test.ll"
+    # Create a test QIS file
+    local QIS_FILE="$TEST_DIR/concurrent_test.ll"
     mkdir -p "$TEST_DIR"
-    cat > "$QIR_FILE" << 'EOF'
+    cat > "$QIS_FILE" << 'EOF'
 define void @main() {
     ret void
 }
@@ -56,13 +56,13 @@ EOF
     rm -f "$MARKER_FILE"
     rm -f "$RUNTIME_LIB"
 
-    # Launch multiple QIR compilations simultaneously
-    log_info "Launching 3 concurrent QIR compilations..."
+    # Launch multiple QIS compilations simultaneously
+    log_info "Launching 3 concurrent QIS compilations..."
 
     for i in 1 2 3; do
         (
             cd "$PROJECT_ROOT"
-            "$PROJECT_ROOT/target/debug/pecos" compile "$QIR_FILE" 2>&1 | sed "s/^/[Process $i] /"
+            "$PROJECT_ROOT/target/debug/pecos" compile "$QIS_FILE" 2>&1 | sed "s/^/[Process $i] /"
         ) &
     done
 
@@ -90,18 +90,18 @@ EOF
 test_rapid_modifications() {
     log_test "Rapid File Modifications"
 
-    local QIR_FILE="$TEST_DIR/rapid.ll"
+    local QIS_FILE="$TEST_DIR/rapid.ll"
     mkdir -p "$TEST_DIR"
 
-    # Create initial QIR
-    cat > "$QIR_FILE" << 'EOF'
+    # Create initial QIS
+    cat > "$QIS_FILE" << 'EOF'
 define void @main() {
     ret void
 }
 EOF
 
     # Compile once
-    "$PROJECT_ROOT/target/debug/pecos" compile "$QIR_FILE" || {
+    "$PROJECT_ROOT/target/debug/pecos" compile "$QIS_FILE" || {
         log_error "Initial compilation failed"
         return 1
     }
@@ -109,8 +109,8 @@ EOF
     # Rapid modifications without sleep
     log_info "Making rapid modifications..."
     for i in {1..5}; do
-        echo "; Modification $i" >> "$QIR_FILE"
-        "$PROJECT_ROOT/target/debug/pecos" compile "$QIR_FILE" 2>/dev/null || {
+        echo "; Modification $i" >> "$QIS_FILE"
+        "$PROJECT_ROOT/target/debug/pecos" compile "$QIS_FILE" 2>/dev/null || {
             log_error "Compilation $i failed"
             return 1
         }
@@ -139,27 +139,27 @@ test_corrupted_marker() {
         return 1
     fi
 
-    # The corrupted marker should be handled during QIR compilation
+    # The corrupted marker should be handled during QIS compilation
     # (RuntimeBuilder removes marker after successful build)
-    local QIR_FILE="$TEST_DIR/corrupted_test.ll"
+    local QIS_FILE="$TEST_DIR/corrupted_test.ll"
     mkdir -p "$TEST_DIR"
-    cat > "$QIR_FILE" << 'EOF'
+    cat > "$QIS_FILE" << 'EOF'
 define void @main() {
     ret void
 }
 EOF
 
-    # Compile QIR - this should trigger runtime build and marker removal
-    if "$PROJECT_ROOT/target/debug/pecos" compile "$QIR_FILE" 2>/dev/null; then
+    # Compile QIS - this should trigger runtime build and marker removal
+    if "$PROJECT_ROOT/target/debug/pecos" compile "$QIS_FILE" 2>/dev/null; then
         if [[ -f "$MARKER_FILE" ]]; then
-            log_error "Marker not removed after QIR compilation"
+            log_error "Marker not removed after QIS compilation"
             return 1
         else
-            log_info "Corrupted marker removed during QIR compilation"
+            log_info "Corrupted marker removed during QIS compilation"
             return 0
         fi
     else
-        log_error "QIR compilation failed with corrupted marker"
+        log_error "QIS compilation failed with corrupted marker"
         return 1
     fi
 }
@@ -324,7 +324,7 @@ main() {
     # Build CLI first
     log_info "Building PECOS CLI..."
     cd "$PROJECT_ROOT"
-    cargo build -p pecos-cli --quiet || {
+    cargo build -p pecos --features cli --quiet || {
         log_error "Failed to build PECOS CLI"
         exit 1
     }

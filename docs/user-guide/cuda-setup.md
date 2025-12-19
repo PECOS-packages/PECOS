@@ -130,10 +130,10 @@ uv pip install quantum-pecos[cuda]
 # From the PECOS repository root
 cd /path/to/PECOS
 
-# Option 1: Use make targets (recommended)
-make build-cuda  # Build with CUDA support
-make devc        # Full dev cycle: clean + build-cuda + test
-make devcl       # Dev cycle + linting
+# Option 1: Use just commands (recommended)
+just build-cuda  # Build with CUDA support
+just devc        # Full dev cycle: clean + build-cuda + test
+just devcl       # Dev cycle + linting
 
 # Option 2: Manual installation
 uv pip install -e "./python/quantum-pecos[all,cuda]"
@@ -345,7 +345,7 @@ To use GPU simulators in PECOS:
    ```bash
    uv pip install quantum-pecos[cuda]
    # or for development:
-   make build-cuda
+   just build-cuda
    ```
 5. **Verify GPU simulators**:
    ```python

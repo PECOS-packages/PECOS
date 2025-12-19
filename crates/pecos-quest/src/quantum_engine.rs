@@ -399,9 +399,9 @@ impl QuantumEngine for QuestDensityMatrixEngine {
 pub struct QuestStateVectorEngineBuilder {
     /// Number of qubits (if explicitly set)
     num_qubits: Option<usize>,
-    /// GPU mode flag (only used if gpu feature is enabled)
+    /// CUDA acceleration mode flag
     #[allow(dead_code)]
-    use_gpu: bool,
+    use_cuda: bool,
 }
 
 impl QuestStateVectorEngineBuilder {
@@ -421,26 +421,31 @@ impl QuestStateVectorEngineBuilder {
     /// Use CPU-only mode (default)
     #[must_use]
     pub fn with_cpu(mut self) -> Self {
-        self.use_gpu = false;
+        self.use_cuda = false;
         self
     }
 
     /// Use GPU acceleration mode
     ///
+    /// This enables GPU acceleration using the best available backend.
+    /// Currently supports NVIDIA CUDA via the `QuEST` CUDA backend.
+    /// The backend is loaded at runtime, so systems without GPU support
+    /// can still use the CPU mode.
+    ///
     /// # Panics
-    /// Panics if the `gpu` feature is not enabled at compile time
+    /// Panics if the `cuda` feature is not enabled at compile time
     #[must_use]
     pub fn with_gpu(self) -> Self {
-        #[cfg(not(feature = "gpu"))]
+        #[cfg(not(feature = "cuda"))]
         {
             panic!(
-                "GPU feature is not enabled. Rebuild with --features gpu to use GPU acceleration"
+                "GPU feature is not enabled. Rebuild with --features cuda to use GPU acceleration"
             );
         }
-        #[cfg(feature = "gpu")]
+        #[cfg(feature = "cuda")]
         {
             Self {
-                use_gpu: true,
+                use_cuda: true,
                 ..self
             }
         }
@@ -452,6 +457,25 @@ impl QuantumEngineBuilder for QuestStateVectorEngineBuilder {
         let num_qubits = self.num_qubits.ok_or_else(|| {
             PecosError::Input("Number of qubits not specified for Quest engine".to_string())
         })?;
+
+        // Check if CUDA was requested
+        #[cfg(feature = "cuda")]
+        if self.use_cuda {
+            // Create and return CUDA-backed engine
+            let engine = QuestCudaStateVecEngine::new(num_qubits)?;
+            return Ok(Box::new(engine));
+        }
+
+        #[cfg(not(feature = "cuda"))]
+        if self.use_cuda {
+            return Err(PecosError::Processing(
+                "CUDA acceleration requested but 'cuda' feature is not enabled. \
+                 Rebuild with --features cuda to use GPU acceleration."
+                    .to_string(),
+            ));
+        }
+
+        // CPU mode - use the standard implementation
         Ok(Box::new(QuestStateVecEngine::new(num_qubits)))
     }
 
@@ -475,9 +499,9 @@ impl IntoQuantumEngineBuilder for QuestStateVectorEngineBuilder {
 pub struct QuestDensityMatrixEngineBuilder {
     /// Number of qubits (if explicitly set)
     num_qubits: Option<usize>,
-    /// GPU mode flag (only used if gpu feature is enabled)
+    /// CUDA acceleration mode flag
     #[allow(dead_code)]
-    use_gpu: bool,
+    use_cuda: bool,
 }
 
 impl QuestDensityMatrixEngineBuilder {
@@ -497,26 +521,31 @@ impl QuestDensityMatrixEngineBuilder {
     /// Use CPU-only mode (default)
     #[must_use]
     pub fn with_cpu(mut self) -> Self {
-        self.use_gpu = false;
+        self.use_cuda = false;
         self
     }
 
     /// Use GPU acceleration mode
     ///
+    /// This enables GPU acceleration using the best available backend.
+    /// Currently supports NVIDIA CUDA via the `QuEST` CUDA backend.
+    /// The backend is loaded at runtime, so systems without GPU support
+    /// can still use the CPU mode.
+    ///
     /// # Panics
-    /// Panics if the `gpu` feature is not enabled at compile time
+    /// Panics if the `cuda` feature is not enabled at compile time
     #[must_use]
     pub fn with_gpu(self) -> Self {
-        #[cfg(not(feature = "gpu"))]
+        #[cfg(not(feature = "cuda"))]
         {
             panic!(
-                "GPU feature is not enabled. Rebuild with --features gpu to use GPU acceleration"
+                "GPU feature is not enabled. Rebuild with --features cuda to use GPU acceleration"
             );
         }
-        #[cfg(feature = "gpu")]
+        #[cfg(feature = "cuda")]
         {
             Self {
-                use_gpu: true,
+                use_cuda: true,
                 ..self
             }
         }
@@ -528,6 +557,19 @@ impl QuantumEngineBuilder for QuestDensityMatrixEngineBuilder {
         let num_qubits = self.num_qubits.ok_or_else(|| {
             PecosError::Input("Number of qubits not specified for Quest engine".to_string())
         })?;
+
+        // Check if CUDA was requested
+        if self.use_cuda {
+            // CUDA density matrix engine not yet implemented
+            return Err(PecosError::Processing(
+                "CUDA acceleration for density matrix simulation is not yet implemented. \
+                 Use QuestStateVectorEngineBuilder for GPU-accelerated state vector simulation, \
+                 or use CPU mode for density matrix simulation."
+                    .to_string(),
+            ));
+        }
+
+        // CPU mode - use the standard implementation
         Ok(Box::new(QuestDensityMatrixEngine::new(num_qubits)))
     }
 
@@ -556,4 +598,397 @@ pub fn quest_state_vec() -> QuestStateVectorEngineBuilder {
 #[must_use]
 pub fn quest_density_matrix() -> QuestDensityMatrixEngineBuilder {
     QuestDensityMatrixEngineBuilder::new()
+}
+
+// ============================================================================
+// CUDA-backed quantum engine
+// ============================================================================
+
+/// CUDA-backed `QuEST` state vector quantum engine
+///
+/// This engine uses the dynamically-loaded `QuEST` CUDA backend for GPU-accelerated
+/// quantum simulation. The CUDA backend is loaded at runtime via dlopen, allowing
+/// the same binary to work on systems with and without CUDA installed.
+#[cfg(feature = "cuda")]
+pub struct QuestCudaStateVecEngine {
+    /// Opaque handle to the `QuEST` environment (owned by CUDA backend)
+    env_handle: *mut u8,
+    /// Opaque handle to the quantum register (owned by CUDA backend)
+    qureg_handle: *mut u8,
+    /// Reference to the CUDA backend (static lifetime, lazily loaded)
+    backend: &'static crate::cuda_loader::CudaBackend,
+    /// Number of qubits
+    num_qubits: usize,
+}
+
+#[cfg(feature = "cuda")]
+impl QuestCudaStateVecEngine {
+    /// Create a new CUDA-backed state vector engine
+    ///
+    /// # Errors
+    /// Returns `PecosError::Processing` if:
+    /// - The CUDA backend library cannot be loaded
+    /// - The CUDA environment cannot be created
+    /// - The quantum register cannot be allocated
+    ///
+    /// # Panics
+    /// Panics if `num_qubits` exceeds `i32::MAX` (extremely unlikely in practice).
+    pub fn new(num_qubits: usize) -> Result<Self, PecosError> {
+        let backend = crate::cuda_loader::try_load_cuda().map_err(|e| {
+            PecosError::Processing(format!(
+                "Failed to load CUDA backend: {e}\n\n{}",
+                crate::cuda_loader::cuda_unavailable_error_message()
+            ))
+        })?;
+
+        // Create environment
+        let env_handle = unsafe { (backend.create_env)() };
+        if env_handle.is_null() {
+            return Err(PecosError::Processing(
+                "Failed to create CUDA QuEST environment".to_string(),
+            ));
+        }
+
+        // Create quantum register
+        let qureg_handle =
+            unsafe { (backend.create_qureg)(env_handle, i32::try_from(num_qubits).unwrap()) };
+        if qureg_handle.is_null() {
+            unsafe {
+                (backend.destroy_env)(env_handle);
+            }
+            return Err(PecosError::Processing(format!(
+                "Failed to create CUDA quantum register with {num_qubits} qubits"
+            )));
+        }
+
+        // Initialize to zero state
+        unsafe {
+            (backend.init_zero_state)(qureg_handle);
+        }
+
+        log::info!("Created CUDA-backed QuEST state vector engine with {num_qubits} qubits");
+
+        Ok(Self {
+            env_handle,
+            qureg_handle,
+            backend,
+            num_qubits,
+        })
+    }
+}
+
+#[cfg(feature = "cuda")]
+impl Drop for QuestCudaStateVecEngine {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.qureg_handle.is_null() {
+                (self.backend.destroy_qureg)(self.qureg_handle);
+            }
+            if !self.env_handle.is_null() {
+                (self.backend.destroy_env)(self.env_handle);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "cuda")]
+impl Debug for QuestCudaStateVecEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QuestCudaStateVecEngine")
+            .field("num_qubits", &self.num_qubits)
+            .finish_non_exhaustive()
+    }
+}
+
+// Safety: The CUDA backend handles are thread-safe through QuEST's internal synchronization
+#[cfg(feature = "cuda")]
+unsafe impl Send for QuestCudaStateVecEngine {}
+#[cfg(feature = "cuda")]
+unsafe impl Sync for QuestCudaStateVecEngine {}
+
+#[cfg(feature = "cuda")]
+impl Clone for QuestCudaStateVecEngine {
+    /// Clone creates a new CUDA engine with the same configuration but reset to zero state.
+    ///
+    /// Note: This does NOT preserve the quantum state of the original engine.
+    /// Cloning GPU resources is expensive, so this creates a fresh engine.
+    fn clone(&self) -> Self {
+        Self::new(self.num_qubits).expect("Failed to clone CUDA engine")
+    }
+}
+
+#[cfg(feature = "cuda")]
+impl Engine for QuestCudaStateVecEngine {
+    type Input = ByteMessage;
+    type Output = ByteMessage;
+
+    // Allow cast warnings: qubit indices are always small (quantum computers don't have billions of qubits)
+    #[allow(
+        clippy::too_many_lines,
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap
+    )]
+    fn process(&mut self, message: Self::Input) -> Result<Self::Output, PecosError> {
+        let batch = message.quantum_ops()?;
+        let mut measurements = Vec::new();
+
+        for cmd in &batch {
+            match cmd.gate_type {
+                GateType::X => {
+                    for q in &cmd.qubits {
+                        let qubit = usize::from(*q) as i32;
+                        unsafe {
+                            (self.backend.apply_pauli_x)(self.qureg_handle, qubit);
+                        }
+                    }
+                }
+                GateType::Y => {
+                    for q in &cmd.qubits {
+                        let qubit = usize::from(*q) as i32;
+                        unsafe {
+                            (self.backend.apply_pauli_y)(self.qureg_handle, qubit);
+                        }
+                    }
+                }
+                GateType::Z => {
+                    for q in &cmd.qubits {
+                        let qubit = usize::from(*q) as i32;
+                        unsafe {
+                            (self.backend.apply_pauli_z)(self.qureg_handle, qubit);
+                        }
+                    }
+                }
+                GateType::H => {
+                    for q in &cmd.qubits {
+                        let qubit = usize::from(*q) as i32;
+                        unsafe {
+                            (self.backend.apply_hadamard)(self.qureg_handle, qubit);
+                        }
+                    }
+                }
+                GateType::SZ => {
+                    for q in &cmd.qubits {
+                        let qubit = usize::from(*q) as i32;
+                        unsafe {
+                            (self.backend.apply_s_gate)(self.qureg_handle, qubit);
+                        }
+                    }
+                }
+                GateType::SZdg => {
+                    // S-dagger = S^3 = phase(-pi/2)
+                    for q in &cmd.qubits {
+                        let qubit = usize::from(*q) as i32;
+                        unsafe {
+                            (self.backend.apply_phase_shift)(
+                                self.qureg_handle,
+                                qubit,
+                                -std::f64::consts::FRAC_PI_2,
+                            );
+                        }
+                    }
+                }
+                GateType::T => {
+                    for q in &cmd.qubits {
+                        let qubit = usize::from(*q) as i32;
+                        unsafe {
+                            (self.backend.apply_t_gate)(self.qureg_handle, qubit);
+                        }
+                    }
+                }
+                GateType::Tdg => {
+                    // T-dagger = T^7 = phase(-pi/4)
+                    for q in &cmd.qubits {
+                        let qubit = usize::from(*q) as i32;
+                        unsafe {
+                            (self.backend.apply_phase_shift)(
+                                self.qureg_handle,
+                                qubit,
+                                -std::f64::consts::FRAC_PI_4,
+                            );
+                        }
+                    }
+                }
+                GateType::CX => {
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let (ctrl, tgt) =
+                            (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                        unsafe {
+                            (self.backend.apply_cnot)(self.qureg_handle, ctrl, tgt);
+                        }
+                    }
+                }
+                GateType::RX => {
+                    if !cmd.params.is_empty() {
+                        for q in &cmd.qubits {
+                            let qubit = **q as i32;
+                            unsafe {
+                                (self.backend.apply_rotation_x)(
+                                    self.qureg_handle,
+                                    qubit,
+                                    cmd.params[0],
+                                );
+                            }
+                        }
+                    }
+                }
+                GateType::RY => {
+                    if !cmd.params.is_empty() {
+                        for q in &cmd.qubits {
+                            let qubit = **q as i32;
+                            unsafe {
+                                (self.backend.apply_rotation_y)(
+                                    self.qureg_handle,
+                                    qubit,
+                                    cmd.params[0],
+                                );
+                            }
+                        }
+                    }
+                }
+                GateType::RZ => {
+                    if !cmd.params.is_empty() {
+                        for q in &cmd.qubits {
+                            let qubit = **q as i32;
+                            unsafe {
+                                (self.backend.apply_rotation_z)(
+                                    self.qureg_handle,
+                                    qubit,
+                                    cmd.params[0],
+                                );
+                            }
+                        }
+                    }
+                }
+                GateType::RZZ => {
+                    // RZZ(theta) = exp(-i * theta/2 * Z_a Z_b)
+                    // Decompose as: CNOT(a,b) - RZ(theta, b) - CNOT(a,b)
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let (a, b) = (*qubits[0] as i32, *qubits[1] as i32);
+                        unsafe {
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                            (self.backend.apply_rotation_z)(self.qureg_handle, b, cmd.params[0]);
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                        }
+                    }
+                }
+                GateType::SZZ => {
+                    // SZZ = RZZ(pi/2) = exp(-i * pi/4 * Z_a Z_b)
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let (a, b) = (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                        unsafe {
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                            (self.backend.apply_rotation_z)(
+                                self.qureg_handle,
+                                b,
+                                std::f64::consts::FRAC_PI_2,
+                            );
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                        }
+                    }
+                }
+                GateType::SZZdg => {
+                    // SZZdg = RZZ(-pi/2) = exp(i * pi/4 * Z_a Z_b)
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let (a, b) = (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                        unsafe {
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                            (self.backend.apply_rotation_z)(
+                                self.qureg_handle,
+                                b,
+                                -std::f64::consts::FRAC_PI_2,
+                            );
+                            (self.backend.apply_cnot)(self.qureg_handle, a, b);
+                        }
+                    }
+                }
+                GateType::R1XY => {
+                    // R1XY(theta, phi) gate
+                    // Decompose as: RZ(-phi) - RX(theta) - RZ(phi)
+                    if cmd.params.len() >= 2 {
+                        for q in &cmd.qubits {
+                            let qubit = **q as i32;
+                            let (theta, phi) = (cmd.params[0], cmd.params[1]);
+                            unsafe {
+                                (self.backend.apply_rotation_z)(self.qureg_handle, qubit, -phi);
+                                (self.backend.apply_rotation_x)(self.qureg_handle, qubit, theta);
+                                (self.backend.apply_rotation_z)(self.qureg_handle, qubit, phi);
+                            }
+                        }
+                    }
+                }
+                GateType::U => {
+                    // U(theta, phi, lambda) = RZ(phi) - RY(theta) - RZ(lambda)
+                    if cmd.params.len() >= 3 {
+                        for q in &cmd.qubits {
+                            let qubit = **q as i32;
+                            let (theta, phi, lambda) =
+                                (cmd.params[0], cmd.params[1], cmd.params[2]);
+                            unsafe {
+                                (self.backend.apply_rotation_z)(self.qureg_handle, qubit, lambda);
+                                (self.backend.apply_rotation_y)(self.qureg_handle, qubit, theta);
+                                (self.backend.apply_rotation_z)(self.qureg_handle, qubit, phi);
+                            }
+                        }
+                    }
+                }
+                GateType::Measure | GateType::MeasureLeaked => {
+                    for q in &cmd.qubits {
+                        let qubit = **q as i32;
+                        let outcome = unsafe { (self.backend.measure)(self.qureg_handle, qubit) };
+                        measurements.push(u32::try_from(outcome).unwrap());
+                    }
+                }
+                GateType::Prep => {
+                    // Prepare in |0> state: measure and flip if result is 1
+                    for q in &cmd.qubits {
+                        let qubit = **q as i32;
+                        let outcome = unsafe { (self.backend.measure)(self.qureg_handle, qubit) };
+                        if outcome == 1 {
+                            unsafe {
+                                (self.backend.apply_pauli_x)(self.qureg_handle, qubit);
+                            }
+                        }
+                    }
+                }
+                GateType::I
+                | GateType::Idle
+                | GateType::MeasCrosstalkLocalPayload
+                | GateType::MeasCrosstalkGlobalPayload => {
+                    // No operation needed
+                }
+            }
+        }
+
+        // Create a message with the measurement results
+        let mut builder = ByteMessage::outcomes_builder();
+        let outcomes: Vec<usize> = measurements.iter().map(|&m| m as usize).collect();
+        builder.add_outcomes(&outcomes);
+
+        Ok(builder.build())
+    }
+
+    fn reset(&mut self) -> Result<(), PecosError> {
+        unsafe {
+            (self.backend.init_zero_state)(self.qureg_handle);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "cuda")]
+impl QuantumEngine for QuestCudaStateVecEngine {
+    fn set_seed(&mut self, _seed: u64) -> Result<(), PecosError> {
+        // CUDA backend doesn't currently support seeding via the loaded library
+        // The seed would need to be passed to QuEST's internal RNG
+        log::warn!("set_seed not yet implemented for CUDA backend");
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }

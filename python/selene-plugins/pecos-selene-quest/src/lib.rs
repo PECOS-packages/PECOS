@@ -29,6 +29,8 @@
 
 use anyhow::{Result, anyhow, bail};
 use num_complex::Complex64;
+#[cfg(feature = "cuda")]
+use pecos_quest::QuantumSimulator;
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuestDensityMatrix, QuestStateVec};
 use rand_chacha::ChaCha8Rng;
 use selene_core::export_simulator_plugin;
@@ -37,6 +39,9 @@ use selene_core::simulator::interface::SimulatorInterfaceFactory;
 use selene_core::utils::MetricValue;
 use std::io::Write;
 use std::sync::Arc;
+
+#[cfg(feature = "cuda")]
+use pecos_quest::cuda_loader;
 
 /// Simulation mode for the Quest plugin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -62,6 +67,120 @@ impl SimulatorMode {
 enum QuestSimulatorInner {
     StateVector(QuestStateVec<ChaCha8Rng>),
     DensityMatrix(QuestDensityMatrix<ChaCha8Rng>),
+    #[cfg(feature = "cuda")]
+    StateVectorGpu(CudaStateVec),
+    #[cfg(feature = "cuda")]
+    DensityMatrixGpu(CudaDensityMatrix),
+}
+
+/// CUDA-backed state vector wrapper
+#[cfg(feature = "cuda")]
+struct CudaStateVec {
+    env_handle: *mut u8,
+    qureg_handle: *mut u8,
+    backend: &'static cuda_loader::CudaBackend,
+}
+
+#[cfg(feature = "cuda")]
+impl CudaStateVec {
+    fn new(num_qubits: usize) -> Result<Self> {
+        let backend = cuda_loader::try_load_cuda().map_err(|e| {
+            anyhow!(
+                "Failed to load CUDA backend: {e}\n\n{}",
+                cuda_loader::cuda_unavailable_error_message()
+            )
+        })?;
+
+        let env_handle = unsafe { (backend.create_env)() };
+        if env_handle.is_null() {
+            bail!("Failed to create CUDA QuEST environment");
+        }
+
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let qureg_handle = unsafe { (backend.create_qureg)(env_handle, num_qubits as i32) };
+        if qureg_handle.is_null() {
+            unsafe { (backend.destroy_env)(env_handle) };
+            bail!("Failed to create CUDA QuEST qureg");
+        }
+
+        unsafe { (backend.init_zero_state)(qureg_handle) };
+
+        Ok(Self {
+            env_handle,
+            qureg_handle,
+            backend,
+        })
+    }
+
+    fn is_gpu_accelerated(&self) -> bool {
+        let info = unsafe { (self.backend.get_env_info)(self.env_handle) };
+        info.is_gpu_accelerated
+    }
+}
+
+#[cfg(feature = "cuda")]
+impl Drop for CudaStateVec {
+    fn drop(&mut self) {
+        unsafe {
+            (self.backend.destroy_qureg)(self.qureg_handle);
+            (self.backend.destroy_env)(self.env_handle);
+        }
+    }
+}
+
+/// CUDA-backed density matrix wrapper
+#[cfg(feature = "cuda")]
+struct CudaDensityMatrix {
+    env_handle: *mut u8,
+    qureg_handle: *mut u8,
+    backend: &'static cuda_loader::CudaBackend,
+}
+
+#[cfg(feature = "cuda")]
+impl CudaDensityMatrix {
+    fn new(num_qubits: usize) -> Result<Self> {
+        let backend = cuda_loader::try_load_cuda().map_err(|e| {
+            anyhow!(
+                "Failed to load CUDA backend: {e}\n\n{}",
+                cuda_loader::cuda_unavailable_error_message()
+            )
+        })?;
+
+        let env_handle = unsafe { (backend.create_env)() };
+        if env_handle.is_null() {
+            bail!("Failed to create CUDA QuEST environment");
+        }
+
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let qureg_handle = unsafe { (backend.create_density_qureg)(env_handle, num_qubits as i32) };
+        if qureg_handle.is_null() {
+            unsafe { (backend.destroy_env)(env_handle) };
+            bail!("Failed to create CUDA QuEST density qureg");
+        }
+
+        unsafe { (backend.init_zero_state)(qureg_handle) };
+
+        Ok(Self {
+            env_handle,
+            qureg_handle,
+            backend,
+        })
+    }
+
+    fn is_gpu_accelerated(&self) -> bool {
+        let info = unsafe { (self.backend.get_env_info)(self.env_handle) };
+        info.is_gpu_accelerated
+    }
+}
+
+#[cfg(feature = "cuda")]
+impl Drop for CudaDensityMatrix {
+    fn drop(&mut self) {
+        unsafe {
+            (self.backend.destroy_qureg)(self.qureg_handle);
+            (self.backend.destroy_env)(self.env_handle);
+        }
+    }
 }
 
 impl QuestSimulatorInner {
@@ -73,6 +192,17 @@ impl QuestSimulatorInner {
         Self::DensityMatrix(QuestDensityMatrix::with_seed(n_qubits, seed))
     }
 
+    #[cfg(feature = "cuda")]
+    fn new_state_vector_gpu(n_qubits: usize) -> Result<Self> {
+        Ok(Self::StateVectorGpu(CudaStateVec::new(n_qubits)?))
+    }
+
+    #[cfg(feature = "cuda")]
+    fn new_density_matrix_gpu(n_qubits: usize) -> Result<Self> {
+        Ok(Self::DensityMatrixGpu(CudaDensityMatrix::new(n_qubits)?))
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn rz(&mut self, theta: f64, qubit: usize) {
         match self {
             Self::StateVector(sim) => {
@@ -81,9 +211,18 @@ impl QuestSimulatorInner {
             Self::DensityMatrix(sim) => {
                 sim.rz(theta, qubit);
             }
+            #[cfg(feature = "cuda")]
+            Self::StateVectorGpu(sim) => unsafe {
+                (sim.backend.apply_rotation_z)(sim.qureg_handle, qubit as i32, theta);
+            },
+            #[cfg(feature = "cuda")]
+            Self::DensityMatrixGpu(sim) => unsafe {
+                (sim.backend.apply_rotation_z)(sim.qureg_handle, qubit as i32, theta);
+            },
         }
     }
 
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn rx(&mut self, theta: f64, qubit: usize) {
         match self {
             Self::StateVector(sim) => {
@@ -92,9 +231,18 @@ impl QuestSimulatorInner {
             Self::DensityMatrix(sim) => {
                 sim.rx(theta, qubit);
             }
+            #[cfg(feature = "cuda")]
+            Self::StateVectorGpu(sim) => unsafe {
+                (sim.backend.apply_rotation_x)(sim.qureg_handle, qubit as i32, theta);
+            },
+            #[cfg(feature = "cuda")]
+            Self::DensityMatrixGpu(sim) => unsafe {
+                (sim.backend.apply_rotation_x)(sim.qureg_handle, qubit as i32, theta);
+            },
         }
     }
 
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn cx(&mut self, control: usize, target: usize) {
         match self {
             Self::StateVector(sim) => {
@@ -103,9 +251,18 @@ impl QuestSimulatorInner {
             Self::DensityMatrix(sim) => {
                 sim.cx(control, target);
             }
+            #[cfg(feature = "cuda")]
+            Self::StateVectorGpu(sim) => unsafe {
+                (sim.backend.apply_cnot)(sim.qureg_handle, control as i32, target as i32);
+            },
+            #[cfg(feature = "cuda")]
+            Self::DensityMatrixGpu(sim) => unsafe {
+                (sim.backend.apply_cnot)(sim.qureg_handle, control as i32, target as i32);
+            },
         }
     }
 
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn x(&mut self, qubit: usize) {
         match self {
             Self::StateVector(sim) => {
@@ -114,23 +271,60 @@ impl QuestSimulatorInner {
             Self::DensityMatrix(sim) => {
                 sim.x(qubit);
             }
+            #[cfg(feature = "cuda")]
+            Self::StateVectorGpu(sim) => unsafe {
+                (sim.backend.apply_pauli_x)(sim.qureg_handle, qubit as i32);
+            },
+            #[cfg(feature = "cuda")]
+            Self::DensityMatrixGpu(sim) => unsafe {
+                (sim.backend.apply_pauli_x)(sim.qureg_handle, qubit as i32);
+            },
         }
     }
 
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn mz(&mut self, qubit: usize) -> pecos_quest::MeasurementResult {
         match self {
             Self::StateVector(sim) => sim.mz(qubit),
             Self::DensityMatrix(sim) => sim.mz(qubit),
+            #[cfg(feature = "cuda")]
+            Self::StateVectorGpu(sim) => {
+                let outcome = unsafe { (sim.backend.measure)(sim.qureg_handle, qubit as i32) };
+                pecos_quest::MeasurementResult {
+                    outcome: outcome != 0,
+                    is_deterministic: false, // CUDA backend doesn't report this
+                }
+            }
+            #[cfg(feature = "cuda")]
+            Self::DensityMatrixGpu(sim) => {
+                let outcome = unsafe { (sim.backend.measure)(sim.qureg_handle, qubit as i32) };
+                pecos_quest::MeasurementResult {
+                    outcome: outcome != 0,
+                    is_deterministic: false,
+                }
+            }
         }
     }
 
+    // State indices are bounded by 2^n_qubits which is always small enough
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn probability(&self, state_index: usize) -> f64 {
         match self {
             Self::StateVector(sim) => sim.probability(state_index),
             Self::DensityMatrix(sim) => sim.probability(state_index),
+            #[cfg(feature = "cuda")]
+            Self::StateVectorGpu(sim) => unsafe {
+                (sim.backend.get_prob_amp)(sim.qureg_handle, state_index as i64)
+            },
+            #[cfg(feature = "cuda")]
+            Self::DensityMatrixGpu(sim) => unsafe {
+                (sim.backend.get_prob_amp)(sim.qureg_handle, state_index as i64)
+            },
         }
     }
 
+    // State indices are bounded by 2^n_qubits which is always small enough
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     fn get_amplitude(&self, state_index: usize) -> Complex64 {
         match self {
             Self::StateVector(sim) => sim.get_amplitude(state_index),
@@ -139,13 +333,48 @@ impl QuestSimulatorInner {
                 // This is a limitation - dump_state will need special handling
                 Complex64::new(0.0, 0.0)
             }
+            #[cfg(feature = "cuda")]
+            Self::StateVectorGpu(sim) => {
+                let re =
+                    unsafe { (sim.backend.get_real_amp)(sim.qureg_handle, state_index as i64) };
+                let im =
+                    unsafe { (sim.backend.get_imag_amp)(sim.qureg_handle, state_index as i64) };
+                Complex64::new(re, im)
+            }
+            #[cfg(feature = "cuda")]
+            Self::DensityMatrixGpu(_sim) => {
+                // For density matrix, we can't directly get amplitudes
+                Complex64::new(0.0, 0.0)
+            }
         }
     }
 
+    #[cfg(feature = "cuda")]
     fn is_gpu_accelerated(&self) -> bool {
         match self {
             Self::StateVector(sim) => sim.get_env_info().is_gpu_accelerated,
             Self::DensityMatrix(sim) => sim.get_env_info().is_gpu_accelerated,
+            Self::StateVectorGpu(sim) => sim.is_gpu_accelerated(),
+            Self::DensityMatrixGpu(sim) => sim.is_gpu_accelerated(),
+        }
+    }
+
+    /// Reinitialize the state to |0...0>
+    #[cfg(feature = "cuda")]
+    fn reinit_zero_state(&mut self) {
+        match self {
+            Self::StateVector(sim) => {
+                sim.reset();
+            }
+            Self::DensityMatrix(sim) => {
+                sim.reset();
+            }
+            Self::StateVectorGpu(sim) => unsafe {
+                (sim.backend.init_zero_state)(sim.qureg_handle);
+            },
+            Self::DensityMatrixGpu(sim) => unsafe {
+                (sim.backend.init_zero_state)(sim.qureg_handle);
+            },
         }
     }
 }
@@ -197,11 +426,20 @@ impl QuestSimulator {
         Self::to_usize(self.n_qubits - 1 - selene_qubit)
     }
 
-    /// Create a new simulator with the given seed.
-    fn new_simulator(mode: SimulatorMode, n_qubits: usize, seed: u64) -> QuestSimulatorInner {
+    /// Create a new CPU simulator with the given seed.
+    fn new_simulator_cpu(mode: SimulatorMode, n_qubits: usize, seed: u64) -> QuestSimulatorInner {
         match mode {
             SimulatorMode::StateVector => QuestSimulatorInner::new_state_vector(n_qubits, seed),
             SimulatorMode::DensityMatrix => QuestSimulatorInner::new_density_matrix(n_qubits, seed),
+        }
+    }
+
+    /// Create a new GPU simulator.
+    #[cfg(feature = "cuda")]
+    fn new_simulator_gpu(mode: SimulatorMode, n_qubits: usize) -> Result<QuestSimulatorInner> {
+        match mode {
+            SimulatorMode::StateVector => QuestSimulatorInner::new_state_vector_gpu(n_qubits),
+            SimulatorMode::DensityMatrix => QuestSimulatorInner::new_density_matrix_gpu(n_qubits),
         }
     }
 }
@@ -212,8 +450,21 @@ impl SimulatorInterface for QuestSimulator {
     }
 
     fn shot_start(&mut self, _shot_id: u64, seed: u64) -> Result<()> {
-        // Create a fresh simulator with the given seed for deterministic behavior
-        self.simulator = Self::new_simulator(self.mode, Self::to_usize(self.n_qubits), seed);
+        // For CPU mode: create a fresh simulator with the given seed for deterministic behavior
+        // For GPU mode: reinitialize the state (GPU backend doesn't support seeded random)
+        #[cfg(feature = "cuda")]
+        {
+            if self.use_gpu {
+                // GPU mode: just reinitialize to zero state
+                // Note: GPU measurements are not seeded, so results may differ from CPU
+                self.simulator.reinit_zero_state();
+                self.cumulative_postselect_probability = 1.0;
+                return Ok(());
+            }
+        }
+
+        // CPU mode: recreate simulator with seed
+        self.simulator = Self::new_simulator_cpu(self.mode, Self::to_usize(self.n_qubits), seed);
         self.cumulative_postselect_probability = 1.0;
         Ok(())
     }
@@ -491,21 +742,38 @@ impl SimulatorInterfaceFactory for QuestSimulatorFactory {
 
         check_memory(n_qubits, mode)?;
 
-        let simulator = QuestSimulator::new_simulator(mode, QuestSimulator::to_usize(n_qubits), 0);
+        let n_qubits_usize = QuestSimulator::to_usize(n_qubits);
 
-        // Check GPU availability at runtime if GPU was requested
-        if use_gpu {
-            let is_gpu_accelerated = simulator.is_gpu_accelerated();
-            if !is_gpu_accelerated {
+        // Create simulator based on GPU flag
+        #[cfg(feature = "cuda")]
+        let simulator = if use_gpu {
+            // Try to create GPU simulator
+            QuestSimulator::new_simulator_gpu(mode, n_qubits_usize)?
+        } else {
+            QuestSimulator::new_simulator_cpu(mode, n_qubits_usize, 0)
+        };
+
+        #[cfg(not(feature = "cuda"))]
+        let simulator = {
+            if use_gpu {
                 bail!(
-                    "GPU acceleration was requested but is not available. \
-                     This could mean:\n\
-                     - CUDA is not installed or not properly configured\n\
-                     - No compatible GPU was found\n\
-                     - The library was not compiled with GPU support\n\
-                     Please check your CUDA installation and GPU availability."
+                    "GPU acceleration was requested but this library was not compiled with CUDA support.\n\
+                     Please install a CUDA-enabled build of pecos-selene-quest."
                 );
             }
+            QuestSimulator::new_simulator_cpu(mode, n_qubits_usize, 0)
+        };
+
+        // Verify GPU is actually being used if requested
+        #[cfg(feature = "cuda")]
+        if use_gpu && !simulator.is_gpu_accelerated() {
+            bail!(
+                "GPU acceleration was requested but the simulator is not using GPU.\n\
+                 This could mean:\n\
+                 - CUDA is not installed or not properly configured\n\
+                 - No compatible GPU was found\n\
+                 Please check your CUDA installation and GPU availability."
+            );
         }
 
         Ok(Box::new(QuestSimulator {
@@ -585,9 +853,10 @@ mod tests {
             }
             Err(err) => {
                 let err_msg = err.to_string();
+                // Accept either "not available" (runtime) or "not compiled with CUDA" (compile-time)
                 assert!(
-                    err_msg.contains("GPU acceleration was requested but is not available"),
-                    "Expected GPU unavailable error, got: {err_msg}"
+                    err_msg.contains("GPU acceleration was requested"),
+                    "Expected GPU error, got: {err_msg}"
                 );
             }
         }
@@ -733,8 +1002,9 @@ mod tests {
             Err(err) => {
                 // GPU not available - verify error message is helpful
                 let err_msg = err.to_string();
+                // Accept either "not available" (runtime) or "not compiled with CUDA" (compile-time)
                 assert!(
-                    err_msg.contains("GPU acceleration was requested but is not available"),
+                    err_msg.contains("GPU acceleration was requested"),
                     "Expected helpful GPU error message, got: {err_msg}"
                 );
             }
@@ -763,8 +1033,9 @@ mod tests {
             Err(err) => {
                 // GPU not available - verify error message
                 let err_msg = err.to_string();
+                // Accept either "not available" (runtime) or "not compiled with CUDA" (compile-time)
                 assert!(
-                    err_msg.contains("GPU acceleration was requested but is not available"),
+                    err_msg.contains("GPU acceleration was requested"),
                     "Expected helpful GPU error message, got: {err_msg}"
                 );
             }

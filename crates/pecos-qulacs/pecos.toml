@@ -1,0 +1,22 @@
+# PECOS dependency manifest for pecos-qulacs
+# This file is included in the published crate package
+
+version = 1
+
+[dependencies.qulacs]
+version = "0.6.12"
+url = "https://github.com/qulacs/qulacs/archive/v0.6.12.tar.gz"
+sha256 = "b9e5422e0bb2b07725b0c62f7827326b5a1486facb30cf68d12b4ef119c485e9"
+description = "Qulacs quantum simulator"
+
+[dependencies.eigen]
+version = "3.4.0"
+url = "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz"
+sha256 = "8586084f71f9bde545ee7fa6d00288b264a2b7ac3607b974e54d13e7162c1c72"
+description = "C++ linear algebra library"
+
+[dependencies.boost]
+version = "1.83.0"
+url = "https://archives.boost.io/release/1.83.0/source/boost_1_83_0.tar.bz2"
+sha256 = "6478edfe2f3305127cffe8caf73ea0176c53769f4bf1585be237eb30798c3b8e"
+description = "C++ Boost libraries"

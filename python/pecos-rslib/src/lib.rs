@@ -75,6 +75,53 @@ use state_vec_engine_bindings::PyStateVecEngine;
 #[cfg(feature = "wasm")]
 use wasm_foreign_object_bindings::PyWasmForeignObject;
 
+/// Set up the `QuEST` CUDA backend path environment variable for runtime loading.
+/// This allows the Rust code to find and load the CUDA-accelerated `QuEST` backend
+/// via dlopen when CUDA acceleration is requested.
+fn setup_cuda_library_path() {
+    // Only set if not already configured by the user
+    if std::env::var("PECOS_QUEST_CUDA_LIB").is_ok() {
+        log::debug!("PECOS_QUEST_CUDA_LIB already set, skipping auto-detection");
+        return;
+    }
+
+    // Determine the QuEST CUDA backend filename based on platform
+    #[cfg(target_os = "linux")]
+    let cuda_backend_name = "libpecos_quest_cuda.so";
+    #[cfg(target_os = "macos")]
+    let cuda_backend_name = "libpecos_quest_cuda.dylib";
+    #[cfg(target_os = "windows")]
+    let cuda_backend_name = "pecos_quest_cuda.dll";
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    return;
+
+    // Try to find the QuEST CUDA backend in common locations
+    let search_paths = [
+        // 1. Same directory as the current executable/library
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join(cuda_backend_name))),
+        // 2. ~/.pecos/lib/
+        dirs::home_dir().map(|h| h.join(".pecos").join("lib").join(cuda_backend_name)),
+        // 3. Cargo target directory (for development)
+        Some(std::path::PathBuf::from("target/release").join(cuda_backend_name)),
+    ];
+
+    for path_opt in search_paths.into_iter().flatten() {
+        if path_opt.exists() {
+            log::info!("Found QuEST CUDA backend at: {}", path_opt.display());
+            // SAFETY: Setting environment variables is safe in single-threaded context
+            // during module initialization. This is called once before any other code runs.
+            unsafe {
+                std::env::set_var("PECOS_QUEST_CUDA_LIB", &path_opt);
+            }
+            return;
+        }
+    }
+
+    log::debug!("QuEST CUDA backend not found in standard locations");
+}
+
 /// A Python module implemented in Rust.
 /// Users should import from `pecos` (quantum-pecos) which re-exports these types
 /// with additional Python-native enhancements.
@@ -84,6 +131,9 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Note: Rust logging is controlled via RUST_LOG environment variable (e.g., RUST_LOG=debug)
     // We don't use pyo3-log because it interferes with Python's logging.basicConfig() in tests
     log::debug!("pecos_rslib module initializing...");
+
+    // Set up QuEST CUDA backend path for runtime loading (before any QuEST usage)
+    setup_cuda_library_path();
 
     // CRITICAL: Preload libselene_simple_runtime.so with RTLD_GLOBAL BEFORE anything else
     // This prevents conflicts with LLVM-14 when the Selene runtime is loaded later

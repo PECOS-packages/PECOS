@@ -35,6 +35,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Free disk space
+        run: |
+          # Remove large packages we don't need to free up disk space
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo apt-get clean
+          df -h
+
       - name: Install Rust (for local testing)
         run: |
           curl https://sh.rustup.rs -sSf | sh -s -- -y
@@ -49,20 +56,29 @@ jobs:
         with:
           save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
 
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.29
+        id: cuda-toolkit
+        with:
+          cuda: '12.6.3'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart-dev"]'
+          non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
+
       - name: Install LLVM 14.0.6 using pecos-llvm
         run: |
-          echo "Installing LLVM using pecos-llvm-utils..."
-          cargo run -p pecos-llvm-utils --bin pecos-llvm --release -- install
+          echo "Installing LLVM using pecos-dev..."
+          cargo run -p pecos-dev --release -- llvm install
 
           echo "Setting LLVM environment variables..."
-          export PECOS_LLVM=$(cargo run -p pecos-llvm-utils --bin pecos-llvm --release -- find 2>/dev/null)
+          export PECOS_LLVM=$(cargo run -p pecos-dev --release -- llvm find 2>/dev/null)
           export LLVM_SYS_140_PREFIX="$PECOS_LLVM"
 
           echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
           echo "LLVM_SYS_140_PREFIX=$LLVM_SYS_140_PREFIX" >> $GITHUB_ENV
 
           echo "Verifying LLVM installation..."
-          cargo run -p pecos-llvm-utils --bin pecos-llvm --release -- check
+          cargo run -p pecos-dev --release -- llvm check
 
       - name: Install rustfmt
         run: rustup component add rustfmt
@@ -75,15 +91,9 @@ jobs:
 
       - name: Run clippy
         run: |
-          echo "Running clippy with all features (including LLVM)..."
-          # Exclude crates with GPU features that require CUDA
-          cargo clippy --workspace --exclude pecos --exclude pecos-quest --exclude pecos-selene-quest --all-targets --all-features -- -D warnings
-          echo "Running clippy on pecos with all non-GPU features..."
-          cargo clippy -p pecos --all-targets --features "llvm,selene,qasm,phir,all-simulators" -- -D warnings
-          echo "Running clippy on pecos-quest with CPU features only..."
-          cargo clippy -p pecos-quest --all-targets --features "cpu" -- -D warnings
-          echo "Running clippy on pecos-selene-quest without GPU..."
-          cargo clippy -p pecos-selene-quest --all-targets -- -D warnings
+          echo "Running clippy with all features (including LLVM and GPU)..."
+          # With CUDA Toolkit installed, we can now build with GPU features
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   rust-lint-no-llvm:
     runs-on: ubuntu-latest
@@ -177,6 +187,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Free disk space (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          # Remove large packages we don't need to free up disk space
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo apt-get clean
+          df -h
+
       - name: Install Rust (for local testing)
         if: matrix.os == 'windows-latest'
         run: |
@@ -203,41 +221,51 @@ jobs:
       - name: Install LLVM 14.0.6 using pecos-llvm (Unix)
         if: matrix.os != 'windows-latest'
         run: |
-          echo "Installing LLVM using pecos-llvm-utils..."
-          cargo run -p pecos-llvm-utils --bin pecos-llvm --release -- install
+          echo "Installing LLVM using pecos-dev..."
+          cargo run -p pecos-dev --release -- llvm install
 
           echo "Setting LLVM environment variables..."
-          export PECOS_LLVM=$(cargo run -p pecos-llvm-utils --bin pecos-llvm --release -- find 2>/dev/null)
+          export PECOS_LLVM=$(cargo run -p pecos-dev --release -- llvm find 2>/dev/null)
           export LLVM_SYS_140_PREFIX="$PECOS_LLVM"
 
           echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
           echo "LLVM_SYS_140_PREFIX=$LLVM_SYS_140_PREFIX" >> $GITHUB_ENV
 
           echo "Verifying LLVM installation..."
-          cargo run -p pecos-llvm-utils --bin pecos-llvm --release -- check
+          cargo run -p pecos-dev --release -- llvm check
 
       - name: Install LLVM 14.0.6 using pecos-llvm (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          Write-Host "Installing LLVM using pecos-llvm-utils..."
-          cargo run -p pecos-llvm-utils --bin pecos-llvm --release -- install
+          Write-Host "Installing LLVM using pecos-dev..."
+          cargo run -p pecos-dev --release -- llvm install
 
           Write-Host "Setting LLVM environment variables..."
-          $env:PECOS_LLVM = (cargo run -p pecos-llvm-utils --bin pecos-llvm --release -- find 2>$null)
+          $env:PECOS_LLVM = (cargo run -p pecos-dev --release -- llvm find 2>$null)
           $env:LLVM_SYS_140_PREFIX = $env:PECOS_LLVM
 
           "PECOS_LLVM=$env:PECOS_LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "LLVM_SYS_140_PREFIX=$env:LLVM_SYS_140_PREFIX" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
           Write-Host "Verifying LLVM installation..."
-          cargo run -p pecos-llvm-utils --bin pecos-llvm --release -- check
+          cargo run -p pecos-dev --release -- llvm check
 
       - name: Set up Visual Studio environment on Windows
         if: matrix.os == 'windows-latest'
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+
+      - name: Install CUDA Toolkit (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        uses: Jimver/cuda-toolkit@v0.2.29
+        id: cuda-toolkit-test
+        with:
+          cuda: '12.6.3'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart-dev"]'
+          non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
 
       - name: Compile tests (macOS)
         if: matrix.os == 'macos-latest'
@@ -258,8 +286,15 @@ jobs:
           cargo test --no-run -p pecos-quest --features cpu
           cargo test --no-run -p pecos-decoders --all-features
 
-      - name: Compile tests (Linux/Windows)
-        if: matrix.os != 'macos-latest'
+      - name: Compile tests (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          # With CUDA Toolkit installed, we can compile with CUDA features
+          cargo test --no-run --workspace --exclude pecos-decoders --features llvm,cuda
+          cargo test --no-run -p pecos-decoders --all-features
+
+      - name: Compile tests (Windows)
+        if: matrix.os == 'windows-latest'
         run: |
           cargo test --no-run --workspace --exclude pecos-quest --exclude pecos-decoders --features llvm
           cargo test --no-run -p pecos-quest --features cpu
@@ -285,8 +320,9 @@ jobs:
       - name: Run tests (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          cargo test --workspace --exclude pecos-quest --exclude pecos-decoders --features llvm
-          cargo test -p pecos-quest --features cpu
+          # With CUDA Toolkit installed, we can test with CUDA features
+          # Note: GPU tests will detect no actual GPU at runtime and skip GPU-specific tests
+          cargo test --workspace --exclude pecos-decoders --features llvm,cuda
           cargo test -p pecos-decoders --all-features
 
       - name: Run tests (Windows)

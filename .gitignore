@@ -4,7 +4,7 @@ tmp/
 **/.*/settings.local.json
 
 # LLVM (extracted from archive for Windows development)
-llvm/
+/llvm/
 
 # Cargo config with machine-specific LLVM paths
 .cargo/config.toml
@@ -31,6 +31,10 @@ __pycache__/
 
 # C extensions
 *.so
+*.dylib
+
+# Selene plugin build artifacts
+python/selene-plugins/**/_dist/
 
 # Distribution / packaging
 .Python

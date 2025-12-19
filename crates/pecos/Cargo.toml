@@ -10,10 +10,17 @@ keywords.workspace = true
 categories.workspace = true
 readme = "../../README.md"
 description = "A crate for evaluating and exploring quantum error correction."
+# Disable auto-discovery of binaries (we only want pecos binary, not engine_setup helper module)
+autobins = false
 
 [lib]
 doctest = true
 test = true
+
+[[bin]]
+name = "pecos"
+path = "src/bin/pecos.rs"
+required-features = ["cli"]
 
 [dependencies]
 pecos-core.workspace = true
@@ -34,6 +41,12 @@ log.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
 
+# CLI dependencies (optional)
+clap = { workspace = true, optional = true }
+clap_complete = { version = "4.5", optional = true }
+env_logger = { workspace = true, optional = true }
+which = { version = "8", optional = true }
+
 # Quantum simulator backends (optional - for Python bindings and advanced users)
 pecos-cppsparsesim = { workspace = true, optional = true }
 pecos-quest = { workspace = true, optional = true }
@@ -46,15 +59,19 @@ pecos-wasm = { workspace = true, optional = true }
 pecos-decoders = { workspace = true, optional = true }
 
 [features]
-default = ["qasm", "phir", "wasm"]
+default = ["qasm", "phir", "wasm", "cli"]
+
+# CLI binary (included in default for easy `cargo install pecos`)
+cli = ["dep:clap", "dep:clap_complete", "dep:env_logger", "dep:which", "qasm", "phir"]
 
 # Program formats
 qasm = []
 phir = []
 
 # Heavy external dependencies
-llvm = ["pecos-qis-core/llvm", "pecos-llvm", "pecos-hugr-qis", "pecos-hugr-qis?/llvm"]
-selene = ["pecos-qis-selene"]
+# llvm: Enables LLVM-based infrastructure (Selene runtime, HUGR compilation, QIS execution)
+llvm = ["pecos-qis-core/llvm", "pecos-llvm", "pecos-hugr-qis", "pecos-hugr-qis/llvm",
+        "pecos-qis-selene", "pecos-qis-selene/hugr"]
 wasm = ["pecos-wasm", "pecos-wasm/wasm"]
 
 # Quantum simulator backends (C++ wrappers)
@@ -63,15 +80,15 @@ quest = ["pecos-quest"]
 qulacs = ["pecos-qulacs"]
 all-simulators = ["cppsparsesim", "quest", "qulacs"]
 
-# GPU support
-gpu = ["quest", "pecos-quest/gpu"]
+# NVIDIA CUDA support
+cuda = ["quest", "pecos-quest/cuda"]
 
 # Decoder backends
 ldpc = ["pecos-decoders", "pecos-decoders/ldpc"]
 all-decoders = ["ldpc"]
 
 # Everything
-full = ["all-simulators", "all-decoders", "llvm", "selene", "wasm"]
+full = ["all-simulators", "all-decoders", "llvm", "wasm"]
 
 [dev-dependencies]
 tempfile.workspace = true

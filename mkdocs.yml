@@ -50,17 +50,20 @@ nav:
 - Home: README.md
 - User Guide:
   - Getting Started: user-guide/getting-started.md
+  - Command Line Interface: user-guide/cli.md
   - QASM Simulation: user-guide/qasm-simulation.md
   - Simulators: user-guide/simulators.md
   - Noise Model Builders: user-guide/noise-model-builders.md
   - Decoders: user-guide/decoders.md
   - Graph API: user-guide/graph-api.md
+  - Parallel Execution: user-guide/parallel-execution.md
   - LLVM Setup: user-guide/llvm-setup.md
   - CUDA Setup: user-guide/cuda-setup.md
 - API:
   - api/api-reference.md
 - Development:
   - development/DEVELOPMENT.md
+  - Developer Tools CLI: development/dev-tools.md
   - development/QIS_ARCHITECTURE.md
 - Releases:
   - releases/changelog.md

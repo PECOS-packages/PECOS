@@ -75,7 +75,7 @@ def find_and_remove_dirs(
             # Optionally skip .venv directories (third-party packages)
             if skip_venv and ".venv" in path.parts:
                 continue
-            if rmtree_safe(path, dry_run):
+            if rmtree_safe(path, dry_run=dry_run):
                 count += 1
     return count
 
@@ -97,7 +97,7 @@ def find_and_remove_files(
             # Optionally skip .venv directories (third-party packages)
             if skip_venv and ".venv" in path.parts:
                 continue
-            if rm_safe(path, dry_run):
+            if rm_safe(path, dry_run=dry_run):
                 count += 1
     return count
 
@@ -130,10 +130,10 @@ def clean_project(root: Path, *, dry_run: bool = False) -> None:
 
     # Top-level directories
     for dirname in ["dist", "site", ".ruff_cache"]:
-        rmtree_safe(root / dirname, dry_run)
+        rmtree_safe(root / dirname, dry_run=dry_run)
 
     # Python docs build
-    rmtree_safe(root / "python" / "docs" / "_build", dry_run)
+    rmtree_safe(root / "python" / "docs" / "_build", dry_run=dry_run)
 
     # Find and remove common build directories
     dir_patterns = [
@@ -146,36 +146,36 @@ def clean_project(root: Path, *, dry_run: bool = False) -> None:
         "__pycache__",
     ]
     for pattern in dir_patterns:
-        count = find_and_remove_dirs(root, pattern, dry_run)
+        count = find_and_remove_dirs(root, pattern, dry_run=dry_run)
         if count > 0 and not dry_run:
             print(f"  Removed {count} '{pattern}' directories")
 
     # Compiled Python extensions
     python_dir = root / "python"
     if python_dir.exists():
-        so_count = find_and_remove_files(python_dir, "*.so", dry_run)
-        pyd_count = find_and_remove_files(python_dir, "*.pyd", dry_run)
+        so_count = find_and_remove_files(python_dir, "*.so", dry_run=dry_run)
+        pyd_count = find_and_remove_files(python_dir, "*.pyd", dry_run=dry_run)
         if (so_count + pyd_count) > 0 and not dry_run:
             print(f"  Removed {so_count + pyd_count} compiled extensions")
 
     # Julia artifacts
     julia_dir = root / "julia"
     if julia_dir.exists():
-        rm_safe(julia_dir / "PECOS.jl" / "Manifest.toml", dry_run)
+        rm_safe(julia_dir / "PECOS.jl" / "Manifest.toml", dry_run=dry_run)
         rm_safe(
             julia_dir / "PECOS.jl" / "dev" / "PECOS_julia_jll" / "Manifest.toml",
-            dry_run,
+            dry_run=dry_run,
         )
-        find_and_remove_files(julia_dir, "*.jl.*.cov", dry_run)
-        find_and_remove_files(julia_dir, "*.jl.cov", dry_run)
-        find_and_remove_files(julia_dir, "*.jl.mem", dry_run)
+        find_and_remove_files(julia_dir, "*.jl.*.cov", dry_run=dry_run)
+        find_and_remove_files(julia_dir, "*.jl.cov", dry_run=dry_run)
+        find_and_remove_files(julia_dir, "*.jl.mem", dry_run=dry_run)
 
     # Clean pecos_rslib from venv
     venv_dir = root / ".venv"
     if venv_dir.exists():
         for site_packages in venv_dir.rglob("site-packages"):
             for pecos_rslib in site_packages.glob("pecos_rslib*"):
-                rmtree_safe(pecos_rslib, dry_run)
+                rmtree_safe(pecos_rslib, dry_run=dry_run)
 
     # Clean uv cache for pecos-rslib
     if not dry_run:
@@ -194,7 +194,7 @@ def clean_selene(root: Path, *, dry_run: bool = False) -> None:
             if plugin_dir.is_dir():
                 for python_pkg in (plugin_dir / "python").glob("*"):
                     dist_dir = python_pkg / "_dist"
-                    if rmtree_safe(dist_dir, dry_run):
+                    if rmtree_safe(dist_dir, dry_run=dry_run):
                         count += 1
         if count > 0:
             print(f"  Removed {count} _dist directories")
@@ -210,19 +210,19 @@ def clean_pecos_home(
 
     if what == "cache":
         print("Cleaning ~/.pecos/cache/ and ~/.pecos/tmp/...")
-        rmtree_safe(pecos_home / "cache", dry_run)
-        rmtree_safe(pecos_home / "tmp", dry_run)
+        rmtree_safe(pecos_home / "cache", dry_run=dry_run)
+        rmtree_safe(pecos_home / "tmp", dry_run=dry_run)
     elif what == "deps":
         print("Cleaning ~/.pecos/deps/...")
-        rmtree_safe(pecos_home / "deps", dry_run)
+        rmtree_safe(pecos_home / "deps", dry_run=dry_run)
     elif what == "llvm":
         print("Cleaning ~/.pecos/llvm/...")
-        if rmtree_safe(pecos_home / "llvm", dry_run):
-            print("  Run 'make install-llvm' to reinstall LLVM")
+        if rmtree_safe(pecos_home / "llvm", dry_run=dry_run):
+            print("  Run 'just install-llvm' to reinstall LLVM")
     elif what == "cuda":
         print("Cleaning ~/.pecos/cuda/...")
-        if rmtree_safe(pecos_home / "cuda", dry_run):
-            print("  Run 'make install-cuda' to reinstall CUDA")
+        if rmtree_safe(pecos_home / "cuda", dry_run=dry_run):
+            print("  Run 'just install-cuda' to reinstall CUDA")
 
 
 def main() -> int:
@@ -279,28 +279,28 @@ def main() -> int:
 
     # Determine what to clean
     if args.all:
-        clean_project(root, args.dry_run)
-        clean_selene(root, args.dry_run)
-        clean_pecos_home("cache", args.dry_run)
-        clean_pecos_home("deps", args.dry_run)
-        clean_pecos_home("llvm", args.dry_run)
-        clean_pecos_home("cuda", args.dry_run)
+        clean_project(root, dry_run=args.dry_run)
+        clean_selene(root, dry_run=args.dry_run)
+        clean_pecos_home("cache", dry_run=args.dry_run)
+        clean_pecos_home("deps", dry_run=args.dry_run)
+        clean_pecos_home("llvm", dry_run=args.dry_run)
+        clean_pecos_home("cuda", dry_run=args.dry_run)
     elif args.selene:
-        clean_selene(root, args.dry_run)
+        clean_selene(root, dry_run=args.dry_run)
     elif args.cache or args.deps or args.llvm or args.cuda:
         # Only clean specified ~/.pecos/ subdirectories
         if args.cache:
-            clean_pecos_home("cache", args.dry_run)
+            clean_pecos_home("cache", dry_run=args.dry_run)
         if args.deps:
-            clean_pecos_home("deps", args.dry_run)
+            clean_pecos_home("deps", dry_run=args.dry_run)
         if args.llvm:
-            clean_pecos_home("llvm", args.dry_run)
+            clean_pecos_home("llvm", dry_run=args.dry_run)
         if args.cuda:
-            clean_pecos_home("cuda", args.dry_run)
+            clean_pecos_home("cuda", dry_run=args.dry_run)
     else:
         # Default: clean project artifacts only
-        clean_project(root, args.dry_run)
-        clean_selene(root, args.dry_run)
+        clean_project(root, dry_run=args.dry_run)
+        clean_selene(root, dry_run=args.dry_run)
 
     print("\nDone.")
     return 0

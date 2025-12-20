@@ -2,7 +2,7 @@
 //! These tests verify that multiple `QuestStateVec` instances can work in parallel
 //! without interfering with each other, which is essential for Monte Carlo simulations.
 
-use approx::assert_relative_eq;
+use pecos_num::assert_relative_eq;
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, QuestStateVec};
 use rand_chacha::ChaCha8Rng;
 use std::sync::{Arc, Barrier};

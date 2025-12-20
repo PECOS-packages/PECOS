@@ -1,6 +1,6 @@
 //! Basic tests for the `QuEST` wrapper using PECOS-style API
 
-use approx::assert_relative_eq;
+use pecos_num::assert_relative_eq;
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, QuestStateVec};
 use rand_chacha::ChaCha8Rng;
 

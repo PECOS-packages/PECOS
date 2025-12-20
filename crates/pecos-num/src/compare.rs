@@ -617,6 +617,107 @@ where
     }
 }
 
+/// Check if two floating-point values are approximately equal using relative tolerance.
+///
+/// This matches the behavior of the `approx` crate's `relative_eq` function.
+/// It checks both absolute and relative tolerance to handle near-zero values:
+/// - Absolute: `|a - b| <= epsilon`
+/// - Relative: `|a - b| <= epsilon * max(|a|, |b|)`
+///
+/// Returns true if EITHER condition is satisfied.
+///
+/// # Arguments
+///
+/// * `a` - First value
+/// * `b` - Second value
+/// * `epsilon` - Tolerance (used for both absolute and relative comparison)
+///
+/// # Returns
+///
+/// `true` if the values are within the tolerance
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::compare::relative_eq;
+///
+/// assert!(relative_eq(1.0, 1.0000001, 1e-6));
+/// assert!(!relative_eq(1.0, 1.1, 1e-6));
+/// // Near-zero values work correctly
+/// assert!(relative_eq(1e-17, 0.0, 1e-9));
+/// ```
+#[must_use]
+#[inline]
+pub fn relative_eq(a: f64, b: f64, epsilon: f64) -> bool {
+    // Handle exact equality (including infinities with same sign)
+    #[allow(clippy::float_cmp)]
+    if a == b {
+        return true;
+    }
+
+    // Handle NaN
+    if a.is_nan() || b.is_nan() {
+        return false;
+    }
+
+    // Handle infinities with different signs
+    if a.is_infinite() || b.is_infinite() {
+        return false;
+    }
+
+    let diff = (a - b).abs();
+
+    // Check absolute tolerance first (handles near-zero case)
+    if diff <= epsilon {
+        return true;
+    }
+
+    // Then check relative tolerance: |a - b| <= epsilon * max(|a|, |b|)
+    let max_abs = a.abs().max(b.abs());
+    diff <= epsilon * max_abs
+}
+
+/// Assert that two floating-point values are approximately equal using relative tolerance.
+///
+/// This macro provides a drop-in replacement for `approx::assert_relative_eq!`.
+///
+/// # Syntax
+///
+/// ```ignore
+/// assert_relative_eq!(a, b, epsilon = 1e-10);
+/// ```
+///
+/// # Panics
+///
+/// Panics if `|a - b| > epsilon * max(|a|, |b|)`
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::assert_relative_eq;
+///
+/// let a = 1.0;
+/// let b = 1.0000001;
+/// assert_relative_eq!(a, b, epsilon = 1e-6);
+/// ```
+#[macro_export]
+macro_rules! assert_relative_eq {
+    ($a:expr, $b:expr, epsilon = $epsilon:expr) => {{
+        let a = $a;
+        let b = $b;
+        let epsilon = $epsilon;
+        if !$crate::compare::relative_eq(a, b, epsilon) {
+            panic!(
+                "assertion failed: `relative_eq(left, right)`\n  left: `{:?}`\n right: `{:?}`\n epsilon: `{:?}`\n |left - right|: `{:?}`",
+                a,
+                b,
+                epsilon,
+                (a - b).abs()
+            );
+        }
+    }};
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1047,5 +1148,74 @@ mod tests {
 
         let c = array![[1.0, 2.0], [3.0, 5.0]];
         assert!(!super::array_equal(&a, &c, false));
+    }
+
+    // Tests for relative_eq
+    #[test]
+    fn test_relative_eq_exact() {
+        assert!(super::relative_eq(1.0, 1.0, 1e-10));
+        assert!(super::relative_eq(0.0, 0.0, 1e-10));
+        assert!(super::relative_eq(-5.0, -5.0, 1e-10));
+    }
+
+    #[test]
+    #[allow(clippy::unreadable_literal)] // Test values - exact digits matter
+    fn test_relative_eq_within_tolerance() {
+        assert!(super::relative_eq(1.0, 1.0000001, 1e-6));
+        assert!(super::relative_eq(100.0, 100.0001, 1e-5));
+        assert!(super::relative_eq(0.5, 0.50000001, 1e-6));
+    }
+
+    #[test]
+    fn test_relative_eq_outside_tolerance() {
+        assert!(!super::relative_eq(1.0, 1.1, 1e-6));
+        assert!(!super::relative_eq(1.0, 2.0, 1e-6));
+        assert!(!super::relative_eq(100.0, 101.0, 1e-5));
+    }
+
+    #[test]
+    #[allow(clippy::unreadable_literal)] // Test values - exact digits matter
+    fn test_relative_eq_near_zero() {
+        // Near zero, relative comparison can be tricky
+        // Our implementation handles this by checking absolute tolerance first
+        assert!(super::relative_eq(1e-10, 1e-10, 1e-6));
+        assert!(super::relative_eq(0.0, 0.0, 1e-10));
+        // These are the cases that failed before - tiny floating point errors near zero
+        assert!(super::relative_eq(6.123233995736766e-17, 0.0, 1e-9));
+        assert!(super::relative_eq(-5.551115123125783e-17, 0.0, 1e-9));
+        assert!(super::relative_eq(1e-17, 0.0, 1e-9));
+    }
+
+    #[test]
+    fn test_relative_eq_nan() {
+        assert!(!super::relative_eq(f64::NAN, f64::NAN, 1e-6));
+        assert!(!super::relative_eq(f64::NAN, 1.0, 1e-6));
+        assert!(!super::relative_eq(1.0, f64::NAN, 1e-6));
+    }
+
+    #[test]
+    fn test_relative_eq_infinity() {
+        assert!(super::relative_eq(f64::INFINITY, f64::INFINITY, 1e-6));
+        assert!(super::relative_eq(
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+            1e-6
+        ));
+        assert!(!super::relative_eq(f64::INFINITY, f64::NEG_INFINITY, 1e-6));
+        assert!(!super::relative_eq(f64::INFINITY, 1e308, 1e-6));
+    }
+
+    #[test]
+    #[allow(clippy::unreadable_literal)] // Test values - exact digits matter
+    fn test_assert_relative_eq_macro() {
+        crate::assert_relative_eq!(1.0, 1.0000001, epsilon = 1e-6);
+        crate::assert_relative_eq!(100.0, 100.0001, epsilon = 1e-5);
+        crate::assert_relative_eq!(0.5, 0.5, epsilon = 1e-10);
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion failed")]
+    fn test_assert_relative_eq_macro_fails() {
+        crate::assert_relative_eq!(1.0, 2.0, epsilon = 1e-6);
     }
 }

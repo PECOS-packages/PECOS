@@ -3,9 +3,9 @@
 #[cfg(test)]
 use crate::{QuestDensityMatrix, QuestStateVec};
 #[cfg(test)]
-use approx::assert_relative_eq;
-#[cfg(test)]
 use num_complex::Complex64;
+#[cfg(test)]
+use pecos_num::assert_relative_eq;
 #[cfg(test)]
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 #[cfg(test)]

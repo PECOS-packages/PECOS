@@ -14,7 +14,7 @@ description = "Random number generators for PECOS quantum computing simulations"
 [dependencies]
 
 [dev-dependencies]
-random_tester = "0.1"
+random_tester.workspace = true
 wyrand.workspace = true
 rand.workspace = true
 rand_xoshiro.workspace = true

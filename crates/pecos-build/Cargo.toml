@@ -39,7 +39,7 @@ log.workspace = true
 
 # Serialization (for manifest files)
 serde = { workspace = true, features = ["derive"] }
-toml = "0.8"
+toml.workspace = true
 
 # Cargo metadata parsing
 cargo_metadata.workspace = true

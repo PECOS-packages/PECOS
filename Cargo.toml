@@ -32,7 +32,6 @@ pyo3-build-config = { version = "0.27", features = ["resolve-config"] }
 rayon = "1"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4.5"
-which = "8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 parking_lot = "0.12"
@@ -61,14 +60,15 @@ flate2 = "1"
 bzip2 = "0.6"
 sha2 = "0.10"
 dirs = "6"
-approx = "0.5"
-itertools = "0.14"
 inkwell = "0.7"
-bincode = "2"
-tracing = "0.1"
+bincode = { version = "2", features = ["derive"] }
 cargo_metadata = "0.23"
 xz2 = "0.1"
 sevenz-rust = "0.6"
+random_tester = "0.1"
+toml = "0.9"
+
+# Archive handling
 
 # Logging
 log = "0.4"
@@ -79,8 +79,6 @@ anyhow = "1"
 thiserror = "2"
 
 # Numerical computing
-peroxide = "0.40"
-roots = "0.0.8"
 levenberg-marquardt = "0.15"
 nalgebra = "0.34"
 rustworkx-core = "0.17"
@@ -93,13 +91,15 @@ rand = "0.9"
 rand_chacha = "0.9"
 rand_xoshiro = "0.7"
 wyrand = { version = "0.3", features = ["rand_core"] }
-romu = "0.7"
 wide = "1"
 
 # Windows workaround: Disable zstd-sys legacy feature to avoid MSVC ICE
 # MSVC 14.43 has an internal compiler error (C1001) when compiling zstd_v06.c
 # The legacy feature compiles old zstd formats (v0.1-v0.7) that PECOS doesn't need
-zstd-sys = { version = "2.0", default-features = false, features = ["zdict_builder"] }
+# zstd-sys = { version = "2.0", default-features = false, features = ["zdict_builder"] }
+
+# Internal crates
+# ==========================================================================================
 
 pecos-core = { version = "0.1.1", path = "crates/pecos-core" }
 pecos-programs = { version = "0.1.1", path = "crates/pecos-programs" }
@@ -120,7 +120,6 @@ pecos-hugr-qis = { version = "0.1.1", path = "crates/pecos-hugr-qis" }
 pecos-llvm = { version = "0.1.1", path = "crates/pecos-llvm" }
 pecos-rslib = { version = "0.1.1", path = "python/pecos-rslib" }
 pecos-wasm = { version = "0.1.1", path = "crates/pecos-wasm" }
-# CLI binary is part of pecos crate (cargo install pecos)
 # Build utilities for crate build.rs are in pecos-build
 pecos-num = { version = "0.1.1", path = "crates/pecos-num" }
 
@@ -147,9 +146,9 @@ debug = true           # Include debug info
 incremental = true     # Enable incremental compilation
 split-debuginfo = "unpacked"  # Faster linking on supported platforms
 
-# For tests, use no optimization for fastest compilation
+# For tests, use no optimization for the fastest compilation
 [profile.test]
-opt-level = 0          # No optimization for fastest compilation
+opt-level = 0          # No optimization for the fastest compilation
 debug = true           # Include debug info
 incremental = true     # Enable incremental compilation
 split-debuginfo = "unpacked"  # Faster linking on supported platforms
@@ -162,7 +161,7 @@ codegen-units = 1      # Single codegen unit for better optimization
 
 # Native profile: release + CPU-specific optimizations
 # Use with: cargo build --profile native
-# Build scripts detect this via PROFILE=native env var and add -march=native for C++ code
+# Build scripts detect this via PROFILE=native env var and add --march=native for C++ code
 [profile.native]
 inherits = "release"
 

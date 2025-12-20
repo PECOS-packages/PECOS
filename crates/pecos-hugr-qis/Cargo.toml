@@ -15,8 +15,6 @@ readme = "README.md"
 # Core dependencies
 anyhow.workspace = true
 log.workspace = true
-itertools.workspace = true
-tracing.workspace = true
 serde_json.workspace = true
 
 # PECOS dependencies

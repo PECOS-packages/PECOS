@@ -45,7 +45,6 @@ serde_json = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 clap_complete = { workspace = true, optional = true }
 env_logger = { workspace = true, optional = true }
-which = { workspace = true, optional = true }
 pecos-build = { workspace = true, optional = true }
 cargo_metadata = { workspace = true, optional = true }
 
@@ -65,7 +64,7 @@ pecos-decoders = { workspace = true, optional = true }
 default = ["cli", "core"]
 
 # CLI binary with dev tools (lightweight - no simulation dependencies)
-cli = ["dep:clap", "dep:clap_complete", "dep:env_logger", "dep:which", "dep:pecos-build", "dep:cargo_metadata"]
+cli = ["dep:clap", "dep:clap_complete", "dep:env_logger", "dep:pecos-build", "dep:cargo_metadata"]
 
 # Runtime: enables full simulation library with QASM and PHIR support
 # Use this for CLI runtime commands (run, compile, info, doctor, examples)
@@ -119,6 +118,7 @@ full = ["runtime", "all-simulators", "all-decoders", "hugr", "wasm"]
 
 [dev-dependencies]
 tempfile.workspace = true
+assert_cmd.workspace = true
 # Required for doctests
 pecos-core.workspace = true
 pecos-qsim.workspace = true
@@ -129,17 +129,25 @@ pecos-rng.workspace = true
 log.workspace = true
 serde_json.workspace = true
 
+[[test]]
+name = "cli"
+required-features = ["runtime", "qis"]
+
+[[test]]
+name = "unified_sim_api_test"
+required-features = ["runtime", "qis"]
+
 [[example]]
 name = "quest_example"
 required-features = ["quest"]
 
 [[example]]
 name = "sim_api_final"
-required-features = ["runtime"]
+required-features = ["runtime", "qis"]
 
 [[example]]
 name = "sim_api_examples"
-required-features = ["runtime"]
+required-features = ["runtime", "qis"]
 
 [[example]]
 name = "unified_sim_demo"

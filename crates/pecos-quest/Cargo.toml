@@ -37,7 +37,7 @@ env_logger.workspace = true
 dirs.workspace = true
 
 [dev-dependencies]
-approx.workspace = true
+pecos-num.workspace = true
 
 [lints]
 workspace = true

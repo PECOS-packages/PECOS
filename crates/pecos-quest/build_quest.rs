@@ -8,7 +8,7 @@
 //! on systems with and without CUDA installed.
 
 use log::{debug, info};
-use pecos_dev::{Manifest, Result, ensure_dep_ready, report_cache_config};
+use pecos_build::{Manifest, Result, ensure_dep_ready, report_cache_config};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,17 +18,17 @@ use std::process::Command;
 /// Returns the CUDA installation path if found
 ///
 /// Search order:
-/// 1. `~/.pecos/cuda/` (local installation via pecos-dev cuda install)
+/// 1. `~/.pecos/cuda/` (local installation via pecos cuda install)
 /// 2. `CUDA_PATH` environment variable
 /// 3. `nvcc` in PATH
 /// 4. Standard system paths
 fn detect_cuda_path() -> Option<String> {
-    // 1. Check ~/.pecos/cuda/ first (local installation via pecos-dev)
+    // 1. Check ~/.pecos/cuda/ first (local installation via pecos)
     if let Some(home) = dirs::home_dir() {
         let pecos_cuda = home.join(".pecos").join("cuda");
         let nvcc_path = pecos_cuda.join("bin").join("nvcc");
         if nvcc_path.exists() {
-            info!("Found CUDA in ~/.pecos/cuda/ (installed via pecos-dev)");
+            info!("Found CUDA in ~/.pecos/cuda/ (installed via pecos)");
             return Some(pecos_cuda.to_string_lossy().to_string());
         }
     }
@@ -554,7 +554,7 @@ fn get_quest_source() -> Result<PathBuf> {
     let quest_dir = deps_path.join("quest");
 
     if !quest_dir.exists() {
-        return Err(pecos_dev::Error::Archive(format!(
+        return Err(pecos_build::Error::Archive(format!(
             "QuEST source directory not found at: {}",
             quest_dir.display()
         )));

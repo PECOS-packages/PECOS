@@ -2,12 +2,12 @@
 
 #![allow(clippy::unnecessary_wraps)]
 
-use crate::Result;
-use crate::cli::LlvmCommands;
-use crate::llvm::config::{auto_configure_llvm, validate_llvm_config};
-use crate::llvm::installer::install_llvm;
-use crate::llvm::{
-    find_llvm_14, find_tool, get_llvm_version, get_pecos_dev_command, get_repo_root_from_manifest,
+use super::LlvmCommands;
+use pecos_build::Result;
+use pecos_build::llvm::config::{auto_configure_llvm, validate_llvm_config};
+use pecos_build::llvm::installer::install_llvm;
+use pecos_build::llvm::{
+    find_llvm_14, find_tool, get_llvm_version, get_pecos_command, get_repo_root_from_manifest,
 };
 
 /// Run an LLVM subcommand
@@ -52,7 +52,7 @@ fn run_check(quiet: bool) -> Result<()> {
         Ok(())
     } else {
         if !quiet {
-            let cmd = get_pecos_dev_command();
+            let cmd = get_pecos_command();
             eprintln!("LLVM 14 not found");
             eprintln!();
             eprintln!("Install with: `{cmd} llvm install`");
@@ -102,7 +102,9 @@ fn run_validate(path: Option<String>) -> Result<()> {
     } else {
         let repo_root = get_repo_root_from_manifest();
         find_llvm_14(repo_root).ok_or_else(|| {
-            crate::errors::Error::Llvm("LLVM 14 not found. Specify a path or install first.".into())
+            pecos_build::errors::Error::Llvm(
+                "LLVM 14 not found. Specify a path or install first.".into(),
+            )
         })?
     };
 

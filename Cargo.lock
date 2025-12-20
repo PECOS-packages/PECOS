@@ -2681,10 +2681,12 @@ checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
 name = "pecos"
 version = "0.1.1"
 dependencies = [
+ "cargo_metadata",
  "clap",
  "clap_complete",
  "env_logger",
  "log",
+ "pecos-build",
  "pecos-core",
  "pecos-cppsparsesim",
  "pecos-decoders",
@@ -2706,6 +2708,25 @@ dependencies = [
  "serde_json",
  "tempfile",
  "which",
+]
+
+[[package]]
+name = "pecos-build"
+version = "0.1.1"
+dependencies = [
+ "bzip2",
+ "cargo_metadata",
+ "dirs",
+ "flate2",
+ "log",
+ "reqwest",
+ "serde",
+ "sevenz-rust",
+ "sha2",
+ "tar",
+ "thiserror 2.0.17",
+ "toml",
+ "xz2",
 ]
 
 [[package]]
@@ -2746,27 +2767,6 @@ version = "0.1.1"
 dependencies = [
  "pecos-decoder-core",
  "pecos-ldpc-decoders",
-]
-
-[[package]]
-name = "pecos-dev"
-version = "0.1.1"
-dependencies = [
- "bzip2",
- "cargo_metadata",
- "clap",
- "dirs",
- "env_logger",
- "flate2",
- "log",
- "reqwest",
- "serde",
- "sevenz-rust",
- "sha2",
- "tar",
- "thiserror 2.0.17",
- "toml",
- "xz2",
 ]
 
 [[package]]
@@ -2825,8 +2825,8 @@ dependencies = [
  "env_logger",
  "log",
  "ndarray 0.17.1",
+ "pecos-build",
  "pecos-decoder-core",
- "pecos-dev",
  "rand 0.9.2",
  "thiserror 2.0.17",
 ]
@@ -2836,8 +2836,8 @@ name = "pecos-llvm"
 version = "0.1.1"
 dependencies = [
  "inkwell 0.7.1",
+ "pecos-build",
  "pecos-core",
- "pecos-dev",
 ]
 
 [[package]]
@@ -2927,8 +2927,8 @@ dependencies = [
  "dyn-clone",
  "inkwell 0.7.1",
  "log",
+ "pecos-build",
  "pecos-core",
- "pecos-dev",
  "pecos-engines",
  "pecos-programs",
  "pecos-qis-ffi-types",
@@ -3000,8 +3000,8 @@ dependencies = [
  "libloading 0.9.0",
  "log",
  "num-complex",
+ "pecos-build",
  "pecos-core",
- "pecos-dev",
  "pecos-engines",
  "pecos-qsim",
  "rand 0.9.2",
@@ -3019,8 +3019,8 @@ dependencies = [
  "env_logger",
  "log",
  "num-complex",
+ "pecos-build",
  "pecos-core",
- "pecos-dev",
  "pecos-qsim",
  "rand 0.9.2",
  "rand_chacha",

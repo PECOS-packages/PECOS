@@ -44,7 +44,7 @@ PECOS now consists of multiple interconnected components:
   - `/crates/pecos-llvm-runtime/`: Implementation of LLVM IR execution for hybrid quantum-classical programs
   - `/crates/pecos-engines/`: Quantum and classical engines for simulations
   - `/crates/pecos/`: Main PECOS library (includes CLI with `cli` feature)
-  - `/crates/pecos-dev/`: Developer tools CLI (LLVM setup, dependency management)
+  - `/crates/pecos-build/`: Developer tools CLI (LLVM setup, dependency management)
   - `/crates/pecos-python/`: Rust code for Python extensions
   - `/crates/benchmarks/`: A collection of benchmarks to test the performance of the crates
 - `/julia/`: Contains Julia packages (experimental)
@@ -122,7 +122,7 @@ pecos = "0.x.x"  # Replace with the latest version
 
   ```sh
   # Quick setup with automated installer (recommended):
-  cargo run -p pecos-dev -- llvm install
+  cargo run -p pecos --features cli -- llvm install
   cargo build
   ```
 

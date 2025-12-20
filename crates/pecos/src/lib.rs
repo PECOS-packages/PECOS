@@ -4,57 +4,78 @@
 //! It provides a comprehensive set of tools for quantum simulation, noise modeling,
 //! and error correction analysis.
 //!
+//! ## Features
+//!
+//! The library functionality is gated behind feature flags:
+//!
+//! ### Core Features
+//! - **`core`**: Core types and error handling (very lightweight)
+//! - **`num`**: Numerical computing utilities (scipy-like functions, random numbers)
+//! - **`sim`**: Quantum simulation library (includes core and num)
+//! - **`runtime`**: Full simulation with QASM and PHIR format support
+//!
+//! ### Format/Language Support
+//! - **`qasm`**: `OpenQASM` 2.0 support (includes sim)
+//! - **`phir`**: PHIR JSON format support (includes sim)
+//! - **`qis`**: QIS/LLVM IR execution (includes llvm, requires LLVM 14)
+//! - **`hugr`**: HUGR program support (includes qis)
+//!
+//! ### Backends and Extensions
+//! - **`llvm`**: LLVM infrastructure (required by qis)
+//! - **`quest`**: `QuEST` quantum simulator backend
+//! - **`cppsparsesim`**: C++ sparse stabilizer simulator
+//! - **`qulacs`**: Qulacs quantum simulator backend
+//! - **`wasm`**: WebAssembly foreign object support
+//! - **`ldpc`**: LDPC decoder support
+//!
 //! ## Quick Start
 //!
-//! The easiest way to use PECOS is through the unified simulation API:
+//! Enable the `qasm` feature to simulate QASM programs:
 //!
-//! ```rust,no_run
-//! use pecos::prelude::*;
-//! use pecos::quantum::sparse_stabilizer;
+//! ```toml
+//! [dependencies]
+//! pecos = { version = "...", features = ["qasm"] }
+//! ```
 //!
-//! // Create a QASM program
-//! let qasm_code = r#"
-//!     OPENQASM 2.0;
-//!     include "qelib1.inc";
-//!     qreg q[2];
-//!     creg c[2];
-//!     h q[0];
-//!     cx q[0], q[1];
-//!     measure q -> c;
-//! "#;
+//! For PHIR support, add `phir`. For both, use `features = ["runtime"]`.
 //!
-//! let program = Qasm::from_string(qasm_code);
+//! Then use the unified simulation API (see examples in the prelude module).
 //!
-//! // Run simulation
-//! let results = sim(program)
-//!     .quantum(sparse_stabilizer())
-//!     .seed(42)
-//!     .run(1000)?;
+//! ## Running Examples
 //!
-//! println!("Got {} shots", results.len());
-//! # Ok::<(), pecos_core::errors::PecosError>(())
+//! Most examples require the `runtime` feature (QASM + PHIR). Run them with:
+//!
+//! ```sh
+//! cargo run --example sim_api_final --features runtime
+//! cargo run --example unified_sim_demo --features runtime
+//! ```
+//!
+//! For `QuEST` examples, also enable the `quest` feature:
+//!
+//! ```sh
+//! cargo run --example quest_example --features quest
 //! ```
 //!
 //! ## Organized Namespaces
 //!
 //! PECOS exports functionality through organized namespaces for easy discovery:
 //!
-//! ### Quantum Simulation
-//! - [`engines`] - Classical control engines (QASM, QIS, PHIR)
-//! - [`quantum`] - Quantum simulation backends (state vector, sparse stabilizer)
-//! - [`noise`] - Noise models (depolarizing, general, etc.)
-//! - [`programs`] - Program types (QASM, QIS, HUGR, etc.)
-//! - [`runtime`] - QIS runtime implementations
-//! - [`results`] - Result types (Shot, `ShotVec`, `ShotMap`)
+//! ### Quantum Simulation (requires `sim` feature)
+//! - `engines` - Classical control engines (QASM, QIS, PHIR)
+//! - `quantum` - Quantum simulation backends (state vector, sparse stabilizer)
+//! - `noise` - Noise models (depolarizing, general, etc.)
+//! - `programs` - Program types (QASM, QIS, HUGR, etc.)
+//! - `runtime` - QIS runtime implementations
+//! - `results` - Result types (Shot, `ShotVec`, `ShotMap`)
 //!
-//! ### Numerical Computing
-//! - [`linalg`] - Linear algebra operations (norm, etc.)
-//! - [`random`] - Random number generation (NumPy-compatible)
-//! - [`optimize`] - Optimization algorithms (root finding, curve fitting)
-//! - [`polynomial`] - Polynomial fitting and evaluation
-//! - [`stats`] - Statistical functions (mean, std, etc.)
-//! - [`math`] - Mathematical functions (sin, cos, exp, etc.)
-//! - [`compare`] - Comparison utilities (allclose, isclose, etc.)
+//! ### Numerical Computing (requires `num` feature)
+//! - `linalg` - Linear algebra operations (norm, etc.)
+//! - `random` - Random number generation (NumPy-compatible)
+//! - `optimize` - Optimization algorithms (root finding, curve fitting)
+//! - `polynomial` - Polynomial fitting and evaluation
+//! - `stats` - Statistical functions (mean, std, etc.)
+//! - `math` - Mathematical functions (sin, cos, exp, etc.)
+//! - `compare` - Comparison utilities (allclose, isclose, etc.)
 //!
 //! Commonly used functions are also re-exported at the crate root for convenience.
 //!
@@ -65,23 +86,39 @@
 //! - QIS (Quantum Instruction Set - LLVM IR)
 //! - HUGR (Hierarchical Unified Graph Representation)
 //! - PHIR JSON (PECOS High-level IR in JSON format)
-//!
-//! ## Features
-//!
-//! PECOS supports a variety of noise models and quantum simulators. Check the documentation
-//! for the simulation builders and noise models for more details on the available options.
+
+// ============================================================================
+// Core re-exports (available with just the `core` feature)
+// ============================================================================
+
+/// Core types and error handling from pecos-core
+#[cfg(feature = "core")]
+pub mod core {
+    pub use pecos_core::*;
+}
+
+// Re-export commonly used core types at crate root for convenience
+#[cfg(feature = "core")]
+pub use pecos_core::{QubitId, errors::PecosError};
 
 // ============================================================================
 // Internal modules
 // ============================================================================
 
+// Engine type support (requires sim for core simulation types)
+#[cfg(feature = "sim")]
 pub mod engine_type;
+
+// Full prelude and unified API (require runtime for format support)
+#[cfg(feature = "runtime")]
 pub mod prelude;
+#[cfg(feature = "runtime")]
 pub mod program;
+#[cfg(feature = "runtime")]
 pub mod unified_sim;
 
 // ============================================================================
-// Namespace modules for organized exports
+// Namespace modules for organized exports (require sim feature)
 // ============================================================================
 
 /// Classical control engines for quantum program execution
@@ -97,21 +134,19 @@ pub mod unified_sim;
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// # use pecos_core::errors::PecosError;
-/// # fn example() -> Result<(), PecosError> {
+/// ```rust
 /// use pecos::engines;
 /// use pecos_programs::Qasm;
 ///
 /// let program = Qasm::from_string("OPENQASM 2.0; qreg q[1]; h q[0];");
 /// let engine = engines::qasm_engine().program(program);
-/// # Ok(())
-/// # }
 /// ```
+#[cfg(feature = "sim")]
 pub mod engines {
     #[cfg(feature = "qasm")]
     pub use pecos_qasm::{QASMEngine, QasmEngineBuilder, qasm_engine};
 
+    #[cfg(feature = "qis")]
     pub use pecos_qis_core::{
         QisEngine, QisEngineBuilder, qis_engine, setup_qis_engine_with_runtime,
     };
@@ -140,6 +175,7 @@ pub mod engines {
 /// // Or use sparse stabilizer for efficient Clifford simulation
 /// let qengine = quantum::sparse_stabilizer();
 /// ```
+#[cfg(feature = "sim")]
 pub mod quantum {
     pub use pecos_engines::quantum::{
         QuantumEngine, SparseStabEngine, StateVecEngine, new_quantum_engine_arbitrary_qgate,
@@ -182,6 +218,7 @@ pub mod quantum {
 ///
 /// let noise_model = DepolarizingNoise { p: 0.01 };
 /// ```
+#[cfg(feature = "sim")]
 pub mod noise {
     pub use pecos_engines::noise::{
         BiasedDepolarizingNoiseModelBuilder, DepolarizingNoiseModel, DepolarizingNoiseModelBuilder,
@@ -209,6 +246,7 @@ pub mod noise {
 ///
 /// let program = Qasm::from_string("OPENQASM 2.0; qreg q[1]; h q[0];");
 /// ```
+#[cfg(feature = "sim")]
 pub mod programs {
     pub use pecos_programs::{Hugr, Program, Qasm, Qis};
 }
@@ -219,21 +257,21 @@ pub mod programs {
 ///
 /// # Available Runtimes
 ///
-/// - **Selene**: Selene-based runtime via [`SeleneRuntime`] (requires `selene` feature)
+/// - **Selene**: Selene-based runtime via [`SeleneRuntime`] (requires `qis` feature)
 ///
 /// # Example
 ///
 /// ```rust,no_run
-/// # #[cfg(feature = "llvm")]
+/// # #[cfg(feature = "qis")]
 /// # {
 /// use pecos::runtime::selene_simple_runtime;
 ///
 /// let runtime = selene_simple_runtime();
 /// # }
 /// ```
+#[cfg(feature = "qis")]
 pub mod runtime {
-    // Re-export Selene interface when feature is enabled
-    #[cfg(feature = "llvm")]
+    // Re-export Selene interface
     pub use pecos_qis_selene::{
         HeliosInterfaceBuilder, QisHeliosInterface, SeleneRuntime, helios_interface_builder,
         selene_runtime_auto, selene_simple_runtime,
@@ -265,6 +303,7 @@ pub mod runtime {
 ///     // Process the shot map...
 /// }
 /// ```
+#[cfg(feature = "sim")]
 pub mod results {
     pub use pecos_engines::shot_results::{Data, Shot, ShotMap, ShotVec};
     pub use pecos_engines::{
@@ -295,7 +334,7 @@ pub mod wasm {
 }
 
 // ============================================================================
-// Numerical computing namespace modules (pecos-num)
+// Numerical computing namespace modules (pecos-num) - require sim
 // ============================================================================
 
 /// Linear algebra operations
@@ -316,6 +355,7 @@ pub mod wasm {
 /// let norm = linalg::norm(&vec.view(), None); // None = L2 norm
 /// assert!((norm - 5.0).abs() < 1e-10);
 /// ```
+#[cfg(feature = "num")]
 pub mod linalg {
     pub use pecos_num::linalg::*;
 }
@@ -345,6 +385,7 @@ pub mod linalg {
 /// let samples = random::randint(0, Some(10), 100);
 /// assert_eq!(samples.len(), 100);
 /// ```
+#[cfg(feature = "num")]
 pub mod random {
     pub use pecos_num::random::*;
 }
@@ -367,6 +408,7 @@ pub mod random {
 /// let root = optimize::brentq(|x| x * x - 2.0, 0.0, 2.0, None).unwrap();
 /// assert!((root - std::f64::consts::SQRT_2).abs() < 1e-10);
 /// ```
+#[cfg(feature = "num")]
 pub mod optimize {
     pub use pecos_num::optimize::*;
 }
@@ -393,6 +435,7 @@ pub mod optimize {
 /// let coeffs = polynomial::polyfit(x.view(), y.view(), 1).unwrap();
 /// assert_eq!(coeffs.len(), 2); // [b, m]
 /// ```
+#[cfg(feature = "num")]
 pub mod polynomial {
     pub use pecos_num::polynomial::*;
 }
@@ -416,6 +459,7 @@ pub mod polynomial {
 /// let avg = stats::mean(&data);
 /// assert_eq!(avg, 3.0);
 /// ```
+#[cfg(feature = "num")]
 pub mod stats {
     pub use pecos_num::stats::*;
 }
@@ -440,6 +484,7 @@ pub mod stats {
 /// let result = math::sin(x);
 /// assert!((result - 1.0).abs() < 1e-10);
 /// ```
+#[cfg(feature = "num")]
 pub mod math {
     pub use pecos_num::math::*;
 }
@@ -466,6 +511,7 @@ pub mod math {
 /// // allclose(a, b, rtol, atol, equal_nan)
 /// assert!(compare::allclose(&a.view(), &b.view(), 1e-8, 1e-8, false));
 /// ```
+#[cfg(feature = "num")]
 pub mod compare {
     pub use pecos_num::compare::*;
 }
@@ -500,6 +546,7 @@ pub mod compare {
 /// let matching = graph.max_weight_matching(false);
 /// assert_eq!(matching.len(), 4); // Two pairs, each appearing twice
 /// ```
+#[cfg(feature = "num")]
 pub mod graph {
     pub use pecos_num::graph::*;
 }
@@ -558,18 +605,21 @@ pub mod decoders {
 /// let sampler = MeasurementSampler::new(sim.measurement_history());
 /// let samples = sampler.sample(1000);
 /// ```
+#[cfg(feature = "sim")]
 pub mod qsim {
     pub use pecos_qsim::*;
 }
 
 // ============================================================================
 // Top-level re-exports for convenience and backward compatibility
+// (require sim feature unless otherwise noted)
 // ============================================================================
 
 // Engine builders
 #[cfg(feature = "qasm")]
 pub use pecos_qasm::{QasmEngineBuilder, qasm_engine, run_qasm};
 
+#[cfg(feature = "qis")]
 pub use pecos_qis_core::{QisEngineBuilder, qis_engine, setup_qis_engine_with_runtime};
 
 #[cfg(feature = "phir")]
@@ -578,28 +628,34 @@ pub use pecos_phir::PhirConfig;
 pub use pecos_phir_json::{PhirJsonEngineBuilder, phir_json_engine};
 
 // Quantum backends
+#[cfg(feature = "sim")]
 pub use pecos_engines::{sparse_stabilizer, state_vector};
 
 // Noise models
+#[cfg(feature = "sim")]
 pub use pecos_engines::{
     BiasedDepolarizingNoise, DepolarizingNoise, GeneralNoiseModelBuilder, PassThroughNoiseModel,
 };
 
 // Program types
+#[cfg(feature = "sim")]
 pub use pecos_programs::{Hugr, Program, Qasm, Qis};
 
 // Selene interface (when feature is enabled)
-#[cfg(feature = "llvm")]
+#[cfg(feature = "qis")]
 pub use pecos_qis_selene::{
     HeliosInterfaceBuilder, QisHeliosInterface, SeleneRuntime, helios_interface_builder,
     selene_runtime_auto, selene_simple_runtime,
 };
 
 // Simulation API
+#[cfg(feature = "sim")]
 pub use pecos_engines::{SimInput, sim_builder};
+#[cfg(feature = "runtime")]
 pub use unified_sim::{ProgrammedSimBuilder, SimBuilderExt, sim};
 
 // Engine type support
+#[cfg(feature = "sim")]
 pub use engine_type::{DynamicEngineBuilder, EngineType, sim_dynamic};
 
 // Feature-gated quantum backends
@@ -620,6 +676,7 @@ pub use pecos_qulacs::QulacsStateVec;
 pub use pecos_wasm::{ForeignObject, WasmForeignObject};
 
 // Numerical computing - commonly used functions at top level for convenience
+#[cfg(feature = "num")]
 pub use pecos_num::{
     Poly1d,
     // Comparison utilities

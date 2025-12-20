@@ -23,29 +23,31 @@ path = "src/bin/pecos.rs"
 required-features = ["cli"]
 
 [dependencies]
-pecos-core.workspace = true
-pecos-qsim.workspace = true
-pecos-engines.workspace = true
-pecos-programs.workspace = true
-pecos-qasm.workspace = true
-pecos-phir-json.workspace = true
-#pecos-qis-ffi-types.workspace = true
-pecos-qis-core.workspace = true
+# Core simulation library dependencies (optional - for runtime commands)
+pecos-core = { workspace = true, optional = true }
+pecos-qsim = { workspace = true, optional = true }
+pecos-engines = { workspace = true, optional = true }
+pecos-programs = { workspace = true, optional = true }
+pecos-qasm = { workspace = true, optional = true }
+pecos-phir-json = { workspace = true, optional = true }
+pecos-qis-core = { workspace = true, optional = true }
 pecos-qis-selene = { workspace = true, optional = true }
 pecos-llvm = { workspace = true, optional = true }
 pecos-hugr-qis = { workspace = true, optional = true }
-pecos-phir = { workspace = true, features = ["hugr"] }
-pecos-rng.workspace = true
-pecos-num.workspace = true
-log.workspace = true
-tempfile.workspace = true
-serde_json.workspace = true
+pecos-phir = { workspace = true, optional = true, features = ["hugr"] }
+pecos-rng = { workspace = true, optional = true }
+pecos-num = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 # CLI dependencies (optional)
 clap = { workspace = true, optional = true }
-clap_complete = { version = "4.5", optional = true }
+clap_complete = { workspace = true, optional = true }
 env_logger = { workspace = true, optional = true }
-which = { version = "8", optional = true }
+which = { workspace = true, optional = true }
+pecos-build = { workspace = true, optional = true }
+cargo_metadata = { workspace = true, optional = true }
 
 # Quantum simulator backends (optional - for Python bindings and advanced users)
 pecos-cppsparsesim = { workspace = true, optional = true }
@@ -59,36 +61,61 @@ pecos-wasm = { workspace = true, optional = true }
 pecos-decoders = { workspace = true, optional = true }
 
 [features]
-default = ["qasm", "phir", "wasm", "cli"]
+# Default: CLI dev tools + core types for library users
+default = ["cli", "core"]
 
-# CLI binary (included in default for easy `cargo install pecos`)
-cli = ["dep:clap", "dep:clap_complete", "dep:env_logger", "dep:which", "qasm", "phir"]
+# CLI binary with dev tools (lightweight - no simulation dependencies)
+cli = ["dep:clap", "dep:clap_complete", "dep:env_logger", "dep:which", "dep:pecos-build", "dep:cargo_metadata"]
 
-# Program formats
-qasm = []
-phir = []
+# Runtime: enables full simulation library with QASM and PHIR support
+# Use this for CLI runtime commands (run, compile, info, doctor, examples)
+runtime = ["sim", "qasm", "phir"]
+
+# Core types and error handling (very lightweight)
+core = ["dep:pecos-core"]
+
+# Numerical computing utilities (scipy-like functions, random number generation)
+num = ["dep:pecos-num", "dep:pecos-rng"]
+
+# Quantum simulation library (includes core and num)
+sim = [
+    "core", "num",
+    "dep:pecos-qsim", "dep:pecos-engines", "dep:pecos-programs",
+    "dep:pecos-phir",
+    "dep:log", "dep:tempfile", "dep:serde_json"
+]
+
+# Program formats (require sim)
+qasm = ["sim", "dep:pecos-qasm"]
+phir = ["sim", "dep:pecos-phir-json"]
 
 # Heavy external dependencies
-# llvm: Enables LLVM-based infrastructure (Selene runtime, HUGR compilation, QIS execution)
-llvm = ["pecos-qis-core/llvm", "pecos-llvm", "pecos-hugr-qis", "pecos-hugr-qis/llvm",
-        "pecos-qis-selene", "pecos-qis-selene/hugr"]
-wasm = ["pecos-wasm", "pecos-wasm/wasm"]
+# llvm: Enables LLVM infrastructure (required for QIS)
+llvm = ["sim", "dep:pecos-llvm"]
+
+# qis: QIS/LLVM IR execution support (Selene runtime)
+qis = ["llvm", "dep:pecos-qis-core", "pecos-qis-core/llvm",
+       "dep:pecos-qis-selene"]
+
+# hugr: HUGR program support (requires QIS)
+hugr = ["qis", "dep:pecos-hugr-qis", "pecos-hugr-qis/llvm", "pecos-qis-selene/hugr"]
+wasm = ["sim", "dep:pecos-wasm", "pecos-wasm/wasm"]
 
 # Quantum simulator backends (C++ wrappers)
-cppsparsesim = ["pecos-cppsparsesim"]
-quest = ["pecos-quest"]
-qulacs = ["pecos-qulacs"]
+cppsparsesim = ["sim", "dep:pecos-cppsparsesim"]
+quest = ["sim", "dep:pecos-quest"]
+qulacs = ["sim", "dep:pecos-qulacs"]
 all-simulators = ["cppsparsesim", "quest", "qulacs"]
 
 # NVIDIA CUDA support
 cuda = ["quest", "pecos-quest/cuda"]
 
 # Decoder backends
-ldpc = ["pecos-decoders", "pecos-decoders/ldpc"]
+ldpc = ["sim", "dep:pecos-decoders", "pecos-decoders/ldpc"]
 all-decoders = ["ldpc"]
 
 # Everything
-full = ["all-simulators", "all-decoders", "llvm", "wasm"]
+full = ["runtime", "all-simulators", "all-decoders", "hugr", "wasm"]
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -105,6 +132,26 @@ serde_json.workspace = true
 [[example]]
 name = "quest_example"
 required-features = ["quest"]
+
+[[example]]
+name = "sim_api_final"
+required-features = ["runtime"]
+
+[[example]]
+name = "sim_api_examples"
+required-features = ["runtime"]
+
+[[example]]
+name = "unified_sim_demo"
+required-features = ["runtime"]
+
+[[example]]
+name = "unified_sim_auto_selection"
+required-features = ["runtime"]
+
+[[example]]
+name = "unified_sim_reusable"
+required-features = ["runtime"]
 
 [lints]
 workspace = true

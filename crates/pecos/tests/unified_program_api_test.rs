@@ -3,6 +3,8 @@
 //! These tests verify that engines can accept both shared program types
 //! from pecos-programs and engine-specific types.
 
+#![cfg(feature = "runtime")]
+
 #[cfg(test)]
 mod tests {
     use pecos::qis_engine;

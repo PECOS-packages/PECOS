@@ -2,6 +2,8 @@
 //!
 //! These tests verify that the unified API works consistently across engine types.
 
+#![cfg(feature = "runtime")]
+
 #[cfg(test)]
 mod tests {
     #[test]

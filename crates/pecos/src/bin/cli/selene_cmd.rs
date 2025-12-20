@@ -1,7 +1,7 @@
 //! Implementation of the `selene` subcommand
 
-use crate::Result;
-use crate::errors::Error;
+use pecos_build::Result;
+use pecos_build::errors::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 

@@ -3,7 +3,7 @@ use pecos::DynamicEngineBuilder;
 #[cfg(feature = "phir")]
 use pecos::phir_json_engine;
 use pecos::prelude::*;
-#[cfg(feature = "llvm")]
+#[cfg(feature = "qis")]
 use pecos::{helios_interface_builder, qis_engine, selene_simple_runtime};
 use std::path::Path;
 
@@ -37,7 +37,7 @@ pub fn setup_cli_engine(
         ProgramType::QIS => {
             debug!("Setting up QIS engine");
 
-            #[cfg(feature = "llvm")]
+            #[cfg(feature = "qis")]
             {
                 let qis_program = Qis::from_file(program_path)?;
 
@@ -90,7 +90,7 @@ pub fn setup_cli_engine_builder(
     match program_type {
         ProgramType::QIS => {
             debug!("Setting up QIS engine builder");
-            #[cfg(feature = "llvm")]
+            #[cfg(feature = "qis")]
             {
                 let qis_program = Qis::from_file(program_path)?;
 

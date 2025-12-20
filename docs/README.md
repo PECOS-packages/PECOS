@@ -41,7 +41,7 @@ quantum/classical compute execution models.
     ```toml
     # Cargo.toml
     [dependencies]
-    pecos = "0.1"
+    pecos = { version = "0.1", features = ["qasm"] }
     ```
 
     ```rust

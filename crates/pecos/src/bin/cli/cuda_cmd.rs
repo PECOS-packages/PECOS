@@ -1,9 +1,11 @@
 //! Implementation of the `cuda` subcommand
 
-use crate::Result;
-use crate::cuda::installer::{install_cuda, uninstall_cuda};
-use crate::cuda::{find_cuda, get_cuda_version, get_pecos_cuda_dir, is_valid_cuda_installation};
-use crate::errors::Error;
+use pecos_build::Result;
+use pecos_build::cuda::installer::{install_cuda, uninstall_cuda};
+use pecos_build::cuda::{
+    find_cuda, get_cuda_version, get_pecos_cuda_dir, is_valid_cuda_installation,
+};
+use pecos_build::errors::Error;
 
 /// Run the cuda subcommand
 pub fn run(command: super::CudaCommands) -> Result<()> {
@@ -44,7 +46,7 @@ fn run_check(quiet: bool) -> Result<()> {
         if !quiet {
             eprintln!("cuda: not found");
             eprintln!();
-            eprintln!("Install with: pecos-dev cuda install");
+            eprintln!("Install with: pecos cuda install");
             eprintln!("Or set CUDA_PATH to your system CUDA installation");
         }
         Err(Error::Cuda("CUDA not available".to_string()))
@@ -64,7 +66,7 @@ fn run_find(export: bool) -> Result<()> {
     } else {
         eprintln!("CUDA not found");
         eprintln!();
-        eprintln!("Install with: pecos-dev cuda install");
+        eprintln!("Install with: pecos cuda install");
         Err(Error::Cuda("CUDA not found".to_string()))
     }
 }

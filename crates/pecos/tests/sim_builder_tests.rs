@@ -12,6 +12,8 @@
 
 //! Tests for the simulation builder API in the PECOS crate.
 
+#![cfg(feature = "runtime")]
+
 use pecos::prelude::*;
 use pecos_engines::sim_builder;
 

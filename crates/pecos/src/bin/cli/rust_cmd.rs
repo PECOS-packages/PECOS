@@ -1,8 +1,8 @@
 //! Implementation of the `rust` subcommand (CUDA-aware cargo commands)
 
-use crate::Result;
-use crate::errors::Error;
 use cargo_metadata::MetadataCommand;
+use pecos_build::Result;
+use pecos_build::errors::Error;
 use std::collections::BTreeSet;
 use std::process::Command;
 
@@ -24,7 +24,7 @@ pub fn run(command: &super::RustCommands) -> Result<()> {
 
 /// Check if CUDA is available (local ~/.pecos/cuda/ or system)
 fn is_cuda_available() -> bool {
-    crate::cuda::is_cuda_available()
+    pecos_build::cuda::is_cuda_available()
 }
 
 /// Check if a tool is available
@@ -401,7 +401,9 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
     let release_flag = if release { "--release" } else { "" };
 
     println!("Testing workspace packages...");
-    let mut args: Vec<&str> = vec!["test", "--workspace", "--features=llvm"];
+    // runtime = sim + qasm + phir (format parsers)
+    // hugr = qis (includes llvm) + hugr compilation
+    let mut args: Vec<&str> = vec!["test", "--workspace", "--features=runtime,hugr"];
 
     for crate_name in FFI_CRATES {
         args.push("--exclude");

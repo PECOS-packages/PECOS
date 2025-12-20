@@ -2,10 +2,10 @@
 
 #![allow(clippy::unnecessary_wraps)]
 
-use crate::Result;
-use crate::deps::list_dependencies;
-use crate::home::{get_cache_dir, get_deps_dir, get_llvm_dir};
-use crate::llvm::{find_llvm_14, get_llvm_version, get_repo_root_from_manifest};
+use pecos_build::Result;
+use pecos_build::deps::list_dependencies;
+use pecos_build::home::{get_cache_dir, get_deps_dir, get_llvm_dir};
+use pecos_build::llvm::{find_llvm_14, get_llvm_version, get_repo_root_from_manifest};
 use std::fs;
 
 /// Run the list command

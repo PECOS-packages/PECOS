@@ -71,16 +71,18 @@
 
 pub use pecos_core::prelude::*;
 pub use pecos_engines::prelude::*;
+#[cfg(feature = "qasm")]
 pub use pecos_qasm::prelude::*;
 pub use pecos_qsim::prelude::*;
 
 // Re-export pecos_qis_core prelude
 // Note: Shot and Value from pecos_qis_core are not included (removed from its prelude)
-// to avoid conflicts with pecos_engines (which provides the main Shot type users should use)
+// Re-export QIS core prelude (when qis feature is enabled)
+#[cfg(feature = "qis")]
 pub use pecos_qis_core::prelude::*;
 
 // Re-export Selene QIS interface when feature is enabled
-#[cfg(feature = "llvm")]
+#[cfg(feature = "qis")]
 pub use pecos_qis_selene::prelude::*;
 
 // Re-export program types prelude
@@ -93,7 +95,7 @@ pub use pecos_rng::prelude::*;
 pub use pecos_num::prelude::*;
 
 // Re-export HUGR compiler prelude
-#[cfg(feature = "llvm")]
+#[cfg(feature = "hugr")]
 pub use pecos_hugr_qis::prelude::*;
 
 // Re-export LLVM IR generation prelude
@@ -101,6 +103,7 @@ pub use pecos_hugr_qis::prelude::*;
 pub use pecos_llvm::prelude::*;
 
 // Re-export PHIR-JSON prelude
+#[cfg(feature = "phir")]
 pub use pecos_phir_json::prelude::*;
 
 // Re-export PHIR configuration (not commonly used, but available)

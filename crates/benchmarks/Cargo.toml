@@ -12,9 +12,8 @@ publish = false
 
 [dev-dependencies]
 criterion.workspace = true
-pecos.workspace = true
+pecos = { workspace = true, features = ["runtime"] }
 rand.workspace = true
-rand_chacha.workspace = true
 rand_xoshiro.workspace = true
 wyrand.workspace = true
 wide.workspace = true

@@ -309,12 +309,12 @@ mod qulacs_tests {
     #[test]
     fn test_rng_management() {
         use rand::SeedableRng;
-        use rand_chacha::ChaCha8Rng;
+        use rand_xoshiro::Xoshiro256PlusPlus;
 
         let mut sim = QulacsStateVec::new(1);
 
         // Set a specific RNG
-        let new_rng = ChaCha8Rng::seed_from_u64(123);
+        let new_rng = Xoshiro256PlusPlus::seed_from_u64(123);
         sim.set_rng(new_rng).unwrap();
 
         // Prepare superposition and measure
@@ -326,7 +326,7 @@ mod qulacs_tests {
         }
 
         // Reset RNG with same seed - should get same results
-        let new_rng = ChaCha8Rng::seed_from_u64(123);
+        let new_rng = Xoshiro256PlusPlus::seed_from_u64(123);
         sim.set_rng(new_rng).unwrap();
 
         let mut results2 = Vec::new();

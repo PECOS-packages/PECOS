@@ -15,7 +15,7 @@ use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
 use pecos_core::RngManageable;
 use pecos_core::errors::PecosError;
-use rand_chacha::ChaCha8Rng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 
 use core::fmt::Debug;
 use rand::{Rng, RngCore, SeedableRng};
@@ -42,7 +42,7 @@ use rand::{Rng, RngCore, SeedableRng};
 /// let mut biased_sim = CoinToss::with_prob_and_seed(4, 0.8, Some(42));
 /// ```
 #[derive(Clone, Debug)]
-pub struct CoinToss<R = ChaCha8Rng>
+pub struct CoinToss<R = Xoshiro256PlusPlus>
 where
     R: RngCore + SeedableRng + Debug,
 {
@@ -51,7 +51,7 @@ where
     rng: R,
 }
 
-impl CoinToss<ChaCha8Rng> {
+impl CoinToss<Xoshiro256PlusPlus> {
     /// Create a new `CoinToss` simulator with default 50% measurement probability
     ///
     /// # Arguments
@@ -125,14 +125,14 @@ impl CoinToss<ChaCha8Rng> {
         );
 
         let rng = if let Some(s) = seed {
-            ChaCha8Rng::seed_from_u64(s)
+            Xoshiro256PlusPlus::seed_from_u64(s)
         } else {
             // Use a default seed when none provided
             let default_seed = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            ChaCha8Rng::seed_from_u64(default_seed)
+            Xoshiro256PlusPlus::seed_from_u64(default_seed)
         };
 
         Self {

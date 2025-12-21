@@ -27,10 +27,10 @@ use std::path::Path;
 /// ```
 /// use pecos_core::rng::{RecordingRng, ReplayingRng};
 /// use rand::{Rng, SeedableRng};
-/// use rand_chacha::ChaCha8Rng;
+/// use rand_xoshiro::Xoshiro256PlusPlus;
 ///
-/// // Create a recording wrapper around a ChaCha8Rng
-/// let rng = ChaCha8Rng::seed_from_u64(42);
+/// // Create a recording wrapper around a Xoshiro256PlusPlus
+/// let rng = Xoshiro256PlusPlus::seed_from_u64(42);
 /// let mut recording_rng = RecordingRng::new(rng);
 ///
 /// // Generate some random values
@@ -262,12 +262,12 @@ mod tests {
     use super::*;
     use crate::rng::ReplayingRng;
     use rand::SeedableRng;
-    use rand_chacha::ChaCha8Rng;
+    use rand_xoshiro::Xoshiro256PlusPlus;
 
     #[test]
     fn test_recording_basic() {
-        let chacha_rng = ChaCha8Rng::seed_from_u64(42);
-        let mut recording_rng = RecordingRng::new(chacha_rng);
+        let base_rng = Xoshiro256PlusPlus::seed_from_u64(42);
+        let mut recording_rng = RecordingRng::new(base_rng);
 
         // Generate some values
         let _ = recording_rng.next_u32();
@@ -279,8 +279,8 @@ mod tests {
 
     #[test]
     fn test_recording_and_replay() {
-        let chacha_rng = ChaCha8Rng::seed_from_u64(42);
-        let mut recording_rng = RecordingRng::new(chacha_rng);
+        let base_rng = Xoshiro256PlusPlus::seed_from_u64(42);
+        let mut recording_rng = RecordingRng::new(base_rng);
 
         // Generate a sequence of values
         let val1 = recording_rng.next_u32();
@@ -302,8 +302,8 @@ mod tests {
     #[test]
     fn test_seedable() {
         // Test the SeedableRng implementation
-        let mut rng1 = RecordingRng::<ChaCha8Rng>::seed_from_u64(42);
-        let mut rng2 = RecordingRng::<ChaCha8Rng>::seed_from_u64(42);
+        let mut rng1 = RecordingRng::<Xoshiro256PlusPlus>::seed_from_u64(42);
+        let mut rng2 = RecordingRng::<Xoshiro256PlusPlus>::seed_from_u64(42);
 
         // Both RNGs should produce the same sequence
         assert_eq!(rng1.next_u64(), rng2.next_u64());
@@ -311,8 +311,8 @@ mod tests {
 
     #[test]
     fn test_fill_bytes() {
-        let chacha_rng = ChaCha8Rng::seed_from_u64(42);
-        let mut recording_rng = RecordingRng::new(chacha_rng);
+        let base_rng = Xoshiro256PlusPlus::seed_from_u64(42);
+        let mut recording_rng = RecordingRng::new(base_rng);
 
         // Create a buffer and fill it with random bytes
         let mut buffer = [0u8; 16];

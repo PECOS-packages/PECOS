@@ -18,7 +18,7 @@ use crate::quantum::QuantumEngine;
 use crate::quantum_system::QuantumSystem;
 use pecos_core::errors::PecosError;
 use rand::SeedableRng;
-use rand_chacha::ChaCha8Rng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Builder for creating a `MonteCarloEngine` with customizable configuration
@@ -365,20 +365,21 @@ impl MonteCarloEngineBuilder {
         };
 
         // Create a new Monte Carlo engine with the hybrid engine
-        let rng = if let Some(seed) = self.seed {
-            ChaCha8Rng::seed_from_u64(seed)
+        let (rng, seed) = if let Some(seed) = self.seed {
+            (Xoshiro256PlusPlus::seed_from_u64(seed), seed)
         } else {
             // Create a random seed
             let seed = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("Failed to get system time")
                 .as_secs();
-            ChaCha8Rng::seed_from_u64(seed)
+            (Xoshiro256PlusPlus::seed_from_u64(seed), seed)
         };
 
         MonteCarloEngine {
             hybrid_engine_template: hybrid_engine,
             rng,
+            seed,
             default_workers: self.default_workers,
         }
     }
@@ -420,7 +421,8 @@ impl MonteCarloEngineBuilder {
         // Create a new Monte Carlo engine with the hybrid engine and seed
         let engine = MonteCarloEngine {
             hybrid_engine_template: hybrid_engine,
-            rng: ChaCha8Rng::seed_from_u64(seed),
+            rng: Xoshiro256PlusPlus::seed_from_u64(seed),
+            seed,
             default_workers: self.default_workers,
         };
 
@@ -461,18 +463,15 @@ mod tests {
 
     #[test]
     fn test_with_seed() {
-        // Create an engine with a seed
+        // Create an engine with a specific seed
         let engine = MonteCarloEngineBuilder::new()
             .with_classical_engine(Box::new(ExternalClassicalEngine::new()))
             .with_quantum_engine(quantum::new_quantum_engine_with_seed(2, 42))
             .with_seed(42)
             .build();
 
-        // Run a few operations and verify they succeed
-        let seed_bytes = engine.rng.get_seed();
-        // Print the actual value for debugging
-        println!("Actual seed byte: {}", seed_bytes[0]);
-        assert_eq!(seed_bytes[0], 164);
+        // Verify the seed was stored correctly
+        assert_eq!(engine.seed, 42);
     }
 
     #[test]

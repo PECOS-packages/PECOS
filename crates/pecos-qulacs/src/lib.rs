@@ -24,7 +24,7 @@ use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
 };
 use rand::{RngCore, SeedableRng};
-use rand_chacha::ChaCha8Rng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 use std::fmt::Debug;
 
 /// A quantum state simulator using Qulacs C++ backend.
@@ -34,7 +34,7 @@ use std::fmt::Debug;
 ///
 /// # Type Parameters
 /// * `R` - Random number generator type implementing `RngCore + SeedableRng` traits
-pub struct QulacsStateVec<R = ChaCha8Rng>
+pub struct QulacsStateVec<R = Xoshiro256PlusPlus>
 where
     R: RngCore + SeedableRng + Debug,
 {
@@ -66,16 +66,16 @@ impl QulacsStateVec {
     /// Create a new state initialized to |0...0⟩
     #[inline]
     #[must_use]
-    pub fn new(num_qubits: usize) -> QulacsStateVec<ChaCha8Rng> {
-        let rng = ChaCha8Rng::from_os_rng();
+    pub fn new(num_qubits: usize) -> QulacsStateVec<Xoshiro256PlusPlus> {
+        let rng = Xoshiro256PlusPlus::from_os_rng();
         QulacsStateVec::with_rng(num_qubits, rng)
     }
 
     /// Create a new state vector simulator with a specific seed for the random number generator
     #[inline]
     #[must_use]
-    pub fn with_seed(num_qubits: usize, seed: u64) -> QulacsStateVec<ChaCha8Rng> {
-        let rng = ChaCha8Rng::seed_from_u64(seed);
+    pub fn with_seed(num_qubits: usize, seed: u64) -> QulacsStateVec<Xoshiro256PlusPlus> {
+        let rng = Xoshiro256PlusPlus::seed_from_u64(seed);
         QulacsStateVec::with_rng(num_qubits, rng)
     }
 }

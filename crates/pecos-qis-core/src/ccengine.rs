@@ -14,7 +14,7 @@ use pecos_engines::{
 };
 use pecos_qis_ffi_types::{OperationCollector as OperationList, QuantumOp};
 use rand::{RngCore, SeedableRng};
-use rand_chacha::ChaCha8Rng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 use std::collections::BTreeMap;
 
 /// QIS Control Engine that mediates between interface and runtime
@@ -45,7 +45,7 @@ pub struct QisEngine {
     measurement_results: BTreeMap<usize, bool>,
 
     /// RNG for generating per-shot seeds
-    rng: ChaCha8Rng,
+    rng: Xoshiro256PlusPlus,
 
     /// Current shot seed (stored for quantum engine seeding)
     current_shot_seed: Option<u64>,
@@ -63,7 +63,7 @@ impl QisEngine {
             started: false,
             measurement_mapping: Vec::new(),
             measurement_results: BTreeMap::new(),
-            rng: ChaCha8Rng::seed_from_u64(0), // Will be properly seeded via set_seed()
+            rng: Xoshiro256PlusPlus::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
         }
     }
@@ -118,7 +118,7 @@ impl QisEngine {
             started: false,
             measurement_mapping: Vec::new(),
             measurement_results: BTreeMap::new(),
-            rng: ChaCha8Rng::seed_from_u64(0), // Will be properly seeded via set_seed()
+            rng: Xoshiro256PlusPlus::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
         }
     }
@@ -322,7 +322,7 @@ impl ClassicalEngine for QisEngine {
 
     fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
         // Seed the RNG for generating per-shot seeds
-        self.rng = ChaCha8Rng::seed_from_u64(seed);
+        self.rng = Xoshiro256PlusPlus::seed_from_u64(seed);
         debug!("QisEngine: Set master seed to {seed}");
         Ok(())
     }

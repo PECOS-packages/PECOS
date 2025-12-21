@@ -13,7 +13,7 @@ description = "Provides core definitions and functions for PECOS simulations."
 [dependencies]
 bitvec.workspace = true
 rand.workspace = true
-rand_chacha.workspace = true
+rand_xoshiro.workspace = true
 num-traits.workspace = true
 num-complex.workspace = true
 thiserror.workspace = true

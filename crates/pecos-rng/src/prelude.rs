@@ -14,8 +14,10 @@
 //!
 //! This prelude re-exports the PCG random number generator module.
 
-// Re-export RNG module
+// Re-export RNG modules
+pub use crate::bulk_rng;
 pub use crate::rng_pcg;
 
-// Re-export PCG random types from the module
+// Re-export types
+pub use crate::bulk_rng::BulkRng;
 pub use crate::rng_pcg::{PCG64Fast, PCGRandom};

@@ -13,7 +13,7 @@
 use crate::errors::PecosError;
 use rand::RngCore;
 use rand::SeedableRng;
-use rand_chacha::ChaCha8Rng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
@@ -44,7 +44,7 @@ pub fn derive_seed(base_seed: u64, purpose: &str) -> u64 {
     let combined_seed = base_seed.wrapping_add(purpose_hash);
 
     // Use the combined seed to initialize an RNG and get a random number
-    let mut rng = ChaCha8Rng::seed_from_u64(combined_seed);
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(combined_seed);
     rng.next_u64()
 }
 

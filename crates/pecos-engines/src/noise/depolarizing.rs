@@ -16,7 +16,7 @@ use crate::engine_system::{ControlEngine, EngineStage};
 use crate::noise::{NoiseModel, NoiseRng, NoiseUtils, ProbabilityValidator, RngManageable};
 use log::trace;
 use pecos_core::errors::PecosError;
-use rand_chacha::ChaCha8Rng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 use std::any::Any;
 
 /// Implements depolarizing channel noise for quantum simulations
@@ -62,7 +62,7 @@ pub struct DepolarizingNoiseModel {
     /// Probability of applying an error after two-qubit gates
     p2: f64,
     /// Random number generator
-    rng: NoiseRng<ChaCha8Rng>,
+    rng: NoiseRng<Xoshiro256PlusPlus>,
 }
 
 impl ProbabilityValidator for DepolarizingNoiseModel {}
@@ -318,9 +318,9 @@ impl NoiseModel for DepolarizingNoiseModel {
 }
 
 impl RngManageable for DepolarizingNoiseModel {
-    type Rng = ChaCha8Rng;
+    type Rng = Xoshiro256PlusPlus;
 
-    fn set_rng(&mut self, rng: ChaCha8Rng) -> Result<(), PecosError> {
+    fn set_rng(&mut self, rng: Xoshiro256PlusPlus) -> Result<(), PecosError> {
         self.rng = NoiseRng::new(rng);
         Ok(())
     }

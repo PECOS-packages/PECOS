@@ -479,7 +479,6 @@ fn bench_rng_generation<M: Measurement>(c: &mut Criterion<M>) {
 fn bench_rng_comparison<M: Measurement>(c: &mut Criterion<M>) {
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
-    use rand_chacha::{ChaCha8Rng, ChaCha20Rng};
     use rand_xoshiro::{
         Xoroshiro128PlusPlus, Xoshiro256Plus, Xoshiro256PlusPlus, Xoshiro256StarStar,
         Xoshiro512PlusPlus,
@@ -614,26 +613,24 @@ fn bench_rng_comparison<M: Measurement>(c: &mut Criterion<M>) {
         });
     });
 
-    // ChaCha8Rng (crypto-lite, good balance)
-    group.bench_function("ChaCha8Rng", |b| {
-        let mut rng = ChaCha8Rng::seed_from_u64(42);
+    // BulkRng<Xoshiro256++> - scalar fill for comparison
+    group.bench_function("BulkRng<Xoshiro256++> scalar", |b| {
+        use pecos::prelude::BulkRng;
+        let mut rng = BulkRng::<Xoshiro256PlusPlus, 4>::seed_from_u64(42);
         b.iter(|| {
             let mut data = vec![0u64; num_u64s];
-            for val in &mut data {
-                *val = rng.random();
-            }
+            rng.fill_u64_scalar(&mut data);
             black_box(data)
         });
     });
 
-    // ChaCha20Rng (full crypto)
-    group.bench_function("ChaCha20Rng", |b| {
-        let mut rng = ChaCha20Rng::seed_from_u64(42);
+    // BulkRng<Xoshiro256++> - parallel fill (4 RNGs)
+    group.bench_function("BulkRng<Xoshiro256++> parallel", |b| {
+        use pecos::prelude::BulkRng;
+        let mut rng = BulkRng::<Xoshiro256PlusPlus, 4>::seed_from_u64(42);
         b.iter(|| {
             let mut data = vec![0u64; num_u64s];
-            for val in &mut data {
-                *val = rng.random();
-            }
+            rng.fill_u64(&mut data);
             black_box(data)
         });
     });

@@ -396,12 +396,12 @@ fn test_rzz_gate() {
 fn test_rng_management() {
     use pecos_core::rng::RngManageable;
     use rand::SeedableRng;
-    use rand_chacha::ChaCha8Rng;
+    use rand_xoshiro::Xoshiro256PlusPlus;
 
     let mut sim = QuestStateVec::new(2);
 
     // Set a new RNG
-    let new_rng = ChaCha8Rng::seed_from_u64(12345);
+    let new_rng = Xoshiro256PlusPlus::seed_from_u64(12345);
     sim.set_rng(new_rng).unwrap();
 
     // Should be able to get RNG reference

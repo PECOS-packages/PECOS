@@ -15,7 +15,7 @@ use crate::byte_message::ByteMessage;
 use crate::engine_system::{ControlEngine, EngineStage};
 use pecos_core::RngManageable;
 use pecos_core::errors::PecosError;
-use rand_chacha::ChaCha8Rng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 use std::any::Any;
 
 /// A noise model that passes through messages unchanged
@@ -25,7 +25,7 @@ use std::any::Any;
 pub struct PassThroughNoiseModel {
     /// Dummy RNG field to satisfy the `RngManageable` trait
     /// `PassThroughNoiseModel` doesn't actually use randomness
-    rng: ChaCha8Rng,
+    rng: Xoshiro256PlusPlus,
 }
 
 impl PassThroughNoiseModel {
@@ -34,7 +34,7 @@ impl PassThroughNoiseModel {
     pub fn new() -> Self {
         use rand::SeedableRng;
         Self {
-            rng: ChaCha8Rng::seed_from_u64(0), // Default seed, not used
+            rng: Xoshiro256PlusPlus::seed_from_u64(0), // Default seed, not used
         }
     }
 
@@ -63,7 +63,7 @@ impl NoiseModel for PassThroughNoiseModel {
 
 // Implement RngManageable for PassThroughNoise
 impl RngManageable for PassThroughNoiseModel {
-    type Rng = ChaCha8Rng;
+    type Rng = Xoshiro256PlusPlus;
 
     fn set_rng(&mut self, rng: Self::Rng) -> Result<(), PecosError> {
         // PassThroughNoise doesn't use randomness, but we store it to satisfy the trait
@@ -129,7 +129,7 @@ impl PassThroughNoiseModelBuilder {
     pub fn build(self) -> PassThroughNoiseModel {
         use rand::SeedableRng;
         PassThroughNoiseModel {
-            rng: ChaCha8Rng::seed_from_u64(0), // Default seed, not used
+            rng: Xoshiro256PlusPlus::seed_from_u64(0), // Default seed, not used
         }
     }
 }

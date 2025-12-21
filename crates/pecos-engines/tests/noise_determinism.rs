@@ -17,7 +17,7 @@ use pecos_engines::{
     Engine, GateType, QuantumSystem, byte_message::ByteMessage, engine_system::ControlEngine,
 };
 use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha8Rng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 use std::collections::BTreeMap;
 
 /// Reset a noise model and set its seed in one operation
@@ -77,7 +77,7 @@ fn apply_noise(model: &mut GeneralNoiseModel, msg: &ByteMessage) -> Vec<ByteMess
     // If measurement results are required from measurements, we provide pseudorandom ones,
     // but always from the same seed. This is because we are testing that different noise models
     // respond differently to the same inputs.
-    let mut measure_rng = ChaCha8Rng::seed_from_u64(5330);
+    let mut measure_rng = Xoshiro256PlusPlus::seed_from_u64(5330);
     let mut state = model
         .start(msg.clone())
         .expect("Failed to start noise model processing");

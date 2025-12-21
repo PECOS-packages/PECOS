@@ -24,7 +24,7 @@ use pecos_core::errors::PecosError;
 use pecos_core::rng::RngManageable;
 use pecos_core::rng::rng_manageable::derive_seed;
 use rand::{RngCore, SeedableRng};
-use rand_chacha::ChaCha8Rng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 use rayon::{
     ThreadPoolBuilder,
     iter::{IntoParallelIterator, ParallelIterator},
@@ -91,7 +91,9 @@ pub struct MonteCarloEngine {
     /// Template `HybridEngine` that is cloned for each worker
     pub hybrid_engine_template: HybridEngine,
     /// Random number generator for seed generation
-    pub rng: ChaCha8Rng,
+    pub rng: Xoshiro256PlusPlus,
+    /// The seed used to initialize the RNG
+    pub seed: u64,
     /// Default number of worker threads
     pub default_workers: usize,
 }
@@ -199,7 +201,7 @@ impl MonteCarloEngine {
     ///
     /// Setting a seed ensures deterministic behavior across runs with the same seed.
     /// This method sets the seed for:
-    /// - The internal `ChaCha8Rng` used for shot distribution
+    /// - The internal `Xoshiro256PlusPlus` used for shot distribution
     /// - The template `HybridEngine` (which sets seeds for the noise model and quantum engine)
     ///
     /// # Arguments
@@ -211,7 +213,8 @@ impl MonteCarloEngine {
     /// # Errors
     /// Returns a `PecosError` if setting the seed fails for any component
     pub fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
-        self.rng = ChaCha8Rng::seed_from_u64(seed);
+        self.seed = seed;
+        self.rng = Xoshiro256PlusPlus::seed_from_u64(seed);
         self.hybrid_engine_template.set_seed(seed)
     }
 
@@ -581,6 +584,7 @@ impl Clone for MonteCarloEngine {
         Self {
             hybrid_engine_template: self.hybrid_engine_template.clone(),
             rng: self.rng.clone(),
+            seed: self.seed,
             default_workers: self.default_workers,
         }
     }

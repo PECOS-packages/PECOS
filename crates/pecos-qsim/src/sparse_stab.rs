@@ -16,7 +16,7 @@ use core::mem;
 use pecos_core::errors::PecosError;
 use pecos_core::{IndexableElement, RngManageable, Set, VecSet};
 use rand::{Rng, RngCore, SeedableRng};
-use rand_chacha::ChaCha8Rng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 
 #[expect(clippy::module_name_repetitions)]
 pub type StdSparseStab = SparseStab<VecSet<usize>, usize>;
@@ -40,7 +40,7 @@ pub type StdSparseStab = SparseStab<VecSet<usize>, usize>;
 /// # Type Parameters
 /// - T: A set type that implements the Set trait, used for storing operator locations
 /// - E: An indexable element type that can convert between usize indices
-/// - R: A random number generator type, defaults to `ChaCha8Rng`
+/// - R: A random number generator type, defaults to `Xoshiro256PlusPlus`
 ///
 /// # Examples
 /// ```rust
@@ -103,7 +103,7 @@ pub type StdSparseStab = SparseStab<VecSet<usize>, usize>;
 /// 2. Ryan-Anderson, "Quantum Algorithms, Architecture, and Error Correction"
 ///    <https://arxiv.org/abs/1812.04735>
 #[derive(Clone, Debug)]
-pub struct SparseStab<T, E, R = ChaCha8Rng>
+pub struct SparseStab<T, E, R = Xoshiro256PlusPlus>
 where
     T: for<'a> Set<'a, Element = E>,
     E: IndexableElement,
@@ -130,7 +130,7 @@ where
     /// Create a new stabilizer simulator with a specific seed for the random number generator
     ///
     /// This method allows for deterministic behavior by setting a specific seed for the
-    /// random number generator, while still using the default RNG type (`ChaCha8Rng`).
+    /// random number generator, while still using the default RNG type (`Xoshiro256PlusPlus`).
     ///
     /// # Arguments
     /// * `num_qubits` - Number of qubits in the system

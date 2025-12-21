@@ -3,7 +3,7 @@
 
 use pecos_core::rng::{RecordingRng, ReplayingRng};
 use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha8Rng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 
 // Epsilon value for floating-point comparisons
 const EPSILON: f64 = 1e-10;
@@ -16,9 +16,9 @@ fn approx_eq(a: f64, b: f64) -> bool {
 fn main() {
     println!("=== RECORDING PHASE ===");
 
-    // Create a RecordingRng with a ChaCha8Rng as the underlying RNG
-    let chacha_rng = ChaCha8Rng::seed_from_u64(42);
-    let mut recording_rng = RecordingRng::new(chacha_rng);
+    // Create a RecordingRng with a Xoshiro256PlusPlus as the underlying RNG
+    let xoshiro_rng = Xoshiro256PlusPlus::seed_from_u64(42);
+    let mut recording_rng = RecordingRng::new(xoshiro_rng);
 
     // Generate various types of random values
     println!("Generating random values:");

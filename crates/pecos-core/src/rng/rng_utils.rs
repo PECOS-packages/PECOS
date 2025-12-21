@@ -168,12 +168,12 @@ pub fn gen_bools<R: Rng>(rng: &mut R, p: f64, n: usize) -> Vec<bool> {
 mod tests {
     use super::*;
     use rand::SeedableRng;
-    use rand_chacha::ChaCha8Rng;
+    use rand_xoshiro::Xoshiro256PlusPlus;
 
     #[test]
     fn test_random_utils_struct() {
         // Create a seeded RNG for deterministic tests
-        let rng = ChaCha8Rng::seed_from_u64(42);
+        let rng = Xoshiro256PlusPlus::seed_from_u64(42);
         let mut random_utils = RandomUtils::new(rng);
 
         // Test coin_flip
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Cannot select from empty weights")]
     fn test_weighted_index_empty() {
-        let rng = ChaCha8Rng::seed_from_u64(42);
+        let rng = Xoshiro256PlusPlus::seed_from_u64(42);
         let mut random_utils = RandomUtils::new(rng);
         random_utils.weighted_index(&[]);
     }
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Sum of weights must be positive")]
     fn test_weighted_index_all_zeros() {
-        let rng = ChaCha8Rng::seed_from_u64(42);
+        let rng = Xoshiro256PlusPlus::seed_from_u64(42);
         let mut random_utils = RandomUtils::new(rng);
         random_utils.weighted_index(&[0.0, 0.0, 0.0]);
     }

@@ -12,13 +12,14 @@ categories.workspace = true
 description = "Random number generators for PECOS quantum computing simulations"
 
 [dependencies]
+rand.workspace = true
+wide.workspace = true
 
 [dev-dependencies]
 random_tester.workspace = true
 wyrand.workspace = true
 rand.workspace = true
 rand_xoshiro.workspace = true
-rand_chacha.workspace = true
 
 [lints]
 workspace = true

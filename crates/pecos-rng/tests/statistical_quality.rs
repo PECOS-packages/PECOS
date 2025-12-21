@@ -156,16 +156,6 @@ fn generate_xoshiro_bytes(seed: u64, count: usize) -> Vec<u8> {
     bytes
 }
 
-/// Generate random bytes using `ChaCha8`
-fn generate_chacha8_bytes(seed: u64, count: usize) -> Vec<u8> {
-    use rand::RngCore;
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha8Rng;
-    let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    let mut bytes = vec![0u8; count];
-    rng.fill_bytes(&mut bytes);
-    bytes
-}
 
 // ============================================================================
 // Tests for PCG64Fast
@@ -236,16 +226,6 @@ fn test_xoshiro_statistical_quality() {
     );
 }
 
-#[test]
-fn test_chacha8_statistical_quality() {
-    let data = generate_chacha8_bytes(42, TEST_BYTES);
-    let results = run_tests("ChaCha8", &data);
-    results.print_report();
-    assert!(
-        results.is_acceptable(),
-        "ChaCha8 failed statistical quality tests"
-    );
-}
 
 // ============================================================================
 // Comparison report (run with `cargo test -- --nocapture`)
@@ -264,7 +244,6 @@ fn comparison_report() {
         ("PCGRandom", generate_pcgrandom_bytes(42, TEST_BYTES)),
         ("WyRand", generate_wyrand_bytes(42, TEST_BYTES)),
         ("Xoshiro256++", generate_xoshiro_bytes(42, TEST_BYTES)),
-        ("ChaCha8", generate_chacha8_bytes(42, TEST_BYTES)),
     ];
 
     let mut all_pass = true;

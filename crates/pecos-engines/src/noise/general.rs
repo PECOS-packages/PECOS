@@ -92,7 +92,7 @@ use crate::noise::{NoiseModel, RngManageable};
 use log::trace;
 use pecos_core::QubitId;
 use pecos_core::errors::PecosError;
-use rand_chacha::ChaCha8Rng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 use std::any::Any;
 use std::collections::BTreeSet;
 
@@ -339,7 +339,7 @@ pub struct GeneralNoiseModel {
     leaked_qubits: BTreeSet<usize>,
 
     /// Random number generator for stochastic noise processes
-    rng: NoiseRng<ChaCha8Rng>,
+    rng: NoiseRng<Xoshiro256PlusPlus>,
 
     /// Set of qubits that have been prepared at any point in the program.
     ///
@@ -429,7 +429,7 @@ impl NoiseModel for GeneralNoiseModel {
 }
 
 impl RngManageable for GeneralNoiseModel {
-    type Rng = ChaCha8Rng;
+    type Rng = Xoshiro256PlusPlus;
 
     fn set_rng(&mut self, rng: Self::Rng) -> Result<(), PecosError> {
         self.rng = NoiseRng::new(rng);

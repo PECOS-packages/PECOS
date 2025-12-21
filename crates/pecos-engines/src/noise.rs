@@ -40,7 +40,7 @@ use crate::byte_message::ByteMessage;
 use crate::engine_system::{ControlEngine, EngineStage};
 use dyn_clone::DynClone;
 use pecos_core::errors::PecosError;
-use rand_chacha::ChaCha8Rng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 use std::any::Any;
 
 // Re-export RngManageable to ensure consistent trait resolution
@@ -62,7 +62,7 @@ pub trait NoiseModel:
     + Send
     + Sync
     + Any
-    + RngManageable<Rng = ChaCha8Rng>
+    + RngManageable<Rng = Xoshiro256PlusPlus>
 {
     /// Returns a reference to self as Any
     ///
@@ -95,7 +95,7 @@ dyn_clone::clone_trait_object!(NoiseModel);
 /// reducing code duplication and improving maintainability.
 pub struct BaseNoiseModel {
     /// The random number generator for the noise model
-    rng: NoiseRng<ChaCha8Rng>,
+    rng: NoiseRng<Xoshiro256PlusPlus>,
 }
 
 impl BaseNoiseModel {
@@ -117,13 +117,13 @@ impl BaseNoiseModel {
 
     /// Get a reference to the random number generator
     #[must_use]
-    pub fn rng(&self) -> &NoiseRng<ChaCha8Rng> {
+    pub fn rng(&self) -> &NoiseRng<Xoshiro256PlusPlus> {
         &self.rng
     }
 
     /// Get a mutable reference to the random number generator
     #[must_use]
-    pub fn rng_mut(&mut self) -> &mut NoiseRng<ChaCha8Rng> {
+    pub fn rng_mut(&mut self) -> &mut NoiseRng<Xoshiro256PlusPlus> {
         &mut self.rng
     }
 
@@ -155,9 +155,9 @@ impl Clone for BaseNoiseModel {
 }
 
 impl RngManageable for BaseNoiseModel {
-    type Rng = ChaCha8Rng;
+    type Rng = Xoshiro256PlusPlus;
 
-    fn set_rng(&mut self, rng: ChaCha8Rng) -> Result<(), PecosError> {
+    fn set_rng(&mut self, rng: Xoshiro256PlusPlus) -> Result<(), PecosError> {
         self.rng = NoiseRng::new(rng);
         Ok(())
     }
@@ -207,7 +207,7 @@ mod base_tests {
         let model = BaseNoiseModel::new();
         // Verify RNG is initialized, not checking for null since from_ref is never null
         assert!(
-            model.rng().inner() != &ChaCha8Rng::seed_from_u64(0),
+            model.rng().inner() != &Xoshiro256PlusPlus::seed_from_u64(0),
             "Default RNG should be randomly seeded"
         );
 
@@ -215,7 +215,7 @@ mod base_tests {
         // Check the model has a properly seeded RNG
         assert_eq!(
             *model.rng().inner(),
-            ChaCha8Rng::seed_from_u64(42),
+            Xoshiro256PlusPlus::seed_from_u64(42),
             "RNG should be initialized with seed 42"
         );
     }

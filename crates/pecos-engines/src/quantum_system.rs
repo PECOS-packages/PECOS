@@ -79,17 +79,7 @@ impl QuantumSystem {
     ///
     /// # Arguments
     /// * `seed` - Base seed value for the random number generators
-    ///
-    /// # Returns
-    /// Result indicating success or failure
-    ///
-    /// # Errors
-    /// Returns a `PecosError` if setting the seed fails for either component
-    ///
-    /// # Panics
-    /// This function will panic if the engine type changes between the check for engine type
-    /// and the attempt to get a mutable reference to it, which should never happen in practice.
-    pub fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
+    pub fn set_seed(&mut self, seed: u64) {
         // Derive a different seed for the noise model using the standard protocol
         let noise_seed = pecos_core::rng::rng_manageable::derive_seed(seed, "noise_model");
 
@@ -97,15 +87,10 @@ impl QuantumSystem {
         let engine_seed = pecos_core::rng::rng_manageable::derive_seed(seed, "quantum_engine");
 
         // Set the seed for the noise model using RngManageable::set_seed
-        // Convert the error type to PecosError
-        self.noise_model
-            .set_seed(noise_seed)
-            .map_err(|e| PecosError::Processing(format!("Failed to set noise model seed: {e}")))?;
+        self.noise_model.set_seed(noise_seed);
 
         // Directly set the seed for the quantum engine using the trait method
-        self.quantum_engine.set_seed(engine_seed)?;
-
-        Ok(())
+        self.quantum_engine.set_seed(engine_seed);
     }
 
     /// Returns a reference to the noise model
@@ -268,9 +253,7 @@ mod tests {
             quantum_engine,
         );
 
-        system
-            .set_seed(seed)
-            .expect("Failed to set seed for system");
+        system.set_seed(seed);
 
         system
     }
@@ -391,9 +374,7 @@ mod tests {
 
         // Reset system1 and set it to use the different seed
         system1.reset().expect("Failed to reset system1");
-        system1
-            .set_seed(different_seed)
-            .expect("Failed to set seed for system1");
+        system1.set_seed(different_seed);
 
         // Process the input again with system1 and system3
         let result1 = system1

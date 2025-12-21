@@ -85,10 +85,8 @@ impl PyCoinToss {
     ///
     /// # Arguments
     /// * `seed` - Seed value for the random number generator
-    fn set_seed(&mut self, seed: u64) -> PyResult<()> {
-        self.inner.set_seed(seed).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to set seed: {e}"))
-        })
+    fn set_seed(&mut self, seed: u64) {
+        self.inner.set_seed(seed);
     }
 
     /// Executes a single-qubit gate based on the provided symbol and location

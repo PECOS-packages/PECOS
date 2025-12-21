@@ -16,9 +16,7 @@ use crate::monte_carlo::engine::MonteCarloEngine;
 use crate::noise::{DepolarizingNoiseModel, NoiseModel};
 use crate::quantum::QuantumEngine;
 use crate::quantum_system::QuantumSystem;
-use pecos_core::errors::PecosError;
-use rand::SeedableRng;
-use rand_xoshiro::Xoshiro256PlusPlus;
+use pecos_rng::PecosRng;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Builder for creating a `MonteCarloEngine` with customizable configuration
@@ -366,14 +364,14 @@ impl MonteCarloEngineBuilder {
 
         // Create a new Monte Carlo engine with the hybrid engine
         let (rng, seed) = if let Some(seed) = self.seed {
-            (Xoshiro256PlusPlus::seed_from_u64(seed), seed)
+            (PecosRng::seed_from_u64(seed), seed)
         } else {
             // Create a random seed
             let seed = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("Failed to get system time")
                 .as_secs();
-            (Xoshiro256PlusPlus::seed_from_u64(seed), seed)
+            (PecosRng::seed_from_u64(seed), seed)
         };
 
         MonteCarloEngine {
@@ -386,20 +384,19 @@ impl MonteCarloEngineBuilder {
 
     /// Build the `MonteCarloEngine` with the configured components and set the seed
     ///
-    /// This is similar to `build()` but returns a Result to handle seed setting errors.
+    /// This is similar to `build()` but also sets the seed.
     ///
     /// # Returns
     /// A new `MonteCarloEngine` configured according to the builder settings with the seed set
-    ///
-    /// # Errors
-    /// Returns a `PecosError` if setting the seed fails
     ///
     /// # Panics
     ///
     /// This function will panic if:
     /// - No hybrid engine has been configured
     /// - Required components like classical engine are missing
-    pub fn build_with_seed(self) -> Result<MonteCarloEngine, PecosError> {
+    /// - No seed has been set
+    #[must_use]
+    pub fn build_with_seed(self) -> MonteCarloEngine {
         // Get the seed or panic if not set
         let seed = self.seed.expect(
             "Seed is required for build_with_seed(). Use with_seed() to set one or use build() instead.",
@@ -408,10 +405,10 @@ impl MonteCarloEngineBuilder {
         // Build a hybrid engine with the seed
         let hybrid_engine = if let Some(engine) = self.hybrid_engine {
             let mut engine_copy = engine.clone();
-            engine_copy.set_seed(seed)?;
+            engine_copy.set_seed(seed);
             engine_copy
         } else if let Some(builder) = self.hybrid_engine_builder {
-            builder.with_seed(seed).build_with_seed()?
+            builder.with_seed(seed).build_with_seed()
         } else {
             panic!(
                 "No hybrid engine has been configured. Use either with_hybrid_engine() or other configuration methods."
@@ -419,14 +416,12 @@ impl MonteCarloEngineBuilder {
         };
 
         // Create a new Monte Carlo engine with the hybrid engine and seed
-        let engine = MonteCarloEngine {
+        MonteCarloEngine {
             hybrid_engine_template: hybrid_engine,
-            rng: Xoshiro256PlusPlus::seed_from_u64(seed),
+            rng: PecosRng::seed_from_u64(seed),
             seed,
             default_workers: self.default_workers,
-        };
-
-        Ok(engine)
+        }
     }
 }
 

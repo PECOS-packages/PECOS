@@ -15,7 +15,7 @@ fn count_results(
 ) -> BTreeMap<String, usize> {
     let quantum = Box::new(StateVecEngine::new(num_qubits));
     let mut system = QuantumSystem::new(noise_model, quantum);
-    system.set_seed(42).expect("Failed to set seed");
+    system.set_seed(42);
 
     let mut counts = BTreeMap::new();
     for _ in 0..num_shots {

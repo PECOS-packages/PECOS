@@ -318,7 +318,7 @@ impl SimBuilder {
 
         // Set seed if configured
         if let Some(seed) = self.config.seed {
-            monte_carlo.set_seed(seed)?;
+            monte_carlo.set_seed(seed);
         }
 
         Ok(monte_carlo)

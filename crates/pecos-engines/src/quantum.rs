@@ -9,7 +9,6 @@ use pecos_core::errors::PecosError;
 use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVec, StdSparseStab,
 };
-use rand::SeedableRng;
 use std::any::Any;
 use std::fmt::Debug;
 
@@ -26,13 +25,7 @@ pub trait QuantumEngine:
     ///
     /// # Arguments
     /// * `seed` - Seed value for the random number generator
-    ///
-    /// # Returns
-    /// Result indicating success or failure
-    ///
-    /// # Errors
-    /// Returns an error if setting the seed fails
-    fn set_seed(&mut self, seed: u64) -> Result<(), PecosError>;
+    fn set_seed(&mut self, seed: u64);
 
     /// Returns a reference to this object as Any, for downcasting
     fn as_any(&self) -> &dyn Any;
@@ -89,16 +82,18 @@ impl StateVecEngine {
 
     /// Ensure the simulator has the correct number of qubits, recreating if necessary
     ///
-    /// This method checks if the current simulator has the specified number of qubits.
-    /// If not, it recreates the simulator with the correct dimensions to prevent
+    /// This method checks if the current simulator has enough qubits.
+    /// If not, it recreates the simulator with more qubits to prevent
     /// memory corruption during quantum operations.
     ///
+    /// Note: The simulator can only grow, never shrink, to preserve quantum state.
+    ///
     /// # Arguments
-    /// * `required_qubits` - The number of qubits required for the simulation
+    /// * `required_qubits` - The minimum number of qubits required for the simulation
     pub fn ensure_qubit_count(&mut self, required_qubits: usize) {
-        if self.simulator.num_qubits() != required_qubits {
+        if self.simulator.num_qubits() < required_qubits {
             debug!(
-                "StateVecEngine: Recreating simulator (was {} qubits, now {} qubits)",
+                "StateVecEngine: Expanding simulator (was {} qubits, now {} qubits)",
                 self.simulator.num_qubits(),
                 required_qubits
             );
@@ -356,8 +351,8 @@ impl Engine for StateVecEngine {
 impl RngManageable for StateVecEngine {
     type Rng = <StateVec as RngManageable>::Rng;
 
-    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), PecosError> {
-        self.simulator.set_rng(rng)
+    fn set_rng(&mut self, rng: Self::Rng) {
+        self.simulator.set_rng(rng);
     }
 
     /// Get a read-only reference to the internal random number generator
@@ -382,14 +377,12 @@ impl RngManageable for StateVecEngine {
 }
 
 impl QuantumEngine for StateVecEngine {
-    fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
+    fn set_seed(&mut self, seed: u64) {
         // Create a new RNG with the given seed
         let rng = <StateVec as RngManageable>::Rng::seed_from_u64(seed);
 
         // Set the simulator's RNG
-        self.simulator
-            .set_rng(rng)
-            .map_err(|e| quantum_error(format!("Failed to set seed: {e}")))
+        self.simulator.set_rng(rng);
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -614,8 +607,8 @@ impl Engine for SparseStabEngine {
 impl RngManageable for SparseStabEngine {
     type Rng = <StdSparseStab as RngManageable>::Rng;
 
-    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), PecosError> {
-        self.simulator.set_rng(rng)
+    fn set_rng(&mut self, rng: Self::Rng) {
+        self.simulator.set_rng(rng);
     }
 
     /// Get a read-only reference to the internal random number generator
@@ -640,14 +633,12 @@ impl RngManageable for SparseStabEngine {
 }
 
 impl QuantumEngine for SparseStabEngine {
-    fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
+    fn set_seed(&mut self, seed: u64) {
         // Create a new RNG with the given seed
         let rng = <StdSparseStab as RngManageable>::Rng::seed_from_u64(seed);
 
         // Set the simulator's RNG
-        self.simulator
-            .set_rng(rng)
-            .map_err(|e| quantum_error(format!("Failed to set seed: {e}")))
+        self.simulator.set_rng(rng);
     }
 
     fn as_any(&self) -> &dyn Any {

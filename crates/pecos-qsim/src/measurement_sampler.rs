@@ -51,9 +51,8 @@
 
 use crate::symbolic_sparse_stab::MeasurementHistory;
 use pecos_core::{Bit, Bits};
-use rand::{Rng, SeedableRng};
+use pecos_rng::{PecosRng, Rng, SeedableRng};
 use wide::u64x4;
-use wyrand::WyRand;
 
 // ============================================================================
 // Common types
@@ -380,8 +379,7 @@ impl SequentialMeasurementSampler {
 
     /// Sample measurement outcomes and return a [`SampleResult`].
     ///
-    /// This is the primary sampling method. Uses a fast non-cryptographic RNG
-    /// (`WyRand`) for high performance.
+    /// This is the primary sampling method. Uses [`PecosRng`] for high performance.
     ///
     /// # Arguments
     /// * `shots` - Number of measurement shots to generate
@@ -391,7 +389,7 @@ impl SequentialMeasurementSampler {
     #[inline]
     #[must_use]
     pub fn sample(&self, shots: usize) -> SampleResult {
-        let mut rng = WyRand::from_rng(&mut rand::rng());
+        let mut rng = PecosRng::from_os_rng();
         self.sample_with_rng(shots, &mut rng)
     }
 
@@ -406,7 +404,7 @@ impl SequentialMeasurementSampler {
     #[inline]
     #[must_use]
     pub fn sample_with_seed(&self, shots: usize, seed: u64) -> SampleResult {
-        let mut rng = WyRand::seed_from_u64(seed);
+        let mut rng = PecosRng::seed_from_u64(seed);
         self.sample_with_rng(shots, &mut rng)
     }
 
@@ -928,7 +926,7 @@ impl MeasurementSampler {
     #[inline]
     #[must_use]
     pub fn sample(&self, shots: usize) -> SampleResult {
-        let mut rng = WyRand::from_rng(&mut rand::rng());
+        let mut rng = PecosRng::from_os_rng();
         self.sample_with_rng(shots, &mut rng)
     }
 
@@ -958,7 +956,7 @@ impl MeasurementSampler {
     #[inline]
     #[must_use]
     pub fn sample_with_seed(&self, shots: usize, seed: u64) -> SampleResult {
-        let mut rng = WyRand::seed_from_u64(seed);
+        let mut rng = PecosRng::seed_from_u64(seed);
         self.sample_with_rng(shots, &mut rng)
     }
 

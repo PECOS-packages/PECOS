@@ -55,15 +55,8 @@ pub trait ClassicalEngine: Engine<Input = (), Output = Shot> + DynClone + Send +
     ///
     /// # Arguments
     /// * `seed` - Seed value for the random number generator
-    ///
-    /// # Returns
-    /// Result indicating success or failure
-    ///
-    /// # Errors
-    /// Returns a `PecosError` if setting the seed fails
-    fn set_seed(&mut self, _seed: u64) -> Result<(), PecosError> {
-        // Default implementation just succeeds without doing anything
-        Ok(())
+    fn set_seed(&mut self, _seed: u64) {
+        // Default implementation does nothing
     }
 
     /// Compiles the classical program into an intermediate representation or directly
@@ -319,8 +312,8 @@ impl ClassicalEngine for Box<dyn ClassicalControlEngine> {
         (**self).get_results()
     }
 
-    fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
-        (**self).set_seed(seed)
+    fn set_seed(&mut self, seed: u64) {
+        (**self).set_seed(seed);
     }
 
     fn compile(&self) -> Result<(), PecosError> {

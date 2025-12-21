@@ -4,21 +4,20 @@
 use pecos_core::rng::{RecordingRng, ReplayingRng};
 use pecos_qsim::CliffordGateable;
 use pecos_qsim::StateVec;
-use rand::{Rng, SeedableRng};
-use rand_xoshiro::Xoshiro256PlusPlus;
+use pecos_rng::{PecosRng, Rng};
 use std::fmt::Display;
 
 // Custom wrapper for a simulator with a RecordingRng
 struct RecordingSimulator {
-    // We can't directly create StateVec<RecordingRng<Xoshiro256PlusPlus>>, so we use delegation pattern
+    // We can't directly create StateVec<RecordingRng<PecosRng>>, so we use delegation pattern
     simulator: StateVec,
-    recording_rng: RecordingRng<Xoshiro256PlusPlus>,
+    recording_rng: RecordingRng<PecosRng>,
 }
 
 impl RecordingSimulator {
     // Create a new recording simulator
     fn new(num_qubits: usize, seed: u64) -> Self {
-        let base_rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+        let base_rng = PecosRng::seed_from_u64(seed);
         let recording_rng = RecordingRng::new(base_rng);
 
         // Create standard simulator

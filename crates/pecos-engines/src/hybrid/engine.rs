@@ -84,24 +84,16 @@ impl HybridEngine {
     ///
     /// # Arguments
     /// * `seed` - Base seed value for random number generators
-    ///
-    /// # Returns
-    /// Result indicating success or failure
-    ///
-    /// # Errors
-    /// Returns a `PecosError` if setting the seed fails for any component
-    pub fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
+    pub fn set_seed(&mut self, seed: u64) {
         // Derive seeds for each component
         let classical_seed = derive_seed(seed, "classical_engine");
         let quantum_seed = derive_seed(seed, "quantum_system");
 
         // Set seed for quantum system (this sets seeds for both quantum engine and noise model)
-        self.quantum_system.set_seed(quantum_seed)?;
+        self.quantum_system.set_seed(quantum_seed);
 
         // Set seed for classical engine
-        self.classical_engine.set_seed(classical_seed)?;
-
-        Ok(())
+        self.classical_engine.set_seed(classical_seed);
     }
 
     /// Resets the state of the hybrid engine, including classical, quantum, and noise model components.

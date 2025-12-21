@@ -4,7 +4,7 @@
 
 use pecos_num::assert_relative_eq;
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, QuestStateVec};
-use rand_xoshiro::Xoshiro256PlusPlus;
+use pecos_rng::PecosRng;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
@@ -26,7 +26,7 @@ fn test_parallel_independent_instances() {
             let barrier = Arc::clone(&barrier);
             thread::spawn(move || {
                 // Each thread gets its own completely independent state
-                let mut state: QuestStateVec<Xoshiro256PlusPlus> =
+                let mut state: QuestStateVec<PecosRng> =
                     QuestStateVec::with_seed(NUM_QUBITS, thread_id as u64 + 42);
 
                 // Wait for all threads to be ready
@@ -95,7 +95,7 @@ fn test_parallel_bell_state_measurements() {
     let handles: Vec<_> = (0..NUM_THREADS)
         .map(|thread_id| {
             thread::spawn(move || {
-                let mut state: QuestStateVec<Xoshiro256PlusPlus> =
+                let mut state: QuestStateVec<PecosRng> =
                     QuestStateVec::with_seed(2, thread_id as u64 * 1000);
 
                 // Create Bell state
@@ -201,7 +201,7 @@ fn test_parallel_cloning_and_states() {
         .map(|thread_id| {
             thread::spawn(move || {
                 // Create template state
-                let mut template: QuestStateVec<Xoshiro256PlusPlus> = QuestStateVec::with_seed(2, 12345); // Same seed
+                let mut template: QuestStateVec<PecosRng> = QuestStateVec::with_seed(2, 12345); // Same seed
                 template.h(0).cx(0, 1); // Bell state
 
                 // Verify template probabilities
@@ -263,7 +263,7 @@ fn test_many_parallel_instances() {
     let handles: Vec<_> = (0..NUM_THREADS)
         .map(|thread_id| {
             thread::spawn(move || {
-                let mut state: QuestStateVec<Xoshiro256PlusPlus> =
+                let mut state: QuestStateVec<PecosRng> =
                     QuestStateVec::with_seed(1, thread_id as u64);
 
                 // Perform a series of operations

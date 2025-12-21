@@ -11,14 +11,8 @@ use pecos_engines::{
     byte_message::{ByteMessage, GateType},
 };
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
-use rand::SeedableRng;
 use std::any::Any;
 use std::fmt::Debug;
-
-/// Helper function to create quantum engine errors
-fn quantum_error<S: Into<String>>(msg: S) -> PecosError {
-    PecosError::Processing(msg.into())
-}
 
 /// Quest state vector quantum engine wrapper
 #[derive(Debug, Clone)]
@@ -191,11 +185,9 @@ impl Engine for QuestStateVecEngine {
 }
 
 impl QuantumEngine for QuestStateVecEngine {
-    fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
+    fn set_seed(&mut self, seed: u64) {
         let rng = <QuestStateVec as RngManageable>::Rng::seed_from_u64(seed);
-        self.simulator
-            .set_rng(rng)
-            .map_err(|e| quantum_error(format!("Failed to set seed: {e}")))
+        self.simulator.set_rng(rng);
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -378,11 +370,9 @@ impl Engine for QuestDensityMatrixEngine {
 }
 
 impl QuantumEngine for QuestDensityMatrixEngine {
-    fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
+    fn set_seed(&mut self, seed: u64) {
         let rng = <QuestDensityMatrix as RngManageable>::Rng::seed_from_u64(seed);
-        self.simulator
-            .set_rng(rng)
-            .map_err(|e| quantum_error(format!("Failed to set seed: {e}")))
+        self.simulator.set_rng(rng);
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -977,11 +967,10 @@ impl Engine for QuestCudaStateVecEngine {
 
 #[cfg(feature = "cuda")]
 impl QuantumEngine for QuestCudaStateVecEngine {
-    fn set_seed(&mut self, _seed: u64) -> Result<(), PecosError> {
+    fn set_seed(&mut self, _seed: u64) {
         // CUDA backend doesn't currently support seeding via the loaded library
         // The seed would need to be passed to QuEST's internal RNG
         log::warn!("set_seed not yet implemented for CUDA backend");
-        Ok(())
     }
 
     fn as_any(&self) -> &dyn Any {

@@ -26,11 +26,10 @@ use std::path::Path;
 ///
 /// ```
 /// use pecos_core::rng::{RecordingRng, ReplayingRng};
-/// use rand::{Rng, SeedableRng};
-/// use rand_xoshiro::Xoshiro256PlusPlus;
+/// use pecos_rng::{PecosRng, Rng, SeedableRng};
 ///
-/// // Create a recording wrapper around a Xoshiro256PlusPlus
-/// let rng = Xoshiro256PlusPlus::seed_from_u64(42);
+/// // Create a recording wrapper around PecosRng
+/// let rng = PecosRng::seed_from_u64(42);
 /// let mut recording_rng = RecordingRng::new(rng);
 ///
 /// // Generate some random values

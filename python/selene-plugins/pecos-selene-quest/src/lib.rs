@@ -32,7 +32,7 @@ use num_complex::Complex64;
 #[cfg(feature = "cuda")]
 use pecos_quest::QuantumSimulator;
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuestDensityMatrix, QuestStateVec};
-use rand_xoshiro::Xoshiro256PlusPlus;
+use pecos_rng::PecosRng;
 use selene_core::export_simulator_plugin;
 use selene_core::simulator::SimulatorInterface;
 use selene_core::simulator::interface::SimulatorInterfaceFactory;
@@ -65,8 +65,8 @@ impl SimulatorMode {
 
 /// Wrapper enum to hold either state vector or density matrix simulator.
 enum QuestSimulatorInner {
-    StateVector(QuestStateVec<Xoshiro256PlusPlus>),
-    DensityMatrix(QuestDensityMatrix<Xoshiro256PlusPlus>),
+    StateVector(QuestStateVec<PecosRng>),
+    DensityMatrix(QuestDensityMatrix<PecosRng>),
     #[cfg(feature = "cuda")]
     StateVectorGpu(CudaStateVec),
     #[cfg(feature = "cuda")]

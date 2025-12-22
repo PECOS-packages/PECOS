@@ -51,7 +51,7 @@
 
 use crate::symbolic_sparse_stab::MeasurementHistory;
 use pecos_core::{Bit, Bits};
-use pecos_rng::{PecosRng, Rng, SeedableRng};
+use pecos_rng::{PecosRng, Rng, RngBulkExt, SeedableRng};
 use wide::u64x4;
 
 // ============================================================================
@@ -520,7 +520,7 @@ impl MeasurementSampler {
     /// Internally uses SIMD operations for better performance.
     #[inline]
     #[must_use]
-    pub fn sample_raw<R: Rng>(&self, shots: usize, rng: &mut R) -> Vec<Vec<u64>> {
+    pub fn sample_raw<R: Rng + RngBulkExt>(&self, shots: usize, rng: &mut R) -> Vec<Vec<u64>> {
         if self.measurements.is_empty() || shots == 0 {
             return vec![Vec::new(); self.measurements.len()];
         }
@@ -547,10 +547,12 @@ impl MeasurementSampler {
 
     /// Generate a SIMD column of random bits.
     ///
-    /// Uses direct u64 slice filling for better performance (~16% faster than
-    /// constructing u64x4 values one at a time).
+    /// Uses bulk fill for better performance (~2x faster than individual calls).
     #[inline]
-    fn generate_random_column_simd<R: Rng>(num_simd_words: usize, rng: &mut R) -> Vec<u64x4> {
+    fn generate_random_column_simd<R: Rng + RngBulkExt>(
+        num_simd_words: usize,
+        rng: &mut R,
+    ) -> Vec<u64x4> {
         // Allocate the vector with zeros (will be overwritten)
         let mut column: Vec<u64x4> = vec![u64x4::splat(0); num_simd_words];
 
@@ -560,9 +562,8 @@ impl MeasurementSampler {
             std::slice::from_raw_parts_mut(column.as_mut_ptr().cast::<u64>(), num_simd_words * 4)
         };
 
-        for val in u64_slice {
-            *val = rng.random();
-        }
+        // Use bulk fill from RngBulkExt trait (optimized for PECOS RNGs)
+        rng.fill_u64_bulk(u64_slice);
 
         column
     }
@@ -597,7 +598,7 @@ impl MeasurementSampler {
     /// Returns a vector of columns where each column is a `Vec<u64x4>`.
     /// Each `u64x4` holds 4 u64s (256 bits = 256 shots).
     #[inline]
-    fn sample_raw_simd<R: Rng>(&self, shots: usize, rng: &mut R) -> Vec<Vec<u64x4>> {
+    fn sample_raw_simd<R: Rng + RngBulkExt>(&self, shots: usize, rng: &mut R) -> Vec<Vec<u64x4>> {
         if self.measurements.is_empty() || shots == 0 {
             return vec![Vec::new(); self.measurements.len()];
         }
@@ -965,7 +966,7 @@ impl MeasurementSampler {
     /// Use this when you need full control over the random number generator.
     #[inline]
     #[must_use]
-    pub fn sample_with_rng<R: Rng>(&self, shots: usize, rng: &mut R) -> SampleResult {
+    pub fn sample_with_rng<R: Rng + RngBulkExt>(&self, shots: usize, rng: &mut R) -> SampleResult {
         let columns = self.sample_raw(shots, rng);
         SampleResult::new(columns, shots)
     }

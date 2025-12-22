@@ -19,11 +19,11 @@ use rand::prelude::*;
 /// This struct wraps a random number generator and provides methods for
 /// common operations like coin flips, weighted choices, and generating
 /// collections of random values.
-pub struct RandomUtils<R: Rng> {
+pub struct RandomUtils<R: Rng + RngProbabilityExt> {
     rng: R,
 }
 
-impl<R: Rng> RandomUtils<R> {
+impl<R: Rng + RngProbabilityExt> RandomUtils<R> {
     /// Create a new `RandomUtils` with the given random number generator
     ///
     /// # Arguments
@@ -137,7 +137,7 @@ pub fn choose_weighted<'a, T, R: Rng>(rng: &mut R, choices: &'a Choices<T>) -> &
 ///
 /// Note: Consider using `RngProbabilityExt::coin_flip()` directly instead.
 #[inline]
-pub fn coin_flip<R: Rng>(rng: &mut R) -> bool {
+pub fn coin_flip<R: Rng + RngProbabilityExt>(rng: &mut R) -> bool {
     rng.coin_flip()
 }
 
@@ -145,7 +145,7 @@ pub fn coin_flip<R: Rng>(rng: &mut R) -> bool {
 ///
 /// Note: Consider using `RngProbabilityExt::gen_bools()` directly instead.
 #[inline]
-pub fn gen_bools<R: Rng>(rng: &mut R, p: f64, n: usize) -> Vec<bool> {
+pub fn gen_bools<R: Rng + RngProbabilityExt>(rng: &mut R, p: f64, n: usize) -> Vec<bool> {
     rng.gen_bools(p, n)
 }
 

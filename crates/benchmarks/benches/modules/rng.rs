@@ -539,14 +539,17 @@ fn bench_bulk_operations<M: Measurement>(c: &mut Criterion<M>) {
 
         // --- fill_u64 benchmarks ---
 
+        // PecosRng: compare loop vs bulk fill_u64
         group.bench_with_input(
-            BenchmarkId::new("PecosRng/fill_u64", shots),
+            BenchmarkId::new("PecosRng/loop", shots),
             &num_words,
             |b, &n| {
                 let mut rng = PecosRng::seed_from_u64(42);
                 let mut data = vec![0u64; n];
                 b.iter(|| {
-                    rng.fill_u64(&mut data);
+                    for val in &mut data {
+                        *val = rng.next_u64();
+                    }
                     black_box(&data);
                 });
             },
@@ -656,21 +659,6 @@ fn bench_bulk_operations<M: Measurement>(c: &mut Criterion<M>) {
         );
 
         // --- simd_column benchmarks ---
-
-        group.bench_with_input(
-            BenchmarkId::new("PecosRng/simd_column", shots),
-            &num_simd,
-            |b, &n| {
-                let mut rng = PecosRng::seed_from_u64(42);
-                b.iter(|| {
-                    let mut column = Vec::with_capacity(n);
-                    for _ in 0..n {
-                        column.push(rng.next_u64x4());
-                    }
-                    black_box(column)
-                });
-            },
-        );
 
         group.bench_with_input(
             BenchmarkId::new("PecosRng/simd_column", shots),
@@ -1329,31 +1317,6 @@ fn bench_batched_probability<M: Measurement>(c: &mut Criterion<M>) {
     group.bench_function("batched (PecosRng)", |b| {
         let mut rng = PecosRng::seed_from_u64(42);
         let threshold = rng.probability_threshold(error_rate);
-        b.iter(|| {
-            let indices = rng.check_probability_indices(threshold, num_gates);
-            black_box(indices)
-        });
-    });
-
-    // Scalar with PecosRng
-    group.bench_function("scalar loop (PecosRng)", |b| {
-        let mut rng = PecosRng::seed_from_u64(42);
-        let threshold = PecosRng::probability_threshold(error_rate);
-        b.iter(|| {
-            let mut indices = Vec::with_capacity(20);
-            for i in 0..num_gates {
-                if rng.check_probability(threshold) {
-                    indices.push(i);
-                }
-            }
-            black_box(indices)
-        });
-    });
-
-    // Batched with PecosRng (uses parallel RNGs)
-    group.bench_function("batched (PecosRng)", |b| {
-        let mut rng = PecosRng::seed_from_u64(42);
-        let threshold = PecosRng::probability_threshold(error_rate);
         b.iter(|| {
             let indices = rng.check_probability_indices(threshold, num_gates);
             black_box(indices)

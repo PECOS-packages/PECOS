@@ -29,7 +29,7 @@ pub use rand_core::{RngCore, SeedableRng};
 // Re-export types
 pub use crate::quality_rng::{PecosQualityRng, SimdXoshiro256PlusPlus};
 pub use crate::rng::{ParallelRapidRng, PecosRng};
-pub use crate::rng_ext::RngProbabilityExt;
+pub use crate::rng_ext::{RngBulkExt, RngProbabilityExt};
 pub use crate::rng_manageable::{RngManageable, derive_seed};
 pub use crate::rng_pcg::{PCG64Fast, PCGRandom};
 pub use crate::scalar_rng::PecosScalarRng;

@@ -493,10 +493,118 @@ pub trait RngProbabilityExt: RngCore {
         let threshold = self.probability_threshold(p);
         (0..n).map(|_| self.next_u64() < threshold).collect()
     }
+
+    // ========================================================================
+    // Bulk generation utilities
+    // ========================================================================
+
+    /// Fill a slice with random u64 values.
+    ///
+    /// This is the primary bulk random number generation method. The default
+    /// implementation uses a simple loop, but RNG implementations may provide
+    /// optimized versions that use SIMD or batch generation.
+    ///
+    /// # Arguments
+    ///
+    /// * `dest` - The slice to fill with random values
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_rng::{PecosRng, SeedableRng};
+    /// use pecos_rng::rng_ext::RngProbabilityExt;
+    ///
+    /// let mut rng = PecosRng::seed_from_u64(42);
+    /// let mut data = vec![0u64; 1000];
+    /// rng.fill_u64(&mut data);
+    /// ```
+    #[inline]
+    fn fill_u64(&mut self, dest: &mut [u64]) {
+        for val in dest {
+            *val = self.next_u64();
+        }
+    }
 }
 
 // Blanket implementation for all RngCore types
 impl<T: RngCore> RngProbabilityExt for T {}
+
+// ============================================================================
+// RngBulkExt: Optimized bulk operations
+// ============================================================================
+
+/// Extension trait for optimized bulk random number generation.
+///
+/// This trait provides methods for efficiently filling slices with random values.
+/// Unlike [`RngProbabilityExt`] which has a blanket implementation, this trait
+/// requires explicit implementation to enable optimized versions.
+///
+/// # Example
+///
+/// ```
+/// use pecos_rng::{PecosRng, SeedableRng, RngBulkExt};
+///
+/// let mut rng = PecosRng::seed_from_u64(42);
+/// let mut data = vec![0u64; 1000];
+/// rng.fill_u64_bulk(&mut data);  // Uses optimized implementation
+/// ```
+pub trait RngBulkExt: RngCore {
+    /// Fill a slice with random u64 values using optimized bulk generation.
+    ///
+    /// This method is designed for high-performance scenarios where many
+    /// random values are needed at once, such as measurement sampling.
+    fn fill_u64_bulk(&mut self, dest: &mut [u64]);
+}
+
+// Optimized implementations for PECOS RNGs
+impl RngBulkExt for crate::PecosRng {
+    #[inline]
+    fn fill_u64_bulk(&mut self, dest: &mut [u64]) {
+        self.fill_u64(dest);
+    }
+}
+
+impl RngBulkExt for crate::PecosQualityRng {
+    #[inline]
+    fn fill_u64_bulk(&mut self, dest: &mut [u64]) {
+        self.fill_u64(dest);
+    }
+}
+
+impl RngBulkExt for crate::PecosScalarRng {
+    #[inline]
+    fn fill_u64_bulk(&mut self, dest: &mut [u64]) {
+        self.fill_u64(dest);
+    }
+}
+
+// Default implementations for common external RNGs
+impl RngBulkExt for rand::rngs::SmallRng {
+    #[inline]
+    fn fill_u64_bulk(&mut self, dest: &mut [u64]) {
+        for val in dest {
+            *val = self.next_u64();
+        }
+    }
+}
+
+impl RngBulkExt for rand::rngs::StdRng {
+    #[inline]
+    fn fill_u64_bulk(&mut self, dest: &mut [u64]) {
+        for val in dest {
+            *val = self.next_u64();
+        }
+    }
+}
+
+impl RngBulkExt for rand::rngs::ThreadRng {
+    #[inline]
+    fn fill_u64_bulk(&mut self, dest: &mut [u64]) {
+        for val in dest {
+            *val = self.next_u64();
+        }
+    }
+}
 
 #[cfg(test)]
 #[allow(clippy::cast_precision_loss)]

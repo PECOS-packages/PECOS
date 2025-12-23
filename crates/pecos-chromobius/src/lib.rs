@@ -1,11 +1,8 @@
 //! Chromobius color code decoder for PECOS
-
-// Internal crate - don't require exhaustive docs
-#![allow(
-    clippy::missing_errors_doc,
-    clippy::missing_panics_doc,
-    clippy::must_use_candidate
-)]
+//!
+//! This crate provides Rust bindings for the Chromobius decoder, which is designed
+//! for decoding color codes in quantum error correction. Chromobius uses a Mobius
+//! matching approach to efficiently decode color code syndromes.
 
 pub mod bridge;
 pub mod decoder;

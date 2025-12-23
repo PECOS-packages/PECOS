@@ -57,6 +57,12 @@ pub struct PyMatchingEdge {
 /// # Ok(())
 /// # }
 /// ```
+/// # Errors
+///
+/// Returns a [`PyMatchingError`] if:
+/// - The decoder builder fails
+/// - Setting the number of observables fails
+/// - Adding an edge fails
 pub fn pymatching_from_petgraph<S: std::hash::BuildHasher>(
     graph: &UnGraph<PyMatchingNode, PyMatchingEdge>,
     boundary_nodes: &std::collections::HashSet<NodeIndex, S>,
@@ -219,6 +225,12 @@ pub fn pymatching_to_petgraph(
 /// # Arguments
 /// * `graph` - The petgraph with f64 edge weights
 /// * `num_observables` - Number of observables (defaults to 1 per edge)
+///
+/// # Errors
+///
+/// Returns a [`PyMatchingError`] if:
+/// - The decoder builder fails
+/// - Adding an edge fails
 pub fn pymatching_from_petgraph_weighted(
     graph: &UnGraph<(), f64>,
     num_observables: Option<usize>,

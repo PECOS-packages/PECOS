@@ -224,6 +224,15 @@ impl PyMatchingBuilder {
     ///
     /// This is a convenience method to populate the builder from a check matrix.
     /// Note: this will set the number of nodes and observables based on the matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`PyMatchingError`](crate::PyMatchingError) if the decoder creation fails.
+    ///
+    /// # Panics
+    ///
+    /// This function will not panic. The internal `unwrap()` is safe because
+    /// `config` is checked for `is_none()` before use.
     pub fn from_check_matrix(
         self,
         matrix: &CheckMatrix,
@@ -240,6 +249,13 @@ impl PyMatchingBuilder {
     }
 
     /// Build the decoder
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`PyMatchingError`](crate::PyMatchingError) if:
+    /// - The decoder creation fails
+    /// - Adding an edge fails (e.g., invalid node indices)
+    /// - Adding a boundary edge fails
     pub fn build(self) -> Result<PyMatchingDecoder> {
         let config = PyMatchingConfig {
             num_nodes: self.num_nodes,

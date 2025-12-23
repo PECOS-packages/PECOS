@@ -9,13 +9,6 @@
     clippy::cast_precision_loss,
     clippy::cast_sign_loss
 )]
-// Internal crate - don't require exhaustive docs
-#![allow(
-    clippy::missing_errors_doc,
-    clippy::missing_panics_doc,
-    clippy::must_use_candidate,
-    clippy::needless_pass_by_value
-)]
 
 pub mod core_traits;
 pub mod decoder;

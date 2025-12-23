@@ -849,7 +849,13 @@ impl PyMatchingDecoder {
     /// Automatically uses the appropriate method based on the number of observables
     ///
     /// # Errors
+    ///
     /// Returns an error if detection events are invalid or decoding fails.
+    ///
+    /// # Panics
+    ///
+    /// This function will not panic. The internal `expect()` is safe because
+    /// the value `(obs_mask >> i) & 1` is always 0 or 1, which fits in a `u8`.
     #[must_use = "The decoding result should be used"]
     pub fn decode(&mut self, detection_events: &[u8]) -> Result<DecodingResult> {
         // Validate detection events length
@@ -1292,10 +1298,9 @@ impl PyMatchingDecoder {
             visited[start] = true;
 
             // Mark all nodes connected to start
-            #[allow(clippy::needless_range_loop)]
-            for target in (start + 1)..num_nodes {
-                if !visited[target] && self.check_nodes_connected(start, target) {
-                    visited[target] = true;
+            for (target, visit_status) in visited.iter_mut().enumerate().skip(start + 1) {
+                if !*visit_status && self.check_nodes_connected(start, target) {
+                    *visit_status = true;
                 }
             }
         }

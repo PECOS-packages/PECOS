@@ -226,7 +226,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_tree_size: None,
         };
 
-        let mut decoder_legacy = FusionBlossomDecoder::new(config.clone())?;
+        let mut decoder_legacy = FusionBlossomDecoder::new(config)?;
         config.solver_type = SolverType::Serial;
         let mut decoder_serial = FusionBlossomDecoder::new(config)?;
 

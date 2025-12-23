@@ -174,6 +174,13 @@ impl TesseractDecoder {
     /// # }
     /// # example().unwrap();
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TesseractError::InitializationFailed`] if:
+    /// - The DEM string is malformed
+    /// - The DEM contains unsupported error mechanisms
+    /// - Memory allocation fails
     pub fn new(dem_string: &str, config: TesseractConfig) -> Result<Self, TesseractError> {
         let config_repr = config.to_ffi_repr();
 
@@ -200,6 +207,11 @@ impl TesseractDecoder {
     ///
     /// # Returns
     /// The decoded error configuration and associated metadata
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TesseractError::InvalidInput`] if the detection array is not contiguous,
+    /// or [`TesseractError::DecodingFailed`] if the C++ decoder fails.
     pub fn decode_detections(
         &mut self,
         detections: &ArrayView1<u64>,
@@ -227,6 +239,11 @@ impl TesseractDecoder {
     ///
     /// # Returns
     /// The decoded error configuration using the specified ordering
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TesseractError::InvalidInput`] if the detection array is not contiguous,
+    /// or [`TesseractError::DecodingFailed`] if the C++ decoder fails.
     pub fn decode_with_order(
         &mut self,
         detections: &ArrayView1<u64>,

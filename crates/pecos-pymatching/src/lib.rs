@@ -9,12 +9,6 @@
     clippy::cast_precision_loss,
     clippy::cast_sign_loss
 )]
-// Internal crate - don't require exhaustive docs
-#![allow(
-    clippy::missing_errors_doc,
-    clippy::missing_panics_doc,
-    clippy::must_use_candidate
-)]
 
 pub mod bridge;
 pub mod builder;

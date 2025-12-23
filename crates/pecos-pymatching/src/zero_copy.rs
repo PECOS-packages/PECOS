@@ -79,6 +79,13 @@ impl PyMatchingDecoder {
     ///
     /// This method reuses the provided observable buffer to avoid allocations.
     /// The buffer must be at least (`num_observables` + 7) / 8 bytes long.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`PyMatchingError`](crate::PyMatchingError) if:
+    /// - The syndrome length doesn't match the number of detectors
+    /// - The observable buffer is too small
+    /// - Decoding fails
     pub fn decode_into(&mut self, syndrome: &[u8], observable_buffer: &mut [u8]) -> Result<f64> {
         self.validate_syndrome(syndrome)?;
         self.validate_buffer_size(observable_buffer, "Observable")?;
@@ -95,6 +102,10 @@ impl PyMatchingDecoder {
     }
 
     /// Decode with a reusable buffer
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::decode_into`].
     pub fn decode_with_buffer(
         &mut self,
         syndrome: &[u8],

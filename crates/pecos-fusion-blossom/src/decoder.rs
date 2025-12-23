@@ -24,7 +24,7 @@ pub enum SolverType {
 }
 
 /// Configuration for Fusion Blossom decoder
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FusionBlossomConfig {
     /// Number of nodes in the graph
     pub num_nodes: Option<usize>,
@@ -48,7 +48,7 @@ impl Default for FusionBlossomConfig {
 }
 
 /// Options for decoding
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct DecodingOptions {
     /// Whether to include perfect matching details in the result
     pub include_perfect_matching: bool,
@@ -122,7 +122,7 @@ impl fmt::Display for DecodingResult {
 }
 
 /// Standard QEC code types
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum StandardCode {
     /// Code capacity planar code
     CodeCapacityPlanar {
@@ -202,6 +202,10 @@ pub struct FusionBlossomDecoder {
 
 impl FusionBlossomDecoder {
     /// Create a new decoder with the given configuration
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FusionBlossomError::Configuration`] if `num_nodes` is not specified in the config.
     pub fn new(config: FusionBlossomConfig) -> Result<Self> {
         let num_nodes = config.num_nodes.ok_or_else(|| {
             FusionBlossomError::Configuration("num_nodes must be specified".to_string())
@@ -220,6 +224,11 @@ impl FusionBlossomDecoder {
     }
 
     /// Create decoder from a standard QEC code
+    ///
+    /// # Errors
+    ///
+    /// This function currently does not return errors, but returns `Result` for API
+    /// consistency and future extensibility.
     pub fn from_standard_code(code: StandardCode, config: FusionBlossomConfig) -> Result<Self> {
         let example_code: Box<dyn ExampleCode> = match code {
             StandardCode::CodeCapacityPlanar {
@@ -318,6 +327,12 @@ impl FusionBlossomDecoder {
     }
 
     /// Add an edge to the graph
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FusionBlossomError::InvalidGraph`] if:
+    /// - Either node index is out of bounds
+    /// - The weight is negative
     pub fn add_edge(
         &mut self,
         node1: usize,
@@ -358,6 +373,18 @@ impl FusionBlossomDecoder {
     }
 
     /// Add a boundary edge (connects a node to the boundary)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FusionBlossomError::InvalidGraph`] if:
+    /// - The node index is out of bounds
+    /// - The weight is negative
+    ///
+    /// # Panics
+    ///
+    /// This function will not panic. The internal `unwrap()` is safe because
+    /// `boundary_node` is always set before use (either already `Some` or set
+    /// in the same code path).
     pub fn add_boundary_edge(
         &mut self,
         node: usize,
@@ -404,6 +431,13 @@ impl FusionBlossomDecoder {
     }
 
     /// Create decoder from a check matrix
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - [`FusionBlossomError::Configuration`] if `num_nodes` cannot be set
+    /// - [`FusionBlossomError::InvalidCheckMatrix`] if a column has more than 2 non-zero entries
+    /// - [`FusionBlossomError::InvalidGraph`] if edge addition fails
     pub fn from_check_matrix(
         check_matrix: &Array2<u8>,
         weights: Option<&[f64]>,
@@ -498,6 +532,11 @@ impl FusionBlossomDecoder {
     }
 
     /// Decode a syndrome with advanced options and decoding options
+    ///
+    /// # Errors
+    ///
+    /// This function currently does not return errors, but returns `Result` for API
+    /// consistency and future extensibility.
     pub fn decode_with_options(
         &mut self,
         syndrome_data: SyndromeData,
@@ -601,11 +640,20 @@ impl FusionBlossomDecoder {
     }
 
     /// Decode a syndrome with advanced options (backwards compatibility)
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::decode_with_options`].
     pub fn decode_advanced(&mut self, syndrome_data: SyndromeData) -> Result<DecodingResult> {
         self.decode_with_options(syndrome_data, DecodingOptions::default())
     }
 
     /// Decode a syndrome (simple interface)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FusionBlossomError::InvalidSyndrome`] if the syndrome length doesn't
+    /// match the number of nodes in the decoder.
     pub fn decode(&mut self, syndrome: &ArrayView1<u8>) -> Result<DecodingResult> {
         if syndrome.len() != self.num_nodes {
             return Err(FusionBlossomError::InvalidSyndrome(format!(

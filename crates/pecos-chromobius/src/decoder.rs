@@ -119,6 +119,13 @@ impl ChromobiusDecoder {
     /// # }
     /// # example().unwrap();
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ChromobiusError::InitializationFailed`] if:
+    /// - The DEM string is malformed
+    /// - The DEM contains unsupported error mechanisms
+    /// - Memory allocation fails
     pub fn new(dem_string: &str, config: ChromobiusConfig) -> Result<Self, ChromobiusError> {
         let inner = ffi::create_chromobius_decoder(
             dem_string,
@@ -143,6 +150,10 @@ impl ChromobiusDecoder {
     ///
     /// # Returns
     /// The decoded observables mask
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ChromobiusError::DecodingFailed`] if decoding fails.
     pub fn decode_detection_events(
         &mut self,
         detection_events: &[u8],
@@ -163,6 +174,10 @@ impl ChromobiusDecoder {
     ///
     /// # Returns
     /// The decoded observables mask and weight
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ChromobiusError::DecodingFailed`] if decoding fails.
     pub fn decode_detection_events_with_weight(
         &mut self,
         detection_events: &[u8],

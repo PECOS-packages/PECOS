@@ -8,7 +8,7 @@
 
 [Installation](#installation) · [Quick Example](#quick-example) · [Documentation](#documentation) · [Rust](#for-rust-users) · [Citing](#citing)
 
-**PECOS** (Performance Estimator of Codes On Surfaces) is a framework for exploring, developing, and evaluating quantum error correction protocols and hybrid quantum-classical programs.
+**PECOS** (Performance Estimator of Codes On Surfaces) is a framework/library for exploring, developing, and evaluating quantum error correction protocols and hybrid quantum-classical programs.
 
 Quantum error correcting since 2014. Fast simulators, from stabilizer to GPU. User-friendly Python API. Blazingly fast Rust core. Supported by Quantinuum.
 

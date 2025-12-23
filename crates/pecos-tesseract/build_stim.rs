@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 /// Get the essential Stim source files needed for Tesseract
 pub fn collect_stim_sources(stim_src_dir: &Path) -> Vec<PathBuf> {
-    // Tesseract primarily needs DEM parsing and basic circuit support
+    // Tesseract needs DEM parsing, circuit support, and simulation utilities
     let essential_files = vec![
         // Core DEM files
         "stim/dem/detector_error_model.cc",
@@ -21,11 +21,17 @@ pub fn collect_stim_sources(stim_src_dir: &Path) -> Vec<PathBuf> {
         "stim/circuit/circuit_instruction.cc",
         "stim/circuit/gate_data.cc",
         "stim/circuit/gate_target.cc",
+        "stim/circuit/gate_decomposition.cc", // For decompose_mpp_operation, etc.
         // Memory management
         "stim/mem/simd_word.cc",
         "stim/mem/simd_util.cc",
+        "stim/mem/bit_ref.cc", // For bit_ref::bit_ref
         // I/O for reading files
         "stim/io/raii_file.cc",
+        "stim/io/sparse_shot.cc", // For SparseShot
+        // Utility functions
+        "stim/util_bot/arg_parse.cc",        // For parse_int64
+        "stim/util_bot/probability_util.cc", // For RareErrorIterator, biased_randomize_bits
         // All gate implementations needed by GateDataMap
         "stim/gates/gates.cc",
         "stim/gates/gate_data_annotations.cc",

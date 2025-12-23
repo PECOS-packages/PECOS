@@ -33,9 +33,9 @@ public:
     ChromobiusDecoderWrapper(const ChromobiusDecoderWrapper&) = delete;
     ChromobiusDecoderWrapper& operator=(const ChromobiusDecoderWrapper&) = delete;
 
-    // Allow move
-    ChromobiusDecoderWrapper(ChromobiusDecoderWrapper&&) = default;
-    ChromobiusDecoderWrapper& operator=(ChromobiusDecoderWrapper&&) = default;
+    // Allow move (defined in .cpp where Impl is complete for MSVC compatibility)
+    ChromobiusDecoderWrapper(ChromobiusDecoderWrapper&&) noexcept;
+    ChromobiusDecoderWrapper& operator=(ChromobiusDecoderWrapper&&) noexcept;
 
     // Initialize decoder (for use after default construction)
     void init(const std::string& dem_string, bool drop_mobius_errors_involving_remnant_errors);

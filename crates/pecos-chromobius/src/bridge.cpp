@@ -89,6 +89,8 @@ ChromobiusDecoderWrapper::ChromobiusDecoderWrapper(
 }
 
 ChromobiusDecoderWrapper::~ChromobiusDecoderWrapper() = default;
+ChromobiusDecoderWrapper::ChromobiusDecoderWrapper(ChromobiusDecoderWrapper&&) noexcept = default;
+ChromobiusDecoderWrapper& ChromobiusDecoderWrapper::operator=(ChromobiusDecoderWrapper&&) noexcept = default;
 
 void ChromobiusDecoderWrapper::init(
     const std::string& dem_string,

@@ -4,6 +4,7 @@
 #include "pecos-chromobius/src/bridge.rs.h"
 #include <memory>
 #include <stdexcept>
+#include <array>    // Required for std::array on MSVC
 
 // Include Chromobius headers
 #include "chromobius/decode/decoder.h"

@@ -140,8 +140,14 @@ fn build_cxx_bridge(tesseract_dir: &Path, stim_dir: &Path) {
         build
             .flag("/W0")
             .flag("/MD")
+            .flag("/EHsc") // Enable C++ exception handling
             .flag_if_supported("/permissive-")
             .flag_if_supported("/Zc:__cplusplus");
+
+        // Force include standard headers that external libraries assume are available
+        // MSVC is stricter than GCC/Clang about transitive includes
+        build.flag("/FI").flag("array"); // For std::array
+        build.flag("/FI").flag("numeric"); // For std::iota
     }
 
     build.compile("tesseract-bridge");

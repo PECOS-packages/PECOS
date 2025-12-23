@@ -5,6 +5,7 @@
 #include <memory>
 #include <stdexcept>
 #include <sstream>
+#include <numeric>  // Required for std::iota on MSVC
 
 // Include Tesseract headers
 #include "tesseract.h"

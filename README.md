@@ -40,10 +40,10 @@ measure q -> c;
 
 # Run 10 shots
 results = sim(circuit).seed(42).run(10)
-print(results.to_dict())  # {0: 5, 3: 5} - qubits always match!
+print(results.to_binary_dict())  # {"c": ["00", "11", "00", ...]} - qubits always match!
 ```
 
-The results show `0` (both qubits measured `|0⟩`) and `3` (both measured `|1⟩`)—never `1` or `2`. That's quantum entanglement in action.
+The results show `"00"` (both qubits measured `|0⟩`) and `"11"` (both measured `|1⟩`)—never `"01"` or `"10"`. That's quantum entanglement in action.
 
 ## What Can You Do With PECOS?
 

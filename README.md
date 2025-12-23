@@ -47,7 +47,7 @@ The results show `"00"` (both qubits measured `|0⟩`) and `"11"` (both measured
 
 ## What Can You Do With PECOS?
 
-- **Simulate quantum circuits** using a fast stabilizer simulator, ideal for error correction research
+- **Simulate quantum circuits** using fast simulators ideal for error correction research
 - **Study quantum error correction codes** with tools for syndrome extraction, decoding, and analysis
 - **Run hybrid quantum-classical programs** with support for classical control flow, conditionals, and Wasm
 - **Add realistic noise** to understand how errors affect your circuits

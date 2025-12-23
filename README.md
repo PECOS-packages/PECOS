@@ -1,7 +1,7 @@
 # ![PECOS](images/pecos_logo.svg)
 
 [![PyPI version](https://badge.fury.io/py/quantum-pecos.svg)](https://badge.fury.io/py/quantum-pecos)
-[![Crates.io](https://img.shields.io/crates/v/pecos.svg)](https://crates.io/crates/pecos)
+[![Crates.io](https://img.shields.io/crates/v/pecos.svg?color=brightgreen)](https://crates.io/crates/pecos)
 [![Documentation Status](https://readthedocs.org/projects/quantum-pecos/badge/?version=latest)](https://quantum-pecos.readthedocs.io/en/latest/?badge=latest)
 [![Python versions](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://img.shields.io/badge/python-3.10%2C%203.11%2C%203.12%2C%203.13%2C%203.14-blue.svg)
 [![Supported by Quantinuum](https://img.shields.io/badge/supported_by-Quantinuum-blue)](https://www.quantinuum.com/)
@@ -14,11 +14,17 @@ Quantum error correcting since 2014. Fast simulators, from stabilizer to GPU. Us
 
 ## Installation
 
+**Python:**
 ```bash
 pip install quantum-pecos
 ```
 
-That's it! For Rust, Julia, or optional features (LLVM, CUDA), see the [Getting Started Guide](docs/user-guide/getting-started.md).
+**Rust:** Add to your `Cargo.toml`:
+```toml
+pecos = { version = "0.1", features = ["qasm"] }
+```
+
+For Julia or optional features (LLVM, CUDA), see the [Getting Started Guide](docs/user-guide/getting-started.md).
 
 ## Quick Example
 
@@ -44,6 +50,8 @@ print(results.to_binary_dict())  # {"c": ["00", "11", "00", ...]} - qubits alway
 ```
 
 The results show `"00"` (both qubits measured `|0⟩`) and `"11"` (both measured `|1⟩`)—never `"01"` or `"10"`. That's quantum entanglement in action.
+
+For a Rust example, see [For Rust Users](#for-rust-users) below.
 
 ## What Can You Do With PECOS?
 

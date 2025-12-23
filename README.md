@@ -6,11 +6,11 @@
 [![Python versions](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://img.shields.io/badge/python-3.10%2C%203.11%2C%203.12%2C%203.13%2C%203.14-blue.svg)
 [![Supported by Quantinuum](https://img.shields.io/badge/supported_by-Quantinuum-blue)](https://www.quantinuum.com/)
 
-[Installation](#installation) · [Quick Example](#quick-example) · [Documentation](#documentation) · [Citing](#citing)
+[Installation](#installation) · [Quick Example](#quick-example) · [Documentation](#documentation) · [Rust](#for-rust-users) · [Citing](#citing)
 
-**PECOS** (Performance Estimator of Codes On Surfaces) is a Python library for exploring, developing, and evaluating quantum error correction protocols and hybrid quantum-classical programs.
+**PECOS** (Performance Estimator of Codes On Surfaces) is a framework for exploring, developing, and evaluating quantum error correction protocols and hybrid quantum-classical programs.
 
-Fast quantum simulation (stabilizer, state vector, MPS). Simple Python API. Rust-powered core. Supported by Quantinuum.
+Quantum error correcting since 2014. Fast simulators, from stabilizer to GPU. User-friendly Python API. Blazingly fast Rust core. Supported by Quantinuum.
 
 ## Installation
 

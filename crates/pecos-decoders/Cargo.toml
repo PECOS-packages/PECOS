@@ -14,11 +14,19 @@ description = "Unified decoder library for PECOS - meta crate"
 [dependencies]
 pecos-decoder-core.workspace = true
 pecos-ldpc-decoders = { workspace = true, optional = true }
+pecos-fusion-blossom = { workspace = true, optional = true }
+pecos-pymatching = { workspace = true, optional = true }
+pecos-tesseract = { workspace = true, optional = true }
+pecos-chromobius = { workspace = true, optional = true }
 
 [features]
 default = []
 ldpc = ["dep:pecos-ldpc-decoders"]
-all = ["ldpc"]
+fusion-blossom = ["dep:pecos-fusion-blossom"]
+pymatching = ["dep:pecos-pymatching"]
+tesseract = ["dep:pecos-tesseract"]
+chromobius = ["dep:pecos-chromobius"]
+all = ["ldpc", "fusion-blossom", "pymatching", "tesseract", "chromobius"]
 
 [lints]
 workspace = true

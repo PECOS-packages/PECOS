@@ -126,4 +126,34 @@ For publications utilizing PECOS, please cite:
 }
 ```
 
-Or use the [Zenodo DOI](https://zenodo.org/records/13700104) for citing a specific version.
+### Additional Citation Formats
+
+**PhD Thesis** (where PECOS was first described):
+
+```bibtex
+@phdthesis{crathesis,
+ author={Ciar\'{a}n Ryan-Anderson},
+ school = {University of New Mexico},
+ title={Quantum Algorithms, Architecture, and Error Correction},
+ journal={arXiv:1812.04735},
+ URL = {https://digitalrepository.unm.edu/phyc_etds/203},
+ year={2018}
+}
+```
+
+**Zenodo DOI** (for citing a specific version):
+
+```bibtex
+@software{pecos_version,
+  author       = {Ciar\'{a}n Ryan-Anderson},
+  title        = {PECOS-packages/PECOS: [version]},
+  month        = [month],
+  year         = [year],
+  publisher    = {Zenodo},
+  version      = {[version]},
+  doi          = {10.5281/zenodo.13700104},
+  url          = {https://doi.org/10.5281/zenodo.13700104}
+}
+```
+
+See [Zenodo](https://zenodo.org/records/13700104) for version-specific DOIs.

@@ -15,6 +15,13 @@ This guide will help you get up and running with PECOS quickly.
     !!! note "Import Name"
         Import with `import pecos` (not `import quantum_pecos`).
 
+    !!! tip "Pre-release versions"
+        To install the latest development version from PyPI:
+        ```bash
+        pip install quantum-pecos --pre
+        ```
+        Or a specific version: `pip install quantum-pecos==0.8.0.dev0`
+
 === ":fontawesome-brands-rust: Rust"
 
     Add to your `Cargo.toml`:
@@ -143,3 +150,17 @@ Most users won't need these, but they're available for specialized use cases:
 
 !!! tip "Python users"
     Pre-built wheels include LLVM support—no extra setup needed.
+
+## Uninstalling
+
+To remove PECOS:
+
+=== ":fontawesome-brands-python: Python"
+
+    ```bash
+    pip uninstall quantum-pecos pecos-rslib
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
+
+    Remove the `pecos` dependency from your `Cargo.toml`.

@@ -12,15 +12,11 @@ readme.workspace = true
 description = "Numerical computing support for PECOS quantum error correction simulations"
 
 [dependencies]
-# Comprehensive numerical computing library (for Newton, polynomial fitting)
-peroxide.workspace = true
+# Linear algebra (for polynomial fitting, curve fitting, matrix operations)
+nalgebra.workspace = true
 
-# Root finding (for Brent's method only - Peroxide doesn't have it)
-roots.workspace = true
-
-# Curve fitting (scipy-compatible API, better match than Peroxide's AD-based optimizer)
+# Non-linear curve fitting (Levenberg-Marquardt algorithm)
 levenberg-marquardt.workspace = true
-nalgebra.workspace = true  # Required by levenberg-marquardt
 
 # Array interface (for API compatibility and return types)
 ndarray.workspace = true

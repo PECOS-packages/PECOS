@@ -25,7 +25,7 @@
 use anyhow::{Result, anyhow, bail};
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_qulacs::QulacsStateVec;
-use rand_chacha::ChaCha8Rng;
+use pecos_rng::PecosRng;
 use selene_core::export_simulator_plugin;
 use selene_core::simulator::SimulatorInterface;
 use selene_core::simulator::interface::SimulatorInterfaceFactory;
@@ -36,7 +36,7 @@ use std::sync::Arc;
 /// The PECOS Qulacs simulator wrapped for Selene compatibility.
 pub struct QulacsSimulator {
     /// The underlying PECOS Qulacs state vector simulator
-    simulator: QulacsStateVec<ChaCha8Rng>,
+    simulator: QulacsStateVec<PecosRng>,
     /// Number of qubits in the system
     n_qubits: u64,
     /// Cumulative probability of postselection outcomes

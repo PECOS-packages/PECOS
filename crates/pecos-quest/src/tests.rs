@@ -3,9 +3,9 @@
 #[cfg(test)]
 use crate::{QuestDensityMatrix, QuestStateVec};
 #[cfg(test)]
-use approx::assert_relative_eq;
-#[cfg(test)]
 use num_complex::Complex64;
+#[cfg(test)]
+use pecos_num::assert_relative_eq;
 #[cfg(test)]
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 #[cfg(test)]
@@ -395,14 +395,13 @@ fn test_rzz_gate() {
 #[test]
 fn test_rng_management() {
     use pecos_core::rng::RngManageable;
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha8Rng;
+    use pecos_rng::PecosRng;
 
     let mut sim = QuestStateVec::new(2);
 
     // Set a new RNG
-    let new_rng = ChaCha8Rng::seed_from_u64(12345);
-    sim.set_rng(new_rng).unwrap();
+    let new_rng = PecosRng::seed_from_u64(12345);
+    sim.set_rng(new_rng);
 
     // Should be able to get RNG reference
     let _ = sim.rng();
@@ -414,7 +413,7 @@ fn test_set_seed() {
     use pecos_core::rng::RngManageable;
 
     let mut sim = QuestStateVec::new(2);
-    sim.set_seed(9999).unwrap();
+    sim.set_seed(9999);
 
     // Subsequent random operations should be deterministic
     // (though we don't have random operations in basic gates)

@@ -16,9 +16,9 @@
 //! in noise models through the `NoiseRng` wrapper.
 
 use crate::Gate;
+use pecos_rng::rng_ext::RngProbabilityExt;
+use pecos_rng::{PecosRng, Rng, SeedableRng};
 use rand::prelude::Distribution;
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha8Rng;
 use std::ops::Range;
 
 /// Wrapper for random number generator used by noise models
@@ -26,7 +26,7 @@ use std::ops::Range;
 /// Provides a common interface to random number generator functionality
 /// for all noise models.
 #[derive(Debug, Clone)]
-pub struct NoiseRng<R: Rng + Clone = ChaCha8Rng> {
+pub struct NoiseRng<R: Rng + Clone = PecosRng> {
     rng: R,
 }
 
@@ -36,7 +36,7 @@ impl<R: Rng + Clone> NoiseRng<R> {
         Self { rng }
     }
 
-    /// Create a new `NoiseRng` with a seeded `ChaCha8Rng`
+    /// Create a new `NoiseRng` with a seeded RNG
     #[must_use]
     pub fn with_seed(seed: u64) -> Self
     where
@@ -63,7 +63,8 @@ impl<R: Rng + Clone> NoiseRng<R> {
     /// `true` if the event occurs, `false` otherwise
     pub fn occurs(&mut self, probability: f64) -> bool {
         debug_assert!((0.0..=1.0).contains(&probability));
-        self.rng.random_bool(probability)
+        let threshold = self.rng.probability_threshold(probability);
+        self.rng.check_probability(threshold)
     }
 
     /// Generate a random integer in the given range
@@ -125,17 +126,16 @@ impl<R: Rng + Clone> NoiseRng<R> {
     ///
     /// A `GateCommand` representing the Pauli operation, or `None` if no operation
     pub fn random_pauli_or_none(&mut self, qubit: usize) -> Option<Gate> {
-        // Generate a random int from 0 to 3
+        // Use optimized random_index_4 which efficiently selects from 0-3
         // 0: No operation (identity)
         // 1: X gate
         // 2: Y gate
         // 3: Z gate
-        match self.random_int(0..4) {
+        match self.rng.random_index_4() {
             0 => None,
             1 => Some(Gate::x(&[qubit])),
             2 => Some(Gate::y(&[qubit])),
-            3 => Some(Gate::z(&[qubit])),
-            _ => unreachable!(),
+            _ => Some(Gate::z(&[qubit])),
         }
     }
 }
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn test_noise_rng_random_float() {
-        let mut rng = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
         let value = rng.random_float();
         assert!((0.0..=1.0).contains(&value));
 
@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn test_noise_rng_occurs() {
-        let mut rng = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
 
         // With probability 0, should never occur
         for _ in 0..100 {
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn test_noise_rng_random_int() {
-        let mut rng = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
 
         // Test with a range of 0..3
         for _ in 0..100 {
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_random_pauli_or_none() {
-        let mut rng = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
 
         // Count occurrences of each gate type
         let mut none_count = 0;
@@ -267,8 +267,8 @@ mod tests {
     #[test]
     fn test_seed_determinism_basic() {
         // Test that the same seed produces the same sequence of random numbers
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         for _ in 0..SAMPLE_SIZE {
             assert!(
@@ -284,8 +284,8 @@ mod tests {
         let seed_pairs = [(42, 42), (123, 123), (999, 999), (0, 0)];
 
         for (seed1, seed2) in seed_pairs {
-            let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(seed1);
-            let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(seed2);
+            let mut rng1 = NoiseRng::<PecosRng>::with_seed(seed1);
+            let mut rng2 = NoiseRng::<PecosRng>::with_seed(seed2);
 
             for _ in 0..SAMPLE_SIZE {
                 assert!(
@@ -302,8 +302,8 @@ mod tests {
         let seed_pairs = [(42, 43), (123, 124), (999, 1000), (0, 1)];
 
         for (seed1, seed2) in seed_pairs {
-            let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(seed1);
-            let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(seed2);
+            let mut rng1 = NoiseRng::<PecosRng>::with_seed(seed1);
+            let mut rng2 = NoiseRng::<PecosRng>::with_seed(seed2);
 
             let mut found_difference = false;
             for _ in 0..SAMPLE_SIZE {
@@ -323,13 +323,13 @@ mod tests {
     fn test_seed_determinism_reset() {
         // Test that resetting with the same seed produces the same sequence
         let seed = 42;
-        let mut rng = NoiseRng::<ChaCha8Rng>::with_seed(seed);
+        let mut rng = NoiseRng::<PecosRng>::with_seed(seed);
 
         // First sequence
         let results1: Vec<f64> = (0..SAMPLE_SIZE).map(|_| rng.random_float()).collect();
 
         // Reset and get second sequence
-        rng = NoiseRng::<ChaCha8Rng>::with_seed(seed);
+        rng = NoiseRng::<PecosRng>::with_seed(seed);
         let results2: Vec<f64> = (0..SAMPLE_SIZE).map(|_| rng.random_float()).collect();
 
         // Compare the floats with epsilon tolerance
@@ -345,8 +345,8 @@ mod tests {
     fn test_seed_determinism_distribution() {
         // Test that the same seed produces the same sequence for different distributions
         let seed = 42;
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(seed);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(seed);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(seed);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(seed);
 
         // Test uniform distribution
         let uniform = Uniform::new(0.0, 1.0).unwrap();
@@ -360,8 +360,8 @@ mod tests {
         }
 
         // Reset RNGs
-        rng1 = NoiseRng::<ChaCha8Rng>::with_seed(seed);
-        rng2 = NoiseRng::<ChaCha8Rng>::with_seed(seed);
+        rng1 = NoiseRng::<PecosRng>::with_seed(seed);
+        rng2 = NoiseRng::<PecosRng>::with_seed(seed);
 
         // Test weighted index distribution
         let weights = vec![0.3, 0.7];
@@ -379,8 +379,8 @@ mod tests {
     fn test_seed_determinism_interleaved() {
         // Test that interleaved operations maintain determinism
         let seed = 42;
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(seed);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(seed);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(seed);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(seed);
 
         let uniform = Uniform::new(0.0, 1.0).unwrap();
         let weights = vec![0.3, 0.7];

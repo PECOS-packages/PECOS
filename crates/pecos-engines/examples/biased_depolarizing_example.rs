@@ -60,7 +60,7 @@ fn example1_different_bias_levels(circ: &ByteMessage, quantum: &StateVecEngine) 
         let mut system = QuantumSystem::new(Box::new(noise), Box::new(quantum.clone()));
 
         // For deterministic testing, set a fixed seed
-        system.set_seed(42).expect("Failed to set seed");
+        system.set_seed(42);
 
         // Run the circuit multiple times and collect statistics
         let mut counts = BTreeMap::new();
@@ -179,7 +179,7 @@ fn example3_bell_state() {
     let mut system2 = QuantumSystem::new(Box::new(noise2), quantum2);
 
     // Set a fixed seed for deterministic results
-    system2.set_seed(42).expect("Failed to set seed");
+    system2.set_seed(42);
 
     // Run the bell circuit multiple times and collect statistics
     let num_shots = 1000;

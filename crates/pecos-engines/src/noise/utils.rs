@@ -397,7 +397,7 @@ mod tests {
     use crate::byte_message::GateType;
     use crate::noise::noise_rng::NoiseRng;
     use crate::noise::weighted_sampler::SingleQubitWeightedSampler;
-    use rand_chacha::ChaCha8Rng;
+    use pecos_rng::PecosRng;
     use std::collections::BTreeMap;
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -452,7 +452,7 @@ mod tests {
 
     #[test]
     fn test_sample_paulis() {
-        let mut rng = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
 
         // Test with a valid model
         // Note: Weights must sum to exactly 1.0 to pass the strict normalization check
@@ -548,7 +548,7 @@ mod tests {
         // Define constants at the beginning
         const SAMPLE_SIZE: usize = 10000;
 
-        let mut rng = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
 
         // Test with a valid model including leakage
         // Note: Weights must sum to exactly 1.0 to pass the strict normalization check

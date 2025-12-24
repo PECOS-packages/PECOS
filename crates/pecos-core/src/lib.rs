@@ -34,7 +34,7 @@ pub use element::{Element, IndexableElement};
 pub use phase::quarter_phase::QuarterPhase;
 pub use phase::sign::Sign;
 pub use qubit_id::QubitId;
-pub use rng::RngManageable;
+pub use rng::{RngManageable, derive_seed};
 pub use sets::set::Set;
 pub use sets::vec_set::VecSet;
 

@@ -18,12 +18,31 @@ requires_llvm = true
 
 [crates.pecos-ldpc-decoders]
 dependencies = [
-    "stim",
-    "pymatching",
     "ldpc",
-    "tesseract",
-    "chromobius",
+    "stim",
     "boost",
+]
+requires_llvm = false
+
+[crates.pecos-pymatching]
+dependencies = [
+    "pymatching",
+    "stim",
+]
+requires_llvm = false
+
+[crates.pecos-tesseract]
+dependencies = [
+    "tesseract",
+    "stim",
+]
+requires_llvm = false
+
+[crates.pecos-chromobius]
+dependencies = [
+    "chromobius",
+    "pymatching",
+    "stim",
 ]
 requires_llvm = false
 

@@ -10,7 +10,31 @@ use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use itertools::Itertools;
+/// Extension trait providing `exactly_one()` for iterators.
+trait ExactlyOneExt: Iterator + Sized {
+    /// Returns the single element of an iterator, or an error if there are zero or multiple.
+    fn exactly_one(mut self) -> std::result::Result<Self::Item, ExactlyOneError> {
+        match self.next() {
+            None => Err(ExactlyOneError::Empty),
+            Some(first) => {
+                if self.next().is_some() {
+                    Err(ExactlyOneError::Multiple)
+                } else {
+                    Ok(first)
+                }
+            }
+        }
+    }
+}
+
+impl<I: Iterator> ExactlyOneExt for I {}
+
+/// Error returned when `exactly_one()` fails.
+#[derive(Debug)]
+enum ExactlyOneError {
+    Empty,
+    Multiple,
+}
 use tket::hugr::envelope::EnvelopeConfig;
 #[allow(deprecated)]
 use tket::hugr::llvm::extension::int::IntCodegenExtension;
@@ -38,7 +62,6 @@ use tket_qsystem::llvm::{
     debug::DebugCodegenExtension, prelude::QISPreludeCodegen, qsystem::QSystemCodegenExtension,
     random::RandomCodegenExtension, result::ResultsCodegenExtension, utils::UtilsCodegenExtension,
 };
-use tracing::{Level, event, instrument};
 
 // Import read_hugr_envelope from utils module
 use crate::utils::read_hugr_envelope;
@@ -297,13 +320,12 @@ fn optimize_module(
 
 /// Compile the given HUGR to an LLVM module
 /// This function is the primary entry point for the compiler
-#[instrument(skip(args, ctx, hugr), parent = None)]
 fn compile<'c, 'hugr: 'c>(
     args: &CompileArgs,
     ctx: &'c Context,
     hugr: &'hugr mut Hugr,
 ) -> Result<Module<'c>> {
-    event!(Level::DEBUG, "starting primary compilation");
+    log::debug!("starting primary compilation");
     let namer = Rc::new(Namer::new("__hugr__.", true));
 
     // Find the entry point

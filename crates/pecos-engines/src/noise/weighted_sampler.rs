@@ -454,7 +454,7 @@ impl CrosstalkWeightedSampler {
 mod tests {
     use super::*;
     use crate::noise::noise_rng::NoiseRng;
-    use rand_chacha::ChaCha8Rng;
+    use pecos_rng::PecosRng;
 
     const SAMPLE_SIZE: usize = 100;
 
@@ -474,8 +474,8 @@ mod tests {
         let sampler2 = WeightedSampler::new(&weights2);
 
         // Use the same seed for both RNGs
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         // Sample from both samplers
         let results1: Vec<String> = (0..SAMPLE_SIZE)
@@ -510,8 +510,8 @@ mod tests {
         let sampler2 = WeightedSampler::new(&weights2);
 
         // Use the same seed for both RNGs
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         // Sample from both samplers
         let results1: Vec<String> = (0..SAMPLE_SIZE)
@@ -538,8 +538,8 @@ mod tests {
         let sampler = WeightedSampler::new(&weights);
 
         // Create two RNGs with the same seed
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         // Sample from both RNGs
         let results1: Vec<String> = (0..SAMPLE_SIZE)
@@ -569,8 +569,8 @@ mod tests {
         let seed_pairs = [(42, 42), (123, 123), (999, 999), (0, 0)];
 
         for (seed1, seed2) in seed_pairs {
-            let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(seed1);
-            let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(seed2);
+            let mut rng1 = NoiseRng::<PecosRng>::with_seed(seed1);
+            let mut rng2 = NoiseRng::<PecosRng>::with_seed(seed2);
 
             let results1: Vec<String> = (0..SAMPLE_SIZE)
                 .map(|_| sampler.sample(&mut rng1))
@@ -599,8 +599,8 @@ mod tests {
         let seed_pairs = [(42, 43), (123, 124), (999, 1000), (0, 1)];
 
         for (seed1, seed2) in seed_pairs {
-            let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(seed1);
-            let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(seed2);
+            let mut rng1 = NoiseRng::<PecosRng>::with_seed(seed1);
+            let mut rng2 = NoiseRng::<PecosRng>::with_seed(seed2);
 
             let results1: Vec<String> = (0..SAMPLE_SIZE)
                 .map(|_| sampler.sample(&mut rng1))
@@ -628,8 +628,8 @@ mod tests {
         let sampler = SingleQubitWeightedSampler::new(&weights);
 
         // Create two RNGs with the same seed
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         // Sample from both RNGs
         let results1: Vec<SingleQubitNoiseResult> = (0..SAMPLE_SIZE)
@@ -669,8 +669,8 @@ mod tests {
         let sampler = TwoQubitWeightedSampler::new(&weights);
 
         // Create two RNGs with the same seed
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         // Sample from both RNGs
         let results1: Vec<TwoQubitNoiseResult> = (0..SAMPLE_SIZE)
@@ -718,8 +718,8 @@ mod tests {
         let sampler = CrosstalkWeightedSampler::new(&weights);
 
         // Create two RNGs with the same seed
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         // Sample from both RNGs
         let results1: Vec<SingleQubitNoiseResult> = (0..SAMPLE_SIZE)
@@ -757,11 +757,11 @@ mod tests {
         let seed = 42;
 
         // First sequence
-        let mut rng = NoiseRng::<ChaCha8Rng>::with_seed(seed);
+        let mut rng = NoiseRng::<PecosRng>::with_seed(seed);
         let results1: Vec<String> = (0..SAMPLE_SIZE).map(|_| sampler.sample(&mut rng)).collect();
 
         // Reset RNG with same seed
-        rng = NoiseRng::<ChaCha8Rng>::with_seed(seed);
+        rng = NoiseRng::<PecosRng>::with_seed(seed);
         let results2: Vec<String> = (0..SAMPLE_SIZE).map(|_| sampler.sample(&mut rng)).collect();
 
         // Verify exact sequence match
@@ -779,14 +779,14 @@ mod tests {
         weights.insert("B".to_string(), 0.7);
 
         let sampler = WeightedSampler::new(&weights);
-        let mut rng = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
 
         // Take two consecutive samples
         let result1 = sampler.sample(&mut rng);
         let result2 = sampler.sample(&mut rng);
 
         // Reset RNG and take the same two samples
-        rng = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        rng = NoiseRng::<PecosRng>::with_seed(42);
         let result3 = sampler.sample(&mut rng);
         let result4 = sampler.sample(&mut rng);
 
@@ -809,8 +809,8 @@ mod tests {
         let sampler1 = WeightedSampler::new(&weights1);
         let sampler2 = WeightedSampler::new(&weights2);
 
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         // Interleaved sampling
         let results1: Vec<String> = (0..SAMPLE_SIZE)
@@ -824,8 +824,8 @@ mod tests {
             .collect();
 
         // Reset RNGs and repeat
-        rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         let results2: Vec<String> = (0..SAMPLE_SIZE)
             .map(|_| {
@@ -850,8 +850,8 @@ mod tests {
         weights.insert("A".to_string(), 1.0); // Single outcome with probability 1.0
 
         let sampler = WeightedSampler::new(&weights);
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         // Should always get "A" regardless of RNG state
         let results1: Vec<String> = (0..SAMPLE_SIZE)
@@ -878,8 +878,8 @@ mod tests {
         weights.insert("L".to_string(), 1.0); // Always leak
 
         let sampler = SingleQubitWeightedSampler::new(&weights);
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         let results1: Vec<SingleQubitNoiseResult> = (0..SAMPLE_SIZE)
             .map(|_| sampler.sample_gates(&mut rng1, 0))
@@ -906,8 +906,8 @@ mod tests {
         weights.insert("LL".to_string(), 1.0); // Always leak both qubits
 
         let sampler = TwoQubitWeightedSampler::new(&weights);
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         let results1: Vec<TwoQubitNoiseResult> = (0..SAMPLE_SIZE)
             .map(|_| sampler.sample_gates(&mut rng1, 0, 1))
@@ -942,8 +942,8 @@ mod tests {
         weights.insert("1->L".to_string(), 1.0); // Always leak
 
         let sampler = CrosstalkWeightedSampler::new(&weights);
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         let results1: Vec<SingleQubitNoiseResult> = (0..SAMPLE_SIZE)
             .map(|_| sampler.sample_gates(&mut rng1, 0, 1))

@@ -23,8 +23,7 @@ use log::debug;
 use pecos_core::errors::PecosError;
 use pecos_core::rng::RngManageable;
 use pecos_core::rng::rng_manageable::derive_seed;
-use rand::{RngCore, SeedableRng};
-use rand_chacha::ChaCha8Rng;
+use pecos_rng::PecosRng;
 use rayon::{
     ThreadPoolBuilder,
     iter::{IntoParallelIterator, ParallelIterator},
@@ -91,7 +90,9 @@ pub struct MonteCarloEngine {
     /// Template `HybridEngine` that is cloned for each worker
     pub hybrid_engine_template: HybridEngine,
     /// Random number generator for seed generation
-    pub rng: ChaCha8Rng,
+    pub rng: PecosRng,
+    /// The seed used to initialize the RNG
+    pub seed: u64,
     /// Default number of worker threads
     pub default_workers: usize,
 }
@@ -199,20 +200,15 @@ impl MonteCarloEngine {
     ///
     /// Setting a seed ensures deterministic behavior across runs with the same seed.
     /// This method sets the seed for:
-    /// - The internal `ChaCha8Rng` used for shot distribution
+    /// - The internal `PecosRng` used for shot distribution
     /// - The template `HybridEngine` (which sets seeds for the noise model and quantum engine)
     ///
     /// # Arguments
     /// * `seed` - The seed value for the random number generators
-    ///
-    /// # Returns
-    /// Result indicating success or failure
-    ///
-    /// # Errors
-    /// Returns a `PecosError` if setting the seed fails for any component
-    pub fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
-        self.rng = ChaCha8Rng::seed_from_u64(seed);
-        self.hybrid_engine_template.set_seed(seed)
+    pub fn set_seed(&mut self, seed: u64) {
+        self.seed = seed;
+        self.rng = PecosRng::seed_from_u64(seed);
+        self.hybrid_engine_template.set_seed(seed);
     }
 
     /// Run a Monte Carlo simulation with the specified number of shots and worker threads.
@@ -298,12 +294,7 @@ impl MonteCarloEngine {
                 // Create worker engine with derived seed
                 let mut engine = self.hybrid_engine_template.clone();
                 let worker_seed = derive_seed(base_seed, &format!("worker_{worker_idx}"));
-
-                if let Err(e) = engine.set_seed(worker_seed) {
-                    return Err(PecosError::Processing(format!(
-                        "Failed to set seed for worker {worker_idx}: {e}"
-                    )));
-                }
+                engine.set_seed(worker_seed);
 
                 // Process all shots for this worker
                 debug!(
@@ -434,7 +425,7 @@ impl MonteCarloEngine {
             .build();
 
         if let Some(s) = seed {
-            engine.set_seed(s)?;
+            engine.set_seed(s);
         }
 
         engine.run_with_workers(num_shots, num_workers)
@@ -479,7 +470,7 @@ impl MonteCarloEngine {
 
         // Set seed if provided
         if let Some(s) = seed {
-            hybrid_engine.set_seed(s)?;
+            hybrid_engine.set_seed(s);
         }
 
         Self::run_with_hybrid_engine(hybrid_engine, num_shots, num_workers, seed)
@@ -523,7 +514,7 @@ impl MonteCarloEngine {
 
         // Set seed if provided
         if let Some(s) = seed {
-            hybrid_engine.set_seed(s)?;
+            hybrid_engine.set_seed(s);
         }
 
         Self::run_with_hybrid_engine(hybrid_engine, num_shots, num_workers, seed)
@@ -560,9 +551,7 @@ impl MonteCarloEngine {
         let mut noise_model = crate::noise::DepolarizingNoiseModel::new_uniform(p);
 
         if let Some(s) = seed {
-            noise_model
-                .set_seed(derive_seed(s, "noise_model"))
-                .map_err(|e| PecosError::Processing(format!("Failed to set seed: {e}")))?;
+            noise_model.set_seed(derive_seed(s, "noise_model"));
         }
 
         // Run simulation with external classical engine
@@ -581,6 +570,7 @@ impl Clone for MonteCarloEngine {
         Self {
             hybrid_engine_template: self.hybrid_engine_template.clone(),
             rng: self.rng.clone(),
+            seed: self.seed,
             default_workers: self.default_workers,
         }
     }

@@ -22,9 +22,9 @@ cxx.workspace = true
 pecos-core.workspace = true
 pecos-qsim.workspace = true
 pecos-engines.workspace = true
+pecos-rng.workspace = true
 num-complex.workspace = true
 rand.workspace = true
-rand_chacha.workspace = true
 libloading.workspace = true
 log.workspace = true
 dirs.workspace = true
@@ -37,7 +37,7 @@ env_logger.workspace = true
 dirs.workspace = true
 
 [dev-dependencies]
-approx.workspace = true
+pecos-num.workspace = true
 
 [lints]
 workspace = true

@@ -7,7 +7,6 @@
 
 #[cfg(test)]
 mod tests {
-    use pecos::qis_engine;
     use pecos_engines::sim;
     use pecos_programs::{Hugr, Qasm, Qis};
     use pecos_qasm::qasm_engine;
@@ -21,8 +20,11 @@ mod tests {
         let _ = qasm_engine().program(program);
     }
 
+    #[cfg(feature = "qis")]
     #[test]
     fn test_qis_engine_builder_creation() {
+        use pecos::qis_engine;
+
         // Test that builder can be created (doesn't require interface/runtime)
         let _ = qis_engine();
 

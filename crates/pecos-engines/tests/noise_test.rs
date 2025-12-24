@@ -25,7 +25,7 @@ fn count_results(
 ) -> BTreeMap<String, usize> {
     let quantum = Box::new(StateVecEngine::new(num_qubits));
     let mut system = QuantumSystem::new(Box::new(noise_model), quantum);
-    system.set_seed(42).expect("Failed to set seed");
+    system.set_seed(42);
 
     let mut counts = BTreeMap::new();
 
@@ -832,7 +832,7 @@ fn test_seed_effect() {
     for seed in [42, 100, 999] {
         // Create a copy of the noise model with a different seed
         let mut model_copy = noise_model.clone();
-        model_copy.set_seed(seed).expect("Failed to set seed");
+        model_copy.set_seed(seed);
 
         // Run the circuit
         let counts = count_results(model_copy.clone(), &circ, NUM_SHOTS, 1);
@@ -848,7 +848,7 @@ fn test_seed_effect() {
 
     // Create a copy of the model that we can use in test_debug_x_gate_noise that passes
     let mut debug_model = noise_model.clone();
-    debug_model.set_seed(42).expect("Failed to set seed");
+    debug_model.set_seed(42);
 
     // Now run the code from the test_debug_x_gate_noise function that already works
     println!("\nRunning with the approach from test_debug_x_gate_noise (which passes):");

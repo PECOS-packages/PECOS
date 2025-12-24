@@ -8,14 +8,13 @@
 use pecos_core::RngManageable;
 use pecos_core::rng::{RecordingRng, ReplayingRng};
 use pecos_qsim::{CliffordGateable, StateVec};
-use rand::SeedableRng;
-use rand_chacha::ChaCha8Rng;
+use pecos_rng::PecosRng;
 
 fn main() {
     println!("=== RNG Recording and Replay Example ===\n");
 
     // Step 1: Create a simulator with RecordingRng
-    let base_rng = ChaCha8Rng::seed_from_u64(42);
+    let base_rng = PecosRng::seed_from_u64(42);
     let recording_rng = RecordingRng::new(base_rng);
     let mut sim_recording = StateVec::with_rng(2, recording_rng);
 

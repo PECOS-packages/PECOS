@@ -1,8 +1,8 @@
 //! Basic tests for the `QuEST` wrapper using PECOS-style API
 
-use approx::assert_relative_eq;
+use pecos_num::assert_relative_eq;
 use pecos_quest::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, QuestStateVec};
-use rand_chacha::ChaCha8Rng;
+use pecos_rng::PecosRng;
 
 #[test]
 fn test_state_creation() {
@@ -16,8 +16,8 @@ fn test_state_creation() {
 
 #[test]
 fn test_state_with_seed() {
-    let state1: QuestStateVec<ChaCha8Rng> = QuestStateVec::with_seed(3, 42);
-    let state2: QuestStateVec<ChaCha8Rng> = QuestStateVec::with_seed(3, 42);
+    let state1: QuestStateVec<PecosRng> = QuestStateVec::with_seed(3, 42);
+    let state2: QuestStateVec<PecosRng> = QuestStateVec::with_seed(3, 42);
 
     assert_eq!(state1.num_qubits(), 3);
     assert_eq!(state2.num_qubits(), 3);

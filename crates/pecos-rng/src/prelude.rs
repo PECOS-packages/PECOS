@@ -14,8 +14,22 @@
 //!
 //! This prelude re-exports the PCG random number generator module.
 
-// Re-export RNG module
+// Re-export RNG modules
+pub use crate::quality_rng;
+pub use crate::rng;
+pub use crate::rng_ext;
+pub use crate::rng_manageable;
 pub use crate::rng_pcg;
+pub use crate::scalar_rng;
 
-// Re-export PCG random types from the module
+// Re-export rand traits for convenience
+pub use rand::Rng;
+pub use rand_core::{RngCore, SeedableRng};
+
+// Re-export types
+pub use crate::quality_rng::{PecosQualityRng, SimdXoshiro256PlusPlus};
+pub use crate::rng::{ParallelRapidRng, PecosRng};
+pub use crate::rng_ext::{RngBulkExt, RngProbabilityExt};
+pub use crate::rng_manageable::{RngManageable, derive_seed};
 pub use crate::rng_pcg::{PCG64Fast, PCGRandom};
+pub use crate::scalar_rng::PecosScalarRng;

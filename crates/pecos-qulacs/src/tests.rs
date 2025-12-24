@@ -308,14 +308,13 @@ mod qulacs_tests {
 
     #[test]
     fn test_rng_management() {
-        use rand::SeedableRng;
-        use rand_chacha::ChaCha8Rng;
+        use pecos_rng::PecosRng;
 
         let mut sim = QulacsStateVec::new(1);
 
         // Set a specific RNG
-        let new_rng = ChaCha8Rng::seed_from_u64(123);
-        sim.set_rng(new_rng).unwrap();
+        let new_rng = PecosRng::seed_from_u64(123);
+        sim.set_rng(new_rng);
 
         // Prepare superposition and measure
         sim.h(0usize);
@@ -326,8 +325,8 @@ mod qulacs_tests {
         }
 
         // Reset RNG with same seed - should get same results
-        let new_rng = ChaCha8Rng::seed_from_u64(123);
-        sim.set_rng(new_rng).unwrap();
+        let new_rng = PecosRng::seed_from_u64(123);
+        sim.set_rng(new_rng);
 
         let mut results2 = Vec::new();
         for _ in 0..10 {

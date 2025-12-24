@@ -41,7 +41,7 @@ fn main() {
 
     // Also set seed on the system if provided
     if let Some(seed) = seed_option {
-        system.set_seed(seed).expect("failed to set seed");
+        system.set_seed(seed);
     }
 
     print!("[");

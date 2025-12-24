@@ -14,9 +14,8 @@
 
 use core::fmt::Debug;
 use num_complex::Complex64;
-use pecos_core::prelude::PecosError;
+use pecos_rng::PecosRng;
 use rand::{RngCore, SeedableRng};
-use rand_chacha::ChaCha8Rng;
 use std::f64::consts::FRAC_PI_4;
 use thiserror::Error;
 
@@ -124,7 +123,7 @@ unsafe impl Sync for QuregWrapper {}
 
 /// A quantum state simulator using the `QuEST` state vector representation
 #[derive(Debug)]
-pub struct QuestStateVec<R = ChaCha8Rng>
+pub struct QuestStateVec<R = PecosRng>
 where
     R: RngCore + SeedableRng + Debug,
 {
@@ -467,9 +466,8 @@ where
 {
     type Rng = R;
 
-    fn set_rng(&mut self, rng: Self::Rng) -> std::result::Result<(), PecosError> {
+    fn set_rng(&mut self, rng: Self::Rng) {
         self.rng = rng;
-        Ok(())
     }
 
     fn rng(&self) -> &Self::Rng {
@@ -508,7 +506,7 @@ unsafe impl<R> Sync for QuestStateVec<R> where R: RngCore + SeedableRng + Debug 
 
 /// A quantum density matrix simulator using `QuEST`'s density matrix representation
 #[derive(Debug)]
-pub struct QuestDensityMatrix<R = ChaCha8Rng>
+pub struct QuestDensityMatrix<R = PecosRng>
 where
     R: RngCore + SeedableRng + Debug,
 {
@@ -863,9 +861,8 @@ where
 {
     type Rng = R;
 
-    fn set_rng(&mut self, rng: Self::Rng) -> std::result::Result<(), PecosError> {
+    fn set_rng(&mut self, rng: Self::Rng) {
         self.rng = rng;
-        Ok(())
     }
 
     fn rng(&self) -> &Self::Rng {

@@ -5,8 +5,7 @@ mod thread_safety_tests {
     use crate::QulacsStateVec;
     use pecos_core::RngManageable;
     use pecos_qsim::{CliffordGateable, QuantumSimulator};
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha8Rng;
+    use pecos_rng::PecosRng;
     use std::sync::{Arc, Mutex};
     use std::thread;
 
@@ -100,8 +99,7 @@ mod thread_safety_tests {
             .map(|thread_id| {
                 let mut sim = template.clone();
                 // Give each thread a different seed to avoid correlation
-                sim.set_rng(ChaCha8Rng::seed_from_u64(123 + thread_id as u64 * 1000))
-                    .unwrap();
+                sim.set_rng(PecosRng::seed_from_u64(123 + thread_id as u64 * 1000));
 
                 thread::spawn(move || {
                     let mut measurement_results = Vec::new();

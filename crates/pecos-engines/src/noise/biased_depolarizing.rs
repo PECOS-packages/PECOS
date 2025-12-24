@@ -16,7 +16,7 @@ use crate::engine_system::{ControlEngine, EngineStage};
 use crate::noise::{NoiseModel, NoiseRng, NoiseUtils, ProbabilityValidator, RngManageable};
 use log::trace;
 use pecos_core::errors::PecosError;
-use rand_chacha::ChaCha8Rng;
+use pecos_rng::PecosRng;
 use std::any::Any;
 
 /// Implements general noise model for quantum simulations, combining
@@ -37,7 +37,7 @@ use std::any::Any;
 ///
 /// // Create with direct constructor
 /// let mut noise_model = BiasedDepolarizingNoiseModel::new(0.01, 0.02, 0.03, 0.04, 0.05);
-/// noise_model.set_seed(42).unwrap(); // For reproducibility
+/// noise_model.set_seed(42); // For reproducibility
 ///
 /// // Or use the builder pattern
 /// let noise_model = BiasedDepolarizingNoiseModel::builder()
@@ -67,7 +67,7 @@ pub struct BiasedDepolarizingNoiseModel {
     /// Probability of applying an error after two-qubit gates
     p2: f64,
     /// Random number generator
-    rng: NoiseRng<ChaCha8Rng>,
+    rng: NoiseRng<PecosRng>,
 }
 
 impl ProbabilityValidator for BiasedDepolarizingNoiseModel {}
@@ -445,11 +445,10 @@ impl NoiseModel for BiasedDepolarizingNoiseModel {
 }
 
 impl RngManageable for BiasedDepolarizingNoiseModel {
-    type Rng = ChaCha8Rng;
+    type Rng = PecosRng;
 
-    fn set_rng(&mut self, rng: ChaCha8Rng) -> Result<(), PecosError> {
+    fn set_rng(&mut self, rng: PecosRng) {
         self.rng = NoiseRng::new(rng);
-        Ok(())
     }
 
     fn rng(&self) -> &Self::Rng {
@@ -591,7 +590,7 @@ impl BiasedDepolarizingNoiseModelBuilder {
         // Set the seed if provided
         if let Some(seed) = self.seed {
             // Use RngManageable::set_seed directly
-            noise.set_seed(seed).expect("Failed to set seed");
+            noise.set_seed(seed);
         }
 
         noise

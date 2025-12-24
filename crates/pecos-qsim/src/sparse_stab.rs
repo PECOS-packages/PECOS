@@ -13,10 +13,9 @@
 use crate::{CliffordGateable, Gens, MeasurementResult, QuantumSimulator};
 use core::fmt::Debug;
 use core::mem;
-use pecos_core::errors::PecosError;
 use pecos_core::{IndexableElement, RngManageable, Set, VecSet};
-use rand::{Rng, RngCore, SeedableRng};
-use rand_chacha::ChaCha8Rng;
+use pecos_rng::rng_ext::RngProbabilityExt;
+use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
 
 #[expect(clippy::module_name_repetitions)]
 pub type StdSparseStab = SparseStab<VecSet<usize>, usize>;
@@ -40,7 +39,7 @@ pub type StdSparseStab = SparseStab<VecSet<usize>, usize>;
 /// # Type Parameters
 /// - T: A set type that implements the Set trait, used for storing operator locations
 /// - E: An indexable element type that can convert between usize indices
-/// - R: A random number generator type, defaults to `ChaCha8Rng`
+/// - R: A random number generator type, defaults to `PecosRng`
 ///
 /// # Examples
 /// ```rust
@@ -103,7 +102,7 @@ pub type StdSparseStab = SparseStab<VecSet<usize>, usize>;
 /// 2. Ryan-Anderson, "Quantum Algorithms, Architecture, and Error Correction"
 ///    <https://arxiv.org/abs/1812.04735>
 #[derive(Clone, Debug)]
-pub struct SparseStab<T, E, R = ChaCha8Rng>
+pub struct SparseStab<T, E, R = PecosRng>
 where
     T: for<'a> Set<'a, Element = E>,
     E: IndexableElement,
@@ -130,7 +129,7 @@ where
     /// Create a new stabilizer simulator with a specific seed for the random number generator
     ///
     /// This method allows for deterministic behavior by setting a specific seed for the
-    /// random number generator, while still using the default RNG type (`ChaCha8Rng`).
+    /// random number generator, while still using the default RNG type (`PecosRng`).
     ///
     /// # Arguments
     /// * `num_qubits` - Number of qubits in the system
@@ -728,7 +727,7 @@ where
             // There are no stabilizers that anti-commute with Z_q
             self.deterministic_meas(q)
         } else {
-            let result = self.rng.random_bool(0.5);
+            let result = self.rng.coin_flip();
             self.nondeterministic_meas(q, result)
         }
     }
@@ -742,9 +741,8 @@ where
 {
     type Rng = R;
 
-    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), PecosError> {
+    fn set_rng(&mut self, rng: Self::Rng) {
         self.rng = rng;
-        Ok(())
     }
 
     /// Get a read-only reference to the internal random number generator

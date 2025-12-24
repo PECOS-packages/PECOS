@@ -17,10 +17,10 @@
 //! This module provides implementations of polynomial operations,
 //! compatible with numpy.polyfit and numpy.poly1d API.
 //!
-//! Uses Peroxide for linear algebra (SVD solving).
+//! Uses nalgebra for linear algebra operations.
 
+use nalgebra::{DMatrix, DVector};
 use ndarray::{Array1, Array2, ArrayView1};
-use peroxide::fuga::{Col, LU, LinearAlgebra, MatrixTrait, Row, matrix};
 
 /// Error type for polynomial operations.
 #[derive(Debug, Clone)]
@@ -108,36 +108,37 @@ pub fn polyfit(
         });
     }
 
-    // Build Vandermonde matrix using Peroxide
+    // Build Vandermonde matrix using nalgebra
     // For degree 2: [[x0^2, x0, 1], [x1^2, x1, 1], ...]
-    // Flatten to 1D vec for Peroxide's matrix constructor
-    let mut vandermonde_data = Vec::with_capacity(n * (deg + 1));
-    for &xi in x {
+    let mut vandermonde = DMatrix::zeros(n, deg + 1);
+    for (i, &xi) in x.iter().enumerate() {
         for j in 0..=deg {
             // Cast is safe: polynomial degrees are always << i32::MAX
             #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
             let power = (deg - j) as i32;
-            vandermonde_data.push(xi.powi(power));
+            vandermonde[(i, j)] = xi.powi(power);
         }
     }
-    let vandermonde = matrix(vandermonde_data, n, deg + 1, Row);
 
-    // Convert y to vector and then to column matrix
-    let y_vec: Vec<f64> = y.iter().copied().collect();
-    let y_mat = matrix(y_vec.clone(), n, 1, Col);
+    // Convert y to nalgebra vector
+    let y_vec = DVector::from_iterator(n, y.iter().copied());
 
     // Solve least squares: coeffs = (A^T A)^{-1} A^T y
     // where A is the Vandermonde matrix
-    let at = vandermonde.t(); // A^T
+    let at = vandermonde.transpose();
     let gram_matrix = &at * &vandermonde; // A^T A (Gram matrix)
-    let at_y = &at * &y_mat; // A^T y
+    let at_y = &at * &y_vec; // A^T y
 
-    // Solve the normal equations
-    let at_y_vec: Vec<f64> = at_y.data.clone();
-    let coeffs_vec = gram_matrix.solve(&at_y_vec, LU);
+    // Solve the normal equations using LU decomposition
+    let coeffs_vec = gram_matrix
+        .lu()
+        .solve(&at_y)
+        .ok_or_else(|| PolynomialError::LinAlgError {
+            message: "LU decomposition failed to solve system".to_string(),
+        })?;
 
     // Convert back to ndarray
-    let coeffs = Array1::from_vec(coeffs_vec);
+    let coeffs = Array1::from_vec(coeffs_vec.as_slice().to_vec());
 
     log::debug!("polyfit: fitted polynomial of degree {deg} with coeffs: {coeffs:?}");
 
@@ -198,41 +199,44 @@ pub fn polyfit_with_cov(
         });
     }
 
-    // Build Vandermonde matrix using Peroxide
+    // Build Vandermonde matrix using nalgebra
     // For degree 2: [[x0^2, x0, 1], [x1^2, x1, 1], ...]
-    let mut vandermonde_data = Vec::with_capacity(n * (deg + 1));
-    for &xi in x {
+    let mut vandermonde = DMatrix::zeros(n, deg + 1);
+    for (i, &xi) in x.iter().enumerate() {
         for j in 0..=deg {
             #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
             let power = (deg - j) as i32;
-            vandermonde_data.push(xi.powi(power));
+            vandermonde[(i, j)] = xi.powi(power);
         }
     }
-    let vandermonde = matrix(vandermonde_data, n, deg + 1, Row);
 
-    // Convert y to vector and then to column matrix
-    let y_vec: Vec<f64> = y.iter().copied().collect();
-    let y_mat = matrix(y_vec.clone(), n, 1, Col);
+    // Convert y to nalgebra vector
+    let y_vec = DVector::from_iterator(n, y.iter().copied());
 
     // Solve least squares: coeffs = (A^T A)^{-1} A^T y
-    let at = vandermonde.t(); // A^T
+    let at = vandermonde.transpose();
     let gram_matrix = &at * &vandermonde; // A^T A (Gram matrix)
-    let at_y = &at * &y_mat; // A^T y
+    let at_y = &at * &y_vec; // A^T y
 
-    // Solve the normal equations
-    let at_y_vec: Vec<f64> = at_y.data.clone();
-    let coeffs_vec = gram_matrix.solve(&at_y_vec, LU);
+    // Solve the normal equations using LU decomposition
+    let coeffs_vec =
+        gram_matrix
+            .clone()
+            .lu()
+            .solve(&at_y)
+            .ok_or_else(|| PolynomialError::LinAlgError {
+                message: "LU decomposition failed to solve system".to_string(),
+            })?;
 
     // Convert coefficients to ndarray
-    let coeffs = Array1::from_vec(coeffs_vec.clone());
+    let coeffs = Array1::from_vec(coeffs_vec.as_slice().to_vec());
 
     // Compute residuals: residuals = y - A * coeffs
-    let coeffs_mat = matrix(coeffs_vec, deg + 1, 1, Col);
-    let y_pred = &vandermonde * &coeffs_mat;
-    let residuals = &y_mat - &y_pred;
+    let y_pred = &vandermonde * &coeffs_vec;
+    let residuals = &y_vec - &y_pred;
 
     // Compute residual sum of squares
-    let rss: f64 = residuals.data.iter().map(|r| r * r).sum();
+    let rss: f64 = residuals.iter().map(|r| r * r).sum();
 
     // Degrees of freedom
     let dof = n.saturating_sub(deg + 1);
@@ -248,16 +252,22 @@ pub fn polyfit_with_cov(
     };
 
     // Covariance matrix = (A^T A)^{-1} * scale_factor
-    // Invert the Gram matrix
-    let gram_inv = gram_matrix.inv();
+    // Invert the Gram matrix using SVD pseudo-inverse for numerical stability
+    let gram_inv = gram_matrix
+        .svd(true, true)
+        .pseudo_inverse(1e-15)
+        .map_err(|e| PolynomialError::LinAlgError {
+            message: format!("Failed to compute pseudo-inverse: {e}"),
+        })?;
 
-    // Scale by residual variance
-    let cov_data: Vec<f64> = gram_inv.data.iter().map(|&x| x * scale_factor).collect();
-    let cov_matrix = Array2::from_shape_vec((deg + 1, deg + 1), cov_data).map_err(|e| {
-        PolynomialError::NumericalIssue {
-            message: format!("Failed to create covariance matrix: {e}"),
+    // Scale by residual variance and convert to ndarray
+    let n_params = deg + 1;
+    let mut cov_matrix = Array2::zeros((n_params, n_params));
+    for i in 0..n_params {
+        for j in 0..n_params {
+            cov_matrix[[i, j]] = gram_inv[(i, j)] * scale_factor;
         }
-    })?;
+    }
 
     log::debug!("polyfit_with_cov: fitted polynomial of degree {deg} with coeffs: {coeffs:?}");
     log::debug!(

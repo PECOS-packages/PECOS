@@ -1,0 +1,24 @@
+[package]
+name = "pecos-fusion-blossom"
+version.workspace = true
+edition.workspace = true
+readme.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Fusion Blossom decoder wrapper for PECOS"
+
+[dependencies]
+pecos-decoder-core.workspace = true
+ndarray.workspace = true
+thiserror.workspace = true
+fusion-blossom.workspace = true
+
+[lib]
+name = "pecos_fusion_blossom"
+
+[lints]
+workspace = true

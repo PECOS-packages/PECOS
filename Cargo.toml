@@ -28,11 +28,9 @@ categories = ["science", "simulation"]
 
 [workspace.dependencies]
 pyo3 = { version = "0.27", features = ["extension-module"] }
-pyo3-build-config = { version = "0.27", features = ["resolve-config"] }
 rayon = "1"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4.5"
-which = "8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 parking_lot = "0.12"
@@ -49,25 +47,27 @@ tempfile = "3"
 assert_cmd = "2"
 wasmtime = { version = "39", default-features = false, features = ["cranelift", "runtime", "wat", "std"] }
 wat = "1"
-cc = "1"
 ron = "0.12"
 tket = "0.16"
 tket-qsystem = { version = "0.22", default-features = false }
+cc = "1"
 cxx = "1.0.187"
 cxx-build = "1.0.187"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
-tar = "0.4"
 flate2 = "1"
-bzip2 = "0.6"
 sha2 = "0.10"
 dirs = "6"
-approx = "0.5"
-itertools = "0.14"
 inkwell = "0.7"
-bincode = "2"
-tracing = "0.1"
+bincode = { version = "2", features = ["derive"] }
 cargo_metadata = "0.23"
+random_tester = "0.1"
+toml = "0.9"
+wide = "1"
+
+# Archive handling
 xz2 = "0.1"
+bzip2 = "0.6"
+tar = "0.4"
 sevenz-rust = "0.6"
 
 # Logging
@@ -79,8 +79,6 @@ anyhow = "1"
 thiserror = "2"
 
 # Numerical computing
-peroxide = "0.40"
-roots = "0.0.8"
 levenberg-marquardt = "0.15"
 nalgebra = "0.34"
 rustworkx-core = "0.17"
@@ -89,19 +87,22 @@ num-traits = "0.2"
 num-bigint = { version = "0.4", features = ["serde"] }
 bitvec = { version = "1", features = ["serde"] }
 ndarray = "0.17"
+
+# RNG
 rand = "0.9"
-rand_chacha = "0.9"
+rand_core = "0.9"
 rand_xoshiro = "0.7"
-wyrand = { version = "0.3", features = ["rand_core"] }
-romu = "0.7"
-wide = "1"
+rapidhash = { version = "4", features = ["rng"] }
 
 # Windows workaround: Disable zstd-sys legacy feature to avoid MSVC ICE
 # MSVC 14.43 has an internal compiler error (C1001) when compiling zstd_v06.c
 # The legacy feature compiles old zstd formats (v0.1-v0.7) that PECOS doesn't need
-zstd-sys = { version = "2.0", default-features = false, features = ["zdict_builder"] }
+# zstd-sys = { version = "2.0", default-features = false, features = ["zdict_builder"] }
 
+# Internal crates
+pecos-build = { version = "0.1.1", path = "crates/pecos-build", default-features = false }
 pecos-core = { version = "0.1.1", path = "crates/pecos-core" }
+pecos = { version = "0.1.1", path = "crates/pecos", default-features = false }
 pecos-programs = { version = "0.1.1", path = "crates/pecos-programs" }
 pecos-qsim = { version = "0.1.1", path = "crates/pecos-qsim" }
 pecos-qasm = { version = "0.1.1", path = "crates/pecos-qasm" }
@@ -110,8 +111,6 @@ pecos-engines = { version = "0.1.1", path = "crates/pecos-engines" }
 pecos-phir = { version = "0.1.1", path = "crates/pecos-phir" }
 pecos-qec = { version = "0.1.1", path = "crates/pecos-qec" }
 pecos-rng = { version = "0.1.1", path = "crates/pecos-rng" }
-pecos = { version = "0.1.1", path = "crates/pecos", default-features = false }
-pecos-build = { version = "0.1.1", path = "crates/pecos-build", default-features = false }
 pecos-qis-ffi = { version = "0.1.1", path = "crates/pecos-qis-ffi" }
 pecos-qis-ffi-types = { version = "0.1.1", path = "crates/pecos-qis-ffi-types" }
 pecos-qis-selene = { version = "0.1.1", path = "crates/pecos-qis-selene" }
@@ -120,8 +119,6 @@ pecos-hugr-qis = { version = "0.1.1", path = "crates/pecos-hugr-qis" }
 pecos-llvm = { version = "0.1.1", path = "crates/pecos-llvm" }
 pecos-rslib = { version = "0.1.1", path = "python/pecos-rslib" }
 pecos-wasm = { version = "0.1.1", path = "crates/pecos-wasm" }
-# CLI binary is part of pecos crate (cargo install pecos)
-# Build utilities for crate build.rs are in pecos-build
 pecos-num = { version = "0.1.1", path = "crates/pecos-num" }
 
 # Decoder crates
@@ -130,6 +127,24 @@ pecos-decoders = { version = "0.1.1", path = "crates/pecos-decoders" }
 
 # ldpc decoder wrapper (https://github.com/quantumgizmos/ldpc)
 pecos-ldpc-decoders = { version = "0.1.1", path = "crates/pecos-ldpc-decoders" }
+
+# PyMatching decoder wrapper (https://github.com/oscarhiggott/PyMatching)
+pecos-pymatching = { version = "0.1.1", path = "crates/pecos-pymatching" }
+
+# Tesseract decoder wrapper (https://github.com/quantumlib/tesseract-decoder)
+pecos-tesseract = { version = "0.1.1", path = "crates/pecos-tesseract" }
+
+# Chromobius decoder wrapper (https://github.com/quantumlib/chromobius)
+pecos-chromobius = { version = "0.1.1", path = "crates/pecos-chromobius" }
+
+# Fusion Blossom decoder wrapper (pure Rust MWPM)
+pecos-fusion-blossom = { version = "0.1.1", path = "crates/pecos-fusion-blossom" }
+
+# Fusion Blossom library (pure Rust MWPM decoder)
+fusion-blossom = "0.2"
+
+# petgraph for graph algorithms (used by pymatching)
+petgraph = "0.8"
 
 # QuEST simulator wrapper (https://github.com/quest-kit/QuEST)
 pecos-quest = { version = "0.1.1", path = "crates/pecos-quest" }
@@ -147,9 +162,9 @@ debug = true           # Include debug info
 incremental = true     # Enable incremental compilation
 split-debuginfo = "unpacked"  # Faster linking on supported platforms
 
-# For tests, use no optimization for fastest compilation
+# For tests, use no optimization for the fastest compilation
 [profile.test]
-opt-level = 0          # No optimization for fastest compilation
+opt-level = 0          # No optimization for the fastest compilation
 debug = true           # Include debug info
 incremental = true     # Enable incremental compilation
 split-debuginfo = "unpacked"  # Faster linking on supported platforms
@@ -162,7 +177,7 @@ codegen-units = 1      # Single codegen unit for better optimization
 
 # Native profile: release + CPU-specific optimizations
 # Use with: cargo build --profile native
-# Build scripts detect this via PROFILE=native env var and add -march=native for C++ code
+# Build scripts detect this via PROFILE=native env var and add --march=native for C++ code
 [profile.native]
 inherits = "release"
 

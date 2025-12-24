@@ -43,7 +43,7 @@ pub mod prelude;
 pub mod random;
 pub mod stats;
 
-pub use compare::allclose;
+pub use compare::{allclose, relative_eq};
 pub use curve_fit::{CurveFitError, CurveFitOptions, CurveFitResult, curve_fit};
 pub use optimize::{BrentqOptions, NewtonOptions, OptimizeError, brentq, newton};
 pub use polynomial::{Poly1d, PolynomialError, polyfit};

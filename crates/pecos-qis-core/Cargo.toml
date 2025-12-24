@@ -17,11 +17,11 @@ pecos-qis-ffi-types.workspace = true
 pecos-core.workspace = true
 pecos-engines.workspace = true
 pecos-programs.workspace = true
+pecos-rng.workspace = true
 log.workspace = true
 dyn-clone.workspace = true
 tempfile.workspace = true
 rand.workspace = true
-rand_chacha.workspace = true
 
 # Inkwell configuration - use default linking strategy (matches TKET approach)
 [dependencies.inkwell]

@@ -92,7 +92,7 @@ use crate::noise::{NoiseModel, RngManageable};
 use log::trace;
 use pecos_core::QubitId;
 use pecos_core::errors::PecosError;
-use rand_chacha::ChaCha8Rng;
+use pecos_rng::PecosRng;
 use std::any::Any;
 use std::collections::BTreeSet;
 
@@ -339,7 +339,7 @@ pub struct GeneralNoiseModel {
     leaked_qubits: BTreeSet<usize>,
 
     /// Random number generator for stochastic noise processes
-    rng: NoiseRng<ChaCha8Rng>,
+    rng: NoiseRng<PecosRng>,
 
     /// Set of qubits that have been prepared at any point in the program.
     ///
@@ -429,11 +429,10 @@ impl NoiseModel for GeneralNoiseModel {
 }
 
 impl RngManageable for GeneralNoiseModel {
-    type Rng = ChaCha8Rng;
+    type Rng = PecosRng;
 
-    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), PecosError> {
+    fn set_rng(&mut self, rng: Self::Rng) {
         self.rng = NoiseRng::new(rng);
-        Ok(())
     }
 
     fn rng(&self) -> &Self::Rng {
@@ -1392,17 +1391,11 @@ impl GeneralNoiseModel {
     /// # Parameters
     /// * `seed` - The seed to set for the RNG
     ///
-    /// # Returns
-    /// Result indicating success or failure
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the seed cannot be set or the noise model cannot be rebuilt.
-    pub fn reset_with_seed(&mut self, seed: u64) -> Result<(), PecosError> {
+    pub fn reset_with_seed(&mut self, seed: u64) {
         // First reset the noise model
         self.reset_noise_model();
         // Then set the seed
-        self.set_seed(seed)
+        self.set_seed(seed);
     }
 }
 
@@ -1998,7 +1991,7 @@ mod tests {
 
             // Reset seed periodically to get different random values
             if i % 100 == 99 {
-                noise.set_seed(12345 + (i / 100) as u64).unwrap();
+                noise.set_seed(12345 + (i / 100) as u64);
             }
         }
 
@@ -2016,7 +2009,7 @@ mod tests {
 
         // Second test: all ones
         let mut ones_flipped = 0;
-        noise.set_seed(54321).unwrap(); // Different seed for variety
+        noise.set_seed(54321); // Different seed for variety
 
         for i in 0..NUM_MEASUREMENTS {
             // Process measurement gate
@@ -2035,7 +2028,7 @@ mod tests {
 
             // Reset seed periodically
             if i % 100 == 99 {
-                noise.set_seed(54321 + (i / 100) as u64).unwrap();
+                noise.set_seed(54321 + (i / 100) as u64);
             }
         }
 
@@ -2351,7 +2344,7 @@ mod tests {
         for i in 0..runs {
             // Reset noise model state but keep leaked qubits
             noise.measured_qubits.clear();
-            noise.set_seed(42 + i).unwrap();
+            noise.set_seed(42 + i);
 
             // Re-process measurement gates each time
             let mut gate_builder = ByteMessageBuilder::new();

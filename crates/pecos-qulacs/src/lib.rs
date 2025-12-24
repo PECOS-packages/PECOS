@@ -23,8 +23,8 @@ use pecos_core::{IndexableElement, RngManageable};
 use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator,
 };
+use pecos_rng::PecosRng;
 use rand::{RngCore, SeedableRng};
-use rand_chacha::ChaCha8Rng;
 use std::fmt::Debug;
 
 /// A quantum state simulator using Qulacs C++ backend.
@@ -34,7 +34,7 @@ use std::fmt::Debug;
 ///
 /// # Type Parameters
 /// * `R` - Random number generator type implementing `RngCore + SeedableRng` traits
-pub struct QulacsStateVec<R = ChaCha8Rng>
+pub struct QulacsStateVec<R = PecosRng>
 where
     R: RngCore + SeedableRng + Debug,
 {
@@ -66,16 +66,16 @@ impl QulacsStateVec {
     /// Create a new state initialized to |0...0⟩
     #[inline]
     #[must_use]
-    pub fn new(num_qubits: usize) -> QulacsStateVec<ChaCha8Rng> {
-        let rng = ChaCha8Rng::from_os_rng();
+    pub fn new(num_qubits: usize) -> QulacsStateVec<PecosRng> {
+        let rng = PecosRng::from_os_rng();
         QulacsStateVec::with_rng(num_qubits, rng)
     }
 
     /// Create a new state vector simulator with a specific seed for the random number generator
     #[inline]
     #[must_use]
-    pub fn with_seed(num_qubits: usize, seed: u64) -> QulacsStateVec<ChaCha8Rng> {
-        let rng = ChaCha8Rng::seed_from_u64(seed);
+    pub fn with_seed(num_qubits: usize, seed: u64) -> QulacsStateVec<PecosRng> {
+        let rng = PecosRng::seed_from_u64(seed);
         QulacsStateVec::with_rng(num_qubits, rng)
     }
 }
@@ -437,12 +437,11 @@ where
         &mut self.rng
     }
 
-    fn set_rng(&mut self, mut rng: Self::Rng) -> Result<(), pecos_core::errors::PecosError> {
+    fn set_rng(&mut self, mut rng: Self::Rng) {
         // Re-seed the C++ RNG when setting a new Rust RNG
         let seed = rng.next_u32();
         ffi::set_seed(self.state.pin_mut(), seed);
         self.rng = rng;
-        Ok(())
     }
 }
 

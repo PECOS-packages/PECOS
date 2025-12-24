@@ -48,9 +48,8 @@ where
 {
     /// Set a specific seed for reproducible randomness
     fn py_set_seed(&mut self, seed: u64) -> PyResult<()> {
-        self.inner_mut().set_seed(seed).map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to set engine seed in Python bindings: {e}"))
-        })
+        self.inner_mut().set_seed(seed);
+        Ok(())
     }
 }
 

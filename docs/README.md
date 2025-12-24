@@ -99,9 +99,9 @@ This documentation is organized to help you get the most out of PECOS:
 
 ## Project History
 
-Initially conceived and developed in 2014 to verify lattice-surgery procedures presented in [arXiv:1407.5103](https://arxiv.org/abs/1407.5103) and
-released publicly in 2018, PECOS provided QEC tools not available at that time. Over the years, it has grown into a
-framework for studying general QECCs and hybrid computation.
+Initially developed in 2014 to verify lattice-surgery procedures presented in [arXiv:1407.5103](https://arxiv.org/abs/1407.5103) and
+released publicly in 2018, PECOS provided QEC tools not available at that time. PECOS developed into a
+framework for studying general QECCs and hybrid quantum-classical computation.
 
 ## Getting Support
 

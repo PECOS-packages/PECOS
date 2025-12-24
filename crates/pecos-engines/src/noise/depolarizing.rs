@@ -16,7 +16,8 @@ use crate::engine_system::{ControlEngine, EngineStage};
 use crate::noise::{NoiseModel, NoiseRng, NoiseUtils, ProbabilityValidator, RngManageable};
 use log::trace;
 use pecos_core::errors::PecosError;
-use rand_chacha::ChaCha8Rng;
+use pecos_rng::PecosRng;
+use pecos_rng::rng_ext::RngProbabilityExt;
 use std::any::Any;
 
 /// Implements depolarizing channel noise for quantum simulations
@@ -35,7 +36,7 @@ use std::any::Any;
 ///
 /// // Create with direct constructor
 /// let mut noise_model = DepolarizingNoiseModel::new(0.01, 0.02, 0.03, 0.04);
-/// noise_model.set_seed(42).unwrap(); // For reproducibility
+/// noise_model.set_seed(42); // For reproducibility
 ///
 /// // Or use the builder pattern
 /// let noise_model = DepolarizingNoiseModel::builder()
@@ -61,13 +62,36 @@ pub struct DepolarizingNoiseModel {
     p1: f64,
     /// Probability of applying an error after two-qubit gates
     p2: f64,
+    /// Precomputed threshold for preparation error probability
+    p_prep_threshold: u64,
+    /// Precomputed threshold for measurement error probability
+    p_meas_threshold: u64,
+    /// Precomputed threshold for single-qubit gate error probability
+    p1_threshold: u64,
+    /// Precomputed threshold for two-qubit gate error probability
+    p2_threshold: u64,
     /// Random number generator
-    rng: NoiseRng<ChaCha8Rng>,
+    rng: NoiseRng<PecosRng>,
 }
 
 impl ProbabilityValidator for DepolarizingNoiseModel {}
 
 impl DepolarizingNoiseModel {
+    /// Compute a probability threshold from a f64 probability
+    #[inline]
+    fn compute_threshold(p: f64) -> u64 {
+        // Convert probability to fixed-point threshold for fast comparison
+        // This matches the formula used in RngProbabilityExt::probability_threshold
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
+        {
+            (p * (u64::MAX as f64)) as u64
+        }
+    }
+
     /// Create a new depolarizing noise model with the given probabilities
     #[must_use]
     pub fn new(p_prep: f64, p_meas: f64, p1: f64, p2: f64) -> Self {
@@ -82,6 +106,10 @@ impl DepolarizingNoiseModel {
             p_meas,
             p1,
             p2,
+            p_prep_threshold: Self::compute_threshold(p_prep),
+            p_meas_threshold: Self::compute_threshold(p_meas),
+            p1_threshold: Self::compute_threshold(p1),
+            p2_threshold: Self::compute_threshold(p2),
             rng: NoiseRng::default(),
         }
     }
@@ -109,6 +137,12 @@ impl DepolarizingNoiseModel {
         self.p_meas = p_meas;
         self.p1 = p1;
         self.p2 = p2;
+
+        // Recompute thresholds for optimized probability checks
+        self.p_prep_threshold = Self::compute_threshold(p_prep);
+        self.p_meas_threshold = Self::compute_threshold(p_meas);
+        self.p1_threshold = Self::compute_threshold(p1);
+        self.p2_threshold = Self::compute_threshold(p2);
     }
 
     /// Set a uniform probability for all error types
@@ -176,22 +210,32 @@ impl DepolarizingNoiseModel {
     }
 
     fn apply_prep_faults(&mut self, builder: &mut ByteMessageBuilder, gate: &Gate) {
-        if self.rng.occurs(self.p_prep) {
+        // Use precomputed threshold for fast probability check
+        if self
+            .rng
+            .inner_mut()
+            .check_probability(self.p_prep_threshold)
+        {
             trace!("Applying prep fault on qubits {:?}", gate.qubits);
             NoiseUtils::apply_x(builder, *gate.qubits[0]);
         }
     }
 
     fn apply_meas_faults(&mut self, builder: &mut ByteMessageBuilder, gate: &Gate) {
-        if self.rng.occurs(self.p_meas) {
+        // Use precomputed threshold for fast probability check
+        if self
+            .rng
+            .inner_mut()
+            .check_probability(self.p_meas_threshold)
+        {
             trace!("Applying meas fault on qubits {:?}", gate.qubits);
             NoiseUtils::apply_x(builder, *gate.qubits[0]);
         }
     }
 
     fn apply_sq_faults(&mut self, builder: &mut ByteMessageBuilder, gate: &Gate) {
-        if self.rng.occurs(self.p1) {
-            let fault_type = self.rng.random_int(0..3);
+        // Use fused noise sampling: probability check + Pauli selection in one call
+        if let Some(fault_type) = self.rng.inner_mut().noise_sample_1q(self.p1_threshold) {
             let qubit = gate.qubits[0];
 
             match fault_type {
@@ -212,8 +256,8 @@ impl DepolarizingNoiseModel {
     }
 
     fn apply_tq_faults(&mut self, builder: &mut ByteMessageBuilder, gate: &Gate) {
-        if self.rng.occurs(self.p2) {
-            let fault_type = self.rng.random_int(0..15);
+        // Use fused noise sampling: probability check + Pauli selection in one call
+        if let Some(fault_type) = self.rng.inner_mut().noise_sample_2q(self.p2_threshold) {
             let qubit0 = gate.qubits[0];
             let qubit1 = gate.qubits[1];
 
@@ -318,11 +362,10 @@ impl NoiseModel for DepolarizingNoiseModel {
 }
 
 impl RngManageable for DepolarizingNoiseModel {
-    type Rng = ChaCha8Rng;
+    type Rng = PecosRng;
 
-    fn set_rng(&mut self, rng: ChaCha8Rng) -> Result<(), PecosError> {
+    fn set_rng(&mut self, rng: PecosRng) {
         self.rng = NoiseRng::new(rng);
-        Ok(())
     }
 
     fn rng(&self) -> &Self::Rng {
@@ -449,7 +492,7 @@ impl DepolarizingNoiseModelBuilder {
         // Set the seed if provided
         if let Some(seed) = self.seed {
             // Use RngManageable::set_seed directly
-            noise.set_seed(seed).expect("Failed to set seed");
+            noise.set_seed(seed);
         }
 
         noise

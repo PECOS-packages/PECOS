@@ -608,7 +608,7 @@ mod tests {
         assert_eq!(qulacs_deps.len(), 3); // qulacs, eigen, boost
 
         let ldpc_deps = manifest.get_crate_dependencies("pecos-ldpc-decoders");
-        assert!(ldpc_deps.len() >= 5);
+        assert_eq!(ldpc_deps.len(), 3); // ldpc, stim, boost
     }
 
     #[test]

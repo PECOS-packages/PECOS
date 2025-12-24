@@ -16,12 +16,11 @@
 //!
 //! This module provides implementations of common numerical optimization
 //! algorithms, compatible with scipy.optimize API.
-//!
-//! Uses Peroxide for Newton's method implementation, with scipy-compatible
-//! functional wrappers.
 
-use peroxide::fuga::{NewtonMethod, RootFinder, RootFindingProblem, anyhow};
 use std::fmt;
+
+// Machine epsilon for f64
+const EPSILON: f64 = f64::EPSILON;
 
 /// Error type for optimization functions.
 #[derive(Debug, Clone)]
@@ -142,84 +141,127 @@ impl Default for NewtonOptions {
 /// let root = brentq(|x| x * x - 2.0, 0.0, 2.0, None).unwrap();
 /// assert!((root - 2f64.sqrt()).abs() < 1e-10);
 /// ```
+#[allow(clippy::many_single_char_names)] // Standard mathematical notation for Brent's method
 pub fn brentq<F>(f: F, a: f64, b: f64, options: Option<BrentqOptions>) -> Result<f64, OptimizeError>
 where
     F: Fn(f64) -> f64,
 {
     let opts = options.unwrap_or_default();
+    let xtol = opts.xtol;
+    let rtol = opts.rtol;
+    let maxiter = opts.maxiter;
 
-    // Use roots crate for Brent's method
-    let mut convergency = roots::SimpleConvergency {
-        eps: opts.xtol,
-        max_iter: opts.maxiter,
-    };
+    let mut xa = a;
+    let mut xb = b;
+    let mut fa = f(xa);
+    let mut fb = f(xb);
 
-    let result = roots::find_root_brent(a, b, &f, &mut convergency);
-
-    match result {
-        Ok(root) => {
-            log::debug!("brentq converged to root={root}");
-            Ok(root)
-        }
-        Err(e) => {
-            log::warn!("brentq failed: {e:?}");
-            // Check if it's a sign issue
-            let fa = f(a);
-            let fb = f(b);
-            if fa * fb > 0.0 {
-                Err(OptimizeError::SameSigns { fa, fb })
-            } else {
-                Err(OptimizeError::MaxIterations {
-                    iterations: opts.maxiter,
-                })
-            }
-        }
-    }
-}
-
-/// Internal wrapper for Newton's method using Peroxide.
-struct NewtonProblem<F, G>
-where
-    F: Fn(f64) -> f64,
-    G: Fn(f64) -> f64,
-{
-    f: F,
-    fprime: Option<G>,
-    eps: f64,
-    x0: f64,
-}
-
-impl<F, G> RootFindingProblem<1, 1, f64> for NewtonProblem<F, G>
-where
-    F: Fn(f64) -> f64,
-    G: Fn(f64) -> f64,
-{
-    fn function(&self, x: [f64; 1]) -> Result<[f64; 1], anyhow::Error> {
-        Ok([(self.f)(x[0])])
+    // Check that root is bracketed
+    if fa * fb > 0.0 {
+        return Err(OptimizeError::SameSigns { fa, fb });
     }
 
-    fn derivative(&self, x: [f64; 1]) -> Result<[[f64; 1]; 1], anyhow::Error> {
-        let fprime_x = if let Some(ref fprime_fn) = self.fprime {
-            (fprime_fn)(x[0])
+    // Handle case where one endpoint is already a root
+    if fa == 0.0 {
+        return Ok(xa);
+    }
+    if fb == 0.0 {
+        return Ok(xb);
+    }
+
+    // Ensure |f(xb)| <= |f(xa)| so xb is the best guess
+    if fa.abs() < fb.abs() {
+        std::mem::swap(&mut xa, &mut xb);
+        std::mem::swap(&mut fa, &mut fb);
+    }
+
+    let mut xc = xa; // Previous iterate
+    let mut fc = fa;
+    let mut xd = xb; // Iterate before previous
+    let mut use_bisection = true;
+
+    for iteration in 0..maxiter {
+        // Convergence check
+        let tol = xtol + rtol * xb.abs();
+        let xm = 0.5 * (xa - xb); // Midpoint relative to xb
+
+        if xm.abs() <= tol || fb == 0.0 {
+            log::debug!("brentq converged to root={xb} after {iteration} iterations");
+            return Ok(xb);
+        }
+
+        let mut step;
+
+        // Try inverse quadratic interpolation if we have 3 distinct points
+        if (fa - fc).abs() > EPSILON && (fb - fc).abs() > EPSILON {
+            // Inverse quadratic interpolation
+            let r = fb / fc;
+            let s = fb / fa;
+            let t = fa / fc;
+            let p = s * (t * (r - t) * (xc - xb) - (1.0 - r) * (xb - xa));
+            let q = (t - 1.0) * (r - 1.0) * (s - 1.0);
+            step = p / q;
         } else {
-            // Numerical derivative using finite differences
-            let h = self.eps;
-            let fx = (self.f)(x[0]);
-            let fx_plus_h = (self.f)(x[0] + h);
-            (fx_plus_h - fx) / h
+            // Secant method
+            step = (xa - xb) * fb / (fb - fa);
+        }
+
+        // Accept interpolation step only if it's reasonable
+        // Otherwise fall back to bisection
+        let step_ok = {
+            let cond1 = (step - xm).abs() < xm.abs(); // Step is toward the root
+            let cond2 = step.abs()
+                < 0.5
+                    * if use_bisection {
+                        (xb - xc).abs()
+                    } else {
+                        (xc - xd).abs()
+                    };
+            cond1 && cond2
         };
 
-        Ok([[fprime_x]])
+        if step_ok {
+            use_bisection = false;
+        } else {
+            step = xm;
+            use_bisection = true;
+        }
+
+        // Update xd, xc (keep history)
+        xd = xc;
+        xc = xb;
+        fc = fb;
+
+        // Take the step (but ensure minimum step size)
+        if step.abs() > tol {
+            xb += step;
+        } else {
+            xb += if xm > 0.0 { tol } else { -tol };
+        }
+        fb = f(xb);
+
+        // Maintain bracket: ensure fa and fb have opposite signs
+        if (fb > 0.0) == (fa > 0.0) {
+            xa = xc;
+            fa = fc;
+        }
+
+        // Keep xb as the best guess (smallest |f|)
+        if fa.abs() < fb.abs() {
+            std::mem::swap(&mut xa, &mut xb);
+            std::mem::swap(&mut fa, &mut fb);
+        }
     }
 
-    fn initial_guess(&self) -> f64 {
-        self.x0
-    }
+    log::warn!("brentq failed to converge after {maxiter} iterations");
+    Err(OptimizeError::MaxIterations {
+        iterations: maxiter,
+    })
 }
 
 /// Find root using Newton-Raphson method.
 ///
-/// This is a scipy.optimize.newton-compatible wrapper around Peroxide's Newton implementation.
+/// This is a Rust implementation of scipy.optimize.newton.
 ///
 /// Newton's method uses the function value and its derivative to iteratively
 /// converge to a root. It typically converges quickly when close to the root,
@@ -258,6 +300,7 @@ where
 /// ).unwrap();
 /// assert!((root - 2f64.sqrt()).abs() < 1e-10);
 /// ```
+#[allow(clippy::needless_pass_by_value)] // Option<G> for closures is more ergonomic than Option<&G>
 pub fn newton<F, G>(
     f: F,
     x0: f64,
@@ -269,38 +312,65 @@ where
     G: Fn(f64) -> f64,
 {
     let opts = options.unwrap_or_default();
+    let tol = opts.tol;
+    let maxiter = opts.maxiter;
+    let eps = opts.eps;
 
     log::debug!("newton starting from x0={x0}");
 
-    // Create Peroxide problem
-    let problem = NewtonProblem {
-        f,
-        fprime,
-        eps: opts.eps,
-        x0,
-    };
+    let mut x = x0;
 
-    // Create Peroxide Newton method
-    let method = NewtonMethod {
-        max_iter: opts.maxiter,
-        tol: opts.tol,
-    };
+    for iteration in 0..maxiter {
+        let fx = f(x);
 
-    // Solve using Peroxide
-    let result = method.find(&problem);
-
-    match result {
-        Ok(root) => {
-            log::debug!("newton converged to root={}", root[0]);
-            Ok(root[0])
+        // Check for convergence
+        if fx.abs() < tol {
+            log::debug!("newton converged to root={x} after {iteration} iterations");
+            return Ok(x);
         }
-        Err(e) => {
-            log::warn!("newton failed: {e:?}");
-            Err(OptimizeError::ConvergenceFailed {
-                message: format!("{e:?}"),
-            })
+
+        // Compute derivative (analytically or numerically)
+        let fprime_x = if let Some(ref fprime_fn) = fprime {
+            fprime_fn(x)
+        } else {
+            // Numerical derivative using forward difference
+            let h = eps * (1.0 + x.abs());
+            (f(x + h) - fx) / h
+        };
+
+        // Check for zero derivative
+        if fprime_x.abs() < EPSILON {
+            return Err(OptimizeError::ZeroDerivative {
+                x,
+                derivative: fprime_x,
+            });
+        }
+
+        // Newton step: x_{n+1} = x_n - f(x_n) / f'(x_n)
+        let step = fx / fprime_x;
+        x -= step;
+
+        // Check for convergence based on step size
+        if step.abs() < tol * (1.0 + x.abs()) {
+            log::debug!(
+                "newton converged to root={x} after {} iterations",
+                iteration + 1
+            );
+            return Ok(x);
+        }
+
+        // Check for numerical issues
+        if !x.is_finite() {
+            return Err(OptimizeError::NumericalIssue {
+                message: format!("x became non-finite: {x}"),
+            });
         }
     }
+
+    log::warn!("newton failed to converge after {maxiter} iterations");
+    Err(OptimizeError::MaxIterations {
+        iterations: maxiter,
+    })
 }
 
 #[cfg(test)]

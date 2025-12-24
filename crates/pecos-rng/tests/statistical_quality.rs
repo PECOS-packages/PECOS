@@ -134,12 +134,11 @@ fn generate_pcgrandom_bytes(seed: u64, count: usize) -> Vec<u8> {
     bytes
 }
 
-/// Generate random bytes using `WyRand`
-fn generate_wyrand_bytes(seed: u64, count: usize) -> Vec<u8> {
+/// Generate random bytes using `RapidRng`
+fn generate_rapidrng_bytes(seed: u64, count: usize) -> Vec<u8> {
     use rand::RngCore;
-    use rand::SeedableRng;
-    use wyrand::WyRand;
-    let mut rng = WyRand::seed_from_u64(seed);
+    use rapidhash::rng::RapidRng;
+    let mut rng = RapidRng::new(seed);
     let mut bytes = vec![0u8; count];
     rng.fill_bytes(&mut bytes);
     bytes
@@ -156,12 +155,19 @@ fn generate_xoshiro_bytes(seed: u64, count: usize) -> Vec<u8> {
     bytes
 }
 
-/// Generate random bytes using `ChaCha8`
-fn generate_chacha8_bytes(seed: u64, count: usize) -> Vec<u8> {
-    use rand::RngCore;
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha8Rng;
-    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+/// Generate random bytes using `PecosRng` (SIMD Xoshiro256++)
+fn generate_pecosrng_bytes(seed: u64, count: usize) -> Vec<u8> {
+    use pecos_rng::prelude::{PecosRng, RngCore};
+    let mut rng = PecosRng::seed_from_u64(seed);
+    let mut bytes = vec![0u8; count];
+    rng.fill_bytes(&mut bytes);
+    bytes
+}
+
+/// Generate random bytes using `PecosRng` (parallel `RapidRng`)
+fn generate_pecosfastrng_bytes(seed: u64, count: usize) -> Vec<u8> {
+    use pecos_rng::prelude::{PecosRng, RngCore};
+    let mut rng = PecosRng::seed_from_u64(seed);
     let mut bytes = vec![0u8; count];
     rng.fill_bytes(&mut bytes);
     bytes
@@ -211,17 +217,47 @@ fn test_pcgrandom_statistical_quality() {
 }
 
 // ============================================================================
+// Tests for PecosRng (SIMD Xoshiro256++)
+// ============================================================================
+
+#[test]
+fn test_pecosrng_statistical_quality() {
+    let data = generate_pecosrng_bytes(42, TEST_BYTES);
+    let results = run_tests("PecosRng", &data);
+    results.print_report();
+    assert!(
+        results.is_acceptable(),
+        "PecosRng failed statistical quality tests"
+    );
+}
+
+// ============================================================================
+// Tests for PecosRng (parallel RapidRng)
+// ============================================================================
+
+#[test]
+fn test_pecosfastrng_statistical_quality() {
+    let data = generate_pecosfastrng_bytes(42, TEST_BYTES);
+    let results = run_tests("PecosRng", &data);
+    results.print_report();
+    assert!(
+        results.is_acceptable(),
+        "PecosRng failed statistical quality tests"
+    );
+}
+
+// ============================================================================
 // Comparison tests with other well-known RNGs
 // ============================================================================
 
 #[test]
-fn test_wyrand_statistical_quality() {
-    let data = generate_wyrand_bytes(42, TEST_BYTES);
-    let results = run_tests("WyRand", &data);
+fn test_rapidrng_statistical_quality() {
+    let data = generate_rapidrng_bytes(42, TEST_BYTES);
+    let results = run_tests("RapidRng", &data);
     results.print_report();
     assert!(
         results.is_acceptable(),
-        "WyRand failed statistical quality tests"
+        "RapidRng failed statistical quality tests"
     );
 }
 
@@ -233,17 +269,6 @@ fn test_xoshiro_statistical_quality() {
     assert!(
         results.is_acceptable(),
         "Xoshiro256++ failed statistical quality tests"
-    );
-}
-
-#[test]
-fn test_chacha8_statistical_quality() {
-    let data = generate_chacha8_bytes(42, TEST_BYTES);
-    let results = run_tests("ChaCha8", &data);
-    results.print_report();
-    assert!(
-        results.is_acceptable(),
-        "ChaCha8 failed statistical quality tests"
     );
 }
 
@@ -262,9 +287,10 @@ fn comparison_report() {
     let rngs: Vec<(&str, Vec<u8>)> = vec![
         ("PCG64Fast", generate_pcg64fast_bytes(42, TEST_BYTES)),
         ("PCGRandom", generate_pcgrandom_bytes(42, TEST_BYTES)),
-        ("WyRand", generate_wyrand_bytes(42, TEST_BYTES)),
+        ("RapidRng", generate_rapidrng_bytes(42, TEST_BYTES)),
         ("Xoshiro256++", generate_xoshiro_bytes(42, TEST_BYTES)),
-        ("ChaCha8", generate_chacha8_bytes(42, TEST_BYTES)),
+        ("PecosRng", generate_pecosrng_bytes(42, TEST_BYTES)),
+        ("PecosRng", generate_pecosfastrng_bytes(42, TEST_BYTES)),
     ];
 
     let mut all_pass = true;

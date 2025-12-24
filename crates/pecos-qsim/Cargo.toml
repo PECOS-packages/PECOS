@@ -12,11 +12,12 @@ description = "Provides simulators and related elements for PECOS simulations."
 
 [dependencies]
 pecos-core.workspace = true
-rand.workspace = true
-rand_chacha.workspace = true
-wyrand.workspace = true
+pecos-rng.workspace = true
 num-complex.workspace = true
 wide.workspace = true
+
+[dev-dependencies]
+rand.workspace = true
 
 [lints]
 workspace = true

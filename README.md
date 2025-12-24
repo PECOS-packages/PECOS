@@ -34,7 +34,8 @@ Create and simulate a Bell state—an entangled pair of qubits:
 from pecos import sim, Qasm
 
 # Define a Bell state circuit
-circuit = Qasm("""
+circuit = Qasm(
+    """
 OPENQASM 2.0;
 include "qelib1.inc";
 qreg q[2];
@@ -42,7 +43,8 @@ creg c[2];
 h q[0];
 cx q[0], q[1];
 measure q -> c;
-""")
+"""
+)
 
 # Run 10 shots
 results = sim(circuit).seed(42).run(10)

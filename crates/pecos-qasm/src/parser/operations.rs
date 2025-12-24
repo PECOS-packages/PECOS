@@ -247,6 +247,7 @@ pub fn parse_measure(pair: Pair<Rule>, program: &Program) -> Result<Option<Opera
             // Create a Gate with GateType::Measure
             let gate = Gate::new(
                 GateType::Measure,
+                vec![], // No angles
                 vec![], // No parameters
                 vec![QubitId(qubit)],
             );
@@ -285,6 +286,7 @@ pub fn parse_reset(pair: Pair<Rule>, program: &Program) -> Result<Option<Operati
             let qubit = resolve_qubit_index(&reg_name, idx, program)?;
             let gate = Gate::new(
                 GateType::Prep,
+                vec![], // No angles
                 vec![], // No parameters
                 vec![QubitId(qubit)],
             );

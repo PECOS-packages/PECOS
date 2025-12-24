@@ -9,6 +9,7 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 publish = false
+readme = "../../README.md"
 
 [dev-dependencies]
 criterion.workspace = true

@@ -2764,6 +2764,7 @@ dependencies = [
  "pecos-qis-core",
  "pecos-qis-selene",
  "pecos-qsim",
+ "pecos-quantum",
  "pecos-quest",
  "pecos-qulacs",
  "pecos-rng",
@@ -3090,6 +3091,16 @@ dependencies = [
  "pecos-rng",
  "rand 0.9.2",
  "wide 1.1.1",
+]
+
+[[package]]
+name = "pecos-quantum"
+version = "0.1.1"
+dependencies = [
+ "log",
+ "pecos-core",
+ "pecos-num",
+ "tket",
 ]
 
 [[package]]

@@ -25,6 +25,7 @@ required-features = ["cli"]
 [dependencies]
 # Core simulation library dependencies (optional - for runtime commands)
 pecos-core = { workspace = true, optional = true }
+pecos-quantum = { workspace = true, optional = true }
 pecos-qsim = { workspace = true, optional = true }
 pecos-engines = { workspace = true, optional = true }
 pecos-programs = { workspace = true, optional = true }
@@ -73,12 +74,15 @@ runtime = ["sim", "qasm", "phir"]
 # Core types and error handling (very lightweight)
 core = ["dep:pecos-core"]
 
+# Quantum circuit representation (DagCircuit)
+quantum = ["core", "dep:pecos-quantum"]
+
 # Numerical computing utilities (scipy-like functions, random number generation)
 num = ["dep:pecos-num", "dep:pecos-rng"]
 
-# Quantum simulation library (includes core and num)
+# Quantum simulation library (includes core, quantum, and num)
 sim = [
-    "core", "num",
+    "core", "quantum", "num",
     "dep:pecos-qsim", "dep:pecos-engines", "dep:pecos-programs",
     "dep:pecos-phir",
     "dep:log", "dep:tempfile", "dep:serde_json"
@@ -97,7 +101,7 @@ qis = ["llvm", "dep:pecos-qis-core", "pecos-qis-core/llvm",
        "dep:pecos-qis-selene"]
 
 # hugr: HUGR program support (requires QIS)
-hugr = ["qis", "dep:pecos-hugr-qis", "pecos-hugr-qis/llvm", "pecos-qis-selene/hugr"]
+hugr = ["qis", "dep:pecos-hugr-qis", "pecos-hugr-qis/llvm", "pecos-qis-selene/hugr", "pecos-quantum/hugr"]
 wasm = ["sim", "dep:pecos-wasm", "pecos-wasm/wasm"]
 
 # Quantum simulator backends (C++ wrappers)

@@ -1,5 +1,5 @@
 [package]
-name = "pecos-qsim"
+name = "pecos-quantum"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -8,18 +8,18 @@ repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Provides simulators and related elements for PECOS simulations."
+description = "Quantum computing primitives for PECOS, including DagCircuit."
 readme = "../../README.md"
 
 [dependencies]
 pecos-core.workspace = true
-pecos-rng.workspace = true
-num-complex.workspace = true
-wide.workspace = true
+pecos-num.workspace = true
+tket = { workspace = true, optional = true }
+log.workspace = true
 
-[dev-dependencies]
-rand.workspace = true
-pecos-quest.workspace = true
+[features]
+default = []
+hugr = ["tket"]
 
 [lints]
 workspace = true

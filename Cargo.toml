@@ -50,7 +50,7 @@ wasmtime = { version = "40", default-features = false, features = [
 ] }
 wat = "1"
 ron = "0.12"
-tket = "0.16"
+tket = { version = "0.16", default-features = false }
 tket-qsystem = { version = "0.22", default-features = false }
 cc = "1"
 cxx = "1.0.187"
@@ -124,6 +124,7 @@ pecos-llvm = { version = "0.1.1", path = "crates/pecos-llvm" }
 pecos-rslib = { version = "0.1.1", path = "python/pecos-rslib" }
 pecos-wasm = { version = "0.1.1", path = "crates/pecos-wasm" }
 pecos-num = { version = "0.1.1", path = "crates/pecos-num" }
+pecos-quantum = { version = "0.1.1", path = "crates/pecos-quantum" }
 
 # Decoder crates
 pecos-decoder-core = { version = "0.1.1", path = "crates/pecos-decoder-core" }

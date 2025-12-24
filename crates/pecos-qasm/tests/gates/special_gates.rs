@@ -101,9 +101,15 @@ fn test_sx_gate_parameters() {
             assert!((parameters[0] + std::f64::consts::PI / 2.0).abs() < 0.0001); // -pi/2
         }
         Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::RZ) => {
-            // For native gates, the angle is in the params field
-            assert_eq!(gate.params.len(), 1);
-            assert!((gate.params[0] + std::f64::consts::PI / 2.0).abs() < 0.0001); // -pi/2
+            // For native gates, the angle is in the angles field as Angle64
+            // Note: Angle64 normalizes to [0, 2π), so -π/2 becomes 3π/2
+            assert_eq!(gate.angles.len(), 1);
+            let angle = gate.angles[0].to_radians();
+            let expected = 3.0 * std::f64::consts::PI / 2.0; // -pi/2 normalized to 3pi/2
+            assert!(
+                (angle - expected).abs() < 0.0001,
+                "Expected angle {expected}, got {angle}"
+            );
         }
         _ => panic!("Expected RZ gate at position 0"),
     }
@@ -132,9 +138,15 @@ fn test_sx_gate_parameters() {
             assert!((parameters[0] + std::f64::consts::PI / 2.0).abs() < 0.0001); // -pi/2
         }
         Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::RZ) => {
-            // For native gates, the angle is in the params field
-            assert_eq!(gate.params.len(), 1);
-            assert!((gate.params[0] + std::f64::consts::PI / 2.0).abs() < 0.0001); // -pi/2
+            // For native gates, the angle is in the angles field as Angle64
+            // Note: Angle64 normalizes to [0, 2π), so -π/2 becomes 3π/2
+            assert_eq!(gate.angles.len(), 1);
+            let angle = gate.angles[0].to_radians();
+            let expected = 3.0 * std::f64::consts::PI / 2.0; // -pi/2 normalized to 3pi/2
+            assert!(
+                (angle - expected).abs() < 0.0001,
+                "Expected angle {expected}, got {angle}"
+            );
         }
         _ => panic!("Expected RZ gate at position 2"),
     }
@@ -164,9 +176,9 @@ fn test_sxdg_gate_parameters() {
             assert!((parameters[0] - std::f64::consts::PI / 2.0).abs() < 0.0001); // pi/2
         }
         Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::RZ) => {
-            // For native gates, the angle is in the params field
-            assert_eq!(gate.params.len(), 1);
-            assert!((gate.params[0] - std::f64::consts::PI / 2.0).abs() < 0.0001); // pi/2
+            // For native gates, the angle is in the angles field as Angle64
+            assert_eq!(gate.angles.len(), 1);
+            assert!((gate.angles[0].to_radians() - std::f64::consts::PI / 2.0).abs() < 0.0001); // pi/2
         }
         _ => panic!("Expected RZ gate at position 0"),
     }
@@ -195,9 +207,9 @@ fn test_sxdg_gate_parameters() {
             assert!((parameters[0] - std::f64::consts::PI / 2.0).abs() < 0.0001); // pi/2
         }
         Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::RZ) => {
-            // For native gates, the angle is in the params field
-            assert_eq!(gate.params.len(), 1);
-            assert!((gate.params[0] - std::f64::consts::PI / 2.0).abs() < 0.0001); // pi/2
+            // For native gates, the angle is in the angles field as Angle64
+            assert_eq!(gate.angles.len(), 1);
+            assert!((gate.angles[0].to_radians() - std::f64::consts::PI / 2.0).abs() < 0.0001); // pi/2
         }
         _ => panic!("Expected RZ gate at position 2"),
     }

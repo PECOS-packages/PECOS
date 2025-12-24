@@ -9,6 +9,7 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Provides core definitions and functions for PECOS simulations."
+readme = "../../README.md"
 
 [dependencies]
 bitvec.workspace = true

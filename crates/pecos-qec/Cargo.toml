@@ -9,6 +9,7 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "QEC for Rust PECOS."
+readme = "../../README.md"
 
 [lints]
 workspace = true

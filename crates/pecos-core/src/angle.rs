@@ -358,6 +358,24 @@ impl_angle_constants!(u32);
 impl_angle_constants!(u64);
 impl_angle_constants!(u128);
 
+/// Implements `From<f64>` for common Angle types, treating f64 as radians.
+///
+/// This allows convenient angle creation: `Angle64::from(1.5708)` or `angle.into()`
+/// where the f64 value is interpreted as radians.
+macro_rules! impl_from_f64 {
+    ($($t:ty),*) => {
+        $(
+            impl From<f64> for Angle<$t> {
+                fn from(radians: f64) -> Self {
+                    Self::from_radians(radians)
+                }
+            }
+        )*
+    };
+}
+
+impl_from_f64!(u8, u16, u32, u64, u128);
+
 /// Implements addition for angles, with modular wrapping.
 impl<T> Add for Angle<T>
 where

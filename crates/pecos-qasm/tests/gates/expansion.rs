@@ -109,11 +109,12 @@ fn test_gate_expansion_rx() {
             assert_eq!(gate.gate_type, pecos_core::gate_type::GateType::RZ);
             assert_eq!(gate.qubits.len(), 1);
             assert_eq!({ gate.qubits[0].0 }, 0);
-            assert_eq!(gate.params.len(), 1);
+            // Rotation gate angles are now stored in gate.angles as Angle64
+            assert_eq!(gate.angles.len(), 1);
             assert!(
-                (gate.params[0] - std::f64::consts::FRAC_PI_2).abs() < 1e-6,
-                "Expected parameter PI/2, got {}",
-                gate.params[0]
+                (gate.angles[0].to_radians() - std::f64::consts::FRAC_PI_2).abs() < 1e-6,
+                "Expected angle PI/2, got {}",
+                gate.angles[0].to_radians()
             );
         }
         _ => panic!("Expected rz gate"),

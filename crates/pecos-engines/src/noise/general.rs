@@ -600,9 +600,9 @@ impl GeneralNoiseModel {
                     self.apply_sq_faults(&gate, &mut builder);
                 }
                 _ if gate.is_two_qubit() => {
-                    // For angle-dependent error rates
-                    let p2 = if gate.classical_arity() == 1 {
-                        let angle = gate.params[0];
+                    // For angle-dependent error rates (rotation gates like RZZ)
+                    let p2 = if gate.angle_arity() >= 1 && !gate.angles.is_empty() {
+                        let angle = gate.angles[0].to_radians();
                         self.p2_angle_error_rate(angle)
                     } else {
                         self.p2
@@ -1050,7 +1050,12 @@ impl GeneralNoiseModel {
             if !original_gate_qubits.is_empty() {
                 let qubits_qubit_id: Vec<QubitId> =
                     original_gate_qubits.into_iter().map(QubitId).collect();
-                let new_gate = Gate::new(gate.gate_type, gate.params.clone(), qubits_qubit_id);
+                let new_gate = Gate::new(
+                    gate.gate_type,
+                    gate.angles.clone(),
+                    gate.params.clone(),
+                    qubits_qubit_id,
+                );
                 builder.add_gate_command(&new_gate);
             }
         } else {
@@ -1161,7 +1166,12 @@ impl GeneralNoiseModel {
             if !original_gate_qubits.is_empty() {
                 let qubits_qubit_id: Vec<QubitId> =
                     original_gate_qubits.iter().map(|&q| QubitId(q)).collect();
-                let new_gate = Gate::new(gate.gate_type, gate.params.clone(), qubits_qubit_id);
+                let new_gate = Gate::new(
+                    gate.gate_type,
+                    gate.angles.clone(),
+                    gate.params.clone(),
+                    qubits_qubit_id,
+                );
                 builder.add_gate_command(&new_gate);
             }
         } else {
@@ -1405,6 +1415,7 @@ mod tests {
     use crate::Gate;
     use crate::byte_message::ByteMessageBuilder;
     use crate::byte_message::GateType;
+    use pecos_core::Angle64;
 
     #[test]
     fn test_default() {
@@ -1545,6 +1556,7 @@ mod tests {
         for &qubit in qubits {
             request_builder.add_gate_command(&Gate {
                 gate_type: GateType::Measure,
+                angles: vec![],
                 qubits: vec![QubitId(qubit)],
                 params: vec![],
             });
@@ -1625,6 +1637,7 @@ mod tests {
         // Create a quantum gate operation (Prep on qubit 0)
         let gate = Gate {
             gate_type: GateType::Prep,
+            angles: vec![],
             qubits: vec![QubitId(0)],
             params: vec![],
         };
@@ -1813,6 +1826,7 @@ mod tests {
         let _ = builder.for_quantum_operations();
         let prep_gate = Gate {
             gate_type: GateType::Prep,
+            angles: vec![],
             qubits: vec![QubitId(0)],
             params: vec![],
         };
@@ -2729,6 +2743,7 @@ mod tests {
         // Create an idle gate
         let gate = Gate {
             gate_type: GateType::Idle,
+            angles: vec![],
             qubits: vec![QubitId(0)],
             params: vec![1.0], // 1 second duration
         };
@@ -2751,6 +2766,7 @@ mod tests {
         let mut builder = ByteMessage::quantum_operations_builder();
         let multi_qubit_gate = Gate {
             gate_type: GateType::Idle,
+            angles: vec![],
             qubits: vec![QubitId(0), QubitId(1), QubitId(2)], // 3 qubits
             params: vec![1.0],                                // 1 second duration
         };
@@ -2886,13 +2902,15 @@ mod tests {
         // Create an RZ gate (noiseless - should not have noise applied)
         let rz_gate = Gate {
             gate_type: GateType::RZ,
+            angles: vec![Angle64::from_radians(0.1)],
             qubits: vec![QubitId(0)],
-            params: vec![0.1],
+            params: vec![],
         };
 
         // Create an X gate (not noiseless - should have noise applied)
         let x_gate = Gate {
             gate_type: GateType::X,
+            angles: vec![],
             qubits: vec![QubitId(0)],
             params: vec![],
         };

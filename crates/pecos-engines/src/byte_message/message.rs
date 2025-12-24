@@ -4,10 +4,10 @@ use crate::byte_message::protocol::{
     calc_padding,
 };
 use log::trace;
-use pecos_core::QubitId;
 use pecos_core::errors::PecosError;
 use pecos_core::gate_type::GateType;
 use pecos_core::gates::Gate;
+use pecos_core::{Angle64, QubitId};
 use std::mem::size_of;
 
 /// A message encoded using the PECOS byte protocol
@@ -698,25 +698,36 @@ impl ByteMessage {
         trace!("parse_gate_command: Parsed qubits: {qubits:?}");
 
         // Parse parameters if present
-        let params = if has_params {
+        // The wire format stores all classical parameters as f64, with angles first (in radians)
+        let (angles, params) = if has_params {
             let params_offset = qubits_offset + qubits_byte_size;
             let parsed_params = Self::parse_gate_parameters(payload, params_offset, gate_type)?;
             trace!("parse_gate_command: Parsed parameters: {parsed_params:?}");
-            parsed_params
+
+            // Split into angles and other params based on gate type
+            let angle_count = gate_type.angle_arity();
+            let angles: Vec<Angle64> = parsed_params
+                .iter()
+                .take(angle_count)
+                .map(|&r| Angle64::from_radians(r))
+                .collect();
+            let other_params: Vec<f64> = parsed_params.into_iter().skip(angle_count).collect();
+
+            (angles, other_params)
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
 
         // Special logging for RZ gates
         if matches!(gate_type, GateType::RZ) {
             trace!(
                 "parse_gate_command: RZ gate parsed with angle: {:?}, qubit: {:?}",
-                params.first(),
+                angles.first(),
                 qubits.first()
             );
         }
 
-        Ok(Gate::new(gate_type, params, qubits))
+        Ok(Gate::new(gate_type, angles, params, qubits))
     }
 
     // The parse_simple_measurement method has been removed as part of simplifying the protocol.

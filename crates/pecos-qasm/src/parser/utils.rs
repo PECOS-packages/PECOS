@@ -10,7 +10,23 @@ use crate::parser::errors::{
 use crate::parser::gates::evaluate_param_expr;
 use crate::parser::native_gates::{canonical_gate_name, is_native_operation, parse_native_gate};
 use crate::parser::{Program, QASMParser};
+use pecos_core::Angle64;
 use pecos_core::prelude::{Gate, GateType, QubitId};
+
+/// Convert parsed parameters (radians) into angles and other params based on gate type.
+///
+/// For rotation gates (RX, RY, RZ, RZZ, R1XY, U), parameters are angles in radians.
+/// For other parameterized gates (like Idle), parameters are not angles.
+fn split_parameters(gate_type: GateType, parameters: &[f64]) -> (Vec<Angle64>, Vec<f64>) {
+    let angle_count = gate_type.angle_arity();
+    let angles: Vec<Angle64> = parameters
+        .iter()
+        .take(angle_count)
+        .map(|&r| Angle64::from_radians(r))
+        .collect();
+    let other_params: Vec<f64> = parameters.iter().skip(angle_count).copied().collect();
+    (angles, other_params)
+}
 
 /// Expand all gate operations in the program to native gates
 ///
@@ -109,10 +125,16 @@ fn expand_gate_operation(
         match (gate_type.quantum_arity(), qubits.len()) {
             (1, n) if n > 1 => {
                 // Single-qubit gate applied to multiple qubits
+                let (angles, params) = split_parameters(gate_type, parameters);
                 Ok(qubits
                     .iter()
                     .map(|&qubit| {
-                        let gate = Gate::new(gate_type, parameters.to_vec(), vec![QubitId(qubit)]);
+                        let gate = Gate::new(
+                            gate_type,
+                            angles.clone(),
+                            params.clone(),
+                            vec![QubitId(qubit)],
+                        );
                         Operation::NativeGate(gate)
                     })
                     .collect())
@@ -124,12 +146,14 @@ fn expand_gate_operation(
                         "Two-qubit gate '{name}' applied to {n} qubits (must be even number)"
                     )));
                 }
+                let (angles, params) = split_parameters(gate_type, parameters);
                 Ok((0..n)
                     .step_by(2)
                     .map(|i| {
                         let gate = Gate::new(
                             gate_type,
-                            parameters.to_vec(),
+                            angles.clone(),
+                            params.clone(),
                             vec![QubitId(qubits[i]), QubitId(qubits[i + 1])],
                         );
                         Operation::NativeGate(gate)
@@ -142,9 +166,11 @@ fn expand_gate_operation(
             }
             _ => {
                 // Correct number of qubits, no expansion needed
+                let (angles, params) = split_parameters(gate_type, parameters);
                 let gate = Gate::new(
                     gate_type,
-                    parameters.to_vec(),
+                    angles,
+                    params,
                     qubits.iter().map(|&q| QubitId(q)).collect(),
                 );
                 Ok(vec![Operation::NativeGate(gate)])
@@ -161,7 +187,7 @@ fn expand_gate_operation(
                 Ok(qubits
                     .iter()
                     .map(|&qubit| {
-                        let gate = Gate::new(GateType::Prep, vec![], vec![QubitId(qubit)]);
+                        let gate = Gate::new(GateType::Prep, vec![], vec![], vec![QubitId(qubit)]);
                         Operation::NativeGate(gate)
                     })
                     .collect())
@@ -225,6 +251,7 @@ fn expand_register_measure(
         // Create a Gate with GateType::Measure
         let gate = Gate::new(
             GateType::Measure,
+            vec![], // No angles
             vec![], // No parameters
             vec![QubitId(qubit)],
         );

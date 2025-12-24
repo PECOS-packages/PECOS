@@ -99,7 +99,7 @@ pub use num_complex::{Complex, Complex32, Complex64};
 pub use crate::array::{arange, delete, diag, linspace, ones, sum_axis, zeros};
 
 // Re-export graph types and algorithms
-pub use crate::dag::{DAG, DAGHasCycleError, DAGWouldCycleError};
+pub use crate::dag::{DAG, DAGHasCycleError, DagWouldCycleError};
 pub use crate::digraph::DiGraph;
 pub use crate::graph::{self, Graph};
 

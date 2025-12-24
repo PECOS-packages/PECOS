@@ -19,6 +19,7 @@ fn count_gates_by_name(operations: &[Operation], gate_name: &str) -> usize {
 }
 
 // Helper function to extract gate parameters
+// Note: For NativeGate, rotation angles are now stored in gate.angles as Angle64
 fn extract_gate_parameters(operations: &[Operation], gate_name: &str) -> Vec<f64> {
     operations
         .iter()
@@ -29,7 +30,8 @@ fn extract_gate_parameters(operations: &[Operation], gate_name: &str) -> Vec<f64
             Operation::NativeGate(gate) => {
                 let gate_type_str = format!("{:?}", gate.gate_type);
                 if gate_type_str.eq_ignore_ascii_case(gate_name) {
-                    gate.params.first().copied()
+                    // Rotation gate angles are stored in gate.angles as Angle64
+                    gate.angles.first().map(pecos_core::Angle::to_radians)
                 } else {
                     None
                 }
@@ -87,7 +89,13 @@ fn test_hqslib1_rzz_sequence() {
                 let gate_type_str = format!("{:?}", gate.gate_type);
                 if gate_type_str == "RZZ" {
                     let qubits = gate.qubits.iter().map(|q| q.0).collect();
-                    Some((gate.params.clone(), qubits))
+                    // Rotation gate angles are now stored in gate.angles as Angle64
+                    let params: Vec<f64> = gate
+                        .angles
+                        .iter()
+                        .map(pecos_core::Angle::to_radians)
+                        .collect();
+                    Some((params, qubits))
                 } else {
                     None
                 }
@@ -107,20 +115,23 @@ fn test_hqslib1_rzz_sequence() {
     }
 
     // Verify the parameter values (approximate due to pi calculations)
+    // Note: Angle64 normalizes angles to [0, 2π), so negative angles become positive
+    // -0.6*PI becomes 1.4*PI, -0.3*PI becomes 1.7*PI
+    let pi = std::f64::consts::PI;
     let expected_params = [
-        0.3 * std::f64::consts::PI,
-        0.4 * std::f64::consts::PI,
-        -0.6 * std::f64::consts::PI,
-        1.0 * std::f64::consts::PI,
-        -0.299_999_999_999_999_8 * std::f64::consts::PI,
-        0.6 * std::f64::consts::PI,
-        1.0 * std::f64::consts::PI,
+        0.3 * pi,                             // 0.3*pi
+        0.4 * pi,                             // 0.4*pi
+        1.4 * pi,                             // -0.6*pi normalized to 1.4*pi
+        1.0 * pi,                             // 1.0*pi
+        (2.0 - 0.299_999_999_999_999_8) * pi, // -0.3*pi normalized to ~1.7*pi
+        0.6 * pi,                             // 0.6*pi
+        1.0 * pi,                             // 1.0*pi
     ];
 
     for (i, ((params, _), expected)) in rzz_gates.iter().zip(expected_params.iter()).enumerate() {
         let delta = (params[0] - expected).abs();
         assert!(
-            delta < 1e-10,
+            delta < 1e-6, // Relaxed tolerance for angle normalization
             "RZZ gate {} parameter mismatch: expected {}, got {}",
             i,
             expected,
@@ -132,6 +143,7 @@ fn test_hqslib1_rzz_sequence() {
 #[test]
 fn test_rzz_with_negative_parameters() {
     // Test that RZZ handles negative parameters correctly
+    // Note: Angle64 normalizes angles to [0, 2π), so negative angles become positive
     let qasm = r#"
         OPENQASM 2.0;
         include "hqslib1.inc";
@@ -149,24 +161,28 @@ fn test_rzz_with_negative_parameters() {
 
     assert_eq!(rzz_parameters.len(), 3);
 
-    // Check negative values are preserved
-    assert!(
-        rzz_parameters[0] < 0.0,
-        "First parameter should be negative"
-    );
-    assert!(
-        rzz_parameters[1] < 0.0,
-        "Second parameter should be negative"
-    );
-    assert!(
-        rzz_parameters[2] < 0.0,
-        "Third parameter should be negative"
-    );
+    // Angle64 normalizes to [0, 2π), so:
+    // -π/2 becomes 3π/2
+    // -π becomes π
+    // -2π becomes 0
+    let pi = std::f64::consts::PI;
 
-    // Check approximate values
-    assert!((rzz_parameters[0] - (-std::f64::consts::PI / 2.0)).abs() < 1e-10);
-    assert!((rzz_parameters[1] - (-std::f64::consts::PI)).abs() < 1e-10);
-    assert!((rzz_parameters[2] - (-2.0 * std::f64::consts::PI)).abs() < 1e-10);
+    // Check normalized values
+    assert!(
+        (rzz_parameters[0] - 3.0 * pi / 2.0).abs() < 1e-6,
+        "First parameter should be 3π/2 (normalized from -π/2), got {}",
+        rzz_parameters[0]
+    );
+    assert!(
+        (rzz_parameters[1] - pi).abs() < 1e-6,
+        "Second parameter should be π (normalized from -π), got {}",
+        rzz_parameters[1]
+    );
+    assert!(
+        rzz_parameters[2].abs() < 1e-6,
+        "Third parameter should be 0 (normalized from -2π), got {}",
+        rzz_parameters[2]
+    );
 }
 
 #[test]

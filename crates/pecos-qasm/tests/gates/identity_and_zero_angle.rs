@@ -99,10 +99,10 @@ fn test_p_gate_expansion() {
             );
         }
         Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::RZ) => {
-            // For native gates, check params field
-            assert_eq!(gate.params.len(), 1);
+            // For native gates, check angles field (Angle64)
+            assert_eq!(gate.angles.len(), 1);
             assert!(
-                (gate.params[0] - 0.0).abs() < f64::EPSILON,
+                (gate.angles[0].to_radians() - 0.0).abs() < f64::EPSILON,
                 "RZ angle should be 0"
             );
         }
@@ -144,17 +144,18 @@ fn test_u_gate_expansion() {
             );
         }
         Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::U) => {
-            assert_eq!(gate.params.len(), 3);
+            // U gate has 3 angles stored in gate.angles as Angle64
+            assert_eq!(gate.angles.len(), 3);
             assert!(
-                (gate.params[0] - 0.0).abs() < f64::EPSILON,
+                (gate.angles[0].to_radians() - 0.0).abs() < f64::EPSILON,
                 "U theta parameter should be 0"
             );
             assert!(
-                (gate.params[1] - 0.0).abs() < f64::EPSILON,
+                (gate.angles[1].to_radians() - 0.0).abs() < f64::EPSILON,
                 "U phi parameter should be 0"
             );
             assert!(
-                (gate.params[2] - 0.0).abs() < f64::EPSILON,
+                (gate.angles[2].to_radians() - 0.0).abs() < f64::EPSILON,
                 "U lambda parameter should be 0"
             );
         }

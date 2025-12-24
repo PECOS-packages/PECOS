@@ -200,15 +200,16 @@ impl Engine for StateVecEngine {
                             cmd.qubits.len()
                         )));
                     }
-                    if cmd.params.is_empty() {
-                        return Err(quantum_error("RZZ gate requires at least one parameter"));
+                    if cmd.angles.is_empty() {
+                        return Err(quantum_error("RZZ gate requires at least one angle"));
                     }
+                    let angle = cmd.angles[0].to_radians();
                     for qubits in cmd.qubits.chunks_exact(2) {
                         debug!(
                             "Processing RZZ gate on qubits {:?} and {:?}",
                             qubits[0], qubits[1]
                         );
-                        self.simulator.rzz(cmd.params[0], *qubits[0], *qubits[1]);
+                        self.simulator.rzz(angle, *qubits[0], *qubits[1]);
                     }
                 }
                 GateType::SZZ => {
@@ -243,49 +244,42 @@ impl Engine for StateVecEngine {
                             .szzdg(usize::from(qubits[0]), usize::from(qubits[1]));
                     }
                 }
-                // TODO: Consider setting exact numbers of parameters
                 GateType::RX => {
-                    if !cmd.params.is_empty() {
+                    if !cmd.angles.is_empty() {
+                        let angle = cmd.angles[0].to_radians();
                         for q in &cmd.qubits {
-                            debug!(
-                                "Processing RX gate with angle {:?} on qubit {:?}",
-                                cmd.params[0], q
-                            );
-                            self.simulator.rx(cmd.params[0], **q);
+                            debug!("Processing RX gate with angle {angle:?} on qubit {q:?}");
+                            self.simulator.rx(angle, **q);
                         }
                     }
                 }
                 GateType::RY => {
-                    if !cmd.params.is_empty() {
+                    if !cmd.angles.is_empty() {
+                        let angle = cmd.angles[0].to_radians();
                         for q in &cmd.qubits {
-                            debug!(
-                                "Processing RY gate with angle {:?} on qubit {:?}",
-                                cmd.params[0], q
-                            );
-                            self.simulator.ry(cmd.params[0], **q);
+                            debug!("Processing RY gate with angle {angle:?} on qubit {q:?}");
+                            self.simulator.ry(angle, **q);
                         }
                     }
                 }
                 GateType::RZ => {
-                    if !cmd.params.is_empty() {
+                    if !cmd.angles.is_empty() {
+                        let angle = cmd.angles[0].to_radians();
                         for q in &cmd.qubits {
-                            debug!(
-                                "Processing RZ gate with angle {:?} on qubit {:?}",
-                                cmd.params[0], q
-                            );
-                            self.simulator.rz(cmd.params[0], **q);
+                            debug!("Processing RZ gate with angle {angle:?} on qubit {q:?}");
+                            self.simulator.rz(angle, **q);
                         }
                     }
                 }
-                // TODO: Consider setting exact number of parameters
                 GateType::R1XY => {
-                    if cmd.params.len() >= 2 {
+                    if cmd.angles.len() >= 2 {
+                        let theta = cmd.angles[0].to_radians();
+                        let phi = cmd.angles[1].to_radians();
                         for q in &cmd.qubits {
                             debug!(
-                                "Processing R1XY gate with angles theta={:?}, phi={:?} on qubit {:?}",
-                                cmd.params[0], cmd.params[1], q
+                                "Processing R1XY gate with angles theta={theta:?}, phi={phi:?} on qubit {q:?}"
                             );
-                            self.simulator.r1xy(cmd.params[0], cmd.params[1], **q);
+                            self.simulator.r1xy(theta, phi, **q);
                         }
                     }
                 }
@@ -311,20 +305,38 @@ impl Engine for StateVecEngine {
                 GateType::I
                 | GateType::Idle
                 | GateType::MeasCrosstalkLocalPayload
-                | GateType::MeasCrosstalkGlobalPayload => {
+                | GateType::MeasCrosstalkGlobalPayload
+                | GateType::QFree => {
                     // Just let the system naturally evolve for the specified duration
                     // No active operation needed in the simulator
+                    // QFree is a no-op for state vector simulation (qubit tracking is handled elsewhere)
+                }
+                GateType::QAlloc => {
+                    // Allocate qubits in |0⟩ state - for state vector sim, same as Prep
+                    for q in &cmd.qubits {
+                        debug!("Processing QAlloc gate on qubit {q:?}");
+                        self.simulator.pz(**q);
+                    }
+                }
+                GateType::MeasureFree => {
+                    // Measure and deallocate - measure first, then the qubit is implicitly freed
+                    for q in &cmd.qubits {
+                        debug!("Processing MeasureFree gate on qubit {q:?}");
+                        let meas_result = self.simulator.mz(**q);
+                        let outcome = u32::from(meas_result.outcome);
+                        measurements.push(outcome);
+                    }
                 }
                 GateType::U => {
-                    // TODO: Consider checking for the exact number of parameters
-                    if cmd.params.len() >= 3 {
+                    if cmd.angles.len() >= 3 {
+                        let theta = cmd.angles[0].to_radians();
+                        let phi = cmd.angles[1].to_radians();
+                        let lambda = cmd.angles[2].to_radians();
                         for q in &cmd.qubits {
                             debug!(
-                                "Processing U gate with angles theta={:?}, phi={:?}, lambda={:?} on qubit {:?}",
-                                cmd.params[0], cmd.params[1], cmd.params[2], q
+                                "Processing U gate with angles theta={theta:?}, phi={phi:?}, lambda={lambda:?} on qubit {q:?}"
                             );
-                            self.simulator
-                                .u(cmd.params[0], cmd.params[1], cmd.params[2], **q);
+                            self.simulator.u(theta, phi, lambda, **q);
                         }
                     }
                 }

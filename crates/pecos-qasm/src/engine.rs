@@ -592,7 +592,8 @@ impl QASMEngine {
             GateType::I
             | GateType::Idle
             | GateType::MeasCrosstalkLocalPayload
-            | GateType::MeasCrosstalkGlobalPayload => Ok(()), // No-op gates
+            | GateType::MeasCrosstalkGlobalPayload
+            | GateType::QFree => Ok(()), // No-op gates (QFree is just a marker)
             GateType::X
             | GateType::Y
             | GateType::Z
@@ -601,7 +602,8 @@ impl QASMEngine {
             | GateType::SZdg
             | GateType::T
             | GateType::Tdg
-            | GateType::Prep => self.process_single_qubit_gate(gate.gate_type, &qubits),
+            | GateType::Prep
+            | GateType::QAlloc => self.process_single_qubit_gate(gate.gate_type, &qubits),
             GateType::CX | GateType::SZZ | GateType::SZZdg => {
                 self.process_two_qubit_gate(gate.gate_type, &qubits)
             }
@@ -610,11 +612,18 @@ impl QASMEngine {
             | GateType::RZ
             | GateType::RZZ
             | GateType::R1XY
-            | GateType::U => self.process_parameterized_gate(gate.gate_type, &qubits, &gate.params),
-            GateType::Measure | GateType::MeasureLeaked => Err(PecosError::Processing(
-                "Measure and MeasureLeaked gates should be handled by MeasureWithMapping operation"
-                    .to_string(),
-            )),
+            | GateType::U => {
+                // Convert angles to radians for process_parameterized_gate
+                let angles_as_radians: Vec<f64> =
+                    gate.angles.iter().map(pecos_core::Angle::to_radians).collect();
+                self.process_parameterized_gate(gate.gate_type, &qubits, &angles_as_radians)
+            }
+            GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
+                Err(PecosError::Processing(
+                    "Measure, MeasureLeaked, and MeasureFree gates should be handled by MeasureWithMapping operation"
+                        .to_string(),
+                ))
+            }
         }
     }
 

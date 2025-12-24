@@ -1620,7 +1620,7 @@ impl PyDiGraphAttrsView {
 /// g.add_edge(n1, n2)  # n1 -> n2
 ///
 /// # This would raise an error (creates cycle):
-/// # g.add_edge(n2, n0)  # Raises DAGWouldCycleError
+/// # g.add_edge(n2, n0)  # Raises DagWouldCycleError
 ///
 /// # Topological sort always succeeds for DAGs
 /// order = g.topological_sort()

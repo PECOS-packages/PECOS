@@ -9,9 +9,8 @@ use crate::byte_message::protocol::{
     ReturnValueHeader, calc_padding,
 };
 use bytemuck::bytes_of;
-use pecos_core::QubitId;
-use pecos_core::gate_type::GateType;
 use pecos_core::gates::Gate;
+use pecos_core::{Angle64, QubitId};
 use std::mem::size_of;
 
 // ByteMessage guarantees 4-byte alignment by storing data in Vec<u32>
@@ -206,21 +205,17 @@ impl ByteMessageBuilder {
     /// as the protocol uses a u8 to represent the qubit count.
     pub fn add_gate_command(&mut self, gate: &Gate) -> &mut Self {
         // Calculate total payload size
+        // Classical parameters in wire format include both angles (as radians) and other params
         let header_size = size_of::<GateHeader>();
         let qubits_size = gate.qubits.len() * size_of::<u32>();
-        let params_size = match gate.gate_type {
-            GateType::R1XY => 2 * size_of::<f64>(),
-            GateType::U => 3 * size_of::<f64>(),
-            GateType::Idle | GateType::RZ | GateType::RZZ => size_of::<f64>(),
-            _ => 0,
-        };
+        let params_size = (gate.angles.len() + gate.params.len()) * size_of::<f64>();
         let total_size = header_size + qubits_size + params_size;
 
         // Create a buffer for the payload
         let mut payload = Vec::with_capacity(total_size);
 
-        // Determine gate type and parameters
-        let has_params = !gate.params.is_empty();
+        // Determine if there are any parameters (angles or other params)
+        let has_params = !gate.angles.is_empty() || !gate.params.is_empty();
 
         // Create gate header
         let header = GateHeader {
@@ -239,7 +234,13 @@ impl ByteMessageBuilder {
             payload.extend_from_slice(&qubit_u32.to_le_bytes());
         }
 
-        // Add parameters to payload if any
+        // Add angles to payload (converted to radians for wire format)
+        for angle in &gate.angles {
+            let radians = angle.to_radians();
+            payload.extend_from_slice(&radians.to_le_bytes());
+        }
+
+        // Add other parameters to payload if any (e.g., duration for Idle)
         for param in &gate.params {
             payload.extend_from_slice(&param.to_le_bytes());
         }
@@ -384,7 +385,7 @@ impl ByteMessageBuilder {
             .zip(qubits2.iter())
             .map(|(&q1, &q2)| (q1, q2))
             .collect();
-        let gate = Gate::rzz(theta, &pairs);
+        let gate = Gate::rzz(Angle64::from_radians(theta), &pairs);
         self.add_gate_command(&gate);
         self
     }
@@ -442,21 +443,30 @@ impl ByteMessageBuilder {
 
     /// Add an RZ gate
     pub fn add_rz(&mut self, theta: f64, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::rz(theta, qubits);
+        let gate = Gate::rz(Angle64::from_radians(theta), qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add an R1XY gate
     pub fn add_r1xy(&mut self, theta: f64, phi: f64, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::r1xy(theta, phi, qubits);
+        let gate = Gate::r1xy(
+            Angle64::from_radians(theta),
+            Angle64::from_radians(phi),
+            qubits,
+        );
         self.add_gate_command(&gate);
         self
     }
 
     /// Add a U gate
     pub fn add_u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::u(theta, phi, lambda, qubits);
+        let gate = Gate::u(
+            Angle64::from_radians(theta),
+            Angle64::from_radians(phi),
+            Angle64::from_radians(lambda),
+            qubits,
+        );
         self.add_gate_command(&gate);
         self
     }
@@ -540,14 +550,14 @@ impl ByteMessageBuilder {
 
     /// Add an RX gate
     pub fn add_rx(&mut self, theta: f64, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::new(GateType::RX, vec![theta], qubits.to_vec());
+        let gate = Gate::rx(Angle64::from_radians(theta), qubits);
         self.add_gate_command(&gate);
         self
     }
 
     /// Add an RY gate
     pub fn add_ry(&mut self, theta: f64, qubits: &[usize]) -> &mut Self {
-        let gate = Gate::new(GateType::RY, vec![theta], qubits.to_vec());
+        let gate = Gate::ry(Angle64::from_radians(theta), qubits);
         self.add_gate_command(&gate);
         self
     }
@@ -729,7 +739,7 @@ mod tests {
         // Add gates using new GateCommand interface
         let gate = Gate::h(&[0]);
         builder.add_gate_command(&gate);
-        let gate = Gate::rz(0.5, &[1]);
+        let gate = Gate::rz(Angle64::from_radians(0.5), &[1]);
         builder.add_gate_command(&gate);
 
         // Test multiple gates at once
@@ -812,9 +822,16 @@ mod tests {
         assert_eq!(commands[2].gate_type, GateType::Y);
         assert_eq!(commands[3].gate_type, GateType::Z);
         assert_eq!(commands[4].gate_type, GateType::RZ);
-        assert_eq!(commands[4].params, vec![0.5]);
+        // RZ angle is now stored in angles field (as Angle64), params should be empty
+        assert_eq!(commands[4].angles.len(), 1);
+        assert!((commands[4].angles[0].to_radians() - 0.5).abs() < 1e-10);
+        assert!(commands[4].params.is_empty());
         assert_eq!(commands[5].gate_type, GateType::R1XY);
-        assert_eq!(commands[5].params, vec![0.1, 0.2]);
+        // R1XY has two angles, also stored in angles field
+        assert_eq!(commands[5].angles.len(), 2);
+        assert!((commands[5].angles[0].to_radians() - 0.1).abs() < 1e-10);
+        assert!((commands[5].angles[1].to_radians() - 0.2).abs() < 1e-10);
+        assert!(commands[5].params.is_empty());
         assert_eq!(commands[6].gate_type, GateType::Measure);
     }
 

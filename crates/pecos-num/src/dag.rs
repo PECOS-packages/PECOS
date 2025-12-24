@@ -73,21 +73,21 @@ impl Error for DAGHasCycleError {}
 
 /// Error returned when adding an edge would create a cycle in the DAG.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DAGWouldCycleError;
+pub struct DagWouldCycleError;
 
-impl fmt::Display for DAGWouldCycleError {
+impl fmt::Display for DagWouldCycleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Adding this edge would create a cycle in the DAG")
     }
 }
 
-impl Error for DAGWouldCycleError {}
+impl Error for DagWouldCycleError {}
 
 /// A Directed Acyclic Graph (DAG) with runtime cycle detection.
 ///
 /// This type guarantees that the graph remains acyclic at all times.
 /// Any attempt to add an edge that would create a cycle will fail with
-/// a [`DAGWouldCycleError`].
+/// a [`DagWouldCycleError`].
 ///
 /// The DAG provides efficient methods for:
 /// - Adding nodes and edges (with cycle checking)
@@ -221,11 +221,11 @@ impl DAG {
     /// # Returns
     ///
     /// `Ok(edge_id)` if the edge was added successfully, or
-    /// `Err(DAGWouldCycleError)` if adding the edge would create a cycle.
+    /// `Err(DagWouldCycleError)` if adding the edge would create a cycle.
     ///
     /// # Errors
     ///
-    /// Returns [`DAGWouldCycleError`] if the edge would create a cycle.
+    /// Returns [`DagWouldCycleError`] if the edge would create a cycle.
     ///
     /// # Example
     ///
@@ -239,7 +239,7 @@ impl DAG {
     /// assert!(dag.add_edge(a, b).is_ok());
     /// assert!(dag.add_edge(b, a).is_err()); // Would create cycle
     /// ```
-    pub fn add_edge(&mut self, source: usize, target: usize) -> Result<usize, DAGWouldCycleError> {
+    pub fn add_edge(&mut self, source: usize, target: usize) -> Result<usize, DagWouldCycleError> {
         self.add_edge_with_weight(source, target, 1.0)
     }
 
@@ -247,17 +247,17 @@ impl DAG {
     ///
     /// # Returns
     ///
-    /// `Ok(edge_id)` if successful, `Err(DAGWouldCycleError)` if it would create a cycle.
+    /// `Ok(edge_id)` if successful, `Err(DagWouldCycleError)` if it would create a cycle.
     ///
     /// # Errors
     ///
-    /// Returns [`DAGWouldCycleError`] if the edge would create a cycle.
+    /// Returns [`DagWouldCycleError`] if the edge would create a cycle.
     pub fn add_edge_with_weight(
         &mut self,
         source: usize,
         target: usize,
         weight: f64,
-    ) -> Result<usize, DAGWouldCycleError> {
+    ) -> Result<usize, DagWouldCycleError> {
         let data = EdgeAttrs::with_weight(weight);
         self.add_edge_with_data(source, target, data)
     }
@@ -266,17 +266,17 @@ impl DAG {
     ///
     /// # Returns
     ///
-    /// `Ok(edge_id)` if successful, `Err(DAGWouldCycleError)` if it would create a cycle.
+    /// `Ok(edge_id)` if successful, `Err(DagWouldCycleError)` if it would create a cycle.
     ///
     /// # Errors
     ///
-    /// Returns [`DAGWouldCycleError`] if the edge would create a cycle.
+    /// Returns [`DagWouldCycleError`] if the edge would create a cycle.
     pub fn add_edge_with_data(
         &mut self,
         source: usize,
         target: usize,
         data: EdgeAttrs,
-    ) -> Result<usize, DAGWouldCycleError> {
+    ) -> Result<usize, DagWouldCycleError> {
         let source_node = NodeIndex::new(source);
         let target_node = NodeIndex::new(target);
 
@@ -288,12 +288,12 @@ impl DAG {
             source_node,
             Some(&mut self.cycle_state),
         ) {
-            return Err(DAGWouldCycleError);
+            return Err(DagWouldCycleError);
         }
 
         // Also check for self-loops
         if source == target {
-            return Err(DAGWouldCycleError);
+            return Err(DagWouldCycleError);
         }
 
         let edge_idx = self

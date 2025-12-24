@@ -186,12 +186,12 @@ impl DepolarizingNoiseModel {
                 GateType::RZ => {
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                 }
-                GateType::Measure | GateType::MeasureLeaked => {
+                GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
                     trace!("Applying measurement with possible fault");
                     self.apply_meas_faults(&mut builder, gate);
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                 }
-                GateType::Prep => {
+                GateType::Prep | GateType::QAlloc => {
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                     trace!("Applying preparation with possible fault");
                     self.apply_prep_faults(&mut builder, gate);
@@ -199,9 +199,10 @@ impl DepolarizingNoiseModel {
                 GateType::I
                 | GateType::Idle
                 | GateType::MeasCrosstalkLocalPayload
-                | GateType::MeasCrosstalkGlobalPayload => {
+                | GateType::MeasCrosstalkGlobalPayload
+                | GateType::QFree => {
                     // Just pass through with no added noise
-                    // builder.add_quantum_gate(gate);
+                    // QFree has no physical operation to apply noise to
                 }
             }
         }

@@ -207,32 +207,40 @@ impl NoiseUtils {
                 builder.add_szzdg(&[*gate.qubits[0]], &[*gate.qubits[1]]);
             }
 
-            // Gates with parameters that need validation
-            GateType::RX if !gate.params.is_empty() => {
+            // Rotation gates - angles are now stored in gate.angles field
+            GateType::RX if !gate.angles.is_empty() => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_rx(gate.params[0], &qubits_usize);
+                builder.add_rx(gate.angles[0].to_radians(), &qubits_usize);
             }
-            GateType::RY if !gate.params.is_empty() => {
+            GateType::RY if !gate.angles.is_empty() => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_ry(gate.params[0], &qubits_usize);
+                builder.add_ry(gate.angles[0].to_radians(), &qubits_usize);
             }
-            GateType::RZ if !gate.params.is_empty() => {
+            GateType::RZ if !gate.angles.is_empty() => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_rz(gate.params[0], &qubits_usize);
+                builder.add_rz(gate.angles[0].to_radians(), &qubits_usize);
             }
-            GateType::RZZ if gate.qubits.len() >= 2 && !gate.params.is_empty() => {
-                builder.add_rzz(gate.params[0], &[*gate.qubits[0]], &[*gate.qubits[1]]);
+            GateType::RZZ if gate.qubits.len() >= 2 && !gate.angles.is_empty() => {
+                builder.add_rzz(
+                    gate.angles[0].to_radians(),
+                    &[*gate.qubits[0]],
+                    &[*gate.qubits[1]],
+                );
             }
-            GateType::R1XY if gate.params.len() >= 2 => {
+            GateType::R1XY if gate.angles.len() >= 2 => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
-                builder.add_r1xy(gate.params[0], gate.params[1], &qubits_usize);
+                builder.add_r1xy(
+                    gate.angles[0].to_radians(),
+                    gate.angles[1].to_radians(),
+                    &qubits_usize,
+                );
             }
-            GateType::U if gate.params.len() >= 3 => {
+            GateType::U if gate.angles.len() >= 3 => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
                 builder.add_u(
-                    gate.params[0],
-                    gate.params[1],
-                    gate.params[2],
+                    gate.angles[0].to_radians(),
+                    gate.angles[1].to_radians(),
+                    gate.angles[2].to_radians(),
                     &qubits_usize,
                 );
             }

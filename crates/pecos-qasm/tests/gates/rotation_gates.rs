@@ -135,10 +135,10 @@ fn test_crz_expansion() {
                 Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::RZ) => {
                     assert_eq!(gate.qubits.len(), 1);
                     assert_eq!(gate.qubits[0].0, 1); // Target qubit
-                    // For native gates, the angle is in the params field
-                    assert_eq!(gate.params.len(), 1);
+                    // For native gates, the angle is in the angles field as Angle64
+                    assert_eq!(gate.angles.len(), 1);
                     assert!(
-                        (gate.params[0] - std::f64::consts::PI / 4.0).abs() < 1e-10,
+                        (gate.angles[0].to_radians() - std::f64::consts::PI / 4.0).abs() < 1e-10,
                         "First RZ should have angle pi/4"
                     );
                 }
@@ -174,11 +174,14 @@ fn test_crz_expansion() {
                 Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::RZ) => {
                     assert_eq!(gate.qubits.len(), 1);
                     assert_eq!(gate.qubits[0].0, 1); // Target qubit
-                    // For native gates, the angle is in the params field
-                    assert_eq!(gate.params.len(), 1);
+                    // For native gates, the angle is in the angles field as Angle64
+                    // Note: Angle64 normalizes to [0, 2π), so -π/4 becomes 7π/4
+                    assert_eq!(gate.angles.len(), 1);
+                    let angle = gate.angles[0].to_radians();
+                    let expected = 7.0 * std::f64::consts::PI / 4.0; // -pi/4 normalized to 7pi/4
                     assert!(
-                        (gate.params[0] + std::f64::consts::PI / 4.0).abs() < 1e-10,
-                        "Second RZ should have angle -pi/4"
+                        (angle - expected).abs() < 1e-10,
+                        "Second RZ should have angle 7pi/4 (normalized from -pi/4), got {angle}"
                     );
                 }
                 _ => panic!("Expected RZ gate at position 2"),

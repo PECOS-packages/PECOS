@@ -34,8 +34,10 @@ import pecos_rslib
 from pecos_rslib import (
     Array,  # Array type with generic dtype support (Array[f64], etc.)
     BitInt,  # Fixed-width binary integer type
+    Nanoseconds,  # Time duration in nanoseconds
     Pauli,  # Quantum Pauli operators (I, X, Y, Z)
     PauliString,  # Multi-qubit Pauli operators
+    TimeUnits,  # Abstract time duration in arbitrary units
     WasmForeignObject,  # WASM foreign object for classical coprocessor
     abs,  # Absolute value  # noqa: A004
     all,  # All elements true  # noqa: A004
@@ -193,6 +195,7 @@ from pecos import (
     programs,
     protocols,
     qeccs,
+    quantum,  # Quantum types (DagCircuit, Gate, Pauli, etc.)
     simulators,
     testing,  # Testing utilities (like numpy.testing)
     tools,
@@ -257,6 +260,7 @@ __all__ = [
     "HybridEngine",
     "Inexact",
     "Integer",
+    "Nanoseconds",  # Time unit type
     "Numeric",
     "Pauli",
     "PauliString",
@@ -271,6 +275,7 @@ __all__ = [
     "QisEngineBuilder",
     "QuantumCircuit",
     "SignedInteger",
+    "TimeUnits",  # Time unit type
     "UnsignedInteger",
     "Wasm",
     "WasmForeignObject",
@@ -350,6 +355,7 @@ __all__ = [
     "qasm_engine",
     "qeccs",
     "qis_engine",
+    "quantum",
     "random",
     "round",
     # Simulation entry point

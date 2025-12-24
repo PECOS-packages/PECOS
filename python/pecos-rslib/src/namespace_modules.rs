@@ -5,10 +5,48 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 /// Register the 'quantum' namespace module
-/// Contains quantum simulation backends and builders
+/// Contains quantum circuit types and simulation backends
 pub fn register_quantum_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = parent.py();
     let quantum = PyModule::new(py, "quantum")?;
+
+    // Add circuit representation types
+    quantum.add("DagCircuit", parent.getattr("DagCircuit")?)?;
+    quantum.add("Gate", parent.getattr("Gate")?)?;
+    quantum.add("GateType", parent.getattr("GateType")?)?;
+    quantum.add("QubitId", parent.getattr("QubitId")?)?;
+    quantum.add("Tick", parent.getattr("Tick")?)?;
+    quantum.add("TickCircuit", parent.getattr("TickCircuit")?)?;
+    quantum.add("TickHandle", parent.getattr("TickHandle")?)?;
+    quantum.add("TickPrepHandle", parent.getattr("TickPrepHandle")?)?;
+    quantum.add("TickMeasureHandle", parent.getattr("TickMeasureHandle")?)?;
+    quantum.add(
+        "DagCircuitWouldCycleError",
+        parent.getattr("DagCircuitWouldCycleError")?,
+    )?;
+
+    // Add HUGR conversion functions and exception
+    quantum.add(
+        "HugrConversionError",
+        parent.getattr("HugrConversionError")?,
+    )?;
+    quantum.add("QubitConflictError", parent.getattr("QubitConflictError")?)?;
+    quantum.add(
+        "hugr_to_dag_circuit",
+        parent.getattr("hugr_to_dag_circuit")?,
+    )?;
+    quantum.add(
+        "hugr_op_to_gate_type",
+        parent.getattr("hugr_op_to_gate_type")?,
+    )?;
+    quantum.add(
+        "gate_type_to_hugr_op",
+        parent.getattr("gate_type_to_hugr_op")?,
+    )?;
+    quantum.add(
+        "is_quantum_operation",
+        parent.getattr("is_quantum_operation")?,
+    )?;
 
     // Add factory functions (references to the engine builders)
     quantum.add("state_vector", parent.getattr("state_vector")?)?;

@@ -12,9 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Quantum operator types and utilities.
+"""Quantum operator types, circuit representation, and utilities.
 
 This module provides fundamental quantum types for PECOS:
+
+Circuit Representation:
+- DagCircuit: DAG-based quantum circuit (nodes=gates, edges=qubit wires)
+- Gate: Quantum gate with type, parameters, and qubit targets
+- GateType: Enum of supported gate types (H, X, CX, RZ, Measure, etc.)
+- QubitId: Qubit identifier
+
+Pauli Operators:
 - Pauli operators (I, X, Y, Z)
 - Pauli strings (multi-qubit Pauli operators)
 - Array support for quantum operators (via pecos.array)
@@ -23,6 +31,18 @@ All functionality is provided by pecos_rslib - this module just re-exports
 with clean documentation for quantum computing use cases.
 
 Examples:
+    >>> from pecos.quantum import DagCircuit, Gate, QubitId
+
+    >>> # Build a Bell state circuit
+    >>> circuit = DagCircuit()
+    >>> h = circuit.add_gate(Gate.h([0]))
+    >>> cx = circuit.add_gate(Gate.cx([(0, 1)]))
+    >>> circuit.connect(h, cx, 0)
+
+    >>> # Query circuit properties
+    >>> print(circuit.gate_count())  # 2
+    >>> print(circuit.depth())  # 1
+
     >>> from pecos.quantum import Pauli
     >>> x = Pauli.X
     >>> z = Pauli.Z
@@ -51,13 +71,34 @@ if TYPE_CHECKING:
 
     from pecos.typing import Integer
 
-# Import Pauli types from pecos_rslib
+# Import types from pecos_rslib
 try:
     from pecos_rslib import Pauli, PauliString
+
+    # Circuit representation types
+    # HUGR conversion utilities
+    from pecos_rslib.quantum import (
+        DagCircuit,
+        DagCircuitWouldCycleError,
+        Gate,
+        GateType,
+        HugrConversionError,
+        QubitConflictError,
+        QubitId,
+        Tick,
+        TickCircuit,
+        TickHandle,
+        TickMeasureHandle,
+        TickPrepHandle,
+        gate_type_to_hugr_op,
+        hugr_op_to_gate_type,
+        hugr_to_dag_circuit,
+        is_quantum_operation,
+    )
 except ImportError as e:
     # Provide helpful error message if Rust bindings not built
     msg = (
-        f"Failed to import Pauli types from pecos_rslib: {e}\n"
+        f"Failed to import quantum types from pecos_rslib: {e}\n"
         "Make sure pecos_rslib is properly installed with: uv sync"
     )
     raise ImportError(msg) from e
@@ -153,7 +194,26 @@ def pauli_string(
 
 
 __all__ = [
+    # Circuit representation
+    "DagCircuit",
+    "DagCircuitWouldCycleError",
+    "Gate",
+    "GateType",
+    # HUGR conversion utilities
+    "HugrConversionError",
+    # Pauli operators
     "Pauli",
     "PauliString",
+    "QubitConflictError",
+    "QubitId",
+    "Tick",
+    "TickCircuit",
+    "TickHandle",
+    "TickMeasureHandle",
+    "TickPrepHandle",
+    "gate_type_to_hugr_op",
+    "hugr_op_to_gate_type",
+    "hugr_to_dag_circuit",
+    "is_quantum_operation",
     "pauli_string",
 ]

@@ -205,7 +205,17 @@ impl PyByteMessage {
             let qubits_as_usize: Vec<usize> = op.qubits.iter().map(|q| **q).collect();
             dict.set_item("qubits", qubits_as_usize)?;
 
-            // Handle params vector
+            // Handle angles vector (rotation angles stored as Angle64, convert to radians for Python)
+            if !op.angles.is_empty() {
+                let angles_radians: Vec<f64> = op
+                    .angles
+                    .iter()
+                    .map(pecos::core::Angle::to_radians)
+                    .collect();
+                dict.set_item("angles", angles_radians)?;
+            }
+
+            // Handle params vector (other non-angle parameters)
             if !op.params.is_empty() {
                 dict.set_item("params", op.params.clone())?;
             }

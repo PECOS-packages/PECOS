@@ -155,11 +155,19 @@ pub mod engines {
     pub use pecos_phir_json::{PhirJsonEngine, PhirJsonEngineBuilder, phir_json_engine};
 }
 
-/// Quantum simulation backends
+/// Quantum simulation backends and circuit representation
 ///
-/// This module provides builders and types for different quantum state simulation backends.
+/// This module provides builders and types for quantum state simulation backends
+/// as well as quantum circuit representation types.
 ///
-/// # Available Backends
+/// # Circuit Representation
+///
+/// - **`DagCircuit`**: DAG-based quantum circuit (nodes=gates, edges=qubit wires)
+/// - **`Gate`**: Quantum gate representation
+/// - **`GateType`**: Enum of supported gate types
+/// - **`QubitId`**: Qubit identifier
+///
+/// # Simulation Backends
 ///
 /// - **State Vector**: Full quantum state simulation via [`state_vector()`](state_vector)
 /// - **Sparse Stabilizer**: Efficient Clifford simulation via [`sparse_stabilizer()`](sparse_stabilizer)
@@ -167,19 +175,41 @@ pub mod engines {
 /// # Example
 ///
 /// ```rust
-/// use pecos::quantum;
+/// use pecos::quantum::{DagCircuit, Gate, QubitId};
 ///
-/// // Create a state vector quantum backend
-/// let qengine = quantum::state_vector();
+/// // Build a Bell state circuit
+/// let mut circuit = DagCircuit::new();
+/// let h = circuit.add_gate(Gate::h(&[0]));
+/// let cx = circuit.add_gate(Gate::cx(&[(0, 1)]));
+/// circuit.connect(h, cx, QubitId::from(0)).unwrap();
 ///
-/// // Or use sparse stabilizer for efficient Clifford simulation
-/// let qengine = quantum::sparse_stabilizer();
+/// // Or use simulation backends
+/// let qengine = pecos::quantum::state_vector();
 /// ```
-#[cfg(feature = "sim")]
+#[cfg(feature = "quantum")]
 pub mod quantum {
+    // Circuit representation from pecos-quantum
+    pub use pecos_quantum::{
+        Attribute, DagCircuit, DagWouldCycleError, Gate, GateType, QubitId, Tick, TickCircuit,
+    };
+
+    // HUGR conversion (requires hugr feature)
+    #[cfg(feature = "hugr")]
+    pub use pecos_quantum::hugr_convert::{
+        HugrConvertError, gate_type_to_hugr_op, hugr_op_to_gate_type, hugr_to_dag_circuit,
+        is_quantum_operation,
+    };
+
+    // Re-export read_hugr_envelope for parsing HUGR bytes
+    #[cfg(feature = "hugr")]
+    pub use pecos_hugr_qis::read_hugr_envelope;
+
+    // Simulation backends (require sim feature)
+    #[cfg(feature = "sim")]
     pub use pecos_engines::quantum::{
         QuantumEngine, SparseStabEngine, StateVecEngine, new_quantum_engine_arbitrary_qgate,
     };
+    #[cfg(feature = "sim")]
     pub use pecos_engines::quantum_engine_builder::{
         IntoQuantumEngineBuilder, SparseStabilizerEngineBuilder, StateVectorEngineBuilder,
         sparse_stabilizer, state_vector,

@@ -141,14 +141,14 @@ impl Engine for QuestStateVecEngine {
                         }
                     }
                 }
-                GateType::Measure | GateType::MeasureLeaked => {
+                GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
                     for q in &cmd.qubits {
                         let meas_result = self.simulator.mz(**q);
                         let outcome = u32::from(meas_result.outcome);
                         measurements.push(outcome);
                     }
                 }
-                GateType::Prep => {
+                GateType::Prep | GateType::QAlloc => {
                     for q in &cmd.qubits {
                         self.simulator.pz(**q);
                     }
@@ -156,8 +156,9 @@ impl Engine for QuestStateVecEngine {
                 GateType::I
                 | GateType::Idle
                 | GateType::MeasCrosstalkLocalPayload
-                | GateType::MeasCrosstalkGlobalPayload => {
-                    // No operation needed
+                | GateType::MeasCrosstalkGlobalPayload
+                | GateType::QFree => {
+                    // No operation needed (QFree is just a marker for qubit lifecycle)
                 }
                 GateType::U => {
                     if cmd.params.len() >= 3 {
@@ -326,14 +327,14 @@ impl Engine for QuestDensityMatrixEngine {
                         }
                     }
                 }
-                GateType::Measure | GateType::MeasureLeaked => {
+                GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
                     for q in &cmd.qubits {
                         let meas_result = self.simulator.mz(**q);
                         let outcome = u32::from(meas_result.outcome);
                         measurements.push(outcome);
                     }
                 }
-                GateType::Prep => {
+                GateType::Prep | GateType::QAlloc => {
                     for q in &cmd.qubits {
                         self.simulator.pz(**q);
                     }
@@ -341,8 +342,9 @@ impl Engine for QuestDensityMatrixEngine {
                 GateType::I
                 | GateType::Idle
                 | GateType::MeasCrosstalkLocalPayload
-                | GateType::MeasCrosstalkGlobalPayload => {
-                    // No operation needed
+                | GateType::MeasCrosstalkGlobalPayload
+                | GateType::QFree => {
+                    // No operation needed (QFree is just a marker for qubit lifecycle)
                 }
                 GateType::U => {
                     if cmd.params.len() >= 3 {
@@ -921,14 +923,14 @@ impl Engine for QuestCudaStateVecEngine {
                         }
                     }
                 }
-                GateType::Measure | GateType::MeasureLeaked => {
+                GateType::Measure | GateType::MeasureLeaked | GateType::MeasureFree => {
                     for q in &cmd.qubits {
                         let qubit = **q as i32;
                         let outcome = unsafe { (self.backend.measure)(self.qureg_handle, qubit) };
                         measurements.push(u32::try_from(outcome).unwrap());
                     }
                 }
-                GateType::Prep => {
+                GateType::Prep | GateType::QAlloc => {
                     // Prepare in |0> state: measure and flip if result is 1
                     for q in &cmd.qubits {
                         let qubit = **q as i32;
@@ -943,8 +945,9 @@ impl Engine for QuestCudaStateVecEngine {
                 GateType::I
                 | GateType::Idle
                 | GateType::MeasCrosstalkLocalPayload
-                | GateType::MeasCrosstalkGlobalPayload => {
-                    // No operation needed
+                | GateType::MeasCrosstalkGlobalPayload
+                | GateType::QFree => {
+                    // No operation needed (QFree is just a marker for qubit lifecycle)
                 }
             }
         }

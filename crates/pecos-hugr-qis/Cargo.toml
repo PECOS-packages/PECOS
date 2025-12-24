@@ -21,7 +21,7 @@ serde_json.workspace = true
 pecos-core = { workspace = true, features = ["anyhow"] }
 
 # tket dependencies - exactly as Selene's hugr-qis
-tket.workspace = true
+tket = { workspace = true, features = ["llvm"] }
 tket-qsystem.workspace = true
 
 [features]

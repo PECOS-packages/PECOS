@@ -21,6 +21,7 @@ mod bit_int_bindings;
 mod byte_message_bindings;
 mod coin_toss_bindings;
 mod cpp_sparse_sim_bindings;
+mod dag_circuit_bindings;
 mod dtypes;
 mod engine_bindings;
 mod engine_builders;
@@ -243,6 +244,12 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register graph module (graph algorithms for MWPM)
     graph_bindings::register_graph_module(m)?;
+
+    // Register quantum circuit types (DagCircuit, Gate, GateType, QubitId)
+    dag_circuit_bindings::register_quantum_circuit_types(m)?;
+
+    // Register time unit types at top level (Nanoseconds, TimeUnits)
+    dag_circuit_bindings::register_time_unit_types(m)?;
 
     // Register program types
     m.add_class::<PyQasm>()?;

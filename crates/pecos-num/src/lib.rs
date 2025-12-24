@@ -49,7 +49,7 @@ pub mod stats;
 
 pub use compare::{allclose, relative_eq};
 pub use curve_fit::{CurveFitError, CurveFitOptions, CurveFitResult, curve_fit};
-pub use dag::{DAG, DAGHasCycleError, DAGWouldCycleError};
+pub use dag::{DAG, DAGHasCycleError, DagWouldCycleError};
 pub use digraph::DiGraph;
 pub use graph::Graph;
 pub use optimize::{BrentqOptions, NewtonOptions, OptimizeError, brentq, newton};

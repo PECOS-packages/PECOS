@@ -14,4 +14,35 @@
 
 This name space contains classes and functions for converting circuit data-structures
 into other circuit data-structures.
+
+Modules:
+    checks2circuit: Convert check matrices to circuits.
+    hugr_to_dag: Convert HUGR (from Guppy) to DAG (requires hugr package).
 """
+
+from pecos.circuit_converters.checks2circuit import Check2Circuits
+
+# hugr_to_dag requires the optional hugr package
+try:
+    from pecos.circuit_converters.hugr_to_dag import (
+        UnsupportedHugrStructureError,
+        dag_to_gate_sequence,
+        guppy_to_dag,
+        hugr_to_dag,
+    )
+
+    _HAS_HUGR = True
+except ImportError:
+    _HAS_HUGR = False
+
+__all__ = [
+    "Check2Circuits",
+]
+
+if _HAS_HUGR:
+    __all__ += [
+        "UnsupportedHugrStructureError",
+        "dag_to_gate_sequence",
+        "guppy_to_dag",
+        "hugr_to_dag",
+    ]

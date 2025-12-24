@@ -90,19 +90,23 @@ def test_byte_message_parameterized_gates() -> None:
     # Parse the operations
     ops = message.parse_quantum_operations()
 
+    import math
+
     # Verify the operations
+    # Note: Rotation gate angles are stored in "angles" field (in radians)
     assert len(ops) == 3
     assert ops[0]["gate_type"] == "RZ"
     assert ops[0]["qubits"] == [0]
-    assert ops[0]["params"] == [0.5]
+    assert math.isclose(ops[0]["angles"][0], 0.5)
 
     assert ops[1]["gate_type"] == "RZZ"
     assert ops[1]["qubits"] == [0, 1]
-    assert ops[1]["params"] == [0.25]
+    assert math.isclose(ops[1]["angles"][0], 0.25)
 
     assert ops[2]["gate_type"] == "R1XY"
     assert ops[2]["qubits"] == [2]
-    assert ops[2]["params"] == [0.3, 0.4]
+    assert math.isclose(ops[2]["angles"][0], 0.3)
+    assert math.isclose(ops[2]["angles"][1], 0.4)
 
 
 def test_byte_message_builder_reuse() -> None:

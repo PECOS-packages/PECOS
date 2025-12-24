@@ -196,12 +196,26 @@ where
     ///
     /// Panics if the index is too large to be converted to `i64`.
     pub fn probability(&self, index: usize) -> f64 {
+        let quest_index = self.convert_basis_state(index);
         unsafe {
             ffi::quest_get_prob_amp(
                 self.qureg.ptr,
-                i64::try_from(index).expect("Index too large"),
+                i64::try_from(quest_index).expect("Index too large"),
             )
         }
+    }
+
+    /// Convert PECOS basis state to `QuEST` basis state by reversing bit order
+    #[inline]
+    fn convert_basis_state(&self, pecos_basis: usize) -> usize {
+        let mut quest_basis = 0;
+        for i in 0..self.num_qubits {
+            if (pecos_basis >> i) & 1 == 1 {
+                // Bit i in PECOS maps to bit (n-1-i) in QuEST
+                quest_basis |= 1 << (self.num_qubits - 1 - i);
+            }
+        }
+        quest_basis
     }
 
     /// Prepares the quantum state in the specified computational basis state.
@@ -210,10 +224,11 @@ where
     ///
     /// Panics if the index is too large to be converted to `i64`.
     pub fn prepare_computational_basis(&mut self, index: usize) {
+        let quest_index = self.convert_basis_state(index);
         unsafe {
             ffi::quest_init_classical_state(
                 self.qureg.ptr,
-                i64::try_from(index).expect("Index too large"),
+                i64::try_from(quest_index).expect("Index too large"),
             );
         }
     }
@@ -579,12 +594,26 @@ where
     ///
     /// Panics if the index is too large to be converted to `i64`.
     pub fn probability(&self, index: usize) -> f64 {
+        let quest_index = self.convert_basis_state(index);
         unsafe {
             ffi::quest_get_prob_amp(
                 self.qureg.ptr,
-                i64::try_from(index).expect("Index too large"),
+                i64::try_from(quest_index).expect("Index too large"),
             )
         }
+    }
+
+    /// Convert PECOS basis state to `QuEST` basis state by reversing bit order
+    #[inline]
+    fn convert_basis_state(&self, pecos_basis: usize) -> usize {
+        let mut quest_basis = 0;
+        for i in 0..self.num_qubits {
+            if (pecos_basis >> i) & 1 == 1 {
+                // Bit i in PECOS maps to bit (n-1-i) in QuEST
+                quest_basis |= 1 << (self.num_qubits - 1 - i);
+            }
+        }
+        quest_basis
     }
 
     pub fn purity(&self) -> f64 {
@@ -597,10 +626,11 @@ where
     ///
     /// Panics if the index is too large to be converted to `i64`.
     pub fn prepare_computational_basis(&mut self, index: usize) {
+        let quest_index = self.convert_basis_state(index);
         unsafe {
             ffi::quest_init_classical_state(
                 self.qureg.ptr,
-                i64::try_from(index).expect("Index too large"),
+                i64::try_from(quest_index).expect("Index too large"),
             );
         }
     }

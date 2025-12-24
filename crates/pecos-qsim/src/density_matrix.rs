@@ -1,0 +1,1266 @@
+// Copyright 2024 The PECOS Developers
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the License
+// is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
+// or implied. See the License for the specific language governing permissions and limitations under
+// the License.
+
+use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
+use super::clifford_gateable::{CliffordGateable, MeasurementResult};
+use super::quantum_simulator::QuantumSimulator;
+use super::state_vec::StateVec;
+use pecos_core::RngManageable;
+use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
+
+use core::fmt::{Debug, Display, Formatter, Write};
+use num_complex::Complex64;
+
+/// A quantum state simulator using the density matrix representation via the Choi-Jamiolkowski isomorphism
+///
+/// `DensityMatrix` represents an N-qubit density matrix as a 2N-qubit state vector,
+/// which allows reusing the state vector operations for density matrix simulation.
+/// This enables the simulation of both pure and mixed quantum states, including the effects of noise.
+///
+/// # Type Parameters
+/// * `R` - Random number generator type implementing `RngCore + SeedableRng` traits
+///
+/// # Examples
+/// ```rust
+/// use pecos_qsim::DensityMatrix;
+///
+/// // Create a new 2-qubit system
+/// let mut state = DensityMatrix::new(2);
+///
+/// // Prepare a superposition state
+/// state.prepare_plus_state();
+/// ```
+#[derive(Clone, Debug)]
+pub struct DensityMatrix<R = PecosRng>
+where
+    R: RngCore + SeedableRng + Debug + Clone,
+{
+    /// Number of qubits in the physical system
+    num_physical_qubits: usize,
+
+    /// The underlying state vector (representing a 2N-qubit system)
+    state_vector: StateVec<R>,
+}
+
+impl DensityMatrix {
+    /// Create a new density matrix initialized to |0...0⟩⟨0...0|
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::DensityMatrix;
+    ///
+    /// // Initialize a 3-qubit density matrix in the |000⟩⟨000| state
+    /// let density_matrix = DensityMatrix::new(3);
+    ///
+    /// // Confirm the state is |000⟩⟨000|
+    /// let prob = density_matrix.probability(0);
+    /// assert!((prob - 1.0).abs() < 1e-10);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn new(num_physical_qubits: usize) -> DensityMatrix<PecosRng> {
+        let rng = PecosRng::from_os_rng();
+        DensityMatrix::with_rng(num_physical_qubits, rng)
+    }
+
+    /// Create a new density matrix simulator with a specific seed for the random number generator
+    ///
+    /// This method allows for deterministic behavior by setting a specific seed for the
+    /// random number generator, while still using the default RNG type (`PecosRng`).
+    ///
+    /// # Arguments
+    /// * `num_physical_qubits` - Number of qubits in the physical system
+    /// * `seed` - Seed value for the random number generator
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::DensityMatrix;
+    ///
+    /// // Create a simulator with a specific seed
+    /// let state = DensityMatrix::with_seed(2, 42);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_seed(num_physical_qubits: usize, seed: u64) -> DensityMatrix<PecosRng> {
+        let rng = PecosRng::seed_from_u64(seed);
+        DensityMatrix::with_rng(num_physical_qubits, rng)
+    }
+}
+
+impl<R> DensityMatrix<R>
+where
+    R: RngCore + SeedableRng + Debug + Clone,
+{
+    /// Returns the number of qubits in the physical system
+    ///
+    /// # Returns
+    /// * `usize` - The total number of physical qubits this simulator is configured to handle
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::{QuantumSimulator, DensityMatrix};
+    /// let state = DensityMatrix::new(2);
+    /// let num = state.num_qubits();
+    /// assert_eq!(num, 2);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn num_qubits(&self) -> usize {
+        self.num_physical_qubits
+    }
+
+    /// Create a new density matrix with a custom random number generator
+    ///
+    /// # Arguments
+    /// * `num_physical_qubits` - Number of qubits in the physical system
+    /// * `rng` - Random number generator implementing `RngCore + SeedableRng` traits
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::DensityMatrix;
+    /// use pecos_rng::{PecosRng, SeedableRng};
+    ///
+    /// let rng = PecosRng::seed_from_u64(42);
+    /// let state = DensityMatrix::with_rng(2, rng);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn with_rng(num_physical_qubits: usize, rng: R) -> Self {
+        // Create a state vector with twice the number of qubits
+        let state_vector = StateVec::with_rng(2 * num_physical_qubits, rng);
+
+        DensityMatrix {
+            num_physical_qubits,
+            state_vector,
+        }
+    }
+
+    /// Returns the underlying state vector representation
+    ///
+    /// This provides access to the 2N-qubit state vector that represents the density matrix
+    /// via the Choi-Jamiolkowski isomorphism.
+    ///
+    /// # Returns
+    /// * `&StateVec<R>` - A reference to the underlying state vector
+    #[inline]
+    #[must_use]
+    pub fn state_vector(&self) -> &StateVec<R> {
+        &self.state_vector
+    }
+
+    /// Returns a mutable reference to the underlying state vector
+    ///
+    /// # Returns
+    /// * `&mut StateVec<R>` - A mutable reference to the underlying state vector
+    #[inline]
+    #[must_use]
+    pub fn state_vector_mut(&mut self) -> &mut StateVec<R> {
+        &mut self.state_vector
+    }
+
+    /// Returns the density matrix as a 2D Vector of Complex64 values
+    ///
+    /// This function extracts the actual density matrix from the Choi representation,
+    /// making it easier to inspect the quantum state.
+    ///
+    /// # Returns
+    /// * `Vec<Vec<Complex64>>` - A 2D vector representing the density matrix
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::{DensityMatrix, CliffordGateable};
+    ///
+    /// // Create a Bell state
+    /// let mut state = DensityMatrix::new(2);
+    /// state.h(0).cx(0, 1);
+    ///
+    /// // Get the density matrix representation
+    /// let rho = state.get_density_matrix();
+    ///
+    /// // A Bell state should have non-zero elements at [0,0], [0,3], [3,0], and [3,3]
+    /// assert!(rho[0][0].re.abs() > 0.0);
+    /// assert!(rho[0][3].re.abs() > 0.0);
+    /// assert!(rho[3][0].re.abs() > 0.0);
+    /// assert!(rho[3][3].re.abs() > 0.0);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn get_density_matrix(&self) -> Vec<Vec<Complex64>> {
+        let n = self.num_physical_qubits;
+        let dim = 1 << n;
+        let sv = self.state_vector.state();
+
+        // Initialize density matrix with zeros
+        let mut rho = vec![vec![Complex64::new(0.0, 0.0); dim]; dim];
+
+        // Extract density matrix elements from the Choi representation
+        for (row, rho_row) in rho.iter_mut().enumerate() {
+            for (col, rho_element) in rho_row.iter_mut().enumerate() {
+                // Calculate the corresponding elements in the state vector
+                // For density matrix element ρ_{row,col}
+                let mut element = Complex64::new(0.0, 0.0);
+
+                for i in 0..dim {
+                    // Map row/col to the corresponding indices in the state vector
+                    let idx1 = (row << n) | i;
+                    let idx2 = (col << n) | i;
+
+                    // Sum over the corresponding pairs of amplitudes
+                    element += sv[idx1] * sv[idx2].conj();
+                }
+
+                *rho_element = element;
+            }
+        }
+
+        rho
+    }
+
+    /// Returns a formatted string representation of the density matrix
+    ///
+    /// This function generates a human-readable string representation of the
+    /// density matrix, with options to control the formatting.
+    ///
+    /// # Arguments
+    /// * `precision` - Number of decimal places to show (default: 4)
+    /// * `threshold` - Minimum absolute value to display (smaller values shown as 0, default: 1e-10)
+    ///
+    /// # Returns
+    /// * `String` - A formatted string representation of the density matrix
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::{DensityMatrix, CliffordGateable};
+    ///
+    /// // Create a Bell state
+    /// let mut state = DensityMatrix::new(2);
+    /// state.h(0).cx(0, 1);
+    ///
+    /// // Print the density matrix with 6 decimal places
+    /// let matrix_str = state.density_matrix_to_string(6, 1e-10);
+    /// println!("{}", matrix_str);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn density_matrix_to_string(&self, precision: usize, threshold: f64) -> String {
+        let rho = self.get_density_matrix();
+        let dim = rho.len();
+
+        let mut result = String::with_capacity(dim * dim * (precision + 8));
+        result.push_str("Density matrix (ρ):\n");
+
+        for rho_row in &rho {
+            result.push('[');
+            for (col, val) in rho_row.iter().enumerate() {
+                // Apply threshold to small values
+                let re = if val.re.abs() < threshold {
+                    0.0
+                } else {
+                    val.re
+                };
+                let im = if val.im.abs() < threshold {
+                    0.0
+                } else {
+                    val.im
+                };
+
+                // Format the complex number
+                if im.abs() < threshold {
+                    // Real number
+                    write!(result, "{re:.precision$}").unwrap();
+                } else if re.abs() < threshold {
+                    // Imaginary number
+                    write!(result, "{im:.precision$}i").unwrap();
+                } else {
+                    // Full complex number
+                    let sign = if im >= 0.0 { "+" } else { "-" };
+                    write!(
+                        result,
+                        "{:.*}{}{:.*}i",
+                        precision,
+                        re,
+                        sign,
+                        precision,
+                        im.abs()
+                    )
+                    .unwrap();
+                }
+
+                if col < dim - 1 {
+                    result.push_str(", ");
+                }
+            }
+            result.push_str("]\n");
+        }
+
+        result
+    }
+
+    /// Returns the density matrix as a flattened complex vector in row-major order
+    ///
+    /// This function extracts the actual density matrix from the Choi representation
+    /// and returns it as a 1D vector in row-major order, which is compatible with
+    /// many numerical computing libraries.
+    ///
+    /// # Returns
+    /// * `Vec<Complex64>` - A flattened row-major vector representation of the density matrix
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::{DensityMatrix, CliffordGateable};
+    ///
+    /// // Create a Bell state
+    /// let mut state = DensityMatrix::new(2);
+    /// state.h(0).cx(0, 1);
+    ///
+    /// // Get the flattened density matrix
+    /// let flat_rho = state.get_flattened_density_matrix();
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn get_flattened_density_matrix(&self) -> Vec<Complex64> {
+        self.get_density_matrix().into_iter().flatten().collect()
+    }
+
+    /// Returns the probability of measuring a specific basis state
+    ///
+    /// # Arguments
+    /// * `basis_state` - The computational basis state to measure
+    ///
+    /// # Returns
+    /// * `f64` - The probability of measuring the given basis state
+    ///
+    /// # Panics
+    /// Code will panic if `basis_state` >= `2^num_qubits` (i.e., if the basis state index is too large for the number of qubits)
+    #[inline]
+    #[must_use]
+    pub fn probability(&self, basis_state: usize) -> f64 {
+        assert!(basis_state < 1 << self.num_physical_qubits);
+
+        // In the Choi representation, the diagonal elements of the density matrix
+        // correspond to specific elements in the state vector
+        let n = self.num_physical_qubits;
+        let basis_mask = (1 << n) - 1;
+
+        // Calculate probability by summing appropriate elements
+        let mut prob = 0.0;
+        for i in 0..(1 << n) {
+            // Map to the corresponding index in the state vector
+            // For the element ρ_{basis_state,basis_state} in density matrix
+            let state_idx = ((basis_state & basis_mask) << n) | (i & basis_mask);
+            prob += self.state_vector.state()[state_idx].norm_sqr();
+        }
+
+        prob
+    }
+
+    /// Calculate the purity of the quantum state, defined as Tr(rho^2)
+    ///
+    /// For pure states, purity = 1
+    /// For mixed states, purity < 1 (with minimum value 1/2^n for maximally mixed state)
+    ///
+    /// # Returns
+    /// * `f64` - The purity of the quantum state
+    #[inline]
+    #[must_use]
+    pub fn purity(&self) -> f64 {
+        // Purity = Tr(rho^2) = sum_{i,j} |rho[i][j]|^2
+        self.get_density_matrix()
+            .iter()
+            .flatten()
+            .map(Complex64::norm_sqr)
+            .sum()
+    }
+
+    /// Check if the quantum state is pure
+    ///
+    /// A pure state has purity = 1
+    ///
+    /// # Returns
+    /// * `bool` - True if the state is pure, false otherwise
+    #[inline]
+    #[must_use]
+    pub fn is_pure(&self) -> bool {
+        const TOLERANCE: f64 = 1e-10;
+        (self.purity() - 1.0).abs() < TOLERANCE
+    }
+
+    /// Prepare a specific computational basis state
+    ///
+    /// # Arguments
+    /// * `basis_state` - The computational basis state to prepare
+    ///
+    /// # Returns
+    /// * `&mut Self` - Returns self for method chaining
+    ///
+    /// # Panics
+    /// Code will panic if `basis_state` >= `2^num_qubits` (i.e., if the basis state index is too large for the number of qubits)
+    #[inline]
+    pub fn prepare_computational_basis(&mut self, basis_state: usize) -> &mut Self {
+        assert!(basis_state < 1 << self.num_physical_qubits);
+
+        // Reset the state vector
+        let n = self.num_physical_qubits;
+        let sv_size = 1 << (2 * n);
+        let mut new_state = vec![Complex64::new(0.0, 0.0); sv_size];
+
+        // In Choi representation, a pure state |ψ⟩⟨ψ| has a specific pattern
+        // For computational basis state |basis_state⟩, we set the corresponding element
+        let idx = (basis_state << n) | basis_state;
+        new_state[idx] = Complex64::new(1.0, 0.0);
+
+        // Update the state vector
+        *self.state_vector_mut() = StateVec::from_state(new_state, self.state_vector.rng().clone());
+
+        self
+    }
+
+    /// Prepare all qubits in the |+⟩ state, creating a pure state of tensor product of |+⟩ states
+    ///
+    /// # Returns
+    /// * `&mut Self` - Returns self for method chaining
+    #[inline]
+    pub fn prepare_plus_state(&mut self) -> &mut Self {
+        let n = self.num_physical_qubits;
+
+        // First prepare |0...0⟩ state
+        self.prepare_computational_basis(0);
+
+        // Apply Hadamard gates to all qubits
+        for q in 0..n {
+            self.h(q);
+        }
+
+        self
+    }
+
+    /// Prepare the maximally mixed state I/2ⁿ
+    ///
+    /// # Returns
+    /// * `&mut Self` - Returns self for method chaining
+    #[inline]
+    pub fn prepare_maximally_mixed(&mut self) -> &mut Self {
+        let n = self.num_physical_qubits;
+        let sv_size = 1 << (2 * n);
+        let dim = 1 << n;
+        let mut new_state = vec![Complex64::new(0.0, 0.0); sv_size];
+
+        // In Choi representation, for density matrix element rho_{i,j}:
+        // rho_{i,j} = sum_k psi[(i<<n)|k] * psi*[(j<<n)|k]
+        //
+        // For I/dim (maximally mixed state), we need rho_{i,i} = 1/dim.
+        // Setting psi[(i<<n)|i] = 1/sqrt(dim) gives:
+        // rho_{i,i} = |1/sqrt(dim)|^2 = 1/dim
+        // Note: dim is always 2^n for n qubits, which is safe to cast for realistic quantum systems
+        #[allow(clippy::cast_precision_loss)]
+        let factor = 1.0 / (dim as f64).sqrt();
+
+        // Set diagonal elements for the maximally mixed state
+        for i in 0..dim {
+            let idx = (i << n) | i;
+            new_state[idx] = Complex64::new(factor, 0.0);
+        }
+
+        // Update the state vector
+        *self.state_vector_mut() = StateVec::from_state(new_state, self.state_vector.rng().clone());
+
+        self
+    }
+
+    /// Apply a depolarizing noise channel to a qubit
+    ///
+    /// The depolarizing channel applies a random Pauli error (X, Y, or Z) with probability p/3 each,
+    /// or leaves the state unchanged with probability 1-p.
+    ///
+    /// # Arguments
+    /// * `qubit` - Target qubit
+    /// * `probability` - Probability of applying a Pauli error (0.0 to 1.0)
+    ///
+    /// # Returns
+    /// * `&mut Self` - Returns self for method chaining
+    #[inline]
+    pub fn apply_depolarizing_noise(&mut self, qubit: usize, probability: f64) -> &mut Self {
+        // Ensure probability is in valid range
+        let p = probability.clamp(0.0, 1.0);
+
+        if p < f64::EPSILON {
+            // No noise, return unchanged
+            return self;
+        }
+
+        // Depolarizing channel: rho -> (1-p) rho + (p/3)(X rho X + Y rho Y + Z rho Z)
+        //
+        // For density matrix elements:
+        // - Off-diagonal (qubit q differs): scale by (1 - 4p/3)
+        // - Diagonal in qubit q: rho_{i,j} -> (1-2p/3) rho_{i,j} + (2p/3) rho_{i^q, j^q}
+        //   where i^q means i with bit q flipped
+
+        let n = self.num_physical_qubits;
+        let dim = 1 << n;
+        let qubit_mask = 1 << qubit;
+
+        // Get current density matrix
+        let rho = self.get_density_matrix();
+
+        // Apply depolarizing transformation
+        let mut new_rho = vec![vec![Complex64::new(0.0, 0.0); dim]; dim];
+
+        for i in 0..dim {
+            for j in 0..dim {
+                let i_bit = (i & qubit_mask) != 0;
+                let j_bit = (j & qubit_mask) != 0;
+
+                if i_bit == j_bit {
+                    // Diagonal in qubit q: mix with flipped qubit
+                    let i_flipped = i ^ qubit_mask;
+                    let j_flipped = j ^ qubit_mask;
+                    new_rho[i][j] = (1.0 - 2.0 * p / 3.0) * rho[i][j]
+                        + (2.0 * p / 3.0) * rho[i_flipped][j_flipped];
+                } else {
+                    // Off-diagonal in qubit q: scale by (1 - 4p/3)
+                    new_rho[i][j] = (1.0 - 4.0 * p / 3.0) * rho[i][j];
+                }
+            }
+        }
+
+        // Convert new density matrix back to Choi representation using Cholesky decomposition
+        // rho = L L^dagger, then set psi[(i<<n)|j] = L[i][j]
+        self.set_from_density_matrix(&new_rho);
+
+        self
+    }
+
+    /// Set the Choi state from a density matrix using Cholesky decomposition
+    ///
+    /// This finds a purification of the given density matrix.
+    fn set_from_density_matrix(&mut self, rho: &[Vec<Complex64>]) {
+        let n = self.num_physical_qubits;
+        let dim = rho.len();
+
+        // Compute Cholesky decomposition: rho = L L^dagger
+        // For numerical stability, add a small epsilon to diagonal if needed
+        let mut l = vec![vec![Complex64::new(0.0, 0.0); dim]; dim];
+
+        for i in 0..dim {
+            for j in 0..=i {
+                let mut sum = rho[i][j];
+
+                for (li_k, lj_k) in l[i].iter().take(j).zip(l[j].iter().take(j)) {
+                    sum -= li_k * lj_k.conj();
+                }
+
+                if i == j {
+                    // Diagonal element
+                    let diag_val = sum.re.max(0.0); // Ensure non-negative
+                    l[i][j] = Complex64::new(diag_val.sqrt(), 0.0);
+                } else if l[j][j].norm() > 1e-15 {
+                    // Off-diagonal element
+                    l[i][j] = sum / l[j][j];
+                }
+            }
+        }
+
+        // Create new Choi state: psi[(i<<n)|j] = L[i][j]
+        let sv_size = 1 << (2 * n);
+        let mut new_state = vec![Complex64::new(0.0, 0.0); sv_size];
+
+        for (i, l_row) in l.iter().enumerate() {
+            for (j, l_ij) in l_row.iter().enumerate() {
+                let idx = (i << n) | j;
+                new_state[idx] = *l_ij;
+            }
+        }
+
+        *self.state_vector_mut() = StateVec::from_state(new_state, self.state_vector.rng().clone());
+    }
+
+    /// Apply a amplitude damping noise channel to a qubit
+    ///
+    /// The amplitude damping channel models energy dissipation in a quantum system,
+    /// representing the process where a qubit in state |1⟩ decays to state |0⟩ with probability gamma.
+    ///
+    /// # Arguments
+    /// * `qubit` - Target qubit
+    /// * `gamma` - Damping parameter (0.0 to 1.0)
+    ///
+    /// # Returns
+    /// * `&mut Self` - Returns self for method chaining
+    #[inline]
+    pub fn apply_amplitude_damping(&mut self, qubit: usize, gamma: f64) -> &mut Self {
+        // Ensure gamma is in valid range
+        let gamma = gamma.clamp(0.0, 1.0);
+
+        if gamma < f64::EPSILON {
+            // No damping, return unchanged
+            return self;
+        }
+
+        // Amplitude damping channel can be implemented using the Kraus operators:
+        // E_0 = |0⟩⟨0| + sqrt(1 - gamma) |1⟩⟨1|
+        // E_1 = sqrt(gamma) |0⟩⟨1|
+
+        // Create a copy of the current state
+        let original_state = self.clone();
+
+        // Reset state first
+        let n = self.num_physical_qubits;
+        let sv_size = 1 << (2 * n);
+        let mut new_state = vec![num_complex::Complex64::new(0.0, 0.0); sv_size];
+
+        // We need to apply each Kraus operator to the state
+        // We'll implement the amplitude damping channel by its action on the density matrix elements
+
+        let qubit_mask = 1 << qubit;
+
+        // Iterate through all basis states
+        for i in 0..(1 << n) {
+            for j in 0..(1 << n) {
+                // Find the corresponding index in the state vector
+                let idx_i_j = (i << n) | j;
+
+                // Check if the qubit is in state |1⟩ in basis state i and j
+                let i_has_1 = (i & qubit_mask) != 0;
+                let j_has_1 = (j & qubit_mask) != 0;
+
+                // Calculate the modified state
+                if i_has_1 && j_has_1 {
+                    // Case |1⟩⟨1| -> (1-gamma)|1⟩⟨1| + gamma|0⟩⟨0|
+                    let i_with_0 = i & !qubit_mask; // Flip the qubit to 0
+                    let j_with_0 = j & !qubit_mask;
+
+                    // Apply damping
+                    new_state[idx_i_j] +=
+                        (1.0 - gamma) * original_state.state_vector().state()[idx_i_j];
+                    new_state[(i_with_0 << n) | j_with_0] +=
+                        gamma * original_state.state_vector().state()[idx_i_j];
+                } else if i_has_1 && !j_has_1 {
+                    // Case |1⟩⟨0| -> sqrt(1-gamma)|1⟩⟨0|
+                    new_state[idx_i_j] +=
+                        (1.0 - gamma).sqrt() * original_state.state_vector().state()[idx_i_j];
+                } else if !i_has_1 && j_has_1 {
+                    // Case |0⟩⟨1| -> sqrt(1-gamma)|0⟩⟨1|
+                    new_state[idx_i_j] +=
+                        (1.0 - gamma).sqrt() * original_state.state_vector().state()[idx_i_j];
+                } else {
+                    // Case |0⟩⟨0| -> |0⟩⟨0| + damping from |1⟩ states (added above)
+                    new_state[idx_i_j] += original_state.state_vector().state()[idx_i_j];
+                }
+            }
+        }
+
+        // Update the state vector
+        *self.state_vector_mut() = StateVec::from_state(new_state, self.state_vector.rng().clone());
+
+        self
+    }
+
+    /// Apply a phase damping noise channel to a qubit
+    ///
+    /// The phase damping channel models pure decoherence without energy dissipation,
+    /// causing the loss of quantum information without changing the probabilities of
+    /// measuring the system in the computational basis.
+    ///
+    /// # Arguments
+    /// * `qubit` - Target qubit
+    /// * `lambda` - Damping parameter (0.0 to 1.0)
+    ///
+    /// # Returns
+    /// * `&mut Self` - Returns self for method chaining
+    #[inline]
+    pub fn apply_phase_damping(&mut self, qubit: usize, lambda: f64) -> &mut Self {
+        // Ensure lambda is in valid range
+        let lambda = lambda.clamp(0.0, 1.0);
+
+        if lambda < f64::EPSILON {
+            // No damping, return unchanged
+            return self;
+        }
+
+        // Phase damping channel can be implemented using the Kraus operators:
+        // E_0 = |0⟩⟨0| + sqrt(1 - lambda) |1⟩⟨1|
+        // E_1 = sqrt(lambda) |1⟩⟨1|
+
+        // Create a copy of the current state
+        let original_state = self.clone();
+
+        // Reset state first
+        let n = self.num_physical_qubits;
+        let sv_size = 1 << (2 * n);
+        let mut new_state = vec![num_complex::Complex64::new(0.0, 0.0); sv_size];
+
+        // We need to apply each Kraus operator to the state
+        // Phase damping channel keeps diagonal elements constant,
+        // but reduces off-diagonal elements
+
+        let qubit_mask = 1 << qubit;
+
+        // Iterate through all basis states
+        for i in 0..(1 << n) {
+            for j in 0..(1 << n) {
+                // Find the corresponding index in the state vector
+                let idx_i_j = (i << n) | j;
+
+                // Check if the qubit is in different states in i and j
+                let i_has_1 = (i & qubit_mask) != 0;
+                let j_has_1 = (j & qubit_mask) != 0;
+
+                if i_has_1 == j_has_1 {
+                    // Diagonal elements are preserved
+                    new_state[idx_i_j] += original_state.state_vector().state()[idx_i_j];
+                } else {
+                    // Off-diagonal elements involving the qubit get damped
+                    new_state[idx_i_j] +=
+                        (1.0 - lambda).sqrt() * original_state.state_vector().state()[idx_i_j];
+                }
+            }
+        }
+
+        // Update the state vector
+        *self.state_vector_mut() = StateVec::from_state(new_state, self.state_vector.rng().clone());
+
+        self
+    }
+
+    /// Apply a bit flip noise channel to a qubit
+    ///
+    /// The bit flip channel flips the qubit from |0⟩ to |1⟩ or from |1⟩ to |0⟩
+    /// with probability p.
+    ///
+    /// # Arguments
+    /// * `qubit` - Target qubit
+    /// * `probability` - Probability of a bit flip (0.0 to 1.0)
+    ///
+    /// # Returns
+    /// * `&mut Self` - Returns self for method chaining
+    #[inline]
+    pub fn apply_bit_flip(&mut self, qubit: usize, probability: f64) -> &mut Self {
+        // Ensure probability is in valid range
+        let p = probability.clamp(0.0, 1.0);
+
+        if p < f64::EPSILON {
+            // No noise, return unchanged
+            return self;
+        }
+
+        // Bit flip channel: rho -> (1-p) rho + p X rho X
+        //
+        // For density matrix elements:
+        // rho_{i,j} -> (1-p) rho_{i,j} + p rho_{i^q, j^q}
+        // where i^q means i with bit q flipped
+
+        let n = self.num_physical_qubits;
+        let dim = 1 << n;
+        let qubit_mask = 1 << qubit;
+
+        // Get current density matrix
+        let rho = self.get_density_matrix();
+
+        // Apply bit flip transformation
+        let mut new_rho = vec![vec![Complex64::new(0.0, 0.0); dim]; dim];
+
+        for i in 0..dim {
+            for j in 0..dim {
+                let i_flipped = i ^ qubit_mask;
+                let j_flipped = j ^ qubit_mask;
+                new_rho[i][j] = (1.0 - p) * rho[i][j] + p * rho[i_flipped][j_flipped];
+            }
+        }
+
+        // Convert back to Choi representation
+        self.set_from_density_matrix(&new_rho);
+
+        self
+    }
+
+    /// Apply a phase flip noise channel to a qubit
+    ///
+    /// The phase flip channel applies a Z operation on the qubit
+    /// with probability p, introducing a relative phase of -1 between |0⟩ and |1⟩.
+    ///
+    /// # Arguments
+    /// * `qubit` - Target qubit
+    /// * `probability` - Probability of a phase flip (0.0 to 1.0)
+    ///
+    /// # Returns
+    /// * `&mut Self` - Returns self for method chaining
+    #[inline]
+    pub fn apply_phase_flip(&mut self, qubit: usize, probability: f64) -> &mut Self {
+        // Ensure probability is in valid range
+        let p = probability.clamp(0.0, 1.0);
+
+        if p < f64::EPSILON {
+            // No noise, return unchanged
+            return self;
+        }
+
+        // Phase flip channel: rho -> (1-p) rho + p Z rho Z
+        //
+        // For density matrix elements:
+        // - If bit q of i = bit q of j: rho_{i,j} unchanged
+        // - If bit q of i != bit q of j: rho_{i,j} -> (1-2p) rho_{i,j}
+
+        let n = self.num_physical_qubits;
+        let dim = 1 << n;
+        let qubit_mask = 1 << qubit;
+
+        // Get current density matrix
+        let rho = self.get_density_matrix();
+
+        // Apply phase flip transformation
+        let mut new_rho = vec![vec![Complex64::new(0.0, 0.0); dim]; dim];
+
+        for i in 0..dim {
+            for j in 0..dim {
+                let i_bit = (i & qubit_mask) != 0;
+                let j_bit = (j & qubit_mask) != 0;
+
+                if i_bit == j_bit {
+                    // Diagonal in qubit q: unchanged
+                    new_rho[i][j] = rho[i][j];
+                } else {
+                    // Off-diagonal in qubit q: scale by (1-2p)
+                    new_rho[i][j] = (1.0 - 2.0 * p) * rho[i][j];
+                }
+            }
+        }
+
+        // Convert back to Choi representation
+        self.set_from_density_matrix(&new_rho);
+
+        self
+    }
+}
+
+impl<R> Display for DensityMatrix<R>
+where
+    R: RngCore + SeedableRng + Debug + Clone,
+{
+    /// Formats the density matrix using default formatting parameters.
+    ///
+    /// This implementation uses 4 decimal places and a threshold of 1e-10.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use pecos_qsim::{DensityMatrix, CliffordGateable};
+    ///
+    /// // Create a Bell state
+    /// let mut state = DensityMatrix::new(2);
+    /// state.h(0).cx(0, 1);
+    ///
+    /// // Print the density matrix with default formatting
+    /// println!("{}", state);
+    /// ```
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.density_matrix_to_string(4, 1e-10))
+    }
+}
+
+impl<R> QuantumSimulator for DensityMatrix<R>
+where
+    R: RngCore + SeedableRng + Debug + Clone,
+{
+    /// Reset the quantum state to |0...0⟩⟨0...0|
+    ///
+    /// # Returns
+    /// * `&mut Self` - Returns self for method chaining
+    #[inline]
+    fn reset(&mut self) -> &mut Self {
+        self.prepare_computational_basis(0)
+    }
+}
+
+impl<R> RngManageable for DensityMatrix<R>
+where
+    R: RngCore + SeedableRng + Debug + Clone,
+{
+    type Rng = R;
+
+    /// Replace the random number generator with a new one
+    ///
+    /// # Arguments
+    /// * `rng` - New random number generator
+    #[inline]
+    fn set_rng(&mut self, rng: R) {
+        self.state_vector.set_rng(rng);
+    }
+
+    /// Get a reference to the random number generator
+    ///
+    /// # Returns
+    /// * `&Self::Rng` - Reference to the RNG
+    #[inline]
+    fn rng(&self) -> &Self::Rng {
+        self.state_vector.rng()
+    }
+
+    /// Get a mutable reference to the random number generator
+    ///
+    /// # Returns
+    /// * `&mut Self::Rng` - Mutable reference to the RNG
+    #[inline]
+    fn rng_mut(&mut self) -> &mut Self::Rng {
+        self.state_vector.rng_mut()
+    }
+}
+
+impl<R> CliffordGateable<usize> for DensityMatrix<R>
+where
+    R: RngCore + SeedableRng + Debug + Clone,
+{
+    /// Apply the Hadamard gate to the given qubit
+    ///
+    /// # Arguments
+    /// * `qubit` - Target qubit
+    ///
+    /// # Returns
+    /// * `&mut Self` - Returns self for method chaining
+    #[inline]
+    fn h(&mut self, qubit: usize) -> &mut Self {
+        let n = self.num_physical_qubits;
+
+        // Apply H to the system qubit
+        self.state_vector_mut().h(qubit);
+
+        // Apply H* (= H since H is Hermitian) to the environment qubit
+        self.state_vector_mut().h(qubit + n);
+
+        self
+    }
+
+    /// Apply the S gate (√Z) to the given qubit
+    ///
+    /// # Arguments
+    /// * `qubit` - Target qubit
+    ///
+    /// # Returns
+    /// * `&mut Self` - Returns self for method chaining
+    #[inline]
+    fn sz(&mut self, qubit: usize) -> &mut Self {
+        let n = self.num_physical_qubits;
+
+        // Apply S to the system qubit
+        self.state_vector_mut().sz(qubit);
+
+        // For the environment qubit, we need S* which is S†
+        // S† is the inverse of S, which is implemented as szdag in the state vector
+        self.state_vector_mut().szdg(qubit + n);
+
+        self
+    }
+
+    /// Apply the controlled-X (CNOT) gate
+    ///
+    /// # Arguments
+    /// * `control` - Control qubit
+    /// * `target` - Target qubit
+    ///
+    /// # Returns
+    /// * `&mut Self` - Returns self for method chaining
+    #[inline]
+    fn cx(&mut self, control: usize, target: usize) -> &mut Self {
+        let n = self.num_physical_qubits;
+
+        // Apply CX to the system qubits
+        self.state_vector_mut().cx(control, target);
+
+        // Apply CX* to the environment qubits
+        // CX is real so CX* = CX
+        self.state_vector_mut().cx(control + n, target + n);
+
+        self
+    }
+
+    /// Measure a qubit in the Z basis and collapse the state
+    ///
+    /// # Arguments
+    /// * `qubit` - The qubit to measure
+    ///
+    /// # Returns
+    /// * `MeasurementResult` - Contains the outcome and whether it was deterministic
+    #[inline]
+    fn mz(&mut self, qubit: usize) -> MeasurementResult {
+        // First calculate the probabilities of measuring 0 and 1
+        let n = self.num_physical_qubits;
+        let mut prob_one = 0.0;
+
+        // Calculate probability of measuring 1
+        for i in 0..(1 << n) {
+            if (i & (1 << qubit)) != 0 {
+                // This is a state where qubit is 1
+                prob_one += self.probability(i);
+            }
+        }
+
+        // Determine if measurement is deterministic
+        let is_deterministic = !(1e-10..=1.0 - 1e-10).contains(&prob_one);
+
+        // Determine outcome
+        let outcome = if is_deterministic {
+            prob_one > 0.5
+        } else {
+            self.state_vector.rng_mut().random_range(0.0..1.0) < prob_one
+        };
+
+        // Apply the measurement projection: ρ → P_m ρ P_m / Tr(P_m ρ P_m)
+        // In the Choi representation, index (row << n) | col corresponds to ρ_{row,col}
+        // The projector P_m zeros out rows/cols where the measured qubit doesn't match outcome
+        let qubit_mask = 1 << qubit;
+        let target_bit = if outcome { qubit_mask } else { 0 };
+
+        let sv = self.state_vector.state();
+        let sv_size = 1 << (2 * n);
+
+        // Create new state with projected amplitudes
+        let mut new_state = vec![Complex64::new(0.0, 0.0); sv_size];
+        let mut norm_sq = 0.0;
+
+        for idx in 0..sv_size {
+            let row = idx >> n;
+            let col = idx & ((1 << n) - 1);
+
+            // Check if both row and column have the correct qubit value
+            let row_matches = (row & qubit_mask) == target_bit;
+            let col_matches = (col & qubit_mask) == target_bit;
+
+            if row_matches && col_matches {
+                new_state[idx] = sv[idx];
+                norm_sq += sv[idx].norm_sqr();
+            }
+        }
+
+        // Renormalize the state
+        if norm_sq > 1e-15 {
+            let norm = norm_sq.sqrt();
+            for amplitude in &mut new_state {
+                *amplitude /= norm;
+            }
+        }
+
+        // Update the state vector
+        *self.state_vector_mut() = StateVec::from_state(new_state, self.state_vector.rng().clone());
+
+        MeasurementResult {
+            outcome,
+            is_deterministic,
+        }
+    }
+}
+
+impl<R> ArbitraryRotationGateable<usize> for DensityMatrix<R>
+where
+    R: RngCore + SeedableRng + Debug + Clone,
+{
+    /// Apply a rotation around the X-axis
+    ///
+    /// # Arguments
+    /// * `theta` - Rotation angle in radians
+    /// * `qubit` - Target qubit
+    ///
+    /// # Returns
+    /// * `&mut Self` - Returns self for method chaining
+    #[inline]
+    fn rx(&mut self, theta: f64, qubit: usize) -> &mut Self {
+        let n = self.num_physical_qubits;
+
+        // Apply RX to the system qubit
+        self.state_vector_mut().rx(theta, qubit);
+
+        // Apply RX* to the environment qubit
+        // For RX, RX* is RX(-theta)
+        self.state_vector_mut().rx(-theta, qubit + n);
+
+        self
+    }
+
+    /// Apply a rotation around the Y-axis
+    ///
+    /// # Arguments
+    /// * `theta` - Rotation angle in radians
+    /// * `qubit` - Target qubit
+    ///
+    /// # Returns
+    /// * `&mut Self` - Returns self for method chaining
+    #[inline]
+    fn ry(&mut self, theta: f64, qubit: usize) -> &mut Self {
+        let n = self.num_physical_qubits;
+
+        // Apply RY to the system qubit
+        self.state_vector_mut().ry(theta, qubit);
+
+        // Apply RY* to the environment qubit
+        // RY is a real matrix, so RY* = RY
+        self.state_vector_mut().ry(theta, qubit + n);
+
+        self
+    }
+
+    /// Apply a rotation around the Z-axis
+    ///
+    /// # Arguments
+    /// * `theta` - Rotation angle in radians
+    /// * `qubit` - Target qubit
+    ///
+    /// # Returns
+    /// * `&mut Self` - Returns self for method chaining
+    #[inline]
+    fn rz(&mut self, theta: f64, qubit: usize) -> &mut Self {
+        let n = self.num_physical_qubits;
+
+        // Apply RZ to the system qubit
+        self.state_vector_mut().rz(theta, qubit);
+
+        // Apply RZ* to the environment qubit
+        // For RZ, RZ* is RZ(-theta)
+        self.state_vector_mut().rz(-theta, qubit + n);
+
+        self
+    }
+
+    /// Apply a two-qubit ZZ rotation
+    ///
+    /// # Arguments
+    /// * `theta` - Rotation angle
+    /// * `qubit1` - First qubit
+    /// * `qubit2` - Second qubit
+    ///
+    /// # Returns
+    /// * `&mut Self` - Returns self for method chaining
+    #[inline]
+    fn rzz(&mut self, theta: f64, qubit1: usize, qubit2: usize) -> &mut Self {
+        let n = self.num_physical_qubits;
+
+        // Apply RZZ to the system qubits
+        self.state_vector_mut().rzz(theta, qubit1, qubit2);
+
+        // Apply RZZ* to the environment qubits
+        // For RZZ, RZZ* is RZZ(-theta)
+        self.state_vector_mut().rzz(-theta, qubit1 + n, qubit2 + n);
+
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_density_matrix() {
+        // Create a new 1-qubit density matrix
+        let dm = DensityMatrix::new(1);
+
+        // Check that it represents |0⟩⟨0|
+        assert!((dm.probability(0) - 1.0).abs() < 1e-10);
+        assert!(dm.probability(1) < 1e-10);
+
+        // Check that it's a pure state
+        assert!(dm.is_pure());
+    }
+
+    #[test]
+    fn test_prepare_computational_basis() {
+        // Test preparing different computational basis states
+        let mut dm = DensityMatrix::new(2);
+
+        // Prepare |01⟩⟨01|
+        dm.prepare_computational_basis(1);
+        assert!((dm.probability(1) - 1.0).abs() < 1e-10);
+        assert!(dm.probability(0) < 1e-10);
+        assert!(dm.probability(2) < 1e-10);
+        assert!(dm.probability(3) < 1e-10);
+
+        // Prepare |10⟩⟨10|
+        dm.prepare_computational_basis(2);
+        assert!((dm.probability(2) - 1.0).abs() < 1e-10);
+        assert!(dm.probability(0) < 1e-10);
+        assert!(dm.probability(1) < 1e-10);
+        assert!(dm.probability(3) < 1e-10);
+    }
+
+    #[test]
+    fn test_reset() {
+        // Test that reset returns to |0...0⟩⟨0...0|
+        let mut dm = DensityMatrix::new(2);
+
+        // Prepare a different state
+        dm.prepare_computational_basis(3);
+
+        // Reset
+        dm.reset();
+
+        // Check state is |00⟩⟨00|
+        assert!((dm.probability(0) - 1.0).abs() < 1e-10);
+        assert!(dm.probability(1) < 1e-10);
+        assert!(dm.probability(2) < 1e-10);
+        assert!(dm.probability(3) < 1e-10);
+    }
+
+    #[test]
+    fn test_x_gate() {
+        // Test X gate on computational basis state
+        let mut dm = DensityMatrix::new(1);
+
+        // Apply X to |0⟩⟨0|
+        dm.x(0);
+
+        // Check state is |1⟩⟨1|
+        assert!(dm.probability(0) < 1e-10);
+        assert!((dm.probability(1) - 1.0).abs() < 1e-10);
+
+        // Apply X again to return to |0⟩⟨0|
+        dm.x(0);
+
+        // Check state is |0⟩⟨0|
+        assert!((dm.probability(0) - 1.0).abs() < 1e-10);
+        assert!(dm.probability(1) < 1e-10);
+    }
+
+    #[test]
+    fn test_h_gate() {
+        // Test H gate creating superposition
+        let mut dm = DensityMatrix::new(1);
+
+        // Apply H to |0⟩⟨0|
+        dm.h(0);
+
+        // Check probabilities are 0.5 for both outcomes
+        assert!((dm.probability(0) - 0.5).abs() < 1e-10);
+        assert!((dm.probability(1) - 0.5).abs() < 1e-10);
+
+        // Apply H again to return to |0⟩⟨0|
+        dm.h(0);
+
+        // Check state is |0⟩⟨0|
+        assert!((dm.probability(0) - 1.0).abs() < 1e-10);
+        assert!(dm.probability(1) < 1e-10);
+    }
+
+    #[test]
+    fn test_bell_state() {
+        // Test creating a Bell state
+        let mut dm = DensityMatrix::new(2);
+
+        // Create Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
+        dm.h(0).cx(0, 1);
+
+        // Check probabilities
+        assert!((dm.probability(0) - 0.5).abs() < 1e-10);
+        assert!(dm.probability(1) < 1e-10);
+        assert!(dm.probability(2) < 1e-10);
+        assert!((dm.probability(3) - 0.5).abs() < 1e-10);
+
+        // State should be pure
+        assert!(dm.is_pure());
+    }
+
+    // Additional tests for other gates and operations would be added here
+}

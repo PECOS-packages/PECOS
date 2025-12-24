@@ -12,6 +12,7 @@
 
 pub mod clifford_gateable;
 pub mod coin_toss;
+pub mod density_matrix;
 pub mod gens;
 pub mod measurement_sampler;
 pub mod pauli_prop;
@@ -29,6 +30,7 @@ pub mod symbolic_sparse_stab;
 pub use arbitrary_rotation_gateable::ArbitraryRotationGateable;
 pub use clifford_gateable::{CliffordGateable, MeasurementResult};
 pub use coin_toss::CoinToss;
+pub use density_matrix::DensityMatrix;
 pub use gens::Gens;
 // pub use paulis::Paulis;
 pub use measurement_sampler::{

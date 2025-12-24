@@ -143,15 +143,19 @@ fn test_cnot_gate() {
     state.cx(0, 1);
     assert_relative_eq!(state.probability(0b00), 1.0, epsilon = 1e-10);
 
-    // Prepare |10> and apply CNOT(0,1) -> |11>
-    state.prepare_computational_basis(0b10); // This is |10> with our qubit ordering
-    state.cx(0, 1);
-    assert_relative_eq!(state.probability(0b11), 1.0, epsilon = 1e-10);
+    // In PECOS convention (qubit 0 = LSB):
+    // - State 0b01 has qubit 0 = 1 (control set), qubit 1 = 0
+    // - State 0b10 has qubit 0 = 0 (control clear), qubit 1 = 1
 
-    // Prepare |01> and apply CNOT(0,1) -> |01>
-    state.prepare_computational_basis(0b01); // This is |01> with our qubit ordering
-    state.cx(0, 1);
-    assert_relative_eq!(state.probability(0b01), 1.0, epsilon = 1e-10);
+    // Prepare state with control qubit 0 = 1, apply CNOT(0,1) -> target flips
+    state.prepare_computational_basis(0b01); // qubit 0 = 1, qubit 1 = 0
+    state.cx(0, 1); // control=0 is set, so target=1 flips: 0->1
+    assert_relative_eq!(state.probability(0b11), 1.0, epsilon = 1e-10); // qubit 0 = 1, qubit 1 = 1
+
+    // Prepare state with control qubit 0 = 0, apply CNOT(0,1) -> no change
+    state.prepare_computational_basis(0b10); // qubit 0 = 0, qubit 1 = 1
+    state.cx(0, 1); // control=0 is clear, target doesn't flip
+    assert_relative_eq!(state.probability(0b10), 1.0, epsilon = 1e-10); // unchanged
 }
 
 #[test]

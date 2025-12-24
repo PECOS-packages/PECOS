@@ -205,7 +205,7 @@ where
         }
     }
 
-    /// Convert PECOS basis state to QuEST basis state by reversing bit order
+    /// Convert PECOS basis state to `QuEST` basis state by reversing bit order
     #[inline]
     fn convert_basis_state(&self, pecos_basis: usize) -> usize {
         let mut quest_basis = 0;
@@ -603,7 +603,7 @@ where
         }
     }
 
-    /// Convert PECOS basis state to QuEST basis state by reversing bit order
+    /// Convert PECOS basis state to `QuEST` basis state by reversing bit order
     #[inline]
     fn convert_basis_state(&self, pecos_basis: usize) -> usize {
         let mut quest_basis = 0;

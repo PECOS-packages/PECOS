@@ -1,9 +1,9 @@
-//! Comparison tests between DensityMatrix and QuEST's QuestDensityMatrix
+//! Comparison tests between `DensityMatrix` and `QuEST`'s `QuestDensityMatrix`
 //!
-//! These tests verify that our DensityMatrix implementation produces the same
-//! results as the reference QuEST density matrix simulator.
+//! These tests verify that our `DensityMatrix` implementation produces the same
+//! results as the reference `QuEST` density matrix simulator.
 //!
-//! NOTE: QuEST has thread safety issues - run with --test-threads=1
+//! NOTE: `QuEST` has thread safety issues - run with --test-threads=1
 
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, DensityMatrix, QuantumSimulator};
 use pecos_quest::QuestDensityMatrix;
@@ -24,7 +24,11 @@ fn assert_close(a: f64, b: f64, msg: &str) {
 }
 
 /// Compare probabilities for all computational basis states between simulators
-fn compare_probabilities(dm: &DensityMatrix, qdm: &QuestDensityMatrix<PecosRng>, num_qubits: usize) {
+fn compare_probabilities(
+    dm: &DensityMatrix,
+    qdm: &QuestDensityMatrix<PecosRng>,
+    num_qubits: usize,
+) {
     for i in 0..(1 << num_qubits) {
         let dm_prob = dm.probability(i);
         let qdm_prob = qdm.probability(i);
@@ -422,7 +426,10 @@ fn test_measurement_deterministic() {
     let dm_result = dm.mz(0);
     let qdm_result = qdm.mz(0);
 
-    assert_eq!(dm_result.outcome, qdm_result.outcome, "measurement outcome mismatch");
+    assert_eq!(
+        dm_result.outcome, qdm_result.outcome,
+        "measurement outcome mismatch"
+    );
     assert_eq!(
         dm_result.is_deterministic, qdm_result.is_deterministic,
         "determinism mismatch"
@@ -464,15 +471,11 @@ fn test_measurement_superposition() {
     // One probability should be ~1, other ~0
     assert!(
         (dm_prob0 > 0.99 && dm_prob1 < 0.01) || (dm_prob0 < 0.01 && dm_prob1 > 0.99),
-        "DensityMatrix not collapsed: p0={}, p1={}",
-        dm_prob0,
-        dm_prob1
+        "DensityMatrix not collapsed: p0={dm_prob0}, p1={dm_prob1}"
     );
     assert!(
         (qdm_prob0 > 0.99 && qdm_prob1 < 0.01) || (qdm_prob0 < 0.01 && qdm_prob1 > 0.99),
-        "QuestDensityMatrix not collapsed: p0={}, p1={}",
-        qdm_prob0,
-        qdm_prob1
+        "QuestDensityMatrix not collapsed: p0={qdm_prob0}, p1={qdm_prob1}"
     );
 }
 
@@ -503,7 +506,15 @@ fn test_rotation_angles() {
     let num_qubits = 1;
 
     // Test various rotation angles
-    let angles = [0.0, PI / 8.0, PI / 4.0, PI / 2.0, PI, 3.0 * PI / 2.0, 2.0 * PI];
+    let angles = [
+        0.0,
+        PI / 8.0,
+        PI / 4.0,
+        PI / 2.0,
+        PI,
+        3.0 * PI / 2.0,
+        2.0 * PI,
+    ];
 
     for &theta in &angles {
         let mut dm = DensityMatrix::new(num_qubits);
@@ -572,18 +583,17 @@ fn test_density_matrix_is_hermitian() {
     dm.sz(1);
 
     let rho = dm.get_density_matrix();
-    let dim = 1 << num_qubits;
 
     // Check rho[i][j] == rho[j][i].conj()
-    for i in 0..dim {
-        for j in 0..dim {
-            let diff = (rho[i][j] - rho[j][i].conj()).norm();
+    for (i, rho_row) in rho.iter().enumerate() {
+        for (j, rho_ij) in rho_row.iter().enumerate() {
+            let diff = (rho_ij - rho[j][i].conj()).norm();
             assert!(
                 diff < TOLERANCE,
                 "Not Hermitian at ({},{}): {} vs {}",
                 i,
                 j,
-                rho[i][j],
+                rho_ij,
                 rho[j][i].conj()
             );
         }
@@ -603,7 +613,7 @@ fn test_density_matrix_probabilities_sum_to_one() {
     let mut sum = 0.0;
     for i in 0..(1 << num_qubits) {
         let prob = dm.probability(i);
-        assert!(prob >= -TOLERANCE, "Negative probability at {}: {}", i, prob);
+        assert!(prob >= -TOLERANCE, "Negative probability at {i}: {prob}");
         sum += prob;
     }
     assert_close(sum, 1.0, "probabilities should sum to 1");

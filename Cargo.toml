@@ -1,25 +1,22 @@
 [workspace]
 resolver = "2"
 members = [
-    "python/pecos-rslib",
-    "python/selene-plugins/pecos-selene-sparsestab",
-    "python/selene-plugins/pecos-selene-statevec",
-    "python/selene-plugins/pecos-selene-quest",
-    "python/selene-plugins/pecos-selene-qulacs",
-    "julia/pecos-julia-ffi",
-    "go/pecos-go-ffi",
-    "crates/pecos*",
-    "crates/benchmarks",
+  "python/pecos-rslib",
+  "python/selene-plugins/pecos-selene-sparsestab",
+  "python/selene-plugins/pecos-selene-statevec",
+  "python/selene-plugins/pecos-selene-quest",
+  "python/selene-plugins/pecos-selene-qulacs",
+  "julia/pecos-julia-ffi",
+  "go/pecos-go-ffi",
+  "crates/pecos*",
+  "crates/benchmarks",
 ]
 
 [workspace.package]
 version = "0.1.1"
 edition = "2024"
 readme = "README.md"
-authors = [
-    "The PECOS Developers",
-    "Ciaran Ryan-Anderson<ciaranra@gmail.com>",
-]
+authors = ["The PECOS Developers", "Ciaran Ryan-Anderson<ciaranra@gmail.com>"]
 homepage = "https://pecos.io"
 repository = "https://github.com/PECOS-packages/PECOS"
 license = "Apache-2.0"
@@ -37,7 +34,7 @@ parking_lot = "0.12"
 criterion = "0.8"
 libloading = "0.9"
 libc = "0.2"
-bytemuck = {  version = "1", features = ["derive"] }
+bytemuck = { version = "1", features = ["derive"] }
 bitflags = "2"
 dyn-clone = "1"
 regex = "1"
@@ -45,7 +42,12 @@ pest = "2"
 pest_derive = "2"
 tempfile = "3"
 assert_cmd = "2"
-wasmtime = { version = "39", default-features = false, features = ["cranelift", "runtime", "wat", "std"] }
+wasmtime = { version = "40", default-features = false, features = [
+  "cranelift",
+  "runtime",
+  "wat",
+  "std",
+] }
 wat = "1"
 ron = "0.12"
 tket = "0.16"
@@ -53,7 +55,10 @@ tket-qsystem = { version = "0.22", default-features = false }
 cc = "1"
 cxx = "1.0.187"
 cxx-build = "1.0.187"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = [
+  "blocking",
+  "rustls-tls",
+] }
 flate2 = "1"
 sha2 = "0.10"
 dirs = "6"
@@ -156,23 +161,23 @@ pecos-cppsparsesim = { version = "0.1.1", path = "crates/pecos-cppsparsesim" }
 
 # Optimize build times
 [profile.dev]
-opt-level = 0          # No optimization for faster compilation
-debug = true           # Include debug info
-incremental = true     # Enable incremental compilation
-split-debuginfo = "unpacked"  # Faster linking on supported platforms
+opt-level = 0                # No optimization for faster compilation
+debug = true                 # Include debug info
+incremental = true           # Enable incremental compilation
+split-debuginfo = "unpacked" # Faster linking on supported platforms
 
 # For tests, use no optimization for the fastest compilation
 [profile.test]
-opt-level = 0          # No optimization for the fastest compilation
-debug = true           # Include debug info
-incremental = true     # Enable incremental compilation
-split-debuginfo = "unpacked"  # Faster linking on supported platforms
+opt-level = 0                # No optimization for the fastest compilation
+debug = true                 # Include debug info
+incremental = true           # Enable incremental compilation
+split-debuginfo = "unpacked" # Faster linking on supported platforms
 
 # The release profile
 [profile.release]
-opt-level = 3          # Maximum optimization
-lto = true             # Link-time optimization (same as "fat")
-codegen-units = 1      # Single codegen unit for better optimization
+opt-level = 3     # Maximum optimization
+lto = true        # Link-time optimization (same as "fat")
+codegen-units = 1 # Single codegen unit for better optimization
 
 # Native profile: release + CPU-specific optimizations
 # Use with: cargo build --profile native
@@ -189,6 +194,6 @@ style = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 # restriction = "warn"
 cargo = { level = "warn", priority = -1 }
-multiple-crate-versions = "allow" # TODO: remove when possible
+multiple-crate-versions = "allow"         # TODO: remove when possible
 # Allow more function arguments for PyO3 bindings (many parameters needed for Python interop)
 too-many-arguments = "allow"

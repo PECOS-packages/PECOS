@@ -313,7 +313,7 @@ unsigned int State::deterministic_measure(const int_num& qubit) {
     // we are measuring a stabilizer of the state. The task then is to
     // determine the sign of the measured stabilizer. The generators that have
     // destabilizers that anticommute with the measurement multiply to give
-    // the measured stabilzer. Therefore, we loop through these generators.
+    // the measured stabilizer. Therefore, we loop through these generators.
 
 
     // Count the is and -1s out front of the stabilizers being multiplied

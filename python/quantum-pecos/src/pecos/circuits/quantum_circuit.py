@@ -21,7 +21,7 @@ from collections import defaultdict
 from collections.abc import MutableSequence
 from typing import TYPE_CHECKING, NamedTuple
 
-from pecos import __version__
+import pecos as pc
 from pecos.circuits import qc2phir
 
 if TYPE_CHECKING:
@@ -240,7 +240,7 @@ class QuantumCircuit(MutableSequence):
 
         prog = {
             "prog_type": "PECOS.QuantumCircuit",
-            "PECOS_version": str(__version__),
+            "PECOS_version": str(pc.__version__),
             "prog_metadata": metadata,
             "gates": gates,
         }
@@ -490,7 +490,7 @@ class ParamGateCollection:
 
     def items(
         self,
-        tick: None = None,  # noqa: ARG002
+        _tick: None = None,
     ) -> Iterator[tuple[str, set[Location], JSONDict]]:
         """Generator to return a dictionary-like iter."""
         for gate_symbol, gate_list in self.symbols.items():

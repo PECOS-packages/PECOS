@@ -5,7 +5,7 @@ use pecos_engines::byte_message::ByteMessage;
 use pecos_engines::noise::BiasedDepolarizingNoiseModel;
 use pecos_engines::quantum::StateVecEngine;
 use pecos_engines::{EngineSystem, QuantumSystem};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 fn main() {
     // Create a simple quantum circuit that prepares a superposition and measures it
@@ -60,10 +60,10 @@ fn example1_different_bias_levels(circ: &ByteMessage, quantum: &StateVecEngine) 
         let mut system = QuantumSystem::new(Box::new(noise), Box::new(quantum.clone()));
 
         // For deterministic testing, set a fixed seed
-        system.set_seed(42).expect("Failed to set seed");
+        system.set_seed(42);
 
         // Run the circuit multiple times and collect statistics
-        let mut counts = HashMap::new();
+        let mut counts = BTreeMap::new();
 
         for _ in 0..num_shots {
             system.reset().expect("Failed to reset");
@@ -122,7 +122,7 @@ fn example2_with_seed(circ: &ByteMessage) {
 
     // Run the circuit multiple times and collect statistics
     let num_shots = 1000;
-    let mut counts = HashMap::new();
+    let mut counts = BTreeMap::new();
 
     for _ in 0..num_shots {
         system.reset().expect("Failed to reset");
@@ -179,11 +179,11 @@ fn example3_bell_state() {
     let mut system2 = QuantumSystem::new(Box::new(noise2), quantum2);
 
     // Set a fixed seed for deterministic results
-    system2.set_seed(42).expect("Failed to set seed");
+    system2.set_seed(42);
 
     // Run the bell circuit multiple times and collect statistics
     let num_shots = 1000;
-    let mut bell_counts = HashMap::new();
+    let mut bell_counts = BTreeMap::new();
 
     for _ in 0..num_shots {
         system2.reset().expect("Failed to reset");
@@ -210,7 +210,7 @@ fn example3_bell_state() {
     let p_flip_1 = 0.3;
 
     // Calculate theoretical distributions
-    let mut expected_probs = HashMap::new();
+    let mut expected_probs = BTreeMap::new();
     expected_probs.insert(
         "00".to_string(),
         ((1.0 - p_flip_0) * (1.0 - p_flip_0) + p_flip_1 * p_flip_1) * 50.0,

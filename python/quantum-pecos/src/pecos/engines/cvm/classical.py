@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.engines.cvm.binarray import BinArray
+from pecos import BitInt
 
 if TYPE_CHECKING:
     from typing import Any
@@ -32,11 +32,11 @@ def set_output(
     state: SimulatorProtocol,
     circuit: QuantumCircuit,
     output_spec: dict[str, int] | None,
-    output: dict[str, BinArray] | None,
-) -> dict[str, BinArray]:
+    output: dict[str, BitInt] | None,
+) -> dict[str, BitInt]:
     """Set up output dictionary for classical variable storage.
 
-    Initializes the output dictionary with BinArrays for storing classical
+    Initializes the output dictionary with BitInts for storing classical
     computation results, using size specifications from the circuit metadata
     and provided output specification.
 
@@ -47,7 +47,7 @@ def set_output(
         output: Existing output dictionary to update, if any.
 
     Returns:
-        Initialized output dictionary with BinArrays for each variable.
+        Initialized output dictionary with BitInts for each variable.
     """
     if output_spec is None:
         output_spec = {}
@@ -64,36 +64,36 @@ def set_output(
 
         if output_spec:
             for symbol, size in output_spec.items():
-                output[symbol] = BinArray(size)
+                output[symbol] = BitInt(size)
 
     return output
 
 
 def eval_op(
     op: str,
-    a: BinArray | int,
-    b: BinArray | int | None = None,
+    a: BitInt | int,
+    b: BitInt | int | None = None,
     width: int = 32,
-) -> BinArray:
-    """Evaluate a binary or unary operation on BinArrays.
+) -> BitInt:
+    """Evaluate a binary or unary operation on BitInts.
 
     Performs arithmetic, logical, or comparison operations on binary arrays,
     supporting assignment, bitwise operations, arithmetic, and comparisons.
 
     Args:
         op: Operation string (e.g., '=', '+', '&', '==', '~').
-        a: First operand as BinArray or integer.
+        a: First operand as BitInt or integer.
         b: Second operand for binary operations, None for unary operations.
-        width: Bit width for integer to BinArray conversion.
+        width: Bit width for integer to BitInt conversion.
 
     Returns:
-        Result of the operation as a BinArray.
+        Result of the operation as a BitInt.
 
     Raises:
         Exception: If operation is unsupported or arguments are invalid.
     """
     if isinstance(a, int):
-        a = BinArray(width, a)
+        a = BitInt(width, a)
 
     if op == "=":
         if b:
@@ -153,29 +153,29 @@ def eval_op(
 
 
 def get_val(
-    a: BinArray | tuple[str, int] | list[str | int] | str | int,
-    output: dict[str, BinArray],
+    a: BitInt | tuple[str, int] | list[str | int] | str | int,
+    output: dict[str, BitInt],
     width: int,
     shot_id: int,
-) -> BinArray:
-    """Extract and convert a value to BinArray.
+) -> BitInt:
+    """Extract and convert a value to BitInt.
 
-    Retrieves values from the output dictionary or converts literals to BinArrays,
+    Retrieves values from the output dictionary or converts literals to BitInts,
     supporting indexed access for array variables.
 
     Args:
-        a: Value to extract - can be BinArray, variable reference, or literal.
+        a: Value to extract - can be BitInt, variable reference, or literal.
         output: Dictionary containing variable values.
         width: Bit width for value conversion.
         shot_id: The current instance's shot id
 
     Returns:
-        Value converted to BinArray format.
+        Value converted to BitInt format.
 
     Raises:
         TypeError: If the input type is not supported.
     """
-    if isinstance(a, BinArray):
+    if isinstance(a, BitInt):
         return a
 
     if isinstance(a, tuple | list):
@@ -192,15 +192,15 @@ def get_val(
         msg = f'Could not evaluate "{a!s}". Wrong type, got type: {type(a)}.'
         raise TypeError(msg)
 
-    return BinArray(width, val)
+    return BitInt(width, val)
 
 
 def recur_eval_op(
     expr_dict: dict[str, Any],
-    output: dict[str, BinArray],
+    output: dict[str, BitInt],
     width: int,
     shot_id: int,
-) -> BinArray:
+) -> BitInt:
     """Recursively evaluate a nested expression dictionary.
 
     Processes nested expressions by recursively evaluating sub-expressions
@@ -213,7 +213,7 @@ def recur_eval_op(
         shot_id: The current instance's shot id.
 
     Returns:
-        Result of the evaluated expression as BinArray.
+        Result of the evaluated expression as BitInt.
     """
     a = expr_dict.get("a")
     op = expr_dict.get("op")
@@ -249,7 +249,7 @@ def recur_eval_op(
 
 def eval_cop(
     cop_expr: dict[str, Any] | list[dict[str, Any]],
-    output: dict[str, BinArray],
+    output: dict[str, BitInt],
     width: int,
     shot_id: int,
 ) -> None:
@@ -258,8 +258,8 @@ def eval_cop(
     Evaluate classical expression such as:
 
     assignment:
-    t = a     BinArray = (BinArray | int)
-    t[i] = a  BinArray[i] = (BinArray | int)
+    t = a     BitInt = (BitInt | int)
+    t[i] = a  BitInt[i] = (BitInt | int)
 
     binary operations:
     t = a o b
@@ -298,7 +298,7 @@ def eval_cop(
 
 def eval_tick_conds(
     tick_circuit: QuantumCircuit,
-    output: dict[str, BinArray],
+    output: dict[str, BitInt],
 ) -> list[bool]:
     """Evaluate conditional expressions for each operation in a tick circuit.
 
@@ -323,7 +323,7 @@ def eval_tick_conds(
 
 def eval_condition(
     conditional_expr: dict[str, Any] | tuple[Any, ...] | list[Any] | None,
-    output: dict[str, BinArray],
+    output: dict[str, BitInt],
 ) -> bool:
     """Evaluate a conditional expression to a boolean result.
 
@@ -362,7 +362,7 @@ def eval_condition(
         b = conditional_expr["b"]
         op = conditional_expr["op"]
         if isinstance(a, str):
-            a = output[a]  # str -> BinArray
+            a = output[a]  # str -> BitInt
         elif isinstance(a, tuple | list) and len(a) == 2:
             a = output[a[0]][a[1]]  # (str, int) -> int (1 or 0)
         else:
@@ -370,7 +370,7 @@ def eval_condition(
             raise Exception(msg)
 
         if isinstance(b, str):
-            b = output[b]  # str -> BinArray
+            b = output[b]  # str -> BitInt
         elif isinstance(b, tuple | list) and len(b) == 2:
             b = output[b[0]][b[1]]  # (str, int) -> int (1 or 0)
         elif isinstance(b, int):

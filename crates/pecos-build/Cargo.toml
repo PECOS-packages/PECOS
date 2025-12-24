@@ -1,0 +1,48 @@
+[package]
+name = "pecos-build"
+version.workspace = true
+edition.workspace = true
+description = "PECOS build utilities - dependency management, LLVM setup, and build script helpers"
+readme.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords = ["quantum", "llvm", "build-utils", "dependencies"]
+categories = ["development-tools::build-utils"]
+
+[features]
+default = []
+
+[dependencies]
+# Directory management
+dirs.workspace = true
+
+# Downloading
+reqwest.workspace = true
+
+# Checksums
+sha2.workspace = true
+
+# Archive extraction
+tar.workspace = true
+flate2.workspace = true
+bzip2.workspace = true
+xz2.workspace = true
+sevenz-rust.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Logging
+log.workspace = true
+
+# Serialization (for manifest files)
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
+
+# Cargo metadata parsing
+cargo_metadata.workspace = true
+
+[lints]
+workspace = true

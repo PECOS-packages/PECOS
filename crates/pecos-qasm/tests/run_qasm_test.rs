@@ -1,6 +1,9 @@
-// Tests for the new run_qasm function
+// Tests for the new unified QASM API
 
-use pecos_qasm::prelude::*;
+use pecos_engines::noise::{DepolarizingNoiseModelBuilder, PassThroughNoiseModelBuilder};
+use pecos_engines::{sim_builder, sparse_stabilizer, state_vector};
+use pecos_programs::Qasm;
+use pecos_qasm::qasm_engine;
 
 #[test]
 fn test_run_qasm_simple() {
@@ -18,15 +21,11 @@ fn test_run_qasm_simple() {
     "#;
 
     // Simple usage - ideal simulation
-    let results = run_qasm(
-        qasm,
-        100,
-        PassThroughNoiseModelBuilder::new(),
-        None,
-        None,
-        None,
-    )
-    .unwrap();
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .noise(PassThroughNoiseModelBuilder::new())
+        .run(100)
+        .unwrap();
     assert_eq!(results.len(), 100);
 
     // Check Bell state results
@@ -49,15 +48,12 @@ fn test_run_qasm_with_noise() {
         measure q[0] -> c[0];
     "#;
 
-    let results = run_qasm(
-        qasm,
-        1000,
-        DepolarizingNoiseModel::builder().with_uniform_probability(0.1),
-        None,
-        None,
-        Some(42),
-    )
-    .unwrap();
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .seed(42)
+        .noise(DepolarizingNoiseModelBuilder::new().with_uniform_probability(0.1))
+        .run(1000)
+        .unwrap();
 
     let shot_map = results.try_as_shot_map().unwrap();
     let values = shot_map.try_bits_as_u64("c").unwrap();
@@ -83,27 +79,23 @@ fn test_run_qasm_with_engine() {
     "#;
 
     // Test with StateVector engine
-    let results_sv = run_qasm(
-        qasm,
-        100,
-        PassThroughNoiseModelBuilder::new(),
-        Some(QuantumEngineType::StateVector),
-        None,
-        Some(42),
-    )
-    .unwrap();
+    let results_sv = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .seed(42)
+        .noise(PassThroughNoiseModelBuilder::new())
+        .quantum(state_vector().qubits(2))
+        .run(100)
+        .unwrap();
     assert_eq!(results_sv.len(), 100);
 
     // Test with SparseStabilizer engine
-    let results_stab = run_qasm(
-        qasm,
-        100,
-        PassThroughNoiseModelBuilder::new(),
-        Some(QuantumEngineType::SparseStabilizer),
-        None,
-        Some(42),
-    )
-    .unwrap();
+    let results_stab = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .seed(42)
+        .noise(PassThroughNoiseModelBuilder::new())
+        .quantum(sparse_stabilizer().qubits(2))
+        .run(100)
+        .unwrap();
     assert_eq!(results_stab.len(), 100);
 }
 
@@ -120,21 +112,19 @@ fn test_run_qasm_with_config_structs() {
     "#;
 
     // Test with config struct converted to enum
-    let noise_config = DepolarizingNoiseModel::builder()
+    let noise_config = DepolarizingNoiseModelBuilder::new()
         .with_prep_probability(0.01)
         .with_meas_probability(0.01)
         .with_p1_probability(0.001)
         .with_p2_probability(0.1);
 
-    let results = run_qasm(
-        qasm,
-        1000,
-        noise_config,
-        None,
-        Some(4),  // workers
-        Some(42), // seed
-    )
-    .unwrap();
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .seed(42)
+        .workers(4)
+        .noise(noise_config)
+        .run(1000)
+        .unwrap();
 
     assert_eq!(results.len(), 1000);
 }
@@ -151,24 +141,18 @@ fn test_run_qasm_deterministic() {
     "#;
 
     // Run twice with same seed
-    let results1 = run_qasm(
-        qasm,
-        100,
-        PassThroughNoiseModelBuilder::new(),
-        None,
-        None,
-        Some(123),
-    )
-    .unwrap();
-    let results2 = run_qasm(
-        qasm,
-        100,
-        PassThroughNoiseModelBuilder::new(),
-        None,
-        None,
-        Some(123),
-    )
-    .unwrap();
+    let results1 = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .seed(123)
+        .noise(PassThroughNoiseModelBuilder::new())
+        .run(100)
+        .unwrap();
+    let results2 = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .seed(123)
+        .noise(PassThroughNoiseModelBuilder::new())
+        .run(100)
+        .unwrap();
 
     // Convert to comparable format
     let map1 = results1.try_as_shot_map().unwrap();

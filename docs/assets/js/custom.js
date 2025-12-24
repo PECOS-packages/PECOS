@@ -27,16 +27,22 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // Apply collapsing logic after a small delay to ensure all elements are loaded
-  setTimeout(setupNavigationCollapsing, 100);
+  setTimeout(function() {
+    setupNavigationCollapsing();
+  }, 100);
 
   // Re-apply on hash changes or navigation events
-  window.addEventListener('hashchange', setupNavigationCollapsing);
+  window.addEventListener('hashchange', function() {
+    setupNavigationCollapsing();
+  });
 
   // Handle Material instant navigation
   const content = document.querySelector('.md-content');
   if (content) {
     const observer = new MutationObserver(function() {
-      setTimeout(setupNavigationCollapsing, 100);
+      setTimeout(function() {
+        setupNavigationCollapsing();
+      }, 100);
     });
 
     observer.observe(content, {

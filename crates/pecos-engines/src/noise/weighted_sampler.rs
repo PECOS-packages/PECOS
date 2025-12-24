@@ -343,11 +343,118 @@ impl TwoQubitWeightedSampler {
     }
 }
 
+/// Samples crosstalk noise transitions
+#[derive(Clone, Debug)]
+pub struct CrosstalkWeightedSampler {
+    sampler_from_0: WeightedSampler<String>,
+    sampler_from_1: WeightedSampler<String>,
+}
+
+impl CrosstalkWeightedSampler {
+    /// Create a new crosstalk sampler from a weighted map
+    ///
+    /// Valid keys are: "0->0", "0->1", "0->L", "1->1", "1->0", "1->L"
+    ///
+    /// # Panics
+    /// - If the weighted map contains invalid keys
+    /// - If the weighted map is empty
+    /// - If the total weight of each sampler is not positive
+    /// - If the total weight of each sampler deviates from 1.0 by more than the tolerance
+    #[must_use]
+    pub fn new(weighted_map: &BTreeMap<String, f64>) -> Self {
+        const KEYS_FROM_0: [&str; 3] = ["0->0", "0->1", "0->L"];
+        const KEYS_FROM_1: [&str; 3] = ["1->1", "1->0", "1->L"];
+        Self::validate_crosstalk_keys(weighted_map);
+
+        // Separate the 0->* components from the 1->* components
+        let weighted_map_from_0 = KEYS_FROM_0
+            .into_iter()
+            .filter_map(|key| weighted_map.get(key).map(|&val| (key.to_string(), val)))
+            .collect();
+        let weighted_map_from_1 = KEYS_FROM_1
+            .into_iter()
+            .filter_map(|key| weighted_map.get(key).map(|&val| (key.to_string(), val)))
+            .collect();
+
+        Self {
+            sampler_from_0: WeightedSampler::new(&weighted_map_from_0),
+            sampler_from_1: WeightedSampler::new(&weighted_map_from_1),
+        }
+    }
+
+    fn validate_crosstalk_keys(weighted_map: &BTreeMap<String, f64>) {
+        const VALID_KEYS: [&str; 6] = ["0->0", "0->1", "0->L", "1->1", "1->0", "1->L"];
+
+        for key in weighted_map.keys() {
+            assert!(
+                VALID_KEYS.contains(&key.as_str()),
+                "CrosstalkWeightedSampler: invalid key '{key}' - must be one of {VALID_KEYS:?}",
+            );
+        }
+    }
+
+    /// Get a reference to the normalized weighted map, for keys 0->* or 1->*
+    /// # Panics
+    /// - If `from_state` is not either 0 or 1.
+    #[must_use]
+    pub fn get_weighted_map(&self, from_state: u32) -> &BTreeMap<String, f64> {
+        assert!(from_state == 0 || from_state == 1);
+        if from_state == 0 {
+            self.sampler_from_0.get_weighted_map()
+        } else {
+            self.sampler_from_1.get_weighted_map()
+        }
+    }
+
+    /// Sample a raw key from the distribution, for keys 0->* or 1->*.
+    /// # Panics
+    /// - If `from_state` is not either 0 or 1.
+    #[must_use]
+    pub fn sample_keys(&self, rng: &mut NoiseRng, from_state: u32) -> String {
+        assert!(from_state == 0 || from_state == 1);
+        if from_state == 0 {
+            self.sampler_from_0.sample(rng)
+        } else {
+            self.sampler_from_1.sample(rng)
+        }
+    }
+
+    /// Sample a gate operation for the given qubit
+    ///
+    /// # Panics
+    /// - If the sampled key is invalid (this should never happen if the sampler was created properly)
+    #[must_use]
+    pub fn sample_gates(
+        &self,
+        rng: &mut NoiseRng,
+        qubit: usize,
+        from_state: u32,
+    ) -> SingleQubitNoiseResult {
+        let key = self.sample_keys(rng, from_state);
+
+        match key.as_str() {
+            "0->0" | "1->1" => SingleQubitNoiseResult {
+                gate: None,
+                qubit_leaked: false,
+            },
+            "0->1" | "1->0" => SingleQubitNoiseResult {
+                gate: Some(Gate::x(&[qubit])),
+                qubit_leaked: false,
+            },
+            "0->L" | "1->L" => SingleQubitNoiseResult {
+                gate: None,
+                qubit_leaked: true,
+            },
+            _ => panic!("CrosstalkWeightedSampler: invalid key '{key}'"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::noise::noise_rng::NoiseRng;
-    use rand_chacha::ChaCha8Rng;
+    use pecos_rng::PecosRng;
 
     const SAMPLE_SIZE: usize = 100;
 
@@ -367,8 +474,8 @@ mod tests {
         let sampler2 = WeightedSampler::new(&weights2);
 
         // Use the same seed for both RNGs
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         // Sample from both samplers
         let results1: Vec<String> = (0..SAMPLE_SIZE)
@@ -403,8 +510,8 @@ mod tests {
         let sampler2 = WeightedSampler::new(&weights2);
 
         // Use the same seed for both RNGs
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         // Sample from both samplers
         let results1: Vec<String> = (0..SAMPLE_SIZE)
@@ -431,8 +538,8 @@ mod tests {
         let sampler = WeightedSampler::new(&weights);
 
         // Create two RNGs with the same seed
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         // Sample from both RNGs
         let results1: Vec<String> = (0..SAMPLE_SIZE)
@@ -462,8 +569,8 @@ mod tests {
         let seed_pairs = [(42, 42), (123, 123), (999, 999), (0, 0)];
 
         for (seed1, seed2) in seed_pairs {
-            let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(seed1);
-            let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(seed2);
+            let mut rng1 = NoiseRng::<PecosRng>::with_seed(seed1);
+            let mut rng2 = NoiseRng::<PecosRng>::with_seed(seed2);
 
             let results1: Vec<String> = (0..SAMPLE_SIZE)
                 .map(|_| sampler.sample(&mut rng1))
@@ -492,8 +599,8 @@ mod tests {
         let seed_pairs = [(42, 43), (123, 124), (999, 1000), (0, 1)];
 
         for (seed1, seed2) in seed_pairs {
-            let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(seed1);
-            let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(seed2);
+            let mut rng1 = NoiseRng::<PecosRng>::with_seed(seed1);
+            let mut rng2 = NoiseRng::<PecosRng>::with_seed(seed2);
 
             let results1: Vec<String> = (0..SAMPLE_SIZE)
                 .map(|_| sampler.sample(&mut rng1))
@@ -521,8 +628,8 @@ mod tests {
         let sampler = SingleQubitWeightedSampler::new(&weights);
 
         // Create two RNGs with the same seed
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         // Sample from both RNGs
         let results1: Vec<SingleQubitNoiseResult> = (0..SAMPLE_SIZE)
@@ -562,8 +669,8 @@ mod tests {
         let sampler = TwoQubitWeightedSampler::new(&weights);
 
         // Create two RNGs with the same seed
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         // Sample from both RNGs
         let results1: Vec<TwoQubitNoiseResult> = (0..SAMPLE_SIZE)
@@ -600,6 +707,46 @@ mod tests {
     }
 
     #[test]
+    fn test_deterministic_sampling_crosstalk() {
+        // Test deterministic sampling with single qubit sampler
+        let mut weights = BTreeMap::new();
+        weights.insert("0->1".to_string(), 0.5);
+        weights.insert("0->L".to_string(), 0.5);
+        weights.insert("1->0".to_string(), 0.5);
+        weights.insert("1->L".to_string(), 0.5);
+
+        let sampler = CrosstalkWeightedSampler::new(&weights);
+
+        // Create two RNGs with the same seed
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
+
+        // Sample from both RNGs
+        let results1: Vec<SingleQubitNoiseResult> = (0..SAMPLE_SIZE)
+            .map(|_| sampler.sample_gates(&mut rng1, 0, 0))
+            .collect();
+        let results2: Vec<SingleQubitNoiseResult> = (0..SAMPLE_SIZE)
+            .map(|_| sampler.sample_gates(&mut rng2, 0, 0))
+            .collect();
+
+        // Verify exact sequence match
+        for (i, (r1, r2)) in results1.iter().zip(results2.iter()).enumerate() {
+            assert_eq!(
+                r1.qubit_leaked, r2.qubit_leaked,
+                "Leakage mismatch at index {i}"
+            );
+            match (&r1.gate, &r2.gate) {
+                (Some(g1), Some(g2)) => assert_eq!(
+                    g1.gate_type, g2.gate_type,
+                    "Gate type mismatch at index {i}"
+                ),
+                (None, None) => (),
+                _ => panic!("Gate presence mismatch at index {i}"),
+            }
+        }
+    }
+
+    #[test]
     fn test_deterministic_sampling_reset() {
         // Test that resetting the RNG and using the same seed produces the same sequence
         let mut weights = BTreeMap::new();
@@ -610,11 +757,11 @@ mod tests {
         let seed = 42;
 
         // First sequence
-        let mut rng = NoiseRng::<ChaCha8Rng>::with_seed(seed);
+        let mut rng = NoiseRng::<PecosRng>::with_seed(seed);
         let results1: Vec<String> = (0..SAMPLE_SIZE).map(|_| sampler.sample(&mut rng)).collect();
 
         // Reset RNG with same seed
-        rng = NoiseRng::<ChaCha8Rng>::with_seed(seed);
+        rng = NoiseRng::<PecosRng>::with_seed(seed);
         let results2: Vec<String> = (0..SAMPLE_SIZE).map(|_| sampler.sample(&mut rng)).collect();
 
         // Verify exact sequence match
@@ -632,14 +779,14 @@ mod tests {
         weights.insert("B".to_string(), 0.7);
 
         let sampler = WeightedSampler::new(&weights);
-        let mut rng = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
 
         // Take two consecutive samples
         let result1 = sampler.sample(&mut rng);
         let result2 = sampler.sample(&mut rng);
 
         // Reset RNG and take the same two samples
-        rng = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        rng = NoiseRng::<PecosRng>::with_seed(42);
         let result3 = sampler.sample(&mut rng);
         let result4 = sampler.sample(&mut rng);
 
@@ -662,8 +809,8 @@ mod tests {
         let sampler1 = WeightedSampler::new(&weights1);
         let sampler2 = WeightedSampler::new(&weights2);
 
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         // Interleaved sampling
         let results1: Vec<String> = (0..SAMPLE_SIZE)
@@ -677,8 +824,8 @@ mod tests {
             .collect();
 
         // Reset RNGs and repeat
-        rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         let results2: Vec<String> = (0..SAMPLE_SIZE)
             .map(|_| {
@@ -703,8 +850,8 @@ mod tests {
         weights.insert("A".to_string(), 1.0); // Single outcome with probability 1.0
 
         let sampler = WeightedSampler::new(&weights);
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         // Should always get "A" regardless of RNG state
         let results1: Vec<String> = (0..SAMPLE_SIZE)
@@ -731,8 +878,8 @@ mod tests {
         weights.insert("L".to_string(), 1.0); // Always leak
 
         let sampler = SingleQubitWeightedSampler::new(&weights);
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         let results1: Vec<SingleQubitNoiseResult> = (0..SAMPLE_SIZE)
             .map(|_| sampler.sample_gates(&mut rng1, 0))
@@ -759,8 +906,8 @@ mod tests {
         weights.insert("LL".to_string(), 1.0); // Always leak both qubits
 
         let sampler = TwoQubitWeightedSampler::new(&weights);
-        let mut rng1 = NoiseRng::<ChaCha8Rng>::with_seed(42);
-        let mut rng2 = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
 
         let results1: Vec<TwoQubitNoiseResult> = (0..SAMPLE_SIZE)
             .map(|_| sampler.sample_gates(&mut rng1, 0, 1))
@@ -784,6 +931,35 @@ mod tests {
                 "Both qubits should leak"
             );
             assert!(r1.gates.is_none(), "No gates should be present");
+        }
+    }
+
+    #[test]
+    fn test_deterministic_sampling_crosstalk_edge_cases() {
+        // Test edge cases for single qubit sampling
+        let mut weights = BTreeMap::new();
+        weights.insert("0->L".to_string(), 1.0); // Always leak
+        weights.insert("1->L".to_string(), 1.0); // Always leak
+
+        let sampler = CrosstalkWeightedSampler::new(&weights);
+        let mut rng1 = NoiseRng::<PecosRng>::with_seed(42);
+        let mut rng2 = NoiseRng::<PecosRng>::with_seed(42);
+
+        let results1: Vec<SingleQubitNoiseResult> = (0..SAMPLE_SIZE)
+            .map(|_| sampler.sample_gates(&mut rng1, 0, 1))
+            .collect();
+        let results2: Vec<SingleQubitNoiseResult> = (0..SAMPLE_SIZE)
+            .map(|_| sampler.sample_gates(&mut rng2, 0, 1))
+            .collect();
+
+        // Verify exact sequence match
+        for (i, (r1, r2)) in results1.iter().zip(results2.iter()).enumerate() {
+            assert_eq!(
+                r1.qubit_leaked, r2.qubit_leaked,
+                "Leakage mismatch at index {i}"
+            );
+            assert!(r1.qubit_leaked, "All results should indicate leakage");
+            assert!(r1.gate.is_none(), "No gates should be present");
         }
     }
 }

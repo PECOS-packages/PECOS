@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Test script for QuEST simulators exposed to Python via pecos-rslib"""
 
-from pecos_rslib import QuestStateVec, QuestDensityMatrix
 import math
 
+from pecos_rslib import QuestDensityMatrix, QuestStateVec
 
-def test_quest_statevec():
+
+def test_quest_statevec() -> None:
     """Test the QuEST state vector simulator"""
     print("Testing QuEST State Vector Simulator")
     print("=" * 40)
@@ -73,7 +74,7 @@ def test_quest_statevec():
     print(f"    |1⟩ amplitude: ({amp1[0]:.4f}, {amp1[1]:.4f})")
 
 
-def test_quest_density_matrix():
+def test_quest_density_matrix() -> None:
     """Test the QuEST density matrix simulator"""
     print("\n\nTesting QuEST Density Matrix Simulator")
     print("=" * 40)
@@ -127,4 +128,4 @@ def test_quest_density_matrix():
 if __name__ == "__main__":
     test_quest_statevec()
     test_quest_density_matrix()
-    print("\n✓ All tests completed successfully!")
+    print("\nAll tests completed successfully!")

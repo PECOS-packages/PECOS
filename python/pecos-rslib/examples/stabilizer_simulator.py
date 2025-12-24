@@ -11,20 +11,20 @@
 # or implied. See the License for the specific language governing permissions and limitations under
 # the License.
 
-"""Example of running Clifford circuits using the SparseStabEngineRs."""
+"""Example of running Clifford circuits using the SparseStabEngine."""
 
-import sys
-import os
 import collections
+import os
+import sys
 
 # Add the parent directory to the path to import pecos_rslib
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from pecos_rslib import ByteMessage, SparseStabEngineRs
+from pecos_rslib import ByteMessage, SparseStabEngine
 
 
 def run_bell_state_experiment() -> None:
-    """Run a Bell state experiment using the SparseStabEngineRs."""
+    """Run a Bell state experiment using the SparseStabEngine."""
     print("==== Bell State Experiment with Clifford Simulator ====")
 
     # Create a Bell state circuit
@@ -41,7 +41,7 @@ def run_bell_state_experiment() -> None:
     print("Circuit built successfully")
 
     # Create a simulator with 2 qubits
-    simulator = SparseStabEngineRs(2)
+    simulator = SparseStabEngine(2)
     print("Created stabilizer simulator with 2 qubits")
 
     # Run the circuit once and check results
@@ -89,34 +89,34 @@ def run_bell_state_experiment() -> None:
 
     print("\nCorrelation analysis:")
     print(
-        f"  Correlated outcomes (00 or 11): {correlated_outcomes} ({correlated_outcomes / num_shots * 100:.1f}%)"
+        f"  Correlated outcomes (00 or 11): {correlated_outcomes} ({correlated_outcomes / num_shots * 100:.1f}%)",
     )
     print(
-        f"  Anti-correlated outcomes (01 or 10): {anticorrelated_outcomes} ({anticorrelated_outcomes / num_shots * 100:.1f}%)"
+        f"  Anti-correlated outcomes (01 or 10): {anticorrelated_outcomes} ({anticorrelated_outcomes / num_shots * 100:.1f}%)",
     )
 
     if correlated_outcomes > 0.95 * num_shots:
         print(
-            "\nSuccess! The qubits are highly correlated, as expected in a Bell state."
+            "\nSuccess! The qubits are highly correlated, as expected in a Bell state.",
         )
     elif anticorrelated_outcomes > 0.95 * num_shots:
         print(
-            "\nInteresting! The qubits are anti-correlated, which is another valid Bell state."
+            "\nInteresting! The qubits are anti-correlated, which is another valid Bell state.",
         )
     else:
         print(
-            "\nUnexpected result: The qubits don't show the strong correlation expected in a Bell state."
+            "\nUnexpected result: The qubits don't show the strong correlation expected in a Bell state.",
         )
 
     print("\n==== End of Bell State Experiment ====")
 
 
 def run_ghz_state_experiment() -> None:
-    """Create and measure a GHZ state using the SparseStabEngineRs."""
+    """Create and measure a GHZ state using the SparseStabEngine."""
     print("\n==== GHZ State Experiment with Clifford Simulator ====")
 
     # Create a simulator with 3 qubits
-    simulator = SparseStabEngineRs(3)
+    simulator = SparseStabEngine(3)
     print("Created stabilizer simulator with 3 qubits")
 
     # Create a GHZ state circuit: |GHZ⟩ = (|000⟩ + |111⟩)/√2
@@ -164,10 +164,10 @@ def run_ghz_state_experiment() -> None:
 
     print("\nGHZ state analysis:")
     print(
-        f"  Expected outcomes (000 or 111): {expected_outcomes} ({expected_outcomes / num_shots * 100:.1f}%)"
+        f"  Expected outcomes (000 or 111): {expected_outcomes} ({expected_outcomes / num_shots * 100:.1f}%)",
     )
     print(
-        f"  Unexpected outcomes: {unexpected_outcomes} ({unexpected_outcomes / num_shots * 100:.1f}%)"
+        f"  Unexpected outcomes: {unexpected_outcomes} ({unexpected_outcomes / num_shots * 100:.1f}%)",
     )
 
     print("\n==== End of GHZ State Experiment ====")
@@ -178,7 +178,7 @@ def run_stabilizer_specific_circuit() -> None:
     print("\n==== Stabilizer-Specific Circuit Example ====")
 
     # Create a stabilizer simulator with 2 qubits
-    simulator = SparseStabEngineRs(2)
+    simulator = SparseStabEngine(2)
     print("Created stabilizer simulator with 2 qubits")
 
     # Create a circuit using operations specifically available in stabilizer formalism

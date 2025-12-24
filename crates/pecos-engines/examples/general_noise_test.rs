@@ -5,7 +5,7 @@ use pecos_engines::byte_message::ByteMessage;
 use pecos_engines::noise::{BiasedDepolarizingNoiseModel, GeneralNoiseModel};
 use pecos_engines::quantum::StateVecEngine;
 use pecos_engines::{EngineSystem, QuantumSystem};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 fn main() {
     // Create a simple quantum circuit that prepares a superposition and measures it
@@ -72,8 +72,8 @@ fn compare_biased_and_general(circ: &ByteMessage, quantum: &StateVecEngine) {
             QuantumSystem::new(Box::new(general_noise), Box::new(quantum.clone()));
 
         // Run simulations with both noise models
-        let mut biased_counts = HashMap::new();
-        let mut general_counts = HashMap::new();
+        let mut biased_counts = BTreeMap::new();
+        let mut general_counts = BTreeMap::new();
 
         for _ in 0..num_shots {
             // Run with biased noise model
@@ -176,8 +176,8 @@ fn bell_state_comparison() {
     let mut general_system = QuantumSystem::new(Box::new(general_noise), Box::new(quantum.clone()));
 
     // Run simulations with both models
-    let mut biased_counts = HashMap::new();
-    let mut general_counts = HashMap::new();
+    let mut biased_counts = BTreeMap::new();
+    let mut general_counts = BTreeMap::new();
 
     for _ in 0..num_shots {
         // Run with biased noise model
@@ -246,7 +246,7 @@ fn bell_state_comparison() {
     println!();
 
     // Calculate theoretical probabilities
-    let mut expected_probs = HashMap::new();
+    let mut expected_probs = BTreeMap::new();
     expected_probs.insert(
         "00".to_string(),
         ((1.0 - p_flip_0) * (1.0 - p_flip_0) + p_flip_1 * p_flip_1) * 50.0,

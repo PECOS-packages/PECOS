@@ -17,13 +17,11 @@ quantum-classical algorithms with integrated classical computation support.
 
 from __future__ import annotations
 
-import random
 from typing import TYPE_CHECKING, Any, Protocol, Union
 
-import numpy as np
-
+import pecos as pc
 from pecos.classical_interpreters.phir_classical_interpreter import (
-    PHIRClassicalInterpreter,
+    PhirClassicalInterpreter,
 )
 from pecos.engines import hybrid_engine_multiprocessing
 from pecos.error_models.error_model import NoErrorModel
@@ -39,11 +37,11 @@ if TYPE_CHECKING:
         MachineProtocol,
         OpProcessorProtocol,
     )
-    from pecos.reps.pypmir import PyPMIR
+    from pecos.reps.pyphir import PyPHIR
     from pecos.typing import GateParams
 
 
-class PHIRConvertible(Protocol):
+class PhirConvertible(Protocol):
     """Protocol for objects that can be converted to PHIR dictionary format."""
 
     def to_phir_dict(self) -> dict[str, Any]:
@@ -51,7 +49,7 @@ class PHIRConvertible(Protocol):
         ...
 
 
-PHIRProgram = Union[str, dict[str, Any], "PyPMIR", PHIRConvertible]
+PHIRProgram = Union[str, dict[str, Any], "PyPHIR", PhirConvertible]
 
 
 class HybridEngine:
@@ -75,7 +73,7 @@ class HybridEngine:
 
         Args:
             cinterp: Classical interpreter for executing classical operations.
-                Defaults to PHIRClassicalInterpreter if None.
+                Defaults to PhirClassicalInterpreter if None.
             qsim: Quantum simulator for executing quantum operations. Can be a
                 QuantumSimulator instance or a string specifying the simulator type.
                 Defaults to QuantumSimulator if None.
@@ -91,10 +89,10 @@ class HybridEngine:
 
         self.cinterp: ClassicalInterpreterProtocol | None = cinterp
         if self.cinterp is None:
-            self.cinterp: ClassicalInterpreterProtocol = PHIRClassicalInterpreter()
+            self.cinterp: ClassicalInterpreterProtocol = PhirClassicalInterpreter()
 
         self._internal_cinterp: ClassicalInterpreterProtocol = (
-            PHIRClassicalInterpreter()
+            PhirClassicalInterpreter()
         )
         self._internal_cinterp.phir_validate = self.cinterp.phir_validate
 
@@ -154,6 +152,9 @@ class HybridEngine:
         self.machine.init(num_qubits)
         self.error_model.init(num_qubits, self.machine)
         self.op_processor.init()
+        # Pass seed to quantum simulator if one was set
+        if self.seed is not None:
+            self.qsim.qsim_params["seed"] = self.seed
         self.qsim.init(num_qubits)
 
     def shot_reinit_components(self) -> None:
@@ -165,19 +166,36 @@ class HybridEngine:
         self.cinterp.shot_reinit()
         self._internal_cinterp.shot_reinit()
         for i in range(self.machine.num_qubits):
-            self._internal_cinterp.add_cvar(f"__q{i}__", np.uint8, 1)
+            self._internal_cinterp.add_cvar(f"__q{i}__", pc.dtypes.i64, 1)
         self.machine.shot_reinit()
         self.error_model.shot_reinit()
         self.op_processor.shot_reinit()
         self.qsim.shot_reinit()
 
-    @staticmethod
-    def use_seed(seed: int | None = None) -> int:
-        """Use a seed to set random number generators."""
+    def use_seed(self, seed: int | None = None) -> int:
+        """Set a seed for reproducible random number generation.
+
+        This method seeds the global random number generator and stores the seed
+        on this engine instance. When run() is called without a seed parameter,
+        it will use this stored seed instead of generating a random one.
+
+        Args:
+            seed: The seed value to use. If None, a random seed is generated.
+
+        Returns:
+            The seed value that was used.
+
+        Example:
+            >>> engine = HybridEngine()
+            >>> engine.use_seed(42)  # Set seed for reproducibility
+            42
+            >>> results = engine.run(program, shots=100)  # Uses seed 42
+        """
         if seed is None:
-            seed = np.random.randint(np.iinfo(np.int32).max)
-        np.random.seed(seed)
-        random.seed(seed)
+            # Use i32::MAX from Rust as max seed value
+            seed = int(pc.random.randint(0, pc.dtypes.i32.max, 1)[0])
+        pc.random.seed(seed)
+        self.seed = seed
         return seed
 
     def results_accumulator(self, shot_results: dict) -> None:
@@ -202,7 +220,9 @@ class HybridEngine:
             program: The quantum program to execute.
             foreign_object: Optional foreign object for external function calls.
             shots: Number of times to run the simulation.
-            seed: Random seed for reproducibility.
+            seed: Random seed for reproducibility. If not provided and use_seed()
+                was previously called, that seed will be used. If neither is set,
+                a random seed is generated.
             initialize: Whether to initialize the quantum state before running.
             return_int: Whether to return measurement results as integers.
 
@@ -210,7 +230,17 @@ class HybridEngine:
         measurements = MeasData()
 
         if initialize:
-            self.seed = self.use_seed(seed)
+            # Use explicit seed if provided, otherwise use previously set seed,
+            # otherwise generate a random seed
+            if seed is not None:
+                self.use_seed(seed)
+            elif self.seed is None:
+                # No seed was set via use_seed() and none provided - generate random
+                self.use_seed(None)
+            else:
+                # A seed was previously set via use_seed() - re-seed the RNG with it
+                # to ensure reproducibility across multiple run() calls
+                pc.random.seed(self.seed)
             self.initialize_sim_components(program, foreign_object)
 
         for _ in range(shots):

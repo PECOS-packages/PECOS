@@ -14,11 +14,9 @@ use super::arbitrary_rotation_gateable::ArbitraryRotationGateable;
 use super::clifford_gateable::{CliffordGateable, MeasurementResult};
 use super::quantum_simulator::QuantumSimulator;
 use pecos_core::RngManageable;
-use pecos_core::errors::PecosError;
-use rand_chacha::ChaCha8Rng;
+use pecos_rng::{PecosRng, Rng, RngCore, SeedableRng};
 
 use core::fmt::Debug;
-use rand::{Rng, RngCore, SeedableRng};
 
 /// A quantum simulator that ignores all quantum operations and uses coin tosses for measurements
 ///
@@ -42,7 +40,7 @@ use rand::{Rng, RngCore, SeedableRng};
 /// let mut biased_sim = CoinToss::with_prob_and_seed(4, 0.8, Some(42));
 /// ```
 #[derive(Clone, Debug)]
-pub struct CoinToss<R = ChaCha8Rng>
+pub struct CoinToss<R = PecosRng>
 where
     R: RngCore + SeedableRng + Debug,
 {
@@ -51,7 +49,7 @@ where
     rng: R,
 }
 
-impl CoinToss<ChaCha8Rng> {
+impl CoinToss<PecosRng> {
     /// Create a new `CoinToss` simulator with default 50% measurement probability
     ///
     /// # Arguments
@@ -125,14 +123,14 @@ impl CoinToss<ChaCha8Rng> {
         );
 
         let rng = if let Some(s) = seed {
-            ChaCha8Rng::seed_from_u64(s)
+            PecosRng::seed_from_u64(s)
         } else {
             // Use a default seed when none provided
             let default_seed = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            ChaCha8Rng::seed_from_u64(default_seed)
+            PecosRng::seed_from_u64(default_seed)
         };
 
         Self {
@@ -221,9 +219,9 @@ where
     /// let mut sim = CoinToss::new(2);
     /// sim.set_seed(42);
     /// ```
-    pub fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
+    pub fn set_seed(&mut self, seed: u64) {
         let new_rng = R::seed_from_u64(seed);
-        self.set_rng(new_rng)
+        self.set_rng(new_rng);
     }
 }
 
@@ -243,9 +241,8 @@ where
 {
     type Rng = R;
 
-    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), PecosError> {
+    fn set_rng(&mut self, rng: Self::Rng) {
         self.rng = rng;
-        Ok(())
     }
 
     fn rng(&self) -> &Self::Rng {
@@ -417,8 +414,8 @@ mod tests {
         let mut sim1 = CoinToss::new(2);
         let mut sim2 = CoinToss::new(2);
 
-        sim1.set_seed(123).unwrap();
-        sim2.set_seed(123).unwrap();
+        sim1.set_seed(123);
+        sim2.set_seed(123);
 
         // Should produce identical sequences with same seed
         for _ in 0..10 {

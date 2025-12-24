@@ -48,7 +48,7 @@ def sim_print(_runner: Runner, *args: tuple[str, Any]) -> None:
 
 def sim_test(
     _runner: Runner,
-    *_args: Any,  # noqa: ANN401 - Dispatcher ignores args
+    *_args: object,
 ) -> None:
     """Test function for simulation debugging.
 
@@ -84,7 +84,7 @@ def sim_get_amp(
 
 def sim_get_amps(
     runner: Runner,
-    *_args: Any,  # noqa: ANN401 - Dispatcher ignores args
+    *_args: object,
 ) -> dict[str, Any]:
     """Get all quantum state amplitudes.
 
@@ -103,7 +103,7 @@ def sim_get_amps(
 
 def sim_noise(
     runner: Runner,
-    *_args: Any,  # noqa: ANN401 - Dispatcher ignores args
+    *_args: object,
 ) -> int:
     """Get current noise generation status.
 
@@ -121,7 +121,7 @@ def sim_noise(
 
 def sim_noise_off(
     runner: Runner,
-    *_args: Any,  # noqa: ANN401 - Dispatcher ignores args
+    *_args: object,
 ) -> int:
     """Disable noise generation in simulation.
 
@@ -140,7 +140,7 @@ def sim_noise_off(
 
 def sim_noise_on(
     runner: Runner,
-    *_args: Any,  # noqa: ANN401 - Dispatcher ignores args
+    *_args: object,
 ) -> int:
     """Enable noise generation in simulation.
 
@@ -171,8 +171,8 @@ sim_funcs = {
 def sim_exec(
     func: str,
     runner: Runner,
-    *args: Any,  # noqa: ANN401 - Dynamic dispatch requires Any
-) -> int | dict[str, Any] | None:
+    *args: object,
+) -> int | dict[str, object] | None:
     """Execute a simulation function by name.
 
     Dispatches to the appropriate simulation function based on the function name,

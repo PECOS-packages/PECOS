@@ -22,7 +22,7 @@ from __future__ import annotations
 from itertools import permutations, product
 from typing import TYPE_CHECKING
 
-from pecos import QuantumCircuit
+import pecos as pc
 from pecos.engines.circuit_runners import Standard
 from pecos.simulators import SparseSim
 
@@ -33,11 +33,11 @@ if TYPE_CHECKING:
 
 
 def find_pauli_fault(
-    qcirc: QuantumCircuit,
+    qcirc: pc.QuantumCircuit,
     wt: int,
     fail_func: Callable,
     num_qubits: int | None = None,
-    simulator: str = "stabilizer",  # noqa: ARG001
+    _simulator: str = "stabilizer",
     *,
     verbose: bool = True,
     failure_break: bool = True,
@@ -49,7 +49,7 @@ def find_pauli_fault(
 
     Args:
     ----
-        qcirc: QuantumCircuit
+        qcirc: pc.QuantumCircuit
         wt: Number of errors to apply.
         fail_func: A callable (e.g., function) that determines if a result fails.
         num_qubits: Number of qubits in the circuit.
@@ -102,7 +102,7 @@ def find_pauli_fault(
 
 
 def get_all_spacetime(
-    qcirc: QuantumCircuit,
+    qcirc: pc.QuantumCircuit,
     initial_qubits: Sequence[int] | None = None,
 ) -> Generator[SpacetimeLocation, None, None]:
     """Determine all the spacetime locations of gates/error events."""
@@ -119,12 +119,13 @@ def get_all_spacetime(
     for gates, tick, _ in qcirc.iter_ticks():
         for sym, locations, metadata in gates.items():
             for loc in locations:
+                loc_tuple = loc
                 if isinstance(loc, int):
-                    loc = (loc,)  # noqa: PLW2901 - normalize int to tuple
+                    loc_tuple = (loc,)
 
                 yield {
                     "tick": tick,
-                    "location": loc,
+                    "location": loc_tuple,
                     "before": sym.startswith("meas"),
                     "symbol": sym,
                     "metadata": metadata,
@@ -132,13 +133,13 @@ def get_all_spacetime(
 
 
 def get_wt_paulis(
-    circ: QuantumCircuit,
+    circ: pc.QuantumCircuit,
     wt: int,
     initial_qubits: Sequence[int] | None = None,
     *,
     make_qc: bool = True,
 ) -> Generator[
-    dict[int, list[str]] | tuple[QuantumCircuit, QuantumCircuit],
+    dict[int, list[str]] | tuple[pc.QuantumCircuit, pc.QuantumCircuit],
     None,
     None,
 ]:
@@ -149,7 +150,7 @@ def get_wt_paulis(
         circ: The quantum circuit to generate faults for.
         wt: The weight (number) of Pauli faults to generate.
         initial_qubits: The qubits that are initialized at the beginning of the circuit.
-        make_qc: If True, returns QuantumCircuit objects; otherwise returns raw error data.
+        make_qc: If True, returns pc.QuantumCircuit objects; otherwise returns raw error data.
     """
     # get the spacetime locations that will have errors
     for gate_data in permutations(get_all_spacetime(circ, initial_qubits), wt):
@@ -206,20 +207,20 @@ def get_wt_paulis(
                 for t, pdict in tick_dict_after.items():
                     error_tick = error.setdefault(t, {})
                     if cond_dict.get(t):
-                        qc = QuantumCircuit()
+                        qc = pc.QuantumCircuit()
                         qc.append(pdict, cond=cond_dict.get(t))
                         error_tick["after"] = qc
                     else:
-                        error_tick["after"] = QuantumCircuit([pdict])
+                        error_tick["after"] = pc.QuantumCircuit([pdict])
 
                 for t, pdict in tick_dict_before.items():
                     error_tick = error.setdefault(t, {})
                     if cond_dict.get(t):
-                        qc = QuantumCircuit()
+                        qc = pc.QuantumCircuit()
                         qc.append(pdict, cond=cond_dict.get(t))
                         error_tick["before"] = qc
                     else:
-                        error_tick["before"] = QuantumCircuit([pdict])
+                        error_tick["before"] = pc.QuantumCircuit([pdict])
 
                 yield error
 

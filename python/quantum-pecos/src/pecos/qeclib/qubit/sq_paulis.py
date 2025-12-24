@@ -16,15 +16,14 @@ essential building blocks for stabilizer codes.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from numpy import array
-
+import pecos as pc
 from pecos.qeclib.qubit.qgate_base import QGate
 
 
 class X(QGate):
     """The Pauli X unitary."""
 
-    matrix = array(
+    matrix = pc.array(
         [
             [0, 1],
             [1, 0],
@@ -41,7 +40,7 @@ class X(QGate):
 class Y(QGate):
     """The Pauli Y unitary."""
 
-    matrix = array(
+    matrix = pc.array(
         [
             [0, -1j],
             [1j, 0],
@@ -58,7 +57,7 @@ class Y(QGate):
 class Z(QGate):
     """The Pauli Z unitary."""
 
-    matrix = array(
+    matrix = pc.array(
         [
             [1, 0],
             [0, -1],

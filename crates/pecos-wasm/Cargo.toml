@@ -1,0 +1,38 @@
+# Copyright 2025 The PECOS Developers
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
+
+[package]
+name = "pecos-wasm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+description = "WebAssembly foreign object support for PECOS"
+
+[dependencies]
+pecos-core.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+
+# Wasmtime dependencies (optional, enabled with "wasm" feature)
+wasmtime = { workspace = true, optional = true }
+
+[features]
+default = ["wasm"]
+wasm = ["dep:wasmtime"]
+
+[lints]
+workspace = true

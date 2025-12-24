@@ -7,7 +7,8 @@ various quantum noise models for QASM simulations.
 
 from collections import Counter
 
-from pecos.rslib import GeneralNoiseModelBuilder, qasm_sim
+from pecos.rslib import GeneralNoiseModelBuilder, qasm_engine
+from pecos.rslib.programs import QasmProgram
 
 
 def simple_noise_example() -> None:
@@ -33,8 +34,15 @@ def simple_noise_example() -> None:
         .with_p2_probability(0.01)
     )
 
-    results = qasm_sim(qasm).noise(noise).run(1000)
-    counts = Counter(results["c"])
+    results = (
+        qasm_engine()
+        .program(QasmProgram.from_string(qasm))
+        .to_sim()
+        .noise(noise)
+        .run(1000)
+    )
+    results_dict = results.to_dict()
+    counts = Counter(results_dict["c"])
 
     print(f"Bell state results: {dict(counts)}")
     print("Expected: Mostly 0 (|00>) and 3 (|11>) with small error rates")
@@ -69,8 +77,15 @@ def hardware_realistic_noise() -> None:
         .with_meas_1_probability(0.005)
     )  # 0.5% false negative
 
-    results = qasm_sim(qasm).noise(noise).run(1000)
-    counts = Counter(results["c"])
+    results = (
+        qasm_engine()
+        .program(QasmProgram.from_string(qasm))
+        .to_sim()
+        .noise(noise)
+        .run(1000)
+    )
+    results_dict = results.to_dict()
+    counts = Counter(results_dict["c"])
 
     print("GHZ state results (top 5):")
     for state, count in counts.most_common(5):
@@ -111,8 +126,15 @@ def biased_noise_example() -> None:
         )
     )
 
-    results = qasm_sim(qasm).noise(noise).run(1000)
-    errors = sum(1 for val in results["c"] if val == 1)
+    results = (
+        qasm_engine()
+        .program(QasmProgram.from_string(qasm))
+        .to_sim()
+        .noise(noise)
+        .run(1000)
+    )
+    results_dict = results.to_dict()
+    errors = sum(1 for val in results_dict["c"] if val == 1)
 
     print(f"Circuit should measure |0>, but got {errors} errors out of 1000")
     print("With biased noise (80% Z errors), phase errors accumulate")
@@ -145,8 +167,15 @@ def ion_trap_noise() -> None:
         .with_meas_1_probability(0.005)
     )  # Bright state error
 
-    results = qasm_sim(qasm).noise(noise).run(1000)
-    counts = Counter(results["c"])
+    results = (
+        qasm_engine()
+        .program(QasmProgram.from_string(qasm))
+        .to_sim()
+        .noise(noise)
+        .run(1000)
+    )
+    results_dict = results.to_dict()
+    counts = Counter(results_dict["c"])
 
     print(f"Ion trap Bell state: {dict(counts)}")
     print("Note: Two-qubit gate errors dominate in ion traps")
@@ -176,8 +205,15 @@ def noiseless_gates_example() -> None:
         .with_noiseless_gate("H")
     )  # H gates have no error
 
-    results = qasm_sim(qasm).noise(noise).run(1000)
-    counts = Counter(results["c"])
+    results = (
+        qasm_engine()
+        .program(QasmProgram.from_string(qasm))
+        .to_sim()
+        .noise(noise)
+        .run(1000)
+    )
+    results_dict = results.to_dict()
+    counts = Counter(results_dict["c"])
 
     print(f"Results with noiseless H: {dict(counts)}")
     print("H gate is perfect, but X and CX gates have 1% error rate")
@@ -219,12 +255,26 @@ def scaled_noise_example() -> None:
     )  # Triple all error rates!
 
     # Run both
-    results_base = qasm_sim(qasm).noise(base_noise).run(1000)
-    results_scaled = qasm_sim(qasm).noise(scaled_noise).run(1000)
+    results_base = (
+        qasm_engine()
+        .program(QasmProgram.from_string(qasm))
+        .to_sim()
+        .noise(base_noise)
+        .run(1000)
+    )
+    results_scaled = (
+        qasm_engine()
+        .program(QasmProgram.from_string(qasm))
+        .to_sim()
+        .noise(scaled_noise)
+        .run(1000)
+    )
 
     # Count errors (anything not 0 or 3)
-    errors_base = sum(1 for val in results_base["c"] if val not in [0, 3])
-    errors_scaled = sum(1 for val in results_scaled["c"] if val not in [0, 3])
+    results_base_dict = results_base.to_dict()
+    results_scaled_dict = results_scaled.to_dict()
+    errors_base = sum(1 for val in results_base_dict["c"] if val not in [0, 3])
+    errors_scaled = sum(1 for val in results_scaled_dict["c"] if val not in [0, 3])
 
     print(f"Base noise errors: {errors_base}/1000")
     print(f"3x scaled noise errors: {errors_scaled}/1000")
@@ -276,8 +326,15 @@ def comprehensive_example() -> None:
         .with_meas_1_probability(0.005)
     )
 
-    results = qasm_sim(qasm).noise(noise).run(1000)
-    counts = Counter(results["c"])
+    results = (
+        qasm_engine()
+        .program(QasmProgram.from_string(qasm))
+        .to_sim()
+        .noise(noise)
+        .run(1000)
+    )
+    results_dict = results.to_dict()
+    counts = Counter(results_dict["c"])
 
     print("4-qubit GHZ results (top 8):")
     for state, count in counts.most_common(8):

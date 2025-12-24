@@ -16,8 +16,9 @@ name = "pecos_julia"
 crate-type = ["cdylib"]
 
 [dependencies]
-# PECOS - the meta crate that includes everything via its prelude
-pecos = { workspace = true }
+# Use pecos with only core feature for minimal dependencies
+# The Julia wrapper currently only needs QubitId from pecos-core
+pecos = { workspace = true, default-features = false, features = ["core"] }
 
 [lints]
 workspace = true

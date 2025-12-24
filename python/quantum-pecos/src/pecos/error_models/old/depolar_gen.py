@@ -17,9 +17,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar
 
+import pecos as pc
 from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.error_models.class_errors_circuit import ErrorCircuits
 from pecos.error_models.parent_class_error_gen import ParentErrorModel
+from pecos.quantum import Pauli
 
 if TYPE_CHECKING:
     from pecos.typing import ErrorParams, GateParams
@@ -46,23 +48,25 @@ class DepolarModel(ParentErrorModel):
     inits_x: ClassVar[set[str]] = {"init |+>", "init |->"}
     inits_y: ClassVar[set[str]] = {"init |+i>", "init |-i>"}
 
-    error_two_paulis_collection: ClassVar[list[tuple[str, str]]] = [
-        ("I", "X"),
-        ("I", "Y"),
-        ("I", "Z"),
-        ("X", "I"),
-        ("X", "X"),
-        ("X", "Y"),
-        ("X", "Z"),
-        ("Y", "I"),
-        ("Y", "X"),
-        ("Y", "Y"),
-        ("Y", "Z"),
-        ("Z", "I"),
-        ("Z", "X"),
-        ("Z", "Y"),
-        ("Z", "Z"),
-    ]
+    error_two_paulis_collection = pc.array(
+        [
+            (Pauli.I, Pauli.X),
+            (Pauli.I, Pauli.Y),
+            (Pauli.I, Pauli.Z),
+            (Pauli.X, Pauli.I),
+            (Pauli.X, Pauli.X),
+            (Pauli.X, Pauli.Y),
+            (Pauli.X, Pauli.Z),
+            (Pauli.Y, Pauli.I),
+            (Pauli.Y, Pauli.X),
+            (Pauli.Y, Pauli.Y),
+            (Pauli.Y, Pauli.Z),
+            (Pauli.Z, Pauli.I),
+            (Pauli.Z, Pauli.X),
+            (Pauli.Z, Pauli.Y),
+            (Pauli.Z, Pauli.Z),
+        ],
+    )
 
     def __init__(
         self,
@@ -89,12 +93,15 @@ class DepolarModel(ParentErrorModel):
         self.gen.set_gate_group("preps", self.inits)
         self.gen.set_gate_group("two_qubits", self.two_qubits)
 
-        xerror = self.gen.ErrorStaticSymbol("X")
-        zerror = self.gen.ErrorStaticSymbol("Z")
-        xerror_before = self.gen.ErrorStaticSymbol("X", after=False)
-        zerror_before = self.gen.ErrorStaticSymbol("Z", after=False)
-        pauli_errors = self.gen.ErrorSet({"X", "Y", "Z"})
-        pauli_errors_before = self.gen.ErrorSet({"X", "Y", "Z"}, after=False)
+        xerror = self.gen.ErrorStaticSymbol(Pauli.X)
+        zerror = self.gen.ErrorStaticSymbol(Pauli.Z)
+        xerror_before = self.gen.ErrorStaticSymbol(Pauli.X, after=False)
+        zerror_before = self.gen.ErrorStaticSymbol(Pauli.Z, after=False)
+        pauli_errors = self.gen.ErrorSet([Pauli.X, Pauli.Y, Pauli.Z])
+        pauli_errors_before = self.gen.ErrorSet(
+            [Pauli.X, Pauli.Y, Pauli.Z],
+            after=False,
+        )
         two_pauli_errors = self.gen.ErrorSetTwoQuditTensorProduct(
             self.error_two_paulis_collection,
         )

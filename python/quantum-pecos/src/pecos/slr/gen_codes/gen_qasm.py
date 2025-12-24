@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from pecos import __version__
+import pecos as pc
 from pecos.slr.gen_codes.generator import Generator
 
 
@@ -50,7 +50,7 @@ class QASMGenerator(Generator):
                 # TODO: dump definitions in for things that are used instead of using includes
                 self.write('include "hqslib1.inc";')
             if self.add_versions:
-                self.write(f"// Generated using: PECOS version {__version__}")
+                self.write(f"// Generated using: PECOS version {pc.__version__}")
             for var in block.vars:
                 var_def = self.process_var_def(var)
                 if var_def:
@@ -122,11 +122,16 @@ class QASMGenerator(Generator):
                 self.write("")
             else:
                 for op in block.ops:
+                    # Skip Return statements - they're metadata for type checking
+                    if type(op).__name__ == "Return":
+                        continue
                     # TODO: figure out how to identify Block types without using isinstance
                     if hasattr(op, "ops"):
                         self._handle_block(op)
                     else:
-                        self.write(self.generate_op(op))
+                        op_str = self.generate_op(op)
+                        if op_str:  # Only write non-empty strings
+                            self.write(op_str)
 
             # Reset the condition
             self.cond = None
@@ -159,6 +164,9 @@ class QASMGenerator(Generator):
             )
 
             for op in block.ops:
+                # Skip Return statements - they're metadata for type checking
+                if type(op).__name__ == "Return":
+                    continue
                 # TODO: figure out how to identify Block types without using isinstance
                 if hasattr(op, "ops"):
                     self._handle_block(op)
@@ -222,6 +230,11 @@ class QASMGenerator(Generator):
 
             txt = [f"//{t}" if t.strip() != "" else t for t in txt]
             op_str = "\n".join(txt)
+
+        elif op_name == "Return":
+            # Return is metadata for type checking, not a QASM operation
+            # It's like Python's return statement - used for control flow in other generators
+            op_str = ""  # No-op for QASM
 
         elif op_name == "While":
             msg = (

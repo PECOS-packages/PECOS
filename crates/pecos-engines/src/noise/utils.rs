@@ -208,6 +208,14 @@ impl NoiseUtils {
             }
 
             // Gates with parameters that need validation
+            GateType::RX if !gate.params.is_empty() => {
+                let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
+                builder.add_rx(gate.params[0], &qubits_usize);
+            }
+            GateType::RY if !gate.params.is_empty() => {
+                let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
+                builder.add_ry(gate.params[0], &qubits_usize);
+            }
             GateType::RZ if !gate.params.is_empty() => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
                 builder.add_rz(gate.params[0], &qubits_usize);
@@ -218,6 +226,15 @@ impl NoiseUtils {
             GateType::R1XY if gate.params.len() >= 2 => {
                 let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
                 builder.add_r1xy(gate.params[0], gate.params[1], &qubits_usize);
+            }
+            GateType::U if gate.params.len() >= 3 => {
+                let qubits_usize: Vec<usize> = gate.qubits.iter().map(|q| **q).collect();
+                builder.add_u(
+                    gate.params[0],
+                    gate.params[1],
+                    gate.params[2],
+                    &qubits_usize,
+                );
             }
 
             // Measurement gates
@@ -380,7 +397,7 @@ mod tests {
     use crate::byte_message::GateType;
     use crate::noise::noise_rng::NoiseRng;
     use crate::noise::weighted_sampler::SingleQubitWeightedSampler;
-    use rand_chacha::ChaCha8Rng;
+    use pecos_rng::PecosRng;
     use std::collections::BTreeMap;
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -435,7 +452,7 @@ mod tests {
 
     #[test]
     fn test_sample_paulis() {
-        let mut rng = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
 
         // Test with a valid model
         // Note: Weights must sum to exactly 1.0 to pass the strict normalization check
@@ -531,7 +548,7 @@ mod tests {
         // Define constants at the beginning
         const SAMPLE_SIZE: usize = 10000;
 
-        let mut rng = NoiseRng::<ChaCha8Rng>::with_seed(42);
+        let mut rng = NoiseRng::<PecosRng>::with_seed(42);
 
         // Test with a valid model including leakage
         // Note: Weights must sum to exactly 1.0 to pass the strict normalization check

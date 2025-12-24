@@ -38,12 +38,10 @@ if TYPE_CHECKING:
 
     from pecos.slr import Qubit
 
-# ruff: noqa: B024
-
 
 # TODO: Try to move more into using the class instead of instance. E.g., class methods, don't override call or
 #   use the whole H = HGate() type thing. H should be a class not an instance.
-class QGate(metaclass=ABCMeta):
+class QGate:
     """Quantum gates including unitaries, measurements, and preparations."""
 
     is_qgate = True

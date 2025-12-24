@@ -8,6 +8,10 @@ from enum import Enum
 
 from pecos.slr.gen_codes.guppy.ir import ResourceState, ScopeContext
 
+# Maximum array size fallback when actual size cannot be determined from context
+# This is a conservative upper bound to ensure all indices are covered
+_MAX_ARRAY_SIZE_FALLBACK = 1000
+
 
 class ScopeType(Enum):
     """Type of scope."""
@@ -127,6 +131,19 @@ class ScopeManager:
         """Check if currently inside a loop scope."""
         return any(scope.scope_type == ScopeType.LOOP for scope in self.scope_stack)
 
+    def is_in_conditional_within_loop(self) -> bool:
+        """Check if currently inside a conditional (if) within a loop."""
+        in_loop = False
+        in_conditional = False
+
+        for scope in self.scope_stack:
+            if scope.scope_type == ScopeType.LOOP:
+                in_loop = True
+            elif scope.scope_type in (ScopeType.IF_THEN, ScopeType.IF_ELSE) and in_loop:
+                in_conditional = True
+
+        return in_loop and in_conditional
+
     def mark_resource_returned(self, qreg_name: str) -> None:
         """Mark a resource as returned from current scope."""
         if self.current_scope:
@@ -183,9 +200,9 @@ class ScopeManager:
                     if var_info and var_info.size:
                         then_consumed[res_name] = set(range(var_info.size))
                     else:
-                        then_consumed[res_name] = set(range(1000))  # Fallback
+                        then_consumed[res_name] = set(range(_MAX_ARRAY_SIZE_FALLBACK))
                 else:
-                    then_consumed[res_name] = set(range(1000))  # Fallback
+                    then_consumed[res_name] = set(range(_MAX_ARRAY_SIZE_FALLBACK))
             elif usage.indices:
                 then_consumed[res_name] = usage.indices
 
@@ -200,9 +217,11 @@ class ScopeManager:
                         if var_info and var_info.size:
                             else_consumed[res_name] = set(range(var_info.size))
                         else:
-                            else_consumed[res_name] = set(range(1000))  # Fallback
+                            else_consumed[res_name] = set(
+                                range(_MAX_ARRAY_SIZE_FALLBACK),
+                            )
                     else:
-                        else_consumed[res_name] = set(range(1000))  # Fallback
+                        else_consumed[res_name] = set(range(_MAX_ARRAY_SIZE_FALLBACK))
                 elif usage.indices:
                     else_consumed[res_name] = usage.indices
 
@@ -219,6 +238,8 @@ class ScopeManager:
                 else_indices - then_indices
                 missing_in_else = then_indices - else_indices
 
+                # For now, we track indices missing in else branch
+                # (consumed in then but not else)
                 if missing_in_else:
                     unbalanced[res_name] = missing_in_else
 

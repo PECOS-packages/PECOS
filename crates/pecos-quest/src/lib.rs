@@ -14,14 +14,21 @@
 
 use core::fmt::Debug;
 use num_complex::Complex64;
-use pecos_core::prelude::PecosError;
+use pecos_rng::PecosRng;
 use rand::{RngCore, SeedableRng};
-use rand_chacha::ChaCha8Rng;
 use std::f64::consts::FRAC_PI_4;
 use thiserror::Error;
 
 pub mod bridge;
 use bridge::ffi;
+
+pub mod cuda_loader;
+
+pub mod quantum_engine;
+pub use quantum_engine::{
+    QuestDensityMatrixEngine, QuestDensityMatrixEngineBuilder, QuestStateVecEngine,
+    QuestStateVectorEngineBuilder, quest_density_matrix, quest_state_vec,
+};
 
 pub use pecos_core::rng::RngManageable;
 pub use pecos_qsim::{
@@ -116,14 +123,14 @@ unsafe impl Sync for QuregWrapper {}
 
 /// A quantum state simulator using the `QuEST` state vector representation
 #[derive(Debug)]
-pub struct QuestStateVec<R = ChaCha8Rng>
+pub struct QuestStateVec<R = PecosRng>
 where
     R: RngCore + SeedableRng + Debug,
 {
     num_qubits: usize,
     // The QuEST environment must be kept alive for the lifetime of the simulator.
     // This field manages the global QuEST environment reference count via RAII.
-    _env: QuestEnvWrapper,
+    env: QuestEnvWrapper,
     qureg: QuregWrapper,
     rng: R,
 }
@@ -172,7 +179,7 @@ where
 
         let state = Self {
             num_qubits,
-            _env: env,
+            env,
             qureg,
             rng,
         };
@@ -226,6 +233,11 @@ where
         unsafe { ffi::quest_get_qureg_info(self.qureg.ptr) }
     }
 
+    /// Get information about the `QuEST` environment (for debugging/introspection)
+    pub fn get_env_info(&self) -> ffi::QuESTEnvInfo {
+        unsafe { ffi::quest_get_env_info(self.env.ptr) }
+    }
+
     fn check_qubit_index(&self, qubit: usize) -> Result<()> {
         if qubit >= self.num_qubits {
             Err(QuestError::InvalidQubit(qubit))
@@ -257,7 +269,7 @@ where
 
         Self {
             num_qubits: self.num_qubits,
-            _env: env,
+            env,
             qureg,
             rng: self.rng.clone(),
         }
@@ -363,17 +375,24 @@ where
     // }
 
     fn mz(&mut self, qubit: usize) -> MeasurementResult {
+        use rand::Rng;
+
         self.check_qubit_index(qubit).expect("Invalid qubit index");
         let quest_qubit = self.convert_qubit_index(qubit);
 
-        let mut outcome_prob = 0.0;
-        let outcome = unsafe {
-            ffi::quest_measure_with_stats(self.qureg.ptr, quest_qubit, &mut outcome_prob)
-        };
+        // Get probability of measuring |0⟩ (deterministic calculation)
+        let prob_0 = unsafe { ffi::quest_calc_prob_of_outcome(self.qureg.ptr, quest_qubit, 0) };
+
+        // Sample outcome using our seeded Rust RNG
+        let outcome = i32::from(self.rng.random::<f64>() >= prob_0);
+
+        // Collapse state to the sampled outcome
+        let actual_prob =
+            unsafe { ffi::quest_apply_forced_measurement(self.qureg.ptr, quest_qubit, outcome) };
 
         MeasurementResult {
             outcome: outcome != 0,
-            is_deterministic: (outcome_prob - 1.0).abs() < f64::EPSILON,
+            is_deterministic: (actual_prob - 1.0).abs() < f64::EPSILON,
         }
     }
 }
@@ -447,9 +466,8 @@ where
 {
     type Rng = R;
 
-    fn set_rng(&mut self, rng: Self::Rng) -> std::result::Result<(), PecosError> {
+    fn set_rng(&mut self, rng: Self::Rng) {
         self.rng = rng;
-        Ok(())
     }
 
     fn rng(&self) -> &Self::Rng {
@@ -488,14 +506,14 @@ unsafe impl<R> Sync for QuestStateVec<R> where R: RngCore + SeedableRng + Debug 
 
 /// A quantum density matrix simulator using `QuEST`'s density matrix representation
 #[derive(Debug)]
-pub struct QuestDensityMatrix<R = ChaCha8Rng>
+pub struct QuestDensityMatrix<R = PecosRng>
 where
     R: RngCore + SeedableRng + Debug,
 {
     num_qubits: usize,
     // The QuEST environment must be kept alive for the lifetime of the simulator.
     // This field manages the global QuEST environment reference count via RAII.
-    _env: QuestEnvWrapper,
+    env: QuestEnvWrapper,
     qureg: QuregWrapper,
     rng: R,
 }
@@ -544,7 +562,7 @@ where
 
         let state = Self {
             num_qubits,
-            _env: env,
+            env,
             qureg,
             rng,
         };
@@ -602,6 +620,11 @@ where
         unsafe { ffi::quest_get_qureg_info(self.qureg.ptr) }
     }
 
+    /// Get information about the `QuEST` environment (for debugging/introspection)
+    pub fn get_env_info(&self) -> ffi::QuESTEnvInfo {
+        unsafe { ffi::quest_get_env_info(self.env.ptr) }
+    }
+
     fn check_qubit_index(&self, qubit: usize) -> Result<()> {
         if qubit >= self.num_qubits {
             Err(QuestError::InvalidQubit(qubit))
@@ -640,7 +663,7 @@ where
 
         Self {
             num_qubits: self.num_qubits,
-            _env: env,
+            env,
             qureg,
             rng: self.rng.clone(),
         }
@@ -747,17 +770,24 @@ where
     // }
 
     fn mz(&mut self, qubit: usize) -> MeasurementResult {
+        use rand::Rng;
+
         self.check_qubit_index(qubit).expect("Invalid qubit index");
         let quest_qubit = self.convert_qubit_index(qubit);
 
-        let mut outcome_prob = 0.0;
-        let outcome = unsafe {
-            ffi::quest_measure_with_stats(self.qureg.ptr, quest_qubit, &mut outcome_prob)
-        };
+        // Get probability of measuring |0⟩ (deterministic calculation)
+        let prob_0 = unsafe { ffi::quest_calc_prob_of_outcome(self.qureg.ptr, quest_qubit, 0) };
+
+        // Sample outcome using our seeded Rust RNG
+        let outcome = i32::from(self.rng.random::<f64>() >= prob_0);
+
+        // Collapse state to the sampled outcome
+        let actual_prob =
+            unsafe { ffi::quest_apply_forced_measurement(self.qureg.ptr, quest_qubit, outcome) };
 
         MeasurementResult {
             outcome: outcome != 0,
-            is_deterministic: (outcome_prob - 1.0).abs() < f64::EPSILON,
+            is_deterministic: (actual_prob - 1.0).abs() < f64::EPSILON,
         }
     }
 }
@@ -831,9 +861,8 @@ where
 {
     type Rng = R;
 
-    fn set_rng(&mut self, rng: Self::Rng) -> std::result::Result<(), PecosError> {
+    fn set_rng(&mut self, rng: Self::Rng) {
         self.rng = rng;
-        Ok(())
     }
 
     fn rng(&self) -> &Self::Rng {

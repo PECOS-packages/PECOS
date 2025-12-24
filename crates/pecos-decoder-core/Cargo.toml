@@ -16,9 +16,5 @@ ndarray.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
 
-[features]
-default = []
-testing = []
-
 [lints]
 workspace = true

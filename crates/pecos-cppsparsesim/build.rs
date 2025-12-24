@@ -1,15 +1,107 @@
+use std::env;
+
+/// Get the build profile from Cargo's environment
+/// Returns "debug", "release", or "native"
+///
+/// Note: Cargo's PROFILE env var only reports "debug" or "release" even for custom profiles
+/// (due to backward compatibility - see RFC 2678). Custom profiles inherit from these base
+/// profiles, so PROFILE reflects the parent. To detect custom profiles like "native", we
+/// check the `OUT_DIR` path which contains the actual profile directory name.
+///
+/// Profile behavior:
+/// - "debug" -> no C++ optimization, fast compile
+/// - "release" -> full optimization (-O3)
+/// - "native" -> full optimization + CPU-specific (-O3 -march=native)
+fn get_build_profile() -> String {
+    // First check OUT_DIR for custom profile name (e.g., target/native/build/...)
+    // Custom profiles get their own directory under target/
+    if let Ok(out_dir) = env::var("OUT_DIR") {
+        // OUT_DIR looks like: .../target/<profile>/build/<crate>-<hash>/out
+        // We want to extract <profile>
+        let parts: Vec<&str> = out_dir.split(std::path::MAIN_SEPARATOR).collect();
+        if let Some(target_idx) = parts.iter().position(|&p| p == "target")
+            && let Some(profile_name) = parts.get(target_idx + 1)
+        {
+            return match *profile_name {
+                "native" => "native",
+                "release" => "release",
+                "debug" => "debug",
+                _ => {
+                    // Unknown profile, fall back to PROFILE env var
+                    if env::var("PROFILE").as_deref() == Ok("release") {
+                        "release"
+                    } else {
+                        "debug"
+                    }
+                }
+            }
+            .to_string();
+        }
+    }
+
+    // Fallback to PROFILE env var (will be "debug" or "release")
+    match env::var("PROFILE").as_deref() {
+        Ok("release") => "release".to_string(),
+        _ => "debug".to_string(),
+    }
+}
+
+/// Apply profile optimization flags to a `cc::Build`
+fn apply_profile_flags(build: &mut cc::Build, target: &str) {
+    let profile = get_build_profile();
+
+    if target.contains("windows") {
+        // MSVC optimization flags
+        match profile.as_str() {
+            "native" => {
+                build.opt_level(2); // /O2
+                build.flag_if_supported("/arch:AVX2"); // Common native optimization for modern CPUs
+            }
+            "release" => {
+                build.opt_level(2); // /O2
+            }
+            _ => {
+                // Dev: use default (no optimization)
+            }
+        }
+    } else {
+        // GCC/Clang optimization flags
+        match profile.as_str() {
+            "native" => {
+                build.flag_if_supported("-O3");
+                build.flag_if_supported("-march=native");
+            }
+            "release" => {
+                build.flag_if_supported("-O3");
+            }
+            _ => {
+                // Dev: no optimization for fastest compile
+                build.flag_if_supported("-O0");
+            }
+        }
+    }
+}
+
 fn main() {
     // Build C++ source files
     let mut build = cc::Build::new();
+
+    // Use C++14 or newer to avoid issues with older cross-compilers
+    // that don't fully support C++11 type traits like is_trivially_move_constructible
+    let target = env::var("TARGET").unwrap_or_default();
+
+    // On macOS, explicitly use system clang to ensure SDK paths are correct.
+    // The PECOS LLVM clang may be in PATH but doesn't have SDK headers configured,
+    // causing "math.h file not found" errors during compilation.
+    if target.contains("darwin") && env::var("CXX").is_err() && env::var("CC").is_err() {
+        build.compiler("/usr/bin/clang++");
+    }
+
     build
         .cpp(true)
         .file("src/sparsesim.cpp")
         .file("src/cxx_shim.cpp")
         .include("src");
-
-    // Use C++14 or newer to avoid issues with older cross-compilers
-    // that don't fully support C++11 type traits like is_trivially_move_constructible
-    let target = std::env::var("TARGET").unwrap_or_default();
 
     // For cross-compilation (especially aarch64), we need at least C++14
     // to ensure type traits are available
@@ -24,11 +116,25 @@ fn main() {
         build.std("c++14");
     }
 
+    // On Windows, embed debug info in .obj files (no PDB) for parallel build reliability
+    if target.contains("windows") {
+        build.flag("/Z7");
+    }
+
+    // Apply PECOS profile optimization flags
+    apply_profile_flags(&mut build, &target);
+
     build.compile("sparsesim");
 
     // Generate cxx bridge code with same C++ standard
     let mut bridge = cxx_build::bridge("src/lib.rs");
     bridge.file("src/cxx_shim.cpp");
+
+    // On macOS, explicitly use system clang to ensure SDK paths are correct.
+    // The PECOS LLVM clang may be in PATH but doesn't have SDK headers configured.
+    if target.contains("darwin") && env::var("CXX").is_err() && env::var("CC").is_err() {
+        bridge.compiler("/usr/bin/clang++");
+    }
 
     // Match the same C++ standard for cxx bridge
     if target.contains("aarch64") || target.contains("arm") {
@@ -41,7 +147,28 @@ fn main() {
         bridge.std("c++14");
     }
 
+    // On macOS, use the -stdlib=libc++ flag to ensure proper C++ standard library linkage
+    if target.contains("darwin") {
+        bridge.flag("-stdlib=libc++");
+        // Note: Linker-specific flags are passed via cargo:rustc-link-arg below, not here
+    }
+
+    // On Windows, embed debug info in .obj files (no PDB) for parallel build reliability
+    if target.contains("windows") {
+        bridge.flag("/Z7");
+    }
+
+    // Apply PECOS profile optimization flags to bridge
+    apply_profile_flags(&mut bridge, &target);
+
     bridge.compile("cppsparsesim-bridge");
+
+    // On macOS, link against the system C++ library from dyld shared cache
+    if target.contains("darwin") {
+        println!("cargo:rustc-link-search=native=/usr/lib");
+        println!("cargo:rustc-link-lib=c++");
+        println!("cargo:rustc-link-arg=-Wl,-search_paths_first");
+    }
 
     // Tell cargo to rerun if source files change
     println!("cargo:rerun-if-changed=src/lib.rs");

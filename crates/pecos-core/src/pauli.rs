@@ -27,17 +27,13 @@ use std::fmt::Debug;
 /// #[`allow(clippy::module_name_repetitions)`]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
+#[derive(Default)]
 pub enum Pauli {
+    #[default]
     I = 0b00,
     X = 0b01,
     Z = 0b10,
     Y = 0b11,
-}
-
-impl Default for Pauli {
-    fn default() -> Self {
-        Self::I
-    }
 }
 
 /// A trait for general Pauli operators.

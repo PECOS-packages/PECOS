@@ -17,12 +17,11 @@ including CUDA-based state vector storage and manipulation for high-performance 
 
 from __future__ import annotations
 
-import random
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import cupy as cp
 from cuquantum import ComputeType, cudaDataType
-from cuquantum import custatevec as cusv
+from cuquantum.bindings import custatevec as cusv
 
 from pecos.simulators.custatevec import bindings
 from pecos.simulators.sim_class_types import StateVector
@@ -30,7 +29,7 @@ from pecos.simulators.sim_class_types import StateVector
 if TYPE_CHECKING:
     import sys
 
-    from numpy.typing import ArrayLike
+    from pecos import Array
 
     # Handle Python 3.10 compatibility for Self type
     if sys.version_info >= (3, 11):
@@ -44,18 +43,17 @@ if TYPE_CHECKING:
 class CuStateVec(StateVector):
     """Simulation using cuQuantum's cuStateVec."""
 
-    def __init__(self, num_qubits: int, seed: int | None = None) -> None:
+    def __init__(self, num_qubits: int, _seed: int | None = None) -> None:
         """Initializes the state vector.
 
         Args:
             num_qubits (int): Number of qubits being represented.
-            seed (int): Seed for randomness.
+            _seed (int): Seed for randomness (kept for API compatibility, not used in GPU-based simulator).
         """
         self.libhandle = None
         if not isinstance(num_qubits, int):
             msg = "``num_qubits`` should be of type ``int``."
             raise TypeError(msg)
-        random.seed(seed)
 
         super().__init__()
 
@@ -104,10 +102,17 @@ class CuStateVec(StateVector):
         cusv.set_stream(self.libhandle, self.stream.ptr)
 
         # Device memory handler
-        def malloc(size: int, stream: Any) -> int:  # noqa: ANN401
+        def malloc(
+            size: int,
+            stream: object,
+        ) -> int:  # stream: CUDA stream object (opaque type)
             return cp.cuda.runtime.mallocAsync(size, stream)
 
-        def free(ptr: int, _size: int, stream: Any) -> None:  # noqa: ANN401
+        def free(
+            ptr: int,
+            _size: int,
+            stream: object,
+        ) -> None:  # stream: CUDA stream object (opaque type)
             cp.cuda.runtime.freeAsync(ptr, stream)
 
         mem_handler = (malloc, free, "GPU memory handler")
@@ -132,7 +137,7 @@ class CuStateVec(StateVector):
             cusv.destroy(self.libhandle)
 
     @property
-    def vector(self) -> ArrayLike:
+    def vector(self) -> Array:
         """Get the quantum state vector from GPU memory.
 
         Returns:

@@ -8,9 +8,9 @@ env:
 
 on:
   push:
-    branches: [ "master", "development", "dev" ]
+    branches: [ "main", "master", "development", "dev" ]
   pull_request:
-    branches: [ "master", "development", "dev" ]
+    branches: [ "main", "master", "development", "dev" ]
   workflow_dispatch:
 
 concurrency:
@@ -24,13 +24,59 @@ defaults:
 jobs:
   python-test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macOS-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
+    - name: Free Disk Space (Ubuntu)
+      if: runner.os == 'Linux'
+      uses: jlumbroso/free-disk-space@main
+      with:
+        # Remove Android tools (saves ~14GB)
+        android: true
+        # Remove .NET runtime (saves ~2.7GB)
+        dotnet: true
+        # Remove Haskell runtime
+        haskell: true
+        # Don't remove large packages - may include libffi and other build deps
+        large-packages: false
+        # Remove Docker images (saves space)
+        docker-images: true
+        # Keep tool-cache as we may need some tools
+        tool-cache: false
+        # Remove swap storage (saves ~4GB)
+        swap-storage: true
+
+    - name: Free Disk Space (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Write-Host "Disk space before cleanup:"
+        Get-PSDrive C | Select-Object Used,Free
+
+        # Remove Android SDK (saves ~9GB)
+        Write-Host "Removing Android SDK..."
+        Remove-Item -Path "C:\Android" -Recurse -Force -ErrorAction SilentlyContinue
+
+        # Remove .NET runtime and libraries (saves ~2GB)
+        Write-Host "Removing .NET..."
+        Remove-Item -Path "C:\Program Files\dotnet" -Recurse -Force -ErrorAction SilentlyContinue
+
+        # Remove CodeQL (saves ~5GB)
+        Write-Host "Removing CodeQL..."
+        Remove-Item -Path "C:\hostedtoolcache\CodeQL" -Recurse -Force -ErrorAction SilentlyContinue
+
+        # Remove large packages
+        Write-Host "Removing large packages..."
+        Remove-Item -Path "C:\ProgramData\chocolatey" -Recurse -Force -ErrorAction SilentlyContinue
+
+        Write-Host "Disk space after cleanup:"
+        Get-PSDrive C | Select-Object Used,Free
+
     - uses: actions/checkout@v4
 
     - name: Set up Python ${{ matrix.python-version }}
@@ -52,15 +98,76 @@ jobs:
     - name: Set up Rust
       run: rustup show
 
+    - name: Install just
+      uses: extractions/setup-just@v2
+
     - name: Cache Rust
       uses: Swatinem/rust-cache@v2
       with:
         workspaces: python/pecos-rslib
 
+    - name: Install LLVM 14.0.6 using pecos-llvm (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        echo "Installing LLVM using pecos..."
+        cargo run -p pecos --features cli --release -- llvm install
+
+        echo "Setting LLVM environment variables..."
+        export PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)
+        export LLVM_SYS_140_PREFIX="$PECOS_LLVM"
+
+        echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
+        echo "LLVM_SYS_140_PREFIX=$LLVM_SYS_140_PREFIX" >> $GITHUB_ENV
+
+        echo "Verifying LLVM installation..."
+        cargo run -p pecos --features cli --release -- llvm check
+
+    - name: Install LLVM 14.0.6 using pecos-llvm (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Write-Host "Installing LLVM using pecos..."
+        cargo run -p pecos --features cli --release -- llvm install
+
+        Write-Host "Setting LLVM environment variables..."
+        $env:PECOS_LLVM = (cargo run -p pecos --features cli --release -- llvm find 2>$null)
+        $env:LLVM_SYS_140_PREFIX = $env:PECOS_LLVM
+
+        "PECOS_LLVM=$env:PECOS_LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "LLVM_SYS_140_PREFIX=$env:LLVM_SYS_140_PREFIX" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+        Write-Host "Verifying LLVM installation..."
+        cargo run -p pecos --features cli --release -- llvm check
+
     - name: Build and test PECOS (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
+        # Ensure LLVM environment variable is available
+        # If LLVM_SYS_140_PREFIX is not set but LLVM_PATH is, use LLVM_PATH
+        if (-not $env:LLVM_SYS_140_PREFIX -and $env:LLVM_PATH) {
+          Write-Host "Setting LLVM_SYS_140_PREFIX from LLVM_PATH"
+          $env:LLVM_SYS_140_PREFIX = $env:LLVM_PATH
+        }
+
+        # Double check it's really set
+        if (-not $env:LLVM_SYS_140_PREFIX) {
+          Write-Error "LLVM_SYS_140_PREFIX is still not set!"
+          exit 1
+        }
+
+        # Export to GitHub env for make/maturin to use (in case it wasn't already)
+        "LLVM_SYS_140_PREFIX=$env:LLVM_SYS_140_PREFIX" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+        # Also ensure LLVM bin is in PATH
+        $llvmBinDir = Join-Path -Path $env:LLVM_SYS_140_PREFIX -ChildPath "bin"
+        if (Test-Path $llvmBinDir) {
+          # Update PATH for current session (so pytest can find llvm-as)
+          $env:PATH = "$llvmBinDir;$env:PATH"
+          # Update PATH for future steps
+          "$llvmBinDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        }
+
         # Find MSVC link.exe and create cargo config
         $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
         $vsPath = & $vsWhere -latest -property installationPath
@@ -69,26 +176,54 @@ jobs:
                     Select-Object -First 1 -ExpandProperty FullName
 
         if ($linkPath) {
-          Write-Host "Found MSVC link.exe at: $linkPath"
-
-          # Create .cargo directory and config
+          # Create .cargo directory and config in multiple locations
+          # Create in root
           New-Item -ItemType Directory -Force -Path .cargo | Out-Null
 
-          # Create config with escaped path
+          # Create config with escaped path and LLVM environment variable
           $escapedPath = $linkPath.Replace('\', '/')
-          "[target.x86_64-pc-windows-msvc]" | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
-          "linker = `"$escapedPath`"" | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8 -Append
+          $escapedLLVMPath = $env:LLVM_SYS_140_PREFIX.Replace('\', '/')
 
-          Write-Host "Created .cargo\config.toml:"
-          Get-Content .cargo\config.toml
+          $configContent = "[target.x86_64-pc-windows-msvc]`nlinker = `"$escapedPath`"`n`n[env]`nLLVM_SYS_140_PREFIX = `"$escapedLLVMPath`""
+
+          $configContent | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
+
+          # Also create in pecos-rslib directory
+          New-Item -ItemType Directory -Force -Path "python\pecos-rslib\.cargo" | Out-Null
+          $configContent | Out-File -FilePath "python\pecos-rslib\.cargo\config.toml" -Encoding UTF8
+
+          # And in the rust subdirectory
+          New-Item -ItemType Directory -Force -Path "python\pecos-rslib\rust\.cargo" | Out-Null
+          $configContent | Out-File -FilePath "python\pecos-rslib\rust\.cargo\config.toml" -Encoding UTF8
+
+          # Also create in user's cargo home directory as a fallback
+          $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { "$env:USERPROFILE\.cargo" }
+          New-Item -ItemType Directory -Force -Path $cargoHome | Out-Null
+
+          # For user cargo config, we need to be careful not to overwrite existing content
+          if (Test-Path "$cargoHome\config.toml") {
+            # Add our content to existing file
+            "`n$configContent" | Out-File -FilePath "$cargoHome\config.toml" -Encoding UTF8 -Append
+          } else {
+            # Create new file
+            $configContent | Out-File -FilePath "$cargoHome\config.toml" -Encoding UTF8
+          }
+
         } else {
           Write-Error "Could not find MSVC link.exe"
           exit 1
         }
 
+        # Ensure LLVM environment variable is exported for subprocess
+        [System.Environment]::SetEnvironmentVariable("LLVM_SYS_140_PREFIX", $env:LLVM_SYS_140_PREFIX, "User")
+        [System.Environment]::SetEnvironmentVariable("LLVM_SYS_140_PREFIX", $env:LLVM_SYS_140_PREFIX, "Process")
+
+        # Also set it as a regular environment variable one more time
+        $env:LLVM_SYS_140_PREFIX = $env:LLVM_SYS_140_PREFIX
+
         # Build and test
-        make build
-        make pytest-all
+        just build-debug
+        just pytest-all
 
     - name: Build and test PECOS (non-Windows)
       if: runner.os != 'Windows'
@@ -105,20 +240,53 @@ jobs:
           export NUMEXPR_NUM_THREADS=1
           export OMP_NUM_THREADS=1
 
-          # Disable macOS System Integrity Protection library validation
-          # This can help with library loading issues
-          export DYLD_LIBRARY_PATH=""
-
           # Force matplotlib to use bundled libraries instead of system ones
           export MPLCONFIGDIR=$PWD/.matplotlib
           mkdir -p $MPLCONFIGDIR
+
+          # CRITICAL: Prevent Homebrew library paths from being used during linking
+          # This fixes the "@rpath/libunwind.1.dylib" runtime error on macOS
+          # Reference: https://github.com/rust-lang/rust/issues/135372
+          #
+          # The issue: When LIBRARY_PATH or similar environment variables include
+          # Homebrew paths (like /usr/local/lib or /opt/homebrew/lib), the linker
+          # finds Homebrew's libunwind and creates @rpath references that fail at runtime.
+          #
+          # The solution: Clear these variables so the linker ONLY uses system libraries
+          # from /usr/lib (which are in the dyld shared cache).
+          unset LIBRARY_PATH
+          unset LD_LIBRARY_PATH
+          unset DYLD_LIBRARY_PATH
+          unset DYLD_FALLBACK_LIBRARY_PATH
+
+          # Also prevent pkg-config from finding Homebrew packages
+          unset PKG_CONFIG_PATH
+
+          # Set explicit library path to ONLY include system directories
+          export LIBRARY_PATH=/usr/lib
+
+          echo "macOS environment configured for build (LIBRARY_PATH=/usr/lib)"
         fi
 
-        # Build and test
-        make build
-        make pytest-all
+        # Build the project
+        just build-debug
+
+        # After build, verify the extension module on macOS
+        if [[ "${{ runner.os }}" == "macOS" ]]; then
+          EXT_MODULE=$(find .venv/lib -name "pecos_rslib*.so" 2>/dev/null | head -1)
+          if [ -n "$EXT_MODULE" ]; then
+            if otool -L "$EXT_MODULE" | grep -q "@rpath/libunwind"; then
+              echo "ERROR: Extension has @rpath/libunwind reference"
+              otool -L "$EXT_MODULE"
+              exit 1
+            fi
+            echo "macOS extension module built successfully"
+          fi
+        fi
+
+        just pytest-all
 
     - name: Run linting
       run: |
         # Run all linting checks
-        make lint  # Rust checks + Python pre-commit
+        just lint  # Rust checks + Python pre-commit

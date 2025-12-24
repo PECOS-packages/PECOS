@@ -16,11 +16,13 @@ and fault propagation simulators.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-# Rust version of simulators
-from pecos_rslib import CoinToss, CppSparseSimRs, SparseSimRs
-from pecos_rslib import SparseSimRs as SparseSim
+# Rust simulators (direct exports without Python wrappers)
+from pecos_rslib.simulators import SparseSim, SparseSimCpp
 
 from pecos.simulators import sim_class_types
+
+# Coin toss simulator (uses Rust backend)
+from pecos.simulators.cointoss import CoinToss
 
 # Ignores quantum gates, coin toss for measurements
 from pecos.simulators.default_simulator import DefaultSimulator
@@ -58,3 +60,23 @@ try:
 except ImportError:
     CuStateVec = None
     MPS = None
+
+__all__ = [
+    "MPS",
+    # Python simulators
+    "CoinToss",
+    "CuStateVec",
+    "DefaultSimulator",
+    "PauliFaultProp",
+    "PauliProp",
+    "QuestDensityMatrix",
+    "QuestStateVec",
+    "Qulacs",
+    # Rust simulators
+    "SparseSim",
+    "SparseSimCpp",
+    "SparseSimPy",
+    "StateVec",
+    # Submodules
+    "sim_class_types",
+]

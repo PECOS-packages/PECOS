@@ -33,14 +33,14 @@ pub use self::noise_rng::NoiseRng;
 pub use self::pass_through::{PassThroughNoiseModel, PassThroughNoiseModelBuilder};
 pub use self::utils::{NoiseUtils, ProbabilityValidator};
 pub use self::weighted_sampler::{
-    SingleQubitWeightedSampler, TwoQubitWeightedSampler, WeightedSampler,
+    CrosstalkWeightedSampler, SingleQubitWeightedSampler, TwoQubitWeightedSampler, WeightedSampler,
 };
 
 use crate::byte_message::ByteMessage;
 use crate::engine_system::{ControlEngine, EngineStage};
 use dyn_clone::DynClone;
 use pecos_core::errors::PecosError;
-use rand_chacha::ChaCha8Rng;
+use pecos_rng::PecosRng;
 use std::any::Any;
 
 // Re-export RngManageable to ensure consistent trait resolution
@@ -62,7 +62,7 @@ pub trait NoiseModel:
     + Send
     + Sync
     + Any
-    + RngManageable<Rng = ChaCha8Rng>
+    + RngManageable<Rng = PecosRng>
 {
     /// Returns a reference to self as Any
     ///
@@ -77,7 +77,16 @@ pub trait NoiseModel:
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
-// Register the NoiseModel trait with dyn_clone
+/// Trait for types that can be converted into a noise model
+///
+/// This trait enables lazy evaluation by storing a closure that builds
+/// the noise model when needed.
+pub trait IntoNoiseModel: Send + Sync {
+    /// Convert into a boxed noise model
+    fn into_noise_model(self) -> Box<dyn NoiseModel>;
+}
+
+// Register traits with dyn_clone
 dyn_clone::clone_trait_object!(NoiseModel);
 
 /// Base implementation for noise models
@@ -86,7 +95,7 @@ dyn_clone::clone_trait_object!(NoiseModel);
 /// reducing code duplication and improving maintainability.
 pub struct BaseNoiseModel {
     /// The random number generator for the noise model
-    rng: NoiseRng<ChaCha8Rng>,
+    rng: NoiseRng<PecosRng>,
 }
 
 impl BaseNoiseModel {
@@ -108,13 +117,13 @@ impl BaseNoiseModel {
 
     /// Get a reference to the random number generator
     #[must_use]
-    pub fn rng(&self) -> &NoiseRng<ChaCha8Rng> {
+    pub fn rng(&self) -> &NoiseRng<PecosRng> {
         &self.rng
     }
 
     /// Get a mutable reference to the random number generator
     #[must_use]
-    pub fn rng_mut(&mut self) -> &mut NoiseRng<ChaCha8Rng> {
+    pub fn rng_mut(&mut self) -> &mut NoiseRng<PecosRng> {
         &mut self.rng
     }
 
@@ -146,11 +155,10 @@ impl Clone for BaseNoiseModel {
 }
 
 impl RngManageable for BaseNoiseModel {
-    type Rng = ChaCha8Rng;
+    type Rng = PecosRng;
 
-    fn set_rng(&mut self, rng: ChaCha8Rng) -> Result<(), PecosError> {
+    fn set_rng(&mut self, rng: PecosRng) {
         self.rng = NoiseRng::new(rng);
-        Ok(())
     }
 
     fn rng(&self) -> &Self::Rng {
@@ -191,14 +199,13 @@ impl ControlEngine for Box<dyn NoiseModel> {
 #[cfg(test)]
 mod base_tests {
     use super::*;
-    use rand::SeedableRng;
 
     #[test]
     fn test_base_noise_model_construction() {
         let model = BaseNoiseModel::new();
         // Verify RNG is initialized, not checking for null since from_ref is never null
         assert!(
-            model.rng().inner() != &ChaCha8Rng::seed_from_u64(0),
+            model.rng().inner() != &PecosRng::seed_from_u64(0),
             "Default RNG should be randomly seeded"
         );
 
@@ -206,7 +213,7 @@ mod base_tests {
         // Check the model has a properly seeded RNG
         assert_eq!(
             *model.rng().inner(),
-            ChaCha8Rng::seed_from_u64(42),
+            PecosRng::seed_from_u64(42),
             "RNG should be initialized with seed 42"
         );
     }
@@ -236,7 +243,7 @@ mod tests {
     fn test_noise_model_biased_depolarizing() {
         // Create a biased depolarizing noise model with a fixed seed
         let mut noise_model = BiasedDepolarizingNoiseModel::new_uniform(0.1);
-        noise_model.set_seed(42).unwrap(); // Set seed for deterministic behavior
+        noise_model.set_seed(42); // Set seed for deterministic behavior
 
         // Create a quantum operation message
         let mut builder = ByteMessageBuilder::new();

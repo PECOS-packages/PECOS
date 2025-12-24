@@ -1,3 +1,5 @@
+#![cfg(feature = "runtime")]
+
 use pecos::prelude::*;
 use pecos_qasm::QASMEngine;
 use std::str::FromStr;

@@ -14,8 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-import numpy as np
-
+import pecos as pc
 from pecos.qeclib import qubit as q
 
 if TYPE_CHECKING:
@@ -69,22 +68,22 @@ class QIRGateMetadata(Enum):
 
     SX = QG.decompose(
         lambda sx: [
-            q.RX[np.pi / 2](sx.qargs[0]),
+            q.RX[pc.f64.frac_pi_2](sx.qargs[0]),
         ],
     )
     SXdg = QG.decompose(
         lambda sxdg: [
-            q.RX[-np.pi / 2](sxdg.qargs[0]),
+            q.RX[-pc.f64.frac_pi_2](sxdg.qargs[0]),
         ],
     )
     SY = QG.decompose(
         lambda sy: [
-            q.RY[np.pi / 2](sy.qargs[0]),
+            q.RY[pc.f64.frac_pi_2](sy.qargs[0]),
         ],
     )
     SYdg = QG.decompose(
         lambda sydg: [
-            q.RY[-np.pi / 2](sydg.qargs[0]),
+            q.RY[-pc.f64.frac_pi_2](sydg.qargs[0]),
         ],
     )
 
@@ -113,7 +112,7 @@ class QIRGateMetadata(Enum):
         lambda f4dg: [
             q.SXdg(f4dg.qargs[0]),
             # q.SZdg(f4dg.qargs[0]),
-            q.RZ[-np.pi / 2](f4dg.qargs[0]),
+            q.RZ[-pc.f64.frac_pi_2](f4dg.qargs[0]),
         ],
     )
 

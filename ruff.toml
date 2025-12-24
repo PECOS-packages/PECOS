@@ -5,6 +5,21 @@ target-version = "py310"
 line-length = 120
 # preview = true
 
+[lint.pycodestyle]
+max-doc-length = 120
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.isort]
+split-on-trailing-comma = true
+
+[lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[lint.flake8-type-checking]
+strict = true
+
 [lint]
 select = [
     "A",        # flake8-builtins
@@ -86,46 +101,152 @@ ignore = [
 
 [lint.per-file-ignores]
 "**/__init__.py" = ["F401"]  # imported but unused - Expected for __init__.py re-exports
-"python/tests/**/*.py" = [
-    "INP001",                       # File is part of an implicit namespace package - OK for test directories
-    "S101",                         # Use of `assert` detected - Assert is standard practice in test files
-    "N802",                         # Function name should be lowercase - Test functions often match gate names
-    "PLC0415",                      # Import inside try/except for optional dependencies - OK in tests
-]
-"python/slr-tests/**/*.py" = [
-    "INP001",                       # File is part of an implicit namespace package - OK for test directories
-    "S101",                         # Use of `assert` detected - Assert is standard practice in test files
-    "N802",                         # Function name should be lowercase - Test functions often match gate names
-    "PLC0415",                      # Import inside try/except for optional dependencies - OK in tests
-]
-"**/*.ipynb" = [
-    "S101",                         # Use of `assert` detected - Assert is appropriate for Jupyter notebook demonstrations
-]
-"python/quantum-pecos/src/pecos/simulators/*.py" = [
-    "N802",
+
+# Main pecos __init__.py - special case for module initialization
+"python/quantum-pecos/src/pecos/__init__.py" = [
+    "E402",     # Module level import not at top - intentional for module setup
+    "SLF001",   # Private member access - accessing _to_program() on program wrappers
+    "ANN",      # Missing annotations - legacy code with duck typing for program wrappers
+    "PLC0415",  # Import inside function - optional guppylang check
 ]
 
+
+# Test files
+"python/*/tests/**/*.py" = [
+    "F401",     # Imported but unused - OK in tests for import availability checks
+    "INP001",   # File is part of an implicit namespace package - OK for test directories
+    "S101",     # Use of `assert` detected - Assert is standard practice in test files
+    "N802",     # Function name should be lowercase - Test functions often match gate names
+    "PLC0415",  # Import inside try/except for optional dependencies - OK in tests
+    "S311",     # Standard pseudo-random generators - OK for tests
+    "S301",     # Pickle - OK for test data
+    "S603",     # Subprocess calls - OK in tests for running build tools (cargo, llvm-as)
+    "S607",     # Starting process with partial path - OK for testing common tools
+    "BLE001",   # Blind except - OK in tests for checking error conditions
+    "PT017",    # Assertions in except blocks - testing error conditions
+    "FBT003",   # Boolean positional values - OK in tests for explicit boolean testing
+    "TRY300",   # Try-except patterns in test code
+]
+"python/selene-plugins/*/tests/**/*.py" = [
+    "F401",     # Imported but unused - OK in tests
+    "INP001",   # File is part of an implicit namespace package - OK for test directories
+    "S101",     # Use of `assert` detected - standard in tests
+    "BLE001",   # Blind except - OK in tests for checking error conditions
+]
+"python/slr-tests/**/*.py" = [
+    "INP001",   # File is part of an implicit namespace package - OK for test directories
+    "S101",     # Use of `assert` detected - Assert is standard practice in test files
+    "N802",     # Function name should be lowercase - Test functions often match gate names
+    "PLC0415",  # Import inside try/except for optional dependencies - OK in tests
+    "S311",     # Standard pseudo-random generators - OK for tests
+    "S301",     # Pickle - OK for test data
+]
+"python/pecos-rslib/tests/*.py" = ["INP001"]  # Test files don't need __init__.py
+
+# Scripts and examples - not packages
+"scripts/**/*.py" = ["INP001", "S603"]  # Script files don't need __init__.py and may run subprocess calls for testing
+"examples/**/*.py" = ["INP001", "BLE001"]  # Example files don't need __init__.py and can use broad exception handling
+
+
+# Jupyter notebooks
+"**/*.ipynb" = [
+    "S101",  # Use of `assert` detected - Assert is appropriate for Jupyter notebook demonstrations
+]
+
+# Simulator files
+"python/quantum-pecos/src/pecos/simulators/*.py" = [
+    "N802",  # Quantum gate functions use uppercase names (H, X, Y, Z, CX, CZ, etc.)
+]
+
+# SLR (Simple Logical Representation) DSL
 "python/quantum-pecos/src/pecos/slr/*.py" = [
     "ANN",
     "D",
-    "PLC",
-    "PLW",
-    "B",
+    "N802",  # DSL methods use capitalized names (Then, Else, Do) for readability
+    "PLW1641",  # __hash__ not needed for DSL classes
 ]
+# Specific SLR files with DSL methods
+"python/quantum-pecos/src/pecos/slr/__init__.py" = ["N814"]  # Main as SLR
+# SLR code generation files - complex legacy code with many style issues
+"python/quantum-pecos/src/pecos/slr/gen_codes/*.py" = [
+    "PLC0415",  # Function-level imports for optional dependencies
+    "B905",  # zip without strict - legacy code
+    "B007",  # Loop variables not used - legacy patterns
+    "PLW2901",  # Variable overwrite in loops - legacy patterns
+]
+"python/quantum-pecos/src/pecos/slr/gen_codes/guppy/*.py" = [
+    "PLC0415",  # Function-level imports
+    "B905",  # zip without strict
+    "B007",  # Unused loop variables
+    "B009",  # getattr with constant - used for private API access
+    "B028",  # stacklevel in warnings - not critical
+    "B904",  # raise from - exception handling patterns
+]
+"python/quantum-pecos/src/pecos/slr/slr_converter.py" = ["PLC0415"]  # Optional guppy import
+
+# Private member access for simulator internal APIs
+"python/quantum-pecos/src/pecos/simulators/statevec/bindings.py" = ["SLF001"]  # private _sim access
+"python/pecos-rslib/src/pecos_rslib/*.py" = ["SLF001"]  # private _sim access
+
+# Documentation
+"python/quantum-pecos/docs/conf.py" = ["A001", "INP001"]  # Sphinx expects 'copyright' variable
+
+# Re-export modules
+"python/quantum-pecos/src/pecos/rslib.py" = ["F403"]  # Re-exporting all symbols from pecos_rslib
+
+# Hatch build hooks - standalone build scripts, not packages
+"python/selene-plugins/*/hatch_build.py" = ["ARG002", "INP001", "PLC0415", "S603", "S607"]  # Build scripts call cargo, version arg required by interface, conditional imports for macOS
+
+# Subprocess calls (S603, S607) - These call trusted build tools and compilers
+"python/pecos-rslib/src/pecos_rslib/selene_compilation.py" = ["S603", "S607", "TRY301"]  # llc, gcc compilation
+"python/pecos-rslib/src/pecos_rslib/selene_simple_runtime.py" = ["S603", "S607"]  # Build tools
+"python/quantum-pecos/src/pecos/frontends/hugr_llvm_compiler.py" = ["S603", "S607"]  # cargo build
+"python/quantum-pecos/src/pecos/engines/selene_engine_builder.py" = ["S603", "S607", "TRY301"]  # file command
+"python/quantum-pecos/src/pecos/selene_subprocess_engine.py" = ["S603", "S607"]  # Selene subprocess
+"python/quantum-pecos/src/pecos/_compilation/guppy.py" = ["S603", "S607", "PLC0415", "TRY301"]  # HUGR/LLVM compilation tools
+"python/quantum-pecos/src/pecos/_compilation/hugr_llvm.py" = ["S603", "S607"]  # cargo build, hugr-to-llvm binary
 
 
+# Stub files (.pyi) - type stubs need flexibility
+"**/*.pyi" = ["ANN401", "PYI021", "PYI048"]  # Any types and stub-specific issues allowed
 
-[lint.pycodestyle]
-max-doc-length = 120
+# Optional dependency imports (PLC0415) - These files load dependencies lazily for performance
+# and to handle optional features gracefully
+"python/pecos-rslib/src/pecos_rslib/bridge_*.py" = ["PLC0415", "ANN401", "SLF001"]  # Bridge: lazy loading, Any types, monkey-patching
+"python/pecos-rslib/src/pecos_rslib/selene_*.py" = ["PLC0415"]  # Selene: optional dependency
+"python/pecos-rslib/src/pecos_rslib/guppy_conversion.py" = ["PLC0415"]  # Guppy: optional dependency
+"python/quantum-pecos/src/pecos/compilation_pipeline.py" = ["PLC0415"]  # Multiple optional backends
+"python/quantum-pecos/src/pecos/execute_llvm.py" = ["PLC0415"]  # Optional LLVM backends
+"python/quantum-pecos/src/pecos/frontends/*.py" = ["PLC0415"]  # All frontends have optional dependencies
+"python/quantum-pecos/src/pecos/frontends/guppy_frontend.py" = ["PLC0415", "S603", "S607"]  # Also uses subprocess for external tools
+"python/quantum-pecos/src/pecos/frontends/selene_native_backend.py" = ["S311"]  # Uses random for test placeholders
+"python/quantum-pecos/src/pecos/qeccs/plot.py" = ["PLC0415"]  # matplotlib: optional visualization dependency
+"python/quantum-pecos/src/pecos/qeclib/color488/plot_layout.py" = ["PLC0415"]  # matplotlib: optional visualization dependency
+"python/quantum-pecos/src/pecos/qeclib/surface/visualization/lattice_2d.py" = ["PLC0415"]  # matplotlib: optional visualization dependency
+"python/quantum-pecos/src/pecos/tools/pseudo_threshold_tools.py" = ["PLC0415"]  # matplotlib: optional visualization dependency
 
-[lint.pydocstyle]
-convention = "google"
+# Examples - relaxed rules for demonstration code
+"python/pecos-rslib/examples/*.py" = ["PLC0415", "INP001"]  # Lazy imports, no __init__.py needed
+"examples/*.py" = ["PLC0415", "INP001", "BLE001"]  # Lazy imports, no __init__.py, broad exception handling OK
 
-[lint.isort]
-split-on-trailing-comma = true
+# Placeholder/stub functions
+"python/pecos-rslib/src/pecos_rslib/__init__.py" = ["N802"]  # Stub functions matching class names
 
-[lint.flake8-tidy-imports]
-ban-relative-imports = "all"
+# Files with specific security patterns
+"python/quantum-pecos/src/pecos/engines/cvm/wasm.py" = ["S301"]  # Pickle for trusted circuit metadata
+"python/quantum-pecos/tests/pecos/unit/test_rng.py" = ["S311"]  # Testing RNG bounds
 
-[lint.flake8-type-checking]
-strict = true
+# Multiprocessing worker - must catch all exceptions
+"python/quantum-pecos/src/pecos/engines/hybrid_engine_multiprocessing.py" = ["BLE001"]  # Must catch all in worker
+
+# QEC conventions - specific files with special naming
+"python/quantum-pecos/src/pecos/qeclib/steane/meas/destructive_meas.py" = ["N802"]  # MeasDecode follows QEC naming conventions
+
+# Files with private member access for internal APIs
+"python/quantum-pecos/src/pecos/simulators/mps_pytket/state.py" = ["SLF001"]  # MPS internal APIs
+"python/quantum-pecos/tests/guppy/test_helpers.py" = ["SLF001"]  # Test metadata marking
+"python/quantum-pecos/tests/guppy/test_selene_library_integration.py" = ["SLF001"]  # Testing internal builder methods
+
+# Try-except patterns (TRY300) - Complex error handling in integration code
+"python/pecos-rslib/src/pecos_rslib/selene_bridge_integration.py" = ["TRY300"]  # Bridge integration
+"python/pecos-rslib/src/pecos_rslib/sim_wrapper.py" = ["TRY300"]  # Wrapper patterns

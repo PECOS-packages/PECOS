@@ -58,3 +58,34 @@ class Permute(Statement):
         self.elems_i = elems_i
         self.elems_f = elems_f
         self.comment = comment
+
+
+class Return(Statement):
+    """Explicitly declares which variables a block returns.
+
+    This operation is similar to Python's return statement and works in conjunction with
+    the block_returns annotation (similar to Python's -> type annotation).
+
+    Example:
+        from pecos.slr import Block, QReg
+        from pecos.slr.types import Array, QubitType
+        from pecos.slr.misc import Return
+
+        class MyBlock(Block):
+            # Type annotation (like -> Type)
+            block_returns = (Array[QubitType, 2], Array[QubitType, 7])
+
+            def __init__(self, data, ancilla):
+                super().__init__()
+                # ... operations ...
+                # Explicit return statement
+                self.extend(Return(ancilla, data))
+    """
+
+    def __init__(self, *return_vars) -> None:
+        """Initialize Return operation with variables to return.
+
+        Args:
+            *return_vars: Variables to return, in order. Can be QReg, Qubit, Bit, or other variables.
+        """
+        self.return_vars = return_vars

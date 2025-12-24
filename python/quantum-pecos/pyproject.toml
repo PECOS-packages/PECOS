@@ -10,30 +10,27 @@
 # specific language governing permissions and limitations under the License.
 
 [build-system]
-requires = ["setuptools>=62.6"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "quantum-pecos"
-version = "0.7.0.dev4"
+version = "0.8.0.dev0"
 authors = [
     {name = "The PECOS Developers"},
 ]
 maintainers =[
     {name = "Ciaran Ryan-Anderson", email = "ciaranra@gmail.com"},
 ]
-description = """PECOS is a library/framework for the evaluation, study, and design of QEC protocols. It also provides the ability to study and evaluate the performance advanced hybrid quantum/classical compute execution models for NISQ algorithms and beyond."""
+description = """PECOS is a library for the evaluation, study, and design of quantum error correction protocols."""
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE"}
 keywords = ["quantum", "QEC", "simulation", "PECOS"]
 dependencies = [
-    "pecos-rslib==0.7.0.dev4",
+    "pecos-rslib==0.8.0.dev0",
     "phir>=0.3.3",
-    "numpy>=1.15.0",
-    "scipy>=1.1.0",
     "networkx>=2.1.0",
-    "matplotlib>=2.2.0",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -47,6 +44,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
 
@@ -55,77 +53,52 @@ documentation = "https://quantum-pecos.readthedocs.io"
 repository = "https://github.com/PECOS-packages/PECOS"
 
 [project.optional-dependencies]
-qir = [
-    "llvmlite==0.43.0; python_version < '3.13'"
-]
 guppy = [
     "guppylang>=0.21.0",  # Install guppylang first
     "selene-sim~=0.2.0",  # Then selene-sim (dependency of guppylang)
-    "hugr>=0.13.0,<0.14",  # Use stable version compatible with guppylang
 ]
-wasmtime = [
-    "wasmtime>=13.0"
+stim = [
+    "stim>=1.12.0",  # For Stim circuit conversion and interoperability
 ]
 visualization = [
+    "matplotlib>=2.2.0",
     "plotly~=5.9.0",
 ]
-wasm-all = [
-    "quantum-pecos[wasmtime]",
-    "quantum-pecos[wasmer]; python_version < '3.13'",
-]
 all = [
-    "quantum-pecos[qir]",
-    "quantum-pecos[simulators]",
-    "quantum-pecos[wasm-all]",
     "quantum-pecos[visualization]",
-    "quantum-pecos[qir]",
     "quantum-pecos[guppy]",
-]
-# The following only work for some environments/Python versions:
-wasmer = [
-    "wasmer~=1.1.0", # Package not currently compatible with Python 3.13
-    "wasmer_compiler_cranelift~=1.1.0",
+    "quantum-pecos[stim]",
 ]
 
-## CUDA dependencies. See README.md
-#cuda = [
-#    "cupy>=10.4.0",
-#    "cuquantum-python>=24.03.0",
-#    "custatevec>=1.6.0",
-#    "pytket-cutensornet>=0.7.0",
-#]
+# CUDA dependencies. See docs/user-guide/cuda-setup.md for detailed installation instructions
+# Requires CUDA Toolkit 13 or 12 installed at system level first.
+# For Ubuntu/Pop!_OS: sudo apt install cuda-toolkit-13
+# These packages work with uv/pip once CUDA toolkit is installed.
+# Note: CUDA packages require Python 3.11+ due to cuquantum-python-cu13 requirements
+cuda = [
+    "cupy-cuda13x>=13.0.0; python_version >= '3.11'",  # Use cupy-cuda12x for CUDA 12
+    "cuquantum-python-cu13>=25.3.0; python_version >= '3.11'",  # Use cuquantum-python-cu12 for CUDA 12
+    "pytket-cutensornet>=0.12.0; python_version >= '3.11'",
+]
+# Install with: uv pip install -e .[cuda]
+
+[dependency-groups]
+test = [
+    # Core testing dependencies - no numpy required
+]
+numpy-compat = [
+    "numpy>=1.15.0",  # NumPy compatibility tests - core functionality uses pecos.num
+]
 
 [tool.uv]
-default-groups = ["dev", "test"]
+# default-groups = ["dev", "test"]  # Uncommented now that dependency-groups is defined
+default-groups = ["test"]
 
 [tool.uv.sources]
 pecos-rslib = { workspace = true }
 
-[tool.hatch.metadata]
-allow-direct-references = true
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/pecos"]
-
-[tool.distutils.build_ext]
-inplace = 1
-
-[tool.distutils.bdist_wheel]
-universal = 1
-
-[tool.setuptools]
-zip-safe = false
-package-dir = {"" = "src"}
-license-files = ["LICENSE"]
-include-package-data = false
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["pecos*"]
-namespaces = true
-
-[tool.setuptools.package-data]
-"pecos" = ["py.typed"]
 
 # Linting and autorefactoring tools
 # ---------------------------------

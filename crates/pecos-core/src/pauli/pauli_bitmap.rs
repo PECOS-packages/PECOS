@@ -161,7 +161,7 @@ impl PauliOperator for PauliBitmap {
     fn commutes_with(&self, other: &Self) -> bool {
         let overlap_count =
             ((self.x_bits & other.z_bits) ^ (self.z_bits & other.x_bits)).count_ones();
-        overlap_count % 2 == 0
+        overlap_count.is_multiple_of(2)
     }
 
     /// Creates a `PauliBitmap` operator with a single qubit in the specified state.

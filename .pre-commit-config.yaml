@@ -1,17 +1,22 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
-        exclude: ^python/docs/reference/_autosummary/
+        exclude: ^python/quantum-pecos/docs/reference/_autosummary/
       - id: end-of-file-fixer
         exclude: |
           (?x)^(
-            python/docs/reference/_autosummary/|
-            .*\.rs$
+            python/quantum-pecos/docs/reference/_autosummary/|
+            .*\.rs$|
+            crates/.*/LICENSE$|
+            python/.*/LICENSE$|
+            python/quantum-pecos/NOTICE$|
+            python/quantum-pecos/README\.md$
           )
       - id: check-toml
       - id: check-yaml
+        args: [--unsafe]
       - id: check-added-large-files
       # Python-specific
       - id: check-ast
@@ -19,19 +24,19 @@ repos:
       - id: debug-statements
 
   - repo: https://github.com/crate-ci/typos
-    rev: v1
+    rev: v1.38.1
     hooks:
       - id: typos
         args: []
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.4
+    rev: v0.14.0
     hooks:
       - id: ruff-check
         args: [--fix, --exit-non-zero-on-fix]
 
   - repo: https://github.com/psf/black
-    rev: 25.1.0
+    rev: 25.9.0
     hooks:
       - id: black
 
@@ -40,4 +45,4 @@ repos:
     hooks:
     -   id: blackdoc
         additional_dependencies:
-        - black==24.8.0
+        - black==25.1.0

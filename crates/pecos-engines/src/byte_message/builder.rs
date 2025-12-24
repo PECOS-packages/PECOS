@@ -5,7 +5,8 @@
 
 use crate::byte_message::message::ByteMessage;
 use crate::byte_message::protocol::{
-    BatchHeader, GateHeader, MessageFlags, MessageHeader, MessageType, OutcomeHeader, calc_padding,
+    BatchHeader, GateHeader, MessageFlags, MessageHeader, MessageType, OutcomeHeader,
+    ReturnValueHeader, calc_padding,
 };
 use bytemuck::bytes_of;
 use pecos_core::QubitId;
@@ -23,6 +24,7 @@ pub enum BuilderMode {
     Empty,               // No operations added yet
     QuantumOperations,   // Contains quantum operations
     MeasurementOutcomes, // Contains measurement outcomes
+    ReturnValue,         // Contains return value
 }
 
 /// Helper for building binary messages
@@ -145,12 +147,21 @@ impl ByteMessageBuilder {
             MessageType::Outcome => {
                 // Outcomes require MeasurementOutcomes mode
                 assert!(
-                    !(self.mode == BuilderMode::QuantumOperations),
-                    "Cannot mix quantum operations and measurement outcomes in the same message"
+                    !(self.mode == BuilderMode::QuantumOperations
+                        || self.mode == BuilderMode::ReturnValue),
+                    "Cannot mix measurement outcomes with other message types"
                 );
 
                 // Always set the mode (even if already in Empty state)
                 self.mode = BuilderMode::MeasurementOutcomes;
+            }
+            MessageType::ReturnValue => {
+                // Return values should be sent separately
+                assert!(
+                    self.mode == BuilderMode::Empty || self.mode == BuilderMode::ReturnValue,
+                    "Cannot mix return values with other message types"
+                );
+                self.mode = BuilderMode::ReturnValue;
             }
         }
 
@@ -263,6 +274,21 @@ impl ByteMessageBuilder {
                 MessageFlags::NONE,
             );
         }
+        self
+    }
+
+    /// Add a return value from program execution
+    ///
+    /// This is typically used to send the return value from `teardown()`
+    /// back to PECOS through the IPC channel.
+    pub fn add_return_value(&mut self, value: i64) -> &mut Self {
+        let return_header = ReturnValueHeader { value };
+
+        self.add_message(
+            MessageType::ReturnValue,
+            bytes_of(&return_header),
+            MessageFlags::NONE,
+        );
         self
     }
 
@@ -467,10 +493,102 @@ impl ByteMessageBuilder {
         self
     }
 
+    /// Add a `MeasCrosstalkGlobalPayload`
+    pub fn add_meas_crosstalk_global_payload(&mut self, qubits: &[usize]) -> &mut Self {
+        let gate = Gate::meas_crosstalk_global_payload(qubits);
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add a `MeasCrosstalkLocalPayload`
+    pub fn add_meas_crosstalk_local_payload(&mut self, qubits: &[usize]) -> &mut Self {
+        let gate = Gate::meas_crosstalk_local_payload(qubits);
+        self.add_gate_command(&gate);
+        self
+    }
+
     /// Add a Prep gate
     pub fn add_prep(&mut self, qubits: &[usize]) -> &mut Self {
         let gate = Gate::prep(qubits);
         self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add an SZ (S) gate
+    pub fn add_sz(&mut self, qubits: &[usize]) -> &mut Self {
+        // S gate is RZ(π/2)
+        self.add_rz(std::f64::consts::FRAC_PI_2, qubits)
+    }
+
+    /// Add an `SZdg` (S†) gate
+    pub fn add_szdg(&mut self, qubits: &[usize]) -> &mut Self {
+        // S† gate is RZ(-π/2)
+        self.add_rz(-std::f64::consts::FRAC_PI_2, qubits)
+    }
+
+    /// Add a T gate
+    pub fn add_t(&mut self, qubits: &[usize]) -> &mut Self {
+        // T gate is RZ(π/4)
+        self.add_rz(std::f64::consts::FRAC_PI_4, qubits)
+    }
+
+    /// Add a Tdg (T†) gate
+    pub fn add_tdg(&mut self, qubits: &[usize]) -> &mut Self {
+        // T† gate is RZ(-π/4)
+        self.add_rz(-std::f64::consts::FRAC_PI_4, qubits)
+    }
+
+    /// Add an RX gate
+    pub fn add_rx(&mut self, theta: f64, qubits: &[usize]) -> &mut Self {
+        let gate = Gate::new(GateType::RX, vec![theta], qubits.to_vec());
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add an RY gate
+    pub fn add_ry(&mut self, theta: f64, qubits: &[usize]) -> &mut Self {
+        let gate = Gate::new(GateType::RY, vec![theta], qubits.to_vec());
+        self.add_gate_command(&gate);
+        self
+    }
+
+    /// Add a CY gate
+    ///
+    /// # Panics
+    ///
+    /// Panics if the length of `controls` and `targets` are not equal.
+    pub fn add_cy(&mut self, controls: &[usize], targets: &[usize]) -> &mut Self {
+        // CY = (I ⊗ Sdg) CX (I ⊗ S)
+        assert_eq!(
+            controls.len(),
+            targets.len(),
+            "Controls and targets must have same length"
+        );
+        for (&c, &t) in controls.iter().zip(targets.iter()) {
+            self.add_szdg(&[t]);
+            self.add_cx(&[c], &[t]);
+            self.add_sz(&[t]);
+        }
+        self
+    }
+
+    /// Add a CZ gate
+    ///
+    /// # Panics
+    ///
+    /// Panics if the length of `controls` and `targets` are not equal.
+    pub fn add_cz(&mut self, controls: &[usize], targets: &[usize]) -> &mut Self {
+        // CZ = H CX H
+        assert_eq!(
+            controls.len(),
+            targets.len(),
+            "Controls and targets must have same length"
+        );
+        for (&c, &t) in controls.iter().zip(targets.iter()) {
+            self.add_h(&[t]);
+            self.add_cx(&[c], &[t]);
+            self.add_h(&[t]);
+        }
         self
     }
 

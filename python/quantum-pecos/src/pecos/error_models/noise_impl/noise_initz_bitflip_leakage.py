@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pecos.error_models.noise_impl.noise_initz_bitflip import noise_initz_bitflip
-from pecos.reps.pypmir.op_types import QOp
+from pecos.reps.pyphir.op_types import QOp
 
 if TYPE_CHECKING:
     from pecos.protocols import MachineProtocol

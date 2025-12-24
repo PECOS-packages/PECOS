@@ -190,6 +190,13 @@ impl DataVec {
             Data::Bytes(_) => Self::Bytes(Vec::with_capacity(data.len())),
             Data::BitVec(_) => Self::BitVec(Vec::with_capacity(data.len())),
             Data::Json(_) => Self::Json(Vec::with_capacity(data.len())),
+            Data::Vec(_) => {
+                // For nested vectors, we need to create a nested DataVec
+                // For now, return an error as this is complex to handle
+                return Err(PecosError::Processing(
+                    "Cannot create DataVec from nested vectors".to_string(),
+                ));
+            }
         };
 
         // Push all elements, checking for type consistency
@@ -386,6 +393,11 @@ impl DataVecType {
             Data::Bytes(_) => Self::Bytes,
             Data::BitVec(_) => Self::BitVec,
             Data::Json(_) => Self::Json,
+            Data::Vec(_) => {
+                // For nested vectors, we can't determine a single type
+                // This is a limitation of the current type system
+                Self::Json // Use Json as a fallback for complex types
+            }
         }
     }
 }

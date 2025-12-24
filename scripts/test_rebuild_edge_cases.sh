@@ -16,13 +16,13 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
-RUNTIME_LIB="$CARGO_HOME/pecos-qir/libpecos_qir.a"
-MARKER_FILE="$CARGO_HOME/pecos-qir/.needs_rebuild"
+RUNTIME_LIB="$CARGO_HOME/pecos-llvm-runtime/libpecos_llvm_runtime.a"
+MARKER_FILE="$CARGO_HOME/pecos-llvm-runtime/.needs_rebuild"
 TEST_DIR="$PROJECT_ROOT/target/edge_case_test_$$"
 
 # Platform adjustments
 if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
-    RUNTIME_LIB="$CARGO_HOME/pecos-qir/pecos_qir.lib"
+    RUNTIME_LIB="$CARGO_HOME/pecos-llvm-runtime/pecos_llvm_runtime.lib"
 fi
 
 # Logging
@@ -43,10 +43,10 @@ log_error() {
 test_concurrent_marker_access() {
     log_test "Concurrent Marker File Access"
 
-    # Create a test QIR file
-    local QIR_FILE="$TEST_DIR/concurrent_test.ll"
+    # Create a test QIS file
+    local QIS_FILE="$TEST_DIR/concurrent_test.ll"
     mkdir -p "$TEST_DIR"
-    cat > "$QIR_FILE" << 'EOF'
+    cat > "$QIS_FILE" << 'EOF'
 define void @main() {
     ret void
 }
@@ -56,13 +56,13 @@ EOF
     rm -f "$MARKER_FILE"
     rm -f "$RUNTIME_LIB"
 
-    # Launch multiple QIR compilations simultaneously
-    log_info "Launching 3 concurrent QIR compilations..."
+    # Launch multiple QIS compilations simultaneously
+    log_info "Launching 3 concurrent QIS compilations..."
 
     for i in 1 2 3; do
         (
             cd "$PROJECT_ROOT"
-            "$PROJECT_ROOT/target/debug/pecos" compile "$QIR_FILE" 2>&1 | sed "s/^/[Process $i] /"
+            "$PROJECT_ROOT/target/debug/pecos" compile "$QIS_FILE" 2>&1 | sed "s/^/[Process $i] /"
         ) &
     done
 
@@ -90,18 +90,18 @@ EOF
 test_rapid_modifications() {
     log_test "Rapid File Modifications"
 
-    local QIR_FILE="$TEST_DIR/rapid.ll"
+    local QIS_FILE="$TEST_DIR/rapid.ll"
     mkdir -p "$TEST_DIR"
 
-    # Create initial QIR
-    cat > "$QIR_FILE" << 'EOF'
+    # Create initial QIS
+    cat > "$QIS_FILE" << 'EOF'
 define void @main() {
     ret void
 }
 EOF
 
     # Compile once
-    "$PROJECT_ROOT/target/debug/pecos" compile "$QIR_FILE" || {
+    "$PROJECT_ROOT/target/debug/pecos" compile "$QIS_FILE" || {
         log_error "Initial compilation failed"
         return 1
     }
@@ -109,8 +109,8 @@ EOF
     # Rapid modifications without sleep
     log_info "Making rapid modifications..."
     for i in {1..5}; do
-        echo "; Modification $i" >> "$QIR_FILE"
-        "$PROJECT_ROOT/target/debug/pecos" compile "$QIR_FILE" 2>/dev/null || {
+        echo "; Modification $i" >> "$QIS_FILE"
+        "$PROJECT_ROOT/target/debug/pecos" compile "$QIS_FILE" 2>/dev/null || {
             log_error "Compilation $i failed"
             return 1
         }
@@ -132,34 +132,34 @@ test_corrupted_marker() {
 
     # Try to build
     cd "$PROJECT_ROOT"
-    if cargo build -p pecos-qir --quiet 2>/dev/null; then
+    if cargo build -p pecos-llvm-runtime --quiet 2>/dev/null; then
         log_info "Build succeeded despite corrupted marker"
     else
         log_error "Build failed with corrupted marker"
         return 1
     fi
 
-    # The corrupted marker should be handled during QIR compilation
+    # The corrupted marker should be handled during QIS compilation
     # (RuntimeBuilder removes marker after successful build)
-    local QIR_FILE="$TEST_DIR/corrupted_test.ll"
+    local QIS_FILE="$TEST_DIR/corrupted_test.ll"
     mkdir -p "$TEST_DIR"
-    cat > "$QIR_FILE" << 'EOF'
+    cat > "$QIS_FILE" << 'EOF'
 define void @main() {
     ret void
 }
 EOF
 
-    # Compile QIR - this should trigger runtime build and marker removal
-    if "$PROJECT_ROOT/target/debug/pecos" compile "$QIR_FILE" 2>/dev/null; then
+    # Compile QIS - this should trigger runtime build and marker removal
+    if "$PROJECT_ROOT/target/debug/pecos" compile "$QIS_FILE" 2>/dev/null; then
         if [[ -f "$MARKER_FILE" ]]; then
-            log_error "Marker not removed after QIR compilation"
+            log_error "Marker not removed after QIS compilation"
             return 1
         else
-            log_info "Corrupted marker removed during QIR compilation"
+            log_info "Corrupted marker removed during QIS compilation"
             return 0
         fi
     else
-        log_error "QIR compilation failed with corrupted marker"
+        log_error "QIS compilation failed with corrupted marker"
         return 1
     fi
 }
@@ -186,7 +186,7 @@ test_permission_issues() {
 
     # Try to build (should handle gracefully)
     cd "$PROJECT_ROOT"
-    if cargo build -p pecos-qir --quiet 2>&1 | grep -q "permission"; then
+    if cargo build -p pecos-llvm-runtime --quiet 2>&1 | grep -q "permission"; then
         log_info "Permission error handled gracefully"
         chmod 755 "$MARKER_DIR"
         return 0
@@ -214,7 +214,7 @@ test_symlink_handling() {
 
         # Run build
         cd "$PROJECT_ROOT"
-        if cargo build -p pecos-qir --quiet; then
+        if cargo build -p pecos-llvm-runtime --quiet; then
             log_info "Build works with symlinked runtime library"
 
             # Check if marker was created (it shouldn't be if symlink is valid)
@@ -255,9 +255,9 @@ test_cargo_home_variations() {
     log_info "Testing with CARGO_HOME=$CARGO_HOME"
 
     cd "$PROJECT_ROOT"
-    if cargo build -p pecos-qir --quiet 2>&1; then
+    if cargo build -p pecos-llvm-runtime --quiet 2>&1; then
         # Check if marker path is created in custom location
-        local CUSTOM_MARKER="$CARGO_HOME/pecos-qir/.needs_rebuild"
+        local CUSTOM_MARKER="$CARGO_HOME/pecos-llvm-runtime/.needs_rebuild"
         if [[ -f "$CUSTOM_MARKER" ]]; then
             log_info "Marker created in custom CARGO_HOME"
         else
@@ -303,7 +303,7 @@ test_filesystem_full() {
     export CARGO_HOME="$MOUNT_POINT"
 
     cd "$PROJECT_ROOT"
-    if cargo build -p pecos-qir --quiet 2>&1 | grep -q "space"; then
+    if cargo build -p pecos-llvm-runtime --quiet 2>&1 | grep -q "space"; then
         log_info "Filesystem full error handled"
     else
         log_info "Build handled full filesystem scenario"
@@ -324,7 +324,7 @@ main() {
     # Build CLI first
     log_info "Building PECOS CLI..."
     cd "$PROJECT_ROOT"
-    cargo build -p pecos-cli --quiet || {
+    cargo build -p pecos --features cli --quiet || {
         log_error "Failed to build PECOS CLI"
         exit 1
     }

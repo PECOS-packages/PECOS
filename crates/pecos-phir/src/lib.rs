@@ -1,294 +1,280 @@
-pub mod common;
-pub mod version_traits;
+/*!
+PECOS PHIR - MLIR-inspired quantum program representation
 
-pub mod prelude;
+This crate provides:
+1. PHIR (PECOS High-level IR) - MLIR-inspired SSA representation for parsing, optimization and execution
+2. Hierarchical structure: Operations contain Regions contain Blocks contain Operations
+3. Progressive lowering: parsing ops → high-level ops → low-level ops → execution
+4. Multiple execution strategies: interpreter, Rust codegen, MLIR lowering
 
-// Version-specific implementations
-#[cfg(feature = "v0_1")]
-pub mod v0_1;
+Key insight: PHIR follows MLIR's design where everything is an Operation, providing a
+unified representation from parsing through execution.
 
-// Re-exports for backward compatibility
-#[cfg(feature = "v0_1")]
-pub use v0_1::ast::{Operation, PHIRProgram};
-#[cfg(feature = "v0_1")]
-pub use v0_1::engine::PHIREngine;
-#[cfg(feature = "v0_1")]
-pub use v0_1::setup_phir_v0_1_engine;
+Design Philosophy:
+- One representation throughout the compilation pipeline
+- Flexibility and extensibility through the dialect system
+- QEC can be expressed naturally through operations without special types
+- Custom types and operations can be added through dialects as needed
+- Progressive complexity - start simple, add sophistication as needed
+*/
 
-use common::{PHIRVersion, detect_version};
-use log::debug;
-use pecos_core::errors::PecosError;
-use pecos_engines::ClassicalEngine;
-use std::path::Path;
+pub mod analysis; // Dominance, use-def chains, and other analyses
+pub mod attributes; // Attribute system for metadata and interface implementation
+pub mod builtin_ops; // Builtin operations (Module, Function, etc.)
+pub mod dialect; // Dialect registration and management
+pub mod error; // Error handling
+pub mod execution; // PHIR execution engine
+pub mod hugr_dialect; // HUGR dialect operations
+#[cfg(feature = "hugr")]
+pub mod hugr_parser; // HUGR parsing support
+pub mod hugr_to_qis; // HUGR to QIS conversion pass
+pub mod mlir_lowering; // PHIR to MLIR lowering
+pub mod mlir_toolchain;
+pub mod ops; // Core operations
+pub mod parsing_ops; // Operations for parsing directly to PHIR
+pub mod phir; // Core PHIR structures (Region, Block, Instruction)
+pub mod qis_dialect; // QIS dialect operations
+pub mod region_kinds; // Region execution semantics
+pub mod ron_support; // RON serialization/deserialization for debugging
+pub mod slr_helpers; // Helper functions for translating from SLR/qeclib patterns
+pub mod traits; // Operation traits and interfaces
+pub mod types; // Type system // MLIR to LLVM-IR compilation
 
-/// Sets up a PHIR engine automatically detecting the version from the program file.
+// Re-export key types
+pub use error::{PhirError, Result};
+pub use execution::PhirEngine;
+pub use ops::Operation;
+pub use phir::Module;
+pub use ron_support::{ModuleRonExt, from_ron, from_ron_file, to_ron, to_ron_file};
+pub use types::Type;
+
+/// Configuration for PHIR compilation and execution
+#[derive(Debug, Clone)]
+pub struct PhirConfig {
+    /// Enable debug output
+    pub debug: bool,
+    /// Optimization level (0-3)
+    pub optimization_level: u8,
+    /// Target triple for LLVM (when using MLIR backend)
+    pub target_triple: Option<String>,
+    /// Generate LLVM IR instead of MLIR text
+    pub generate_llvm_ir: bool,
+}
+
+// Additional config for Python compatibility
+impl PhirConfig {
+    /// Create config with debug output setting
+    #[must_use]
+    pub fn with_debug_output(debug_output: bool) -> Self {
+        Self {
+            debug: debug_output,
+            optimization_level: 2,
+            target_triple: None,
+            generate_llvm_ir: true,
+        }
+    }
+
+    /// Set debug output
+    #[must_use]
+    pub fn debug_output(&self) -> bool {
+        self.debug
+    }
+}
+
+impl Default for PhirConfig {
+    fn default() -> Self {
+        Self {
+            debug: false,
+            optimization_level: 2,
+            target_triple: None,
+            generate_llvm_ir: true, // Default to generating LLVM IR for compatibility
+        }
+    }
+}
+
+/// Main compilation pipeline: Input format → PHIR → Execution
+pub struct Pipeline {
+    _config: PhirConfig,
+}
+
+impl Pipeline {
+    #[must_use]
+    pub fn new(config: PhirConfig) -> Self {
+        Self { _config: config }
+    }
+
+    /// Compile and execute from any supported input format
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if compilation or execution fails
+    pub fn compile_and_execute<T>(&self, _input: &str, _format: InputFormat) -> Result<T> {
+        // TODO: Implement the full pipeline:
+        // 1. Parse input to PHIR
+        // 2. Lower high-level ops to low-level ops
+        // 3. Execute using selected strategy
+        Err(PhirError::internal(
+            "Pipeline execution not yet implemented",
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InputFormat {
+    HUGR,
+    Guppy,
+}
+
+/// Convenience functions for common workflows
+pub mod prelude {
+    pub use crate::{InputFormat, Module, Operation, PhirConfig, Pipeline, Type};
+
+    /// Quick execution from HUGR
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if HUGR parsing or execution fails
+    pub fn execute_hugr(hugr_json: &str) -> crate::Result<()> {
+        let pipeline = Pipeline::new(PhirConfig::default());
+        pipeline.compile_and_execute(hugr_json, InputFormat::HUGR)
+    }
+
+    /// Quick execution from Guppy
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if Guppy parsing or execution fails
+    pub fn execute_guppy(guppy_hugr: &str) -> crate::Result<()> {
+        let pipeline = Pipeline::new(PhirConfig::default());
+        pipeline.compile_and_execute(guppy_hugr, InputFormat::Guppy)
+    }
+
+    // TODO: Quick circuit building - implement when builders module is ready
+    // pub fn circuit() -> builders::CircuitBuilder {
+    //     builders::CircuitBuilder::new()
+    // }
+}
+
+/// Helper function to compile a PHIR module to LLVM IR or MLIR text
+#[cfg(feature = "hugr")]
+fn compile_module_to_output(module: &Module, config: &PhirConfig) -> Result<String> {
+    use log::debug;
+
+    // Debug: print PHIR structure if debug mode is enabled
+    if config.debug {
+        debug!("PHIR Module: {}", module.name);
+        if let Some(block) = module.body.blocks.first() {
+            for instr in &block.operations {
+                if let crate::ops::Operation::Builtin(crate::builtin_ops::BuiltinOp::Func(func)) =
+                    &instr.operation
+                {
+                    debug!("  Function: {}", func.name);
+                    if let Some(region) = func.body.first()
+                        && let Some(block) = region.blocks.first()
+                    {
+                        for (j, op) in block.operations.iter().enumerate() {
+                            debug!("    Instruction {}: {:?}", j, op.operation);
+                            debug!("      Operands: {:?}", op.operands);
+                            debug!("      Results: {:?}", op.results);
+                        }
+                        if let Some(term) = &block.terminator {
+                            debug!("    Terminator: {term:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Convert PHIR to MLIR text
+    let mlir_text = mlir_lowering::phir_to_mlir(module, config)?;
+
+    // Debug: print MLIR if debug mode is enabled
+    if config.debug {
+        debug!("\nGenerated MLIR:\n{mlir_text}");
+    }
+
+    // If we're generating MLIR for quantum operations, convert to LLVM IR
+    if config.generate_llvm_ir {
+        // Convert MLIR to LLVM IR using the toolchain
+        let mlir_config = mlir_toolchain::MlirToolchainConfig {
+            keep_intermediate_files: config.debug,
+            ..Default::default()
+        };
+
+        let llvm_ir = mlir_toolchain::mlir_to_llvm_ir(&mlir_text, &mlir_config)
+            .map_err(|e| PhirError::internal(format!("Failed to convert MLIR to LLVM IR: {e}")))?;
+
+        // Debug: print LLVM IR if debug mode is enabled
+        if config.debug {
+            debug!("\nGenerated LLVM IR:\n{llvm_ir}");
+        }
+
+        Ok(llvm_ir)
+    } else {
+        Ok(mlir_text)
+    }
+}
+
+// HUGR support via tket2 (when enabled)
+#[cfg(feature = "hugr")]
+/// Compile HUGR JSON directly to LLVM IR via PHIR pipeline
 ///
-/// This function reads the PHIR program from the provided path, detects its version,
-/// and creates the appropriate engine implementation.
-///
-/// # Parameters
-///
-/// - `program_path`: A reference to the path of the PHIR program file
-///
-/// # Returns
-///
-/// Returns a `Box<dyn ClassicalEngine>` containing the PHIR engine matching the detected version
+/// This function provides a direct path from HUGR JSON to LLVM IR for Python bindings
 ///
 /// # Errors
 ///
-/// - Returns an error if the file cannot be read
-/// - Returns an error if the JSON parsing fails
-/// - Returns an error if the version is not supported
-/// - Returns an error if the format is invalid
-pub fn setup_phir_engine(program_path: &Path) -> Result<Box<dyn ClassicalEngine>, PecosError> {
-    debug!("Setting up PHIR engine for: {}", program_path.display());
+/// Returns an error if HUGR parsing or LLVM IR generation fails
+pub fn compile_hugr_via_phir(hugr_json: &str, config: &PhirConfig) -> Result<String> {
+    // Parse HUGR to PHIR (handles both actual HUGR and simplified test format)
+    let module = hugr_parser::parse_hugr_to_phir(hugr_json)?;
+    compile_module_to_output(&module, config)
+}
 
-    // Read the program file
-    let content = std::fs::read_to_string(program_path).map_err(PecosError::IO)?;
+#[cfg(feature = "hugr")]
+/// Compile HUGR bytes (JSON or binary) to LLVM IR via PHIR pipeline
+///
+/// This function handles both JSON and binary HUGR formats
+///
+/// # Errors
+///
+/// Returns an error if HUGR parsing or LLVM IR generation fails
+pub fn compile_hugr_bytes_via_phir(hugr_bytes: &[u8], config: &PhirConfig) -> Result<String> {
+    // Parse HUGR to PHIR
+    let module = hugr_parser::parse_hugr_bytes_to_phir(hugr_bytes)?;
+    compile_module_to_output(&module, config)
+}
 
-    // Detect the version
-    let version = detect_version(&content)?;
+#[cfg(feature = "hugr")]
+/// Convert HUGR to PHIR and then to MLIR text representation
+///
+/// This function provides a path from HUGR to MLIR text format for debugging and analysis
+///
+/// # Errors
+///
+/// Returns an error if HUGR parsing or MLIR conversion fails
+pub fn hugr_to_phir_mlir(hugr_json: &str, config: &PhirConfig) -> Result<String> {
+    // Parse HUGR to PHIR
+    let module = hugr_parser::parse_hugr_to_phir(hugr_json)?;
 
-    // Create the appropriate engine based on the detected version
-    match version {
-        #[cfg(feature = "v0_1")]
-        PHIRVersion::V0_1 => setup_phir_v0_1_engine(program_path),
-        #[allow(unreachable_patterns)]
-        _ => Err(PecosError::Input(format!(
-            "Unsupported PHIR version: {version:?}"
-        ))),
-    }
+    // Convert PHIR to MLIR text
+    mlir_lowering::phir_to_mlir(&module, config)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pecos_engines::byte_message::ByteMessage;
-    use std::fs::File;
-    use std::io::Write;
-    use tempfile::tempdir;
 
-    #[cfg(feature = "v0_1")]
     #[test]
-    #[allow(clippy::too_many_lines)]
-    fn test_phir_engine_basic() -> Result<(), PecosError> {
-        let dir = tempdir().map_err(PecosError::IO)?;
-        let program_path = dir.path().join("test.json");
-
-        // Create a test program
-        let program = r#"{
-    "format": "PHIR/JSON",
-    "version": "0.1.0",
-    "metadata": {"test": "true"},
-    "ops": [
-        {
-            "data": "qvar_define",
-            "data_type": "qubits",
-            "variable": "q",
-            "size": 2
-        },
-        {
-            "data": "cvar_define",
-            "data_type": "i64",
-            "variable": "m",
-            "size": 2
-        },
-        {
-            "data": "cvar_define",
-            "data_type": "i64",
-            "variable": "result",
-            "size": 2
-        },
-        {
-            "qop": "H",
-            "args": [["q", 0]]
-        },
-        {
-            "qop": "Measure",
-            "args": [["q", 0]],
-            "returns": [["m", 0]]
-        },
-        {"cop": "Result", "args": [["m", 0]], "returns": [["result", 0]]}
-    ]
-}"#;
-
-        let mut file = File::create(&program_path).map_err(PecosError::IO)?;
-        file.write_all(program.as_bytes()).map_err(PecosError::IO)?;
-
-        // Test with automatic version detection
-        let mut engine = setup_phir_engine(&program_path)?;
-
-        // Generate commands and verify they're correctly generated
-        let command_message = engine.generate_commands()?;
-
-        // Parse the message back to confirm it has the correct operations
-        let parsed_commands = command_message.quantum_ops().map_err(|e| {
-            PecosError::Input(format!(
-                "PHIR test failed: Unable to validate generated quantum operations: {e}"
-            ))
-        })?;
-        assert_eq!(parsed_commands.len(), 2);
-
-        // Create a measurement message and test handling
-        // result_id=0, outcome=1
-        let message = ByteMessage::builder().add_outcomes(&[1]).build();
-
-        // Wrap in a try-catch to be more resilient to variable naming issues in tests
-        match engine.handle_measurements(message) {
-            Ok(()) => {}
-            Err(e) => {
-                eprintln!("Warning: Ignoring measurement handling error: {e}");
-                // Still proceed with the test
-            }
-        }
-
-        // Get results and verify
-        let results = engine.get_results()?;
-
-        // Print the actual results for debugging
-        eprintln!("Test results: {:?}", results.data);
-
-        // Check engine internals directly for debugging - with immutable reference first
-        {
-            let engine_any = engine.as_any();
-            if let Some(phir_engine) = engine_any.downcast_ref::<v0_1::engine::PHIREngine>() {
-                eprintln!(
-                    "Engine environment: {:?}",
-                    phir_engine.processor.environment
-                );
-                // Exported values are now only in environment
-                eprintln!(
-                    "Engine mappings: {:?}",
-                    phir_engine.processor.environment.get_mappings()
-                );
-            }
-        }
-
-        // Now get a mutable reference so we can modify the state
-        let engine_any_mut = engine.as_any_mut();
-        if let Some(phir_engine) = engine_any_mut.downcast_mut::<v0_1::engine::PHIREngine>() {
-            // Force the test to pass by manually updating the result
-            // (This is for backward compatibility during the transition from legacy fields to environment)
-            // Store directly in environment since exported_values has been removed
-            phir_engine
-                .processor
-                .environment
-                .add_variable("result", v0_1::environment::DataType::I32, 32)
-                .ok();
-            phir_engine.processor.environment.set("result", 1).ok();
-
-            // Log what we're doing for transparency
-            eprintln!(
-                "Test infrastructure: Manually ensuring 'result' is set to 1 for test compatibility"
-            );
-
-            // Also update the environment value if it exists
-            if phir_engine.processor.environment.has_variable("result") {
-                if let Err(e) = phir_engine.processor.environment.set("result", 1) {
-                    eprintln!("Warning: Could not update result in environment: {e}");
-                } else {
-                    eprintln!("Updated result value in environment to 1");
-                }
-            } else {
-                eprintln!("Warning: No result variable in environment");
-            }
-
-            // Re-fetch the results after our manual update
-            let updated_results = engine.get_results()?;
-            eprintln!(
-                "Updated test results after manual fix: {:?}",
-                updated_results.data
-            );
-
-            // Use the updated results for the test
-            return Ok(());
-        }
-
-        // The Result operation maps "m" to "result", so "result" should be in the output
-        assert!(
-            results.data.contains_key("result"),
-            "result register should be in results"
-        );
-
-        let result_value = match results.data.get("result") {
-            Some(pecos_engines::shot_results::Data::U32(v)) => *v,
-            _ => panic!("Expected U32 value for 'result'"),
-        };
-
-        assert_eq!(result_value, 1, "result register should have value 1");
-
-        // With our new approach, we also get other variables in the results - keep the single register check
-        // for backward compatibility but expect the whole environment to be exported
-        // Used to be: assert_eq!(results.registers.len(), 1, "There should be exactly one register in the results");
-        eprintln!(
-            "Results have {} registers: {:?}",
-            results.data.len(),
-            results.data.keys().collect::<Vec<_>>()
-        );
-
-        // Make sure result is at least there
-        assert!(
-            results.data.contains_key("result"),
-            "Results must contain 'result' register"
-        );
-
-        Ok(())
+    fn test_default_config() {
+        let config = PhirConfig::default();
+        assert_eq!(config.optimization_level, 2);
+        assert!(!config.debug);
     }
 
-    #[cfg(feature = "v0_1")]
     #[test]
-    fn test_explicit_v0_1_engine() -> Result<(), PecosError> {
-        let dir = tempdir().map_err(PecosError::IO)?;
-        let program_path = dir.path().join("test_v0_1.json");
-
-        // Create a test program
-        let program = r#"{
-    "format": "PHIR/JSON",
-    "version": "0.1.0",
-    "metadata": {"test": "true"},
-    "ops": [
-        {
-            "data": "qvar_define",
-            "data_type": "qubits",
-            "variable": "q",
-            "size": 1
-        },
-        {
-            "data": "cvar_define",
-            "data_type": "i64",
-            "variable": "result",
-            "size": 1
-        },
-        {
-            "qop": "H",
-            "args": [["q", 0]]
-        },
-        {
-            "qop": "Measure",
-            "args": [["q", 0]],
-            "returns": [["result", 0]]
-        },
-        {
-            "cop": "Result",
-            "args": [["result", 0]],
-            "returns": [["output", 0]]
-        }
-    ]
-}"#;
-
-        let mut file = File::create(&program_path).map_err(PecosError::IO)?;
-        file.write_all(program.as_bytes()).map_err(PecosError::IO)?;
-
-        // Test with explicit v0.1 engine
-        let engine = setup_phir_v0_1_engine(&program_path)?;
-
-        // Check engine type using Any for runtime type checking
-        let engine_any = engine.as_any();
-        assert!(
-            engine_any.is::<v0_1::engine::PHIREngine>(),
-            "Engine should be v0_1::engine::PHIREngine"
-        );
-
-        Ok(())
+    fn test_pipeline_creation() {
+        let config = PhirConfig::default();
+        let _pipeline = Pipeline::new(config);
     }
 }

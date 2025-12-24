@@ -9,26 +9,44 @@ repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "PHIR (PECOS High-level Intermediate Representation) specification and execution capabilities for PECOS"
-
-[features]
-default = ["v0_1"]
-v0_1 = []
-all-versions = ["v0_1"]
-wasm = ["wasmtime", "parking_lot"]
+description = "PECOS High-level Intermediate Representation (PHIR) pipeline for quantum program compilation and execution."
 
 [dependencies]
-log.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-pecos-core.workspace = true
+# Core PECOS dependencies
+pecos-core = { workspace = true, features = ["anyhow"] }
 pecos-engines.workspace = true
-wasmtime = { workspace = true, optional = true }
-parking_lot = { workspace = true, optional = true }
+
+# Logging
+log.workspace = true
+
+# JSON serialization (keeping for HUGR parsing)
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror.workspace = true
+
+# Regular expressions for text processing
+regex.workspace = true
+
+# Temporary file handling for MLIR pipeline
+tempfile.workspace = true
+
+# RON (Rusty Object Notation) for debugging
+ron.workspace = true
+
+# HUGR support via tket (formerly tket2, which re-exports hugr)
+tket = { workspace = true, optional = true }
+tket-qsystem = { workspace = true, optional = true }
 
 [dev-dependencies]
-# Testing
 tempfile.workspace = true
+
+[features]
+default = []
+
+# HUGR parsing support
+hugr = ["tket", "tket-qsystem"]
 
 [lints]
 workspace = true

@@ -74,7 +74,7 @@ mod belief_find_tests {
         // Verify the decoding produces the correct syndrome
         let dense_pcm = pcm.to_dense();
         let decoded_syndrome_vec = dense_pcm.dot(&result.decoding);
-        let decoded_syndrome: Array1<u8> = decoded_syndrome_vec.mapv(|x| (x % 2));
+        let decoded_syndrome: Array1<u8> = decoded_syndrome_vec.mapv(|x| x % 2);
         assert_eq!(decoded_syndrome, syndrome);
     }
 
@@ -113,7 +113,7 @@ mod belief_find_tests {
         // Verify we get a valid decoding
         let dense_pcm = pcm.to_dense();
         let decoded_syndrome_vec = dense_pcm.dot(&result.decoding);
-        let decoded_syndrome: Array1<u8> = decoded_syndrome_vec.mapv(|x| (x % 2));
+        let decoded_syndrome: Array1<u8> = decoded_syndrome_vec.mapv(|x| x % 2);
         assert_eq!(decoded_syndrome, syndrome);
     }
 
@@ -157,7 +157,7 @@ mod belief_find_tests {
             // Verify valid decoding
             let dense_pcm = pcm.to_dense();
             let decoded_syndrome_vec = dense_pcm.dot(&result.decoding);
-            let decoded_syndrome: Array1<u8> = decoded_syndrome_vec.mapv(|x| (x % 2));
+            let decoded_syndrome: Array1<u8> = decoded_syndrome_vec.mapv(|x| x % 2);
             assert_eq!(decoded_syndrome, syndrome);
         }
     }
@@ -190,7 +190,7 @@ mod belief_find_tests {
         // Verify syndrome
         let dense_pcm = pcm.to_dense();
         let decoded_syndrome_vec = dense_pcm.dot(&result.decoding);
-        let decoded_syndrome: Array1<u8> = decoded_syndrome_vec.mapv(|x| (x % 2));
+        let decoded_syndrome: Array1<u8> = decoded_syndrome_vec.mapv(|x| x % 2);
         assert_eq!(decoded_syndrome, syndrome);
     }
 
@@ -287,7 +287,7 @@ mod belief_find_tests {
         // Should produce a valid decoding
         let dense_pcm = pcm.to_dense();
         let decoded_syndrome_vec = dense_pcm.dot(&result.decoding);
-        let decoded_syndrome: Array1<u8> = decoded_syndrome_vec.mapv(|x| (x % 2));
+        let decoded_syndrome: Array1<u8> = decoded_syndrome_vec.mapv(|x| x % 2);
         assert_eq!(decoded_syndrome, syndrome);
 
         println!(

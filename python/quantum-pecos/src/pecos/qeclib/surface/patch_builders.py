@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING, TypeVar
 
-from pecos.errors import ConfigurationError
+from pecos.exceptions import ConfigurationError
 from pecos.qeclib.surface.layouts.layout_base import LatticeType
 from pecos.qeclib.surface.patches.patch_base import SurfacePatchOrientation
 from pecos.qeclib.surface.patches.surface_patches import (

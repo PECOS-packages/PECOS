@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025 The PECOS Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -212,7 +211,3 @@ def example_bell_state_experiment() -> None:
     print("\n==== End of Example ====")
 
     return message
-
-
-if __name__ == "__main__":
-    example_bell_state_experiment()

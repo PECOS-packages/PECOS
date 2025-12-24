@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
+import pecos as pc
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -43,7 +43,7 @@ def noise_init_bitflip(
         flip: The symbol for what Pauli operator should be applied if an initialization fault occurs.
         p: The probability of a bit-flip error occurring during initialization.
     """
-    rand_nums = np.random.random(len(locations)) <= p
+    rand_nums = pc.random.random(len(locations)) <= p
 
     for r, loc in zip(rand_nums, locations, strict=False):
         if r:

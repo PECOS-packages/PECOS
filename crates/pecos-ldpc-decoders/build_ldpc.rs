@@ -1,11 +1,56 @@
 //! Build script for LDPC decoder integration
 
-use pecos_build_utils::{
-    Result, download_cached, extract_archive, ldpc_download_info, report_cache_config,
-};
+use log::info;
+use pecos_build::{Manifest, Result, ensure_dep_ready, report_cache_config};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// Get the build profile from Cargo's environment
+/// Returns "debug", "release", or "native"
+///
+/// Note: Cargo's PROFILE env var only reports "debug" or "release" even for custom profiles
+/// (due to backward compatibility - see RFC 2678). Custom profiles inherit from these base
+/// profiles, so PROFILE reflects the parent. To detect custom profiles like "native", we
+/// check the `OUT_DIR` path which contains the actual profile directory name.
+///
+/// Profile behavior:
+/// - "debug" -> no C++ optimization, fast compile
+/// - "release" -> full optimization (-O3)
+/// - "native" -> full optimization + CPU-specific (-O3 -march=native)
+fn get_build_profile() -> String {
+    // First check OUT_DIR for custom profile name (e.g., target/native/build/...)
+    // Custom profiles get their own directory under target/
+    if let Ok(out_dir) = env::var("OUT_DIR") {
+        // OUT_DIR looks like: .../target/<profile>/build/<crate>-<hash>/out
+        // We want to extract <profile>
+        let parts: Vec<&str> = out_dir.split(std::path::MAIN_SEPARATOR).collect();
+        if let Some(target_idx) = parts.iter().position(|&p| p == "target")
+            && let Some(profile_name) = parts.get(target_idx + 1)
+        {
+            return match *profile_name {
+                "native" => "native",
+                "release" => "release",
+                "debug" => "debug",
+                _ => {
+                    // Unknown profile, fall back to PROFILE env var
+                    if env::var("PROFILE").as_deref() == Ok("release") {
+                        "release"
+                    } else {
+                        "debug"
+                    }
+                }
+            }
+            .to_string();
+        }
+    }
+
+    // Fallback to PROFILE env var (will be "debug" or "release")
+    match env::var("PROFILE").as_deref() {
+        Ok("release") => "release".to_string(),
+        _ => "debug".to_string(),
+    }
+}
 
 /// Main build function for LDPC
 pub fn build() -> Result<()> {
@@ -19,31 +64,18 @@ pub fn build() -> Result<()> {
     println!("cargo:rerun-if-env-changed=FORCE_REBUILD");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
-    let ldpc_dir = out_dir.join("ldpc");
 
     // Always emit link directives - these are cached by Cargo
     println!("cargo:rustc-link-search=native={}", out_dir.display());
     println!("cargo:rustc-link-lib=static=ldpc-bridge");
 
-    // Download and extract LDPC source if not already present
-    if !ldpc_dir.exists() {
-        download_and_extract_ldpc(&out_dir)?;
-    }
+    // Get LDPC source (downloads to ~/.pecos/cache/, extracts to ~/.pecos/deps/)
+    let manifest = Manifest::find_and_load_validated()?;
+    let ldpc_dir = ensure_dep_ready("ldpc", &manifest)?;
 
     // Build using cxx
     build_cxx_bridge(&ldpc_dir)?;
 
-    Ok(())
-}
-
-fn download_and_extract_ldpc(out_dir: &Path) -> Result<()> {
-    let info = ldpc_download_info();
-    let tar_gz = download_cached(&info)?;
-    extract_archive(&tar_gz, out_dir, Some("ldpc"))?;
-
-    if std::env::var("PECOS_VERBOSE_BUILD").is_ok() {
-        println!("cargo:warning=LDPC source downloaded and extracted");
-    }
     Ok(())
 }
 
@@ -63,9 +95,7 @@ fn fix_header_guard_conflict(src_cpp_dir: &Path) -> Result<()> {
                 .replace("#ifndef UF2_H", "#ifndef UNION_FIND_H")
                 .replace("#define UF2_H", "#define UNION_FIND_H");
             fs::write(&union_find_path, fixed_content)?;
-            if std::env::var("PECOS_VERBOSE_BUILD").is_ok() {
-                println!("cargo:warning=Fixed header guard conflict in union_find.hpp");
-            }
+            info!("Fixed header guard conflict in union_find.hpp");
         }
     }
 
@@ -124,9 +154,7 @@ fn fix_mbp_iterate_methods(src_cpp_dir: &Path) -> Result<()> {
 
             fixed_content = new_lines.join("\n");
             fs::write(&mbp_path, fixed_content)?;
-            if std::env::var("PECOS_VERBOSE_BUILD").is_ok() {
-                println!("cargo:warning=Fixed iterate method names and syntax in mbp.hpp");
-            }
+            info!("Fixed iterate method names and syntax in mbp.hpp");
         }
     }
 
@@ -165,9 +193,58 @@ fn fix_msvc_compatibility(src_cpp_dir: &Path) -> Result<()> {
 
             let fixed_content = new_lines.join("\n");
             fs::write(&lsd_path, fixed_content)?;
-            if std::env::var("PECOS_VERBOSE_BUILD").is_ok() {
-                println!("cargo:warning=Fixed MSVC compatibility issues in lsd.hpp");
-            }
+            info!("Fixed MSVC compatibility issues in lsd.hpp");
+        }
+    }
+
+    Ok(())
+}
+
+fn fix_uninitialized_pointers(src_cpp_dir: &Path) -> Result<()> {
+    // Fix uninitialized pointer bug in osd.hpp
+    // The LuDecomposition pointer is not initialized, but the destructor always tries to delete it
+    // When osd_method == OSD_OFF, osd_setup() returns early without initializing LuDecomposition
+    // This causes heap corruption when the destructor tries to delete uninitialized memory
+    // Issue exists in commit 31cf9f33872f32579af1efbe1e84552d42b03ea8
+    let osd_path = src_cpp_dir.join("osd.hpp");
+
+    if osd_path.exists() {
+        let mut content = fs::read_to_string(&osd_path)?;
+        let mut modified = false;
+
+        // Fix 1: Initialize LuDecomposition pointer
+        if content.contains("RowReduce<ldpc::bp::BpEntry>* LuDecomposition;")
+            && !content.contains("LuDecomposition = nullptr")
+        {
+            content = content.replace(
+                "ldpc::gf2sparse_linalg::RowReduce<ldpc::bp::BpEntry>* LuDecomposition;",
+                "ldpc::gf2sparse_linalg::RowReduce<ldpc::bp::BpEntry>* LuDecomposition = nullptr;",
+            );
+
+            content = content.replace(
+                "~OsdDecoder(){\n            delete this->LuDecomposition;\n        };",
+                "~OsdDecoder(){\n            if (this->LuDecomposition) delete this->LuDecomposition;\n        };",
+            );
+            modified = true;
+            info!("Fixed uninitialized pointer bug in osd.hpp");
+        }
+
+        // Fix 2: Fix buffer overflow in COMBINATION_SWEEP when osd_order > k
+        // The code loops i,j from 0 to osd_order but accesses candidate[i] and candidate[j]
+        // where candidate has size k. When osd_order > k, this is out of bounds.
+        if content.contains("for(int i = 0; i<this->osd_order;i++){")
+            && !content.contains("// PECOS FIX: clamp to k")
+        {
+            content = content.replace(
+                "            if(this->osd_method == COMBINATION_SWEEP){\n                for(int i=0; i<k; i++) {\n                    std::vector<uint8_t> osd_candidate;\n                    osd_candidate.resize(k,0);\n                    osd_candidate[i]=1; \n                    this->osd_candidate_strings.push_back(osd_candidate);\n                }\n\n                for(int i = 0; i<this->osd_order;i++){\n                    for(int j = 0; j<this->osd_order; j++){",
+                "            if(this->osd_method == COMBINATION_SWEEP){\n                for(int i=0; i<k; i++) {\n                    std::vector<uint8_t> osd_candidate;\n                    osd_candidate.resize(k,0);\n                    osd_candidate[i]=1; \n                    this->osd_candidate_strings.push_back(osd_candidate);\n                }\n\n                // PECOS FIX: clamp to k to prevent buffer overflow when osd_order > k\n                int max_order = (this->osd_order < k) ? this->osd_order : k;\n                for(int i = 0; i<max_order;i++){\n                    for(int j = 0; j<max_order; j++){",
+            );
+            modified = true;
+            info!("Fixed buffer overflow in OSD COMBINATION_SWEEP");
+        }
+
+        if modified {
+            fs::write(&osd_path, content)?;
         }
     }
 
@@ -187,19 +264,32 @@ fn build_cxx_bridge(ldpc_dir: &Path) -> Result<()> {
     // Fix MSVC compatibility issues
     fix_msvc_compatibility(&src_cpp_dir)?;
 
+    // Fix uninitialized pointers that cause heap corruption on Windows
+    fix_uninitialized_pointers(&src_cpp_dir)?;
+
     // Build the cxx bridge first to generate headers
     let mut build = cxx_build::bridge("src/bridge.rs");
+
+    let target = env::var("TARGET").unwrap_or_default();
+
+    // On macOS, explicitly use system clang to ensure SDK paths are correct.
+    // The PECOS LLVM clang may be in PATH but doesn't have SDK headers configured,
+    // causing "math.h file not found" errors during compilation.
+    if target.contains("darwin") && env::var("CXX").is_err() && env::var("CC").is_err() {
+        build.compiler("/usr/bin/clang++");
+    }
+
     build
         .file("src/bridge.cpp")
         .include(&src_cpp_dir)
         .include(&include_dir)
         .include(include_dir.join("robin_map"))
         .include(include_dir.join("rapidcsv"))
-        .include("include");
+        .include("include")
+        .warnings(false); // Disable cxx's default warning flags so we can set our own
 
     // Use C++17 when available, fall back to C++14 for older compilers
     // This helps with cross-compilation where older toolchains may not fully support C++17
-    let target = env::var("TARGET").unwrap_or_default();
     if target.contains("aarch64") || target.contains("arm") {
         // For ARM targets, check what's supported
         if build.is_flag_supported("-std=c++17").unwrap_or(false) {
@@ -215,19 +305,26 @@ fn build_cxx_bridge(ldpc_dir: &Path) -> Result<()> {
     // Report ccache/sccache configuration
     report_cache_config();
 
-    // Use different optimization levels for debug vs release builds
-    if cfg!(debug_assertions) {
-        build.flag_if_supported("-O0"); // No optimization for faster compilation
-        build.flag_if_supported("-g"); // Include debug symbols
-    } else {
-        build.flag_if_supported("-O3"); // Full optimization for release
-    }
-
-    // Only use -march=native if not cross-compiling and not explicitly disabled
-    if env::var("CARGO_CFG_TARGET_ARCH").ok() == env::var("HOST_ARCH").ok()
-        && env::var("DECODER_DISABLE_NATIVE_ARCH").is_err()
-    {
-        build.flag_if_supported("-march=native");
+    // Use build profile for optimization settings
+    let profile = get_build_profile();
+    match profile.as_str() {
+        "native" => {
+            // Native profile: release optimizations + CPU-specific optimizations
+            build.flag_if_supported("-O3");
+            // Only use -march=native if not cross-compiling
+            if env::var("CARGO_CFG_TARGET_ARCH").ok() == env::var("HOST_ARCH").ok() {
+                build.flag_if_supported("-march=native");
+            }
+        }
+        "release" => {
+            // Release profile: full optimization
+            build.flag_if_supported("-O3");
+        }
+        _ => {
+            // Dev profile: no optimization for faster compilation
+            build.flag_if_supported("-O0");
+            build.flag_if_supported("-g"); // Include debug symbols
+        }
     }
 
     // Suppress warnings from external code
@@ -236,16 +333,39 @@ fn build_cxx_bridge(ldpc_dir: &Path) -> Result<()> {
         build
             .flag("-w") // Suppress all warnings
             .flag_if_supported("-fopenmp"); // Enable OpenMP if available
+
+        // On macOS, use the -stdlib=libc++ flag to ensure proper C++ standard library linkage
+        if target.contains("darwin") {
+            build.flag("-stdlib=libc++");
+            // Prevent opportunistic linking to Homebrew's libunwind (Xcode 15+ issue)
+            build.flag("-L/usr/lib");
+            build.flag("-Wl,-search_paths_first");
+        }
     } else {
         // For MSVC
         build
             .flag("/W0") // Warning level 0 (no warnings)
-            .flag_if_supported("/openmp") // Enable OpenMP if available
+            // NOTE: OpenMP disabled on Windows to avoid CRT issues - can cause heap corruption
+            // when combined with dynamic CRT (/MD) in multi-threaded scenarios
+            // .flag_if_supported("/openmp") // Enable OpenMP if available
             .flag_if_supported("/permissive-") // Enable standards-compliant C++ parsing
             .flag_if_supported("/Zc:__cplusplus"); // Report correct __cplusplus macro value
+
+        // CRITICAL: Use the same CRT as Rust/cxx to avoid heap corruption on Windows
+        // Dependencies like cxx are always built with release CRT (/MD) even in debug builds
+        // We must match this to avoid heap corruption when memory crosses DLL boundaries
+        // Always use /MD (release CRT) to match dependencies
+        build.flag("/MD"); // Dynamic CRT, release version (matches cxx and other deps)
     }
 
     build.compile("ldpc-bridge");
+
+    // On macOS, link against the system C++ library from dyld shared cache
+    if target.contains("darwin") {
+        println!("cargo:rustc-link-search=native=/usr/lib");
+        println!("cargo:rustc-link-lib=c++");
+        println!("cargo:rustc-link-arg=-Wl,-search_paths_first");
+    }
 
     Ok(())
 }

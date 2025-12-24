@@ -1,100 +1,166 @@
 # Getting Started
 
-This guide will help you get up and running with PECOS quickly, whether you're using the Python package, the Rust crates, or both.
+This guide will help you get up and running with PECOS quickly.
 
 ## Installation
 
-=== "Python"
-
-    To install the main Python package for general usage:
+=== ":fontawesome-brands-python: Python"
 
     ```bash
     pip install quantum-pecos
     ```
 
-    This will install both `quantum-pecos` and its dependency `pecos-rslib`.
-
-    For optional dependencies that should work on all systems:
-
-    ```bash
-    pip install quantum-pecos[all]
-    ```
+    That's it! This installs everything you need to start simulating quantum circuits.
 
     !!! note "Import Name"
-        The `quantum-pecos` package is imported as `import pecos` and not `import quantum_pecos`.
+        Import with `import pecos` (not `import quantum_pecos`).
 
-    To install pre-releases (the latest development code) from PyPI:
+    !!! tip "Pre-release versions"
+        To install the latest development version from PyPI:
+        ```bash
+        pip install quantum-pecos --pre
+        ```
+        Or a specific version: `pip install quantum-pecos==0.8.0.dev0`
 
-    ```bash
-    pip install quantum-pecos==X.Y.Z.devN  # Replace with actual version number
-    ```
+=== ":fontawesome-brands-rust: Rust"
 
-=== "Rust"
-
-    To use PECOS in your Rust project, add the following to your `Cargo.toml`:
+    Add to your `Cargo.toml`:
 
     ```toml
     [dependencies]
-    pecos-core = "0.1.x"  # Replace with the latest version
-    # Add other PECOS crates as needed:
-    # pecos-engines = "0.1.x"
-    # pecos-qsim = "0.1.x"
+    pecos = { version = "0.1", features = ["qasm"] }
     ```
 
-## Optional Dependencies
+    The `qasm` feature enables QASM simulation. For PHIR support, add `phir`. See the [Rust API docs](https://docs.rs/pecos) for all available features.
 
-### LLVM for QIR Support
+## Verify Installation
 
-LLVM version 14 is required for QIR (Quantum Intermediate Representation) support:
-
-=== "Linux"
-    ```bash
-    sudo apt install llvm-14
-    ```
-
-=== "macOS"
-    ```bash
-    brew install llvm@14
-    ```
-
-=== "Windows"
-    Download LLVM 14.x installer from [LLVM releases](https://releases.llvm.org/download.html#14.0.0)
-
-!!! warning
-    PECOS's QIR implementation is currently only compatible with LLVM version 14.x.
-
-If LLVM 14 is not installed, PECOS will still function normally but QIR-related features will be disabled.
-
-### Simulators with Special Requirements
-
-Some simulators from `pecos.simulators` require external packages:
-
-- **QuEST**: Installed with the Python package `pyquest` via `pip install .[all]`. For 32-bit float point precision, follow the installation instructions [here](https://github.com/rrmeister/pyQuEST/tree/develop).
-
-- **CuStateVec**: Requires a Linux machine with an NVIDIA GPU. Installation via conda is recommended, as discussed [here](https://docs.nvidia.com/cuda/cuquantum/latest/getting_started/getting_started.html#installing-cuquantum).
-
-- **MPS**: Uses `pytket-cutensornet` and can be installed via `pip install .[cuda]`. These simulators use NVIDIA GPUs and cuQuantum. Follow the instructions for `CuStateVec` above to install cuQuantum.
-
-## Verification
-
-Verify your installation:
-
-=== "Python"
+=== ":fontawesome-brands-python: Python"
     ```python
     import pecos
 
     print(pecos.__version__)
     ```
 
-=== "Rust"
-    Create a simple Rust program and run:
-
+=== ":fontawesome-brands-rust: Rust"
     ```rust
-    // This example assumes you have added pecos-core to your Cargo.toml
-    // use pecos_core;
+    use pecos::prelude::*;
 
     fn main() {
-        println!("PECOS Rust crates would be loaded here!");
-        // Once loaded, you can use PECOS functionality
+        let sim = StdSparseStab::new(1);
+        println!("PECOS is working! Created a {}-qubit simulator", sim.num_qubits());
     }
     ```
+
+## Your First Simulation
+
+Now that PECOS is installed, let's create a simple quantum circuit. We'll create a **Bell state**—a fundamental entangled state used throughout quantum computing and quantum error correction.
+
+### What We're Building
+
+A Bell state is created by:
+
+1. Applying a Hadamard gate (H) to put a qubit in superposition
+2. Applying a CNOT gate to entangle two qubits
+
+The result is the state $\frac{1}{\sqrt{2}}(|00\rangle + |11\rangle)$, where measuring either qubit always gives the same result as the other.
+
+### Running the Simulation
+
+=== ":fontawesome-brands-python: Python"
+
+    ```python
+    from pecos import sim, Qasm
+
+    # Define a Bell state circuit in OpenQASM
+    qasm_code = """
+    OPENQASM 2.0;
+    include "qelib1.inc";
+    qreg q[2];
+    creg c[2];
+    h q[0];
+    cx q[0], q[1];
+    measure q -> c;
+    """
+
+    # Run 10 shots of the simulation
+    results = sim(Qasm(qasm_code)).seed(42).run(10)
+
+    # View results (0 = both |0⟩, 3 = both |1⟩)
+    print(f"Results: {results.to_dict()}")
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
+
+    ```rust
+    use pecos::prelude::*;
+
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        // Define a Bell state circuit in OpenQASM
+        let qasm_code = r#"
+            OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[2];
+            creg c[2];
+            h q[0];
+            cx q[0], q[1];
+            measure q -> c;
+        "#;
+
+        let program = Qasm::from_string(qasm_code);
+
+        // Run 10 shots of the simulation
+        let results = sim(program)
+            .seed(42)
+            .run(10)?;
+
+        // View results
+        println!("Results: {:?}", results);
+        Ok(())
+    }
+    ```
+
+### Understanding the Output
+
+Run the code multiple times (with different seeds). You'll notice:
+
+- Results contain values like `0` (binary `00`) and `3` (binary `11`)
+- Both qubits **always** have the same value—this is quantum entanglement!
+
+The `sim()` function is PECOS's unified simulation API. It accepts circuits in various formats (QASM, HUGR, etc.) and provides a builder pattern for configuration.
+
+This demonstrates PECOS's stabilizer simulator, which efficiently simulates Clifford circuits (circuits using H, S, CNOT, and similar gates). Stabilizer simulation is the foundation for simulating quantum error correction codes.
+
+## Next Steps
+
+- **[QASM Simulation](qasm-simulation.md)**: Learn the full simulation API
+- **[Simulators](simulators.md)**: Choose the right simulation backend
+- **[Noise Model Builders](noise-model-builders.md)**: Add realistic noise to your simulations
+- **[Decoders](decoders.md)**: Explore quantum error correction decoding
+
+## Optional Features
+
+Most users won't need these, but they're available for specialized use cases:
+
+| Feature | What it enables | Setup guide |
+|---------|-----------------|-------------|
+| **LLVM** (Rust only) | QIR/LLVM IR execution | [LLVM Setup](llvm-setup.md) |
+| **CUDA** | GPU-accelerated simulation | [CUDA Setup](cuda-setup.md) |
+| **QuEST** | Alternative simulator backend | `pip install quantum-pecos[all]` |
+
+!!! tip "Python users"
+    Pre-built wheels include LLVM support—no extra setup needed.
+
+## Uninstalling
+
+To remove PECOS:
+
+=== ":fontawesome-brands-python: Python"
+
+    ```bash
+    pip uninstall quantum-pecos pecos-rslib
+    ```
+
+=== ":fontawesome-brands-rust: Rust"
+
+    Remove the `pecos` dependency from your `Cargo.toml`.

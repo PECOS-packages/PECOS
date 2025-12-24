@@ -20,7 +20,6 @@ log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rand.workspace = true
-rand_chacha.workspace = true
 bytemuck.workspace = true
 bitflags.workspace = true
 dyn-clone.workspace = true
@@ -29,6 +28,7 @@ bitvec.workspace = true
 
 pecos-core.workspace = true
 pecos-qsim.workspace = true
+pecos-rng.workspace = true
 
 [lints]
 workspace = true

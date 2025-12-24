@@ -17,8 +17,6 @@ including Pauli gates, rotation gates, and other fundamental single-qubit operat
 
 from __future__ import annotations
 
-import cmath
-import math
 from typing import TYPE_CHECKING
 
 import cupy as cp
@@ -26,7 +24,9 @@ import cupy as cp
 if TYPE_CHECKING:
     from pecos.simulators.custatevec.state import CuStateVec
     from pecos.typing import SimulatorGateParams
-from cuquantum import custatevec as cusv
+from cuquantum.bindings import custatevec as cusv
+
+import pecos as pc
 
 
 def _apply_one_qubit_matrix(state: CuStateVec, qubit: int, matrix: cp.ndarray) -> None:
@@ -150,10 +150,10 @@ def RX(
 
     matrix = cp.asarray(
         [
-            math.cos(theta / 2),
-            -1j * math.sin(theta / 2),
-            -1j * math.sin(theta / 2),
-            math.cos(theta / 2),
+            pc.cos(theta / 2),
+            -1j * pc.sin(theta / 2),
+            -1j * pc.sin(theta / 2),
+            pc.cos(theta / 2),
         ],
         dtype=state.cp_type,
     )
@@ -180,10 +180,10 @@ def RY(
 
     matrix = cp.asarray(
         [
-            math.cos(theta / 2),
-            -math.sin(theta / 2),
-            math.sin(theta / 2),
-            math.cos(theta / 2),
+            pc.cos(theta / 2),
+            -pc.sin(theta / 2),
+            pc.sin(theta / 2),
+            pc.cos(theta / 2),
         ],
         dtype=state.cp_type,
     )
@@ -210,10 +210,10 @@ def RZ(
 
     matrix = cp.asarray(
         [
-            cmath.exp(-1j * theta / 2),
+            cp.exp(-1j * theta / 2),
             0,
             0,
-            cmath.exp(1j * theta / 2),
+            cp.exp(1j * theta / 2),
         ],
         dtype=state.cp_type,
     )
@@ -240,9 +240,9 @@ def R1XY(
     phi = angles[1]
 
     # Gate is equal to RZ(phi-pi/2)*RY(theta)*RZ(-phi+pi/2)
-    RZ(state, qubit, angles=(-phi + math.pi / 2,))
+    RZ(state, qubit, angles=(-phi + pc.f64.frac_pi_2,))
     RY(state, qubit, angles=(theta,))
-    RZ(state, qubit, angles=(phi - math.pi / 2,))
+    RZ(state, qubit, angles=(phi - pc.f64.frac_pi_2,))
 
 
 def SX(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -252,7 +252,7 @@ def SX(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of CuStateVec
         qubit: The index of the qubit where the gate is applied
     """
-    RX(state, qubit, angles=(math.pi / 2,))
+    RX(state, qubit, angles=(pc.f64.frac_pi_2,))
 
 
 def SXdg(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -262,7 +262,7 @@ def SXdg(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of CuStateVec
         qubit: The index of the qubit where the gate is applied
     """
-    RX(state, qubit, angles=(-math.pi / 2,))
+    RX(state, qubit, angles=(-pc.f64.frac_pi_2,))
 
 
 def SY(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -272,7 +272,7 @@ def SY(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of CuStateVec
         qubit: The index of the qubit where the gate is applied
     """
-    RY(state, qubit, angles=(math.pi / 2,))
+    RY(state, qubit, angles=(pc.f64.frac_pi_2,))
 
 
 def SYdg(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -282,7 +282,7 @@ def SYdg(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of CuStateVec
         qubit: The index of the qubit where the gate is applied
     """
-    RY(state, qubit, angles=(-math.pi / 2,))
+    RY(state, qubit, angles=(-pc.f64.frac_pi_2,))
 
 
 def SZ(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -292,7 +292,7 @@ def SZ(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of CuStateVec
         qubit: The index of the qubit where the gate is applied
     """
-    RZ(state, qubit, angles=(math.pi / 2,))
+    RZ(state, qubit, angles=(pc.f64.frac_pi_2,))
 
 
 def SZdg(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -302,7 +302,7 @@ def SZdg(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of CuStateVec
         qubit: The index of the qubit where the gate is applied
     """
-    RZ(state, qubit, angles=(-math.pi / 2,))
+    RZ(state, qubit, angles=(-pc.f64.frac_pi_2,))
 
 
 def H(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -335,8 +335,8 @@ def F(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of CuStateVec
         qubit: The index of the qubit where the gate is applied
     """
-    RX(state, qubit, angles=(math.pi / 2,))
-    RZ(state, qubit, angles=(math.pi / 2,))
+    RX(state, qubit, angles=(pc.f64.frac_pi_2,))
+    RZ(state, qubit, angles=(pc.f64.frac_pi_2,))
 
 
 def Fdg(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -346,8 +346,8 @@ def Fdg(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of CuStateVec
         qubit: The index of the qubit where the gate is applied
     """
-    RZ(state, qubit, angles=(-math.pi / 2,))
-    RX(state, qubit, angles=(-math.pi / 2,))
+    RZ(state, qubit, angles=(-pc.f64.frac_pi_2,))
+    RX(state, qubit, angles=(-pc.f64.frac_pi_2,))
 
 
 def T(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -357,7 +357,7 @@ def T(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of CuStateVec
         qubit: The index of the qubit where the gate is applied
     """
-    RZ(state, qubit, angles=(math.pi / 4,))
+    RZ(state, qubit, angles=(pc.f64.frac_pi_4,))
 
 
 def Tdg(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -367,7 +367,7 @@ def Tdg(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of CuStateVec
         qubit: The index of the qubit where the gate is applied
     """
-    RZ(state, qubit, angles=(-math.pi / 4,))
+    RZ(state, qubit, angles=(-pc.f64.frac_pi_4,))
 
 
 def H2(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:

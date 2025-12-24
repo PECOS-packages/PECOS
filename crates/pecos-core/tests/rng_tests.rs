@@ -2,7 +2,7 @@
 
 use pecos_core::rng::{RecordingRng, ReplayingRng};
 use rand::{Rng, RngCore, SeedableRng};
-use rand_chacha::ChaCha8Rng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 
 // Epsilon value for floating-point comparisons
 const EPSILON: f64 = 1e-10;
@@ -14,9 +14,9 @@ fn approx_eq(a: f64, b: f64) -> bool {
 
 #[test]
 fn test_replaying_rng_basic_values() {
-    // Create a recording RNG with ChaCha8Rng
-    let chacha_rng = ChaCha8Rng::seed_from_u64(42);
-    let mut recording_rng = RecordingRng::new(chacha_rng);
+    // Create a recording RNG with Xoshiro256PlusPlus
+    let xoshiro_rng = Xoshiro256PlusPlus::seed_from_u64(42);
+    let mut recording_rng = RecordingRng::new(xoshiro_rng);
 
     // Generate various types of random values
     let bool_value = recording_rng.random::<bool>();
@@ -38,8 +38,8 @@ fn test_replaying_rng_basic_values() {
 #[test]
 fn test_replaying_rng_char_generation() {
     // This test specifically targets the char generation issue we identified
-    let chacha_rng = ChaCha8Rng::seed_from_u64(42);
-    let mut recording_rng = RecordingRng::new(chacha_rng);
+    let xoshiro_rng = Xoshiro256PlusPlus::seed_from_u64(42);
+    let mut recording_rng = RecordingRng::new(xoshiro_rng);
 
     // Generate a random character
     let random_char = recording_rng.random::<char>();
@@ -57,9 +57,9 @@ fn test_replaying_rng_char_generation() {
 
 #[test]
 fn test_complex_rng_sequence() {
-    // Create a recording RNG with ChaCha8Rng
-    let chacha_rng = ChaCha8Rng::seed_from_u64(42);
-    let mut recording_rng = RecordingRng::new(chacha_rng);
+    // Create a recording RNG with Xoshiro256PlusPlus
+    let xoshiro_rng = Xoshiro256PlusPlus::seed_from_u64(42);
+    let mut recording_rng = RecordingRng::new(xoshiro_rng);
 
     // Generate a complex sequence of random values
     let bool_value1 = recording_rng.random::<bool>();
@@ -99,7 +99,7 @@ fn test_replaying_rng_custom_function() {
     }
 
     // Create recording RNG and original results
-    let mut recording_rng = RecordingRng::new(ChaCha8Rng::seed_from_u64(123));
+    let mut recording_rng = RecordingRng::new(Xoshiro256PlusPlus::seed_from_u64(123));
     let mut original_results = Vec::new();
     for i in 0..5 {
         original_results.push(generate_random_data(&mut recording_rng, i));

@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 from pecos.slr.gen_codes.generator import Generator
 from pecos.slr.gen_codes.guppy.dependency_analyzer import DependencyAnalyzer
 from pecos.slr.gen_codes.guppy.ir import ScopeContext
-from pecos.slr.gen_codes.guppy.ir_analyzer import IRAnalyzer
 from pecos.slr.gen_codes.guppy.ir_builder import IRBuilder
 from pecos.slr.gen_codes.guppy.ir_postprocessor import IRPostProcessor
+from pecos.slr.gen_codes.guppy.unified_resource_planner import UnifiedResourcePlanner
 
 if TYPE_CHECKING:
     from pecos.slr import Block
@@ -26,15 +26,24 @@ class IRGuppyGenerator(Generator):
 
     def generate_block(self, block: Block) -> None:
         """Generate Guppy code for a block using IR."""
-        # First pass: Analyze the block
-        analyzer = IRAnalyzer()
-        unpacking_plan = analyzer.analyze_block(block, self.variable_context)
-
         # Build variable context from block
         self._build_variable_context(block)
 
-        # Second pass: Build IR
-        builder = IRBuilder(unpacking_plan, include_optimization_report=True)
+        # First pass: Analyze the block with unified resource planning
+        # This coordinates unpacking decisions with allocation strategies
+        planner = UnifiedResourcePlanner()
+        unified_analysis = planner.analyze(block, self.variable_context)
+
+        # Convert unified analysis to UnpackingPlan
+        # The unified planner internally runs IRAnalyzer, so we don't need to run it again
+        unpacking_plan = unified_analysis.get_unpacking_plan()
+
+        # Second pass: Build IR with both unpacking plan and unified analysis
+        builder = IRBuilder(
+            unpacking_plan,
+            unified_analysis=unified_analysis,
+            include_optimization_report=True,
+        )
         module = builder.build_module(block, [])  # No pending functions for now
 
         # Post-processing pass: Fix array accesses after unpacking

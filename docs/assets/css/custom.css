@@ -1,7 +1,16 @@
 /* Custom styles for PECOS documentation */
 
+/* Import Proxima Nova font */
+@import url('https://fonts.cdnfonts.com/css/proxima-nova-2');
+
 /* We're using built-in Material teal theme now */
 :root {
+  /* Font configuration */
+  --md-text-font: 'Proxima Nova', sans-serif;
+  --md-code-font: 'Source Code Pro', monospace;
+
+  /* Adjust font sizes for compact layout */
+  --md-typeset-font-size: 0.65rem;
 
   /* Make navigation text lighter */
   --md-default-fg-color:         rgba(0, 0, 0, 0.7);
@@ -45,6 +54,11 @@
 }
 
 
+/* Main content area font size */
+.md-typeset {
+  font-size: 0.65rem !important;
+}
+
 /* Code block styling */
 .md-typeset code {
   font-size: 0.85em;
@@ -53,7 +67,7 @@
 /* Admonition styling */
 .md-typeset .admonition,
 .md-typeset details {
-  font-size: 0.85rem;
+  font-size: 0.6rem;
 }
 
 /* Image styling */
@@ -85,7 +99,7 @@
 }
 
 .md-typeset table:not([class]) {
-  font-size: 0.85rem;
+  font-size: 0.6rem;
 }
 
 /* Navigation sidebar width */
@@ -108,7 +122,7 @@
 .md-nav__item--nested > .md-nav__link {
   font-weight: bold;
   color: var(--nav-section-color);
-  font-size: 0.8rem;
+  font-size: 0.75rem;
 }
 
 /* Style the navigation links and hide default toggles */
@@ -197,12 +211,24 @@
 /* TOC title styling */
 .md-nav--secondary .md-nav__title {
   color: var(--toc-title-color) !important;
-  font-size: 0.8rem;
-  padding-bottom: 0.2rem;
-  margin-bottom: 0.1rem;
-  background: none !important;
-  box-shadow: none !important;
+  font-size: 0.7rem;
+  padding-bottom: 0.3rem !important;
+  margin-bottom: 0.3rem !important;
   font-weight: 600;
+  line-height: 1.4;
+  height: auto !important;
+  /* Make sticky with background so scrolling content goes underneath */
+  position: sticky !important;
+  top: 0 !important;
+  background-color: var(--md-default-bg-color) !important;
+  z-index: 1 !important;
+  box-shadow: none !important;
+}
+
+/* Ensure TOC list doesn't overlap with title */
+.md-nav--secondary > .md-nav__list {
+  margin-top: 0 !important;
+  padding-top: 0 !important;
 }
 
 /* Improve spacing in navigation */
@@ -227,7 +253,7 @@
 .md-nav__link {
   color: var(--nav-text-color);
   transition: color 0.2s;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   margin-top: 0.05rem;
   margin-bottom: 0.05rem;
   padding-top: 0.05rem;
@@ -262,7 +288,7 @@
 /* Homepage specific styles */
 .md-typeset h1 {
   font-weight: 600;
-  margin-bottom: 1em;
+  margin-bottom: 0.5em;
   color: #607d8b;
   font-size: 2.4em;
 }
@@ -349,11 +375,39 @@ body.index-page .md-content__inner > p:nth-of-type(2) {
   font-weight: 400;
   border-bottom: 1px solid rgba(0,0,0,0.07);
   padding-bottom: 0.2rem;
+  margin-top: 1.2em;
+  margin-bottom: 0.6em;
+}
+
+.md-typeset h3 {
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+}
+
+.md-typeset h4 {
+  margin-top: 0.8em;
+  margin-bottom: 0.4em;
+}
+
+.md-typeset p {
+  margin-bottom: 0.8em;
+}
+
+/* Reduce spacing between list items */
+.md-typeset ul li,
+.md-typeset ol li {
+  margin-bottom: 0.3em;
+}
+
+.md-typeset ul,
+.md-typeset ol {
+  margin-top: 0.5em;
+  margin-bottom: 0.8em;
 }
 
 /* Table of Contents styling */
 .md-nav--secondary .md-nav__link {
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   margin-top: 0.03rem;
   margin-bottom: 0.03rem;
   padding-top: 0.04rem;

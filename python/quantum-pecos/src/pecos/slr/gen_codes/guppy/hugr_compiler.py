@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import tempfile
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pecos.slr.gen_codes.guppy.hugr_error_handler import HugrErrorHandler
-
-if TYPE_CHECKING:
-    from pecos.slr.gen_codes.guppy.generator import GuppyGenerator
 
 try:
     # Check if guppylang is available by attempting actual imports
@@ -39,11 +36,11 @@ except (ImportError, AttributeError) as e:
 class HugrCompiler:
     """Compiles generated Guppy code to HUGR."""
 
-    def __init__(self, generator: GuppyGenerator):
+    def __init__(self, generator):
         """Initialize the HUGR compiler.
 
         Args:
-            generator: The GuppyGenerator instance with generated code
+            generator: A generator instance with generated code (must have get_output() method)
         """
         self.generator = generator
 
@@ -111,6 +108,11 @@ class HugrCompiler:
 
             # Compile to HUGR
             try:
+                # Debug: print the generated code
+                # print("DEBUG: Generated Guppy code:")
+                # print(guppy_code)
+                # print("="*50)
+
                 # Use the new API: func.compile() instead of guppy.compile(func)
                 return main_func.compile()
             except (AttributeError, TypeError, ValueError, RuntimeError) as e:

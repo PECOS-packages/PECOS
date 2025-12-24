@@ -1,64 +1,23 @@
-use pecos_core::errors::PecosError;
-use std::fmt::Debug;
+// Copyright 2025 The PECOS Developers
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
 
-/// Trait for foreign object implementations in QASM
-pub trait ForeignObject: Debug + Send + Sync {
-    /// Clone the foreign object
-    fn clone_box(&self) -> Box<dyn ForeignObject>;
+//! Re-export foreign object trait from pecos-wasm crate
+//!
+//! This module previously defined its own `ForeignObject` trait,
+//! but now uses the unified trait from pecos-wasm.
 
-    /// Initialize object before running a series of simulations
-    ///
-    /// # Errors
-    /// Returns an error if initialization fails.
-    fn init(&mut self) -> Result<(), PecosError>;
+// Re-export from pecos-wasm crate
+#[cfg(feature = "wasm")]
+pub use pecos_wasm::{DummyForeignObject, ForeignObject};
 
-    /// Create new instance/internal state for a new shot
-    ///
-    /// # Errors
-    /// Returns an error if instance creation fails.
-    fn new_instance(&mut self) -> Result<(), PecosError>;
-
-    /// Execute a function given a list of arguments
-    ///
-    /// # Errors
-    /// Returns an error if the function does not exist or execution fails.
-    fn exec(&mut self, func_name: &str, args: &[i64]) -> Result<Vec<i64>, PecosError>;
-}
-
-/// Dummy foreign object for when no foreign object is needed
-#[derive(Debug, Clone)]
-pub struct DummyForeignObject {}
-
-impl DummyForeignObject {
-    /// Create a new dummy foreign object
-    #[must_use]
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-impl Default for DummyForeignObject {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ForeignObject for DummyForeignObject {
-    fn clone_box(&self) -> Box<dyn ForeignObject> {
-        Box::new(Self::default())
-    }
-
-    fn init(&mut self) -> Result<(), PecosError> {
-        Ok(())
-    }
-
-    fn new_instance(&mut self) -> Result<(), PecosError> {
-        Ok(())
-    }
-
-    fn exec(&mut self, func_name: &str, _args: &[i64]) -> Result<Vec<i64>, PecosError> {
-        Err(PecosError::Input(format!(
-            "Dummy foreign object cannot execute function: {func_name}"
-        )))
-    }
-}
+// For when wasm feature is disabled, provide minimal trait
+#[cfg(not(feature = "wasm"))]
+pub use pecos_wasm::{DummyForeignObject, ForeignObject};

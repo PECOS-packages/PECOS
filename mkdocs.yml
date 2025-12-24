@@ -1,4 +1,4 @@
-site_name: PECOS User Guide
+site_name: PECOS Documentation
 docs_dir: docs
 site_dir: site
 use_directory_urls: false
@@ -17,22 +17,22 @@ theme:
   icon:
     repo: fontawesome/brands/github
   font:
-    text: Roboto
-    code: Roboto Mono
+    text: Proxima Nova
+    code: Source Code Pro
   palette:
   - media: '(prefers-color-scheme: light)'
     scheme: default
     primary: custom
     accent: deep orange
     toggle:
-      icon: material/toggle-switch-off-outline
+      icon: material/brightness-7
       name: Switch to dark mode
   - media: '(prefers-color-scheme: dark)'
     scheme: slate
     primary: custom
     accent: deep orange
     toggle:
-      icon: material/toggle-switch
+      icon: material/brightness-4
       name: Switch to light mode
   features:
   - navigation.tracking
@@ -40,24 +40,31 @@ theme:
   - navigation.footer
   - navigation.top
   - toc.follow
-  - toc.integrate
   - content.code.copy
   - content.code.annotate
+  - content.tabs.link
   - search.highlight
   - search.suggest
   - search.share
 nav:
+- Home: README.md
 - User Guide:
-  - Introduction: README.md
-  - user-guide/getting-started.md
-  - user-guide/qasm-simulation.md
-  - user-guide/noise-model-builders.md
-  - user-guide/general-noise-factory.md
-  - user-guide/decoders.md
+  - Getting Started: user-guide/getting-started.md
+  - Command Line Interface: user-guide/cli.md
+  - QASM Simulation: user-guide/qasm-simulation.md
+  - Simulators: user-guide/simulators.md
+  - Noise Model Builders: user-guide/noise-model-builders.md
+  - Decoders: user-guide/decoders.md
+  - Graph API: user-guide/graph-api.md
+  - Parallel Execution: user-guide/parallel-execution.md
+  - LLVM Setup: user-guide/llvm-setup.md
+  - CUDA Setup: user-guide/cuda-setup.md
 - API:
   - api/api-reference.md
 - Development:
   - development/DEVELOPMENT.md
+  - Developer Tools CLI: development/dev-tools.md
+  - development/QIS_ARCHITECTURE.md
 - Releases:
   - releases/changelog.md
 markdown_extensions:
@@ -68,8 +75,14 @@ markdown_extensions:
 - pymdownx.superfences
 - pymdownx.tabbed:
     alternate_style: true
+- pymdownx.emoji:
+    emoji_index: !!python/name:material.extensions.emoji.twemoji
+    emoji_generator: !!python/name:material.extensions.emoji.to_svg
 - pymdownx.arithmatex:
     generic: true
+- toc:
+    permalink: true
+    toc_depth: 3
 - tables
 - footnotes
 - pymdownx.details

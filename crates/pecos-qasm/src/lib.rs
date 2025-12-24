@@ -17,7 +17,7 @@
 //!
 //! ```
 //! use pecos_qasm::QASMEngine;
-//! use pecos_engines::ClassicalEngine;
+//! use pecos_engines::{ClassicalEngine, ClassicalControlEngine};
 //! use std::str::FromStr;
 //!
 //! let qasm = r#"
@@ -36,7 +36,7 @@
 //!
 //! ```
 //! use pecos_qasm::QASMEngine;
-//! use pecos_engines::ClassicalEngine;
+//! use pecos_engines::{ClassicalEngine, ClassicalControlEngine};
 //!
 //! let qasm = r#"
 //!     OPENQASM 2.0;
@@ -46,7 +46,7 @@
 //! "#;
 //!
 //! let engine = QASMEngine::builder()
-//!     .with_virtual_include("custom.inc", "gate my_gate a { h a; }")
+//!     .with_virtual_include("custom.inc", "gate my_gate a { H a; }")
 //!     .allow_complex_conditionals(true)
 //!     .build_from_str(qasm)?;
 //! assert_eq!(engine.num_qubits(), 1);
@@ -55,7 +55,7 @@
 
 pub mod ast;
 pub mod bitvec_expression;
-pub mod config;
+// pub mod config; // TODO: Update to use unified API types
 pub mod engine;
 pub mod engine_builder;
 pub mod foreign_objects;
@@ -67,6 +67,7 @@ pub mod program;
 pub mod result_formatter;
 pub mod run;
 pub mod simulation;
+pub mod unified_engine_builder;
 pub mod util;
 
 #[cfg(feature = "wasm")]
@@ -79,6 +80,9 @@ pub use engine_builder::QASMEngineBuilder;
 pub use parser::{ParseConfig, QASMParser};
 pub use preprocessor::Preprocessor;
 pub use program::QASMProgram;
+#[cfg(feature = "wasm")]
+pub use program::QasmEngineWasm;
+pub use unified_engine_builder::{QasmEngineBuilder, qasm_engine};
 pub use util::{count_qubits_in_file, count_qubits_in_str};
 
 /// List of built-in mathematical functions that cannot be overridden by WASM
@@ -87,7 +91,7 @@ pub const PLATFORM_FUNCTIONS: [&str; 4] = ["RNGseed", "RNGbound", "RNGindex", "R
 
 use log::debug;
 use pecos_core::errors::PecosError;
-use pecos_engines::ClassicalEngine;
+use pecos_engines::ClassicalControlEngine;
 use std::path::Path;
 
 /// Sets up a basic QASM engine.
@@ -111,7 +115,7 @@ use std::path::Path;
 pub fn setup_qasm_engine(
     program_path: &Path,
     seed: Option<u64>,
-) -> Result<Box<dyn ClassicalEngine>, PecosError> {
+) -> Result<Box<dyn ClassicalControlEngine>, PecosError> {
     debug!("Setting up QASM engine for: {}", program_path.display());
 
     // Note: The seed parameter is unused as QASMEngine doesn't handle randomness.

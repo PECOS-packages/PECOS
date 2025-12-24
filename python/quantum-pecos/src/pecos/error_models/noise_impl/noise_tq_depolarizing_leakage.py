@@ -20,9 +20,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
-
-from pecos.reps.pypmir.op_types import QOp
+import pecos as pc
+from pecos.reps.pyphir.op_types import QOp
 
 if TYPE_CHECKING:
     from pecos.protocols import MachineProtocol
@@ -35,7 +34,7 @@ def noise_tq_depolarizing_leakage(
     machine: MachineProtocol,
 ) -> list[QOp] | None:
     """Two-qubit gate depolarizing noise plus leakage."""
-    # TODO: precompute, in PyPMIR, a flattened version of args
+    # TODO: precompute, in PyPHIR, a flattened version of args
     args = set()
     for a in op.args:
         for q in a:
@@ -47,31 +46,32 @@ def noise_tq_depolarizing_leakage(
     if leaked:
         not_leaked = args - leaked
 
-        # TODO: precompute, in PyPMIR, a flattened version of args
+        # TODO: precompute, in PyPHIR, a flattened version of args
         new_args = []
         for a, b in op.args:
             if a not in not_leaked and b not in leaked:
                 new_args.append([a, b])
         op = QOp(name=op.name, args=new_args, metadata=dict(op.metadata))
 
-    rand_nums = np.random.random(len(op.args)) <= p
+    # Use fused operation to check and get error indices in one pass
+    error_indices = pc.random.compare_indices(len(op.args), p)
 
-    if np.any(rand_nums):
+    if error_indices:
         noise = {}
-        for r, loc in zip(rand_nums, op.args, strict=False):
-            if r:
-                rand = np.random.random()
-                p_tot = 0.0
-                for (fault1, fault2), prob in noise_dict.items():
-                    p_tot += prob
+        for idx in error_indices:
+            loc = op.args[idx]
+            rand = pc.random.random(1)[0]
+            p_tot = 0.0
+            for (fault1, fault2), prob in noise_dict.items():
+                p_tot += prob
 
-                    if p_tot >= rand:
-                        loc1, loc2 = loc
-                        if fault1 != "I":
-                            noise.setdefault(fault1, []).append(loc1)
-                        if fault2 != "I":
-                            noise.setdefault(fault2, []).append(loc2)
-                        break
+                if p_tot >= rand:
+                    loc1, loc2 = loc
+                    if fault1 != "I":
+                        noise.setdefault(fault1, []).append(loc1)
+                    if fault2 != "I":
+                        noise.setdefault(fault2, []).append(loc2)
+                    break
 
         if noise:
             buffered_ops = []

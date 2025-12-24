@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pecos.protocols import LogicalInstructionProtocol
 from pecos.qeccs.helper_functions import make_hashable_params
@@ -84,7 +84,7 @@ class DefaultLogicalInstruction:
 
         self.params_tuple = make_hashable_params(params)  # Used for hashing.
 
-    def plot(self, **kwargs: Any) -> None:  # noqa: ANN401
+    def plot(self, **kwargs: object) -> None:
         """Creates a plot of the logical instruction.
 
         Returns: None
@@ -95,8 +95,8 @@ class DefaultLogicalInstruction:
     def _compile_circuit(
         self,
         abstract_circuit: QuantumCircuit,
-        *args: Any,  # noqa: ANN401 - Allows for subclass extensions
-        **kwargs: Any,  # noqa: ANN401 - Compiler may need various parameters
+        *args: object,
+        **kwargs: object,
     ) -> None:
         """Create `circuit` instance from `abstract_circuit` instance for the logical instruction.
 

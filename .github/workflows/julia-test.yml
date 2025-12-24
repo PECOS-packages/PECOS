@@ -18,9 +18,9 @@ env:
 
 on:
   push:
-    branches: [ "master", "development", "dev" ]
+    branches: [ "main", "master", "development", "dev" ]
   pull_request:
-    branches: [ "master", "development", "dev" ]
+    branches: [ "main", "master", "development", "dev" ]
   workflow_dispatch:
 
 concurrency:
@@ -38,13 +38,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macOS-latest]
-        julia-version: ["1.10", "1.11", "1"]  # 1 = latest stable
-        # Exclude some combinations to reduce CI time
-        exclude:
-          - os: windows-latest
-            julia-version: "1.11"
-          - os: macOS-latest
-            julia-version: "1.11"
+        julia-version: ["1"]  # Latest stable (experimental bindings)
 
     steps:
     - uses: actions/checkout@v4
@@ -56,6 +50,42 @@ jobs:
 
     - name: Set up Rust
       run: rustup show
+
+    # NOTE: LLVM is not currently needed for Julia FFI since we use pecos with default-features = false
+    # Keeping this commented out in case we need to re-enable LLVM features in the future.
+    #
+    # - name: Install LLVM 14.0.6 using pecos (Unix)
+    #   if: runner.os != 'Windows'
+    #   run: |
+    #     echo "Installing LLVM using pecos..."
+    #     cargo run -p pecos --features cli --release -- llvm install
+    #
+    #     echo "Setting LLVM environment variables..."
+    #     export PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)
+    #     export LLVM_SYS_140_PREFIX="$PECOS_LLVM"
+    #
+    #     echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
+    #     echo "LLVM_SYS_140_PREFIX=$LLVM_SYS_140_PREFIX" >> $GITHUB_ENV
+    #
+    #     echo "Verifying LLVM installation..."
+    #     cargo run -p pecos --features cli --release -- llvm check
+    #
+    # - name: Install LLVM 14.0.6 using pecos (Windows)
+    #   if: runner.os == 'Windows'
+    #   shell: pwsh
+    #   run: |
+    #     Write-Host "Installing LLVM using pecos..."
+    #     cargo run -p pecos --features cli --release -- llvm install
+    #
+    #     Write-Host "Setting LLVM environment variables..."
+    #     $env:PECOS_LLVM = (cargo run -p pecos --features cli --release -- llvm find 2>$null)
+    #     $env:LLVM_SYS_140_PREFIX = $env:PECOS_LLVM
+    #
+    #     "PECOS_LLVM=$env:PECOS_LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+    #     "LLVM_SYS_140_PREFIX=$env:LLVM_SYS_140_PREFIX" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+    #
+    #     Write-Host "Verifying LLVM installation..."
+    #     cargo run -p pecos --features cli --release -- llvm check
 
     - name: Cache Rust
       uses: Swatinem/rust-cache@v2
@@ -79,6 +109,21 @@ jobs:
       if: runner.os != 'Windows'
       shell: bash
       run: |
+        # On macOS, prevent Homebrew library paths from being used during linking
+        if [[ "${{ runner.os }}" == "macOS" ]]; then
+          # CRITICAL: Prevent Homebrew library paths from being used during linking
+          # This fixes the "@rpath/libunwind.1.dylib" runtime error on macOS
+          # Reference: https://github.com/rust-lang/rust/issues/135372
+          unset LIBRARY_PATH
+          unset LD_LIBRARY_PATH
+          unset DYLD_LIBRARY_PATH
+          unset DYLD_FALLBACK_LIBRARY_PATH
+          unset PKG_CONFIG_PATH
+          export LIBRARY_PATH=/usr/lib
+
+          echo "RUSTFLAGS: $RUSTFLAGS"
+        fi
+
         cd julia/pecos-julia-ffi
         cargo build --release
 

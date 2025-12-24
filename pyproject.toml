@@ -1,9 +1,10 @@
 [project]
 name = "pecos-workspace"
-version = "0.7.0.dev4"
+version = "0.8.0.dev0"
 dependencies = [
     # Note: guppylang is an optional dependency in quantum-pecos
     # Don't include it here as a direct dependency
+    "stim>=1.15.0",
 ]
 
 [tool.uv.workspace]
@@ -18,6 +19,7 @@ members = [
 [dependency-groups]
 dev = [
     "maturin>=1.2,<2.0", # For building (should match build requirements)
+    "patchelf; platform_system != 'Windows'", # For setting rpath in shared libraries (Linux/macOS only)
     "setuptools>=62.6", # Build system
     "pre-commit", # Git hooks
     "black", # Code formatting
@@ -26,9 +28,7 @@ dev = [
     "mkdocs-material", # Material theme for MkDocs
     "mkdocstrings[python]", # Code documentation extraction
     "markdown-exec[ansi]", # Executable markdown blocks
-    # Runtime dependencies for development
-    "numpy>=1.15.0",
-    "scipy>=1.1.0",
+    # Runtime dependencies for development (non-test)
     "networkx>=2.1.0",
     "matplotlib>=2.2.0",
     "phir>=0.3.3",
@@ -41,14 +41,17 @@ test = [ # pinning testing environment
     "pytest-cov==6.0.0",
     "hypothesis==6.122.3",
 ]
+numpy-compat = [  # NumPy/SciPy compatibility tests - verify compatibility with scientific Python stack
+    "numpy>=1.15.0",
+    "scipy>=1.1.0",
+]
 
 [tool.uv]
 default-groups = ["dev", "test"]
-
-# Override dependencies to ensure correct versions
-override-dependencies = [
-    "hugr==0.13.0",
-]
+# Prevent uv from caching pecos-rslib wheels - always use freshly built version
+# This fixes stale code issues when uv sync/run reinstalls cached old wheels
+# See: https://github.com/astral-sh/uv/issues/11390
+reinstall-package = ["pecos-rslib"]
 
 [tool.pytest.ini_options]
 markers = [
@@ -56,4 +59,5 @@ markers = [
     "optional_unix: mark tests as using an optional dependency that only work with Unix-based systems",
     "wasmer: mark test as using the 'wasmer' option",
     "wasmtime: mark test as using the 'wasmtime' option",
+    "numpy: mark tests that verify NumPy compatibility (requires numpy installed)",
 ]

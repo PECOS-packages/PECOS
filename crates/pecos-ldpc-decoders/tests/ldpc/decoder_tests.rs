@@ -636,7 +636,7 @@ mod edge_case_tests {
             let dense_pcm = pcm.to_dense();
             let error_vec = arr1(&error);
             let syndrome_vec = dense_pcm.dot(&error_vec);
-            let syndrome: Array1<u8> = syndrome_vec.mapv(|x| (x % 2));
+            let syndrome: Array1<u8> = syndrome_vec.mapv(|x| x % 2);
 
             let mut decoder = BpOsdDecoder::new(
                 &pcm,
@@ -660,7 +660,7 @@ mod edge_case_tests {
 
             // Verify that the decoded error gives the same syndrome
             let decoded_syndrome_vec = dense_pcm.dot(&result.decoding);
-            let decoded_syndrome: Array1<u8> = decoded_syndrome_vec.mapv(|x| (x % 2));
+            let decoded_syndrome: Array1<u8> = decoded_syndrome_vec.mapv(|x| x % 2);
             assert_eq!(
                 decoded_syndrome, syndrome,
                 "Decoded error doesn't produce correct syndrome for bit position {bit_pos}"

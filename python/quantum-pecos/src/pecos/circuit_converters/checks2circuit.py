@@ -273,7 +273,7 @@ class Check2Circuits:
     def generate_ticks(
         make_ticks_data: dict[str, Any],
         gate_symbol: str,
-        locations: set[int],  # noqa: ARG004
+        _locations: set[int],
         params: dict[str, Any],
     ) -> dict[str, Any]:
         """Generate tick data for stabilizer checks.

@@ -30,8 +30,7 @@ from pecos.simulators.mps_pytket import bindings
 from pecos.simulators.sim_class_types import StateTN
 
 if TYPE_CHECKING:
-    import numpy as np
-
+    from pecos import Array
     from pecos.typing import SimulatorInitParams
 
 
@@ -43,9 +42,29 @@ class MPS(StateTN):
 
         Args:
             num_qubits (int): Number of qubits being represented.
-            mps_params: a collection of keyword arguments passed down to
-                the ``Config`` object of the MPS. See the docs of pytket-cutensornet
-                for a list of all available parameters.
+            mps_params: Configuration parameters passed to pytket-cutensornet's Config object.
+
+        Keyword Args:
+            chi (int | None): Maximum bond dimension. Lower values = faster but less accurate.
+                Default: None (unlimited). For faster tests, try chi=16-64.
+            truncation_fidelity (float | None): Target per-gate fidelity for SVD truncation.
+                Lower values = faster but less accurate. Default: None (no truncation).
+                For faster tests, try truncation_fidelity=0.999.
+            kill_threshold (float): Threshold for discarding small singular values.
+                Default: 0.0.
+            seed (int | None): Random seed for sampling operations. Default: None.
+            float_precision (type): Precision type (np.float32 or np.float64).
+                Default: np.float64.
+            value_of_zero (float): Value considered as zero. Default: 1e-16.
+            leaf_size (int): Leaf size for internal algorithms. Default: 8.
+            k (int): Parameter for internal algorithms. Default: 4.
+            optim_delta (float): Optimization delta parameter. Default: 1e-5.
+            loglevel (int): Logging level (10=DEBUG, 20=INFO, 30=WARNING).
+                Default: 30 (WARNING).
+
+        Note:
+            For detailed documentation, see pytket-cutensornet Config class:
+            https://docs.quantinuum.com/tket/extensions/pytket-cutensornet/
         """
         if not isinstance(num_qubits, int):
             msg = "``num_qubits`` should be of type ``int``."
@@ -58,7 +77,7 @@ class MPS(StateTN):
 
         # Configure the simulator
         self.config = Config(**mps_params)
-        self.dtype = self.config._complex_t  # noqa: SLF001
+        self.dtype = self.config._complex_t
 
         # cuTensorNet handle initialization
         self.libhandle = CuTensorNetHandle()
@@ -70,7 +89,7 @@ class MPS(StateTN):
         """Reset the quantum state to all 0 for another run."""
         qubits = [Qubit(q) for q in range(self.num_qubits)]
         self.mps = MPSxGate(self.libhandle, qubits, self.config)
-        self.mps._logger.info("Resetting MPS...")  # noqa: SLF001
+        self.mps._logger.info("Resetting MPS...")
         return self
 
     def __del__(self) -> None:
@@ -80,7 +99,7 @@ class MPS(StateTN):
         self.libhandle.destroy()
 
     @property
-    def vector(self) -> np.ndarray:
+    def vector(self) -> Array:
         """Obtain the statevector encoded in this MPS.
 
         Note:
@@ -89,6 +108,6 @@ class MPS(StateTN):
             of tensor network methods.
 
         Returns:
-            The statevector represented by the MPS as a numpy array.
+            The statevector represented by the MPS as a PECOS array.
         """
         return self.mps.get_statevector()

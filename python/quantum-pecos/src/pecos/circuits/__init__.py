@@ -18,3 +18,8 @@ This package provides quantum and logical circuit abstractions and conversion ut
 
 from pecos.circuits.logical_circuit import LogicalCircuit
 from pecos.circuits.quantum_circuit import QuantumCircuit
+
+__all__ = [
+    "LogicalCircuit",
+    "QuantumCircuit",
+]

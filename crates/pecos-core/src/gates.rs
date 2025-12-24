@@ -115,7 +115,7 @@ impl Gate {
     #[must_use]
     pub fn cx_vec(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         assert!(
-            qubits.len() % 2 == 0,
+            qubits.len().is_multiple_of(2),
             "CX gate requires an even number of qubits"
         );
         Self::new(
@@ -140,7 +140,7 @@ impl Gate {
     #[must_use]
     pub fn szz_vec(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         assert!(
-            qubits.len() % 2 == 0,
+            qubits.len().is_multiple_of(2),
             "SZZ gate requires an even number of qubits"
         );
         Self::new(
@@ -165,7 +165,7 @@ impl Gate {
     #[must_use]
     pub fn szzdg_vec(qubits: &[impl Into<QubitId> + Copy]) -> Self {
         assert!(
-            qubits.len() % 2 == 0,
+            qubits.len().is_multiple_of(2),
             "SZZdg gate requires an even number of qubits"
         );
         Self::new(
@@ -190,7 +190,7 @@ impl Gate {
     #[must_use]
     pub fn rzz_vec(theta: f64, qubits: &[impl Into<QubitId> + Copy]) -> Self {
         assert!(
-            qubits.len() % 2 == 0,
+            qubits.len().is_multiple_of(2),
             "RZZ gate requires an even number of qubits"
         );
         Self::new(
@@ -295,6 +295,47 @@ impl Gate {
         }
     }
 
+    /// Create a new `MeasCrosstalkGlobalPayload` with the data from runtime.
+    ///
+    /// # Arguments
+    ///
+    /// * `qubits` - The qubits that are guaranteed *not* to be affected by the
+    ///   global crosstalk event.
+    ///
+    /// NOTE: it seems unintuitive to give the complement of the list of victim qubits.
+    /// It fits better with the previous version of crosstalk, but we might want to
+    /// refactor this.
+    ///
+    /// # Returns
+    ///
+    /// A new `MeasCrosstalkGlobalPayload` gate with the specified parameters
+    #[must_use]
+    pub fn meas_crosstalk_global_payload(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::new(
+            GateType::MeasCrosstalkGlobalPayload,
+            vec![],
+            qubits.iter().map(|&q| q.into()).collect(),
+        )
+    }
+
+    /// Create a new `MeasCrosstalkLocalPayload` with the data from runtime.
+    ///
+    /// # Arguments
+    ///
+    /// * `qubits` - The qubits that are potential victims of the local crosstalk event.
+    ///
+    /// # Returns
+    ///
+    /// A new `MeasCrosstalkLocalPayload` gate with the specified parameters
+    #[must_use]
+    pub fn meas_crosstalk_local_payload(qubits: &[impl Into<QubitId> + Copy]) -> Self {
+        Self::new(
+            GateType::MeasCrosstalkLocalPayload,
+            vec![],
+            qubits.iter().map(|&q| q.into()).collect(),
+        )
+    }
+
     /// Returns the number of angle parameters this gate requires
     ///
     /// # Returns
@@ -358,7 +399,7 @@ impl Gate {
                 self.params.len()
             ));
         }
-        if self.qubits.len() % self.quantum_arity() != 0 {
+        if !self.qubits.len().is_multiple_of(self.quantum_arity()) {
             return Err(format!(
                 "Gate {:?} requires a multiple of {} qubits, got {}",
                 self.gate_type,

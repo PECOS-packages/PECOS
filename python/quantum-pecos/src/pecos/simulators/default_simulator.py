@@ -78,7 +78,7 @@ class DefaultSimulator:
 
         return output
 
-    def run_circuit(  # noqa: D417
+    def run_circuit(
         self,
         circuit: QuantumCircuit,
         removed_locations: set | None = None,
@@ -86,12 +86,12 @@ class DefaultSimulator:
         """Run a quantum circuit on the simulator.
 
         Args:
-        ----
             circuit (QuantumCircuit): A circuit instance or object with an appropriate items() generator.
-            removed_locations: Optional set of locations to skip when running the circuit.
+            removed_locations (set | None): Optional set of locations to skip when running the circuit.
 
-        Returns (list): If output is True then the circuit output is returned. Note that this output format may differ
-        from what a ``circuit_runner`` will return for the same method named ``run_circuit``.
+        Returns:
+            dict[int | tuple[int, ...], JSONType]: Circuit output. Note that this output format may differ
+            from what a ``circuit_runner`` will return for the same method named ``run_circuit``.
 
         """
         output = {}

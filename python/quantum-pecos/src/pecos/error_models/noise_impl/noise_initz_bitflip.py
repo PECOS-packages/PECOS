@@ -18,7 +18,7 @@ in quantum error correction simulations.
 
 
 from pecos.error_models.noise_impl.noise_sq_bitflip import noise_sq_bitflip
-from pecos.reps.pypmir.op_types import QOp
+from pecos.reps.pyphir.op_types import QOp
 
 
 def noise_initz_bitflip(op: QOp, p: float) -> None:

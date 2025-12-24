@@ -1,16 +1,16 @@
 name = "PECOS"
 license = "Apache-2.0"
-authors = ["PECOS Developers"]
 version = "0.1.0-dev0"
+authors = ["PECOS Developers"]
 
 [deps]
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 
 [compat]
-julia = "1.10"
-Pkg = "1"
 Aqua = "0.8"
+Pkg = "1"
 Test = "1"
+julia = "1.10"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"

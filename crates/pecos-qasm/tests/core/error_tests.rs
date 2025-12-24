@@ -306,21 +306,21 @@ fn test_gate_with_missing_parameters() {
 // Tests for native and defined gates
 #[test]
 fn test_undefined_gate_fails() {
-    // Test with rx gate which is NOT in the native gates list
+    // Test with foo gate which is NOT in the native gates list and not defined
     let qasm = r"
         OPENQASM 2.0;
         qreg q[1];
-        rx(pi/2) q[0];
+        foo(pi/2) q[0];
     ";
 
     let result = QASMParser::parse_str_raw(qasm);
 
-    // This should fail because rx is not native and not defined
+    // This should fail because foo is not native and not defined
     assert!(result.is_err());
 
     if let Err(e) = result {
         let error_msg = e.to_string();
-        assert!(error_msg.contains("rx"));
+        assert!(error_msg.contains("foo"));
         assert!(error_msg.contains("Undefined"));
         assert!(error_msg.contains("qelib1.inc"));
     }

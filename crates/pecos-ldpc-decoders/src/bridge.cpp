@@ -21,15 +21,19 @@ using namespace ldpc;
 
 // Destructor implementations
 BpOsdDecoder::~BpOsdDecoder() {
-    delete static_cast<bp::BpSparse*>(pcm);
-    delete static_cast<bp::BpDecoder*>(bp_decoder);
-    delete static_cast<osd::OsdDecoder*>(osd_decoder);
+    // IMPORTANT: Delete in reverse construction order
+    // osd_decoder created last, so delete first; then bp_decoder; then pcm last
+    if (osd_decoder) delete static_cast<osd::OsdDecoder*>(osd_decoder);
+    if (bp_decoder) delete static_cast<bp::BpDecoder*>(bp_decoder);
+    if (pcm) delete static_cast<bp::BpSparse*>(pcm);
 }
 
 BpLsdDecoder::~BpLsdDecoder() {
-    delete static_cast<bp::BpSparse*>(pcm);
-    delete static_cast<bp::BpDecoder*>(bp_decoder);
-    delete static_cast<lsd::LsdDecoder*>(lsd_decoder);
+    // IMPORTANT: Delete child decoders BEFORE pcm because they contain references to pcm
+    // Deleting pcm first causes use-after-free when their destructors try to access it
+    if (lsd_decoder) delete static_cast<lsd::LsdDecoder*>(lsd_decoder);
+    if (bp_decoder) delete static_cast<bp::BpDecoder*>(bp_decoder);
+    if (pcm) delete static_cast<bp::BpSparse*>(pcm);
 }
 
 // Helper function to create PCM from sparse representation
@@ -67,6 +71,11 @@ std::unique_ptr<BpOsdDecoder> create_bp_osd_decoder(
     }
 
     auto decoder = std::make_unique<BpOsdDecoder>();
+
+    // Initialize all pointers to nullptr to avoid deleting garbage in destructor
+    decoder->pcm = nullptr;
+    decoder->bp_decoder = nullptr;
+    decoder->osd_decoder = nullptr;
 
     // Create PCM
     decoder->pcm = create_pcm_from_sparse(pcm);
@@ -214,6 +223,11 @@ std::unique_ptr<BpLsdDecoder> create_bp_lsd_decoder(
     }
 
     auto decoder = std::make_unique<BpLsdDecoder>();
+
+    // Initialize all pointers to nullptr to avoid deleting garbage in destructor
+    decoder->pcm = nullptr;
+    decoder->bp_decoder = nullptr;
+    decoder->lsd_decoder = nullptr;
 
     // Create PCM
     decoder->pcm = create_pcm_from_sparse(pcm);
@@ -508,8 +522,10 @@ rust::String get_statistics_json_lsd(const BpLsdDecoder& decoder) {
 
 // Soft Information BP Decoder implementation
 SoftInfoBpDecoder::~SoftInfoBpDecoder() {
-    delete static_cast<bp::BpSparse*>(pcm);
-    delete static_cast<bp::BpDecoder*>(bp_decoder);
+    // IMPORTANT: Delete bp_decoder BEFORE pcm because bp_decoder contains a reference to pcm
+    // Deleting pcm first causes use-after-free when bp_decoder's destructor tries to access it
+    if (bp_decoder) delete static_cast<bp::BpDecoder*>(bp_decoder);
+    if (pcm) delete static_cast<bp::BpSparse*>(pcm);
 }
 
 std::unique_ptr<SoftInfoBpDecoder> create_soft_info_bp_decoder(
@@ -523,6 +539,10 @@ std::unique_ptr<SoftInfoBpDecoder> create_soft_info_bp_decoder(
     int32_t random_schedule_seed
 ) {
     auto decoder = std::make_unique<SoftInfoBpDecoder>();
+
+    // Initialize all pointers to nullptr to avoid deleting garbage in destructor
+    decoder->pcm = nullptr;
+    decoder->bp_decoder = nullptr;
 
     // Create sparse matrix
     auto pcm = new bp::BpSparse(pcm_repr.rows, pcm_repr.cols);
@@ -651,8 +671,8 @@ rust::Vec<double> get_log_prob_ratios_soft(const SoftInfoBpDecoder& decoder) {
 
 // Flip Decoder implementation
 FlipDecoder::~FlipDecoder() {
-    delete static_cast<bp::BpSparse*>(pcm);
-    delete static_cast<flip::FlipDecoder*>(flip_decoder);
+    if (pcm) delete static_cast<bp::BpSparse*>(pcm);
+    if (flip_decoder) delete static_cast<flip::FlipDecoder*>(flip_decoder);
 }
 
 std::unique_ptr<FlipDecoder> create_flip_decoder(
@@ -662,6 +682,10 @@ std::unique_ptr<FlipDecoder> create_flip_decoder(
     int32_t seed
 ) {
     auto decoder = std::make_unique<FlipDecoder>();
+
+    // Initialize all pointers to nullptr to avoid deleting garbage in destructor
+    decoder->pcm = nullptr;
+    decoder->flip_decoder = nullptr;
 
     // Create sparse matrix
     auto pcm = new bp::BpSparse(pcm_repr.rows, pcm_repr.cols);
@@ -727,8 +751,8 @@ int32_t get_iterations_flip(const FlipDecoder& decoder) {
 
 // Union Find Decoder implementation
 UnionFindDecoder::~UnionFindDecoder() {
-    delete static_cast<bp::BpSparse*>(pcm);
-    delete static_cast<ldpc::uf::UfDecoder*>(uf_decoder);
+    if (pcm) delete static_cast<bp::BpSparse*>(pcm);
+    if (uf_decoder) delete static_cast<ldpc::uf::UfDecoder*>(uf_decoder);
 }
 
 std::unique_ptr<UnionFindDecoder> create_union_find_decoder(
@@ -736,6 +760,10 @@ std::unique_ptr<UnionFindDecoder> create_union_find_decoder(
     int32_t uf_method
 ) {
     auto decoder = std::make_unique<UnionFindDecoder>();
+
+    // Initialize all pointers to nullptr to avoid deleting garbage in destructor
+    decoder->pcm = nullptr;
+    decoder->uf_decoder = nullptr;
 
     // Create sparse matrix
     auto pcm = new bp::BpSparse(pcm_repr.rows, pcm_repr.cols);
@@ -799,9 +827,9 @@ uint32_t get_bit_count_uf(const UnionFindDecoder& decoder) {
 // MBP Decoder implementation
 MbpDecoder::~MbpDecoder() {
     // The mbp_decoder owns the pcm, so it will delete it
-    delete static_cast<::mbp_decoder*>(mbp_decoder);
-    delete static_cast<bp::BpSparse*>(pcmx);
-    delete static_cast<bp::BpSparse*>(pcmz);
+    if (mbp_decoder) delete static_cast<::mbp_decoder*>(mbp_decoder);
+    if (pcmx) delete static_cast<bp::BpSparse*>(pcmx);
+    if (pcmz) delete static_cast<bp::BpSparse*>(pcmz);
 }
 
 std::unique_ptr<MbpDecoder> create_mbp_decoder(
@@ -823,6 +851,12 @@ std::unique_ptr<MbpDecoder> create_mbp_decoder(
     }
 
     auto decoder = std::make_unique<MbpDecoder>();
+
+    // Initialize all pointers to nullptr to avoid deleting garbage in destructor
+    decoder->pcm = nullptr;
+    decoder->pcmx = nullptr;
+    decoder->pcmz = nullptr;
+    decoder->mbp_decoder = nullptr;
 
     // Store sizes
     decoder->qubit_count = hx.cols;

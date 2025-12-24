@@ -217,7 +217,7 @@ fn test_medium_code_performance() {
     // Create a more structured LDPC code for better performance
     for i in 0..m {
         // Each check connects to exactly 3 bits (regular LDPC)
-        let mut connected = std::collections::HashSet::new();
+        let mut connected = std::collections::BTreeSet::new();
         while connected.len() < 3 {
             let j = rng.random_range(0..n);
             if connected.insert(j) {

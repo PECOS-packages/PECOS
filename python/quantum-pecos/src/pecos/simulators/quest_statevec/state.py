@@ -19,8 +19,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos_rslib import QuestStateVec as RustQuestStateVec
+from pecos_rslib.simulators import QuestStateVec as RustQuestStateVec
 
+import pecos as pc
 from pecos.simulators.quest_statevec.bindings import get_bindings
 
 if TYPE_CHECKING:
@@ -48,18 +49,18 @@ class QuestStateVec:
         self.bindings = get_bindings(self)
 
     @property
-    def vector(self) -> list[complex]:
-        """Get the state vector as a list of complex numbers.
+    def vector(self) -> Array:  # noqa: F821 - Array is a forward reference
+        """Get the state vector as an Array of complex numbers.
 
         Returns:
-            List of complex amplitudes representing the quantum state.
+            Array of complex amplitudes representing the quantum state.
         """
         # QuEST stores amplitudes internally - we need to extract them
         amplitudes = []
         for i in range(2**self.num_qubits):
             re, im = self.backend.get_amplitude(i)
             amplitudes.append(complex(re, im))
-        return amplitudes
+        return pc.array(amplitudes, dtype=pc.dtypes.complex128)
 
     def reset(self) -> QuestStateVec:
         """Resets the quantum state to the all-zero state."""
@@ -92,11 +93,12 @@ class QuestStateVec:
                     params["angles"] = (params["angle"],)
 
                 # Convert list to tuple if needed (for Rust bindings compatibility)
+                loc_to_use = location
                 if isinstance(location, list):
-                    location = tuple(location)  # noqa: PLW2901
+                    loc_to_use = tuple(location)
 
                 if symbol in self.bindings:
-                    results = self.bindings[symbol](self, location, **params)
+                    results = self.bindings[symbol](self, loc_to_use, **params)
                 else:
                     msg = f"Gate {symbol} is not supported in the QuEST simulator."
                     raise Exception(msg)

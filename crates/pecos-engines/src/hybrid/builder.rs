@@ -11,11 +11,9 @@
 // the License.
 
 use super::engine::HybridEngine;
-use crate::engine_system::{ClassicalEngine, QuantumEngine};
+use crate::engine_system::{ClassicalControlEngine, QuantumEngine};
 use crate::noise::{DepolarizingNoiseModel, NoiseModel, PassThroughNoiseModel};
 use crate::quantum_system::QuantumSystem;
-use pecos_core::errors::PecosError;
-
 /// Builder for creating a `HybridEngine` with customizable configuration
 ///
 /// This builder provides a fluent interface for constructing a `HybridEngine`
@@ -51,7 +49,7 @@ use pecos_core::errors::PecosError;
 /// ```
 #[derive(Clone)]
 pub struct HybridEngineBuilder {
-    classical_engine: Option<Box<dyn ClassicalEngine>>,
+    classical_engine: Option<Box<dyn ClassicalControlEngine>>,
     quantum_engine: Option<Box<dyn QuantumEngine>>,
     noise_model: Option<Box<dyn NoiseModel>>,
     quantum_system: Option<QuantumSystem>,
@@ -81,12 +79,12 @@ impl HybridEngineBuilder {
     /// Set the classical engine component
     ///
     /// # Arguments
-    /// * `engine` - The classical engine to use
+    /// * `engine` - The classical engine to use (must implement both `ClassicalEngine` and `ControlEngine`)
     ///
     /// # Returns
     /// The builder for method chaining
     #[must_use]
-    pub fn with_classical_engine(mut self, engine: Box<dyn ClassicalEngine>) -> Self {
+    pub fn with_classical_engine(mut self, engine: Box<dyn ClassicalControlEngine>) -> Self {
         self.classical_engine = Some(engine);
         self
     }
@@ -218,7 +216,7 @@ impl HybridEngineBuilder {
 
         // If a seed is set, apply it (and ignore errors since this is a convenience builder)
         if let Some(seed) = self.seed {
-            let _ = engine.set_seed(seed);
+            let () = engine.set_seed(seed);
         }
 
         engine
@@ -231,16 +229,14 @@ impl HybridEngineBuilder {
     /// # Returns
     /// A new `HybridEngine` configured according to the builder settings with the seed set
     ///
-    /// # Errors
-    /// Returns a `PecosError` if setting the seed fails
-    ///
     /// # Panics
     ///
     /// This function will panic if:
     /// - No classical engine has been set
     /// - Neither a quantum system nor a quantum engine has been set
     /// - No seed has been set
-    pub fn build_with_seed(self) -> Result<HybridEngine, PecosError> {
+    #[must_use]
+    pub fn build_with_seed(self) -> HybridEngine {
         // Get the seed or panic if not set
         let seed = self.seed.expect(
             "Seed is required for build_with_seed(). Use with_seed() to set one or use build() instead.",
@@ -249,9 +245,9 @@ impl HybridEngineBuilder {
         // Build the engine
         let mut engine = self.build();
 
-        // Set the seed and return the result
-        engine.set_seed(seed)?;
-        Ok(engine)
+        // Set the seed
+        engine.set_seed(seed);
+        engine
     }
 }
 
@@ -295,14 +291,14 @@ mod tests {
     #[test]
     fn test_with_seed() {
         // Create an engine with a seed
-        let result = HybridEngineBuilder::new()
+        let mut engine = HybridEngineBuilder::new()
             .with_classical_engine(Box::new(ExternalClassicalEngine::new()))
             .with_quantum_engine(quantum::new_quantum_engine_with_seed(2, 0))
             .with_seed(42)
             .build_with_seed();
 
-        // Verify the engine was created and seed was set successfully
-        assert!(result.is_ok());
+        // Verify the engine was created successfully
+        assert!(engine.run_shot().is_ok());
     }
 
     #[test]

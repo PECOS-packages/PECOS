@@ -139,10 +139,19 @@ pub fn evaluate_expression_bitvec(
             ))
         }
 
-        Expression::FunctionCall { name, .. } => {
-            Err(PecosError::ParseInvalidExpression(format!(
-                "Function '{name}' is not allowed in classical register expressions. Functions are only supported in gate parameter expressions."
-            )))
+        Expression::FunctionCall { name, args: _ } => {
+            // Built-in functions (sin, cos, etc.) return floats and are not allowed
+            if crate::BUILTIN_FUNCTIONS.contains(&name.as_str()) {
+                Err(PecosError::ParseInvalidExpression(format!(
+                    "Built-in function '{name}' returns float and is not allowed in classical register expressions. Use it only in gate parameter expressions."
+                )))
+            } else {
+                // Non-built-in functions (WASM functions) cannot be evaluated here
+                // The engine's evaluate_expression_bitvec_with_width will handle them
+                Err(PecosError::ParseInvalidExpression(format!(
+                    "Function '{name}' cannot be evaluated without engine context"
+                )))
+            }
         }
     }
 }

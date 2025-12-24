@@ -55,9 +55,29 @@ pub enum Data {
     BitVec(BitVec<u8, Lsb0>),
     /// JSON value for complex or dynamic data
     Json(JsonValue),
+    /// Vector of data values (for tuples, arrays, multiple measurements, etc.)
+    Vec(Vec<Data>),
 }
 
 impl Data {
+    /// Create a Vec variant from a vector of Data values
+    #[must_use]
+    pub fn from_vec(values: Vec<Data>) -> Self {
+        Self::Vec(values)
+    }
+
+    /// Create a Vec variant from a vector of i32 values
+    #[must_use]
+    pub fn from_i32_vec(values: Vec<i32>) -> Self {
+        Self::Vec(values.into_iter().map(Data::I32).collect())
+    }
+
+    /// Create a Vec variant from a vector of u32 values
+    #[must_use]
+    pub fn from_u32_vec(values: Vec<u32>) -> Self {
+        Self::Vec(values.into_iter().map(Data::U32).collect())
+    }
+
     /// Create a Bytes variant from a Vec<u8>
     #[must_use]
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
@@ -139,6 +159,10 @@ impl Data {
             Self::String(v) => v.clone(),
             Self::Bytes(v) => format!("{v:?}"), // Could use hex or base64
             Self::Json(v) => v.to_string(),
+            Self::Vec(v) => {
+                let strings: Vec<String> = v.iter().map(Data::to_value_string).collect();
+                format!("[{}]", strings.join(", "))
+            }
         }
     }
 
@@ -172,6 +196,62 @@ impl Data {
             _ => None,
         }
     }
+
+    /// Get the inner vector if this is a Vec variant
+    #[must_use]
+    pub fn as_vec(&self) -> Option<&Vec<Data>> {
+        match self {
+            Self::Vec(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Convert Vec variant to vector of u32 values if possible
+    #[must_use]
+    pub fn as_u32_vec(&self) -> Option<Vec<u32>> {
+        match self {
+            Self::Vec(v) => {
+                let mut result = Vec::with_capacity(v.len());
+                for item in v {
+                    match item.as_u32() {
+                        Some(val) => result.push(val),
+                        None => return None,
+                    }
+                }
+                Some(result)
+            }
+            _ => None,
+        }
+    }
+
+    /// Convert Vec variant to vector of i32 values if possible
+    #[must_use]
+    pub fn as_i32_vec(&self) -> Option<Vec<i32>> {
+        match self {
+            Self::Vec(v) => {
+                let mut result = Vec::with_capacity(v.len());
+                for item in v {
+                    match item {
+                        Data::I32(val) => result.push(*val),
+                        Data::I16(val) => result.push(i32::from(*val)),
+                        Data::I8(val) => result.push(i32::from(*val)),
+                        Data::U8(val) => result.push(i32::from(*val)),
+                        Data::U16(val) => result.push(i32::from(*val)),
+                        Data::U32(val) => {
+                            if let Ok(i) = i32::try_from(*val) {
+                                result.push(i);
+                            } else {
+                                return None;
+                            }
+                        }
+                        _ => return None,
+                    }
+                }
+                Some(result)
+            }
+            _ => None,
+        }
+    }
 }
 
 // Implement Display trait for Data instead of inherent to_string method
@@ -194,6 +274,16 @@ impl std::fmt::Display for Data {
             Self::Bytes(v) => write!(f, "{v:?}"), // Could also use hex or base64
             Self::BitVec(bv) => write!(f, "{}", bitvec::to_bitstring(bv)),
             Self::Json(v) => write!(f, "{v}"),
+            Self::Vec(v) => {
+                write!(f, "[")?;
+                for (i, item) in v.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{item}")?;
+                }
+                write!(f, "]")
+            }
         }
     }
 }

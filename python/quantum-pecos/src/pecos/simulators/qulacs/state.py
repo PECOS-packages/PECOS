@@ -19,14 +19,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
-import pecos_rslib._pecos_rslib as rslib
+from pecos_rslib import simulators as rslib_sim
 
+import pecos as pc
 from pecos.simulators.qulacs import bindings
 from pecos.simulators.sim_class_types import StateVector
 
 if TYPE_CHECKING:
-    from numpy.typing import ArrayLike
+    from pecos import Array
 
 
 class Qulacs(StateVector):
@@ -47,7 +47,7 @@ class Qulacs(StateVector):
 
         self.bindings = bindings.gate_dict
         self.num_qubits = num_qubits
-        self.qulacs_state = rslib.RsQulacs(num_qubits, seed=seed)
+        self.qulacs_state = rslib_sim.Qulacs(num_qubits, seed=seed)
 
         self.reset()
 
@@ -58,15 +58,15 @@ class Qulacs(StateVector):
         return self
 
     @property
-    def vector(self) -> ArrayLike:
+    def vector(self) -> Array:
         """Get the quantum state vector from Qulacs.
 
         Returns:
-            The state vector as a numpy array with complex values.
+            The state vector as a PECOS array with complex values.
         """
-        # Convert from [(real, imag), ...] tuples to complex numpy array
+        # Convert from [(real, imag), ...] tuples to complex array
         complex_tuples = self.qulacs_state.vector
-        return np.array(
+        return pc.array(
             [complex(real, imag) for real, imag in complex_tuples],
-            dtype=complex,
+            dtype="complex",
         )

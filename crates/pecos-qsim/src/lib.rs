@@ -13,23 +13,36 @@
 pub mod clifford_gateable;
 pub mod coin_toss;
 pub mod gens;
+pub mod measurement_sampler;
 pub mod pauli_prop;
 // pub mod paulis;
 pub mod arbitrary_rotation_gateable;
 pub mod prelude;
 pub mod quantum_simulator;
+pub mod sign_algebra;
 pub mod sparse_stab;
 pub mod stabilizer_tableau;
 pub mod state_vec;
+pub mod symbolic_gens;
+pub mod symbolic_sparse_stab;
 
 pub use arbitrary_rotation_gateable::ArbitraryRotationGateable;
 pub use clifford_gateable::{CliffordGateable, MeasurementResult};
 pub use coin_toss::CoinToss;
 pub use gens::Gens;
 // pub use paulis::Paulis;
+pub use measurement_sampler::{
+    MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,
+    SequentialMeasurementSampler,
+};
 pub use pauli_prop::{PauliProp, StdPauliProp};
 pub use pecos_core::VecSet;
 pub use quantum_simulator::QuantumSimulator;
+pub use sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign};
 pub use sparse_stab::{SparseStab, StdSparseStab};
 pub use stabilizer_tableau::StabilizerTableauSimulator;
 pub use state_vec::StateVec;
+pub use symbolic_gens::SymbolicGens;
+pub use symbolic_sparse_stab::{
+    MeasurementHistory, StdSymbolicSparseStab, SymbolicMeasurementResult, SymbolicSparseStab,
+};

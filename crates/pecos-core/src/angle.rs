@@ -642,7 +642,7 @@ mod tests {
         );
 
         angle /= 2u64; // Should result in an eighth turn
-        let expected = Angle::from_turn_ratio(1, 8); // 1/8 of a turn
+        let expected = Angle::<u64>::from_turn_ratio(1, 8); // 1/8 of a turn
         assert_eq!(
             angle.fraction, expected.fraction,
             "not getting 1 / 4 turn / 2 ==  1/8 turn"

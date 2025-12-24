@@ -17,8 +17,6 @@ including CNOT gates, controlled gates, and other entangling operations using CU
 
 from __future__ import annotations
 
-import cmath
-import math
 from typing import TYPE_CHECKING
 
 import cupy as cp
@@ -26,8 +24,9 @@ import cupy as cp
 if TYPE_CHECKING:
     from pecos.simulators.custatevec.state import CuStateVec
     from pecos.typing import SimulatorGateParams
-from cuquantum import custatevec as cusv
+from cuquantum.bindings import custatevec as cusv
 
+import pecos as pc
 from pecos.simulators.custatevec.gates_one_qubit import H
 
 
@@ -211,22 +210,22 @@ def RXX(
 
     matrix = cp.asarray(
         [
-            math.cos(theta / 2),
+            pc.cos(theta / 2),
             0,
             0,
-            -1j * math.sin(theta / 2),
+            -1j * pc.sin(theta / 2),
             0,
-            math.cos(theta / 2),
-            -1j * math.sin(theta / 2),
-            0,
-            0,
-            -1j * math.sin(theta / 2),
-            math.cos(theta / 2),
-            0,
-            -1j * math.sin(theta / 2),
+            pc.cos(theta / 2),
+            -1j * pc.sin(theta / 2),
             0,
             0,
-            math.cos(theta / 2),
+            -1j * pc.sin(theta / 2),
+            pc.cos(theta / 2),
+            0,
+            -1j * pc.sin(theta / 2),
+            0,
+            0,
+            pc.cos(theta / 2),
         ],
         dtype=state.cp_type,
     )
@@ -253,22 +252,22 @@ def RYY(
 
     matrix = cp.asarray(
         [
-            math.cos(theta / 2),
+            pc.cos(theta / 2),
             0,
             0,
-            1j * math.sin(theta / 2),
+            1j * pc.sin(theta / 2),
             0,
-            math.cos(theta / 2),
-            -1j * math.sin(theta / 2),
-            0,
-            0,
-            -1j * math.sin(theta / 2),
-            math.cos(theta / 2),
-            0,
-            1j * math.sin(theta / 2),
+            pc.cos(theta / 2),
+            -1j * pc.sin(theta / 2),
             0,
             0,
-            math.cos(theta / 2),
+            -1j * pc.sin(theta / 2),
+            pc.cos(theta / 2),
+            0,
+            1j * pc.sin(theta / 2),
+            0,
+            0,
+            pc.cos(theta / 2),
         ],
         dtype=state.cp_type,
     )
@@ -295,22 +294,22 @@ def RZZ(
 
     matrix = cp.asarray(
         [
-            cmath.exp(-1j * theta / 2),
+            cp.exp(-1j * theta / 2),
             0,
             0,
             0,
             0,
-            cmath.exp(1j * theta / 2),
+            cp.exp(1j * theta / 2),
             0,
             0,
             0,
             0,
-            cmath.exp(1j * theta / 2),
+            cp.exp(1j * theta / 2),
             0,
             0,
             0,
             0,
-            cmath.exp(-1j * theta / 2),
+            cp.exp(-1j * theta / 2),
         ],
         dtype=state.cp_type,
     )
@@ -350,7 +349,7 @@ def SXX(
         state: An instance of CuStateVec
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RXX(state, qubits, angles=(math.pi / 2,))
+    RXX(state, qubits, angles=(pc.f64.frac_pi_2,))
 
 
 def SXXdg(
@@ -364,7 +363,7 @@ def SXXdg(
         state: An instance of CuStateVec
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RXX(state, qubits, angles=(-math.pi / 2,))
+    RXX(state, qubits, angles=(-pc.f64.frac_pi_2,))
 
 
 def SYY(
@@ -378,7 +377,7 @@ def SYY(
         state: An instance of CuStateVec
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RYY(state, qubits, angles=(math.pi / 2,))
+    RYY(state, qubits, angles=(pc.f64.frac_pi_2,))
 
 
 def SYYdg(
@@ -392,7 +391,7 @@ def SYYdg(
         state: An instance of CuStateVec
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RYY(state, qubits, angles=(-math.pi / 2,))
+    RYY(state, qubits, angles=(-pc.f64.frac_pi_2,))
 
 
 def SZZ(
@@ -406,7 +405,7 @@ def SZZ(
         state: An instance of CuStateVec
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RZZ(state, qubits, angles=(math.pi / 2,))
+    RZZ(state, qubits, angles=(pc.f64.frac_pi_2,))
 
 
 def SZZdg(
@@ -420,7 +419,7 @@ def SZZdg(
         state: An instance of CuStateVec
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RZZ(state, qubits, angles=(-math.pi / 2,))
+    RZZ(state, qubits, angles=(-pc.f64.frac_pi_2,))
 
 
 def SWAP(

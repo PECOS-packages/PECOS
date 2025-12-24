@@ -3,14 +3,9 @@
 mod build_ldpc;
 
 fn main() {
-    // Download and build LDPC
-    let download_info = pecos_build_utils::ldpc_download_info();
+    // Initialize logger for build script
+    env_logger::init();
 
-    // Download if needed
-    if let Err(e) = pecos_build_utils::download_all_cached(vec![download_info]) {
-        println!("cargo:warning=Download failed: {e}, continuing with build");
-    }
-
-    // Build LDPC
+    // Build LDPC (download handled inside build_ldpc)
     build_ldpc::build().expect("LDPC build failed");
 }

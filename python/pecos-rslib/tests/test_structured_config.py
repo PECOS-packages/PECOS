@@ -1,25 +1,24 @@
-"""Test structured configuration for qasm_sim with direct method chaining."""
+"""Test structured configuration for sim() with direct method chaining."""
+
+from collections import Counter
 
 import pytest
-from collections import Counter
-from pecos_rslib.qasm_sim import (
-    qasm_sim,
-    QuantumEngine,
-    GeneralNoiseModelBuilder,
-    DepolarizingNoise,
-    DepolarizingCustomNoise,
-    BiasedDepolarizingNoise,
-    GeneralNoise,
+from pecos_rslib import (
+    biased_depolarizing_noise,
+    depolarizing_noise,
+    general_noise,
 )
+from pecos_rslib.programs import Qasm
+from pecos_rslib import sim
 
 
 class TestDirectMethodChaining:
     """Test the direct method chaining configuration approach."""
 
-    def test_general_noise_model_builder_basic(self):
-        """Test basic GeneralNoiseModelBuilder usage."""
+    def test_general_noise_model_builder_basic(self) -> None:
+        """Test basic general_noise() usage."""
         noise = (
-            GeneralNoiseModelBuilder()
+            general_noise()
             .with_seed(42)
             .with_p1_probability(0.001)
             .with_p2_probability(0.01)
@@ -27,45 +26,30 @@ class TestDirectMethodChaining:
             .with_meas_1_probability(0.002)
         )
 
-        # Should be able to use the noise object
-        assert hasattr(noise, "_get_builder")
-        assert noise._get_builder() is not None
+        # The noise object is already a builder, can be used directly
+        # Test that it's a valid builder by checking it has builder methods
+        assert hasattr(noise, "with_seed")
+        assert hasattr(noise, "with_p1_probability")
 
-    def test_general_noise_model_builder_validation(self):
-        """Test GeneralNoiseModelBuilder parameter validation."""
-        builder = GeneralNoiseModelBuilder()
+    def test_general_noise_model_builder_validation(self) -> None:
+        """Test general_noise() parameter validation."""
+        builder = general_noise()
 
         # Test invalid probability values
-        with pytest.raises(ValueError, match="p1 must be between 0 and 1"):
-            builder.with_p1_probability(1.5)
+        # Rust panics raise BaseException
+        with pytest.raises(
+            BaseException, match=r".*"
+        ):  # Rust panic - any error message
+            builder.with_p1_probability(-0.1)  # Negative probability
 
-        with pytest.raises(ValueError, match="scale must be non-negative"):
-            builder.with_scale(-1.0)
+        builder = general_noise()
+        with pytest.raises(
+            BaseException, match=r".*"
+        ):  # Rust panic - any error message
+            builder.with_p2_probability(1.5)  # > 1 probability
 
-        with pytest.raises(ValueError, match="leakage_scale must be between 0 and 1"):
-            builder.with_leakage_scale(2.0)
-
-    def test_general_noise_model_builder_advanced(self):
-        """Test advanced GeneralNoiseModelBuilder features."""
-        noise = (
-            GeneralNoiseModelBuilder()
-            .with_seed(42)
-            .with_scale(1.5)
-            .with_noiseless_gate("H")
-            .with_p1_probability(0.001)
-            .with_p1_pauli_model({"X": 0.5, "Y": 0.3, "Z": 0.2})
-            .with_p2_probability(0.01)
-            .with_prep_probability(0.0005)
-            .with_meas_0_probability(0.002)
-            .with_meas_1_probability(0.003)
-        )
-
-        # Should be able to use the noise object
-        builder = noise._get_builder()
-        assert builder is not None
-
-    def test_general_noise_model_builder_with_simulation(self):
-        """Test GeneralNoiseModelBuilder integration with qasm_sim."""
+    def test_direct_noise_builder_with_sim(self) -> None:
+        """Test using builders directly with sim()."""
         qasm = """
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -76,120 +60,29 @@ class TestDirectMethodChaining:
         measure q -> c;
         """
 
+        prog = Qasm.from_string(qasm)
+
+        # Create a configured noise builder
         noise = (
-            GeneralNoiseModelBuilder()
+            general_noise()
             .with_seed(42)
             .with_p1_probability(0.001)
             .with_p2_probability(0.01)
         )
 
-        results = qasm_sim(qasm).seed(42).noise(noise).run(100)
-        assert len(results["c"]) == 100
+        # Use the builder directly with sim()
+        results = sim(prog).noise(noise).run(1000).to_dict()
 
-    def test_direct_method_chaining_basic(self):
-        """Test basic direct method chaining configuration."""
-        qasm = """
-        OPENQASM 2.0;
-        include "qelib1.inc";
-        qreg q[2];
-        creg c[2];
-        h q[0];
-        cx q[0], q[1];
-        measure q -> c;
-        """
+        assert "c" in results
+        assert len(results["c"]) == 1000
 
-        # Test method chaining with various configurations
-        results = (
-            qasm_sim(qasm)
-            .seed(42)
-            .workers(4)
-            .noise(DepolarizingNoise(p=0.01))
-            .quantum_engine(QuantumEngine.StateVector)
-            .with_binary_string_format()
-            .run(100)
-        )
+        # Check for Bell state with some noise
+        counts = Counter(results["c"])
+        assert 0 in counts  # 00
+        assert 3 in counts  # 11
 
-        assert len(results["c"]) == 100
-        # Check binary string format
-        assert all(isinstance(val, str) for val in results["c"])
-        assert all(len(val) == 2 for val in results["c"])
-
-    def test_auto_workers_method(self):
-        """Test auto_workers method."""
-        qasm = """
-        OPENQASM 2.0;
-        include "qelib1.inc";
-        qreg q[1];
-        creg c[1];
-        h q[0];
-        measure q[0] -> c[0];
-        """
-
-        results = (
-            qasm_sim(qasm)
-            .seed(42)
-            .auto_workers()  # Should automatically set workers based on CPU cores
-            .run(100)
-        )
-
-        assert len(results["c"]) == 100
-
-    def test_method_chaining_with_general_noise_builder(self):
-        """Test method chaining with GeneralNoiseModelBuilder."""
-        qasm = """
-        OPENQASM 2.0;
-        include "qelib1.inc";
-        qreg q[3];
-        creg c[3];
-        h q[0];
-        cx q[0], q[1];
-        cx q[1], q[2];
-        measure q -> c;
-        """
-
-        noise = (
-            GeneralNoiseModelBuilder()
-            .with_seed(42)
-            .with_p1_probability(0.001)
-            .with_p2_probability(0.008)
-            .with_meas_0_probability(0.002)
-            .with_meas_1_probability(0.002)
-        )
-
-        # Use chaining with custom noise
-        sim = (
-            qasm_sim(qasm)
-            .seed(42)
-            .workers(2)
-            .noise(noise)
-            .quantum_engine(QuantumEngine.StateVector)
-            .build()
-        )
-
-        results = sim.run(100)
-        assert len(results["c"]) == 100
-
-    def test_general_noise_direct_usage(self):
-        """Test using GeneralNoise dataclass directly."""
-        qasm = """
-        OPENQASM 2.0;
-        include "qelib1.inc";
-        qreg q[2];
-        creg c[2];
-        h q[0];
-        cx q[0], q[1];
-        measure q -> c;
-        """
-
-        # Create noise directly
-        noise = GeneralNoise(p1=0.001, p2=0.01, p_meas_0=0.002, p_meas_1=0.002)
-
-        results = qasm_sim(qasm).seed(42).noise(noise).run(100)
-
-        assert len(results["c"]) == 100
-
-    def test_noise_model_comparison(self):
-        """Test different noise models with method chaining."""
+    def test_depolarizing_noise_builder(self) -> None:
+        """Test depolarizing_noise() function."""
         qasm = """
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -199,72 +92,73 @@ class TestDirectMethodChaining:
         measure q[0] -> c[0];
         """
 
-        noise_models = [
-            ("No noise", None),
-            ("Depolarizing", DepolarizingNoise(p=0.1)),
-            (
-                "Custom depolarizing",
-                DepolarizingCustomNoise(p_prep=0.01, p_meas=0.05, p1=0.02, p2=0.03),
-            ),
-            ("Biased depolarizing", BiasedDepolarizingNoise(p=0.1)),
-        ]
+        prog = Qasm.from_string(qasm)
 
-        for name, noise in noise_models:
-            if noise is None:
-                results = qasm_sim(qasm).seed(42).run(1000)
-            else:
-                results = qasm_sim(qasm).seed(42).noise(noise).run(1000)
+        # Create builder with specific config
+        noise = depolarizing_noise().with_seed(42).with_uniform_probability(0.1)
 
-            # Count measurement errors (should see mostly 1s for X gate)
-            zeros = sum(1 for val in results["c"] if val == 0)
+        results = sim(prog).seed(42).noise(noise).run(1000).to_dict()
 
-            if name == "No noise":
-                assert zeros == 0  # Perfect X gate
-            else:
-                assert zeros > 0  # Some errors expected
+        # Should see some errors with 10% error rate
+        zeros = sum(1 for val in results["c"] if val == 0)
+        assert 50 < zeros < 200
 
-    def test_complex_noise_configuration(self):
-        """Test complex noise configuration with method chaining."""
+    def test_biased_depolarizing_builder(self) -> None:
+        """Test biased_depolarizing_noise() function."""
         qasm = """
         OPENQASM 2.0;
         include "qelib1.inc";
-        qreg q[4];
-        creg c[4];
+        qreg q[1];
+        creg c[1];
         h q[0];
-        h q[1];
-        cx q[0], q[2];
-        cx q[1], q[3];
+        measure q[0] -> c[0];
+        """
+
+        prog = Qasm.from_string(qasm)
+
+        # Create builder with uniform probability
+        noise = biased_depolarizing_noise().with_seed(42).with_uniform_probability(0.05)
+
+        results = sim(prog).noise(noise).run(1000).to_dict()
+
+        assert "c" in results
+        assert len(results["c"]) == 1000
+
+    def test_complex_circuit_with_noise(self) -> None:
+        """Test more complex circuit with noise."""
+        qasm = """
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[3];
+        creg c[3];
+
+        h q[0];
+        cx q[0], q[1];
+        cx q[1], q[2];
+
         measure q -> c;
         """
 
+        prog = Qasm.from_string(qasm)
+
+        # Configure general noise with specific parameters
         noise = (
-            GeneralNoiseModelBuilder()
-            .with_seed(42)
-            .with_scale(1.2)
-            .with_noiseless_gate("H")
-            .with_p1_probability(0.0005)
-            .with_p1_pauli_model({"X": 0.4, "Y": 0.3, "Z": 0.3})
-            .with_p2_probability(0.005)
-            .with_prep_probability(0.001)
-            .with_meas_0_probability(0.002)
-            .with_meas_1_probability(0.002)
+            general_noise()
+            .with_seed(123)
+            .with_p1_probability(0.005)
+            .with_p2_probability(0.02)
+            .with_meas_0_probability(0.01)
+            .with_meas_1_probability(0.01)
         )
 
-        results = (
-            qasm_sim(qasm)
-            .seed(42)
-            .auto_workers()
-            .noise(noise)
-            .quantum_engine(QuantumEngine.StateVector)
-            .with_binary_string_format()
-            .run(1000)
-        )
+        results = sim(prog).noise(noise).run(1000).to_dict()
 
-        assert len(results["c"]) == 1000
-        # Check binary string format
-        assert all(isinstance(val, str) for val in results["c"])
-        assert all(len(val) == 4 for val in results["c"])
-
-        # Verify we have some variety in results (not all same state)
         counts = Counter(results["c"])
-        assert len(counts) > 1  # Should have multiple different measurement outcomes
+
+        # Should see mostly GHZ states (000 and 111) with some errors
+        assert 0 in counts  # 000
+        assert 7 in counts  # 111
+
+        # But also some error states due to noise
+        error_states = [k for k in counts.keys() if k not in [0, 7]]
+        assert len(error_states) > 0

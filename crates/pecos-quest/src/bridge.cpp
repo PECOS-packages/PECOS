@@ -4,8 +4,8 @@
 
 #include "quest_ffi.h"
 #include "quest.h"
-#include "pecos-quest/src/bridge.rs.h"
-#include <memory>
+// Note: quest_ffi.h includes the cxx-generated header and rust/cxx.h before <memory>
+
 #include <stdexcept>
 #include <vector>
 #include <cstring>
@@ -333,6 +333,11 @@ int32_t quest_measure_with_stats(uint8_t* qureg, int32_t qubit, double& outcomeP
 double quest_calc_prob_of_outcome(uint8_t* qureg, int32_t qubit, int32_t outcome) {
     auto* handle = reinterpret_cast<QuregHandle*>(qureg);
     return calcProbOfQubitOutcome(handle->qureg, qubit, outcome);
+}
+
+double quest_apply_forced_measurement(uint8_t* qureg, int32_t qubit, int32_t outcome) {
+    auto* handle = reinterpret_cast<QuregHandle*>(qureg);
+    return applyForcedQubitMeasurement(handle->qureg, qubit, outcome);
 }
 
 double quest_calc_total_prob(uint8_t* qureg) {

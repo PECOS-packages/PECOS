@@ -21,10 +21,19 @@ from pecos.qeclib.steane.gates_sq import sqrt_paulis
 from pecos.qeclib.steane.gates_sq.hadamards import H
 from pecos.qeclib.steane.gates_sq.paulis import X, Z
 from pecos.slr import Barrier, Bit, Block, Comment, If, QReg, Qubit, Repeat
+from pecos.slr.misc import Return
+from pecos.slr.types import Array, QubitType
 
 
 class PrepEncodingNonFTZero(Block):
-    """Represents the non-fault-tolerant encoding circuit for the Steane code."""
+    """Represents the non-fault-tolerant encoding circuit for the Steane code.
+
+    Returns:
+        array[qubit, 7]: The encoded 7-qubit register.
+    """
+
+    # Declare return type: returns the encoded qubit register
+    block_returns = (Array[QubitType, 7],)
 
     def __init__(self, q: QReg) -> None:
         """Initialize PrepEncodingNonFTZero block for non-fault-tolerant zero state preparation.
@@ -56,6 +65,8 @@ class PrepEncodingNonFTZero(Block):
                 (q[4], q[1]),
                 (q[3], q[2]),
             ),
+            # Explicitly declare return value
+            Return(q),
         )
 
 
@@ -106,14 +117,24 @@ class PrepZeroVerify(Block):
 
 
 class PrepEncodingFTZero(Block):
-    """Represents the non-fault-tolerant encoding circuit for the Steane code.
+    """Represents the fault-tolerant encoding circuit for the Steane code.
+
+    This block prepares a logical zero state with verification. It consumes one ancilla
+    qubit (measured during verification) and returns the remaining qubits.
+
+    Returns:
+        tuple[array[qubit, 2], array[qubit, 7]]: The ancilla register (size reduced from 3 to 2)
+            and the data register (size unchanged at 7).
 
     Args:
-        data (QReg[7]):
-        ancilla (Qubit):
-        init_bit (Bit):
-        reset (bool):
+        data (QReg[7]): Data register with 7 qubits (the logical Steane code)
+        ancilla (QReg[3]): Ancilla register with 3 qubits
+        init_bit (Bit): Bit to store initialization result
+        reset (bool): Whether to reset qubits before preparation
     """
+
+    # Declare return type: returns ancilla[2] and data[7]
+    block_returns = (Array[QubitType, 2], Array[QubitType, 7])
 
     def __init__(
         self,
@@ -153,6 +174,9 @@ class PrepEncodingFTZero(Block):
             PrepEncodingNonFTZero(data),
             # reset_ancilla to False because it is reset earlier
             PrepZeroVerify(data, ancilla, init_bit, reset_ancilla=False),
+            # Explicitly declare return values (like Python's return statement)
+            # Combined with block_returns annotation for robust type checking
+            Return(a, q),
         )
 
 
@@ -199,7 +223,14 @@ class PrepRUS(Block):
 
 
 class LogZeroRot(Block):
-    """Rotate logical |0> to appropriate Pauli state."""
+    """Rotate logical |0> to appropriate Pauli state.
+
+    Returns:
+        array[qubit, 7]: The rotated 7-qubit register in the target Pauli eigenstate.
+    """
+
+    # Declare return type: returns the rotated qubit register
+    block_returns = (Array[QubitType, 7],)
 
     def __init__(self, q: QReg, state: str) -> None:
         """Initialize LogZeroRot block to rotate logical |0> to target Pauli state.
@@ -240,3 +271,6 @@ class LogZeroRot(Block):
             case _:
                 msg = f"Unsupported init state '{state}'"
                 raise Exception(msg)
+
+        # Explicitly declare return value
+        self.extend(Return(q))

@@ -27,7 +27,7 @@ This directory contains examples of using various PECOS Python APIs:
 
 ## QASM Simulation Example
 
-`qasm_sim_example.py` demonstrates the QASM simulation API with comprehensive examples:
+`qasm_simulation_examples.py` demonstrates the QASM simulation API with comprehensive examples:
 
 1. Creating and measuring Bell states with various noise models
 2. GHZ state preparation with custom depolarizing noise
@@ -46,7 +46,7 @@ To run the examples:
 cd python/pecos-rslib
 python examples/bell_state_example.py
 python examples/bell_state_simulator.py
-python examples/qasm_sim_example.py
+python examples/qasm_simulation_examples.py
 ```
 
 ## API Overview

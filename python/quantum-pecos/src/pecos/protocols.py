@@ -533,3 +533,66 @@ class QECCProtocol(Protocol):
             figsize: Optional figure size as (width, height) tuple.
         """
         ...
+
+
+class GuppyCallable(Protocol):
+    """Protocol for Guppy-decorated functions."""
+
+    def compile(self) -> dict:
+        """Compile the Guppy function to HUGR."""
+        ...
+
+
+class QuantumBackend(Protocol):
+    """Protocol for quantum simulator backends with gate operations."""
+
+    def run_1q_gate(self, gate: str, qubit: int, params: dict[str, Any] | None) -> None:
+        """Run a single-qubit gate."""
+        ...
+
+    def run_2q_gate(
+        self,
+        gate: str,
+        qubits: tuple[int, int],
+        params: dict[str, Any] | None,
+    ) -> None:
+        """Run a two-qubit gate."""
+        ...
+
+    def sy_gate(self, qubit: int) -> None:
+        """Apply SY gate."""
+        ...
+
+    def sydg_gate(self, qubit: int) -> None:
+        """Apply SY dagger gate."""
+        ...
+
+    def sx_gate(self, qubit: int) -> None:
+        """Apply SX gate."""
+        ...
+
+    def sxdg_gate(self, qubit: int) -> None:
+        """Apply SX dagger gate."""
+        ...
+
+
+__all__ = [
+    "CCOPProtocol",
+    "CircuitInspector",
+    "CircuitRunner",
+    "ClassicalInterpreterProtocol",
+    "Decoder",
+    "EngineRunner",
+    "ErrorGenerator",
+    "ErrorModelProtocol",
+    "ForeignObjectProtocol",
+    "GuppyCallable",
+    "LogicalGateProtocol",
+    "LogicalInstructionProtocol",
+    "MachineProtocol",
+    "OpProcessorProtocol",
+    "QECCProtocol",
+    "QuantumBackend",
+    "SimulatorProtocol",
+    "SimulatorState",
+]

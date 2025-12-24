@@ -31,7 +31,7 @@
 //!
 //! * Standard library types needed for QASM operations (`FromStr`, `BTreeMap`)
 //! * QASM engine types (`QASMEngine`, `QASMEngineBuilder`, `QASMProgram`)
-//! * QASM simulation function (`run_qasm`)
+//! * Main entry point function (`qasm_engine`) for the unified API
 //! * Result types (`Shot`, `ShotVec`, `ShotMap`) from pecos-engines
 //! * Engine traits (`ClassicalEngine`) for accessing engine methods
 //! * Noise models and quantum engines from `pecos-engines`
@@ -52,24 +52,19 @@ pub use crate::engine::QASMEngine;
 pub use crate::engine_builder::QASMEngineBuilder;
 pub use crate::program::QASMProgram;
 
-// Re-export run function
-pub use crate::run::run_qasm;
+// Re-export main entry point function
+pub use crate::qasm_engine;
 
-// Re-export simulation module types and functions
-pub use crate::simulation::{
-    NoiseModelType, QasmSimulation, QasmSimulationBuilder, QuantumEngineType, qasm_sim,
-};
-
-// Re-export config module types
-pub use crate::config::{NoiseConfig, QuantumEngineConfig};
+// Config types can be updated later to use unified types
+// pub use crate::config::{NoiseConfig, QuantumEngineConfig};
 
 // Re-export setup function
 pub use crate::setup_qasm_engine;
 
 // Re-export engine traits and types from pecos-engines
 pub use pecos_engines::{
-    BitVecDisplayFormat, ClassicalEngine, MonteCarloEngine, Shot, ShotMap, ShotMapDisplayExt,
-    ShotMapDisplayOptions, ShotVec,
+    BitVecDisplayFormat, ClassicalControlEngineBuilder, ClassicalEngine, MonteCarloEngine, Shot,
+    ShotMap, ShotMapDisplayExt, ShotMapDisplayOptions, ShotVec, sim_builder,
 };
 
 // Re-export core error type and traits

@@ -64,20 +64,19 @@ def test_python_block(
 
     try:
         # Execute the code block and capture output
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             [sys.executable, "-c", code_block],
             capture_output=True,
             text=True,
             timeout=30,
             check=False,
+            shell=False,
         )
 
         if result.returncode != 0:
             print(f"FAIL: Error in Python block #{block_number} from {file_path}:")
             print(result.stderr)
             return False
-        print(f"PASS: Python block #{block_number} from {file_path}")
-        return True  # noqa: TRY300
     except subprocess.TimeoutExpired:
         print(f"FAIL: Timeout in Python block #{block_number} from {file_path}")
         return False
@@ -91,6 +90,9 @@ def test_python_block(
             f"FAIL: Subprocess error testing Python block #{block_number} from {file_path}: {e}",
         )
         return False
+    else:
+        print(f"PASS: Python block #{block_number} from {file_path}")
+        return True
 
 
 def test_rust_block(
@@ -122,12 +124,13 @@ def test_rust_block(
                 error_msg = f"FAIL: rustc not found in PATH for Rust block #{block_number} from {file_path}"
             else:
                 # Compile and run the Rust code
-                compile_result = subprocess.run(  # noqa: S603
+                compile_result = subprocess.run(
                     [rustc_path, str(temp_file), "-o", str(Path(tmpdir) / "rust_test")],
                     capture_output=True,
                     text=True,
                     timeout=30,
                     check=False,
+                    shell=False,
                 )
 
                 if compile_result.returncode != 0:
@@ -137,12 +140,13 @@ def test_rust_block(
                     )
                 else:
                     # Run the compiled program
-                    run_result = subprocess.run(  # noqa: S603
+                    run_result = subprocess.run(
                         [str(Path(tmpdir) / "rust_test")],
                         capture_output=True,
                         text=True,
                         timeout=30,
                         check=False,
+                        shell=False,
                     )
 
                     if run_result.returncode != 0:

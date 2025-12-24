@@ -1,23 +1,12 @@
-//! Example of using `GeneralNoiseModelBuilder` with fluent API
+//! Example of using `GeneralNoiseModelBuilder` with fluent API and the unified simulation API
 
-use pecos_core::gate_type::GateType;
 use pecos_engines::noise::GeneralNoiseModel;
-use pecos_qasm::prelude::*;
+use pecos_engines::{GateType, sim_builder, sparse_stabilizer};
+use pecos_programs::Qasm;
+use pecos_qasm::qasm_engine;
 use std::collections::BTreeMap;
 
-fn main() {
-    let qasm = r#"
-        OPENQASM 2.0;
-        include "qelib1.inc";
-        qreg q[3];
-        creg c[3];
-        h q[0];
-        cx q[0], q[1];
-        cx q[1], q[2];
-        measure q -> c;
-    "#;
-
-    // Example 1: Basic noise configuration with fluent API
+fn run_basic_noise_example(qasm: &str) {
     println!("Example 1: Basic noise configuration");
     let basic_noise = GeneralNoiseModel::builder()
         .with_seed(42)
@@ -26,11 +15,10 @@ fn main() {
         .with_meas_0_probability(0.002)
         .with_meas_1_probability(0.002);
 
-    let noise_model = NoiseModelType::General(Box::new(basic_noise));
-
-    let results = qasm_sim(qasm)
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .seed(42)
-        .noise(noise_model)
+        .noise(basic_noise)
         .run(1000)
         .unwrap();
 
@@ -44,6 +32,22 @@ fn main() {
         *state_counts.entry(val).or_insert(0) += 1;
     }
     println!("State distribution: {state_counts:?}\n");
+}
+
+fn main() {
+    let qasm = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[3];
+        creg c[3];
+        h q[0];
+        cx q[0], q[1];
+        cx q[1], q[2];
+        measure q -> c;
+    "#;
+
+    // Example 1: Basic noise configuration
+    run_basic_noise_example(qasm);
 
     // Example 2: Complex noise with Pauli models
     println!("Example 2: Complex noise with Pauli error models");
@@ -72,11 +76,10 @@ fn main() {
         .with_leakage_scale(0.1)
         .with_emission_scale(0.8);
 
-    let noise_model = NoiseModelType::General(Box::new(complex_noise));
-
-    let _results = qasm_sim(qasm)
+    let _results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .seed(123)
-        .noise(noise_model)
+        .noise(complex_noise)
         .run(500)
         .unwrap();
 
@@ -89,12 +92,14 @@ fn main() {
         .with_seed(42)
         .with_p1_probability(0.1) // High single-qubit error
         .with_p2_probability(0.1) // High two-qubit error
-        .with_noiseless_gate(GateType::H) // H gates have no noise
-        .with_noiseless_gate(GateType::Measure); // Measurements have no noise
+        .with_noiseless_gate(pecos_core::prelude::GateType::H) // H gates have no noise
+        .with_noiseless_gate(pecos_core::prelude::GateType::Measure); // Measurements have no noise
 
-    let noise_model = NoiseModelType::General(Box::new(selective_noise));
-
-    let _results = qasm_sim(qasm).noise(noise_model).run(100).unwrap();
+    let _results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .noise(selective_noise)
+        .run(100)
+        .unwrap();
 
     println!("Ran 100 shots with selective noiseless gates");
     println!("H and MEASURE gates are noiseless, CX gates have 10% error rate\n");
@@ -119,19 +124,15 @@ fn main() {
         .with_noiseless_gate(GateType::H)
         .with_noiseless_gate(GateType::CX);
 
-    let noise_model = NoiseModelType::General(Box::new(full_noise));
-
     // Use with full simulation configuration
-    let sim = qasm_sim(qasm)
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
         .seed(456)
         .workers(2)
-        .noise(noise_model)
-        .quantum_engine(QuantumEngineType::SparseStabilizer)
-        .with_binary_string_format()
-        .build()
+        .noise(full_noise)
+        .quantum(sparse_stabilizer().qubits(3))
+        .run(50)
         .unwrap();
-
-    let results = sim.run(50).unwrap();
 
     println!("Ran 50 shots with full noise configuration");
     let shot_map = results.try_as_shot_map().unwrap();

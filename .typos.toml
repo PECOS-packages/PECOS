@@ -9,3 +9,16 @@ anc = "anc"
 Pn = "Pn"
 emiss = "emiss"
 fo = "fo"
+# HUGR JSON format uses "typ" as a field name for type information
+typ = "typ"
+# These are operation names in HUGR/Guppy integer operations
+ine = "ine"  # Integer not equal operation
+inot = "inot"  # Integer bitwise NOT operation
+# QuEST v4.1.0 uses "calcExpec" (not "calcExpect") in function names
+Expec = "Expec"
+# NumPy uses "arange" (array range), not "arrange"
+arange = "arange"
+# Common variable name prefix for ndarray
+nd = "nd"
+# delocate is a macOS wheel repair tool (delocate-wheel command)
+delocate = "delocate"

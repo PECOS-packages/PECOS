@@ -1,5 +1,6 @@
-use pecos_engines::{ShotMap, ShotMapDisplayExt};
-use pecos_qasm::prelude::*;
+use pecos_engines::{ShotMap, ShotMapDisplayExt, sim_builder};
+use pecos_programs::Qasm;
+use pecos_qasm::qasm_engine;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Run a simple QASM circuit
@@ -19,15 +20,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         measure q[0] -> ancilla[0];
     "#;
 
-    // Run simulation - run_qasm returns ShotVec directly
-    let shot_vec = run_qasm(
-        qasm,
-        20,
-        PassThroughNoiseModel::builder(),
-        None,
-        None,
-        Some(42),
-    )?;
+    // Run simulation - sim_builder returns ShotVec directly
+    let shot_vec = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .seed(42)
+        .run(20)?;
 
     // Convert to ShotMap for display and columnar access
     let shot_map: ShotMap = shot_vec.try_as_shot_map()?;

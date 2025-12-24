@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.reps.pypmir.op_types import EMOp, MOp, QOp
+from pecos.reps.pyphir.op_types import EMOp, MOp, QOp
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -65,7 +65,7 @@ class NoErrorModel:
     def process(
         self,
         ops: list,
-        call_back: Callable | None = None,  # noqa: ARG002
+        _call_back: Callable | None = None,
     ) -> list | None:
         """Process operations without applying any errors.
 

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
+import pecos as pc
 
 if TYPE_CHECKING:
     from pecos import QuantumCircuit
@@ -43,7 +43,7 @@ def noise_meas_bitflip(
     """
     # Bit flip noise
     # --------------
-    rand_nums = np.random.random(len(locations)) <= p
+    rand_nums = pc.random.random(len(locations)) <= p
 
     for r, loc in zip(rand_nums, locations, strict=False):
         if r:

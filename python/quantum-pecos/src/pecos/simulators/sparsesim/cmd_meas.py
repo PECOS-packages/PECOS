@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
+import pecos as pc
 
 if TYPE_CHECKING:
     from pecos.simulators.sparsesim.state import SparseSim
@@ -172,7 +172,7 @@ def meas_z(
                 msg,
             )
     else:
-        meas_outcome = np.random.randint(2)
+        meas_outcome = int(pc.random.randint(0, 2, 1)[0])
 
     return meas_outcome
 
@@ -332,18 +332,10 @@ def nondeterministic_meas(
     # Measurements
     # ---------------------------------------------------------------------
 
-    """
-    if forced_outcome is not None:
-
-        if forced_outcome == 0 or forced_outcome == 1:
-            meas_outcome = forced_outcome
-        else:
-            raise Exception('forced_outcome can only be 0 or 1 and not %s' % forced_outcome)
-    else:
-        meas_outcome = np.random.randint(2)
-    """
-
-    meas_outcome = forced_outcome if forced_outcome > -1 else np.random.randint(2)
+    # Use forced outcome if provided, otherwise generate random outcome (0 or 1)
+    meas_outcome = (
+        forced_outcome if forced_outcome > -1 else int(pc.random.randint(0, 2, 1)[0])
+    )
 
     # Use the random outcome as the sign of the replaced stabilizer
     if meas_outcome:

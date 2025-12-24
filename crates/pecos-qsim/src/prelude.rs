@@ -14,10 +14,16 @@ pub use pecos_core::{IndexableElement, VecSet};
 
 pub use crate::{
     arbitrary_rotation_gateable::ArbitraryRotationGateable,
-    clifford_gateable::CliffordGateable,
+    clifford_gateable::{CliffordGateable, MeasurementResult},
+    coin_toss::CoinToss,
+    measurement_sampler::{MeasurementSampler, SampleResult, SequentialMeasurementSampler},
     pauli_prop::{PauliProp, StdPauliProp},
     quantum_simulator::QuantumSimulator,
+    sign_algebra::{PhaseSign, SignAlgebra, SymbolicSign},
     sparse_stab::{SparseStab, StdSparseStab},
     stabilizer_tableau::StabilizerTableauSimulator,
     state_vec::StateVec,
+    symbolic_sparse_stab::{
+        MeasurementHistory, StdSymbolicSparseStab, SymbolicMeasurementResult, SymbolicSparseStab,
+    },
 };

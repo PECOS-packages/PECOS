@@ -40,11 +40,17 @@ class If(CondBlock):
         super().__init__(*args, cond=cond)
         self.else_block = None
 
-    def Then(self, *args):  # noqa: N802
+    def Then(
+        self,
+        *args,
+    ):
         self._extend(*args)
         return self
 
-    def Else(self, *args):  # noqa: N802
+    def Else(
+        self,
+        *args,
+    ):
         self.else_block = Block(*args)
         return self
 

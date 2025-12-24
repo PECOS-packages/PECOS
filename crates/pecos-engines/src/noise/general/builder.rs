@@ -1,14 +1,15 @@
 use crate::GateType;
 use crate::noise::{
-    GeneralNoiseModel, NoiseRng, SingleQubitWeightedSampler, TwoQubitWeightedSampler,
+    CrosstalkWeightedSampler, GeneralNoiseModel, NoiseRng, SingleQubitWeightedSampler,
+    TwoQubitWeightedSampler,
 };
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Builder for creating general noise models
 #[derive(Debug, Clone)]
 pub struct GeneralNoiseModelBuilder {
     // global params
-    noiseless_gates: Option<HashSet<GateType>>,
+    noiseless_gates: Option<BTreeSet<GateType>>,
     seed: Option<u64>,
     scale: Option<f64>,
     leakage_scale: Option<f64>,
@@ -46,8 +47,10 @@ pub struct GeneralNoiseModelBuilder {
     // measurement noise
     p_meas_0: Option<f64>,
     p_meas_1: Option<f64>,
-    p_meas_crosstalk: Option<f64>,
     meas_scale: Option<f64>,
+    p_meas_crosstalk_global: Option<f64>,
+    p_meas_crosstalk_local: Option<f64>,
+    p_meas_crosstalk_model: Option<CrosstalkWeightedSampler>,
     p_meas_crosstalk_scale: Option<f64>,
 }
 
@@ -101,8 +104,10 @@ impl GeneralNoiseModelBuilder {
             // measurement noise
             p_meas_0: None,
             p_meas_1: None,
-            p_meas_crosstalk: None,
             meas_scale: None,
+            p_meas_crosstalk_global: None,
+            p_meas_crosstalk_local: None,
+            p_meas_crosstalk_model: None,
             p_meas_crosstalk_scale: None,
         }
     }
@@ -242,8 +247,16 @@ impl GeneralNoiseModelBuilder {
 
         model.p_meas_max = model.p_meas_0.max(model.p_meas_1);
 
-        if let Some(prob) = self.p_meas_crosstalk {
-            model.p_meas_crosstalk = prob;
+        if let Some(prob) = self.p_meas_crosstalk_global {
+            model.p_meas_crosstalk_global = prob;
+        }
+
+        if let Some(prob) = self.p_meas_crosstalk_local {
+            model.p_meas_crosstalk_local = prob;
+        }
+
+        if let Some(model_map) = self.p_meas_crosstalk_model.clone() {
+            model.p_meas_crosstalk_model = model_map;
         }
 
         // scale
@@ -260,7 +273,7 @@ impl GeneralNoiseModelBuilder {
     #[must_use]
     pub fn with_noiseless_gate(mut self, gate_type: GateType) -> Self {
         if self.noiseless_gates.is_none() {
-            self.noiseless_gates = Some(HashSet::new());
+            self.noiseless_gates = Some(BTreeSet::new());
         }
 
         if let Some(ref mut gates) = self.noiseless_gates {
@@ -644,19 +657,33 @@ impl GeneralNoiseModelBuilder {
         self
     }
 
-    /// Set the probability of crosstalk during measurement operations
+    /// Set the probability of global crosstalk during measurement operations
     #[must_use]
-    pub fn with_p_meas_crosstalk(mut self, prob: f64) -> Self {
-        self.p_meas_crosstalk = Some(Self::validate_probability(prob));
+    pub fn with_p_meas_crosstalk_global(mut self, prob: f64) -> Self {
+        self.p_meas_crosstalk_global = Some(Self::validate_probability(prob));
         self
     }
 
-    // TODO: See if we should put a average scaling...
-    /// Set the average measurement crosstalk
+    /// Set the probability of local crosstalk during measurement operations
     #[must_use]
-    pub fn with_average_p_meas_crosstalk(mut self, prob: f64) -> Self {
-        let prob: f64 = prob * 18.0 / 5.0;
-        self.p_meas_crosstalk = Some(prob);
+    pub fn with_p_meas_crosstalk_local(mut self, prob: f64) -> Self {
+        self.p_meas_crosstalk_local = Some(Self::validate_probability(prob));
+        self
+    }
+
+    /// Set the probability of crosstalk during measurement operations
+    /// This is a shorthand that sets both global and local to the given value
+    #[must_use]
+    pub fn with_p_meas_crosstalk(mut self, prob: f64) -> Self {
+        self.p_meas_crosstalk_global = Some(Self::validate_probability(prob));
+        self.p_meas_crosstalk_local = Some(Self::validate_probability(prob));
+        self
+    }
+
+    /// Set the transition model for measurement crosstalk
+    #[must_use]
+    pub fn with_p_meas_crosstalk_model(mut self, model: &BTreeMap<String, f64>) -> Self {
+        self.p_meas_crosstalk_model = Some(CrosstalkWeightedSampler::new(model));
         self
     }
 
@@ -751,11 +778,13 @@ impl GeneralNoiseModelBuilder {
         model.p_prep_leak_ratio = model.p_prep_leak_ratio.min(1.0);
 
         // Apply crosstalk rescaling factors
-        model.p_meas_crosstalk *= p_meas_crosstalk_scale;
+        model.p_meas_crosstalk_global *= p_meas_crosstalk_scale;
+        model.p_meas_crosstalk_local *= p_meas_crosstalk_scale;
         model.p_prep_crosstalk *= p_prep_crosstalk_scale;
 
         // Then apply the regular scaling to crosstalks
-        model.p_meas_crosstalk *= meas_scale * scale;
+        model.p_meas_crosstalk_global *= meas_scale * scale;
+        model.p_meas_crosstalk_local *= meas_scale * scale;
         model.p_prep_crosstalk *= prep_scale * scale;
 
         // Scale emission ratios
@@ -778,5 +807,11 @@ impl GeneralNoiseModelBuilder {
 
         model.p_idle_linear_rate = model.p_idle_linear_rate * scale * idle_scale;
         model.p2_idle = Self::validate_probability(model.p2_idle * scale * idle_scale);
+    }
+}
+
+impl crate::noise::IntoNoiseModel for GeneralNoiseModelBuilder {
+    fn into_noise_model(self) -> Box<dyn crate::noise::NoiseModel> {
+        Box::new(self.build())
     }
 }

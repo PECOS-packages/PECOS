@@ -89,20 +89,12 @@ fn expand_gate_operation(
     qubits: &[usize],
     gate_definitions: &BTreeMap<String, GateDefinition>,
 ) -> Result<Vec<Operation>, PecosError> {
-    // First check if this is a user-defined gate
+    // First check if it's a user-defined gate - prioritize user-defined over native
     if let Some(gate_def) = gate_definitions.get(name) {
-        // User-defined gate
-        return expand_gate_call(gate_def, parameters, qubits, gate_definitions);
-    }
-
-    // Check if it's a native gate (case insensitive)
-    if let Some(gate_type) = parse_native_gate(name) {
-        // Only allow exact uppercase native gates unless there's a definition
-        let is_uppercase = name == name.to_uppercase();
-        if !is_uppercase && !gate_definitions.contains_key(name) {
-            // Lowercase native gate without definition - error
-            return Err(undefined_gate(name));
-        }
+        // Use the existing expand_gate_call function
+        expand_gate_call(gate_def, parameters, qubits, gate_definitions)
+    } else if let Some(gate_type) = parse_native_gate(name) {
+        // Native gates can be uppercase or lowercase - we'll use them as native either way
 
         // Validate parameter count
         let expected_params = gate_type.classical_arity();
@@ -271,7 +263,7 @@ fn expand_gate_call(
         Ok(expanded)
     } else if gate_def.qargs.len() == 2 && qubits.len() > 2 {
         // Two-qubit gate applied to multiple qubits - apply pairwise
-        if qubits.len() % 2 != 0 {
+        if !qubits.len().is_multiple_of(2) {
             return Err(PecosError::CompileInvalidOperation {
                 operation: format!("gate '{}'", gate_def.name),
                 reason: format!(

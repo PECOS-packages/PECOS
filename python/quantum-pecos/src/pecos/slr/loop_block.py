@@ -28,7 +28,7 @@ class While(CondBlock):
     def __init__(self, *args, cond=None):
         super().__init__(*args, cond=cond)
 
-    def Do(self, *args):  # noqa: N802
+    def Do(self, *args):
         """Add operations to the while loop body."""
         self._extend(*args)
         return self
@@ -88,7 +88,7 @@ class For(Block):
             msg = f"Invalid arguments for For loop: {args}"
             raise ValueError(msg)
 
-    def Do(self, *args):  # noqa: N802
+    def Do(self, *args):
         """Add operations to the for loop body."""
         super().extend(*args)
         return self

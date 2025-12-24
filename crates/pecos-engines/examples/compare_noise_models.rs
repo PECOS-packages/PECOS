@@ -2,7 +2,7 @@ use pecos_engines::byte_message::ByteMessage;
 use pecos_engines::noise::{DepolarizingNoiseModel, GeneralNoiseModel};
 use pecos_engines::quantum::StateVecEngine;
 use pecos_engines::{Engine, EngineSystem, QuantumSystem};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 fn main() {
     // Create the same Bell state circuit as in run_noisy_circ.rs
@@ -127,8 +127,8 @@ fn compare_depolarizing_with_general(circ: &ByteMessage) {
     );
 
     // Count distribution of each outcome
-    let mut depolarizing_counts = HashMap::new();
-    let mut general_counts = HashMap::new();
+    let mut depolarizing_counts = BTreeMap::new();
+    let mut general_counts = BTreeMap::new();
 
     for result in &depolarizing_results {
         *depolarizing_counts.entry(result.clone()).or_insert(0) += 1;
@@ -205,8 +205,8 @@ fn test_asymmetric_measurements() {
         QuantumSystem::new(Box::new(depolarizing_noise), Box::new(quantum.clone()));
 
     // Run simulations
-    let mut general_counts = HashMap::new();
-    let mut depolarizing_counts = HashMap::new();
+    let mut general_counts = BTreeMap::new();
+    let mut depolarizing_counts = BTreeMap::new();
 
     for _ in 0..num_shots {
         // Run with general noise

@@ -18,7 +18,6 @@ CNOT gates, controlled gates, and other entangling operations with MPS bond dime
 from __future__ import annotations
 
 import cmath
-import math
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -28,6 +27,7 @@ if TYPE_CHECKING:
 import cupy as cp
 from pytket import Qubit
 
+import pecos as pc
 from pecos.simulators.mps_pytket.gates_one_qubit import H
 
 
@@ -133,10 +133,10 @@ def RXX(
 
     matrix = cp.asarray(
         [
-            [math.cos(theta / 2), 0, 0, -1j * math.sin(theta / 2)],
-            [0, math.cos(theta / 2), -1j * math.sin(theta / 2), 0],
-            [0, -1j * math.sin(theta / 2), math.cos(theta / 2), 0],
-            [-1j * math.sin(theta / 2), 0, 0, math.cos(theta / 2)],
+            [pc.cos(theta / 2), 0, 0, -1j * pc.sin(theta / 2)],
+            [0, pc.cos(theta / 2), -1j * pc.sin(theta / 2), 0],
+            [0, -1j * pc.sin(theta / 2), pc.cos(theta / 2), 0],
+            [-1j * pc.sin(theta / 2), 0, 0, pc.cos(theta / 2)],
         ],
         dtype=state.dtype,
     )
@@ -163,10 +163,10 @@ def RYY(
 
     matrix = cp.asarray(
         [
-            [math.cos(theta / 2), 0, 0, 1j * math.sin(theta / 2)],
-            [0, math.cos(theta / 2), -1j * math.sin(theta / 2), 0],
-            [0, -1j * math.sin(theta / 2), math.cos(theta / 2), 0],
-            [1j * math.sin(theta / 2), 0, 0, math.cos(theta / 2)],
+            [pc.cos(theta / 2), 0, 0, 1j * pc.sin(theta / 2)],
+            [0, pc.cos(theta / 2), -1j * pc.sin(theta / 2), 0],
+            [0, -1j * pc.sin(theta / 2), pc.cos(theta / 2), 0],
+            [1j * pc.sin(theta / 2), 0, 0, pc.cos(theta / 2)],
         ],
         dtype=state.dtype,
     )
@@ -232,7 +232,7 @@ def SXX(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> 
         state: An instance of MPS
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RXX(state, qubits, angles=(math.pi / 2,))
+    RXX(state, qubits, angles=(pc.f64.frac_pi_2,))
 
 
 def SXXdg(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
@@ -242,7 +242,7 @@ def SXXdg(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -
         state: An instance of MPS
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RXX(state, qubits, angles=(-math.pi / 2,))
+    RXX(state, qubits, angles=(-pc.f64.frac_pi_2,))
 
 
 def SYY(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
@@ -252,7 +252,7 @@ def SYY(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> 
         state: An instance of MPS
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RYY(state, qubits, angles=(math.pi / 2,))
+    RYY(state, qubits, angles=(pc.f64.frac_pi_2,))
 
 
 def SYYdg(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
@@ -262,7 +262,7 @@ def SYYdg(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -
         state: An instance of MPS
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RYY(state, qubits, angles=(-math.pi / 2,))
+    RYY(state, qubits, angles=(-pc.f64.frac_pi_2,))
 
 
 def SZZ(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
@@ -272,7 +272,7 @@ def SZZ(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> 
         state: An instance of MPS
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RZZ(state, qubits, angles=(math.pi / 2,))
+    RZZ(state, qubits, angles=(pc.f64.frac_pi_2,))
 
 
 def SZZdg(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:
@@ -282,7 +282,7 @@ def SZZdg(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -
         state: An instance of MPS
         qubits: A tuple with the index of the qubits where the gate is applied
     """
-    RZZ(state, qubits, angles=(-math.pi / 2,))
+    RZZ(state, qubits, angles=(-pc.f64.frac_pi_2,))
 
 
 def SWAP(state: MPS, qubits: tuple[int, int], **_params: SimulatorGateParams) -> None:

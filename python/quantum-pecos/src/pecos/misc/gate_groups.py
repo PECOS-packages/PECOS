@@ -15,7 +15,8 @@ This module defines sets and functions for categorizing quantum gates by
 their properties such as qubit count, gate type, and rotation characteristics.
 """
 
-import numpy as np
+import pecos as pc
+from pecos.quantum import Pauli
 
 two_qubits = {
     "CNOT",
@@ -77,24 +78,24 @@ one_qubits = {
     "RXY1Q",
 }
 
-error_two_paulis_collection = np.array(
+error_two_paulis_collection = pc.array(
     [
-        (None, "X"),
-        (None, "Y"),
-        (None, "Z"),
-        ("X", None),
-        ("X", "X"),
-        ("X", "Y"),
-        ("X", "Z"),
-        ("Y", None),
-        ("Y", "X"),
-        ("Y", "Y"),
-        ("Y", "Z"),
-        ("Z", None),
-        ("Z", "X"),
-        ("Z", "Y"),
-        ("Z", "Z"),
+        (Pauli.I, Pauli.X),
+        (Pauli.I, Pauli.Y),
+        (Pauli.I, Pauli.Z),
+        (Pauli.X, Pauli.I),
+        (Pauli.X, Pauli.X),
+        (Pauli.X, Pauli.Y),
+        (Pauli.X, Pauli.Z),
+        (Pauli.Y, Pauli.I),
+        (Pauli.Y, Pauli.X),
+        (Pauli.Y, Pauli.Y),
+        (Pauli.Y, Pauli.Z),
+        (Pauli.Z, Pauli.I),
+        (Pauli.Z, Pauli.X),
+        (Pauli.Z, Pauli.Y),
+        (Pauli.Z, Pauli.Z),
     ],
 )
 
-error_one_paulis_collection = np.array(["X", "Y", "Z"])
+error_one_paulis_collection = pc.array([Pauli.X, Pauli.Y, Pauli.Z])

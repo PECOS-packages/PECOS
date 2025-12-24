@@ -75,6 +75,10 @@ pub enum PecosError {
     ParseInvalidExpression(String),
 
     // Compilation errors
+    /// General compilation error
+    #[error("Compilation error: {0}")]
+    Compilation(String),
+
     /// Invalid operation during compilation
     #[error("Invalid {operation}: {reason}")]
     CompileInvalidOperation { operation: String, reason: String },
@@ -133,5 +137,14 @@ impl PecosError {
             context: context.into(),
             source: Box::new(error),
         }
+    }
+}
+
+#[cfg(feature = "anyhow")]
+impl From<anyhow::Error> for PecosError {
+    fn from(error: anyhow::Error) -> Self {
+        // anyhow::Error implements std::error::Error + Send + Sync
+        // Convert to PecosError::External using the error's Display
+        Self::External(error.into())
     }
 }

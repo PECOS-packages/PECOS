@@ -19,12 +19,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
+import pecos as pc
 
 if TYPE_CHECKING:
     from pecos.simulators.custatevec.state import CuStateVec
     from pecos.typing import SimulatorGateParams
-from cuquantum import custatevec as cusv
+from cuquantum.bindings import custatevec as cusv
 
 
 def meas_z(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> int:
@@ -53,7 +53,7 @@ def meas_z(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> int
         n_index_bits=state.num_qubits,  # Number of qubits in the statevector
         basis_bits=[target],  # The index of the qubit being measured
         n_basis_bits=1,  # Number of qubits being measured
-        randnum=np.random.random(),  # Source of randomness for the measurement
+        randnum=pc.random.random(1)[0],  # Source of randomness for the measurement
         collapse=cusv.Collapse.NORMALIZE_AND_ZERO,  # Collapse and normalise
     )
     state.stream.synchronize()

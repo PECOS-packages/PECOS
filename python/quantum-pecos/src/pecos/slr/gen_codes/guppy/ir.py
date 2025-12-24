@@ -47,11 +47,21 @@ class ScopeContext:
     variables: dict[str, VariableInfo] = field(default_factory=dict)
     unpacked_arrays: dict[str, list[str]] = field(default_factory=dict)
     consumed_resources: set[str] = field(default_factory=set)
+    refreshed_arrays: dict[str, str] = field(
+        default_factory=dict,
+    )  # original_name -> fresh_name
 
     def lookup_variable(self, name: str) -> VariableInfo | None:
         """Look up a variable in this scope or parent scopes."""
         if name in self.variables:
             return self.variables[name]
+
+        # Check if this variable was refreshed by a function call
+        if name in self.refreshed_arrays:
+            fresh_name = self.refreshed_arrays[name]
+            if fresh_name in self.variables:
+                return self.variables[fresh_name]
+
         if self.parent:
             return self.parent.lookup_variable(name)
         return None
@@ -87,6 +97,7 @@ class ArrayAccess(IRNode):
     array_name: str = None  # Optional for backwards compatibility
     array: IRNode = None  # Can be a FieldAccess for struct.field[index]
     index: int | str | IRNode = None
+    force_array_syntax: bool = False  # If True, never use unpacked names
 
     def __post_init__(self):
         """Initialize ArrayAccess, supporting both old and new API."""
@@ -102,7 +113,7 @@ class ArrayAccess(IRNode):
     def render(self, context: ScopeContext) -> list[str]:
         """Render array access, using unpacked name if available."""
         # Handle old API
-        if self.array_name:
+        if self.array_name and not self.force_array_syntax:
             var = context.lookup_variable(self.array_name)
             if (
                 var
@@ -161,6 +172,7 @@ class VariableRef(IRNode):
     def render(self, context: ScopeContext) -> list[str]:
         """Render variable reference."""
         var = context.lookup_variable(self.name)
+
         if var:
             return [var.name]  # Use potentially renamed name
         return [self.name]
@@ -647,6 +659,9 @@ class Module(IRNode):
 
     imports: list[str] = field(default_factory=list)
     functions: list[Function] = field(default_factory=list)
+    refreshed_arrays: dict[str, set[str]] = field(
+        default_factory=dict,
+    )  # function_name -> set of refreshed array names
 
     def analyze(self, context: ScopeContext) -> None:
         for func in self.functions:

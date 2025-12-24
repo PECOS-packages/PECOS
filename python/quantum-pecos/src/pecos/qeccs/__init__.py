@@ -24,3 +24,12 @@ from pecos.qeccs.default_logical_instruction import DefaultLogicalInstruction
 from pecos.qeccs.default_qecc import DefaultQECC
 from pecos.qeccs.surface_4444.surface_4444 import Surface4444
 from pecos.qeccs.surface_medial_4444.surface_medial_4444 import SurfaceMedial4444
+
+__all__ = [
+    "Color488",
+    "DefaultLogicalGate",
+    "DefaultLogicalInstruction",
+    "DefaultQECC",
+    "Surface4444",
+    "SurfaceMedial4444",
+]

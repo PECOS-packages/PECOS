@@ -18,7 +18,7 @@ from pecos.slr.cops import SET, PyCOp
 class Vars:
     """A collection of variables."""
 
-    def __init__(self, *args) -> None:  # noqa: ARG002
+    def __init__(self, *_args) -> None:
         self.vars = []
         # Store the source class name for code generation
         self.source_class = None

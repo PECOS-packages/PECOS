@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.reps.pypmir import types as pt
+from pecos.reps.pyphir import types as pt
 
 if TYPE_CHECKING:
     from pecos.protocols import ErrorModelProtocol, MachineProtocol

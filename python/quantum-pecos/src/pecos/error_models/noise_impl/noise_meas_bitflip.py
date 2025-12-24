@@ -16,9 +16,8 @@ errors in quantum error correction protocols.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-import numpy as np
-
-from pecos.reps.pypmir.op_types import QOp
+import pecos as pc
+from pecos.reps.pyphir.op_types import QOp
 
 
 def noise_meas_bitflip(op: QOp, p: float) -> list[QOp] | None:
@@ -31,15 +30,11 @@ def noise_meas_bitflip(op: QOp, p: float) -> list[QOp] | None:
     """
     # Bit flip noise
     # --------------
-    rand_nums = np.random.random(len(op.args)) <= p
+    # Use fused operation to check and get error indices in one pass
+    error_indices = pc.random.compare_indices(len(op.args), p)
 
-    noise = []
-
-    if np.any(rand_nums):
-        bitflips = []
-        for r, loc in zip(rand_nums, op.args, strict=False):
-            if r:
-                bitflips.append(loc)
+    if error_indices:
+        bitflips = [op.args[idx] for idx in error_indices]
 
         noisy_op = QOp(
             name="Measure",
@@ -48,7 +43,6 @@ def noise_meas_bitflip(op: QOp, p: float) -> list[QOp] | None:
             metadata=dict(op.metadata),
         )
         noisy_op.metadata["bitflips"] = bitflips
-        noise.append(noisy_op)
-        return noise
+        return [noisy_op]
 
     return None

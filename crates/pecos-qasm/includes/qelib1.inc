@@ -129,11 +129,19 @@ gate cphase(theta) a,b {
 // Toffoli gate (controlled-controlled-X)
 gate ccx a,b,c {
   h c;
-  cx b,c; tdg c;
-  cx a,c; t c;
-  cx b,c; tdg c;
-  cx a,c; t b; t c; h c;
-  cx a,b; t a; tdg b;
+  cx b,c;
+  tdg c;
+  cx a,c;
+  t c;
+  cx b,c;
+  tdg c;
+  cx a,c;
+  t b;
+  t c;
+  h c;
+  cx a,b;
+  t a;
+  tdg b;
   cx a,b;
 }
 
@@ -193,24 +201,6 @@ gate rxx(theta) a,b {
   h b;
 }
 
-// Three-qubit Toffoli gate
-gate ccx a,b,c {
-  h c;
-  cx b,c;
-  tdg c;
-  cx a,c;
-  t c;
-  cx b,c;
-  tdg c;
-  cx a,c;
-  t b;
-  t c;
-  h c;
-  cx a,b;
-  t a;
-  tdg b;
-  cx a,b;
-}
 
 // Synonyms for common gates
 gate cnot a,b { cx a,b; }

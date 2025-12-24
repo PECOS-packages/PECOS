@@ -1,19 +1,20 @@
-use pecos_build_utils::{
-    boost_download_info, download_cached, eigen_download_info, extract_archive,
-    qulacs_download_info,
-};
+use log::warn;
+use pecos_build::{Manifest, ensure_dep_ready};
 use std::env;
 use std::path::{Path, PathBuf};
 
 fn main() {
+    // Initialize logger for build script
+    env_logger::init();
+
     setup_rerun_conditions();
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let target = env::var("TARGET").unwrap_or_default();
     let is_windows = target.contains("windows");
 
-    // Download and extract dependencies
-    let (qulacs_path, eigen_path, boost_path) = download_and_extract_dependencies(&out_dir);
+    // Ensure dependencies are downloaded and extracted to ~/.pecos/deps/
+    let (qulacs_path, eigen_path, boost_path) = download_and_extract_dependencies();
 
     // Build our wrapper with actual Qulacs
     let mut build = cxx_build::bridge("src/bridge.rs");
@@ -33,6 +34,7 @@ fn main() {
         &qulacs_src,
         &out_dir,
         is_windows,
+        &target,
     );
 
     // Compile everything
@@ -41,6 +43,13 @@ fn main() {
     // Add Windows-specific boost exception stub if needed
     if is_windows {
         create_windows_boost_stub(&out_dir);
+    }
+
+    // On macOS, link against the system C++ library from dyld shared cache
+    if target.contains("darwin") {
+        println!("cargo:rustc-link-search=native=/usr/lib");
+        println!("cargo:rustc-link-lib=c++");
+        println!("cargo:rustc-link-arg=-Wl,-search_paths_first");
     }
 }
 
@@ -51,19 +60,62 @@ fn setup_rerun_conditions() {
     println!("cargo:rerun-if-changed=src/qulacs_wrapper.h");
 }
 
-fn download_and_extract_dependencies(out_dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
-    // Download all dependencies
-    let qulacs_data = download_cached(&qulacs_download_info()).expect("Failed to download Qulacs");
-    let eigen_data = download_cached(&eigen_download_info()).expect("Failed to download Eigen");
-    let boost_data = download_cached(&boost_download_info()).expect("Failed to download Boost");
+/// Get the build profile from Cargo's environment
+/// Returns "debug", "release", or "native"
+///
+/// Note: Cargo's PROFILE env var only reports "debug" or "release" even for custom profiles
+/// (due to backward compatibility - see RFC 2678). Custom profiles inherit from these base
+/// profiles, so PROFILE reflects the parent. To detect custom profiles like "native", we
+/// check the `OUT_DIR` path which contains the actual profile directory name.
+///
+/// Profile behavior:
+/// - "debug" -> no C++ optimization, fast compile
+/// - "release" -> full optimization (-O3)
+/// - "native" -> full optimization + CPU-specific (-O3 -march=native)
+fn get_build_profile() -> String {
+    // First check OUT_DIR for custom profile name (e.g., target/native/build/...)
+    // Custom profiles get their own directory under target/
+    if let Ok(out_dir) = env::var("OUT_DIR") {
+        // OUT_DIR looks like: .../target/<profile>/build/<crate>-<hash>/out
+        // We want to extract <profile>
+        let parts: Vec<&str> = out_dir.split(std::path::MAIN_SEPARATOR).collect();
+        if let Some(target_idx) = parts.iter().position(|&p| p == "target")
+            && let Some(profile_name) = parts.get(target_idx + 1)
+        {
+            return match *profile_name {
+                "native" => "native",
+                "release" => "release",
+                "debug" => "debug",
+                _ => {
+                    // Unknown profile, fall back to PROFILE env var
+                    if env::var("PROFILE").as_deref() == Ok("release") {
+                        "release"
+                    } else {
+                        "debug"
+                    }
+                }
+            }
+            .to_string();
+        }
+    }
 
-    // Extract archives
-    let qulacs_path =
-        extract_archive(&qulacs_data, out_dir, Some("qulacs")).expect("Failed to extract Qulacs");
-    let eigen_path =
-        extract_archive(&eigen_data, out_dir, Some("eigen")).expect("Failed to extract Eigen");
-    let boost_path =
-        extract_archive(&boost_data, out_dir, Some("boost")).expect("Failed to extract Boost");
+    // Fallback to PROFILE env var (will be "debug" or "release")
+    match env::var("PROFILE").as_deref() {
+        Ok("release") => "release".to_string(),
+        _ => "debug".to_string(),
+    }
+}
+
+fn download_and_extract_dependencies() -> (PathBuf, PathBuf, PathBuf) {
+    // Load manifest (crate-local or workspace-level, with validation)
+    let manifest =
+        Manifest::find_and_load_validated().expect("pecos.toml not found or validation failed");
+
+    // Ensure dependencies are downloaded and extracted to ~/.pecos/deps/
+    // This persists across `cargo clean` for faster rebuilds
+    let qulacs_path = ensure_dep_ready("qulacs", &manifest).expect("Failed to get Qulacs");
+    let eigen_path = ensure_dep_ready("eigen", &manifest).expect("Failed to get Eigen");
+    let boost_path = ensure_dep_ready("boost", &manifest).expect("Failed to get Boost");
 
     (qulacs_path, eigen_path, boost_path)
 }
@@ -94,7 +146,7 @@ fn add_qulacs_source_files(build: &mut cc::Build, qulacs_src: &Path) {
         if path.exists() {
             build.file(path);
         } else {
-            eprintln!("Warning: Skipping missing file: cppsim/{file}");
+            warn!("Skipping missing file: cppsim/{file}");
         }
     }
 
@@ -148,7 +200,7 @@ fn add_qulacs_source_files(build: &mut cc::Build, qulacs_src: &Path) {
         if path.exists() {
             build.file(path);
         } else {
-            eprintln!("Warning: Skipping missing file: csim/{file}");
+            warn!("Skipping missing file: csim/{file}");
         }
     }
 }
@@ -160,6 +212,7 @@ fn configure_build(
     qulacs_src: &Path,
     out_dir: &Path,
     is_windows: bool,
+    target: &str,
 ) {
     // Include directories
     build.include(eigen_path);
@@ -170,9 +223,28 @@ fn configure_build(
     build.include("src");
     build.include(out_dir);
 
-    // Set compiler flags
+    // Configure the C++ compiler based on platform.
+    // - macOS: MUST use system clang (/usr/bin/clang++) which has proper SDK paths.
+    //   PECOS's bundled clang doesn't have macOS SDK headers configured (missing math.h, etc.)
+    //   and the cc crate will find PECOS clang first if it's in PATH.
+    // - Windows: Use MSVC (default). PECOS's bundled clang-cl is LLVM 14, but MSVC 2022's STL
+    //   requires Clang 19.0.0+ when using clang-cl, causing "STL1000: Unexpected compiler version".
+    // - Linux: Use system GCC (PECOS clang can't find system GCC headers for libstdc++)
+    // Only override if CXX/CC env vars are not already set (allow user override).
+    if env::var("CXX").is_err() && env::var("CC").is_err() && target.contains("darwin") {
+        // On macOS, explicitly use system clang to ensure SDK paths are correct.
+        // The PECOS LLVM clang may be in PATH but doesn't have SDK headers.
+        build.compiler("/usr/bin/clang++");
+    }
+    // On Windows and Linux, use the default compiler (MSVC on Windows, GCC on Linux)
+
+    // Get the build profile for optimization decisions
+    let profile = get_build_profile();
+    let is_release = profile == "release" || profile == "native";
+
+    // Set compiler flags based on platform and compiler
     if is_windows {
-        // Windows-specific settings
+        // MSVC-specific settings
         build.std("c++14");
         // Define Boost exception handling for Windows
         build.define("BOOST_NO_EXCEPTIONS", None);
@@ -180,17 +252,69 @@ fn configure_build(
         // Windows needs these for proper linking
         build.define("_WINDOWS", None);
         build.define("NOMINMAX", None);
+
+        // Fix MSVC compiler crash with Eigen templates
+        build.flag("/bigobj"); // Allow larger object files
+        build.flag("/EHsc"); // Enable exception handling
+        build.flag("/Z7"); // Embed debug info in .obj files (no PDB) - required for parallel builds
+
+        // Suppress warnings from external headers (Eigen, Boost, Qulacs)
+        build.flag_if_supported("/external:anglebrackets"); // Treat angle-bracket includes as external
+        build.flag_if_supported("/external:W0"); // Disable warnings for external headers
+
+        // Use optimization level based on Cargo profile
+        if is_release {
+            build.opt_level(2); // Maximize speed optimization (/O2)
+        } else {
+            build.opt_level(0); // No optimization for debug builds
+        }
     } else {
         build.flag_if_supported("-std=c++14");
-        build.flag_if_supported("-O3");
-        build.flag_if_supported("-ffast-math");
+
+        // Use profile-based optimization settings
+        match profile.as_str() {
+            "native" => {
+                // Native profile: release optimizations + CPU-specific optimizations
+                build.flag_if_supported("-O3");
+                build.flag_if_supported("-march=native"); // CPU-specific optimizations
+            }
+            "release" => {
+                // Release profile: optimized build
+                build.flag_if_supported("-O3");
+            }
+            _ => {
+                // Dev profile: no optimization flags for fastest compile times
+            }
+        }
+        // Debug builds use cc crate's default (no optimization flags)
+
+        // Safe math optimizations (don't cause ICEs, provide modest speedup)
+        // Applied to all profiles
+        build.flag_if_supported("-fno-math-errno");
+        build.flag_if_supported("-fno-trapping-math");
+
         // Silence OpenMP pragma warnings since we intentionally don't use OpenMP
         // PECOS uses thread-level parallelism instead of OpenMP's internal parallelism
         build.flag_if_supported("-Wno-unknown-pragmas");
+
+        // Suppress specific warnings from third-party libraries (Eigen, Boost, Qulacs)
+        build.flag_if_supported("-Wno-unused-but-set-variable"); // Eigen SparseLU warnings
+        build.flag_if_supported("-Wno-deprecated-copy-with-user-provided-copy"); // Boost warnings
+        build.flag_if_supported("-Wno-unqualified-std-cast-call"); // Qulacs move() warnings
+        build.flag_if_supported("-Wno-inconsistent-missing-override"); // Qulacs override warnings
+
+        // On macOS, use libc++ (the system default and what PECOS clang expects)
+        if target.contains("darwin") {
+            build.flag("-stdlib=libc++");
+            // Note: Linker flags are passed via cargo:rustc-link-arg below, not here
+        }
+        // On Linux, use system default (libstdc++) - no flag needed
     }
 
-    // Define preprocessor macros
-    build.define("EIGEN_NO_DEBUG", None);
+    // Define preprocessor macros - only disable Eigen debug checks in release mode
+    if is_release {
+        build.define("EIGEN_NO_DEBUG", None);
+    }
 }
 
 fn create_windows_boost_stub(out_dir: &Path) {

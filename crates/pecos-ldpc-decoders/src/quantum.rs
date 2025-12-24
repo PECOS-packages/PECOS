@@ -344,11 +344,9 @@ mod tests {
         let syndrome = Array1::from_vec(vec![1, 0, 1]); // Z0=1, Z1=0, X0=1
         let result = decoder.decode(&syndrome.view()).unwrap();
 
-        println!("MBP decoded Pauli errors: {result:?}");
         assert_eq!(result.len(), 3);
 
         // Test GF4 decoding
-        let gf4_result = decoder.decode_gf4(&syndrome.view()).unwrap();
-        println!("MBP GF4 decoding: {gf4_result:?}");
+        decoder.decode_gf4(&syndrome.view()).unwrap();
     }
 }

@@ -103,7 +103,7 @@ pub mod utils {
     /// Returns [`DecoderError`] if the DEM format is invalid
     pub fn parse_dem_metadata(dem: &str) -> Result<(usize, usize), DecoderError> {
         let mut max_detector = None;
-        let mut observables = std::collections::HashSet::new();
+        let mut observables = std::collections::BTreeSet::new();
 
         for line in dem.lines() {
             let line = line.trim();

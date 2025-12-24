@@ -61,7 +61,9 @@ def conv_expr(expr: dict[str, Any]) -> dict[str, Any]:
 
         if expr["op"] == "=":
             # op = = -> "t = a"
-            assert "b" not in expr  # noqa: S101
+            if "b" in expr:
+                msg = "Assignment expression should not have 'b' operand"
+                raise ValueError(msg)
             left = expr["t"]
             right = expr["a"]
         else:

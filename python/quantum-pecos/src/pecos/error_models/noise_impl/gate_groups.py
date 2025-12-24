@@ -18,7 +18,8 @@ noise application in error models.
 
 from __future__ import annotations
 
-import numpy as np
+import pecos as pc
+from pecos.quantum import Pauli
 
 two_qubits = {
     "CNOT",
@@ -99,27 +100,27 @@ measurementsz = {"measure X", "measure Y", "Measure +X", "Measure +Y"}
 initsx = {"init |0>", "init |1>"}
 initsz = {"init |+>", "init |->", "init |+i>", "init |-i>"}
 
-error_two_paulis_collection = np.array(
+error_two_paulis_collection = pc.array(
     [
-        (None, "X"),
-        (None, "Y"),
-        (None, "Z"),
-        ("X", None),
-        ("X", "X"),
-        ("X", "Y"),
-        ("X", "Z"),
-        ("Y", None),
-        ("Y", "X"),
-        ("Y", "Y"),
-        ("Y", "Z"),
-        ("Z", None),
-        ("Z", "X"),
-        ("Z", "Y"),
-        ("Z", "Z"),
+        (Pauli.I, Pauli.X),
+        (Pauli.I, Pauli.Y),
+        (Pauli.I, Pauli.Z),
+        (Pauli.X, Pauli.I),
+        (Pauli.X, Pauli.X),
+        (Pauli.X, Pauli.Y),
+        (Pauli.X, Pauli.Z),
+        (Pauli.Y, Pauli.I),
+        (Pauli.Y, Pauli.X),
+        (Pauli.Y, Pauli.Y),
+        (Pauli.Y, Pauli.Z),
+        (Pauli.Z, Pauli.I),
+        (Pauli.Z, Pauli.X),
+        (Pauli.Z, Pauli.Y),
+        (Pauli.Z, Pauli.Z),
     ],
 )
 
-error_one_paulis_collection = np.array(["X", "Y", "Z"])
+error_one_paulis_collection = pc.array([Pauli.X, Pauli.Y, Pauli.Z])
 
 # Residual one-qubit gates that are applied due to leakage cause the MS gate not to be applied but the non-leaked
 # qubits still gets the wrapper one-gates applied.

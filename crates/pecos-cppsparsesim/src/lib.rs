@@ -331,12 +331,9 @@ impl CliffordGateable<usize> for CppSparseStab {
         result
     }
 
-    fn my(&mut self, q: usize) -> MeasurementResult {
-        self.sxdg(q);
-        let result = self.mz(q);
-        self.sx(q);
-        result
-    }
+    // Note: my() and mny() use the trait defaults which correctly implement:
+    // my(): sx → mz → sxdg (measure +Y)
+    // mny(): sxdg → mz → sx (measure -Y)
 }
 
 // Additional convenience methods
@@ -392,12 +389,14 @@ impl CppSparseStab {
     }
 
     /// Get the stabilizer tableau as a string
-    pub fn stab_tableau(&mut self) -> String {
+    #[must_use]
+    pub fn stab_tableau(&self) -> String {
         self.format_generators(true)
     }
 
     /// Get the destabilizer tableau as a string
-    pub fn destab_tableau(&mut self) -> String {
+    #[must_use]
+    pub fn destab_tableau(&self) -> String {
         self.format_generators(false)
     }
 

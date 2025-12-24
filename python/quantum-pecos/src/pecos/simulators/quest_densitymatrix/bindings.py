@@ -15,13 +15,15 @@ This module provides the gate bindings that map gate symbols to their correspond
 in the QuEST backend for the density matrix simulator.
 """
 
-# ruff: noqa: ANN401 ARG005  # backend is PyO3 object; unused params are part of gate interface
+# Gate bindings require consistent interfaces even if not all parameters are used.
+# This is a design pattern where all gates must have the same signature for polymorphic dispatch.
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pecos.protocols import QuantumBackend
     from pecos.simulators.quest_densitymatrix.state import QuestDensityMatrix
 
 
@@ -33,14 +35,12 @@ def _init_one(sim: QuestDensityMatrix, q: int, _p: dict[str, Any]) -> None:
     # If it's 0, flip it to 1
     if result == 0:
         sim.run_gate("X", {q})
-    return
 
 
 def _init_plus(sim: QuestDensityMatrix, q: int, _p: dict[str, Any]) -> None:
     """Initialize qubit to |+⟩ state."""
     sim.reset()  # First reset to |0⟩
     sim.run_gate("H", {q})  # Then apply H to get |+⟩
-    return
 
 
 def _init_minus(sim: QuestDensityMatrix, q: int, _p: dict[str, Any]) -> None:
@@ -48,7 +48,6 @@ def _init_minus(sim: QuestDensityMatrix, q: int, _p: dict[str, Any]) -> None:
     sim.reset()  # First reset to |0⟩
     sim.run_gate("X", {q})  # Apply X to get |1⟩
     sim.run_gate("H", {q})  # Then apply H to get |-⟩
-    return
 
 
 def _init_plusi(sim: QuestDensityMatrix, q: int, _p: dict[str, Any]) -> None:
@@ -56,7 +55,6 @@ def _init_plusi(sim: QuestDensityMatrix, q: int, _p: dict[str, Any]) -> None:
     sim.reset()  # First reset to |0⟩
     sim.run_gate("H", {q})  # Apply H to get |+⟩
     sim.run_gate("Sdg", {q})  # Apply S† to get |+i⟩
-    return
 
 
 def _init_minusi(sim: QuestDensityMatrix, q: int, _p: dict[str, Any]) -> None:
@@ -64,11 +62,10 @@ def _init_minusi(sim: QuestDensityMatrix, q: int, _p: dict[str, Any]) -> None:
     sim.reset()  # First reset to |0⟩
     sim.run_gate("H", {q})  # Apply H to get |+⟩
     sim.run_gate("S", {q})  # Apply S to get |-i⟩
-    return
 
 
 def _rxx_decomposition(
-    backend: Any,
+    backend: QuantumBackend,
     qs: int | list[int] | tuple[int, ...],
     p: dict[str, Any],
 ) -> None:
@@ -89,7 +86,7 @@ def _rxx_decomposition(
 
 
 def _ryy_decomposition(
-    backend: Any,
+    backend: QuantumBackend,
     qs: int | list[int] | tuple[int, ...],
     p: dict[str, Any],
 ) -> None:
@@ -108,7 +105,7 @@ def _ryy_decomposition(
 
 
 def _rzz_decomposition(
-    backend: Any,
+    backend: QuantumBackend,
     qs: int | list[int] | tuple[int, ...],
     p: dict[str, Any],
 ) -> None:
@@ -126,7 +123,10 @@ def _rzz_decomposition(
     backend.run_1q_gate("H", q2, None)
 
 
-def _cy_decomposition(backend: Any, qs: int | list[int] | tuple[int, ...]) -> None:
+def _cy_decomposition(
+    backend: QuantumBackend,
+    qs: int | list[int] | tuple[int, ...],
+) -> None:
     """CY = SZdg(q2); CX(q1,q2); SZ(q2) - Note: reversed from trait due to sign convention."""
     q1, q2 = (qs[0], qs[1]) if isinstance(qs, list | tuple) else (qs, qs)
 
@@ -152,75 +152,77 @@ def get_bindings(state: QuestDensityMatrix) -> dict:
 
     return {
         # Single-qubit gates
-        "I": lambda s, q, **p: None,
-        "X": lambda s, q, **p: backend.run_1q_gate("X", q, None),
-        "Y": lambda s, q, **p: backend.run_1q_gate("Y", q, None),
-        "Z": lambda s, q, **p: backend.run_1q_gate("Z", q, None),
-        "H": lambda s, q, **p: backend.run_1q_gate("H", q, None),
-        "H1": lambda s, q, **p: backend.run_1q_gate("H", q, None),
-        "H2": lambda s, q, **p: backend.h2_gate(q),
-        "H3": lambda s, q, **p: backend.h3_gate(q),
-        "H4": lambda s, q, **p: backend.h4_gate(q),
-        "H5": lambda s, q, **p: backend.h5_gate(q),
-        "H6": lambda s, q, **p: backend.h6_gate(q),
-        "H+z+x": lambda s, q, **p: backend.run_1q_gate("H", q, None),
-        "H-z-x": lambda s, q, **p: backend.h2_gate(q),
-        "H+y-z": lambda s, q, **p: backend.h3_gate(q),
-        "H-y-z": lambda s, q, **p: backend.h4_gate(q),
-        "H-x+y": lambda s, q, **p: backend.h5_gate(q),
-        "H-x-y": lambda s, q, **p: backend.h6_gate(q),
+        "I": lambda _s, _q, **_p: None,
+        "X": lambda _s, q, **_p: backend.run_1q_gate("X", q, None),
+        "Y": lambda _s, q, **_p: backend.run_1q_gate("Y", q, None),
+        "Z": lambda _s, q, **_p: backend.run_1q_gate("Z", q, None),
+        "H": lambda _s, q, **_p: backend.run_1q_gate("H", q, None),
+        "H1": lambda _s, q, **_p: backend.run_1q_gate("H", q, None),
+        "H2": lambda _s, q, **_p: backend.h2_gate(q),
+        "H3": lambda _s, q, **_p: backend.h3_gate(q),
+        "H4": lambda _s, q, **_p: backend.h4_gate(q),
+        "H5": lambda _s, q, **_p: backend.h5_gate(q),
+        "H6": lambda _s, q, **_p: backend.h6_gate(q),
+        "H+z+x": lambda _s, q, **_p: backend.run_1q_gate("H", q, None),
+        "H-z-x": lambda _s, q, **_p: backend.h2_gate(q),
+        "H+y-z": lambda _s, q, **_p: backend.h3_gate(q),
+        "H-y-z": lambda _s, q, **_p: backend.h4_gate(q),
+        "H-x+y": lambda _s, q, **_p: backend.h5_gate(q),
+        "H-x-y": lambda _s, q, **_p: backend.h6_gate(q),
         # Square root gates (available from traits)
-        "SX": lambda s, q, **p: backend.sx_gate(q),
-        "SXdg": lambda s, q, **p: backend.sxdg_gate(q),
-        "SY": lambda s, q, **p: backend.sy_gate(q),
-        "SYdg": lambda s, q, **p: backend.sydg_gate(q),
-        "SZ": lambda s, q, **p: backend.sz_gate(q),
-        "SZdg": lambda s, q, **p: backend.szdg_gate(q),
+        "SX": lambda _s, q, **_p: backend.sx_gate(q),
+        "SXdg": lambda _s, q, **_p: backend.sxdg_gate(q),
+        "SY": lambda _s, q, **_p: backend.sy_gate(q),
+        "SYdg": lambda _s, q, **_p: backend.sydg_gate(q),
+        "SZ": lambda _s, q, **_p: backend.sz_gate(q),
+        "SZdg": lambda _s, q, **_p: backend.szdg_gate(q),
         # Face gates (F gates) - decompositions from traits
-        "F": lambda s, q, **p: (backend.sx_gate(q), backend.sz_gate(q))[-1] or None,
-        "Fdg": lambda s, q, **p: (backend.szdg_gate(q), backend.sxdg_gate(q))[-1]
+        "F": lambda _s, q, **_p: (backend.sx_gate(q), backend.sz_gate(q))[-1] or None,
+        "Fdg": lambda _s, q, **_p: (backend.szdg_gate(q), backend.sxdg_gate(q))[-1]
         or None,
-        "F2": lambda s, q, **p: (backend.sxdg_gate(q), backend.sy_gate(q))[-1] or None,
-        "F2dg": lambda s, q, **p: (backend.sydg_gate(q), backend.sx_gate(q))[-1]
+        "F2": lambda _s, q, **_p: (backend.sxdg_gate(q), backend.sy_gate(q))[-1]
         or None,
-        "F3": lambda s, q, **p: (backend.sxdg_gate(q), backend.sz_gate(q))[-1] or None,
-        "F3dg": lambda s, q, **p: (backend.szdg_gate(q), backend.sx_gate(q))[-1]
+        "F2dg": lambda _s, q, **_p: (backend.sydg_gate(q), backend.sx_gate(q))[-1]
         or None,
-        "F4": lambda s, q, **p: (backend.sz_gate(q), backend.sx_gate(q))[-1] or None,
-        "F4dg": lambda s, q, **p: (backend.sxdg_gate(q), backend.szdg_gate(q))[-1]
+        "F3": lambda _s, q, **_p: (backend.sxdg_gate(q), backend.sz_gate(q))[-1]
+        or None,
+        "F3dg": lambda _s, q, **_p: (backend.szdg_gate(q), backend.sx_gate(q))[-1]
+        or None,
+        "F4": lambda _s, q, **_p: (backend.sz_gate(q), backend.sx_gate(q))[-1] or None,
+        "F4dg": lambda _s, q, **_p: (backend.sxdg_gate(q), backend.szdg_gate(q))[-1]
         or None,
         # Two-qubit gates
-        "II": lambda s, qs, **p: None,
-        "CX": lambda s, qs, **p: backend.run_2q_gate(
+        "II": lambda _s, _qs, **_p: None,
+        "CX": lambda _s, qs, **_p: backend.run_2q_gate(
             "CX",
             tuple(qs) if isinstance(qs, list) else qs,
             None,
         ),
-        "CNOT": lambda s, qs, **p: backend.run_2q_gate(
+        "CNOT": lambda _s, qs, **_p: backend.run_2q_gate(
             "CX",
             tuple(qs) if isinstance(qs, list) else qs,
             None,
         ),
-        "CY": lambda s, qs, **p: _cy_decomposition(backend, qs),
-        "CZ": lambda s, qs, **p: backend.run_2q_gate(
+        "CY": lambda _s, qs, **_p: _cy_decomposition(backend, qs),
+        "CZ": lambda _s, qs, **_p: backend.run_2q_gate(
             "CZ",
             tuple(qs) if isinstance(qs, list) else qs,
             None,
         ),
         # Measurements
-        "MZ": lambda s, q, **p: backend.run_1q_gate("MZ", q, None),
-        "MX": lambda s, q, **p: backend.mx_gate(q),
-        "MY": lambda s, q, **p: backend.my_gate(q),
-        "Measure": lambda s, q, **p: backend.run_1q_gate("MZ", q, None),
-        "measure Z": lambda s, q, **p: backend.run_1q_gate("MZ", q, None),
-        "Measure +Z": lambda s, q, **p: backend.run_1q_gate("MZ", q, None),
+        "MZ": lambda _s, q, **_p: backend.run_1q_gate("MZ", q, None),
+        "MX": lambda _s, q, **_p: backend.mx_gate(q),
+        "MY": lambda _s, q, **_p: backend.my_gate(q),
+        "Measure": lambda _s, q, **_p: backend.run_1q_gate("MZ", q, None),
+        "measure Z": lambda _s, q, **_p: backend.run_1q_gate("MZ", q, None),
+        "Measure +Z": lambda _s, q, **_p: backend.run_1q_gate("MZ", q, None),
         # Projections/Initializations (map to reset for now)
-        "PZ": lambda s, q, **p: backend.reset() or None,
-        "Init": lambda s, q, **p: backend.reset() or None,
-        "Init +Z": lambda s, q, **p: backend.reset() or None,
-        "init |0>": lambda s, q, **p: backend.reset() or None,
+        "PZ": lambda _s, _q, **_p: backend.reset() or None,
+        "Init": lambda _s, _q, **_p: backend.reset() or None,
+        "Init +Z": lambda _s, _q, **_p: backend.reset() or None,
+        "init |0>": lambda _s, _q, **_p: backend.reset() or None,
         # Rotation gates
-        "RX": lambda s, q, **p: backend.run_1q_gate(
+        "RX": lambda _s, q, **p: backend.run_1q_gate(
             "RX",
             q,
             (
@@ -229,7 +231,7 @@ def get_bindings(state: QuestDensityMatrix) -> dict:
                 else {"angle": p.get("angle", 0)}
             ),
         ),
-        "RY": lambda s, q, **p: backend.run_1q_gate(
+        "RY": lambda _s, q, **p: backend.run_1q_gate(
             "RY",
             q,
             (
@@ -238,7 +240,7 @@ def get_bindings(state: QuestDensityMatrix) -> dict:
                 else {"angle": p.get("angle", 0)}
             ),
         ),
-        "RZ": lambda s, q, **p: backend.run_1q_gate(
+        "RZ": lambda _s, q, **p: backend.run_1q_gate(
             "RZ",
             q,
             (
@@ -247,7 +249,7 @@ def get_bindings(state: QuestDensityMatrix) -> dict:
                 else {"angle": p.get("angle", 0)}
             ),
         ),
-        "R1XY": lambda s, q, **p: backend.r1xy_gate(
+        "R1XY": lambda _s, q, **p: backend.r1xy_gate(
             p["angles"][0] if "angles" in p else p.get("theta", 0),
             (
                 p["angles"][1]
@@ -256,17 +258,17 @@ def get_bindings(state: QuestDensityMatrix) -> dict:
             ),
             q,
         ),
-        "RXX": lambda s, qs, **p: _rxx_decomposition(backend, qs, p),
-        "RYY": lambda s, qs, **p: _ryy_decomposition(backend, qs, p),
-        "RZZ": lambda s, qs, **p: _rzz_decomposition(backend, qs, p),
-        "R2XXYYZZ": lambda s, qs, **p: backend.rzzryyrxx_gate(
+        "RXX": lambda _s, qs, **p: _rxx_decomposition(backend, qs, p),
+        "RYY": lambda _s, qs, **p: _ryy_decomposition(backend, qs, p),
+        "RZZ": lambda _s, qs, **p: _rzz_decomposition(backend, qs, p),
+        "R2XXYYZZ": lambda _s, qs, **p: backend.rzzryyrxx_gate(
             p["angles"][0] if "angles" in p else 0,
             p["angles"][1] if "angles" in p and len(p["angles"]) > 1 else 0,
             p["angles"][2] if "angles" in p and len(p["angles"]) > 2 else 0,
             qs[0] if isinstance(qs, list | tuple) else qs,
             qs[1] if isinstance(qs, list | tuple) else qs,
         ),
-        "RZZRYYRXX": lambda s, qs, **p: backend.rzzryyrxx_gate(
+        "RZZRYYRXX": lambda _s, qs, **p: backend.rzzryyrxx_gate(
             p["angles"][0] if "angles" in p else 0,
             p["angles"][1] if "angles" in p and len(p["angles"]) > 1 else 0,
             p["angles"][2] if "angles" in p and len(p["angles"]) > 2 else 0,
@@ -274,32 +276,32 @@ def get_bindings(state: QuestDensityMatrix) -> dict:
             qs[1] if isinstance(qs, list | tuple) else qs,
         ),
         # T gates - use RZ implementation instead of trait methods
-        "T": lambda s, q, **p: backend.run_1q_gate(
+        "T": lambda _s, q, **_p: backend.run_1q_gate(
             "RZ",
             q,
             {"angle": 0.7853981633974483},
         ),  # π/4
-        "TDG": lambda s, q, **p: backend.run_1q_gate(
+        "TDG": lambda _s, q, **_p: backend.run_1q_gate(
             "RZ",
             q,
             {"angle": -0.7853981633974483},
         ),  # -π/4
-        "Tdg": lambda s, q, **p: backend.run_1q_gate(
+        "Tdg": lambda _s, q, **_p: backend.run_1q_gate(
             "RZ",
             q,
             {"angle": -0.7853981633974483},
         ),  # StateVec compatibility
-        "TDAGGER": lambda s, q, **p: backend.run_1q_gate(
+        "TDAGGER": lambda _s, q, **_p: backend.run_1q_gate(
             "RZ",
             q,
             {"angle": -0.7853981633974483},
         ),
         # Two-qubit Clifford gates from traits
-        "SXX": lambda s, qs, **p: backend.sxx_gate(
+        "SXX": lambda _s, qs, **_p: backend.sxx_gate(
             qs[0] if isinstance(qs, list | tuple) else qs,
             qs[1] if isinstance(qs, list | tuple) else qs,
         ),
-        "SXXdg": lambda s, qs, **p: (
+        "SXXdg": lambda _s, qs, **_p: (
             backend.x(qs[0] if isinstance(qs, list | tuple) else qs),
             backend.x(qs[1] if isinstance(qs, list | tuple) else qs),
             backend.sxx_gate(
@@ -308,11 +310,11 @@ def get_bindings(state: QuestDensityMatrix) -> dict:
             ),
         )[-1]
         or None,
-        "SYY": lambda s, qs, **p: backend.syy_gate(
+        "SYY": lambda _s, qs, **_p: backend.syy_gate(
             qs[0] if isinstance(qs, list | tuple) else qs,
             qs[1] if isinstance(qs, list | tuple) else qs,
         ),
-        "SYYdg": lambda s, qs, **p: (
+        "SYYdg": lambda _s, qs, **_p: (
             backend.y(qs[0] if isinstance(qs, list | tuple) else qs),
             backend.y(qs[1] if isinstance(qs, list | tuple) else qs),
             backend.syy_gate(
@@ -321,11 +323,11 @@ def get_bindings(state: QuestDensityMatrix) -> dict:
             ),
         )[-1]
         or None,
-        "SZZ": lambda s, qs, **p: backend.szz_gate(
+        "SZZ": lambda _s, qs, **_p: backend.szz_gate(
             qs[0] if isinstance(qs, list | tuple) else qs,
             qs[1] if isinstance(qs, list | tuple) else qs,
         ),
-        "SZZdg": lambda s, qs, **p: (
+        "SZZdg": lambda _s, qs, **_p: (
             backend.z(qs[0] if isinstance(qs, list | tuple) else qs),
             backend.z(qs[1] if isinstance(qs, list | tuple) else qs),
             backend.szz_gate(
@@ -334,11 +336,11 @@ def get_bindings(state: QuestDensityMatrix) -> dict:
             ),
         )[-1]
         or None,
-        "SWAP": lambda s, qs, **p: backend.swap_gate(
+        "SWAP": lambda _s, qs, **_p: backend.swap_gate(
             qs[0] if isinstance(qs, list | tuple) else qs,
             qs[1] if isinstance(qs, list | tuple) else qs,
         ),
-        "G": lambda s, qs, **p: (
+        "G": lambda _s, qs, **_p: (
             backend.run_2q_gate("CZ", tuple(qs) if isinstance(qs, list) else qs, None),
             backend.run_1q_gate(
                 "H",
@@ -353,7 +355,7 @@ def get_bindings(state: QuestDensityMatrix) -> dict:
             backend.run_2q_gate("CZ", tuple(qs) if isinstance(qs, list) else qs, None),
         )[-1]
         or None,
-        "G2": lambda s, qs, **p: (
+        "G2": lambda _s, qs, **_p: (
             backend.run_2q_gate("CZ", tuple(qs) if isinstance(qs, list) else qs, None),
             backend.run_1q_gate(
                 "H",
@@ -369,10 +371,10 @@ def get_bindings(state: QuestDensityMatrix) -> dict:
         )[-1]
         or None,
         # S and S-dagger gates
-        "S": lambda s, q, **p: backend.s(q),
-        "Sdg": lambda s, q, **p: backend.sdg(q),
-        "SDAG": lambda s, q, **p: backend.sdg(q),
-        "SDG": lambda s, q, **p: backend.sdg(q),
+        "S": lambda _s, q, **_p: backend.s(q),
+        "Sdg": lambda _s, q, **_p: backend.sdg(q),
+        "SDAG": lambda _s, q, **_p: backend.sdg(q),
+        "SDG": lambda _s, q, **_p: backend.sdg(q),
         # Initialization gates for error states
         "Init -Z": lambda s, q, **p: _init_one(s, q, p),
         "Init +X": lambda s, q, **p: _init_plus(s, q, p),

@@ -21,13 +21,12 @@ import pickle
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from pecos.engines.cvm.binarray import BinArray
-from pecos.engines.cvm.sim_func import sim_exec
-from pecos.engines.cvm.wasm_vms.wasmer import read_wasmer
-from pecos.engines.cvm.wasm_vms.wasmtime import read_wasmtime
-from pecos.errors import MissingCCOPError
+from pecos import BitInt, WasmForeignObject
+from pecos.engines.cvm.sim_func import sim_exec, sim_funcs
+from pecos.exceptions import MissingCCOPError
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from typing import Any
 
     from pecos.circuits import QuantumCircuit
@@ -36,7 +35,13 @@ if TYPE_CHECKING:
 class CCOPObject(Protocol):
     """Protocol for CCOP objects."""
 
-    def exec(self, func_name: str, args: list) -> int:
+    def exec(
+        self,
+        func_name: str,
+        args: Sequence[tuple[Any, int]],
+        *,
+        debug: bool = False,
+    ) -> int:
         """Execute a function."""
         ...
 
@@ -49,6 +54,64 @@ class EngineRunner(Protocol):
     circuit: QuantumCircuit
 
 
+class WasmCCOP:
+    """WASM-based Classical Coprocessor using Rust WasmForeignObject.
+
+    This class wraps the Rust WasmForeignObject to provide the CCOP interface
+    expected by the CVM, including debug mode support for simulation functions.
+    """
+
+    def __init__(self, path: str | bytes) -> None:
+        """Initialize a WASM CCOP instance.
+
+        Args:
+            path: Path to a WebAssembly file or raw WebAssembly bytes.
+        """
+        self._wasm = WasmForeignObject(path)
+        self._wasm.init()
+
+    def get_funcs(self) -> list[str]:
+        """Get list of available function names from the WASM module.
+
+        Returns:
+            List of function names that can be executed.
+        """
+        return self._wasm.get_funcs()
+
+    def exec(
+        self,
+        func_name: str,
+        args: Sequence[tuple[Any, int]],
+        *,
+        debug: bool = False,
+    ) -> int:
+        """Execute a WASM function with given arguments.
+
+        Args:
+            func_name: Name of the function to execute.
+            args: Sequence of (type, value) tuples for arguments.
+            debug: Whether to use debug simulation functions.
+
+        Returns:
+            Integer result from the function execution.
+        """
+        # Handle debug simulation functions
+        if debug and func_name.startswith("sim_") and func_name in sim_funcs:
+            return sim_funcs[func_name](*args)
+
+        # Convert args from (type, value) tuples to just values
+        args_list = [int(b) for _, b in args]
+        return self._wasm.exec(func_name, args_list)
+
+    def shot_reinit(self) -> None:
+        """Reset variables before each shot."""
+        self._wasm.shot_reinit()
+
+    def teardown(self) -> None:
+        """Clean up wasmtime resources."""
+        self._wasm.teardown()
+
+
 def read_pickle(picklefile: str | bytes) -> CCOPObject:
     """Read in either a file path or byte object meant to be a pickled class used to define the ccop.
 
@@ -57,9 +120,13 @@ def read_pickle(picklefile: str | bytes) -> CCOPObject:
     """
     if isinstance(picklefile, str):  # filename
         with Path.open(picklefile, "rb") as f:
-            return pickle.load(f)  # noqa: S301 - Loading trusted circuit metadata
+            return pickle.load(
+                f,
+            )
     else:
-        return pickle.loads(picklefile)  # noqa: S301 - Loading trusted circuit metadata
+        return pickle.loads(
+            picklefile,
+        )
 
 
 def get_ccop(circuit: QuantumCircuit) -> CCOPObject | None:
@@ -91,13 +158,7 @@ def get_ccop(circuit: QuantumCircuit) -> CCOPObject | None:
             ccop = read_pickle(ccop)
 
         elif ccop_type == "wasmtime":
-            ccop = read_wasmtime(ccop)
-
-        elif ccop_type in {"wasmer", "wasmer_cl"}:
-            ccop = read_wasmer(ccop, compiler="wasmer_cl")
-
-        elif ccop_type == "wasmer_llvm":
-            ccop = read_wasmer(ccop, compiler=ccop_type)
+            ccop = WasmCCOP(ccop)
 
         elif ccop_type in {"obj", "object"}:
             pass
@@ -118,7 +179,7 @@ def get_ccop(circuit: QuantumCircuit) -> CCOPObject | None:
 def eval_cfunc(
     runner: EngineRunner,
     params: dict[str, Any],
-    output: dict[str, BinArray],
+    output: dict[str, BitInt],
 ) -> None:
     """Evaluate a classical function using the coprocessor.
 
@@ -165,7 +226,7 @@ def eval_cfunc(
             if runner.debug and func.startswith("sim_"):
                 output[assign_vars[0]] = vals
             else:
-                b = BinArray(a_obj.size, int(vals))
+                b = BitInt(a_obj.size, int(vals))
                 a_obj.set(b)
 
         else:
@@ -175,7 +236,7 @@ def eval_cfunc(
                 if runner.debug and func.startswith("sim_"):
                     output[asym] = b
                 elif isinstance(b, int):
-                    bin_array = BinArray(
+                    bin_array = BitInt(
                         a_obj.size,
                         int(b),
                     )

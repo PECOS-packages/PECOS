@@ -2,7 +2,10 @@
 
 use pecos_core::gate_type::GateType;
 use pecos_engines::noise::GeneralNoiseModel;
-use pecos_qasm::prelude::*;
+use pecos_engines::prelude::{sparse_stabilizer, state_vector};
+use pecos_engines::sim_builder;
+use pecos_programs::Qasm;
+use pecos_qasm::qasm_engine;
 use std::collections::BTreeMap;
 
 #[test]
@@ -25,11 +28,10 @@ fn test_general_noise_builder_basic() {
         .with_meas_0_probability(0.002)
         .with_meas_1_probability(0.002);
 
-    let noise_model = NoiseModelType::General(Box::new(noise_builder));
-
-    let results = qasm_sim(qasm)
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .noise(noise_builder)
         .seed(42)
-        .noise(noise_model)
         .run(1000)
         .unwrap();
 
@@ -71,11 +73,10 @@ fn test_general_noise_builder_with_pauli_models() {
         .with_p1_probability(0.1) // High error rate for testing
         .with_p1_pauli_model(&p1_model);
 
-    let noise_model = NoiseModelType::General(Box::new(noise_builder));
-
-    let results = qasm_sim(qasm)
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .noise(noise_builder)
         .seed(42)
-        .noise(noise_model)
         .run(1000)
         .unwrap();
 
@@ -84,7 +85,11 @@ fn test_general_noise_builder_with_pauli_models() {
 
     // Count errors (should see some 0s due to high error rate)
     let zeros = values.iter().filter(|&&v| v == 0).count();
-    assert!(zeros > 50, "Should see errors with 10% p1 error rate");
+    // With fixed seeds on both noise and simulation, results should be deterministic
+    assert!(
+        zeros > 50,
+        "Should see errors with 10% p1 error rate, got {zeros} zeros"
+    );
 }
 
 #[test]
@@ -126,12 +131,11 @@ fn test_general_noise_builder_complex_configuration() {
         .with_meas_1_probability(0.003)
         .with_noiseless_gate(GateType::H);
 
-    let noise_model = NoiseModelType::General(Box::new(noise_builder));
-
-    let results = qasm_sim(qasm)
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .noise(noise_builder)
         .seed(123)
         .workers(2)
-        .noise(noise_model)
         .run(500)
         .unwrap();
 
@@ -158,9 +162,12 @@ fn test_general_noise_builder_noiseless_gates() {
         .with_noiseless_gate(GateType::H) // H gate is noiseless
         .with_noiseless_gate(GateType::Measure); // Measurement is noiseless
 
-    let noise_model = NoiseModelType::General(Box::new(noise_builder));
-
-    let results = qasm_sim(qasm).noise(noise_model).run(1000).unwrap();
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .noise(noise_builder)
+        .seed(42)
+        .run(1000)
+        .unwrap();
 
     // Even with very high error rates, H being noiseless should preserve some structure
     let shot_map = results.try_as_shot_map().unwrap();
@@ -189,11 +196,10 @@ fn test_general_noise_builder_with_prep_errors() {
         .with_seed(42)
         .with_prep_probability(0.1); // 10% prep error
 
-    let noise_model = NoiseModelType::General(Box::new(noise_builder));
-
-    let results = qasm_sim(qasm)
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .noise(noise_builder)
         .seed(42)
-        .noise(noise_model)
         .run(1000)
         .unwrap();
 
@@ -234,9 +240,12 @@ fn test_general_noise_builder_measurement_errors() {
         .with_meas_0_probability(0.05) // 5% chance |0> measured as |1>
         .with_meas_1_probability(0.10); // 10% chance |1> measured as |0>
 
-    let noise_model = NoiseModelType::General(Box::new(noise_builder));
-
-    let results = qasm_sim(qasm).noise(noise_model).run(1000).unwrap();
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .noise(noise_builder)
+        .seed(42)
+        .run(1000)
+        .unwrap();
 
     let shot_map = results.try_as_shot_map().unwrap();
     let values = shot_map.try_bits_as_u64("c").unwrap();
@@ -290,10 +299,13 @@ fn test_general_noise_builder_chaining_all_methods() {
         .with_noiseless_gate(GateType::H)
         .with_noiseless_gate(GateType::CX);
 
-    let noise_model = NoiseModelType::General(Box::new(noise_builder));
-
     // Should compile and run without errors
-    let results = qasm_sim(qasm).noise(noise_model).run(100).unwrap();
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .noise(noise_builder)
+        .seed(42)
+        .run(100)
+        .unwrap();
 
     assert_eq!(results.len(), 100);
 }
@@ -322,11 +334,11 @@ fn test_general_noise_builder_with_multiple_noiseless_gates() {
         .with_noiseless_gate(GateType::CX)
         .with_noiseless_gate(GateType::Measure);
 
-    let noise_model = NoiseModelType::General(Box::new(noise_builder));
-
-    let results = qasm_sim(qasm)
-        .quantum_engine(QuantumEngineType::StateVector) // Need StateVector for T gate
-        .noise(noise_model)
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .quantum(state_vector()) // Need StateVector for T gate
+        .noise(noise_builder)
+        .seed(42)
         .run(100)
         .unwrap();
 
@@ -372,19 +384,15 @@ fn test_general_noise_builder_comparison_with_sim_builder() {
         .with_p1_probability(0.001)
         .with_p2_probability(0.01);
 
-    let noise_model = NoiseModelType::General(Box::new(noise_builder));
-
     // Test full method chaining with simulation builder
-    let sim = qasm_sim(qasm)
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .quantum(sparse_stabilizer())
+        .noise(noise_builder)
         .seed(42)
         .workers(2)
-        .noise(noise_model)
-        .quantum_engine(QuantumEngineType::SparseStabilizer)
-        .with_binary_string_format()
-        .build()
+        .run(100)
         .unwrap();
-
-    let results = sim.run(100).unwrap();
     assert_eq!(results.len(), 100);
 
     // Check binary string format

@@ -1,3 +1,5 @@
+#![cfg(feature = "runtime")]
+
 use pecos::prelude::*;
 use std::fs;
 
@@ -23,7 +25,7 @@ fn test_setup_engine_for_program() -> Result<(), PecosError> {
     .map_err(PecosError::IO)?;
 
     // Create JSON/PHIR file with proper extension
-    let phir_path = temp_dir.path().join("test_program.json");
+    let phir_path = temp_dir.path().join("test_program.phir.json");
     fs::write(
         &phir_path,
         r#"{
@@ -61,11 +63,11 @@ fn test_setup_engine_for_program() -> Result<(), PecosError> {
 
     // Setup engines
     let qasm_engine = setup_engine_for_program(qasm_type, &qasm_path, Some(42))?;
-    let phir_engine = setup_engine_for_program(phir_type, &phir_path, None)?;
+    let phir_json_engine = setup_engine_for_program(phir_type, &phir_path, None)?;
 
     // Verify engine setup
     assert_eq!(qasm_engine.num_qubits(), 2);
-    assert_eq!(phir_engine.num_qubits(), 2);
+    assert_eq!(phir_json_engine.num_qubits(), 2);
 
     Ok(())
 }

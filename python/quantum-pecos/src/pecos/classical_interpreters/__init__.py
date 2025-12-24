@@ -15,5 +15,5 @@ This package provides classical interpreters for various quantum program represe
 # specific language governing permissions and limitations under the License.
 
 from pecos.classical_interpreters.phir_classical_interpreter import (
-    PHIRClassicalInterpreter,
+    PhirClassicalInterpreter,
 )

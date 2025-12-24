@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos_rslib import StateVecRs
+from pecos_rslib.simulators import StateVec as StateVecRs
 
 from pecos.simulators.statevec.bindings import get_bindings
 
@@ -48,13 +48,13 @@ class StateVec:
         self.bindings = get_bindings(self)
 
     @property
-    def vector(self) -> list[complex]:
-        """Get the state vector as a list of complex numbers.
+    def vector(self) -> Array:  # noqa: F821 - Array is a forward reference
+        """Get the state vector as an Array of complex numbers.
 
         Returns:
-            List of complex amplitudes representing the quantum state.
+            Array of complex amplitudes representing the quantum state.
         """
-        return self.backend.vector
+        return self.backend.vector_big_endian()
 
     def reset(self) -> StateVec:
         """Resets the quantum state to the all-zero state."""
@@ -87,11 +87,12 @@ class StateVec:
                     params["angles"] = (params["angle"],)
 
                 # Convert list to tuple if needed (for Rust bindings compatibility)
+                loc_to_use = location
                 if isinstance(location, list):
-                    location = tuple(location)  # noqa: PLW2901
+                    loc_to_use = tuple(location)
 
                 if symbol in self.bindings:
-                    results = self.bindings[symbol](self, location, **params)
+                    results = self.bindings[symbol](self, loc_to_use, **params)
                 else:
                     msg = f"Gate {symbol} is not supported in this simulator."
                     raise Exception(msg)

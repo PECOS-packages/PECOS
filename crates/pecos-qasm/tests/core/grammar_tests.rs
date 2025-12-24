@@ -1,4 +1,6 @@
-use pecos_qasm::{prelude::PassThroughNoiseModel, run::run_qasm};
+use pecos_engines::ClassicalControlEngineBuilder;
+use pecos_programs::Qasm;
+use pecos_qasm::qasm_engine;
 
 #[test]
 fn test_bell_qasm() {
@@ -15,15 +17,13 @@ fn test_bell_qasm() {
         measure q[1] -> c[1];
     "#;
 
-    let results = run_qasm(
-        qasm,
-        10,
-        PassThroughNoiseModel::builder(),
-        None,
-        Some(1),
-        Some(42),
-    )
-    .unwrap();
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(10)
+        .unwrap();
 
     assert_eq!(results.len(), 10);
     assert!(results.shots[0].data.contains_key("c"));
@@ -75,15 +75,13 @@ fn test_x_qasm() {
         measure w[0] -> d[0];
     "#;
 
-    let results = run_qasm(
-        qasm,
-        10,
-        PassThroughNoiseModel::builder(),
-        None,
-        Some(1),
-        Some(42),
-    )
-    .unwrap();
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(10)
+        .unwrap();
 
     assert!(
         results.shots[0].data.contains_key("d"),
@@ -120,15 +118,13 @@ fn test_arbitrary_register_names() {
         measure bob[0] -> result[1];
     "#;
 
-    let results = run_qasm(
-        qasm,
-        10,
-        PassThroughNoiseModel::builder(),
-        None,
-        Some(1),
-        Some(42),
-    )
-    .unwrap();
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(10)
+        .unwrap();
 
     println!("Arbitrary register test results: {results:?}");
 
@@ -177,15 +173,13 @@ fn test_flips_multi_reg_qasm() {
         measure b -> d;
     "#;
 
-    let results = run_qasm(
-        qasm,
-        10,
-        PassThroughNoiseModel::builder(),
-        None,
-        Some(1),
-        Some(42),
-    )
-    .unwrap();
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(10)
+        .unwrap();
 
     assert!(
         results.shots[0].data.contains_key("c"),
@@ -231,15 +225,13 @@ fn test_basic_arthmetic_qasm() {
         b = 0;
     "#;
 
-    let results = run_qasm(
-        qasm,
-        10,
-        PassThroughNoiseModel::builder(),
-        None,
-        Some(1),
-        Some(42),
-    )
-    .unwrap();
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(10)
+        .unwrap();
 
     println!("Arithmetic test results: {results:?}");
 
@@ -287,15 +279,13 @@ fn test_defaults_qasm() {
         measure q -> m;
     "#;
 
-    let results = run_qasm(
-        qasm,
-        5,
-        PassThroughNoiseModel::builder(),
-        None,
-        Some(1),
-        Some(42),
-    )
-    .unwrap();
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(5)
+        .unwrap();
 
     println!("Default test results: {results:?}");
 
@@ -351,15 +341,13 @@ fn test_basic_if_creg_statements_qasm() {
         if(b==0) a = 1 + 2;
     "#;
 
-    let results = run_qasm(
-        qasm,
-        10,
-        PassThroughNoiseModel::builder(),
-        None,
-        Some(1),
-        Some(42),
-    )
-    .unwrap();
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(10)
+        .unwrap();
 
     println!("If creg test results: {results:?}");
 
@@ -409,15 +397,13 @@ fn test_basic_if_qreg_statements_qasm() {
         measure q[0] -> a[1];
     "#;
 
-    let results = run_qasm(
-        qasm,
-        10,
-        PassThroughNoiseModel::builder(),
-        None,
-        Some(1),
-        Some(42),
-    )
-    .unwrap();
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(10)
+        .unwrap();
 
     println!("If creg test results: {results:?}");
 
@@ -471,15 +457,13 @@ fn test_cond_bell() {
         // c should be "10" == 2
     "#;
 
-    let results = run_qasm(
-        qasm,
-        10,
-        PassThroughNoiseModel::builder(),
-        None,
-        Some(1),
-        Some(42),
-    )
-    .unwrap();
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(10)
+        .unwrap();
 
     println!("Conditional test results: {results:?}");
 
@@ -527,15 +511,13 @@ fn test_classical_statement() {
 
     "#;
 
-    let results = run_qasm(
-        qasm,
-        10,
-        PassThroughNoiseModel::builder(),
-        None,
-        Some(1),
-        Some(42),
-    )
-    .unwrap();
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(10)
+        .unwrap();
 
     println!("Conditional test results: {results:?}");
 

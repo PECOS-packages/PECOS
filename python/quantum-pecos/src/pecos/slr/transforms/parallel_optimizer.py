@@ -77,24 +77,25 @@ class ParallelOptimizer:
             new_block = Repeat(block.cond)
             if new_ops:
                 new_block.block(*new_ops)
+        # Only reconstruct certain block types
+        elif isinstance(block, Parallel) and type(block) is Parallel:
+            new_block = Parallel(*new_ops)
+        elif isinstance(block, Main) and type(block) is Main:
+            new_block = Main(*new_ops)
+        elif isinstance(block, Block):
+            # Use isinstance to handle Block subclasses
+            new_block = Block(*new_ops)
+            # Preserve block metadata if available
+            if hasattr(block, "block_name"):
+                new_block.block_name = block.block_name
+            if hasattr(block, "block_module"):
+                new_block.block_module = block.block_module
+            if hasattr(block, "__slr_return_type__"):
+                new_block.__slr_return_type__ = block.__slr_return_type__
         else:
-            # Only reconstruct certain block types
-            if isinstance(block, Parallel) and type(block) is Parallel:
-                new_block = Parallel(*new_ops)
-            elif isinstance(block, Main) and type(block) is Main:
-                new_block = Main(*new_ops)
-            elif isinstance(block, Block):
-                # Use isinstance to handle Block subclasses
-                new_block = Block(*new_ops)
-                # Preserve block metadata if available
-                if hasattr(block, "block_name"):
-                    new_block.block_name = block.block_name
-                if hasattr(block, "block_module"):
-                    new_block.block_module = block.block_module
-            else:
-                # For non-Block types, don't transform them
-                # They may have specific initialization requirements
-                return block
+            # For non-Block types, don't transform them
+            # They may have specific initialization requirements
+            return block
 
         # Copy over any additional attributes
         if hasattr(block, "vars"):

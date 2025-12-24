@@ -1,0 +1,32 @@
+[package]
+name = "pecos-hugr-qis"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "HUGR to QIS (Quantum Instruction Set) compiler for PECOS quantum programs."
+readme = "README.md"
+
+[dependencies]
+# Core dependencies
+anyhow.workspace = true
+log.workspace = true
+serde_json.workspace = true
+
+# PECOS dependencies
+pecos-core = { workspace = true, features = ["anyhow"] }
+
+# tket dependencies - exactly as Selene's hugr-qis
+tket.workspace = true
+tket-qsystem.workspace = true
+
+[features]
+default = []
+llvm = ["tket-qsystem/llvm"]
+
+[lints]
+workspace = true

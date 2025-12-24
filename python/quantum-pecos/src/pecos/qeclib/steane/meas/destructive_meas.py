@@ -332,7 +332,7 @@ Determine correction to get logical output
             raise Exception(msg)
 
 
-def MeasDecode(  # noqa: N802
+def MeasDecode(
     q: QReg,
     meas_basis: str,
     meas: CReg,

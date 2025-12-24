@@ -210,13 +210,12 @@ def get_stab_gens(height: int, width: int) -> list[tuple[str, tuple[int, ...]]]:
                             ]
                             polygons_0.append(poly)
 
-                    else:
-                        if (x - 2) % 4 == 0:
-                            poly = [
-                                calc_pos2id(x - 1, y - 1, width, height),
-                                calc_pos2id(x + 1, y - 1, width, height),
-                            ]
-                            polygons_0.append(poly)
+                    elif (x - 2) % 4 == 0:
+                        poly = [
+                            calc_pos2id(x - 1, y - 1, width, height),
+                            calc_pos2id(x + 1, y - 1, width, height),
+                        ]
+                        polygons_0.append(poly)
 
                 elif x == lattice_width:
                     # Right: Z checks
@@ -228,13 +227,12 @@ def get_stab_gens(height: int, width: int) -> list[tuple[str, tuple[int, ...]]]:
                                 calc_pos2id(x - 1, y - 1, width, height),
                             ]
                             polygons_1.append(poly)
-                    else:
-                        if (y - 2) % 4 == 0:
-                            poly = [
-                                calc_pos2id(x - 1, y + 1, width, height),
-                                calc_pos2id(x - 1, y - 1, width, height),
-                            ]
-                            polygons_1.append(poly)
+                    elif (y - 2) % 4 == 0:
+                        poly = [
+                            calc_pos2id(x - 1, y + 1, width, height),
+                            calc_pos2id(x - 1, y - 1, width, height),
+                        ]
+                        polygons_1.append(poly)
 
     return [("X", tuple(poly)) for poly in polygons_0] + [
         ("Z", tuple(poly)) for poly in polygons_1

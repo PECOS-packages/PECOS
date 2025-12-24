@@ -18,7 +18,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::simulation::{NoiseModelType, QuantumEngineType};
+use pecos_engines::sim_builder::QuantumEngineType;
 use pecos_engines::GateType;
 use pecos_engines::noise::{
     BiasedDepolarizingNoiseModel, DepolarizingNoiseModel, GeneralNoiseModel,
@@ -351,47 +351,6 @@ pub fn parse_gate_type_from_string(gate_str: &str) -> Option<GateType> {
     }
 }
 
-impl From<NoiseConfig> for NoiseModelType {
-    fn from(config: NoiseConfig) -> Self {
-        match config {
-            NoiseConfig::PassThroughNoise => {
-                let builder = PassThroughNoiseModel::builder();
-                NoiseModelType::PassThrough(Box::new(builder))
-            }
-            NoiseConfig::DepolarizingNoise { p } => {
-                let builder = DepolarizingNoiseModel::builder().with_uniform_probability(p);
-                NoiseModelType::Depolarizing(Box::new(builder))
-            }
-            NoiseConfig::DepolarizingCustomNoise {
-                p_prep,
-                p_meas,
-                p1,
-                p2,
-            } => {
-                let builder = DepolarizingNoiseModel::builder()
-                    .with_prep_probability(p_prep)
-                    .with_meas_probability(p_meas)
-                    .with_p1_probability(p1)
-                    .with_p2_probability(p2);
-                NoiseModelType::Depolarizing(Box::new(builder))
-            }
-            NoiseConfig::BiasedDepolarizingNoise { p } => {
-                let builder = BiasedDepolarizingNoiseModel::builder().with_uniform_probability(p);
-                NoiseModelType::BiasedDepolarizing(Box::new(builder))
-            }
-            NoiseConfig::GeneralNoise(fields) => {
-                let mut builder = GeneralNoiseModel::builder();
-
-                // Apply all parameter groups
-                builder = fields.apply_global_params(builder);
-                builder = fields.apply_idle_params(builder);
-                builder = fields.apply_prep_params(builder);
-                builder = fields.apply_single_qubit_params(builder);
-                builder = fields.apply_two_qubit_params(builder);
-                builder = fields.apply_meas_params(builder);
-
-                NoiseModelType::General(Box::new(builder))
-            }
-        }
-    }
-}
+// Note: The old impl From<NoiseConfig> for NoiseModelType has been removed
+// as NoiseModelType is no longer used in the unified API.
+// Use the noise model builders directly with the simulation API instead.

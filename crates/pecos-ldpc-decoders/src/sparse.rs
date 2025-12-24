@@ -3,7 +3,7 @@
 #![allow(clippy::similar_names)]
 
 use ndarray::{Array2, ArrayView2};
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 /// Sparse matrix in COO (Coordinate) format
 #[derive(Debug, Clone)]
@@ -99,7 +99,7 @@ impl SparseMatrix {
     /// Check if the matrix has duplicate entries
     #[must_use]
     pub fn has_duplicates(&self) -> bool {
-        let mut seen = HashSet::new();
+        let mut seen = BTreeSet::new();
         for (&r, &c) in self.row_indices.iter().zip(self.col_indices.iter()) {
             if !seen.insert((r, c)) {
                 return true;
@@ -110,7 +110,7 @@ impl SparseMatrix {
 
     /// Remove duplicate entries
     pub fn remove_duplicates(&mut self) {
-        let mut seen = HashSet::new();
+        let mut seen = BTreeSet::new();
         let mut new_row_indices = Vec::new();
         let mut new_col_indices = Vec::new();
 

@@ -1,4 +1,5 @@
 use pecos_core::prelude::GateType;
+use pecos_engines::ClassicalControlEngineBuilder;
 use pecos_qasm::{Operation, parser::QASMParser};
 
 // Helper function to check if an operation is a specific gate
@@ -18,7 +19,8 @@ fn is_gate_with_name(op: &Operation, gate_name: &str) -> bool {
     }
 }
 
-use pecos_qasm::{prelude::PassThroughNoiseModel, run::run_qasm};
+use pecos_programs::Qasm;
+use pecos_qasm::qasm_engine;
 
 #[test]
 fn test_x_gate_and_measure() {
@@ -91,15 +93,13 @@ fn test_x_gate_and_measure() {
     }
 
     // Now test actual simulation - X gate should flip the qubit from |0⟩ to |1⟩
-    let shot_vec = run_qasm(
-        qasm,
-        100,
-        PassThroughNoiseModel::builder(),
-        None,
-        Some(1),
-        Some(42),
-    )
-    .expect("Failed to run simulation");
+    let shot_vec = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(100)
+        .expect("Failed to run simulation");
 
     // Verify that qubit 10 is always measured as 1 (since X flips it)
     assert_eq!(shot_vec.len(), 100, "Should have 100 shots");

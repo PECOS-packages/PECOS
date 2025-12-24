@@ -38,7 +38,7 @@ pub struct QASMParser;
 /// These gates don't need to be expanded and can be handled by the quantum engine
 pub const PECOS_NATIVE_GATES: &[&str] = &[
     // Quantum gates from ByteMessage::GateType
-    "X", "Y", "Z", "H", "CX", "SZZ", "RZ", "R1XY", "RZZ", "SZZdg", "U",
+    "X", "Y", "Z", "H", "CX", "SZZ", "RZ", "RX", "RY", "R1XY", "RZZ", "SZZdg", "U",
     // Special operations (these are handled differently but treated as "native")
     "barrier", "reset", "opaque", "measure",
 ];

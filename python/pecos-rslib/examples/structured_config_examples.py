@@ -5,21 +5,20 @@ to configure quantum simulations with better type safety and IDE support compare
 the legacy dictionary-based approach.
 """
 
-from pecos_rslib.qasm_sim import (
-    qasm_sim,
-    QuantumEngine,
-    GeneralNoiseModelBuilder,  # Rust-native builder
-    DepolarizingNoise,
-    DepolarizingCustomNoise,
-    BiasedDepolarizingNoise,
-    GeneralNoise,
-)
 from collections import Counter
 
+from pecos_rslib import (
+    biased_depolarizing_noise,
+    depolarizing_noise,
+    general_noise,
+    sim,
+)
+from pecos_rslib.quantum import state_vector
 
-def example_basic_noise_builder():
-    """Example 1: Basic usage of Rust GeneralNoiseModelBuilder."""
-    print("\n=== Example 1: Direct Rust GeneralNoiseModelBuilder ===")
+
+def example_basic_noise_builder() -> None:
+    """Example 1: Basic usage of general_noise() function."""
+    print("\n=== Example 1: Direct general_noise() function ===")
 
     # Create a simple Bell state circuit
     qasm = """
@@ -32,29 +31,29 @@ def example_basic_noise_builder():
     measure q -> c;
     """
 
-    # Create and configure Rust-native builder with fluent chaining
-    builder = (
-        GeneralNoiseModelBuilder()
+    # Create and configure noise using functional API with fluent chaining
+    noise = (
+        general_noise()
         .with_seed(42)
         .with_p1_probability(0.001)  # Single-qubit gate error
         .with_p2_probability(0.01)  # Two-qubit gate error
         .with_meas_0_probability(0.002)  # 0->1 measurement flip
-        .with_meas_1_probability(0.002)
-    )  # 1->0 measurement flip
+        .with_meas_1_probability(0.002)  # 1->0 measurement flip
+    )
 
-    # Use builder directly with .noise() - just like Rust API!
-    results = qasm_sim(qasm).noise(builder).run(1000)
+    # Use noise directly with .noise()
+    results = sim(qasm).noise(noise).run(1000)
 
     # Analyze results
     counts = Counter(results["c"])
     print(f"Bell state measurement results: {dict(counts)}")
     print("Expected: mostly 0 (|00>) and 3 (|11>) with some errors")
-    print("Note: Using Rust-native builder for maximum performance")
+    print("Note: Using functional API for maximum performance")
 
 
-def example_advanced_noise_builder():
-    """Example 2: Advanced GeneralNoiseModelBuilder with detailed noise configuration."""
-    print("\n=== Example 2: Advanced GeneralNoiseModelBuilder ===")
+def example_advanced_noise_builder() -> None:
+    """Example 2: Advanced general_noise() with detailed noise configuration."""
+    print("\n=== Example 2: Advanced general_noise() ===")
 
     qasm = """
     OPENQASM 2.0;
@@ -69,7 +68,7 @@ def example_advanced_noise_builder():
 
     # Build complex noise model
     noise = (
-        GeneralNoiseModelBuilder()
+        general_noise()
         # Global parameters
         .with_seed(42)
         .with_scale(1.2)  # Scale all error rates by 1.2
@@ -81,23 +80,23 @@ def example_advanced_noise_builder():
                 "X": 0.5,  # 50% X errors
                 "Y": 0.3,  # 30% Y errors
                 "Z": 0.2,  # 20% Z errors
-            }
+            },
         )
         # Two-qubit gate noise
         .with_average_p2_probability(0.008)  # Average error (converted to total)
         # Preparation and measurement noise
         .with_prep_probability(0.001)
         .with_meas_0_probability(0.002)
-        .with_meas_1_probability(0.003)
-    )  # Asymmetric measurement error
+        .with_meas_1_probability(0.003)  # Asymmetric measurement error
+    )
 
-    results = qasm_sim(qasm).noise(noise).run(1000)
+    results = sim(qasm).noise(noise).run(1000)
     counts = Counter(results["c"])
     print(f"GHZ-like state results: {dict(counts)}")
     print("Expected: mostly 0 (|000>) and 7 (|111>) with errors")
 
 
-def example_direct_configuration():
+def example_direct_configuration() -> None:
     """Example 3: Using direct method chaining for complete simulation setup."""
     print("\n=== Example 3: Direct Method Chaining ===")
 
@@ -113,24 +112,25 @@ def example_direct_configuration():
     measure q -> c;
     """
 
-    # Create noise using builder
-    noise = (
-        GeneralNoiseModelBuilder().with_p1_probability(0.001).with_p2_probability(0.01)
-    )
+    # Create noise using functional API
+    noise = general_noise().with_p1_probability(0.001).with_p2_probability(0.01)
 
     # Configure entire simulation with method chaining
-    sim = (
-        qasm_sim(qasm)
+    simulation = (
+        sim(qasm)
         .seed(42)
         .auto_workers()  # Automatically use all CPU cores
         .noise(noise)
-        .quantum_engine(QuantumEngine.StateVector)
-        .with_binary_string_format()  # Output as binary strings
-        .build()
+        .quantum(
+            state_vector(),
+        )  # Use state_vector() instead of undefined QuantumEngine
+        .run(100)
     )
 
-    results_100 = sim.run(100)
-    results_1000 = sim.run(1000)
+    results_100 = simulation
+    results_1000 = (
+        sim(qasm).seed(42).auto_workers().noise(noise).quantum(state_vector()).run(1000)
+    )
 
     print("First run (100 shots):")
     print(f"  Sample results: {results_100['c'][:5]}")
@@ -141,9 +141,9 @@ def example_direct_configuration():
     print(f"  Most common states: {counts.most_common(4)}")
 
 
-def example_builder_vs_direct():
-    """Example 4: Comparing Python builder vs GeneralNoise dataclass."""
-    print("\n=== Example 4: Builder vs Direct Configuration ===")
+def example_builder_vs_direct() -> None:
+    """Example 4: Comparing different ways to configure noise."""
+    print("\n=== Example 4: Different Noise Configuration Methods ===")
 
     qasm = """
     OPENQASM 2.0;
@@ -155,10 +155,10 @@ def example_builder_vs_direct():
     measure q -> c;
     """
 
-    # APPROACH 1: Using GeneralNoiseModelBuilder with method chaining
-    print("Using GeneralNoiseModelBuilder with method chaining:")
+    # APPROACH 1: Using general_noise() with method chaining
+    print("Using general_noise() with method chaining:")
     noise_via_builder = (
-        GeneralNoiseModelBuilder()
+        general_noise()
         .with_p1_probability(0.001)
         .with_p2_probability(0.01)
         .with_meas_0_probability(0.002)
@@ -168,39 +168,34 @@ def example_builder_vs_direct():
     )
 
     results_builder = (
-        qasm_sim(qasm)
+        sim(qasm)
         .seed(42)
         .workers(4)
         .noise(noise_via_builder)
-        .quantum_engine(QuantumEngine.StateVector)
+        .quantum(state_vector())
         .run(100)
     )
     print(f"  Results type: {type(results_builder['c'][0])} (integers)")
 
-    # APPROACH 2: Using GeneralNoise directly
-    print("\nUsing GeneralNoise dataclass directly:")
-    noise_direct = GeneralNoise(
-        p1=0.001,
-        p2=0.01,
-        p_meas_0=0.002,
-        p_meas_1=0.002,
-        noiseless_gates=["H"],
-        p1_pauli_model={"X": 0.5, "Y": 0.3, "Z": 0.2},
+    # APPROACH 2: Using another configuration with same parameters
+    print("\nUsing equivalent configuration:")
+    noise_equivalent = (
+        general_noise()
+        .with_seed(42)
+        .with_p1_probability(0.001)
+        .with_p2_probability(0.01)
+        .with_meas_0_probability(0.002)
+        .with_meas_1_probability(0.002)
+        .set_noiseless_gates(["H"])
+        .with_p1_pauli_model({"X": 0.5, "Y": 0.3, "Z": 0.2})
     )
 
-    results_direct = (
-        qasm_sim(qasm)
-        .seed(42)
-        .workers(4)
-        .noise(noise_direct)
-        .quantum_engine(QuantumEngine.StateVector)
-        .run(100)
-    )
-    print(f"  Results type: {type(results_direct['c'][0])} (integers)")
-    print(f"  Results match: {results_builder['c'] == results_direct['c']}")
+    results_equivalent = sim(qasm).seed(42).workers(4).noise(noise_equivalent).run(100)
+    print(f"  Results type: {type(results_equivalent['c'][0])} (integers)")
+    print(f"  Results match: {results_builder['c'] == results_equivalent['c']}")
 
 
-def example_different_noise_models():
+def example_different_noise_models() -> None:
     """Example 5: Using different built-in noise models."""
     print("\n=== Example 5: Different Noise Models ===")
 
@@ -216,25 +211,29 @@ def example_different_noise_models():
     # Test different noise models
     noise_models = [
         ("No noise", None),
-        ("Depolarizing", DepolarizingNoise(p=0.1)),
+        ("Depolarizing", depolarizing_noise().with_probability(0.1)),
         (
             "Custom depolarizing",
-            DepolarizingCustomNoise(p_prep=0.01, p_meas=0.05, p1=0.02, p2=0.03),
+            depolarizing_noise()
+            .with_prep_probability(0.01)
+            .with_meas_probability(0.05)
+            .with_p1_probability(0.02)
+            .with_p2_probability(0.03),
         ),
-        ("Biased depolarizing", BiasedDepolarizingNoise(p=0.1)),
+        ("Biased depolarizing", biased_depolarizing_noise().with_probability(0.1)),
         (
-            "General (builder)",
-            GeneralNoiseModelBuilder().with_meas_1_probability(0.1),
-        ),  # 10% chance to flip 1->0
+            "General",
+            general_noise().with_meas_1_probability(0.1),  # 10% chance to flip 1->0
+        ),
     ]
 
     for name, noise in noise_models:
-        results = qasm_sim(qasm).seed(42).noise(noise).run(1000)
+        results = sim(qasm).seed(42).noise(noise).run(1000)
         errors = sum(1 for val in results["c"] if val == 0)
         print(f"{name:20} - Errors: {errors}/1000 ({errors/10:.1f}%)")
 
 
-def example_ion_trap_noise():
+def example_ion_trap_noise() -> None:
     """Example 6: Realistic ion trap noise model."""
     print("\n=== Example 6: Ion Trap Noise Model ===")
 
@@ -258,7 +257,7 @@ def example_ion_trap_noise():
 
     # Realistic ion trap noise parameters
     noise = (
-        GeneralNoiseModelBuilder()
+        general_noise()
         .with_seed(42)
         # Ion trap typical parameters
         .with_prep_probability(0.001)  # State prep error
@@ -268,10 +267,10 @@ def example_ion_trap_noise():
         .with_p2_probability(0.003)
         # Measurement (asymmetric for ions)
         .with_meas_0_probability(0.001)  # Dark state error
-        .with_meas_1_probability(0.005)
-    )  # Bright state error
+        .with_meas_1_probability(0.005)  # Bright state error
+    )
 
-    results = qasm_sim(qasm).noise(noise).run(1000)
+    results = sim(qasm).noise(noise).run(1000)
     counts = Counter(results["c"])
     print("W-state preparation results (top 5):")
     for state, count in counts.most_common(5):
@@ -279,7 +278,7 @@ def example_ion_trap_noise():
         print(f"  |{binary}> : {count}")
 
 
-def main():
+def main() -> None:
     """Run all examples."""
     print("PECOS Structured Configuration Examples")
     print("=" * 50)

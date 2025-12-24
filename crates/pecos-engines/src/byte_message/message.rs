@@ -1,6 +1,7 @@
 use crate::byte_message::builder::ByteMessageBuilder;
 use crate::byte_message::protocol::{
-    BatchHeader, GateHeader, MessageHeader, MessageType, OutcomeHeader, calc_padding,
+    BatchHeader, GateHeader, MessageHeader, MessageType, OutcomeHeader, ReturnValueHeader,
+    calc_padding,
 };
 use log::trace;
 use pecos_core::QubitId;
@@ -258,6 +259,25 @@ impl ByteMessage {
 
         // Process based on message type - we only care about Gate messages here
         let result = if msg_type == MessageType::Gate {
+            // Debug: dump payload bytes for RZ gates
+            if payload.len() >= size_of::<GateHeader>() {
+                let header =
+                    *bytemuck::from_bytes::<GateHeader>(&payload[0..size_of::<GateHeader>()]);
+                if header.gate_type == GateType::RZ as u8 {
+                    trace!("process_gate_message: RZ gate payload dump:");
+                    trace!("  Total payload size: {} bytes", payload.len());
+                    trace!(
+                        "  Header: gate_type={}, num_qubits={}, has_params={}",
+                        header.gate_type, header.num_qubits, header.has_params
+                    );
+
+                    // Dump raw bytes in hex
+                    let hex_bytes: Vec<String> =
+                        payload.iter().map(|b| format!("{b:02x}")).collect();
+                    trace!("  Raw bytes: {}", hex_bytes.join(" "));
+                }
+            }
+
             match Self::parse_gate_command(payload) {
                 Ok(cmd) => Some(cmd),
                 Err(e) => {
@@ -388,20 +408,30 @@ impl ByteMessage {
         // Parse and validate the batch header
         let batch_header = self.parse_batch_header()?;
 
+        trace!(
+            "quantum_ops: Processing {} messages",
+            batch_header.msg_count
+        );
+
         let mut commands = Vec::new();
         let mut offset = size_of::<BatchHeader>();
 
         // Process each message
-        for _ in 0..batch_header.msg_count {
+        for msg_idx in 0..batch_header.msg_count {
             // Try to process this message
             let (new_offset, maybe_gate) = self.process_gate_message(offset)?;
             offset = new_offset;
 
             // Add any gate we found to our commands list
             if let Some(gate) = maybe_gate {
+                trace!("quantum_ops: Message {msg_idx} parsed as gate: {gate:?}");
                 commands.push(gate);
+            } else {
+                trace!("quantum_ops: Message {msg_idx} did not yield a gate");
             }
         }
+
+        trace!("quantum_ops: Total gates parsed: {}", commands.len());
 
         Ok(commands)
     }
@@ -431,6 +461,99 @@ impl ByteMessage {
         }
 
         Ok(measurements)
+    }
+
+    /// Extract return value from the message.
+    ///
+    /// # Returns
+    ///
+    /// Returns the return value if found, or None if no return value is present.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the message is malformed.
+    pub fn return_value(&self) -> Result<Option<i64>, PecosError> {
+        // Parse and validate the batch header
+        let batch_header = self.parse_batch_header()?;
+
+        let mut offset = size_of::<BatchHeader>();
+
+        // Process each message
+        for _ in 0..batch_header.msg_count {
+            // Try to process this message for return value
+            let (new_offset, maybe_value) = self.process_return_value_message(offset)?;
+            offset = new_offset;
+
+            // If we found a return value, return it immediately
+            if let Some(value) = maybe_value {
+                return Ok(Some(value));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Process a single message to extract return value if it's a `ReturnValue` message
+    fn process_return_value_message(
+        &self,
+        offset: usize,
+    ) -> Result<(usize, Option<i64>), PecosError> {
+        // Parse message header
+        let Ok((msg_header, new_offset)) = self.parse_message_header(offset) else {
+            // If we can't parse the header, just return the current offset with no value
+            return Ok((offset, None));
+        };
+        let offset = new_offset;
+
+        // Get message type
+        let Ok(msg_type) = msg_header.get_type() else {
+            // Skip invalid message types
+            trace!("Skipping message with invalid type");
+
+            // Calculate the new offset after this message
+            let payload_size = msg_header.payload_size as usize;
+            let payload_end = offset + payload_size;
+            let padding = calc_padding(payload_size, 4);
+            let new_offset = payload_end + (if padding > 0 { padding } else { 0 });
+
+            return Ok((new_offset, None));
+        };
+
+        // Check payload bounds
+        let payload_size = msg_header.payload_size as usize;
+        let payload_end = offset + payload_size;
+
+        // Make sure the payload fits within the buffer
+        if payload_end > self.byte_len {
+            return Err(PecosError::Input(format!(
+                "Message payload extends beyond message bounds: offset={}, size={}, total_len={}",
+                offset, payload_size, self.byte_len
+            )));
+        }
+
+        // Extract the payload
+        let payload = &self.as_bytes()[offset..payload_end];
+
+        // Process based on message type - we only care about ReturnValue messages here
+        let result = if msg_type == MessageType::ReturnValue {
+            if payload.len() >= size_of::<ReturnValueHeader>() {
+                // ReturnValueHeader at aligned payload start
+                let return_header = *bytemuck::from_bytes::<ReturnValueHeader>(
+                    &payload[0..size_of::<ReturnValueHeader>()],
+                );
+                Some(return_header.value)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Calculate the new offset after this message
+        let padding = calc_padding(payload_size, 4);
+        let new_offset = payload_end + (if padding > 0 { padding } else { 0 });
+
+        Ok((new_offset, result))
     }
 
     /// Validate if the payload has enough bytes for the gate header
@@ -490,6 +613,8 @@ impl ByteMessage {
             return Ok(Vec::new());
         }
 
+        trace!("parse_gate_parameters: Gate {gate_type:?} requires {param_count} parameters");
+
         // Validate the parameter size
         let required_size = param_count * size_of::<f64>();
         Self::validate_params_size(
@@ -504,7 +629,17 @@ impl ByteMessage {
         for i in 0..param_count {
             let param_offset = params_offset + i * size_of::<f64>();
             let param = Self::parse_f64_param(payload, param_offset);
+            trace!("parse_gate_parameters: Parameter {i} at offset {param_offset}: {param}");
             params.push(param);
+        }
+
+        // Special logging for RZ gate parameters
+        if matches!(gate_type, GateType::RZ) && !params.is_empty() {
+            trace!(
+                "parse_gate_parameters: RZ angle parsed as {} radians ({} degrees)",
+                params[0],
+                params[0].to_degrees()
+            );
         }
 
         Ok(params)
@@ -547,6 +682,10 @@ impl ByteMessage {
         let has_params = header.has_params != 0;
         let gate_type = GateType::from(header.gate_type);
 
+        trace!(
+            "parse_gate_command: Parsing gate type {gate_type:?}, num_qubits: {num_qubits}, has_params: {has_params}"
+        );
+
         // Calculate sizes
         let qubits_byte_size = num_qubits * size_of::<u32>();
         let qubits_offset = size_of::<GateHeader>();
@@ -556,13 +695,26 @@ impl ByteMessage {
         // Parse qubit indices directly to QubitId
         let qubits = Self::parse_qubit_indices(payload, qubits_offset, num_qubits);
 
+        trace!("parse_gate_command: Parsed qubits: {qubits:?}");
+
         // Parse parameters if present
         let params = if has_params {
             let params_offset = qubits_offset + qubits_byte_size;
-            Self::parse_gate_parameters(payload, params_offset, gate_type)?
+            let parsed_params = Self::parse_gate_parameters(payload, params_offset, gate_type)?;
+            trace!("parse_gate_command: Parsed parameters: {parsed_params:?}");
+            parsed_params
         } else {
             Vec::new()
         };
+
+        // Special logging for RZ gates
+        if matches!(gate_type, GateType::RZ) {
+            trace!(
+                "parse_gate_command: RZ gate parsed with angle: {:?}, qubit: {:?}",
+                params.first(),
+                qubits.first()
+            );
+        }
 
         Ok(Gate::new(gate_type, params, qubits))
     }

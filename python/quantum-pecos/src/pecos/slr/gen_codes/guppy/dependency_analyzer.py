@@ -73,17 +73,16 @@ class DependencyAnalyzer:
                 params[param_name] = getattr(block, param_name)
             elif hasattr(block, f"_{param_name}"):
                 params[param_name] = getattr(block, f"_{param_name}")
-            else:
-                # Try to infer from operations
-                if param_name in ["data", "qubits", "q"]:
-                    # Look for quantum registers
-                    params[param_name] = self._find_qreg_in_ops(block)
-                elif param_name in ["ancilla", "a"]:
-                    # Look for ancilla qubits
-                    params[param_name] = self._find_ancilla_in_ops(block)
-                elif param_name in ["init_bit", "init", "bit", "c"]:
-                    # Look for classical bits
-                    params[param_name] = self._find_bit_in_ops(block)
+            # Try to infer from operations
+            elif param_name in ["data", "qubits", "q"]:
+                # Look for quantum registers
+                params[param_name] = self._find_qreg_in_ops(block)
+            elif param_name in ["ancilla", "a"]:
+                # Look for ancilla qubits
+                params[param_name] = self._find_ancilla_in_ops(block)
+            elif param_name in ["init_bit", "init", "bit", "c"]:
+                # Look for classical bits
+                params[param_name] = self._find_bit_in_ops(block)
 
         return params
 
@@ -114,6 +113,9 @@ class DependencyAnalyzer:
             for cout in op.cout:
                 if hasattr(cout, "reg") and hasattr(cout.reg, "sym"):
                     used_vars.add(cout.reg.sym)
+                elif hasattr(cout, "sym"):
+                    # Direct CReg reference
+                    used_vars.add(cout.sym)
 
         # Check condition (for If blocks)
         if hasattr(op, "cond"):

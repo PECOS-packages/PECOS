@@ -1,7 +1,9 @@
 //! Integration tests that validate quantum simulation results
 //! These tests go beyond parsing and actually verify quantum circuit behavior
 
-use pecos_qasm::{prelude::PassThroughNoiseModel, run::run_qasm};
+use pecos_engines::ClassicalControlEngineBuilder;
+use pecos_programs::Qasm;
+use pecos_qasm::qasm_engine;
 
 #[test]
 fn test_bell_state_simulation() {
@@ -17,15 +19,13 @@ fn test_bell_state_simulation() {
         measure q -> c;
     "#;
 
-    let results = run_qasm(
-        qasm,
-        1000,
-        PassThroughNoiseModel::builder(),
-        None,
-        Some(1),
-        Some(42),
-    )
-    .unwrap();
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(1000)
+        .unwrap();
 
     // Count occurrences of |00⟩ and |11⟩
     let mut count_00 = 0;
@@ -68,15 +68,13 @@ fn test_ghz_state_simulation() {
         measure q -> c;
     "#;
 
-    let results = run_qasm(
-        qasm,
-        1000,
-        PassThroughNoiseModel::builder(),
-        None,
-        Some(1),
-        Some(42),
-    )
-    .unwrap();
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(1000)
+        .unwrap();
 
     // Count occurrences of |000⟩ and |111⟩
     let mut count_000 = 0;
@@ -127,15 +125,13 @@ fn test_phase_kickback() {
         measure q -> c;
     "#;
 
-    let results = run_qasm(
-        qasm,
-        1000,
-        PassThroughNoiseModel::builder(),
-        None,
-        Some(1),
-        Some(42),
-    )
-    .unwrap();
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(1000)
+        .unwrap();
 
     // After phase kickback, control qubit should be |1⟩
     for shot in &results.shots {

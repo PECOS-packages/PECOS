@@ -1,0 +1,35 @@
+[package]
+name = "pecos-qis-ffi"
+version.workspace = true
+edition.workspace = true
+description = "FFI layer for quantum instruction set operations"
+readme.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+# Generate both cdylib and rlib:
+# - cdylib: Provides __quantum__* symbols globally for shim and programs to use via dlopen
+# - rlib: Allows Rust code to depend on this crate (triggers cdylib build during cargo test)
+# - For types, use pecos-qis-ffi-types which has NO FFI symbols
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Data structures (no FFI symbols)
+pecos-qis-ffi-types.workspace = true
+# Minimal dependencies for fast compilation
+log.workspace = true
+# For heap allocation (malloc/free)
+libc.workspace = true
+
+[features]
+default = []
+# Feature for generating the static library
+static-lib = []
+
+[lints]
+workspace = true

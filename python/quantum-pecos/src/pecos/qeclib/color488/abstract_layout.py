@@ -38,9 +38,8 @@ def gen_layout(distance: int) -> tuple[dict[int, tuple[int, int]], list[list[Any
                     if (x / 2) % 4 == 2 or (x / 2) % 4 == 3:
                         pos_qubits.append((x, y))
 
-                else:
-                    if (x / 2) % 4 == 0 or (x / 2) % 4 == 1:
-                        pos_qubits.append((x, y))
+                elif (x / 2) % 4 == 0 or (x / 2) % 4 == 1:
+                    pos_qubits.append((x, y))
 
             if x % 4 == 1 and y % 4 == 3:
                 pos_checks.append((x, y))

@@ -1,6 +1,13 @@
+**NUL
 **.DS_Store
 tmp/
 **/.*/settings.local.json
+
+# LLVM (extracted from archive for Windows development)
+/llvm/
+
+# Cargo config with machine-specific LLVM paths
+.cargo/config.toml
 
 # pytest results
 junit/
@@ -24,6 +31,10 @@ __pycache__/
 
 # C extensions
 *.so
+*.dylib
+
+# Selene plugin build artifacts
+python/selene-plugins/**/_dist/
 
 # Distribution / packaging
 .Python
@@ -88,7 +99,7 @@ instance/
 
 # Sphinx documentation
 docs/_build/
-python/docs/_build/
+python/quantum-pecos/docs/_build/
 
 # PyBuilder
 .pybuilder/

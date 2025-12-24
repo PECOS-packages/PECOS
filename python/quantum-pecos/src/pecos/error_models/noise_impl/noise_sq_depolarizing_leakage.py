@@ -20,9 +20,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
-
-from pecos.reps.pypmir.op_types import QOp
+import pecos as pc
+from pecos.reps.pyphir.op_types import QOp
 
 if TYPE_CHECKING:
     from pecos.protocols import MachineProtocol
@@ -59,20 +58,21 @@ def noise_sq_depolarizing_leakage(
     else:
         noisy_op = op
 
-    rand_nums = np.random.random(len(noisy_op.args)) <= p
+    # Use fused operation to check and get error indices in one pass
+    error_indices = pc.random.compare_indices(len(noisy_op.args), p)
 
     noise = {}
-    if np.any(rand_nums):
-        for r, loc in zip(rand_nums, noisy_op.args, strict=False):
-            if r:
-                rand = np.random.random()
-                p_tot = 0.0
-                for fault1, prob in noise_dict.items():
-                    p_tot += prob
+    if error_indices:
+        for idx in error_indices:
+            loc = noisy_op.args[idx]
+            rand = pc.random.random(1)[0]
+            p_tot = 0.0
+            for fault1, prob in noise_dict.items():
+                p_tot += prob
 
-                    if p_tot >= rand:
-                        noise.setdefault(fault1, []).append(loc)
-                        break
+                if p_tot >= rand:
+                    noise.setdefault(fault1, []).append(loc)
+                    break
 
     if noise or leaked:
         buffered_ops = []

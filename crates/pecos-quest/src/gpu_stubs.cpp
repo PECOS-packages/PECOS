@@ -370,6 +370,7 @@ double gpu_statevec_calcTotalProb_sub(Qureg q) { return 1.0; }
 double gpu_densmatr_calcTotalProb_sub(Qureg q) { return 1.0; }
 std::complex<double> gpu_statevec_calcInnerProduct_sub(Qureg q1, Qureg q2) { return 0.0; }
 double gpu_densmatr_calcHilbertSchmidtDistance_sub(Qureg q1, Qureg q2) { return 0.0; }
+// Note: Function names use calcExpec (not calcExpec) to match QuEST v4.1.0
 double gpu_statevec_calcExpecAnyTargZ_sub(Qureg q, std::vector<int> targets) { return 0.0; }
 std::complex<double> gpu_densmatr_calcExpecAnyTargZ_sub(Qureg q, std::vector<int> targets) { return 0.0; }
 std::complex<double> gpu_statevec_calcExpecPauliStr_subA(Qureg q, std::vector<int> a, std::vector<int> b, std::vector<int> c) { return 0.0; }

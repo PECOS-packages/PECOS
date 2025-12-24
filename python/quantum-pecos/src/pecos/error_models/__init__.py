@@ -22,3 +22,12 @@ from pecos.error_models.old.gatewise_gen import GatewiseModel
 from pecos.error_models.old.xerror_gen import XModel
 from pecos.error_models.old.xzerror_gen import XZModel
 from pecos.error_models.old.zerror_gen import ZModel
+
+__all__ = [
+    "DepolarModel",
+    "ErrorCircuits",
+    "GatewiseModel",
+    "XModel",
+    "XZModel",
+    "ZModel",
+]

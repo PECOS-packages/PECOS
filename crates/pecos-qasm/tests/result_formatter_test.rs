@@ -1,6 +1,7 @@
 // Tests for the result_formatter module
 
 use pecos_engines::shot_results::{Data, Shot, ShotVec};
+use pecos_engines::sim_builder;
 use pecos_qasm::QASMEngine;
 use pecos_qasm::result_formatter::{
     QASMResultFormatter, format_as_binary_strings, format_as_decimal_arrays,
@@ -220,7 +221,8 @@ fn test_large_register_values() {
 
 #[test]
 fn test_integration_with_actual_simulation() {
-    use pecos_qasm::{prelude::PassThroughNoiseModel, run_qasm};
+    use pecos_programs::Qasm;
+    use pecos_qasm::qasm_engine;
 
     // Run an actual QASM simulation
     let qasm = r#"
@@ -244,15 +246,11 @@ fn test_integration_with_actual_simulation() {
     let _register_sizes = engine.classical_register_sizes().unwrap();
 
     // Run simulation
-    let shot_vec = run_qasm(
-        qasm,
-        5,
-        PassThroughNoiseModel::builder(),
-        None,
-        None,
-        Some(42),
-    )
-    .unwrap();
+    let shot_vec = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .seed(42)
+        .run(5)
+        .unwrap();
 
     // Convert to ShotMap for analysis
     let shot_map = shot_vec.try_as_shot_map().unwrap();
@@ -347,7 +345,8 @@ fn test_zero_width_registers() {
 #[test]
 fn test_bell_state_formatting() {
     // Test a real Bell state scenario
-    use pecos_qasm::{prelude::PassThroughNoiseModel, run_qasm};
+    use pecos_programs::Qasm;
+    use pecos_qasm::qasm_engine;
 
     let qasm = r#"
         OPENQASM 2.0;
@@ -365,15 +364,11 @@ fn test_bell_state_formatting() {
     let _register_sizes = engine.classical_register_sizes().unwrap();
 
     // Run with enough shots to likely see both outcomes
-    let shot_vec = run_qasm(
-        qasm,
-        20,
-        PassThroughNoiseModel::builder(),
-        None,
-        None,
-        Some(42),
-    )
-    .unwrap();
+    let shot_vec = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .seed(42)
+        .run(20)
+        .unwrap();
 
     // Convert to ShotMap for analysis
     let shot_map = shot_vec.try_as_shot_map().unwrap();

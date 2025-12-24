@@ -2,11 +2,11 @@ name: Documentation Tests & Build
 
 on:
   push:
-    branches: [ master, development, dev ]
+    branches: [ main, master, development, dev ]
     paths:
       - 'docs/**'
   pull_request:
-    branches: [ master, development, dev ]
+    branches: [ main, master, development, dev ]
     paths:
       - 'docs/**'
   workflow_dispatch:
@@ -41,22 +41,20 @@ jobs:
         with:
           workspaces: python/pecos-rslib
 
-      - name: Install LLVM
-        uses: KyleMayes/install-llvm-action@v2
-        with:
-          version: "14.0"
-          env: True
-
-      - name: Configure LLVM
+      - name: Install LLVM 14.0.6 using pecos-llvm
         run: |
-          echo "LLVM_CONFIG=$LLVM_PATH/bin/llvm-config" >> "$GITHUB_ENV"
-          echo "LLVM_SYS_140_PREFIX=$LLVM_PATH" >> "$GITHUB_ENV"
-          # Disable LTO to avoid gold linker plugin issues
-          echo "CFLAGS=-fno-lto" >> "$GITHUB_ENV"
-          echo "CXXFLAGS=-fno-lto" >> "$GITHUB_ENV"
-          echo "LDFLAGS=-fno-lto" >> "$GITHUB_ENV"
-          # Test LLVM installation
-          "$LLVM_PATH/bin/llvm-config" --version
+          echo "Installing LLVM using pecos..."
+          cargo run -p pecos --features cli --release -- llvm install
+
+          echo "Setting LLVM environment variables..."
+          export PECOS_LLVM=$(cargo run -p pecos --features cli --release -- llvm find 2>/dev/null)
+          export LLVM_SYS_140_PREFIX="$PECOS_LLVM"
+
+          echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
+          echo "LLVM_SYS_140_PREFIX=$LLVM_SYS_140_PREFIX" >> $GITHUB_ENV
+
+          echo "Verifying LLVM installation..."
+          cargo run -p pecos --features cli --release -- llvm check
 
       - name: Generate lockfile and install dependencies
         run: |

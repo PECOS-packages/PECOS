@@ -1,0 +1,44 @@
+[package]
+name = "pecos-num"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme.workspace = true
+description = "Numerical computing support for PECOS quantum error correction simulations"
+
+[dependencies]
+# Linear algebra (for polynomial fitting, curve fitting, matrix operations)
+nalgebra.workspace = true
+
+# Non-linear curve fitting (Levenberg-Marquardt algorithm)
+levenberg-marquardt.workspace = true
+
+# Array interface (for API compatibility and return types)
+ndarray.workspace = true
+
+# Random number generation (for numpy.random drop-in replacements)
+rand.workspace = true
+
+# Complex number support (for numpy complex operations)
+num-complex.workspace = true
+
+# Numeric traits (for generic trait implementations)
+num-traits.workspace = true
+
+# Logging
+log.workspace = true
+
+# Graph algorithms (for MWPM decoder and other graph operations)
+rustworkx-core.workspace = true
+
+# Serialization (for JSON attribute support in graphs)
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

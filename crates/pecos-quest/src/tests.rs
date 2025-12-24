@@ -3,9 +3,9 @@
 #[cfg(test)]
 use crate::{QuestDensityMatrix, QuestStateVec};
 #[cfg(test)]
-use approx::assert_relative_eq;
-#[cfg(test)]
 use num_complex::Complex64;
+#[cfg(test)]
+use pecos_num::assert_relative_eq;
 #[cfg(test)]
 use pecos_qsim::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 #[cfg(test)]
@@ -395,14 +395,13 @@ fn test_rzz_gate() {
 #[test]
 fn test_rng_management() {
     use pecos_core::rng::RngManageable;
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha8Rng;
+    use pecos_rng::PecosRng;
 
     let mut sim = QuestStateVec::new(2);
 
     // Set a new RNG
-    let new_rng = ChaCha8Rng::seed_from_u64(12345);
-    sim.set_rng(new_rng).unwrap();
+    let new_rng = PecosRng::seed_from_u64(12345);
+    sim.set_rng(new_rng);
 
     // Should be able to get RNG reference
     let _ = sim.rng();
@@ -414,8 +413,132 @@ fn test_set_seed() {
     use pecos_core::rng::RngManageable;
 
     let mut sim = QuestStateVec::new(2);
-    sim.set_seed(9999).unwrap();
+    sim.set_seed(9999);
 
     // Subsequent random operations should be deterministic
     // (though we don't have random operations in basic gates)
+}
+
+#[test]
+fn test_measurement_determinism_with_seed() {
+    // Test that measurements are deterministic when using the same seed
+    let seed = 42;
+    let num_measurements = 100;
+
+    // Run first simulation - repeatedly prepare and measure
+    let mut sim1: QuestStateVec = QuestStateVec::with_seed(2, seed);
+    let mut results1 = Vec::new();
+    for _ in 0..num_measurements {
+        sim1.reset();
+        sim1.h(0).cx(0, 1); // Create Bell state
+        let outcome = sim1.mz(0);
+        results1.push(outcome.outcome);
+    }
+
+    // Run second simulation with same seed - repeatedly prepare and measure
+    let mut sim2: QuestStateVec = QuestStateVec::with_seed(2, seed);
+    let mut results2 = Vec::new();
+    for _ in 0..num_measurements {
+        sim2.reset();
+        sim2.h(0).cx(0, 1); // Create same Bell state
+        let outcome = sim2.mz(0);
+        results2.push(outcome.outcome);
+    }
+
+    // Results should be identical
+    assert_eq!(
+        results1, results2,
+        "Measurements with same seed should produce identical results"
+    );
+}
+
+#[test]
+fn test_measurement_randomness_with_different_seeds() {
+    // Test that measurements show randomness when using different seeds
+    // This is deterministic because we control the seeds
+    let num_trials = 30;
+
+    let mut all_results = Vec::new();
+
+    for i in 0_u64..num_trials {
+        // Use different seeds for each trial to ensure different random streams
+        let mut sim: QuestStateVec = QuestStateVec::with_seed(1, 12345 + i);
+        sim.h(0); // Create superposition
+        let outcome = sim.mz(0);
+        all_results.push(outcome.outcome);
+    }
+
+    // With 30 different seeds measuring a superposition, we expect variation
+    // This test is deterministic given the seeds
+    let all_same = all_results.iter().all(|&x| x == all_results[0]);
+    assert!(
+        !all_same,
+        "Measurements with different seeds should show variation in outcomes"
+    );
+}
+
+#[test]
+fn test_different_seeds_produce_different_results() {
+    // Test that different seeds produce different measurement sequences
+    let num_measurements = 50;
+
+    let mut results_seed1 = Vec::new();
+    let mut results_seed2 = Vec::new();
+
+    // Seed 1 - repeatedly prepare and measure
+    let mut sim1: QuestStateVec = QuestStateVec::with_seed(1, 12345);
+    for _ in 0..num_measurements {
+        sim1.reset(); // Reset to |0⟩
+        sim1.h(0); // Create superposition
+        let outcome = sim1.mz(0);
+        results_seed1.push(outcome.outcome);
+    }
+
+    // Seed 2 (different) - repeatedly prepare and measure
+    let mut sim2: QuestStateVec = QuestStateVec::with_seed(1, 67890);
+    for _ in 0..num_measurements {
+        sim2.reset(); // Reset to |0⟩
+        sim2.h(0); // Create superposition
+        let outcome = sim2.mz(0);
+        results_seed2.push(outcome.outcome);
+    }
+
+    // Different seeds should produce different sequences
+    assert_ne!(
+        results_seed1, results_seed2,
+        "Different seeds should produce different measurement sequences"
+    );
+}
+
+#[test]
+fn test_density_matrix_measurement_determinism_with_seed() {
+    // Same test for QuestDensityMatrix
+    let seed = 123;
+    let num_measurements = 100;
+
+    // Run first simulation - repeatedly prepare and measure
+    let mut sim1: QuestDensityMatrix = QuestDensityMatrix::with_seed(2, seed);
+    let mut results1 = Vec::new();
+    for _ in 0..num_measurements {
+        sim1.reset();
+        sim1.h(0).cx(0, 1); // Create Bell state
+        let outcome = sim1.mz(0);
+        results1.push(outcome.outcome);
+    }
+
+    // Run second simulation with same seed - repeatedly prepare and measure
+    let mut sim2: QuestDensityMatrix = QuestDensityMatrix::with_seed(2, seed);
+    let mut results2 = Vec::new();
+    for _ in 0..num_measurements {
+        sim2.reset();
+        sim2.h(0).cx(0, 1); // Create same Bell state
+        let outcome = sim2.mz(0);
+        results2.push(outcome.outcome);
+    }
+
+    // Results should be identical
+    assert_eq!(
+        results1, results2,
+        "Density matrix measurements with same seed should produce identical results"
+    );
 }

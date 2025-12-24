@@ -12,7 +12,9 @@
 
 use crate::Engine;
 use crate::byte_message::ByteMessage;
-use crate::engine_system::{ClassicalEngine, ControlEngine, EngineStage, EngineSystem};
+use crate::engine_system::{
+    ClassicalControlEngine, ClassicalEngine, ControlEngine, EngineStage, EngineSystem,
+};
 use crate::quantum_system::QuantumSystem;
 use crate::shot_results::Shot;
 use dyn_clone;
@@ -68,7 +70,7 @@ use pecos_core::rng::rng_manageable::derive_seed;
 /// ```
 pub struct HybridEngine {
     /// The classical engine component responsible for program flow and measurement processing
-    pub classical_engine: Box<dyn ClassicalEngine>,
+    pub classical_engine: Box<dyn ClassicalControlEngine>,
     /// The quantum system component responsible for executing quantum operations
     pub quantum_system: QuantumSystem,
 }
@@ -82,24 +84,16 @@ impl HybridEngine {
     ///
     /// # Arguments
     /// * `seed` - Base seed value for random number generators
-    ///
-    /// # Returns
-    /// Result indicating success or failure
-    ///
-    /// # Errors
-    /// Returns a `PecosError` if setting the seed fails for any component
-    pub fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
+    pub fn set_seed(&mut self, seed: u64) {
         // Derive seeds for each component
         let classical_seed = derive_seed(seed, "classical_engine");
         let quantum_seed = derive_seed(seed, "quantum_system");
 
         // Set seed for quantum system (this sets seeds for both quantum engine and noise model)
-        self.quantum_system.set_seed(quantum_seed)?;
+        self.quantum_system.set_seed(quantum_seed);
 
         // Set seed for classical engine
-        self.classical_engine.set_seed(classical_seed)?;
-
-        Ok(())
+        self.classical_engine.set_seed(classical_seed);
     }
 
     /// Resets the state of the hybrid engine, including classical, quantum, and noise model components.
@@ -150,14 +144,23 @@ impl HybridEngine {
                 iteration_count,
                 std::thread::current().id()
             );
+            debug!("Processing quantum commands, iteration {iteration_count}");
 
             // Process through engine (could be QuantumEngine or EngineSystem)
             let measurement_message = self.quantum_system.process(command_message)?;
 
+            debug!("Calling continue_processing with measurements");
             // Continue classical processing with measurements
             stage = self
                 .classical_engine
                 .continue_processing(measurement_message)?;
+            debug!(
+                "continue_processing returned stage: {:?}",
+                match &stage {
+                    EngineStage::Complete(_) => "Complete",
+                    EngineStage::NeedsProcessing(_) => "NeedsProcessing",
+                }
+            );
         }
 
         match stage {
@@ -191,7 +194,7 @@ impl Engine for HybridEngine {
 }
 
 impl EngineSystem for HybridEngine {
-    type Controller = Box<dyn ClassicalEngine>;
+    type Controller = Box<dyn ClassicalControlEngine>;
     type ControlledEngine = QuantumSystem;
     type EngineInput = ByteMessage;
     type EngineOutput = ByteMessage;

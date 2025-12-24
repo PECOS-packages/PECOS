@@ -1,9 +1,10 @@
 use pecos_core::gate_type::GateType as CoreGateType;
 
 /// Check if a gate name corresponds to a native PECOS gate
+/// Note: Only uppercase names are considered native gates
 #[must_use]
 pub fn parse_native_gate(name: &str) -> Option<CoreGateType> {
-    match name.to_uppercase().as_str() {
+    match name {
         "I" => Some(CoreGateType::I),
         "X" => Some(CoreGateType::X),
         "Y" => Some(CoreGateType::Y),
@@ -13,6 +14,8 @@ pub fn parse_native_gate(name: &str) -> Option<CoreGateType> {
         "SZZ" => Some(CoreGateType::SZZ),
         "SZZDG" => Some(CoreGateType::SZZdg),
         "RZ" => Some(CoreGateType::RZ),
+        "RX" => Some(CoreGateType::RX),
+        "RY" => Some(CoreGateType::RY),
         "RZZ" => Some(CoreGateType::RZZ),
         "R1XY" => Some(CoreGateType::R1XY),
         "U" => Some(CoreGateType::U),

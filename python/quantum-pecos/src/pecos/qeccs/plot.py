@@ -18,12 +18,12 @@ for various QECC implementations in PECOS.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 import networkx as nx
-from matplotlib import pyplot as plt
 
 if TYPE_CHECKING:
+
     from pecos.protocols import LogicalInstructionProtocol, QECCProtocol
 
 T = TypeVar("T")
@@ -38,7 +38,7 @@ def plot_qecc(
     title_font_size: int = 16,
     axis_font_size: int = 14,
     legend_font_size: int = 14,
-    **kwargs: Any,  # noqa: ANN401 - Matplotlib accepts various parameter types
+    **kwargs: object,
 ) -> None:
     """Produces a plot of a qecc.
 
@@ -54,6 +54,8 @@ def plot_qecc(
         **kwargs: Additional keyword arguments (will raise exception if any are provided).
 
     """
+    from matplotlib import pyplot as plt
+
     if kwargs:
         msg = f"keys {kwargs.keys()} not recognized!"
         raise Exception(msg)
@@ -150,7 +152,7 @@ def plot_instr(
     title_font_size: int = 16,
     axis_font_size: int = 14,
     legend_font_size: int = 14,
-    **kwargs: Any,  # noqa: ANN401 - Matplotlib accepts various parameter types
+    **kwargs: object,
 ) -> None:
     """Plot syndrome extraction using the provided configuration.
 
@@ -166,6 +168,8 @@ def plot_instr(
         **kwargs: Additional keyword arguments (will raise exception if any are provided)
 
     """
+    from matplotlib import pyplot as plt
+
     if kwargs:
         msg = f"keys {kwargs.keys()} not recognized!"
         raise Exception(msg)

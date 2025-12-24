@@ -22,19 +22,16 @@ import json
 import warnings
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-from phir.model import PHIRModel
-
-from pecos.reps.pypmir import PyPMIR, signed_data_types, unsigned_data_types
-from pecos.reps.pypmir import types as pt
+from pecos.reps.pyphir import PyPHIR, signed_data_types, unsigned_data_types
+from pecos.reps.pyphir import types as pt
+from pecos.typing import PhirModel
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable, Sequence
 
-    from numpy import integer
-
     from pecos import QuantumCircuit
     from pecos.protocols import ForeignObjectProtocol
+    from pecos.typing import Integer
 
 
 def version2tuple(v: str) -> tuple[int, ...]:
@@ -47,7 +44,7 @@ data_type_map = signed_data_types | unsigned_data_types
 data_type_map_rev = {v: k for k, v in data_type_map.items()}
 
 
-class PHIRClassicalInterpreter:
+class PhirClassicalInterpreter:
     """An interpreter that takes in a PHIR program and runs the classical side of the program."""
 
     def __init__(self) -> None:
@@ -95,14 +92,14 @@ class PHIRClassicalInterpreter:
             str,
         ):  # Assume it is in the PHIR/JSON format and convert to dict
             self.program = json.loads(program)
-        elif isinstance(self.program, PyPMIR | dict):
+        elif isinstance(self.program, PyPHIR | dict):
             pass
         else:
             self.program = self.program.to_phir_dict()
 
         # Assume PHIR dict format, validate PHIR
         if isinstance(self.program, dict) and self.phir_validate:
-            PHIRModel.model_validate(self.program)
+            PhirModel.model_validate(self.program)
 
         if isinstance(self.program, dict):
             if self.program["format"] not in {"PHIR/JSON", "PHIR"}:
@@ -113,8 +110,8 @@ class PHIRClassicalInterpreter:
                 raise ValueError(msg)
 
         # convert to a format that will, hopefully, run faster in simulation
-        if not isinstance(self.program, PyPMIR):
-            self.program = PyPMIR.from_phir(self.program)
+        if not isinstance(self.program, PyPHIR):
+            self.program = PyPHIR.from_phir(self.program)
 
         self.check_ffc(self.program.foreign_func_calls, self.foreign_obj)
 
@@ -162,7 +159,7 @@ class PHIRClassicalInterpreter:
                 self.cenv.append(dtype(0))
                 self.cid2dtype.append(dtype)
 
-    def add_cvar(self, cvar: str, dtype: type[np.integer], size: int) -> None:
+    def add_cvar(self, cvar: str, dtype: type[Integer], size: int) -> None:
         """Adds a new classical variable to the interpreter."""
         if cvar not in self.csym2id:
             cid = len(self.csym2id)
@@ -224,14 +221,14 @@ class PHIRClassicalInterpreter:
         if op_buffer:
             yield op_buffer
 
-    def get_cval(self, cvar: str) -> np.integer:
+    def get_cval(self, cvar: str) -> Integer:
         """Get the classical value of a variable.
 
         Args:
             cvar: Name of the classical variable.
 
         Returns:
-            The classical value as a numpy integer.
+            The classical value as a PECOS integer.
         """
         cid = self.csym2id[cvar]
         return self.cenv[cid]
@@ -249,15 +246,17 @@ class PHIRClassicalInterpreter:
         cval = self.get_cval(cvar)
         dtype = type(cval)
 
+        # Get bit width using Rust-backed dtype system
+        bit_width = dtype.itemsize * 8
+
         # Check if idx is within the valid range for the data type
-        bit_width = 8 * np.dtype(dtype).itemsize
         if idx >= bit_width:
             msg = f"Bit index {idx} out of range for {dtype} (max {bit_width - 1})"
             raise ValueError(
                 msg,
             )
 
-        # Use the same data type for constant 1
+        # Use Rust-backed bitwise operations
         one = dtype(1)
         mask = one << dtype(idx)
 
@@ -266,7 +265,7 @@ class PHIRClassicalInterpreter:
     def eval_expr(
         self,
         expr: int | str | list | pt.opt.COp,
-    ) -> int | integer | None:
+    ) -> int | Integer | None:
         """Evaluates integer expressions."""
         match expr:
             case int():
@@ -420,6 +419,7 @@ class PHIRClassicalInterpreter:
             cval = self.cenv[cid]
             if not return_int:
                 size = self.cvar_meta[cid].size
+                # Use native __format__() implementation from Rust scalars
                 cval = "{:0{width}b}".format(cval, width=size)
             result[csym] = cval
 

@@ -35,7 +35,8 @@ pub enum MessageType {
     Gate = 10, // All gate operations (including measurements)
 
     // Result messages
-    Outcome = 20, // Measurement result
+    Outcome = 20,     // Measurement result
+    ReturnValue = 21, // Program return value (from teardown or main function)
 }
 
 /// Message batch header for framing multiple messages
@@ -102,6 +103,7 @@ impl MessageHeader {
         match self.msg_type {
             10 => Ok(MessageType::Gate),
             20 => Ok(MessageType::Outcome),
+            21 => Ok(MessageType::ReturnValue),
             _ => Err("Unknown message type"),
         }
     }
@@ -133,6 +135,13 @@ pub struct GateHeader {
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
 pub struct OutcomeHeader {
     pub outcome: u32, // Measurement outcome (0 or 1, but u32 for alignment)
+}
+
+/// Return value message payload header
+#[repr(C, align(4))]
+#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+pub struct ReturnValueHeader {
+    pub value: i64, // Return value from program (i64 for general integer support)
 }
 
 /// Calculate padding needed for alignment

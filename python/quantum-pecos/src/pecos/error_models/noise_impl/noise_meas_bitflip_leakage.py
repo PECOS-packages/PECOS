@@ -20,9 +20,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
-
-from pecos.reps.pypmir.op_types import QOp
+import pecos as pc
+from pecos.reps.pyphir.op_types import QOp
 
 if TYPE_CHECKING:
     from pecos.protocols import MachineProtocol
@@ -43,7 +42,8 @@ def noise_meas_bitflip_leakage(
     """
     # Bit flip noise
     # --------------
-    rand_nums = np.random.random(len(op.args)) <= p
+    # Use fused operation to check and get error indices in one pass
+    error_indices = pc.random.compare_indices(len(op.args), p)
 
     noise = []
 
@@ -52,11 +52,8 @@ def noise_meas_bitflip_leakage(
         noisy_ops = machine.meas_leaked(leakded)
         noise.extend(noisy_ops)
 
-    if np.any(rand_nums):
-        bitflips = []
-        for r, loc in zip(rand_nums, op.args, strict=False):
-            if r:
-                bitflips.append(loc)
+    if error_indices:
+        bitflips = [op.args[idx] for idx in error_indices]
 
         noisy_op = QOp(
             name="Measure",

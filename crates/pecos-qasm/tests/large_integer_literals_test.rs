@@ -1,7 +1,8 @@
 // Test that verifies arbitrary-precision integer literals work in QASM
 
-use pecos_engines::Data;
-use pecos_qasm::{prelude::PassThroughNoiseModel, run_qasm};
+use pecos_engines::{Data, sim_builder};
+use pecos_programs::Qasm;
+use pecos_qasm::qasm_engine;
 
 #[test]
 fn test_very_large_integer_literal() {
@@ -15,7 +16,10 @@ fn test_very_large_integer_literal() {
         c = 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000;
     ";
 
-    let shot_vec = run_qasm(qasm, 1, PassThroughNoiseModel::builder(), None, None, None).unwrap();
+    let shot_vec = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .run(1)
+        .unwrap();
     let shot = &shot_vec.shots[0];
 
     if let Data::BitVec(bitvec) = &shot.data["c"] {
@@ -52,7 +56,10 @@ fn test_large_integer_arithmetic() {
         sum = a + b;  // Should be 2^65 - 1
     ";
 
-    let shot_vec = run_qasm(qasm, 1, PassThroughNoiseModel::builder(), None, None, None).unwrap();
+    let shot_vec = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .run(1)
+        .unwrap();
     let shot = &shot_vec.shots[0];
 
     // Check a (2^64)
@@ -104,7 +111,10 @@ fn test_negative_large_literals() {
         neg_value = -value;  // Should be 2^64
     ";
 
-    let shot_vec = run_qasm(qasm, 1, PassThroughNoiseModel::builder(), None, None, None).unwrap();
+    let shot_vec = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .run(1)
+        .unwrap();
     let shot = &shot_vec.shots[0];
 
     // Check value (-(2^64) in two's complement)
@@ -156,7 +166,10 @@ fn test_extremely_large_literal() {
         huge = 1606938044258990275541962092341162602522202993782792835301376;
     ";
 
-    let shot_vec = run_qasm(qasm, 1, PassThroughNoiseModel::builder(), None, None, None).unwrap();
+    let shot_vec = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .run(1)
+        .unwrap();
     let shot = &shot_vec.shots[0];
 
     if let Data::BitVec(huge_bits) = &shot.data["huge"] {
@@ -189,7 +202,10 @@ fn test_literal_display_and_parsing() {
         c = 1000000000000000000000000000000; // 10^30
     ";
 
-    let shot_vec = run_qasm(qasm, 1, PassThroughNoiseModel::builder(), None, None, None).unwrap();
+    let shot_vec = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .run(1)
+        .unwrap();
     let shot = &shot_vec.shots[0];
 
     // Just verify they were parsed and stored
@@ -242,7 +258,10 @@ fn test_mixed_size_literals_in_expressions() {
         test[2] = (18446744073709551616 > 1000);    // Should be true
     ";
 
-    let shot_vec = run_qasm(qasm, 1, PassThroughNoiseModel::builder(), None, None, None).unwrap();
+    let shot_vec = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .run(1)
+        .unwrap();
     let shot = &shot_vec.shots[0];
 
     // Check result

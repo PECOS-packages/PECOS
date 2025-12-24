@@ -1,9 +1,13 @@
 #ifndef QUEST_FFI_H
 #define QUEST_FFI_H
 
-#include <memory>
 #include <cstdint>
+
+// Include rust/cxx.h before <memory> to ensure proper pointer_traits specializations
 #include "rust/cxx.h"
+
+// Now include <memory> - pointer_traits should already be specialized by cxx
+#include <memory>
 
 // Include CXX-generated structs
 #include "pecos-quest/src/bridge.rs.h"
@@ -56,6 +60,7 @@ void quest_apply_multi_controlled_pauli_z(uint8_t* qureg, rust::Slice<const int3
 int32_t quest_measure(uint8_t* qureg, int32_t qubit);
 int32_t quest_measure_with_stats(uint8_t* qureg, int32_t qubit, double& outcome_prob);
 double quest_calc_prob_of_outcome(uint8_t* qureg, int32_t qubit, int32_t outcome);
+double quest_apply_forced_measurement(uint8_t* qureg, int32_t qubit, int32_t outcome);
 double quest_calc_total_prob(uint8_t* qureg);
 
 // Amplitude access

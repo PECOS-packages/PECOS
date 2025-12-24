@@ -75,9 +75,9 @@ fn main() {
             if result0.outcome { "1" } else { "0" },
             if result1.outcome { "1" } else { "0" },
             if result0.outcome == result1.outcome {
-                "✓"
+                ""
             } else {
-                "✗"
+                "FAIL"
             }
         );
     }

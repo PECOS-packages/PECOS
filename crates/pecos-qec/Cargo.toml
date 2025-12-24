@@ -10,7 +10,5 @@ keywords.workspace = true
 categories.workspace = true
 description = "QEC for Rust PECOS."
 
-[dependencies]
-
 [lints]
 workspace = true

@@ -20,16 +20,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
-
+import pecos as pc
 from pecos.error_models.noise_impl_old.gate_groups import one_qubits, two_qubits
-from pecos.reps.pypmir.op_types import QOp
+from pecos.reps.pyphir.op_types import QOp
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from pecos.protocols import MachineProtocol
-    from pecos.reps.pypmir.block_types import SeqBlock
+    from pecos.reps.pyphir.block_types import SeqBlock
 
 one_qubit_paulis = ["X", "Y", "Z"]
 
@@ -97,7 +96,7 @@ class SimpleDepolarizingErrorModel:
         self._eparams["p2"] *= 5 / 4
 
         if isinstance(self._eparams["p_meas"], tuple):
-            self._eparams["p_meas"] = np.mean(self._eparams["p_meas"])
+            self._eparams["p_meas"] = pc.mean(self._eparams["p_meas"])
 
     def shot_reinit(self) -> None:
         """Run all code needed at the beginning of each shot, e.g., resetting state."""
@@ -105,7 +104,7 @@ class SimpleDepolarizingErrorModel:
     def process(
         self,
         qops: list[QOp],
-        call_back: Callable[..., None] | None = None,  # noqa: ARG002
+        _call_back: Callable[..., None] | None = None,
     ) -> list[QOp | SeqBlock]:
         """Process quantum operations and apply simple depolarizing errors.
 
@@ -125,57 +124,69 @@ class SimpleDepolarizingErrorModel:
             # INITS WITH X NOISE
             if op.name in {"init |0>", "Init", "Init +Z"}:
                 erroneous_ops = [op]
-                rand_nums = np.random.random(len(op.args)) <= self._eparams["p_init"]
+                # Use fused operation to check and get error indices in one pass
+                error_indices = pc.random.compare_indices(
+                    len(op.args),
+                    self._eparams["p_init"],
+                )
 
-                if np.any(rand_nums):
-                    for r, loc in zip(rand_nums, op.args, strict=False):
-                        if r:
-                            erroneous_ops.append(QOp(name="X", args=[loc], metadata={}))
+                for idx in error_indices:
+                    erroneous_ops.append(
+                        QOp(name="X", args=[op.args[idx]], metadata={}),
+                    )
 
             # ########################################
             # ONE QUBIT GATES
             if op.name in one_qubits:
                 erroneous_ops = [op]
-                rand_nums = np.random.random(len(op.args)) <= self._eparams["p1"]
+                # Use fused operation to check and get error indices in one pass
+                error_indices = pc.random.compare_indices(
+                    len(op.args),
+                    self._eparams["p1"],
+                )
 
-                if np.any(rand_nums):
-                    for r, loc in zip(rand_nums, op.args, strict=False):
-                        if r:
-                            err = np.random.choice(one_qubit_paulis)
-                            erroneous_ops.append(
-                                QOp(name=err[0], args=[loc], metadata={}),
-                            )
+                for idx in error_indices:
+                    err = pc.random.choice(one_qubit_paulis, 1)[0]
+                    erroneous_ops.append(
+                        QOp(name=err[0], args=[op.args[idx]], metadata={}),
+                    )
 
             # ########################################
             # TWO QUBIT GATES
             elif op.name in two_qubits:
                 erroneous_ops = [op]
-                rand_nums = np.random.random(len(op.args)) <= self._eparams["p2"]
+                # Use fused operation to check and get error indices in one pass
+                error_indices = pc.random.compare_indices(
+                    len(op.args),
+                    self._eparams["p2"],
+                )
 
-                if np.any(rand_nums):
-                    for r, loc in zip(rand_nums, op.args, strict=False):
-                        if r:
-                            err = np.random.choice(two_qubit_paulis)
-                            loc1, loc2 = loc
-                            if err[0] != "I":
-                                erroneous_ops.append(
-                                    QOp(name=err[0], args=[loc1], metadata={}),
-                                )
-                            if err[1] != "I":
-                                erroneous_ops.append(
-                                    QOp(name=err[1], args=[loc2], metadata={}),
-                                )
+                for idx in error_indices:
+                    err = pc.random.choice(two_qubit_paulis, 1)[0]
+                    loc1, loc2 = op.args[idx]
+                    if err[0] != "I":
+                        erroneous_ops.append(
+                            QOp(name=err[0], args=[loc1], metadata={}),
+                        )
+                    if err[1] != "I":
+                        erroneous_ops.append(
+                            QOp(name=err[1], args=[loc2], metadata={}),
+                        )
 
             # ########################################
             # MEASURE X NOISE
             elif op.name in {"measure Z", "Measure", "Measure +Z"}:
                 erroneous_ops = []
-                rand_nums = np.random.random(len(op.args)) <= self._eparams["p_meas"]
+                # Use fused operation to check and get error indices in one pass
+                error_indices = pc.random.compare_indices(
+                    len(op.args),
+                    self._eparams["p_meas"],
+                )
 
-                if np.any(rand_nums):
-                    for r, loc in zip(rand_nums, op.args, strict=False):
-                        if r:
-                            erroneous_ops.append(QOp(name="X", args=[loc], metadata={}))
+                for idx in error_indices:
+                    erroneous_ops.append(
+                        QOp(name="X", args=[op.args[idx]], metadata={}),
+                    )
 
                 erroneous_ops.append(op)
 

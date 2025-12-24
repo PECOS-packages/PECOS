@@ -19,7 +19,6 @@ computation with error correction circuits.
 from pecos.qeclib.steane.steane_class import Steane
 from pecos.slr import Barrier, CReg, If, Main
 
-# ruff: noqa: INP001
 # Turn of Black's formatting to allow for newline spacing below:
 # fmt: off
 

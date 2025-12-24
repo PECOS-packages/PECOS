@@ -1,16 +1,16 @@
-//! Example of using `GeneralNoiseModelBuilder` directly and via JSON configuration
+//! Example of using noise models with the unified API
 //!
 //! This example demonstrates:
-//! 1. Direct builder usage (recommended)
-//! 2. JSON configuration that converts to builders internally
+//! 1. Direct builder usage with the unified simulation API
+//! 2. Different types of noise models
 //! 3. Complex noise model configurations
 
-use pecos_core::gate_type::GateType;
-use pecos_engines::noise::GeneralNoiseModel;
-use pecos_qasm::config::NoiseConfig;
-use pecos_qasm::simulation::{NoiseModelType, qasm_sim};
-use serde_json::json;
-use std::collections::BTreeMap;
+use pecos_engines::noise::{
+    BiasedDepolarizingNoiseModel, DepolarizingNoiseModel, GeneralNoiseModel,
+};
+use pecos_engines::sim_builder;
+use pecos_programs::Qasm;
+use pecos_qasm::qasm_engine;
 
 fn main() {
     let qasm = r#"
@@ -23,9 +23,9 @@ fn main() {
         measure q -> c;
     "#;
 
-    // Example 1: Direct builder usage (recommended approach)
-    println!("Example 1: Direct GeneralNoiseModelBuilder usage");
-    let builder = GeneralNoiseModel::builder()
+    // Example 1: General noise model with detailed configuration
+    println!("Example 1: GeneralNoiseModelBuilder with unified API");
+    let general_noise = GeneralNoiseModel::builder()
         .with_p1_probability(0.001)
         .with_p2_probability(0.01)
         .with_prep_probability(0.001)
@@ -33,90 +33,72 @@ fn main() {
         .with_meas_1_probability(0.001)
         .with_seed(42);
 
-    let noise_model = NoiseModelType::General(Box::new(builder));
-    let results = qasm_sim(qasm).noise(noise_model).run(100).unwrap();
-    println!("Shot results: {:?}", &results.shots[..5]);
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .noise(general_noise)
+        .seed(42)
+        .run(1000)
+        .unwrap();
 
-    // Example 2: JSON configuration (converts to builder internally)
-    println!("\nExample 2: JSON configuration (for backward compatibility)");
-    let json_config = json!({
-        "type": "GeneralNoise",
-        "p1": 0.001,
-        "p2": 0.01,
-        "p_prep": 0.001,
-        "p_meas_0": 0.001,
-        "p_meas_1": 0.001,
-        "seed": 42
-    });
+    println!("Got {} shots with general noise", results.shots.len());
 
-    let noise_config: NoiseConfig = serde_json::from_value(json_config).unwrap();
-    let noise_model: NoiseModelType = noise_config.into();
+    // Example 2: Simple depolarizing noise
+    println!("\nExample 2: Simple depolarizing noise");
+    let depolarizing = DepolarizingNoiseModel::builder().with_uniform_probability(0.001);
 
-    let results = qasm_sim(qasm).noise(noise_model).run(100).unwrap();
-    println!("Shot results: {:?}", &results.shots[..5]);
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .noise(depolarizing)
+        .seed(42)
+        .run(1000)
+        .unwrap();
 
-    // Example 3: Complex builder configuration with all parameters
-    println!("\nExample 3: Complex GeneralNoiseModelBuilder configuration");
+    println!("Got {} shots with depolarizing noise", results.shots.len());
 
-    let mut p1_model = BTreeMap::new();
-    p1_model.insert("X".to_string(), 0.5);
-    p1_model.insert("Y".to_string(), 0.3);
-    p1_model.insert("Z".to_string(), 0.2);
-
-    let mut p2_model = BTreeMap::new();
-    p2_model.insert("IX".to_string(), 0.1);
-    p2_model.insert("IY".to_string(), 0.06);
-    p2_model.insert("IZ".to_string(), 0.08);
-    p2_model.insert("XI".to_string(), 0.1);
-    p2_model.insert("XX".to_string(), 0.06);
-    p2_model.insert("XY".to_string(), 0.06);
-    p2_model.insert("XZ".to_string(), 0.06);
-    p2_model.insert("YI".to_string(), 0.06);
-    p2_model.insert("YX".to_string(), 0.06);
-    p2_model.insert("YY".to_string(), 0.06);
-    p2_model.insert("YZ".to_string(), 0.06);
-    p2_model.insert("ZI".to_string(), 0.08);
-    p2_model.insert("ZX".to_string(), 0.06);
-    p2_model.insert("ZY".to_string(), 0.06);
-    p2_model.insert("ZZ".to_string(), 0.04);
-
-    let builder = GeneralNoiseModel::builder()
-        .with_seed(123)
-        .with_scale(1.5)
-        .with_p1_probability(0.001)
-        .with_p2_probability(0.01)
+    // Example 3: Custom depolarizing noise with different rates
+    println!("\nExample 3: Custom depolarizing noise");
+    let custom_depolarizing = DepolarizingNoiseModel::builder()
         .with_prep_probability(0.001)
-        .with_meas_0_probability(0.002)
-        .with_meas_1_probability(0.002)
-        .with_noiseless_gate(GateType::H)
-        .with_noiseless_gate(GateType::Measure)
-        .with_p1_pauli_model(&p1_model)
-        .with_p2_pauli_model(&p2_model)
-        .with_p_idle_coherent(false)
-        .with_p_idle_linear_rate(0.0001)
-        .with_leakage_scale(0.5)
-        .with_emission_scale(0.8);
+        .with_meas_probability(0.002)
+        .with_p1_probability(0.001)
+        .with_p2_probability(0.01);
 
-    let noise_model = NoiseModelType::General(Box::new(builder));
-    let results = qasm_sim(qasm)
-        .noise(noise_model)
-        .workers(4)
-        .run(100)
-        .unwrap();
-    println!("Shot results: {:?}", &results.shots[..5]);
-
-    // Example 4: Fluent API style
-    println!("\nExample 4: Fluent API style (method chaining)");
-    let results = qasm_sim(qasm)
-        .noise(NoiseModelType::General(Box::new(
-            GeneralNoiseModel::builder()
-                .with_p1_probability(0.001)
-                .with_p2_probability(0.01)
-                .with_seed(789),
-        )))
-        .workers(4)
-        .run(100)
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .noise(custom_depolarizing)
+        .seed(42)
+        .run(1000)
         .unwrap();
 
-    println!("Shot results: {:?}", &results.shots[..5]);
+    println!(
+        "Got {} shots with custom depolarizing noise",
+        results.shots.len()
+    );
+
+    // Example 4: Biased depolarizing noise
+    println!("\nExample 4: Biased depolarizing noise");
+    let biased = BiasedDepolarizingNoiseModel::builder().with_uniform_probability(0.001);
+
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .noise(biased)
+        .seed(42)
+        .workers(4) // Use multiple workers
+        .run(1000)
+        .unwrap();
+
+    println!(
+        "Got {} shots with biased depolarizing noise",
+        results.shots.len()
+    );
+
+    // Example 5: No noise (ideal simulation)
+    println!("\nExample 5: Ideal simulation (no noise)");
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm)))
+        .seed(42)
+        .run(1000)
+        .unwrap();
+
+    println!("Got {} shots with no noise", results.shots.len());
 }

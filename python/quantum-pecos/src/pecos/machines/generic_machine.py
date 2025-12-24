@@ -20,10 +20,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.reps.pypmir.op_types import QOp
+from pecos.reps.pyphir.op_types import QOp
 
 if TYPE_CHECKING:
-    from pecos.reps.pypmir.op_types import MOp
+    from pecos.reps.pyphir.op_types import MOp
 
 
 class GenericMachine:

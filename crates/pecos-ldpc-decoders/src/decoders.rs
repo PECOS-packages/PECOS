@@ -12,7 +12,7 @@ use super::{bridge::ffi, sparse::SparseMatrix};
 use crate::{BpMethod, BpSchedule, DecodingResult, InputVectorType, LdpcError, OsdMethod};
 use cxx::UniquePtr;
 use ndarray::{Array1, ArrayView1};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Helper function to prepare channel probabilities
 fn prepare_channel_probs(
@@ -517,7 +517,7 @@ pub struct ClusterStatistics {
 #[derive(Debug, Clone)]
 pub struct LsdStatistics {
     /// Individual cluster statistics
-    pub individual_cluster_stats: HashMap<usize, ClusterStatistics>,
+    pub individual_cluster_stats: BTreeMap<usize, ClusterStatistics>,
     /// Elapsed time in microseconds
     pub elapsed_time: u64,
     /// LSD method used

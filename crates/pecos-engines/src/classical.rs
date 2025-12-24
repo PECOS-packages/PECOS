@@ -55,15 +55,8 @@ pub trait ClassicalEngine: Engine<Input = (), Output = Shot> + DynClone + Send +
     ///
     /// # Arguments
     /// * `seed` - Seed value for the random number generator
-    ///
-    /// # Returns
-    /// Result indicating success or failure
-    ///
-    /// # Errors
-    /// Returns a `PecosError` if setting the seed fails
-    fn set_seed(&mut self, _seed: u64) -> Result<(), PecosError> {
-        // Default implementation just succeeds without doing anything
-        Ok(())
+    fn set_seed(&mut self, _seed: u64) {
+        // Default implementation does nothing
     }
 
     /// Compiles the classical program into an intermediate representation or directly
@@ -112,54 +105,264 @@ pub trait ClassicalEngine: Engine<Input = (), Output = Shot> + DynClone + Send +
 // Register the ClassicalEngine trait with dyn_clone
 dyn_clone::clone_trait_object!(ClassicalEngine);
 
-impl ControlEngine for Box<dyn ClassicalEngine> {
+/// A trait that combines `ClassicalEngine` with `ControlEngine` for use in `HybridEngine`
+///
+/// This trait ensures that engines used by `HybridEngine` implement both the
+/// `ClassicalEngine` interface (for quantum command generation and measurement handling)
+/// and the `ControlEngine` interface (for orchestrating the execution flow).
+///
+/// # Important
+///
+/// **Both traits must be explicitly implemented** by any engine that wants to be used
+/// with `HybridEngine`. There is no default implementation because control flow is
+/// highly specific to each engine type:
+///
+/// - Some engines may need to batch operations (like `PhirEngine`)
+/// - Some engines may need to finalize state after measurements (like `PhirEngine`'s exports)
+/// - Some engines may process everything in one shot (like `QasmEngine`)
+///
+/// # Example Implementation Pattern
+///
+/// ```rust
+/// use pecos_engines::{
+///     ClassicalEngine, ControlEngine, Engine, EngineStage,
+///     ByteMessage, ByteMessageBuilder, Shot
+/// };
+/// use pecos_core::errors::PecosError;
+/// use std::any::Any;
+///
+/// // Example engine implementation
+/// #[derive(Clone)]
+/// struct MyEngine {
+///     num_qubits: usize,
+///     commands_generated: bool,
+///     shot_result: Shot,
+/// }
+///
+/// impl MyEngine {
+///     fn new(num_qubits: usize) -> Self {
+///         Self {
+///             num_qubits,
+///             commands_generated: false,
+///             shot_result: Shot::default(),
+///         }
+///     }
+/// }
+///
+/// // First implement the base Engine trait
+/// impl Engine for MyEngine {
+///     type Input = ();
+///     type Output = Shot;
+///
+///     fn process(&mut self, _input: Self::Input) -> Result<Self::Output, PecosError> {
+///         // Process a single shot
+///         Ok(self.shot_result.clone())
+///     }
+///
+///     fn reset(&mut self) -> Result<(), PecosError> {
+///         // Reset engine state
+///         self.commands_generated = false;
+///         self.shot_result = Shot::default();
+///         Ok(())
+///     }
+/// }
+///
+/// // Then implement ClassicalEngine for quantum-specific functionality
+/// impl ClassicalEngine for MyEngine {
+///     fn num_qubits(&self) -> usize {
+///         self.num_qubits
+///     }
+///
+///     fn generate_commands(&mut self) -> Result<ByteMessage, PecosError> {
+///         let mut builder = ByteMessageBuilder::new();
+///         builder.for_quantum_operations();
+///
+///         // Generate commands only once in this example
+///         if !self.commands_generated {
+///             // Add quantum operations (e.g., H gate on qubit 0)
+///             builder.add_h(&[0]);
+///             self.commands_generated = true;
+///         }
+///
+///         Ok(builder.build())
+///     }
+///
+///     fn handle_measurements(&mut self, msg: ByteMessage) -> Result<(), PecosError> {
+///         // Process measurement results from quantum engine
+///         // In a real implementation, you would parse the message
+///         // and update internal state accordingly
+///         Ok(())
+///     }
+///
+///     fn get_results(&self) -> Result<Shot, PecosError> {
+///         Ok(self.shot_result.clone())
+///     }
+///
+///     fn compile(&self) -> Result<(), PecosError> {
+///         // Perform any necessary compilation/validation
+///         Ok(())
+///     }
+///
+///     fn as_any(&self) -> &dyn Any {
+///         self
+///     }
+///
+///     fn as_any_mut(&mut self) -> &mut dyn Any {
+///         self
+///     }
+/// }
+///
+/// // Finally implement ControlEngine for execution flow control
+/// impl ControlEngine for MyEngine {
+///     type Input = ();
+///     type Output = Shot;
+///     type EngineInput = ByteMessage;
+///     type EngineOutput = ByteMessage;
+///
+///     fn start(&mut self, _: ()) -> Result<EngineStage<ByteMessage, Shot>, PecosError> {
+///         // Generate initial quantum commands
+///         let commands = self.generate_commands()?;
+///
+///         if commands.is_empty()? {
+///             // No commands to execute, return results
+///             Ok(EngineStage::Complete(self.get_results()?))
+///         } else {
+///             // Send commands to quantum engine
+///             Ok(EngineStage::NeedsProcessing(commands))
+///         }
+///     }
+///
+///     fn continue_processing(&mut self, measurements: ByteMessage)
+///         -> Result<EngineStage<ByteMessage, Shot>, PecosError> {
+///         // Handle measurements from quantum engine
+///         self.handle_measurements(measurements)?;
+///
+///         // Check if there are more commands to execute
+///         let commands = self.generate_commands()?;
+///
+///         if commands.is_empty()? {
+///             // All done, return final results
+///             Ok(EngineStage::Complete(self.get_results()?))
+///         } else {
+///             // More commands to execute
+///             Ok(EngineStage::NeedsProcessing(commands))
+///         }
+///     }
+///
+///     fn reset(&mut self) -> Result<(), PecosError> {
+///         // Reset control engine state
+///         self.commands_generated = false;
+///         self.shot_result = Shot::default();
+///         Ok(())
+///     }
+/// }
+///
+/// // Verify the implementation
+/// let mut engine = MyEngine::new(2);
+/// assert_eq!(engine.num_qubits(), 2);
+///
+/// // Test compilation
+/// engine.compile().unwrap();
+///
+/// // Test command generation
+/// let commands = engine.generate_commands().unwrap();
+/// assert!(!commands.is_empty().unwrap());
+///
+/// // Second call returns empty (no more commands)
+/// let commands = engine.generate_commands().unwrap();
+/// assert!(commands.is_empty().unwrap());
+/// ```
+///
+/// See `PhirEngine`, `QasmEngine`, and `QisEngine` for concrete examples.
+pub trait ClassicalControlEngine: ClassicalEngine
+    + ControlEngine<Input = (), Output = Shot, EngineInput = ByteMessage, EngineOutput = ByteMessage>
+{
+}
+
+// Blanket implementation for all types that implement both traits
+impl<T> ClassicalControlEngine for T where
+    T: ClassicalEngine
+        + ControlEngine<
+            Input = (),
+            Output = Shot,
+            EngineInput = ByteMessage,
+            EngineOutput = ByteMessage,
+        >
+{
+}
+
+// Register the combined trait with dyn_clone
+dyn_clone::clone_trait_object!(ClassicalControlEngine);
+
+// Implement ClassicalEngine for Box<dyn ClassicalControlEngine> to enable trait object usage
+impl ClassicalEngine for Box<dyn ClassicalControlEngine> {
+    fn num_qubits(&self) -> usize {
+        (**self).num_qubits()
+    }
+
+    fn generate_commands(&mut self) -> Result<ByteMessage, PecosError> {
+        (**self).generate_commands()
+    }
+
+    fn handle_measurements(&mut self, message: ByteMessage) -> Result<(), PecosError> {
+        (**self).handle_measurements(message)
+    }
+
+    fn get_results(&self) -> Result<Shot, PecosError> {
+        (**self).get_results()
+    }
+
+    fn set_seed(&mut self, seed: u64) {
+        (**self).set_seed(seed);
+    }
+
+    fn compile(&self) -> Result<(), PecosError> {
+        (**self).compile()
+    }
+
+    fn reset(&mut self) -> Result<(), PecosError> {
+        ClassicalEngine::reset(&mut **self)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        (**self).as_any()
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        (**self).as_any_mut()
+    }
+}
+
+// Implement ControlEngine for Box<dyn ClassicalControlEngine> to enable trait object usage
+impl ControlEngine for Box<dyn ClassicalControlEngine> {
     type Input = ();
     type Output = Shot;
     type EngineInput = ByteMessage;
     type EngineOutput = ByteMessage;
 
-    fn start(&mut self, _input: ()) -> Result<EngineStage<ByteMessage, Shot>, PecosError> {
-        // Build up first batch of commands until measurement needed
-        let commands = self.generate_commands()?;
-
-        // Check if we have an empty message (no more commands)
-        if commands.is_empty()? {
-            // No more commands, return results
-            let results = self.get_results()?;
-            return Ok(EngineStage::Complete(results));
-        }
-
-        // Need to process these commands
-        Ok(EngineStage::NeedsProcessing(commands))
+    fn start(&mut self, input: ()) -> Result<EngineStage<ByteMessage, Shot>, PecosError> {
+        (**self).start(input)
     }
 
     fn continue_processing(
         &mut self,
-        measurements: ByteMessage,
+        result: ByteMessage,
     ) -> Result<EngineStage<ByteMessage, Shot>, PecosError> {
-        // Handle measurements from quantum engine
-        self.handle_measurements(measurements)?;
-
-        // Generate next batch of commands
-        let commands = self.generate_commands()?;
-
-        // Check if we have an empty message (no more commands)
-        if commands.is_empty()? {
-            // No more commands, return results
-            let results = self.get_results()?;
-            return Ok(EngineStage::Complete(results));
-        }
-
-        Ok(EngineStage::NeedsProcessing(commands))
+        (**self).continue_processing(result)
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
-        // Use fully qualified path to disambiguate
-        ClassicalEngine::reset(&mut **self)
+        <dyn ControlEngine<
+                Input = (),
+                Output = Shot,
+                EngineInput = ByteMessage,
+                EngineOutput = ByteMessage,
+            >>::reset(&mut **self)
     }
 }
 
-impl Engine for Box<dyn ClassicalEngine> {
+// Implement Engine for Box<dyn ClassicalControlEngine>
+impl Engine for Box<dyn ClassicalControlEngine> {
     type Input = ();
     type Output = Shot;
 

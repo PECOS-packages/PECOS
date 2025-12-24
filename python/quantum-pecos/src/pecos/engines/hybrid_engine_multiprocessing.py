@@ -23,7 +23,7 @@ from os import getpid
 from typing import TYPE_CHECKING
 from warnings import warn
 
-import numpy as np
+import pecos as pc
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -72,15 +72,17 @@ def run_multisim(
         "initialize": True,
     }
 
-    np.random.seed(seed)
-    max_value = np.iinfo(np.int32).max
+    if seed is not None:
+        pc.random.seed(seed)
+    # Use i32::MAX from Rust as max seed value
+    max_value = pc.dtypes.i32.max
 
     manager = multiprocessing.get_context("spawn").Manager()
     queue = manager.Queue()
     args = []
     for i, sh in enumerate(multi_shots):
         # make a unique seed for each process
-        sd = np.random.randint(max_value)
+        sd = int(pc.random.randint(0, max_value, 1)[0])
 
         kwargs_temp = dict(kwargs)
         kwargs_temp.update(
@@ -174,7 +176,7 @@ def worker_wrapper(
     except (ValueError, TypeError, RuntimeError, KeyError, AttributeError) as e:
         queue.put((pid, "error", f"{type(e).__name__}: {e}"))
     # Must catch all exceptions in worker process to prevent silent failures
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         queue.put((pid, "error", f"Unexpected error: {type(e).__name__}: {e}"))
 
     return results, run_info

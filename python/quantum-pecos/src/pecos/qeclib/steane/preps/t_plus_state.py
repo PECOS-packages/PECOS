@@ -20,10 +20,19 @@ from pecos.qeclib.steane.gates_sq.face_rots import F
 from pecos.qeclib.steane.preps.encoding_circ import EncodingCircuit
 from pecos.qeclib.steane.preps.plus_h_state import PrepHStateFT, PrepHStateFTRUS
 from pecos.slr import Bit, Block, Comment, CReg, QReg
+from pecos.slr.misc import Return
+from pecos.slr.types import Array, QubitType
 
 
 class PrepEncodeTPlusNonFT(Block):
-    """Uses the encoding circuit to non-fault-tolerantly initialize the logical T|+> magic state."""
+    """Uses the encoding circuit to non-fault-tolerantly initialize the logical T|+> magic state.
+
+    Returns:
+        array[qubit, 7]: The encoded 7-qubit register in the T|+> state.
+    """
+
+    # Declare return type: returns the encoded qubit register
+    block_returns = (Array[QubitType, 7],)
 
     def __init__(self, q: QReg) -> None:
         """Initialize PrepEncodeTPlusNonFT block for non-fault-tolerant T|+> preparation.
@@ -37,11 +46,20 @@ class PrepEncodeTPlusNonFT(Block):
             qubit.H(q[6]),
             qubit.T(q[6]),
             EncodingCircuit(q),
+            # Explicitly declare return value
+            Return(q),
         )
 
 
 class PrepEncodeTDagPlusNonFT(Block):
-    """Uses the encoding circuit to non-fault-tolerantly initialize the logical T|+> magic state."""
+    """Uses the encoding circuit to non-fault-tolerantly initialize the logical T†|+> magic state.
+
+    Returns:
+        array[qubit, 7]: The encoded 7-qubit register in the T†|+> state.
+    """
+
+    # Declare return type: returns the encoded qubit register
+    block_returns = (Array[QubitType, 7],)
 
     def __init__(self, q: QReg) -> None:
         """Initialize PrepEncodeTDagPlusNonFT block for non-fault-tolerant T†|+> preparation.
@@ -55,6 +73,8 @@ class PrepEncodeTDagPlusNonFT(Block):
             qubit.H(q[6]),
             qubit.Tdg(q[6]),
             EncodingCircuit(q),
+            # Explicitly declare return value
+            Return(q),
         )
 
 
@@ -64,12 +84,18 @@ class PrepEncodeTPlusFT(Block):
     Prepare |+H> by measuring the logical Hadamard, doing a QED round, and
     then rotate to T|+>.
 
+    Returns:
+        array[qubit, 7]: The encoded 7-qubit data register in the T|+> state.
+
     Arguments:
         d: Data qubits (size 7)
         a: Axillary qubits (size 2)
         out: Measurement outputs (size 2). out[0] is the Measure H result and out[1] is the flag result.
         reject: Whether the procedure failed and should be rejected. 0 it is good, 1 prep failed.
     """
+
+    # Declare return type: returns the data qubit register
+    block_returns = (Array[QubitType, 7],)
 
     def __init__(
         self,
@@ -110,6 +136,8 @@ class PrepEncodeTPlusFT(Block):
                 last_raw_syn_z,
             ),
             F(d),  # |+H> -> T|+X>
+            # Explicitly declare return value
+            Return(d),
         )
 
 
@@ -119,6 +147,9 @@ class PrepEncodeTPlusFTRUS(Block):
     By measuring the logical Hadamard using Repeat-until-success style
     initialization.
 
+    Returns:
+        array[qubit, 7]: The encoded 7-qubit data register in the T|+> state.
+
     Arguments:
         d: Data qubits (size 7)
         a: Axillary qubits (size 2)
@@ -126,6 +157,9 @@ class PrepEncodeTPlusFTRUS(Block):
         limit: The number of RUS steps to take.
         reject: Whether the procedure failed and should be rejected. 0 it is good, 1 prep failed.
     """
+
+    # Declare return type: returns the data qubit register
+    block_returns = (Array[QubitType, 7],)
 
     def __init__(
         self,
@@ -170,4 +204,6 @@ class PrepEncodeTPlusFTRUS(Block):
                 limit,
             ),
             F(d),
+            # Explicitly declare return value
+            Return(d),
         )

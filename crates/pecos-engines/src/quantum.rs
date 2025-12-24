@@ -9,7 +9,6 @@ use pecos_core::errors::PecosError;
 use pecos_qsim::{
     ArbitraryRotationGateable, CliffordGateable, QuantumSimulator, StateVec, StdSparseStab,
 };
-use rand::SeedableRng;
 use std::any::Any;
 use std::fmt::Debug;
 
@@ -26,13 +25,7 @@ pub trait QuantumEngine:
     ///
     /// # Arguments
     /// * `seed` - Seed value for the random number generator
-    ///
-    /// # Returns
-    /// Result indicating success or failure
-    ///
-    /// # Errors
-    /// Returns an error if setting the seed fails
-    fn set_seed(&mut self, seed: u64) -> Result<(), PecosError>;
+    fn set_seed(&mut self, seed: u64);
 
     /// Returns a reference to this object as Any, for downcasting
     fn as_any(&self) -> &dyn Any;
@@ -86,6 +79,29 @@ impl StateVecEngine {
             simulator: StateVec::with_seed(num_qubits, seed),
         }
     }
+
+    /// Ensure the simulator has the correct number of qubits, recreating if necessary
+    ///
+    /// This method checks if the current simulator has enough qubits.
+    /// If not, it recreates the simulator with more qubits to prevent
+    /// memory corruption during quantum operations.
+    ///
+    /// Note: The simulator can only grow, never shrink, to preserve quantum state.
+    ///
+    /// # Arguments
+    /// * `required_qubits` - The minimum number of qubits required for the simulation
+    pub fn ensure_qubit_count(&mut self, required_qubits: usize) {
+        if self.simulator.num_qubits() < required_qubits {
+            debug!(
+                "StateVecEngine: Expanding simulator (was {} qubits, now {} qubits)",
+                self.simulator.num_qubits(),
+                required_qubits
+            );
+            // Preserve the RNG state if possible
+            let rng = self.simulator.rng().clone();
+            self.simulator = StateVec::with_rng(required_qubits, rng);
+        }
+    }
 }
 
 impl Engine for StateVecEngine {
@@ -96,6 +112,19 @@ impl Engine for StateVecEngine {
     fn process(&mut self, message: Self::Input) -> Result<Self::Output, PecosError> {
         // Parse commands from the message
         let batch = message.quantum_ops()?;
+
+        // Calculate required number of qubits from operations and ensure simulator has correct size
+        if !batch.is_empty() {
+            let max_qubit_index = batch
+                .iter()
+                .flat_map(|cmd| cmd.qubits.iter())
+                .map(|q| usize::from(*q))
+                .max()
+                .unwrap_or(0);
+            let required_qubits = max_qubit_index + 1;
+            self.ensure_qubit_count(required_qubits);
+        }
+
         let mut measurements = Vec::new();
 
         for cmd in &batch {
@@ -149,6 +178,12 @@ impl Engine for StateVecEngine {
                     }
                 }
                 GateType::CX => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "CX gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
                     for qubits in cmd.qubits.chunks_exact(2) {
                         debug!(
                             "Processing CX gate with control {:?} and target {:?}",
@@ -159,6 +194,15 @@ impl Engine for StateVecEngine {
                     }
                 }
                 GateType::RZZ => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "RZZ gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    if cmd.params.is_empty() {
+                        return Err(quantum_error("RZZ gate requires at least one parameter"));
+                    }
                     for qubits in cmd.qubits.chunks_exact(2) {
                         debug!(
                             "Processing RZZ gate on qubits {:?} and {:?}",
@@ -168,6 +212,12 @@ impl Engine for StateVecEngine {
                     }
                 }
                 GateType::SZZ => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "SZZ gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
                     for qubits in cmd.qubits.chunks_exact(2) {
                         debug!(
                             "Processing SZZ gate on qubits {:?} and {:?}",
@@ -178,6 +228,12 @@ impl Engine for StateVecEngine {
                     }
                 }
                 GateType::SZZdg => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "SZZdg gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
                     for qubits in cmd.qubits.chunks_exact(2) {
                         debug!(
                             "Processing SZZdg gate on qubits {:?} and {:?}",
@@ -188,6 +244,28 @@ impl Engine for StateVecEngine {
                     }
                 }
                 // TODO: Consider setting exact numbers of parameters
+                GateType::RX => {
+                    if !cmd.params.is_empty() {
+                        for q in &cmd.qubits {
+                            debug!(
+                                "Processing RX gate with angle {:?} on qubit {:?}",
+                                cmd.params[0], q
+                            );
+                            self.simulator.rx(cmd.params[0], **q);
+                        }
+                    }
+                }
+                GateType::RY => {
+                    if !cmd.params.is_empty() {
+                        for q in &cmd.qubits {
+                            debug!(
+                                "Processing RY gate with angle {:?} on qubit {:?}",
+                                cmd.params[0], q
+                            );
+                            self.simulator.ry(cmd.params[0], **q);
+                        }
+                    }
+                }
                 GateType::RZ => {
                     if !cmd.params.is_empty() {
                         for q in &cmd.qubits {
@@ -217,18 +295,24 @@ impl Engine for StateVecEngine {
                     for q in &cmd.qubits {
                         debug!("Processing measurement on qubit {q:?}");
                         let meas_result = self.simulator.mz(**q);
+                        // According to the documentation:
+                        // mz() outcome: true if projected to |1⟩, false if projected to |0⟩
+                        // So we can directly convert the boolean to u32
                         let outcome = u32::from(meas_result.outcome);
                         measurements.push(outcome);
                     }
                 }
                 GateType::Prep => {
                     for q in &cmd.qubits {
-                        debug!("Processing Y gate on qubit {q:?}");
+                        debug!("Processing Prep gate on qubit {q:?}");
                         self.simulator.pz(**q);
                     }
                 }
-                GateType::Idle | GateType::I => {
-                    // For idle/identity gates, just let the system naturally evolve for the specified duration
+                GateType::I
+                | GateType::Idle
+                | GateType::MeasCrosstalkLocalPayload
+                | GateType::MeasCrosstalkGlobalPayload => {
+                    // Just let the system naturally evolve for the specified duration
                     // No active operation needed in the simulator
                 }
                 GateType::U => {
@@ -258,6 +342,7 @@ impl Engine for StateVecEngine {
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
+        debug!("StateVecEngine: reset() called");
         self.simulator.reset();
         Ok(())
     }
@@ -266,8 +351,8 @@ impl Engine for StateVecEngine {
 impl RngManageable for StateVecEngine {
     type Rng = <StateVec as RngManageable>::Rng;
 
-    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), PecosError> {
-        self.simulator.set_rng(rng)
+    fn set_rng(&mut self, rng: Self::Rng) {
+        self.simulator.set_rng(rng);
     }
 
     /// Get a read-only reference to the internal random number generator
@@ -292,14 +377,12 @@ impl RngManageable for StateVecEngine {
 }
 
 impl QuantumEngine for StateVecEngine {
-    fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
+    fn set_seed(&mut self, seed: u64) {
         // Create a new RNG with the given seed
         let rng = <StateVec as RngManageable>::Rng::seed_from_u64(seed);
 
         // Set the simulator's RNG
-        self.simulator
-            .set_rng(rng)
-            .map_err(|e| quantum_error(format!("Failed to set seed: {e}")))
+        self.simulator.set_rng(rng);
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -392,12 +475,27 @@ impl SparseStabEngine {
                     "Tdg gate is not supported by stabilizer simulator",
                 ));
             }
+            GateType::RX | GateType::RY => {
+                return Err(quantum_error(
+                    "RX/RY gates are not supported by stabilizer simulator",
+                ));
+            }
             _ => {} // Handled elsewhere
         }
         Ok(())
     }
 
     fn process_two_qubit_gate(&mut self, gate_type: GateType, qubits: &[QubitId]) {
+        // Verify even number of qubits for all two-qubit gates
+        if !qubits.len().is_multiple_of(2) {
+            log::warn!(
+                "{:?} gate requires even number of qubits, got {} - skipping",
+                gate_type,
+                qubits.len()
+            );
+            return;
+        }
+
         match gate_type {
             GateType::CX => {
                 for qubits in qubits.chunks_exact(2) {
@@ -452,7 +550,9 @@ impl Engine for SparseStabEngine {
                 | GateType::SZ
                 | GateType::SZdg
                 | GateType::T
-                | GateType::Tdg => {
+                | GateType::Tdg
+                | GateType::RX
+                | GateType::RY => {
                     self.process_single_qubit_gate(cmd.gate_type, &cmd.qubits)?;
                 }
                 // Two-qubit gates
@@ -464,13 +564,16 @@ impl Engine for SparseStabEngine {
                     for q in &cmd.qubits {
                         debug!("Processing measurement on qubit {q:?}");
                         let meas_result = self.simulator.mz(**q);
+                        // According to the documentation:
+                        // mz() outcome: true if projected to |1⟩, false if projected to |0⟩
+                        // So we can directly convert the boolean to u32
                         let outcome = u32::from(meas_result.outcome);
                         measurements.push(outcome);
                     }
                 }
                 GateType::Prep => {
                     for q in &cmd.qubits {
-                        debug!("Processing Y gate on qubit {q:?}");
+                        debug!("Processing Prep gate on qubit {q:?}");
                         self.simulator.pz(**q);
                     }
                 }
@@ -479,7 +582,10 @@ impl Engine for SparseStabEngine {
                     // No active operation needed in the simulator
                 }
                 _ => {
-                    debug!("Skipping unsupported gate {:?}", cmd.gate_type);
+                    return Err(PecosError::Processing(format!(
+                        "Gate {:?} is not supported by the stabilizer simulator. Only Clifford gates are supported.",
+                        cmd.gate_type
+                    )));
                 }
             }
         }
@@ -501,8 +607,8 @@ impl Engine for SparseStabEngine {
 impl RngManageable for SparseStabEngine {
     type Rng = <StdSparseStab as RngManageable>::Rng;
 
-    fn set_rng(&mut self, rng: Self::Rng) -> Result<(), PecosError> {
-        self.simulator.set_rng(rng)
+    fn set_rng(&mut self, rng: Self::Rng) {
+        self.simulator.set_rng(rng);
     }
 
     /// Get a read-only reference to the internal random number generator
@@ -527,14 +633,12 @@ impl RngManageable for SparseStabEngine {
 }
 
 impl QuantumEngine for SparseStabEngine {
-    fn set_seed(&mut self, seed: u64) -> Result<(), PecosError> {
+    fn set_seed(&mut self, seed: u64) {
         // Create a new RNG with the given seed
         let rng = <StdSparseStab as RngManageable>::Rng::seed_from_u64(seed);
 
         // Set the simulator's RNG
-        self.simulator
-            .set_rng(rng)
-            .map_err(|e| quantum_error(format!("Failed to set seed: {e}")))
+        self.simulator.set_rng(rng);
     }
 
     fn as_any(&self) -> &dyn Any {

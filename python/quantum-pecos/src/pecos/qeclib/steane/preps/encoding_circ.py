@@ -17,6 +17,8 @@ representation, enabling quantum error correction.
 
 from pecos.qeclib import qubit
 from pecos.slr import Block, Comment, QReg
+from pecos.slr.misc import Return
+from pecos.slr.types import Array, QubitType
 
 
 class EncodingCircuit(Block):
@@ -24,7 +26,13 @@ class EncodingCircuit(Block):
 
     This class implements the encoding circuit that transforms a single logical
     qubit into the 7-qubit Steane code representation.
+
+    Returns:
+        array[qubit, 7]: The encoded 7-qubit register.
     """
+
+    # Declare return type: returns the encoded qubit register
+    block_returns = (Array[QubitType, 7],)
 
     def __init__(self, q: QReg) -> None:
         """Initialize EncodingCircuit block for Steane code encoding.
@@ -73,4 +81,7 @@ class EncodingCircuit(Block):
                 (q[3], q[0]),
             ),
             Comment(""),
+            # Explicitly declare return value (like Python's return statement)
+            # Combined with block_returns annotation for robust type checking
+            Return(q),
         )

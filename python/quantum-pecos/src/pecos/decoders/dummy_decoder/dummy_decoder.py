@@ -32,8 +32,8 @@ class DummyDecoder:
 
     @staticmethod
     def decode(
-        measurements: StdOutput,  # noqa: ARG004
-        **kwargs: object,  # noqa: ARG004
+        _measurements: StdOutput,
+        **_kwargs: object,
     ) -> list[QuantumCircuit]:
         """Decode measurements and return recovery operations.
 

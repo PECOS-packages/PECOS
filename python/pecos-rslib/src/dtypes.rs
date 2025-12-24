@@ -3504,38 +3504,129 @@ impl ScalarI64 {
     }
 
     // Bitwise operations
-    fn __lshift__(&self, other: &Self) -> Self {
-        Self {
-            value: self.value << other.value,
-        }
+    fn __and__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        let other_value = if other.is_instance_of::<ScalarI64>() {
+            other.extract::<ScalarI64>()?.value
+        } else if let Ok(val) = other.extract::<i64>() {
+            val
+        } else {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
+                "unsupported operand type(s) for &: 'i64' and '{}'",
+                other.get_type().name()?
+            )));
+        };
+        Ok(Self {
+            value: self.value & other_value,
+        })
     }
 
-    fn __rshift__(&self, other: &Self) -> Self {
-        Self {
-            value: self.value >> other.value,
-        }
+    fn __rand__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        self.__and__(other)
     }
 
-    fn __and__(&self, other: &Self) -> Self {
-        Self {
-            value: self.value & other.value,
-        }
+    fn __or__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        let other_value = if other.is_instance_of::<ScalarI64>() {
+            other.extract::<ScalarI64>()?.value
+        } else if let Ok(val) = other.extract::<i64>() {
+            val
+        } else {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
+                "unsupported operand type(s) for |: 'i64' and '{}'",
+                other.get_type().name()?
+            )));
+        };
+        Ok(Self {
+            value: self.value | other_value,
+        })
     }
 
-    fn __or__(&self, other: &Self) -> Self {
-        Self {
-            value: self.value | other.value,
-        }
+    fn __ror__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        self.__or__(other)
     }
 
-    fn __xor__(&self, other: &Self) -> Self {
-        Self {
-            value: self.value ^ other.value,
-        }
+    fn __xor__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        let other_value = if other.is_instance_of::<ScalarI64>() {
+            other.extract::<ScalarI64>()?.value
+        } else if let Ok(val) = other.extract::<i64>() {
+            val
+        } else {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
+                "unsupported operand type(s) for ^: 'i64' and '{}'",
+                other.get_type().name()?
+            )));
+        };
+        Ok(Self {
+            value: self.value ^ other_value,
+        })
+    }
+
+    fn __rxor__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        self.__xor__(other)
     }
 
     fn __invert__(&self) -> Self {
         Self { value: !self.value }
+    }
+
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // Rust shift ops require u32; shifts > 63 are masked by wrapping_shl anyway
+    fn __lshift__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        let shift_amount = if other.is_instance_of::<ScalarI64>() {
+            other.extract::<ScalarI64>()?.value as u32
+        } else if let Ok(val) = other.extract::<u32>() {
+            val
+        } else {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
+                "unsupported operand type(s) for <<: 'i64' and '{}'",
+                other.get_type().name()?
+            )));
+        };
+        Ok(Self {
+            value: self.value.wrapping_shl(shift_amount),
+        })
+    }
+
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // Rust shift ops require u32; shifts > 63 are masked by wrapping_shl anyway
+    fn __rlshift__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        let Ok(base_value) = other.extract::<i64>() else {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
+                "unsupported operand type(s) for <<: '{}' and 'i64'",
+                other.get_type().name()?
+            )));
+        };
+        Ok(Self {
+            value: base_value.wrapping_shl(self.value as u32),
+        })
+    }
+
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // Rust shift ops require u32; shifts > 63 are masked by wrapping_shr anyway
+    fn __rshift__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        let shift_amount = if other.is_instance_of::<ScalarI64>() {
+            other.extract::<ScalarI64>()?.value as u32
+        } else if let Ok(val) = other.extract::<u32>() {
+            val
+        } else {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
+                "unsupported operand type(s) for >>: 'i64' and '{}'",
+                other.get_type().name()?
+            )));
+        };
+        // Arithmetic right shift (sign extension for signed)
+        Ok(Self {
+            value: self.value.wrapping_shr(shift_amount),
+        })
+    }
+
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)] // Rust shift ops require u32; shifts > 63 are masked by wrapping_shr anyway
+    fn __rrshift__(&self, other: &Bound<PyAny>) -> PyResult<Self> {
+        let Ok(base_value) = other.extract::<i64>() else {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
+                "unsupported operand type(s) for >>: '{}' and 'i64'",
+                other.get_type().name()?
+            )));
+        };
+        Ok(Self {
+            value: base_value.wrapping_shr(self.value as u32),
+        })
     }
 
     // Arithmetic operations with Python int/float

@@ -172,13 +172,30 @@ class HybridEngine:
         self.op_processor.shot_reinit()
         self.qsim.shot_reinit()
 
-    @staticmethod
-    def use_seed(seed: int | None = None) -> int:
-        """Use a seed to set random number generators."""
+    def use_seed(self, seed: int | None = None) -> int:
+        """Set a seed for reproducible random number generation.
+
+        This method seeds the global random number generator and stores the seed
+        on this engine instance. When run() is called without a seed parameter,
+        it will use this stored seed instead of generating a random one.
+
+        Args:
+            seed: The seed value to use. If None, a random seed is generated.
+
+        Returns:
+            The seed value that was used.
+
+        Example:
+            >>> engine = HybridEngine()
+            >>> engine.use_seed(42)  # Set seed for reproducibility
+            42
+            >>> results = engine.run(program, shots=100)  # Uses seed 42
+        """
         if seed is None:
             # Use i32::MAX from Rust as max seed value
             seed = int(pc.random.randint(0, pc.dtypes.i32.max, 1)[0])
         pc.random.seed(seed)
+        self.seed = seed
         return seed
 
     def results_accumulator(self, shot_results: dict) -> None:
@@ -203,7 +220,9 @@ class HybridEngine:
             program: The quantum program to execute.
             foreign_object: Optional foreign object for external function calls.
             shots: Number of times to run the simulation.
-            seed: Random seed for reproducibility.
+            seed: Random seed for reproducibility. If not provided and use_seed()
+                was previously called, that seed will be used. If neither is set,
+                a random seed is generated.
             initialize: Whether to initialize the quantum state before running.
             return_int: Whether to return measurement results as integers.
 
@@ -211,7 +230,17 @@ class HybridEngine:
         measurements = MeasData()
 
         if initialize:
-            self.seed = self.use_seed(seed)
+            # Use explicit seed if provided, otherwise use previously set seed,
+            # otherwise generate a random seed
+            if seed is not None:
+                self.use_seed(seed)
+            elif self.seed is None:
+                # No seed was set via use_seed() and none provided - generate random
+                self.use_seed(None)
+            else:
+                # A seed was previously set via use_seed() - re-seed the RNG with it
+                # to ensure reproducibility across multiple run() calls
+                pc.random.seed(self.seed)
             self.initialize_sim_components(program, foreign_object)
 
         for _ in range(shots):

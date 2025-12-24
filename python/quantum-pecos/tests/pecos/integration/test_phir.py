@@ -272,3 +272,48 @@ def test_bell_qparallel_cliff_ifbarrier() -> None:
     register = "c" if "c" in results_dict else "m"
     result_values = results_dict[register]
     assert result_values.count("00") + result_values.count("11") == len(result_values)
+
+
+def test_i64_shift_with_python_int_issue_213() -> None:
+    """Regression test for issue #213: i64 shift operations with Python int.
+
+    This test reproduces the exact example from the issue where a bitwise
+    left-shift operation on an i64 variable with a Python int literal failed
+    with: TypeError: unsupported operand type(s) for <<: 'pecos_rslib.dtypes.i64' and 'int'
+
+    See: https://github.com/PECOS-packages/PECOS/issues/213
+    """
+    phir = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {
+                "data": "cvar_define",
+                "data_type": "i64",
+                "variable": "a",
+                "size": 8,
+            },
+            {
+                "cop": "=",
+                "returns": ["a"],
+                "args": [1],
+            },
+            {
+                "cop": "=",
+                "returns": ["a"],
+                "args": [
+                    {
+                        "cop": "<<",
+                        "args": ["a", 1],
+                    },
+                ],
+            },
+        ],
+    }
+
+    # This should not raise TypeError
+    results = HybridEngine(qsim="state-vector").run(program=phir, shots=1)
+
+    # Verify the shift operation worked correctly: 1 << 1 = 2
+    # Results are returned as binary strings
+    assert int(results["a"][0], 2) == 2

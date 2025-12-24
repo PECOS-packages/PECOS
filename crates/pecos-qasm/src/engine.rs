@@ -5,6 +5,7 @@ use log::debug;
 use pecos_core::errors::PecosError;
 use pecos_engines::byte_message::ByteMessageBuilder;
 use pecos_engines::prelude::*;
+use pecos_rng::rng_pcg::RNGModel;
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -60,6 +61,8 @@ pub struct QASMEngine {
     /// Foreign object for WASM function calls
     #[cfg(feature = "wasm")]
     foreign_object: Option<Box<dyn crate::foreign_objects::ForeignObject>>,
+
+    rng_model: RNGModel,
 }
 
 impl QASMEngine {
@@ -912,7 +915,6 @@ impl QASMEngine {
 
         while self.current_op < total_ops && operation_count < Self::MAX_BATCH_SIZE {
             let op = &program.operations[self.current_op];
-
             match op {
                 Operation::Gate {
                     name,
@@ -1162,52 +1164,146 @@ impl QASMEngine {
         Ok(Some(msg))
     }
 
+    fn evaluate_rng_models(
+        &mut self,
+        name: &str,
+        args: &[Expression],
+        target_width: usize,
+    ) -> Result<ExpressionValue, PecosError> {
+        match name {
+            "RNGseed" => {
+                if args.len() != 1 {
+                    return Err(PecosError::ParseInvalidExpression(
+                        "Expected a single seed for RNGseed. Received {args.len()}".to_string(),
+                    ));
+                }
+                let seed: u64 = match &args[0] {
+                    Expression::Integer(bit_vec) => bit_vec.load(),
+                    _ => {
+                        return Err(PecosError::ParseInvalidExpression(
+                            "Invalid seed for RNGseed. Expected u64".to_string(),
+                        ));
+                    }
+                };
+                self.rng_model.set_seed(seed);
+                // Void function - return 0
+                Ok(ExpressionValue::BitVec(BitVec::repeat(false, target_width)))
+            }
+            "RNGindex" => {
+                if args.len() != 1 {
+                    return Err(PecosError::ParseInvalidExpression(
+                        "Expected a single index for RNGseed. Received {args.len()}".to_string(),
+                    ));
+                }
+                let idx: u64 = match &args[0] {
+                    Expression::Integer(bit_vec) => bit_vec.load(),
+                    _ => {
+                        return Err(PecosError::ParseInvalidExpression(
+                            "Invalid idx for RNGindex. Expected u64".to_string(),
+                        ));
+                    }
+                };
+                self.rng_model.set_index(idx);
+                Ok(ExpressionValue::BitVec(BitVec::repeat(false, target_width)))
+            }
+            "RNGbound" => {
+                if args.len() != 1 {
+                    return Err(PecosError::ParseInvalidExpression(
+                        "Expected a single bound for RNGbound. Received {args.len()}".to_string(),
+                    ));
+                }
+                let ubound: u32 = match &args[0] {
+                    Expression::Integer(bit_vec) => bit_vec.load(),
+                    _ => {
+                        return Err(PecosError::ParseInvalidExpression(
+                            "Invalid idx for RNGindex. Expected u64".to_string(),
+                        ));
+                    }
+                };
+                self.rng_model.set_bound(ubound);
+                Ok(ExpressionValue::BitVec(BitVec::repeat(false, target_width)))
+            }
+            "RNGnum" => {
+                if !args.is_empty() {
+                    return Err(PecosError::ParseInvalidExpression(
+                        "RNGnum receives no arguments. Received {args.len()}".to_string(),
+                    ));
+                }
+                let rng_num = self.rng_model.rng_num();
+
+                // convert random number to bitvec
+                let mut bitvec = BitVec::<u8, Lsb0>::with_capacity(target_width);
+                for i in 0..target_width {
+                    bitvec.push((rng_num >> i) & 1 != 0);
+                }
+                Ok(ExpressionValue::BitVec(bitvec))
+            }
+            _ => Err(PecosError::ParseInvalidExpression(
+                "Invalid RNG function '{name}'".to_string(),
+            )),
+        }
+    }
+
+    #[cfg(feature = "wasm")]
+    fn evaluate_wasm_expr(
+        &mut self,
+        name: &str,
+        args: &[Expression],
+        target_width: usize,
+    ) -> Result<ExpressionValue, PecosError> {
+        let mut arg_values = Vec::new();
+        for arg in args {
+            let val = evaluate_expression_bitvec(arg, self, target_width)?;
+            arg_values.push(val.as_i64());
+        }
+        if let Some(ref mut foreign_obj) = self.foreign_object {
+            let results = foreign_obj.exec(name, &arg_values)?;
+            // Convert result back to BitVec
+            if results.is_empty() {
+                // Void function - return 0
+                return Ok(ExpressionValue::BitVec(BitVec::repeat(false, target_width)));
+            } else if results.len() == 1 {
+                // Single return value - convert to BitVec
+                let value = results[0];
+                let mut bitvec = BitVec::<u8, Lsb0>::with_capacity(target_width);
+                for i in 0..target_width {
+                    bitvec.push((value >> i) & 1 != 0);
+                }
+                return Ok(ExpressionValue::BitVec(bitvec));
+            }
+            return Err(PecosError::ParseInvalidExpression(format!(
+                "WASM function '{name}' returned {} values, but only single return values are supported in QASM expressions",
+                results.len()
+            )));
+        }
+        Err(PecosError::ParseInvalidExpression(format!(
+            "WASM function '{name}' innappropriately defined",
+        )))
+    }
+
     fn evaluate_expression_bitvec_with_width(
         &mut self,
         expr: &Expression,
         target_width: usize,
     ) -> Result<ExpressionValue, PecosError> {
-        log::debug!(" evaluate_expression_bitvec_with_width called with expr: {expr:?}");
+        log::debug!("evaluate_expression_bitvec_with_width called with expr: {expr:?}");
 
-        // Check if this is a WASM function call
-        #[cfg(feature = "wasm")]
-        if let Expression::FunctionCall { name, args } = expr
-            && let Some(ref _foreign_obj) = self.foreign_object
-        {
-            // Check if it's not a built-in function
-            if !crate::BUILTIN_FUNCTIONS.contains(&name.as_str()) {
-                // Evaluate arguments first (while we still have access to self)
-                let mut arg_values = Vec::new();
-                for arg in args {
-                    let val = evaluate_expression_bitvec(arg, self, target_width)?;
-                    arg_values.push(val.as_i64());
-                }
+        // Check if this is a platform fn call (RNG functions) or WASM function call
+        if let Expression::FunctionCall { name, args } = expr {
+            // Check platform functions first (RNG support)
+            let is_platform_fn = crate::PLATFORM_FUNCTIONS.contains(&name.as_str());
+            if is_platform_fn {
+                return self.evaluate_rng_models(name, args, target_width);
+            }
 
-                // Now call the WASM function with evaluated arguments
-                if let Some(ref mut foreign_obj) = self.foreign_object {
-                    let results = foreign_obj.exec(name, &arg_values)?;
-
-                    // Convert result back to BitVec
-                    if results.is_empty() {
-                        // Void function - return 0
-                        return Ok(ExpressionValue::BitVec(BitVec::repeat(false, target_width)));
-                    } else if results.len() == 1 {
-                        // Single return value - convert to BitVec
-                        let value = results[0];
-                        let mut bitvec = BitVec::<u8, Lsb0>::with_capacity(target_width);
-                        for i in 0..target_width {
-                            bitvec.push((value >> i) & 1 != 0);
-                        }
-                        return Ok(ExpressionValue::BitVec(bitvec));
-                    }
-                    return Err(PecosError::ParseInvalidExpression(format!(
-                        "WASM function '{name}' returned {} values, but only single return values are supported in QASM expressions",
-                        results.len()
-                    )));
-                }
+            // Check for WASM functions
+            #[cfg(feature = "wasm")]
+            if let Some(ref _foreign_obj) = self.foreign_object
+                && !crate::BUILTIN_FUNCTIONS.contains(&name.as_str())
+            {
+                return self.evaluate_wasm_expr(name, args, target_width);
             }
         }
-
         // Use target width as hint for expression evaluation
         debug!("Falling back to regular evaluate_expression_bitvec for expr: {expr:?}");
 
@@ -1496,6 +1592,7 @@ impl Default for QASMEngine {
             measurements_processed: 0,
             message_builder: ByteMessageBuilder::new(),
             allow_complex_conditionals: false,
+            rng_model: RNGModel::default(),
             #[cfg(feature = "wasm")]
             foreign_object: None,
         }
@@ -1541,7 +1638,8 @@ impl fmt::Debug for QASMEngine {
             .field(
                 "allow_complex_conditionals",
                 &self.allow_complex_conditionals,
-            );
+            )
+            .field("RNGModel:", &self.rng_model);
 
         #[cfg(feature = "wasm")]
         s.field("foreign_object", &self.foreign_object.is_some());

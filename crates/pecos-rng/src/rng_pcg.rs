@@ -289,3 +289,54 @@ mod tests {
         }
     }
 }
+
+#[derive(Default)]
+pub struct RNGModel {
+    pub rng_gen: PCGRandom,
+    pub curr_bound: u32,
+    pub count: u64,
+}
+
+impl std::fmt::Debug for RNGModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "RNGModel: {:?}; Current rng bound: {} with index count: {}",
+            self.rng_gen, self.curr_bound, self.count
+        )
+    }
+}
+
+impl RNGModel {
+    pub fn set_seed(&mut self, seed: u64) {
+        PCGRandom::pcg32_srandom_r(&mut self.rng_gen, 42_u64, seed);
+    }
+
+    /// Advance the RNG to a specific index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is less than the current count (i.e., the index has already been passed).
+    pub fn set_index(&mut self, idx: u64) {
+        assert!(
+            self.count <= idx,
+            "RNGindex called after specified index already generated"
+        );
+        while self.count < idx {
+            self.rng_num();
+        }
+    }
+
+    pub fn rng_num(&mut self) -> u32 {
+        self.count += 1;
+        if self.curr_bound == 0 {
+            PCGRandom::pcg32_random_r(&mut self.rng_gen)
+        } else {
+            PCGRandom::pcg32_boundedrand_r(&mut self.rng_gen, self.curr_bound)
+        }
+    }
+
+    pub fn set_bound(&mut self, ubound: u32) {
+        self.curr_bound = ubound;
+    }
+}

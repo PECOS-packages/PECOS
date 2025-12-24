@@ -30,6 +30,7 @@ log.workspace = true
 pecos-core.workspace = true
 pecos-programs.workspace = true
 pecos-engines.workspace = true
+pecos-rng.workspace = true
 
 # Serialization (for result formatting)
 serde_json.workspace = true

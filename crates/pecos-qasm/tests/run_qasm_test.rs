@@ -14,6 +14,9 @@ fn test_run_qasm_simple() {
         creg c[2];
         h q[0];
         cx q[0], q[1];
+        RNGseed(10);
+        RNGindex(11);
+        // RNGnum();
         measure q -> c;
     "#;
 

@@ -86,7 +86,8 @@ pub use unified_engine_builder::{QasmEngineBuilder, qasm_engine};
 pub use util::{count_qubits_in_file, count_qubits_in_str};
 
 /// List of built-in mathematical functions that cannot be overridden by WASM
-pub const BUILTIN_FUNCTIONS: &[&str] = &["sin", "cos", "tan", "exp", "ln", "sqrt"];
+pub const BUILTIN_FUNCTIONS: [&str; 6] = ["sin", "cos", "tan", "exp", "ln", "sqrt"];
+pub const PLATFORM_FUNCTIONS: [&str; 4] = ["RNGseed", "RNGbound", "RNGindex", "RNGnum"];
 
 use log::debug;
 use pecos_core::errors::PecosError;

@@ -524,6 +524,8 @@ pub mod compare {
 /// # Main Types
 ///
 /// - **`Graph`** - Undirected graph with weighted edges
+/// - **`DiGraph`** - Directed graph
+/// - **`DAG`** - Directed acyclic graph with cycle checking
 ///
 /// # Available Functions
 ///
@@ -549,6 +551,52 @@ pub mod compare {
 #[cfg(feature = "num")]
 pub mod graph {
     pub use pecos_num::graph::*;
+}
+
+/// Directed graph data structure
+///
+/// This module provides the `DiGraph` type for directed graphs.
+/// Unlike `DAG`, this type allows cycles.
+///
+/// # Example
+///
+/// ```rust
+/// use pecos::digraph::DiGraph;
+///
+/// let mut g = DiGraph::new();
+/// let n0 = g.add_node();
+/// let n1 = g.add_node();
+/// g.add_edge(n0, n1);
+///
+/// assert_eq!(g.successors(n0), vec![n1]);
+/// assert_eq!(g.predecessors(n1), vec![n0]);
+/// ```
+#[cfg(feature = "num")]
+pub mod digraph {
+    pub use pecos_num::digraph::*;
+}
+
+/// Directed acyclic graph (DAG) data structure
+///
+/// This module provides the `DAG` type which enforces acyclicity at runtime.
+/// Adding an edge that would create a cycle returns an error.
+///
+/// # Example
+///
+/// ```rust
+/// use pecos::dag::DAG;
+///
+/// let mut g = DAG::new();
+/// let n0 = g.add_node();
+/// let n1 = g.add_node();
+/// g.add_edge(n0, n1).unwrap();
+///
+/// // Topological sort always succeeds for a DAG
+/// let order = g.topological_sort();
+/// ```
+#[cfg(feature = "num")]
+pub mod dag {
+    pub use pecos_num::dag::*;
 }
 
 /// Quantum error correction decoders

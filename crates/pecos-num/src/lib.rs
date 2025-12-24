@@ -23,6 +23,8 @@
 //! - Random number generation (numpy.random drop-in replacements)
 //! - Root finding algorithms (Brent's method, Newton-Raphson)
 //! - Curve fitting (Levenberg-Marquardt, polynomial fitting)
+//! - Graph data structures ([`Graph`](graph::Graph), [`DiGraph`](digraph::DiGraph), [`DAG`](dag::DAG))
+//! - Graph algorithms (MWPM matching, shortest paths, topological sort)
 //! - Performance improvements over scipy/numpy
 //! - Better cross-platform support
 //!
@@ -34,6 +36,8 @@
 pub mod array;
 pub mod compare;
 pub mod curve_fit;
+pub mod dag;
+pub mod digraph;
 pub mod graph;
 pub mod linalg;
 pub mod math;
@@ -45,6 +49,9 @@ pub mod stats;
 
 pub use compare::{allclose, relative_eq};
 pub use curve_fit::{CurveFitError, CurveFitOptions, CurveFitResult, curve_fit};
+pub use dag::{DAG, DAGHasCycleError, DAGWouldCycleError};
+pub use digraph::DiGraph;
+pub use graph::Graph;
 pub use optimize::{BrentqOptions, NewtonOptions, OptimizeError, brentq, newton};
 pub use polynomial::{Poly1d, PolynomialError, polyfit};
 pub use stats::mean;

@@ -98,7 +98,9 @@ pub use num_complex::{Complex, Complex32, Complex64};
 // Note: sum() for slices removed - use .iter().sum() directly (idiomatic Rust)
 pub use crate::array::{arange, delete, diag, linspace, ones, sum_axis, zeros};
 
-// Re-export graph algorithms
+// Re-export graph types and algorithms
+pub use crate::dag::{DAG, DAGHasCycleError, DAGWouldCycleError};
+pub use crate::digraph::DiGraph;
 pub use crate::graph::{self, Graph};
 
 // Re-export mathematical constants (f64)

@@ -15,10 +15,12 @@
 //! This module provides Python bindings for graph data structures and algorithms,
 //! particularly for MWPM (Minimum Weight Perfect Matching) used in quantum error correction.
 
-use pecos::graph::{Attribute as RustAttribute, Graph as RustGraph};
+use pecos::dag::DAG as RustDAG;
+use pecos::digraph::DiGraph as RustDiGraph;
+use pecos::graph::{Attribute, Attribute as RustAttribute, EdgeAttrs, Graph as RustGraph};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Helper function to convert Python values to Attribute enum.
 fn python_value_to_attribute(value: &Bound<'_, PyAny>, key: &str) -> PyResult<RustAttribute> {
@@ -1156,6 +1158,955 @@ impl PyGraphAttrsView {
     }
 }
 
+// =============================================================================
+// PyDiGraph - Directed Graph
+// =============================================================================
+
+/// Python wrapper for the Rust `DiGraph` type (directed graph).
+///
+/// This class provides an interface to directed graph operations. It wraps
+/// the Rust `pecos_num::digraph::DiGraph` type.
+///
+/// # Examples (Python)
+///
+/// ```python
+/// import pecos_rslib
+///
+/// # Create a new directed graph
+/// g = pecos_rslib.graph.DiGraph()
+///
+/// # Add nodes
+/// n0 = g.add_node()
+/// n1 = g.add_node()
+/// n2 = g.add_node()
+///
+/// # Add directed edges
+/// g.add_edge(n0, n1)  # n0 -> n1
+/// g.add_edge(n1, n2)  # n1 -> n2
+///
+/// # Query directed relationships
+/// assert g.successors(n0) == [n1]
+/// assert g.predecessors(n2) == [n1]
+///
+/// # Topological sort
+/// order = g.topological_sort()  # Returns [n0, n1, n2] or None if cyclic
+/// ```
+#[pyclass(name = "DiGraph", module = "pecos_rslib.graph")]
+#[derive(Clone)]
+pub struct PyDiGraph {
+    inner: RustDiGraph,
+}
+
+#[pymethods]
+impl PyDiGraph {
+    /// Creates a new empty directed graph.
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: RustDiGraph::new(),
+        }
+    }
+
+    /// Helper method to resolve and validate a node index.
+    fn resolve_node_id(&self, node: &Bound<'_, PyAny>) -> PyResult<usize> {
+        let idx = node.extract::<usize>().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Node identifier must be an integer (node ID)",
+            )
+        })?;
+
+        if !self.inner.nodes().contains(&idx) {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Node index {idx} does not exist in graph"
+            )));
+        }
+
+        Ok(idx)
+    }
+
+    /// Creates a new directed graph with pre-allocated capacity.
+    #[staticmethod]
+    fn with_capacity(nodes: usize, edges: usize) -> Self {
+        Self {
+            inner: RustDiGraph::with_capacity(nodes, edges),
+        }
+    }
+
+    /// Adds a new node to the graph.
+    fn add_node(&mut self) -> usize {
+        self.inner.add_node()
+    }
+
+    /// Adds a directed edge from source to target with default weight of 1.0.
+    fn add_edge(
+        &mut self,
+        source: &Bound<'_, PyAny>,
+        target: &Bound<'_, PyAny>,
+    ) -> PyResult<usize> {
+        let src = self.resolve_node_id(source)?;
+        let tgt = self.resolve_node_id(target)?;
+
+        let edge_data = EdgeAttrs::new();
+        self.inner.add_edge_with_data(src, tgt, edge_data);
+
+        // Return the edge ID
+        Ok(self.inner.find_edge(src, tgt).unwrap_or(0))
+    }
+
+    /// Returns the number of nodes in the graph.
+    fn node_count(&self) -> usize {
+        self.inner.node_count()
+    }
+
+    /// Returns the number of edges in the graph.
+    fn edge_count(&self) -> usize {
+        self.inner.edge_count()
+    }
+
+    /// Returns a list of all node indices in the graph.
+    fn nodes(&self) -> Vec<usize> {
+        self.inner.nodes()
+    }
+
+    /// Check if a node exists in the graph.
+    fn has_node(&self, node: usize) -> bool {
+        self.inner.nodes().contains(&node)
+    }
+
+    /// Remove a node and all its connected edges from the graph.
+    fn remove_node(&mut self, node: usize) -> bool {
+        self.inner.remove_node(node).is_some()
+    }
+
+    /// Returns a list of all edges as (source, target, weight) tuples.
+    fn edges(&self) -> Vec<(usize, usize, f64)> {
+        self.inner.edges()
+    }
+
+    /// Returns the predecessors of a node (nodes with edges pointing to this node).
+    fn predecessors(&self, node: usize) -> Vec<usize> {
+        self.inner.predecessors(node)
+    }
+
+    /// Returns the successors of a node (nodes this node points to).
+    fn successors(&self, node: usize) -> Vec<usize> {
+        self.inner.successors(node)
+    }
+
+    /// Returns the in-degree of a node (number of incoming edges).
+    fn in_degree(&self, node: usize) -> usize {
+        self.inner.in_degree(node)
+    }
+
+    /// Returns the out-degree of a node (number of outgoing edges).
+    fn out_degree(&self, node: usize) -> usize {
+        self.inner.out_degree(node)
+    }
+
+    /// Returns edge IDs of incoming edges to a node.
+    fn in_edges(&self, node: usize) -> Vec<usize> {
+        self.inner.in_edges(node)
+    }
+
+    /// Returns edge IDs of outgoing edges from a node.
+    fn out_edges(&self, node: usize) -> Vec<usize> {
+        self.inner.out_edges(node)
+    }
+
+    /// Returns a topological ordering of the graph, or None if the graph has a cycle.
+    fn topological_sort(&self) -> Option<Vec<usize>> {
+        self.inner.topological_sort()
+    }
+
+    /// Returns True if the graph has no cycles.
+    fn is_acyclic(&self) -> bool {
+        self.inner.is_acyclic()
+    }
+
+    /// Returns True if there is a path from source to target.
+    fn has_path(&self, source: usize, target: usize) -> bool {
+        self.inner.has_path(source, target)
+    }
+
+    /// Creates a subgraph containing only the specified nodes.
+    #[allow(clippy::needless_pass_by_value)]
+    fn subgraph(&self, nodes: Vec<usize>) -> Self {
+        Self {
+            inner: self.inner.subgraph(&nodes),
+        }
+    }
+
+    /// Finds the edge ID between two nodes.
+    fn find_edge(&self, source: usize, target: usize) -> Option<usize> {
+        self.inner.find_edge(source, target)
+    }
+
+    /// Gets the endpoints of an edge by its edge ID.
+    fn edge_endpoints(&self, edge_id: usize) -> Option<(usize, usize)> {
+        self.inner.edge_endpoints(edge_id)
+    }
+
+    /// Gets the weight of an edge by its edge ID.
+    fn edge_weight(&self, edge_id: usize) -> f64 {
+        self.inner.edge_weight(edge_id)
+    }
+
+    /// Sets the weight of an edge by its edge ID.
+    fn set_edge_weight(&mut self, edge_id: usize, weight: f64) {
+        self.inner.set_edge_weight(edge_id, weight);
+    }
+
+    /// Gets the weight of an edge between two nodes.
+    fn get_weight(
+        &self,
+        source: &Bound<'_, PyAny>,
+        target: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<f64>> {
+        let src = self.resolve_node_id(source)?;
+        let tgt = self.resolve_node_id(target)?;
+        Ok(self.inner.get_weight(src, tgt))
+    }
+
+    /// Sets the weight of an edge between two nodes.
+    fn set_weight(
+        &mut self,
+        source: &Bound<'_, PyAny>,
+        target: &Bound<'_, PyAny>,
+        weight: f64,
+    ) -> PyResult<()> {
+        let src = self.resolve_node_id(source)?;
+        let tgt = self.resolve_node_id(target)?;
+        self.inner.set_weight(src, tgt, weight);
+        Ok(())
+    }
+
+    /// Removes an edge by its edge ID.
+    fn remove_edge(&mut self, edge_id: usize) -> bool {
+        self.inner.remove_edge(edge_id).is_some()
+    }
+
+    /// Gets edge data between two nodes.
+    fn get_edge_data(&self, py: Python<'_>, source: usize, target: usize) -> Option<Py<PyAny>> {
+        self.inner
+            .get_edge_data(source, target)
+            .map(|edge_attrs: EdgeAttrs| {
+                let dict = PyDict::new(py);
+                dict.set_item("weight", edge_attrs.weight()).unwrap();
+                for (key, value) in edge_attrs.attrs() {
+                    let py_value = attribute_to_python(py, value).unwrap();
+                    dict.set_item(key, py_value).unwrap();
+                }
+                dict.into()
+            })
+    }
+
+    /// Returns a mutable view of edge attributes.
+    fn edge_attrs(slf: Py<Self>, source: usize, target: usize) -> PyDiGraphEdgeAttrsView {
+        PyDiGraphEdgeAttrsView {
+            graph: slf,
+            source,
+            target,
+        }
+    }
+
+    /// Returns a mutable view of node attributes.
+    fn node_attrs(slf: Py<Self>, node: usize) -> PyDiGraphNodeAttrsView {
+        PyDiGraphNodeAttrsView { graph: slf, node }
+    }
+
+    /// Returns a mutable view of graph-level attributes.
+    fn attrs(slf: Py<Self>) -> PyDiGraphAttrsView {
+        PyDiGraphAttrsView { graph: slf }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "DiGraph(nodes={}, edges={})",
+            self.inner.node_count(),
+            self.inner.edge_count()
+        )
+    }
+}
+
+/// Mutable view into `DiGraph` edge attributes.
+#[pyclass(name = "DiGraphEdgeAttrsView", module = "pecos_rslib.graph")]
+pub struct PyDiGraphEdgeAttrsView {
+    graph: Py<PyDiGraph>,
+    source: usize,
+    target: usize,
+}
+
+#[pymethods]
+impl PyDiGraphEdgeAttrsView {
+    fn __setitem__(&self, py: Python<'_>, key: String, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut graph = self.graph.borrow_mut(py);
+        let attr = python_value_to_attribute(value, &key)?;
+        let attrs: &mut BTreeMap<String, Attribute> =
+            match graph.inner.edge_attrs_mut(self.source, self.target) {
+                Some(a) => a,
+                None => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                        "Edge does not exist",
+                    ));
+                }
+            };
+        attrs.insert(key, attr);
+        Ok(())
+    }
+
+    fn __getitem__(&self, py: Python<'_>, key: String) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+        let attrs: &BTreeMap<String, Attribute> =
+            match graph.inner.edge_attrs(self.source, self.target) {
+                Some(a) => a,
+                None => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                        "Edge does not exist",
+                    ));
+                }
+            };
+        if let Some(attr) = attrs.get(&key) {
+            attribute_to_python(py, attr)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(key))
+        }
+    }
+
+    #[pyo3(signature = (key, default=None))]
+    fn get(
+        &self,
+        py: Python<'_>,
+        key: &str,
+        default: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+        let attrs: Option<&BTreeMap<String, Attribute>> =
+            graph.inner.edge_attrs(self.source, self.target);
+        if let Some(attrs) = attrs {
+            if let Some(attr) = attrs.get(key) {
+                attribute_to_python(py, attr)
+            } else if let Some(def) = default {
+                Ok(def.clone().unbind())
+            } else {
+                Ok(py.None())
+            }
+        } else if let Some(def) = default {
+            Ok(def.clone().unbind())
+        } else {
+            Ok(py.None())
+        }
+    }
+}
+
+/// Mutable view into `DiGraph` node attributes.
+#[pyclass(name = "DiGraphNodeAttrsView", module = "pecos_rslib.graph")]
+pub struct PyDiGraphNodeAttrsView {
+    graph: Py<PyDiGraph>,
+    node: usize,
+}
+
+#[pymethods]
+impl PyDiGraphNodeAttrsView {
+    fn __setitem__(&self, py: Python<'_>, key: String, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut graph = self.graph.borrow_mut(py);
+        let attrs: &mut BTreeMap<String, Attribute> = match graph.inner.node_attrs_mut(self.node) {
+            Some(a) => a,
+            None => {
+                return Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                    "Node does not exist",
+                ));
+            }
+        };
+        let attr = python_value_to_attribute(value, &key)?;
+        attrs.insert(key, attr);
+        Ok(())
+    }
+
+    fn __getitem__(&self, py: Python<'_>, key: String) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+        let attrs: &BTreeMap<String, Attribute> = match graph.inner.node_attrs(self.node) {
+            Some(a) => a,
+            None => {
+                return Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                    "Node does not exist",
+                ));
+            }
+        };
+        if let Some(attr) = attrs.get(&key) {
+            attribute_to_python(py, attr)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(key))
+        }
+    }
+
+    #[pyo3(signature = (key, default=None))]
+    fn get(&self, py: Python<'_>, key: &str, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+        let attrs: Option<&BTreeMap<String, Attribute>> = graph.inner.node_attrs(self.node);
+        if let Some(attrs) = attrs {
+            if let Some(attr) = attrs.get(key) {
+                attribute_to_python(py, attr)
+            } else {
+                Ok(default.unwrap_or_else(|| py.None()))
+            }
+        } else {
+            Ok(default.unwrap_or_else(|| py.None()))
+        }
+    }
+}
+
+/// Mutable view into DiGraph-level attributes.
+#[pyclass(name = "DiGraphAttrsView", module = "pecos_rslib.graph")]
+pub struct PyDiGraphAttrsView {
+    graph: Py<PyDiGraph>,
+}
+
+#[pymethods]
+impl PyDiGraphAttrsView {
+    fn __setitem__(&self, py: Python<'_>, key: String, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut graph = self.graph.borrow_mut(py);
+        let attr = python_value_to_attribute(value, &key)?;
+        let attrs: &mut BTreeMap<String, Attribute> = graph.inner.attrs_mut();
+        attrs.insert(key, attr);
+        Ok(())
+    }
+
+    fn __getitem__(&self, py: Python<'_>, key: String) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+        let attrs: &BTreeMap<String, Attribute> = graph.inner.attrs();
+        if let Some(attr) = attrs.get(&key) {
+            attribute_to_python(py, attr)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(key))
+        }
+    }
+
+    #[pyo3(signature = (key, default=None))]
+    fn get(&self, py: Python<'_>, key: &str, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+        let attrs: &BTreeMap<String, Attribute> = graph.inner.attrs();
+        if let Some(attr) = attrs.get(key) {
+            attribute_to_python(py, attr)
+        } else {
+            Ok(default.unwrap_or_else(|| py.None()))
+        }
+    }
+}
+
+// =============================================================================
+// PyDAG - Directed Acyclic Graph
+// =============================================================================
+
+/// Python wrapper for the Rust DAG type (directed acyclic graph).
+///
+/// This class provides an interface to DAG operations with cycle checking.
+/// Adding an edge that would create a cycle raises an error.
+///
+/// # Examples (Python)
+///
+/// ```python
+/// import pecos_rslib
+///
+/// # Create a new DAG
+/// g = pecos_rslib.graph.DAG()
+///
+/// # Add nodes
+/// n0 = g.add_node()
+/// n1 = g.add_node()
+/// n2 = g.add_node()
+///
+/// # Add directed edges (automatically checked for cycles)
+/// g.add_edge(n0, n1)  # n0 -> n1
+/// g.add_edge(n1, n2)  # n1 -> n2
+///
+/// # This would raise an error (creates cycle):
+/// # g.add_edge(n2, n0)  # Raises DAGWouldCycleError
+///
+/// # Topological sort always succeeds for DAGs
+/// order = g.topological_sort()
+///
+/// # DAG-specific operations
+/// roots = g.roots()      # Nodes with no predecessors
+/// leaves = g.leaves()    # Nodes with no successors
+/// ```
+#[pyclass(name = "DAG", module = "pecos_rslib.graph")]
+#[derive(Clone)]
+pub struct PyDAG {
+    inner: RustDAG,
+}
+
+// Exception raised when adding an edge would create a cycle in a DAG.
+pyo3::create_exception!(
+    pecos_rslib,
+    DagWouldCycleError,
+    pyo3::exceptions::PyException
+);
+
+// Exception raised when trying to create a DAG from a cyclic graph.
+pyo3::create_exception!(pecos_rslib, DagHasCycleError, pyo3::exceptions::PyException);
+
+#[pymethods]
+impl PyDAG {
+    /// Creates a new empty DAG.
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: RustDAG::new(),
+        }
+    }
+
+    /// Helper method to resolve and validate a node index.
+    fn resolve_node_id(&self, node: &Bound<'_, PyAny>) -> PyResult<usize> {
+        let idx = node.extract::<usize>().map_err(|_| {
+            PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Node identifier must be an integer (node ID)",
+            )
+        })?;
+
+        if !self.inner.nodes().contains(&idx) {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Node index {idx} does not exist in graph"
+            )));
+        }
+
+        Ok(idx)
+    }
+
+    /// Creates a new DAG with pre-allocated capacity.
+    #[staticmethod]
+    fn with_capacity(nodes: usize, edges: usize) -> Self {
+        Self {
+            inner: RustDAG::with_capacity(nodes, edges),
+        }
+    }
+
+    /// Creates a DAG from a `DiGraph`.
+    ///
+    /// Raises `DagHasCycleError` if the `DiGraph` contains a cycle.
+    #[staticmethod]
+    fn from_digraph(digraph: &PyDiGraph) -> PyResult<Self> {
+        match RustDAG::try_from_digraph(digraph.inner.clone()) {
+            Ok(dag) => Ok(Self { inner: dag }),
+            Err(_) => Err(PyErr::new::<DagHasCycleError, _>(
+                "DiGraph contains a cycle",
+            )),
+        }
+    }
+
+    /// Adds a new node to the DAG.
+    fn add_node(&mut self) -> usize {
+        self.inner.add_node()
+    }
+
+    /// Adds a directed edge from source to target.
+    ///
+    /// Raises `DagWouldCycleError` if the edge would create a cycle.
+    fn add_edge(
+        &mut self,
+        source: &Bound<'_, PyAny>,
+        target: &Bound<'_, PyAny>,
+    ) -> PyResult<usize> {
+        let src = self.resolve_node_id(source)?;
+        let tgt = self.resolve_node_id(target)?;
+
+        let edge_data = EdgeAttrs::new();
+        match self.inner.add_edge_with_data(src, tgt, edge_data) {
+            Ok(edge_id) => Ok(edge_id),
+            Err(_) => Err(PyErr::new::<DagWouldCycleError, _>(
+                "Adding this edge would create a cycle",
+            )),
+        }
+    }
+
+    /// Adds a child node connected from the parent.
+    ///
+    /// This is more efficient than `add_node` + `add_edge` since no cycle check is needed
+    /// (a new node cannot create a cycle).
+    ///
+    /// Returns (`node_id`, `edge_id`).
+    fn add_child(&mut self, parent: usize) -> (usize, usize) {
+        use pecos::graph::NodeAttrs;
+        self.inner
+            .add_child(parent, EdgeAttrs::new(), NodeAttrs::default())
+    }
+
+    /// Adds a parent node connected to the child.
+    ///
+    /// This is more efficient than `add_node` + `add_edge` since no cycle check is needed.
+    ///
+    /// Returns (`node_id`, `edge_id`).
+    fn add_parent(&mut self, child: usize) -> (usize, usize) {
+        use pecos::graph::NodeAttrs;
+        self.inner
+            .add_parent(child, EdgeAttrs::new(), NodeAttrs::default())
+    }
+
+    /// Returns the number of nodes in the DAG.
+    fn node_count(&self) -> usize {
+        self.inner.node_count()
+    }
+
+    /// Returns the number of edges in the DAG.
+    fn edge_count(&self) -> usize {
+        self.inner.edge_count()
+    }
+
+    /// Returns a list of all node indices.
+    fn nodes(&self) -> Vec<usize> {
+        self.inner.nodes()
+    }
+
+    /// Check if a node exists.
+    fn has_node(&self, node: usize) -> bool {
+        self.inner.nodes().contains(&node)
+    }
+
+    /// Remove a node and all its edges.
+    fn remove_node(&mut self, node: usize) -> bool {
+        self.inner.remove_node(node).is_some()
+    }
+
+    /// Returns a list of all edges as (source, target, weight) tuples.
+    fn edges(&self) -> Vec<(usize, usize, f64)> {
+        self.inner.edges()
+    }
+
+    /// Returns the predecessors of a node.
+    fn predecessors(&self, node: usize) -> Vec<usize> {
+        self.inner.predecessors(node)
+    }
+
+    /// Returns the successors of a node.
+    fn successors(&self, node: usize) -> Vec<usize> {
+        self.inner.successors(node)
+    }
+
+    /// Returns the in-degree of a node.
+    fn in_degree(&self, node: usize) -> usize {
+        self.inner.in_degree(node)
+    }
+
+    /// Returns the out-degree of a node.
+    fn out_degree(&self, node: usize) -> usize {
+        self.inner.out_degree(node)
+    }
+
+    /// Returns edge IDs of incoming edges.
+    fn in_edges(&self, node: usize) -> Vec<usize> {
+        self.inner.in_edges(node)
+    }
+
+    /// Returns edge IDs of outgoing edges.
+    fn out_edges(&self, node: usize) -> Vec<usize> {
+        self.inner.out_edges(node)
+    }
+
+    /// Returns a topological ordering of the DAG.
+    ///
+    /// This always succeeds for a DAG (unlike `DiGraph.topological_sort()`).
+    fn topological_sort(&self) -> Vec<usize> {
+        self.inner.topological_sort()
+    }
+
+    /// Returns True if there is a path from source to target.
+    fn has_path(&self, source: usize, target: usize) -> bool {
+        self.inner.has_path(source, target)
+    }
+
+    /// Returns the root nodes (nodes with no predecessors).
+    fn roots(&self) -> Vec<usize> {
+        self.inner.roots()
+    }
+
+    /// Returns the leaf nodes (nodes with no successors).
+    fn leaves(&self) -> Vec<usize> {
+        self.inner.leaves()
+    }
+
+    /// Returns all ancestors of a node (nodes that can reach this node).
+    fn ancestors(&self, node: usize) -> BTreeSet<usize> {
+        self.inner.ancestors(node).into_iter().collect()
+    }
+
+    /// Returns all descendants of a node (nodes reachable from this node).
+    fn descendants(&self, node: usize) -> BTreeSet<usize> {
+        self.inner.descendants(node).into_iter().collect()
+    }
+
+    /// Returns the depth of the DAG (length of the longest path).
+    fn depth(&self) -> usize {
+        self.inner.depth()
+    }
+
+    /// Returns the longest path in the DAG as (path, `total_weight`).
+    fn longest_path(&self) -> (Vec<usize>, f64) {
+        self.inner.longest_path()
+    }
+
+    /// Creates a subgraph containing only the specified nodes.
+    #[allow(clippy::needless_pass_by_value)]
+    fn subgraph(&self, nodes: Vec<usize>) -> Self {
+        let subgraph = self.inner.subgraph(&nodes);
+        Self { inner: subgraph }
+    }
+
+    /// Finds the edge ID between two nodes.
+    fn find_edge(&self, source: usize, target: usize) -> Option<usize> {
+        self.inner.find_edge(source, target)
+    }
+
+    /// Gets the endpoints of an edge by its edge ID.
+    fn edge_endpoints(&self, edge_id: usize) -> Option<(usize, usize)> {
+        self.inner.edge_endpoints(edge_id)
+    }
+
+    /// Gets the weight of an edge by its edge ID.
+    fn edge_weight(&self, edge_id: usize) -> f64 {
+        self.inner.edge_weight(edge_id)
+    }
+
+    /// Sets the weight of an edge by its edge ID.
+    fn set_edge_weight(&mut self, edge_id: usize, weight: f64) {
+        self.inner.set_edge_weight(edge_id, weight);
+    }
+
+    /// Gets the weight of an edge between two nodes.
+    fn get_weight(
+        &self,
+        source: &Bound<'_, PyAny>,
+        target: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<f64>> {
+        let src = self.resolve_node_id(source)?;
+        let tgt = self.resolve_node_id(target)?;
+        Ok(self.inner.get_weight(src, tgt))
+    }
+
+    /// Sets the weight of an edge between two nodes.
+    fn set_weight(
+        &mut self,
+        source: &Bound<'_, PyAny>,
+        target: &Bound<'_, PyAny>,
+        weight: f64,
+    ) -> PyResult<()> {
+        let src = self.resolve_node_id(source)?;
+        let tgt = self.resolve_node_id(target)?;
+        self.inner.set_weight(src, tgt, weight);
+        Ok(())
+    }
+
+    /// Removes an edge by its edge ID.
+    fn remove_edge(&mut self, edge_id: usize) -> bool {
+        self.inner.remove_edge(edge_id).is_some()
+    }
+
+    /// Gets edge data between two nodes.
+    fn get_edge_data(&self, py: Python<'_>, source: usize, target: usize) -> Option<Py<PyAny>> {
+        self.inner
+            .get_edge_data(source, target)
+            .map(|edge_attrs: EdgeAttrs| {
+                let dict = PyDict::new(py);
+                dict.set_item("weight", edge_attrs.weight()).unwrap();
+                for (key, value) in edge_attrs.attrs() {
+                    let py_value = attribute_to_python(py, value).unwrap();
+                    dict.set_item(key, py_value).unwrap();
+                }
+                dict.into()
+            })
+    }
+
+    /// Returns a mutable view of edge attributes.
+    fn edge_attrs(slf: Py<Self>, source: usize, target: usize) -> PyDagEdgeAttrsView {
+        PyDagEdgeAttrsView {
+            graph: slf,
+            source,
+            target,
+        }
+    }
+
+    /// Returns a mutable view of node attributes.
+    fn node_attrs(slf: Py<Self>, node: usize) -> PyDagNodeAttrsView {
+        PyDagNodeAttrsView { graph: slf, node }
+    }
+
+    /// Returns a mutable view of graph-level attributes.
+    fn attrs(slf: Py<Self>) -> PyDagGraphAttrsView {
+        PyDagGraphAttrsView { graph: slf }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "DAG(nodes={}, edges={})",
+            self.inner.node_count(),
+            self.inner.edge_count()
+        )
+    }
+}
+
+/// Mutable view into DAG edge attributes.
+#[pyclass(name = "DagEdgeAttrsView", module = "pecos_rslib.graph")]
+pub struct PyDagEdgeAttrsView {
+    graph: Py<PyDAG>,
+    source: usize,
+    target: usize,
+}
+
+#[pymethods]
+impl PyDagEdgeAttrsView {
+    fn __setitem__(&self, py: Python<'_>, key: String, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut graph = self.graph.borrow_mut(py);
+        let attr = python_value_to_attribute(value, &key)?;
+        let attrs: &mut BTreeMap<String, Attribute> =
+            match graph.inner.edge_attrs_mut(self.source, self.target) {
+                Some(a) => a,
+                None => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                        "Edge does not exist",
+                    ));
+                }
+            };
+        attrs.insert(key, attr);
+        Ok(())
+    }
+
+    fn __getitem__(&self, py: Python<'_>, key: String) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+        let attrs: &BTreeMap<String, Attribute> =
+            match graph.inner.edge_attrs(self.source, self.target) {
+                Some(a) => a,
+                None => {
+                    return Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                        "Edge does not exist",
+                    ));
+                }
+            };
+        if let Some(attr) = attrs.get(&key) {
+            attribute_to_python(py, attr)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(key))
+        }
+    }
+
+    #[pyo3(signature = (key, default=None))]
+    fn get(
+        &self,
+        py: Python<'_>,
+        key: &str,
+        default: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+        let attrs: Option<&BTreeMap<String, Attribute>> =
+            graph.inner.edge_attrs(self.source, self.target);
+        if let Some(attrs) = attrs {
+            if let Some(attr) = attrs.get(key) {
+                attribute_to_python(py, attr)
+            } else if let Some(def) = default {
+                Ok(def.clone().unbind())
+            } else {
+                Ok(py.None())
+            }
+        } else if let Some(def) = default {
+            Ok(def.clone().unbind())
+        } else {
+            Ok(py.None())
+        }
+    }
+}
+
+/// Mutable view into DAG node attributes.
+#[pyclass(name = "DagNodeAttrsView", module = "pecos_rslib.graph")]
+pub struct PyDagNodeAttrsView {
+    graph: Py<PyDAG>,
+    node: usize,
+}
+
+#[pymethods]
+impl PyDagNodeAttrsView {
+    fn __setitem__(&self, py: Python<'_>, key: String, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut graph = self.graph.borrow_mut(py);
+        let attrs: &mut BTreeMap<String, Attribute> = match graph.inner.node_attrs_mut(self.node) {
+            Some(a) => a,
+            None => {
+                return Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                    "Node does not exist",
+                ));
+            }
+        };
+        let attr = python_value_to_attribute(value, &key)?;
+        attrs.insert(key, attr);
+        Ok(())
+    }
+
+    fn __getitem__(&self, py: Python<'_>, key: String) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+        let attrs: &BTreeMap<String, Attribute> = match graph.inner.node_attrs(self.node) {
+            Some(a) => a,
+            None => {
+                return Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(
+                    "Node does not exist",
+                ));
+            }
+        };
+        if let Some(attr) = attrs.get(&key) {
+            attribute_to_python(py, attr)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(key))
+        }
+    }
+
+    #[pyo3(signature = (key, default=None))]
+    fn get(&self, py: Python<'_>, key: &str, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+        let attrs: Option<&BTreeMap<String, Attribute>> = graph.inner.node_attrs(self.node);
+        if let Some(attrs) = attrs {
+            if let Some(attr) = attrs.get(key) {
+                attribute_to_python(py, attr)
+            } else {
+                Ok(default.unwrap_or_else(|| py.None()))
+            }
+        } else {
+            Ok(default.unwrap_or_else(|| py.None()))
+        }
+    }
+}
+
+/// Mutable view into DAG-level attributes.
+#[pyclass(name = "DagGraphAttrsView", module = "pecos_rslib.graph")]
+pub struct PyDagGraphAttrsView {
+    graph: Py<PyDAG>,
+}
+
+#[pymethods]
+impl PyDagGraphAttrsView {
+    fn __setitem__(&self, py: Python<'_>, key: String, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut graph = self.graph.borrow_mut(py);
+        let attr = python_value_to_attribute(value, &key)?;
+        let attrs: &mut BTreeMap<String, Attribute> = graph.inner.attrs_mut();
+        attrs.insert(key, attr);
+        Ok(())
+    }
+
+    fn __getitem__(&self, py: Python<'_>, key: String) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+        let attrs: &BTreeMap<String, Attribute> = graph.inner.attrs();
+        if let Some(attr) = attrs.get(&key) {
+            attribute_to_python(py, attr)
+        } else {
+            Err(PyErr::new::<pyo3::exceptions::PyKeyError, _>(key))
+        }
+    }
+
+    #[pyo3(signature = (key, default=None))]
+    fn get(&self, py: Python<'_>, key: &str, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
+        let graph = self.graph.borrow(py);
+        let attrs: &BTreeMap<String, Attribute> = graph.inner.attrs();
+        if let Some(attr) = attrs.get(key) {
+            attribute_to_python(py, attr)
+        } else {
+            Ok(default.unwrap_or_else(|| py.None()))
+        }
+    }
+}
+
 /// Register the graph module with Python.
 ///
 /// This function is called from the main module registration to expose the graph
@@ -1165,11 +2116,27 @@ pub fn register_graph_module(parent_module: &Bound<'_, PyModule>) -> PyResult<()
     let py = parent_module.py();
     let graph_module = PyModule::new(py, "graph")?;
 
-    // Add classes to the graph submodule
+    // Add undirected Graph classes
     graph_module.add_class::<PyEdgeAttrsView>()?;
     graph_module.add_class::<PyNodeAttrsView>()?;
     graph_module.add_class::<PyGraphAttrsView>()?;
     graph_module.add_class::<PyGraph>()?;
+
+    // Add DiGraph classes
+    graph_module.add_class::<PyDiGraph>()?;
+    graph_module.add_class::<PyDiGraphEdgeAttrsView>()?;
+    graph_module.add_class::<PyDiGraphNodeAttrsView>()?;
+    graph_module.add_class::<PyDiGraphAttrsView>()?;
+
+    // Add DAG classes
+    graph_module.add_class::<PyDAG>()?;
+    graph_module.add_class::<PyDagEdgeAttrsView>()?;
+    graph_module.add_class::<PyDagNodeAttrsView>()?;
+    graph_module.add_class::<PyDagGraphAttrsView>()?;
+
+    // Add DAG exceptions to graph module
+    graph_module.add("DagWouldCycleError", py.get_type::<DagWouldCycleError>())?;
+    graph_module.add("DagHasCycleError", py.get_type::<DagHasCycleError>())?;
 
     // Add the submodule to the parent module
     parent_module.add_submodule(&graph_module)?;
@@ -1184,6 +2151,12 @@ pub fn register_graph_module(parent_module: &Bound<'_, PyModule>) -> PyResult<()
     parent_module.add_class::<PyNodeAttrsView>()?;
     parent_module.add_class::<PyGraphAttrsView>()?;
     parent_module.add_class::<PyGraph>()?;
+    parent_module.add_class::<PyDiGraph>()?;
+    parent_module.add_class::<PyDAG>()?;
+
+    // Add DAG exceptions to parent module for direct import
+    parent_module.add("DagWouldCycleError", py.get_type::<DagWouldCycleError>())?;
+    parent_module.add("DagHasCycleError", py.get_type::<DagHasCycleError>())?;
 
     Ok(())
 }

@@ -128,6 +128,24 @@ pecos-decoders = { version = "0.1.1", path = "crates/pecos-decoders" }
 # ldpc decoder wrapper (https://github.com/quantumgizmos/ldpc)
 pecos-ldpc-decoders = { version = "0.1.1", path = "crates/pecos-ldpc-decoders" }
 
+# PyMatching decoder wrapper (https://github.com/oscarhiggott/PyMatching)
+pecos-pymatching = { version = "0.1.1", path = "crates/pecos-pymatching" }
+
+# Tesseract decoder wrapper (https://github.com/quantumlib/tesseract-decoder)
+pecos-tesseract = { version = "0.1.1", path = "crates/pecos-tesseract" }
+
+# Chromobius decoder wrapper (https://github.com/quantumlib/chromobius)
+pecos-chromobius = { version = "0.1.1", path = "crates/pecos-chromobius" }
+
+# Fusion Blossom decoder wrapper (pure Rust MWPM)
+pecos-fusion-blossom = { version = "0.1.1", path = "crates/pecos-fusion-blossom" }
+
+# Fusion Blossom library (pure Rust MWPM decoder)
+fusion-blossom = "0.2"
+
+# petgraph for graph algorithms (used by pymatching)
+petgraph = "0.8"
+
 # QuEST simulator wrapper (https://github.com/quest-kit/QuEST)
 pecos-quest = { version = "0.1.1", path = "crates/pecos-quest" }
 

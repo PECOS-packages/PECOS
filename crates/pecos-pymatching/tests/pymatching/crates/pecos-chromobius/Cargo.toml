@@ -1,0 +1,26 @@
+[package]
+name = "pecos-chromobius"
+version.workspace = true
+edition.workspace = true
+readme.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Chromobius decoder wrapper for PECOS"
+
+[dependencies]
+pecos-decoder-core.workspace = true
+ndarray.workspace = true
+thiserror.workspace = true
+cxx.workspace = true
+
+[build-dependencies]
+pecos-build-utils.workspace = true
+cxx-build.workspace = true
+cc.workspace = true
+
+[lib]
+name = "pecos_chromobius"

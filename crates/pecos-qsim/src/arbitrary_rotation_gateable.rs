@@ -50,9 +50,10 @@ pub trait ArbitraryRotationGateable<T: IndexableElement>: CliffordGateable<T> {
     /// Gate RY(θ) = exp(-i θ Y/2) = cos(θ/2) I - i*sin(θ/2) Y
     ///
     /// RY(θ) = [[cos(θ/2), -sin(θ/2)],
-    ///          [-sin(θ/2), cos(θ/2)]]
+    ///          [sin(θ/2), cos(θ/2)]]
     ///
-    /// By default, this is implemented in terms of `sz`, `rx`, and `szdg` gates.
+    /// By default, this is implemented in terms of `szdg`, `rx`, and `sz` gates:
+    /// RY(θ) = S · RX(θ) · S†
     ///
     /// # Parameters
     /// - `theta`: The rotation angle in radians.
@@ -62,7 +63,7 @@ pub trait ArbitraryRotationGateable<T: IndexableElement>: CliffordGateable<T> {
     /// A mutable reference to `Self` for method chaining.
     #[inline]
     fn ry(&mut self, theta: f64, q: T) -> &mut Self {
-        self.sz(q).rx(theta, q).szdg(q)
+        self.szdg(q).rx(theta, q).sz(q)
     }
 
     /// Applies a rotation around the Z-axis by an angle `theta`.

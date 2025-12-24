@@ -49,14 +49,17 @@ fn test_parallel_independent_instances() {
                         prob
                     }
                     2 => {
-                        // Thread 2: Create Bell-like state on 3 qubits: (|000> + |110>)/sqrt(2)
+                        // Thread 2: Create Bell-like state on 3 qubits
+                        // H(0) puts qubit 0 in superposition, CX(0,1) entangles qubits 0 and 1
+                        // Result: (|000> + |011>)/sqrt(2) in |q2 q1 q0> notation
+                        // In PECOS (qubit 0 = LSB): states 0b000 = 0 and 0b011 = 3
                         state.reset();
                         state.h(0).cx(0, 1);
                         let prob_000 = state.probability(0b000);
-                        let prob_110 = state.probability(0b110);
+                        let prob_011 = state.probability(0b011);
                         assert_relative_eq!(prob_000, 0.5, epsilon = 1e-10);
-                        assert_relative_eq!(prob_110, 0.5, epsilon = 1e-10);
-                        prob_000 + prob_110
+                        assert_relative_eq!(prob_011, 0.5, epsilon = 1e-10);
+                        prob_000 + prob_011
                     }
                     3 => {
                         // Thread 3: Create uniform superposition

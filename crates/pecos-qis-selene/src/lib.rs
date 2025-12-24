@@ -32,17 +32,12 @@
 pub mod builder;
 pub mod executor;
 pub mod prelude;
-pub mod selene_library_runtime;
 pub mod selene_runtime;
 pub mod selene_runtimes;
 pub mod shim;
 
 pub use builder::{HeliosInterfaceBuilder, helios_interface_builder};
 pub use executor::QisHeliosInterface;
-pub use selene_library_runtime::{
-    QisSeleneLibraryRuntime, QisSeleneSimpleRuntime, SeleneRuntimeConfig, selene_library_runtime,
-    selene_simple_runtime as selene_simple_runtime_v2, selene_simple_runtime_from_path,
-};
 pub use selene_runtime::SeleneRuntime;
 pub use selene_runtimes::{
     RuntimeFetchError, find_selene_runtime, selene_runtime_auto, selene_simple_runtime,

@@ -15,9 +15,7 @@ pub use operations::{Operation, QuantumOp};
 ///
 /// This struct is used to collect quantum operations during FFI execution.
 /// It's referenced through thread-local storage by the FFI functions.
-#[derive(
-    Debug, Clone, Default, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode,
-)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct OperationCollector {
     /// Collected quantum operations in order
     pub operations: Vec<Operation>,

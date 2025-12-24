@@ -22,10 +22,6 @@ pub use crate::builder::{HeliosInterfaceBuilder, helios_interface_builder};
 pub use crate::executor::QisHeliosInterface;
 
 // Re-export runtime types
-pub use crate::selene_library_runtime::{
-    QisSeleneLibraryRuntime, QisSeleneSimpleRuntime, SeleneRuntimeConfig, selene_library_runtime,
-    selene_simple_runtime as selene_simple_runtime_v2, selene_simple_runtime_from_path,
-};
 pub use crate::selene_runtime::SeleneRuntime;
 pub use crate::selene_runtimes::{
     RuntimeFetchError, find_selene_runtime, selene_runtime_auto, selene_simple_runtime,

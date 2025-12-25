@@ -23,8 +23,6 @@ Note: For Python wrappers that accept pecos.programs types, use:
     - pecos.qasm_engine()
     - pecos.qis_engine()
     - pecos.phir_json_engine()
-
-Note: Selene Bridge Plugin is now located in pecos.simulators.selene_bridge
 """
 
 # Copyright 2022 The PECOS Developers

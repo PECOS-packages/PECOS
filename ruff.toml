@@ -248,5 +248,4 @@ ignore = [
 "python/quantum-pecos/tests/guppy/test_selene_library_integration.py" = ["SLF001"]  # Testing internal builder methods
 
 # Try-except patterns (TRY300) - Complex error handling in integration code
-"python/pecos-rslib/src/pecos_rslib/selene_bridge_integration.py" = ["TRY300"]  # Bridge integration
 "python/pecos-rslib/src/pecos_rslib/sim_wrapper.py" = ["TRY300"]  # Wrapper patterns

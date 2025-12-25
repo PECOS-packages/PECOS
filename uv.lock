@@ -3557,7 +3557,6 @@ dependencies = [
     { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pecos-rslib" },
     { name = "phir" },
-    { name = "selene-sim" },
 ]
 
 [package.optional-dependencies]
@@ -3584,6 +3583,9 @@ numpy-compat = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
+test = [
+    { name = "selene-sim" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -3599,14 +3601,13 @@ requires-dist = [
     { name = "pytket-cutensornet", marker = "python_full_version >= '3.11' and extra == 'cuda'", specifier = ">=0.12.0" },
     { name = "quantum-pecos", extras = ["stim"], marker = "extra == 'all'" },
     { name = "quantum-pecos", extras = ["visualization"], marker = "extra == 'all'" },
-    { name = "selene-sim", specifier = "~=0.2.0" },
     { name = "stim", marker = "extra == 'stim'", specifier = ">=1.12.0" },
 ]
 provides-extras = ["stim", "visualization", "all", "cuda"]
 
 [package.metadata.requires-dev]
 numpy-compat = [{ name = "numpy", specifier = ">=1.15.0" }]
-test = []
+test = [{ name = "selene-sim", specifier = "~=0.2.0" }]
 
 [[package]]
 name = "qwasm"

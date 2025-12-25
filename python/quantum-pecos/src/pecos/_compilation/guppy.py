@@ -8,33 +8,11 @@ import contextlib
 import shutil
 import subprocess
 import tempfile
-import warnings
 from collections.abc import Callable
 from pathlib import Path
 
-try:
-    from guppylang import guppy
-
-    GUPPY_AVAILABLE = True
-except ImportError:
-    GUPPY_AVAILABLE = False
-    guppy = None
-
-# Try to import Rust backend
-try:
-    from pecos_rslib import (
-        RUST_HUGR_AVAILABLE,
-        check_rust_hugr_availability,
-        compile_hugr_to_llvm_rust,
-    )
-
-    RUST_BACKEND_AVAILABLE = RUST_HUGR_AVAILABLE
-except ImportError:
-    RUST_BACKEND_AVAILABLE = False
-    warnings.warn(
-        "Rust HUGR backend not available, falling back to external tools",
-        stacklevel=2,
-    )
+from guppylang import guppy
+from pecos_rslib import compile_hugr_to_qis
 
 
 def _raise_external_compiler_error() -> None:
@@ -73,48 +51,21 @@ class GuppyFrontend:
         # Initialize attributes first to avoid AttributeError in cleanup
         self._temp_dir = None
 
-        if not GUPPY_AVAILABLE:
-            msg = "guppylang is not available. Please install guppylang to use the Guppy frontend."
-            raise ImportError(
-                msg,
-            )
+        # Determine backend to use (Rust backend is always available)
+        self.use_rust_backend = (
+            use_rust_backend if use_rust_backend is not None else True
+        )
 
-        # Determine backend to use
-        if use_rust_backend is None:
-            self.use_rust_backend = RUST_BACKEND_AVAILABLE
-        else:
-            self.use_rust_backend = use_rust_backend
-            if use_rust_backend and not RUST_BACKEND_AVAILABLE:
-                msg = "Rust backend requested but not available"
-                raise ImportError(msg) from None
-
-        # External tools configuration (used when Rust backend not available/requested)
+        # External tools configuration (used when Rust backend not requested)
         self.hugr_to_llvm_binary = hugr_to_llvm_binary
         self.format_converter = format_converter
-
-        # Rust backend configuration
-        # Only HUGR convention is supported after removing QIR convention support
-        if self.use_rust_backend:
-            # Verify Rust backend is working
-            available, message = check_rust_hugr_availability()
-            if not available:
-                # If Rust backend was explicitly requested, fail rather than fallback
-                if use_rust_backend is True:
-                    msg = f"Rust backend explicitly requested but not available: {message}"
-                    raise ImportError(msg)
-                # Only fallback if auto-detection was used
-                warnings.warn(
-                    f"Rust backend not fully available: {message}",
-                    stacklevel=2,
-                )
-                self.use_rust_backend = False
 
     def get_backend_info(self) -> dict:
         """Get information about the backend being used."""
         return {
             "backend": "rust" if self.use_rust_backend else "external",
-            "rust_available": RUST_BACKEND_AVAILABLE,
-            "guppy_available": GUPPY_AVAILABLE,
+            "rust_available": True,  # HUGR support is always available
+            "guppy_available": True,  # guppylang is now a required dependency
             "external_tools": {
                 "hugr_to_llvm_binary": (
                     str(self.hugr_to_llvm_binary) if self.hugr_to_llvm_binary else None
@@ -194,7 +145,7 @@ class GuppyFrontend:
 
             # Compile HUGR to QIR using Rust backend
             # Use the configured naming convention
-            qir_content = compile_hugr_to_llvm_rust(
+            qir_content = compile_hugr_to_qis(
                 hugr_bytes,
                 None,  # output_path
             )
@@ -266,16 +217,13 @@ class GuppyFrontend:
         else:
             # Use PECOS HUGR compiler for real HUGR→LLVM compilation
             try:
-                # Try to use the new HUGR compiler from PECOS
-                print("  [OK] Using PECOS HUGR->LLVM compiler")
-
                 # Try to import the hugr_llvm_compiler
                 from pecos._compilation.hugr_llvm import HugrLlvmCompiler
 
                 compiler = HugrLlvmCompiler()
                 if compiler.is_available():
                     # Use the external hugr_quantum_llvm binary
-                    llvm_ir = compiler.compile_hugr_to_llvm(
+                    llvm_ir = compiler.compile_hugr_to_qis(
                         hugr_bytes,
                     )
 
@@ -284,9 +232,6 @@ class GuppyFrontend:
                         f.write(llvm_ir)
 
                     return qir_file
-                print(
-                    "    [WARNING] External HUGR compiler not available, trying execute_llvm...",
-                )
                 _raise_external_compiler_error()
 
             except ImportError:
@@ -297,17 +242,9 @@ class GuppyFrontend:
                 # First try PECOS's own execute_llvm
                 try:
                     from pecos import execute_llvm
-
-                    print(
-                        "  [OK] Using PECOS execute_llvm module for HUGR->LLVM compilation",
-                    )
                 except ImportError:
                     # Try external execute_llvm
                     import execute_llvm
-
-                    print(
-                        "  [OK] Using external execute_llvm module for HUGR->LLVM compilation",
-                    )
 
                 # Compile HUGR bytes to LLVM IR string
                 llvm_ir = execute_llvm.compile_module_to_string(hugr_bytes)
@@ -321,7 +258,7 @@ class GuppyFrontend:
                 # No fallback - we only support proper HUGR->LLVM compilation
                 msg = (
                     "HUGR to LLVM compilation failed: No working HUGR compiler available. "
-                    "The Rust backend (compile_hugr_to_llvm_rust) failed and no external "
+                    "The Rust backend (compile_hugr_to_qis) failed and no external "
                     "compiler is available. We only support proper HUGR convention LLVM-IR "
                     "generated via hugr-llvm, not fallback QIR."
                 )
@@ -405,14 +342,9 @@ def guppy_to_hugr(guppy_func: Callable) -> bytes:
         HUGR program as bytes
 
     Raises:
-        ImportError: If guppylang is not available
         ValueError: If the function is not a Guppy function
         RuntimeError: If compilation fails
     """
-    if not GUPPY_AVAILABLE:
-        msg = "guppylang is not available. Please install guppylang."
-        raise ImportError(msg)
-
     # Check if this is a Guppy function
     is_guppy = (
         hasattr(guppy_func, "_guppy_compiled")

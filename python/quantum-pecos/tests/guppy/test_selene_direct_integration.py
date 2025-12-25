@@ -10,35 +10,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-# Check if required dependencies are available
-try:
-    from guppylang import guppy
-    from guppylang.std.quantum import cx, h, measure, qubit
-
-    GUPPY_AVAILABLE = True
-except ImportError:
-    GUPPY_AVAILABLE = False
-
-try:
-    from selene_sim import build
-    from selene_sim.backends import Coinflip, SimpleRuntime
-    from selene_sim.backends import IdealErrorModel as IdealNoiseModel
-
-    SELENE_AVAILABLE = True
-except ImportError:
-    SELENE_AVAILABLE = False
-
-try:
-    from pecos.compilation_pipeline import compile_guppy_to_hugr
-
-    COMPILATION_AVAILABLE = True
-except ImportError:
-    COMPILATION_AVAILABLE = False
+from guppylang import guppy
+from guppylang.std.quantum import cx, h, measure, qubit
+from pecos.compilation_pipeline import compile_guppy_to_hugr
+from selene_sim import build
+from selene_sim.backends import Coinflip, SimpleRuntime
+from selene_sim.backends import IdealErrorModel as IdealNoiseModel
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="guppylang not available")
-@pytest.mark.skipif(not SELENE_AVAILABLE, reason="selene not available")
 class TestSeleneDirectIntegration:
     """Test Selene running Guppy programs directly."""
 
@@ -55,9 +34,6 @@ class TestSeleneDirectIntegration:
             return measure(q0), measure(q1)
 
         # Step 2: Compile Guppy to HUGR
-        if not COMPILATION_AVAILABLE:
-            pytest.skip("Compilation pipeline not available")
-
         hugr_bytes = compile_guppy_to_hugr(bell_state)
         assert hugr_bytes is not None, "HUGR compilation should succeed"
         assert len(hugr_bytes) > 0, "HUGR bytes should not be empty"
@@ -315,7 +291,6 @@ class TestSeleneDirectIntegration:
         assert len(public_methods) >= 0, "Error model should have interface methods"
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="guppylang not available")
 class TestGuppyToHUGRCompilation:
     """Test just the Guppy to HUGR compilation step."""
 
@@ -328,9 +303,6 @@ class TestGuppyToHUGRCompilation:
             q = qubit()
             h(q)
             return measure(q)
-
-        if not COMPILATION_AVAILABLE:
-            pytest.skip("Compilation pipeline not available")
 
         hugr_bytes = compile_guppy_to_hugr(simple_h_gate)
         assert hugr_bytes is not None, "Should produce HUGR bytes"
@@ -378,9 +350,6 @@ class TestGuppyToHUGRCompilation:
             cx(q1, q2)
             return measure(q0), measure(q1), measure(q2)
 
-        if not COMPILATION_AVAILABLE:
-            pytest.skip("Compilation pipeline not available")
-
         hugr_bytes = compile_guppy_to_hugr(three_qubit_ghz)
         assert hugr_bytes is not None, "Should produce HUGR bytes"
         assert len(hugr_bytes) > 100, "Multi-qubit HUGR should be substantial"
@@ -407,9 +376,6 @@ class TestGuppyToHUGRCompilation:
             if result:
                 return 1
             return 0
-
-        if not COMPILATION_AVAILABLE:
-            pytest.skip("Compilation pipeline not available")
 
         hugr_bytes = compile_guppy_to_hugr(conditional_circuit)
         assert hugr_bytes is not None, "Should produce HUGR bytes"

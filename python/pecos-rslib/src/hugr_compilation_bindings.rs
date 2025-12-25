@@ -5,18 +5,19 @@ use std::fs;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-/// Compile HUGR to LLVM IR
+/// Compile HUGR to QIS (LLVM IR with quantum instructions)
 ///
-/// This function takes HUGR bytes (envelope format) and compiles them to LLVM IR
-/// using the PECOS HUGR compiler that generates QIS-compatible output.
+/// This function takes HUGR bytes (envelope format) and compiles them to QIS,
+/// which is LLVM IR with quantum instruction set extensions.
 ///
 /// Args:
 ///     `hugr_bytes`: HUGR program as envelope bytes
+///     `output_path`: Optional path to write the QIS output
 ///
 /// Returns:
-///     LLVM IR as a string
-#[pyfunction(name = "compile_hugr_to_llvm", signature = (hugr_bytes, output_path=None))]
-pub fn py_compile_hugr_to_llvm(hugr_bytes: &[u8], output_path: Option<&str>) -> PyResult<String> {
+///     QIS (LLVM IR) as a string
+#[pyfunction(name = "compile_hugr_to_qis", signature = (hugr_bytes, output_path=None))]
+pub fn py_compile_hugr_to_qis(hugr_bytes: &[u8], output_path: Option<&str>) -> PyResult<String> {
     let llvm_ir = compile_hugr_bytes_to_string(hugr_bytes)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
@@ -26,12 +27,6 @@ pub fn py_compile_hugr_to_llvm(hugr_bytes: &[u8], output_path: Option<&str>) -> 
     }
 
     Ok(llvm_ir)
-}
-
-/// Check if Rust HUGR backend is available
-#[pyfunction]
-pub fn check_rust_hugr_availability() -> (bool, String) {
-    (true, "HUGR support available via sim() API".to_string())
 }
 
 /// Get information about available compilation backends
@@ -59,17 +54,8 @@ pub fn get_compilation_backends(py: Python<'_>) -> PyResult<Py<PyDict>> {
 
 /// Register HUGR compilation functions with the Python module
 pub fn register_hugr_compilation_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let compile_fn = wrap_pyfunction!(py_compile_hugr_to_llvm, m)?;
-    m.add_function(compile_fn.clone())?;
-    // Add backwards-compatible alias
-    m.add("compile_hugr_to_llvm_rust", compile_fn)?;
-
-    m.add_function(wrap_pyfunction!(check_rust_hugr_availability, m)?)?;
+    m.add_function(wrap_pyfunction!(py_compile_hugr_to_qis, m)?)?;
     m.add_function(wrap_pyfunction!(get_compilation_backends, m)?)?;
-
-    // Add availability constants
-    m.add("RUST_HUGR_AVAILABLE", true)?;
-    m.add("HUGR_LLVM_PIPELINE_AVAILABLE", true)?;
 
     Ok(())
 }

@@ -8,7 +8,7 @@ def test_hugr_to_llvm_compilation() -> None:
     try:
         from guppylang import guppy
         from guppylang.std.quantum import cx, h, measure, qubit
-        from pecos_rslib import compile_hugr_to_llvm
+        from pecos_rslib import compile_hugr_to_qis
     except ImportError as e:
         pytest.skip(f"Required imports not available: {e}")
 
@@ -38,7 +38,7 @@ def test_hugr_to_llvm_compilation() -> None:
     hugr_bytes = hugr_str.encode("utf-8")
 
     # Compile HUGR to LLVM using pecos-selene-engine
-    llvm_ir = compile_hugr_to_llvm(hugr_bytes)
+    llvm_ir = compile_hugr_to_qis(hugr_bytes)
 
     # Verify basic structure - check for Selene QIS patterns
     assert "@___qalloc()" in llvm_ir, "Should have Selene qubit allocation"
@@ -56,7 +56,7 @@ def test_simple_hadamard_circuit() -> None:
     try:
         from guppylang import guppy
         from guppylang.std.quantum import h, measure, qubit
-        from pecos_rslib import compile_hugr_to_llvm
+        from pecos_rslib import compile_hugr_to_qis
     except ImportError as e:
         pytest.skip(f"Required imports not available: {e}")
 
@@ -85,7 +85,7 @@ def test_simple_hadamard_circuit() -> None:
     hugr_bytes = hugr_str.encode("utf-8")
 
     # Compile HUGR to LLVM
-    llvm_ir = compile_hugr_to_llvm(hugr_bytes)
+    llvm_ir = compile_hugr_to_qis(hugr_bytes)
 
     # Verify operations - check for Selene QIS patterns
     assert "@___qalloc()" in llvm_ir, "Should have Selene qubit allocation"

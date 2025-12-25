@@ -3,42 +3,19 @@
 import json
 
 import pytest
-
-# Check for required dependencies
-try:
-    from pecos import sim
-
-    SIM_API_AVAILABLE = True
-except ImportError:
-    SIM_API_AVAILABLE = False
-
-try:
-    from pecos_rslib import (
-        Hugr,
-        PhirJson,
-        Qasm,
-        Qis,
-        sparse_stabilizer,
-        state_vector,
-    )
-
-    PECOS_RSLIB_AVAILABLE = True
-except ImportError:
-    PECOS_RSLIB_AVAILABLE = False
-
-try:
-    from guppylang import guppy
-    from guppylang.std.quantum import h, measure, qubit
-
-    GUPPY_AVAILABLE = True
-except ImportError:
-    GUPPY_AVAILABLE = False
-
-
-@pytest.mark.skipif(
-    not all([SIM_API_AVAILABLE, PECOS_RSLIB_AVAILABLE]),
-    reason="sim API or pecos_rslib not available",
+from guppylang import guppy
+from guppylang.std.quantum import h, measure, qubit
+from pecos import sim
+from pecos_rslib import (
+    Hugr,
+    PhirJson,
+    Qasm,
+    Qis,
+    sparse_stabilizer,
+    state_vector,
 )
+
+
 class TestQASMSimulation:
     """Test sim API with QASM programs."""
 
@@ -138,10 +115,6 @@ class TestQASMSimulation:
         assert all(m == 1 for m in measurements), "X gate should always measure 1"
 
 
-@pytest.mark.skipif(
-    not all([SIM_API_AVAILABLE, PECOS_RSLIB_AVAILABLE]),
-    reason="sim API or pecos_rslib not available",
-)
 class TestLLVMSimulation:
     """Test sim API with LLVM IR programs."""
 
@@ -314,10 +287,6 @@ class TestLLVMSimulation:
 
 
 @pytest.mark.optional_dependency
-@pytest.mark.skipif(
-    not all([SIM_API_AVAILABLE, PECOS_RSLIB_AVAILABLE, GUPPY_AVAILABLE]),
-    reason="Dependencies not available",
-)
 class TestHUGRSimulation:
     """Test sim API with HUGR programs."""
 
@@ -434,10 +403,6 @@ class TestHUGRSimulation:
                 pytest.fail(f"Unexpected error in HUGR routing: {e}")
 
 
-@pytest.mark.skipif(
-    not all([SIM_API_AVAILABLE, PECOS_RSLIB_AVAILABLE]),
-    reason="sim API or pecos_rslib not available",
-)
 class TestPHIRSimulation:
     """Test sim API with PHIR JSON programs."""
 
@@ -541,10 +506,6 @@ class TestPHIRSimulation:
 class TestSimAPIFeatures:
     """Test various features of the sim API."""
 
-    @pytest.mark.skipif(
-        not all([SIM_API_AVAILABLE, PECOS_RSLIB_AVAILABLE]),
-        reason="Dependencies not available",
-    )
     def test_sim_with_different_backends(self) -> None:
         """Test sim API with different quantum backends."""
         qasm_str = """
@@ -579,10 +540,6 @@ class TestSimAPIFeatures:
             if "not supported" in str(e).lower():
                 pytest.skip(f"Sparse stabilizer not supported for this program: {e}")
 
-    @pytest.mark.skipif(
-        not all([SIM_API_AVAILABLE, PECOS_RSLIB_AVAILABLE]),
-        reason="Dependencies not available",
-    )
     def test_sim_error_handling(self) -> None:
         """Test error handling in sim API."""
         # Invalid QASM
@@ -602,10 +559,6 @@ class TestSimAPIFeatures:
             or "error" in str(exc_info.value).lower()
         ), "Should raise error for invalid QASM"
 
-    @pytest.mark.skipif(
-        not all([SIM_API_AVAILABLE, PECOS_RSLIB_AVAILABLE]),
-        reason="Dependencies not available",
-    )
     def test_sim_deterministic_seeding(self) -> None:
         """Test that seeding produces deterministic results."""
         qasm_str = """

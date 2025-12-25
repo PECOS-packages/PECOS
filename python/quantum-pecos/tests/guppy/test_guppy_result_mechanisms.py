@@ -160,7 +160,7 @@ class TestGuppyResultMechanisms:
         try:
             from pecos.compilation_pipeline import (
                 compile_guppy_to_hugr,
-                compile_hugr_to_llvm,
+                compile_hugr_to_qis,
             )
         except ImportError:
             pytest.skip("Compilation pipeline not available")
@@ -169,7 +169,7 @@ class TestGuppyResultMechanisms:
             hugr_bytes = compile_guppy_to_hugr(func)
 
             try:
-                llvm_ir = compile_hugr_to_llvm(hugr_bytes)
+                llvm_ir = compile_hugr_to_qis(hugr_bytes)
             except Exception as e:
                 # Known issues with some compilation paths
                 if "Unknown type" in str(e) or "not supported" in str(e):
@@ -338,7 +338,7 @@ class TestLLVMResultPatterns:
             from guppylang.std.quantum import h, measure, qubit
             from pecos.compilation_pipeline import (
                 compile_guppy_to_hugr,
-                compile_hugr_to_llvm,
+                compile_hugr_to_qis,
             )
         except ImportError:
             pytest.skip("Required modules not available")
@@ -354,7 +354,7 @@ class TestLLVMResultPatterns:
         # Compile to LLVM
         try:
             hugr_bytes = compile_guppy_to_hugr(simple_result)
-            llvm_ir = compile_hugr_to_llvm(hugr_bytes)
+            llvm_ir = compile_hugr_to_qis(hugr_bytes)
         except Exception as e:
             if "Unknown type" in str(e) or "not supported" in str(e):
                 pytest.skip(f"Known compilation issue: {e}")

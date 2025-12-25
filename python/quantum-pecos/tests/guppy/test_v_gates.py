@@ -19,7 +19,7 @@ class TestVGates:
             return measure(q)
 
         hugr = test_v.compile()
-        output = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        output = pecos_rslib.compile_hugr_to_qis(hugr.to_bytes())
 
         # V gate should be decomposed to RXY(0, π/2)
         assert "___rxy" in output
@@ -37,7 +37,7 @@ class TestVGates:
             return measure(q)
 
         hugr = test_vdg.compile()
-        output = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        output = pecos_rslib.compile_hugr_to_qis(hugr.to_bytes())
 
         # Vdg gate should be decomposed to RXY(0, -π/2)
         assert "___rxy" in output
@@ -56,7 +56,7 @@ class TestVGates:
             return measure(q)
 
         hugr = test_v_vdg.compile()
-        output = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        output = pecos_rslib.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should have two RXY calls (V and Vdg)
         assert output.count("___rxy") >= 2
@@ -72,7 +72,7 @@ class TestVGates:
             return measure(q)
 
         hugr = test_double_v.compile()
-        output = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        output = pecos_rslib.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should have two RXY calls for the two V gates (plus one declaration)
         rxy_calls = output.count("tail call void @___rxy")
@@ -89,7 +89,7 @@ class TestVGates:
             return measure(q)
 
         hugr = simple_v.compile()
-        output = pecos_rslib.compile_hugr_to_llvm_rust(hugr.to_bytes())
+        output = pecos_rslib.compile_hugr_to_qis(hugr.to_bytes())
 
         # V gate should be decomposed into RXY
         assert "declare" in output

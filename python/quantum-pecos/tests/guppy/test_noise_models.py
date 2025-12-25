@@ -5,28 +5,17 @@ and working with the sim builder pattern.
 """
 
 import pytest
-
-try:
-    from guppylang import guppy
-    from guppylang.std.quantum import cx, h, measure, qubit, x
-
-    GUPPY_AVAILABLE = True
-except ImportError:
-    GUPPY_AVAILABLE = False
-
-try:
-    from pecos import Guppy, sim
-    from pecos_rslib import (
-        biased_depolarizing_noise,
-        depolarizing_noise,
-        general_noise,
-        state_vector,
-    )
-except ImportError:
-    pass
+from guppylang import guppy
+from guppylang.std.quantum import cx, h, measure, qubit, x
+from pecos import Guppy, sim
+from pecos_rslib import (
+    biased_depolarizing_noise,
+    depolarizing_noise,
+    general_noise,
+    state_vector,
+)
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 class TestNoiseModels:
     """Test noise model integration with sim."""
 
@@ -212,7 +201,6 @@ class TestNoiseModels:
         assert noisy_corr >= 0
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 def test_noise_model_builder_pattern() -> None:
     """Test the builder pattern for noise models."""
 
@@ -269,7 +257,6 @@ def test_noise_model_builder_pattern() -> None:
     assert len(measurements2) == 10
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 def test_noise_on_single_qubit_gates() -> None:
     """Test noise specifically on single-qubit gates."""
 
@@ -300,7 +287,6 @@ def test_noise_on_single_qubit_gates() -> None:
     assert zeros > 0, "Noise on gates should cause errors"
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 def test_measurement_noise() -> None:
     """Test measurement noise specifically."""
 

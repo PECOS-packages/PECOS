@@ -10,6 +10,41 @@ This test file addresses gaps identified in the test coverage analysis:
 """
 
 import pytest
+from guppylang import guppy
+from guppylang.std.builtins import array
+from guppylang.std.quantum import cx, h, measure, qubit, x
+from pecos import Guppy, sim
+from pecos_rslib import (
+    biased_depolarizing_noise,
+    depolarizing_noise,
+    general_noise,
+    sparse_stabilizer,
+    state_vector,
+)
+
+# Try to import optional functions that might not be available
+try:
+    from guppylang.std.quantum import discard_array, measure_array
+except ImportError:
+    measure_array = None
+    discard_array = None
+
+try:
+    from guppylang.std.quantum_functional import project_z
+except ImportError:
+    project_z = None
+
+try:
+    from guppylang.std.builtins import owned, panic
+except ImportError:
+    owned = None
+    panic = None
+
+# Try to import array type for quantum operations
+try:
+    from guppylang.std.quantum import array as qubit_array
+except ImportError:
+    qubit_array = None
 
 
 def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, ...]]:
@@ -46,75 +81,11 @@ def get_measurements(results: dict, expected_count: int = 1) -> list:  # noqa: A
     return results.get("measurements", results.get("result", []))
 
 
-# Check dependencies
-try:
-    from guppylang import guppy
-    from guppylang.std.builtins import array
-
-    # Import all required quantum operations
-    from guppylang.std.quantum import (
-        cx,
-        h,
-        measure,
-        qubit,
-        x,
-    )
-
-    GUPPY_AVAILABLE = True
-
-    # Try to import optional functions that might not be available
-    try:
-        from guppylang.std.quantum import discard_array, measure_array
-    except ImportError:
-        measure_array = None
-        discard_array = None
-
-    try:
-        from guppylang.std.quantum_functional import project_z
-    except ImportError:
-        project_z = None
-
-    try:
-        from guppylang.std.builtins import owned, panic
-    except ImportError:
-        owned = None
-        panic = None
-
-    # Try to import array type for quantum operations
-    try:
-        from guppylang.std.quantum import array as qubit_array
-    except ImportError:
-        qubit_array = None
-except ImportError:
-    GUPPY_AVAILABLE = False
-
-try:
-    from pecos import Guppy, sim
-    from pecos_rslib import (
-        biased_depolarizing_noise,
-        depolarizing_noise,
-        general_noise,
-        sparse_stabilizer,
-        state_vector,
-    )
-
-    PECOS_AVAILABLE = True
-except ImportError:
-    PECOS_AVAILABLE = False
-    # Set to None so tests can check availability
-    sim = None
-    state_vector = None
-    sparse_stabilizer = None
-    depolarizing_noise = None
-    biased_depolarizing_noise = None
-    general_noise = None
-
 # ============================================================================
 # NOISE MODEL TESTS
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 class TestNoiseModels:
     """Test quantum simulations with various noise models."""
 
@@ -230,7 +201,6 @@ class TestNoiseModels:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 class TestArrayOperations:
     """Test array and batch quantum operations."""
 
@@ -373,7 +343,6 @@ class TestArrayOperations:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 class TestAdvancedControlFlow:
     """Test complex control flow patterns."""
 
@@ -524,7 +493,6 @@ class TestAdvancedControlFlow:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 class TestQuantumEngines:
     """Test different quantum simulation engines."""
 
@@ -642,7 +610,6 @@ class TestQuantumEngines:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 class TestQuantumErrorHandling:
     """Test error handling with quantum resources."""
 

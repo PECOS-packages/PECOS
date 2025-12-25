@@ -8,6 +8,10 @@ to advanced classical-quantum hybrid programs.
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from guppylang import guppy
+from guppylang.std.quantum import cx, h, measure, qubit, x, y, z
+from pecos import Guppy, sim
+from pecos_rslib import state_vector
 
 if TYPE_CHECKING:
     from pecos.protocols import GuppyCallable
@@ -26,43 +30,9 @@ def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, 
     return decoded
 
 
-# Check dependencies
-try:
-    from guppylang import guppy
-    from guppylang.std.quantum import cx, h, measure, qubit, x, y, z
-
-    GUPPY_AVAILABLE = True
-except ImportError:
-    GUPPY_AVAILABLE = False
-
-try:
-    from pecos import Guppy, sim
-    from pecos_rslib import check_rust_hugr_availability, state_vector
-
-    PECOS_FRONTEND_AVAILABLE = True
-except ImportError:
-    PECOS_FRONTEND_AVAILABLE = False
-
-
 def get_guppy_backends() -> dict[str, Any]:
-    """Get available backends (replacement for run_guppy version)."""
-    import importlib.util
-
-    result = {"guppy_available": False, "rust_backend": False}
-
-    if importlib.util.find_spec("guppylang") is not None:
-        result["guppy_available"] = True
-        rust_available, msg = check_rust_hugr_availability()
-        result["rust_backend"] = rust_available
-        result["rust_message"] = msg
-
-    return result
-
-
-try:
-    from pecos_rslib import HUGR_LLVM_PIPELINE_AVAILABLE
-except ImportError:
-    HUGR_LLVM_PIPELINE_AVAILABLE = False
+    """Get available backends."""
+    return {"guppy_available": True, "rust_backend": True}
 
 
 class GuppyPipelineTest:
@@ -70,7 +40,7 @@ class GuppyPipelineTest:
 
     def __init__(self) -> None:
         """Initialize test helper with available backends."""
-        self.backends = get_guppy_backends() if PECOS_FRONTEND_AVAILABLE else {}
+        self.backends = get_guppy_backends()
 
     def test_function_on_both_pipelines(
         self,
@@ -192,8 +162,6 @@ def pipeline_tester() -> GuppyPipelineTest:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_FRONTEND_AVAILABLE, reason="PECOS frontend not available")
 class TestBasicQuantumOperations:
     """Test basic quantum gate operations on both pipelines."""
 
@@ -324,8 +292,6 @@ class TestBasicQuantumOperations:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_FRONTEND_AVAILABLE, reason="PECOS frontend not available")
 class TestClassicalComputation:
     """Test classical computation capabilities in both pipelines."""
 
@@ -386,8 +352,6 @@ class TestClassicalComputation:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_FRONTEND_AVAILABLE, reason="PECOS frontend not available")
 class TestHybridPrograms:
     """Test hybrid quantum-classical programs."""
 
@@ -452,8 +416,6 @@ class TestHybridPrograms:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_FRONTEND_AVAILABLE, reason="PECOS frontend not available")
 class TestAdvancedAlgorithms:
     """Test advanced quantum algorithms (to be implemented)."""
 

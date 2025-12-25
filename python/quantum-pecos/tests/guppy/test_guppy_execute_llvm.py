@@ -45,7 +45,7 @@ class TestGuppyExecuteLLVM:
         assert hugr_bytes is not None, "HUGR compilation should produce bytes"
         assert len(hugr_bytes) > 0, "HUGR bytes should not be empty"
 
-    def test_compile_hugr_to_llvm(self, simple_quantum_function: object) -> None:
+    def test_compile_hugr_to_qis(self, simple_quantum_function: object) -> None:
         """Test compiling HUGR to LLVM IR using execute_llvm with default Selene compiler."""
         try:
             from pecos import execute_llvm

@@ -19,35 +19,12 @@ The backward compatibility API provides:
 - get_guppy_backends() - Backend availability check.
 """
 
-# Check availability first
-try:
-    import pecos
-
-    print("[OK] PECOS available")
-    print(f"Guppy integration: {pecos.GUPPY_INTEGRATION_AVAILABLE}")
-except ImportError:
-    print("[WARNING] PECOS not available")
-
-# Try to import and run examples
-try:
-    from guppylang import guppy
-    from guppylang.std.quantum import cx, h, measure, qubit
-
-    print("[OK] Guppy available")
-    DEMO_ENABLED = True
-except ImportError:
-    print(
-        "[WARNING] Guppy not available - install with: pip install quantum-pecos[guppy]",
-    )
-    DEMO_ENABLED = False
+from guppylang import guppy
+from guppylang.std.quantum import cx, h, measure, qubit
 
 
 def demo_simple_api() -> None:
     """Demonstrate the simple run_guppy() API."""
-    if not DEMO_ENABLED:
-        print("Skipping demo - Guppy not available")
-        return
-
     print("\n=== Simple run_guppy() API Demo ===")
 
     # Define quantum functions
@@ -222,9 +199,6 @@ def demo_comparison_with_qasm() -> None:
 
 def demo_error_handling() -> None:
     """Demonstrate error handling in the simple API."""
-    if not DEMO_ENABLED:
-        return
-
     print("\n=== Error Handling Demo ===")
 
     # Test with non-guppy function
@@ -271,7 +245,7 @@ def main() -> None:
     print("Demo complete!")
 
     print("\nQuick start guide:")
-    print("1. Install: pip install quantum-pecos[guppy]")
+    print("1. Install: pip install quantum-pecos")
     print("2. Import: from pecos import run_guppy")
     print("3. Use: results = run_guppy(my_guppy_function, shots=1000)")
 

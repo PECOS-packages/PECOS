@@ -43,8 +43,6 @@ def test_guppy_frontend_creation() -> None:
     pytest.importorskip("guppylang")
     from pecos._compilation import GuppyFrontend
 
-    # Since guppy_frontend.py is already imported with GUPPY_AVAILABLE=False,
-    # we need to check if it would fail
     try:
         frontend = GuppyFrontend()
         # Should be able to get backend info

@@ -5,43 +5,34 @@ to identify which specific operation causes the segfault.
 """
 
 import pytest
-
-# Check dependencies
-try:
-    from guppylang import guppy
-    from guppylang.std.angles import pi
-    from guppylang.std.quantum import (
-        ch,
-        cx,
-        cy,
-        cz,
-        discard,
-        h,
-        measure,
-        qubit,
-        reset,
-        rx,
-        ry,
-        rz,
-        s,
-        sdg,
-        t,
-        tdg,
-        toffoli,
-        x,
-        y,
-        z,
-    )
-
-    GUPPY_AVAILABLE = True
-except ImportError:
-    GUPPY_AVAILABLE = False
-
+from guppylang import guppy
+from guppylang.std.angles import pi
+from guppylang.std.quantum import (
+    ch,
+    cx,
+    cy,
+    cz,
+    discard,
+    h,
+    measure,
+    qubit,
+    reset,
+    rx,
+    ry,
+    rz,
+    s,
+    sdg,
+    t,
+    tdg,
+    toffoli,
+    x,
+    y,
+    z,
+)
 from pecos import Guppy, sim
 from pecos_rslib import state_vector
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, ...]]:
     """Decode integer-encoded results back to tuples of booleans."""
     decoded = []

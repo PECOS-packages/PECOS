@@ -3,30 +3,10 @@
 import warnings
 
 import pytest
-
-# Check for required dependencies
-try:
-    from guppylang import guppy
-    from guppylang.std.quantum import cx, h, measure, qubit, x
-
-    GUPPY_AVAILABLE = True
-except ImportError:
-    GUPPY_AVAILABLE = False
-
-try:
-    from pecos import Guppy, sim
-    from pecos_rslib import state_vector
-
-    PECOS_API_AVAILABLE = True
-except ImportError:
-    PECOS_API_AVAILABLE = False
-
-try:
-    from pecos_rslib import compile_hugr_to_llvm
-
-    HUGR_LLVM_AVAILABLE = True
-except ImportError:
-    HUGR_LLVM_AVAILABLE = False
+from guppylang import guppy
+from guppylang.std.quantum import cx, h, measure, qubit, x
+from pecos import Guppy, sim
+from pecos_rslib import compile_hugr_to_qis, state_vector
 
 
 def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, ...]]:
@@ -38,7 +18,6 @@ def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, 
     return decoded
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 class TestGuppyCompilation:
     """Test Guppy compilation capabilities."""
 
@@ -87,10 +66,6 @@ class TestGuppyCompilation:
         assert callable(parametric_circuit), "Parametric circuit should be callable"
 
 
-@pytest.mark.skipif(
-    not all([GUPPY_AVAILABLE, HUGR_LLVM_AVAILABLE]),
-    reason="Guppy or HUGR→LLVM not available",
-)
 class TestHUGRToLLVMCompilation:
     """Test HUGR to LLVM compilation."""
 
@@ -106,9 +81,9 @@ class TestHUGRToLLVMCompilation:
         # Compile to HUGR - the compile() method returns the Package directly
         package = simple_circuit.compile()
 
-        # Get HUGR JSON format - compile_hugr_to_llvm currently requires JSON, not envelope format
+        # Get HUGR JSON format - compile_hugr_to_qis currently requires JSON, not envelope format
         # We suppress the deprecation warning since we need to use to_json() until
-        # compile_hugr_to_llvm is updated to handle the new envelope format from to_str()
+        # compile_hugr_to_qis is updated to handle the new envelope format from to_str()
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             hugr_json = package.to_json()
@@ -117,7 +92,7 @@ class TestHUGRToLLVMCompilation:
 
         # Try to compile to LLVM
         try:
-            llvm_ir = compile_hugr_to_llvm(hugr_bytes)
+            llvm_ir = compile_hugr_to_qis(hugr_bytes)
             assert llvm_ir is not None, "Should produce LLVM IR"
             assert isinstance(llvm_ir, str), "LLVM IR should be a string"
             assert len(llvm_ir) > 0, "LLVM IR should not be empty"
@@ -148,16 +123,16 @@ class TestHUGRToLLVMCompilation:
         # Compile to HUGR - the compile() method returns the Package directly
         package = bell_state.compile()
 
-        # Get HUGR JSON format - compile_hugr_to_llvm currently requires JSON, not envelope format
+        # Get HUGR JSON format - compile_hugr_to_qis currently requires JSON, not envelope format
         # We suppress the deprecation warning since we need to use to_json() until
-        # compile_hugr_to_llvm is updated to handle the new envelope format from to_str()
+        # compile_hugr_to_qis is updated to handle the new envelope format from to_str()
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             hugr_json = package.to_json()
         hugr_bytes = hugr_json.encode("utf-8")
 
         try:
-            llvm_ir = compile_hugr_to_llvm(hugr_bytes)
+            llvm_ir = compile_hugr_to_qis(hugr_bytes)
             assert llvm_ir is not None, "Should produce LLVM IR for Bell state"
 
             # Check for specific Bell state operations
@@ -180,11 +155,9 @@ class TestHUGRToLLVMCompilation:
             pytest.fail(f"Bell state compilation failed: {e}")
 
 
-@pytest.mark.skipif(not PECOS_API_AVAILABLE, reason="PECOS API not available")
 class TestSimAPI:
     """Test the sim() API."""
 
-    @pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
     def test_sim_api_simple_circuit(self) -> None:
         """Test sim() API with simple circuit."""
 
@@ -228,7 +201,6 @@ class TestSimAPI:
                 pytest.skip(f"sim() API execution not fully supported: {e}")
             pytest.fail(f"sim() API failed: {e}")
 
-    @pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
     def test_sim_api_bell_state(self) -> None:
         """Test sim() API with Bell state."""
 
@@ -274,8 +246,6 @@ class TestSimAPI:
 
     def test_sim_api_with_noise(self) -> None:
         """Test sim() API with noise model."""
-        if not GUPPY_AVAILABLE:
-            pytest.skip("Guppy not available")
 
         @guppy
         def noisy_circuit() -> bool:
@@ -325,10 +295,6 @@ class TestSimAPI:
 class TestCompletePipeline:
     """Test the complete Guppy→HUGR→LLVM→PECOS pipeline."""
 
-    @pytest.mark.skipif(
-        not all([GUPPY_AVAILABLE, PECOS_API_AVAILABLE]),
-        reason="Full pipeline not available",
-    )
     def test_complete_pipeline_integration(self) -> None:
         """Test complete pipeline from Guppy to execution."""
 
@@ -394,8 +360,6 @@ class TestCompletePipeline:
 
     def test_pipeline_error_handling(self) -> None:
         """Test error handling in the pipeline."""
-        if not GUPPY_AVAILABLE:
-            pytest.skip("Guppy not available")
 
         @guppy
         def invalid_circuit() -> bool:
@@ -408,20 +372,16 @@ class TestCompletePipeline:
         compiled = invalid_circuit.compile()
         assert compiled is not None, "Should compile even simple circuit"
 
-        if PECOS_API_AVAILABLE:
-            # Should handle execution gracefully
-            try:
-                results = (
-                    sim(Guppy(invalid_circuit))
-                    .qubits(1)
-                    .quantum(state_vector())
-                    .run(10)
-                )
-                # If it works, verify results are dict-like
-                assert hasattr(results, "__getitem__"), "Results should be dict-like"
-            except (RuntimeError, ValueError):
-                # Expected - some backends might reject this
-                pass
+        # Should handle execution gracefully
+        try:
+            results = (
+                sim(Guppy(invalid_circuit)).qubits(1).quantum(state_vector()).run(10)
+            )
+            # If it works, verify results are dict-like
+            assert hasattr(results, "__getitem__"), "Results should be dict-like"
+        except (RuntimeError, ValueError):
+            # Expected - some backends might reject this
+            pass
 
     def test_integer_result_decoding(self) -> None:
         """Test the integer result decoding utility."""

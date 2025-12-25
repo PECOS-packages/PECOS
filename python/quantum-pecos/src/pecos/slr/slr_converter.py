@@ -20,10 +20,7 @@ try:
 except ImportError:
     QIRGenerator = None
 
-try:
-    from pecos.slr.gen_codes.guppy import IRGuppyGenerator
-except ImportError:
-    IRGuppyGenerator = None
+from pecos.slr.gen_codes.guppy import IRGuppyGenerator
 
 try:
     from pecos.slr.gen_codes.gen_stim import StimGenerator

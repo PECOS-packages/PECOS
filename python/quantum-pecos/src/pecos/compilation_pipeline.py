@@ -24,19 +24,10 @@ def compile_guppy_to_hugr(guppy_function: Callable) -> bytes:
         HUGR package as bytes
 
     Raises:
-        ImportError: If guppylang is not available
         ValueError: If function is not a Guppy function
         RuntimeError: If compilation fails
     """
-    try:
-        from guppylang import guppy as guppy_module
-    except ImportError as err:
-        msg = (
-            "guppylang is not available. Install with: pip install quantum-pecos[guppy]"
-        )
-        raise ImportError(
-            msg,
-        ) from err
+    from guppylang import guppy as guppy_module
 
     # Check if this is a Guppy function
     is_guppy = (
@@ -165,7 +156,7 @@ def _update_tket_wasm_version(hugr_bytes: bytes) -> bytes:
     return hugr_bytes
 
 
-def compile_hugr_to_llvm(
+def compile_hugr_to_qis(
     hugr_bytes: bytes,
     *,
     _debug_info: bool = False,
@@ -185,7 +176,7 @@ def compile_hugr_to_llvm(
     """
     # Try to use PECOS's HUGR to LLVM compiler
     try:
-        from pecos_rslib import compile_hugr_to_llvm_rust
+        from pecos_rslib import compile_hugr_to_qis
 
         rust_backend_available = True
     except ImportError:
@@ -193,7 +184,7 @@ def compile_hugr_to_llvm(
 
     if rust_backend_available:
         try:
-            return compile_hugr_to_llvm_rust(
+            return compile_hugr_to_qis(
                 hugr_bytes,
                 None,
             )
@@ -280,7 +271,7 @@ def compile_guppy_to_llvm(
         LLVM IR as string (HUGR convention)
     """
     hugr_bytes = compile_guppy_to_hugr(guppy_function)
-    return compile_hugr_to_llvm(hugr_bytes, debug_info=debug_info)
+    return compile_hugr_to_qis(hugr_bytes, debug_info=debug_info)
 
 
 def run_guppy_function(
@@ -311,7 +302,7 @@ __all__ = [
     # Core pipeline functions
     "compile_guppy_to_hugr",
     "compile_guppy_to_llvm",
-    "compile_hugr_to_llvm",
+    "compile_hugr_to_qis",
     "execute_llvm",
     # Convenience functions
     "run_guppy_function",

@@ -56,6 +56,7 @@ nav:
   - Noise Model Builders: user-guide/noise-model-builders.md
   - Decoders: user-guide/decoders.md
   - Graph API: user-guide/graph-api.md
+  - Circuit Representation: user-guide/circuit-representation.md
   - Parallel Execution: user-guide/parallel-execution.md
   - LLVM Setup: user-guide/llvm-setup.md
   - CUDA Setup: user-guide/cuda-setup.md

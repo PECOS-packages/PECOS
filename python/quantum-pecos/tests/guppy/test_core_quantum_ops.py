@@ -1,6 +1,27 @@
 """Core quantum operations tests - simplified version."""
 
 import pytest
+from guppylang import guppy
+from guppylang.std.angles import pi
+from guppylang.std.builtins import owned
+from guppylang.std.quantum import (
+    cx,
+    cy,
+    cz,
+    discard,
+    h,
+    measure,
+    qubit,
+    reset,
+    rx,
+    ry,
+    rz,
+    s,
+    t,
+    x,
+    y,
+    z,
+)
 from pecos import Guppy, sim
 from pecos_rslib import state_vector
 
@@ -42,35 +63,6 @@ def get_measurement_tuples(results: dict, n_bits: int) -> list[tuple[bool, ...]]
     return decode_integer_results(measurements, n_bits)
 
 
-try:
-    from guppylang import guppy
-    from guppylang.std.angles import pi
-    from guppylang.std.builtins import owned
-    from guppylang.std.quantum import (
-        cx,
-        cy,
-        cz,
-        discard,
-        h,
-        measure,
-        qubit,
-        reset,
-        rx,
-        ry,
-        rz,
-        s,
-        t,
-        x,
-        y,
-        z,
-    )
-
-    GUPPY_AVAILABLE = True
-except ImportError:
-    GUPPY_AVAILABLE = False
-
-
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 class TestSingleQubitGates:
     """Test individual single-qubit gates."""
 
@@ -182,7 +174,6 @@ class TestSingleQubitGates:
         assert all(r == 1 for r in measurements)
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 class TestTwoQubitGates:
     """Test two-qubit gates."""
 
@@ -236,7 +227,6 @@ class TestTwoQubitGates:
         assert all(r == (True, True) for r in decoded_results)
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 class TestQuantumStateManagement:
     """Test state management operations."""
 
@@ -279,7 +269,6 @@ class TestQuantumStateManagement:
         assert all(r == 1 for r in measurements)
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 class TestQuantumCircuits:
     """Test quantum circuit patterns."""
 
@@ -324,7 +313,6 @@ class TestQuantumCircuits:
             assert a == b == c  # GHZ state is all-correlated
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 class TestRotationGates:
     """Test rotation gates."""
 
@@ -378,7 +366,6 @@ class TestRotationGates:
         assert all(r == 0 for r in measurements)
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 class TestControlFlow:
     """Test control flow with quantum operations."""
 

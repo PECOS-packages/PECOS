@@ -3,7 +3,10 @@
 This is a simplified version that won't hang.
 """
 
-import pytest
+from guppylang import guppy
+from guppylang.std.quantum import cx, h, measure, qubit, x
+from pecos import Guppy, get_guppy_backends, sim
+from pecos_rslib import state_vector
 
 
 def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, ...]]:
@@ -15,27 +18,6 @@ def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, 
     return decoded
 
 
-try:
-    from guppylang import guppy
-    from guppylang.std.quantum import cx, h, measure, qubit, x
-
-    GUPPY_AVAILABLE = True
-except ImportError:
-    GUPPY_AVAILABLE = False
-
-try:
-    from pecos import Guppy, get_guppy_backends, sim
-    from pecos_rslib import state_vector
-
-    PECOS_FRONTEND_AVAILABLE = True
-except ImportError:
-    PECOS_FRONTEND_AVAILABLE = False
-
-
-@pytest.mark.skipif(
-    not GUPPY_AVAILABLE or not PECOS_FRONTEND_AVAILABLE,
-    reason="Dependencies not available",
-)
 def test_pipeline_capabilities() -> None:
     """Test what both pipelines can currently handle - simplified version."""
     backends = get_guppy_backends()

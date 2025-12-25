@@ -6,6 +6,10 @@ This test demonstrates the sim() API builder pattern for quantum simulations.
 from pathlib import Path
 
 import pytest
+from guppylang import guppy
+from guppylang.std.quantum import cx, h, measure, qubit
+from pecos import Guppy, sim
+from pecos_rslib import state_vector
 
 
 def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, ...]]:
@@ -17,26 +21,6 @@ def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, 
     return decoded
 
 
-# Check dependencies
-try:
-    from guppylang import guppy
-    from guppylang.std.quantum import cx, h, measure, qubit
-
-    GUPPY_AVAILABLE = True
-except ImportError:
-    GUPPY_AVAILABLE = False
-
-try:
-    from pecos import Guppy, sim
-    from pecos_rslib import state_vector
-
-    BUILDER_AVAILABLE = True
-except ImportError:
-    BUILDER_AVAILABLE = False
-
-
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not BUILDER_AVAILABLE, reason="Builder not available")
 class TestGuppySimBuilder:
     """Test the sim builder pattern."""
 

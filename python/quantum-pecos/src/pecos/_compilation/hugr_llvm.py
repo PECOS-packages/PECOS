@@ -51,7 +51,7 @@ class HugrLlvmCompiler:
 
         return None
 
-    def compile_hugr_to_llvm(
+    def compile_hugr_to_qis(
         self,
         hugr_bytes: bytes,
         output_file: Path | None = None,
@@ -152,7 +152,7 @@ def compile_hugr_bytes_to_llvm(
     """
     compiler = HugrLlvmCompiler()
     try:
-        return compiler.compile_hugr_to_llvm(hugr_bytes)
+        return compiler.compile_hugr_to_qis(hugr_bytes)
     finally:
         compiler.cleanup()
 

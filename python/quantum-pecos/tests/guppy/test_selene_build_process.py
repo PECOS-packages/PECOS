@@ -10,37 +10,13 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
-try:
-    from guppylang import guppy
-    from guppylang.std.quantum import cx, h, measure, qubit
-
-    GUPPY_AVAILABLE = True
-except ImportError:
-    GUPPY_AVAILABLE = False
-
-try:
-    from selene_sim import SeleneInstance, build
-    from selene_sim.backends import Coinflip, SimpleRuntime
-
-    SELENE_AVAILABLE = True
-except ImportError:
-    SELENE_AVAILABLE = False
-
-try:
-    from pecos.compilation_pipeline import compile_guppy_to_hugr
-
-    COMPILATION_AVAILABLE = True
-except ImportError:
-    COMPILATION_AVAILABLE = False
+from guppylang import guppy
+from guppylang.std.quantum import cx, h, measure, qubit
+from pecos.compilation_pipeline import compile_guppy_to_hugr
+from selene_sim import SeleneInstance, build
+from selene_sim.backends import Coinflip, SimpleRuntime
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not SELENE_AVAILABLE, reason="Selene not available")
-@pytest.mark.skipif(
-    not COMPILATION_AVAILABLE,
-    reason="Compilation pipeline not available",
-)
 class TestSeleneBuildProcess:
     """Test suite for Selene build process."""
 
@@ -363,11 +339,7 @@ class TestSeleneBuildProcess:
         llvm_ir_edge_cases = textwrap.dedent(
             """
         ; ModuleID = 'edge_cases'
-
-
         ; Empty lines above and below
-
-
         source_filename = "edge_cases"
 
         declare i64 @___qalloc()    local_unnamed_addr
@@ -375,8 +347,6 @@ class TestSeleneBuildProcess:
         declare i64    @___lazy_measure(i64)    local_unnamed_addr
         declare void @setup(i64) local_unnamed_addr
         declare i64 @teardown() local_unnamed_addr
-
-
         define i64 @qmain(i64 %arg) #0 {
         entry:
           tail call void @setup(i64 %arg)
@@ -386,8 +356,6 @@ class TestSeleneBuildProcess:
           %f = tail call i64 @teardown()
           ret i64 %f
         }
-
-
         attributes #0 = { "EntryPoint" }
 
         ; Trailing comment
@@ -576,7 +544,6 @@ class TestSeleneBuildProcess:
                 pytest.fail(f"Unexpected compilation error: {e}")
 
 
-@pytest.mark.skipif(not SELENE_AVAILABLE, reason="Selene not available")
 class TestSeleneBackends:
     """Test different Selene backend configurations."""
 
@@ -660,10 +627,6 @@ class TestSeleneBackends:
             pytest.skip("SimpleRuntime not available")
 
 
-@pytest.mark.skipif(
-    not all([GUPPY_AVAILABLE, COMPILATION_AVAILABLE]),
-    reason="Guppy or compilation not available",
-)
 class TestBuildOutputFormats:
     """Test different output formats from the build process."""
 
@@ -701,9 +664,6 @@ class TestBuildOutputFormats:
 
     def test_build_artifacts_structure(self) -> None:
         """Test the structure of build artifacts created."""
-        if not SELENE_AVAILABLE:
-            pytest.skip("Selene not available")
-
         with tempfile.TemporaryDirectory() as tmpdir:
             build_dir = Path(tmpdir)
 

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Example of using PECOS's execute_llvm module for HUGR->LLVM compilation.
 
-PECOS provides an execute_llvm module that implements the same interface as
-the external execute_llvm package, but uses PECOS's own HUGR compilation
-infrastructure.
+PECOS provides an execute_llvm module that compiles HUGR programs to LLVM IR
+using the built-in Selene compiler.
 """
 
 import pecos as pc
@@ -13,14 +12,6 @@ def main() -> None:
     """Demonstrate execute_llvm functionality."""
     print("PECOS execute_llvm Module Demo")
     print("=" * 50)
-
-    # Check if execute_llvm functionality is available
-    if pc.execute_llvm.is_available():
-        print("execute_llvm functionality is available")
-    else:
-        print("No HUGR->LLVM backend available")
-        print("  Build PECOS with HUGR support or install external compiler")
-        return
 
     # In a real scenario, you would get HUGR bytes from compiling a Guppy function
     # For this demo, we'll use dummy data
@@ -40,7 +31,6 @@ def main() -> None:
     print("  - compile_module_to_file(hugr_bytes, output_path)")
     print("  - compile_hugr_file_to_string(hugr_path) -> str")
     print("  - compile_hugr_file_to_file(hugr_path, output_path)")
-    print("  - is_available() -> bool")
 
     print("\nThis integrates seamlessly with PECOS's Guppy frontend!")
 

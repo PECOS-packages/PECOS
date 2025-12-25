@@ -19,9 +19,9 @@ def compile_module_to_string(hugr_bytes: bytes) -> str:
         RuntimeError: If compilation fails
     """
     try:
-        from pecos_rslib import compile_hugr_to_llvm_rust
+        from pecos_rslib import compile_hugr_to_qis
 
-        return compile_hugr_to_llvm_rust(hugr_bytes, None)
+        return compile_hugr_to_qis(hugr_bytes, None)
     except ImportError as e:
         msg = (
             "PECOS's Rust HUGR compiler is not available. "
@@ -82,7 +82,7 @@ def is_available() -> bool:
     # Check Rust backend
     import importlib.util
 
-    if importlib.util.find_spec("pecos_rslib.compile_hugr_to_llvm_rust") is not None:
+    if importlib.util.find_spec("pecos_rslib.compile_hugr_to_qis") is not None:
         return True
 
     try:

@@ -7,33 +7,15 @@ for the same HUGR input.
 from pathlib import Path
 
 import pytest
+from guppylang import GuppyModule, guppy
+from pecos_rslib import compile_hugr_to_qis as rust_compile
+from selene_hugr_qis_compiler import compile_to_llvm_ir as selene_compile
 
-# Check if we have the required dependencies
+# Import quantum operations - try stdlib first, fall back to std
 try:
-    from guppylang import GuppyModule, guppy
-
-    GUPPY_AVAILABLE = True
+    from guppylang.stdlib.quantum import cx, h, measure, qubit
 except ImportError:
-    GUPPY_AVAILABLE = False
-    GuppyModule = None
-    guppy = None
-
-# Import quantum operations separately to avoid import error when guppylang isn't available
-if GUPPY_AVAILABLE:
-    try:
-        from guppylang.stdlib.quantum import cx, h, measure, qubit
-    except ImportError:
-        # Fallback for different guppylang versions
-        from guppylang.std.quantum import cx, h, measure, qubit
-
-try:
-    from selene_hugr_qis_compiler import compile_to_llvm_ir as selene_compile
-
-    SELENE_AVAILABLE = True
-except ImportError:
-    SELENE_AVAILABLE = False
-
-from pecos_rslib import compile_hugr_to_llvm_rust as rust_compile
+    from guppylang.std.quantum import cx, h, measure, qubit
 
 
 def normalize_llvm_ir(llvm_ir: str) -> list[str]:
@@ -97,9 +79,6 @@ def compare_compilers(
     Returns:
         (are_equivalent, diagnostic_message)
     """
-    if not SELENE_AVAILABLE:
-        return False, "One or both compilers not available"
-
     try:
         # Compile with Selene's hugr-qis (expects binary format)
         selene_ir = selene_compile(hugr_binary_selene)
@@ -136,11 +115,6 @@ def compare_compilers(
     return False, msg
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="guppylang not available")
-@pytest.mark.skipif(
-    not SELENE_AVAILABLE,
-    reason="selene_hugr_qis_compiler not available",
-)
 def test_bell_state_compilation_parity() -> None:
     """Test that both compilers produce equivalent LLVM IR for Bell state."""
 
@@ -166,11 +140,6 @@ def test_bell_state_compilation_parity() -> None:
     assert equivalent, f"Bell state compilation differs: {msg}"
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="guppylang not available")
-@pytest.mark.skipif(
-    not SELENE_AVAILABLE,
-    reason="selene_hugr_qis_compiler not available",
-)
 def test_single_hadamard_compilation_parity() -> None:
     """Test that both compilers produce equivalent LLVM IR for single Hadamard."""
 
@@ -192,11 +161,6 @@ def test_single_hadamard_compilation_parity() -> None:
     assert equivalent, f"Hadamard compilation differs: {msg}"
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="guppylang not available")
-@pytest.mark.skipif(
-    not SELENE_AVAILABLE,
-    reason="selene_hugr_qis_compiler not available",
-)
 def test_ghz_state_compilation_parity() -> None:
     """Test that both compilers produce equivalent LLVM IR for GHZ state."""
 
@@ -225,10 +189,6 @@ def test_ghz_state_compilation_parity() -> None:
     assert equivalent, f"GHZ state compilation differs: {msg}"
 
 
-@pytest.mark.skipif(
-    not SELENE_AVAILABLE,
-    reason="selene_hugr_qis_compiler not available",
-)
 def test_existing_hugr_files_parity() -> None:
     """Test parity using existing HUGR test data files."""
     # Path to test data
@@ -267,38 +227,31 @@ def test_existing_hugr_files_parity() -> None:
 
 if __name__ == "__main__":
     # Quick manual test
-    if GUPPY_AVAILABLE and SELENE_AVAILABLE:
+    @guppy
+    def test_circuit() -> bool:
+        """Simple test circuit with H gate and measurement."""
+        q = qubit()
+        h(q)
+        return measure(q)
 
-        @guppy
-        def test_circuit() -> bool:
-            """Simple test circuit with H gate and measurement."""
-            q = qubit()
-            h(q)
-            return measure(q)
+    hugr = test_circuit.compile()
 
-        hugr = test_circuit.compile()
+    # Get both formats
+    hugr_binary = hugr.to_bytes()  # Binary format for Selene
+    try:
+        hugr_json = hugr.to_json()  # JSON format for Rust compiler
+    except AttributeError:
+        # If to_json not available, use to_str
+        hugr_json = hugr.to_str() if hasattr(hugr, "to_str") else str(hugr)
 
-        # Get both formats
-        hugr_binary = hugr.to_bytes()  # Binary format for Selene
-        try:
-            hugr_json = hugr.to_json()  # JSON format for Rust compiler
-        except AttributeError:
-            # If to_json not available, use to_str
-            hugr_json = hugr.to_str() if hasattr(hugr, "to_str") else str(hugr)
+    print("Comparing compilers for test circuit...")
+    equivalent, msg = compare_compilers(hugr_binary, hugr_json)
+    print(f"Result: {'MATCH' if equivalent else 'DIFFER'}")
+    print(f"Details: {msg}")
 
-        print("Comparing compilers for test circuit...")
-        equivalent, msg = compare_compilers(hugr_binary, hugr_json)
-        print(f"Result: {'MATCH' if equivalent else 'DIFFER'}")
-        print(f"Details: {msg}")
-
-        # Show actual outputs for debugging
-        if not equivalent:
-            print("\n=== Selene LLVM IR ===")
-            print(selene_compile(hugr_binary))
-            print("\n=== Rust LLVM IR ===")
-            print(rust_compile(hugr_json.encode("utf-8"), None))
-    else:
-        print("Missing dependencies:")
-        print(f"  Guppy: {GUPPY_AVAILABLE}")
-        print(f"  Selene: {SELENE_AVAILABLE}")
-        print("  Rust compiler: Available")
+    # Show actual outputs for debugging
+    if not equivalent:
+        print("\n=== Selene LLVM IR ===")
+        print(selene_compile(hugr_binary))
+        print("\n=== Rust LLVM IR ===")
+        print(rust_compile(hugr_json.encode("utf-8"), None))

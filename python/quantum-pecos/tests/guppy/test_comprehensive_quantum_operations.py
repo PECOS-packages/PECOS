@@ -3,45 +3,32 @@
 from typing import Any
 
 import pytest
-
-# Check dependencies
-try:
-    from guppylang import guppy
-    from guppylang.std.angles import pi
-    from guppylang.std.builtins import owned
-    from guppylang.std.quantum import (
-        ch,
-        cx,
-        cz,
-        discard,
-        h,
-        measure,
-        qubit,
-        reset,
-        rx,
-        ry,
-        rz,
-        s,
-        sdg,
-        t,
-        tdg,
-        toffoli,
-        x,
-        y,
-        z,
-    )
-
-    GUPPY_AVAILABLE = True
-except ImportError:
-    GUPPY_AVAILABLE = False
-
-try:
-    from pecos import Guppy, sim
-    from pecos_rslib import state_vector
-
-    PECOS_AVAILABLE = True
-except ImportError:
-    PECOS_AVAILABLE = False
+from guppylang import guppy
+from guppylang.std.angles import pi
+from guppylang.std.builtins import owned
+from guppylang.std.quantum import (
+    ch,
+    cx,
+    cz,
+    discard,
+    h,
+    measure,
+    qubit,
+    reset,
+    rx,
+    ry,
+    rz,
+    s,
+    sdg,
+    t,
+    tdg,
+    toffoli,
+    x,
+    y,
+    z,
+)
+from pecos import Guppy, sim
+from pecos_rslib import state_vector
 
 
 def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, ...]]:
@@ -132,8 +119,6 @@ def get_decoded_results(
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_AVAILABLE, reason="PECOS not available")
 class TestBasicQuantumGates:
     """Test all basic quantum gate operations."""
 
@@ -324,8 +309,6 @@ class TestBasicQuantumGates:
             assert r == (True, True, True)
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_AVAILABLE, reason="PECOS not available")
 class TestQuantumStateManagement:
     """Test quantum state allocation, measurement, and cleanup."""
 
@@ -423,8 +406,6 @@ class TestQuantumStateManagement:
             assert not r[1]  # After reset
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_AVAILABLE, reason="PECOS not available")
 class TestLinearTypeSystem:
     """Test Guppy's linear type system for qubits."""
 
@@ -532,8 +513,6 @@ class TestLinearTypeSystem:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_AVAILABLE, reason="PECOS not available")
 class TestQuantumClassicalHybrid:
     """Test quantum-classical hybrid patterns."""
 
@@ -672,8 +651,6 @@ class TestQuantumClassicalHybrid:
         assert true_count > 0
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_AVAILABLE, reason="PECOS not available")
 class TestQuantumCircuitPatterns:
     """Test common quantum circuit patterns."""
 
@@ -790,8 +767,6 @@ class TestQuantumCircuitPatterns:
         ), f"Expected ~875 successes, got {success_count}"
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_AVAILABLE, reason="PECOS not available")
 class TestStructuredQuantumData:
     """Test qubits in structured data."""
 

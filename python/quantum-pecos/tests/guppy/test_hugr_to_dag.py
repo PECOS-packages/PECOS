@@ -36,8 +36,6 @@ try:
     HAS_HUGR_TO_DAG = True
 except ImportError:
     HAS_HUGR_TO_DAG = False
-
-
 pytestmark = pytest.mark.skipif(
     not (HAS_GUPPYLANG and HAS_HUGR_TO_DAG),
     reason="guppylang or hugr not available",

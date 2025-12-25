@@ -19,10 +19,6 @@ Currently supports basic quantum circuits without classical control flow,
 loops, or conditionals. Will raise UnsupportedHugrStructureError for
 unsupported constructs.
 
-Requires the optional ``guppy`` dependencies::
-
-    pip install quantum-pecos[guppy]
-
 Example::
 
     from guppylang import guppy

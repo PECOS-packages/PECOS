@@ -3,41 +3,19 @@
 import json
 
 import pytest
-
-# Check for required dependencies
-try:
-    from guppylang.decorator import guppy as guppy_decorator
-    from guppylang.std.quantum import cx, h, measure, qubit, x
-
-    GUPPY_AVAILABLE = True
-except ImportError:
-    GUPPY_AVAILABLE = False
-
-try:
-    from pecos import Guppy, sim
-    from pecos_rslib import state_vector
-
-    PECOS_API_AVAILABLE = True
-except ImportError:
-    PECOS_API_AVAILABLE = False
-
-try:
-    from pecos.compilation_pipeline import compile_guppy_to_hugr
-
-    COMPILATION_AVAILABLE = True
-except ImportError:
-    COMPILATION_AVAILABLE = False
+from guppylang.decorator import guppy as guppy_decorator
+from guppylang.std.quantum import cx, h, measure, qubit, x
+from pecos import Guppy, sim
+from pecos.compilation_pipeline import compile_guppy_to_hugr
+from pecos_rslib import state_vector
 
 
 @pytest.mark.optional_dependency
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
 class TestSeleneHUGRCompilation:
     """Test HUGR compilation through Selene."""
 
     def test_selene_hugr_llvm_generation(self) -> None:
         """Test that Selene can generate LLVM IR from HUGR."""
-        if not PECOS_API_AVAILABLE:
-            pytest.skip("PECOS API not available")
 
         # Define a proper Bell state with CNOT
         @guppy_decorator
@@ -89,8 +67,6 @@ class TestSeleneHUGRCompilation:
 
     def test_direct_hugr_compilation(self) -> None:
         """Test direct HUGR compilation without simulation."""
-        if not COMPILATION_AVAILABLE:
-            pytest.skip("Compilation pipeline not available")
 
         @guppy_decorator
         def simple_circuit() -> bool:
@@ -135,8 +111,6 @@ class TestSeleneHUGRCompilation:
 
     def test_complex_circuit_compilation(self) -> None:
         """Test compilation of more complex quantum circuits."""
-        if not all([GUPPY_AVAILABLE, COMPILATION_AVAILABLE]):
-            pytest.skip("Required dependencies not available")
 
         @guppy_decorator
         def quantum_teleportation() -> tuple[bool, bool, bool]:
@@ -182,8 +156,6 @@ class TestSeleneHUGRCompilation:
 
     def test_parametric_circuit_compilation(self) -> None:
         """Test compilation of parametric quantum circuits."""
-        if not COMPILATION_AVAILABLE:
-            pytest.skip("Compilation pipeline not available")
 
         @guppy_decorator
         def parametric_circuit(n: int) -> int:
@@ -222,8 +194,6 @@ class TestLLVMGeneration:
 
     def test_llvm_ir_from_hugr(self) -> None:
         """Test generating LLVM IR from HUGR."""
-        if not all([GUPPY_AVAILABLE, COMPILATION_AVAILABLE]):
-            pytest.skip("Required dependencies not available")
 
         @guppy_decorator
         def simple_measurement() -> bool:
@@ -295,8 +265,6 @@ class TestHUGRVersionCompatibility:
 
     def test_hugr_version_detection(self) -> None:
         """Test detection of HUGR version from compiled output."""
-        if not all([GUPPY_AVAILABLE, COMPILATION_AVAILABLE]):
-            pytest.skip("Required dependencies not available")
 
         @guppy_decorator
         def version_test() -> bool:
@@ -330,8 +298,6 @@ class TestHUGRVersionCompatibility:
 
     def test_hugr_0_13_compatibility(self) -> None:
         """Test compatibility with HUGR 0.13 format."""
-        if not COMPILATION_AVAILABLE:
-            pytest.skip("Compilation pipeline not available")
 
         @guppy_decorator
         def compatibility_test() -> tuple[bool, bool]:
@@ -371,8 +337,6 @@ class TestHUGRVersionCompatibility:
 
     def test_hugr_metadata_preservation(self) -> None:
         """Test that metadata is preserved through compilation."""
-        if not COMPILATION_AVAILABLE:
-            pytest.skip("Compilation pipeline not available")
 
         @guppy_decorator
         def metadata_test() -> bool:

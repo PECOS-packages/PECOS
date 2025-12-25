@@ -31,11 +31,11 @@ def test_phir_json_simulation_import() -> None:
     assert PhirJsonSimulation is not None
 
 
-def test_compile_hugr_to_llvm_import() -> None:
-    """Test that compile_hugr_to_llvm can be imported."""
-    from pecos_rslib import compile_hugr_to_llvm
+def test_compile_hugr_to_qis_import() -> None:
+    """Test that compile_hugr_to_qis can be imported."""
+    from pecos_rslib import compile_hugr_to_qis
 
-    assert compile_hugr_to_llvm is not None
+    assert compile_hugr_to_qis is not None
 
 
 def test_phir_json_engine_function() -> None:
@@ -66,20 +66,20 @@ def test_phir_json_program_creation() -> None:
         # Empty object might be accepted or rejected
 
 
-def test_compile_hugr_to_llvm_with_invalid_input() -> None:
-    """Test compile_hugr_to_llvm with invalid input."""
-    from pecos_rslib import compile_hugr_to_llvm
+def test_compile_hugr_to_qis_with_invalid_input() -> None:
+    """Test compile_hugr_to_qis with invalid input."""
+    from pecos_rslib import compile_hugr_to_qis
 
-    # compile_hugr_to_llvm expects bytes
+    # compile_hugr_to_qis expects bytes
     with pytest.raises((RuntimeError, ValueError, TypeError)):
         # Pass invalid HUGR bytes
-        compile_hugr_to_llvm(b"not valid hugr")
+        compile_hugr_to_qis(b"not valid hugr")
 
 
-def test_compile_hugr_to_llvm_with_wrong_type() -> None:
-    """Test compile_hugr_to_llvm with wrong input type."""
-    from pecos_rslib import compile_hugr_to_llvm
+def test_compile_hugr_to_qis_with_wrong_type() -> None:
+    """Test compile_hugr_to_qis with wrong input type."""
+    from pecos_rslib import compile_hugr_to_qis
 
     # Should raise TypeError for string instead of bytes
     with pytest.raises(TypeError):
-        compile_hugr_to_llvm("{}")  # String instead of bytes
+        compile_hugr_to_qis("{}")  # String instead of bytes

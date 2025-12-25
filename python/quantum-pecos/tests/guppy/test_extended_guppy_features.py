@@ -13,6 +13,28 @@ additional coverage of Guppy language capabilities, including:
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from guppylang import guppy
+from guppylang.std.angles import pi
+from guppylang.std.quantum import array as qubit_array
+from guppylang.std.quantum import (
+    cx,
+    cy,
+    cz,
+    discard,
+    h,
+    measure,
+    qubit,
+    reset,
+    ry,
+    rz,
+    s,
+    sdg,
+    t,
+    tdg,
+    x,
+)
+from pecos import Guppy, get_guppy_backends, sim
+from pecos_rslib import state_vector
 
 if TYPE_CHECKING:
     from pecos.protocols import GuppyCallable
@@ -27,50 +49,12 @@ def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, 
     return decoded
 
 
-# Check dependencies
-try:
-    from guppylang import guppy
-    from guppylang.std.angles import pi
-
-    # Note: array, nat, owned are available but not directly used in tests
-    from guppylang.std.quantum import array as qubit_array
-    from guppylang.std.quantum import (
-        cx,
-        cy,
-        cz,
-        discard,
-        h,
-        measure,
-        qubit,
-        reset,
-        ry,
-        rz,
-        s,
-        sdg,
-        t,
-        tdg,
-        x,
-    )
-
-    GUPPY_AVAILABLE = True
-except ImportError:
-    GUPPY_AVAILABLE = False
-
-try:
-    from pecos import Guppy, get_guppy_backends, sim
-    from pecos_rslib import state_vector
-
-    PECOS_FRONTEND_AVAILABLE = True
-except ImportError:
-    PECOS_FRONTEND_AVAILABLE = False
-
-
 class ExtendedGuppyTester:
     """Extended helper class for testing advanced Guppy features."""
 
     def __init__(self) -> None:
         """Initialize extended tester with available backends."""
-        self.backends = get_guppy_backends() if PECOS_FRONTEND_AVAILABLE else {}
+        self.backends = get_guppy_backends()
 
     def test_function(
         self,
@@ -140,8 +124,6 @@ def tester() -> ExtendedGuppyTester:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_FRONTEND_AVAILABLE, reason="PECOS frontend not available")
 class TestPhaseAndRotationGates:
     """Test phase gates and rotation operations."""
 
@@ -229,8 +211,6 @@ class TestPhaseAndRotationGates:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_FRONTEND_AVAILABLE, reason="PECOS frontend not available")
 class TestMultiQubitGates:
     """Test multi-qubit gate operations."""
 
@@ -271,8 +251,6 @@ class TestMultiQubitGates:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_FRONTEND_AVAILABLE, reason="PECOS frontend not available")
 class TestQubitArrays:
     """Test qubit array operations and indexing."""
 
@@ -336,8 +314,6 @@ class TestQubitArrays:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_FRONTEND_AVAILABLE, reason="PECOS frontend not available")
 class TestClassicalDataTypes:
     """Test classical data types and operations."""
 
@@ -391,8 +367,6 @@ class TestClassicalDataTypes:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_FRONTEND_AVAILABLE, reason="PECOS frontend not available")
 class TestControlFlow:
     """Test advanced control flow patterns."""
 
@@ -501,8 +475,6 @@ class TestControlFlow:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_FRONTEND_AVAILABLE, reason="PECOS frontend not available")
 class TestQuantumAlgorithms:
     """Test quantum algorithms and protocols."""
 
@@ -693,8 +665,6 @@ class TestQuantumAlgorithms:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_FRONTEND_AVAILABLE, reason="PECOS frontend not available")
 class TestErrorHandling:
     """Test error handling and edge cases."""
 
@@ -752,8 +722,6 @@ class TestErrorHandling:
 # ============================================================================
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_FRONTEND_AVAILABLE, reason="PECOS frontend not available")
 class TestPerformance:
     """Test performance with larger circuits."""
 
@@ -812,15 +780,9 @@ class TestPerformance:
 # ============================================================================
 # FEATURE CAPABILITY REPORT
 # ============================================================================
-
-
 def generate_extended_feature_report() -> None:
     """Generate comprehensive feature capability report."""
     # print("EXTENDED GUPPY FEATURE TEST REPORT")
-
-    if not PECOS_FRONTEND_AVAILABLE:
-        # print("PECOS frontend not available - cannot run tests")
-        return
 
     tester = ExtendedGuppyTester()
 
@@ -848,19 +810,18 @@ def generate_extended_feature_report() -> None:
         # print("4. Implement measurement result post-processing")
 
     # Run some sample tests
-    if GUPPY_AVAILABLE and PECOS_FRONTEND_AVAILABLE:
-        tester = ExtendedGuppyTester()
+    tester = ExtendedGuppyTester()
 
-        # print("\nRunning sample tests...")
+    # print("\nRunning sample tests...")
 
-        # Test phase gates
-        phase_test = TestPhaseAndRotationGates()
-        phase_test.test_phase_gates_s_and_t(tester)
+    # Test phase gates
+    phase_test = TestPhaseAndRotationGates()
+    phase_test.test_phase_gates_s_and_t(tester)
 
-        # Test arrays
-        array_test = TestQubitArrays()
-        array_test.test_qubit_array_creation_and_access(tester)
+    # Test arrays
+    array_test = TestQubitArrays()
+    array_test.test_qubit_array_creation_and_access(tester)
 
-        # Test algorithms
-        algo_test = TestQuantumAlgorithms()
-        algo_test.test_ghz_state_creation(tester)
+    # Test algorithms
+    algo_test = TestQuantumAlgorithms()
+    algo_test.test_ghz_state_creation(tester)

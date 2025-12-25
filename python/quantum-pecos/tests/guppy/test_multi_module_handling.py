@@ -9,33 +9,15 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from guppylang import GuppyModule, guppy
+from pecos_rslib import compile_hugr_to_qis as rust_compile
+from selene_hugr_qis_compiler import compile_to_llvm_ir as selene_compile
 
-# Check if we have the required dependencies
+# Import quantum operations - try stdlib first, fall back to std
 try:
-    from guppylang import GuppyModule, guppy
-
-    GUPPY_AVAILABLE = True
+    from guppylang.stdlib.quantum import cx, h, measure, qubit
 except ImportError:
-    GUPPY_AVAILABLE = False
-    GuppyModule = None
-    guppy = None
-
-# Import quantum operations separately to avoid import error when guppylang isn't available
-if GUPPY_AVAILABLE:
-    try:
-        from guppylang.stdlib.quantum import cx, h, measure, qubit
-    except ImportError:
-        # Fallback for different guppylang versions
-        from guppylang.std.quantum import cx, h, measure, qubit
-
-try:
-    from selene_hugr_qis_compiler import compile_to_llvm_ir as selene_compile
-
-    SELENE_AVAILABLE = True
-except ImportError:
-    SELENE_AVAILABLE = False
-
-from pecos_rslib import compile_hugr_to_llvm_rust as rust_compile
+    from guppylang.std.quantum import cx, h, measure, qubit
 
 
 def count_modules_in_hugr(hugr_str: str) -> tuple[int, list[str]]:
@@ -102,7 +84,6 @@ def extract_function_calls_from_llvm(llvm_ir: str) -> set[str]:
     return function_calls
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="guppylang not available")
 def test_single_module_baseline() -> None:
     """Test baseline behavior with a single module for comparison."""
 
@@ -124,7 +105,6 @@ def test_single_module_baseline() -> None:
     assert "single_hadamard" in function_names, "Should contain the main function"
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="guppylang not available")
 def test_multiple_functions_compilation() -> None:
     """Test compiling multiple functions using current guppylang API."""
 
@@ -177,11 +157,6 @@ def test_multiple_functions_compilation() -> None:
     ), "Single HUGR should contain single_qubit_test"
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="guppylang not available")
-@pytest.mark.skipif(
-    not SELENE_AVAILABLE,
-    reason="selene_hugr_qis_compiler not available",
-)
 def test_compiler_comparison_simple() -> None:
     """Test how Selene vs PECOS handle HUGR compilation."""
 
@@ -272,7 +247,6 @@ def test_compiler_comparison_simple() -> None:
         print("This suggests different compilation behavior.")
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="guppylang not available")
 def test_hugr_structure_analysis() -> None:
     """Analyze the structure of HUGR to understand the format."""
 
@@ -333,7 +307,7 @@ def test_hugr_structure_analysis() -> None:
 
 if __name__ == "__main__":
     # Manual testing
-    if GUPPY_AVAILABLE:
+    if True:
         print("Running manual multi-module tests...")
 
         # Test 1: Single module baseline
@@ -348,13 +322,6 @@ if __name__ == "__main__":
         print("\n=== Test 3: Structure Analysis ===")
         test_hugr_structure_analysis()
 
-        # Test 4: Compiler comparison (if available)
-        if SELENE_AVAILABLE:
-            print("\n=== Test 4: Compiler Comparison ===")
-            test_compiler_comparison_simple()
-        else:
-            print("\n=== Test 4: Skipped (missing compilers) ===")
-            print(f"Selene available: {SELENE_AVAILABLE}")
-            print("Rust compiler available: True")
-    else:
-        print("Guppylang not available, skipping manual tests")
+        # Test 4: Compiler comparison
+        print("\n=== Test 4: Compiler Comparison ===")
+        test_compiler_comparison_simple()

@@ -1,35 +1,13 @@
 """Test qubit allocation limits and error handling."""
 
 import pytest
-
-try:
-    from guppylang import guppy
-    from guppylang.std.quantum import h, measure, qubit
-
-    # Try to import array from builtins
-    try:
-        from guppylang.std.builtins import array
-
-        ARRAY_AVAILABLE = True
-    except ImportError:
-        ARRAY_AVAILABLE = False
-        array = None  # type: ignore
-    GUPPY_AVAILABLE = True
-except ImportError:
-    GUPPY_AVAILABLE = False
-    ARRAY_AVAILABLE = False
-
-try:
-    from pecos import Guppy, sim
-    from pecos_rslib import state_vector
-
-    PECOS_AVAILABLE = True
-except ImportError:
-    PECOS_AVAILABLE = False
+from guppylang import guppy
+from guppylang.std.builtins import array
+from guppylang.std.quantum import h, measure, qubit
+from pecos import Guppy, sim
+from pecos_rslib import state_vector
 
 
-@pytest.mark.skipif(not GUPPY_AVAILABLE, reason="Guppy not available")
-@pytest.mark.skipif(not PECOS_AVAILABLE, reason="PECOS not available")
 class TestQubitAllocationLimits:
     """Test qubit allocation limits and dynamic allocation behavior."""
 
@@ -296,20 +274,8 @@ class TestQubitAllocationLimits:
 
     def test_qubit_array_allocation(self) -> None:
         """Test allocation of qubit arrays using Guppy's array type with proper ownership."""
-        if not ARRAY_AVAILABLE:
-            pytest.skip("Array type not available from guppylang.std.builtins")
-
-        # Import owned annotation
-        try:
-            from guppylang.std.builtins import owned
-        except ImportError:
-            pytest.skip("owned annotation not available")
-
-        # Import measure_array for proper array handling
-        try:
-            from guppylang.std.quantum import measure_array
-        except ImportError:
-            pytest.skip("measure_array not available")
+        from guppylang.std.builtins import owned
+        from guppylang.std.quantum import measure_array
 
         @guppy
         def apply_h_to_array(qubits: array[qubit, 3] @ owned) -> array[qubit, 3]:

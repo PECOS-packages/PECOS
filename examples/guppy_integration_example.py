@@ -11,30 +11,20 @@ Workflow:
 4. Execute on PECOS quantum simulator
 
 Prerequisites:
-- Install quantum-pecos with guppy support: pip install quantum-pecos[guppy]
+- Install quantum-pecos: pip install quantum-pecos
 - Build hugr-quantum-llvm compiler (or provide path to existing binary).
 """
 
 import sys
 from pathlib import Path
 
-try:
-    from guppylang import guppy
-    from guppylang.std.quantum import cx, h, measure, qubit
-    from pecos._compilation import GuppyFrontend
-
-    print("[OK] Guppy integration available")
-    GUPPY_AVAILABLE = True
-except ImportError as e:
-    print(f"[WARNING] Guppy not available: {e}")
-    print("Install with: pip install quantum-pecos[guppy]")
-    GUPPY_AVAILABLE = False
+from guppylang import guppy
+from guppylang.std.quantum import cx, h, measure, qubit
+from pecos._compilation import GuppyFrontend
 
 
 def example_bell_state() -> None:
     """Example: Bell state creation and measurement."""
-    if not GUPPY_AVAILABLE:
-        return
 
     @guppy
     def bell_state() -> tuple[bool, bool]:
@@ -106,8 +96,6 @@ def example_bell_state() -> None:
 
 def example_quantum_adder() -> None:
     """Example: Simple quantum arithmetic."""
-    if not GUPPY_AVAILABLE:
-        return
 
     @guppy
     def quantum_adder() -> bool:
@@ -127,10 +115,6 @@ def main() -> int:
     """Run all examples."""
     print("PECOS Guppy Integration Examples")
     print("=" * 40)
-
-    if not GUPPY_AVAILABLE:
-        print("Guppy integration not available. Install quantum-pecos[guppy]")
-        return 1
 
     # Run examples
     example_bell_state()

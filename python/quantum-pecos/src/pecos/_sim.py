@@ -73,17 +73,10 @@ def get_guppy_backends() -> dict:
     """Get available Guppy backends.
 
     Returns a dict with:
-        - guppy_available: True if guppylang is installed
+        - guppy_available: Always True (guppylang is now a required dependency)
         - rust_backend: Always True (HUGR support is built into pecos-rslib)
     """
-    result = {"guppy_available": False, "rust_backend": True}
-    try:
-        import guppylang  # noqa: F401, PLC0415
-
-        result["guppy_available"] = True
-    except ImportError:
-        pass
-    return result
+    return {"guppy_available": True, "rust_backend": True}
 
 
 __all__ = [

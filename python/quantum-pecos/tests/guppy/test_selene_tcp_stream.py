@@ -12,26 +12,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-try:
-    from selene_sim.result_handling import ResultStream, TCPStream
-
-    SELENE_STREAM_AVAILABLE = True
-except ImportError:
-    SELENE_STREAM_AVAILABLE = False
-
-try:
-    from selene_sim import SeleneInstance
-
-    SELENE_AVAILABLE = True
-except ImportError:
-    SELENE_AVAILABLE = False
+from selene_sim import SeleneInstance
+from selene_sim.result_handling import ResultStream, TCPStream
 
 
-@pytest.mark.skipif(
-    not SELENE_STREAM_AVAILABLE,
-    reason="Selene stream handling not available",
-)
 class TestSeleneTCPStream:
     """Test Selene's TCP stream functionality."""
 
@@ -213,7 +197,6 @@ class TestSeleneTCPStream:
                 logfile_path.unlink()
 
 
-@pytest.mark.skipif(not SELENE_AVAILABLE, reason="Selene not available")
 class TestSeleneResultInterception:
     """Test intercepting results from Selene execution."""
 
@@ -240,9 +223,6 @@ class TestSeleneResultInterception:
 
     def test_selene_with_custom_stream(self) -> None:
         """Test running Selene with a custom output stream."""
-        if not SELENE_STREAM_AVAILABLE:
-            pytest.skip("Stream handling not available")
-
         # Create a simple LLVM program
         llvm_ir = """
         declare void @__quantum__qis__h__body(i64)

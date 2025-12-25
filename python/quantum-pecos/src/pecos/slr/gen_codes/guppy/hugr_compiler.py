@@ -7,31 +7,6 @@ from typing import Any
 
 from pecos.slr.gen_codes.guppy.hugr_error_handler import HugrErrorHandler
 
-try:
-    # Check if guppylang is available by attempting actual imports
-    # We need these imports to verify the environment is properly configured
-    import guppylang
-
-    # Verify key attributes/modules are accessible
-    _ = guppylang.guppy  # This will raise AttributeError if not available
-
-    # Test importing the std modules
-    from guppylang.std import quantum
-    from guppylang.std.builtins import array, owned, result
-
-    # If we get here, all imports worked
-    GUPPY_AVAILABLE = True
-
-    # Clean up namespace - we don't need these imports here
-    del guppylang, quantum, array, owned, result
-
-except (ImportError, AttributeError) as e:
-    # For debugging - we want to know what specific import failed
-    import warnings
-
-    warnings.warn(f"guppylang import failed: {e}")
-    GUPPY_AVAILABLE = False
-
 
 class HugrCompiler:
     """Compiles generated Guppy code to HUGR."""
@@ -51,15 +26,8 @@ class HugrCompiler:
             The compiled HUGR module
 
         Raises:
-            ImportError: If guppylang is not available
             RuntimeError: If compilation fails
         """
-        if not GUPPY_AVAILABLE:
-            msg = "guppylang is not installed. Install it with: pip install guppylang"
-            raise ImportError(
-                msg,
-            )
-
         # Get the generated Guppy code
         guppy_code = self.generator.get_output()
 

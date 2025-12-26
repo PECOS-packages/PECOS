@@ -13,6 +13,7 @@ use pecos::prelude::*;
 type RustQasmEngineBuilder = pecos::QasmEngineBuilder;
 type RustQisEngineBuilder = pecos::QisEngineBuilder;
 type RustPhirJsonEngineBuilder = pecos::PhirJsonEngineBuilder;
+type RustHugrEngineBuilder = pecos::HugrEngineBuilder;
 type RustSparseStabilizerEngineBuilder = SparseStabilizerEngineBuilder;
 type RustStateVectorEngineBuilder = StateVectorEngineBuilder;
 
@@ -357,6 +358,106 @@ pub struct PyPhirJsonSimBuilder {
     pub(crate) explicit_num_qubits: Option<usize>,
 }
 
+/// Python wrapper for HUGR engine builder (direct HUGR interpreter)
+///
+/// This engine directly interprets HUGR programs without LLVM compilation,
+/// making it faster for simple circuits and useful for testing.
+#[pyclass(name = "HugrEngineBuilder")]
+#[derive(Clone)]
+pub struct PyHugrEngineBuilder {
+    pub(crate) inner: RustHugrEngineBuilder,
+}
+
+#[pymethods]
+impl PyHugrEngineBuilder {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: pecos::hugr_engine(),
+        }
+    }
+
+    /// Set the HUGR source from a file path
+    #[pyo3(signature = (path))]
+    fn hugr_file(&self, path: &str) -> PyResult<Self> {
+        Ok(Self {
+            inner: self.inner.clone().hugr_file(path),
+        })
+    }
+
+    /// Set the HUGR source from bytes
+    #[pyo3(signature = (bytes))]
+    fn hugr_bytes(&self, bytes: Vec<u8>) -> PyResult<Self> {
+        Ok(Self {
+            inner: self.inner.clone().hugr_bytes(bytes),
+        })
+    }
+
+    /// Set the HUGR program
+    #[pyo3(signature = (program))]
+    fn program(&self, program: &PyHugr) -> PyResult<Self> {
+        Ok(Self {
+            inner: self.inner.clone().hugr_bytes(program.inner.hugr.clone()),
+        })
+    }
+
+    /// Check if this builder has a HUGR source configured
+    pub fn has_source(&self) -> bool {
+        self.inner.has_source()
+    }
+
+    /// Convert to simulation builder
+    fn to_sim(&self) -> PyResult<PySimBuilder> {
+        Ok(PySimBuilder {
+            inner: SimBuilderInner::Hugr(PyHugrSimBuilder {
+                engine_builder: Arc::new(Mutex::new(Some(self.inner.clone()))),
+                seed: None,
+                workers: None,
+                quantum_engine_builder: None,
+                noise_builder: None,
+                explicit_num_qubits: None,
+            }),
+        })
+    }
+}
+
+/// Internal HUGR simulation builder state
+pub struct PyHugrSimBuilder {
+    pub(crate) engine_builder: Arc<Mutex<Option<RustHugrEngineBuilder>>>,
+    pub(crate) seed: Option<u64>,
+    pub(crate) workers: Option<usize>,
+    pub(crate) quantum_engine_builder: Option<Py<PyAny>>,
+    pub(crate) noise_builder: Option<Py<PyAny>>,
+    pub(crate) explicit_num_qubits: Option<usize>,
+}
+
+/// Python wrapper for built HUGR simulation
+#[pyclass(name = "HugrSimulation")]
+pub struct PyHugrSimulation {
+    pub(crate) inner: Arc<Mutex<MonteCarloEngine>>,
+}
+
+#[pymethods]
+impl PyHugrSimulation {
+    /// Run the simulation
+    pub fn run(&self, shots: usize) -> PyResult<PyShotVec> {
+        let mut engine = self.inner.lock().unwrap();
+        match engine.run(shots) {
+            Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
+            Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+        }
+    }
+
+    /// Run the simulation with specified number of workers
+    fn run_with_workers(&self, shots: usize, workers: usize) -> PyResult<PyShotVec> {
+        let mut engine = self.inner.lock().unwrap();
+        match engine.run_with_workers(shots, workers) {
+            Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
+            Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
+        }
+    }
+}
+
 /// Python wrapper for program types
 #[pyclass(name = "Qasm")]
 #[derive(Clone)]
@@ -485,6 +586,16 @@ pub fn phir_json_engine() -> PyPhirJsonEngineBuilder {
     PyPhirJsonEngineBuilder {
         inner: pecos::phir_json_engine(),
     }
+}
+
+/// Create a HUGR engine builder (direct HUGR interpreter)
+///
+/// This creates a builder for the direct HUGR interpreter engine,
+/// which executes HUGR programs without LLVM compilation.
+/// This is useful for testing and for simple circuits.
+#[pyfunction]
+pub fn hugr_engine() -> PyHugrEngineBuilder {
+    PyHugrEngineBuilder::new()
 }
 
 /// Create a general noise model builder
@@ -1146,8 +1257,8 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Engine builders
     m.add_class::<PyQasmEngineBuilder>()?;
     m.add_class::<PyQisEngineBuilder>()?;
-    m.add_class::<PyQisEngineBuilder>()?;
     m.add_class::<PyPhirJsonEngineBuilder>()?;
+    m.add_class::<PyHugrEngineBuilder>()?;
 
     // Simulation builders are now handled by the unified PySimBuilder in sim.rs
 
@@ -1155,6 +1266,7 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyQasmSimulation>()?;
     m.add_class::<PyPhirJsonSimulation>()?;
     m.add_class::<PyQisControlSimulation>()?;
+    m.add_class::<PyHugrSimulation>()?;
 
     // Program types
     m.add_class::<PyQasm>()?;
@@ -1178,6 +1290,7 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(self::qis_engine, m)?)?;
     m.add_function(wrap_pyfunction!(self::selene_runtime, m)?)?;
     m.add_function(wrap_pyfunction!(self::phir_json_engine, m)?)?;
+    m.add_function(wrap_pyfunction!(self::hugr_engine, m)?)?;
 
     // Interface builder functions
     m.add_function(wrap_pyfunction!(self::qis_helios_interface, m)?)?;

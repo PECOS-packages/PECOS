@@ -2754,6 +2754,7 @@ dependencies = [
  "pecos-cppsparsesim",
  "pecos-decoders",
  "pecos-engines",
+ "pecos-hugr",
  "pecos-hugr-qis",
  "pecos-llvm",
  "pecos-num",
@@ -2886,6 +2887,22 @@ name = "pecos-go-ffi"
 version = "0.1.0-dev0"
 dependencies = [
  "pecos",
+]
+
+[[package]]
+name = "pecos-hugr"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "log",
+ "pecos-core",
+ "pecos-engines",
+ "pecos-quantum",
+ "pecos-quest",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tket",
 ]
 
 [[package]]

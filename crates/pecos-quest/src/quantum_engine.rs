@@ -96,6 +96,18 @@ impl Engine for QuestStateVecEngine {
                             .cx(usize::from(qubits[0]), usize::from(qubits[1]));
                     }
                 }
+                GateType::CY => {
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        self.simulator
+                            .cy(usize::from(qubits[0]), usize::from(qubits[1]));
+                    }
+                }
+                GateType::CZ => {
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        self.simulator
+                            .cz(usize::from(qubits[0]), usize::from(qubits[1]));
+                    }
+                }
                 GateType::RZZ => {
                     for qubits in cmd.qubits.chunks_exact(2) {
                         self.simulator.rzz(cmd.params[0], *qubits[0], *qubits[1]);
@@ -280,6 +292,18 @@ impl Engine for QuestDensityMatrixEngine {
                     for qubits in cmd.qubits.chunks_exact(2) {
                         self.simulator
                             .cx(usize::from(qubits[0]), usize::from(qubits[1]));
+                    }
+                }
+                GateType::CY => {
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        self.simulator
+                            .cy(usize::from(qubits[0]), usize::from(qubits[1]));
+                    }
+                }
+                GateType::CZ => {
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        self.simulator
+                            .cz(usize::from(qubits[0]), usize::from(qubits[1]));
                     }
                 }
                 GateType::RZZ => {
@@ -806,6 +830,41 @@ impl Engine for QuestCudaStateVecEngine {
                             (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
                         unsafe {
                             (self.backend.apply_cnot)(self.qureg_handle, ctrl, tgt);
+                        }
+                    }
+                }
+                GateType::CY => {
+                    // CY = (I ⊗ S†) · CX · (I ⊗ S) = Controlled-Y
+                    // Decompose as: S†(target) · CX · S(target)
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let (ctrl, tgt) =
+                            (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                        unsafe {
+                            // S†(tgt) = phase(-pi/2)
+                            (self.backend.apply_phase_shift)(
+                                self.qureg_handle,
+                                tgt,
+                                -std::f64::consts::FRAC_PI_2,
+                            );
+                            (self.backend.apply_cnot)(self.qureg_handle, ctrl, tgt);
+                            // S(tgt) = phase(pi/2)
+                            (self.backend.apply_phase_shift)(
+                                self.qureg_handle,
+                                tgt,
+                                std::f64::consts::FRAC_PI_2,
+                            );
+                        }
+                    }
+                }
+                GateType::CZ => {
+                    // CZ = H(target) · CX · H(target)
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        let (ctrl, tgt) =
+                            (usize::from(qubits[0]) as i32, usize::from(qubits[1]) as i32);
+                        unsafe {
+                            (self.backend.apply_hadamard)(self.qureg_handle, tgt);
+                            (self.backend.apply_cnot)(self.qureg_handle, ctrl, tgt);
+                            (self.backend.apply_hadamard)(self.qureg_handle, tgt);
                         }
                     }
                 }

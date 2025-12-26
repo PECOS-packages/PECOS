@@ -35,6 +35,7 @@ pecos-qis-core = { workspace = true, optional = true }
 pecos-qis-selene = { workspace = true, optional = true }
 pecos-llvm = { workspace = true, optional = true }
 pecos-hugr-qis = { workspace = true, optional = true }
+pecos-hugr = { workspace = true, optional = true }
 pecos-phir = { workspace = true, optional = true, features = ["hugr"] }
 pecos-rng = { workspace = true, optional = true }
 pecos-num = { workspace = true, optional = true }
@@ -100,8 +101,8 @@ llvm = ["sim", "dep:pecos-llvm"]
 qis = ["llvm", "dep:pecos-qis-core", "pecos-qis-core/llvm",
        "dep:pecos-qis-selene"]
 
-# hugr: HUGR program support (requires QIS)
-hugr = ["qis", "dep:pecos-hugr-qis", "pecos-hugr-qis/llvm", "pecos-qis-selene/hugr", "pecos-quantum/hugr"]
+# hugr: HUGR program support (requires QIS) + direct HUGR interpreter
+hugr = ["qis", "dep:pecos-hugr-qis", "pecos-hugr-qis/llvm", "pecos-qis-selene/hugr", "pecos-quantum/hugr", "dep:pecos-hugr"]
 wasm = ["sim", "dep:pecos-wasm", "pecos-wasm/wasm"]
 
 # Quantum simulator backends (C++ wrappers)

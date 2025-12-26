@@ -604,7 +604,7 @@ impl QASMEngine {
             | GateType::Tdg
             | GateType::Prep
             | GateType::QAlloc => self.process_single_qubit_gate(gate.gate_type, &qubits),
-            GateType::CX | GateType::SZZ | GateType::SZZdg => {
+            GateType::CX | GateType::CY | GateType::CZ | GateType::SZZ | GateType::SZZdg => {
                 self.process_two_qubit_gate(gate.gate_type, &qubits)
             }
             GateType::RX

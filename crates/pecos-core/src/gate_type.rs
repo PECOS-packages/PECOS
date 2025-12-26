@@ -47,8 +47,8 @@ pub enum GateType {
     R1XY = 36,
 
     CX = 50,
-    // CY = 51
-    // CZ = 52
+    CY = 51,
+    CZ = 52,
     // SXX = 53
     // SXXdg = 54
     // SYY = 55
@@ -110,6 +110,8 @@ impl From<u8> for GateType {
             35 => GateType::U,
             36 => GateType::R1XY,
             50 => GateType::CX,
+            51 => GateType::CY,
+            52 => GateType::CZ,
             57 => GateType::SZZ,
             58 => GateType::SZZdg,
             82 => GateType::RZZ,
@@ -147,6 +149,8 @@ impl GateType {
             | GateType::T
             | GateType::Tdg
             | GateType::CX
+            | GateType::CY
+            | GateType::CZ
             | GateType::SZZ
             | GateType::SZZdg
             | GateType::Measure
@@ -204,7 +208,12 @@ impl GateType {
             | GateType::MeasCrosstalkLocalPayload => 1,
 
             // Two-qubit gates
-            GateType::CX | GateType::SZZ | GateType::SZZdg | GateType::RZZ => 2,
+            GateType::CX
+            | GateType::CY
+            | GateType::CZ
+            | GateType::SZZ
+            | GateType::SZZdg
+            | GateType::RZZ => 2,
         }
     }
 
@@ -270,6 +279,8 @@ impl fmt::Display for GateType {
             GateType::U => write!(f, "U"),
             GateType::R1XY => write!(f, "R1XY"),
             GateType::CX => write!(f, "CX"),
+            GateType::CY => write!(f, "CY"),
+            GateType::CZ => write!(f, "CZ"),
             GateType::SZZ => write!(f, "SZZ"),
             GateType::SZZdg => write!(f, "SZZdg"),
             GateType::RZZ => write!(f, "RZZ"),

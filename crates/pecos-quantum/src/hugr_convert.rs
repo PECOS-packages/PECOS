@@ -82,6 +82,8 @@ pub fn hugr_op_to_gate_type(op_name: &str) -> Option<GateType> {
         "Rz" => Some(GateType::RZ),
         // Two-qubit gates
         "CX" => Some(GateType::CX),
+        "CY" => Some(GateType::CY),
+        "CZ" => Some(GateType::CZ),
         "ZZMax" => Some(GateType::SZZ),
         // Lifecycle operations
         "QAlloc" => Some(GateType::QAlloc),
@@ -111,6 +113,8 @@ pub fn gate_type_to_hugr_op(gate_type: GateType) -> Option<&'static str> {
         GateType::RZ => Some("Rz"),
         // Two-qubit gates
         GateType::CX => Some("CX"),
+        GateType::CY => Some("CY"),
+        GateType::CZ => Some("CZ"),
         GateType::SZZ => Some("ZZMax"),
         // Lifecycle operations
         GateType::QAlloc => Some("QAlloc"),
@@ -144,6 +148,8 @@ fn gate_type_to_tket_op(gate_type: GateType) -> Option<TketOp> {
         GateType::RY => Some(TketOp::Ry),
         GateType::RZ => Some(TketOp::Rz),
         GateType::CX => Some(TketOp::CX),
+        GateType::CY => Some(TketOp::CY),
+        GateType::CZ => Some(TketOp::CZ),
         GateType::QAlloc => Some(TketOp::QAlloc),
         GateType::QFree => Some(TketOp::QFree),
         GateType::Measure => Some(TketOp::Measure),
@@ -171,7 +177,8 @@ struct QuantumOp {
 }
 
 /// Check if a gate type is a rotation gate that takes angle parameters.
-fn is_rotation_gate(gate_type: GateType) -> bool {
+#[must_use]
+pub fn is_rotation_gate(gate_type: GateType) -> bool {
     matches!(gate_type, GateType::RX | GateType::RY | GateType::RZ)
 }
 
@@ -527,7 +534,12 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
 /// - 0.25 turns = pi/2 radians (quarter turn)
 /// - 0.5 turns = pi radians (half turn)
 /// - 1.0 turns = 2*pi radians (full turn)
-fn try_extract_rotation_angle(
+///
+/// # Arguments
+/// * `hugr` - The HUGR graph
+/// * `gate_node` - The rotation gate node
+/// * `num_qubit_inputs` - Number of qubit inputs (angle is after these)
+pub fn try_extract_rotation_angle(
     hugr: &Hugr,
     gate_node: Node,
     num_qubit_inputs: usize,

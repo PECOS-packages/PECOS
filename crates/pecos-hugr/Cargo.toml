@@ -1,0 +1,41 @@
+[package]
+name = "pecos-hugr"
+version.workspace = true
+edition.workspace = true
+readme.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Direct HUGR interpreter engine for PECOS quantum simulator"
+
+[dependencies]
+# Logging
+log.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Serialization
+serde_json.workspace = true
+
+# HUGR support
+tket.workspace = true
+
+# Workspace dependencies
+pecos-core.workspace = true
+pecos-engines.workspace = true
+pecos-quantum = { workspace = true, features = ["hugr"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+# For creating test HUGRs from DagCircuit
+pecos-quantum = { workspace = true, features = ["hugr"] }
+# For integration testing with quantum simulator
+pecos-quest.workspace = true
+
+[lints]
+workspace = true

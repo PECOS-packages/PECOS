@@ -193,6 +193,38 @@ impl Engine for StateVecEngine {
                             .cx(usize::from(qubits[0]), usize::from(qubits[1]));
                     }
                 }
+                GateType::CY => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "CY gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        debug!(
+                            "Processing CY gate with control {:?} and target {:?}",
+                            qubits[0], qubits[1]
+                        );
+                        self.simulator
+                            .cy(usize::from(qubits[0]), usize::from(qubits[1]));
+                    }
+                }
+                GateType::CZ => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "CZ gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    for qubits in cmd.qubits.chunks_exact(2) {
+                        debug!(
+                            "Processing CZ gate with control {:?} and target {:?}",
+                            qubits[0], qubits[1]
+                        );
+                        self.simulator
+                            .cz(usize::from(qubits[0]), usize::from(qubits[1]));
+                    }
+                }
                 GateType::RZZ => {
                     if cmd.qubits.len() % 2 != 0 {
                         return Err(quantum_error(format!(

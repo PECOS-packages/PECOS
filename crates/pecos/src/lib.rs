@@ -153,6 +153,9 @@ pub mod engines {
 
     #[cfg(feature = "phir")]
     pub use pecos_phir_json::{PhirJsonEngine, PhirJsonEngineBuilder, phir_json_engine};
+
+    #[cfg(feature = "hugr")]
+    pub use pecos_hugr::{HugrEngine, HugrEngineBuilder, hugr_engine, hugr_sim};
 }
 
 /// Quantum simulation backends and circuit representation
@@ -704,6 +707,10 @@ pub use pecos_qis_core::{QisEngineBuilder, qis_engine, setup_qis_engine_with_run
 pub use pecos_phir::PhirConfig;
 #[cfg(feature = "phir")]
 pub use pecos_phir_json::{PhirJsonEngineBuilder, phir_json_engine};
+
+// Direct HUGR interpreter (doesn't require LLVM)
+#[cfg(feature = "hugr")]
+pub use pecos_hugr::{HugrEngine, HugrEngineBuilder, hugr_engine, hugr_sim};
 
 // Quantum backends
 #[cfg(feature = "sim")]

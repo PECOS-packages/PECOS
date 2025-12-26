@@ -28,10 +28,10 @@ This guide will help you get up and running with PECOS quickly.
 
     ```toml
     [dependencies]
-    pecos = { version = "0.1", features = ["qasm"] }
+    pecos = { version = "0.1", features = ["hugr"] }
     ```
 
-    The `qasm` feature enables QASM simulation. For PHIR support, add `phir`. See the [Rust API docs](https://docs.rs/pecos) for all available features.
+    The `hugr` feature enables HUGR simulation. For QASM support, add `qasm`. See the [Rust API docs](https://docs.rs/pecos) for all available features.
 
 ## Verify Installation
 
@@ -69,56 +69,56 @@ The result is the state $\frac{1}{\sqrt{2}}(|00\rangle + |11\rangle)$, where mea
 
 === ":fontawesome-brands-python: Python"
 
-    ```python
-    from pecos import sim, Qasm
+    We'll use **Guppy**, a Python-embedded quantum programming language that offers type-safe qubit tracking and native control flow:
 
-    # Define a Bell state circuit in OpenQASM
-    qasm_code = """
-    OPENQASM 2.0;
-    include "qelib1.inc";
-    qreg q[2];
-    creg c[2];
-    h q[0];
-    cx q[0], q[1];
-    measure q -> c;
-    """
+    ```python
+    from guppylang import guppy
+    from guppylang.std.quantum import h, cx, measure, qubit
+    from pecos import sim, Guppy
+    from pecos_rslib import state_vector
+
+
+    @guppy
+    def bell_state() -> tuple[bool, bool]:
+        """Create and measure a Bell state."""
+        q0 = qubit()
+        q1 = qubit()
+        h(q0)
+        cx(q0, q1)
+        return measure(q0), measure(q1)
+
 
     # Run 10 shots of the simulation
-    results = sim(Qasm(qasm_code)).seed(42).run(10)
+    results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).seed(42).run(10)
 
-    # View results (0 = both |0⟩, 3 = both |1⟩)
+    # View results
     print(f"Results: {results.to_dict()}")
     ```
 
 === ":fontawesome-brands-rust: Rust"
 
+    In Rust, we load pre-compiled **HUGR** (Hierarchical Unified Graph Representation) files:
+
     ```rust
-    use pecos::prelude::*;
+    use pecos_hugr::hugr_sim;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
-        // Define a Bell state circuit in OpenQASM
-        let qasm_code = r#"
-            OPENQASM 2.0;
-            include "qelib1.inc";
-            qreg q[2];
-            creg c[2];
-            h q[0];
-            cx q[0], q[1];
-            measure q -> c;
-        "#;
-
-        let program = Qasm::from_string(qasm_code);
-
-        // Run 10 shots of the simulation
-        let results = sim(program)
+        // Load and run a pre-compiled Bell state circuit
+        let results = hugr_sim("bell_state.hugr")
             .seed(42)
             .run(10)?;
 
         // View results
-        println!("Results: {:?}", results);
+        for shot in &results.shots {
+            println!("Measurement: {:?}", shot.data);
+        }
         Ok(())
     }
     ```
+
+    !!! note "HUGR Files"
+        HUGR files are compiled from Guppy programs or other quantum tools.
+        See [HUGR & Guppy Simulation](hugr-simulation.md) for how to generate them.
 
 ### Understanding the Output
 
@@ -127,13 +127,17 @@ Run the code multiple times (with different seeds). You'll notice:
 - Results contain values like `0` (binary `00`) and `3` (binary `11`)
 - Both qubits **always** have the same value—this is quantum entanglement!
 
-The `sim()` function is PECOS's unified simulation API. It accepts circuits in various formats (QASM, HUGR, etc.) and provides a builder pattern for configuration.
+The `sim()` function is PECOS's unified simulation API. It accepts circuits in various formats (Guppy, HUGR, QASM) and provides a builder pattern for configuration.
 
-This demonstrates PECOS's stabilizer simulator, which efficiently simulates Clifford circuits (circuits using H, S, CNOT, and similar gates). Stabilizer simulation is the foundation for simulating quantum error correction codes.
+The Python example uses a state vector simulator, which supports all quantum gates. For Clifford-only circuits (H, S, CNOT, measurements), PECOS also provides efficient stabilizer simulators—see the [Simulators](simulators.md) guide.
+
+!!! tip "Working with existing OpenQASM code?"
+    PECOS also supports OpenQASM 2.0. See the [QASM Simulation](qasm-simulation.md) guide.
 
 ## Next Steps
 
-- **[QASM Simulation](qasm-simulation.md)**: Learn the full simulation API
+- **[HUGR & Guppy Simulation](hugr-simulation.md)**: Measurement-based control flow and advanced Guppy features
+- **[QASM Simulation](qasm-simulation.md)**: Full QASM simulation API for existing OpenQASM code
 - **[Simulators](simulators.md)**: Choose the right simulation backend
 - **[Noise Model Builders](noise-model-builders.md)**: Add realistic noise to your simulations
 - **[Decoders](decoders.md)**: Explore quantum error correction decoding

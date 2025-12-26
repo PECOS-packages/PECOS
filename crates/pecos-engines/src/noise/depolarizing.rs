@@ -178,7 +178,12 @@ impl DepolarizingNoiseModel {
                     trace!("Applying single-qubit gate with possible fault");
                     self.apply_sq_faults(&mut builder, gate);
                 }
-                GateType::CX | GateType::RZZ | GateType::SZZ | GateType::SZZdg => {
+                GateType::CX
+                | GateType::CY
+                | GateType::CZ
+                | GateType::RZZ
+                | GateType::SZZ
+                | GateType::SZZdg => {
                     NoiseUtils::add_gate_to_builder(&mut builder, gate);
                     trace!("Applying two-qubit gate with possible fault");
                     self.apply_tq_faults(&mut builder, gate);

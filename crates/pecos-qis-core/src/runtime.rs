@@ -209,4 +209,29 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
         // Default implementation does nothing
         let _ = size;
     }
+
+    /// Check if the runtime needs to re-execute with known measurements
+    ///
+    /// This is set to true after measurements are provided for programs
+    /// that may have conditional logic depending on measurement results.
+    /// The engine should call `reload_operations()` with new operations
+    /// from the interface's `execute_with_measurements()`.
+    fn needs_reexecution(&self) -> bool {
+        // Default: no re-execution needed (for static circuits)
+        false
+    }
+
+    /// Clear the re-execution flag after operations have been reloaded
+    fn clear_reexecution_flag(&mut self) {
+        // Default: no-op
+    }
+
+    /// Reload operations from a new execution (used for dynamic circuits)
+    ///
+    /// This is called when re-executing with known measurement values
+    /// allows conditionals in the program to take the correct branches.
+    fn reload_operations(&mut self, operations: OperationCollector) {
+        // Default: just reload via load_interface
+        let _ = self.load_interface(operations);
+    }
 }

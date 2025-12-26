@@ -67,8 +67,8 @@ impl From<std::io::Error> for RuntimeFetchError {
 /// Returns an error if the Selene simple runtime library cannot be found.
 pub fn selene_simple_runtime() -> Result<SeleneRuntime, RuntimeFetchError> {
     let runtime_path = find_built_selene_runtime("selene_simple_runtime")?;
-    eprintln!(
-        "[selene_simple_runtime] Found runtime at: {}",
+    log::debug!(
+        "selene_simple_runtime: Found runtime at: {}",
         runtime_path.display()
     );
     let runtime = SeleneRuntime::new(runtime_path);

@@ -181,6 +181,7 @@ impl PyQisEngineBuilder {
                 explicit_num_qubits: None,
                 keep_intermediate_files: false,
                 hugr_bytes: None,
+                enable_dynamic: false,
             }),
         })
     }
@@ -310,6 +311,8 @@ pub struct PyQisControlSimBuilder {
     pub(crate) explicit_num_qubits: Option<usize>,
     pub(crate) keep_intermediate_files: bool,
     pub(crate) hugr_bytes: Option<Vec<u8>>,
+    /// Enable dynamic circuit execution (for programs with conditionals depending on measurements)
+    pub(crate) enable_dynamic: bool,
 }
 
 /// Python wrapper for built QIS control simulation

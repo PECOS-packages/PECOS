@@ -170,7 +170,7 @@ impl ByteMessageBuilder {
         // Create and write message header
         let payload_size = u32::try_from(payload.len()).unwrap_or_else(|_| {
             // This is a very unlikely case, but we handle it gracefully
-            eprintln!("Warning: Payload size exceeds u32::MAX, using maximum value");
+            log::warn!("Payload size exceeds u32::MAX, using maximum value");
             u32::MAX
         });
 
@@ -684,7 +684,7 @@ impl ByteMessageBuilder {
         let header = BatchHeader::new(
             self.msg_count,
             u32::try_from(total_size).unwrap_or_else(|_| {
-                eprintln!("Warning: Message size exceeds u32::MAX, using maximum value");
+                log::warn!("Message size exceeds u32::MAX, using maximum value");
                 u32::MAX
             }),
         );

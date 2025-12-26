@@ -3031,13 +3031,16 @@ version = "0.1.1"
 name = "pecos-qis-core"
 version = "0.1.1"
 dependencies = [
+ "crossbeam-channel",
  "dyn-clone",
  "inkwell 0.7.1",
+ "libloading 0.9.0",
  "log",
  "pecos-build",
  "pecos-core",
  "pecos-engines",
  "pecos-programs",
+ "pecos-qis-ffi",
  "pecos-qis-ffi-types",
  "pecos-qis-selene",
  "pecos-rng",

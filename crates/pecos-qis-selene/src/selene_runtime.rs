@@ -44,6 +44,13 @@ pub struct SeleneRuntime {
 
     /// Current operation index
     current_op_index: usize,
+
+    /// Flag indicating we need to re-execute with known measurements
+    /// Set to true after measurements are provided for dynamic circuits
+    needs_reexecution: bool,
+
+    /// Track measurement result IDs that have been seen but not yet resolved
+    pending_measurements: Vec<usize>,
 }
 
 // Safety: The Selene runtime is designed to be thread-safe
@@ -64,7 +71,49 @@ impl SeleneRuntime {
             num_results: 0,
             interface: None,
             current_op_index: 0,
+            needs_reexecution: false,
+            pending_measurements: Vec::new(),
         }
+    }
+
+    /// Check if this runtime needs re-execution with known measurements
+    ///
+    /// This is set to true after measurements are provided for programs
+    /// that may have conditional logic depending on measurement results.
+    #[must_use]
+    pub fn needs_reexecution(&self) -> bool {
+        self.needs_reexecution
+    }
+
+    /// Clear the re-execution flag after operations have been reloaded
+    pub fn clear_reexecution_flag(&mut self) {
+        self.needs_reexecution = false;
+    }
+
+    /// Reload operations from a new execution (used for dynamic circuits)
+    pub fn reload_operations(&mut self, operations: OperationCollector) {
+        debug!(
+            "Reloading operations with {} ops (previous: {} ops)",
+            operations.operations.len(),
+            self.interface.as_ref().map_or(0, |i| i.operations.len())
+        );
+
+        // Update qubit and result counts from new execution
+        self.num_qubits = operations
+            .allocated_qubits
+            .iter()
+            .max()
+            .map_or(0, |&q| q + 1);
+        self.num_results = operations
+            .allocated_results
+            .iter()
+            .max()
+            .map_or(0, |&r| r + 1);
+
+        self.interface = Some(operations);
+        self.current_op_index = 0;
+        self.needs_reexecution = false;
+        self.pending_measurements.clear();
     }
 
     /// Load the Selene plugin
@@ -114,6 +163,10 @@ impl SeleneRuntime {
     }
 
     /// Process operations from the interface sequentially
+    ///
+    /// This method now breaks at measurement operations to allow the quantum
+    /// simulator to execute measurements before continuing. This is essential
+    /// for dynamic circuits where conditionals depend on measurement results.
     fn process_interface_ops(&mut self) -> Result<Option<Vec<QuantumOp>>> {
         let interface = self
             .interface
@@ -121,9 +174,8 @@ impl SeleneRuntime {
             .ok_or(RuntimeError::NoProgramLoaded)?;
 
         self.operations_buffer.clear();
+        self.pending_measurements.clear();
 
-        // For quantum programs, process ALL quantum operations in a single batch
-        // to maintain quantum coherence and entanglement
         while self.current_op_index < interface.operations.len() {
             let op = &interface.operations[self.current_op_index];
 
@@ -132,6 +184,23 @@ impl SeleneRuntime {
                     trace!("Processing quantum operation: {qop:?}");
                     self.operations_buffer.push(qop.clone());
                     self.current_op_index += 1;
+
+                    // Check if this is a measurement operation
+                    if let QuantumOp::Measure(_, result_id) = qop {
+                        self.pending_measurements.push(*result_id);
+                        debug!(
+                            "Breaking batch after measurement (result_id={result_id}) to wait for results"
+                        );
+                        // Break the batch after measurements to get results
+                        // This enables dynamic circuits with conditionals
+                        break;
+                    }
+
+                    // Also break if we've reached the batch size limit
+                    if self.operations_buffer.len() >= self.batch_size {
+                        debug!("Breaking batch at size limit ({})", self.batch_size);
+                        break;
+                    }
                 }
                 Operation::AllocateQubit { id } => {
                     trace!("Allocating qubit {id}");
@@ -198,6 +267,8 @@ impl Clone for SeleneRuntime {
             num_results: self.num_results,
             interface: self.interface.clone(),
             current_op_index: self.current_op_index,
+            needs_reexecution: self.needs_reexecution,
+            pending_measurements: self.pending_measurements.clone(),
         }
     }
 }
@@ -228,6 +299,8 @@ impl QisRuntime for SeleneRuntime {
 
         self.interface = Some(interface);
         self.current_op_index = 0;
+        self.needs_reexecution = false;
+        self.pending_measurements.clear();
 
         // Don't load the plugin yet - defer until actually needed
         // This allows creating and testing the runtime without a real .so file
@@ -251,18 +324,18 @@ impl QisRuntime for SeleneRuntime {
         );
 
         // Store measurements in classical state
-        for (result_id, value) in measurements {
+        for (result_id, value) in &measurements {
             trace!(
                 "Measurement result {} = {} (num_results={})",
                 result_id, value, self.num_results
             );
-            self.state.measurements.insert(result_id, value);
+            self.state.measurements.insert(*result_id, *value);
 
             // For Selene runtime: Only pass measurements that were explicitly allocated
             // The Selene runtime doesn't support dynamic result allocation, so we must
             // check if this result was known at compile time
             if let Some(interface) = &mut self.interface {
-                if interface.allocated_results.contains(&result_id) {
+                if interface.allocated_results.contains(result_id) {
                     // This result was explicitly allocated, try to pass to Selene runtime
                     if let Some(lib) = &self.library
                         && let Some(instance) = self.instance
@@ -273,7 +346,7 @@ impl QisRuntime for SeleneRuntime {
                                     b"selene_runtime_set_bool_result",
                                 )
                             {
-                                let errno = set_result_fn(instance, result_id as u64, value);
+                                let errno = set_result_fn(instance, *result_id as u64, *value);
                                 if errno != 0 {
                                     // Unexpected error - log it at trace level since this is normal
                                     // for programs that don't explicitly allocate all result slots
@@ -293,10 +366,28 @@ impl QisRuntime for SeleneRuntime {
                 }
 
                 // Update the interface with the measurement result
-                interface.store_result(result_id, value);
+                interface.store_result(*result_id, *value);
             } else {
                 // No interface loaded - just store locally
                 log::trace!("No interface loaded, storing measurement {result_id} locally");
+            }
+        }
+
+        // Check if there are remaining operations that might depend on these measurements
+        // If so, we need to re-execute the program with the known measurement values
+        // so that conditionals can evaluate correctly
+        if let Some(interface) = &self.interface {
+            let remaining_ops = interface
+                .operations
+                .len()
+                .saturating_sub(self.current_op_index);
+            if remaining_ops > 0 && !measurements.is_empty() {
+                debug!(
+                    "Setting needs_reexecution=true: {} ops remaining after {} measurements",
+                    remaining_ops,
+                    measurements.len()
+                );
+                self.needs_reexecution = true;
             }
         }
 
@@ -323,6 +414,18 @@ impl QisRuntime for SeleneRuntime {
 
     fn set_batch_size(&mut self, size: usize) {
         self.batch_size = size;
+    }
+
+    fn needs_reexecution(&self) -> bool {
+        self.needs_reexecution
+    }
+
+    fn clear_reexecution_flag(&mut self) {
+        self.needs_reexecution = false;
+    }
+
+    fn reload_operations(&mut self, operations: OperationCollector) {
+        SeleneRuntime::reload_operations(self, operations);
     }
 
     fn shot_start(&mut self, shot_id: u64, seed: Option<u64>) -> Result<()> {
@@ -353,6 +456,8 @@ impl QisRuntime for SeleneRuntime {
         // Reset state for new shot
         self.state = ClassicalState::default();
         self.current_op_index = 0;
+        self.needs_reexecution = false;
+        self.pending_measurements.clear();
 
         Ok(())
     }

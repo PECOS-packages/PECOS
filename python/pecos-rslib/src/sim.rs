@@ -128,6 +128,7 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
                 explicit_num_qubits: None,
                 keep_intermediate_files: false,
                 hugr_bytes: None, // QIS programs don't have HUGR bytes
+                enable_dynamic: false,
             }),
         })
     } else if let Ok(hugr_prog) = program.extract::<PyHugr>(py) {
@@ -190,6 +191,7 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
                 explicit_num_qubits: None,
                 keep_intermediate_files: false,
                 hugr_bytes: Some(hugr_prog.inner.hugr.clone()), // Store HUGR bytes for artifact saving
+                enable_dynamic: false,
             }),
         })
     } else if let Ok(phir_prog) = program.extract::<PyPhirJson>(py) {
@@ -426,6 +428,32 @@ impl PySimBuilder {
         })
     }
 
+    /// Enable dynamic circuit execution
+    ///
+    /// When enabled, the LLVM program runs on a worker thread and coordinates
+    /// with the quantum simulator via channels. This allows conditionals that
+    /// depend on measurement results to work correctly (dynamic circuits).
+    ///
+    /// # Example
+    /// ```python
+    /// # Enable dynamic execution for circuits with measurement-dependent conditionals
+    /// result = sim(Guppy(my_func)).qubits(10).quantum(state_vector()).dynamic(True).run(100)
+    /// ```
+    fn dynamic(&mut self, enable: bool) -> PyResult<Self> {
+        match &mut self.inner {
+            SimBuilderInner::QisControl(builder) => {
+                builder.enable_dynamic = enable;
+            }
+            SimBuilderInner::Qasm(_) | SimBuilderInner::PhirJson(_) | SimBuilderInner::Empty => {
+                // These engine types don't need dynamic execution
+                // (they already support it natively)
+            }
+        }
+        Ok(PySimBuilder {
+            inner: self.inner.clone(),
+        })
+    }
+
     /// Run the simulation
     #[allow(clippy::too_many_lines)] // Complex simulation dispatch with multiple engine types
     fn run(&self, shots: usize) -> PyResult<crate::shot_results_bindings::PyShotVec> {
@@ -518,6 +546,14 @@ impl PySimBuilder {
                 let engine_builder = builder_lock
                     .take()
                     .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
+
+                // Apply dynamic execution mode if enabled
+                let engine_builder = if builder.enable_dynamic {
+                    log::info!("Enabling dynamic circuit execution");
+                    engine_builder.dynamic(true)
+                } else {
+                    engine_builder
+                };
 
                 // Use the Rust sim_builder API directly (from pecos prelude)
                 let mut sim_builder = pecos::sim_builder().classical(engine_builder);
@@ -760,6 +796,14 @@ impl PySimBuilder {
                         .take()
                         .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
 
+                    // Apply dynamic execution mode if enabled
+                    let engine_builder = if builder.enable_dynamic {
+                        log::info!("Enabling dynamic circuit execution");
+                        engine_builder.dynamic(true)
+                    } else {
+                        engine_builder
+                    };
+
                     // Use the Rust sim_builder API directly (from pecos prelude)
                     let mut sim_builder = pecos::sim_builder().classical(engine_builder);
 
@@ -922,6 +966,7 @@ impl Clone for SimBuilderInner {
                     explicit_num_qubits: builder.explicit_num_qubits,
                     keep_intermediate_files: builder.keep_intermediate_files,
                     hugr_bytes: builder.hugr_bytes.clone(),
+                    enable_dynamic: builder.enable_dynamic,
                 })
             }
             SimBuilderInner::PhirJson(builder) => SimBuilderInner::PhirJson(PyPhirJsonSimBuilder {

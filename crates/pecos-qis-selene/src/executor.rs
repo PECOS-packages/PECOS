@@ -200,6 +200,36 @@ fn find_llvm_tool(tool_name: &str) -> PathBuf {
         })
 }
 
+// FFI function types for dynamic circuit coordination
+// These must be called via the dynamically loaded library to use the same statics
+
+/// Opaque type representing an execution context
+#[repr(C)]
+pub struct ExecutionContext {
+    _private: [u8; 0],
+}
+
+/// Wrapper for `ExecutionContext` pointer that is Send + Sync
+///
+/// This is safe because:
+/// 1. The `ExecutionContext` is internally thread-safe (uses atomic operations and mutexes)
+/// 2. Each execution context is designed to be shared between a worker thread and main thread
+/// 3. The pointer is only used to call FFI functions that handle their own synchronization
+struct ExecutionContextPtr(*mut ExecutionContext);
+
+// SAFETY: ExecutionContext is internally thread-safe and designed for cross-thread sharing
+unsafe impl Send for ExecutionContextPtr {}
+unsafe impl Sync for ExecutionContextPtr {}
+
+type CreateExecutionContextFn = unsafe extern "C" fn() -> *mut ExecutionContext;
+type DestroyExecutionContextFn = unsafe extern "C" fn(ctx: *mut ExecutionContext);
+type RegisterExecutionContextFn = unsafe extern "C" fn(ctx: *mut ExecutionContext);
+type EnableDynamicModeFn = unsafe extern "C" fn();
+type DisableDynamicModeFn = unsafe extern "C" fn();
+type WaitForNeedResultFn = unsafe extern "C" fn(timeout_ms: u64) -> u64;
+type SetMeasurementResultFn = unsafe extern "C" fn(result_id: u64, value: bool);
+type SignalResultReadyFn = unsafe extern "C" fn();
+
 /// Helios interface implementation
 ///
 /// This interface:
@@ -222,6 +252,14 @@ pub struct QisHeliosInterface {
 
     /// Keep temporary files alive (`TempPath` auto-deletes when dropped)
     temp_files: Vec<tempfile::TempPath>,
+
+    /// Loaded QIS FFI library for dynamic execution
+    /// We keep this loaded for the lifetime of dynamic execution
+    qis_ffi_lib: Option<Library>,
+
+    /// Execution context for dynamic circuit coordination
+    /// Created when dynamic mode is enabled, destroyed when disabled
+    execution_context: Option<ExecutionContextPtr>,
 }
 
 impl QisHeliosInterface {
@@ -234,6 +272,8 @@ impl QisHeliosInterface {
             format: ProgramFormat::QisBitcode,
             metadata: BTreeMap::new(),
             temp_files: Vec::new(),
+            qis_ffi_lib: None,
+            execution_context: None,
         }
     }
 
@@ -801,8 +841,17 @@ entry:
                 .arg("-shared") // Create shared library instead of executable
                 .arg("-o")
                 .arg(&so_path_for_clang)
-                .arg(&program_temp_path)
-                .arg(&helios_lib_path);
+                .arg(&program_temp_path);
+            // NOTE: We intentionally do NOT link helios_lib_path here.
+            // The helios library statically defines ___read_future_bool which would
+            // shadow our dynamic version from libpecos_qis_ffi.so.
+            // Instead, we let all ___* symbols resolve at runtime from libpecos_qis_ffi.so
+            // which is loaded with RTLD_GLOBAL before program.so.
+            // This enables dynamic circuits because our ___read_future_bool has the
+            // callback mechanism to pause and get measurement results from the simulator.
+            debug!(
+                "Not linking helios library - ___* symbols will resolve from libpecos_qis_ffi.so at runtime"
+            );
         }
 
         // Add platform-specific linker flags
@@ -898,7 +947,14 @@ entry:
     }
 
     /// Execute the program by loading it in-process and calling `qmain()`
-    fn execute_program(&mut self) -> Result<OperationCollector, InterfaceError> {
+    ///
+    /// If `measurements` is Some, pre-populate the measurement results via the cdylib
+    /// before executing. This enables dynamic circuits where conditionals depend on
+    /// measurement results from previous simulation passes.
+    fn execute_program(
+        &mut self,
+        measurements: Option<&BTreeMap<usize, bool>>,
+    ) -> Result<OperationCollector, InterfaceError> {
         let so_path = self.executable_path.as_ref().ok_or_else(|| {
             InterfaceError::ExecutionError("No shared library created".to_string())
         })?;
@@ -938,6 +994,22 @@ entry:
         )?;
         debug!("QIS FFI library loaded successfully!");
 
+        // Step 1b: Register execution context if we have one (for dynamic execution)
+        // This ensures the newly loaded library instance has access to our context
+        if let Some(ExecutionContextPtr(ctx)) = self.execution_context {
+            let register_fn: Symbol<RegisterExecutionContextFn> = unsafe {
+                pecos_qis_lib
+                    .get(b"pecos_register_execution_context\0")
+                    .map_err(|e| {
+                        InterfaceError::ExecutionError(format!(
+                            "Failed to find pecos_register_execution_context: {e}"
+                        ))
+                    })?
+            };
+            unsafe { register_fn(ctx) };
+            debug!("Registered execution context on loaded library: {ctx:?}");
+        }
+
         // Step 2: Reset the QIS interface via the cdylib
         // IMPORTANT: We call the cdylib's version to ensure we're using the same thread-local
         // storage instance that the shim will use
@@ -949,6 +1021,27 @@ entry:
                 })?
         };
         unsafe { reset_fn() };
+
+        // Step 2b: Pre-populate measurement results if provided
+        // This enables dynamic circuits - the results are stored in the cdylib's thread-local
+        // storage where ___read_future_bool will find them
+        if let Some(measurements) = measurements {
+            type SetMeasurementResultFn = unsafe extern "C" fn(result_id: u64, value: bool);
+            let set_result_fn: Symbol<SetMeasurementResultFn> = unsafe {
+                pecos_qis_lib
+                    .get(b"pecos_set_measurement_result\0")
+                    .map_err(|e| {
+                        InterfaceError::ExecutionError(format!(
+                            "Failed to find pecos_set_measurement_result: {e}"
+                        ))
+                    })?
+            };
+
+            for (&result_id, &value) in measurements {
+                debug!("Pre-populating measurement result via cdylib: {result_id} = {value}");
+                unsafe { set_result_fn(result_id as u64, value) };
+            }
+        }
 
         // Step 3: Load our PECOS C shim with RTLD_GLOBAL
         // The shim has undefined __quantum__* symbols that will resolve to the cdylib
@@ -1039,17 +1132,17 @@ impl QisInterface for QisHeliosInterface {
     }
 
     fn collect_operations(&mut self) -> Result<OperationCollector, InterfaceError> {
-        // Execute the program and collect operations
-        self.execute_program()
+        // Execute the program and collect operations (no pre-populated measurements)
+        self.execute_program(None)
     }
 
     fn execute_with_measurements(
         &mut self,
-        _measurements: BTreeMap<usize, bool>,
+        measurements: BTreeMap<usize, bool>,
     ) -> Result<OperationCollector, InterfaceError> {
-        // TODO: Implement measurement support by pre-populating results via cdylib
-        // For now, just execute the program normally
-        self.execute_program()
+        // Execute with pre-populated measurements via the cdylib
+        // This enables dynamic circuits where conditionals depend on measurement results
+        self.execute_program(Some(&measurements))
     }
 
     fn metadata(&self) -> BTreeMap<String, String> {
@@ -1063,5 +1156,234 @@ impl QisInterface for QisHeliosInterface {
     fn reset(&mut self) -> Result<(), InterfaceError> {
         // Reset is not needed for this interface - it happens at the start of execute_program
         Ok(())
+    }
+
+    // ========================================================================
+    // Dynamic execution methods
+    // ========================================================================
+
+    fn supports_dynamic(&self) -> bool {
+        true
+    }
+
+    fn enable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
+        debug!("Enabling dynamic execution mode");
+
+        // Load the QIS FFI library if not already loaded
+        if self.qis_ffi_lib.is_none() {
+            let lib_path = Self::find_pecos_qis_lib()?;
+            debug!(
+                "Loading QIS FFI library for dynamic mode: {}",
+                lib_path.display()
+            );
+
+            let lib = unsafe { Library::new(&lib_path) }.map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to load QIS FFI library for dynamic mode: {e}"
+                ))
+            })?;
+
+            self.qis_ffi_lib = Some(lib);
+        }
+
+        if let Some(ref lib) = self.qis_ffi_lib {
+            // Create an execution context if we don't have one
+            if self.execution_context.is_none() {
+                let create_fn: Symbol<CreateExecutionContextFn> = unsafe {
+                    lib.get(b"pecos_create_execution_context\0").map_err(|e| {
+                        InterfaceError::ExecutionError(format!(
+                            "Failed to find pecos_create_execution_context: {e}"
+                        ))
+                    })?
+                };
+                let ctx = unsafe { create_fn() };
+                debug!("Created execution context: {ctx:?}");
+                self.execution_context = Some(ExecutionContextPtr(ctx));
+            }
+
+            // Register the execution context on this thread
+            let register_fn: Symbol<RegisterExecutionContextFn> = unsafe {
+                lib.get(b"pecos_register_execution_context\0")
+                    .map_err(|e| {
+                        InterfaceError::ExecutionError(format!(
+                            "Failed to find pecos_register_execution_context: {e}"
+                        ))
+                    })?
+            };
+            if let Some(ExecutionContextPtr(ctx)) = self.execution_context {
+                unsafe { register_fn(ctx) };
+                debug!("Registered execution context: {ctx:?}");
+            }
+
+            // Now enable dynamic mode
+            let enable_fn: Symbol<EnableDynamicModeFn> = unsafe {
+                lib.get(b"pecos_enable_dynamic_mode\0").map_err(|e| {
+                    InterfaceError::ExecutionError(format!(
+                        "Failed to find pecos_enable_dynamic_mode: {e}"
+                    ))
+                })?
+            };
+            unsafe { enable_fn() };
+            debug!("Dynamic mode enabled via FFI");
+        }
+
+        Ok(())
+    }
+
+    fn disable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
+        debug!("Disabling dynamic execution mode");
+
+        if let Some(ref lib) = self.qis_ffi_lib {
+            // Disable dynamic mode first
+            let disable_fn: Symbol<DisableDynamicModeFn> = unsafe {
+                lib.get(b"pecos_disable_dynamic_mode\0").map_err(|e| {
+                    InterfaceError::ExecutionError(format!(
+                        "Failed to find pecos_disable_dynamic_mode: {e}"
+                    ))
+                })?
+            };
+            unsafe { disable_fn() };
+            debug!("Dynamic mode disabled via FFI");
+
+            // Unregister the execution context
+            let register_fn: Symbol<RegisterExecutionContextFn> = unsafe {
+                lib.get(b"pecos_register_execution_context\0")
+                    .map_err(|e| {
+                        InterfaceError::ExecutionError(format!(
+                            "Failed to find pecos_register_execution_context: {e}"
+                        ))
+                    })?
+            };
+            unsafe { register_fn(std::ptr::null_mut()) };
+            debug!("Unregistered execution context");
+
+            // Destroy the execution context
+            if let Some(ExecutionContextPtr(ctx)) = self.execution_context.take() {
+                let destroy_fn: Symbol<DestroyExecutionContextFn> = unsafe {
+                    lib.get(b"pecos_destroy_execution_context\0").map_err(|e| {
+                        InterfaceError::ExecutionError(format!(
+                            "Failed to find pecos_destroy_execution_context: {e}"
+                        ))
+                    })?
+                };
+                unsafe { destroy_fn(ctx) };
+                debug!("Destroyed execution context: {ctx:?}");
+            }
+        }
+
+        Ok(())
+    }
+
+    fn wait_for_result_needed(&self, timeout_ms: u64) -> Option<u64> {
+        if let Some(ref lib) = self.qis_ffi_lib {
+            let wait_fn: Symbol<WaitForNeedResultFn> =
+                unsafe { lib.get(b"pecos_wait_for_need_result\0").ok()? };
+            let result_id = unsafe { wait_fn(timeout_ms) };
+            if result_id == u64::MAX {
+                None
+            } else {
+                Some(result_id)
+            }
+        } else {
+            None
+        }
+    }
+
+    fn set_measurement_result(
+        &mut self,
+        result_id: u64,
+        value: bool,
+    ) -> Result<(), InterfaceError> {
+        if let Some(ref lib) = self.qis_ffi_lib {
+            let set_fn: Symbol<SetMeasurementResultFn> = unsafe {
+                lib.get(b"pecos_set_measurement_result\0").map_err(|e| {
+                    InterfaceError::ExecutionError(format!(
+                        "Failed to find pecos_set_measurement_result: {e}"
+                    ))
+                })?
+            };
+            unsafe { set_fn(result_id, value) };
+            debug!("Set measurement result via FFI: {result_id} = {value}");
+            Ok(())
+        } else {
+            Err(InterfaceError::ExecutionError(
+                "QIS FFI library not loaded - call enable_dynamic_mode first".to_string(),
+            ))
+        }
+    }
+
+    fn signal_result_ready(&mut self) -> Result<(), InterfaceError> {
+        if let Some(ref lib) = self.qis_ffi_lib {
+            let signal_fn: Symbol<SignalResultReadyFn> = unsafe {
+                lib.get(b"pecos_signal_result_ready\0").map_err(|e| {
+                    InterfaceError::ExecutionError(format!(
+                        "Failed to find pecos_signal_result_ready: {e}"
+                    ))
+                })?
+            };
+            unsafe { signal_fn() };
+            debug!("Signaled result ready via FFI");
+            Ok(())
+        } else {
+            Err(InterfaceError::ExecutionError(
+                "QIS FFI library not loaded - call enable_dynamic_mode first".to_string(),
+            ))
+        }
+    }
+
+    fn get_pending_operations(
+        &self,
+    ) -> Result<Vec<pecos_qis_ffi_types::Operation>, InterfaceError> {
+        if let Some(ref lib) = self.qis_ffi_lib {
+            // Get operations from the library's thread-local storage
+            let get_ops_fn: Symbol<GetOperationsFn> = unsafe {
+                lib.get(b"pecos_qis_get_operations\0").map_err(|e| {
+                    InterfaceError::ExecutionError(format!(
+                        "Failed to find pecos_qis_get_operations: {e}"
+                    ))
+                })?
+            };
+            let collector = unsafe {
+                let ptr = get_ops_fn();
+                if ptr.is_null() {
+                    return Ok(Vec::new());
+                }
+                Box::from_raw(ptr)
+            };
+            Ok(collector.operations)
+        } else {
+            Err(InterfaceError::ExecutionError(
+                "QIS FFI library not loaded - call enable_dynamic_mode first".to_string(),
+            ))
+        }
+    }
+
+    fn get_qis_ffi_lib_path(&self) -> Option<std::path::PathBuf> {
+        Self::find_pecos_qis_lib().ok()
+    }
+}
+
+impl Drop for QisHeliosInterface {
+    fn drop(&mut self) {
+        // Clean up execution context if still active
+        if let Some(ExecutionContextPtr(ctx)) = self.execution_context.take()
+            && let Some(ref lib) = self.qis_ffi_lib
+        {
+            // Unregister context
+            if let Ok(register_fn) = unsafe {
+                lib.get::<RegisterExecutionContextFn>(b"pecos_register_execution_context\0")
+            } {
+                unsafe { register_fn(std::ptr::null_mut()) };
+                debug!("Unregistered execution context on drop");
+            }
+
+            // Destroy context
+            if let Ok(destroy_fn) = unsafe {
+                lib.get::<DestroyExecutionContextFn>(b"pecos_destroy_execution_context\0")
+            } {
+                unsafe { destroy_fn(ctx) };
+                debug!("Destroyed execution context on drop: {ctx:?}");
+            }
+        }
     }
 }

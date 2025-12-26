@@ -14,6 +14,7 @@ categories.workspace = true
 
 [dependencies]
 pecos-qis-ffi-types.workspace = true
+pecos-qis-ffi.workspace = true
 pecos-core.workspace = true
 pecos-engines.workspace = true
 pecos-programs.workspace = true
@@ -22,6 +23,8 @@ log.workspace = true
 dyn-clone.workspace = true
 tempfile.workspace = true
 rand.workspace = true
+crossbeam-channel.workspace = true
+libloading.workspace = true
 
 # Inkwell configuration - use default linking strategy (matches TKET approach)
 [dependencies.inkwell]

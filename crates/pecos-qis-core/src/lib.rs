@@ -83,6 +83,7 @@
 
 pub mod builder;
 pub mod ccengine;
+pub mod dynamic_executor;
 pub mod interface_impl;
 pub mod prelude;
 pub mod program;

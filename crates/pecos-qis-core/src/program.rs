@@ -632,6 +632,44 @@ pub trait QisInterfaceBuilder: Send + Sync + dyn_clone::DynClone {
 
     /// Get a descriptive name for this builder
     fn name(&self) -> &'static str;
+
+    /// Create a boxed interface for dynamic execution (without collecting operations)
+    ///
+    /// This is used when dynamic circuit execution is enabled. Instead of
+    /// pre-collecting all operations, it creates an interface that can run
+    /// the program dynamically and coordinate with the quantum simulator.
+    ///
+    /// # Errors
+    /// Returns an error if the interface cannot be created.
+    fn create_dynamic_interface_from_qis(
+        &self,
+        program: Qis,
+    ) -> Result<crate::qis_interface::BoxedInterface, PecosError> {
+        // Default implementation: not supported
+        let _ = program;
+        Err(PecosError::Processing(format!(
+            "Interface builder '{}' does not support dynamic execution.\n\
+            Dynamic execution requires an interface that can run LLVM programs incrementally.",
+            self.name()
+        )))
+    }
+
+    /// Create a boxed interface for dynamic execution from HUGR program
+    ///
+    /// # Errors
+    /// Returns an error if the interface cannot be created.
+    fn create_dynamic_interface_from_hugr(
+        &self,
+        program: Hugr,
+    ) -> Result<crate::qis_interface::BoxedInterface, PecosError> {
+        // Default implementation: not supported
+        let _ = program;
+        Err(PecosError::Processing(format!(
+            "Interface builder '{}' does not support dynamic HUGR execution.\n\
+            Dynamic execution requires an interface that can run LLVM programs incrementally.",
+            self.name()
+        )))
+    }
 }
 
 // Implement dyn_clone for the trait

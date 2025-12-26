@@ -106,6 +106,99 @@ pub trait QisInterface: Send + Sync {
     /// # Errors
     /// Returns an error if the reset operation fails.
     fn reset(&mut self) -> Result<(), InterfaceError>;
+
+    // ========================================================================
+    // Dynamic execution methods (for circuits with mid-circuit measurement)
+    // ========================================================================
+
+    /// Check if this interface supports dynamic execution
+    ///
+    /// Dynamic execution allows conditionals that depend on measurement results
+    /// to work correctly by blocking at measurement points and coordinating
+    /// with the main thread.
+    fn supports_dynamic(&self) -> bool {
+        false
+    }
+
+    /// Enable dynamic execution mode
+    ///
+    /// This should be called before starting dynamic execution. It enables
+    /// the synchronization primitives used for coordination.
+    ///
+    /// # Errors
+    /// Returns an error if dynamic execution is not supported by this interface.
+    fn enable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
+        Err(InterfaceError::Other(
+            "Dynamic execution not supported by this interface".to_string(),
+        ))
+    }
+
+    /// Disable dynamic execution mode
+    ///
+    /// # Errors
+    /// Returns an error if dynamic execution is not supported by this interface.
+    fn disable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
+        Ok(())
+    }
+
+    /// Wait for the running program to need a measurement result
+    ///
+    /// This blocks until the program calls `___read_future_bool` and needs
+    /// a result that isn't available. Returns the result ID that is needed,
+    /// or None on timeout.
+    fn wait_for_result_needed(&self, _timeout_ms: u64) -> Option<u64> {
+        None
+    }
+
+    /// Set a measurement result for the running program
+    ///
+    /// This provides the result that the program is waiting for in `___read_future_bool`.
+    ///
+    /// # Errors
+    /// Returns an error if dynamic execution is not supported by this interface.
+    fn set_measurement_result(
+        &mut self,
+        _result_id: u64,
+        _value: bool,
+    ) -> Result<(), InterfaceError> {
+        Err(InterfaceError::Other(
+            "Dynamic execution not supported by this interface".to_string(),
+        ))
+    }
+
+    /// Signal that the measurement result is ready
+    ///
+    /// This wakes up the blocked program to continue execution.
+    ///
+    /// # Errors
+    /// Returns an error if dynamic execution is not supported by this interface.
+    fn signal_result_ready(&mut self) -> Result<(), InterfaceError> {
+        Err(InterfaceError::Other(
+            "Dynamic execution not supported by this interface".to_string(),
+        ))
+    }
+
+    /// Get the pending operations collected so far
+    ///
+    /// This returns the operations that have been collected since the last
+    /// call, without waiting for the program to complete.
+    ///
+    /// # Errors
+    /// Returns an error if dynamic execution is not supported by this interface.
+    fn get_pending_operations(
+        &self,
+    ) -> Result<Vec<pecos_qis_ffi_types::Operation>, InterfaceError> {
+        Err(InterfaceError::Other(
+            "Dynamic execution not supported by this interface".to_string(),
+        ))
+    }
+
+    /// Get the path to the QIS FFI library for dynamic execution
+    ///
+    /// This is used by the engine to load the library separately for main thread FFI calls.
+    fn get_qis_ffi_lib_path(&self) -> Option<std::path::PathBuf> {
+        None
+    }
 }
 
 /// Box type for interface implementations

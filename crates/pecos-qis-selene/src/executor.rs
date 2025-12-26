@@ -10,7 +10,28 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 use tempfile::NamedTempFile;
+
+/// Process-wide singleton for the QIS FFI library.
+///
+/// On macOS, loading the same dynamic library multiple times creates separate
+/// thread-local storage (TLS) instances for each load. This causes crashes when
+/// code in one library instance tries to access TLS data from another instance.
+///
+/// By making this a singleton, all code in the process shares the same library
+/// instance and the same TLS, avoiding the macOS TLS isolation issue.
+///
+/// We store the initialization result (Ok or Err) and both handles:
+/// - The `RTLD_GLOBAL` handle to keep symbols visible to other libraries
+/// - The regular Library handle for symbol lookup
+#[cfg(unix)]
+static QIS_FFI_LIB_SINGLETON: OnceLock<
+    Result<Mutex<(libloading::os::unix::Library, Library)>, String>,
+> = OnceLock::new();
+
+#[cfg(windows)]
+static QIS_FFI_LIB_SINGLETON: OnceLock<Result<Mutex<(Library, Library)>, String>> = OnceLock::new();
 
 // FFI function type aliases for dlopen symbol lookup
 type ResetInterfaceFn = unsafe extern "C" fn();
@@ -253,15 +274,10 @@ pub struct QisHeliosInterface {
     /// Keep temporary files alive (`TempPath` auto-deletes when dropped)
     temp_files: Vec<tempfile::TempPath>,
 
-    /// Loaded QIS FFI library for dynamic execution
-    /// We keep this loaded for the lifetime of dynamic execution
-    qis_ffi_lib: Option<Library>,
-
-    /// `RTLD_GLOBAL` handle for QIS FFI library (Unix only)
-    /// We need to keep this alive to maintain the `RTLD_GLOBAL` symbols
-    #[cfg(unix)]
-    qis_ffi_lib_global: Option<libloading::os::unix::Library>,
-
+    // Note: The QIS FFI library is now stored in a process-wide singleton
+    // (QIS_FFI_LIB_SINGLETON) to avoid macOS TLS issues. Each library load
+    // on macOS creates separate thread-local storage, causing crashes when
+    // execution context is accessed from a different library instance.
     /// Execution context for dynamic circuit coordination
     /// Created when dynamic mode is enabled, destroyed when disabled
     execution_context: Option<ExecutionContextPtr>,
@@ -277,9 +293,6 @@ impl QisHeliosInterface {
             format: ProgramFormat::QisBitcode,
             metadata: BTreeMap::new(),
             temp_files: Vec::new(),
-            qis_ffi_lib: None,
-            #[cfg(unix)]
-            qis_ffi_lib_global: None,
             execution_context: None,
         }
     }
@@ -375,6 +388,70 @@ impl QisHeliosInterface {
                 ))
             })
             .cloned()
+    }
+
+    /// Get or initialize the process-wide QIS FFI library singleton.
+    ///
+    /// This ensures that all code in the process uses the same library instance,
+    /// which is critical on macOS where multiple library loads create separate TLS instances.
+    ///
+    /// Returns a reference to the Mutex containing both library handles.
+    #[cfg(unix)]
+    fn get_qis_ffi_lib_singleton()
+    -> Result<&'static Mutex<(libloading::os::unix::Library, Library)>, InterfaceError> {
+        let result = QIS_FFI_LIB_SINGLETON.get_or_init(|| match Self::find_pecos_qis_lib() {
+            Ok(lib_path) => {
+                debug!(
+                    "Initializing QIS FFI library singleton from: {}",
+                    lib_path.display()
+                );
+
+                match Self::load_library_with_rtld_global(
+                    &lib_path,
+                    "Failed to load QIS FFI library singleton",
+                ) {
+                    Ok((lib_global, lib)) => {
+                        debug!("QIS FFI library singleton initialized successfully");
+                        Ok(Mutex::new((lib_global, lib)))
+                    }
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+            Err(e) => Err(e.to_string()),
+        });
+
+        result
+            .as_ref()
+            .map_err(|e| InterfaceError::ExecutionError(e.clone()))
+    }
+
+    /// Get or initialize the process-wide QIS FFI library singleton (Windows version).
+    #[cfg(windows)]
+    fn get_qis_ffi_lib_singleton() -> Result<&'static Mutex<(Library, Library)>, InterfaceError> {
+        let result = QIS_FFI_LIB_SINGLETON.get_or_init(|| match Self::find_pecos_qis_lib() {
+            Ok(lib_path) => {
+                debug!(
+                    "Initializing QIS FFI library singleton from: {}",
+                    lib_path.display()
+                );
+
+                match Self::load_library_with_rtld_global(
+                    &lib_path,
+                    "Failed to load QIS FFI library singleton",
+                ) {
+                    Ok((lib_global, lib)) => {
+                        debug!("QIS FFI library singleton initialized successfully");
+                        Ok(Mutex::new((lib_global, lib)))
+                    }
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+            Err(e) => Err(e.to_string()),
+        });
+
+        result
+            .as_ref()
+            .map_err(|e| InterfaceError::ExecutionError(e.clone()))
     }
 
     /// Collect operations from thread-local storage via the QIS cdylib
@@ -985,49 +1062,21 @@ entry:
         //   2. libpecos_selene.so (provides selene_*, calls __quantum__*)
         //   3. program.so (provides qmain, calls selene_*)
 
-        // Step 1: Find and load libpecos_qis_ffi.so with RTLD_GLOBAL
-        // This provides the __quantum__* symbols for the shim to resolve
+        // Step 1: Get the process-wide QIS FFI library singleton
+        // This provides the __quantum__* symbols for the shim to resolve.
         //
-        // IMPORTANT: If we already have the library loaded (from enable_dynamic_mode),
-        // we MUST reuse it. On macOS, loading the same library multiple times creates
-        // separate thread-local storage instances, which causes crashes when the execution
-        // context is accessed from a different library instance.
-        #[cfg(unix)]
-        let pecos_qis_lib_global: Option<libloading::os::unix::Library>;
-        #[cfg(windows)]
-        let pecos_qis_lib_global: Option<Library>;
-
-        let pecos_qis_lib_owned: Option<Library>;
-        let pecos_qis_lib: &Library = if let Some(ref lib) = self.qis_ffi_lib {
-            debug!("Reusing already loaded QIS FFI library");
-            #[cfg(unix)]
-            {
-                pecos_qis_lib_global = None;
-            }
-            #[cfg(windows)]
-            {
-                pecos_qis_lib_global = None;
-            }
-            pecos_qis_lib_owned = None;
-            lib
-        } else {
-            debug!("Finding PECOS QIS FFI library");
-            let pecos_qis_lib_path = Self::find_pecos_qis_lib()?;
-            debug!(
-                "Successfully found QIS FFI library at: {}",
-                pecos_qis_lib_path.display()
-            );
-
-            debug!("Loading QIS FFI library with RTLD_GLOBAL...");
-            let (lib_global, lib) = Self::load_library_with_rtld_global(
-                &pecos_qis_lib_path,
-                "Failed to load PECOS QIS cdylib",
-            )?;
-            debug!("QIS FFI library loaded successfully!");
-            pecos_qis_lib_global = Some(lib_global);
-            pecos_qis_lib_owned = Some(lib);
-            pecos_qis_lib_owned.as_ref().unwrap()
-        };
+        // IMPORTANT: We use a process-wide singleton to ensure all code uses the same
+        // library instance. On macOS, loading the same library multiple times creates
+        // separate thread-local storage (TLS) instances, which causes crashes when
+        // the execution context is accessed from a different library instance.
+        // The singleton ensures all clones of QisEngine share the same TLS.
+        let qis_ffi_singleton = Self::get_qis_ffi_lib_singleton()?;
+        let qis_ffi_guard = qis_ffi_singleton.lock().map_err(|e| {
+            InterfaceError::ExecutionError(format!("Failed to lock QIS FFI library singleton: {e}"))
+        })?;
+        // Get the Library handle for symbol lookup (second element of the tuple)
+        let pecos_qis_lib = &qis_ffi_guard.1;
+        debug!("Using QIS FFI library from process-wide singleton");
 
         // Always register the execution context on the current thread
         // This is necessary because TLS registration is per-thread, so the worker thread
@@ -1119,13 +1168,14 @@ entry:
         let operations = Self::collect_operations_from_lib(pecos_qis_lib)?;
 
         // Keep libraries loaded until we're done
-        // Note: pecos_qis_lib may be borrowed from self.qis_ffi_lib, so we only drop the owned one
+        // Note: The QIS FFI library is in a process-wide singleton (qis_ffi_guard will be dropped
+        // automatically at end of function scope, but the singleton keeps the library alive)
         drop(program_lib);
         drop(program_lib_global);
         drop(shim_lib);
         drop(shim_lib_global);
-        drop(pecos_qis_lib_owned);
-        drop(pecos_qis_lib_global);
+        // qis_ffi_guard is dropped here automatically, releasing the mutex lock
+        // but the singleton keeps the library alive for future calls
 
         Ok(operations)
     }
@@ -1206,74 +1256,56 @@ impl QisInterface for QisHeliosInterface {
     fn enable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
         debug!("Enabling dynamic execution mode");
 
-        // Load the QIS FFI library if not already loaded
-        // IMPORTANT: We must use load_library_with_rtld_global to ensure the same
-        // library instance (with the same thread-local storage) is used everywhere.
-        // On macOS, loading the library twice creates separate TLS instances, causing crashes.
-        if self.qis_ffi_lib.is_none() {
-            let lib_path = Self::find_pecos_qis_lib()?;
-            debug!(
-                "Loading QIS FFI library for dynamic mode with RTLD_GLOBAL: {}",
-                lib_path.display()
-            );
+        // Get the process-wide QIS FFI library singleton
+        // IMPORTANT: We use a process-wide singleton to ensure all code uses the same
+        // library instance. On macOS, loading the library twice creates separate TLS
+        // instances, causing crashes when the execution context is accessed from a
+        // different library instance.
+        let qis_ffi_singleton = Self::get_qis_ffi_lib_singleton()?;
+        let qis_ffi_guard = qis_ffi_singleton.lock().map_err(|e| {
+            InterfaceError::ExecutionError(format!("Failed to lock QIS FFI library singleton: {e}"))
+        })?;
+        let lib = &qis_ffi_guard.1;
+        debug!("Using QIS FFI library from process-wide singleton for dynamic mode");
 
-            let (lib_global, lib) = Self::load_library_with_rtld_global(
-                &lib_path,
-                "Failed to load QIS FFI library for dynamic mode",
-            )?;
-
-            self.qis_ffi_lib = Some(lib);
-            #[cfg(unix)]
-            {
-                self.qis_ffi_lib_global = Some(lib_global);
-            }
-            #[cfg(windows)]
-            {
-                // On Windows, both handles are the same type, and we only need one
-                drop(lib_global);
-            }
-        }
-
-        if let Some(ref lib) = self.qis_ffi_lib {
-            // Create an execution context if we don't have one
-            if self.execution_context.is_none() {
-                let create_fn: Symbol<CreateExecutionContextFn> = unsafe {
-                    lib.get(b"pecos_create_execution_context\0").map_err(|e| {
-                        InterfaceError::ExecutionError(format!(
-                            "Failed to find pecos_create_execution_context: {e}"
-                        ))
-                    })?
-                };
-                let ctx = unsafe { create_fn() };
-                debug!("Created execution context: {ctx:?}");
-                self.execution_context = Some(ExecutionContextPtr(ctx));
-            }
-
-            // Register the execution context on this thread
-            let register_fn: Symbol<RegisterExecutionContextFn> = unsafe {
-                lib.get(b"pecos_register_execution_context\0")
-                    .map_err(|e| {
-                        InterfaceError::ExecutionError(format!(
-                            "Failed to find pecos_register_execution_context: {e}"
-                        ))
-                    })?
-            };
-            if let Some(ExecutionContextPtr(ctx)) = self.execution_context {
-                unsafe { register_fn(ctx) };
-                debug!("Registered execution context: {ctx:?}");
-            }
-
-            // Now enable dynamic mode
-            let enable_fn: Symbol<EnableDynamicModeFn> = unsafe {
-                lib.get(b"pecos_enable_dynamic_mode\0").map_err(|e| {
+        // Create an execution context if we don't have one
+        if self.execution_context.is_none() {
+            let create_fn: Symbol<CreateExecutionContextFn> = unsafe {
+                lib.get(b"pecos_create_execution_context\0").map_err(|e| {
                     InterfaceError::ExecutionError(format!(
-                        "Failed to find pecos_enable_dynamic_mode: {e}"
+                        "Failed to find pecos_create_execution_context: {e}"
                     ))
                 })?
             };
-            unsafe { enable_fn() };
-            debug!("Dynamic mode enabled via FFI");
+            let ctx = unsafe { create_fn() };
+            debug!("Created execution context: {ctx:?}");
+            self.execution_context = Some(ExecutionContextPtr(ctx));
         }
+
+        // Register the execution context on this thread
+        let register_fn: Symbol<RegisterExecutionContextFn> = unsafe {
+            lib.get(b"pecos_register_execution_context\0")
+                .map_err(|e| {
+                    InterfaceError::ExecutionError(format!(
+                        "Failed to find pecos_register_execution_context: {e}"
+                    ))
+                })?
+        };
+        if let Some(ExecutionContextPtr(ctx)) = self.execution_context {
+            unsafe { register_fn(ctx) };
+            debug!("Registered execution context: {ctx:?}");
+        }
+
+        // Now enable dynamic mode
+        let enable_fn: Symbol<EnableDynamicModeFn> = unsafe {
+            lib.get(b"pecos_enable_dynamic_mode\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_enable_dynamic_mode: {e}"
+                ))
+            })?
+        };
+        unsafe { enable_fn() };
+        debug!("Dynamic mode enabled via FFI");
 
         Ok(())
     }
@@ -1281,59 +1313,65 @@ impl QisInterface for QisHeliosInterface {
     fn disable_dynamic_mode(&mut self) -> Result<(), InterfaceError> {
         debug!("Disabling dynamic execution mode");
 
-        if let Some(ref lib) = self.qis_ffi_lib {
-            // Disable dynamic mode first
-            let disable_fn: Symbol<DisableDynamicModeFn> = unsafe {
-                lib.get(b"pecos_disable_dynamic_mode\0").map_err(|e| {
+        // Get the process-wide QIS FFI library singleton
+        let qis_ffi_singleton = Self::get_qis_ffi_lib_singleton()?;
+        let qis_ffi_guard = qis_ffi_singleton.lock().map_err(|e| {
+            InterfaceError::ExecutionError(format!("Failed to lock QIS FFI library singleton: {e}"))
+        })?;
+        let lib = &qis_ffi_guard.1;
+
+        // Disable dynamic mode first
+        let disable_fn: Symbol<DisableDynamicModeFn> = unsafe {
+            lib.get(b"pecos_disable_dynamic_mode\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_disable_dynamic_mode: {e}"
+                ))
+            })?
+        };
+        unsafe { disable_fn() };
+        debug!("Dynamic mode disabled via FFI");
+
+        // Unregister the execution context
+        let register_fn: Symbol<RegisterExecutionContextFn> = unsafe {
+            lib.get(b"pecos_register_execution_context\0")
+                .map_err(|e| {
                     InterfaceError::ExecutionError(format!(
-                        "Failed to find pecos_disable_dynamic_mode: {e}"
+                        "Failed to find pecos_register_execution_context: {e}"
+                    ))
+                })?
+        };
+        unsafe { register_fn(std::ptr::null_mut()) };
+        debug!("Unregistered execution context");
+
+        // Destroy the execution context
+        if let Some(ExecutionContextPtr(ctx)) = self.execution_context.take() {
+            let destroy_fn: Symbol<DestroyExecutionContextFn> = unsafe {
+                lib.get(b"pecos_destroy_execution_context\0").map_err(|e| {
+                    InterfaceError::ExecutionError(format!(
+                        "Failed to find pecos_destroy_execution_context: {e}"
                     ))
                 })?
             };
-            unsafe { disable_fn() };
-            debug!("Dynamic mode disabled via FFI");
-
-            // Unregister the execution context
-            let register_fn: Symbol<RegisterExecutionContextFn> = unsafe {
-                lib.get(b"pecos_register_execution_context\0")
-                    .map_err(|e| {
-                        InterfaceError::ExecutionError(format!(
-                            "Failed to find pecos_register_execution_context: {e}"
-                        ))
-                    })?
-            };
-            unsafe { register_fn(std::ptr::null_mut()) };
-            debug!("Unregistered execution context");
-
-            // Destroy the execution context
-            if let Some(ExecutionContextPtr(ctx)) = self.execution_context.take() {
-                let destroy_fn: Symbol<DestroyExecutionContextFn> = unsafe {
-                    lib.get(b"pecos_destroy_execution_context\0").map_err(|e| {
-                        InterfaceError::ExecutionError(format!(
-                            "Failed to find pecos_destroy_execution_context: {e}"
-                        ))
-                    })?
-                };
-                unsafe { destroy_fn(ctx) };
-                debug!("Destroyed execution context: {ctx:?}");
-            }
+            unsafe { destroy_fn(ctx) };
+            debug!("Destroyed execution context: {ctx:?}");
         }
 
         Ok(())
     }
 
     fn wait_for_result_needed(&self, timeout_ms: u64) -> Option<u64> {
-        if let Some(ref lib) = self.qis_ffi_lib {
-            let wait_fn: Symbol<WaitForNeedResultFn> =
-                unsafe { lib.get(b"pecos_wait_for_need_result\0").ok()? };
-            let result_id = unsafe { wait_fn(timeout_ms) };
-            if result_id == u64::MAX {
-                None
-            } else {
-                Some(result_id)
-            }
-        } else {
+        // Get the process-wide QIS FFI library singleton
+        let qis_ffi_singleton = Self::get_qis_ffi_lib_singleton().ok()?;
+        let qis_ffi_guard = qis_ffi_singleton.lock().ok()?;
+        let lib = &qis_ffi_guard.1;
+
+        let wait_fn: Symbol<WaitForNeedResultFn> =
+            unsafe { lib.get(b"pecos_wait_for_need_result\0").ok()? };
+        let result_id = unsafe { wait_fn(timeout_ms) };
+        if result_id == u64::MAX {
             None
+        } else {
+            Some(result_id)
         }
     }
 
@@ -1342,68 +1380,71 @@ impl QisInterface for QisHeliosInterface {
         result_id: u64,
         value: bool,
     ) -> Result<(), InterfaceError> {
-        if let Some(ref lib) = self.qis_ffi_lib {
-            let set_fn: Symbol<SetMeasurementResultFn> = unsafe {
-                lib.get(b"pecos_set_measurement_result\0").map_err(|e| {
-                    InterfaceError::ExecutionError(format!(
-                        "Failed to find pecos_set_measurement_result: {e}"
-                    ))
-                })?
-            };
-            unsafe { set_fn(result_id, value) };
-            debug!("Set measurement result via FFI: {result_id} = {value}");
-            Ok(())
-        } else {
-            Err(InterfaceError::ExecutionError(
-                "QIS FFI library not loaded - call enable_dynamic_mode first".to_string(),
-            ))
-        }
+        // Get the process-wide QIS FFI library singleton
+        let qis_ffi_singleton = Self::get_qis_ffi_lib_singleton()?;
+        let qis_ffi_guard = qis_ffi_singleton.lock().map_err(|e| {
+            InterfaceError::ExecutionError(format!("Failed to lock QIS FFI library singleton: {e}"))
+        })?;
+        let lib = &qis_ffi_guard.1;
+
+        let set_fn: Symbol<SetMeasurementResultFn> = unsafe {
+            lib.get(b"pecos_set_measurement_result\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_set_measurement_result: {e}"
+                ))
+            })?
+        };
+        unsafe { set_fn(result_id, value) };
+        debug!("Set measurement result via FFI: {result_id} = {value}");
+        Ok(())
     }
 
     fn signal_result_ready(&mut self) -> Result<(), InterfaceError> {
-        if let Some(ref lib) = self.qis_ffi_lib {
-            let signal_fn: Symbol<SignalResultReadyFn> = unsafe {
-                lib.get(b"pecos_signal_result_ready\0").map_err(|e| {
-                    InterfaceError::ExecutionError(format!(
-                        "Failed to find pecos_signal_result_ready: {e}"
-                    ))
-                })?
-            };
-            unsafe { signal_fn() };
-            debug!("Signaled result ready via FFI");
-            Ok(())
-        } else {
-            Err(InterfaceError::ExecutionError(
-                "QIS FFI library not loaded - call enable_dynamic_mode first".to_string(),
-            ))
-        }
+        // Get the process-wide QIS FFI library singleton
+        let qis_ffi_singleton = Self::get_qis_ffi_lib_singleton()?;
+        let qis_ffi_guard = qis_ffi_singleton.lock().map_err(|e| {
+            InterfaceError::ExecutionError(format!("Failed to lock QIS FFI library singleton: {e}"))
+        })?;
+        let lib = &qis_ffi_guard.1;
+
+        let signal_fn: Symbol<SignalResultReadyFn> = unsafe {
+            lib.get(b"pecos_signal_result_ready\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_signal_result_ready: {e}"
+                ))
+            })?
+        };
+        unsafe { signal_fn() };
+        debug!("Signaled result ready via FFI");
+        Ok(())
     }
 
     fn get_pending_operations(
         &self,
     ) -> Result<Vec<pecos_qis_ffi_types::Operation>, InterfaceError> {
-        if let Some(ref lib) = self.qis_ffi_lib {
-            // Get operations from the library's thread-local storage
-            let get_ops_fn: Symbol<GetOperationsFn> = unsafe {
-                lib.get(b"pecos_qis_get_operations\0").map_err(|e| {
-                    InterfaceError::ExecutionError(format!(
-                        "Failed to find pecos_qis_get_operations: {e}"
-                    ))
-                })?
-            };
-            let collector = unsafe {
-                let ptr = get_ops_fn();
-                if ptr.is_null() {
-                    return Ok(Vec::new());
-                }
-                Box::from_raw(ptr)
-            };
-            Ok(collector.operations)
-        } else {
-            Err(InterfaceError::ExecutionError(
-                "QIS FFI library not loaded - call enable_dynamic_mode first".to_string(),
-            ))
-        }
+        // Get the process-wide QIS FFI library singleton
+        let qis_ffi_singleton = Self::get_qis_ffi_lib_singleton()?;
+        let qis_ffi_guard = qis_ffi_singleton.lock().map_err(|e| {
+            InterfaceError::ExecutionError(format!("Failed to lock QIS FFI library singleton: {e}"))
+        })?;
+        let lib = &qis_ffi_guard.1;
+
+        // Get operations from the library's thread-local storage
+        let get_ops_fn: Symbol<GetOperationsFn> = unsafe {
+            lib.get(b"pecos_qis_get_operations\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_qis_get_operations: {e}"
+                ))
+            })?
+        };
+        let collector = unsafe {
+            let ptr = get_ops_fn();
+            if ptr.is_null() {
+                return Ok(Vec::new());
+            }
+            Box::from_raw(ptr)
+        };
+        Ok(collector.operations)
     }
 
     fn get_qis_ffi_lib_path(&self) -> Option<std::path::PathBuf> {
@@ -1420,23 +1461,28 @@ impl QisInterface for QisHeliosInterface {
 impl Drop for QisHeliosInterface {
     fn drop(&mut self) {
         // Clean up execution context if still active
-        if let Some(ExecutionContextPtr(ctx)) = self.execution_context.take()
-            && let Some(ref lib) = self.qis_ffi_lib
-        {
-            // Unregister context
-            if let Ok(register_fn) = unsafe {
-                lib.get::<RegisterExecutionContextFn>(b"pecos_register_execution_context\0")
-            } {
-                unsafe { register_fn(std::ptr::null_mut()) };
-                debug!("Unregistered execution context on drop");
-            }
+        if let Some(ExecutionContextPtr(ctx)) = self.execution_context.take() {
+            // Get the process-wide QIS FFI library singleton
+            if let Ok(qis_ffi_singleton) = Self::get_qis_ffi_lib_singleton()
+                && let Ok(qis_ffi_guard) = qis_ffi_singleton.lock()
+            {
+                let lib = &qis_ffi_guard.1;
 
-            // Destroy context
-            if let Ok(destroy_fn) = unsafe {
-                lib.get::<DestroyExecutionContextFn>(b"pecos_destroy_execution_context\0")
-            } {
-                unsafe { destroy_fn(ctx) };
-                debug!("Destroyed execution context on drop: {ctx:?}");
+                // Unregister context
+                if let Ok(register_fn) = unsafe {
+                    lib.get::<RegisterExecutionContextFn>(b"pecos_register_execution_context\0")
+                } {
+                    unsafe { register_fn(std::ptr::null_mut()) };
+                    debug!("Unregistered execution context on drop");
+                }
+
+                // Destroy context
+                if let Ok(destroy_fn) = unsafe {
+                    lib.get::<DestroyExecutionContextFn>(b"pecos_destroy_execution_context\0")
+                } {
+                    unsafe { destroy_fn(ctx) };
+                    debug!("Destroyed execution context on drop: {ctx:?}");
+                }
             }
         }
     }

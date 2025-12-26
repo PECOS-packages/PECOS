@@ -38,6 +38,7 @@ Let's create a Bell state using Guppy. First, define a quantum function:
     from pecos import sim, Guppy
     from pecos_rslib import state_vector
 
+
     # Define a Bell state circuit using Guppy
     @guppy
     def bell_state() -> tuple[bool, bool]:
@@ -52,13 +53,10 @@ Let's create a Bell state using Guppy. First, define a quantum function:
         # Measure both qubits
         return measure(q0), measure(q1)
 
+
     # Run simulation
     results = (
-        sim(Guppy(bell_state))
-        .qubits(2)
-        .quantum(state_vector())
-        .seed(42)
-        .run(1000)
+        sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).seed(42).run(1000)
     )
 
     print(results.to_dict())
@@ -91,12 +89,14 @@ The `sim(Guppy(...))` pattern returns a builder for configuration:
     from pecos import sim, Guppy
     from pecos_rslib import state_vector, DepolarizingNoise
 
+
     @guppy
     def coin_flip() -> bool:
         """Quantum random bit."""
         q = qubit()
         h(q)
         return measure(q)
+
 
     # Simple simulation
     results = sim(Guppy(coin_flip)).qubits(1).quantum(state_vector()).run(100)
@@ -163,6 +163,7 @@ One of HUGR's key advantages is native support for control flow based on measure
     from pecos import sim, Guppy
     from pecos_rslib import state_vector
 
+
     @guppy
     def conditional_x() -> tuple[bool, bool]:
         """Apply X gate conditionally based on measurement."""
@@ -180,13 +181,10 @@ One of HUGR's key advantages is native support for control flow based on measure
         m1 = measure(q1)
         return m0, m1
 
+
     # Run simulation
     results = (
-        sim(Guppy(conditional_x))
-        .qubits(2)
-        .quantum(state_vector())
-        .seed(42)
-        .run(1000)
+        sim(Guppy(conditional_x)).qubits(2).quantum(state_vector()).seed(42).run(1000)
     )
 
     # Results: m0 and m1 are always equal!
@@ -205,6 +203,7 @@ One of HUGR's key advantages is native support for control flow based on measure
     from pecos import sim, Guppy
     from pecos_rslib import state_vector
 
+
     @guppy
     def if_else_circuit() -> tuple[bool, bool]:
         """Different gates in each branch."""
@@ -221,12 +220,9 @@ One of HUGR's key advantages is native support for control flow based on measure
         m1 = measure(q1)
         return m0, m1
 
+
     results = (
-        sim(Guppy(if_else_circuit))
-        .qubits(2)
-        .quantum(state_vector())
-        .seed(42)
-        .run(1000)
+        sim(Guppy(if_else_circuit)).qubits(2).quantum(state_vector()).seed(42).run(1000)
     )
     # m0 always 0, m1 is 50/50 (H applied)
     ```
@@ -241,6 +237,7 @@ One of HUGR's key advantages is native support for control flow based on measure
     from pecos import sim, Guppy
     from pecos_rslib import state_vector
 
+
     @guppy
     def repeat_until_one() -> bool:
         """Repeat H+measure until we get 1."""
@@ -250,6 +247,7 @@ One of HUGR's key advantages is native support for control flow based on measure
             h(q)
             result = measure(q)
         return result
+
 
     results = (
         sim(Guppy(repeat_until_one))
@@ -274,12 +272,14 @@ Guppy supports modular quantum programs with helper functions:
     from pecos import sim, Guppy
     from pecos_rslib import state_vector
 
+
     # Define a reusable function
     @guppy
     def apply_h(q: qubit @ owned) -> qubit:
         """Apply Hadamard gate."""
         h(q)
         return q
+
 
     # Use it in another function
     @guppy
@@ -289,12 +289,8 @@ Guppy supports modular quantum programs with helper functions:
         q = apply_h(q)
         return measure(q)
 
-    results = (
-        sim(Guppy(use_helper))
-        .qubits(1)
-        .quantum(state_vector())
-        .run(100)
-    )
+
+    results = sim(Guppy(use_helper)).qubits(1).quantum(state_vector()).run(100)
     ```
 
 ## Choosing the Right Simulation Engine
@@ -311,7 +307,9 @@ HUGR programs work with different quantum backends:
     results = sim(Guppy(my_circuit)).qubits(5).quantum(state_vector()).run(100)
 
     # Sparse stabilizer - efficient for Clifford circuits
-    results = sim(Guppy(clifford_circuit)).qubits(5).quantum(sparse_stabilizer()).run(100)
+    results = (
+        sim(Guppy(clifford_circuit)).qubits(5).quantum(sparse_stabilizer()).run(100)
+    )
     ```
 
 | Engine | Best For | Gates Supported |
@@ -331,6 +329,7 @@ Add realistic noise to your Guppy simulations:
     from pecos import sim, Guppy
     from pecos_rslib import state_vector, DepolarizingNoise, GeneralNoiseModelBuilder
 
+
     @guppy
     def noisy_bell() -> tuple[bool, bool]:
         q0 = qubit()
@@ -338,6 +337,7 @@ Add realistic noise to your Guppy simulations:
         h(q0)
         cx(q0, q1)
         return measure(q0), measure(q1)
+
 
     # Simple depolarizing noise
     results = (
@@ -360,11 +360,7 @@ Add realistic noise to your Guppy simulations:
     )
 
     results = (
-        sim(Guppy(noisy_bell))
-        .qubits(2)
-        .quantum(state_vector())
-        .noise(noise)
-        .run(1000)
+        sim(Guppy(noisy_bell)).qubits(2).quantum(state_vector()).noise(noise).run(1000)
     )
     ```
 
@@ -442,6 +438,7 @@ def bad_example() -> bool:
     q = qubit()
     # ERROR: q not consumed!
     return True
+
 
 @guppy
 def good_example() -> bool:

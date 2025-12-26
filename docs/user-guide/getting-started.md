@@ -77,6 +77,7 @@ The result is the state $\frac{1}{\sqrt{2}}(|00\rangle + |11\rangle)$, where mea
     from pecos import sim, Guppy
     from pecos_rslib import state_vector
 
+
     @guppy
     def bell_state() -> tuple[bool, bool]:
         """Create and measure a Bell state."""
@@ -86,14 +87,9 @@ The result is the state $\frac{1}{\sqrt{2}}(|00\rangle + |11\rangle)$, where mea
         cx(q0, q1)
         return measure(q0), measure(q1)
 
+
     # Run 10 shots of the simulation
-    results = (
-        sim(Guppy(bell_state))
-        .qubits(2)
-        .quantum(state_vector())
-        .seed(42)
-        .run(10)
-    )
+    results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).seed(42).run(10)
 
     # View results
     print(f"Results: {results.to_dict()}")

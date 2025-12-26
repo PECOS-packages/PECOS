@@ -115,8 +115,14 @@ pub struct QisEngine {
 
 impl QisEngine {
     /// Create a new engine with the given interface and runtime
+    ///
+    /// Dynamic execution is automatically enabled if the interface supports it.
     #[must_use]
     pub fn new(interface: BoxedInterface, runtime: Box<dyn QisRuntime>) -> Self {
+        // Auto-detect dynamic execution support from the interface
+        let enable_dynamic = interface.supports_dynamic();
+        debug!("Creating QisEngine, interface supports_dynamic={enable_dynamic}");
+
         Self {
             interface: Some(interface),
             runtime,
@@ -127,7 +133,7 @@ impl QisEngine {
             measurement_results: BTreeMap::new(),
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
-            enable_dynamic_execution: false,
+            enable_dynamic_execution: enable_dynamic,
             dynamic_state: None,
             pending_dynamic_ops: Vec::new(),
             simulated_op_count: 0,
@@ -142,25 +148,6 @@ impl QisEngine {
     #[must_use]
     pub fn current_shot_seed(&self) -> Option<u64> {
         self.current_shot_seed
-    }
-
-    /// Enable dynamic circuit execution mode
-    ///
-    /// When enabled, LLVM execution runs on a worker thread and coordinates
-    /// with the quantum simulator via channels. This allows conditionals
-    /// that depend on measurement results to work correctly.
-    ///
-    /// # Note
-    /// This should be called before `start()` is invoked.
-    pub fn set_dynamic_execution(&mut self, enable: bool) {
-        self.enable_dynamic_execution = enable;
-        debug!("Dynamic execution mode: {enable}");
-    }
-
-    /// Check if dynamic execution is enabled
-    #[must_use]
-    pub fn is_dynamic_execution_enabled(&self) -> bool {
-        self.enable_dynamic_execution
     }
 
     /// Check if the engine has an interface
@@ -459,16 +446,35 @@ impl QisEngine {
             .enable_dynamic_mode()
             .map_err(|e| PecosError::Generic(format!("Failed to enable dynamic mode: {e}")))?;
 
+        // Get the execution context pointer before moving the interface
+        // We need this to register the same context on the main thread's library handle
+        let execution_context_ptr = interface.get_execution_context_ptr();
+
         // Take the interface for the worker thread
         let mut interface = self.interface.take().ok_or_else(|| {
             PecosError::Generic("No interface available for dynamic execution".to_string())
         })?;
 
         // Load the library for main thread FFI calls
-        // Since the cdylib uses global statics, this handle sees the same state
         let main_thread_lib = unsafe { libloading::Library::new(&lib_path) }.map_err(|e| {
             PecosError::Generic(format!("Failed to load FFI library for main thread: {e}"))
         })?;
+
+        // Register the execution context on the main thread's library handle
+        // This is crucial for cross-thread communication - both threads must use the same context
+        if let Some(ctx_ptr) = execution_context_ptr {
+            type RegisterFn = unsafe extern "C" fn(*mut std::ffi::c_void);
+            let register_fn: libloading::Symbol<RegisterFn> =
+                unsafe { main_thread_lib.get(b"pecos_register_execution_context\0") }.map_err(
+                    |e| {
+                        PecosError::Generic(format!(
+                            "Failed to find pecos_register_execution_context: {e}"
+                        ))
+                    },
+                )?;
+            unsafe { register_fn(ctx_ptr) };
+            debug!("Registered execution context on main thread library: {ctx_ptr:?}");
+        }
 
         // Spawn worker thread that runs the LLVM program
         let worker_handle = std::thread::spawn(move || {
@@ -915,6 +921,20 @@ impl ControlEngine for QisEngine {
 
             // Check if worker completed without needing any results
             if self.check_worker_complete() {
+                // Worker completed but we still need to process any pending operations
+                // through the quantum engine (e.g., programs without measurement-dependent conditionals)
+                if !self.pending_dynamic_ops.is_empty() {
+                    let quantum_ops = Self::operations_to_quantum_ops(&self.pending_dynamic_ops);
+                    self.pending_dynamic_ops.clear();
+                    if !quantum_ops.is_empty() {
+                        debug!(
+                            "Worker completed - sending {} final operations to quantum engine",
+                            quantum_ops.len()
+                        );
+                        let commands = self.operations_to_bytemessage(quantum_ops)?;
+                        return Ok(EngineStage::NeedsProcessing(commands));
+                    }
+                }
                 let shot = self.get_results()?;
                 return Ok(EngineStage::Complete(shot));
             }

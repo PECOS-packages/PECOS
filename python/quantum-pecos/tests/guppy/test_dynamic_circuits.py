@@ -1,11 +1,11 @@
 """Test dynamic circuit execution with Guppy programs.
 
 This test suite validates that dynamic circuits - where conditionals depend on
-mid-circuit measurement results - work correctly with the `.dynamic(True)` API.
+mid-circuit measurement results - work correctly.
 
-Dynamic circuit execution runs LLVM on a worker thread that pauses when
-measurement results are needed, allowing proper back-and-forth between
-the classical control engine and quantum system.
+The execution model runs LLVM on a worker thread that pauses when measurement
+results are needed, allowing proper back-and-forth between the classical
+control engine and quantum system.
 """
 
 import pytest
@@ -42,13 +42,12 @@ class TestDynamicCircuitExecution:
 
             return measure(q2)  # Should always be False
 
-        # Run with dynamic execution enabled
+        # Run the circuit
         results = (
             sim(Guppy(conditional_x_from_zero))
             .qubits(2)
             .quantum(state_vector())
             .seed(42)
-            .dynamic(True)
             .run(100)
         )
 
@@ -84,13 +83,12 @@ class TestDynamicCircuitExecution:
 
             return measure(q2)  # Should always be True
 
-        # Run with dynamic execution enabled
+        # Run the circuit
         results = (
             sim(Guppy(conditional_x_from_one))
             .qubits(2)
             .quantum(state_vector())
             .seed(42)
-            .dynamic(True)
             .run(100)
         )
 
@@ -131,13 +129,12 @@ class TestDynamicCircuitExecution:
 
             return result1, measure(q2)
 
-        # Run with dynamic execution enabled
+        # Run the circuit
         results = (
             sim(Guppy(measurement_feedback))
             .qubits(2)
             .quantum(state_vector())
             .seed(42)
-            .dynamic(True)
             .run(100)
         )
 
@@ -198,14 +195,9 @@ class TestDynamicCircuitExecution:
             # Measure final state - should be |1>
             return measure(q2)
 
-        # Run with dynamic execution enabled
+        # Run the circuit
         results = (
-            sim(Guppy(teleport_one))
-            .qubits(3)
-            .quantum(state_vector())
-            .seed(42)
-            .dynamic(True)
-            .run(100)
+            sim(Guppy(teleport_one)).qubits(3).quantum(state_vector()).seed(42).run(100)
         )
 
         # Extract measurements
@@ -226,60 +218,6 @@ class TestDynamicCircuitExecution:
             f"Teleportation of |1> should succeed with high probability, "
             f"got {ones_count}/100 ones"
         )
-
-
-class TestDynamicVsStaticComparison:
-    """Compare dynamic and static execution to highlight differences."""
-
-    @pytest.mark.skip(reason="Static execution may not handle conditionals correctly")
-    def test_static_vs_dynamic_conditional(self) -> None:
-        """Compare static and dynamic execution of conditional circuits.
-
-        This test documents the expected difference between static execution
-        (where the entire LLVM runs first) and dynamic execution (where
-        measurement results are fed back).
-        """
-
-        @guppy
-        def conditional_circuit() -> bool:
-            q1 = qubit()
-            q2 = qubit()
-
-            # Put in superposition
-            h(q1)
-            result1 = measure(q1)
-
-            # Conditional gate
-            if result1:
-                x(q2)
-
-            return measure(q2)
-
-        # Run with dynamic execution
-        dynamic_results = (
-            sim(Guppy(conditional_circuit))
-            .qubits(2)
-            .quantum(state_vector())
-            .seed(42)
-            .dynamic(True)
-            .run(100)
-        )
-
-        # Run without dynamic execution (static mode)
-        static_results = (
-            sim(Guppy(conditional_circuit))
-            .qubits(2)
-            .quantum(state_vector())
-            .seed(42)
-            .dynamic(False)
-            .run(100)
-        )
-
-        # In dynamic mode, q2 should match q1's measurement
-        # In static mode (if it doesn't handle conditionals), behavior may differ
-        # This test documents the difference
-        print(f"Dynamic results: {dynamic_results}")
-        print(f"Static results: {static_results}")
 
 
 if __name__ == "__main__":

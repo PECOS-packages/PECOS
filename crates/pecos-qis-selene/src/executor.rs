@@ -257,6 +257,11 @@ pub struct QisHeliosInterface {
     /// We keep this loaded for the lifetime of dynamic execution
     qis_ffi_lib: Option<Library>,
 
+    /// `RTLD_GLOBAL` handle for QIS FFI library (Unix only)
+    /// We need to keep this alive to maintain the `RTLD_GLOBAL` symbols
+    #[cfg(unix)]
+    qis_ffi_lib_global: Option<libloading::os::unix::Library>,
+
     /// Execution context for dynamic circuit coordination
     /// Created when dynamic mode is enabled, destroyed when disabled
     execution_context: Option<ExecutionContextPtr>,
@@ -273,6 +278,8 @@ impl QisHeliosInterface {
             metadata: BTreeMap::new(),
             temp_files: Vec::new(),
             qis_ffi_lib: None,
+            #[cfg(unix)]
+            qis_ffi_lib_global: None,
             execution_context: None,
         }
     }
@@ -980,22 +987,51 @@ entry:
 
         // Step 1: Find and load libpecos_qis_ffi.so with RTLD_GLOBAL
         // This provides the __quantum__* symbols for the shim to resolve
-        debug!("Finding PECOS QIS FFI library");
-        let pecos_qis_lib_path = Self::find_pecos_qis_lib()?;
-        debug!(
-            "Successfully found QIS FFI library at: {}",
-            pecos_qis_lib_path.display()
-        );
+        //
+        // IMPORTANT: If we already have the library loaded (from enable_dynamic_mode),
+        // we MUST reuse it. On macOS, loading the same library multiple times creates
+        // separate thread-local storage instances, which causes crashes when the execution
+        // context is accessed from a different library instance.
+        #[cfg(unix)]
+        let pecos_qis_lib_global: Option<libloading::os::unix::Library>;
+        #[cfg(windows)]
+        let pecos_qis_lib_global: Option<Library>;
 
-        debug!("Loading QIS FFI library with RTLD_GLOBAL...");
-        let (pecos_qis_lib_global, pecos_qis_lib) = Self::load_library_with_rtld_global(
-            &pecos_qis_lib_path,
-            "Failed to load PECOS QIS cdylib",
-        )?;
-        debug!("QIS FFI library loaded successfully!");
+        let pecos_qis_lib_owned: Option<Library>;
+        let pecos_qis_lib: &Library = if let Some(ref lib) = self.qis_ffi_lib {
+            debug!("Reusing already loaded QIS FFI library");
+            #[cfg(unix)]
+            {
+                pecos_qis_lib_global = None;
+            }
+            #[cfg(windows)]
+            {
+                pecos_qis_lib_global = None;
+            }
+            pecos_qis_lib_owned = None;
+            lib
+        } else {
+            debug!("Finding PECOS QIS FFI library");
+            let pecos_qis_lib_path = Self::find_pecos_qis_lib()?;
+            debug!(
+                "Successfully found QIS FFI library at: {}",
+                pecos_qis_lib_path.display()
+            );
 
-        // Step 1b: Register execution context if we have one (for dynamic execution)
-        // This ensures the newly loaded library instance has access to our context
+            debug!("Loading QIS FFI library with RTLD_GLOBAL...");
+            let (lib_global, lib) = Self::load_library_with_rtld_global(
+                &pecos_qis_lib_path,
+                "Failed to load PECOS QIS cdylib",
+            )?;
+            debug!("QIS FFI library loaded successfully!");
+            pecos_qis_lib_global = Some(lib_global);
+            pecos_qis_lib_owned = Some(lib);
+            pecos_qis_lib_owned.as_ref().unwrap()
+        };
+
+        // Always register the execution context on the current thread
+        // This is necessary because TLS registration is per-thread, so the worker thread
+        // needs to register the same context that was created on the main thread
         if let Some(ExecutionContextPtr(ctx)) = self.execution_context {
             let register_fn: Symbol<RegisterExecutionContextFn> = unsafe {
                 pecos_qis_lib
@@ -1007,7 +1043,7 @@ entry:
                     })?
             };
             unsafe { register_fn(ctx) };
-            debug!("Registered execution context on loaded library: {ctx:?}");
+            debug!("Registered execution context on current thread: {ctx:?}");
         }
 
         // Step 2: Reset the QIS interface via the cdylib
@@ -1080,14 +1116,15 @@ entry:
         // Step 7: Collect the operations from thread-local storage via the cdylib
         // IMPORTANT: We call the cdylib's version to get the operations from the same
         // thread-local storage instance that the shim used
-        let operations = Self::collect_operations_from_lib(&pecos_qis_lib)?;
+        let operations = Self::collect_operations_from_lib(pecos_qis_lib)?;
 
         // Keep libraries loaded until we're done
+        // Note: pecos_qis_lib may be borrowed from self.qis_ffi_lib, so we only drop the owned one
         drop(program_lib);
         drop(program_lib_global);
         drop(shim_lib);
         drop(shim_lib_global);
-        drop(pecos_qis_lib);
+        drop(pecos_qis_lib_owned);
         drop(pecos_qis_lib_global);
 
         Ok(operations)
@@ -1170,20 +1207,31 @@ impl QisInterface for QisHeliosInterface {
         debug!("Enabling dynamic execution mode");
 
         // Load the QIS FFI library if not already loaded
+        // IMPORTANT: We must use load_library_with_rtld_global to ensure the same
+        // library instance (with the same thread-local storage) is used everywhere.
+        // On macOS, loading the library twice creates separate TLS instances, causing crashes.
         if self.qis_ffi_lib.is_none() {
             let lib_path = Self::find_pecos_qis_lib()?;
             debug!(
-                "Loading QIS FFI library for dynamic mode: {}",
+                "Loading QIS FFI library for dynamic mode with RTLD_GLOBAL: {}",
                 lib_path.display()
             );
 
-            let lib = unsafe { Library::new(&lib_path) }.map_err(|e| {
-                InterfaceError::ExecutionError(format!(
-                    "Failed to load QIS FFI library for dynamic mode: {e}"
-                ))
-            })?;
+            let (lib_global, lib) = Self::load_library_with_rtld_global(
+                &lib_path,
+                "Failed to load QIS FFI library for dynamic mode",
+            )?;
 
             self.qis_ffi_lib = Some(lib);
+            #[cfg(unix)]
+            {
+                self.qis_ffi_lib_global = Some(lib_global);
+            }
+            #[cfg(windows)]
+            {
+                // On Windows, both handles are the same type, and we only need one
+                drop(lib_global);
+            }
         }
 
         if let Some(ref lib) = self.qis_ffi_lib {
@@ -1360,6 +1408,12 @@ impl QisInterface for QisHeliosInterface {
 
     fn get_qis_ffi_lib_path(&self) -> Option<std::path::PathBuf> {
         Self::find_pecos_qis_lib().ok()
+    }
+
+    fn get_execution_context_ptr(&self) -> Option<*mut std::ffi::c_void> {
+        self.execution_context
+            .as_ref()
+            .map(|ExecutionContextPtr(ptr)| (*ptr).cast::<std::ffi::c_void>())
     }
 }
 

@@ -11,8 +11,6 @@ pub struct QisEngineBuilder {
     interface: Option<OperationCollector>,
     interface_builder: Option<Box<dyn crate::program::QisInterfaceBuilder>>,
     program_source: Option<String>, // Store original program source for loading
-    /// Enable dynamic circuit execution (for programs with conditionals depending on measurements)
-    enable_dynamic: bool,
 }
 
 impl Clone for QisEngineBuilder {
@@ -26,7 +24,6 @@ impl Clone for QisEngineBuilder {
                 .as_ref()
                 .map(|b| dyn_clone::clone_box(&**b)),
             program_source: self.program_source.clone(),
-            enable_dynamic: self.enable_dynamic,
         }
     }
 }
@@ -40,27 +37,7 @@ impl QisEngineBuilder {
             interface: None,
             interface_builder: None,
             program_source: None,
-            enable_dynamic: false,
         }
-    }
-
-    /// Enable dynamic circuit execution
-    ///
-    /// When enabled, the LLVM program runs on a worker thread and coordinates
-    /// with the quantum simulator via channels. This allows conditionals that
-    /// depend on measurement results to work correctly (dynamic circuits).
-    ///
-    /// # Example
-    /// ```rust
-    /// use pecos_qis_core::qis_engine;
-    ///
-    /// // Enable dynamic execution for circuits with measurement-dependent conditionals
-    /// let builder = qis_engine().dynamic(true);
-    /// ```
-    #[must_use]
-    pub fn dynamic(mut self, enable: bool) -> Self {
-        self.enable_dynamic = enable;
-        self
     }
 
     /// Set a pre-built interface (for testing)
@@ -264,10 +241,7 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
 
     #[allow(clippy::too_many_lines)]
     fn build(self) -> Result<Self::Engine, PecosError> {
-        log::debug!(
-            "QisEngineBuilder::build() called, enable_dynamic={}",
-            self.enable_dynamic
-        );
+        log::debug!("QisEngineBuilder::build() called");
 
         // Check that a runtime was provided
         let runtime = self.runtime.ok_or_else(|| {
@@ -280,58 +254,32 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
             )
         })?;
 
-        // For dynamic mode, we need to create a dynamic interface that can run LLVM incrementally
-        if self.enable_dynamic {
-            log::debug!("Dynamic mode enabled - creating dynamic interface");
+        // Dynamic execution: when we have a program source and interface builder,
+        // always use dynamic execution which properly handles measurement-dependent conditionals
+        if let Some(program_source) = &self.program_source
+            && let Some(builder) = &self.interface_builder
+        {
             log::debug!(
-                "  program_source present: {}",
-                self.program_source.is_some()
+                "Creating dynamic interface from program source ({} bytes)",
+                program_source.len()
             );
+            let qis_prog = pecos_programs::Qis::from_string(program_source);
+            let dynamic_interface = builder.create_dynamic_interface_from_qis(qis_prog)?;
+            log::debug!("Dynamic interface created successfully");
+
+            let mut engine = QisEngine::new(dynamic_interface, runtime);
+
+            // Store the builder and program source so clones can recreate their interfaces
+            engine.set_dynamic_config(dyn_clone::clone_box(&**builder), program_source);
+
             log::debug!(
-                "  interface_builder present: {}",
-                self.interface_builder.is_some()
+                "Dynamic engine created, interface present: {}",
+                engine.has_interface()
             );
-
-            if let Some(program_source) = &self.program_source {
-                if let Some(builder) = &self.interface_builder {
-                    // Create a dynamic interface using the interface builder
-                    log::debug!(
-                        "Creating dynamic interface from program source ({} bytes)",
-                        program_source.len()
-                    );
-                    let qis_prog = pecos_programs::Qis::from_string(program_source);
-                    let dynamic_interface = builder.create_dynamic_interface_from_qis(qis_prog)?;
-                    log::debug!("Dynamic interface created successfully");
-
-                    let mut engine = QisEngine::new(dynamic_interface, runtime);
-                    engine.set_dynamic_execution(true);
-
-                    // Store the builder and program source so clones can recreate their interfaces
-                    engine.set_dynamic_config(dyn_clone::clone_box(&**builder), program_source);
-
-                    log::debug!(
-                        "Dynamic engine created, interface present: {}",
-                        engine.has_interface()
-                    );
-                    // Don't call initialize_from_interface() - dynamic mode defers execution
-                    return Ok(engine);
-                }
-                log::error!("No interface builder available for dynamic mode");
-                return Err(PecosError::Processing(
-                    "Dynamic execution requires an interface builder that supports dynamic mode.\n\
-                    Use .interface(helios_interface_builder()) to enable dynamic execution."
-                        .to_string(),
-                ));
-            }
-            log::error!("No program source available for dynamic mode");
-            return Err(PecosError::Processing(
-                "Dynamic execution requires a program with LLVM IR source.\n\
-                Bitcode programs are not yet supported for dynamic execution."
-                    .to_string(),
-            ));
+            return Ok(engine);
         }
 
-        // Standard (non-dynamic) mode: use pre-collected operations
+        // Fallback: use pre-collected operations (for testing with pre-built interfaces)
         // Create the interface from builder or use default
         let interface: Option<crate::qis_interface::BoxedInterface> = if let Some(qis_interface) =
             &self.interface

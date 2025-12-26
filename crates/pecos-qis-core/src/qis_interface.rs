@@ -199,6 +199,17 @@ pub trait QisInterface: Send + Sync {
     fn get_qis_ffi_lib_path(&self) -> Option<std::path::PathBuf> {
         None
     }
+
+    /// Get the execution context pointer for dynamic execution
+    ///
+    /// This returns a raw pointer to the execution context, which can be used
+    /// to register the context on other library handles for cross-thread communication.
+    /// The pointer is opaque - it should only be passed to FFI registration functions.
+    ///
+    /// Returns None if dynamic execution is not supported or not enabled.
+    fn get_execution_context_ptr(&self) -> Option<*mut std::ffi::c_void> {
+        None
+    }
 }
 
 /// Box type for interface implementations

@@ -77,9 +77,9 @@ validate-cuda:
 # Build PECOS (profile: debug, release, native)
 build profile="debug": installreqs build-selene
     cargo run -p pecos --features cli -- python build --profile {{profile}}
-    # Build FFI crates if tools available
-    cargo run -p pecos --features cli -- julia build --profile {{profile}} 2>/dev/null || true
-    cargo run -p pecos --features cli -- go build --profile {{profile}} 2>/dev/null || true
+    # Build FFI crates if tools available (- prefix ignores errors)
+    -cargo run -p pecos --features cli -- julia build --profile {{profile}}
+    -cargo run -p pecos --features cli -- go build --profile {{profile}}
 
 # Build and install Selene plugins for development
 build-selene:
@@ -114,9 +114,9 @@ build-selene:
 # Build PECOS with CUDA support
 build-cuda profile="debug": installreqs
     cargo run -p pecos --features cli -- python build --profile {{profile}} --cuda
-    # Build FFI crates if tools available
-    cargo run -p pecos --features cli -- julia build --profile {{profile}} 2>/dev/null || true
-    cargo run -p pecos --features cli -- go build --profile {{profile}} 2>/dev/null || true
+    # Build FFI crates if tools available (- prefix ignores errors)
+    -cargo run -p pecos --features cli -- julia build --profile {{profile}}
+    -cargo run -p pecos --features cli -- go build --profile {{profile}}
 
 # Convenience aliases
 build-debug: (build "debug")

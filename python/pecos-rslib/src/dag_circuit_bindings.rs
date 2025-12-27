@@ -545,7 +545,7 @@ pyo3::create_exception!(
 #[pyclass(name = "DagCircuit", module = "pecos_rslib.quantum")]
 #[derive(Clone)]
 pub struct PyDagCircuit {
-    inner: DagCircuit,
+    pub(crate) inner: DagCircuit,
 }
 
 #[pymethods]

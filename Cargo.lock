@@ -3104,6 +3104,7 @@ version = "0.1.1"
 dependencies = [
  "num-complex",
  "pecos-core",
+ "pecos-quantum",
  "pecos-quest",
  "pecos-rng",
  "rand 0.9.2",
@@ -3182,6 +3183,7 @@ dependencies = [
  "num-complex",
  "parking_lot",
  "pecos",
+ "pecos-quantum",
  "pyo3",
  "regex",
  "serde_json",

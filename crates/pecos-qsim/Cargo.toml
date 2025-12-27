@@ -13,6 +13,7 @@ readme = "../../README.md"
 
 [dependencies]
 pecos-core.workspace = true
+pecos-quantum.workspace = true
 pecos-rng.workspace = true
 num-complex.workspace = true
 wide.workspace = true

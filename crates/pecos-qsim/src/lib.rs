@@ -10,14 +10,15 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+pub mod arbitrary_rotation_gateable;
 pub mod clifford_gateable;
 pub mod coin_toss;
 pub mod density_matrix;
 pub mod gens;
+pub mod hugr_executor;
 pub mod measurement_sampler;
 pub mod pauli_prop;
 // pub mod paulis;
-pub mod arbitrary_rotation_gateable;
 pub mod prelude;
 pub mod quantum_simulator;
 pub mod sign_algebra;
@@ -32,6 +33,7 @@ pub use clifford_gateable::{CliffordGateable, MeasurementResult};
 pub use coin_toss::CoinToss;
 pub use density_matrix::DensityMatrix;
 pub use gens::Gens;
+pub use hugr_executor::{HugrExecutionError, execute_hugr};
 // pub use paulis::Paulis;
 pub use measurement_sampler::{
     MeasurementKind, MeasurementSampler, MeasurementValidationError, SampleResult,

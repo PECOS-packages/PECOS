@@ -33,6 +33,16 @@ use tempfile::NamedTempFile;
 /// 3. We only read from the library (no mutation after initialization)
 static QIS_FFI_LIB_SINGLETON: OnceLock<Result<SharedLibrary, String>> = OnceLock::new();
 
+/// Process-wide singleton for the shim library.
+///
+/// The PECOS C shim library (`libpecos_selene.so/dylib`) provides the selene_*
+/// functions that bridge to __quantum__* FFI functions. On macOS, loading and
+/// unloading this library repeatedly (once per shot in dynamic execution mode)
+/// can cause issues with the dynamic linker.
+///
+/// By making it a singleton, we load it once and keep it for the process lifetime.
+static SHIM_LIB_SINGLETON: OnceLock<Result<SharedLibrary, String>> = OnceLock::new();
+
 /// Thread-safe wrapper for a loaded dynamic library.
 ///
 /// This wrapper exists because `libloading::Library` is `!Sync` by default
@@ -460,6 +470,42 @@ impl QisHeliosInterface {
                 }
             }
             Err(e) => Err(e.to_string()),
+        });
+
+        result
+            .as_ref()
+            .map_err(|e| InterfaceError::ExecutionError(e.clone()))
+    }
+
+    /// Get or initialize the process-wide shim library singleton.
+    ///
+    /// The PECOS C shim library provides the selene_* functions. On macOS,
+    /// loading and unloading it repeatedly can cause dynamic linker issues.
+    /// By making it a singleton, we load once and keep it for the process lifetime.
+    fn get_shim_lib_singleton() -> Result<&'static SharedLibrary, InterfaceError> {
+        let result = SHIM_LIB_SINGLETON.get_or_init(|| {
+            let shim_path = crate::shim::get_shim_library_path().ok_or_else(|| {
+                "PECOS selene shim library not found - build script may have failed".to_string()
+            })?;
+
+            debug!(
+                "Initializing shim library singleton from: {}",
+                shim_path.display()
+            );
+
+            match Self::load_library_with_rtld_global(
+                &shim_path,
+                "Failed to load PECOS C shim library singleton",
+            ) {
+                Ok((lib_global, lib)) => {
+                    debug!("Shim library singleton initialized successfully");
+                    Ok(SharedLibrary {
+                        _global_handle: lib_global,
+                        lib,
+                    })
+                }
+                Err(e) => Err(e.to_string()),
+            }
         });
 
         result
@@ -1056,13 +1102,6 @@ entry:
             InterfaceError::ExecutionError("No shared library created".to_string())
         })?;
 
-        // Get the path to our PECOS selene shim library
-        let shim_path = crate::shim::get_shim_library_path().ok_or_else(|| {
-            InterfaceError::ExecutionError(
-                "PECOS selene shim library not found - build script may have failed".to_string(),
-            )
-        })?;
-
         // Architecture note:
         // The __quantum__* FFI symbols are in libpecos_qis_ffi.so (Rust cdylib from pecos-qis-ffi).
         // The selene_* symbols are in libpecos_selene.so (C shim).
@@ -1136,10 +1175,11 @@ entry:
             }
         }
 
-        // Step 3: Load our PECOS C shim with RTLD_GLOBAL
+        // Step 3: Get the PECOS C shim library from the singleton
         // The shim has undefined __quantum__* symbols that will resolve to the cdylib
-        let (shim_lib_global, shim_lib) =
-            Self::load_library_with_rtld_global(&shim_path, "Failed to load PECOS C shim library")?;
+        // We use a singleton to avoid repeated library load/unload cycles on macOS
+        let shim_lib = Self::get_shim_lib_singleton()?;
+        debug!("Using shim library from process-wide singleton");
 
         // Step 4: Load the program.so with RTLD_GLOBAL so it can resolve selene_* symbols
         // It will find selene_* symbols from our shim (loaded with RTLD_GLOBAL above)
@@ -1148,7 +1188,8 @@ entry:
             Self::load_library_with_rtld_global(so_path, "Failed to load program library")?;
 
         // Step 5: Get the execution symbols (qmain and setjmp wrapper)
-        let (qmain_fn, call_with_setjmp) = Self::get_execution_symbols(&program_lib, &shim_lib)?;
+        let (qmain_fn, call_with_setjmp) =
+            Self::get_execution_symbols(&program_lib, shim_lib.inner())?;
 
         // Step 6: Call qmain via our setjmp wrapper
         // The call chain will be:
@@ -1175,15 +1216,11 @@ entry:
         // thread-local storage instance that the shim used
         let operations = Self::collect_operations_from_lib(pecos_qis_lib.inner())?;
 
-        // Keep libraries loaded until we're done
-        // Note: The QIS FFI library is in a process-wide singleton (qis_ffi_guard will be dropped
-        // automatically at end of function scope, but the singleton keeps the library alive)
+        // Keep program library loaded until we're done collecting operations
+        // Note: The QIS FFI library and shim library are in process-wide singletons
+        // and will remain loaded for the process lifetime
         drop(program_lib);
         drop(program_lib_global);
-        drop(shim_lib);
-        drop(shim_lib_global);
-        // qis_ffi_guard is dropped here automatically, releasing the mutex lock
-        // but the singleton keeps the library alive for future calls
 
         Ok(operations)
     }

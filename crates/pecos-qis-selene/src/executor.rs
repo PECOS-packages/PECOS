@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 use tempfile::NamedTempFile;
 
 /// Process-wide singleton for the QIS FFI library.
@@ -25,13 +25,54 @@ use tempfile::NamedTempFile;
 /// We store the initialization result (Ok or Err) and both handles:
 /// - The `RTLD_GLOBAL` handle to keep symbols visible to other libraries
 /// - The regular Library handle for symbol lookup
-#[cfg(unix)]
-static QIS_FFI_LIB_SINGLETON: OnceLock<
-    Result<Mutex<(libloading::os::unix::Library, Library)>, String>,
-> = OnceLock::new();
+///
+/// Note: We use `SharedLibrary` wrapper to make the library handle `Sync`.
+/// This is safe because:
+/// 1. The library is loaded once and never dropped (lives for process lifetime)
+/// 2. On Unix, `dlsym()` is thread-safe once the library is loaded
+/// 3. We only read from the library (no mutation after initialization)
+static QIS_FFI_LIB_SINGLETON: OnceLock<Result<SharedLibrary, String>> = OnceLock::new();
 
-#[cfg(windows)]
-static QIS_FFI_LIB_SINGLETON: OnceLock<Result<Mutex<(Library, Library)>, String>> = OnceLock::new();
+/// Thread-safe wrapper for a loaded dynamic library.
+///
+/// This wrapper exists because `libloading::Library` is `!Sync` by default
+/// (for safety on some platforms). However, for our use case:
+/// - The library is loaded once at startup and lives for the process lifetime
+/// - We only use it for symbol lookups (dlsym), which are thread-safe on Unix
+/// - We never drop the library (it's in a static singleton)
+///
+/// SAFETY: This is only safe because we never drop the library and only use
+/// thread-safe operations (dlsym for symbol lookup).
+struct SharedLibrary {
+    /// The `RTLD_GLOBAL` handle - keeps symbols visible to other libraries
+    #[cfg(unix)]
+    _global_handle: libloading::os::unix::Library,
+    #[cfg(windows)]
+    _global_handle: Library,
+    /// The regular handle for symbol lookups
+    lib: Library,
+}
+
+// SAFETY: See struct documentation above. The library handle is only used for
+// thread-safe dlsym operations and is never dropped.
+unsafe impl Sync for SharedLibrary {}
+unsafe impl Send for SharedLibrary {}
+
+impl SharedLibrary {
+    /// Get a symbol from the library
+    ///
+    /// # Safety
+    /// Same safety requirements as `Library::get`
+    unsafe fn get<T>(&self, symbol: &[u8]) -> Result<Symbol<'_, T>, libloading::Error> {
+        // SAFETY: We're inside an unsafe fn, caller is responsible for safety
+        unsafe { self.lib.get(symbol) }
+    }
+
+    /// Get a reference to the inner Library for legacy code
+    fn inner(&self) -> &Library {
+        &self.lib
+    }
+}
 
 // FFI function type aliases for dlopen symbol lookup
 type ResetInterfaceFn = unsafe extern "C" fn();
@@ -395,10 +436,8 @@ impl QisHeliosInterface {
     /// This ensures that all code in the process uses the same library instance,
     /// which is critical on macOS where multiple library loads create separate TLS instances.
     ///
-    /// Returns a reference to the Mutex containing both library handles.
-    #[cfg(unix)]
-    fn get_qis_ffi_lib_singleton()
-    -> Result<&'static Mutex<(libloading::os::unix::Library, Library)>, InterfaceError> {
+    /// Returns a reference to the `SharedLibrary` wrapper for symbol lookups.
+    fn get_qis_ffi_lib_singleton() -> Result<&'static SharedLibrary, InterfaceError> {
         let result = QIS_FFI_LIB_SINGLETON.get_or_init(|| match Self::find_pecos_qis_lib() {
             Ok(lib_path) => {
                 debug!(
@@ -412,36 +451,10 @@ impl QisHeliosInterface {
                 ) {
                     Ok((lib_global, lib)) => {
                         debug!("QIS FFI library singleton initialized successfully");
-                        Ok(Mutex::new((lib_global, lib)))
-                    }
-                    Err(e) => Err(e.to_string()),
-                }
-            }
-            Err(e) => Err(e.to_string()),
-        });
-
-        result
-            .as_ref()
-            .map_err(|e| InterfaceError::ExecutionError(e.clone()))
-    }
-
-    /// Get or initialize the process-wide QIS FFI library singleton (Windows version).
-    #[cfg(windows)]
-    fn get_qis_ffi_lib_singleton() -> Result<&'static Mutex<(Library, Library)>, InterfaceError> {
-        let result = QIS_FFI_LIB_SINGLETON.get_or_init(|| match Self::find_pecos_qis_lib() {
-            Ok(lib_path) => {
-                debug!(
-                    "Initializing QIS FFI library singleton from: {}",
-                    lib_path.display()
-                );
-
-                match Self::load_library_with_rtld_global(
-                    &lib_path,
-                    "Failed to load QIS FFI library singleton",
-                ) {
-                    Ok((lib_global, lib)) => {
-                        debug!("QIS FFI library singleton initialized successfully");
-                        Ok(Mutex::new((lib_global, lib)))
+                        Ok(SharedLibrary {
+                            _global_handle: lib_global,
+                            lib,
+                        })
                     }
                     Err(e) => Err(e.to_string()),
                 }
@@ -1070,12 +1083,7 @@ entry:
         // separate thread-local storage (TLS) instances, which causes crashes when
         // the execution context is accessed from a different library instance.
         // The singleton ensures all clones of QisEngine share the same TLS.
-        let qis_ffi_singleton = Self::get_qis_ffi_lib_singleton()?;
-        let qis_ffi_guard = qis_ffi_singleton.lock().map_err(|e| {
-            InterfaceError::ExecutionError(format!("Failed to lock QIS FFI library singleton: {e}"))
-        })?;
-        // Get the Library handle for symbol lookup (second element of the tuple)
-        let pecos_qis_lib = &qis_ffi_guard.1;
+        let pecos_qis_lib = Self::get_qis_ffi_lib_singleton()?;
         debug!("Using QIS FFI library from process-wide singleton");
 
         // Always register the execution context on the current thread
@@ -1165,7 +1173,7 @@ entry:
         // Step 7: Collect the operations from thread-local storage via the cdylib
         // IMPORTANT: We call the cdylib's version to get the operations from the same
         // thread-local storage instance that the shim used
-        let operations = Self::collect_operations_from_lib(pecos_qis_lib)?;
+        let operations = Self::collect_operations_from_lib(pecos_qis_lib.inner())?;
 
         // Keep libraries loaded until we're done
         // Note: The QIS FFI library is in a process-wide singleton (qis_ffi_guard will be dropped
@@ -1261,11 +1269,7 @@ impl QisInterface for QisHeliosInterface {
         // library instance. On macOS, loading the library twice creates separate TLS
         // instances, causing crashes when the execution context is accessed from a
         // different library instance.
-        let qis_ffi_singleton = Self::get_qis_ffi_lib_singleton()?;
-        let qis_ffi_guard = qis_ffi_singleton.lock().map_err(|e| {
-            InterfaceError::ExecutionError(format!("Failed to lock QIS FFI library singleton: {e}"))
-        })?;
-        let lib = &qis_ffi_guard.1;
+        let lib = Self::get_qis_ffi_lib_singleton()?;
         debug!("Using QIS FFI library from process-wide singleton for dynamic mode");
 
         // Create an execution context if we don't have one
@@ -1314,11 +1318,7 @@ impl QisInterface for QisHeliosInterface {
         debug!("Disabling dynamic execution mode");
 
         // Get the process-wide QIS FFI library singleton
-        let qis_ffi_singleton = Self::get_qis_ffi_lib_singleton()?;
-        let qis_ffi_guard = qis_ffi_singleton.lock().map_err(|e| {
-            InterfaceError::ExecutionError(format!("Failed to lock QIS FFI library singleton: {e}"))
-        })?;
-        let lib = &qis_ffi_guard.1;
+        let lib = Self::get_qis_ffi_lib_singleton()?;
 
         // Disable dynamic mode first
         let disable_fn: Symbol<DisableDynamicModeFn> = unsafe {
@@ -1361,9 +1361,7 @@ impl QisInterface for QisHeliosInterface {
 
     fn wait_for_result_needed(&self, timeout_ms: u64) -> Option<u64> {
         // Get the process-wide QIS FFI library singleton
-        let qis_ffi_singleton = Self::get_qis_ffi_lib_singleton().ok()?;
-        let qis_ffi_guard = qis_ffi_singleton.lock().ok()?;
-        let lib = &qis_ffi_guard.1;
+        let lib = Self::get_qis_ffi_lib_singleton().ok()?;
 
         let wait_fn: Symbol<WaitForNeedResultFn> =
             unsafe { lib.get(b"pecos_wait_for_need_result\0").ok()? };
@@ -1381,11 +1379,7 @@ impl QisInterface for QisHeliosInterface {
         value: bool,
     ) -> Result<(), InterfaceError> {
         // Get the process-wide QIS FFI library singleton
-        let qis_ffi_singleton = Self::get_qis_ffi_lib_singleton()?;
-        let qis_ffi_guard = qis_ffi_singleton.lock().map_err(|e| {
-            InterfaceError::ExecutionError(format!("Failed to lock QIS FFI library singleton: {e}"))
-        })?;
-        let lib = &qis_ffi_guard.1;
+        let lib = Self::get_qis_ffi_lib_singleton()?;
 
         let set_fn: Symbol<SetMeasurementResultFn> = unsafe {
             lib.get(b"pecos_set_measurement_result\0").map_err(|e| {
@@ -1401,11 +1395,7 @@ impl QisInterface for QisHeliosInterface {
 
     fn signal_result_ready(&mut self) -> Result<(), InterfaceError> {
         // Get the process-wide QIS FFI library singleton
-        let qis_ffi_singleton = Self::get_qis_ffi_lib_singleton()?;
-        let qis_ffi_guard = qis_ffi_singleton.lock().map_err(|e| {
-            InterfaceError::ExecutionError(format!("Failed to lock QIS FFI library singleton: {e}"))
-        })?;
-        let lib = &qis_ffi_guard.1;
+        let lib = Self::get_qis_ffi_lib_singleton()?;
 
         let signal_fn: Symbol<SignalResultReadyFn> = unsafe {
             lib.get(b"pecos_signal_result_ready\0").map_err(|e| {
@@ -1423,11 +1413,7 @@ impl QisInterface for QisHeliosInterface {
         &self,
     ) -> Result<Vec<pecos_qis_ffi_types::Operation>, InterfaceError> {
         // Get the process-wide QIS FFI library singleton
-        let qis_ffi_singleton = Self::get_qis_ffi_lib_singleton()?;
-        let qis_ffi_guard = qis_ffi_singleton.lock().map_err(|e| {
-            InterfaceError::ExecutionError(format!("Failed to lock QIS FFI library singleton: {e}"))
-        })?;
-        let lib = &qis_ffi_guard.1;
+        let lib = Self::get_qis_ffi_lib_singleton()?;
 
         // Get operations from the library's thread-local storage
         let get_ops_fn: Symbol<GetOperationsFn> = unsafe {
@@ -1463,11 +1449,7 @@ impl Drop for QisHeliosInterface {
         // Clean up execution context if still active
         if let Some(ExecutionContextPtr(ctx)) = self.execution_context.take() {
             // Get the process-wide QIS FFI library singleton
-            if let Ok(qis_ffi_singleton) = Self::get_qis_ffi_lib_singleton()
-                && let Ok(qis_ffi_guard) = qis_ffi_singleton.lock()
-            {
-                let lib = &qis_ffi_guard.1;
-
+            if let Ok(lib) = Self::get_qis_ffi_lib_singleton() {
                 // Unregister context
                 if let Ok(register_fn) = unsafe {
                     lib.get::<RegisterExecutionContextFn>(b"pecos_register_execution_context\0")

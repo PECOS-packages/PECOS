@@ -325,10 +325,20 @@ pub struct QisHeliosInterface {
     /// Keep temporary files alive (`TempPath` auto-deletes when dropped)
     temp_files: Vec<tempfile::TempPath>,
 
-    // Note: The QIS FFI library is now stored in a process-wide singleton
-    // (QIS_FFI_LIB_SINGLETON) to avoid macOS TLS issues. Each library load
-    // on macOS creates separate thread-local storage, causing crashes when
-    // execution context is accessed from a different library instance.
+    // Note: The QIS FFI library and shim library are stored in process-wide singletons
+    // to avoid macOS TLS/dynamic linker issues.
+    //
+    // The program library is stored per-interface to avoid repeated load/unload cycles
+    // on macOS which can cause dynamic linker instability.
+    /// The `RTLD_GLOBAL` handle for the program library (keeps symbols visible)
+    #[cfg(unix)]
+    program_lib_global: Option<libloading::os::unix::Library>,
+    #[cfg(windows)]
+    program_lib_global: Option<Library>,
+
+    /// The program library handle for symbol lookups
+    program_lib: Option<Library>,
+
     /// Execution context for dynamic circuit coordination
     /// Created when dynamic mode is enabled, destroyed when disabled
     execution_context: Option<ExecutionContextPtr>,
@@ -344,6 +354,8 @@ impl QisHeliosInterface {
             format: ProgramFormat::QisBitcode,
             metadata: BTreeMap::new(),
             temp_files: Vec::new(),
+            program_lib_global: None,
+            program_lib: None,
             execution_context: None,
         }
     }
@@ -1086,6 +1098,15 @@ entry:
         self.metadata
             .insert("helios_lib".to_string(), helios_lib_path);
 
+        // Pre-load the program library and keep it for the interface's lifetime.
+        // This avoids repeated library load/unload cycles which cause instability on macOS.
+        debug!("Pre-loading program library for persistent use...");
+        let (program_lib_global, program_lib) =
+            Self::load_library_with_rtld_global(&so_path, "Failed to pre-load program library")?;
+        self.program_lib_global = Some(program_lib_global);
+        self.program_lib = Some(program_lib);
+        debug!("Program library pre-loaded successfully");
+
         Ok(so_path)
     }
 
@@ -1098,9 +1119,12 @@ entry:
         &mut self,
         measurements: Option<&BTreeMap<usize, bool>>,
     ) -> Result<OperationCollector, InterfaceError> {
-        let so_path = self.executable_path.as_ref().ok_or_else(|| {
-            InterfaceError::ExecutionError("No shared library created".to_string())
-        })?;
+        // Verify the program library has been loaded
+        if self.program_lib.is_none() {
+            return Err(InterfaceError::ExecutionError(
+                "No program library loaded. Call load_program() first.".to_string(),
+            ));
+        }
 
         // Architecture note:
         // The __quantum__* FFI symbols are in libpecos_qis_ffi.so (Rust cdylib from pecos-qis-ffi).
@@ -1181,15 +1205,17 @@ entry:
         let shim_lib = Self::get_shim_lib_singleton()?;
         debug!("Using shim library from process-wide singleton");
 
-        // Step 4: Load the program.so with RTLD_GLOBAL so it can resolve selene_* symbols
-        // It will find selene_* symbols from our shim (loaded with RTLD_GLOBAL above)
-        debug!("Loading program.so with RTLD_GLOBAL...");
-        let (program_lib_global, program_lib) =
-            Self::load_library_with_rtld_global(so_path, "Failed to load program library")?;
+        // Step 4: Use the pre-loaded program library
+        // The program library was loaded in create_shared_library() and is kept for the
+        // interface's lifetime. This avoids repeated load/unload cycles on macOS.
+        let program_lib = self.program_lib.as_ref().ok_or_else(|| {
+            InterfaceError::ExecutionError("Program library not loaded".to_string())
+        })?;
+        debug!("Using pre-loaded program library");
 
         // Step 5: Get the execution symbols (qmain and setjmp wrapper)
         let (qmain_fn, call_with_setjmp) =
-            Self::get_execution_symbols(&program_lib, shim_lib.inner())?;
+            Self::get_execution_symbols(program_lib, shim_lib.inner())?;
 
         // Step 6: Call qmain via our setjmp wrapper
         // The call chain will be:
@@ -1216,11 +1242,9 @@ entry:
         // thread-local storage instance that the shim used
         let operations = Self::collect_operations_from_lib(pecos_qis_lib.inner())?;
 
-        // Keep program library loaded until we're done collecting operations
-        // Note: The QIS FFI library and shim library are in process-wide singletons
-        // and will remain loaded for the process lifetime
-        drop(program_lib);
-        drop(program_lib_global);
+        // Note: The program library is kept loaded for the interface's lifetime
+        // (stored in self.program_lib). It will be dropped when the interface is dropped.
+        // The QIS FFI library and shim library are in process-wide singletons.
 
         Ok(operations)
     }

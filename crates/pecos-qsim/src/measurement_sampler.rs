@@ -491,24 +491,24 @@ impl MeasurementSampler {
         self.measurements.len()
     }
 
-    /// Convert a SIMD column to a u64 column via zero-copy transmute.
+    /// Convert a SIMD column to a u64 column.
+    ///
+    /// Note: We copy rather than transmute because `u64x4` has 32-byte alignment
+    /// while `Vec<u64>` expects 8-byte alignment. Using `Vec::from_raw_parts` to
+    /// reinterpret the memory causes heap corruption on Windows when the Vec is
+    /// dropped, as the allocator detects the alignment mismatch.
     #[inline]
     fn simd_column_to_u64_vec(simd_col: Vec<u64x4>, num_words: usize) -> Vec<u64> {
-        // Safety: u64x4 is repr(C) and contains exactly 4 u64s in order.
-        // We're converting Vec<u64x4> to Vec<u64> with 4x the length.
-        let simd_len = simd_col.len();
-        let u64_capacity = simd_len * 4;
-
-        // Convert Vec<u64x4> to Vec<u64> without copying
-        let mut simd_col = std::mem::ManuallyDrop::new(simd_col);
-        let ptr = simd_col.as_mut_ptr().cast::<u64>();
-
-        // Safety: u64x4 has same alignment as u64 (or stricter), and we're
-        // reinterpreting the memory as a flat array of u64s.
-        let mut result = unsafe { Vec::from_raw_parts(ptr, u64_capacity, u64_capacity) };
-
-        // Truncate to the actual number of words needed
-        result.truncate(num_words);
+        let mut result = Vec::with_capacity(num_words);
+        for simd_val in simd_col {
+            let arr: [u64; 4] = simd_val.into();
+            for val in arr {
+                if result.len() >= num_words {
+                    return result;
+                }
+                result.push(val);
+            }
+        }
         result
     }
 

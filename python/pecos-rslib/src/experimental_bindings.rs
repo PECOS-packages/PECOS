@@ -67,19 +67,43 @@ impl PySymbolicExecutionResult {
     ///     List of measurement outcome tuples, where each tuple contains
     ///     the outcomes for all measurements in order.
     fn sample(&self, num_shots: usize) -> Vec<Vec<bool>> {
+        eprintln!(
+            "[DEBUG] sample: num_shots={}, num_measurements={}, deterministic={}, nondeterministic={}",
+            num_shots,
+            self.history.len(),
+            self.history.deterministic().len(),
+            self.history.nondeterministic().len()
+        );
+
+        eprintln!("[DEBUG] sample: Creating MeasurementSampler...");
         let sampler = MeasurementSampler::new(&self.history);
+        eprintln!("[DEBUG] sample: Calling sampler.sample({num_shots})...");
+
         let result = sampler.sample(num_shots);
+        eprintln!(
+            "[DEBUG] sample: sampler.sample() returned, shots={}, num_measurements={}",
+            result.shots(),
+            result.num_measurements()
+        );
 
         // Convert from column-major to row-major format for Python
         let n_shots = result.shots();
         let n_meas = result.num_measurements();
-        (0..n_shots)
+        eprintln!("[DEBUG] sample: Converting to Python format...");
+
+        let output: Vec<Vec<bool>> = (0..n_shots)
             .map(|shot| {
                 (0..n_meas)
                     .map(|meas| result.get(shot, meas).into())
                     .collect()
             })
-            .collect()
+            .collect();
+
+        eprintln!(
+            "[DEBUG] sample: Conversion complete, returning {} rows",
+            output.len()
+        );
+        output
     }
 
     /// Sample and return counts of unique outcomes.
@@ -90,20 +114,46 @@ impl PySymbolicExecutionResult {
     /// Returns:
     ///     Dictionary mapping outcome tuples to their counts
     fn sample_counts(&self, py: Python<'_>, num_shots: usize) -> PyResult<Py<PyDict>> {
+        eprintln!(
+            "[DEBUG] sample_counts: num_shots={}, num_measurements={}, deterministic={}, nondeterministic={}",
+            num_shots,
+            self.history.len(),
+            self.history.deterministic().len(),
+            self.history.nondeterministic().len()
+        );
+
+        eprintln!("[DEBUG] Creating MeasurementSampler...");
         let sampler = MeasurementSampler::new(&self.history);
+        eprintln!(
+            "[DEBUG] MeasurementSampler created, calling sample({num_shots})..."
+        );
+
         let result = sampler.sample(num_shots);
+        eprintln!(
+            "[DEBUG] sample() returned: shots={}, num_measurements={}",
+            result.shots(),
+            result.num_measurements()
+        );
 
         // Count occurrences
         let mut counts: std::collections::HashMap<Vec<bool>, usize> =
             std::collections::HashMap::new();
         let n_shots = result.shots();
         let n_meas = result.num_measurements();
+        eprintln!(
+            "[DEBUG] Counting occurrences: n_shots={n_shots}, n_meas={n_meas}"
+        );
+
         for shot in 0..n_shots {
             let outcome: Vec<bool> = (0..n_meas)
                 .map(|meas| result.get(shot, meas).into())
                 .collect();
             *counts.entry(outcome).or_insert(0) += 1;
         }
+        eprintln!(
+            "[DEBUG] Counting complete, unique outcomes: {}",
+            counts.len()
+        );
 
         // Convert to Python dict with tuple keys
         let dict = PyDict::new(py);
@@ -112,6 +162,7 @@ impl PySymbolicExecutionResult {
             let key: Vec<u8> = outcome.iter().map(|&b| u8::from(b)).collect();
             dict.set_item(key, count)?;
         }
+        eprintln!("[DEBUG] sample_counts complete, returning dict");
 
         Ok(dict.into())
     }

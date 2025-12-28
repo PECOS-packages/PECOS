@@ -124,9 +124,7 @@ impl PySymbolicExecutionResult {
 
         eprintln!("[DEBUG] Creating MeasurementSampler...");
         let sampler = MeasurementSampler::new(&self.history);
-        eprintln!(
-            "[DEBUG] MeasurementSampler created, calling sample({num_shots})..."
-        );
+        eprintln!("[DEBUG] MeasurementSampler created, calling sample({num_shots})...");
 
         let result = sampler.sample(num_shots);
         eprintln!(
@@ -140,9 +138,7 @@ impl PySymbolicExecutionResult {
             std::collections::HashMap::new();
         let n_shots = result.shots();
         let n_meas = result.num_measurements();
-        eprintln!(
-            "[DEBUG] Counting occurrences: n_shots={n_shots}, n_meas={n_meas}"
-        );
+        eprintln!("[DEBUG] Counting occurrences: n_shots={n_shots}, n_meas={n_meas}");
 
         for shot in 0..n_shots {
             let outcome: Vec<bool> = (0..n_meas)

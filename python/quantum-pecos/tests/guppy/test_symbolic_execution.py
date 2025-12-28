@@ -14,40 +14,14 @@
 from __future__ import annotations
 
 import pytest
-
-# Check if guppylang is available
-try:
-    from guppylang import guppy
-    from guppylang.std.quantum import cx, cy, cz, h, measure, qubit, s, x, y, z
-
-    HAS_GUPPYLANG = True
-except ImportError:
-    HAS_GUPPYLANG = False
-
-# Check if symbolic execution is available
-try:
-    from pecos.experimental import (
-        SymbolicExecutionResult,
-        execute_dag_circuit_symbolic,
-        execute_hugr_symbolic,
-    )
-
-    HAS_SYMBOLIC = True
-except ImportError:
-    HAS_SYMBOLIC = False
-
-# Check if hugr_to_dag_circuit is available
-try:
-    from pecos_rslib import hugr_to_dag_circuit
-
-    HAS_DAG_CIRCUIT = True
-except ImportError:
-    HAS_DAG_CIRCUIT = False
-
-pytestmark = pytest.mark.skipif(
-    not (HAS_GUPPYLANG and HAS_SYMBOLIC),
-    reason="guppylang or pecos.experimental not available",
+from guppylang import guppy
+from guppylang.std.quantum import cx, cy, cz, h, measure, qubit, s, x, y, z
+from pecos.experimental import (
+    SymbolicExecutionResult,
+    execute_dag_circuit_symbolic,
+    execute_hugr_symbolic,
 )
+from pecos_rslib import hugr_to_dag_circuit
 
 
 def outcome_to_tuple(outcome: bytes) -> tuple[bool, ...]:
@@ -450,7 +424,6 @@ class TestRepetitionCode:
             assert d0 == d1 == d2, f"Data qubits should match: {outcome}"
 
 
-@pytest.mark.skipif(not HAS_DAG_CIRCUIT, reason="hugr_to_dag_circuit not available")
 class TestDagCircuitSymbolicExecution:
     """Tests for execute_dag_circuit_symbolic."""
 

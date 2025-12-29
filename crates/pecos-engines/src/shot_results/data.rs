@@ -252,6 +252,42 @@ impl Data {
             _ => None,
         }
     }
+
+    /// Convert the Data to a JSON value
+    #[must_use]
+    pub fn to_json_value(&self) -> JsonValue {
+        match self {
+            Self::U8(v) => JsonValue::from(*v),
+            Self::U16(v) => JsonValue::from(*v),
+            Self::U32(v) => JsonValue::from(*v),
+            Self::U64(v) => JsonValue::from(*v),
+            Self::I8(v) => JsonValue::from(*v),
+            Self::I16(v) => JsonValue::from(*v),
+            Self::I32(v) => JsonValue::from(*v),
+            Self::I64(v) => JsonValue::from(*v),
+            Self::F32(v) => serde_json::Number::from_f64(f64::from(*v))
+                .map_or(JsonValue::Null, JsonValue::Number),
+            Self::F64(v) => {
+                serde_json::Number::from_f64(*v).map_or(JsonValue::Null, JsonValue::Number)
+            }
+            Self::String(v) => JsonValue::from(v.clone()),
+            Self::Bool(v) => JsonValue::from(*v),
+            Self::BigInt(v) => JsonValue::from(v.to_string()),
+            Self::Bytes(v) => JsonValue::Array(v.iter().map(|&b| JsonValue::from(b)).collect()),
+            Self::BitVec(bv) => {
+                // Convert BitVec to decimal integer
+                let mut value = 0u64;
+                for (i, bit) in bv.iter().enumerate() {
+                    if *bit && i < 64 {
+                        value |= 1u64 << i;
+                    }
+                }
+                JsonValue::from(value)
+            }
+            Self::Json(v) => v.clone(),
+            Self::Vec(v) => JsonValue::Array(v.iter().map(Data::to_json_value).collect()),
+        }
+    }
 }
 
 // Implement Display trait for Data instead of inherent to_string method

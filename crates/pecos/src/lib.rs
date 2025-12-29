@@ -254,8 +254,21 @@ pub mod quantum {
 #[cfg(feature = "sim")]
 pub mod noise {
     pub use pecos_engines::noise::{
-        BiasedDepolarizingNoiseModelBuilder, DepolarizingNoiseModel, DepolarizingNoiseModelBuilder,
-        GeneralNoiseModelBuilder, IntoNoiseModel, NoiseModel, PassThroughNoiseModel,
+        BiasedDepolarizingNoiseModelBuilder,
+        DepolarizingNoiseModel,
+        DepolarizingNoiseModelBuilder,
+        // Noisy measurement history types (symbolic noise simulation)
+        FaultEvent,
+        GeneralNoiseModelBuilder,
+        IntoNoiseModel,
+        NoiseModel,
+        NoisyMeasurementHistory,
+        NoisyMeasurementHistoryBuilder,
+        NoisyMeasurementResult,
+        NoisyMeasurementSampler,
+        PassThroughNoiseModel,
+        Pauli,
+        SymbolicDepolarizingNoiseModel,
         general::GeneralNoiseModel,
     };
 

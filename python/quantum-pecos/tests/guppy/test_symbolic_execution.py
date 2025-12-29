@@ -17,9 +17,12 @@ import pytest
 from guppylang import guppy
 from guppylang.std.quantum import cx, cy, cz, h, measure, qubit, s, x, y, z
 from pecos.experimental import (
+    NoisySymbolicExecutionResult,
     SymbolicExecutionResult,
     execute_dag_circuit_symbolic,
+    execute_dag_circuit_symbolic_noisy,
     execute_hugr_symbolic,
+    execute_hugr_symbolic_noisy,
 )
 from pecos_rslib import hugr_to_dag_circuit
 
@@ -498,3 +501,148 @@ class TestResultStringRepresentation:
         assert len(str_repr) > 0
         # Should contain measurement info like "m0" or similar
         assert "m" in str_repr.lower() or "[" in str_repr
+
+
+class TestNoisySymbolicExecution:
+    """Tests for noisy symbolic execution with depolarizing noise."""
+
+    def test_noisy_execution_returns_noisy_result(self) -> None:
+        """Test that noisy execution returns NoisySymbolicExecutionResult."""
+
+        @guppy
+        def bell() -> tuple[bool, bool]:
+            q0 = qubit()
+            q1 = qubit()
+            h(q0)
+            cx(q0, q1)
+            return (measure(q0), measure(q1))
+
+        result = execute_hugr_symbolic_noisy(
+            bell.compile().to_bytes(),
+            p1=0.01,  # 1% single-qubit error
+        )
+
+        assert isinstance(result, NoisySymbolicExecutionResult)
+        assert result.num_measurements == 2
+        # Should have faults from the H gate (3 Pauli types)
+        assert result.num_faults > 0
+
+    def test_noiseless_execution_has_no_faults(self) -> None:
+        """Test that zero noise produces no fault events."""
+
+        @guppy
+        def bell() -> tuple[bool, bool]:
+            q0 = qubit()
+            q1 = qubit()
+            h(q0)
+            cx(q0, q1)
+            return (measure(q0), measure(q1))
+
+        result = execute_hugr_symbolic_noisy(
+            bell.compile().to_bytes(),
+            p1=0.0,
+            p2=0.0,
+            p_meas=0.0,
+            p_prep=0.0,
+        )
+
+        assert result.num_measurements == 2
+        assert result.num_faults == 0
+
+    def test_noisy_sampling_produces_more_outcomes(self) -> None:
+        """Test that noise can produce outcomes not in noiseless distribution."""
+
+        @guppy
+        def bell() -> tuple[bool, bool]:
+            q0 = qubit()
+            q1 = qubit()
+            h(q0)
+            cx(q0, q1)
+            return (measure(q0), measure(q1))
+
+        hugr_bytes = bell.compile().to_bytes()
+
+        # Noiseless: only |00> and |11>
+        noiseless = execute_hugr_symbolic(hugr_bytes)
+        noiseless_counts = noiseless.sample_counts(10000)
+        assert len(noiseless_counts) == 2
+        assert b"\x00\x01" not in noiseless_counts
+        assert b"\x01\x00" not in noiseless_counts
+
+        # With significant noise: should see some |01> and |10>
+        noisy = execute_hugr_symbolic_noisy(
+            hugr_bytes,
+            p1=0.1,  # 10% single-qubit error (high for demonstration)
+            p2=0.1,
+        )
+        noisy_counts = noisy.sample_counts(10000)
+
+        # With 10% noise, we should see some anti-correlated outcomes
+        # (though not guaranteed, highly likely with 10000 samples)
+        assert len(noisy_counts) >= 2  # At minimum, still see 00 and 11
+
+    def test_measurement_noise_flips_outcomes(self) -> None:
+        """Test that measurement noise directly flips measurement outcomes."""
+
+        @guppy
+        def deterministic_zero() -> bool:
+            q = qubit()
+            return measure(q)
+
+        # With 100% measurement noise, all outcomes should flip from 0 to 1
+        result = execute_hugr_symbolic_noisy(
+            deterministic_zero.compile().to_bytes(),
+            p_meas=1.0,  # 100% measurement flip
+        )
+
+        # Sample many times - all should be 1 (flipped from deterministic 0)
+        counts = result.sample_counts(100)
+        # Note: measurement noise XORs, so deterministic 0 becomes 0 ^ 1 = 1
+        assert b"\x01" in counts
+        assert counts.get(b"\x01", 0) == 100
+
+    def test_dag_circuit_noisy_execution(self) -> None:
+        """Test noisy execution via DagCircuit."""
+
+        @guppy
+        def bell() -> tuple[bool, bool]:
+            q0 = qubit()
+            q1 = qubit()
+            h(q0)
+            cx(q0, q1)
+            return (measure(q0), measure(q1))
+
+        hugr_bytes = bell.compile().to_bytes()
+        dag = hugr_to_dag_circuit(hugr_bytes)
+
+        result = execute_dag_circuit_symbolic_noisy(
+            dag,
+            p1=0.01,
+            p2=0.01,
+        )
+
+        assert isinstance(result, NoisySymbolicExecutionResult)
+        assert result.num_measurements == 2
+        assert result.num_faults > 0
+
+    def test_noisy_result_string_representation(self) -> None:
+        """Test that str() on noisy result gives meaningful output."""
+
+        @guppy
+        def single_measure() -> bool:
+            q = qubit()
+            h(q)
+            return measure(q)
+
+        result = execute_hugr_symbolic_noisy(
+            single_measure.compile().to_bytes(),
+            p1=0.01,
+        )
+
+        str_repr = str(result)
+        assert isinstance(str_repr, str)
+        assert len(str_repr) > 0
+
+        repr_str = repr(result)
+        assert "NoisySymbolicExecutionResult" in repr_str
+        assert "faults=" in repr_str

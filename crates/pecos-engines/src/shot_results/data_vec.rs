@@ -73,6 +73,8 @@ pub enum DataVec {
     BitVec(Vec<BitVec<u8, Lsb0>>),
     /// Vector of JSON values
     Json(Vec<JsonValue>),
+    /// Vector of nested Data vectors (for tuples, arrays, etc.)
+    Vec(Vec<Vec<Data>>),
 }
 
 impl DataVec {
@@ -96,6 +98,7 @@ impl DataVec {
             Self::Bytes(v) => v.len(),
             Self::BitVec(v) => v.len(),
             Self::Json(v) => v.len(),
+            Self::Vec(v) => v.len(),
         }
     }
 
@@ -127,6 +130,7 @@ impl DataVec {
             (Self::Bytes(v), Data::Bytes(val)) => v.push(val),
             (Self::BitVec(v), Data::BitVec(val)) => v.push(val),
             (Self::Json(v), Data::Json(val)) => v.push(val),
+            (Self::Vec(v), Data::Vec(val)) => v.push(val),
             _ => {
                 return Err(PecosError::Processing(
                     "Data type mismatch when pushing to DataVec".to_string(),
@@ -158,6 +162,7 @@ impl DataVec {
             Self::Bytes(v) => v.get(index).map(|val| Data::Bytes(val.clone())),
             Self::BitVec(v) => v.get(index).map(|val| Data::BitVec(val.clone())),
             Self::Json(v) => v.get(index).map(|val| Data::Json(val.clone())),
+            Self::Vec(v) => v.get(index).map(|val| Data::Vec(val.clone())),
         }
     }
 
@@ -190,13 +195,7 @@ impl DataVec {
             Data::Bytes(_) => Self::Bytes(Vec::with_capacity(data.len())),
             Data::BitVec(_) => Self::BitVec(Vec::with_capacity(data.len())),
             Data::Json(_) => Self::Json(Vec::with_capacity(data.len())),
-            Data::Vec(_) => {
-                // For nested vectors, we need to create a nested DataVec
-                // For now, return an error as this is complex to handle
-                return Err(PecosError::Processing(
-                    "Cannot create DataVec from nested vectors".to_string(),
-                ));
-            }
+            Data::Vec(_) => Self::Vec(Vec::with_capacity(data.len())),
         };
 
         // Push all elements, checking for type consistency
@@ -277,6 +276,15 @@ impl DataVec {
                     .collect(),
             ),
             Self::Json(v) => JsonValue::Array(v.clone()),
+            Self::Vec(v) => JsonValue::Array(
+                v.iter()
+                    .map(|inner| {
+                        JsonValue::Array(
+                            inner.iter().map(super::data::Data::to_json_value).collect(),
+                        )
+                    })
+                    .collect(),
+            ),
         }
     }
 
@@ -308,6 +316,7 @@ impl DataVec {
             DataVecType::Bytes => Self::Bytes(Vec::new()),
             DataVecType::BitVec => Self::BitVec(Vec::new()),
             DataVecType::Json => Self::Json(Vec::new()),
+            DataVecType::Vec => Self::Vec(Vec::new()),
         }
     }
 
@@ -331,6 +340,7 @@ impl DataVec {
             Self::Bytes(_) => DataVecType::Bytes,
             Self::BitVec(_) => DataVecType::BitVec,
             Self::Json(_) => DataVecType::Json,
+            Self::Vec(_) => DataVecType::Vec,
         }
     }
 }
@@ -370,6 +380,8 @@ pub enum DataVecType {
     BitVec,
     /// JSON value type
     Json,
+    /// Nested vector type (for tuples, arrays, etc.)
+    Vec,
 }
 
 impl DataVecType {
@@ -393,11 +405,7 @@ impl DataVecType {
             Data::Bytes(_) => Self::Bytes,
             Data::BitVec(_) => Self::BitVec,
             Data::Json(_) => Self::Json,
-            Data::Vec(_) => {
-                // For nested vectors, we can't determine a single type
-                // This is a limitation of the current type system
-                Self::Json // Use Json as a fallback for complex types
-            }
+            Data::Vec(_) => Self::Vec,
         }
     }
 }
@@ -564,5 +572,47 @@ mod tests {
         } else {
             panic!("Expected Json variant");
         }
+    }
+
+    #[test]
+    fn test_vec_support() {
+        // Test nested vectors (e.g., tuple outputs from HUGR)
+        let vec1 = vec![Data::Bool(true), Data::Bool(false)];
+        let vec2 = vec![Data::Bool(false), Data::Bool(true)];
+
+        let data = vec![Data::Vec(vec1.clone()), Data::Vec(vec2.clone())];
+        let data_vec = DataVec::from_data_vec(data).unwrap();
+
+        assert_eq!(data_vec.len(), 2);
+        assert_eq!(data_vec.data_type(), DataVecType::Vec);
+
+        if let DataVec::Vec(ref vecs) = data_vec {
+            assert_eq!(vecs[0], vec1);
+            assert_eq!(vecs[1], vec2);
+        } else {
+            panic!("Expected Vec variant");
+        }
+
+        // Test JSON serialization
+        let json = data_vec.to_json_array();
+        assert!(json.is_array());
+        let arr = json.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0], serde_json::json!([true, false]));
+        assert_eq!(arr[1], serde_json::json!([false, true]));
+    }
+
+    #[test]
+    fn test_vec_roundtrip() {
+        // Test roundtrip conversion for Vec variant
+        let original = vec![
+            Data::Vec(vec![Data::I32(1), Data::I32(2)]),
+            Data::Vec(vec![Data::I32(3), Data::I32(4)]),
+        ];
+
+        let data_vec = DataVec::from_data_vec(original.clone()).unwrap();
+        let converted_back = data_vec.to_data_vec();
+
+        assert_eq!(original, converted_back);
     }
 }

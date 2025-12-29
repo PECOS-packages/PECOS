@@ -17,6 +17,10 @@
 //! 2. Get symbolic measurement dependencies (`MeasurementHistory`)
 //! 3. Sample efficiently using `MeasurementSampler`
 
+use pecos::noise::{
+    NoisyMeasurementHistory, NoisyMeasurementHistoryBuilder, NoisyMeasurementSampler,
+    SymbolicDepolarizingNoiseModel,
+};
 use pecos::qsim::{
     HugrExecutionError, MeasurementHistory, MeasurementSampler, StdSymbolicSparseStab, execute_hugr,
 };
@@ -265,20 +269,269 @@ pub fn execute_dag_circuit_symbolic(
     })
 }
 
+// ============================================================================
+// Noisy symbolic execution
+// ============================================================================
+
+/// Python wrapper for `NoisyMeasurementHistory` with noisy sampling capabilities
+#[pyclass(name = "NoisySymbolicExecutionResult")]
+pub struct PyNoisySymbolicExecutionResult {
+    history: NoisyMeasurementHistory,
+}
+
+#[pymethods]
+impl PyNoisySymbolicExecutionResult {
+    /// Number of measurements in the history
+    #[getter]
+    fn num_measurements(&self) -> usize {
+        self.history.num_measurements()
+    }
+
+    /// Number of fault events in the noise model
+    #[getter]
+    fn num_faults(&self) -> usize {
+        self.history.num_faults()
+    }
+
+    /// Sample measurement outcomes with noise.
+    ///
+    /// This samples fault bits (with their probabilities) and random bits,
+    /// then computes measurement outcomes via XOR chains.
+    ///
+    /// Args:
+    ///     `num_shots`: Number of samples to generate
+    ///
+    /// Returns:
+    ///     List of measurement outcome lists
+    fn sample(&self, num_shots: usize) -> Vec<Vec<bool>> {
+        let sampler = NoisyMeasurementSampler::new(&self.history);
+        let result = sampler.sample(num_shots);
+
+        // Convert from column-major to row-major format for Python
+        let n_shots = result.shots();
+        let n_meas = result.num_measurements();
+        (0..n_shots)
+            .map(|shot| {
+                (0..n_meas)
+                    .map(|meas| result.get(shot, meas).into())
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Sample and return counts of unique outcomes.
+    ///
+    /// Args:
+    ///     `num_shots`: Number of samples to generate
+    ///
+    /// Returns:
+    ///     Dictionary mapping outcome tuples to their counts
+    fn sample_counts(&self, py: Python<'_>, num_shots: usize) -> PyResult<Py<PyDict>> {
+        let sampler = NoisyMeasurementSampler::new(&self.history);
+        let result = sampler.sample(num_shots);
+
+        // Count occurrences
+        let mut counts: std::collections::HashMap<Vec<bool>, usize> =
+            std::collections::HashMap::new();
+        let n_shots = result.shots();
+        let n_meas = result.num_measurements();
+        for shot in 0..n_shots {
+            let outcome: Vec<bool> = (0..n_meas)
+                .map(|meas| result.get(shot, meas).into())
+                .collect();
+            *counts.entry(outcome).or_insert(0) += 1;
+        }
+
+        // Convert to Python dict with bytes keys
+        let dict = PyDict::new(py);
+        for (outcome, count) in counts {
+            let key: Vec<u8> = outcome.iter().map(|&b| u8::from(b)).collect();
+            dict.set_item(key, count)?;
+        }
+
+        Ok(dict.into())
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "NoisySymbolicExecutionResult(measurements={}, faults={})",
+            self.history.num_measurements(),
+            self.history.num_faults()
+        )
+    }
+
+    fn __str__(&self) -> String {
+        self.history.to_string()
+    }
+}
+
+/// Execute a HUGR symbolically with depolarizing noise.
+///
+/// This function:
+/// 1. Performs symbolic stabilizer simulation to get measurement dependencies
+/// 2. Walks the circuit to identify fault locations
+/// 3. Propagates faults to determine which measurements each fault affects
+/// 4. Returns a result that can be sampled with noise
+///
+/// Args:
+///     `hugr_bytes`: The HUGR program as bytes (envelope format)
+///     `p1`: Single-qubit gate error probability (depolarizing)
+///     `p2`: Two-qubit gate error probability (depolarizing)
+///     `p_meas`: Measurement error probability
+///     `p_prep`: State preparation error probability
+///     `num_qubits`: Number of qubits (optional, auto-detected if None)
+///
+/// Returns:
+///     `NoisySymbolicExecutionResult` that can be sampled with noise
+///
+/// Example:
+///     >>> from pecos.experimental import `execute_hugr_symbolic_noisy`
+///     >>> result = `execute_hugr_symbolic_noisy`(
+///     ...     `hugr_bytes`,
+///     ...     `p1=0.001`,  # 0.1% single-qubit error
+///     ...     `p2=0.01`,   # 1% two-qubit error
+///     ...     `p_meas=0.001`,
+///     ...     `p_prep=0.001`
+///     ... )
+///     >>> counts = `result.sample_counts(1_000_000)`
+#[pyfunction]
+#[pyo3(signature = (hugr_bytes, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0, num_qubits=None))]
+pub fn execute_hugr_symbolic_noisy(
+    hugr_bytes: &Bound<'_, PyBytes>,
+    p1: f64,
+    p2: f64,
+    p_meas: f64,
+    p_prep: f64,
+    num_qubits: Option<usize>,
+) -> PyResult<PyNoisySymbolicExecutionResult> {
+    let bytes = hugr_bytes.as_bytes();
+
+    // Parse HUGR bytes into a Hugr
+    let hugr = read_hugr_envelope(bytes)
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to parse HUGR bytes: {e}")))?;
+
+    // Convert to SimpleHugr
+    let simple_hugr = SimpleHugr::new_relaxed(hugr);
+
+    // Determine number of qubits
+    let n_qubits = num_qubits.unwrap_or_else(|| simple_hugr.qubits().len());
+
+    // Create symbolic simulator and execute
+    let mut sim = StdSymbolicSparseStab::new(n_qubits);
+
+    execute_hugr(&mut sim, &simple_hugr).map_err(|e| match e {
+        HugrExecutionError::UnsupportedGate { gate_type, .. } => PyRuntimeError::new_err(format!(
+            "Unsupported gate for stabilizer simulation: {gate_type}. \
+                 Only Clifford gates (H, S, CX, CY, CZ, X, Y, Z) are supported."
+        )),
+        HugrExecutionError::InvalidQubitCount {
+            gate_type,
+            expected,
+            actual,
+            ..
+        } => PyRuntimeError::new_err(format!(
+            "Gate {gate_type} expected {expected} qubits but got {actual}"
+        )),
+        HugrExecutionError::QubitOutOfBounds {
+            qubit, num_qubits, ..
+        } => PyRuntimeError::new_err(format!(
+            "Qubit {qubit} out of bounds (circuit has {num_qubits} qubits)"
+        )),
+    })?;
+
+    // Build noisy measurement history
+    let noise_model = SymbolicDepolarizingNoiseModel::new(p1, p2, p_meas, p_prep);
+    let builder = NoisyMeasurementHistoryBuilder::new().with_noise_model(noise_model);
+    let noisy_history = builder.build_from_circuit(&simple_hugr, sim.measurement_history());
+
+    Ok(PyNoisySymbolicExecutionResult {
+        history: noisy_history,
+    })
+}
+
+/// Execute a `DagCircuit` symbolically with depolarizing noise.
+///
+/// Args:
+///     circuit: The `DagCircuit` to execute
+///     `p1`: Single-qubit gate error probability
+///     `p2`: Two-qubit gate error probability
+///     `p_meas`: Measurement error probability
+///     `p_prep`: State preparation error probability
+///     `num_qubits`: Number of qubits (optional, auto-detected if None)
+///
+/// Returns:
+///     `NoisySymbolicExecutionResult` that can be sampled with noise
+#[pyfunction]
+#[pyo3(signature = (circuit, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0, num_qubits=None))]
+pub fn execute_dag_circuit_symbolic_noisy(
+    circuit: &PyDagCircuit,
+    p1: f64,
+    p2: f64,
+    p_meas: f64,
+    p_prep: f64,
+    num_qubits: Option<usize>,
+) -> PyResult<PyNoisySymbolicExecutionResult> {
+    // Determine number of qubits
+    let n_qubits = num_qubits.unwrap_or_else(|| circuit.inner.qubits().len());
+
+    // Create symbolic simulator and execute
+    let mut sim = StdSymbolicSparseStab::new(n_qubits);
+
+    execute_hugr(&mut sim, &circuit.inner).map_err(|e| match e {
+        HugrExecutionError::UnsupportedGate { gate_type, .. } => PyRuntimeError::new_err(format!(
+            "Unsupported gate for stabilizer simulation: {gate_type}. \
+                 Only Clifford gates (H, S, CX, CY, CZ, X, Y, Z) are supported."
+        )),
+        HugrExecutionError::InvalidQubitCount {
+            gate_type,
+            expected,
+            actual,
+            ..
+        } => PyRuntimeError::new_err(format!(
+            "Gate {gate_type} expected {expected} qubits but got {actual}"
+        )),
+        HugrExecutionError::QubitOutOfBounds {
+            qubit, num_qubits, ..
+        } => PyRuntimeError::new_err(format!(
+            "Qubit {qubit} out of bounds (circuit has {num_qubits} qubits)"
+        )),
+    })?;
+
+    // Build noisy measurement history
+    let noise_model = SymbolicDepolarizingNoiseModel::new(p1, p2, p_meas, p_prep);
+    let builder = NoisyMeasurementHistoryBuilder::new().with_noise_model(noise_model);
+    let noisy_history = builder.build_from_circuit(&circuit.inner, sim.measurement_history());
+
+    Ok(PyNoisySymbolicExecutionResult {
+        history: noisy_history,
+    })
+}
+
 /// Register the experimental module
 pub fn register_experimental_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = parent.py();
     let experimental = pyo3::types::PyModule::new(py, "experimental")?;
 
-    // Add the main functions
+    // Add the main functions (noiseless)
     experimental.add_function(wrap_pyfunction!(execute_hugr_symbolic, &experimental)?)?;
     experimental.add_function(wrap_pyfunction!(
         execute_dag_circuit_symbolic,
         &experimental
     )?)?;
 
-    // Add the result class
+    // Add noisy execution functions
+    experimental.add_function(wrap_pyfunction!(
+        execute_hugr_symbolic_noisy,
+        &experimental
+    )?)?;
+    experimental.add_function(wrap_pyfunction!(
+        execute_dag_circuit_symbolic_noisy,
+        &experimental
+    )?)?;
+
+    // Add the result classes
     experimental.add_class::<PySymbolicExecutionResult>()?;
+    experimental.add_class::<PyNoisySymbolicExecutionResult>()?;
 
     // Register in sys.modules for import support
     let sys = py.import("sys")?;

@@ -166,6 +166,11 @@ impl<'a> ShotMapDisplay<'a> {
             DataVec::Bytes(v) => v.get(index).map(|x| format!("{x:?}")),
             DataVec::BitVec(v) => v.get(index).map(|x| self.format_bitvec(x)),
             DataVec::Json(v) => v.get(index).map(std::string::ToString::to_string),
+            DataVec::Vec(v) => v.get(index).map(|inner| {
+                let items: Vec<String> =
+                    inner.iter().map(std::string::ToString::to_string).collect();
+                format!("[{}]", items.join(", "))
+            }),
         }
     }
 }

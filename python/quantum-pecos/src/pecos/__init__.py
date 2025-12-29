@@ -231,6 +231,7 @@ biased_depolarizing_noise = pecos_rslib.biased_depolarizing_noise
 general_noise = pecos_rslib.general_noise
 state_vector = pecos_rslib.state_vector
 sparse_stabilizer = pecos_rslib.sparse_stabilizer
+hugr_engine = pecos_rslib.hugr_engine
 
 # Re-export noise model builder classes for direct instantiation
 GeneralNoiseModelBuilder = pecos_rslib.GeneralNoiseModelBuilder
@@ -326,6 +327,7 @@ __all__ = [
     "general_noise",
     "get_guppy_backends",
     "graph",
+    "hugr_engine",
     "i8",
     "i16",
     "i32",

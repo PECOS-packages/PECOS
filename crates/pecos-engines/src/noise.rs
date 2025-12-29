@@ -20,7 +20,6 @@ pub mod biased_depolarizing;
 pub mod depolarizing;
 pub mod general;
 pub mod noise_rng;
-pub mod noisy_measurement_history;
 pub mod pass_through;
 pub mod utils;
 pub mod weighted_sampler;
@@ -31,10 +30,6 @@ pub use self::biased_depolarizing::{
 pub use self::depolarizing::{DepolarizingNoiseModel, DepolarizingNoiseModelBuilder};
 pub use self::general::{GeneralNoiseModel, GeneralNoiseModelBuilder};
 pub use self::noise_rng::NoiseRng;
-pub use self::noisy_measurement_history::{
-    DepolarizingNoiseModel as SymbolicDepolarizingNoiseModel, FaultEvent, NoisyMeasurementHistory,
-    NoisyMeasurementHistoryBuilder, NoisyMeasurementResult, NoisyMeasurementSampler, Pauli,
-};
 pub use self::pass_through::{PassThroughNoiseModel, PassThroughNoiseModelBuilder};
 pub use self::utils::{NoiseUtils, ProbabilityValidator};
 pub use self::weighted_sampler::{

@@ -2865,12 +2865,21 @@ dependencies = [
  "num-bigint",
  "pecos-core",
  "pecos-qsim",
- "pecos-quantum",
  "pecos-rng",
  "rand 0.9.2",
  "rayon",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "pecos-experimental"
+version = "0.1.1"
+dependencies = [
+ "pecos-core",
+ "pecos-qsim",
+ "pecos-quantum",
+ "pecos-rng",
  "wide 1.1.1",
 ]
 
@@ -3185,7 +3194,7 @@ dependencies = [
  "num-complex",
  "parking_lot",
  "pecos",
- "pecos-quantum",
+ "pecos-experimental",
  "pyo3",
  "regex",
  "serde_json",

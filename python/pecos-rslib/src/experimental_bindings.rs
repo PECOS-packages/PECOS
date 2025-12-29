@@ -17,16 +17,12 @@
 //! 2. Get symbolic measurement dependencies (`MeasurementHistory`)
 //! 3. Sample efficiently using `MeasurementSampler`
 
-use pecos::noise::{
-    NoisyMeasurementHistory, NoisyMeasurementHistoryBuilder, NoisyMeasurementSampler,
-    SymbolicDepolarizingNoiseModel,
+use pecos::qsim::{MeasurementHistory, MeasurementSampler, StdSymbolicSparseStab};
+use pecos::quantum::{Circuit, SimpleHugr, read_hugr_envelope};
+use pecos_experimental::{
+    DepolarizingNoiseModel, HugrExecutionError, NoisyMeasurementHistory,
+    NoisyMeasurementHistoryBuilder, NoisyMeasurementSampler, execute_hugr,
 };
-use pecos::qsim::{
-    HugrExecutionError, MeasurementHistory, MeasurementSampler, StdSymbolicSparseStab, execute_hugr,
-};
-use pecos::quantum::read_hugr_envelope;
-use pecos_quantum::Circuit;
-use pecos_quantum::hugr_convert::SimpleHugr;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
@@ -440,7 +436,7 @@ pub fn execute_hugr_symbolic_noisy(
     })?;
 
     // Build noisy measurement history
-    let noise_model = SymbolicDepolarizingNoiseModel::new(p1, p2, p_meas, p_prep);
+    let noise_model = DepolarizingNoiseModel::new(p1, p2, p_meas, p_prep);
     let builder = NoisyMeasurementHistoryBuilder::new().with_noise_model(noise_model);
     let noisy_history = builder.build_from_circuit(&simple_hugr, sim.measurement_history());
 
@@ -498,7 +494,7 @@ pub fn execute_dag_circuit_symbolic_noisy(
     })?;
 
     // Build noisy measurement history
-    let noise_model = SymbolicDepolarizingNoiseModel::new(p1, p2, p_meas, p_prep);
+    let noise_model = DepolarizingNoiseModel::new(p1, p2, p_meas, p_prep);
     let builder = NoisyMeasurementHistoryBuilder::new().with_noise_model(noise_model);
     let noisy_history = builder.build_from_circuit(&circuit.inner, sim.measurement_history());
 

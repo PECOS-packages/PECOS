@@ -1,5 +1,5 @@
 [package]
-name = "pecos-engines"
+name = "pecos-experimental"
 version.workspace = true
 edition.workspace = true
 readme.workspace = true
@@ -9,26 +9,19 @@ repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Provides simulator engines for PECOS simulations."
+description = "Experimental APIs for PECOS - unstable, may change without notice."
+publish = false
 
 [lib]
 crate-type = ["rlib"]
 
 [dependencies]
-rayon.workspace = true
-log.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-rand.workspace = true
-bytemuck.workspace = true
-bitflags.workspace = true
-dyn-clone.workspace = true
-num-bigint.workspace = true
-bitvec.workspace = true
-
+# Can depend on any internal crate - this is the staging area
 pecos-core.workspace = true
-pecos-qsim.workspace = true
 pecos-rng.workspace = true
+pecos-qsim.workspace = true
+pecos-quantum.workspace = true
+wide.workspace = true
 
 [lints]
 workspace = true

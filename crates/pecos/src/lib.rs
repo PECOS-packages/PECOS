@@ -193,14 +193,15 @@ pub mod engines {
 pub mod quantum {
     // Circuit representation from pecos-quantum
     pub use pecos_quantum::{
-        Attribute, DagCircuit, DagWouldCycleError, Gate, GateType, QubitId, Tick, TickCircuit,
+        Attribute, Circuit, CircuitMut, DagCircuit, DagWouldCycleError, Gate, GateHandle, GateType,
+        GateView, QubitId, Tick, TickCircuit,
     };
 
     // HUGR conversion (requires hugr feature)
     #[cfg(feature = "hugr")]
     pub use pecos_quantum::hugr_convert::{
-        HugrConvertError, gate_type_to_hugr_op, hugr_op_to_gate_type, hugr_to_dag_circuit,
-        is_quantum_operation,
+        HugrConvertError, NotSimpleError, SimpleHugr, dag_circuit_to_hugr, gate_type_to_hugr_op,
+        hugr_op_to_gate_type, hugr_to_dag_circuit, is_quantum_operation,
     };
 
     // Re-export read_hugr_envelope for parsing HUGR bytes
@@ -254,21 +255,8 @@ pub mod quantum {
 #[cfg(feature = "sim")]
 pub mod noise {
     pub use pecos_engines::noise::{
-        BiasedDepolarizingNoiseModelBuilder,
-        DepolarizingNoiseModel,
-        DepolarizingNoiseModelBuilder,
-        // Noisy measurement history types (symbolic noise simulation)
-        FaultEvent,
-        GeneralNoiseModelBuilder,
-        IntoNoiseModel,
-        NoiseModel,
-        NoisyMeasurementHistory,
-        NoisyMeasurementHistoryBuilder,
-        NoisyMeasurementResult,
-        NoisyMeasurementSampler,
-        PassThroughNoiseModel,
-        Pauli,
-        SymbolicDepolarizingNoiseModel,
+        BiasedDepolarizingNoiseModelBuilder, DepolarizingNoiseModel, DepolarizingNoiseModelBuilder,
+        GeneralNoiseModelBuilder, IntoNoiseModel, NoiseModel, PassThroughNoiseModel,
         general::GeneralNoiseModel,
     };
 

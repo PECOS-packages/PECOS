@@ -12,6 +12,8 @@
 
 //! Noisy measurement history for efficient sampling with depolarizing noise.
 //!
+//! **⚠️ EXPERIMENTAL: This API is unstable and may change without notice.**
+//!
 //! This module extends the symbolic measurement history to include fault events
 //! from a depolarizing noise model. Faults are treated as "hidden random bits"
 //! with their own probabilities that get XOR'd into measurement outcomes.

@@ -12,6 +12,8 @@
 
 //! HUGR execution for symbolic stabilizer simulation.
 //!
+//! **⚠️ EXPERIMENTAL: This API is unstable and may change without notice.**
+//!
 //! This module provides functionality to execute HUGR circuits (via [`SimpleHugr`])
 //! through the [`SymbolicSparseStab`] simulator, enabling efficient sampling from
 //! the resulting measurement history.
@@ -22,7 +24,7 @@
 //! 1. Compile Guppy code to HUGR bytes
 //! 2. Convert to [`SimpleHugr`] (validates no control flow)
 //! 3. Execute through [`SymbolicSparseStab`] to get symbolic measurement dependencies
-//! 4. Use [`MeasurementSampler`](crate::MeasurementSampler) to efficiently generate many shots
+//! 4. Use [`MeasurementSampler`] to efficiently generate many shots
 //!
 //! This approach is highly efficient because:
 //! - The circuit is simulated only once symbolically
@@ -32,7 +34,8 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use pecos_qsim::{StdSymbolicSparseStab, MeasurementSampler, execute_hugr};
+//! use pecos_qsim::{StdSymbolicSparseStab, MeasurementSampler};
+//! use pecos_experimental::execute_hugr;
 //! use pecos_quantum::hugr_convert::SimpleHugr;
 //!
 //! // Load HUGR from Guppy compilation
@@ -49,14 +52,14 @@
 //! ```
 //!
 //! [`SimpleHugr`]: pecos_quantum::hugr_convert::SimpleHugr
+//! [`MeasurementSampler`]: pecos_qsim::MeasurementSampler
 
 use std::fmt;
 
 use pecos_core::gate_type::GateType;
 use pecos_core::{IndexableElement, Set};
+use pecos_qsim::SymbolicSparseStab;
 use pecos_quantum::Circuit;
-
-use crate::symbolic_sparse_stab::SymbolicSparseStab;
 
 /// Error type for HUGR execution failures.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -324,7 +327,7 @@ fn validate_qubit_count(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::StdSymbolicSparseStab;
+    use pecos_qsim::StdSymbolicSparseStab;
     use pecos_quantum::DagCircuit;
 
     #[test]

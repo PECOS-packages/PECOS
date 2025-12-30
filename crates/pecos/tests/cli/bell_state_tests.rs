@@ -19,9 +19,6 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
 
-// Test lock removed: These tests don't modify shared state and can run in parallel
-// Each test execution uses thread-local runtime contexts
-
 /// Configuration for running PECOS CLI tests
 #[derive(Copy, Clone)]
 struct PecosTestConfig<'a> {
@@ -38,7 +35,7 @@ struct PecosTestConfig<'a> {
 /// Helper function to run PECOS CLI with given parameters
 fn run_pecos(config: PecosTestConfig) -> Result<String, Box<dyn std::error::Error>> {
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("pecos"));
-    cmd.env("RUST_LOG", "info")
+    cmd.env("RUST_LOG", "warn") // Use warn to avoid pipe buffer issues with verbose output
         .env("RUST_BACKTRACE", "0") // Disable backtrace to avoid extra output on segfault
         .arg("run")
         .arg(config.file_path)
@@ -735,8 +732,6 @@ fn test_noise_model_determinism() -> Result<(), Box<dyn std::error::Error>> {
 /// Test LLVM implementation with depolarizing noise model
 #[test]
 fn test_qis_with_depolarizing_noise() -> Result<(), Box<dyn std::error::Error>> {
-    // No lock needed: This test only executes quantum programs without modifying shared state
-
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let bell_llvm_path = manifest_dir.join("../../examples/llvm/bell.ll");
 
@@ -768,8 +763,6 @@ fn test_qis_with_depolarizing_noise() -> Result<(), Box<dyn std::error::Error>> 
 /// Test LLVM implementation with general noise model
 #[test]
 fn test_qis_with_general_noise() -> Result<(), Box<dyn std::error::Error>> {
-    // No lock needed: This test only executes quantum programs without modifying shared state
-
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let bell_llvm_path = manifest_dir.join("../../examples/llvm/bell.ll");
 

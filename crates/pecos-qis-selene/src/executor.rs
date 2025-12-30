@@ -43,6 +43,186 @@ static QIS_FFI_LIB_SINGLETON: OnceLock<Result<SharedLibrary, String>> = OnceLock
 /// By making it a singleton, we load it once and keep it for the process lifetime.
 static SHIM_LIB_SINGLETON: OnceLock<Result<SharedLibrary, String>> = OnceLock::new();
 
+/// Process-wide cache for program libraries (keyed by file path).
+///
+/// When engines are cloned for parallel shot execution, each clone creates its own
+/// interface, which would normally load its own program library. On macOS, this
+/// repeated loading causes dynamic linker issues.
+///
+/// By caching program libraries by their file path, clones that use the same
+/// compiled program share the same loaded library instance.
+///
+/// We use `Box<SharedLibrary>` so that when the `BTreeMap` grows/reallocates, the
+/// actual library data stays in place on the heap (only the Box pointer moves).
+static PROGRAM_LIB_CACHE: OnceLock<std::sync::Mutex<std::collections::BTreeMap<PathBuf, Box<SharedLibrary>>>> =
+    OnceLock::new();
+
+/// Cache mapping program content hash to compiled shared library path.
+///
+/// When multiple interfaces are created with the same program content (e.g., when
+/// engines are cloned for parallel execution), this cache ensures they all use
+/// the same compiled shared library file.
+static COMPILED_PROGRAM_CACHE: OnceLock<std::sync::Mutex<std::collections::BTreeMap<u64, PathBuf>>> =
+    OnceLock::new();
+
+/// Tracks whether cache cleanup has been performed (once per process).
+static CACHE_CLEANUP_DONE: OnceLock<()> = OnceLock::new();
+
+/// Directory for persistent compiled program cache.
+///
+/// Unlike temp files that are deleted when the process exits, files in this directory
+/// persist across process invocations. This enables:
+/// - Tests running in parallel (each subprocess can reuse previously compiled programs)
+/// - Repeated `pecos run` commands to reuse cached compilation
+///
+/// The cache is cleaned up periodically (files older than 24 hours are removed on startup).
+fn get_persistent_cache_dir() -> Result<PathBuf, InterfaceError> {
+    // Use PECOS_CACHE_DIR if set, otherwise use a subdirectory of the system temp dir
+    let cache_dir = std::env::var("PECOS_CACHE_DIR").map_or_else(
+        |_| std::env::temp_dir().join("pecos_compiled_cache"),
+        PathBuf::from,
+    );
+
+    // Ensure the directory exists
+    std::fs::create_dir_all(&cache_dir).map_err(|e| {
+        InterfaceError::LoadError(format!("Failed to create cache directory: {e}"))
+    })?;
+
+    // Cleanup old files (older than 24 hours) - do this once per process
+    CACHE_CLEANUP_DONE.get_or_init(|| {
+        cleanup_old_cache_files(&cache_dir, 24 * 60 * 60); // 24 hours
+    });
+
+    Ok(cache_dir)
+}
+
+/// Remove cache files older than the specified age in seconds
+fn cleanup_old_cache_files(cache_dir: &Path, max_age_secs: u64) {
+    let now = std::time::SystemTime::now();
+    let Ok(entries) = std::fs::read_dir(cache_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let dominated_by_age = entry
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age.as_secs() > max_age_secs);
+
+        if dominated_by_age {
+            debug!("Removing old cache file: {}", entry.path().display());
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// File-based lock for cross-process synchronization during compilation.
+///
+/// This prevents multiple processes from compiling the same program simultaneously,
+/// which would waste resources and potentially cause race conditions.
+///
+/// The lock is acquired by creating a `.lock` file with `O_CREAT | O_EXCL` semantics.
+/// If the lock file already exists, the process waits and retries.
+struct CompilationLock {
+    lock_path: PathBuf,
+}
+
+impl CompilationLock {
+    /// Maximum time to wait for the lock (in seconds)
+    const MAX_WAIT_SECS: u64 = 120;
+    /// Time between retry attempts (in milliseconds)
+    const RETRY_DELAY_MS: u64 = 100;
+    /// Maximum age of a lock file before considering it stale (in seconds)
+    const STALE_LOCK_SECS: u64 = 300;
+
+    /// Try to acquire a compilation lock for the given cache path.
+    ///
+    /// Returns `Some(lock)` if acquired, `None` if the compiled file appeared while waiting.
+    fn acquire(cache_path: &Path) -> Result<Option<Self>, InterfaceError> {
+        let lock_path = cache_path.with_extension("lock");
+        let start = std::time::Instant::now();
+
+        loop {
+            // Try to create the lock file exclusively
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+            {
+                Ok(file) => {
+                    // Write our PID to help debug stale locks
+                    use std::io::Write;
+                    let mut file = file;
+                    let _ = writeln!(file, "{}", std::process::id());
+                    debug!("Acquired compilation lock: {}", lock_path.display());
+                    return Ok(Some(Self { lock_path }));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // Lock exists - another process is compiling
+
+                    // Check if the compiled file appeared (other process finished)
+                    if cache_path.exists() {
+                        debug!(
+                            "Compiled file appeared while waiting for lock: {}",
+                            cache_path.display()
+                        );
+                        // Try to clean up stale lock if we can
+                        let _ = std::fs::remove_file(&lock_path);
+                        return Ok(None);
+                    }
+
+                    // Check if lock is stale (process crashed)
+                    let lock_age = std::fs::metadata(&lock_path)
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|modified| {
+                            std::time::SystemTime::now().duration_since(modified).ok()
+                        });
+
+                    if let Some(age) = lock_age.filter(|a| a.as_secs() > Self::STALE_LOCK_SECS) {
+                        warn!(
+                            "Removing stale compilation lock ({}s old): {}",
+                            age.as_secs(),
+                            lock_path.display()
+                        );
+                        let _ = std::fs::remove_file(&lock_path);
+                        continue; // Try again immediately
+                    }
+
+                    // Check timeout
+                    if start.elapsed().as_secs() > Self::MAX_WAIT_SECS {
+                        return Err(InterfaceError::LoadError(format!(
+                            "Timeout waiting for compilation lock: {}",
+                            lock_path.display()
+                        )));
+                    }
+
+                    // Wait and retry
+                    debug!(
+                        "Waiting for compilation lock: {} (elapsed: {:?})",
+                        lock_path.display(),
+                        start.elapsed()
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(Self::RETRY_DELAY_MS));
+                }
+                Err(e) => {
+                    return Err(InterfaceError::LoadError(format!(
+                        "Failed to create compilation lock: {e}"
+                    )));
+                }
+            }
+        }
+    }
+}
+
+impl Drop for CompilationLock {
+    fn drop(&mut self) {
+        debug!("Releasing compilation lock: {}", self.lock_path.display());
+        let _ = std::fs::remove_file(&self.lock_path);
+    }
+}
+
 /// Thread-safe wrapper for a loaded dynamic library.
 ///
 /// This wrapper exists because `libloading::Library` is `!Sync` by default
@@ -325,19 +505,9 @@ pub struct QisHeliosInterface {
     /// Keep temporary files alive (`TempPath` auto-deletes when dropped)
     temp_files: Vec<tempfile::TempPath>,
 
-    // Note: The QIS FFI library and shim library are stored in process-wide singletons
-    // to avoid macOS TLS/dynamic linker issues.
-    //
-    // The program library is stored per-interface to avoid repeated load/unload cycles
-    // on macOS which can cause dynamic linker instability.
-    /// The `RTLD_GLOBAL` handle for the program library (keeps symbols visible)
-    #[cfg(unix)]
-    program_lib_global: Option<libloading::os::unix::Library>,
-    #[cfg(windows)]
-    program_lib_global: Option<Library>,
-
-    /// The program library handle for symbol lookups
-    program_lib: Option<Library>,
+    // Note: The QIS FFI library, shim library, and program libraries are stored in
+    // process-wide caches/singletons to avoid macOS TLS/dynamic linker issues.
+    // Program libraries are cached by path in PROGRAM_LIB_CACHE.
 
     /// Execution context for dynamic circuit coordination
     /// Created when dynamic mode is enabled, destroyed when disabled
@@ -354,8 +524,6 @@ impl QisHeliosInterface {
             format: ProgramFormat::QisBitcode,
             metadata: BTreeMap::new(),
             temp_files: Vec::new(),
-            program_lib_global: None,
-            program_lib: None,
             execution_context: None,
         }
     }
@@ -487,6 +655,62 @@ impl QisHeliosInterface {
         result
             .as_ref()
             .map_err(|e| InterfaceError::ExecutionError(e.clone()))
+    }
+
+    /// Get or cache a program library by path.
+    ///
+    /// When engines are cloned for parallel shot execution, each clone creates a new
+    /// interface and would normally load its own program library. On macOS, this
+    /// repeated loading causes dynamic linker issues.
+    ///
+    /// By caching program libraries by path, all clones that compile to the same
+    /// shared library path share the same loaded library instance.
+    fn get_or_cache_program_lib(
+        path: &Path,
+    ) -> Result<&'static SharedLibrary, InterfaceError> {
+        let cache = PROGRAM_LIB_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+
+        // First check: quick lookup with lock held briefly
+        {
+            let cache_guard = cache
+                .lock()
+                .map_err(|e| InterfaceError::ExecutionError(format!("Failed to lock program cache: {e}")))?;
+
+            if let Some(boxed_lib) = cache_guard.get(path) {
+                debug!("Using cached program library for: {}", path.display());
+                // SAFETY: Box ensures stable heap address, BTreeMap never removes, OnceLock ensures lifetime
+                let ptr: *const SharedLibrary = std::ptr::from_ref::<SharedLibrary>(boxed_lib);
+                return Ok(unsafe { &*ptr });
+            }
+        } // Lock released here before slow library loading
+
+        // Load library WITHOUT holding the lock - this is the slow part
+        debug!("Loading program library (outside lock): {}", path.display());
+        let (lib_global, lib) = Self::load_library_with_rtld_global(path, "Failed to load program library")?;
+        let shared_lib = SharedLibrary {
+            _global_handle: lib_global,
+            lib,
+        };
+
+        // Second check: re-acquire lock and check if another thread already inserted
+        let mut cache_guard = cache
+            .lock()
+            .map_err(|e| InterfaceError::ExecutionError(format!("Failed to lock program cache: {e}")))?;
+
+        // Double-check: another thread may have inserted while we were loading
+        let ptr: *const SharedLibrary = if let Some(boxed_lib) = cache_guard.get(path) {
+            debug!("Another thread already cached library for: {}", path.display());
+            // Use the existing one (drop our loaded library)
+            std::ptr::from_ref::<SharedLibrary>(boxed_lib)
+        } else {
+            // We're first, insert ours
+            debug!("Caching program library: {}", path.display());
+            cache_guard.insert(path.to_path_buf(), Box::new(shared_lib));
+            std::ptr::from_ref::<SharedLibrary>(cache_guard.get(path).unwrap())
+        };
+
+        // SAFETY: Box ensures stable heap address, BTreeMap never removes, OnceLock ensures lifetime
+        Ok(unsafe { &*ptr })
     }
 
     /// Get or initialize the process-wide shim library singleton.
@@ -687,6 +911,149 @@ impl QisHeliosInterface {
     /// Link the program with Helios interface to create a shared library
     #[allow(clippy::too_many_lines)]
     fn create_shared_library(&mut self) -> Result<PathBuf, InterfaceError> {
+        use std::hash::{Hash, Hasher};
+
+        // Compute content hash for caching
+        // We include the format as a discriminator in case the same bytes could be
+        // interpreted differently (e.g., bitcode vs text IR)
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.program.hash(&mut hasher);
+        std::mem::discriminant(&self.format).hash(&mut hasher);
+        let content_hash = hasher.finish();
+
+        // Check if we already have a compiled library for this content
+        let compiled_cache =
+            COMPILED_PROGRAM_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+
+        // Check cache with lock held briefly, then release before loading
+        let cached_path_opt: Option<PathBuf> = {
+            let cache_guard = compiled_cache
+                .lock()
+                .map_err(|e| InterfaceError::LoadError(format!("Failed to lock compiled cache: {e}")))?;
+
+            if let Some(cached_path) = cache_guard.get(&content_hash) {
+                debug!(
+                    "Using cached compiled library for content hash {content_hash:016x}: {}",
+                    cached_path.display()
+                );
+                // Verify the file still exists (might have been cleaned up)
+                if cached_path.exists() {
+                    Some(cached_path.clone())
+                } else {
+                    debug!("Cached path no longer exists, will recompile");
+                    None
+                }
+            } else {
+                None
+            }
+        }; // Lock released here before potentially slow operations
+
+        // If we found a cached path in the in-process cache, load it
+        if let Some(cached_path) = cached_path_opt {
+            self.executable_path = Some(cached_path.clone());
+            let _lib = Self::get_or_cache_program_lib(&cached_path)?;
+            debug!("Successfully loaded cached program library from in-process cache");
+            return Ok(cached_path);
+        }
+
+        // Check for a persistent cache file (survives process restarts)
+        let cache_dir = get_persistent_cache_dir()?;
+        let lib_suffix = if cfg!(target_os = "windows") {
+            ".dll"
+        } else {
+            ".so"
+        };
+        let persistent_cache_path = cache_dir.join(format!("program_{content_hash:016x}{lib_suffix}"));
+
+        if persistent_cache_path.exists() {
+            debug!(
+                "Found persistent cache file: {}",
+                persistent_cache_path.display()
+            );
+            // Load the cached library
+            match Self::get_or_cache_program_lib(&persistent_cache_path) {
+                Ok(_lib) => {
+                    // Update in-process cache
+                    {
+                        let compiled_cache = COMPILED_PROGRAM_CACHE
+                            .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+                        if let Ok(mut cache_guard) = compiled_cache.lock() {
+                            cache_guard.insert(content_hash, persistent_cache_path.clone());
+                        }
+                    }
+                    self.executable_path = Some(persistent_cache_path.clone());
+                    info!(
+                        "Loaded program from persistent cache: {}",
+                        persistent_cache_path.display()
+                    );
+                    return Ok(persistent_cache_path);
+                }
+                Err(e) => {
+                    // Cache file is invalid, remove it and recompile
+                    warn!(
+                        "Persistent cache file invalid ({}), will recompile: {}",
+                        e,
+                        persistent_cache_path.display()
+                    );
+                    let _ = std::fs::remove_file(&persistent_cache_path);
+                }
+            }
+        }
+
+        // Acquire compilation lock to prevent multiple processes from compiling simultaneously
+        // This is a cross-process lock using file system primitives
+        let Some(_compilation_lock) = CompilationLock::acquire(&persistent_cache_path)? else {
+            // Another process compiled it while we waited - load the cached version
+            debug!("Another process compiled the program, loading from cache");
+            match Self::get_or_cache_program_lib(&persistent_cache_path) {
+                Ok(_lib) => {
+                    let compiled_cache = COMPILED_PROGRAM_CACHE
+                        .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+                    if let Ok(mut cache_guard) = compiled_cache.lock() {
+                        cache_guard.insert(content_hash, persistent_cache_path.clone());
+                    }
+                    self.executable_path = Some(persistent_cache_path.clone());
+                    info!(
+                        "Loaded program compiled by another process: {}",
+                        persistent_cache_path.display()
+                    );
+                    return Ok(persistent_cache_path);
+                }
+                Err(e) => {
+                    // The file that appeared is invalid - we need to recompile
+                    // But we don't have the lock, so we need to acquire it
+                    warn!("Cached file from other process is invalid: {e}");
+                    let _ = std::fs::remove_file(&persistent_cache_path);
+                    // Retry by recursively calling ourselves (will try to get lock again)
+                    return self.create_shared_library();
+                }
+            }
+        };
+
+        // Double-check the file doesn't exist after acquiring the lock
+        // (another process may have created it between our check and lock acquisition)
+        if persistent_cache_path.exists() {
+            match Self::get_or_cache_program_lib(&persistent_cache_path) {
+                Ok(_lib) => {
+                    let compiled_cache = COMPILED_PROGRAM_CACHE
+                        .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+                    if let Ok(mut cache_guard) = compiled_cache.lock() {
+                        cache_guard.insert(content_hash, persistent_cache_path.clone());
+                    }
+                    self.executable_path = Some(persistent_cache_path.clone());
+                    info!(
+                        "Loaded program from cache (appeared after lock): {}",
+                        persistent_cache_path.display()
+                    );
+                    return Ok(persistent_cache_path);
+                }
+                Err(e) => {
+                    warn!("Cache file invalid after acquiring lock: {e}");
+                    let _ = std::fs::remove_file(&persistent_cache_path);
+                }
+            }
+        }
+
         // Find the Helios library using robust search
         let helios_lib_path = find_helios_lib()?;
         let helios_lib_path = helios_lib_path.to_string_lossy().to_string();
@@ -859,48 +1226,27 @@ entry:
         #[cfg(not(target_os = "windows"))]
         let program_temp_path = program_temp_path;
 
-        // Create shared library path with platform-appropriate extension
-        let lib_suffix = if cfg!(target_os = "windows") {
-            ".dll"
-        } else {
-            ".so"
-        };
-        debug!("Creating shared library temp file with suffix {lib_suffix}...");
+        // We already determined lib_suffix above for persistent cache
+        // Create shared library path - use persistent cache path
+        debug!(
+            "Will compile to persistent cache: {}",
+            persistent_cache_path.display()
+        );
 
-        // IMPORTANT: On Windows, we need to get a temp path but NOT create the file yet
-        // because MSVC's link.exe wants to create the DLL file itself
-        #[cfg(target_os = "windows")]
-        let (so_file, so_path_for_clang) = {
-            use tempfile::Builder;
-            // Create a temp file to reserve the name, then immediately close and delete it
-            let temp = Builder::new().suffix(lib_suffix).tempfile().map_err(|e| {
-                InterfaceError::LoadError(format!("Failed to create temp file: {e}"))
-            })?;
-
-            // Get the path before the file is deleted
-            let path = temp.path().to_path_buf();
+        // Use persistent cache path directly
+        // We compile to a temp file first, then rename to avoid partial/corrupted cache files
+        let so_path_for_clang = {
+            // Use a temp file with a unique suffix to avoid conflicts during compilation
+            let temp_path = persistent_cache_path.with_extension(format!(
+                "{}.compiling.{}",
+                lib_suffix.trim_start_matches('.'),
+                std::process::id()
+            ));
             debug!(
-                "Windows: Reserved temp path (will be deleted): {}",
-                path.display()
+                "Compiling to temp path first: {}",
+                temp_path.display()
             );
-            debug!("Windows: File exists before drop: {}", path.exists());
-
-            // Drop temp explicitly to delete the file
-            drop(temp);
-
-            debug!("Windows: File exists after drop: {}", path.exists());
-
-            // We keep the path but the file is deleted - link.exe will create it
-            ((), path)
-        };
-
-        #[cfg(not(target_os = "windows"))]
-        let (so_file, so_path_for_clang) = {
-            let temp = NamedTempFile::with_suffix(lib_suffix).map_err(|e| {
-                InterfaceError::LoadError(format!("Failed to create library file: {e}"))
-            })?;
-            let path = temp.path().to_path_buf();
-            (temp, path)
+            temp_path
         };
 
         debug!("Temp library path: {}", so_path_for_clang.display());
@@ -1058,38 +1404,39 @@ entry:
             warn!("Output file does not exist after successful link!");
         }
 
-        // Keep the temporary files alive by storing the TempPaths
-        #[cfg(target_os = "windows")]
-        {
-            // On Windows, link.exe created the DLL file, so we just use the path we reserved
-            // We need to manually track this file for cleanup
-            // Note: so_file is () on Windows (since we deleted the temp file before linking)
-            // so there's nothing to drop
-            let () = so_file; // Silence unused variable warning
-
+        // Rename temp file to persistent cache path
+        // Use rename for atomicity on Unix (instant, no partial writes)
+        // On some filesystems, rename across mount points may fail, so we fall back to copy+delete
+        let final_path = if std::fs::rename(&so_path_for_clang, &persistent_cache_path).is_ok() {
             debug!(
-                "Windows: DLL created by link.exe at: {}",
-                so_path_for_clang.display()
+                "Renamed compiled library to persistent cache: {}",
+                persistent_cache_path.display()
             );
+            persistent_cache_path.clone()
+        } else {
+            // Rename failed (possibly cross-filesystem), try copy
+            debug!("Rename failed, trying copy for persistent cache...");
+            if std::fs::copy(&so_path_for_clang, &persistent_cache_path).is_ok() {
+                let _ = std::fs::remove_file(&so_path_for_clang);
+                debug!(
+                    "Copied compiled library to persistent cache: {}",
+                    persistent_cache_path.display()
+                );
+                persistent_cache_path.clone()
+            } else {
+                // Copy also failed, use the temp path (it will work, just won't persist)
+                warn!(
+                    "Failed to create persistent cache, using temp path: {}",
+                    so_path_for_clang.display()
+                );
+                so_path_for_clang.clone()
+            }
+        };
 
-            // Store the program bitcode temp path
-            self.temp_files.push(program_temp_path);
+        // Keep the program bitcode temp path alive (not the .so since it's now in cache)
+        self.temp_files.push(program_temp_path);
 
-            // We'll store the DLL path directly since it was created by link.exe
-            // Note: This file won't be auto-deleted, but that's okay for temp testing
-            // In production, we'd want to use a proper temp file wrapper
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            let so_temp_path = so_file.into_temp_path();
-
-            // Store both the program bitcode and the .so file to keep them alive
-            self.temp_files.push(program_temp_path);
-            self.temp_files.push(so_temp_path);
-        }
-
-        let so_path = so_path_for_clang.clone();
+        let so_path = final_path;
 
         self.executable_path = Some(so_path.clone());
 
@@ -1098,14 +1445,24 @@ entry:
         self.metadata
             .insert("helios_lib".to_string(), helios_lib_path);
 
-        // Pre-load the program library and keep it for the interface's lifetime.
+        // Cache the compiled path for content-based lookup
+        {
+            let compiled_cache = COMPILED_PROGRAM_CACHE
+                .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+            if let Ok(mut cache_guard) = compiled_cache.lock() {
+                cache_guard.insert(content_hash, so_path.clone());
+                debug!(
+                    "Cached compiled library for content hash {content_hash:016x}: {}",
+                    so_path.display()
+                );
+            }
+        }
+
+        // Load the program library into the global cache.
         // This avoids repeated library load/unload cycles which cause instability on macOS.
-        debug!("Pre-loading program library for persistent use...");
-        let (program_lib_global, program_lib) =
-            Self::load_library_with_rtld_global(&so_path, "Failed to pre-load program library")?;
-        self.program_lib_global = Some(program_lib_global);
-        self.program_lib = Some(program_lib);
-        debug!("Program library pre-loaded successfully");
+        debug!("Loading program library into global cache...");
+        let _lib = Self::get_or_cache_program_lib(&so_path)?;
+        debug!("Program library loaded into cache successfully");
 
         Ok(so_path)
     }
@@ -1119,12 +1476,12 @@ entry:
         &mut self,
         measurements: Option<&BTreeMap<usize, bool>>,
     ) -> Result<OperationCollector, InterfaceError> {
-        // Verify the program library has been loaded
-        if self.program_lib.is_none() {
-            return Err(InterfaceError::ExecutionError(
-                "No program library loaded. Call load_program() first.".to_string(),
-            ));
-        }
+        // Verify the executable path is set
+        let so_path = self.executable_path.as_ref().ok_or_else(|| {
+            InterfaceError::ExecutionError(
+                "No program library path. Call load_program() first.".to_string(),
+            )
+        })?;
 
         // Architecture note:
         // The __quantum__* FFI symbols are in libpecos_qis_ffi.so (Rust cdylib from pecos-qis-ffi).
@@ -1205,17 +1562,14 @@ entry:
         let shim_lib = Self::get_shim_lib_singleton()?;
         debug!("Using shim library from process-wide singleton");
 
-        // Step 4: Use the pre-loaded program library
-        // The program library was loaded in create_shared_library() and is kept for the
-        // interface's lifetime. This avoids repeated load/unload cycles on macOS.
-        let program_lib = self.program_lib.as_ref().ok_or_else(|| {
-            InterfaceError::ExecutionError("Program library not loaded".to_string())
-        })?;
-        debug!("Using pre-loaded program library");
+        // Step 4: Get the program library from the global cache
+        // The program library is cached to avoid repeated load/unload cycles on macOS.
+        let program_lib = Self::get_or_cache_program_lib(so_path)?;
+        debug!("Using cached program library");
 
         // Step 5: Get the execution symbols (qmain and setjmp wrapper)
         let (qmain_fn, call_with_setjmp) =
-            Self::get_execution_symbols(program_lib, shim_lib.inner())?;
+            Self::get_execution_symbols(program_lib.inner(), shim_lib.inner())?;
 
         // Step 6: Call qmain via our setjmp wrapper
         // The call chain will be:
@@ -1242,9 +1596,8 @@ entry:
         // thread-local storage instance that the shim used
         let operations = Self::collect_operations_from_lib(pecos_qis_lib.inner())?;
 
-        // Note: The program library is kept loaded for the interface's lifetime
-        // (stored in self.program_lib). It will be dropped when the interface is dropped.
-        // The QIS FFI library and shim library are in process-wide singletons.
+        // Note: All libraries (QIS FFI, shim, and program) are in process-wide caches.
+        // They remain loaded for the process lifetime to avoid macOS dynamic linker issues.
 
         Ok(operations)
     }

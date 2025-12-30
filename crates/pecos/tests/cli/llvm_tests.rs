@@ -17,12 +17,6 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Once;
 
-// File-based lock is only needed for test_qis_compile_and_run which modifies build directories
-// All other tests use thread-local runtime contexts and can run in parallel
-#[path = "llvm_test_lock.rs"]
-mod llvm_test_lock;
-use llvm_test_lock::LlvmTestLock;
-
 // Static variable for test initialization
 static INIT: Once = Once::new();
 
@@ -69,7 +63,7 @@ fn run_pecos(
     seed: u64,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("pecos"));
-    cmd.env("RUST_LOG", "info").arg("run");
+    cmd.env("RUST_LOG", "warn").arg("run"); // Use warn to avoid pipe buffer issues with verbose output
 
     // Add --jit flag for LLVM files (when Selene is not available)
     if file_path.extension().and_then(|s| s.to_str()) == Some("ll") {
@@ -231,7 +225,6 @@ fn get_values(json_output: &str) -> Vec<String> {
 fn test_qis_bell_state_distribution() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize test environment (one-time cleanup of old temp directories)
     setup();
-    // No lock needed: This test only executes a quantum program without modifying shared state
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let bell_qir_path = manifest_dir.join("../../examples/llvm/bell.ll");
 
@@ -325,7 +318,6 @@ fn test_qis_bell_state_distribution() -> Result<(), Box<dyn std::error::Error>> 
 fn test_qis_determinism() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize test environment (one-time cleanup of old temp directories)
     setup();
-    // No lock needed: This test only verifies determinism by executing programs
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let bell_qir_path = manifest_dir.join("../../examples/llvm/bell.ll");
 
@@ -365,9 +357,7 @@ fn test_qis_determinism() -> Result<(), Box<dyn std::error::Error>> {
 fn test_qis_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize test environment
     setup();
-    // Keep lock: This test modifies the build directory which could cause conflicts
-    let _lock = LlvmTestLock::acquire();
-    println!("Running LLVM compilation test (requires lock for build directory modification)...");
+    println!("Running LLVM compilation test...");
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let test_file = manifest_dir.join("../../examples/llvm/qprog.ll");
 
@@ -378,6 +368,7 @@ fn test_qis_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // First, test compilation using explicit JIT interface (since Selene may not be available in tests)
+    // Use info level to see compilation messages (this test only does 1 shot, so output is minimal)
     let output = Command::new(assert_cmd::cargo::cargo_bin!("pecos"))
         .env("RUST_LOG", "info")
         .arg("compile")
@@ -409,6 +400,7 @@ fn test_qis_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Then, test execution using explicit JIT interface for consistency
+    // Use info level to see execution messages (this test only does 1 shot)
     let output = Command::new(assert_cmd::cargo::cargo_bin!("pecos"))
         .env("RUST_LOG", "info")
         .arg("run")
@@ -445,7 +437,6 @@ fn test_qis_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
 fn test_qis_shot_counts() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize test environment (one-time cleanup of old temp directories)
     setup();
-    // No lock needed: This test only executes programs with different shot counts
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let bell_qir_path = manifest_dir.join("../../examples/llvm/bell.ll");
 
@@ -493,7 +484,6 @@ fn test_qis_shot_counts() -> Result<(), Box<dyn std::error::Error>> {
 fn test_qis_multiple_workers() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize test environment (one-time cleanup of old temp directories)
     setup();
-    // No lock needed: This test verifies parallel execution with multiple workers
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let bell_qir_path = manifest_dir.join("../../examples/llvm/bell.ll");
 

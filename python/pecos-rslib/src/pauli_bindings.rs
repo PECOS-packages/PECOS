@@ -146,14 +146,17 @@ impl Pauli {
 /// are stored. For example, X on qubit 1 and Z on qubit 5 in a 10-qubit system.
 ///
 /// Examples:
-///     >>> from `pecos_rslib` import Pauli, `PauliString`
-///     >>> # Create X on qubit 0, Z on qubit 1
-///     >>> ps = `PauliString`([(Pauli.X, 0), (Pauli.Z, 1)])
-///     >>> print(ps)  # "XZ"
 ///
-///     >>> # Create from string (assumes sequential qubits starting at 0)
-///     >>> ps2 = PauliString.from_str("XYZ")
-///     >>> print(ps2)  # "XYZ"
+/// ```ignore
+/// >>> from pecos_rslib import Pauli, PauliString
+/// >>> # Create X on qubit 0, Z on qubit 1
+/// >>> ps = PauliString([(Pauli.X, 0), (Pauli.Z, 1)])
+/// >>> print(ps)  # "XZ"
+///
+/// >>> # Create from string (assumes sequential qubits starting at 0)
+/// >>> ps2 = PauliString.from_str("XYZ")
+/// >>> print(ps2)  # "XYZ"
+/// ```
 #[pyclass(name = "PauliString", module = "pecos_rslib")]
 #[derive(Debug, Clone)]
 pub struct PauliString {

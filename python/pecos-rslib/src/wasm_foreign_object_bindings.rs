@@ -33,18 +33,19 @@ use std::path::Path;
 /// - `WasmForeignObject.from_bytes()` - Load from binary bytes in memory
 ///
 /// Example:
-///     ```python
-///     # Load from file
-///     wasm = WasmForeignObject.from_file("math.wasm")
-///     wasm.init()
-///     result = wasm.exec("add", [5, 3])
 ///
-///     # Load from bytes (e.g., downloaded or embedded)
-///     with open("math.wasm", "rb") as f:
-///         wasm_bytes = f.read()
-///     wasm = WasmForeignObject.from_bytes(wasm_bytes)
-///     wasm.init()
-///     ```
+/// ```ignore
+/// # Load from file
+/// wasm = WasmForeignObject.from_file("math.wasm")
+/// wasm.init()
+/// result = wasm.exec("add", [5, 3])
+///
+/// # Load from bytes (e.g., downloaded or embedded)
+/// with open("math.wasm", "rb") as f:
+///     wasm_bytes = f.read()
+/// wasm = WasmForeignObject.from_bytes(wasm_bytes)
+/// wasm.init()
+/// ```
 #[pyclass(name = "WasmForeignObject")]
 pub struct PyWasmForeignObject {
     inner: WasmForeignObject,
@@ -74,16 +75,17 @@ impl PyWasmForeignObject {
     ///     `RuntimeError`: If WASM compilation fails
     ///
     /// Example:
-    ///     ```python
-    ///     # From file path
-    ///     wasm = WasmForeignObject("math.wasm")
     ///
-    ///     # From bytes
-    ///     wasm = WasmForeignObject(wasm_bytes)
+    /// ```ignore
+    /// # From file path
+    /// wasm = WasmForeignObject("math.wasm")
     ///
-    ///     # With custom timeout (5 seconds)
-    ///     wasm = WasmForeignObject("math.wasm", timeout=5.0)
-    ///     ```
+    /// # From bytes
+    /// wasm = WasmForeignObject(wasm_bytes)
+    ///
+    /// # With custom timeout (5 seconds)
+    /// wasm = WasmForeignObject("math.wasm", timeout=5.0)
+    /// ```
     #[new]
     #[pyo3(signature = (file, timeout=None, memory_size=None))]
     fn new(
@@ -162,19 +164,20 @@ impl PyWasmForeignObject {
     ///     `RuntimeError`: If WASM compilation fails
     ///
     /// Example:
-    ///     ```python
-    ///     # Basic usage
-    ///     wasm = WasmForeignObject.from_file("math.wasm")
-    ///     wasm.init()
-    ///     result = wasm.exec("add", [5, 3])
     ///
-    ///     # With custom timeout (5 seconds) and memory limit (10 MB)
-    ///     wasm = WasmForeignObject.from_file(
-    ///         "compute.wasm",
-    ///         timeout=5.0,
-    ///         memory_size=10 * 1024 * 1024
-    ///     )
-    ///     ```
+    /// ```ignore
+    /// # Basic usage
+    /// wasm = WasmForeignObject.from_file("math.wasm")
+    /// wasm.init()
+    /// result = wasm.exec("add", [5, 3])
+    ///
+    /// # With custom timeout (5 seconds) and memory limit (10 MB)
+    /// wasm = WasmForeignObject.from_file(
+    ///     "compute.wasm",
+    ///     timeout=5.0,
+    ///     memory_size=10 * 1024 * 1024
+    /// )
+    /// ```
     #[staticmethod]
     #[pyo3(signature = (path, timeout=None, memory_size=None))]
     fn from_file(
@@ -227,21 +230,22 @@ impl PyWasmForeignObject {
     ///     `RuntimeError`: If WASM compilation fails
     ///
     /// Example:
-    ///     ```python
-    ///     # Load from file into bytes
-    ///     with open("math.wasm", "rb") as f:
-    ///         wasm_bytes = f.read()
-    ///     wasm = WasmForeignObject.from_bytes(wasm_bytes)
-    ///     wasm.init()
     ///
-    ///     # From downloaded content
-    ///     import requests
-    ///     response = requests.get("https://example.com/module.wasm")
-    ///     wasm = WasmForeignObject.from_bytes(response.content)
+    /// ```ignore
+    /// # Load from file into bytes
+    /// with open("math.wasm", "rb") as f:
+    ///     wasm_bytes = f.read()
+    /// wasm = WasmForeignObject.from_bytes(wasm_bytes)
+    /// wasm.init()
     ///
-    ///     # With custom timeout
-    ///     wasm = WasmForeignObject.from_bytes(wasm_bytes, timeout=5.0)
-    ///     ```
+    /// # From downloaded content
+    /// import requests
+    /// response = requests.get("https://example.com/module.wasm")
+    /// wasm = WasmForeignObject.from_bytes(response.content)
+    ///
+    /// # With custom timeout
+    /// wasm = WasmForeignObject.from_bytes(wasm_bytes, timeout=5.0)
+    /// ```
     #[staticmethod]
     #[pyo3(signature = (data, timeout=None, memory_size=None))]
     fn from_bytes(

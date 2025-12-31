@@ -16,6 +16,7 @@ This module provides type information for the pecos_rslib Rust extension.
 
 from __future__ import annotations
 
+import os
 from typing import (
     Callable,
     Generic,
@@ -1115,9 +1116,198 @@ def get_compilation_backends() -> dict[str, object]:
 # WASM
 # =============================================================================
 class WasmForeignObject:
-    """WASM foreign object wrapper."""
+    """WebAssembly foreign object for hybrid quantum/classical computation.
 
-    ...
+    Provides WebAssembly execution capabilities using the Rust Wasmtime runtime.
+    WASM modules can be loaded from files (.wasm or .wat) or directly from bytes.
+
+    For clearer code, prefer using the explicit classmethods:
+    - `WasmForeignObject.from_file()` - Load from a file path
+    - `WasmForeignObject.from_bytes()` - Load from binary bytes in memory
+
+    Example:
+        >>> wasm = WasmForeignObject.from_file("math.wasm")
+        >>> wasm.init()
+        >>> result = wasm.exec("add", [5, 3])
+        >>> print(result)  # 8
+    """
+
+    def __init__(
+        self,
+        file: str | os.PathLike[str] | bytes,
+        timeout: float | None = None,
+        memory_size: int | None = None,
+    ) -> None:
+        """Create a WebAssembly foreign object.
+
+        Args:
+            file: Path to WASM file (str or pathlib.Path) or WASM bytes (bytes)
+            timeout: Optional timeout in seconds (default: 1.0 second)
+            memory_size: Optional maximum memory size in bytes per linear memory
+                        (default: None = unlimited)
+
+        Raises:
+            FileNotFoundError: If file path doesn't exist
+            RuntimeError: If WASM compilation fails
+        """
+        ...
+
+    @staticmethod
+    def from_file(
+        path: str | os.PathLike[str],
+        timeout: float | None = None,
+        memory_size: int | None = None,
+    ) -> WasmForeignObject:
+        """Create a WebAssembly foreign object from a file.
+
+        Loads a WebAssembly module from a .wasm (binary) or .wat (text) file.
+
+        Args:
+            path: Path to the WASM file (str or pathlib.Path)
+            timeout: Optional timeout in seconds for function execution (default: 1.0)
+            memory_size: Optional maximum memory size in bytes per linear memory
+                        (default: None = unlimited)
+
+        Returns:
+            New WebAssembly foreign object instance
+
+        Raises:
+            FileNotFoundError: If the file doesn't exist
+            RuntimeError: If WASM compilation fails
+
+        Example:
+            >>> wasm = WasmForeignObject.from_file("math.wasm")
+            >>> wasm = WasmForeignObject.from_file("math.wasm", timeout=5.0)
+        """
+        ...
+
+    @staticmethod
+    def from_bytes(
+        data: bytes,
+        timeout: float | None = None,
+        memory_size: int | None = None,
+    ) -> WasmForeignObject:
+        """Create a WebAssembly foreign object from bytes.
+
+        Loads a WebAssembly module directly from binary bytes in memory.
+        Useful for downloaded, embedded, or programmatically generated WASM.
+
+        Args:
+            data: WASM binary as bytes
+            timeout: Optional timeout in seconds for function execution (default: 1.0)
+            memory_size: Optional maximum memory size in bytes per linear memory
+                        (default: None = unlimited)
+
+        Returns:
+            New WebAssembly foreign object instance
+
+        Raises:
+            RuntimeError: If WASM compilation fails
+
+        Example:
+            >>> with open("math.wasm", "rb") as f:
+            ...     wasm_bytes = f.read()
+            >>> wasm = WasmForeignObject.from_bytes(wasm_bytes)
+        """
+        ...
+
+    def init(self) -> None:
+        """Initialize the WASM module.
+
+        Must be called before using the object. Creates a new instance
+        and calls the 'init' function in the WASM module.
+
+        Raises:
+            RuntimeError: If init function is missing or execution fails
+        """
+        ...
+
+    def shot_reinit(self) -> None:
+        """Reset variables before each shot.
+
+        Calls the 'shot_reinit' function in the WASM module if it exists.
+        This is a no-op if the function doesn't exist.
+
+        Raises:
+            RuntimeError: If shot_reinit function exists but execution fails
+        """
+        ...
+
+    def new_instance(self) -> None:
+        """Create a new WASM instance.
+
+        Resets the object's internal state by creating a fresh instance.
+
+        Raises:
+            RuntimeError: If instance creation fails
+        """
+        ...
+
+    def get_funcs(self) -> list[str]:
+        """Get list of exported function names.
+
+        Returns:
+            List of function names exported by the WASM module
+        """
+        ...
+
+    def exec(self, func_name: str, args: list[int]) -> int | tuple[int, ...]:
+        """Execute a WASM function.
+
+        Args:
+            func_name: Name of the function to execute
+            args: List of integer arguments (i64)
+
+        Returns:
+            Single integer for functions with one return value,
+            or tuple for multiple return values
+
+        Raises:
+            RuntimeError: If function not found or execution fails
+        """
+        ...
+
+    @property
+    def wasm_bytes(self) -> bytes:
+        """Get the WebAssembly binary bytes."""
+        ...
+
+    def teardown(self) -> None:
+        """Cleanup resources.
+
+        Stops the epoch increment thread. Called automatically when
+        the object is dropped, but can be called explicitly.
+        """
+        ...
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize to dictionary for pickling.
+
+        Returns:
+            Dictionary containing 'fobj_class', 'wasm_bytes', 'timeout', and 'memory_size'
+        """
+        ...
+
+    @staticmethod
+    def from_dict(wasmtime_dict: dict[str, object]) -> WasmForeignObject:
+        """Deserialize from dictionary (for pickling).
+
+        Args:
+            wasmtime_dict: Dictionary containing 'fobj_class', 'wasm_bytes',
+                          and optionally 'timeout' and 'memory_size'
+
+        Returns:
+            New instance created from the dictionary
+        """
+        ...
+
+    def __getstate__(self) -> dict[str, object]:
+        """Support for pickle serialization."""
+        ...
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        """Support for pickle deserialization."""
+        ...
 
 # =============================================================================
 # Utilities

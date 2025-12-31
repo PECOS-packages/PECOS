@@ -547,12 +547,30 @@ struct GateLocation {
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use pecos_qsim::{NoisyMeasurementHistoryBuilder, DepolarizingNoiseModel};
+/// ```rust
+/// use pecos_experimental::{
+///     NoisyMeasurementHistoryBuilder, DepolarizingNoiseModel, execute_hugr,
+/// };
+/// use pecos_qsim::StdSymbolicSparseStab;
+/// use pecos_quantum::{DagCircuit, Gate};
 ///
-/// let history = NoisyMeasurementHistoryBuilder::new()
+/// // Create a circuit with gates that can have faults
+/// let mut circuit = DagCircuit::new();
+/// circuit.add_gate(Gate::h(&[0]));
+/// circuit.add_gate(Gate::cx(&[(0, 1)]));
+/// circuit.add_gate(Gate::measure(&[0]));
+/// circuit.add_gate(Gate::measure(&[1]));
+///
+/// // Run symbolic simulation to get noiseless measurement history
+/// let mut sim = StdSymbolicSparseStab::new(2);
+/// execute_hugr(&mut sim, &circuit).unwrap();
+///
+/// // Build noisy measurement history
+/// let noisy_history = NoisyMeasurementHistoryBuilder::new()
 ///     .with_noise_model(DepolarizingNoiseModel::uniform(0.001))
-///     .build_from_circuit(&circuit, &measurement_history);
+///     .build_from_circuit(&circuit, sim.measurement_history());
+///
+/// assert_eq!(noisy_history.num_measurements(), 2);
 /// ```
 pub struct NoisyMeasurementHistoryBuilder {
     noise_model: DepolarizingNoiseModel,

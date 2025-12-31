@@ -580,6 +580,7 @@ For many shots, you can use multiple CPU cores to speed up simulation:
 ## Further Reading
 
 - [Getting Started with PECOS](getting-started.md)
+- [WASM Foreign Objects](wasm-foreign-objects.md) - Using WebAssembly for classical computation
 - [Simulators Guide](simulators.md)
 - [Noise Model Builders Guide](noise-model-builders.md)
 - [PECOS Development Guide](../development/DEVELOPMENT.md)

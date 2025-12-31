@@ -33,22 +33,28 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use pecos_qsim::{StdSymbolicSparseStab, MeasurementSampler};
 //! use pecos_experimental::execute_hugr;
-//! use pecos_quantum::hugr_convert::SimpleHugr;
+//! use pecos_quantum::{DagCircuit, Gate};
 //!
-//! // Load HUGR from Guppy compilation
-//! let hugr_bytes: Vec<u8> = compile_guppy_to_hugr(my_guppy_func);
-//! let simple_hugr = SimpleHugr::try_from_bytes(&hugr_bytes)?;
+//! // Create a Bell state circuit
+//! let mut circuit = DagCircuit::new();
+//! circuit.add_gate(Gate::h(&[0]));
+//! circuit.add_gate(Gate::cx(&[(0, 1)]));
+//! circuit.add_gate(Gate::measure(&[0]));
+//! circuit.add_gate(Gate::measure(&[1]));
 //!
 //! // Execute symbolically (once!)
-//! let mut sim = StdSymbolicSparseStab::new(simple_hugr.num_qubits());
-//! execute_hugr(&mut sim, &simple_hugr)?;
+//! let mut sim = StdSymbolicSparseStab::new(2);
+//! execute_hugr(&mut sim, &circuit).unwrap();
 //!
 //! // Sample efficiently (millions of shots)
 //! let sampler = MeasurementSampler::new(sim.measurement_history());
 //! let results = sampler.sample(1_000_000);
+//!
+//! // Results will show Bell state correlations: 00 or 11
+//! assert_eq!(results.num_measurements(), 2);
 //! ```
 //!
 //! [`SimpleHugr`]: pecos_quantum::hugr_convert::SimpleHugr
@@ -161,17 +167,21 @@ impl std::error::Error for HugrExecutionError {}
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use pecos_qsim::{StdSymbolicSparseStab, MeasurementSampler, execute_hugr};
-/// use pecos_quantum::hugr_convert::SimpleHugr;
+/// ```rust
+/// use pecos_qsim::StdSymbolicSparseStab;
+/// use pecos_experimental::execute_hugr;
+/// use pecos_quantum::{DagCircuit, Gate};
 ///
-/// let simple_hugr = SimpleHugr::try_from_bytes(&hugr_bytes)?;
+/// // Create a simple circuit
+/// let mut circuit = DagCircuit::new();
+/// circuit.add_gate(Gate::h(&[0]));
+/// circuit.add_gate(Gate::measure(&[0]));
 ///
-/// let mut sim = StdSymbolicSparseStab::new(simple_hugr.num_qubits());
-/// execute_hugr(&mut sim, &simple_hugr)?;
+/// let mut sim = StdSymbolicSparseStab::new(1);
+/// execute_hugr(&mut sim, &circuit).unwrap();
 ///
 /// // Now sim.measurement_history() contains the symbolic dependencies
-/// println!("{}", sim.measurement_history());
+/// assert_eq!(sim.measurement_history().len(), 1);
 /// ```
 #[allow(clippy::too_many_lines)]
 pub fn execute_hugr<T, E, C>(

@@ -30,7 +30,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust,ignore
+//! ```rust
 //! use pecos_experimental::{execute_hugr, HugrExecutionError};
 //! use pecos_experimental::{
 //!     NoisyMeasurementHistory,

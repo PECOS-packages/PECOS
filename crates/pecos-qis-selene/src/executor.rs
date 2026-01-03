@@ -54,16 +54,18 @@ static SHIM_LIB_SINGLETON: OnceLock<Result<SharedLibrary, String>> = OnceLock::n
 ///
 /// We use `Box<SharedLibrary>` so that when the `BTreeMap` grows/reallocates, the
 /// actual library data stays in place on the heap (only the Box pointer moves).
-static PROGRAM_LIB_CACHE: OnceLock<std::sync::Mutex<std::collections::BTreeMap<PathBuf, Box<SharedLibrary>>>> =
-    OnceLock::new();
+static PROGRAM_LIB_CACHE: OnceLock<
+    std::sync::Mutex<std::collections::BTreeMap<PathBuf, Box<SharedLibrary>>>,
+> = OnceLock::new();
 
 /// Cache mapping program content hash to compiled shared library path.
 ///
 /// When multiple interfaces are created with the same program content (e.g., when
 /// engines are cloned for parallel execution), this cache ensures they all use
 /// the same compiled shared library file.
-static COMPILED_PROGRAM_CACHE: OnceLock<std::sync::Mutex<std::collections::BTreeMap<u64, PathBuf>>> =
-    OnceLock::new();
+static COMPILED_PROGRAM_CACHE: OnceLock<
+    std::sync::Mutex<std::collections::BTreeMap<u64, PathBuf>>,
+> = OnceLock::new();
 
 /// Tracks whether cache cleanup has been performed (once per process).
 static CACHE_CLEANUP_DONE: OnceLock<()> = OnceLock::new();
@@ -84,9 +86,8 @@ fn get_persistent_cache_dir() -> Result<PathBuf, InterfaceError> {
     );
 
     // Ensure the directory exists
-    std::fs::create_dir_all(&cache_dir).map_err(|e| {
-        InterfaceError::LoadError(format!("Failed to create cache directory: {e}"))
-    })?;
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| InterfaceError::LoadError(format!("Failed to create cache directory: {e}")))?;
 
     // Cleanup old files (older than 24 hours) - do this once per process
     CACHE_CLEANUP_DONE.get_or_init(|| {
@@ -233,14 +234,27 @@ impl Drop for CompilationLock {
 ///
 /// SAFETY: This is only safe because we never drop the library and only use
 /// thread-safe operations (dlsym for symbol lookup).
+///
+/// IMPORTANT: The library handles are wrapped in `ManuallyDrop` to prevent
+/// calling `dlclose()` during process exit. Calling `dlclose()` during shutdown
+/// can cause hangs because:
+/// 1. Thread-local storage may already be partially torn down
+/// 2. Other static destructors may be running concurrently
+/// 3. The LLVM JIT runtime may be in an inconsistent state
+///
+/// Since these libraries live for the process lifetime, it's safe (and necessary)
+/// to let the OS clean them up during process termination instead of explicitly
+/// calling `dlclose()`.
 struct SharedLibrary {
     /// The `RTLD_GLOBAL` handle - keeps symbols visible to other libraries
+    /// Wrapped in `ManuallyDrop` to prevent `dlclose()` during process exit
     #[cfg(unix)]
-    _global_handle: libloading::os::unix::Library,
+    _global_handle: std::mem::ManuallyDrop<libloading::os::unix::Library>,
     #[cfg(windows)]
-    _global_handle: Library,
+    _global_handle: std::mem::ManuallyDrop<Library>,
     /// The regular handle for symbol lookups
-    lib: Library,
+    /// Wrapped in `ManuallyDrop` to prevent `dlclose()` during process exit
+    lib: std::mem::ManuallyDrop<Library>,
 }
 
 // SAFETY: See struct documentation above. The library handle is only used for
@@ -508,7 +522,6 @@ pub struct QisHeliosInterface {
     // Note: The QIS FFI library, shim library, and program libraries are stored in
     // process-wide caches/singletons to avoid macOS TLS/dynamic linker issues.
     // Program libraries are cached by path in PROGRAM_LIB_CACHE.
-
     /// Execution context for dynamic circuit coordination
     /// Created when dynamic mode is enabled, destroyed when disabled
     execution_context: Option<ExecutionContextPtr>,
@@ -642,8 +655,8 @@ impl QisHeliosInterface {
                     Ok((lib_global, lib)) => {
                         debug!("QIS FFI library singleton initialized successfully");
                         Ok(SharedLibrary {
-                            _global_handle: lib_global,
-                            lib,
+                            _global_handle: std::mem::ManuallyDrop::new(lib_global),
+                            lib: std::mem::ManuallyDrop::new(lib),
                         })
                     }
                     Err(e) => Err(e.to_string()),
@@ -665,16 +678,15 @@ impl QisHeliosInterface {
     ///
     /// By caching program libraries by path, all clones that compile to the same
     /// shared library path share the same loaded library instance.
-    fn get_or_cache_program_lib(
-        path: &Path,
-    ) -> Result<&'static SharedLibrary, InterfaceError> {
-        let cache = PROGRAM_LIB_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+    fn get_or_cache_program_lib(path: &Path) -> Result<&'static SharedLibrary, InterfaceError> {
+        let cache = PROGRAM_LIB_CACHE
+            .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
 
         // First check: quick lookup with lock held briefly
         {
-            let cache_guard = cache
-                .lock()
-                .map_err(|e| InterfaceError::ExecutionError(format!("Failed to lock program cache: {e}")))?;
+            let cache_guard = cache.lock().map_err(|e| {
+                InterfaceError::ExecutionError(format!("Failed to lock program cache: {e}"))
+            })?;
 
             if let Some(boxed_lib) = cache_guard.get(path) {
                 debug!("Using cached program library for: {}", path.display());
@@ -686,20 +698,24 @@ impl QisHeliosInterface {
 
         // Load library WITHOUT holding the lock - this is the slow part
         debug!("Loading program library (outside lock): {}", path.display());
-        let (lib_global, lib) = Self::load_library_with_rtld_global(path, "Failed to load program library")?;
+        let (lib_global, lib) =
+            Self::load_library_with_rtld_global(path, "Failed to load program library")?;
         let shared_lib = SharedLibrary {
-            _global_handle: lib_global,
-            lib,
+            _global_handle: std::mem::ManuallyDrop::new(lib_global),
+            lib: std::mem::ManuallyDrop::new(lib),
         };
 
         // Second check: re-acquire lock and check if another thread already inserted
-        let mut cache_guard = cache
-            .lock()
-            .map_err(|e| InterfaceError::ExecutionError(format!("Failed to lock program cache: {e}")))?;
+        let mut cache_guard = cache.lock().map_err(|e| {
+            InterfaceError::ExecutionError(format!("Failed to lock program cache: {e}"))
+        })?;
 
         // Double-check: another thread may have inserted while we were loading
         let ptr: *const SharedLibrary = if let Some(boxed_lib) = cache_guard.get(path) {
-            debug!("Another thread already cached library for: {}", path.display());
+            debug!(
+                "Another thread already cached library for: {}",
+                path.display()
+            );
             // Use the existing one (drop our loaded library)
             std::ptr::from_ref::<SharedLibrary>(boxed_lib)
         } else {
@@ -736,8 +752,8 @@ impl QisHeliosInterface {
                 Ok((lib_global, lib)) => {
                     debug!("Shim library singleton initialized successfully");
                     Ok(SharedLibrary {
-                        _global_handle: lib_global,
-                        lib,
+                        _global_handle: std::mem::ManuallyDrop::new(lib_global),
+                        lib: std::mem::ManuallyDrop::new(lib),
                     })
                 }
                 Err(e) => Err(e.to_string()),
@@ -922,14 +938,14 @@ impl QisHeliosInterface {
         let content_hash = hasher.finish();
 
         // Check if we already have a compiled library for this content
-        let compiled_cache =
-            COMPILED_PROGRAM_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+        let compiled_cache = COMPILED_PROGRAM_CACHE
+            .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
 
         // Check cache with lock held briefly, then release before loading
         let cached_path_opt: Option<PathBuf> = {
-            let cache_guard = compiled_cache
-                .lock()
-                .map_err(|e| InterfaceError::LoadError(format!("Failed to lock compiled cache: {e}")))?;
+            let cache_guard = compiled_cache.lock().map_err(|e| {
+                InterfaceError::LoadError(format!("Failed to lock compiled cache: {e}"))
+            })?;
 
             if let Some(cached_path) = cache_guard.get(&content_hash) {
                 debug!(
@@ -963,7 +979,8 @@ impl QisHeliosInterface {
         } else {
             ".so"
         };
-        let persistent_cache_path = cache_dir.join(format!("program_{content_hash:016x}{lib_suffix}"));
+        let persistent_cache_path =
+            cache_dir.join(format!("program_{content_hash:016x}{lib_suffix}"));
 
         if persistent_cache_path.exists() {
             debug!(
@@ -975,8 +992,9 @@ impl QisHeliosInterface {
                 Ok(_lib) => {
                     // Update in-process cache
                     {
-                        let compiled_cache = COMPILED_PROGRAM_CACHE
-                            .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+                        let compiled_cache = COMPILED_PROGRAM_CACHE.get_or_init(|| {
+                            std::sync::Mutex::new(std::collections::BTreeMap::new())
+                        });
                         if let Ok(mut cache_guard) = compiled_cache.lock() {
                             cache_guard.insert(content_hash, persistent_cache_path.clone());
                         }
@@ -1242,10 +1260,7 @@ entry:
                 lib_suffix.trim_start_matches('.'),
                 std::process::id()
             ));
-            debug!(
-                "Compiling to temp path first: {}",
-                temp_path.display()
-            );
+            debug!("Compiling to temp path first: {}", temp_path.display());
             temp_path
         };
 
@@ -1860,26 +1875,26 @@ impl QisInterface for QisHeliosInterface {
 
 impl Drop for QisHeliosInterface {
     fn drop(&mut self) {
-        // Clean up execution context if still active
-        if let Some(ExecutionContextPtr(ctx)) = self.execution_context.take() {
-            // Get the process-wide QIS FFI library singleton
-            if let Ok(lib) = Self::get_qis_ffi_lib_singleton() {
-                // Unregister context
-                if let Ok(register_fn) = unsafe {
-                    lib.get::<RegisterExecutionContextFn>(b"pecos_register_execution_context\0")
-                } {
-                    unsafe { register_fn(std::ptr::null_mut()) };
-                    debug!("Unregistered execution context on drop");
-                }
-
-                // Destroy context
-                if let Ok(destroy_fn) = unsafe {
-                    lib.get::<DestroyExecutionContextFn>(b"pecos_destroy_execution_context\0")
-                } {
-                    unsafe { destroy_fn(ctx) };
-                    debug!("Destroyed execution context on drop: {ctx:?}");
-                }
-            }
-        }
+        // Intentionally skip cleanup of execution context during drop.
+        //
+        // IMPORTANT: The FFI calls to unregister and destroy the execution context
+        // (pecos_register_execution_context and pecos_destroy_execution_context) access
+        // thread-local storage (TLS). During process shutdown, TLS may already be partially
+        // torn down, which can cause the FFI calls to hang indefinitely. This was the
+        // root cause of intermittent test hangs (occurring ~15-20% of the time).
+        //
+        // Since drop() is typically called during process exit (when the program is terminating),
+        // it's safe to skip the cleanup:
+        // - The memory will be reclaimed by the OS when the process exits
+        // - The TLS entry will be cleaned up by the OS
+        //
+        // Note: During normal operation, the context should be properly cleaned up via
+        // disable_dynamic_mode() which is called before the program exits normally.
+        // The drop() path is only reached if:
+        // 1. There was a panic or early return before disable_dynamic_mode was called
+        // 2. The program is exiting anyway
+        //
+        // In both cases, leaking the context is acceptable and avoids the TLS hang.
+        let _ = self.execution_context.take();
     }
 }

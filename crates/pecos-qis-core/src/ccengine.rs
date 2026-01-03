@@ -26,6 +26,9 @@ use pecos_qis_ffi_types::{Operation, OperationCollector as OperationList, Quantu
 use pecos_rng::PecosRng;
 use std::collections::BTreeMap;
 
+use std::mem::ManuallyDrop;
+use std::sync::Mutex;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
 /// Result from worker thread - returns both the operations and the interface
@@ -43,13 +46,101 @@ type DisableDynamicModeFn = unsafe extern "C" fn();
 /// The LLVM program runs in a worker thread. When it needs a measurement result,
 /// it blocks in `___read_future_bool`. The main thread simulates operations,
 /// provides the result, and signals the worker to continue.
+///
+/// The `main_thread_lib` field is wrapped in `ManuallyDrop` to prevent calling
+/// `dlclose()` during process exit. Calling `dlclose()` during shutdown can
+/// cause hangs because thread-local storage may already be partially torn down.
 struct DynamicExecutionState {
-    /// Worker thread handle running the LLVM program
-    worker_handle: Option<JoinHandle<WorkerResult>>,
-    /// Loaded library for main thread FFI calls
-    main_thread_lib: Option<libloading::Library>,
     /// Whether execution has completed
     execution_complete: bool,
+    /// Loaded library for main thread FFI calls
+    /// Wrapped in `ManuallyDrop` to prevent `dlclose()` during process exit.
+    main_thread_lib: Option<ManuallyDrop<libloading::Library>>,
+}
+
+/// Work item sent to the persistent dynamic worker thread
+struct DynamicWorkItem {
+    /// The interface to execute
+    interface: BoxedInterface,
+}
+
+/// Persistent worker thread for dynamic execution
+///
+/// This worker thread stays alive across multiple shots, avoiding the overhead
+/// and TLS allocation issues that come from spawning a new thread per shot.
+/// The thread waits for work items via a channel, executes `collect_operations()`,
+/// and sends results back via another channel.
+struct PersistentDynamicWorker {
+    /// Channel to send work items to the worker
+    work_tx: Sender<DynamicWorkItem>,
+    /// Channel to receive results from the worker (wrapped in Mutex for Sync)
+    result_rx: Mutex<Receiver<WorkerResult>>,
+    /// Thread handle (joined on drop)
+    _handle: JoinHandle<()>,
+}
+
+impl PersistentDynamicWorker {
+    /// Create a new persistent dynamic worker thread
+    fn new() -> Self {
+        let (work_tx, work_rx) = mpsc::channel::<DynamicWorkItem>();
+        let (result_tx, result_rx) = mpsc::channel::<WorkerResult>();
+
+        let handle = std::thread::Builder::new()
+            .name("pecos-dynamic-worker".to_string())
+            .spawn(move || {
+                debug!("Persistent dynamic worker started");
+                while let Ok(work_item) = work_rx.recv() {
+                    debug!("Persistent worker: received work item, starting collect_operations");
+                    let mut interface = work_item.interface;
+                    let result = interface.collect_operations();
+                    debug!("Persistent worker: collect_operations returned");
+
+                    // Disable dynamic mode before returning
+                    let _ = interface.disable_dynamic_mode();
+
+                    // Send result back to main thread
+                    let send_result = result
+                        .map(|collector| (collector, interface))
+                        .map_err(|e| e.to_string());
+
+                    if result_tx.send(send_result).is_err() {
+                        // Main thread dropped receiver, exit
+                        debug!("Persistent worker: result channel closed, exiting");
+                        break;
+                    }
+                }
+                debug!("Persistent dynamic worker exiting");
+            })
+            .expect("Failed to spawn persistent dynamic worker thread");
+
+        Self {
+            work_tx,
+            result_rx: Mutex::new(result_rx),
+            _handle: handle,
+        }
+    }
+
+    /// Send a work item to the persistent worker
+    fn execute(&self, interface: BoxedInterface) -> Result<(), PecosError> {
+        self.work_tx
+            .send(DynamicWorkItem { interface })
+            .map_err(|_| PecosError::Generic("Persistent worker thread died".to_string()))
+    }
+
+    /// Receive the result from the persistent worker (blocking)
+    #[allow(dead_code)]
+    fn recv_result(&self) -> Result<WorkerResult, PecosError> {
+        self.result_rx
+            .lock()
+            .map_err(|_| PecosError::Generic("Result receiver lock poisoned".to_string()))?
+            .recv()
+            .map_err(|_| PecosError::Generic("Persistent worker thread died".to_string()))
+    }
+
+    /// Try to receive a result without blocking
+    fn try_recv_result(&self) -> Option<WorkerResult> {
+        self.result_rx.lock().ok()?.try_recv().ok()
+    }
 }
 
 /// QIS Control Engine that mediates between interface and runtime
@@ -111,6 +202,10 @@ pub struct QisEngine {
 
     /// Interface builder for recreating interfaces during clone (dynamic mode)
     interface_builder: Option<Box<dyn QisInterfaceBuilder>>,
+
+    /// Persistent worker thread for dynamic execution (stays alive across shots)
+    /// This avoids spawning a new thread per shot, which causes TLS allocation issues.
+    persistent_worker: Option<PersistentDynamicWorker>,
 }
 
 impl QisEngine {
@@ -140,6 +235,7 @@ impl QisEngine {
             program_bytes: None,
             program_format: None,
             interface_builder: None,
+            persistent_worker: None,
         }
     }
 
@@ -228,6 +324,7 @@ impl QisEngine {
             program_bytes: None,
             program_format: None,
             interface_builder: None,
+            persistent_worker: None,
         }
     }
 
@@ -419,6 +516,8 @@ impl Clone for QisEngine {
                 .interface_builder
                 .as_ref()
                 .map(|b| dyn_clone::clone_box(&**b)),
+            // Create a new persistent worker for this clone (can't share threads across clones)
+            persistent_worker: None,
         }
     }
 }
@@ -427,10 +526,10 @@ impl Clone for QisEngine {
 impl QisEngine {
     /// Start the LLVM program execution in a worker thread
     ///
-    /// The worker thread runs `collect_operations()` which will block at
-    /// `___read_future_bool` when a measurement result is needed.
+    /// Uses a persistent worker thread that stays alive across shots to avoid
+    /// TLS allocation issues from spawning new threads per shot.
     fn start_dynamic_worker(&mut self) -> Result<(), PecosError> {
-        debug!("Starting dynamic execution worker thread");
+        debug!("Starting dynamic execution (using persistent worker)");
 
         // Get the FFI library path first
         let interface = self.interface.as_mut().ok_or_else(|| {
@@ -451,7 +550,7 @@ impl QisEngine {
         let execution_context_ptr = interface.get_execution_context_ptr();
 
         // Take the interface for the worker thread
-        let mut interface = self.interface.take().ok_or_else(|| {
+        let interface = self.interface.take().ok_or_else(|| {
             PecosError::Generic("No interface available for dynamic execution".to_string())
         })?;
 
@@ -476,25 +575,21 @@ impl QisEngine {
             debug!("Registered execution context on main thread library: {ctx_ptr:?}");
         }
 
-        // Spawn worker thread that runs the LLVM program
-        let worker_handle = std::thread::spawn(move || {
-            debug!("Worker thread: starting collect_operations");
-            let result = interface.collect_operations();
-            debug!("Worker thread: collect_operations returned");
+        // Create persistent worker if it doesn't exist
+        if self.persistent_worker.is_none() {
+            debug!("Creating new persistent dynamic worker thread");
+            self.persistent_worker = Some(PersistentDynamicWorker::new());
+        }
 
-            // Disable dynamic mode before returning
-            let _ = interface.disable_dynamic_mode();
+        // Send work to persistent worker
+        self.persistent_worker
+            .as_ref()
+            .expect("persistent worker was just created")
+            .execute(interface)?;
 
-            // Return both the result and the interface
-            result
-                .map(|collector| (collector, interface))
-                .map_err(|e| e.to_string())
-        });
-
-        // Initialize dynamic state
+        // Initialize dynamic state (no longer holds worker_handle, just FFI lib)
         self.dynamic_state = Some(DynamicExecutionState {
-            worker_handle: Some(worker_handle),
-            main_thread_lib: Some(main_thread_lib),
+            main_thread_lib: Some(ManuallyDrop::new(main_thread_lib)),
             execution_complete: false,
         });
 
@@ -594,42 +689,37 @@ impl QisEngine {
                 return true;
             }
 
-            if let Some(handle) = state.worker_handle.take() {
-                if handle.is_finished() {
-                    match handle.join() {
-                        Ok(Ok((collector, interface))) => {
-                            let total_ops = collector.operations.len();
+            // Check if persistent worker has completed (non-blocking)
+            if let Some(ref worker) = self.persistent_worker
+                && let Some(result) = worker.try_recv_result()
+            {
+                match result {
+                    Ok((collector, interface)) => {
+                        let total_ops = collector.operations.len();
+                        debug!(
+                            "Worker completed with {} total operations, {} already simulated",
+                            total_ops, self.simulated_op_count
+                        );
+                        // Only store NEW operations (those after what we already simulated)
+                        if total_ops > self.simulated_op_count {
+                            self.pending_dynamic_ops =
+                                collector.operations[self.simulated_op_count..].to_vec();
                             debug!(
-                                "Worker completed with {} total operations, {} already simulated",
-                                total_ops, self.simulated_op_count
+                                "Storing {} new operations for final processing",
+                                self.pending_dynamic_ops.len()
                             );
-                            // Only store NEW operations (those after what we already simulated)
-                            if total_ops > self.simulated_op_count {
-                                self.pending_dynamic_ops =
-                                    collector.operations[self.simulated_op_count..].to_vec();
-                                debug!(
-                                    "Storing {} new operations for final processing",
-                                    self.pending_dynamic_ops.len()
-                                );
-                            } else {
-                                self.pending_dynamic_ops.clear();
-                            }
-                            self.interface = Some(interface);
-                            state.execution_complete = true;
+                        } else {
+                            self.pending_dynamic_ops.clear();
                         }
-                        Ok(Err(e)) => {
-                            log::error!("Worker failed: {e}");
-                            state.execution_complete = true;
-                        }
-                        Err(_) => {
-                            log::error!("Worker panicked");
-                            state.execution_complete = true;
-                        }
+                        self.interface = Some(interface);
+                        state.execution_complete = true;
                     }
-                    return state.execution_complete;
+                    Err(e) => {
+                        log::error!("Worker failed: {e}");
+                        state.execution_complete = true;
+                    }
                 }
-                // Put handle back if not finished
-                state.worker_handle = Some(handle);
+                return state.execution_complete;
             }
         }
         false

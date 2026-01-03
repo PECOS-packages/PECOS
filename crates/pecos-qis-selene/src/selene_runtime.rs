@@ -8,17 +8,24 @@ use pecos_qis_core::runtime::{ClassicalState, QisRuntime, Result, RuntimeError, 
 use pecos_qis_ffi_types::{Operation, OperationCollector, QuantumOp};
 use std::collections::BTreeMap;
 use std::ffi::c_void;
+use std::mem::ManuallyDrop;
 use std::path::Path;
 use std::sync::Arc;
 
 /// Selene runtime implementation
+///
+/// The `library` field is wrapped in `ManuallyDrop` to prevent calling `dlclose()`
+/// during process exit. Calling `dlclose()` during shutdown can cause hangs because
+/// thread-local storage may already be partially torn down, or other static
+/// destructors may be running concurrently.
 pub struct SeleneRuntime {
     /// Path to the Selene .so file
     plugin_path: String,
 
     /// Loaded library (if any)
+    /// Wrapped in `ManuallyDrop` to prevent `dlclose()` during process exit.
     #[allow(dead_code)]
-    library: Option<Arc<libloading::Library>>,
+    library: Option<ManuallyDrop<Arc<libloading::Library>>>,
 
     /// Runtime instance pointer
     #[allow(dead_code)]
@@ -155,7 +162,7 @@ impl SeleneRuntime {
                 )));
             }
 
-            self.library = Some(lib);
+            self.library = Some(ManuallyDrop::new(lib));
             self.instance = Some(instance);
         }
 
@@ -512,7 +519,27 @@ impl QisRuntime for SeleneRuntime {
 
 impl Drop for SeleneRuntime {
     fn drop(&mut self) {
-        let _ = self.reset();
+        // Intentionally skip cleanup during drop.
+        //
+        // IMPORTANT: The FFI call to selene_runtime_exit in reset() can hang
+        // during process shutdown because:
+        // 1. Thread-local storage may already be partially torn down
+        // 2. Other static destructors may be running concurrently
+        // 3. The library's internal state may be inconsistent
+        //
+        // Since drop() is typically called during process exit, it's safe to skip
+        // the cleanup and let the OS reclaim all resources. This avoids the
+        // intermittent hang that was occurring ~15-20% of the time when running
+        // tests in parallel.
+        //
+        // During normal operation (not process exit), call reset() explicitly
+        // before dropping if cleanup is needed.
+
+        // Just clear our local state without making FFI calls
+        self.instance = None;
+        // Note: We intentionally don't set self.library = None here because
+        // the Arc<Library> might be shared, and we don't want to trigger
+        // dlclose() during process exit.
     }
 }
 

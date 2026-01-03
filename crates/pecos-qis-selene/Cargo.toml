@@ -33,8 +33,8 @@ log.workspace = true
 libloading.workspace = true
 tempfile.workspace = true
 # Selene runtime crates - these build the .so files we need
-selene-simple-runtime = { git = "https://github.com/CQCL/selene.git", rev = "1794e8d1dba26120a18e904940c014f4e034bed6", optional = true }
-selene-soft-rz-runtime = { git = "https://github.com/CQCL/selene.git", rev = "1794e8d1dba26120a18e904940c014f4e034bed6", optional = true }
+selene-simple-runtime = { git = "https://github.com/CQCL/selene.git", rev = "01300ee", optional = true }
+selene-soft-rz-runtime = { git = "https://github.com/CQCL/selene.git", rev = "01300ee", optional = true }
 
 [dev-dependencies]
 pecos-engines.workspace = true

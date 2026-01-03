@@ -424,7 +424,9 @@ EXPORT_API selene_u64_result_t selene_custom_runtime_call(SeleneInstance *instan
 // We DEFINE it here (not extern) so it's available when program.so is loaded.
 // The program.so will have an `extern jmp_buf user_program_jmpbuf` declaration
 // that will resolve to this definition when loaded with RTLD_GLOBAL.
-jmp_buf user_program_jmpbuf;
+// IMPORTANT: Must be thread-local because multiple rayon workers may call
+// pecos_call_qmain_with_setjmp concurrently, and each needs its own jmpbuf.
+__thread jmp_buf user_program_jmpbuf;
 
 /**
  * Wrapper function to safely call qmain with setjmp/longjmp support
@@ -440,7 +442,8 @@ typedef uint64_t (*qmain_fn_t)(uint64_t);
 
 EXPORT_API uint64_t pecos_call_qmain_with_setjmp(qmain_fn_t qmain) {
     // Initialize shot context to match what interface.c main() does
-    static SeleneInstance dummy_instance;
+    // Must be thread-local for concurrent execution by multiple workers
+    static __thread SeleneInstance dummy_instance;
     selene_void_result_t start_result = selene_on_shot_start(&dummy_instance, 0);
     if (start_result.error_code != 0) {
         return start_result.error_code;

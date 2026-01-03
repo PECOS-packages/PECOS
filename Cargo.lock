@@ -3199,7 +3199,7 @@ dependencies = [
  "num-complex",
  "pecos-quest",
  "pecos-rng",
- "selene-core",
+ "selene-core 0.2.1",
 ]
 
 [[package]]
@@ -3210,7 +3210,7 @@ dependencies = [
  "pecos-qsim",
  "pecos-qulacs",
  "pecos-rng",
- "selene-core",
+ "selene-core 0.2.1",
 ]
 
 [[package]]
@@ -3221,7 +3221,7 @@ dependencies = [
  "clap",
  "pecos-core",
  "pecos-qsim",
- "selene-core",
+ "selene-core 0.2.1",
 ]
 
 [[package]]
@@ -3231,7 +3231,7 @@ dependencies = [
  "anyhow",
  "pecos-qsim",
  "pecos-rng",
- "selene-core",
+ "selene-core 0.2.1",
 ]
 
 [[package]]
@@ -4252,21 +4252,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "selene-simple-runtime"
-version = "0.2.4"
-source = "git+https://github.com/CQCL/selene.git?rev=1794e8d1dba26120a18e904940c014f4e034bed6#1794e8d1dba26120a18e904940c014f4e034bed6"
+name = "selene-core"
+version = "0.2.2"
+source = "git+https://github.com/CQCL/selene.git?rev=01300ee#01300ee5d4825e2dfc6500941d0540c3ff06988a"
 dependencies = [
  "anyhow",
- "selene-core",
+ "delegate",
+ "derive_more 2.1.1",
+ "libloading 0.8.9",
+ "ouroboros",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "selene-simple-runtime"
+version = "0.2.6"
+source = "git+https://github.com/CQCL/selene.git?rev=01300ee#01300ee5d4825e2dfc6500941d0540c3ff06988a"
+dependencies = [
+ "anyhow",
+ "selene-core 0.2.2",
 ]
 
 [[package]]
 name = "selene-soft-rz-runtime"
-version = "0.2.4"
-source = "git+https://github.com/CQCL/selene.git?rev=1794e8d1dba26120a18e904940c014f4e034bed6#1794e8d1dba26120a18e904940c014f4e034bed6"
+version = "0.2.6"
+source = "git+https://github.com/CQCL/selene.git?rev=01300ee#01300ee5d4825e2dfc6500941d0540c3ff06988a"
 dependencies = [
  "anyhow",
- "selene-core",
+ "selene-core 0.2.2",
 ]
 
 [[package]]

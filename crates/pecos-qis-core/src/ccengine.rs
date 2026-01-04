@@ -56,6 +56,9 @@ struct DynamicExecutionState {
     /// Loaded library for main thread FFI calls
     /// Wrapped in `ManuallyDrop` to prevent `dlclose()` during process exit.
     main_thread_lib: Option<ManuallyDrop<libloading::Library>>,
+    /// Worker thread handle (used on macOS where persistent worker causes issues)
+    #[cfg(target_os = "macos")]
+    worker_handle: Option<JoinHandle<WorkerResult>>,
 }
 
 /// Work item sent to the persistent dynamic worker thread
@@ -575,23 +578,54 @@ impl QisEngine {
             debug!("Registered execution context on main thread library: {ctx_ptr:?}");
         }
 
-        // Create persistent worker if it doesn't exist
-        if self.persistent_worker.is_none() {
-            debug!("Creating new persistent dynamic worker thread");
-            self.persistent_worker = Some(PersistentDynamicWorker::new());
+        // Platform-specific worker spawning:
+        // - On Linux: Use persistent worker to avoid glibc TLS allocation issues
+        // - On macOS: Use per-shot spawning (persistent worker causes segfaults)
+        #[cfg(not(target_os = "macos"))]
+        {
+            // Create persistent worker if it doesn't exist
+            if self.persistent_worker.is_none() {
+                debug!("Creating new persistent dynamic worker thread");
+                self.persistent_worker = Some(PersistentDynamicWorker::new());
+            }
+
+            // Send work to persistent worker
+            self.persistent_worker
+                .as_ref()
+                .expect("persistent worker was just created")
+                .execute(interface)?;
+
+            // Initialize dynamic state
+            self.dynamic_state = Some(DynamicExecutionState {
+                main_thread_lib: Some(ManuallyDrop::new(main_thread_lib)),
+                execution_complete: false,
+            });
         }
 
-        // Send work to persistent worker
-        self.persistent_worker
-            .as_ref()
-            .expect("persistent worker was just created")
-            .execute(interface)?;
+        #[cfg(target_os = "macos")]
+        {
+            // Spawn worker thread that runs the LLVM program (per-shot)
+            let worker_handle = std::thread::spawn(move || {
+                debug!("Worker thread: starting collect_operations");
+                let result = interface.collect_operations();
+                debug!("Worker thread: collect_operations returned");
 
-        // Initialize dynamic state (no longer holds worker_handle, just FFI lib)
-        self.dynamic_state = Some(DynamicExecutionState {
-            main_thread_lib: Some(ManuallyDrop::new(main_thread_lib)),
-            execution_complete: false,
-        });
+                // Disable dynamic mode before returning
+                let _ = interface.disable_dynamic_mode();
+
+                // Return both the result and the interface
+                result
+                    .map(|collector| (collector, interface))
+                    .map_err(|e| e.to_string())
+            });
+
+            // Initialize dynamic state with worker handle
+            self.dynamic_state = Some(DynamicExecutionState {
+                main_thread_lib: Some(ManuallyDrop::new(main_thread_lib)),
+                execution_complete: false,
+                worker_handle: Some(worker_handle),
+            });
+        }
 
         Ok(())
     }
@@ -683,45 +717,82 @@ impl QisEngine {
 
     /// Check if dynamic execution is complete
     fn check_worker_complete(&mut self) -> bool {
-        if let Some(ref mut state) = self.dynamic_state {
-            // If already marked complete from a previous check, return true
-            if state.execution_complete {
-                return true;
-            }
+        // First check if already complete
+        if let Some(ref state) = self.dynamic_state
+            && state.execution_complete
+        {
+            return true;
+        }
 
-            // Check if persistent worker has completed (non-blocking)
-            if let Some(ref worker) = self.persistent_worker
-                && let Some(result) = worker.try_recv_result()
-            {
-                match result {
-                    Ok((collector, interface)) => {
-                        let total_ops = collector.operations.len();
-                        debug!(
-                            "Worker completed with {} total operations, {} already simulated",
-                            total_ops, self.simulated_op_count
-                        );
-                        // Only store NEW operations (those after what we already simulated)
-                        if total_ops > self.simulated_op_count {
-                            self.pending_dynamic_ops =
-                                collector.operations[self.simulated_op_count..].to_vec();
-                            debug!(
-                                "Storing {} new operations for final processing",
-                                self.pending_dynamic_ops.len()
-                            );
-                        } else {
-                            self.pending_dynamic_ops.clear();
+        // Platform-specific result checking - get result outside of borrow
+        #[cfg(not(target_os = "macos"))]
+        let result: Option<WorkerResult> = self
+            .persistent_worker
+            .as_ref()
+            .and_then(PersistentDynamicWorker::try_recv_result);
+
+        #[cfg(target_os = "macos")]
+        let result: Option<WorkerResult> = {
+            if let Some(ref mut state) = self.dynamic_state {
+                if let Some(handle) = state.worker_handle.take() {
+                    if handle.is_finished() {
+                        match handle.join() {
+                            Ok(r) => Some(r),
+                            Err(_) => {
+                                log::error!("Worker panicked");
+                                state.execution_complete = true;
+                                return true;
+                            }
                         }
-                        self.interface = Some(interface);
-                        state.execution_complete = true;
+                    } else {
+                        // Put handle back if not finished
+                        state.worker_handle = Some(handle);
+                        None
                     }
-                    Err(e) => {
-                        log::error!("Worker failed: {e}");
-                        state.execution_complete = true;
-                    }
+                } else {
+                    None
                 }
-                return state.execution_complete;
+            } else {
+                None
+            }
+        };
+
+        // Process result if we got one
+        if let Some(result) = result {
+            match result {
+                Ok((collector, interface)) => {
+                    let total_ops = collector.operations.len();
+                    debug!(
+                        "Worker completed with {} total operations, {} already simulated",
+                        total_ops, self.simulated_op_count
+                    );
+                    // Only store NEW operations (those after what we already simulated)
+                    if total_ops > self.simulated_op_count {
+                        self.pending_dynamic_ops =
+                            collector.operations[self.simulated_op_count..].to_vec();
+                        debug!(
+                            "Storing {} new operations for final processing",
+                            self.pending_dynamic_ops.len()
+                        );
+                    } else {
+                        self.pending_dynamic_ops.clear();
+                    }
+                    self.interface = Some(interface);
+                    if let Some(ref mut state) = self.dynamic_state {
+                        state.execution_complete = true;
+                    }
+                    return true;
+                }
+                Err(e) => {
+                    log::error!("Worker failed: {e}");
+                    if let Some(ref mut state) = self.dynamic_state {
+                        state.execution_complete = true;
+                    }
+                    return true;
+                }
             }
         }
+
         false
     }
 

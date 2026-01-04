@@ -13,11 +13,14 @@
 
 from typing import Any
 
-from pecos.slr.qeclib.color488.abstract_layout import gen_layout, get_boundaries
+from pecos.qec.color.geometry import generate_488_layout
 
 
 class Color488:
-    """Implementation of the Color 488 quantum error correction code."""
+    """Implementation of the Color 488 quantum error correction code.
+
+    This is a thin wrapper around pecos.qec.color geometry for use in SLR code.
+    """
 
     def __init__(self, distance: int) -> None:
         """Initialize a Color 488 code instance.
@@ -39,17 +42,8 @@ class Color488:
             - polygons: List of stabilizer polygons.
         """
         if self._layout_cache is None:
-            self._layout_cache = gen_layout(self.distance)
+            self._layout_cache = generate_488_layout(self.distance)
         return self._layout_cache
-
-    def get_boundaries(self) -> tuple[list[int], list[int], list[int]]:
-        """Get the boundaries of the color 488 code layout.
-
-        Returns:
-            A tuple containing the left, bottom, and right boundary node lists.
-        """
-        nodeid2pos, _ = self.get_layout()
-        return get_boundaries(nodeid2pos)
 
     def num_data_qubits(self) -> int:
         """Get the number of data qubits in the color 488 code.

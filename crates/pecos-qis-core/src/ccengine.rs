@@ -606,6 +606,7 @@ impl QisEngine {
         {
             // Spawn worker thread that runs the LLVM program (per-shot)
             let worker_handle = std::thread::spawn(move || {
+                let mut interface = interface; // Shadow with mutable binding
                 debug!("Worker thread: starting collect_operations");
                 let result = interface.collect_operations();
                 debug!("Worker thread: collect_operations returned");

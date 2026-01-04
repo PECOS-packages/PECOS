@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.decoders.lookup import (
+from pecos.slr.qeclib.steane.decoders.lookup import (
     FlagLookupQASM,
     FlagLookupQASMActiveCorrectionX,
     FlagLookupQASMActiveCorrectionZ,

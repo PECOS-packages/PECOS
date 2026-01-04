@@ -1,6 +1,6 @@
 """Tests for surface patch construction and rendering."""
 
-from pecos.qeclib.surface import (
+from pecos.slr.qeclib.surface import (
     Lattice2DView,
     LatticeType,
     NonRotatedSurfacePatch,

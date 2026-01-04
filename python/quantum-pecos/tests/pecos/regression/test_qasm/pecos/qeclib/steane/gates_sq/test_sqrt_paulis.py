@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.gates_sq.sqrt_paulis import SX, SY, SZ, SXdg, SYdg, SZdg
+from pecos.slr.qeclib.steane.gates_sq.sqrt_paulis import SX, SY, SZ, SXdg, SYdg, SZdg
 from pecos.slr import QReg
 
 

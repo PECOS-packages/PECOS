@@ -1,7 +1,7 @@
 """Basic tests for IR generator functionality."""
 
-from pecos.qeclib import qubit
-from pecos.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib import qubit
+from pecos.slr.qeclib.qubit.measures import Measure
 from pecos.slr import CReg, If, Main, QReg
 from pecos.slr.gen_codes.guppy.ir_generator import IRGuppyGenerator
 

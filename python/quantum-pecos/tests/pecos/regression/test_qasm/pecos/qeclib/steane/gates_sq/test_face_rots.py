@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.gates_sq.face_rots import F, Fdg
+from pecos.slr.qeclib.steane.gates_sq.face_rots import F, Fdg
 from pecos.slr import QReg
 
 

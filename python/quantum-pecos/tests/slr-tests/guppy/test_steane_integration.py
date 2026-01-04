@@ -5,7 +5,7 @@ through Guppy generation to HUGR compilation with real quantum
 error correction code.
 """
 
-from pecos.qeclib.steane.steane_class import Steane
+from pecos.slr.qeclib.steane.steane_class import Steane
 from pecos.slr import Main, SlrConverter
 
 

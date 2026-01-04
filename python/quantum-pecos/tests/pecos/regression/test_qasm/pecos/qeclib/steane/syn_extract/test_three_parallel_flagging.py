@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.syn_extract.three_parallel_flagging import (
+from pecos.slr.qeclib.steane.syn_extract.three_parallel_flagging import (
     ThreeParallelFlaggingXZZ,
     ThreeParallelFlaggingZXX,
 )

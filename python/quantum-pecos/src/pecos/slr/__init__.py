@@ -23,6 +23,9 @@ from pecos.slr.types import Bit as BitType
 from pecos.slr.types import Qubit as QubitType
 from pecos.slr.vars import Bit, CReg, QReg, Qubit, Vars
 
+# QEC library (moved from pecos.qeclib)
+from pecos.slr import qeclib
+
 __all__ = [
     "SLR",
     "Array",
@@ -45,4 +48,6 @@ __all__ = [
     "SlrConverter",
     "Vars",
     "While",
+    # QEC library
+    "qeclib",
 ]

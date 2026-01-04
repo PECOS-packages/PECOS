@@ -14,7 +14,7 @@
 from collections.abc import Callable
 
 import pecos as pc
-from pecos.qeclib import qubit
+from pecos.slr.qeclib import qubit
 from pecos.slr import QReg
 
 

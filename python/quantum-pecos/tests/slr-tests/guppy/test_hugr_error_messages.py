@@ -1,6 +1,6 @@
 """Test improved HUGR error messages."""
 
-from pecos.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.qubit.measures import Measure
 from pecos.slr import CReg, Main, QReg
 
 

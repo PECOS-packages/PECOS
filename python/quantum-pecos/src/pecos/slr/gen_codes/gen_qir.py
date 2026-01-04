@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from pecos_rslib.llvm import binding, ir
 
 import pecos as pc
-from pecos.qeclib.qubit import qgate_base
+from pecos.slr.qeclib.qubit import qgate_base
 from pecos.slr import Block, If, Repeat
 from pecos.slr.cops import (
     NEG,

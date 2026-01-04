@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib import qubit as qb
+from pecos.slr.qeclib import qubit as qb
 from pecos.slr import Block, CReg, If, Main, Parallel, QReg, Repeat
 
 

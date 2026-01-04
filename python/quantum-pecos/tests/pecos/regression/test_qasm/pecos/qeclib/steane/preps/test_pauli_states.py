@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.preps.pauli_states import (
+from pecos.slr.qeclib.steane.preps.pauli_states import (
     LogZeroRot,
     PrepEncodingFTZero,
     PrepEncodingNonFTZero,

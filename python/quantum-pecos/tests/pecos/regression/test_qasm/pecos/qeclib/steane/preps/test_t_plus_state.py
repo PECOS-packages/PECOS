@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.preps.t_plus_state import (
+from pecos.slr.qeclib.steane.preps.t_plus_state import (
     PrepEncodeTDagPlusNonFT,
     PrepEncodeTPlusFT,
     PrepEncodeTPlusFTRUS,

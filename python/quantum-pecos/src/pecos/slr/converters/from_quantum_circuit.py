@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.qeclib import qubit
+from pecos.slr.qeclib import qubit
 from pecos.slr import Barrier, Comment, CReg, Main, Parallel, QReg
 
 if TYPE_CHECKING:

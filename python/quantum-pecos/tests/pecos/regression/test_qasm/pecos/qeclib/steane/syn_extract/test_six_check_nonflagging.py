@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.syn_extract.six_check_nonflagging import SixUnflaggedSyn
+from pecos.slr.qeclib.steane.syn_extract.six_check_nonflagging import SixUnflaggedSyn
 from pecos.slr import CReg, QReg
 
 

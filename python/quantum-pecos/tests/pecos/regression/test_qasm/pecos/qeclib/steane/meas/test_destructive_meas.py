@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.meas.destructive_meas import (
+from pecos.slr.qeclib.steane.meas.destructive_meas import (
     MeasDecode,
     Measure,
     MeasureX,

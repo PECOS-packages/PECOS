@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.qec.qec_3parallel import ParallelFlagQECActiveCorrection
+from pecos.slr.qeclib.steane.qec.qec_3parallel import ParallelFlagQECActiveCorrection
 from pecos.slr import CReg, QReg
 
 

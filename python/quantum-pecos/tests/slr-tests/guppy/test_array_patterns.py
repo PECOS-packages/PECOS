@@ -8,8 +8,8 @@ These tests verify various array patterns including:
 """
 
 import pytest
-from pecos.qeclib import qubit
-from pecos.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib import qubit
+from pecos.slr.qeclib.qubit.measures import Measure
 from pecos.slr import Block, CReg, Main, Permute, QReg, SlrConverter
 
 

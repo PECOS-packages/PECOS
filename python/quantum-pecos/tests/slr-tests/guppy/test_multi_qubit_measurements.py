@@ -1,6 +1,6 @@
 """Test multi-qubit measurement support in Guppy IR builder."""
 
-from pecos.qeclib import qubit
+from pecos.slr.qeclib import qubit
 from pecos.slr import Block, CReg, QReg
 from pecos.slr.slr_converter import SlrConverter
 

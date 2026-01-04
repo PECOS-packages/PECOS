@@ -4,7 +4,7 @@ This script shows how the three improvements work together to produce
 better code generation with precise, element-level analysis.
 """
 
-from pecos.qeclib import qubit
+from pecos.slr.qeclib import qubit
 from pecos.slr import CReg, If, Main, QReg
 from pecos.slr.gen_codes.guppy.data_flow import DataFlowAnalyzer
 from pecos.slr.gen_codes.guppy.ir_analyzer import IRAnalyzer

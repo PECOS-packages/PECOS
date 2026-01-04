@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.meas.measure_z import NoFlagMeasureZ
+from pecos.slr.qeclib.steane.meas.measure_z import NoFlagMeasureZ
 from pecos.slr import CReg, QReg
 
 

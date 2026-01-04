@@ -3,8 +3,8 @@
 import re
 
 import pytest
-from pecos.qeclib import qubit as p
-from pecos.qeclib.steane.steane_class import Steane
+from pecos.slr.qeclib import qubit as p
+from pecos.slr.qeclib.steane.steane_class import Steane
 from pecos.slr import (
     Barrier,
     Block,

@@ -1,8 +1,8 @@
 """Test For loop implementation in IR generator."""
 
 import pytest
-from pecos.qeclib import qubit
-from pecos.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib import qubit
+from pecos.slr.qeclib.qubit.measures import Measure
 from pecos.slr import CReg, For, Main, QReg
 from pecos.slr.gen_codes.guppy.ir_generator import IRGuppyGenerator
 from pecos.slr.misc import Comment

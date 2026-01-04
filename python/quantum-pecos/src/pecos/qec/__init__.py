@@ -1,0 +1,37 @@
+# Copyright 2024 The PECOS Developers
+# Licensed under the Apache License, Version 2.0
+
+"""Pure QEC geometry and abstractions.
+
+This module provides code-agnostic QEC geometry and data structures
+with no SLR or runtime dependencies. Only numpy is required.
+
+Submodules:
+    generic: Generic stabilizer check framework
+    surface: Surface code geometry (square and rotated lattices)
+    color: Color code geometry (4.8.8 triangular layout)
+
+Example:
+    >>> from pecos.qec.surface import compute_x_stabilizer_supports
+    >>> stabs = compute_x_stabilizer_supports(d=3)
+    >>> print(f"X stabilizers: {len(stabs)}")
+
+    >>> from pecos.qec.color import ColorCode488
+    >>> code = ColorCode488.create(distance=3)
+    >>> print(f"Data qubits: {code.n_data}")
+"""
+
+from pecos.qec.generic import (
+    CheckSchedule,
+    PauliOperator,
+    PauliType,
+    StabilizerCheck,
+)
+
+__all__ = [
+    # Generic
+    "PauliType",
+    "PauliOperator",
+    "StabilizerCheck",
+    "CheckSchedule",
+]

@@ -1,7 +1,7 @@
 """Tests for measurement unrolling with permutations in both QASM and QIR generation."""
 
 import pytest
-from pecos.qeclib import qubit
+from pecos.slr.qeclib import qubit
 from pecos.slr import CReg, Main, Permute, QReg, SlrConverter
 
 

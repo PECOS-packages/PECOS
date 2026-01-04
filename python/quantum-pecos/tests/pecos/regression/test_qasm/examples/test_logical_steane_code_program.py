@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.steane_class import Steane
+from pecos.slr.qeclib.steane.steane_class import Steane
 from pecos.slr import Barrier, CReg, If, Main
 
 

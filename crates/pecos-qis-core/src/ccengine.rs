@@ -13,7 +13,7 @@
 //! 4. The worker resumes with the measurement results available
 
 use crate::program::QisInterfaceBuilder;
-use crate::qis_interface::{BoxedInterface, ProgramFormat};
+use crate::qis_interface::{BoxedInterface, DynamicSyncHandle, ProgramFormat};
 use crate::runtime::QisRuntime;
 use log::debug;
 use pecos_core::prelude::PecosError;
@@ -26,7 +26,6 @@ use pecos_qis_ffi_types::{Operation, OperationCollector as OperationList, Quantu
 use pecos_rng::PecosRng;
 use std::collections::BTreeMap;
 
-use std::mem::ManuallyDrop;
 use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
@@ -34,28 +33,21 @@ use std::thread::JoinHandle;
 /// Result from worker thread - returns both the operations and the interface
 type WorkerResult = Result<(OperationList, BoxedInterface), String>;
 
-/// FFI function types for dynamic circuit sync (main thread)
-type WaitForNeedResultFn = unsafe extern "C" fn(timeout_ms: u64) -> u64;
-type SetMeasurementResultFn = unsafe extern "C" fn(result_id: u64, value: bool);
-type SignalResultReadyFn = unsafe extern "C" fn();
-type GetOperationsFn = unsafe extern "C" fn() -> *mut OperationList;
-type DisableDynamicModeFn = unsafe extern "C" fn();
-
 /// State for dynamic circuit execution
 ///
 /// The LLVM program runs in a worker thread. When it needs a measurement result,
 /// it blocks in `___read_future_bool`. The main thread simulates operations,
 /// provides the result, and signals the worker to continue.
 ///
-/// The `main_thread_lib` field is wrapped in `ManuallyDrop` to prevent calling
-/// `dlclose()` during process exit. Calling `dlclose()` during shutdown can
-/// cause hangs because thread-local storage may already be partially torn down.
+/// State for dynamic execution, tracking whether the worker is complete and
+/// providing synchronization primitives.
 struct DynamicExecutionState {
     /// Whether execution has completed
     execution_complete: bool,
-    /// Loaded library for main thread FFI calls
-    /// Wrapped in `ManuallyDrop` to prevent `dlclose()` during process exit.
-    main_thread_lib: Option<ManuallyDrop<libloading::Library>>,
+    /// Sync handle for main thread FFI calls
+    /// Uses the same library instance (singleton) as the worker thread,
+    /// ensuring TLS consistency on macOS
+    sync_handle: Option<Box<dyn DynamicSyncHandle>>,
     /// Worker thread handle (used on macOS where persistent worker causes issues)
     #[cfg(target_os = "macos")]
     worker_handle: Option<JoinHandle<WorkerResult>>,
@@ -154,9 +146,8 @@ impl PersistentDynamicWorker {
 ///
 /// # Dynamic Circuit Support
 ///
-/// When `enable_dynamic_execution` is true, the engine runs LLVM on a worker thread
-/// and coordinates via channels. This allows conditionals that depend on measurement
-/// results to work correctly.
+/// The engine always runs LLVM on a worker thread and coordinates via channels.
+/// This allows conditionals that depend on measurement results to work correctly.
 pub struct QisEngine {
     /// The QIS interface (program executor)
     interface: Option<BoxedInterface>,
@@ -185,9 +176,6 @@ pub struct QisEngine {
     /// Current shot seed (stored for quantum engine seeding)
     current_shot_seed: Option<u64>,
 
-    /// Enable dynamic circuit execution (LLVM runs on worker thread)
-    enable_dynamic_execution: bool,
-
     /// Dynamic execution state (when dynamic mode is active)
     dynamic_state: Option<DynamicExecutionState>,
 
@@ -214,12 +202,10 @@ pub struct QisEngine {
 impl QisEngine {
     /// Create a new engine with the given interface and runtime
     ///
-    /// Dynamic execution is automatically enabled if the interface supports it.
+    /// Dynamic execution is always enabled - all LLVM runs on a worker thread.
     #[must_use]
     pub fn new(interface: BoxedInterface, runtime: Box<dyn QisRuntime>) -> Self {
-        // Auto-detect dynamic execution support from the interface
-        let enable_dynamic = interface.supports_dynamic();
-        debug!("Creating QisEngine, interface supports_dynamic={enable_dynamic}");
+        debug!("Creating QisEngine with dynamic execution");
 
         Self {
             interface: Some(interface),
@@ -231,7 +217,6 @@ impl QisEngine {
             measurement_results: BTreeMap::new(),
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
-            enable_dynamic_execution: enable_dynamic,
             dynamic_state: None,
             pending_dynamic_ops: Vec::new(),
             simulated_op_count: 0,
@@ -269,38 +254,23 @@ impl QisEngine {
         self.program_format = Some(ProgramFormat::LlvmIrText);
     }
 
-    /// Initialize the engine by collecting operations from the interface
+    /// Initialize the engine for dynamic execution
     ///
-    /// This should be called for pre-built interfaces to load operations into the runtime
+    /// This verifies the interface supports dynamic execution and defers
+    /// actual execution to `start()`.
     ///
     /// # Errors
-    /// Returns an error if no interface is available, or if operation collection or runtime loading fails.
+    /// Returns an error if no interface is available or it doesn't support dynamic execution.
     pub fn initialize_from_interface(&mut self) -> Result<(), PecosError> {
-        if self.enable_dynamic_execution {
-            // In dynamic mode, we defer execution to start()
+        if let Some(ref interface) = self.interface {
+            if !interface.supports_dynamic() {
+                return Err(PecosError::Generic(
+                    "QisEngine requires a dynamic-capable interface (e.g., QisHeliosInterface)"
+                        .to_string(),
+                ));
+            }
+            // Dynamic mode: defer execution to start()
             debug!("Dynamic mode: deferring operation collection to start()");
-            return Ok(());
-        }
-
-        if let Some(ref mut interface) = self.interface {
-            debug!("Collecting operations from interface");
-            let operations = interface
-                .collect_operations()
-                .map_err(crate::interface_impl::interface_error_to_pecos)?;
-            debug!(
-                "Collected {} operations, {} allocated qubits",
-                operations.operations.len(),
-                operations.allocated_qubits.len()
-            );
-
-            // Load operations into runtime
-            self.runtime.load_interface(operations).map_err(|e| {
-                PecosError::Generic(format!("Failed to load operations into runtime: {e}"))
-            })?;
-            debug!(
-                "Runtime loaded, reporting {} qubits",
-                self.runtime.num_qubits()
-            );
             Ok(())
         } else {
             Err(PecosError::Generic("No interface available".to_string()))
@@ -320,7 +290,6 @@ impl QisEngine {
             measurement_results: BTreeMap::new(),
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
-            enable_dynamic_execution: false,
             dynamic_state: None,
             pending_dynamic_ops: Vec::new(),
             simulated_op_count: 0,
@@ -336,10 +305,14 @@ impl QisEngine {
         self.interface = Some(interface);
     }
 
-    /// Load a program into both interface and runtime
+    /// Load a program into the interface
+    ///
+    /// The program is loaded but not executed yet. Execution happens on the
+    /// worker thread during `start()`.
     ///
     /// # Errors
-    /// Returns an error if no interface is set, or if program loading, operation collection, or runtime loading fails.
+    /// Returns an error if no interface is set, program loading fails, or the
+    /// interface doesn't support dynamic execution.
     pub fn load_program(
         &mut self,
         program_bytes: &[u8],
@@ -347,50 +320,28 @@ impl QisEngine {
     ) -> Result<(), PecosError> {
         debug!("Loading program into QisEngine");
 
-        // Store program for potential re-execution in dynamic mode
+        // Store program for potential re-execution
         self.program_bytes = Some(program_bytes.to_vec());
         self.program_format = Some(format);
 
         // Load into the interface
         if let Some(ref mut interface) = self.interface {
-            // Note: Thread-local state management (for JIT interface) has been removed.
-            // The JIT and Native interfaces have been removed from PECOS - use Selene instead.
-
             interface
                 .load_program(program_bytes, format)
                 .map_err(crate::interface_impl::interface_error_to_pecos)?;
 
-            if self.enable_dynamic_execution {
-                // In dynamic mode, defer operation collection to start()
-                debug!("Dynamic mode: program loaded, deferring execution to start()");
-                return Ok(());
+            if !interface.supports_dynamic() {
+                return Err(PecosError::Generic(
+                    "QisEngine requires a dynamic-capable interface (e.g., QisHeliosInterface)"
+                        .to_string(),
+                ));
             }
 
-            // Collect initial operations to set up the runtime
-            let operations = interface
-                .collect_operations()
-                .map_err(crate::interface_impl::interface_error_to_pecos)?;
-
-            // Load the operations into the runtime first
-            self.runtime
-                .load_interface(operations.clone())
-                .map_err(|e| PecosError::Generic(format!("Failed to load into runtime: {e}")))?;
-
-            // Get qubit count from runtime (it should analyze the operations)
-            self.num_qubits = self.runtime.num_qubits();
-            debug!("Runtime reports {} qubits", self.num_qubits);
-            debug!(
-                "Interface had {} allocated qubits: {:?}",
-                operations.allocated_qubits.len(),
-                operations.allocated_qubits
-            );
-
-            self.current_operations = Some(operations);
+            debug!("Program loaded, deferring execution to start()");
+            Ok(())
         } else {
-            return Err(PecosError::Generic("No interface set".to_string()));
+            Err(PecosError::Generic("No interface set".to_string()))
         }
-
-        Ok(())
     }
 
     /// Convert quantum operations to `ByteMessage` for the quantum engine
@@ -472,30 +423,25 @@ impl QisEngine {
 
 impl Clone for QisEngine {
     fn clone(&self) -> Self {
-        // For dynamic execution, recreate the interface from stored program bytes
-        let interface = if self.enable_dynamic_execution {
-            if let (Some(builder), Some(program_bytes)) =
-                (&self.interface_builder, &self.program_bytes)
-            {
-                // Recreate the interface for this clone
-                let program_str = String::from_utf8_lossy(program_bytes).into_owned();
-                let qis_prog = pecos_programs::Qis::from_string(program_str);
-                match builder.create_dynamic_interface_from_qis(qis_prog) {
-                    Ok(interface) => {
-                        debug!("QisEngine::clone() - recreated interface for dynamic mode");
-                        Some(interface)
-                    }
-                    Err(e) => {
-                        log::error!("QisEngine::clone() - failed to recreate interface: {e}");
-                        None
-                    }
+        // Recreate the interface from stored program bytes
+        let interface = if let (Some(builder), Some(program_bytes)) =
+            (&self.interface_builder, &self.program_bytes)
+        {
+            // Recreate the interface for this clone
+            let program_str = String::from_utf8_lossy(program_bytes).into_owned();
+            let qis_prog = pecos_programs::Qis::from_string(program_str);
+            match builder.create_dynamic_interface_from_qis(qis_prog) {
+                Ok(interface) => {
+                    debug!("QisEngine::clone() - recreated interface");
+                    Some(interface)
                 }
-            } else {
-                debug!("QisEngine::clone() - dynamic mode but missing builder or program bytes");
-                None
+                Err(e) => {
+                    log::error!("QisEngine::clone() - failed to recreate interface: {e}");
+                    None
+                }
             }
         } else {
-            // Non-dynamic mode: interface is not needed after operations are collected
+            debug!("QisEngine::clone() - missing builder or program bytes");
             None
         };
 
@@ -508,8 +454,7 @@ impl Clone for QisEngine {
             measurement_mapping: Vec::new(),      // Clear for new shot
             measurement_results: BTreeMap::new(), // Clear for new shot
             rng: self.rng.clone(),
-            current_shot_seed: None, // Will be set on next start()
-            enable_dynamic_execution: self.enable_dynamic_execution,
+            current_shot_seed: None,         // Will be set on next start()
             dynamic_state: None,             // Can't clone thread state
             pending_dynamic_ops: Vec::new(), // Clear for new shot
             simulated_op_count: 0,           // Reset for new shot
@@ -529,54 +474,37 @@ impl Clone for QisEngine {
 impl QisEngine {
     /// Start the LLVM program execution in a worker thread
     ///
-    /// Uses a persistent worker thread that stays alive across shots to avoid
-    /// TLS allocation issues from spawning new threads per shot.
+    /// Uses a persistent worker thread on Linux to avoid glibc TLS allocation issues.
+    /// On macOS, uses per-shot spawning with a sync handle that uses the singleton library.
     fn start_dynamic_worker(&mut self) -> Result<(), PecosError> {
-        debug!("Starting dynamic execution (using persistent worker)");
+        debug!("Starting dynamic execution");
 
-        // Get the FFI library path first
+        // Get reference to interface for setup
         let interface = self.interface.as_mut().ok_or_else(|| {
             PecosError::Generic("No interface available for dynamic execution".to_string())
         })?;
 
-        let lib_path = interface.get_qis_ffi_lib_path().ok_or_else(|| {
-            PecosError::Generic("Interface does not support dynamic execution".to_string())
-        })?;
+        // Verify interface supports dynamic execution
+        if !interface.supports_dynamic() {
+            return Err(PecosError::Generic(
+                "Interface does not support dynamic execution".to_string(),
+            ));
+        }
 
         // Enable dynamic mode on the interface
         interface
             .enable_dynamic_mode()
             .map_err(|e| PecosError::Generic(format!("Failed to enable dynamic mode: {e}")))?;
 
-        // Get the execution context pointer before moving the interface
-        // We need this to register the same context on the main thread's library handle
-        let execution_context_ptr = interface.get_execution_context_ptr();
+        // Get the sync handle BEFORE moving the interface
+        // This handle uses the same singleton library as the worker, ensuring TLS consistency
+        let sync_handle = interface.get_sync_handle();
+        debug!("Got sync handle for main thread: {}", sync_handle.is_some());
 
         // Take the interface for the worker thread
         let interface = self.interface.take().ok_or_else(|| {
             PecosError::Generic("No interface available for dynamic execution".to_string())
         })?;
-
-        // Load the library for main thread FFI calls
-        let main_thread_lib = unsafe { libloading::Library::new(&lib_path) }.map_err(|e| {
-            PecosError::Generic(format!("Failed to load FFI library for main thread: {e}"))
-        })?;
-
-        // Register the execution context on the main thread's library handle
-        // This is crucial for cross-thread communication - both threads must use the same context
-        if let Some(ctx_ptr) = execution_context_ptr {
-            type RegisterFn = unsafe extern "C" fn(*mut std::ffi::c_void);
-            let register_fn: libloading::Symbol<RegisterFn> =
-                unsafe { main_thread_lib.get(b"pecos_register_execution_context\0") }.map_err(
-                    |e| {
-                        PecosError::Generic(format!(
-                            "Failed to find pecos_register_execution_context: {e}"
-                        ))
-                    },
-                )?;
-            unsafe { register_fn(ctx_ptr) };
-            debug!("Registered execution context on main thread library: {ctx_ptr:?}");
-        }
 
         // Platform-specific worker spawning:
         // - On Linux: Use persistent worker to avoid glibc TLS allocation issues
@@ -597,7 +525,7 @@ impl QisEngine {
 
             // Initialize dynamic state
             self.dynamic_state = Some(DynamicExecutionState {
-                main_thread_lib: Some(ManuallyDrop::new(main_thread_lib)),
+                sync_handle,
                 execution_complete: false,
             });
         }
@@ -622,7 +550,7 @@ impl QisEngine {
 
             // Initialize dynamic state with worker handle
             self.dynamic_state = Some(DynamicExecutionState {
-                main_thread_lib: Some(ManuallyDrop::new(main_thread_lib)),
+                sync_handle,
                 execution_complete: false,
                 worker_handle: Some(worker_handle),
             });
@@ -636,17 +564,8 @@ impl QisEngine {
     /// Returns `Some(result_id)` if worker needs a result, None if complete or timeout
     fn wait_for_result_needed(&mut self, timeout_ms: u64) -> Option<u64> {
         let state = self.dynamic_state.as_ref()?;
-        let lib = state.main_thread_lib.as_ref()?;
-
-        let wait_fn: libloading::Symbol<WaitForNeedResultFn> =
-            unsafe { lib.get(b"pecos_wait_for_need_result\0").ok()? };
-
-        let result_id = unsafe { wait_fn(timeout_ms) };
-        if result_id == u64::MAX {
-            None
-        } else {
-            Some(result_id)
-        }
+        let handle = state.sync_handle.as_ref()?;
+        handle.wait_for_need_result(timeout_ms)
     }
 
     /// Set a measurement result for the running program
@@ -655,18 +574,14 @@ impl QisEngine {
             .dynamic_state
             .as_ref()
             .ok_or_else(|| PecosError::Generic("No dynamic execution in progress".to_string()))?;
-        let lib = state
-            .main_thread_lib
+        let handle = state
+            .sync_handle
             .as_ref()
-            .ok_or_else(|| PecosError::Generic("FFI library not loaded".to_string()))?;
+            .ok_or_else(|| PecosError::Generic("No sync handle available".to_string()))?;
 
-        let set_fn: libloading::Symbol<SetMeasurementResultFn> = unsafe {
-            lib.get(b"pecos_set_measurement_result\0").map_err(|e| {
-                PecosError::Generic(format!("Failed to get set_measurement_result: {e}"))
-            })?
-        };
-
-        unsafe { set_fn(result_id, value) };
+        handle
+            .set_measurement_result(result_id, value)
+            .map_err(|e| PecosError::Generic(format!("Failed to set measurement result: {e}")))?;
         debug!("Set dynamic result: {result_id} = {value}");
         Ok(())
     }
@@ -677,43 +592,26 @@ impl QisEngine {
             .dynamic_state
             .as_ref()
             .ok_or_else(|| PecosError::Generic("No dynamic execution in progress".to_string()))?;
-        let lib = state
-            .main_thread_lib
+        let handle = state
+            .sync_handle
             .as_ref()
-            .ok_or_else(|| PecosError::Generic("FFI library not loaded".to_string()))?;
+            .ok_or_else(|| PecosError::Generic("No sync handle available".to_string()))?;
 
-        let signal_fn: libloading::Symbol<SignalResultReadyFn> = unsafe {
-            lib.get(b"pecos_signal_result_ready\0").map_err(|e| {
-                PecosError::Generic(format!("Failed to get signal_result_ready: {e}"))
-            })?
-        };
-
-        unsafe { signal_fn() };
+        handle
+            .signal_result_ready()
+            .map_err(|e| PecosError::Generic(format!("Failed to signal result ready: {e}")))?;
         debug!("Signaled result ready");
         Ok(())
     }
 
     /// Get pending operations from the dynamic execution
     ///
-    /// This reads from the global `PENDING_OPS` storage, which the worker thread
-    /// populates before blocking in `wait_for_result_ready`.
+    /// This reads from the global storage, which the worker thread
+    /// populates before blocking.
     fn get_dynamic_operations(&mut self) -> Option<Vec<Operation>> {
         let state = self.dynamic_state.as_ref()?;
-        let lib = state.main_thread_lib.as_ref()?;
-
-        // Use pecos_get_pending_operations which reads from global storage (not TLS)
-        let get_ops_fn: libloading::Symbol<GetOperationsFn> =
-            unsafe { lib.get(b"pecos_get_pending_operations\0").ok()? };
-
-        let collector = unsafe {
-            let ptr = get_ops_fn();
-            if ptr.is_null() {
-                return Some(Vec::new());
-            }
-            Box::from_raw(ptr)
-        };
-
-        Some(collector.operations)
+        let handle = state.sync_handle.as_ref()?;
+        handle.get_pending_operations().ok()
     }
 
     /// Check if dynamic execution is complete
@@ -799,13 +697,11 @@ impl QisEngine {
 
     /// Abort dynamic execution (cleanup)
     fn abort_dynamic_execution(&mut self) {
-        // Disable dynamic mode via FFI if library is loaded
+        // Abort execution via sync handle if available
         if let Some(ref state) = self.dynamic_state
-            && let Some(ref lib) = state.main_thread_lib
-            && let Ok(disable_fn) =
-                unsafe { lib.get::<DisableDynamicModeFn>(b"pecos_disable_dynamic_mode\0") }
+            && let Some(ref handle) = state.sync_handle
         {
-            unsafe { disable_fn() };
+            let _ = handle.abort_execution();
         }
         self.dynamic_state = None;
         self.pending_dynamic_ops.clear();
@@ -1025,10 +921,19 @@ impl ControlEngine for QisEngine {
         &mut self,
         _input: Self::Input,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
-        debug!(
-            "QisEngine::start called (dynamic_mode={})",
-            self.enable_dynamic_execution
-        );
+        debug!("QisEngine::start called");
+
+        // Verify we have a dynamic-capable interface
+        if !self
+            .interface
+            .as_ref()
+            .is_some_and(|i| i.supports_dynamic())
+        {
+            return Err(PecosError::Generic(
+                "QisEngine requires a dynamic-capable interface (e.g., QisHeliosInterface)"
+                    .to_string(),
+            ));
+        }
 
         // Clear previous shot's measurement state
         self.measurement_results.clear();
@@ -1056,196 +961,176 @@ impl ControlEngine for QisEngine {
 
         self.started = true;
 
-        if self.enable_dynamic_execution {
-            // Dynamic mode: Start LLVM program in worker thread
-            self.start_dynamic_worker()?;
+        // Start LLVM program in worker thread
+        self.start_dynamic_worker()?;
 
-            // Wait for the worker to either need a result or complete
-            // Short timeout initially since we want to be responsive
-            if let Some(result_id) = self.wait_for_result_needed(100) {
-                debug!("Worker needs result for id={result_id}");
-                // Get pending operations
-                if let Some(ops) = self.get_dynamic_operations() {
-                    self.pending_dynamic_ops.clone_from(&ops);
-                    // Track how many operations we're sending for simulation
-                    self.simulated_op_count = ops.len();
-                    debug!(
-                        "Tracking {} operations as simulated",
-                        self.simulated_op_count
-                    );
-                    let quantum_ops = Self::operations_to_quantum_ops(&ops);
-                    if !quantum_ops.is_empty() {
-                        let commands = self.operations_to_bytemessage(quantum_ops)?;
-                        return Ok(EngineStage::NeedsProcessing(commands));
-                    }
+        // Wait for the worker to either need a result or complete
+        // Short timeout initially since we want to be responsive
+        if let Some(result_id) = self.wait_for_result_needed(100) {
+            debug!("Worker needs result for id={result_id}");
+            // Get pending operations
+            if let Some(ops) = self.get_dynamic_operations() {
+                self.pending_dynamic_ops.clone_from(&ops);
+                // Track how many operations we're sending for simulation
+                self.simulated_op_count = ops.len();
+                debug!(
+                    "Tracking {} operations as simulated",
+                    self.simulated_op_count
+                );
+                let quantum_ops = Self::operations_to_quantum_ops(&ops);
+                if !quantum_ops.is_empty() {
+                    let commands = self.operations_to_bytemessage(quantum_ops)?;
+                    return Ok(EngineStage::NeedsProcessing(commands));
                 }
-            }
-
-            // Check if worker completed without needing any results
-            if self.check_worker_complete() {
-                // Worker completed but we still need to process any pending operations
-                // through the quantum engine (e.g., programs without measurement-dependent conditionals)
-                if !self.pending_dynamic_ops.is_empty() {
-                    let quantum_ops = Self::operations_to_quantum_ops(&self.pending_dynamic_ops);
-                    self.pending_dynamic_ops.clear();
-                    if !quantum_ops.is_empty() {
-                        debug!(
-                            "Worker completed - sending {} final operations to quantum engine",
-                            quantum_ops.len()
-                        );
-                        let commands = self.operations_to_bytemessage(quantum_ops)?;
-                        return Ok(EngineStage::NeedsProcessing(commands));
-                    }
-                }
-                let shot = self.get_results()?;
-                return Ok(EngineStage::Complete(shot));
-            }
-
-            // Return empty commands while we wait
-            Ok(EngineStage::NeedsProcessing(ByteMessage::builder().build()))
-        } else {
-            // Standard static execution mode
-            let commands = self.generate_commands()?;
-
-            if commands.is_empty()? && self.runtime.is_complete() {
-                // Already complete
-                let shot = self.get_results()?;
-                Ok(EngineStage::Complete(shot))
-            } else {
-                Ok(EngineStage::NeedsProcessing(commands))
             }
         }
+
+        // Check if worker completed without needing any results
+        if self.check_worker_complete() {
+            // Worker completed but we still need to process any pending operations
+            // through the quantum engine (e.g., programs without measurement-dependent conditionals)
+            if !self.pending_dynamic_ops.is_empty() {
+                let quantum_ops = Self::operations_to_quantum_ops(&self.pending_dynamic_ops);
+                self.pending_dynamic_ops.clear();
+                if !quantum_ops.is_empty() {
+                    debug!(
+                        "Worker completed - sending {} final operations to quantum engine",
+                        quantum_ops.len()
+                    );
+                    let commands = self.operations_to_bytemessage(quantum_ops)?;
+                    return Ok(EngineStage::NeedsProcessing(commands));
+                }
+            }
+            let shot = self.get_results()?;
+            return Ok(EngineStage::Complete(shot));
+        }
+
+        // Return empty commands while we wait
+        Ok(EngineStage::NeedsProcessing(ByteMessage::builder().build()))
     }
 
     fn continue_processing(
         &mut self,
         input: Self::EngineOutput,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
-        debug!(
-            "QisEngine::continue_processing called (dynamic_mode={})",
-            self.enable_dynamic_execution
-        );
+        debug!("QisEngine::continue_processing called");
+
+        // Verify dynamic state exists (set by start())
+        if self.dynamic_state.is_none() {
+            return Err(PecosError::Generic(
+                "continue_processing called without dynamic state - was start() called?"
+                    .to_string(),
+            ));
+        }
 
         // Process the response from quantum engine
         if NoiseUtils::has_measurements(&input) {
             self.handle_measurements(input.clone())?;
         }
 
-        if self.enable_dynamic_execution {
-            // First, check if worker already completed (before processing anything else)
-            // This avoids unnecessary work if the worker finished
-            if self.check_worker_complete() {
-                debug!("Worker already complete, finishing shot");
-                // Process any final operations
-                if !self.pending_dynamic_ops.is_empty() {
-                    let quantum_ops = Self::operations_to_quantum_ops(&self.pending_dynamic_ops);
-                    if !quantum_ops.is_empty() {
-                        let commands = self.operations_to_bytemessage(quantum_ops)?;
-                        self.pending_dynamic_ops.clear();
-                        return Ok(EngineStage::NeedsProcessing(commands));
-                    }
-                }
-                let shot = self.get_results()?;
-                return Ok(EngineStage::Complete(shot));
-            }
-
-            // Extract measurements from quantum engine response
-            let measurements = input
-                .outcomes()
-                .map_err(|e| PecosError::Generic(format!("Failed to parse measurements: {e}")))?;
-
-            // Map measurement values to result IDs and provide to worker
-            for (idx, &value) in measurements.iter().enumerate() {
-                if idx < self.measurement_mapping.len() {
-                    let result_id = self.measurement_mapping[idx];
-                    let bool_value = value != 0;
-                    self.measurement_results.insert(result_id, bool_value);
-                    debug!(
-                        "Stored and providing measurement: result_id={result_id} value={bool_value}"
-                    );
-                    // Provide result to worker thread
-                    self.set_dynamic_result(result_id as u64, bool_value)?;
+        // First, check if worker already completed (before processing anything else)
+        // This avoids unnecessary work if the worker finished
+        if self.check_worker_complete() {
+            debug!("Worker already complete, finishing shot");
+            // Process any final operations
+            if !self.pending_dynamic_ops.is_empty() {
+                let quantum_ops = Self::operations_to_quantum_ops(&self.pending_dynamic_ops);
+                if !quantum_ops.is_empty() {
+                    let commands = self.operations_to_bytemessage(quantum_ops)?;
+                    self.pending_dynamic_ops.clear();
+                    return Ok(EngineStage::NeedsProcessing(commands));
                 }
             }
+            let shot = self.get_results()?;
+            return Ok(EngineStage::Complete(shot));
+        }
 
-            // Signal that results are ready
-            if !measurements.is_empty() {
+        // Extract measurements from quantum engine response
+        let measurements = input
+            .outcomes()
+            .map_err(|e| PecosError::Generic(format!("Failed to parse measurements: {e}")))?;
+
+        // Map measurement values to result IDs and provide to worker
+        for (idx, &value) in measurements.iter().enumerate() {
+            if idx < self.measurement_mapping.len() {
+                let result_id = self.measurement_mapping[idx];
+                let bool_value = value != 0;
+                self.measurement_results.insert(result_id, bool_value);
+                debug!(
+                    "Stored and providing measurement: result_id={result_id} value={bool_value}"
+                );
+                // Provide result to worker thread
+                self.set_dynamic_result(result_id as u64, bool_value)?;
+            }
+        }
+
+        // Signal that results are ready
+        if !measurements.is_empty() {
+            self.signal_dynamic_result_ready()?;
+        }
+
+        // Clear measurement mapping for next batch
+        self.measurement_mapping.clear();
+
+        // Wait for worker to need more results or complete
+        // Use shorter timeout to be more responsive
+        if let Some(result_id) = self.wait_for_result_needed(100) {
+            debug!("Worker needs result for id={result_id}");
+
+            // Check if we already have this result (from a previous batch)
+            // Note: result_id is u64 but measurement_results uses usize keys
+            // This is safe because result IDs are small sequential integers
+            #[allow(clippy::cast_possible_truncation)]
+            let result_key = result_id as usize;
+            if self.measurement_results.contains_key(&result_key) {
+                debug!("Result {result_id} already available, signaling immediately");
+                // Re-set the result in global storage (in case it was cleared)
+                let value = self.measurement_results[&result_key];
+                self.set_dynamic_result(result_id, value)?;
                 self.signal_dynamic_result_ready()?;
-            }
-
-            // Clear measurement mapping for next batch
-            self.measurement_mapping.clear();
-
-            // Wait for worker to need more results or complete
-            // Use shorter timeout to be more responsive
-            if let Some(result_id) = self.wait_for_result_needed(100) {
-                debug!("Worker needs result for id={result_id}");
-
-                // Check if we already have this result (from a previous batch)
-                // Note: result_id is u64 but measurement_results uses usize keys
-                // This is safe because result IDs are small sequential integers
-                #[allow(clippy::cast_possible_truncation)]
-                let result_key = result_id as usize;
-                if self.measurement_results.contains_key(&result_key) {
-                    debug!("Result {result_id} already available, signaling immediately");
-                    // Re-set the result in global storage (in case it was cleared)
-                    let value = self.measurement_results[&result_key];
-                    self.set_dynamic_result(result_id, value)?;
-                    self.signal_dynamic_result_ready()?;
-                    // Continue loop to wait for next result or completion
-                } else {
-                    // Get pending operations
-                    if let Some(ops) = self.get_dynamic_operations() {
-                        // Only process NEW operations (after what we already simulated)
-                        if ops.len() > self.simulated_op_count {
-                            let new_ops: Vec<Operation> = ops[self.simulated_op_count..].to_vec();
-                            // Update count to include these new operations
-                            self.simulated_op_count = ops.len();
-                            debug!(
-                                "Processing {} new operations, total simulated: {}",
-                                new_ops.len(),
-                                self.simulated_op_count
-                            );
-                            let quantum_ops = Self::operations_to_quantum_ops(&new_ops);
-                            self.pending_dynamic_ops = new_ops;
-                            if !quantum_ops.is_empty() {
-                                let commands = self.operations_to_bytemessage(quantum_ops)?;
-                                return Ok(EngineStage::NeedsProcessing(commands));
-                            }
+                // Continue loop to wait for next result or completion
+            } else {
+                // Get pending operations
+                if let Some(ops) = self.get_dynamic_operations() {
+                    // Only process NEW operations (after what we already simulated)
+                    if ops.len() > self.simulated_op_count {
+                        let new_ops: Vec<Operation> = ops[self.simulated_op_count..].to_vec();
+                        // Update count to include these new operations
+                        self.simulated_op_count = ops.len();
+                        debug!(
+                            "Processing {} new operations, total simulated: {}",
+                            new_ops.len(),
+                            self.simulated_op_count
+                        );
+                        let quantum_ops = Self::operations_to_quantum_ops(&new_ops);
+                        self.pending_dynamic_ops = new_ops;
+                        if !quantum_ops.is_empty() {
+                            let commands = self.operations_to_bytemessage(quantum_ops)?;
+                            return Ok(EngineStage::NeedsProcessing(commands));
                         }
                     }
                 }
             }
-
-            // Check if worker completed after the wait
-            if self.check_worker_complete() {
-                debug!("Worker completed after wait");
-                // Process any final operations
-                if !self.pending_dynamic_ops.is_empty() {
-                    let quantum_ops = Self::operations_to_quantum_ops(&self.pending_dynamic_ops);
-                    if !quantum_ops.is_empty() {
-                        let commands = self.operations_to_bytemessage(quantum_ops)?;
-                        self.pending_dynamic_ops.clear();
-                        return Ok(EngineStage::NeedsProcessing(commands));
-                    }
-                }
-                let shot = self.get_results()?;
-                return Ok(EngineStage::Complete(shot));
-            }
-
-            // Return empty commands while we wait
-            Ok(EngineStage::NeedsProcessing(ByteMessage::builder().build()))
-        } else {
-            // Standard static execution mode
-            if self.runtime.is_complete() {
-                let shot = self.get_results()?;
-                Ok(EngineStage::Complete(shot))
-            } else {
-                // Generate next batch of commands
-                let commands = self.generate_commands()?;
-                Ok(EngineStage::NeedsProcessing(commands))
-            }
         }
+
+        // Check if worker completed after the wait
+        if self.check_worker_complete() {
+            debug!("Worker completed after wait");
+            // Process any final operations
+            if !self.pending_dynamic_ops.is_empty() {
+                let quantum_ops = Self::operations_to_quantum_ops(&self.pending_dynamic_ops);
+                if !quantum_ops.is_empty() {
+                    let commands = self.operations_to_bytemessage(quantum_ops)?;
+                    self.pending_dynamic_ops.clear();
+                    return Ok(EngineStage::NeedsProcessing(commands));
+                }
+            }
+            let shot = self.get_results()?;
+            return Ok(EngineStage::Complete(shot));
+        }
+
+        // Return empty commands while we wait
+        Ok(EngineStage::NeedsProcessing(ByteMessage::builder().build()))
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {

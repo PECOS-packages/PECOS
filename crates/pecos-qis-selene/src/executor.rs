@@ -4,7 +4,9 @@
 
 use libloading::{Library, Symbol};
 use log::{debug, error, info, warn};
-use pecos_qis_core::qis_interface::{InterfaceError, ProgramFormat, QisInterface};
+use pecos_qis_core::qis_interface::{
+    DynamicSyncHandle, InterfaceError, ProgramFormat, QisInterface,
+};
 use pecos_qis_ffi_types::OperationCollector;
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -282,6 +284,112 @@ impl SharedLibrary {
 type ResetInterfaceFn = unsafe extern "C" fn();
 type GetOperationsFn = unsafe extern "C" fn() -> *mut OperationCollector;
 type CallQmainFn = unsafe extern "C" fn(extern "C" fn(u64) -> u64) -> u64;
+
+/// Synchronization handle for main thread communication with worker thread
+///
+/// This handle allows the main thread to call FFI functions for synchronization
+/// while the interface is running on a worker thread. It uses the same singleton
+/// library instance as the worker thread, ensuring TLS consistency on macOS.
+pub struct HeliosSyncHandle;
+
+impl HeliosSyncHandle {
+    /// Create a new sync handle
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Get the singleton library for FFI calls
+    fn get_lib() -> Result<&'static SharedLibrary, InterfaceError> {
+        QisHeliosInterface::get_qis_ffi_lib_singleton()
+    }
+}
+
+impl Default for HeliosSyncHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DynamicSyncHandle for HeliosSyncHandle {
+    fn wait_for_need_result(&self, timeout_ms: u64) -> Option<u64> {
+        let lib = Self::get_lib().ok()?;
+        type WaitFn = unsafe extern "C" fn(u64) -> u64;
+        let wait_fn: Symbol<WaitFn> = unsafe { lib.get(b"pecos_wait_for_need_result\0").ok()? };
+        let result_id = unsafe { wait_fn(timeout_ms) };
+        if result_id == u64::MAX {
+            None
+        } else {
+            Some(result_id)
+        }
+    }
+
+    fn set_measurement_result(&self, result_id: u64, value: bool) -> Result<(), InterfaceError> {
+        let lib = Self::get_lib()?;
+        type SetFn = unsafe extern "C" fn(u64, bool);
+        let set_fn: Symbol<SetFn> = unsafe {
+            lib.get(b"pecos_set_measurement_result\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_set_measurement_result: {e}"
+                ))
+            })?
+        };
+        unsafe { set_fn(result_id, value) };
+        debug!("HeliosSyncHandle: Set measurement result {result_id} = {value}");
+        Ok(())
+    }
+
+    fn signal_result_ready(&self) -> Result<(), InterfaceError> {
+        let lib = Self::get_lib()?;
+        type SignalFn = unsafe extern "C" fn();
+        let signal_fn: Symbol<SignalFn> = unsafe {
+            lib.get(b"pecos_signal_result_ready\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_signal_result_ready: {e}"
+                ))
+            })?
+        };
+        unsafe { signal_fn() };
+        debug!("HeliosSyncHandle: Signaled result ready");
+        Ok(())
+    }
+
+    fn get_pending_operations(
+        &self,
+    ) -> Result<Vec<pecos_qis_ffi_types::Operation>, InterfaceError> {
+        let lib = Self::get_lib()?;
+        let get_ops_fn: Symbol<GetOperationsFn> = unsafe {
+            lib.get(b"pecos_qis_get_operations\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_qis_get_operations: {e}"
+                ))
+            })?
+        };
+        let collector = unsafe {
+            let ptr = get_ops_fn();
+            if ptr.is_null() {
+                return Ok(Vec::new());
+            }
+            Box::from_raw(ptr)
+        };
+        Ok(collector.operations)
+    }
+
+    fn abort_execution(&self) -> Result<(), InterfaceError> {
+        let lib = Self::get_lib()?;
+        type AbortFn = unsafe extern "C" fn();
+        let abort_fn: Symbol<AbortFn> = unsafe {
+            lib.get(b"pecos_abort_dynamic_execution\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_abort_dynamic_execution: {e}"
+                ))
+            })?
+        };
+        unsafe { abort_fn() };
+        debug!("HeliosSyncHandle: Aborted execution");
+        Ok(())
+    }
+}
 
 /// Derive the project target directory from the compile-time embedded Helios path.
 ///
@@ -1870,6 +1978,12 @@ impl QisInterface for QisHeliosInterface {
         self.execution_context
             .as_ref()
             .map(|ExecutionContextPtr(ptr)| (*ptr).cast::<std::ffi::c_void>())
+    }
+
+    fn get_sync_handle(&self) -> Option<Box<dyn DynamicSyncHandle>> {
+        // Return a handle that uses the singleton library for FFI calls
+        // This ensures TLS consistency between main thread and worker thread on macOS
+        Some(Box::new(HeliosSyncHandle::new()))
     }
 }
 

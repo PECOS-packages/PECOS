@@ -41,18 +41,14 @@ impl From<std::io::Error> for RuntimeFetchError {
 ///
 /// # Example
 /// ```rust
-/// use pecos_qis_selene::{selene_simple_runtime};
-/// use pecos_qis_core::{qis_engine, QisEngine};
-/// use pecos_engines::ClassicalControlEngineBuilder;
-/// use pecos_qis_ffi_types::OperationCollector;
+/// use pecos_qis_selene::selene_simple_runtime;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Load the simple runtime (built during compilation)
 /// match selene_simple_runtime() {
 ///     Ok(runtime) => {
-///         let interface = OperationCollector::new();
-///         let engine = qis_engine().runtime(runtime).program(interface).build()?;
-///         // Engine is ready to use
+///         println!("Runtime loaded successfully");
+///         // Use with qis_engine().runtime(runtime).interface(...).program(...).build()
 ///     }
 ///     Err(e) => {
 ///         // Runtime not built - Selene repository not found
@@ -83,18 +79,14 @@ pub fn selene_simple_runtime() -> Result<SeleneRuntime, RuntimeFetchError> {
 ///
 /// # Example
 /// ```rust
-/// use pecos_qis_selene::{selene_soft_rz_runtime};
-/// use pecos_qis_core::{qis_engine, QisEngine};
-/// use pecos_engines::ClassicalControlEngineBuilder;
-/// use pecos_qis_ffi_types::OperationCollector;
+/// use pecos_qis_selene::selene_soft_rz_runtime;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Load the soft RZ runtime (built during compilation)
 /// match selene_soft_rz_runtime() {
 ///     Ok(runtime) => {
-///         let interface = OperationCollector::new();
-///         let engine = qis_engine().runtime(runtime).program(interface).build()?;
-///         // Engine is ready with soft RZ gate support
+///         println!("Soft RZ runtime loaded successfully");
+///         // Use with qis_engine().runtime(runtime).interface(...).program(...).build()
 ///     }
 ///     Err(e) => {
 ///         // Runtime not built - Selene repository not found
@@ -304,18 +296,14 @@ pub fn find_selene_runtime(name: &str) -> Option<PathBuf> {
 ///
 /// # Example
 /// ```rust
-/// use pecos_qis_selene::{selene_runtime_auto};
-/// use pecos_qis_core::{qis_engine, QisEngine};
-/// use pecos_engines::ClassicalControlEngineBuilder;
-/// use pecos_qis_ffi_types::OperationCollector;
+/// use pecos_qis_selene::selene_runtime_auto;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Load a runtime by name (built during compilation)
 /// match selene_runtime_auto("selene_simple_runtime") {
 ///     Ok(runtime) => {
-///         let interface = OperationCollector::new();
-///         let engine = qis_engine().runtime(runtime).program(interface).build()?;
-///         // Engine is ready with the runtime
+///         println!("Runtime loaded successfully");
+///         // Use with qis_engine().runtime(runtime).interface(...).program(...).build()
 ///     }
 ///     Err(e) => {
 ///         // Runtime not built - Selene repository not found

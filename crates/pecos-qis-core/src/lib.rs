@@ -95,7 +95,9 @@ pub use ccengine::QisEngine;
 
 // Re-export QisInterface trait and related types
 pub use interface_impl::SimpleQisInterface;
-pub use qis_interface::{BoxedInterface, InterfaceError, ProgramFormat, QisInterface};
+pub use qis_interface::{
+    BoxedInterface, DynamicSyncHandle, InterfaceError, ProgramFormat, QisInterface,
+};
 
 pub use program::{
     InterfaceChoice, IntoQisInterface, ProgramType, QisEngineProgram, QisInterfaceBuilder,

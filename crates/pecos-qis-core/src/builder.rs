@@ -279,74 +279,45 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
             return Ok(engine);
         }
 
-        // Fallback: use pre-collected operations (for testing with pre-built interfaces)
-        // Create the interface from builder or use default
-        let interface: Option<crate::qis_interface::BoxedInterface> = if let Some(qis_interface) =
-            &self.interface
-        {
-            // Pre-built QisInterface provided (from .try_program()) - use it directly without recreating
-            log::debug!(
-                "Pre-built QisInterface provided with {} allocated qubits and {} operations",
-                qis_interface.allocated_qubits.len(),
-                qis_interface.operations.len()
-            );
+        // QisEngine requires dynamic execution - OperationCollector alone is not sufficient
+        if self.interface.is_some() && self.interface_builder.is_none() {
+            return Err(PecosError::Processing(
+                "QisEngine requires a dynamic-capable interface for LLVM execution.\n\
+                OperationCollector alone is not supported.\n\n\
+                Please use .interface() to specify an interface builder, e.g.:\n\
+                  use pecos_qis_selene::helios_interface_builder;\n\
+                  qis_engine()\n\
+                      .interface(helios_interface_builder()?)\n\
+                      .program(qis_program)\n\
+                      .runtime(selene_simple_runtime()?)\n\
+                      .build()"
+                    .to_string(),
+            ));
+        }
 
-            // When we have a pre-built interface, we should NOT create a new interface implementation
-            // Instead, the QisEngine will use this interface directly via initialize_from_interface()
-            None
-        } else if let Some(_builder) = &self.interface_builder {
-            // Interface builder is set but no program was provided - return error
-            log::debug!("Interface builder specified but no program was provided");
+        if self.interface_builder.is_some() && self.program_source.is_none() {
             return Err(PecosError::Processing(
                 "Interface builder specified but no program provided.\n\
                 Please provide a program using .program() or .try_program()"
                     .to_string(),
             ));
-        } else {
-            // No interface specified, return error - user must provide implementation
-            log::debug!("No interface specified - will return error if no interface is provided");
-            None
-        };
-
-        // Create the engine - handle three cases: interface implementation, pre-built QisInterface, or default
-        if let Some(qis_interface) = &self.interface {
-            // Case 1: Pre-built QisInterface provided (from .try_program()) - use it directly
-            log::debug!(
-                "Using pre-built QisInterface with {} allocated qubits and {} operations",
-                qis_interface.allocated_qubits.len(),
-                qis_interface.operations.len()
-            );
-
-            // Create engine with a simple interface that wraps the pre-built QisInterface operations
-            let simple_interface = Box::new(crate::interface_impl::SimpleQisInterface::new(
-                qis_interface.clone(),
-            ));
-            let mut engine = QisEngine::new(simple_interface, runtime);
-            engine.initialize_from_interface()?;
-            Ok(engine)
-        } else if let Some(boxed_interface) = interface {
-            // Case 2: Interface implementation provided - use it and optionally load program
-            let mut engine = QisEngine::new(boxed_interface, runtime);
-
-            if let Some(program_source) = &self.program_source {
-                log::debug!("Loading program source into interface implementation");
-                engine.load_program(
-                    program_source.as_bytes(),
-                    crate::qis_interface::ProgramFormat::LlvmIrText,
-                )?;
-            }
-
-            Ok(engine)
-        } else {
-            // Case 3: Nothing specified - error, user must provide an interface implementation
-            Err(PecosError::Processing(
-                "No interface implementation provided. Please specify an interface using:\n\
-                - .program() to load from a program (uses default Selene Helios interface)\n\
-                - .try_program() for explicit interface selection\n\
-                - Or import pecos-qis-selene and create an interface directly"
-                    .to_string(),
-            ))
         }
+
+        // No interface builder or program - error
+        Err(PecosError::Processing(
+            "No interface implementation provided. Please specify an interface using:\n\
+            - .interface() with a builder like helios_interface_builder()\n\
+            - .program() to load a QIS/LLVM program\n\
+            - .runtime() to specify the runtime\n\n\
+            Example:\n\
+              use pecos_qis_selene::{helios_interface_builder, selene_simple_runtime};\n\
+              qis_engine()\n\
+                  .interface(helios_interface_builder()?)\n\
+                  .program(qis_program)\n\
+                  .runtime(selene_simple_runtime()?)\n\
+                  .build()"
+                .to_string(),
+        ))
     }
 }
 
@@ -355,30 +326,9 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
 /// Creates a builder that requires you to specify both a runtime and a program.
 ///
 /// # Example
-/// ```
-/// use pecos_qis_core::qis_engine;
-/// use pecos_qis_ffi_types::{OperationCollector, QuantumOp};
-/// use pecos_engines::{ClassicalControlEngineBuilder, ClassicalEngine};
-/// use pecos_qis_selene::selene_simple_runtime;
 ///
-/// // Create a builder (you must specify a runtime)
-/// let builder = qis_engine();
-///
-/// // Create an interface with quantum operations
-/// let mut interface = OperationCollector::new();
-/// let q0 = interface.allocate_qubit();
-/// interface.operations.push(QuantumOp::H(q0).into());
-///
-/// let engine = builder
-///     .runtime(selene_simple_runtime()?)
-///     .program(interface)
-///     .build()
-///     .unwrap();
-///
-/// // Engine is ready for quantum simulation
-/// assert_eq!(engine.num_qubits(), 1);
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
+/// For complete examples with dynamic interface (LLVM execution), see the
+/// `pecos-qis-selene` crate documentation which provides `helios_interface_builder()`.
 #[must_use]
 pub fn qis_engine() -> QisEngineBuilder {
     QisEngineBuilder::new()

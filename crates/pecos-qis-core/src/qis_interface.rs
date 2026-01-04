@@ -210,6 +210,45 @@ pub trait QisInterface: Send + Sync {
     fn get_execution_context_ptr(&self) -> Option<*mut std::ffi::c_void> {
         None
     }
+
+    /// Get a synchronization handle for the main thread
+    ///
+    /// This returns a handle that can be used by the main thread to call FFI functions
+    /// for synchronization while the interface is running on a worker thread.
+    ///
+    /// The handle uses the same library instance (singleton) as the worker thread,
+    /// ensuring TLS is consistent across threads (important on macOS).
+    ///
+    /// Returns None if dynamic execution is not supported.
+    fn get_sync_handle(&self) -> Option<Box<dyn DynamicSyncHandle>> {
+        None
+    }
+}
+
+/// Handle for main thread synchronization with a dynamic worker thread
+///
+/// This trait provides methods for the main thread to coordinate with a worker
+/// thread running an LLVM program. All methods access the FFI library through
+/// the same singleton instance used by the worker thread.
+#[allow(clippy::module_name_repetitions)]
+pub trait DynamicSyncHandle: Send + Sync {
+    /// Wait for the worker to need a measurement result
+    ///
+    /// Returns `Some(result_id)` if worker needs a result, None on timeout or completion.
+    fn wait_for_need_result(&self, timeout_ms: u64) -> Option<u64>;
+
+    /// Set a measurement result for the running program
+    fn set_measurement_result(&self, result_id: u64, value: bool) -> Result<(), InterfaceError>;
+
+    /// Signal that the measurement result is ready
+    fn signal_result_ready(&self) -> Result<(), InterfaceError>;
+
+    /// Get the pending operations collected so far
+    fn get_pending_operations(&self)
+    -> Result<Vec<pecos_qis_ffi_types::Operation>, InterfaceError>;
+
+    /// Abort the dynamic execution
+    fn abort_execution(&self) -> Result<(), InterfaceError>;
 }
 
 /// Box type for interface implementations

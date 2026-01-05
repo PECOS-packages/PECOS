@@ -25,10 +25,13 @@ use pecos_engines::{
 use pecos_qis_ffi_types::{Operation, OperationCollector as OperationList, QuantumOp};
 use pecos_rng::PecosRng;
 use std::collections::BTreeMap;
-
-use std::sync::Mutex;
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
+
+// These imports are only used by PersistentDynamicWorker (Linux only)
+#[cfg(not(target_os = "macos"))]
+use std::sync::Mutex;
+#[cfg(not(target_os = "macos"))]
+use std::sync::mpsc::{self, Receiver, Sender};
 
 /// Result from worker thread - returns both the operations and the interface
 type WorkerResult = Result<(OperationList, BoxedInterface), String>;

@@ -31,6 +31,7 @@ class StabilizerSupport:
 
     @property
     def weight(self) -> int:
+        """Number of data qubits in this stabilizer."""
         return len(self.data_qubits)
 
 
@@ -46,10 +47,10 @@ def compute_x_stabilizer_supports(d: int) -> list[StabilizerSupport]:
     Returns:
         List of StabilizerSupport objects, ordered by stabilizer index.
     """
-    n_stab = (d**2 - 1) // 2
-    n_bound = d - 1
-    start_bulk = n_bound // 2
-    end_bulk = n_stab - start_bulk
+    num_stab = (d**2 - 1) // 2
+    num_bound = d - 1
+    start_bulk = num_bound // 2
+    end_bulk = num_stab - start_bulk
 
     supports: list[StabilizerSupport] = []
 
@@ -63,34 +64,34 @@ def compute_x_stabilizer_supports(d: int) -> list[StabilizerSupport]:
                 index=i,
                 data_qubits=(j, j + 1, j + d, j + d + 1),
                 is_boundary=False,
-            )
+            ),
         )
-        if i % (d - 1) == n_bound // 2 - 1:
+        if i % (d - 1) == num_bound // 2 - 1:
             j += 4
         else:
             j += 2
 
     # Top boundary stabilizers (weight 2)
     j = 0
-    for i in range(n_bound // 2):
+    for i in range(num_bound // 2):
         supports.append(
             StabilizerSupport(
                 index=i,
                 data_qubits=(j, j + 1),
                 is_boundary=True,
-            )
+            ),
         )
         j += 2
 
     # Bottom boundary stabilizers (weight 2)
     j = (d - 1) * d + 1
-    for i in range(n_stab - n_bound // 2, n_stab):
+    for i in range(num_stab - num_bound // 2, num_stab):
         supports.append(
             StabilizerSupport(
                 index=i,
                 data_qubits=(j, j + 1),
                 is_boundary=True,
-            )
+            ),
         )
         j += 2
 
@@ -109,10 +110,10 @@ def compute_z_stabilizer_supports(d: int) -> list[StabilizerSupport]:
     Returns:
         List of StabilizerSupport objects, ordered by stabilizer index.
     """
-    n_stab = (d**2 - 1) // 2
-    n_bound = d - 1
-    start_bulk = n_bound // 2
-    end_bulk = n_stab - start_bulk
+    num_stab = (d**2 - 1) // 2
+    num_bound = d - 1
+    start_bulk = num_bound // 2
+    end_bulk = num_stab - start_bulk
 
     supports: list[StabilizerSupport] = []
 
@@ -124,9 +125,9 @@ def compute_z_stabilizer_supports(d: int) -> list[StabilizerSupport]:
                 index=i,
                 data_qubits=(j, j + d, j + 1, j + d + 1),
                 is_boundary=False,
-            )
+            ),
         )
-        if i % (d - 1) == n_bound // 2 - 1:
+        if i % (d - 1) == num_bound // 2 - 1:
             j += 2 * d
             j = j % d - 1 + d
         else:
@@ -136,27 +137,27 @@ def compute_z_stabilizer_supports(d: int) -> list[StabilizerSupport]:
 
     # Right boundary stabilizers (weight 2)
     j = 2 * d - 1
-    for i in range(n_bound // 2):
+    for i in range(num_bound // 2):
         k = j - d
         supports.append(
             StabilizerSupport(
                 index=i,
                 data_qubits=(k, j),
                 is_boundary=True,
-            )
+            ),
         )
         j += 2 * d
 
     # Left boundary stabilizers (weight 2)
     j = d
-    for i in range(n_stab - n_bound // 2, n_stab):
+    for i in range(num_stab - num_bound // 2, num_stab):
         k = j + d
         supports.append(
             StabilizerSupport(
                 index=i,
                 data_qubits=(j, k),
                 is_boundary=True,
-            )
+            ),
         )
         j += 2 * d
 
@@ -232,10 +233,11 @@ def get_bulk_stabilizers(d: int, stab_type: str = "X") -> list[StabilizerSupport
     Returns:
         List of bulk StabilizerSupport objects.
     """
-    if stab_type == "X":
-        supports = compute_x_stabilizer_supports(d)
-    else:
-        supports = compute_z_stabilizer_supports(d)
+    supports = (
+        compute_x_stabilizer_supports(d)
+        if stab_type == "X"
+        else compute_z_stabilizer_supports(d)
+    )
     return [s for s in supports if not s.is_boundary]
 
 
@@ -249,10 +251,11 @@ def get_boundary_stabilizers(d: int, stab_type: str = "X") -> list[StabilizerSup
     Returns:
         List of boundary StabilizerSupport objects.
     """
-    if stab_type == "X":
-        supports = compute_x_stabilizer_supports(d)
-    else:
-        supports = compute_z_stabilizer_supports(d)
+    supports = (
+        compute_x_stabilizer_supports(d)
+        if stab_type == "X"
+        else compute_z_stabilizer_supports(d)
+    )
     return [s for s in supports if s.is_boundary]
 
 

@@ -15,8 +15,8 @@ operations that preserve the error correction properties of the code.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.slr.qeclib import qubit as qb
 from pecos.slr import Block, Comment, QReg
+from pecos.slr.qeclib import qubit as qb
 
 
 class H(Block):

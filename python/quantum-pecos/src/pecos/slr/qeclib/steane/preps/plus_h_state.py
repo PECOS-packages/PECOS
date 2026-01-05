@@ -16,6 +16,8 @@ fault-tolerant distillation and verification protocols.
 # specific language governing permissions and limitations under the License.
 
 import pecos as pc
+from pecos.slr import Bit, Block, Comment, CReg, If, QReg, Repeat
+from pecos.slr.misc import Return
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.generic.check_1flag import Check1Flag
 from pecos.slr.qeclib.steane.preps.encoding_circ import EncodingCircuit
@@ -23,8 +25,6 @@ from pecos.slr.qeclib.steane.syn_extract.three_parallel_flagging import (
     ThreeParallelFlaggingXZZ,
     ThreeParallelFlaggingZXX,
 )
-from pecos.slr import Bit, Block, Comment, CReg, If, QReg, Repeat
-from pecos.slr.misc import Return
 from pecos.slr.types import Array, QubitType
 
 

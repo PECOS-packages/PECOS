@@ -11,8 +11,8 @@
 
 """Pauli projection preparation blocks for surface code operations."""
 
-from pecos.slr.qeclib.qubit.qubit import PhysicalQubit as Q
 from pecos.slr import Block, QReg, Qubit
+from pecos.slr.qeclib.qubit.qubit import PhysicalQubit as Q
 
 
 class PrepZ(Block):

@@ -20,6 +20,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from warnings import warn
 
+from pecos.slr import Block, CReg, If, Permute, QReg, Vars
+
 # from pecos.slr.qeclib.qubit.qubit import PhysicalQubit
 # TODO: Use physical qubit implementation... accept multiple arguments
 # TODO: Make sure the Steane gate api matches the physical qubit api
@@ -34,7 +36,6 @@ from pecos.slr.qeclib.steane.preps.t_plus_state import (
     PrepEncodeTPlusNonFT,
 )
 from pecos.slr.qeclib.steane.qec.qec_3parallel import ParallelFlagQECActiveCorrection
-from pecos.slr import Block, CReg, If, Permute, QReg, Vars
 
 if TYPE_CHECKING:
     from pecos.slr import Bit

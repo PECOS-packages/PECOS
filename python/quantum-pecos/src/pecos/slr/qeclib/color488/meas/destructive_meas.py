@@ -1,7 +1,7 @@
 """Module containing destructive measurement operations for color 488 codes."""
 
-from pecos.slr.qeclib import qubit as qb
 from pecos.slr import Bit, Block, CReg, QReg
+from pecos.slr.qeclib import qubit as qb
 
 
 class MeasureZ(Block):

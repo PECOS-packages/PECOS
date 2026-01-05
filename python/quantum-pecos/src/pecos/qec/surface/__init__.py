@@ -41,7 +41,7 @@ from pecos.qec.surface.patch import (
     SurfacePatchBuilder,
 )
 
-__all__ = [
+__all__ = [  # noqa: RUF022
     # Rotated lattice (most common, default)
     "compute_rotated_x_stabilizers",
     "compute_rotated_z_stabilizers",

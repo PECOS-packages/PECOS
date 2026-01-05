@@ -15,8 +15,8 @@ basis while preserving error correction capabilities.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.slr.qeclib import qubit
 from pecos.slr import Block, Comment, CReg, QReg, Qubit
+from pecos.slr.qeclib import qubit
 
 
 class NoFlagMeasureX(Block):

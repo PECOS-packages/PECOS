@@ -13,9 +13,9 @@ The framework supports:
 - Flexible ancilla allocation
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Sequence
 
 
 class PauliType(Enum):
@@ -26,6 +26,7 @@ class PauliType(Enum):
     Z = "Z"
 
     def __str__(self) -> str:
+        """Return string representation."""
         return self.value
 
 
@@ -42,6 +43,7 @@ class PauliOperator:
     pauli: PauliType
 
     def __str__(self) -> str:
+        """Return string representation (e.g., 'X0', 'Z3')."""
         return f"{self.pauli.value}{self.qubit}"
 
 
@@ -93,13 +95,17 @@ class StabilizerCheck:
             pauli_string = pauli_string * len(qubits)
 
         if len(pauli_string) != len(qubits):
-            raise ValueError(
+            msg = (
                 f"Pauli string length ({len(pauli_string)}) must match "
                 f"number of qubits ({len(qubits)})"
             )
+            raise ValueError(
+                msg,
+            )
 
         paulis = tuple(
-            PauliOperator(q, PauliType(p)) for p, q in zip(pauli_string, qubits)
+            PauliOperator(q, PauliType(p))
+            for p, q in zip(pauli_string, qubits, strict=False)
         )
 
         return cls(
@@ -182,7 +188,8 @@ class CheckSchedule:
 
     @classmethod
     def parallel_by_color(
-        cls, checks: Sequence[StabilizerCheck]
+        cls,
+        checks: Sequence[StabilizerCheck],
     ) -> "CheckSchedule":
         """Create a schedule that parallelizes checks by color."""
         by_color: dict[str | None, list[StabilizerCheck]] = {}
@@ -196,10 +203,11 @@ class CheckSchedule:
 
         rounds = []
         for i in range(max_len):
-            round_checks = []
-            for color_checks in by_color.values():
-                if i < len(color_checks):
-                    round_checks.append(color_checks[i])
+            round_checks = [
+                color_checks[i]
+                for color_checks in by_color.values()
+                if i < len(color_checks)
+            ]
             if round_checks:
                 rounds.append(round_checks)
 

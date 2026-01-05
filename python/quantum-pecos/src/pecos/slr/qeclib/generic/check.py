@@ -20,12 +20,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.slr.qeclib.qubit import CX, CY, CZ, H, Measure, Prep
 from pecos.slr import Barrier, Block, Comment
+from pecos.slr.qeclib.qubit import CX, CY, CZ, H, Measure, Prep
 
 if TYPE_CHECKING:
-    from pecos.slr.qeclib.qubit.qgate_base import QGate
     from pecos.slr import Bit, Qubit
+    from pecos.slr.qeclib.qubit.qgate_base import QGate
 
 
 class Check(Block):

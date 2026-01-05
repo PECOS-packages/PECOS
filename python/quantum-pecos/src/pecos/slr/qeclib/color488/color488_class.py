@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import matplotlib.pyplot as plt
 
+from pecos.slr import Bit, Block, CReg, QReg, Vars
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.color488.color488 import Color488
 from pecos.slr.qeclib.color488.gates_sq import hadamards, sqrt_paulis
@@ -12,7 +13,6 @@ from pecos.slr.qeclib.color488.gates_tq import transversal_tq
 from pecos.slr.qeclib.color488.meas.destructive_meas import MeasureZ, SynMeasProcessing
 from pecos.slr.qeclib.color488.plot_layout import plot_layout
 from pecos.slr.qeclib.color488.syn_extract.bare import SynExtractBareParallel
-from pecos.slr import Bit, Block, CReg, QReg, Vars
 
 
 class Color488Patch(Vars):

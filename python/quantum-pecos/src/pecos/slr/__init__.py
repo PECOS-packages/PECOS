@@ -9,6 +9,8 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+# QEC library (moved from pecos.qeclib)
+from pecos.slr import qeclib
 from pecos.slr.block import Block
 from pecos.slr.cond_block import If, Repeat
 from pecos.slr.loop_block import For, While
@@ -22,9 +24,6 @@ from pecos.slr.types import Array
 from pecos.slr.types import Bit as BitType
 from pecos.slr.types import Qubit as QubitType
 from pecos.slr.vars import Bit, CReg, QReg, Qubit, Vars
-
-# QEC library (moved from pecos.qeclib)
-from pecos.slr import qeclib
 
 __all__ = [
     "SLR",

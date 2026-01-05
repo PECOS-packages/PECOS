@@ -7,8 +7,8 @@ errors in the Steane 7-qubit quantum error correction code.
 from itertools import cycle
 from typing import Any
 
-from pecos.slr.qeclib.generic.check import Check
 from pecos.slr import Block, Comment, CReg, QReg
+from pecos.slr.qeclib.generic.check import Check
 
 
 def poly2qubits(poly: list[Any], data: QReg) -> list[Any]:

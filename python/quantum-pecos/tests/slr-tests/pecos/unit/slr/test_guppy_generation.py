@@ -1,7 +1,7 @@
 """Tests for Guppy code generation from SLR programs."""
 
-from pecos.slr.qeclib import qubit as qb
 from pecos.slr import CReg, If, Main, QReg, Repeat, SlrConverter
+from pecos.slr.qeclib import qubit as qb
 
 
 def test_simple_circuit() -> None:

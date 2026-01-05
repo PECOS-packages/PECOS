@@ -9,6 +9,9 @@ with geometry stored as data structures.
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import TYPE_CHECKING
+
+from pecos_rslib.num import zeros
 
 from pecos.qec.surface.layouts import (
     compute_rotated_x_stabilizers,
@@ -18,6 +21,9 @@ from pecos.qec.surface.layouts import (
     get_rotated_logical_x,
     get_rotated_logical_z,
 )
+
+if TYPE_CHECKING:
+    import pecos
 
 
 class PatchOrientation(Enum):
@@ -39,6 +45,7 @@ class Stabilizer:
 
     @property
     def weight(self) -> int:
+        """Number of data qubits in this stabilizer."""
         return len(self.data_qubits)
 
 
@@ -63,9 +70,9 @@ class PatchGeometry:
     orientation: PatchOrientation = PatchOrientation.X_TOP_BOTTOM
     rotated: bool = True
 
-    n_data: int = field(init=False)
-    n_x_stab: int = field(init=False)
-    n_z_stab: int = field(init=False)
+    num_data: int = field(init=False)
+    num_x_stab: int = field(init=False)
+    num_z_stab: int = field(init=False)
 
     pos_to_id: dict[tuple[int, int], int] = field(default_factory=dict)
     id_to_pos: dict[int, tuple[int, int]] = field(default_factory=dict)
@@ -76,16 +83,17 @@ class PatchGeometry:
     logical_x: LogicalOperator | None = None
     logical_z: LogicalOperator | None = None
 
-    def __post_init__(self):
-        self.n_data = self.dx * self.dz
-        self.n_x_stab = (self.dx * self.dz - 1) // 2
-        self.n_z_stab = (self.dx * self.dz - 1) // 2
+    def __post_init__(self) -> None:
+        """Initialize computed fields and generate geometry."""
+        self.num_data = self.dx * self.dz
+        self.num_x_stab = (self.dx * self.dz - 1) // 2
+        self.num_z_stab = (self.dx * self.dz - 1) // 2
 
         self._generate_layout()
         self._generate_stabilizers()
         self._generate_logical_operators()
 
-    def _generate_layout(self):
+    def _generate_layout(self) -> None:
         for row in range(self.dx):
             for col in range(self.dz):
                 idx = row * self.dz + col
@@ -93,7 +101,7 @@ class PatchGeometry:
                 self.pos_to_id[pos] = idx
                 self.id_to_pos[idx] = pos
 
-    def _generate_stabilizers(self):
+    def _generate_stabilizers(self) -> None:
         d = min(self.dx, self.dz)
 
         if self.rotated:
@@ -106,7 +114,7 @@ class PatchGeometry:
         self.x_stabilizers = [
             Stabilizer(
                 index=s.index,
-                stab_type='X',
+                stab_type="X",
                 data_qubits=s.data_qubits,
                 is_boundary=s.is_boundary,
             )
@@ -116,17 +124,17 @@ class PatchGeometry:
         self.z_stabilizers = [
             Stabilizer(
                 index=s.index,
-                stab_type='Z',
+                stab_type="Z",
                 data_qubits=s.data_qubits,
                 is_boundary=s.is_boundary,
             )
             for s in z_supports
         ]
 
-        self.n_x_stab = len(self.x_stabilizers)
-        self.n_z_stab = len(self.z_stabilizers)
+        self.num_x_stab = len(self.x_stabilizers)
+        self.num_z_stab = len(self.z_stabilizers)
 
-    def _generate_logical_operators(self):
+    def _generate_logical_operators(self) -> None:
         d = min(self.dx, self.dz)
 
         if self.rotated:
@@ -136,20 +144,23 @@ class PatchGeometry:
             logical_x_qubits = tuple(i * self.dz for i in range(self.dx))
             logical_z_qubits = tuple(range(self.dz))
 
-        self.logical_x = LogicalOperator('X', logical_x_qubits)
-        self.logical_z = LogicalOperator('Z', logical_z_qubits)
+        self.logical_x = LogicalOperator("X", logical_x_qubits)
+        self.logical_z = LogicalOperator("Z", logical_z_qubits)
 
     @property
     def distance(self) -> int:
+        """Code distance (minimum of dx and dz)."""
         return min(self.dx, self.dz)
 
     @property
-    def n_ancilla(self) -> int:
+    def num_ancilla(self) -> int:
+        """Number of ancilla qubits."""
         return 2
 
     @property
-    def n_qubits(self) -> int:
-        return self.n_data + self.n_ancilla
+    def num_qubits(self) -> int:
+        """Total number of qubits (data + ancilla)."""
+        return self.num_data + self.num_ancilla
 
 
 class SurfacePatch:
@@ -163,7 +174,8 @@ class SurfacePatch:
         >>> patch = SurfacePatch.create(dx=3, dz=5)  # Asymmetric
     """
 
-    def __init__(self, geometry: PatchGeometry):
+    def __init__(self, geometry: PatchGeometry) -> None:
+        """Initialize a surface patch with the given geometry."""
         self.geometry = geometry
 
     @classmethod
@@ -173,6 +185,7 @@ class SurfacePatch:
         dx: int | None = None,
         dz: int | None = None,
         orientation: PatchOrientation = PatchOrientation.X_TOP_BOTTOM,
+        *,
         rotated: bool = True,
     ) -> "SurfacePatch":
         """Create a surface code patch.
@@ -188,46 +201,57 @@ class SurfacePatch:
         """
         if distance is not None:
             if distance < 3 or distance % 2 == 0:
-                raise ValueError(f"Distance must be odd >= 3, got {distance}")
+                msg = f"Distance must be odd >= 3, got {distance}"
+                raise ValueError(msg)
             dx = dx or distance
             dz = dz or distance
         elif dx is not None and dz is not None:
             if dx < 3 or dx % 2 == 0:
-                raise ValueError(f"dx must be odd >= 3, got {dx}")
+                msg = f"dx must be odd >= 3, got {dx}"
+                raise ValueError(msg)
             if dz < 3 or dz % 2 == 0:
-                raise ValueError(f"dz must be odd >= 3, got {dz}")
+                msg = f"dz must be odd >= 3, got {dz}"
+                raise ValueError(msg)
         else:
-            raise ValueError("Must provide either distance or both dx and dz")
+            msg = "Must provide either distance or both dx and dz"
+            raise ValueError(msg)
 
         geometry = PatchGeometry(dx=dx, dz=dz, orientation=orientation, rotated=rotated)
         return cls(geometry)
 
     @property
     def distance(self) -> int:
+        """Code distance (minimum of dx and dz)."""
         return self.geometry.distance
 
     @property
     def dx(self) -> int:
+        """X distance of the patch."""
         return self.geometry.dx
 
     @property
     def dz(self) -> int:
+        """Z distance of the patch."""
         return self.geometry.dz
 
     @property
-    def n_data(self) -> int:
-        return self.geometry.n_data
+    def num_data(self) -> int:
+        """Number of data qubits."""
+        return self.geometry.num_data
 
     @property
-    def n_qubits(self) -> int:
-        return self.geometry.n_qubits
+    def num_qubits(self) -> int:
+        """Total number of qubits (data + ancilla)."""
+        return self.geometry.num_qubits
 
     @property
     def x_stabilizers(self) -> list[Stabilizer]:
+        """X stabilizers of the patch."""
         return self.geometry.x_stabilizers
 
     @property
     def z_stabilizers(self) -> list[Stabilizer]:
+        """Z stabilizers of the patch."""
         return self.geometry.z_stabilizers
 
     @property
@@ -235,13 +259,11 @@ class SurfacePatch:
         """True if using rotated layout, False for standard layout."""
         return self.geometry.rotated
 
-    def get_parity_matrix(self, stab_type: str):
+    def get_parity_matrix(self, stab_type: str) -> "pecos.Array":
         """Get parity check matrix."""
-        import pecos
-
-        stabs = self.x_stabilizers if stab_type == 'X' else self.z_stabilizers
-        n_stab = len(stabs)
-        matrix = pecos.zeros((n_stab, self.n_data), dtype="int64")
+        stabs = self.x_stabilizers if stab_type == "X" else self.z_stabilizers
+        num_stab = len(stabs)
+        matrix = zeros((num_stab, self.num_data), dtype="int64")
 
         for stab in stabs:
             for q in stab.data_qubits:
@@ -268,7 +290,8 @@ class SurfacePatchBuilder:
         >>> patch = SurfacePatchBuilder().with_distance(5).standard().build()
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize the builder with default settings."""
         self._distance: int | None = None
         self._dx: int | None = None
         self._dz: int | None = None

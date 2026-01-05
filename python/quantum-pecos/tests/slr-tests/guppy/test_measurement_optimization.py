@@ -6,9 +6,9 @@ These tests verify that the Guppy generator optimizes measurement patterns:
 - Handles mixed measurement patterns efficiently
 """
 
+from pecos.slr import Block, CReg, If, Main, QReg, SlrConverter
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
-from pecos.slr import Block, CReg, If, Main, QReg, SlrConverter
 
 
 class TestMeasurementOptimization:

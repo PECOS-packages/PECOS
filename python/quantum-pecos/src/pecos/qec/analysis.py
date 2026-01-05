@@ -95,7 +95,7 @@ def logical_fidelity(
 
     Returns:
         Tuple of (fidelity, error) where error is the standard deviation
-        assuming binomial statistics: sqrt(f * (1-f) / n_shots).
+        assuming binomial statistics: sqrt(f * (1-f) / num_shots).
     """
     if not outcomes:
         msg = "No outcomes provided"
@@ -105,10 +105,9 @@ def logical_fidelity(
     successes = 0
 
     for data in outcomes:
-        if basis == 0:
-            logical = logical_x_from_data(d, data)
-        else:
-            logical = logical_z_from_data(d, data)
+        logical = (
+            logical_x_from_data(d, data) if basis == 0 else logical_z_from_data(d, data)
+        )
 
         if logical == expected:
             successes += 1
@@ -116,10 +115,11 @@ def logical_fidelity(
     fidelity = successes / num_shots
 
     # Binomial error bar
-    if fidelity == 0.0 or fidelity == 1.0:
-        error = 0.0
-    else:
-        error = math.sqrt(fidelity * (1 - fidelity) / num_shots)
+    error = (
+        0.0
+        if fidelity == 0.0 or fidelity == 1.0
+        else math.sqrt(fidelity * (1 - fidelity) / num_shots)
+    )
 
     return fidelity, error
 

@@ -6,7 +6,6 @@
 from dataclasses import dataclass, field
 
 import pecos
-
 from pecos.qec.color.geometry import generate_488_layout
 from pecos.qec.generic import StabilizerCheck
 
@@ -43,17 +42,18 @@ class ColorCode488Geometry:
     distance: int
     qubit_positions: dict[int, tuple[int, int]] = field(default_factory=dict)
     stabilizers: list[ColorCodeStabilizer] = field(default_factory=list)
-    n_data: int = field(init=False)
-    n_stabilizers: int = field(init=False)
+    num_data: int = field(init=False)
+    num_stabilizers: int = field(init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Generate the layout."""
         if self.distance < 3 or self.distance % 2 == 0:
-            raise ValueError(f"Distance must be odd >= 3, got {self.distance}")
+            msg = f"Distance must be odd >= 3, got {self.distance}"
+            raise ValueError(msg)
 
         nodeid2pos, polygons = generate_488_layout(self.distance)
         self.qubit_positions = nodeid2pos
-        self.n_data = len(nodeid2pos)
+        self.num_data = len(nodeid2pos)
 
         # Convert polygons to stabilizers
         self.stabilizers = []
@@ -62,14 +62,16 @@ class ColorCode488Geometry:
             color = polygon[-1]
             is_boundary = len(qubits) < 4  # Boundary stabilizers have fewer qubits
 
-            self.stabilizers.append(ColorCodeStabilizer(
-                index=i,
-                qubits=qubits,
-                color=color,
-                is_boundary=is_boundary,
-            ))
+            self.stabilizers.append(
+                ColorCodeStabilizer(
+                    index=i,
+                    qubits=qubits,
+                    color=color,
+                    is_boundary=is_boundary,
+                ),
+            )
 
-        self.n_stabilizers = len(self.stabilizers)
+        self.num_stabilizers = len(self.stabilizers)
 
 
 class ColorCode488:
@@ -80,11 +82,11 @@ class ColorCode488:
 
     Example:
         >>> code = ColorCode488.create(distance=3)
-        >>> print(f"Data qubits: {code.n_data}")
-        >>> print(f"Stabilizers: {code.n_stabilizers}")
+        >>> print(f"Data qubits: {code.num_data}")
+        >>> print(f"Stabilizers: {code.num_stabilizers}")
     """
 
-    def __init__(self, geometry: ColorCode488Geometry):
+    def __init__(self, geometry: ColorCode488Geometry) -> None:
         """Initialize with geometry."""
         self.geometry = geometry
         self._cache: dict[str, object] = {}
@@ -108,14 +110,14 @@ class ColorCode488:
         return self.geometry.distance
 
     @property
-    def n_data(self) -> int:
+    def num_data(self) -> int:
         """Number of data qubits."""
-        return self.geometry.n_data
+        return self.geometry.num_data
 
     @property
-    def n_stabilizers(self) -> int:
+    def num_stabilizers(self) -> int:
         """Number of stabilizers."""
-        return self.geometry.n_stabilizers
+        return self.geometry.num_stabilizers
 
     @property
     def qubit_positions(self) -> dict[int, tuple[int, int]]:
@@ -140,23 +142,23 @@ class ColorCode488:
 
     def get_red_stabilizers(self) -> list[ColorCodeStabilizer]:
         """Get red (weight-4) stabilizers."""
-        return self.get_stabilizers_by_color('red')
+        return self.get_stabilizers_by_color("red")
 
     def get_green_stabilizers(self) -> list[ColorCodeStabilizer]:
         """Get green stabilizers."""
-        return self.get_stabilizers_by_color('green')
+        return self.get_stabilizers_by_color("green")
 
     def get_blue_stabilizers(self) -> list[ColorCodeStabilizer]:
         """Get blue stabilizers."""
-        return self.get_stabilizers_by_color('blue')
+        return self.get_stabilizers_by_color("blue")
 
     def get_parity_matrix(self) -> pecos.Array:
         """Get the parity check matrix.
 
         Returns:
-            PECOS array of shape (n_stabilizers, n_data)
+            PECOS array of shape (num_stabilizers, num_data)
         """
-        matrix = pecos.zeros((self.n_stabilizers, self.n_data), dtype="int64")
+        matrix = pecos.zeros((self.num_stabilizers, self.num_data), dtype="int64")
 
         for stab in self.stabilizers:
             for q in stab.qubits:
@@ -212,14 +214,11 @@ class ColorCode488Builder:
     """Builder for creating ColorCode488 instances.
 
     Example:
-        >>> code = (
-        ...     ColorCode488Builder()
-        ...     .with_distance(5)
-        ...     .build()
-        ... )
+        >>> code = ColorCode488Builder().with_distance(5).build()
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize the builder."""
         self._distance: int | None = None
 
     def with_distance(self, distance: int) -> "ColorCode488Builder":
@@ -230,5 +229,6 @@ class ColorCode488Builder:
     def build(self) -> ColorCode488:
         """Build the ColorCode488."""
         if self._distance is None:
-            raise ValueError("Distance must be set before building")
+            msg = "Distance must be set before building"
+            raise ValueError(msg)
         return ColorCode488.create(distance=self._distance)

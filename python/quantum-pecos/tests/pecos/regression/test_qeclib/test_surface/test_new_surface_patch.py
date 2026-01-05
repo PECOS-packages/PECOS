@@ -1,5 +1,6 @@
 """Tests for surface patch construction and rendering."""
 
+from pecos.slr import Main, SlrConverter
 from pecos.slr.qeclib.surface import (
     Lattice2DView,
     LatticeType,
@@ -8,7 +9,6 @@ from pecos.slr.qeclib.surface import (
     SurfacePatchBuilder,
     SurfacePatchOrientation,
 )
-from pecos.slr import Main, SlrConverter
 
 
 def test_default_rot_surface_patch() -> None:

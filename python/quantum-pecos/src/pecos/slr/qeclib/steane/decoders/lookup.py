@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pecos.slr.qeclib import qubit
 from pecos.slr import Block, Comment, If
+from pecos.slr.qeclib import qubit
 
 if TYPE_CHECKING:
     from pecos.slr import Bit, CReg, QReg

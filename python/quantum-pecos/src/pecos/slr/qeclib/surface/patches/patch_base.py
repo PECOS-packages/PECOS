@@ -5,18 +5,18 @@ from __future__ import annotations
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol
 
+from pecos.slr import QReg, Vars
 from pecos.slr.qeclib.surface.visualization.rotated_lattice import (
     RotatedLatticeVisualization,
 )
-from pecos.slr import QReg, Vars
 
 if TYPE_CHECKING:
+    from pecos.slr import Qubit
     from pecos.slr.qeclib.surface.layouts.layout_base import Layout
     from pecos.slr.qeclib.surface.visualization.visualization_base import (
         VisualizationData,
         VisualizationStrategy,
     )
-    from pecos.slr import Qubit
 
 # TODO: Create a vector or an array of objects...
 # TODO: Set check scheduling for syn_extract

@@ -15,20 +15,20 @@ Functions:
     generate_488_layout: Generate the 4.8.8 lattice layout
 """
 
-from pecos.qec.color.geometry import generate_488_layout
 from pecos.qec.color.code import (
     ColorCode488,
     ColorCode488Builder,
     ColorCode488Geometry,
     ColorCodeStabilizer,
 )
+from pecos.qec.color.geometry import generate_488_layout
 
 __all__ = [
-    # Geometry
-    "generate_488_layout",
     # Code classes
     "ColorCode488",
+    "ColorCode488Builder",
     "ColorCode488Geometry",
     "ColorCodeStabilizer",
-    "ColorCode488Builder",
+    # Geometry
+    "generate_488_layout",
 ]

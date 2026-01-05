@@ -15,12 +15,12 @@ essential for implementing non-Clifford gates in fault-tolerant quantum computat
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from pecos.slr import Bit, Block, Comment, CReg, QReg
+from pecos.slr.misc import Return
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.steane.gates_sq.face_rots import F
 from pecos.slr.qeclib.steane.preps.encoding_circ import EncodingCircuit
 from pecos.slr.qeclib.steane.preps.plus_h_state import PrepHStateFT, PrepHStateFTRUS
-from pecos.slr import Bit, Block, Comment, CReg, QReg
-from pecos.slr.misc import Return
 from pecos.slr.types import Array, QubitType
 
 

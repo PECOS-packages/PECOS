@@ -1,8 +1,8 @@
 """Measurement and preparation gates for surface codes."""
 
+from pecos.slr import Bit
 from pecos.slr.qeclib.surface.macrolibs.preps.project_pauli import PrepProjectZ
 from pecos.slr.qeclib.surface.patches.patch_base import SurfacePatch
-from pecos.slr import Bit
 
 
 class SurfaceMeasPrepGates:

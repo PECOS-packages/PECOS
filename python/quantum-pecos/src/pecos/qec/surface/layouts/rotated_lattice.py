@@ -1,7 +1,7 @@
 # Copyright 2024 The PECOS Developers
 # Licensed under the Apache License, Version 2.0
 
-"""Rotated surface code lattice geometry.
+r"""Rotated surface code lattice geometry.
 
 The rotated surface code arranges data qubits on a diagonal lattice,
 requiring fewer physical qubits for the same code distance compared
@@ -42,7 +42,8 @@ def compute_rotated_x_stabilizers(d: int) -> list[StabilizerSupport]:
         List of StabilizerSupport for X stabilizers
     """
     if d < 3 or d % 2 == 0:
-        raise ValueError(f"Distance must be odd >= 3, got {d}")
+        msg = f"Distance must be odd >= 3, got {d}"
+        raise ValueError(msg)
 
     supports = []
     stab_idx = 0
@@ -56,32 +57,38 @@ def compute_rotated_x_stabilizers(d: int) -> list[StabilizerSupport]:
                 q_bl = (row + 1) * d + col
                 q_br = (row + 1) * d + col + 1
 
-                supports.append(StabilizerSupport(
-                    index=stab_idx,
-                    data_qubits=(q_tl, q_tr, q_bl, q_br),
-                    is_boundary=False,
-                ))
+                supports.append(
+                    StabilizerSupport(
+                        index=stab_idx,
+                        data_qubits=(q_tl, q_tr, q_bl, q_br),
+                        is_boundary=False,
+                    ),
+                )
                 stab_idx += 1
 
     # Boundary X stabilizers (weight 2) - top and bottom edges
     for col in range(0, d - 1, 2):
         q1 = col
         q2 = col + 1
-        supports.append(StabilizerSupport(
-            index=stab_idx,
-            data_qubits=(q1, q2),
-            is_boundary=True,
-        ))
+        supports.append(
+            StabilizerSupport(
+                index=stab_idx,
+                data_qubits=(q1, q2),
+                is_boundary=True,
+            ),
+        )
         stab_idx += 1
 
     for col in range((d - 1) % 2, d - 1, 2):
         q1 = (d - 1) * d + col
         q2 = (d - 1) * d + col + 1
-        supports.append(StabilizerSupport(
-            index=stab_idx,
-            data_qubits=(q1, q2),
-            is_boundary=True,
-        ))
+        supports.append(
+            StabilizerSupport(
+                index=stab_idx,
+                data_qubits=(q1, q2),
+                is_boundary=True,
+            ),
+        )
         stab_idx += 1
 
     supports.sort(key=lambda s: s.index)
@@ -98,7 +105,8 @@ def compute_rotated_z_stabilizers(d: int) -> list[StabilizerSupport]:
         List of StabilizerSupport for Z stabilizers
     """
     if d < 3 or d % 2 == 0:
-        raise ValueError(f"Distance must be odd >= 3, got {d}")
+        msg = f"Distance must be odd >= 3, got {d}"
+        raise ValueError(msg)
 
     supports = []
     stab_idx = 0
@@ -112,32 +120,38 @@ def compute_rotated_z_stabilizers(d: int) -> list[StabilizerSupport]:
                 q_bl = (row + 1) * d + col
                 q_br = (row + 1) * d + col + 1
 
-                supports.append(StabilizerSupport(
-                    index=stab_idx,
-                    data_qubits=(q_tl, q_tr, q_bl, q_br),
-                    is_boundary=False,
-                ))
+                supports.append(
+                    StabilizerSupport(
+                        index=stab_idx,
+                        data_qubits=(q_tl, q_tr, q_bl, q_br),
+                        is_boundary=False,
+                    ),
+                )
                 stab_idx += 1
 
     # Boundary Z stabilizers (weight 2) - left and right edges
     for row in range(0, d - 1, 2):
         q1 = row * d
         q2 = (row + 1) * d
-        supports.append(StabilizerSupport(
-            index=stab_idx,
-            data_qubits=(q1, q2),
-            is_boundary=True,
-        ))
+        supports.append(
+            StabilizerSupport(
+                index=stab_idx,
+                data_qubits=(q1, q2),
+                is_boundary=True,
+            ),
+        )
         stab_idx += 1
 
     for row in range((d - 1) % 2, d - 1, 2):
         q1 = row * d + (d - 1)
         q2 = (row + 1) * d + (d - 1)
-        supports.append(StabilizerSupport(
-            index=stab_idx,
-            data_qubits=(q1, q2),
-            is_boundary=True,
-        ))
+        supports.append(
+            StabilizerSupport(
+                index=stab_idx,
+                data_qubits=(q1, q2),
+                is_boundary=True,
+            ),
+        )
         stab_idx += 1
 
     supports.sort(key=lambda s: s.index)

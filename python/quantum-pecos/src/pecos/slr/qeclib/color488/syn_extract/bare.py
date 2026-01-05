@@ -4,8 +4,8 @@ from itertools import chain, cycle, repeat
 from typing import Any
 
 import pecos as pc
-from pecos.slr.qeclib.generic.check import Check
 from pecos.slr import Block, Comment, CReg, Parallel, QReg
+from pecos.slr.qeclib.generic.check import Check
 
 
 def poly2qubits(poly: list[Any], data: QReg) -> list[Any]:

@@ -13,6 +13,7 @@
 
 from collections.abc import Callable
 
+from pecos.slr import CReg, QReg
 from pecos.slr.qeclib.steane.meas.destructive_meas import (
     MeasDecode,
     Measure,
@@ -21,7 +22,6 @@ from pecos.slr.qeclib.steane.meas.destructive_meas import (
     MeasureZ,
     ProcessMeas,
 )
-from pecos.slr import CReg, QReg
 
 
 def test_MeasureX(compare_qasm: Callable[..., None]) -> None:

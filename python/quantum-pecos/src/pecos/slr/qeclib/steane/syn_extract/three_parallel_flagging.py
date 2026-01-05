@@ -15,8 +15,8 @@ detecting hook errors during stabilizer measurements in the Steane 7-qubit quant
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.slr.qeclib import qubit as gq
 from pecos.slr import Barrier, Block, Comment, CReg, QReg
+from pecos.slr.qeclib import qubit as gq
 
 
 class ThreeParallelFlaggingXZZ(Block):

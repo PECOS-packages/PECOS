@@ -15,9 +15,9 @@ representation, enabling quantum error correction.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from pecos.slr.qeclib import qubit
 from pecos.slr import Block, Comment, QReg
 from pecos.slr.misc import Return
+from pecos.slr.qeclib import qubit
 from pecos.slr.types import Array, QubitType
 
 

@@ -20,7 +20,7 @@ Example:
 
     >>> from pecos.qec.color import ColorCode488
     >>> code = ColorCode488.create(distance=3)
-    >>> print(f"Data qubits: {code.n_data}")
+    >>> print(f"Data qubits: {code.num_data}")
 """
 
 from pecos.qec import analysis, color, protocols, surface
@@ -69,7 +69,7 @@ from pecos.qec.surface import (
     parity_matrix_z,
 )
 
-__all__ = [
+__all__ = [  # noqa: RUF022
     # Submodules
     "analysis",
     "color",

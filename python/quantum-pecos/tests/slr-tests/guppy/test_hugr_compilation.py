@@ -5,9 +5,9 @@ ensuring linearity constraints are satisfied.
 """
 
 import pytest
+from pecos.slr import Block, CReg, If, Main, QReg, SlrConverter
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
-from pecos.slr import Block, CReg, If, Main, QReg, SlrConverter
 
 
 @pytest.mark.optional_dependency

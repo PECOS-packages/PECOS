@@ -15,13 +15,13 @@ Steane 7-qubit code using both fault-tolerant and non-fault-tolerant encoding me
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from pecos.slr import Barrier, Bit, Block, Comment, If, QReg, Qubit, Repeat
+from pecos.slr.misc import Return
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit import Prep
 from pecos.slr.qeclib.steane.gates_sq import sqrt_paulis
 from pecos.slr.qeclib.steane.gates_sq.hadamards import H
 from pecos.slr.qeclib.steane.gates_sq.paulis import X, Z
-from pecos.slr import Barrier, Bit, Block, Comment, If, QReg, Qubit, Repeat
-from pecos.slr.misc import Return
 from pecos.slr.types import Array, QubitType
 
 

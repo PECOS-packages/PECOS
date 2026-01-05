@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pecos.slr import CReg, QReg, Vars
 from pecos.slr.qeclib.steane.gates_sq import paulis, sqrt_paulis
 from pecos.slr.qeclib.steane.gates_sq.hadamards import H
 from pecos.slr.qeclib.steane.gates_tq import transversal_tq
@@ -26,7 +27,6 @@ from pecos.slr.qeclib.steane.meas.destructive_meas import Measure
 from pecos.slr.qeclib.steane.preps.pauli_states import PrepRUS
 from pecos.slr.qeclib.steane.syn_extract.bare import SynExtractBare
 from pecos.slr.qeclib.steane.syn_extract.flagged import SynExtractFlagged
-from pecos.slr import CReg, QReg, Vars
 
 if TYPE_CHECKING:
     from pecos.slr import Bit, Block

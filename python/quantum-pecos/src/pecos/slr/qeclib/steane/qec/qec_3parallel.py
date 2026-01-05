@@ -15,6 +15,7 @@ fault-tolerant error detection and correction using parallel syndrome extraction
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from pecos.slr import Bit, Block, CReg, If, QReg
 from pecos.slr.qeclib.steane.decoders.lookup import (
     FlagLookupQASM,
     FlagLookupQASMActiveCorrectionX,
@@ -25,7 +26,6 @@ from pecos.slr.qeclib.steane.syn_extract.three_parallel_flagging import (
     ThreeParallelFlaggingXZZ,
     ThreeParallelFlaggingZXX,
 )
-from pecos.slr import Bit, Block, CReg, If, QReg
 
 
 class ParallelFlagQECActiveCorrection(Block):

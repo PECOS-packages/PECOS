@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, NoReturn
 from warnings import warn
 
+from pecos.slr import Block, CReg, If, Permute, QReg, Vars
 from pecos.slr.qeclib.steane.decoders.lookup import (
     FlagLookupQASMActiveCorrectionX,
     FlagLookupQASMActiveCorrectionZ,
@@ -39,7 +40,6 @@ from pecos.slr.qeclib.steane.qec.qec_3parallel import (
 )
 from pecos.slr.qeclib.steane.syn_extract.bare import SynExtractBare
 from pecos.slr.qeclib.steane.syn_extract.flagged import SynExtractFlagged
-from pecos.slr import Block, CReg, If, Permute, QReg, Vars
 
 if TYPE_CHECKING:
     from pecos.slr import Bit

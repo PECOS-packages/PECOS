@@ -1,9 +1,9 @@
 """Tests for conditional resource consumption handling."""
 
 import pytest
+from pecos.slr import CReg, If, Main, QReg, SlrConverter
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
-from pecos.slr import CReg, If, Main, QReg, SlrConverter
 
 
 def test_conditional_measurement_without_else() -> None:

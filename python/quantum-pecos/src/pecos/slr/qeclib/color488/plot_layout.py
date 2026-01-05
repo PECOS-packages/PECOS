@@ -37,7 +37,7 @@ def plot_layout(
     Returns:
         The matplotlib pyplot module with the plot rendered.
     """
-    import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt  # noqa: PLC0415
 
     positions, polygons = color488.get_layout()
 

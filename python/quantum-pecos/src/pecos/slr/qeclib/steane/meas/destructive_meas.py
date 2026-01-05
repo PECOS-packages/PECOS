@@ -18,9 +18,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pecos.slr import Barrier, Block, Comment, If
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.steane.gates_sq.sqrt_paulis import SX, SYdg
-from pecos.slr import Barrier, Block, Comment, If
 
 if TYPE_CHECKING:
     from pecos.slr import Bit, CReg, QReg

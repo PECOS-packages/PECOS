@@ -88,20 +88,20 @@ class OuterCodeGeometry:
     # Boundary: [0,1] (top), [7,8] (bottom)
     # Bulk: [1,2,4,5], [3,4,6,7]
     x_stabilizers: tuple[tuple[int, ...], ...] = (
-        (0, 1),        # boundary top
+        (0, 1),  # boundary top
         (1, 2, 4, 5),  # bulk
         (3, 4, 6, 7),  # bulk
-        (7, 8),        # boundary bottom
+        (7, 8),  # boundary bottom
     )
 
     # Z stabilizers (4 total)
     # Boundary: [2,5] (right), [3,6] (left)
     # Bulk: [0,1,3,4] (same as inner Z), [4,5,7,8]
     z_stabilizers: tuple[tuple[int, ...], ...] = (
-        (2, 5),        # boundary right
+        (2, 5),  # boundary right
         (0, 1, 3, 4),  # bulk (inner code stabilizer)
         (4, 5, 7, 8),  # bulk
-        (3, 6),        # boundary left
+        (3, 6),  # boundary left
     )
 
     @property
@@ -220,9 +220,9 @@ class MSDProtocol:
         """
         return {
             0: "T+",  # T|+> magic state
-            1: "0",   # |0>
-            3: "+",   # |+>
-            4: "+",   # |+>
+            1: "0",  # |0>
+            3: "+",  # |+>
+            4: "+",  # |+>
         }
 
 

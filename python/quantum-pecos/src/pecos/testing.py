@@ -107,22 +107,22 @@ def assert_allclose(
 
             if mismatches:
                 # Count total mismatches
-                n_total_mismatches = sum(
+                num_total_mismatches = sum(
                     1
                     for d, ad in zip(diff_list, abs_desired_list, strict=False)
                     if d > atol + rtol * ad
                 )
                 msg_parts.append(
-                    f"Mismatched elements: {n_total_mismatches} / {len(actual)}",
+                    f"Mismatched elements: {num_total_mismatches} / {len(actual)}",
                 )
                 msg_parts.append("Examples of mismatched values:")
                 for idx, act_val, des_val, diff_val in mismatches:
                     msg_parts.append(
                         f"  Index {idx}: actual={act_val}, desired={des_val}, diff={diff_val}",
                     )
-                if n_total_mismatches > len(mismatches):
+                if num_total_mismatches > len(mismatches):
                     msg_parts.append(
-                        f"  ... and {n_total_mismatches - len(mismatches)} more mismatches",
+                        f"  ... and {num_total_mismatches - len(mismatches)} more mismatches",
                     )
 
         raise AssertionError("\n".join(msg_parts))
@@ -205,16 +205,16 @@ def assert_array_less(
 
         if verbose and violations:
             # Show some examples
-            n_show = min(5, len(violations))
+            num_show = min(5, len(violations))
 
             msg_parts.append("Examples of violations:")
-            for i in range(n_show):
+            for i in range(num_show):
                 idx, xv, yv = violations[i]
                 msg_parts.append(f"  Index {idx}: x={xv}, y={yv}")
 
-            if len(violations) > n_show:
+            if len(violations) > num_show:
                 msg_parts.append(
-                    f"  ... and {len(violations) - n_show} more violations",
+                    f"  ... and {len(violations) - num_show} more violations",
                 )
 
         raise AssertionError("\n".join(msg_parts))

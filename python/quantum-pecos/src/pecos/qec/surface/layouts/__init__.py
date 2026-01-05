@@ -3,6 +3,16 @@
 
 """Surface code lattice layouts."""
 
+from pecos.qec.surface.layouts.rotated_lattice import (
+    RotatedPosition,
+    compute_rotated_x_stabilizers,
+    compute_rotated_z_stabilizers,
+    generate_surface_layout,
+    get_rotated_logical_x,
+    get_rotated_logical_z,
+    rotated_id_to_position,
+    rotated_position_to_id,
+)
 from pecos.qec.surface.layouts.square_lattice import (
     StabilizerSupport,
     compute_x_stabilizer_supports,
@@ -14,18 +24,8 @@ from pecos.qec.surface.layouts.square_lattice import (
     get_bulk_stabilizers,
     get_stabilizer_counts,
 )
-from pecos.qec.surface.layouts.rotated_lattice import (
-    RotatedPosition,
-    compute_rotated_x_stabilizers,
-    compute_rotated_z_stabilizers,
-    generate_surface_layout,
-    get_rotated_logical_x,
-    get_rotated_logical_z,
-    rotated_id_to_position,
-    rotated_position_to_id,
-)
 
-__all__ = [
+__all__ = [  # noqa: RUF022
     # Rotated lattice (most common, default)
     "RotatedPosition",
     "compute_rotated_x_stabilizers",

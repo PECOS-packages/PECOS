@@ -223,7 +223,10 @@ class Surface4444(DefaultQECC):
         }
 
         # Use pecos.qec for layout generation
-        data_positions, ancilla_positions, _ = generate_nonrotated_surface_layout(width, height)
+        data_positions, ancilla_positions, _ = generate_nonrotated_surface_layout(
+            width,
+            height,
+        )
 
         # Add data qubits
         for nid, pos in enumerate(data_positions):

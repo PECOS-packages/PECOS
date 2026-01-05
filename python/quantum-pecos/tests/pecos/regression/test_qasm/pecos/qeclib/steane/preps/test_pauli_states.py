@@ -13,6 +13,7 @@
 
 from collections.abc import Callable
 
+from pecos.slr import CReg, QReg
 from pecos.slr.qeclib.steane.preps.pauli_states import (
     LogZeroRot,
     PrepEncodingFTZero,
@@ -20,7 +21,6 @@ from pecos.slr.qeclib.steane.preps.pauli_states import (
     PrepRUS,
     PrepZeroVerify,
 )
-from pecos.slr import CReg, QReg
 
 
 def test_PrepEncodingNonFTZero(compare_qasm: Callable[..., None]) -> None:

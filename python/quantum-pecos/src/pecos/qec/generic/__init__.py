@@ -15,8 +15,8 @@ from pecos.qec.generic.check import (
 )
 
 __all__ = [
-    "PauliType",
-    "PauliOperator",
-    "StabilizerCheck",
     "CheckSchedule",
+    "PauliOperator",
+    "PauliType",
+    "StabilizerCheck",
 ]

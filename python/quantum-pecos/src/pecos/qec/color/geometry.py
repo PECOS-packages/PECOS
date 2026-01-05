@@ -18,7 +18,9 @@ Key properties:
 from typing import Any
 
 
-def generate_488_layout(distance: int) -> tuple[dict[int, tuple[int, int]], list[list[Any]]]:
+def generate_488_layout(
+    distance: int,
+) -> tuple[dict[int, tuple[int, int]], list[list[Any]]]:
     """Generate the 4.8.8 color code layout.
 
     Creates a triangular lattice with the specified code distance.
@@ -31,7 +33,8 @@ def generate_488_layout(distance: int) -> tuple[dict[int, tuple[int, int]], list
         Each polygon is [qubit_id, ..., color_string]
     """
     if distance < 3 or distance % 2 == 0:
-        raise ValueError(f"Distance must be odd >= 3, got {distance}")
+        msg = f"Distance must be odd >= 3, got {distance}"
+        raise ValueError(msg)
 
     lattice_height = 4 * distance - 4
     lattice_width = 2 * distance - 2

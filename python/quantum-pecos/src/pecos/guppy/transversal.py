@@ -11,17 +11,18 @@ data qubits i. This preserves the CSS structure: X errors on control propagate
 to X errors on target, Z errors on target propagate to Z errors on control.
 """
 
-from dataclasses import dataclass
-from enum import Enum
-from pathlib import Path
 import importlib.util
 import sys
 import tempfile
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 
 class CSSCodeType(Enum):
     """Supported CSS code types."""
+
     SURFACE = "surface"
     COLOR = "color"
 
@@ -31,17 +32,17 @@ class CSSCodeSpec(Protocol):
     """Protocol for CSS code specifications."""
 
     @property
-    def n_data(self) -> int:
+    def num_data(self) -> int:
         """Number of data qubits."""
         ...
 
     @property
-    def n_x_stabilizers(self) -> int:
+    def num_x_stabilizers(self) -> int:
         """Number of X stabilizers."""
         ...
 
     @property
-    def n_z_stabilizers(self) -> int:
+    def num_z_stabilizers(self) -> int:
         """Number of Z stabilizers."""
         ...
 
@@ -64,30 +65,35 @@ class TransversalConfig:
     ctrl_logical_x: bool = False  # Apply logical X to control before CNOT
 
 
-# Cache for generated modules
-_css_transversal_cache: dict[str, dict] = {}
-_temp_dir: Path | None = None
+# Module state container (avoids global statement)
+class _ModuleState:
+    """Container for module-level mutable state."""
+
+    temp_dir: Path | None = None
+    css_transversal_cache: dict[str, dict] = {}  # noqa: RUF012
+
+
+_state = _ModuleState()
 
 
 def _get_temp_dir() -> Path:
     """Get or create temporary directory for generated code."""
-    global _temp_dir
-    if _temp_dir is None:
-        _temp_dir = Path(tempfile.mkdtemp(prefix="pecos_guppy_css_trans_"))
-    return _temp_dir
+    if _state.temp_dir is None:
+        _state.temp_dir = Path(tempfile.mkdtemp(prefix="pecos_guppy_css_trans_"))
+    return _state.temp_dir
 
 
 def _get_surface_code_info(d: int) -> dict:
     """Get surface code parameters."""
-    from pecos.qec.surface import SurfacePatch
+    from pecos.qec.surface import SurfacePatch  # noqa: PLC0415
 
     patch = SurfacePatch.create(distance=d)
     geom = patch.geometry
 
     return {
-        "n_data": d * d,
-        "n_x_stab": len(geom.x_stabilizers),
-        "n_z_stab": len(geom.z_stabilizers),
+        "num_data": d * d,
+        "num_x_stab": len(geom.x_stabilizers),
+        "num_z_stab": len(geom.z_stabilizers),
         "x_stabilizers": geom.x_stabilizers,
         "z_stabilizers": geom.z_stabilizers,
         "logical_x": [i * d for i in range(d)],  # Left column
@@ -99,14 +105,14 @@ def _get_surface_code_info(d: int) -> dict:
 
 def _get_color_code_info(d: int) -> dict:
     """Get color code parameters."""
-    from pecos.qec.color import ColorCode488
+    from pecos.qec.color import ColorCode488  # noqa: PLC0415
 
     code = ColorCode488.create(distance=d)
 
     return {
-        "n_data": code.n_data,
-        "n_x_stab": code.n_stabilizers,  # Same stabilizers for X and Z
-        "n_z_stab": code.n_stabilizers,
+        "num_data": code.num_data,
+        "num_x_stab": code.num_stabilizers,  # Same stabilizers for X and Z
+        "num_z_stab": code.num_stabilizers,
         "stabilizers": code.stabilizers,
         "logical_x": list(code.get_logical_x()),
         "logical_z": list(code.get_logical_z()),
@@ -118,9 +124,9 @@ def _get_color_code_info(d: int) -> dict:
 def generate_surface_transversal_source(d: int) -> str:
     """Generate transversal CNOT source for surface codes."""
     info = _get_surface_code_info(d)
-    n_data = info["n_data"]
-    n_x_stab = info["n_x_stab"]
-    n_z_stab = info["n_z_stab"]
+    num_data = info["num_data"]
+    num_x_stab = info["num_x_stab"]
+    num_z_stab = info["num_z_stab"]
 
     lines = [
         f'"""Transversal CNOT for distance-{d} surface codes.',
@@ -137,157 +143,186 @@ def generate_surface_transversal_source(d: int) -> str:
     ]
 
     # Struct definitions
-    lines.extend([
-        "@guppy.struct",
-        f"class {info['struct_name']}:",
-        f'    """Surface code patch d={d}."""',
-        "",
-        f"    data: array[qubit, {n_data}]",
-        "",
-        "",
-        "@guppy.struct",
-        f"class {info['syndrome_name']}:",
-        f'    """Syndrome for d={d} surface code."""',
-        "",
-        f"    synx: array[bool, {n_x_stab}]",
-        f"    synz: array[bool, {n_z_stab}]",
-        "",
-        "",
-    ])
+    lines.extend(
+        [
+            "@guppy.struct",
+            f"class {info['struct_name']}:",
+            f'    """Surface code patch d={d}."""',
+            "",
+            f"    data: array[qubit, {num_data}]",
+            "",
+            "",
+            "@guppy.struct",
+            f"class {info['syndrome_name']}:",
+            f'    """Syndrome for d={d} surface code."""',
+            "",
+            f"    synx: array[bool, {num_x_stab}]",
+            f"    synz: array[bool, {num_z_stab}]",
+            "",
+            "",
+        ],
+    )
 
     # X stabilizer measurements
     lines.append("# === X Stabilizer Measurements ===")
     lines.append("")
 
     for stab in info["x_stabilizers"]:
-        lines.extend([
-            "@guppy",
-            f"def measure_x_stab_{stab.index}(ax: qubit, data: array[qubit, {n_data}]) -> bool:",
-            f'    """Measure X stabilizer {stab.index}."""',
-            "    h(ax)",
-        ])
-        for q in stab.data_qubits:
-            lines.append(f"    cx(ax, data[{q}])")
-        lines.extend([
-            "    h(ax)",
-            "    return measure_and_reset(ax)",
-            "",
-            "",
-        ])
+        lines.extend(
+            [
+                "@guppy",
+                f"def measure_x_stab_{stab.index}(ax: qubit, data: array[qubit, {num_data}]) -> bool:",
+                f'    """Measure X stabilizer {stab.index}."""',
+                "    h(ax)",
+            ],
+        )
+        lines.extend(f"    cx(ax, data[{q}])" for q in stab.data_qubits)
+        lines.extend(
+            [
+                "    h(ax)",
+                "    return measure_and_reset(ax)",
+                "",
+                "",
+            ],
+        )
 
     # Z stabilizer measurements
     lines.append("# === Z Stabilizer Measurements ===")
     lines.append("")
 
     for stab in info["z_stabilizers"]:
-        lines.extend([
-            "@guppy",
-            f"def measure_z_stab_{stab.index}(az: qubit, data: array[qubit, {n_data}]) -> bool:",
-            f'    """Measure Z stabilizer {stab.index}."""',
-        ])
-        for q in stab.data_qubits:
-            lines.append(f"    cx(data[{q}], az)")
-        lines.extend([
-            "    return measure_and_reset(az)",
-            "",
-            "",
-        ])
+        lines.extend(
+            [
+                "@guppy",
+                f"def measure_z_stab_{stab.index}(az: qubit, data: array[qubit, {num_data}]) -> bool:",
+                f'    """Measure Z stabilizer {stab.index}."""',
+            ],
+        )
+        lines.extend(f"    cx(data[{q}], az)" for q in stab.data_qubits)
+        lines.extend(
+            [
+                "    return measure_and_reset(az)",
+                "",
+                "",
+            ],
+        )
 
     # Syndrome extraction
     x_calls = ", ".join(f"sx{s.index}" for s in info["x_stabilizers"])
     z_calls = ", ".join(f"sz{s.index}" for s in info["z_stabilizers"])
 
-    lines.extend([
-        "# === Syndrome Extraction ===",
-        "",
-        "@guppy",
-        f"def syndrome_extraction(",
-        f"    surf: {info['struct_name']},",
-        "    ax: qubit,",
-        "    az: qubit,",
-        f") -> {info['syndrome_name']}:",
-        '    """Extract full syndrome."""',
-        "    # Z stabilizers",
-    ])
+    lines.extend(
+        [
+            "# === Syndrome Extraction ===",
+            "",
+            "@guppy",
+            "def syndrome_extraction(",
+            f"    surf: {info['struct_name']},",
+            "    ax: qubit,",
+            "    az: qubit,",
+            f") -> {info['syndrome_name']}:",
+            '    """Extract full syndrome."""',
+            "    # Z stabilizers",
+        ],
+    )
 
-    for stab in info["z_stabilizers"]:
-        lines.append(f"    sz{stab.index} = measure_z_stab_{stab.index}(az, surf.data)")
+    lines.extend(
+        f"    sz{stab.index} = measure_z_stab_{stab.index}(az, surf.data)"
+        for stab in info["z_stabilizers"]
+    )
 
     lines.append("")
     lines.append("    # X stabilizers")
 
-    for stab in info["x_stabilizers"]:
-        lines.append(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)")
+    lines.extend(
+        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)"
+        for stab in info["x_stabilizers"]
+    )
 
-    lines.extend([
-        "",
-        f"    synx = array({x_calls})",
-        f"    synz = array({z_calls})",
-        "",
-        f"    return {info['syndrome_name']}(synx, synz)",
-        "",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            f"    synx = array({x_calls})",
+            f"    synz = array({z_calls})",
+            "",
+            f"    return {info['syndrome_name']}(synx, synz)",
+            "",
+            "",
+        ],
+    )
 
     # Initialization
-    lines.extend([
-        "# === Initialization ===",
-        "",
-        "@guppy",
-        f"def init_z_basis(surf: {info['struct_name']}, ax: qubit) -> array[bool, {n_x_stab}]:",
-        '    """Initialize logical |0_L> and extract initial X syndrome."""',
-    ])
+    lines.extend(
+        [
+            "# === Initialization ===",
+            "",
+            "@guppy",
+            f"def init_z_basis(surf: {info['struct_name']}, ax: qubit) -> array[bool, {num_x_stab}]:",
+            '    """Initialize logical |0_L> and extract initial X syndrome."""',
+        ],
+    )
 
-    for stab in info["x_stabilizers"]:
-        lines.append(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)")
+    lines.extend(
+        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, surf.data)"
+        for stab in info["x_stabilizers"]
+    )
 
-    lines.extend([
-        "",
-        f"    return array({x_calls})",
-        "",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            f"    return array({x_calls})",
+            "",
+            "",
+        ],
+    )
 
     # Apply logical X
-    lines.extend([
-        "@guppy",
-        f"def apply_logical_x(surf: {info['struct_name']}) -> None:",
-        '    """Apply logical X operator."""',
-    ])
-    for q in info["logical_x"]:
-        lines.append(f"    x(surf.data[{q}])")
-    lines.extend([
-        "",
-        "",
-    ])
+    lines.extend(
+        [
+            "@guppy",
+            f"def apply_logical_x(surf: {info['struct_name']}) -> None:",
+            '    """Apply logical X operator."""',
+        ],
+    )
+    lines.extend(f"    x(surf.data[{q}])" for q in info["logical_x"])
+    lines.extend(
+        [
+            "",
+            "",
+        ],
+    )
 
     # Transversal CNOT
-    lines.extend([
-        "# === Transversal Operations ===",
-        "",
-        "@guppy",
-        f"def transversal_cnot(ctrl: {info['struct_name']}, tgt: {info['struct_name']}) -> None:",
-        '    """Apply transversal CNOT: ctrl[i] controls tgt[i]."""',
-        f"    for i in range({n_data}):",
-        "        cx(ctrl.data[i], tgt.data[i])",
-        "",
-        "",
-    ])
+    lines.extend(
+        [
+            "# === Transversal Operations ===",
+            "",
+            "@guppy",
+            f"def transversal_cnot(ctrl: {info['struct_name']}, tgt: {info['struct_name']}) -> None:",
+            '    """Apply transversal CNOT: ctrl[i] controls tgt[i]."""',
+            f"    for i in range({num_data}):",
+            "        cx(ctrl.data[i], tgt.data[i])",
+            "",
+            "",
+        ],
+    )
 
     # Measurement
-    lines.extend([
-        "# === Measurement ===",
-        "",
-        "@guppy",
-        f"def measure_z_basis(surf: {info['struct_name']} @ owned) -> array[bool, {n_data}]:",
-        '    """Destructively measure in Z basis."""',
-        "    return measure_array(surf.data)",
-        "",
-        "",
-    ])
+    lines.extend(
+        [
+            "# === Measurement ===",
+            "",
+            "@guppy",
+            f"def measure_z_basis(surf: {info['struct_name']} @ owned) -> array[bool, {num_data}]:",
+            '    """Destructively measure in Z basis."""',
+            "    return measure_array(surf.data)",
+            "",
+            "",
+        ],
+    )
 
     # Factory functions
-    _add_transversal_factory_functions(lines, info, n_data, n_x_stab)
+    _add_transversal_factory_functions(lines, info, num_data, num_x_stab)
 
     return "\n".join(lines)
 
@@ -295,8 +330,8 @@ def generate_surface_transversal_source(d: int) -> str:
 def generate_color_transversal_source(d: int) -> str:
     """Generate transversal CNOT source for color codes."""
     info = _get_color_code_info(d)
-    n_data = info["n_data"]
-    n_stab = info["n_x_stab"]  # Same for X and Z
+    num_data = info["num_data"]
+    num_stab = info["num_x_stab"]  # Same for X and Z
 
     lines = [
         f'"""Transversal CNOT for distance-{d} color codes.',
@@ -313,383 +348,426 @@ def generate_color_transversal_source(d: int) -> str:
     ]
 
     # Struct definitions
-    lines.extend([
-        "@guppy.struct",
-        f"class {info['struct_name']}:",
-        f'    """Color code patch d={d}."""',
-        "",
-        f"    data: array[qubit, {n_data}]",
-        "",
-        "",
-        "@guppy.struct",
-        f"class {info['syndrome_name']}:",
-        f'    """Syndrome for d={d} color code."""',
-        "",
-        f"    synx: array[bool, {n_stab}]",
-        f"    synz: array[bool, {n_stab}]",
-        "",
-        "",
-    ])
+    lines.extend(
+        [
+            "@guppy.struct",
+            f"class {info['struct_name']}:",
+            f'    """Color code patch d={d}."""',
+            "",
+            f"    data: array[qubit, {num_data}]",
+            "",
+            "",
+            "@guppy.struct",
+            f"class {info['syndrome_name']}:",
+            f'    """Syndrome for d={d} color code."""',
+            "",
+            f"    synx: array[bool, {num_stab}]",
+            f"    synz: array[bool, {num_stab}]",
+            "",
+            "",
+        ],
+    )
 
     # X stabilizer measurements (H-CNOT-H pattern)
     lines.append("# === X Stabilizer Measurements ===")
     lines.append("")
 
     for stab in info["stabilizers"]:
-        lines.extend([
-            "@guppy",
-            f"def measure_x_stab_{stab.index}(ax: qubit, data: array[qubit, {n_data}]) -> bool:",
-            f'    """Measure X stabilizer {stab.index} ({stab.color})."""',
-            "    h(ax)",
-        ])
-        for q in stab.qubits:
-            lines.append(f"    cx(ax, data[{q}])")
-        lines.extend([
-            "    h(ax)",
-            "    return measure_and_reset(ax)",
-            "",
-            "",
-        ])
+        lines.extend(
+            [
+                "@guppy",
+                f"def measure_x_stab_{stab.index}(ax: qubit, data: array[qubit, {num_data}]) -> bool:",
+                f'    """Measure X stabilizer {stab.index} ({stab.color})."""',
+                "    h(ax)",
+            ],
+        )
+        lines.extend(f"    cx(ax, data[{q}])" for q in stab.qubits)
+        lines.extend(
+            [
+                "    h(ax)",
+                "    return measure_and_reset(ax)",
+                "",
+                "",
+            ],
+        )
 
     # Z stabilizer measurements
     lines.append("# === Z Stabilizer Measurements ===")
     lines.append("")
 
     for stab in info["stabilizers"]:
-        lines.extend([
-            "@guppy",
-            f"def measure_z_stab_{stab.index}(az: qubit, data: array[qubit, {n_data}]) -> bool:",
-            f'    """Measure Z stabilizer {stab.index} ({stab.color})."""',
-        ])
-        for q in stab.qubits:
-            lines.append(f"    cx(data[{q}], az)")
-        lines.extend([
-            "    return measure_and_reset(az)",
-            "",
-            "",
-        ])
+        lines.extend(
+            [
+                "@guppy",
+                f"def measure_z_stab_{stab.index}(az: qubit, data: array[qubit, {num_data}]) -> bool:",
+                f'    """Measure Z stabilizer {stab.index} ({stab.color})."""',
+            ],
+        )
+        lines.extend(f"    cx(data[{q}], az)" for q in stab.qubits)
+        lines.extend(
+            [
+                "    return measure_and_reset(az)",
+                "",
+                "",
+            ],
+        )
 
     # Syndrome extraction
     x_calls = ", ".join(f"sx{s.index}" for s in info["stabilizers"])
     z_calls = ", ".join(f"sz{s.index}" for s in info["stabilizers"])
 
-    lines.extend([
-        "# === Syndrome Extraction ===",
-        "",
-        "@guppy",
-        f"def syndrome_extraction(",
-        f"    code: {info['struct_name']},",
-        "    ax: qubit,",
-        "    az: qubit,",
-        f") -> {info['syndrome_name']}:",
-        '    """Extract full syndrome."""',
-        "    # Z stabilizers first",
-    ])
+    lines.extend(
+        [
+            "# === Syndrome Extraction ===",
+            "",
+            "@guppy",
+            "def syndrome_extraction(",
+            f"    code: {info['struct_name']},",
+            "    ax: qubit,",
+            "    az: qubit,",
+            f") -> {info['syndrome_name']}:",
+            '    """Extract full syndrome."""',
+            "    # Z stabilizers first",
+        ],
+    )
 
-    for stab in info["stabilizers"]:
-        lines.append(f"    sz{stab.index} = measure_z_stab_{stab.index}(az, code.data)")
+    lines.extend(
+        f"    sz{stab.index} = measure_z_stab_{stab.index}(az, code.data)"
+        for stab in info["stabilizers"]
+    )
 
     lines.append("")
     lines.append("    # X stabilizers")
 
-    for stab in info["stabilizers"]:
-        lines.append(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, code.data)")
+    lines.extend(
+        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, code.data)"
+        for stab in info["stabilizers"]
+    )
 
-    lines.extend([
-        "",
-        f"    synx = array({x_calls})",
-        f"    synz = array({z_calls})",
-        "",
-        f"    return {info['syndrome_name']}(synx, synz)",
-        "",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            f"    synx = array({x_calls})",
+            f"    synz = array({z_calls})",
+            "",
+            f"    return {info['syndrome_name']}(synx, synz)",
+            "",
+            "",
+        ],
+    )
 
     # Initialization
-    lines.extend([
-        "# === Initialization ===",
-        "",
-        "@guppy",
-        f"def init_z_basis(code: {info['struct_name']}, ax: qubit) -> array[bool, {n_stab}]:",
-        '    """Initialize logical |0_L> and extract initial X syndrome."""',
-    ])
+    lines.extend(
+        [
+            "# === Initialization ===",
+            "",
+            "@guppy",
+            f"def init_z_basis(code: {info['struct_name']}, ax: qubit) -> array[bool, {num_stab}]:",
+            '    """Initialize logical |0_L> and extract initial X syndrome."""',
+        ],
+    )
 
-    for stab in info["stabilizers"]:
-        lines.append(f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, code.data)")
+    lines.extend(
+        f"    sx{stab.index} = measure_x_stab_{stab.index}(ax, code.data)"
+        for stab in info["stabilizers"]
+    )
 
-    lines.extend([
-        "",
-        f"    return array({x_calls})",
-        "",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            f"    return array({x_calls})",
+            "",
+            "",
+        ],
+    )
 
     # Apply logical X
-    lines.extend([
-        "@guppy",
-        f"def apply_logical_x(code: {info['struct_name']}) -> None:",
-        '    """Apply logical X operator."""',
-    ])
-    for q in info["logical_x"]:
-        lines.append(f"    x(code.data[{q}])")
-    lines.extend([
-        "",
-        "",
-    ])
+    lines.extend(
+        [
+            "@guppy",
+            f"def apply_logical_x(code: {info['struct_name']}) -> None:",
+            '    """Apply logical X operator."""',
+        ],
+    )
+    lines.extend(f"    x(code.data[{q}])" for q in info["logical_x"])
+    lines.extend(
+        [
+            "",
+            "",
+        ],
+    )
 
     # Transversal CNOT
-    lines.extend([
-        "# === Transversal Operations ===",
-        "",
-        "@guppy",
-        f"def transversal_cnot(ctrl: {info['struct_name']}, tgt: {info['struct_name']}) -> None:",
-        '    """Apply transversal CNOT: ctrl[i] controls tgt[i]."""',
-        f"    for i in range({n_data}):",
-        "        cx(ctrl.data[i], tgt.data[i])",
-        "",
-        "",
-    ])
+    lines.extend(
+        [
+            "# === Transversal Operations ===",
+            "",
+            "@guppy",
+            f"def transversal_cnot(ctrl: {info['struct_name']}, tgt: {info['struct_name']}) -> None:",
+            '    """Apply transversal CNOT: ctrl[i] controls tgt[i]."""',
+            f"    for i in range({num_data}):",
+            "        cx(ctrl.data[i], tgt.data[i])",
+            "",
+            "",
+        ],
+    )
 
     # Measurement
-    lines.extend([
-        "# === Measurement ===",
-        "",
-        "@guppy",
-        f"def measure_z_basis(code: {info['struct_name']} @ owned) -> array[bool, {n_data}]:",
-        '    """Destructively measure in Z basis."""',
-        "    return measure_array(code.data)",
-        "",
-        "",
-    ])
+    lines.extend(
+        [
+            "# === Measurement ===",
+            "",
+            "@guppy",
+            f"def measure_z_basis(code: {info['struct_name']} @ owned) -> array[bool, {num_data}]:",
+            '    """Destructively measure in Z basis."""',
+            "    return measure_array(code.data)",
+            "",
+            "",
+        ],
+    )
 
     # Factory functions
-    _add_color_transversal_factory_functions(lines, info, n_data, n_stab)
+    _add_color_transversal_factory_functions(lines, info, num_data, num_stab)
 
     return "\n".join(lines)
 
 
-def _add_transversal_factory_functions(lines: list[str], info: dict, n_data: int, n_stab: int):
+def _add_transversal_factory_functions(
+    lines: list[str],
+    info: dict,
+    num_data: int,
+    _num_stab: int,
+) -> None:
     """Add factory functions for surface code transversal experiments."""
     struct_name = info["struct_name"]
 
-    lines.extend([
-        "# === Transversal Experiments ===",
-        "",
-        "def make_transversal_cnot(num_rounds: int):",
-        '    """Create transversal CNOT experiment: |0_L>|0_L> -> |0_L>|0_L>."""',
-        "",
-        "    @guppy",
-        "    def transversal_cnot_exp() -> None:",
-        '        """Transversal CNOT experiment."""',
-        f"        ctrl_data = array(qubit() for _ in range({n_data}))",
-        f"        tgt_data = array(qubit() for _ in range({n_data}))",
-        "        ax_ctrl = qubit()",
-        "        az_ctrl = qubit()",
-        "        ax_tgt = qubit()",
-        "        az_tgt = qubit()",
-        "",
-        f"        ctrl = {struct_name}(ctrl_data)",
-        f"        tgt = {struct_name}(tgt_data)",
-        "",
-        "        # Initialize both patches in |0_L>",
-        "        init_syn_ctrl = init_z_basis(ctrl, ax_ctrl)",
-        "        init_syn_tgt = init_z_basis(tgt, ax_tgt)",
-        '        result("init_synx_ctrl", init_syn_ctrl)',
-        '        result("init_synx_tgt", init_syn_tgt)',
-        "",
-        "        # Apply transversal CNOT",
-        "        transversal_cnot(ctrl, tgt)",
-        "",
-        "        # Syndrome extraction rounds",
-        "        for _t in range(comptime(num_rounds)):",
-        "            syn_ctrl = syndrome_extraction(ctrl, ax_ctrl, az_ctrl)",
-        "            syn_tgt = syndrome_extraction(tgt, ax_tgt, az_tgt)",
-        '            result("synx_ctrl", syn_ctrl.synx)',
-        '            result("synz_ctrl", syn_ctrl.synz)',
-        '            result("synx_tgt", syn_tgt.synx)',
-        '            result("synz_tgt", syn_tgt.synz)',
-        "",
-        "        # Final measurement",
-        "        final_ctrl = measure_z_basis(ctrl)",
-        "        final_tgt = measure_z_basis(tgt)",
-        '        result("final_ctrl", final_ctrl)',
-        '        result("final_tgt", final_tgt)',
-        "",
-        "        discard(ax_ctrl)",
-        "        discard(az_ctrl)",
-        "        discard(ax_tgt)",
-        "        discard(az_tgt)",
-        "",
-        "    return transversal_cnot_exp",
-        "",
-        "",
-        "def make_transversal_cnot_with_x(num_rounds: int):",
-        '    """Create transversal CNOT experiment: |1_L>|0_L> -> |1_L>|1_L>."""',
-        "",
-        "    @guppy",
-        "    def transversal_cnot_with_x_exp() -> None:",
-        '        """Transversal CNOT with X experiment."""',
-        f"        ctrl_data = array(qubit() for _ in range({n_data}))",
-        f"        tgt_data = array(qubit() for _ in range({n_data}))",
-        "        ax_ctrl = qubit()",
-        "        az_ctrl = qubit()",
-        "        ax_tgt = qubit()",
-        "        az_tgt = qubit()",
-        "",
-        f"        ctrl = {struct_name}(ctrl_data)",
-        f"        tgt = {struct_name}(tgt_data)",
-        "",
-        "        # Initialize both patches in |0_L>",
-        "        init_syn_ctrl = init_z_basis(ctrl, ax_ctrl)",
-        "        init_syn_tgt = init_z_basis(tgt, ax_tgt)",
-        '        result("init_synx_ctrl", init_syn_ctrl)',
-        '        result("init_synx_tgt", init_syn_tgt)',
-        "",
-        "        # Apply logical X to control to get |1_L>",
-        "        apply_logical_x(ctrl)",
-        "",
-        "        # Apply transversal CNOT",
-        "        transversal_cnot(ctrl, tgt)",
-        "",
-        "        # Syndrome extraction rounds",
-        "        for _t in range(comptime(num_rounds)):",
-        "            syn_ctrl = syndrome_extraction(ctrl, ax_ctrl, az_ctrl)",
-        "            syn_tgt = syndrome_extraction(tgt, ax_tgt, az_tgt)",
-        '            result("synx_ctrl", syn_ctrl.synx)',
-        '            result("synz_ctrl", syn_ctrl.synz)',
-        '            result("synx_tgt", syn_tgt.synx)',
-        '            result("synz_tgt", syn_tgt.synz)',
-        "",
-        "        # Final measurement",
-        "        final_ctrl = measure_z_basis(ctrl)",
-        "        final_tgt = measure_z_basis(tgt)",
-        '        result("final_ctrl", final_ctrl)',
-        '        result("final_tgt", final_tgt)',
-        "",
-        "        discard(ax_ctrl)",
-        "        discard(az_ctrl)",
-        "        discard(ax_tgt)",
-        "        discard(az_tgt)",
-        "",
-        "    return transversal_cnot_with_x_exp",
-        "",
-    ])
+    lines.extend(
+        [
+            "# === Transversal Experiments ===",
+            "",
+            "def make_transversal_cnot(num_rounds: int):",
+            '    """Create transversal CNOT experiment: |0_L>|0_L> -> |0_L>|0_L>."""',
+            "",
+            "    @guppy",
+            "    def transversal_cnot_exp() -> None:",
+            '        """Transversal CNOT experiment."""',
+            f"        ctrl_data = array(qubit() for _ in range({num_data}))",
+            f"        tgt_data = array(qubit() for _ in range({num_data}))",
+            "        ax_ctrl = qubit()",
+            "        az_ctrl = qubit()",
+            "        ax_tgt = qubit()",
+            "        az_tgt = qubit()",
+            "",
+            f"        ctrl = {struct_name}(ctrl_data)",
+            f"        tgt = {struct_name}(tgt_data)",
+            "",
+            "        # Initialize both patches in |0_L>",
+            "        init_syn_ctrl = init_z_basis(ctrl, ax_ctrl)",
+            "        init_syn_tgt = init_z_basis(tgt, ax_tgt)",
+            '        result("init_synx_ctrl", init_syn_ctrl)',
+            '        result("init_synx_tgt", init_syn_tgt)',
+            "",
+            "        # Apply transversal CNOT",
+            "        transversal_cnot(ctrl, tgt)",
+            "",
+            "        # Syndrome extraction rounds",
+            "        for _t in range(comptime(num_rounds)):",
+            "            syn_ctrl = syndrome_extraction(ctrl, ax_ctrl, az_ctrl)",
+            "            syn_tgt = syndrome_extraction(tgt, ax_tgt, az_tgt)",
+            '            result("synx_ctrl", syn_ctrl.synx)',
+            '            result("synz_ctrl", syn_ctrl.synz)',
+            '            result("synx_tgt", syn_tgt.synx)',
+            '            result("synz_tgt", syn_tgt.synz)',
+            "",
+            "        # Final measurement",
+            "        final_ctrl = measure_z_basis(ctrl)",
+            "        final_tgt = measure_z_basis(tgt)",
+            '        result("final_ctrl", final_ctrl)',
+            '        result("final_tgt", final_tgt)',
+            "",
+            "        discard(ax_ctrl)",
+            "        discard(az_ctrl)",
+            "        discard(ax_tgt)",
+            "        discard(az_tgt)",
+            "",
+            "    return transversal_cnot_exp",
+            "",
+            "",
+            "def make_transversal_cnot_with_x(num_rounds: int):",
+            '    """Create transversal CNOT experiment: |1_L>|0_L> -> |1_L>|1_L>."""',
+            "",
+            "    @guppy",
+            "    def transversal_cnot_with_x_exp() -> None:",
+            '        """Transversal CNOT with X experiment."""',
+            f"        ctrl_data = array(qubit() for _ in range({num_data}))",
+            f"        tgt_data = array(qubit() for _ in range({num_data}))",
+            "        ax_ctrl = qubit()",
+            "        az_ctrl = qubit()",
+            "        ax_tgt = qubit()",
+            "        az_tgt = qubit()",
+            "",
+            f"        ctrl = {struct_name}(ctrl_data)",
+            f"        tgt = {struct_name}(tgt_data)",
+            "",
+            "        # Initialize both patches in |0_L>",
+            "        init_syn_ctrl = init_z_basis(ctrl, ax_ctrl)",
+            "        init_syn_tgt = init_z_basis(tgt, ax_tgt)",
+            '        result("init_synx_ctrl", init_syn_ctrl)',
+            '        result("init_synx_tgt", init_syn_tgt)',
+            "",
+            "        # Apply logical X to control to get |1_L>",
+            "        apply_logical_x(ctrl)",
+            "",
+            "        # Apply transversal CNOT",
+            "        transversal_cnot(ctrl, tgt)",
+            "",
+            "        # Syndrome extraction rounds",
+            "        for _t in range(comptime(num_rounds)):",
+            "            syn_ctrl = syndrome_extraction(ctrl, ax_ctrl, az_ctrl)",
+            "            syn_tgt = syndrome_extraction(tgt, ax_tgt, az_tgt)",
+            '            result("synx_ctrl", syn_ctrl.synx)',
+            '            result("synz_ctrl", syn_ctrl.synz)',
+            '            result("synx_tgt", syn_tgt.synx)',
+            '            result("synz_tgt", syn_tgt.synz)',
+            "",
+            "        # Final measurement",
+            "        final_ctrl = measure_z_basis(ctrl)",
+            "        final_tgt = measure_z_basis(tgt)",
+            '        result("final_ctrl", final_ctrl)',
+            '        result("final_tgt", final_tgt)',
+            "",
+            "        discard(ax_ctrl)",
+            "        discard(az_ctrl)",
+            "        discard(ax_tgt)",
+            "        discard(az_tgt)",
+            "",
+            "    return transversal_cnot_with_x_exp",
+            "",
+        ],
+    )
 
 
-def _add_color_transversal_factory_functions(lines: list[str], info: dict, n_data: int, n_stab: int):
+def _add_color_transversal_factory_functions(
+    lines: list[str],
+    info: dict,
+    num_data: int,
+    _num_stab: int,
+) -> None:
     """Add factory functions for color code transversal experiments."""
     struct_name = info["struct_name"]
 
-    lines.extend([
-        "# === Transversal Experiments ===",
-        "",
-        "def make_transversal_cnot(num_rounds: int):",
-        '    """Create transversal CNOT experiment: |0_L>|0_L> -> |0_L>|0_L>."""',
-        "",
-        "    @guppy",
-        "    def transversal_cnot_exp() -> None:",
-        '        """Transversal CNOT experiment."""',
-        f"        ctrl_data = array(qubit() for _ in range({n_data}))",
-        f"        tgt_data = array(qubit() for _ in range({n_data}))",
-        "        ax_ctrl = qubit()",
-        "        az_ctrl = qubit()",
-        "        ax_tgt = qubit()",
-        "        az_tgt = qubit()",
-        "",
-        f"        ctrl = {struct_name}(ctrl_data)",
-        f"        tgt = {struct_name}(tgt_data)",
-        "",
-        "        # Initialize both patches in |0_L>",
-        "        init_syn_ctrl = init_z_basis(ctrl, ax_ctrl)",
-        "        init_syn_tgt = init_z_basis(tgt, ax_tgt)",
-        '        result("init_synx_ctrl", init_syn_ctrl)',
-        '        result("init_synx_tgt", init_syn_tgt)',
-        "",
-        "        # Apply transversal CNOT",
-        "        transversal_cnot(ctrl, tgt)",
-        "",
-        "        # Syndrome extraction rounds",
-        "        for _t in range(comptime(num_rounds)):",
-        "            syn_ctrl = syndrome_extraction(ctrl, ax_ctrl, az_ctrl)",
-        "            syn_tgt = syndrome_extraction(tgt, ax_tgt, az_tgt)",
-        '            result("synx_ctrl", syn_ctrl.synx)',
-        '            result("synz_ctrl", syn_ctrl.synz)',
-        '            result("synx_tgt", syn_tgt.synx)',
-        '            result("synz_tgt", syn_tgt.synz)',
-        "",
-        "        # Final measurement",
-        "        final_ctrl = measure_z_basis(ctrl)",
-        "        final_tgt = measure_z_basis(tgt)",
-        '        result("final_ctrl", final_ctrl)',
-        '        result("final_tgt", final_tgt)',
-        "",
-        "        discard(ax_ctrl)",
-        "        discard(az_ctrl)",
-        "        discard(ax_tgt)",
-        "        discard(az_tgt)",
-        "",
-        "    return transversal_cnot_exp",
-        "",
-        "",
-        "def make_transversal_cnot_with_x(num_rounds: int):",
-        '    """Create transversal CNOT experiment: |1_L>|0_L> -> |1_L>|1_L>."""',
-        "",
-        "    @guppy",
-        "    def transversal_cnot_with_x_exp() -> None:",
-        '        """Transversal CNOT with X experiment."""',
-        f"        ctrl_data = array(qubit() for _ in range({n_data}))",
-        f"        tgt_data = array(qubit() for _ in range({n_data}))",
-        "        ax_ctrl = qubit()",
-        "        az_ctrl = qubit()",
-        "        ax_tgt = qubit()",
-        "        az_tgt = qubit()",
-        "",
-        f"        ctrl = {struct_name}(ctrl_data)",
-        f"        tgt = {struct_name}(tgt_data)",
-        "",
-        "        # Initialize both patches in |0_L>",
-        "        init_syn_ctrl = init_z_basis(ctrl, ax_ctrl)",
-        "        init_syn_tgt = init_z_basis(tgt, ax_tgt)",
-        '        result("init_synx_ctrl", init_syn_ctrl)',
-        '        result("init_synx_tgt", init_syn_tgt)',
-        "",
-        "        # Apply logical X to control to get |1_L>",
-        "        apply_logical_x(ctrl)",
-        "",
-        "        # Apply transversal CNOT",
-        "        transversal_cnot(ctrl, tgt)",
-        "",
-        "        # Syndrome extraction rounds",
-        "        for _t in range(comptime(num_rounds)):",
-        "            syn_ctrl = syndrome_extraction(ctrl, ax_ctrl, az_ctrl)",
-        "            syn_tgt = syndrome_extraction(tgt, ax_tgt, az_tgt)",
-        '            result("synx_ctrl", syn_ctrl.synx)',
-        '            result("synz_ctrl", syn_ctrl.synz)',
-        '            result("synx_tgt", syn_tgt.synx)',
-        '            result("synz_tgt", syn_tgt.synz)',
-        "",
-        "        # Final measurement",
-        "        final_ctrl = measure_z_basis(ctrl)",
-        "        final_tgt = measure_z_basis(tgt)",
-        '        result("final_ctrl", final_ctrl)',
-        '        result("final_tgt", final_tgt)',
-        "",
-        "        discard(ax_ctrl)",
-        "        discard(az_ctrl)",
-        "        discard(ax_tgt)",
-        "        discard(az_tgt)",
-        "",
-        "    return transversal_cnot_with_x_exp",
-        "",
-    ])
+    lines.extend(
+        [
+            "# === Transversal Experiments ===",
+            "",
+            "def make_transversal_cnot(num_rounds: int):",
+            '    """Create transversal CNOT experiment: |0_L>|0_L> -> |0_L>|0_L>."""',
+            "",
+            "    @guppy",
+            "    def transversal_cnot_exp() -> None:",
+            '        """Transversal CNOT experiment."""',
+            f"        ctrl_data = array(qubit() for _ in range({num_data}))",
+            f"        tgt_data = array(qubit() for _ in range({num_data}))",
+            "        ax_ctrl = qubit()",
+            "        az_ctrl = qubit()",
+            "        ax_tgt = qubit()",
+            "        az_tgt = qubit()",
+            "",
+            f"        ctrl = {struct_name}(ctrl_data)",
+            f"        tgt = {struct_name}(tgt_data)",
+            "",
+            "        # Initialize both patches in |0_L>",
+            "        init_syn_ctrl = init_z_basis(ctrl, ax_ctrl)",
+            "        init_syn_tgt = init_z_basis(tgt, ax_tgt)",
+            '        result("init_synx_ctrl", init_syn_ctrl)',
+            '        result("init_synx_tgt", init_syn_tgt)',
+            "",
+            "        # Apply transversal CNOT",
+            "        transversal_cnot(ctrl, tgt)",
+            "",
+            "        # Syndrome extraction rounds",
+            "        for _t in range(comptime(num_rounds)):",
+            "            syn_ctrl = syndrome_extraction(ctrl, ax_ctrl, az_ctrl)",
+            "            syn_tgt = syndrome_extraction(tgt, ax_tgt, az_tgt)",
+            '            result("synx_ctrl", syn_ctrl.synx)',
+            '            result("synz_ctrl", syn_ctrl.synz)',
+            '            result("synx_tgt", syn_tgt.synx)',
+            '            result("synz_tgt", syn_tgt.synz)',
+            "",
+            "        # Final measurement",
+            "        final_ctrl = measure_z_basis(ctrl)",
+            "        final_tgt = measure_z_basis(tgt)",
+            '        result("final_ctrl", final_ctrl)',
+            '        result("final_tgt", final_tgt)',
+            "",
+            "        discard(ax_ctrl)",
+            "        discard(az_ctrl)",
+            "        discard(ax_tgt)",
+            "        discard(az_tgt)",
+            "",
+            "    return transversal_cnot_exp",
+            "",
+            "",
+            "def make_transversal_cnot_with_x(num_rounds: int):",
+            '    """Create transversal CNOT experiment: |1_L>|0_L> -> |1_L>|1_L>."""',
+            "",
+            "    @guppy",
+            "    def transversal_cnot_with_x_exp() -> None:",
+            '        """Transversal CNOT with X experiment."""',
+            f"        ctrl_data = array(qubit() for _ in range({num_data}))",
+            f"        tgt_data = array(qubit() for _ in range({num_data}))",
+            "        ax_ctrl = qubit()",
+            "        az_ctrl = qubit()",
+            "        ax_tgt = qubit()",
+            "        az_tgt = qubit()",
+            "",
+            f"        ctrl = {struct_name}(ctrl_data)",
+            f"        tgt = {struct_name}(tgt_data)",
+            "",
+            "        # Initialize both patches in |0_L>",
+            "        init_syn_ctrl = init_z_basis(ctrl, ax_ctrl)",
+            "        init_syn_tgt = init_z_basis(tgt, ax_tgt)",
+            '        result("init_synx_ctrl", init_syn_ctrl)',
+            '        result("init_synx_tgt", init_syn_tgt)',
+            "",
+            "        # Apply logical X to control to get |1_L>",
+            "        apply_logical_x(ctrl)",
+            "",
+            "        # Apply transversal CNOT",
+            "        transversal_cnot(ctrl, tgt)",
+            "",
+            "        # Syndrome extraction rounds",
+            "        for _t in range(comptime(num_rounds)):",
+            "            syn_ctrl = syndrome_extraction(ctrl, ax_ctrl, az_ctrl)",
+            "            syn_tgt = syndrome_extraction(tgt, ax_tgt, az_tgt)",
+            '            result("synx_ctrl", syn_ctrl.synx)',
+            '            result("synz_ctrl", syn_ctrl.synz)',
+            '            result("synx_tgt", syn_tgt.synx)',
+            '            result("synz_tgt", syn_tgt.synz)',
+            "",
+            "        # Final measurement",
+            "        final_ctrl = measure_z_basis(ctrl)",
+            "        final_tgt = measure_z_basis(tgt)",
+            '        result("final_ctrl", final_ctrl)',
+            '        result("final_tgt", final_tgt)',
+            "",
+            "        discard(ax_ctrl)",
+            "        discard(az_ctrl)",
+            "        discard(ax_tgt)",
+            "        discard(az_tgt)",
+            "",
+            "    return transversal_cnot_with_x_exp",
+            "",
+        ],
+    )
 
 
 def _load_css_transversal_module(code_type: CSSCodeType, d: int) -> dict:
     """Load a transversal module for the given code type and distance."""
     cache_key = f"{code_type.value}_d{d}"
 
-    if cache_key in _css_transversal_cache:
-        return _css_transversal_cache[cache_key]
+    if cache_key in _state.css_transversal_cache:
+        return _state.css_transversal_cache[cache_key]
 
     # Generate source based on code type
     if code_type == CSSCodeType.SURFACE:
@@ -697,7 +775,8 @@ def _load_css_transversal_module(code_type: CSSCodeType, d: int) -> dict:
     elif code_type == CSSCodeType.COLOR:
         source = generate_color_transversal_source(d)
     else:
-        raise ValueError(f"Unsupported code type: {code_type}")
+        msg = f"Unsupported code type: {code_type}"
+        raise ValueError(msg)
 
     # Write to temp file
     temp_dir = _get_temp_dir()
@@ -708,23 +787,25 @@ def _load_css_transversal_module(code_type: CSSCodeType, d: int) -> dict:
     module_name = f"pecos._generated.css_trans_{cache_key}"
     spec = importlib.util.spec_from_file_location(module_name, temp_file)
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"Failed to create module spec for {temp_file}")
+        msg = f"Failed to create module spec for {temp_file}"
+        raise RuntimeError(msg)
 
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
 
-    _css_transversal_cache[cache_key] = vars(module)
-    return _css_transversal_cache[cache_key]
+    _state.css_transversal_cache[cache_key] = vars(module)
+    return _state.css_transversal_cache[cache_key]
 
 
 # === Public API ===
+
 
 def make_css_transversal_cnot(
     code_type: CSSCodeType | str,
     distance: int,
     num_rounds: int = 1,
-):
+) -> object:
     """Create a transversal CNOT experiment for any CSS code.
 
     Args:
@@ -743,7 +824,8 @@ def make_css_transversal_cnot(
         code_type = CSSCodeType(code_type)
 
     if distance < 3 or distance % 2 == 0:
-        raise ValueError(f"Distance must be odd >= 3, got {distance}")
+        msg = f"Distance must be odd >= 3, got {distance}"
+        raise ValueError(msg)
 
     module = _load_css_transversal_module(code_type, distance)
     return module["make_transversal_cnot"](num_rounds)
@@ -753,7 +835,7 @@ def make_css_transversal_cnot_with_x(
     code_type: CSSCodeType | str,
     distance: int,
     num_rounds: int = 1,
-):
+) -> object:
     """Create a transversal CNOT experiment with logical X on control.
 
     This tests |1_L>|0_L> -> |1_L>|1_L>.
@@ -770,13 +852,14 @@ def make_css_transversal_cnot_with_x(
         code_type = CSSCodeType(code_type)
 
     if distance < 3 or distance % 2 == 0:
-        raise ValueError(f"Distance must be odd >= 3, got {distance}")
+        msg = f"Distance must be odd >= 3, got {distance}"
+        raise ValueError(msg)
 
     module = _load_css_transversal_module(code_type, distance)
     return module["make_transversal_cnot_with_x"](num_rounds)
 
 
-def get_transversal_n_qubits(code_type: CSSCodeType | str, distance: int) -> int:
+def get_transversal_num_qubits(code_type: CSSCodeType | str, distance: int) -> int:
     """Get total qubit count for transversal CNOT between two patches.
 
     Args:
@@ -784,51 +867,54 @@ def get_transversal_n_qubits(code_type: CSSCodeType | str, distance: int) -> int
         distance: Code distance
 
     Returns:
-        Total qubits needed (2 * n_data + 4 ancillas)
+        Total qubits needed (2 * num_data + 4 ancillas)
     """
     if isinstance(code_type, str):
         code_type = CSSCodeType(code_type)
 
     if code_type == CSSCodeType.SURFACE:
-        n_data = distance * distance
+        num_data = distance * distance
     elif code_type == CSSCodeType.COLOR:
-        from pecos.qec.color import ColorCode488
+        from pecos.qec.color import ColorCode488  # noqa: PLC0415
+
         code = ColorCode488.create(distance=distance)
-        n_data = code.n_data
+        num_data = code.num_data
     else:
-        raise ValueError(f"Unsupported code type: {code_type}")
+        msg = f"Unsupported code type: {code_type}"
+        raise ValueError(msg)
 
     # Two patches + 4 ancillas (ax, az for each patch)
-    return 2 * n_data + 4
+    return 2 * num_data + 4
 
 
 # === Convenience functions for specific codes ===
 
-def make_color_transversal_cnot(distance: int, num_rounds: int = 1):
+
+def make_color_transversal_cnot(distance: int, num_rounds: int = 1) -> object:
     """Create transversal CNOT for color codes."""
     return make_css_transversal_cnot(CSSCodeType.COLOR, distance, num_rounds)
 
 
-def make_color_transversal_cnot_with_x(distance: int, num_rounds: int = 1):
+def make_color_transversal_cnot_with_x(distance: int, num_rounds: int = 1) -> object:
     """Create transversal CNOT with X for color codes."""
     return make_css_transversal_cnot_with_x(CSSCodeType.COLOR, distance, num_rounds)
 
 
-def make_color_transversal_cnot_d3(num_rounds: int = 1):
+def make_color_transversal_cnot_d3(num_rounds: int = 1) -> object:
     """Create d=3 transversal CNOT for color codes."""
     return make_color_transversal_cnot(3, num_rounds)
 
 
-def make_color_transversal_cnot_with_x_d3(num_rounds: int = 1):
+def make_color_transversal_cnot_with_x_d3(num_rounds: int = 1) -> object:
     """Create d=3 transversal CNOT with X for color codes."""
     return make_color_transversal_cnot_with_x(3, num_rounds)
 
 
-def make_surface_transversal_cnot(distance: int, num_rounds: int = 1):
+def make_surface_transversal_cnot(distance: int, num_rounds: int = 1) -> object:
     """Create transversal CNOT for surface codes."""
     return make_css_transversal_cnot(CSSCodeType.SURFACE, distance, num_rounds)
 
 
-def make_surface_transversal_cnot_with_x(distance: int, num_rounds: int = 1):
+def make_surface_transversal_cnot_with_x(distance: int, num_rounds: int = 1) -> object:
     """Create transversal CNOT with X for surface codes."""
     return make_css_transversal_cnot_with_x(CSSCodeType.SURFACE, distance, num_rounds)

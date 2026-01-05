@@ -1809,21 +1809,35 @@ impl QisInterface for QisHeliosInterface {
         let lib = Self::get_qis_ffi_lib_singleton()?;
         debug!("Using QIS FFI library from process-wide singleton for dynamic mode");
 
-        // Create an execution context if we don't have one
-        if self.execution_context.is_none() {
-            let create_fn: Symbol<CreateExecutionContextFn> = unsafe {
-                lib.get(b"pecos_create_execution_context\0").map_err(|e| {
+        // Destroy any previous execution context from a previous shot.
+        // This is safe because we're at the start of a new shot, so the main thread
+        // is no longer using the old context (it was kept alive during disable_dynamic_mode
+        // to avoid a use-after-free race condition).
+        if let Some(ExecutionContextPtr(old_ctx)) = self.execution_context.take() {
+            debug!("Destroying previous execution context: {old_ctx:?}");
+            let destroy_fn: Symbol<DestroyExecutionContextFn> = unsafe {
+                lib.get(b"pecos_destroy_execution_context\0").map_err(|e| {
                     InterfaceError::ExecutionError(format!(
-                        "Failed to find pecos_create_execution_context: {e}"
+                        "Failed to find pecos_destroy_execution_context: {e}"
                     ))
                 })?
             };
-            let ctx = unsafe { create_fn() };
-            debug!("Created execution context: {ctx:?}");
-            self.execution_context = Some(ExecutionContextPtr(ctx));
+            unsafe { destroy_fn(old_ctx) };
         }
 
-        // Register the execution context on this thread
+        // Create a new execution context for this shot
+        let create_fn: Symbol<CreateExecutionContextFn> = unsafe {
+            lib.get(b"pecos_create_execution_context\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_create_execution_context: {e}"
+                ))
+            })?
+        };
+        let ctx = unsafe { create_fn() };
+        debug!("Created execution context: {ctx:?}");
+        self.execution_context = Some(ExecutionContextPtr(ctx));
+
+        // Register the execution context on this (main) thread
         let register_fn: Symbol<RegisterExecutionContextFn> = unsafe {
             lib.get(b"pecos_register_execution_context\0")
                 .map_err(|e| {
@@ -1832,10 +1846,8 @@ impl QisInterface for QisHeliosInterface {
                     ))
                 })?
         };
-        if let Some(ExecutionContextPtr(ctx)) = self.execution_context {
-            unsafe { register_fn(ctx) };
-            debug!("Registered execution context: {ctx:?}");
-        }
+        unsafe { register_fn(ctx) };
+        debug!("Registered execution context: {ctx:?}");
 
         // Now enable dynamic mode
         let enable_fn: Symbol<EnableDynamicModeFn> = unsafe {
@@ -1857,7 +1869,7 @@ impl QisInterface for QisHeliosInterface {
         // Get the process-wide QIS FFI library singleton
         let lib = Self::get_qis_ffi_lib_singleton()?;
 
-        // Disable dynamic mode first
+        // Disable dynamic mode first (signals worker_complete and notifies waiters)
         let disable_fn: Symbol<DisableDynamicModeFn> = unsafe {
             lib.get(b"pecos_disable_dynamic_mode\0").map_err(|e| {
                 InterfaceError::ExecutionError(format!(
@@ -1868,7 +1880,7 @@ impl QisInterface for QisHeliosInterface {
         unsafe { disable_fn() };
         debug!("Dynamic mode disabled via FFI");
 
-        // Unregister the execution context
+        // Unregister the execution context from this (worker) thread's TLS
         let register_fn: Symbol<RegisterExecutionContextFn> = unsafe {
             lib.get(b"pecos_register_execution_context\0")
                 .map_err(|e| {
@@ -1878,20 +1890,13 @@ impl QisInterface for QisHeliosInterface {
                 })?
         };
         unsafe { register_fn(std::ptr::null_mut()) };
-        debug!("Unregistered execution context");
+        debug!("Unregistered execution context from worker thread");
 
-        // Destroy the execution context
-        if let Some(ExecutionContextPtr(ctx)) = self.execution_context.take() {
-            let destroy_fn: Symbol<DestroyExecutionContextFn> = unsafe {
-                lib.get(b"pecos_destroy_execution_context\0").map_err(|e| {
-                    InterfaceError::ExecutionError(format!(
-                        "Failed to find pecos_destroy_execution_context: {e}"
-                    ))
-                })?
-            };
-            unsafe { destroy_fn(ctx) };
-            debug!("Destroyed execution context: {ctx:?}");
-        }
+        // IMPORTANT: Do NOT destroy the execution context here!
+        // The main thread may still be inside pecos_wait_for_need_result using the context.
+        // The context will be destroyed in enable_dynamic_mode() before the next shot starts,
+        // at which point the main thread is guaranteed to not be using the old context.
+        // This prevents a use-after-free race condition on macOS.
 
         Ok(())
     }
@@ -2002,11 +2007,15 @@ impl Drop for QisHeliosInterface {
         // - The memory will be reclaimed by the OS when the process exits
         // - The TLS entry will be cleaned up by the OS
         //
-        // Note: During normal operation, the context should be properly cleaned up via
-        // disable_dynamic_mode() which is called before the program exits normally.
-        // The drop() path is only reached if:
-        // 1. There was a panic or early return before disable_dynamic_mode was called
-        // 2. The program is exiting anyway
+        // Note: During normal operation (multi-shot execution), the context is cleaned up
+        // in enable_dynamic_mode() at the start of each new shot, before the previous
+        // context is needed. The context is NOT cleaned up in disable_dynamic_mode() to
+        // avoid a use-after-free race condition where the main thread might still be
+        // accessing the context when the worker thread tries to destroy it.
+        //
+        // The drop() path is only reached for the LAST shot's context when:
+        // 1. The program is exiting after all shots complete
+        // 2. There was a panic or early return
         //
         // In both cases, leaking the context is acceptable and avoids the TLS hang.
         let _ = self.execution_context.take();

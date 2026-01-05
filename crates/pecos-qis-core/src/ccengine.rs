@@ -54,6 +54,7 @@ struct DynamicExecutionState {
 }
 
 /// Work item sent to the persistent dynamic worker thread
+#[cfg(not(target_os = "macos"))]
 struct DynamicWorkItem {
     /// The interface to execute
     interface: BoxedInterface,
@@ -65,6 +66,7 @@ struct DynamicWorkItem {
 /// and TLS allocation issues that come from spawning a new thread per shot.
 /// The thread waits for work items via a channel, executes `collect_operations()`,
 /// and sends results back via another channel.
+#[cfg(not(target_os = "macos"))]
 struct PersistentDynamicWorker {
     /// Channel to send work items to the worker
     work_tx: Sender<DynamicWorkItem>,
@@ -74,6 +76,7 @@ struct PersistentDynamicWorker {
     _handle: JoinHandle<()>,
 }
 
+#[cfg(not(target_os = "macos"))]
 impl PersistentDynamicWorker {
     /// Create a new persistent dynamic worker thread
     fn new() -> Self {
@@ -196,6 +199,7 @@ pub struct QisEngine {
 
     /// Persistent worker thread for dynamic execution (stays alive across shots)
     /// This avoids spawning a new thread per shot, which causes TLS allocation issues.
+    #[cfg(not(target_os = "macos"))]
     persistent_worker: Option<PersistentDynamicWorker>,
 }
 
@@ -223,6 +227,7 @@ impl QisEngine {
             program_bytes: None,
             program_format: None,
             interface_builder: None,
+            #[cfg(not(target_os = "macos"))]
             persistent_worker: None,
         }
     }
@@ -296,6 +301,7 @@ impl QisEngine {
             program_bytes: None,
             program_format: None,
             interface_builder: None,
+            #[cfg(not(target_os = "macos"))]
             persistent_worker: None,
         }
     }
@@ -465,6 +471,7 @@ impl Clone for QisEngine {
                 .as_ref()
                 .map(|b| dyn_clone::clone_box(&**b)),
             // Create a new persistent worker for this clone (can't share threads across clones)
+            #[cfg(not(target_os = "macos"))]
             persistent_worker: None,
         }
     }
@@ -635,13 +642,12 @@ impl QisEngine {
             if let Some(ref mut state) = self.dynamic_state {
                 if let Some(handle) = state.worker_handle.take() {
                     if handle.is_finished() {
-                        match handle.join() {
-                            Ok(r) => Some(r),
-                            Err(_) => {
-                                log::error!("Worker panicked");
-                                state.execution_complete = true;
-                                return true;
-                            }
+                        if let Ok(r) = handle.join() {
+                            Some(r)
+                        } else {
+                            log::error!("Worker panicked");
+                            state.execution_complete = true;
+                            return true;
                         }
                     } else {
                         // Put handle back if not finished

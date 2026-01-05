@@ -11,7 +11,12 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Square lattice layout generation for surface codes."""
+"""Square lattice layout generation for surface codes.
+
+This module re-exports the layout function from pecos.qec.surface.layouts.
+"""
+
+from pecos.qec.surface.layouts import generate_nonrotated_surface_layout
 
 
 def gen_layout(
@@ -19,6 +24,8 @@ def gen_layout(
     height: int,
 ) -> tuple[list[tuple[int, int]], list[tuple[int, int]], list[list[tuple[int, int]]]]:
     """Generate rectangular surface code patch layout for a 4.4.4.4 lattice.
+
+    This generates the non-rotated surface code layout.
 
     Args:
         width: Width of the patch in logical qubits.
@@ -30,55 +37,4 @@ def gen_layout(
         - dual_nodes: List of (x, y) coordinates for ancilla qubits.
         - polygons: List of polygons representing stabilizer checks.
     """
-    lattice_height = 2 * (height - 1)
-    lattice_width = 2 * (width - 1)
-
-    nodes = []
-    dual_nodes = []
-    polygons_0 = []
-    polygons_1 = []
-
-    # Determine the position of things
-    for y in range(lattice_height + 1):
-        for x in range(lattice_width + 1):
-            if (x % 2 == 0 and y % 2 == 0) or (x % 2 == 1 and y % 2 == 1):
-                # Data
-                nodes.append((x, y))
-
-            elif x % 2 == 1 and y % 2 == 0:
-                # X ancilla
-                dual_nodes.append((x, y))
-
-                poly = []
-                if y != lattice_height:
-                    poly.append((x, y + 1))
-                if x != 0:
-                    poly.append((x - 1, y))
-                if y != 0:
-                    poly.append((x, y - 1))
-                if x != lattice_width:
-                    poly.append((x + 1, y))
-
-                polygons_0.append(poly)
-
-            elif x % 2 == 0 and y % 2 == 1:
-                # Z ancilla
-                dual_nodes.append((x, y))
-
-                poly = []
-                if y != lattice_height:
-                    poly.append((x, y + 1))
-                if x != 0:
-                    poly.append((x - 1, y))
-                if y != 0:
-                    poly.append((x, y - 1))
-                if x != lattice_width:
-                    poly.append((x + 1, y))
-
-                polygons_0.append(poly)
-
-    polygons = []
-    polygons.extend(polygons_0)
-    polygons.extend(polygons_1)
-
-    return nodes, dual_nodes, polygons
+    return generate_nonrotated_surface_layout(width, height)

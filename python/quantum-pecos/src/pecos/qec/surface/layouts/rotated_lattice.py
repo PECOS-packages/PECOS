@@ -168,3 +168,73 @@ def rotated_position_to_id(x: int, y: int, d: int) -> int:
     col = (x - 1) // 2
     row = d - (y + 1) // 2
     return row * d + col
+
+
+def generate_surface_layout(
+    width: int,
+    height: int,
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Generate rotated surface code layout positions.
+
+    This is the most common surface code variant, using d^2 data qubits for
+    distance d. The non-rotated variant uses more qubits; for that, use
+    generate_nonrotated_surface_layout() instead.
+
+    The rotated surface code places data qubits at odd-odd positions
+    and ancilla qubits at even-even positions in the interior, with
+    boundary ancillas on the edges.
+
+    Args:
+        width: Width of the patch (code distance in Z direction).
+        height: Height of the patch (code distance in X direction).
+
+    Returns:
+        A tuple containing:
+        - data_positions: List of (x, y) coordinates for data qubits.
+        - ancilla_positions: List of (x, y) coordinates for ancilla qubits.
+    """
+    lattice_height = 2 * height
+    lattice_width = 2 * width
+
+    data_positions: list[tuple[int, int]] = []
+    ancilla_positions: list[tuple[int, int]] = []
+
+    for y in range(lattice_height + 1):
+        for x in range(lattice_width + 1):
+            if 0 < x < lattice_width and 0 < y < lattice_height:
+                # Interior (no boundary stabilizers)
+                if x % 2 == 1 and y % 2 == 1:
+                    # Data qubit at odd-odd positions
+                    data_positions.append((x, y))
+                elif x % 2 == 0 and y % 2 == 0:
+                    # Ancilla at even-even positions
+                    ancilla_positions.append((x, y))
+
+            elif 0 < x < lattice_width or 0 < y < lattice_height:
+                # Boundary ancillas (not corners)
+                if y == 0:
+                    # Top edge: X stabilizers
+                    if x != 0 and x % 4 == 0:
+                        ancilla_positions.append((x, y))
+
+                elif x == 0 and (y - 2) % 4 == 0:
+                    # Left edge
+                    ancilla_positions.append((x, y))
+
+                if y == lattice_height:
+                    # Bottom edge
+                    if height % 2 == 0:
+                        if x != 0 and x % 4 == 0:
+                            ancilla_positions.append((x, y))
+                    elif (x - 2) % 4 == 0:
+                        ancilla_positions.append((x, y))
+
+                elif x == lattice_width:
+                    # Right edge
+                    if width % 2 == 1:
+                        if y != 0 and y % 4 == 0:
+                            ancilla_positions.append((x, y))
+                    elif (y - 2) % 4 == 0:
+                        ancilla_positions.append((x, y))
+
+    return data_positions, ancilla_positions

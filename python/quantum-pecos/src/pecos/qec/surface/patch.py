@@ -11,8 +11,12 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from pecos.qec.surface.layouts import (
+    compute_rotated_x_stabilizers,
+    compute_rotated_z_stabilizers,
     compute_x_stabilizer_supports,
     compute_z_stabilizer_supports,
+    get_rotated_logical_x,
+    get_rotated_logical_z,
 )
 
 
@@ -48,11 +52,16 @@ class LogicalOperator:
 
 @dataclass
 class PatchGeometry:
-    """Geometry of a surface code patch."""
+    """Geometry of a surface code patch.
+
+    Supports both rotated (default) and standard (non-rotated) surface codes.
+    The rotated layout is more common and uses fewer qubits for the same distance.
+    """
 
     dx: int
     dz: int
     orientation: PatchOrientation = PatchOrientation.X_TOP_BOTTOM
+    rotated: bool = True
 
     n_data: int = field(init=False)
     n_x_stab: int = field(init=False)
@@ -87,8 +96,12 @@ class PatchGeometry:
     def _generate_stabilizers(self):
         d = min(self.dx, self.dz)
 
-        x_supports = compute_x_stabilizer_supports(d)
-        z_supports = compute_z_stabilizer_supports(d)
+        if self.rotated:
+            x_supports = compute_rotated_x_stabilizers(d)
+            z_supports = compute_rotated_z_stabilizers(d)
+        else:
+            x_supports = compute_x_stabilizer_supports(d)
+            z_supports = compute_z_stabilizer_supports(d)
 
         self.x_stabilizers = [
             Stabilizer(
@@ -114,10 +127,16 @@ class PatchGeometry:
         self.n_z_stab = len(self.z_stabilizers)
 
     def _generate_logical_operators(self):
-        logical_x_qubits = tuple(i * self.dz for i in range(self.dx))
-        self.logical_x = LogicalOperator('X', logical_x_qubits)
+        d = min(self.dx, self.dz)
 
-        logical_z_qubits = tuple(range(self.dz))
+        if self.rotated:
+            logical_x_qubits = get_rotated_logical_x(d)
+            logical_z_qubits = get_rotated_logical_z(d)
+        else:
+            logical_x_qubits = tuple(i * self.dz for i in range(self.dx))
+            logical_z_qubits = tuple(range(self.dz))
+
+        self.logical_x = LogicalOperator('X', logical_x_qubits)
         self.logical_z = LogicalOperator('Z', logical_z_qubits)
 
     @property
@@ -136,8 +155,11 @@ class PatchGeometry:
 class SurfacePatch:
     """A configurable surface code patch.
 
+    Supports both rotated (default) and standard (non-rotated) layouts.
+
     Example:
-        >>> patch = SurfacePatch.create(distance=5)
+        >>> patch = SurfacePatch.create(distance=5)  # Rotated (default)
+        >>> patch = SurfacePatch.create(distance=5, rotated=False)  # Standard
         >>> patch = SurfacePatch.create(dx=3, dz=5)  # Asymmetric
     """
 
@@ -151,8 +173,19 @@ class SurfacePatch:
         dx: int | None = None,
         dz: int | None = None,
         orientation: PatchOrientation = PatchOrientation.X_TOP_BOTTOM,
+        rotated: bool = True,
     ) -> "SurfacePatch":
-        """Create a surface code patch."""
+        """Create a surface code patch.
+
+        Args:
+            distance: Symmetric code distance (must be odd >= 3).
+            dx: X distance for asymmetric codes.
+            dz: Z distance for asymmetric codes.
+            orientation: Patch boundary orientation.
+            rotated: If True (default), use the rotated layout which is more
+                common and uses fewer qubits. If False, use the standard
+                (non-rotated) layout.
+        """
         if distance is not None:
             if distance < 3 or distance % 2 == 0:
                 raise ValueError(f"Distance must be odd >= 3, got {distance}")
@@ -166,7 +199,7 @@ class SurfacePatch:
         else:
             raise ValueError("Must provide either distance or both dx and dz")
 
-        geometry = PatchGeometry(dx=dx, dz=dz, orientation=orientation)
+        geometry = PatchGeometry(dx=dx, dz=dz, orientation=orientation, rotated=rotated)
         return cls(geometry)
 
     @property
@@ -197,6 +230,11 @@ class SurfacePatch:
     def z_stabilizers(self) -> list[Stabilizer]:
         return self.geometry.z_stabilizers
 
+    @property
+    def rotated(self) -> bool:
+        """True if using rotated layout, False for standard layout."""
+        return self.geometry.rotated
+
     def get_parity_matrix(self, stab_type: str):
         """Get parity check matrix."""
         import pecos
@@ -215,6 +253,9 @@ class SurfacePatch:
 class SurfacePatchBuilder:
     """Builder for creating SurfacePatch instances.
 
+    By default, creates a rotated surface code (more common). Use `.standard()`
+    to create a non-rotated surface code.
+
     Example:
         >>> patch = (
         ...     SurfacePatchBuilder()
@@ -222,6 +263,9 @@ class SurfacePatchBuilder:
         ...     .with_orientation(PatchOrientation.Z_TOP_BOTTOM)
         ...     .build()
         ... )
+
+        >>> # Non-rotated (standard) surface code:
+        >>> patch = SurfacePatchBuilder().with_distance(5).standard().build()
     """
 
     def __init__(self):
@@ -229,6 +273,7 @@ class SurfacePatchBuilder:
         self._dx: int | None = None
         self._dz: int | None = None
         self._orientation: PatchOrientation = PatchOrientation.X_TOP_BOTTOM
+        self._rotated: bool = True
 
     def with_distance(self, distance: int) -> "SurfacePatchBuilder":
         """Set symmetric distance."""
@@ -246,6 +291,24 @@ class SurfacePatchBuilder:
         self._orientation = orientation
         return self
 
+    def rotated(self) -> "SurfacePatchBuilder":
+        """Use rotated surface code layout (default).
+
+        The rotated layout is more common and uses fewer physical qubits
+        for the same code distance.
+        """
+        self._rotated = True
+        return self
+
+    def standard(self) -> "SurfacePatchBuilder":
+        """Use standard (non-rotated) surface code layout.
+
+        The standard layout uses more physical qubits but may be preferred
+        for certain applications or compatibility with existing code.
+        """
+        self._rotated = False
+        return self
+
     def build(self) -> SurfacePatch:
         """Build the SurfacePatch."""
         return SurfacePatch.create(
@@ -253,4 +316,5 @@ class SurfacePatchBuilder:
             dx=self._dx,
             dz=self._dz,
             orientation=self._orientation,
+            rotated=self._rotated,
         )

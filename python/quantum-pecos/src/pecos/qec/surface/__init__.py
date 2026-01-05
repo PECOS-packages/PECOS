@@ -23,6 +23,8 @@ from pecos.qec.surface.layouts import (
     compute_rotated_z_stabilizers,
     compute_x_stabilizer_supports,
     compute_z_stabilizer_supports,
+    generate_nonrotated_surface_layout,
+    generate_surface_layout,
     get_rotated_logical_x,
     get_rotated_logical_z,
 )
@@ -40,24 +42,25 @@ from pecos.qec.surface.patch import (
 )
 
 __all__ = [
-    # Data structures
-    "StabilizerSupport",
-    # Square lattice
-    "compute_x_stabilizer_supports",
-    "compute_z_stabilizer_supports",
-    # Rotated lattice
+    # Rotated lattice (most common, default)
     "compute_rotated_x_stabilizers",
     "compute_rotated_z_stabilizers",
+    "generate_surface_layout",
     "get_rotated_logical_x",
     "get_rotated_logical_z",
+    # Non-rotated lattice
+    "StabilizerSupport",
+    "compute_x_stabilizer_supports",
+    "compute_z_stabilizer_supports",
+    "generate_nonrotated_surface_layout",
     # Parity matrices
     "parity_matrix_x",
     "parity_matrix_z",
     # Patch classes
-    "SurfacePatch",
-    "SurfacePatchBuilder",
+    "LogicalOperator",
     "PatchGeometry",
     "PatchOrientation",
     "Stabilizer",
-    "LogicalOperator",
+    "SurfacePatch",
+    "SurfacePatchBuilder",
 ]

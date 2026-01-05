@@ -284,6 +284,10 @@ impl SharedLibrary {
 type ResetInterfaceFn = unsafe extern "C" fn();
 type GetOperationsFn = unsafe extern "C" fn() -> *mut OperationCollector;
 type CallQmainFn = unsafe extern "C" fn(extern "C" fn(u64) -> u64) -> u64;
+type WaitForNeedResultFn = unsafe extern "C" fn(u64) -> u64;
+type SetMeasurementResultFn = unsafe extern "C" fn(u64, bool);
+type SignalResultReadyFn = unsafe extern "C" fn();
+type AbortExecutionFn = unsafe extern "C" fn();
 
 /// Synchronization handle for main thread communication with worker thread
 ///
@@ -314,8 +318,8 @@ impl Default for HeliosSyncHandle {
 impl DynamicSyncHandle for HeliosSyncHandle {
     fn wait_for_need_result(&self, timeout_ms: u64) -> Option<u64> {
         let lib = Self::get_lib().ok()?;
-        type WaitFn = unsafe extern "C" fn(u64) -> u64;
-        let wait_fn: Symbol<WaitFn> = unsafe { lib.get(b"pecos_wait_for_need_result\0").ok()? };
+        let wait_fn: Symbol<WaitForNeedResultFn> =
+            unsafe { lib.get(b"pecos_wait_for_need_result\0").ok()? };
         let result_id = unsafe { wait_fn(timeout_ms) };
         if result_id == u64::MAX {
             None
@@ -326,8 +330,7 @@ impl DynamicSyncHandle for HeliosSyncHandle {
 
     fn set_measurement_result(&self, result_id: u64, value: bool) -> Result<(), InterfaceError> {
         let lib = Self::get_lib()?;
-        type SetFn = unsafe extern "C" fn(u64, bool);
-        let set_fn: Symbol<SetFn> = unsafe {
+        let set_fn: Symbol<SetMeasurementResultFn> = unsafe {
             lib.get(b"pecos_set_measurement_result\0").map_err(|e| {
                 InterfaceError::ExecutionError(format!(
                     "Failed to find pecos_set_measurement_result: {e}"
@@ -341,8 +344,7 @@ impl DynamicSyncHandle for HeliosSyncHandle {
 
     fn signal_result_ready(&self) -> Result<(), InterfaceError> {
         let lib = Self::get_lib()?;
-        type SignalFn = unsafe extern "C" fn();
-        let signal_fn: Symbol<SignalFn> = unsafe {
+        let signal_fn: Symbol<SignalResultReadyFn> = unsafe {
             lib.get(b"pecos_signal_result_ready\0").map_err(|e| {
                 InterfaceError::ExecutionError(format!(
                     "Failed to find pecos_signal_result_ready: {e}"
@@ -358,10 +360,12 @@ impl DynamicSyncHandle for HeliosSyncHandle {
         &self,
     ) -> Result<Vec<pecos_qis_ffi_types::Operation>, InterfaceError> {
         let lib = Self::get_lib()?;
+        // Use pecos_get_pending_operations which reads from the execution context
+        // (not pecos_qis_get_operations which reads thread-local storage)
         let get_ops_fn: Symbol<GetOperationsFn> = unsafe {
-            lib.get(b"pecos_qis_get_operations\0").map_err(|e| {
+            lib.get(b"pecos_get_pending_operations\0").map_err(|e| {
                 InterfaceError::ExecutionError(format!(
-                    "Failed to find pecos_qis_get_operations: {e}"
+                    "Failed to find pecos_get_pending_operations: {e}"
                 ))
             })?
         };
@@ -377,8 +381,7 @@ impl DynamicSyncHandle for HeliosSyncHandle {
 
     fn abort_execution(&self) -> Result<(), InterfaceError> {
         let lib = Self::get_lib()?;
-        type AbortFn = unsafe extern "C" fn();
-        let abort_fn: Symbol<AbortFn> = unsafe {
+        let abort_fn: Symbol<AbortExecutionFn> = unsafe {
             lib.get(b"pecos_abort_dynamic_execution\0").map_err(|e| {
                 InterfaceError::ExecutionError(format!(
                     "Failed to find pecos_abort_dynamic_execution: {e}"
@@ -600,9 +603,6 @@ type DestroyExecutionContextFn = unsafe extern "C" fn(ctx: *mut ExecutionContext
 type RegisterExecutionContextFn = unsafe extern "C" fn(ctx: *mut ExecutionContext);
 type EnableDynamicModeFn = unsafe extern "C" fn();
 type DisableDynamicModeFn = unsafe extern "C" fn();
-type WaitForNeedResultFn = unsafe extern "C" fn(timeout_ms: u64) -> u64;
-type SetMeasurementResultFn = unsafe extern "C" fn(result_id: u64, value: bool);
-type SignalResultReadyFn = unsafe extern "C" fn();
 
 /// Helios interface implementation
 ///

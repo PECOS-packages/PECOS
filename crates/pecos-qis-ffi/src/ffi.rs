@@ -657,6 +657,15 @@ pub unsafe extern "C" fn ___read_future_bool(future_id: i64) -> bool {
 
     // Check if dynamic mode is active (requires execution context)
     if crate::is_dynamic_mode_active() {
+        // First check if result is already available in execution context
+        // This can happen when multiple measurements are batched together
+        if let Some(result) = crate::get_measurement_result(result_id as u64) {
+            log::debug!(
+                "___read_future_bool: result already in context for result_id={result_id}: {result}"
+            );
+            return result;
+        }
+
         log::debug!(
             "___read_future_bool: dynamic mode active, signaling need for result_id={result_id}"
         );

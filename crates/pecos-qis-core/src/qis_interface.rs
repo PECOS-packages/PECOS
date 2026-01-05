@@ -239,16 +239,28 @@ pub trait DynamicSyncHandle: Send + Sync {
     fn wait_for_need_result(&self, timeout_ms: u64) -> Option<u64>;
 
     /// Set a measurement result for the running program
+    ///
+    /// # Errors
+    /// Returns an error if the FFI call fails or no execution context is registered.
     fn set_measurement_result(&self, result_id: u64, value: bool) -> Result<(), InterfaceError>;
 
     /// Signal that the measurement result is ready
+    ///
+    /// # Errors
+    /// Returns an error if the FFI call fails or no execution context is registered.
     fn signal_result_ready(&self) -> Result<(), InterfaceError>;
 
     /// Get the pending operations collected so far
+    ///
+    /// # Errors
+    /// Returns an error if the FFI call fails or no execution context is registered.
     fn get_pending_operations(&self)
     -> Result<Vec<pecos_qis_ffi_types::Operation>, InterfaceError>;
 
     /// Abort the dynamic execution
+    ///
+    /// # Errors
+    /// Returns an error if the FFI call fails.
     fn abort_execution(&self) -> Result<(), InterfaceError>;
 }
 

@@ -965,8 +965,8 @@ impl ControlEngine for QisEngine {
         self.start_dynamic_worker()?;
 
         // Wait for the worker to either need a result or complete
-        // Short timeout initially since we want to be responsive
-        if let Some(result_id) = self.wait_for_result_needed(100) {
+        // Use long timeout as safety net - condvar will wake immediately on signal
+        if let Some(result_id) = self.wait_for_result_needed(30_000) {
             debug!("Worker needs result for id={result_id}");
             // Get pending operations
             if let Some(ops) = self.get_dynamic_operations() {
@@ -1073,8 +1073,8 @@ impl ControlEngine for QisEngine {
         self.measurement_mapping.clear();
 
         // Wait for worker to need more results or complete
-        // Use shorter timeout to be more responsive
-        if let Some(result_id) = self.wait_for_result_needed(100) {
+        // Condvar wakes immediately on signal; timeout is just a safety net
+        if let Some(result_id) = self.wait_for_result_needed(30_000) {
             debug!("Worker needs result for id={result_id}");
 
             // Check if we already have this result (from a previous batch)

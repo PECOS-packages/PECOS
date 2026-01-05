@@ -53,10 +53,11 @@ impl std::error::Error for InterfaceError {}
 /// A `QisInterface` implementation is responsible for executing a quantum program and
 /// collecting the quantum operations that need to be performed.
 ///
-/// Different implementations:
-/// - `pecos_qis_jit::QisJitInterface` - Uses LLVM JIT compilation
+/// The primary implementation is:
 /// - `pecos_qis_selene::QisHeliosInterface` - Links with Selene's Helios compiler
-/// - `SimpleQisInterface` - Pre-built operations list
+///
+/// All implementations must support dynamic execution mode for proper handling of
+/// measurement-dependent conditionals.
 pub trait QisInterface: Send + Sync {
     /// Load a program into the interface
     ///

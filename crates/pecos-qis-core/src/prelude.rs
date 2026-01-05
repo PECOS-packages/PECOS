@@ -20,7 +20,6 @@ pub use crate::builder::{QisEngineBuilder, qis_engine};
 pub use crate::ccengine::QisEngine;
 
 // Re-export QisInterface trait and related types
-pub use crate::interface_impl::SimpleQisInterface;
 pub use crate::qis_interface::{BoxedInterface, InterfaceError, ProgramFormat, QisInterface};
 
 // Re-export program types

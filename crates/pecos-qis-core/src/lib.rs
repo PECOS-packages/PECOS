@@ -35,55 +35,15 @@
 //!
 //! # Example Usage
 //!
-//! This crate provides the core builder API for QIS engines. Specific runtime
-//! implementations are provided by other crates (e.g., `pecos-qis-selene`).
+//! This crate provides the core builder API for QIS engines. QIS engines require
+//! dynamic-capable interfaces (like `QisHeliosInterface` from `pecos-qis-selene`)
+//! for proper handling of measurement-dependent conditionals.
 //!
-//! ```rust
-//! use pecos_qis_core::qis_engine;
-//! use pecos_qis_ffi_types::{OperationCollector, QuantumOp};
-//!
-//! // Create an interface with quantum operations
-//! let mut interface = OperationCollector::new();
-//! let q0 = interface.allocate_qubit();
-//! interface.operations.push(QuantumOp::H(q0).into());
-//!
-//! // Create a builder (requires a runtime to build)
-//! let builder = qis_engine().with_interface(interface.clone());
-//!
-//! // For complete examples with runtime, see the pecos-qis-selene crate
-//! assert_eq!(interface.allocated_qubits.len(), 1);
-//! ```
-//!
-//! # Builder API
-//!
-//! The QIS engine builder follows the standard PECOS builder pattern.
-//! This example shows the API structure:
-//!
-//! ```rust
-//! use pecos_qis_core::qis_engine;
-//! use pecos_qis_ffi_types::{OperationCollector, QuantumOp};
-//!
-//! // Create a Bell state program
-//! let mut interface = OperationCollector::new();
-//! let q0 = interface.allocate_qubit();
-//! let q1 = interface.allocate_qubit();
-//! interface.operations.push(QuantumOp::H(q0).into());
-//! interface.operations.push(QuantumOp::CX(q0, q1).into());
-//!
-//! // Create the builder (requires adding .runtime() and calling .build() to execute)
-//! let builder = qis_engine().with_interface(interface.clone());
-//!
-//! // Verify the interface structure
-//! assert_eq!(interface.allocated_qubits.len(), 2);
-//! assert_eq!(interface.operations.len(), 2);
-//! ```
-//!
-//! For more on Selene-based runtimes and interfaces (LLVM execution), see the
-//! `pecos-qis-selene` crate.
+//! For complete examples with runtime and interface, see the `pecos-qis-selene` crate
+//! documentation which provides `helios_interface_builder()` and runtime functions.
 
 pub mod builder;
 pub mod ccengine;
-pub mod dynamic_executor;
 pub mod interface_impl;
 pub mod prelude;
 pub mod program;
@@ -94,7 +54,6 @@ pub use builder::{QisEngineBuilder, qis_engine};
 pub use ccengine::QisEngine;
 
 // Re-export QisInterface trait and related types
-pub use interface_impl::SimpleQisInterface;
 pub use qis_interface::{
     BoxedInterface, DynamicSyncHandle, InterfaceError, ProgramFormat, QisInterface,
 };

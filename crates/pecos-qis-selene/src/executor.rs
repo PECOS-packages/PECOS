@@ -1896,7 +1896,7 @@ impl QisInterface for QisHeliosInterface {
         // The main thread may still be inside pecos_wait_for_need_result using the context.
         // The context will be destroyed in enable_dynamic_mode() before the next shot starts,
         // at which point the main thread is guaranteed to not be using the old context.
-        // This prevents a use-after-free race condition on macOS.
+        // This prevents a use-after-free race condition.
 
         Ok(())
     }

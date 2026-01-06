@@ -26,15 +26,15 @@ fn shim_lib_name() -> &'static str {
 /// Derive the project target directory from the compile-time embedded path.
 ///
 /// The compile-time path looks like:
-/// `/path/to/project/target/release/build/pecos-qis-selene-HASH/out/libpecos_selene.so`
+/// `/path/to/project/target/release/build/pecos-qis-HASH/out/libpecos_selene.so`
 ///
 /// We want to extract `/path/to/project/target` so we can search for other build hashes.
 fn get_project_target_dir() -> Option<PathBuf> {
     let compile_time_path = PathBuf::from(env!("PECOS_SELENE_SHIM_PATH"));
-    // Go up from: libpecos_selene.so -> out -> pecos-qis-selene-HASH -> build -> release/debug -> target
+    // Go up from: libpecos_selene.so -> out -> pecos-qis-HASH -> build -> release/debug -> target
     compile_time_path
         .parent() // out/
-        .and_then(|p| p.parent()) // pecos-qis-selene-HASH/
+        .and_then(|p| p.parent()) // pecos-qis-HASH/
         .and_then(|p| p.parent()) // build/
         .and_then(|p| p.parent()) // release or debug
         .and_then(|p| p.parent()) // target/
@@ -51,7 +51,7 @@ fn search_target_dir(target_dir: &Path, lib_name: &str) -> Option<PathBuf> {
             for entry in entries.flatten() {
                 let name = entry.file_name();
                 let name_str = name.to_string_lossy();
-                if name_str.starts_with("pecos-qis-selene-") {
+                if name_str.starts_with("pecos-qis-") {
                     let lib_path = entry.path().join("out").join(lib_name);
                     if lib_path.exists() {
                         debug!("Found PECOS shim library at: {}", lib_path.display());

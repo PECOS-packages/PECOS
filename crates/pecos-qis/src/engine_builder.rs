@@ -113,7 +113,7 @@ impl QisEngineBuilder {
     ///
     /// # Example
     ///
-    /// For examples of using custom interface builders, see the `pecos-qis-selene` crate
+    /// For examples of using custom interface builders, see the `pecos-qis` crate
     /// documentation which provides the `helios_interface_builder()` function.
     #[must_use]
     pub fn interface(
@@ -217,12 +217,12 @@ impl QisEngineBuilder {
     /// This allows you to specify any runtime implementation.
     /// The runtime must implement the `QisRuntime` trait.
     ///
-    /// The reference runtime is provided by the `pecos-qis-selene` crate:
+    /// The reference runtime is provided by the `pecos-qis` crate:
     /// - `pecos_qis::selene_simple_runtime()` - Selene-based implementation
     ///
     /// # Example
     ///
-    /// For complete examples with runtime, see the `pecos-qis-selene` crate documentation
+    /// For complete examples with runtime, see the `pecos-qis` crate documentation
     #[must_use]
     pub fn runtime(mut self, runtime: impl crate::runtime::QisRuntime + 'static) -> Self {
         self.runtime = Some(Box::new(runtime));
@@ -328,7 +328,7 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
 /// # Example
 ///
 /// For complete examples with dynamic interface (LLVM execution), see the
-/// `pecos-qis-selene` crate documentation which provides `helios_interface_builder()`.
+/// `pecos-qis` crate documentation which provides `helios_interface_builder()`.
 #[must_use]
 pub fn qis_engine() -> QisEngineBuilder {
     QisEngineBuilder::new()
@@ -352,6 +352,5 @@ mod tests {
     }
 
     // Note: Full builder tests with runtime and interface are in integration tests
-    // in pecos-qis-native and pecos-qis-selene crates, since those have the actual
-    // runtime implementations available.
+    // since those require the actual runtime implementations.
 }

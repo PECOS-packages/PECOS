@@ -1,6 +1,6 @@
 # PECOS Quest Selene Plugin
 
-A [Selene](https://github.com/CQCL/selene) quantum emulator plugin providing access to the [QuEST](https://github.com/quest-kit/QuEST) (Quantum Exact Simulation Toolkit) simulator through the PECOS wrapper.
+A [Selene](https://github.com/Quantinuum/selene) quantum emulator plugin providing access to the [QuEST](https://github.com/quest-kit/QuEST) (Quantum Exact Simulation Toolkit) simulator through the PECOS wrapper.
 
 ## About QuEST
 

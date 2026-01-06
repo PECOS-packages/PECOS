@@ -57,12 +57,12 @@ features = ["llvm14-0"]
 optional = true
 
 [dependencies.selene-simple-runtime]
-git = "https://github.com/CQCL/selene.git"
+git = "https://github.com/Quantinuum/selene.git"
 rev = "01300ee"
 optional = true
 
 [dependencies.selene-soft-rz-runtime]
-git = "https://github.com/CQCL/selene.git"
+git = "https://github.com/Quantinuum/selene.git"
 rev = "01300ee"
 optional = true
 

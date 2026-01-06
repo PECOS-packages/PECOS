@@ -238,7 +238,7 @@ impl QisSeleneHeliosInterface {
         // Compile bitcode to LLVM IR using Selene Helios
         let _llvm_ir = self.compile_bitcode_to_llvm_ir()?;
 
-        // This old implementation is deprecated - use pecos-qis-selene instead
+        // This old implementation is deprecated - use QisHeliosInterface instead
         Err(PecosError::Processing(
             "QisSeleneHeliosInterface is deprecated. Use pecos_qis::QisHeliosInterface instead."
                 .to_string(),
@@ -250,7 +250,7 @@ impl QisSeleneHeliosInterface {
         // Use Selene HUGR compiler (no fallback)
         let _llvm_ir = compile_hugr_with_selene(&self.program_data)?;
 
-        // This old implementation is deprecated - use pecos-qis-selene instead
+        // This old implementation is deprecated - use QisHeliosInterface instead
         Err(PecosError::Processing(
             "QisSeleneHeliosInterface is deprecated. Use pecos_qis::QisHeliosInterface instead."
                 .to_string(),
@@ -324,7 +324,7 @@ impl QisSeleneHeliosInterface {
             "Selene Helios compilation failed. Unable to find Selene installation after trying: {}. \n\
              \n\
              To use Selene Helios interface, you need to:\n\
-             1. Install Selene (https://github.com/CQCL/selene)\n\
+             1. Install Selene (https://github.com/Quantinuum/selene)\n\
              2. Set SELENE_PATH environment variable to the Selene directory\n\
              \n\
              Selene is the only supported interface for QIS programs in modern PECOS.",
@@ -809,8 +809,8 @@ impl From<OperationCollector> for QisEngineProgram {
     }
 }
 
-// Tests for program conversion are in the implementation crates (pecos-qis-selene, etc.)
-// since they require actual interface implementations.
+// Tests for program conversion require actual interface implementations
+// and are in the integration test files.
 
 /// Compile HUGR bytes using Selene's compiler
 ///

@@ -82,6 +82,13 @@ Implements standard PECOS traits:
 - `ArbitraryRotationGateable`
 - `RngManageable`
 
+## Acknowledgements
+
+This crate wraps [QuEST](https://github.com/QuEST-Kit/QuEST) (Quantum Exact Simulation Toolkit), developed by the QuEST-Kit team at the University of Oxford.
+
+**Paper:**
+- Jones, T., Brown, A., Bush, I., & Benjamin, S. C. (2019). "QuEST and High Performance Simulation of Quantum Computers." Scientific Reports, 9, 10736. [arXiv:1802.08032](https://arxiv.org/abs/1802.08032)
+
 ## License
 
 Apache-2.0 (PECOS project license). QuEST is MIT licensed.

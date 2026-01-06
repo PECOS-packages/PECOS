@@ -395,15 +395,15 @@ impl DynamicSyncHandle for HeliosSyncHandle {
 /// Derive the project target directory from the compile-time embedded Helios path.
 ///
 /// The compile-time path looks like:
-/// `/path/to/project/target/release/build/pecos-qis-selene-HASH/out/libhelios_selene_interface.a`
+/// `/path/to/project/target/release/build/pecos-qis-HASH/out/libhelios_selene_interface.a`
 ///
 /// We want to extract `/path/to/project/target` so we can search for other build hashes.
 fn get_helios_target_dir() -> Option<PathBuf> {
     let compile_time_path = PathBuf::from(env!("HELIOS_LIB_PATH"));
-    // Go up from: lib -> out -> pecos-qis-selene-HASH -> build -> release/debug -> target
+    // Go up from: lib -> out -> pecos-qis-HASH -> build -> release/debug -> target
     compile_time_path
         .parent() // out/
-        .and_then(|p| p.parent()) // pecos-qis-selene-HASH/
+        .and_then(|p| p.parent()) // pecos-qis-HASH/
         .and_then(|p| p.parent()) // build/
         .and_then(|p| p.parent()) // release or debug
         .and_then(|p| p.parent()) // target/
@@ -420,7 +420,7 @@ fn search_helios_in_target(target_dir: &Path, lib_name: &str) -> Option<PathBuf>
             for entry in entries.flatten() {
                 let name = entry.file_name();
                 let name_str = name.to_string_lossy();
-                if name_str.starts_with("pecos-qis-selene-") {
+                if name_str.starts_with("pecos-qis-") {
                     let lib_path = entry.path().join("out").join(lib_name);
                     if lib_path.exists() {
                         debug!("Found Helios library at: {}", lib_path.display());
@@ -519,7 +519,7 @@ fn find_helios_lib() -> Result<PathBuf, InterfaceError> {
         "Could not find Helios interface library ({LIB_NAME}).\n\n\
         The compile-time path no longer exists:\n  {}\n\n\
         This usually happens after a partial rebuild. To fix this:\n\
-        1. Run: cargo clean -p pecos-qis-selene\n\
+        1. Run: cargo clean -p pecos-qis\n\
         2. Rebuild: cargo build --release\n\n\
         Or set HELIOS_LIB_PATH environment variable to the library location.\n\n\
         Searched locations:\n{searched_locations}",

@@ -1248,7 +1248,7 @@ pub fn qis_helios_interface() -> PyResult<PyQisInterfaceBuilder> {
 #[pyfunction]
 pub fn qis_selene_helios_interface() -> PyResult<PyQisInterfaceBuilder> {
     // Both qis_helios_interface and qis_selene_helios_interface use the same
-    // Helios interface builder from pecos-qis-selene
+    // Helios interface builder from pecos-qis
     qis_helios_interface()
 }
 

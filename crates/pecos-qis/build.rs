@@ -146,7 +146,9 @@ fn print_llvm_not_found_error_extended() {
     eprintln!("    export PATH=\"/path/to/llvm/bin:$PATH\"");
     eprintln!();
     eprintln!("For detailed instructions, see:");
-    eprintln!("  https://github.com/CQCL/PECOS/blob/master/docs/user-guide/getting-started.md");
+    eprintln!(
+        "  https://github.com/PECOS-packages/PECOS/blob/master/docs/user-guide/getting-started.md"
+    );
     eprintln!();
     eprintln!("Don't need LLVM IR support? Build without it:");
     eprintln!("  cargo build --no-default-features");

@@ -1078,5 +1078,5 @@ impl ControlEngine for QisEngine {
     }
 }
 
-// Tests for QisEngine are in the implementation crates (pecos-qis-jit, pecos-qis-native, etc.)
-// since they require actual interface and runtime implementations.
+// Tests for QisEngine are in integration tests since they require
+// actual interface and runtime implementations.

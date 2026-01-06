@@ -263,7 +263,7 @@ sudo apt install cuda-toolkit-13
 If you encounter issues:
 
 1. Check [NVIDIA cuQuantum Documentation](https://docs.nvidia.com/cuda/cuquantum/latest/)
-2. Check [pytket-cutensornet GitHub Issues](https://github.com/CQCL/pytket-cutensornet/issues)
+2. Check [pytket-cutensornet GitHub Issues](https://github.com/Quantinuum/pytket-cutensornet/issues)
 3. Check [PECOS GitHub Issues](https://github.com/PECOS-packages/PECOS/issues)
 4. Verify your GPU compute capability is 7.0 or higher
 

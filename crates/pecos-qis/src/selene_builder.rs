@@ -83,7 +83,7 @@ impl QisInterfaceBuilder for HeliosInterfaceBuilder {
             let _ = program; // Suppress unused variable warning
             Err(PecosError::Processing(
                 "Helios interface requires the 'hugr' feature to compile HUGR programs.\n\
-                Please enable the 'hugr' feature in pecos-qis-selene to use HUGR compilation."
+                Please enable the 'hugr' feature in pecos-qis to use HUGR compilation."
                     .to_string(),
             ))
         }
@@ -156,7 +156,7 @@ impl QisInterfaceBuilder for HeliosInterfaceBuilder {
             let _ = program; // Suppress unused variable warning
             Err(PecosError::Processing(
                 "Helios interface requires the 'hugr' feature to compile HUGR programs.\n\
-                Please enable the 'hugr' feature in pecos-qis-selene to use HUGR compilation."
+                Please enable the 'hugr' feature in pecos-qis to use HUGR compilation."
                     .to_string(),
             ))
         }

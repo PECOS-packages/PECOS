@@ -41,7 +41,7 @@ impl From<std::io::Error> for RuntimeFetchError {
 ///
 /// # Example
 /// ```rust
-/// use pecos_qis_selene::selene_simple_runtime;
+/// use pecos_qis::selene_simple_runtime;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Load the simple runtime (built during compilation)
@@ -79,7 +79,7 @@ pub fn selene_simple_runtime() -> Result<SeleneRuntime, RuntimeFetchError> {
 ///
 /// # Example
 /// ```rust
-/// use pecos_qis_selene::selene_soft_rz_runtime;
+/// use pecos_qis::selene_soft_rz_runtime;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Load the soft RZ runtime (built during compilation)
@@ -296,7 +296,7 @@ pub fn find_selene_runtime(name: &str) -> Option<PathBuf> {
 ///
 /// # Example
 /// ```rust
-/// use pecos_qis_selene::selene_runtime_auto;
+/// use pecos_qis::selene_runtime_auto;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Load a runtime by name (built during compilation)

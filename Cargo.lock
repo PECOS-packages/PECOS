@@ -2762,8 +2762,7 @@ dependencies = [
  "pecos-phir-json",
  "pecos-programs",
  "pecos-qasm",
- "pecos-qis-core",
- "pecos-qis-selene",
+ "pecos-qis",
  "pecos-qsim",
  "pecos-quantum",
  "pecos-quest",
@@ -3045,23 +3044,27 @@ name = "pecos-qec"
 version = "0.1.1"
 
 [[package]]
-name = "pecos-qis-core"
+name = "pecos-qis"
 version = "0.1.1"
 dependencies = [
+ "cargo_metadata",
  "crossbeam-channel",
  "dyn-clone",
+ "env_logger",
  "inkwell 0.7.1",
  "libloading 0.9.0",
  "log",
  "pecos-build",
  "pecos-core",
  "pecos-engines",
+ "pecos-hugr-qis",
  "pecos-programs",
  "pecos-qis-ffi",
  "pecos-qis-ffi-types",
- "pecos-qis-selene",
  "pecos-rng",
  "rand 0.9.2",
+ "selene-simple-runtime",
+ "selene-soft-rz-runtime",
  "tempfile",
 ]
 
@@ -3079,26 +3082,6 @@ name = "pecos-qis-ffi-types"
 version = "0.1.1"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "pecos-qis-selene"
-version = "0.1.1"
-dependencies = [
- "cargo_metadata",
- "env_logger",
- "libloading 0.9.0",
- "log",
- "pecos-core",
- "pecos-engines",
- "pecos-hugr-qis",
- "pecos-programs",
- "pecos-qis-core",
- "pecos-qis-ffi",
- "pecos-qis-ffi-types",
- "selene-simple-runtime",
- "selene-soft-rz-runtime",
- "tempfile",
 ]
 
 [[package]]

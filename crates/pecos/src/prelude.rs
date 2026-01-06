@@ -44,8 +44,8 @@
 //! - `pecos_engines::prelude` - Simulation engines and builders
 //! - `pecos_qasm::prelude` - `OpenQASM` language support
 //! - `pecos_qsim::prelude` - Quantum simulation implementations
-//! - `pecos_qis_core::prelude` - QIS control engine
-//! - `pecos_qis_selene::prelude` - Selene-based QIS interface (when `selene` feature enabled)
+//! - `pecos_qis::prelude` - QIS control engine
+//! - `pecos_qis::prelude` - Selene-based QIS interface (when `selene` feature enabled)
 //! - `pecos_programs::prelude` - Program type definitions
 //! - `pecos_rng::prelude` - Random number generation
 //! - `pecos_num::prelude` - Numerical computing (scipy.optimize replacement)
@@ -75,15 +75,13 @@ pub use pecos_engines::prelude::*;
 pub use pecos_qasm::prelude::*;
 pub use pecos_qsim::prelude::*;
 
-// Re-export pecos_qis_core prelude
-// Note: Shot and Value from pecos_qis_core are not included (removed from its prelude)
+// Re-export pecos_qis prelude
+// Note: Shot and Value from pecos_qis are not included (removed from its prelude)
 // Re-export QIS core prelude (when qis feature is enabled)
 #[cfg(feature = "qis")]
-pub use pecos_qis_core::prelude::*;
+pub use pecos_qis::prelude::*;
 
 // Re-export Selene QIS interface when feature is enabled
-#[cfg(feature = "qis")]
-pub use pecos_qis_selene::prelude::*;
 
 // Re-export program types prelude
 pub use pecos_programs::prelude::*;

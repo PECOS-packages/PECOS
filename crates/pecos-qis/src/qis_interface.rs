@@ -54,7 +54,7 @@ impl std::error::Error for InterfaceError {}
 /// collecting the quantum operations that need to be performed.
 ///
 /// The primary implementation is:
-/// - `pecos_qis_selene::QisHeliosInterface` - Links with Selene's Helios compiler
+/// - `QisHeliosInterface` - Links with Selene's Helios compiler
 ///
 /// All implementations must support dynamic execution mode for proper handling of
 /// measurement-dependent conditionals.

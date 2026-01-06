@@ -240,7 +240,8 @@ impl QisSeleneHeliosInterface {
 
         // This old implementation is deprecated - use pecos-qis-selene instead
         Err(PecosError::Processing(
-            "QisSeleneHeliosInterface is deprecated. Use pecos_qis_selene::QisHeliosInterface instead.".to_string()
+            "QisSeleneHeliosInterface is deprecated. Use pecos_qis::QisHeliosInterface instead."
+                .to_string(),
         ))
     }
 
@@ -251,7 +252,8 @@ impl QisSeleneHeliosInterface {
 
         // This old implementation is deprecated - use pecos-qis-selene instead
         Err(PecosError::Processing(
-            "QisSeleneHeliosInterface is deprecated. Use pecos_qis_selene::QisHeliosInterface instead.".to_string()
+            "QisSeleneHeliosInterface is deprecated. Use pecos_qis::QisHeliosInterface instead."
+                .to_string(),
         ))
     }
 

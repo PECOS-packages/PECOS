@@ -2,11 +2,9 @@
 //!
 //! This module implements the `QisInterface` trait for Selene's Helios compiler.
 
+use crate::qis_interface::{DynamicSyncHandle, InterfaceError, ProgramFormat, QisInterface};
 use libloading::{Library, Symbol};
 use log::{debug, error, info, warn};
-use pecos_qis_core::qis_interface::{
-    DynamicSyncHandle, InterfaceError, ProgramFormat, QisInterface,
-};
 use pecos_qis_ffi_types::OperationCollector;
 use std::collections::BTreeMap;
 use std::io::Write;

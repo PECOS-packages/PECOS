@@ -120,8 +120,7 @@ pecos-qec = { version = "0.1.1", path = "crates/pecos-qec" }
 pecos-rng = { version = "0.1.1", path = "crates/pecos-rng" }
 pecos-qis-ffi = { version = "0.1.1", path = "crates/pecos-qis-ffi" }
 pecos-qis-ffi-types = { version = "0.1.1", path = "crates/pecos-qis-ffi-types" }
-pecos-qis-selene = { version = "0.1.1", path = "crates/pecos-qis-selene" }
-pecos-qis-core = { version = "0.1.1", path = "crates/pecos-qis-core" }
+pecos-qis = { version = "0.1.1", path = "crates/pecos-qis" }
 pecos-hugr-qis = { version = "0.1.1", path = "crates/pecos-hugr-qis" }
 pecos-hugr = { version = "0.1.1", path = "crates/pecos-hugr" }
 pecos-llvm = { version = "0.1.1", path = "crates/pecos-llvm" }

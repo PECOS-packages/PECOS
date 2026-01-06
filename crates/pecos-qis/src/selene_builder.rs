@@ -3,10 +3,10 @@
 //! This module provides the builder pattern for creating Helios-based `QisInterfaces`.
 
 use crate::QisHeliosInterface;
+use crate::program::QisInterfaceBuilder;
+use crate::qis_interface::{ProgramFormat, QisInterface};
 use pecos_core::errors::PecosError;
 use pecos_programs::{Hugr, Qis, QisContent};
-use pecos_qis_core::program::QisInterfaceBuilder;
-use pecos_qis_core::qis_interface::{ProgramFormat, QisInterface};
 use pecos_qis_ffi_types::OperationCollector;
 
 /// Helios-based interface builder
@@ -104,7 +104,7 @@ impl QisInterfaceBuilder for HeliosInterfaceBuilder {
     fn create_dynamic_interface_from_qis(
         &self,
         program: Qis,
-    ) -> Result<pecos_qis_core::qis_interface::BoxedInterface, PecosError> {
+    ) -> Result<crate::qis_interface::BoxedInterface, PecosError> {
         let mut interface = QisHeliosInterface::new();
 
         // Load the program into the interface WITHOUT collecting operations
@@ -136,7 +136,7 @@ impl QisInterfaceBuilder for HeliosInterfaceBuilder {
     fn create_dynamic_interface_from_hugr(
         &self,
         program: Hugr,
-    ) -> Result<pecos_qis_core::qis_interface::BoxedInterface, PecosError> {
+    ) -> Result<crate::qis_interface::BoxedInterface, PecosError> {
         #[cfg(feature = "hugr")]
         {
             // Compile HUGR to LLVM IR using pecos-hugr-qis

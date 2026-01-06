@@ -54,7 +54,7 @@ impl QisEngineBuilder {
     ///
     /// # Example
     /// ```rust
-    /// use pecos_qis_core::qis_engine;
+    /// use pecos_qis::qis_engine;
     /// use pecos_qis_ffi_types::{OperationCollector, QuantumOp};
     ///
     /// // Create an interface with quantum operations
@@ -80,7 +80,7 @@ impl QisEngineBuilder {
     ///
     /// # Example
     /// ```rust
-    /// use pecos_qis_core::qis_engine;
+    /// use pecos_qis::qis_engine;
     /// use pecos_qis_ffi_types::{OperationCollector, QuantumOp};
     ///
     /// // Create an interface with quantum operations
@@ -133,7 +133,7 @@ impl QisEngineBuilder {
     /// # Example
     /// ```rust
     /// use pecos_core::errors::PecosError;
-    /// use pecos_qis_core::qis_engine;
+    /// use pecos_qis::qis_engine;
     /// use pecos_qis_ffi_types::{OperationCollector, QuantumOp};
     ///
     /// // Create an interface with quantum operations
@@ -218,7 +218,7 @@ impl QisEngineBuilder {
     /// The runtime must implement the `QisRuntime` trait.
     ///
     /// The reference runtime is provided by the `pecos-qis-selene` crate:
-    /// - `pecos_qis_selene::selene_simple_runtime()` - Selene-based implementation
+    /// - `pecos_qis::selene_simple_runtime()` - Selene-based implementation
     ///
     /// # Example
     ///
@@ -248,7 +248,7 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
             PecosError::Processing(
                 "No runtime specified. Please provide a runtime using .runtime().\n\
                 Reference runtime:\n\
-                - pecos_qis_selene::selene_simple_runtime() - Selene-based implementation\n\
+                - pecos_qis::selene_simple_runtime() - Selene-based implementation\n\
                 Example: qis_engine().runtime(selene_simple_runtime()?).build()"
                     .to_string(),
             )
@@ -285,7 +285,7 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
                 "QisEngine requires a dynamic-capable interface for LLVM execution.\n\
                 OperationCollector alone is not supported.\n\n\
                 Please use .interface() to specify an interface builder, e.g.:\n\
-                  use pecos_qis_selene::helios_interface_builder;\n\
+                  use pecos_qis::helios_interface_builder;\n\
                   qis_engine()\n\
                       .interface(helios_interface_builder()?)\n\
                       .program(qis_program)\n\
@@ -310,7 +310,7 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
             - .program() to load a QIS/LLVM program\n\
             - .runtime() to specify the runtime\n\n\
             Example:\n\
-              use pecos_qis_selene::{helios_interface_builder, selene_simple_runtime};\n\
+              use pecos_qis::{helios_interface_builder, selene_simple_runtime};\n\
               qis_engine()\n\
                   .interface(helios_interface_builder()?)\n\
                   .program(qis_program)\n\

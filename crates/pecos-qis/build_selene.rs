@@ -1,18 +1,16 @@
+//! Selene-specific build logic for pecos-qis
+//!
+//! This module handles building the Selene shim library and Helios interface.
+//! It is only compiled when the `selene` feature is enabled.
+
 use log::info;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn main() {
-    // Initialize logger for build script
-    env_logger::init();
+/// Build all Selene-specific components (shim library, Helios interface)
+pub fn build_selene_components() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-
-    // Embed LLVM bin path at compile time for runtime use
-    if let Ok(llvm_prefix) = env::var("LLVM_SYS_140_PREFIX") {
-        let llvm_bin = PathBuf::from(&llvm_prefix).join("bin");
-        println!("cargo:rustc-env=PECOS_LLVM_BIN_PATH={}", llvm_bin.display());
-    }
 
     // Find or build libhelios_selene_interface.a
     find_or_build_helios_lib(&out_dir);

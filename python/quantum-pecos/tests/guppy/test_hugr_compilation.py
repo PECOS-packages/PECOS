@@ -160,7 +160,7 @@ attributes #0 = { "EntryPoint" }
         if not llvm_as_path:
             pytest.skip(
                 "llvm-as not found in PATH, LLVM_SYS_*_PREFIX, or common locations. "
-                "Set PECOS_TEST_USE_CARGO_LLVM_LOOKUP=1 to enable slow cargo fallback."
+                "Set PECOS_TEST_USE_CARGO_LLVM_LOOKUP=1 to enable slow cargo fallback.",
             )
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".ll", delete=False) as f:
@@ -177,9 +177,7 @@ attributes #0 = { "EntryPoint" }
                 check=False,
             )
 
-            assert (
-                result.returncode == 0
-            ), f"LLVM IR validation failed: {result.stderr}"
+            assert result.returncode == 0, f"LLVM IR validation failed: {result.stderr}"
 
         finally:
             # Clean up

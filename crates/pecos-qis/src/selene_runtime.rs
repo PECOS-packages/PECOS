@@ -3,8 +3,8 @@
 //! This wraps a Selene .so runtime plugin and implements the `QisRuntime` trait
 //! to provide a Selene-based classical interpreter for QIS programs.
 
+use crate::runtime::{ClassicalState, QisRuntime, Result, RuntimeError, Shot};
 use log::{debug, trace};
-use pecos_qis_core::runtime::{ClassicalState, QisRuntime, Result, RuntimeError, Shot};
 use pecos_qis_ffi_types::{Operation, OperationCollector, QuantumOp};
 use std::collections::BTreeMap;
 use std::ffi::c_void;

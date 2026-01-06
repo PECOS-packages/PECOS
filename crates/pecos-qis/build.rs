@@ -1,14 +1,38 @@
+//! Build script for pecos-qis
+//!
+//! Handles:
+//! - LLVM validation (when `llvm` feature is enabled)
+//! - Selene shim and Helios interface building (when `selene` feature is enabled)
+
+use std::env;
+use std::path::PathBuf;
+
+#[cfg(feature = "selene")]
+#[path = "build_selene.rs"]
+mod build_selene;
+
 fn main() {
+    // Initialize logger for build script
+    env_logger::init();
+
     // Only run LLVM validation if the llvm feature is enabled
     #[cfg(feature = "llvm")]
     validate_llvm();
+
+    // Embed LLVM bin path at compile time for runtime use
+    if let Ok(llvm_prefix) = env::var("LLVM_SYS_140_PREFIX") {
+        let llvm_bin = PathBuf::from(&llvm_prefix).join("bin");
+        println!("cargo:rustc-env=PECOS_LLVM_BIN_PATH={}", llvm_bin.display());
+    }
+
+    // Build Selene-specific components only when the selene feature is enabled
+    #[cfg(feature = "selene")]
+    build_selene::build_selene_components();
 }
 
 #[cfg(feature = "llvm")]
 fn validate_llvm() {
     use pecos_build::llvm::is_valid_llvm_14;
-    use std::env;
-    use std::path::PathBuf;
 
     // Check if LLVM_SYS_140_PREFIX is already set and valid
     if let Ok(sys_prefix) = env::var("LLVM_SYS_140_PREFIX") {

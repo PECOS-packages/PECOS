@@ -2,14 +2,14 @@
 name = "pecos-rng"
 version.workspace = true
 edition.workspace = true
-readme.workspace = true
+readme = "README.md"
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Random number generators for PECOS quantum computing simulations"
+description = "Random number generation for PECOS"
 
 [dependencies]
 wide.workspace = true

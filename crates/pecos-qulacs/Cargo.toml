@@ -9,7 +9,7 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Qulacs quantum simulator bindings for PECOS"
-readme.workspace = true
+readme = "README.md"
 
 [dependencies]
 pecos-core.workspace = true

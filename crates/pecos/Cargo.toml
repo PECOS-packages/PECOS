@@ -8,8 +8,8 @@ repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-readme = "../../README.md"
-description = "A crate for evaluating and exploring quantum error correction."
+readme = "README.md"
+description = "Main PECOS metacrate providing unified access to quantum simulation and error correction"
 # Disable auto-discovery of binaries (we only want pecos binary, not engine_setup helper module)
 autobins = false
 

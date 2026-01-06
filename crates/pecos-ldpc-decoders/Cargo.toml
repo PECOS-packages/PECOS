@@ -2,7 +2,7 @@
 name = "pecos-ldpc-decoders"
 version.workspace = true
 edition.workspace = true
-readme.workspace = true
+readme = "README.md"
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true

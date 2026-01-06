@@ -76,6 +76,20 @@ use state_vec_engine_bindings::PyStateVecEngine;
 #[cfg(feature = "wasm")]
 use wasm_foreign_object_bindings::PyWasmForeignObject;
 
+/// Find an LLVM tool by name (e.g., "llvm-as", "llc", "opt").
+///
+/// This searches for the tool in the LLVM 14 installation using the same
+/// logic as the pecos-build crate:
+/// 1. ~/.pecos/llvm/ (PECOS managed installation)
+/// 2. Project-local llvm/ directory
+/// 3. System installations (Homebrew on macOS, package manager on Linux)
+///
+/// Returns None if the tool is not found.
+#[pyfunction]
+fn find_llvm_tool(tool_name: &str) -> Option<String> {
+    pecos::find_tool(tool_name).map(|p| p.to_string_lossy().into_owned())
+}
+
 /// Set up the `QuEST` CUDA backend path environment variable for runtime loading.
 /// This allows the Rust code to find and load the CUDA-accelerated `QuEST` backend
 /// via dlopen when CUDA acceleration is requested.
@@ -279,6 +293,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         sparse_stab_bindings::adjust_tableau_string,
         m
     )?)?;
+    m.add_function(wrap_pyfunction!(find_llvm_tool, m)?)?;
 
     // Array creation function (NumPy-like interface, no NumPy dependency)
     m.add_function(wrap_pyfunction!(pecos_array::array, m)?)?;

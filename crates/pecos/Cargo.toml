@@ -66,7 +66,10 @@ pecos-decoders = { workspace = true, optional = true }
 default = ["cli", "core"]
 
 # CLI binary with dev tools (lightweight - no simulation dependencies)
-cli = ["dep:clap", "dep:clap_complete", "dep:env_logger", "dep:pecos-build", "dep:cargo_metadata"]
+cli = ["dep:clap", "dep:clap_complete", "dep:env_logger", "build-tools", "dep:cargo_metadata"]
+
+# Build tools (LLVM detection, installation, etc.) - very lightweight
+build-tools = ["dep:pecos-build"]
 
 # Runtime: enables full simulation library with QASM and PHIR support
 # Use this for CLI runtime commands (run, compile, info, doctor, examples)

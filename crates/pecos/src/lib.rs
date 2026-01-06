@@ -760,6 +760,10 @@ pub use pecos_qulacs::QulacsStateVec;
 #[cfg(feature = "wasm")]
 pub use pecos_wasm::{ForeignObject, WasmForeignObject};
 
+// Build tools for LLVM detection
+#[cfg(feature = "build-tools")]
+pub use pecos_build::llvm::{find_llvm_14, find_tool};
+
 // Numerical computing - commonly used functions at top level for convenience
 #[cfg(feature = "num")]
 pub use pecos_num::{

@@ -25,13 +25,9 @@ use pecos_engines::{
 use pecos_qis_ffi_types::{Operation, OperationCollector as OperationList, QuantumOp};
 use pecos_rng::PecosRng;
 use std::collections::BTreeMap;
-use std::thread::JoinHandle;
-
-// These imports are only used by PersistentDynamicWorker (Linux only)
-#[cfg(not(target_os = "macos"))]
 use std::sync::Mutex;
-#[cfg(not(target_os = "macos"))]
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread::JoinHandle;
 
 /// Result from worker thread - returns both the operations and the interface
 type WorkerResult = Result<(OperationList, BoxedInterface), String>;
@@ -49,15 +45,11 @@ struct DynamicExecutionState {
     execution_complete: bool,
     /// Sync handle for main thread FFI calls
     /// Uses the same library instance (singleton) as the worker thread,
-    /// ensuring TLS consistency on macOS
+    /// ensuring TLS consistency across platforms
     sync_handle: Option<Box<dyn DynamicSyncHandle>>,
-    /// Worker thread handle (used on macOS where persistent worker causes issues)
-    #[cfg(target_os = "macos")]
-    worker_handle: Option<JoinHandle<WorkerResult>>,
 }
 
 /// Work item sent to the persistent dynamic worker thread
-#[cfg(not(target_os = "macos"))]
 struct DynamicWorkItem {
     /// The interface to execute
     interface: BoxedInterface,
@@ -69,7 +61,6 @@ struct DynamicWorkItem {
 /// and TLS allocation issues that come from spawning a new thread per shot.
 /// The thread waits for work items via a channel, executes `collect_operations()`,
 /// and sends results back via another channel.
-#[cfg(not(target_os = "macos"))]
 struct PersistentDynamicWorker {
     /// Channel to send work items to the worker
     work_tx: Sender<DynamicWorkItem>,
@@ -79,7 +70,6 @@ struct PersistentDynamicWorker {
     _handle: JoinHandle<()>,
 }
 
-#[cfg(not(target_os = "macos"))]
 impl PersistentDynamicWorker {
     /// Create a new persistent dynamic worker thread
     fn new() -> Self {
@@ -202,7 +192,6 @@ pub struct QisEngine {
 
     /// Persistent worker thread for dynamic execution (stays alive across shots)
     /// This avoids spawning a new thread per shot, which causes TLS allocation issues.
-    #[cfg(not(target_os = "macos"))]
     persistent_worker: Option<PersistentDynamicWorker>,
 }
 
@@ -230,7 +219,6 @@ impl QisEngine {
             program_bytes: None,
             program_format: None,
             interface_builder: None,
-            #[cfg(not(target_os = "macos"))]
             persistent_worker: None,
         }
     }
@@ -304,7 +292,6 @@ impl QisEngine {
             program_bytes: None,
             program_format: None,
             interface_builder: None,
-            #[cfg(not(target_os = "macos"))]
             persistent_worker: None,
         }
     }
@@ -474,7 +461,6 @@ impl Clone for QisEngine {
                 .as_ref()
                 .map(|b| dyn_clone::clone_box(&**b)),
             // Create a new persistent worker for this clone (can't share threads across clones)
-            #[cfg(not(target_os = "macos"))]
             persistent_worker: None,
         }
     }
@@ -484,8 +470,8 @@ impl Clone for QisEngine {
 impl QisEngine {
     /// Start the LLVM program execution in a worker thread
     ///
-    /// Uses a persistent worker thread on Linux to avoid glibc TLS allocation issues.
-    /// On macOS, uses per-shot spawning with a sync handle that uses the singleton library.
+    /// Uses a persistent worker thread to avoid TLS allocation issues from
+    /// spawning a new thread per shot.
     fn start_dynamic_worker(&mut self) -> Result<(), PecosError> {
         debug!("Starting dynamic execution");
 
@@ -516,55 +502,23 @@ impl QisEngine {
             PecosError::Generic("No interface available for dynamic execution".to_string())
         })?;
 
-        // Platform-specific worker spawning:
-        // - On Linux: Use persistent worker to avoid glibc TLS allocation issues
-        // - On macOS: Use per-shot spawning (persistent worker causes segfaults)
-        #[cfg(not(target_os = "macos"))]
-        {
-            // Create persistent worker if it doesn't exist
-            if self.persistent_worker.is_none() {
-                debug!("Creating new persistent dynamic worker thread");
-                self.persistent_worker = Some(PersistentDynamicWorker::new());
-            }
-
-            // Send work to persistent worker
-            self.persistent_worker
-                .as_ref()
-                .expect("persistent worker was just created")
-                .execute(interface)?;
-
-            // Initialize dynamic state
-            self.dynamic_state = Some(DynamicExecutionState {
-                sync_handle,
-                execution_complete: false,
-            });
+        // Create persistent worker if it doesn't exist
+        if self.persistent_worker.is_none() {
+            debug!("Creating new persistent dynamic worker thread");
+            self.persistent_worker = Some(PersistentDynamicWorker::new());
         }
 
-        #[cfg(target_os = "macos")]
-        {
-            // Spawn worker thread that runs the LLVM program (per-shot)
-            let worker_handle = std::thread::spawn(move || {
-                let mut interface = interface; // Shadow with mutable binding
-                debug!("Worker thread: starting collect_operations");
-                let result = interface.collect_operations();
-                debug!("Worker thread: collect_operations returned");
+        // Send work to persistent worker
+        self.persistent_worker
+            .as_ref()
+            .expect("persistent worker was just created")
+            .execute(interface)?;
 
-                // Disable dynamic mode before returning
-                let _ = interface.disable_dynamic_mode();
-
-                // Return both the result and the interface
-                result
-                    .map(|collector| (collector, interface))
-                    .map_err(|e| e.to_string())
-            });
-
-            // Initialize dynamic state with worker handle
-            self.dynamic_state = Some(DynamicExecutionState {
-                sync_handle,
-                execution_complete: false,
-                worker_handle: Some(worker_handle),
-            });
-        }
+        // Initialize dynamic state
+        self.dynamic_state = Some(DynamicExecutionState {
+            sync_handle,
+            execution_complete: false,
+        });
 
         Ok(())
     }
@@ -633,37 +587,11 @@ impl QisEngine {
             return true;
         }
 
-        // Platform-specific result checking - get result outside of borrow
-        #[cfg(not(target_os = "macos"))]
+        // Check if persistent worker has a result ready
         let result: Option<WorkerResult> = self
             .persistent_worker
             .as_ref()
             .and_then(PersistentDynamicWorker::try_recv_result);
-
-        #[cfg(target_os = "macos")]
-        let result: Option<WorkerResult> = {
-            if let Some(ref mut state) = self.dynamic_state {
-                if let Some(handle) = state.worker_handle.take() {
-                    if handle.is_finished() {
-                        if let Ok(r) = handle.join() {
-                            Some(r)
-                        } else {
-                            log::error!("Worker panicked");
-                            state.execution_complete = true;
-                            return true;
-                        }
-                    } else {
-                        // Put handle back if not finished
-                        state.worker_handle = Some(handle);
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        };
 
         // Process result if we got one
         if let Some(result) = result {

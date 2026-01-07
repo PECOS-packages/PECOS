@@ -10,9 +10,9 @@ sys.path.insert(
 
 import pytest
 from pecos.circuits.quantum_circuit import QuantumCircuit
-from pecos.qeclib import qubit
 from pecos.slr import CReg, For, Main, Parallel, QReg, Repeat, SlrConverter
 from pecos.slr.gen_codes.gen_quantum_circuit import QuantumCircuitGenerator
+from pecos.slr.qeclib import qubit
 
 
 class TestQuantumCircuitToSLR:

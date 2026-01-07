@@ -1,8 +1,8 @@
 """Tests for Stim circuit to/from SLR conversion."""
 
 import pytest
-from pecos.qeclib import qubit
 from pecos.slr import CReg, Main, Parallel, QReg, Repeat, SlrConverter
+from pecos.slr.qeclib import qubit
 
 # Check if stim is available
 try:

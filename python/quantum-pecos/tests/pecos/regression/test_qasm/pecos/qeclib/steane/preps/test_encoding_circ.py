@@ -13,8 +13,8 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.preps.encoding_circ import EncodingCircuit
 from pecos.slr import QReg
+from pecos.slr.qeclib.steane.preps.encoding_circ import EncodingCircuit
 
 
 def test_EncodingCircuit(compare_qasm: Callable[..., None]) -> None:

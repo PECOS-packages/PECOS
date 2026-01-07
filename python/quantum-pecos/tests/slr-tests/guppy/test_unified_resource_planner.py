@@ -4,13 +4,13 @@ This tests the integration of unpacking decisions, allocation strategies,
 and data flow analysis into a coherent resource management plan.
 """
 
-from pecos.qeclib import qubit
 from pecos.slr import CReg, For, If, Main, QReg
 from pecos.slr.gen_codes.guppy.unified_resource_planner import (
     DecisionPriority,
     ResourceStrategy,
     UnifiedResourcePlanner,
 )
+from pecos.slr.qeclib import qubit
 
 
 class TestBasicUnifiedPlanning:

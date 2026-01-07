@@ -15,10 +15,10 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 import pecos as pc
-from pecos.qeclib import qubit as q
+from pecos.slr.qeclib import qubit as q
 
 if TYPE_CHECKING:
-    from pecos.qeclib.qubit.qgate_base import QGate
+    from pecos.slr.qeclib.qubit.qgate_base import QGate
 
 
 @dataclass

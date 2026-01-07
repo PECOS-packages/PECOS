@@ -1,8 +1,8 @@
 """Test register-wide operations that should generate loops."""
 
-from pecos.qeclib import qubit
-from pecos.qeclib.qubit.measures import Measure
 from pecos.slr import CReg, Main, QReg, SlrConverter
+from pecos.slr.qeclib import qubit
+from pecos.slr.qeclib.qubit.measures import Measure
 
 
 def test_hadamard_on_register() -> None:

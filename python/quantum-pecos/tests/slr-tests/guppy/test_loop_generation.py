@@ -1,8 +1,8 @@
 """Test loop generation for register-wide operations."""
 
-from pecos.qeclib import qubit
-from pecos.qeclib.qubit.measures import Measure
 from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+from pecos.slr.qeclib import qubit
+from pecos.slr.qeclib.qubit.measures import Measure
 
 
 def test_consecutive_gate_applications() -> None:

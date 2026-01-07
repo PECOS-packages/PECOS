@@ -1,8 +1,8 @@
 """Test suite for data flow analysis."""
 
-from pecos.qeclib import qubit
 from pecos.slr import CReg, If, Main, QReg
 from pecos.slr.gen_codes.guppy.data_flow import DataFlowAnalyzer
+from pecos.slr.qeclib import qubit
 
 
 class TestDataFlowBasics:

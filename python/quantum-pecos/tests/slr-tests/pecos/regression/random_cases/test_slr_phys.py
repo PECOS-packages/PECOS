@@ -3,8 +3,6 @@
 import re
 
 import pytest
-from pecos.qeclib import qubit as p
-from pecos.qeclib.steane.steane_class import Steane
 from pecos.slr import (
     Barrier,
     Block,
@@ -17,6 +15,8 @@ from pecos.slr import (
     Repeat,
     SlrConverter,
 )
+from pecos.slr.qeclib import qubit as p
+from pecos.slr.qeclib.steane.steane_class import Steane
 
 # TODO: Remove reference to hqslib1.inc... better yet, don't have tests on qasm
 

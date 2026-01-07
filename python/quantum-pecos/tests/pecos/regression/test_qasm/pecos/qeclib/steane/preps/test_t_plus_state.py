@@ -13,13 +13,13 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.preps.t_plus_state import (
+from pecos.slr import CReg, QReg
+from pecos.slr.qeclib.steane.preps.t_plus_state import (
     PrepEncodeTDagPlusNonFT,
     PrepEncodeTPlusFT,
     PrepEncodeTPlusFTRUS,
     PrepEncodeTPlusNonFT,
 )
-from pecos.slr import CReg, QReg
 
 
 def test_PrepEncodeTPlusNonFT(compare_qasm: Callable[..., None]) -> None:

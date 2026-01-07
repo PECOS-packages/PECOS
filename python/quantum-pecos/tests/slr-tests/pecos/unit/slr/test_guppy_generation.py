@@ -1,7 +1,7 @@
 """Tests for Guppy code generation from SLR programs."""
 
-from pecos.qeclib import qubit as qb
 from pecos.slr import CReg, If, Main, QReg, Repeat, SlrConverter
+from pecos.slr.qeclib import qubit as qb
 
 
 def test_simple_circuit() -> None:
@@ -65,7 +65,7 @@ def test_repeat_loop() -> None:
 
 def test_steane_snippet() -> None:
     """Test a simple Steane code snippet."""
-    from pecos.qeclib.steane.steane_class import Steane
+    from pecos.slr.qeclib.steane.steane_class import Steane
 
     prog = Main(
         # Create two logical qubits

@@ -18,6 +18,7 @@ which is based on a 4.8.8 lattice structure.
 
 from typing import Any
 
+from pecos.qec.color.geometry import generate_488_layout
 from pecos.qeccs.color_488.circuit_implementation1 import OneAncillaPerCheck
 from pecos.qeccs.color_488.gates import GateIdentity, GateInitPlus, GateInitZero
 from pecos.qeccs.color_488.instructions import (
@@ -153,36 +154,41 @@ class Color488(DefaultQECC):
         return distance, distance_height, distance_width
 
     def _generate_layout(self) -> dict:
-        """Creates the layout dictionary which describes the location of the qubits in the code."""
+        """Creates the layout dictionary which describes the location of the qubits in the code.
+
+        Uses pecos.qec.color.geometry for data qubit layout generation.
+        """
         self.lattice_height = 4 * self.distance - 4
         self.lattice_width = 2 * self.distance - 2
-        data_ids = self._data_id_iter()
-        ancilla_ids = self._ancilla_id_iter()
 
         self.lattice_dimensions = {
             "width": self.lattice_width,
             "height": self.lattice_height,
         }
 
-        # Determine the position of things
+        # Use pecos.qec for data qubit layout
+        nodeid2pos, _ = generate_488_layout(self.distance)
+
+        # Add data qubits to layout
+        for nid, pos in nodeid2pos.items():
+            self.layout[nid] = pos
+            self.position2qudit[pos] = nid
+            self.qudit_set.add(nid)
+            self.data_qudit_set.add(nid)
+
+        # Add ancilla qubits (check positions)
+        ancilla_ids = self._ancilla_id_iter()
         for y in range(self.lattice_width + 1):
             for x in range(self.lattice_height + 1):
+                # Skip positions outside the triangular region
                 if ((x, y) == (x, x + 2) and x % 2 == 1 and y % 8 == 3) or (
                     (x, y) == (4 * self.distance - y, y) and x % 2 == 1 and y % 8 == 7
                 ):
                     pass
-
                 elif (x, y) > (x, x) or (x, y) > (4 * self.distance - y - 2, y):
                     continue
 
-                if x % 2 == 0 and y % 2 == 0:  # Data
-                    if (y / 2) % 4 == 1 or (y / 2) % 4 == 2:
-                        if (x / 2) % 4 == 2 or (x / 2) % 4 == 3:
-                            self._add_node(x, y, data_ids)
-
-                    elif (x / 2) % 4 == 0 or (x / 2) % 4 == 1:
-                        self._add_node(x, y, data_ids)
-
+                # Ancilla positions
                 if x % 4 == 1 and y % 4 == 3:
                     self._add_node(x, y, ancilla_ids)
 

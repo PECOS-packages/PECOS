@@ -12,8 +12,8 @@
 """Tests for the ParallelOptimizer transformation pass."""
 
 import pytest
-from pecos.qeclib import qubit as qb
 from pecos.slr import Block, CReg, If, Main, Parallel, QReg, Repeat
+from pecos.slr.qeclib import qubit as qb
 from pecos.slr.transforms import ParallelOptimizer
 
 

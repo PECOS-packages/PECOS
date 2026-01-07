@@ -13,8 +13,8 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib import qubit
 from pecos.slr import QReg
+from pecos.slr.qeclib import qubit
 
 
 def test_F(compare_qasm: Callable[..., None]) -> None:

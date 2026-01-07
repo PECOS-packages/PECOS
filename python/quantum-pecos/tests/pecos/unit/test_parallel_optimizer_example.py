@@ -11,8 +11,8 @@
 
 """Example demonstrating the ParallelOptimizer transformation."""
 
-from pecos.qeclib import qubit as qb
 from pecos.slr import Block, CReg, Main, Parallel, QReg, SlrConverter
+from pecos.slr.qeclib import qubit as qb
 from pecos.slr.transforms import ParallelOptimizer
 
 

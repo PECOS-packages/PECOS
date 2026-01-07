@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING
 from pecos_rslib.llvm import binding, ir
 
 import pecos as pc
-from pecos.qeclib.qubit import qgate_base
 from pecos.slr import Block, If, Repeat
 from pecos.slr.cops import (
     NEG,
@@ -30,6 +29,7 @@ from pecos.slr.cops import (
 from pecos.slr.gen_codes.generator import Generator
 from pecos.slr.gen_codes.qir_gate_mapping import QIRGateMetadata
 from pecos.slr.misc import Barrier, Comment, Permute
+from pecos.slr.qeclib.qubit import qgate_base
 from pecos.slr.vars import Bit, CReg, QReg, Qubit, Reg, Vars
 
 if TYPE_CHECKING:

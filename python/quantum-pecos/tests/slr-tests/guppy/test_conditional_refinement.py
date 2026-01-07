@@ -4,9 +4,9 @@ This tests the improvement where we track WHICH specific elements are
 conditionally accessed, rather than marking the entire array as conditional.
 """
 
-from pecos.qeclib import qubit
 from pecos.slr import CReg, If, Main, QReg
 from pecos.slr.gen_codes.guppy.ir_analyzer import IRAnalyzer
+from pecos.slr.qeclib import qubit
 
 
 class TestConditionalElementTracking:

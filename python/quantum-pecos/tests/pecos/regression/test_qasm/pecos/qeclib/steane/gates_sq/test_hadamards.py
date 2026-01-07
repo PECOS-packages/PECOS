@@ -13,8 +13,8 @@
 
 from collections.abc import Callable
 
-from pecos.qeclib.steane.gates_sq.hadamards import H
 from pecos.slr import QReg
+from pecos.slr.qeclib.steane.gates_sq.hadamards import H
 
 
 def test_H(compare_qasm: Callable[..., None]) -> None:

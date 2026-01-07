@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pecos.circuit_converters.checks2circuit import Check2Circuits
+from pecos.qec.surface.layouts import generate_nonrotated_surface_layout
 from pecos.qeccs.default_qecc import DefaultQECC
 from pecos.qeccs.surface_4444.gates import GateIdentity, GateInitPlus, GateInitZero
 from pecos.qeccs.surface_4444.instructions import (
@@ -207,8 +208,7 @@ class Surface4444(DefaultQECC):
     def _generate_layout(self) -> dict:
         """Creates the layout dictionary which describes the location of the qubits in the code.
 
-        :param qudit_ids:
-        :return:
+        Uses pecos.qec.surface.layouts for layout generation.
         """
         height = self.height
         width = self.width
@@ -216,28 +216,33 @@ class Surface4444(DefaultQECC):
         lattice_width = 2 * (width - 1)
         self.lattice_height = lattice_height
         self.lattice_width = lattice_width
-        data_ids = self._data_id_iter()
-        ancilla_ids = self._ancilla_id_iter()
 
         self.lattice_dimensions = {
             "width": lattice_width,
-            "height": lattice_width,
+            "height": lattice_height,
         }
 
-        # Determine the position of things
-        for y in range(lattice_height + 1):
-            for x in range(lattice_width + 1):
-                if (x % 2 == 0 and y % 2 == 0) or (x % 2 == 1 and y % 2 == 1):
-                    # Data
-                    self._add_node(x, y, data_ids)
+        # Use pecos.qec for layout generation
+        data_positions, ancilla_positions, _ = generate_nonrotated_surface_layout(
+            width,
+            height,
+        )
 
-                elif x % 2 == 1 and y % 2 == 0:
-                    # X ancilla
-                    self._add_node(x, y, ancilla_ids)
+        # Add data qubits
+        for nid, pos in enumerate(data_positions):
+            self.layout[nid] = pos
+            self.position_to_qubit[pos] = nid
+            self.qudit_set.add(nid)
+            self.data_qudit_set.add(nid)
 
-                elif x % 2 == 0 and y % 2 == 1:
-                    # Z ancilla
-                    self._add_node(x, y, ancilla_ids)
+        # Add ancilla qubits
+        ancilla_start_id = len(data_positions)
+        for i, pos in enumerate(ancilla_positions):
+            nid = ancilla_start_id + i
+            self.layout[nid] = pos
+            self.position_to_qubit[pos] = nid
+            self.qudit_set.add(nid)
+            self.ancilla_qudit_set.add(nid)
 
         return self.layout
 

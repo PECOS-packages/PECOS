@@ -1,7 +1,7 @@
 """Test improved HUGR error messages."""
 
-from pecos.qeclib.qubit.measures import Measure
 from pecos.slr import CReg, Main, QReg
+from pecos.slr.qeclib.qubit.measures import Measure
 
 
 def test_place_not_used_error() -> None:

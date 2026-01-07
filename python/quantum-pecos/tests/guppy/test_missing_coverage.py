@@ -655,13 +655,15 @@ class TestQuantumErrorHandling:
         )
         measurements = get_measurements(results, expected_count=2)
 
-        # The function returns (success, m2) where:
-        # - success is a bool: False (0) for error path, True (1) for success path
-        # - m2 is the measurement of q2
+        # The measurements are captured in order: m1 (measurement_0), m2 (measurement_1)
+        # The relationship between m1 and success is: success = NOT m1
+        # - m1=0 (False) → else branch → success=True → H gate applied
+        # - m1=1 (True) → if branch → success=False → X gate applied
 
-        # Filter by the first element (success flag)
-        success_cases = [m for m in measurements if m[0] == 1]  # success=True
-        error_cases = [m for m in measurements if m[0] == 0]  # success=False
+        # Filter by the first element (m1, not success!)
+        # m1=0 means success=True, m1=1 means success=False
+        success_cases = [m for m in measurements if m[0] == 0]  # m1=0 → success=True
+        error_cases = [m for m in measurements if m[0] == 1]  # m1=1 → success=False
 
         # With H gate on q1 producing 50/50, expect roughly equal split
         assert (

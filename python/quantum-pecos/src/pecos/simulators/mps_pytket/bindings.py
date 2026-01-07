@@ -21,7 +21,7 @@ from pecos.simulators.mps_pytket.gates_init import init_one, init_zero
 from pecos.simulators.mps_pytket.gates_meas import meas_z
 
 # Supporting gates from table:
-#   https://github.com/CQCL/phir/blob/main/spec.md#table-ii---quantum-operations
+#   https://github.com/Quantinuum/phir/blob/main/spec.md#table-ii---quantum-operations
 
 gate_dict = {
     "Init": init_zero,

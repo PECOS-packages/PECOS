@@ -2,14 +2,14 @@
 name = "pecos-engines"
 version.workspace = true
 edition.workspace = true
-readme.workspace = true
+readme = "README.md"
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Provides simulator engines for PECOS simulations."
+description = "Simulation engine infrastructure for PECOS"
 
 [lib]
 crate-type = ["rlib"]

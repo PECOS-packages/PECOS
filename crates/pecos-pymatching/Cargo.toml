@@ -2,14 +2,14 @@
 name = "pecos-pymatching"
 version.workspace = true
 edition.workspace = true
-readme.workspace = true
+readme = "README.md"
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "PyMatching decoder wrapper for PECOS"
+description = "PyMatching MWPM decoder for PECOS"
 
 [dependencies]
 pecos-decoder-core.workspace = true

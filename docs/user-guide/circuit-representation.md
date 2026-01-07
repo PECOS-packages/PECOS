@@ -1,16 +1,107 @@
 # Circuit Representation
 
-PECOS provides several data structures for representing quantum circuits and general graphs, available in both Rust and Python.
+PECOS provides several ways to represent and work with quantum circuits, from high-level program formats to low-level data structures.
 
-## Overview
+## Quick Guide: What Should I Use?
+
+| I want to... | Use this |
+|--------------|----------|
+| Simulate a Guppy function | `sim(Guppy(my_func))` |
+| Simulate a QASM program | `sim(Qasm("..."))` |
+| Build a circuit programmatically | `DagCircuit` |
+| Schedule gates with explicit timing | `TickCircuit` |
+| Work with QEC syndrome rounds | `TickCircuit` |
+| Analyze circuit depth/width | `DagCircuit` |
+
+## Program Types
+
+When using PECOS's `sim()` API, you wrap your program in one of these types:
+
+| Type | Input Format | Use Case |
+|------|--------------|----------|
+| `Guppy` | Guppy-decorated function | Pythonic circuit construction (recommended) |
+| `Qasm` | OpenQASM 2.0 string | Standard quantum circuits |
+| `Hugr` | HUGR binary bytes | Compiled programs, interop with tket |
+| `Qis` | LLVM IR string | Low-level compiled programs |
+| `PhirJson` | PHIR JSON string | Experimental; easily serializable, simulator/QEC friendly |
+| `Wasm` / `Wat` | WebAssembly | Foreign functions (e.g., decoders) written in Rust/C/C++ for hybrid execution |
+
+### Example: Different Program Types
+
+=== ":fontawesome-brands-python: Python"
+    ```python
+    from pecos import sim, Guppy, Qasm, Hugr
+
+    # Guppy - recommended for new code
+    from guppylang import guppy
+    from guppylang.std.quantum import qubit, h, cx, measure
+
+
+    @guppy
+    def bell_state():
+        q0, q1 = qubit(), qubit()
+        h(q0)
+        cx(q0, q1)
+        return measure(q0), measure(q1)
+
+
+    results = sim(Guppy(bell_state)).run(100)
+
+    # QASM - for existing circuits
+    results = sim(
+        Qasm(
+            """
+        OPENQASM 2.0;
+        qreg q[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    """
+        )
+    ).run(100)
+
+    # HUGR - from compiled output
+    results = sim(Hugr.from_file("program.hugr")).run(100)
+    ```
+
+## Circuit Data Structures
+
+For programmatic circuit construction and analysis, PECOS provides these data structures:
 
 | Type | Purpose | Use Case |
 |------|---------|----------|
 | `DagCircuit` | DAG of quantum gates | Circuit optimization, resource estimation, noise modeling |
-| `TickCircuit` | Time-sliced circuit | Explicit timing, parallel gate scheduling |
+| `TickCircuit` | Time-sliced circuit | Explicit timing, parallel gate scheduling, QEC |
 | `DiGraph` | Directed graph | General directed graph algorithms |
 | `DAG` | Directed acyclic graph | Topological ordering, dependency tracking |
 | `Graph` | Undirected graph | Matching, shortest paths (see [Graph API](graph-api.md)) |
+
+### DagCircuit vs TickCircuit
+
+**DagCircuit** represents circuits as a directed acyclic graph where:
+
+- Nodes are gates
+- Edges are qubit wires connecting gates
+- Parallelism is implicit (independent gates can run together)
+
+**TickCircuit** represents circuits as a sequence of time slices where:
+
+- Each tick contains gates that run in parallel
+- Qubits cannot be reused within the same tick
+- Parallelism is explicit
+
+```
+DagCircuit (implicit parallelism):     TickCircuit (explicit parallelism):
+
+    H(q0) ──┐                          Tick 0: H(q0), H(q1)
+            ├── CX(q0,q1)              Tick 1: CX(q0,q1)
+    H(q1) ──┘                          Tick 2: Mz(q0), Mz(q1)
+            │
+    Mz(q0) ─┘
+    Mz(q1) ─┘
+```
+
+Choose `DagCircuit` when you want automatic parallelism detection. Choose `TickCircuit` when you need explicit control over timing (e.g., QEC syndrome extraction rounds).
 
 ## DagCircuit
 

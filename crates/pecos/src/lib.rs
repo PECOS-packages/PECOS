@@ -147,9 +147,7 @@ pub mod engines {
     pub use pecos_qasm::{QASMEngine, QasmEngineBuilder, qasm_engine};
 
     #[cfg(feature = "qis")]
-    pub use pecos_qis_core::{
-        QisEngine, QisEngineBuilder, qis_engine, setup_qis_engine_with_runtime,
-    };
+    pub use pecos_qis::{QisEngine, QisEngineBuilder, qis_engine, setup_qis_engine_with_runtime};
 
     #[cfg(feature = "phir")]
     pub use pecos_phir_json::{PhirJsonEngine, PhirJsonEngineBuilder, phir_json_engine};
@@ -306,13 +304,13 @@ pub mod programs {
 #[cfg(feature = "qis")]
 pub mod runtime {
     // Re-export Selene interface
-    pub use pecos_qis_selene::{
+    pub use pecos_qis::{
         HeliosInterfaceBuilder, QisHeliosInterface, SeleneRuntime, helios_interface_builder,
         selene_runtime_auto, selene_simple_runtime,
     };
 
     // Re-export core runtime types
-    pub use pecos_qis_core::{ClassicalState, QisRuntime, RuntimeError};
+    pub use pecos_qis::{ClassicalState, QisRuntime, RuntimeError};
 }
 
 /// Simulation results and data types
@@ -702,7 +700,7 @@ pub mod qsim {
 pub use pecos_qasm::{QasmEngineBuilder, qasm_engine, run_qasm};
 
 #[cfg(feature = "qis")]
-pub use pecos_qis_core::{QisEngineBuilder, qis_engine, setup_qis_engine_with_runtime};
+pub use pecos_qis::{QisEngineBuilder, qis_engine, setup_qis_engine_with_runtime};
 
 #[cfg(feature = "phir")]
 pub use pecos_phir::PhirConfig;
@@ -729,7 +727,7 @@ pub use pecos_programs::{Hugr, Program, Qasm, Qis};
 
 // Selene interface (when feature is enabled)
 #[cfg(feature = "qis")]
-pub use pecos_qis_selene::{
+pub use pecos_qis::{
     HeliosInterfaceBuilder, QisHeliosInterface, SeleneRuntime, helios_interface_builder,
     selene_runtime_auto, selene_simple_runtime,
 };
@@ -760,6 +758,10 @@ pub use pecos_qulacs::QulacsStateVec;
 // WebAssembly foreign object support
 #[cfg(feature = "wasm")]
 pub use pecos_wasm::{ForeignObject, WasmForeignObject};
+
+// Build tools for LLVM detection
+#[cfg(feature = "build-tools")]
+pub use pecos_build::llvm::{find_llvm_14, find_tool};
 
 // Numerical computing - commonly used functions at top level for convenience
 #[cfg(feature = "num")]

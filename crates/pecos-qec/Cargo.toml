@@ -8,8 +8,8 @@ repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "QEC for Rust PECOS."
-readme = "../../README.md"
+description = "Quantum error correction utilities for PECOS"
+readme = "README.md"
 
 [lints]
 workspace = true

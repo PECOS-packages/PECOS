@@ -53,5 +53,5 @@ PHIR-JSON can be used as:
 
 ## Related Resources
 
-- [Python PHIR Validator](https://github.com/CQCL/phir): A Pydantic-based validator for PHIR-JSON documents
+- [Python PHIR Validator](https://github.com/Quantinuum/phir): A Pydantic-based validator for PHIR-JSON documents
 - [PECOS](https://github.com/PECOS-packages/PECOS): The PECOS quantum simulation framework

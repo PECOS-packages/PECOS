@@ -415,17 +415,46 @@ pub unsafe extern "C" fn __quantum__rt__result_allocate() -> i64 {
 
 /// Get measurement result (returns 1 if result is One, 0 otherwise)
 ///
+/// This function supports dynamic circuits: if the result is not yet available and
+/// a quantum executor callback has been registered, it will execute pending quantum
+/// operations to obtain the measurement result.
+///
 /// # Safety
 /// This function is safe to call from C/LLVM code. The result parameter must be a valid
 /// non-negative result ID that fits in usize. Invalid IDs will cause a panic.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __quantum__rt__result_get_one(result: i64) -> i32 {
+    log::debug!("__quantum__rt__result_get_one called with result={result}");
     let result_id = i64_to_usize(result);
-    with_interface(|interface| {
-        // In the minimal interface, we just return a placeholder
-        // The actual result will be available after runtime execution
-        interface.get_result(result_id).map_or(0, i32::from)
-    })
+
+    // First check if result is already available
+    let existing_result = with_interface(|interface| interface.get_result(result_id));
+
+    if let Some(value) = existing_result {
+        return i32::from(value);
+    }
+
+    // Result not available - try to execute pending operations
+    // This enables dynamic circuits where conditionals depend on measurements
+    if crate::execute_pending_and_get_results() {
+        log::debug!("Executed pending operations, checking result again");
+        // Execution happened, try to get the result again
+        with_interface(|interface| {
+            interface.get_result(result_id).map_or_else(
+                || {
+                    log::warn!(
+                        "Measurement result {result_id} still not available after executing pending operations"
+                    );
+                    0
+                },
+                i32::from,
+            )
+        })
+    } else {
+        // No executor set - return default (static circuit behavior)
+        log::debug!("No quantum executor set, returning default 0 for result {result_id}");
+        0
+    }
 }
 
 // =============================================================================
@@ -601,6 +630,12 @@ pub unsafe extern "C" fn ___lazy_measure(qubit: i64) -> i64 {
 /// This function retrieves a measurement result from a future/deferred measurement.
 /// The `future_id` is the result ID returned by `___lazy_measure`.
 ///
+/// For dynamic circuits: If the result is not yet available and dynamic mode is active,
+/// this function will signal the main thread and block until the result is available.
+/// The main thread should simulate the pending operations and provide the result.
+///
+/// Requires an execution context to be registered for dynamic circuit support.
+///
 /// # Safety
 /// This function is safe to call from C/LLVM code. The `future_id` parameter must be a valid
 /// result ID previously returned by `___lazy_measure`. Invalid IDs will cause a panic.
@@ -609,12 +644,46 @@ pub unsafe extern "C" fn ___lazy_measure(qubit: i64) -> i64 {
 /// Returns the boolean measurement result (true = 1, false = 0).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ___read_future_bool(future_id: i64) -> bool {
+    log::debug!("___read_future_bool called with future_id={future_id}");
     let result_id = i64_to_usize(future_id);
-    with_interface(|interface| {
-        // Get the measurement result from the interface
-        // Returns false if the result is not yet available
-        interface.get_result(result_id).unwrap_or(false)
-    })
+
+    // Check if result is already available in thread-local storage
+    let existing_result = with_interface(|interface| interface.get_result(result_id));
+    log::debug!("___read_future_bool: existing_result={existing_result:?}");
+
+    if let Some(result) = existing_result {
+        return result;
+    }
+
+    // Check if dynamic mode is active (requires execution context)
+    if crate::is_dynamic_mode_active() {
+        // First check if result is already available in execution context
+        // This can happen when multiple measurements are batched together
+        if let Some(result) = crate::get_measurement_result(result_id as u64) {
+            log::debug!(
+                "___read_future_bool: result already in context for result_id={result_id}: {result}"
+            );
+            return result;
+        }
+
+        log::debug!(
+            "___read_future_bool: dynamic mode active, signaling need for result_id={result_id}"
+        );
+
+        // Wait for the main thread to provide the result
+        // This uses the per-execution context for synchronization
+        if crate::wait_for_result_ready(result_id as u64, 30000) {
+            // Result should now be available in the execution context
+            // The main thread stores results there to cross the thread boundary
+            let result = crate::get_measurement_result(result_id as u64);
+            log::debug!("___read_future_bool: got result after waiting: {result:?}");
+            return result.unwrap_or(false);
+        }
+        log::debug!("___read_future_bool: timeout waiting for result");
+    }
+
+    // Default: return false (for first pass or if no dynamic mode)
+    false
 }
 
 /// Increment the reference count of a future (Guppy/HUGR-LLVM style)
@@ -882,4 +951,759 @@ pub unsafe extern "C" fn heap_free(ptr: *mut u8) {
 
     // Use libc free which pairs with malloc
     unsafe { libc::free(ptr.cast::<libc::c_void>()) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Operation, QuantumOp, reset_interface, with_interface};
+
+    /// Helper to reset and get a clean interface for testing
+    fn setup_test() {
+        reset_interface();
+    }
+
+    // =========================================================================
+    // Single-qubit gate tests
+    // =========================================================================
+
+    #[test]
+    fn test_h_gate() {
+        setup_test();
+        unsafe { __quantum__qis__h__body(0) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations.len(), 1);
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::H(0)));
+        });
+    }
+
+    #[test]
+    fn test_x_gate() {
+        setup_test();
+        unsafe { __quantum__qis__x__body(1) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations.len(), 1);
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::X(1)));
+        });
+    }
+
+    #[test]
+    fn test_y_gate() {
+        setup_test();
+        unsafe { __quantum__qis__y__body(2) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::Y(2)));
+        });
+    }
+
+    #[test]
+    fn test_z_gate() {
+        setup_test();
+        unsafe { __quantum__qis__z__body(3) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::Z(3)));
+        });
+    }
+
+    #[test]
+    fn test_s_gate() {
+        setup_test();
+        unsafe { __quantum__qis__s__body(0) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::S(0)));
+        });
+    }
+
+    #[test]
+    fn test_sdg_gate() {
+        setup_test();
+        unsafe { __quantum__qis__sdg__body(0) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::Sdg(0)));
+        });
+    }
+
+    #[test]
+    fn test_t_gate() {
+        setup_test();
+        unsafe { __quantum__qis__t__body(0) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::T(0)));
+        });
+    }
+
+    #[test]
+    fn test_tdg_gate() {
+        setup_test();
+        unsafe { __quantum__qis__tdg__body(0) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::Tdg(0)));
+        });
+    }
+
+    // =========================================================================
+    // Two-qubit gate tests
+    // =========================================================================
+
+    #[test]
+    fn test_cx_gate() {
+        setup_test();
+        unsafe { __quantum__qis__cx__body(0, 1) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::CX(0, 1)));
+        });
+    }
+
+    #[test]
+    fn test_cnot_gate() {
+        setup_test();
+        unsafe { __quantum__qis__cnot__body(2, 3) };
+
+        with_interface(|iface| {
+            // CNOT is an alias for CX
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::CX(2, 3)));
+        });
+    }
+
+    #[test]
+    fn test_cy_gate() {
+        setup_test();
+        unsafe { __quantum__qis__cy__body(0, 1) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::CY(0, 1)));
+        });
+    }
+
+    #[test]
+    fn test_cz_gate() {
+        setup_test();
+        unsafe { __quantum__qis__cz__body(0, 1) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::CZ(0, 1)));
+        });
+    }
+
+    #[test]
+    fn test_ch_gate() {
+        setup_test();
+        unsafe { __quantum__qis__ch__body(0, 1) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::CH(0, 1)));
+        });
+    }
+
+    // =========================================================================
+    // Rotation gate tests
+    // =========================================================================
+
+    #[test]
+    fn test_rx_gate() {
+        setup_test();
+        let theta = std::f64::consts::PI / 2.0;
+        unsafe { __quantum__qis__rx__body(theta, 0) };
+
+        with_interface(|iface| {
+            assert_eq!(
+                iface.operations[0],
+                Operation::Quantum(QuantumOp::RX(theta, 0))
+            );
+        });
+    }
+
+    #[test]
+    fn test_ry_gate() {
+        setup_test();
+        let theta = std::f64::consts::PI / 4.0;
+        unsafe { __quantum__qis__ry__body(theta, 1) };
+
+        with_interface(|iface| {
+            assert_eq!(
+                iface.operations[0],
+                Operation::Quantum(QuantumOp::RY(theta, 1))
+            );
+        });
+    }
+
+    #[test]
+    fn test_rz_gate() {
+        setup_test();
+        let theta = std::f64::consts::PI;
+        unsafe { __quantum__qis__rz__body(theta, 2) };
+
+        with_interface(|iface| {
+            assert_eq!(
+                iface.operations[0],
+                Operation::Quantum(QuantumOp::RZ(theta, 2))
+            );
+        });
+    }
+
+    #[test]
+    fn test_rzz_gate() {
+        setup_test();
+        let theta = 1.5;
+        unsafe { __quantum__qis__rzz__body(theta, 0, 1) };
+
+        with_interface(|iface| {
+            assert_eq!(
+                iface.operations[0],
+                Operation::Quantum(QuantumOp::RZZ(theta, 0, 1))
+            );
+        });
+    }
+
+    #[test]
+    fn test_r1xy_gate() {
+        setup_test();
+        let theta = 1.0;
+        let phi = 0.5;
+        unsafe { __quantum__qis__r1xy__body(theta, phi, 0) };
+
+        with_interface(|iface| {
+            assert_eq!(
+                iface.operations[0],
+                Operation::Quantum(QuantumOp::RXY(theta, phi, 0))
+            );
+        });
+    }
+
+    #[test]
+    fn test_crz_gate() {
+        setup_test();
+        let theta = 2.0;
+        unsafe { __quantum__qis__crz__body(theta, 0, 1) };
+
+        with_interface(|iface| {
+            assert_eq!(
+                iface.operations[0],
+                Operation::Quantum(QuantumOp::CRZ(theta, 0, 1))
+            );
+        });
+    }
+
+    // =========================================================================
+    // Three-qubit gate tests
+    // =========================================================================
+
+    #[test]
+    fn test_ccx_gate() {
+        setup_test();
+        unsafe { __quantum__qis__ccx__body(0, 1, 2) };
+
+        with_interface(|iface| {
+            assert_eq!(
+                iface.operations[0],
+                Operation::Quantum(QuantumOp::CCX(0, 1, 2))
+            );
+        });
+    }
+
+    // =========================================================================
+    // ZZ interaction tests
+    // =========================================================================
+
+    #[test]
+    fn test_zz_gate() {
+        setup_test();
+        unsafe { __quantum__qis__zz__body(0, 1) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::ZZ(0, 1)));
+        });
+    }
+
+    // =========================================================================
+    // Measurement and reset tests
+    // =========================================================================
+
+    #[test]
+    fn test_measurement() {
+        setup_test();
+        let result = unsafe { __quantum__qis__m__body(0, 0) };
+
+        assert_eq!(result, 0); // Default return value
+
+        with_interface(|iface| {
+            assert_eq!(
+                iface.operations[0],
+                Operation::Quantum(QuantumOp::Measure(0, 0))
+            );
+        });
+    }
+
+    #[test]
+    fn test_mz_measurement() {
+        setup_test();
+        let result = unsafe { __quantum__qis__mz__body(5) };
+
+        assert_eq!(result, 0);
+
+        with_interface(|iface| {
+            // mz uses qubit ID as result ID
+            assert_eq!(
+                iface.operations[0],
+                Operation::Quantum(QuantumOp::Measure(5, 5))
+            );
+        });
+    }
+
+    #[test]
+    fn test_reset() {
+        setup_test();
+        unsafe { __quantum__qis__reset__body(3) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::Reset(3)));
+        });
+    }
+
+    // =========================================================================
+    // Allocation tests
+    // =========================================================================
+
+    #[test]
+    fn test_qubit_allocate() {
+        setup_test();
+        let q0 = unsafe { __quantum__rt__qubit_allocate() };
+        let q1 = unsafe { __quantum__rt__qubit_allocate() };
+
+        assert_eq!(q0, 0);
+        assert_eq!(q1, 1);
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations.len(), 2);
+            assert_eq!(iface.operations[0], Operation::AllocateQubit { id: 0 });
+            assert_eq!(iface.operations[1], Operation::AllocateQubit { id: 1 });
+        });
+    }
+
+    #[test]
+    fn test_qubit_release() {
+        setup_test();
+        unsafe { __quantum__rt__qubit_release(5) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::ReleaseQubit { id: 5 });
+        });
+    }
+
+    #[test]
+    fn test_result_allocate() {
+        setup_test();
+        let r0 = unsafe { __quantum__rt__result_allocate() };
+        let r1 = unsafe { __quantum__rt__result_allocate() };
+
+        assert_eq!(r0, 0);
+        assert_eq!(r1, 1);
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations.len(), 2);
+            assert_eq!(iface.operations[0], Operation::AllocateResult { id: 0 });
+            assert_eq!(iface.operations[1], Operation::AllocateResult { id: 1 });
+        });
+    }
+
+    // =========================================================================
+    // Selene-style function tests
+    // =========================================================================
+
+    #[test]
+    fn test_selene_reset() {
+        setup_test();
+        unsafe { ___reset(4) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::Reset(4)));
+        });
+    }
+
+    #[test]
+    fn test_selene_rxy() {
+        setup_test();
+        unsafe { ___rxy(0, 1.5, 0.5) };
+
+        with_interface(|iface| {
+            assert_eq!(
+                iface.operations[0],
+                Operation::Quantum(QuantumOp::RXY(1.5, 0.5, 0))
+            );
+        });
+    }
+
+    #[test]
+    fn test_selene_rz() {
+        setup_test();
+        unsafe { ___rz(1, 2.0) };
+
+        with_interface(|iface| {
+            assert_eq!(
+                iface.operations[0],
+                Operation::Quantum(QuantumOp::RZ(2.0, 1))
+            );
+        });
+    }
+
+    #[test]
+    fn test_selene_rzz() {
+        setup_test();
+        unsafe { ___rzz(0, 1, 1.5) };
+
+        with_interface(|iface| {
+            assert_eq!(
+                iface.operations[0],
+                Operation::Quantum(QuantumOp::RZZ(1.5, 0, 1))
+            );
+        });
+    }
+
+    #[test]
+    fn test_selene_qalloc() {
+        setup_test();
+        let q = unsafe { ___qalloc() };
+
+        assert_eq!(q, 0);
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::AllocateQubit { id: 0 });
+        });
+    }
+
+    #[test]
+    fn test_selene_qfree() {
+        setup_test();
+        unsafe { ___qfree(3) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::ReleaseQubit { id: 3 });
+        });
+    }
+
+    #[test]
+    fn test_selene_h() {
+        setup_test();
+        unsafe { ___h(2) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::H(2)));
+        });
+    }
+
+    #[test]
+    fn test_selene_cx() {
+        setup_test();
+        unsafe { ___cx(0, 1) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::CX(0, 1)));
+        });
+    }
+
+    // =========================================================================
+    // Lazy measure and future tests
+    // =========================================================================
+
+    #[test]
+    fn test_lazy_measure() {
+        setup_test();
+        let result_id = unsafe { ___lazy_measure(0) };
+
+        assert_eq!(result_id, 0);
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations.len(), 2);
+            assert_eq!(iface.operations[0], Operation::AllocateResult { id: 0 });
+            assert_eq!(
+                iface.operations[1],
+                Operation::Quantum(QuantumOp::Measure(0, 0))
+            );
+        });
+    }
+
+    #[test]
+    fn test_read_future_bool_with_stored_result() {
+        setup_test();
+
+        // Store a result first
+        with_interface(|iface| {
+            iface.store_result(0, true);
+        });
+
+        let result = unsafe { ___read_future_bool(0) };
+        assert!(result);
+    }
+
+    #[test]
+    fn test_read_future_bool_default() {
+        setup_test();
+
+        // No result stored, no dynamic mode - should return false
+        let result = unsafe { ___read_future_bool(99) };
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_future_refcount_noops() {
+        // These are no-ops but should not crash
+        unsafe {
+            ___inc_future_refcount(0);
+            ___dec_future_refcount(0);
+            ___inc_future_refcount(999);
+            ___dec_future_refcount(999);
+        }
+    }
+
+    // =========================================================================
+    // Setup/teardown tests
+    // =========================================================================
+
+    #[test]
+    fn test_setup() {
+        // Should not crash
+        unsafe { setup(0) };
+        unsafe { setup(42) };
+    }
+
+    #[test]
+    fn test_teardown() {
+        let result = unsafe { teardown() };
+        assert_eq!(result, 0);
+    }
+
+    // =========================================================================
+    // Result retrieval tests
+    // =========================================================================
+
+    #[test]
+    fn test_result_get_one_with_stored_result() {
+        setup_test();
+
+        with_interface(|iface| {
+            iface.store_result(0, true);
+        });
+
+        let result = unsafe { __quantum__rt__result_get_one(0) };
+        assert_eq!(result, 1);
+    }
+
+    #[test]
+    fn test_result_get_one_default() {
+        setup_test();
+
+        // No result stored - returns 0
+        let result = unsafe { __quantum__rt__result_get_one(99) };
+        assert_eq!(result, 0);
+    }
+
+    // =========================================================================
+    // Heap allocation tests
+    // =========================================================================
+
+    #[test]
+    fn test_heap_alloc_and_free() {
+        let ptr = unsafe { heap_alloc(100) };
+        assert!(!ptr.is_null());
+
+        // Write to the memory to verify it's valid
+        unsafe {
+            std::ptr::write(ptr, 42u8);
+            assert_eq!(std::ptr::read(ptr), 42u8);
+        }
+
+        // Free should not crash
+        unsafe { heap_free(ptr) };
+    }
+
+    #[test]
+    fn test_heap_alloc_zero_size() {
+        let ptr = unsafe { heap_alloc(0) };
+        assert!(ptr.is_null());
+    }
+
+    #[test]
+    fn test_heap_free_null() {
+        // Should not crash
+        unsafe { heap_free(std::ptr::null_mut()) };
+    }
+
+    // =========================================================================
+    // Message and record tests
+    // =========================================================================
+
+    #[test]
+    fn test_message_null() {
+        // Should not crash with null pointer
+        unsafe { __quantum__rt__message(std::ptr::null()) };
+    }
+
+    #[test]
+    fn test_message_valid() {
+        let msg = std::ffi::CString::new("Test message").unwrap();
+        unsafe { __quantum__rt__message(msg.as_ptr()) };
+    }
+
+    #[test]
+    fn test_record_null() {
+        // Should not crash with null pointer
+        unsafe { __quantum__rt__record(std::ptr::null()) };
+    }
+
+    #[test]
+    fn test_record_valid() {
+        let data = std::ffi::CString::new("Test data").unwrap();
+        unsafe { __quantum__rt__record(data.as_ptr()) };
+    }
+
+    // =========================================================================
+    // Result record output tests
+    // =========================================================================
+
+    #[test]
+    fn test_result_record_output() {
+        setup_test();
+
+        let register_name = std::ffi::CString::new("c0").unwrap();
+        unsafe {
+            __quantum__rt__result_record_output(
+                5 as *const std::ffi::c_void,
+                register_name.as_ptr(),
+            );
+        };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations.len(), 1);
+            assert_eq!(
+                iface.operations[0],
+                Operation::RecordOutput {
+                    result_id: 5,
+                    register_name: "c0".to_string()
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn test_result_record_output_null_name() {
+        setup_test();
+
+        unsafe {
+            __quantum__rt__result_record_output(3 as *const std::ffi::c_void, std::ptr::null());
+        };
+
+        with_interface(|iface| {
+            assert_eq!(
+                iface.operations[0],
+                Operation::RecordOutput {
+                    result_id: 3,
+                    register_name: "unknown".to_string()
+                }
+            );
+        });
+    }
+
+    // =========================================================================
+    // Interface management tests (C exports)
+    // =========================================================================
+
+    #[test]
+    fn test_pecos_qis_reset_interface() {
+        // Add some operations
+        unsafe { __quantum__qis__h__body(0) };
+
+        // Reset
+        unsafe { pecos_qis_reset_interface() };
+
+        with_interface(|iface| {
+            assert!(iface.operations.is_empty());
+        });
+    }
+
+    #[test]
+    fn test_pecos_qis_get_and_free_operations() {
+        setup_test();
+        unsafe { __quantum__qis__h__body(0) };
+
+        let ptr = unsafe { pecos_qis_get_operations() };
+        assert!(!ptr.is_null());
+
+        // Verify contents
+        let collector = unsafe { &*ptr };
+        assert_eq!(collector.operations.len(), 1);
+
+        // Free
+        unsafe { pecos_qis_free_operations(ptr) };
+    }
+
+    #[test]
+    fn test_pecos_qis_free_operations_null() {
+        // Should not crash
+        unsafe { pecos_qis_free_operations(std::ptr::null_mut()) };
+    }
+
+    #[test]
+    fn test_pecos_qis_set_measurements() {
+        setup_test();
+
+        let pairs: [(usize, bool); 2] = [(0, true), (1, false)];
+        unsafe { pecos_qis_set_measurements(pairs.as_ptr(), pairs.len()) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.get_result(0), Some(true));
+            assert_eq!(iface.get_result(1), Some(false));
+        });
+    }
+
+    #[test]
+    fn test_pecos_qis_set_measurements_null() {
+        // Should not crash
+        unsafe { pecos_qis_set_measurements(std::ptr::null(), 5) };
+    }
+
+    // =========================================================================
+    // Multiple operations sequence test
+    // =========================================================================
+
+    #[test]
+    fn test_bell_state_circuit() {
+        setup_test();
+
+        // Bell state: allocate 2 qubits, H on first, CNOT, measure both
+        let q0 = unsafe { __quantum__rt__qubit_allocate() };
+        let q1 = unsafe { __quantum__rt__qubit_allocate() };
+        unsafe { __quantum__qis__h__body(q0) };
+        unsafe { __quantum__qis__cx__body(q0, q1) };
+        let _r0 = unsafe { __quantum__rt__result_allocate() };
+        let _r1 = unsafe { __quantum__rt__result_allocate() };
+        unsafe { __quantum__qis__m__body(q0, 0) };
+        unsafe { __quantum__qis__m__body(q1, 1) };
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations.len(), 8);
+            assert_eq!(iface.operations[0], Operation::AllocateQubit { id: 0 });
+            assert_eq!(iface.operations[1], Operation::AllocateQubit { id: 1 });
+            assert_eq!(iface.operations[2], Operation::Quantum(QuantumOp::H(0)));
+            assert_eq!(iface.operations[3], Operation::Quantum(QuantumOp::CX(0, 1)));
+            assert_eq!(iface.operations[4], Operation::AllocateResult { id: 0 });
+            assert_eq!(iface.operations[5], Operation::AllocateResult { id: 1 });
+            assert_eq!(
+                iface.operations[6],
+                Operation::Quantum(QuantumOp::Measure(0, 0))
+            );
+            assert_eq!(
+                iface.operations[7],
+                Operation::Quantum(QuantumOp::Measure(1, 1))
+            );
+        });
+    }
 }

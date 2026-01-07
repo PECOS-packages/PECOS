@@ -8,7 +8,7 @@ use pecos_engines::{ClassicalControlEngineBuilder, MonteCarloEngine, SimBuilder,
 use pecos_programs::Program;
 use pecos_qasm::qasm_engine;
 #[cfg(feature = "qis")]
-use pecos_qis_core::qis_engine;
+use pecos_qis::qis_engine;
 
 /// Extension trait for `SimBuilder` to add program-based methods
 pub trait SimBuilderExt {

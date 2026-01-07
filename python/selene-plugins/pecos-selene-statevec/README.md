@@ -1,6 +1,6 @@
 # PECOS StateVec Selene Plugin
 
-A state vector simulator plugin for the [Selene](https://github.com/CQCL/selene) quantum emulator using the PECOS state vector implementation.
+A state vector simulator plugin for the [Selene](https://github.com/Quantinuum/selene) quantum emulator using the PECOS state vector implementation.
 
 ## Overview
 

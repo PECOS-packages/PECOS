@@ -19,9 +19,6 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
 
-// Test lock removed: These tests only verify determinism by executing quantum programs
-// They don't modify any shared state and can safely run in parallel
-
 /// Helper function to run PECOS CLI with given parameters
 fn run_pecos(
     file_path: &PathBuf,
@@ -32,7 +29,7 @@ fn run_pecos(
     seed: u64,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("pecos"));
-    cmd.env("RUST_LOG", "info").arg("run");
+    cmd.env("RUST_LOG", "warn").arg("run"); // Use warn to avoid pipe buffer issues with verbose output
 
     // Add --jit flag for LLVM files (when Selene is not available)
     if file_path.extension().and_then(|s| s.to_str()) == Some("ll") {
@@ -224,8 +221,6 @@ fn test_basic_determinism_qasm() -> Result<(), Box<dyn std::error::Error>> {
 /// Test basic determinism with LLVM files, gracefully skipping if LLVM tools are unavailable
 #[test]
 fn test_basic_determinism_llvm() {
-    // No lock needed: This test only verifies determinism without modifying shared state
-
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let bell_ll_path = manifest_dir.join("../../examples/llvm/bell.ll");
 

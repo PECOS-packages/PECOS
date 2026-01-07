@@ -448,13 +448,13 @@ def good_example() -> bool:
 
 ## Next Steps
 
-- **[Guppy Language Guide](https://github.com/CQCL/guppylang)** - Full Guppy documentation
+- **[Guppy Language Guide](https://github.com/Quantinuum/guppylang)** - Full Guppy documentation
 - **[QASM Simulation](qasm-simulation.md)** - Alternative simulation approach
 - **[Noise Model Builders](noise-model-builders.md)** - Custom noise configurations
 - **[Simulators](simulators.md)** - Available quantum backends
 
 ## Further Reading
 
-- [HUGR Specification](https://github.com/CQCL/hugr)
-- [Guppy GitHub Repository](https://github.com/CQCL/guppylang)
+- [HUGR Specification](https://github.com/Quantinuum/hugr)
+- [Guppy GitHub Repository](https://github.com/Quantinuum/guppylang)
 - [PECOS Development Guide](../development/DEVELOPMENT.md)

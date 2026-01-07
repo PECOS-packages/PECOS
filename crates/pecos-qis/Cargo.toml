@@ -1,0 +1,76 @@
+[package]
+name = "pecos-qis"
+version.workspace = true
+edition.workspace = true
+description = "Quantum instruction set (QIS) infrastructure and Selene runtime for PECOS"
+readme = "README.md"
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+# Just a rlib - the cdylib with __quantum__rt__* symbols is in pecos-qis-ffi
+crate-type = ["rlib"]
+
+[features]
+default = ["selene"]
+# LLVM support for QIS programs
+llvm = ["dep:inkwell"]
+# HUGR compilation requires LLVM - enables compiling HUGR programs to QIS
+hugr = ["llvm", "pecos-hugr-qis", "pecos-hugr-qis?/llvm"]
+# Selene implementation (QisHeliosInterface, SeleneRuntime, etc.)
+selene = ["selene-runtimes"]
+# Selene runtime variants (requires selene feature)
+selene-runtimes = ["dep:selene-simple-runtime", "dep:selene-soft-rz-runtime"]
+selene-simple-runtime = ["dep:selene-simple-runtime"]
+selene-soft-rz-runtime = ["dep:selene-soft-rz-runtime"]
+
+[dependencies]
+# Core PECOS crates
+pecos-core.workspace = true
+pecos-engines.workspace = true
+pecos-programs.workspace = true
+pecos-rng.workspace = true
+
+# QIS FFI infrastructure
+pecos-qis-ffi-types.workspace = true
+pecos-qis-ffi.workspace = true  # Ensures cdylib gets built for runtime dlopen
+
+# HUGR support (optional)
+pecos-hugr-qis = { workspace = true, optional = true }
+
+# External dependencies
+log.workspace = true
+dyn-clone.workspace = true
+tempfile.workspace = true
+rand.workspace = true
+crossbeam-channel.workspace = true
+libloading.workspace = true
+
+# Inkwell for LLVM support (optional)
+[dependencies.inkwell]
+workspace = true
+features = ["llvm14-0"]
+optional = true
+
+[dependencies.selene-simple-runtime]
+git = "https://github.com/Quantinuum/selene.git"
+rev = "01300ee"
+optional = true
+
+[dependencies.selene-soft-rz-runtime]
+git = "https://github.com/Quantinuum/selene.git"
+rev = "01300ee"
+optional = true
+
+[build-dependencies]
+pecos-build.workspace = true
+cargo_metadata.workspace = true
+log.workspace = true
+env_logger.workspace = true
+
+[lints]
+workspace = true

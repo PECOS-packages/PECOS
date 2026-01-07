@@ -98,6 +98,9 @@ rand_core = "0.9"
 rand_xoshiro = "0.7"
 rapidhash = { version = "4", features = ["rng"] }
 
+# Concurrency
+crossbeam-channel = "0.5"
+
 # Windows workaround: Disable zstd-sys legacy feature to avoid MSVC ICE
 # MSVC 14.43 has an internal compiler error (C1001) when compiling zstd_v06.c
 # The legacy feature compiles old zstd formats (v0.1-v0.7) that PECOS doesn't need
@@ -117,8 +120,7 @@ pecos-qec = { version = "0.1.1", path = "crates/pecos-qec" }
 pecos-rng = { version = "0.1.1", path = "crates/pecos-rng" }
 pecos-qis-ffi = { version = "0.1.1", path = "crates/pecos-qis-ffi" }
 pecos-qis-ffi-types = { version = "0.1.1", path = "crates/pecos-qis-ffi-types" }
-pecos-qis-selene = { version = "0.1.1", path = "crates/pecos-qis-selene" }
-pecos-qis-core = { version = "0.1.1", path = "crates/pecos-qis-core" }
+pecos-qis = { version = "0.1.1", path = "crates/pecos-qis" }
 pecos-hugr-qis = { version = "0.1.1", path = "crates/pecos-hugr-qis" }
 pecos-hugr = { version = "0.1.1", path = "crates/pecos-hugr" }
 pecos-llvm = { version = "0.1.1", path = "crates/pecos-llvm" }

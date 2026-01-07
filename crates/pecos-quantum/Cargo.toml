@@ -8,8 +8,8 @@ repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Quantum computing primitives for PECOS, including DagCircuit."
-readme = "../../README.md"
+description = "Quantum circuit representation data structures for PECOS"
+readme = "README.md"
 
 [dependencies]
 pecos-core.workspace = true

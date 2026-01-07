@@ -1,6 +1,6 @@
 # PECOS Qulacs Selene Plugin
 
-A [Selene](https://github.com/CQCL/selene) quantum emulator plugin providing access to the [Qulacs](https://github.com/qulacs/qulacs) simulator through the PECOS wrapper.
+A [Selene](https://github.com/Quantinuum/selene) quantum emulator plugin providing access to the [Qulacs](https://github.com/qulacs/qulacs) simulator through the PECOS wrapper.
 
 ## About Qulacs
 

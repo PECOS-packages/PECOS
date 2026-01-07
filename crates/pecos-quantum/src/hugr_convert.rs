@@ -186,20 +186,16 @@ pub fn is_rotation_gate(gate_type: GateType) -> bool {
 /// Handles various formats: Const(Tuple(1.0)), Const(4), `ConstInt`, etc.
 #[allow(clippy::too_many_lines)]
 fn try_extract_const_value(hugr: &Hugr, node: Node) -> Option<f64> {
-    const DEBUG: bool = false;
-
     let op = hugr.get_optype(node);
 
     if let OpType::Const(const_op) = op {
         // Use debug representation to extract the value
         let debug_str = format!("{const_op:?}");
 
-        if DEBUG {
-            eprintln!(
-                "try_extract_const_value: {}",
-                &debug_str[..debug_str.len().min(200)]
-            );
-        }
+        log::trace!(
+            "try_extract_const_value: {}",
+            &debug_str[..debug_str.len().min(200)]
+        );
 
         // Pattern 1: Const(Tuple(number))
         if let Some(start) = debug_str.find("Tuple(") {
@@ -207,9 +203,7 @@ fn try_extract_const_value(hugr: &Hugr, node: Node) -> Option<f64> {
             if let Some(end) = rest.find(')')
                 && let Ok(val) = rest[..end].parse::<f64>()
             {
-                if DEBUG {
-                    eprintln!("  -> Tuple pattern matched: {val}");
-                }
+                log::trace!("  -> Tuple pattern matched: {val}");
                 return Some(val);
             }
         }
@@ -231,9 +225,7 @@ fn try_extract_const_value(hugr: &Hugr, node: Node) -> Option<f64> {
                 if !num_str.is_empty()
                     && let Ok(val) = num_str.parse::<i64>()
                 {
-                    if DEBUG {
-                        eprintln!("  -> ConstInt pattern matched: {val}");
-                    }
+                    log::trace!("  -> ConstInt pattern matched: {val}");
                     #[allow(clippy::cast_precision_loss)]
                     return Some(val as f64);
                 }
@@ -246,9 +238,7 @@ fn try_extract_const_value(hugr: &Hugr, node: Node) -> Option<f64> {
             if let Some(end) = rest.find(')')
                 && let Ok(val) = rest[..end].parse::<f64>()
             {
-                if DEBUG {
-                    eprintln!("  -> F64 pattern matched: {val}");
-                }
+                log::trace!("  -> F64 pattern matched: {val}");
                 return Some(val);
             }
         }
@@ -273,9 +263,7 @@ fn try_extract_const_value(hugr: &Hugr, node: Node) -> Option<f64> {
             if !num_str.is_empty()
                 && let Ok(val) = num_str.parse::<f64>()
             {
-                if DEBUG {
-                    eprintln!("  -> ConstF64 pattern matched: {val}");
-                }
+                log::trace!("  -> ConstF64 pattern matched: {val}");
                 return Some(val);
             }
         }
@@ -306,9 +294,7 @@ fn try_extract_const_value(hugr: &Hugr, node: Node) -> Option<f64> {
                     && num_str.contains('.')
                     && let Ok(val) = num_str.parse::<f64>()
                 {
-                    if DEBUG {
-                        eprintln!("  -> value pattern matched: {val}");
-                    }
+                    log::trace!("  -> value pattern matched: {val}");
                     return Some(val);
                 }
             }
@@ -341,9 +327,7 @@ fn try_extract_const_value(hugr: &Hugr, node: Node) -> Option<f64> {
                 if num_str.contains('.')
                     && let Ok(val) = num_str.parse::<f64>()
                 {
-                    if DEBUG {
-                        eprintln!("  -> fallback float pattern: {val}");
-                    }
+                    log::trace!("  -> fallback float pattern: {val}");
                     best_float = Some(val);
                     break; // Take the first valid float
                 }
@@ -355,9 +339,7 @@ fn try_extract_const_value(hugr: &Hugr, node: Node) -> Option<f64> {
             return best_float;
         }
 
-        if DEBUG {
-            eprintln!("  -> no pattern matched");
-        }
+        log::trace!("  -> no pattern matched");
     }
 
     None
@@ -367,15 +349,11 @@ fn try_extract_const_value(hugr: &Hugr, node: Node) -> Option<f64> {
 /// Returns (value, `is_half_turns`) where `is_half_turns` indicates if we passed through `from_halfturns`.
 #[allow(clippy::too_many_lines)]
 fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, bool)> {
-    const DEBUG: bool = false;
-
     if depth > 20 {
-        if DEBUG {
-            eprintln!(
-                "{}trace_back_for_const: max depth reached",
-                "  ".repeat(depth)
-            );
-        }
+        log::trace!(
+            "{}trace_back_for_const: max depth reached",
+            "  ".repeat(depth)
+        );
         return None; // Prevent infinite recursion
     }
 
@@ -386,14 +364,12 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
     } else {
         op_name
     };
-    if DEBUG {
-        eprintln!(
-            "{}trace_back_for_const: node={:?}, op={}",
-            "  ".repeat(depth),
-            node,
-            op_short
-        );
-    }
+    log::trace!(
+        "{}trace_back_for_const: node={:?}, op={}",
+        "  ".repeat(depth),
+        node,
+        op_short
+    );
 
     // If it's a Const, extract the value directly
     if matches!(op, OpType::Const(_))

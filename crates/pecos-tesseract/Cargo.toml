@@ -2,14 +2,14 @@
 name = "pecos-tesseract"
 version.workspace = true
 edition.workspace = true
-readme.workspace = true
+readme = "README.md"
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Tesseract decoder wrapper for PECOS"
+description = "Tesseract search-based decoder for PECOS"
 
 [dependencies]
 pecos-decoder-core.workspace = true

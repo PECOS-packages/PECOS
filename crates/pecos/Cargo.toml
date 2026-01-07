@@ -8,8 +8,8 @@ repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-readme = "../../README.md"
-description = "A crate for evaluating and exploring quantum error correction."
+readme = "README.md"
+description = "Main PECOS metacrate providing unified access to quantum simulation and error correction"
 # Disable auto-discovery of binaries (we only want pecos binary, not engine_setup helper module)
 autobins = false
 
@@ -31,8 +31,7 @@ pecos-engines = { workspace = true, optional = true }
 pecos-programs = { workspace = true, optional = true }
 pecos-qasm = { workspace = true, optional = true }
 pecos-phir-json = { workspace = true, optional = true }
-pecos-qis-core = { workspace = true, optional = true }
-pecos-qis-selene = { workspace = true, optional = true }
+pecos-qis = { workspace = true, optional = true }
 pecos-llvm = { workspace = true, optional = true }
 pecos-hugr-qis = { workspace = true, optional = true }
 pecos-hugr = { workspace = true, optional = true }
@@ -66,7 +65,10 @@ pecos-decoders = { workspace = true, optional = true }
 default = ["cli", "core"]
 
 # CLI binary with dev tools (lightweight - no simulation dependencies)
-cli = ["dep:clap", "dep:clap_complete", "dep:env_logger", "dep:pecos-build", "dep:cargo_metadata"]
+cli = ["dep:clap", "dep:clap_complete", "dep:env_logger", "build-tools", "dep:cargo_metadata"]
+
+# Build tools (LLVM detection, installation, etc.) - very lightweight
+build-tools = ["dep:pecos-build"]
 
 # Runtime: enables full simulation library with QASM and PHIR support
 # Use this for CLI runtime commands (run, compile, info, doctor, examples)
@@ -98,11 +100,10 @@ phir = ["sim", "dep:pecos-phir-json"]
 llvm = ["sim", "dep:pecos-llvm"]
 
 # qis: QIS/LLVM IR execution support (Selene runtime)
-qis = ["llvm", "dep:pecos-qis-core", "pecos-qis-core/llvm",
-       "dep:pecos-qis-selene"]
+qis = ["llvm", "dep:pecos-qis", "pecos-qis/llvm"]
 
 # hugr: HUGR program support (requires QIS) + direct HUGR interpreter
-hugr = ["qis", "dep:pecos-hugr-qis", "pecos-hugr-qis/llvm", "pecos-qis-selene/hugr", "pecos-quantum/hugr", "dep:pecos-hugr"]
+hugr = ["qis", "dep:pecos-hugr-qis", "pecos-hugr-qis/llvm", "pecos-qis/hugr", "pecos-quantum/hugr", "dep:pecos-hugr"]
 wasm = ["sim", "dep:pecos-wasm", "pecos-wasm/wasm"]
 
 # Quantum simulator backends (C++ wrappers)

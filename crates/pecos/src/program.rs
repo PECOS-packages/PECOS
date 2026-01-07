@@ -164,8 +164,8 @@ pub fn setup_engine_for_program(
                 \n\
                 Please use the builder API with Selene or Native runtime:\n\
                 \n\
-                use pecos_qis_core::{{qis_engine, setup_qis_engine_with_runtime}};\n\
-                use pecos_qis_selene::selene_simple_runtime;\n\
+                use pecos_qis::{{qis_engine, setup_qis_engine_with_runtime}};\n\
+                use pecos_qis::selene_simple_runtime;\n\
                 \n\
                 // Option 1: Use setup function\n\
                 let engine = setup_qis_engine_with_runtime(path, selene_simple_runtime()?);\n\

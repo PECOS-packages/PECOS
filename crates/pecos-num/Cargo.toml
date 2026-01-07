@@ -8,8 +8,8 @@ repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-readme.workspace = true
-description = "Numerical computing support for PECOS quantum error correction simulations"
+readme = "README.md"
+description = "Numerical computing support for PECOS"
 
 [dependencies]
 # Linear algebra (for polynomial fitting, curve fitting, matrix operations)

@@ -17,3 +17,7 @@ This is an **internal crate** used by:
 - `pecos-qasm` - QASM program execution with WASM foreign objects
 - `pecos-phir-json` - PHIR program execution with WASM foreign objects
 - `pecos-rslib` - Python bindings exposing WASM functionality
+
+## Acknowledgements
+
+This crate uses [Wasmtime](https://github.com/bytecodealliance/wasmtime), a standalone WebAssembly runtime developed by the Bytecode Alliance.

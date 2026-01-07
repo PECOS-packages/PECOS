@@ -238,7 +238,7 @@ impl DynamicEngineBuilder {
         match engine_type {
             EngineType::Qasm => Self::new(pecos_qasm::qasm_engine()),
             // Selene removed - both Llvm and Selene use QIS control engine
-            EngineType::Llvm | EngineType::Selene => Self::new(pecos_qis_core::qis_engine()),
+            EngineType::Llvm | EngineType::Selene => Self::new(pecos_qis::qis_engine()),
         }
     }
 }
@@ -325,7 +325,7 @@ macro_rules! create_engine_builder {
             $crate::EngineType::Llvm => {
                 #[cfg(feature = "qis")]
                 {
-                    $crate::DynamicEngineBuilder::new(pecos_qis_core::qis_engine())
+                    $crate::DynamicEngineBuilder::new(pecos_qis::qis_engine())
                 }
                 #[cfg(not(feature = "llvm"))]
                 {
@@ -336,7 +336,7 @@ macro_rules! create_engine_builder {
                 #[cfg(feature = "qis")]
                 {
                     // Selene removed - use QIS control engine instead
-                    $crate::DynamicEngineBuilder::new(pecos_qis_core::qis_engine())
+                    $crate::DynamicEngineBuilder::new(pecos_qis::qis_engine())
                 }
                 #[cfg(not(feature = "llvm"))]
                 {

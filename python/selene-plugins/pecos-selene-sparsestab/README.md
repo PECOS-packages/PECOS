@@ -1,6 +1,6 @@
 # PECOS SparseStab Selene Plugin
 
-A stabilizer simulator plugin for the [Selene](https://github.com/CQCL/selene) quantum emulator using the PECOS sparse stabilizer implementation.
+A stabilizer simulator plugin for the [Selene](https://github.com/Quantinuum/selene) quantum emulator using the PECOS sparse stabilizer implementation.
 
 ## Overview
 

@@ -9,7 +9,7 @@ repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "PECOS High-level Intermediate Representation (PHIR) pipeline for quantum program compilation and execution."
+description = "MLIR-inspired quantum program intermediate representation for PECOS"
 
 [dependencies]
 # Core PECOS dependencies

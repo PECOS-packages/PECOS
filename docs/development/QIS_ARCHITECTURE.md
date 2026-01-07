@@ -13,7 +13,7 @@ The QIS architecture consists of three main components:
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                         QisEngine                           │
-│                    (pecos-qis-core)                         │
+│                       (pecos-qis)                           │
 │                                                             │
 │  ┌─────────────────────┐      ┌──────────────────────┐      │
 │  │   QisInterface      │      │     QisRuntime       │      │
@@ -33,7 +33,7 @@ The **Interface Layer** is responsible for taking a quantum program (in various 
 
 ### Interface Trait
 
-Defined in `pecos-qis-core/src/qis_interface.rs`:
+Defined in `pecos-qis/src/qis_interface.rs`:
 
 ```rust
 pub trait QisInterface {
@@ -61,7 +61,7 @@ pub trait QisInterface {
 
 ### Helios Interface Implementation
 
-The **Helios Interface** (`QisHeliosInterface` in `pecos-qis-selene`) is the primary interface implementation. It works by:
+The **Helios Interface** (`QisHeliosInterface` in `pecos-qis`) is the primary interface implementation. It works by:
 
 1. **Compilation**: Linking quantum program bitcode with Selene's Helios library
 2. **Dynamic Execution**: Loading and executing the compiled program in-process
@@ -103,7 +103,7 @@ libhelios.a (linked into program.so)
   ↓ calls selene_qalloc()
 
 libpecos_selene.so (C shim, loaded with RTLD_GLOBAL)
-  │ File: pecos-qis-selene/src/c/selene_shim.c
+  │ File: pecos-qis/src/c/selene_shim.c
   │ Purpose: Adapts Selene interface to PECOS FFI
   ↓ calls __quantum__rt__qubit_allocate()
 
@@ -124,7 +124,7 @@ QisHeliosInterface
 
 **Purpose**: Bridges Selene's C interface to PECOS Rust FFI
 
-**Location**: Built by `pecos-qis-selene/build.rs` from `src/c/selene_shim.c`
+**Location**: Built by `pecos-qis/build_selene.rs` from `src/c/selene_shim.c`
 
 **Example** (from `selene_shim.c`):
 ```c
@@ -205,7 +205,7 @@ The **Runtime Layer** takes collected quantum operations and executes them using
 
 ### Runtime Trait
 
-Defined in `pecos-qis-core/src/runtime.rs`:
+Defined in `pecos-qis/src/runtime.rs`:
 
 ```rust
 pub trait QisRuntime: Send + Sync + DynClone {
@@ -225,7 +225,7 @@ pub trait QisRuntime: Send + Sync + DynClone {
 
 The **Selene Runtime** wraps Selene's quantum simulator library (.so files).
 
-**Location**: `pecos-qis-selene/src/selene_runtime.rs`
+**Location**: `pecos-qis/src/selene_runtime.rs`
 
 #### Selene Runtime Types
 
@@ -319,7 +319,7 @@ pub struct RuntimeResult {
 
 The **QisEngine** orchestrates the interface and runtime to provide a complete quantum program execution pipeline.
 
-**Location**: `pecos-qis-core/src/lib.rs`
+**Location**: `pecos-qis/src/ccengine.rs`
 
 ### QisEngine Structure
 
@@ -344,8 +344,7 @@ pub struct QisEngine {
 Users construct a `QisEngine` using the builder pattern:
 
 ```rust
-use pecos_qis_core::qis_engine;
-use pecos_qis_selene::{helios_interface_builder, selene_simple_runtime};
+use pecos_qis::{qis_engine, helios_interface_builder, selene_simple_runtime};
 
 let engine = qis_engine()
     .interface(helios_interface_builder())     // Set interface
@@ -354,7 +353,7 @@ let engine = qis_engine()
     .build()?;                                 // Build engine
 ```
 
-**Builder location**: `pecos-qis-core/src/builder.rs`
+**Builder location**: `pecos-qis/src/engine_builder.rs`
 
 ### QisEngine Execution Flow
 
@@ -415,13 +414,12 @@ Let's trace a complete example: executing a Bell state program.
 ### Step 1: User Code
 
 ```rust
-use pecos_qis_core::qis_engine;
-use pecos_qis_selene::{helios_interface_builder, selene_simple_runtime};
-use pecos_programs::QisProgram;
+use pecos_qis::{qis_engine, helios_interface_builder, selene_simple_runtime};
+use pecos_programs::Qis;
 use pecos_engines::{ClassicalControlEngineBuilder, ClassicalEngine};
 
 // Load Bell state program
-let qis_program = QisProgram::from_file("bell.ll")?;
+let qis_program = Qis::from_file("bell.ll")?;
 
 // Build engine
 let mut engine = qis_engine()
@@ -586,30 +584,29 @@ We have both `libpecos_selene.so` (C shim) and `libpecos_qis_ffi.so` (Rust FFI) 
 ## 7. Crate Organization
 
 ```
-pecos-qis-core/
+pecos-qis/                    # Main QIS crate (with optional selene feature)
 ├── src/
-│   ├── lib.rs              # QisEngine
-│   ├── builder.rs          # QisEngineBuilder
-│   ├── qis_interface.rs    # QisInterface trait
-│   └── runtime.rs          # QisRuntime trait
-│
-pecos-qis-ffi/
-├── src/
-│   ├── lib.rs              # OperationCollector, thread-local
-│   ├── ffi.rs              # __quantum__rt__* and __quantum__qis__* exports
-│   └── operations.rs       # Operation types
-└── Cargo.toml              # crate-type = ["rlib", "cdylib"]
-│
-pecos-qis-selene/
-├── src/
-│   ├── lib.rs              # Re-exports
-│   ├── executor.rs         # QisHeliosInterface
-│   ├── selene_runtime.rs   # QisSeleneRuntime wrappers
-│   ├── shim.rs             # Path to libpecos_selene.so
+│   ├── lib.rs                # Re-exports, prelude
+│   ├── ccengine.rs           # QisEngine
+│   ├── engine_builder.rs     # QisEngineBuilder
+│   ├── qis_interface.rs      # QisInterface trait
+│   ├── runtime.rs            # QisRuntime trait
+│   ├── executor.rs           # QisHeliosInterface (selene feature)
+│   ├── selene_runtime.rs     # SeleneRuntime (selene feature)
+│   ├── selene_runtimes.rs    # Runtime discovery (selene feature)
+│   ├── shim.rs               # Path to libpecos_selene.so (selene feature)
 │   └── c/
-│       └── selene_shim.c   # C shim implementation
-├── build.rs                # Builds libpecos_selene.so and libhelios.a
-└── Cargo.toml              # crate-type = ["rlib"]
+│       └── selene_shim.c     # C shim implementation (selene feature)
+├── build.rs                  # Main build script
+├── build_selene.rs           # Selene build logic (selene feature)
+└── Cargo.toml
+│
+pecos-qis-ffi/                # FFI layer (cdylib)
+├── src/
+│   ├── lib.rs                # OperationCollector, thread-local
+│   ├── ffi.rs                # __quantum__rt__* and __quantum__qis__* exports
+│   └── operations.rs         # Operation types
+└── Cargo.toml                # crate-type = ["rlib", "cdylib"]
 ```
 
 ## 8. Future Directions

@@ -270,6 +270,19 @@ impl MonteCarloEngine {
         let shots_per_worker = distribute_shots(num_shots, num_workers);
         let base_seed = self.rng.next_u64();
 
+        // CRITICAL: Pre-create worker engines on the main thread before parallel execution.
+        // This avoids potential deadlocks when worker threads try to clone engines
+        // simultaneously, which can trigger concurrent library loading operations
+        // that contend with each other or the dynamic linker.
+        let worker_engines: Vec<_> = (0..num_workers)
+            .map(|worker_idx| {
+                let mut engine = self.hybrid_engine_template.clone();
+                let worker_seed = derive_seed(base_seed, &format!("worker_{worker_idx}"));
+                engine.set_seed(worker_seed);
+                (worker_idx, shots_per_worker[worker_idx], engine)
+            })
+            .collect();
+
         // Create a dedicated thread pool for this simulation to avoid contention
         // with global Rayon thread pool when multiple simulations run concurrently.
         // CRITICAL: For QIS programs, we need to ensure each test gets its own
@@ -283,59 +296,53 @@ impl MonteCarloEngine {
         // Run shots in parallel across workers using dedicated thread pool
         // CRITICAL: Use install() to ensure all work completes before thread pool cleanup
         let parallel_result = thread_pool.install(|| {
-            (0..num_workers)
+            worker_engines
                 .into_par_iter()
-                .map(|worker_idx| {
-                let shots_this_worker = shots_per_worker[worker_idx];
-                if shots_this_worker == 0 {
-                    return Ok(());
-                }
+                .map(|(worker_idx, shots_this_worker, mut engine)| {
+                    if shots_this_worker == 0 {
+                        return Ok(());
+                    }
 
-                // Create worker engine with derived seed
-                let mut engine = self.hybrid_engine_template.clone();
-                let worker_seed = derive_seed(base_seed, &format!("worker_{worker_idx}"));
-                engine.set_seed(worker_seed);
+                    // Process all shots for this worker
+                    debug!("Worker {worker_idx} running {shots_this_worker} shots");
 
-                // Process all shots for this worker
-                debug!(
-                    "Worker {worker_idx} running {shots_this_worker} shots with seed {worker_seed}"
-                );
+                    for shot_idx in 0..shots_this_worker {
+                        engine.reset()?;
 
-                for shot_idx in 0..shots_this_worker {
-                    engine.reset()?;
+                        // Catch panics during shot execution and convert to PecosError
+                        let shot_result =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                engine.run_shot()
+                            }));
 
-                    // Catch panics during shot execution and convert to PecosError
-                    let shot_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        engine.run_shot()
-                    }));
+                        let shot_result = match shot_result {
+                            Ok(Ok(result)) => result,
+                            Ok(Err(e)) => return Err(e),
+                            Err(panic_payload) => {
+                                // Convert panic to PecosError
+                                let panic_msg =
+                                    if let Some(s) = panic_payload.downcast_ref::<String>() {
+                                        s.clone()
+                                    } else if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                                        (*s).to_string()
+                                    } else {
+                                        "Unknown panic occurred during shot execution".to_string()
+                                    };
 
-                    let shot_result = match shot_result {
-                        Ok(Ok(result)) => result,
-                        Ok(Err(e)) => return Err(e),
-                        Err(panic_payload) => {
-                            // Convert panic to PecosError
-                            let panic_msg = if let Some(s) = panic_payload.downcast_ref::<String>() {
-                                s.clone()
-                            } else if let Some(s) = panic_payload.downcast_ref::<&str>() {
-                                (*s).to_string()
-                            } else {
-                                "Unknown panic occurred during shot execution".to_string()
-                            };
+                                return Err(PecosError::Processing(format!(
+                                    "Shot execution failed: {panic_msg}"
+                                )));
+                            }
+                        };
 
-                            return Err(PecosError::Processing(format!(
-                                "Shot execution failed: {panic_msg}"
-                            )));
-                        }
-                    };
+                        // Store with worker/shot indices for deterministic ordering
+                        results_vec
+                            .lock()
+                            .unwrap()
+                            .push((worker_idx, shot_idx, shot_result));
+                    }
 
-                    // Store with worker/shot indices for deterministic ordering
-                    results_vec
-                        .lock()
-                        .unwrap()
-                        .push((worker_idx, shot_idx, shot_result));
-                }
-
-                Ok(())
+                    Ok(())
                 })
                 .collect::<Result<Vec<()>, PecosError>>()
         });

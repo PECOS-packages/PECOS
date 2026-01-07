@@ -48,10 +48,8 @@ mod tests {
         let builder: pecos_qasm::QasmEngineBuilder = qasm_program.into();
         let _ = builder;
 
-        // Note: Qis From implementation requires an interface (JIT or Selene)
-        // which are in separate crates. Those conversions are tested in their respective
-        // integration tests (pecos-qis-jit, pecos-qis-selene).
-        // and is tested in the pecos-qis-ccengine crate with proper error handling
+        // Note: Qis From implementation requires an interface (Selene Helios)
+        // Those conversions are tested in pecos-qis integration tests.
     }
 
     #[test]

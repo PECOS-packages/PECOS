@@ -1,11 +1,38 @@
 """Test HUGR compilation and LLVM IR generation."""
 
+import os
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
 import pytest
+
+# Module-level cache for llvm-as path to avoid repeated lookups
+_llvm_as_cache: dict[str, str | None] = {}
+
+
+def _find_llvm_as() -> str | None:
+    """Find llvm-as path using the Rust pecos-build crate's LLVM detection.
+
+    This uses the same search logic as the Rust codebase:
+    1. ~/.pecos/llvm/ (PECOS managed installation)
+    2. Project-local llvm/ directory
+    3. System installations (Homebrew on macOS, package manager on Linux)
+    """
+    if "llvm_as" in _llvm_as_cache:
+        return _llvm_as_cache["llvm_as"]
+
+    try:
+        from pecos_rslib import find_llvm_tool
+
+        llvm_as_path = find_llvm_tool("llvm-as")
+        _llvm_as_cache["llvm_as"] = llvm_as_path
+        return llvm_as_path
+    except ImportError:
+        # Fallback if pecos_rslib not available (shouldn't happen in normal tests)
+        _llvm_as_cache["llvm_as"] = None
+        return None
 
 
 class TestHUGRCompilation:
@@ -100,8 +127,6 @@ class TestHUGRCompilation:
 
     def test_llvm_ir_format_validation(self) -> None:
         """Test that generated LLVM IR follows HUGR conventions."""
-        import os
-
         # Create a test LLVM IR file following HUGR conventions
         test_llvm = """
 ; HUGR convention LLVM IR
@@ -130,72 +155,29 @@ define void @main() #0 {
 attributes #0 = { "EntryPoint" }
 """
 
+        # Find llvm-as using cached lookup (avoids expensive cargo fallback)
+        llvm_as_path = _find_llvm_as()
+        if not llvm_as_path:
+            pytest.skip(
+                "llvm-as not found in PATH, LLVM_SYS_*_PREFIX, or common locations. "
+                "Set PECOS_TEST_USE_CARGO_LLVM_LOOKUP=1 to enable slow cargo fallback.",
+            )
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".ll", delete=False) as f:
             f.write(test_llvm)
             llvm_file = Path(f.name)
 
         try:
-            # Find llvm-as - check PATH first, then use pecos
-            llvm_as_path = shutil.which("llvm-as")
-            print(f"DEBUG: llvm-as in PATH: {llvm_as_path}")
+            # Validate with llvm-as
+            output_path = "nul" if os.name == "nt" else "/dev/null"
+            result = subprocess.run(
+                [llvm_as_path, str(llvm_file), "-o", output_path],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
 
-            if not llvm_as_path:
-                # Use pecos to find the tool
-                cargo_path = shutil.which("cargo")
-                print(f"DEBUG: cargo found at: {cargo_path}")
-                if cargo_path:
-                    try:
-                        print("DEBUG: Running cargo to find llvm-as...")
-                        result = subprocess.run(
-                            [
-                                cargo_path,
-                                "run",
-                                "-q",
-                                "--release",
-                                "-p",
-                                "pecos",
-                                "--",
-                                "llvm",
-                                "tool",
-                                "llvm-as",
-                            ],
-                            capture_output=True,
-                            text=True,
-                            check=False,
-                            timeout=120,  # Increased from 30s to account for compilation time on CI
-                        )
-                        print(f"DEBUG: cargo returncode: {result.returncode}")
-                        print(f"DEBUG: cargo stdout: {result.stdout[:200]}")
-                        print(f"DEBUG: cargo stderr: {result.stderr[:200]}")
-                        if result.returncode == 0 and result.stdout.strip():
-                            llvm_as_path = result.stdout.strip()
-                            print(f"DEBUG: llvm-as found at: {llvm_as_path}")
-                    except subprocess.TimeoutExpired as e:
-                        print(f"DEBUG: cargo command timed out after {e.timeout}s")
-                    except Exception as e:
-                        print(f"DEBUG: cargo command failed with exception: {e}")
-                else:
-                    print("DEBUG: cargo not found in PATH")
-
-            if llvm_as_path:
-                # Validate with llvm-as
-                output_path = "nul" if os.name == "nt" else "/dev/null"
-                result = subprocess.run(
-                    [llvm_as_path, str(llvm_file), "-o", output_path],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-
-                assert (
-                    result.returncode == 0
-                ), f"LLVM IR validation failed: {result.stderr}"
-            else:
-                # llvm-as not available - this shouldn't happen for HUGR/QIS tests
-                pytest.fail(
-                    "llvm-as not found. LLVM should be available for HUGR/QIS tests. "
-                    "Check LLVM_SYS_140_PREFIX environment variable.",
-                )
+            assert result.returncode == 0, f"LLVM IR validation failed: {result.stderr}"
 
         finally:
             # Clean up

@@ -109,7 +109,7 @@ This crate provides:
 2. **Execution**: Full integration with PECOS for running PHIR programs on quantum simulators
 3. **Error Handling**: Detailed error messages for both validation and runtime errors
 
-For alternative validation, the [Python Pydantic PHIR validator](https://github.com/CQCL/phir) is also available.
+For alternative validation, the [Python Pydantic PHIR validator](https://github.com/Quantinuum/phir) is also available.
 
 ### Testing with Inline JSON
 

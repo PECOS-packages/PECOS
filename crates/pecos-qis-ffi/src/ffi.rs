@@ -835,6 +835,53 @@ pub unsafe extern "C" fn print_bool(label_ptr: *const u8, label_len: i64, value:
     // This mismatch needs to be resolved in a future update
 }
 
+/// Print a boolean array result with a label
+///
+/// This function is called by Guppy-generated QIS programs to output arrays of
+/// measurement results (e.g., syndrome arrays, final measurements).
+///
+/// # Arguments
+/// * `label_ptr` - Pointer to the label string
+/// * `label_len` - Length of the label string
+/// * `arr_ptr` - Pointer to the boolean array
+/// * `arr_len` - Length of the boolean array
+///
+/// # Safety
+/// This function is safe to call from C/LLVM code. The `label_ptr` must point to a valid byte
+/// array of at least `label_len` bytes. The `arr_ptr` must point to a valid bool array of at
+/// least `arr_len` elements. Invalid pointers or lengths will cause undefined behavior.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn print_bool_arr(
+    label_ptr: *const u8,
+    label_len: i64,
+    arr_ptr: *const bool,
+    arr_len: i64,
+) {
+    // Validate lengths
+    let Ok(label_len_usize) = usize::try_from(label_len) else {
+        log::error!("print_bool_arr: invalid label length {label_len}");
+        return;
+    };
+    let Ok(arr_len_usize) = usize::try_from(arr_len) else {
+        log::error!("print_bool_arr: invalid array length {arr_len}");
+        return;
+    };
+
+    // Convert the C string to a Rust string
+    let label_slice = unsafe { std::slice::from_raw_parts(label_ptr, label_len_usize) };
+    let label_str = std::str::from_utf8(label_slice).unwrap_or("<invalid utf8>");
+
+    // Convert the array to a Rust slice
+    let arr_slice = unsafe { std::slice::from_raw_parts(arr_ptr, arr_len_usize) };
+
+    // Log the array for debugging
+    log::debug!("print_bool_arr called: {label_str} = {arr_slice:?}");
+
+    // TODO: Properly integrate with measurement storage system
+    // The current QisInterface uses numeric IDs, but Guppy uses string names
+    // This mismatch needs to be resolved in a future update
+}
+
 // =============================================================================
 // Interface Management (C exports for dlsym access)
 // =============================================================================

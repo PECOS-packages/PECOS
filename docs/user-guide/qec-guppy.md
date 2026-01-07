@@ -34,7 +34,6 @@ A memory experiment initializes a logical state, performs syndrome extraction ro
 
 ### Quick Start
 
-<!--skip: simulation requires print_bool_arr FFI (TODO: fix in runtime)-->
 ```python
 from pecos import sim, state_vector
 from pecos.guppy import make_surface_code, get_num_qubits
@@ -80,7 +79,7 @@ The generated program produces these result keys:
 | `synz` | Z syndrome per round |
 | `final` | Final data qubit measurements |
 
-<!--skip: simulation requires print_bool_arr FFI-->
+<!--skip: named result keys not yet captured (uses measurement_N instead)-->
 ```python
 results = sim(prog).qubits(11).quantum(state_vector()).run(10)
 data = results.to_dict()
@@ -98,7 +97,7 @@ The 4.8.8 triangular color code supports transversal Clifford gates.
 
 ### Quick Start
 
-<!--skip: simulation requires print_bool_arr FFI-->
+<!--skip: named result keys not yet captured (uses measurement_N instead)-->
 ```python
 from pecos import sim, state_vector
 from pecos.guppy import make_color_code, get_num_qubits_color
@@ -147,7 +146,7 @@ Transversal CNOT applies `CX(ctrl[i], tgt[i])` for all data qubits between two c
 
 ### Generic CSS Transversal CNOT
 
-<!--skip: simulation requires print_bool_arr FFI-->
+<!--skip: named result keys not yet captured (uses measurement_N instead)-->
 ```python
 from pecos import sim, state_vector
 from pecos.guppy import make_css_transversal_cnot, get_transversal_num_qubits
@@ -176,7 +175,7 @@ results = (
 
 Test the logical CNOT by preparing `|1_L>|0_L>` and verifying it becomes `|1_L>|1_L>`:
 
-<!--skip: simulation requires print_bool_arr FFI-->
+<!--skip: named result keys not yet captured (uses measurement_N instead)-->
 ```python
 from pecos.guppy import make_css_transversal_cnot_with_x
 
@@ -331,7 +330,7 @@ print(f"Stabilizers: {module['num_stab']}")
 
 Add noise to QEC simulations:
 
-<!--skip: simulation requires print_bool_arr FFI-->
+<!--skip: named result keys not yet captured (uses measurement_N instead)-->
 ```python
 from pecos import sim, state_vector, depolarizing_noise
 from pecos.guppy import make_surface_code, get_num_qubits
@@ -354,7 +353,7 @@ results = (
 
 Here's a complete example estimating the logical error rate:
 
-<!--skip: simulation requires print_bool_arr FFI-->
+<!--skip: named result keys not yet captured (uses measurement_N instead)-->
 ```python
 from pecos import sim, state_vector, depolarizing_noise
 from pecos.guppy import make_surface_code, get_num_qubits

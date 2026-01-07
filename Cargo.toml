@@ -115,6 +115,7 @@ pecos-qsim = { version = "0.1.1", path = "crates/pecos-qsim" }
 pecos-qasm = { version = "0.1.1", path = "crates/pecos-qasm" }
 pecos-phir-json = { version = "0.1.1", path = "crates/pecos-phir-json" }
 pecos-engines = { version = "0.1.1", path = "crates/pecos-engines" }
+pecos-experimental = { version = "0.1.1", path = "crates/pecos-experimental" }
 pecos-phir = { version = "0.1.1", path = "crates/pecos-phir" }
 pecos-qec = { version = "0.1.1", path = "crates/pecos-qec" }
 pecos-rng = { version = "0.1.1", path = "crates/pecos-rng" }

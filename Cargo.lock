@@ -2872,6 +2872,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-experimental"
+version = "0.1.1"
+dependencies = [
+ "pecos-core",
+ "pecos-qsim",
+ "pecos-quantum",
+ "pecos-rng",
+ "wide 1.1.1",
+]
+
+[[package]]
 name = "pecos-fusion-blossom"
 version = "0.1.1"
 dependencies = [
@@ -3090,6 +3101,7 @@ version = "0.1.1"
 dependencies = [
  "num-complex",
  "pecos-core",
+ "pecos-quantum",
  "pecos-quest",
  "pecos-rng",
  "rand 0.9.2",
@@ -3168,6 +3180,7 @@ dependencies = [
  "num-complex",
  "parking_lot",
  "pecos",
+ "pecos-experimental",
  "pyo3",
  "regex",
  "serde_json",

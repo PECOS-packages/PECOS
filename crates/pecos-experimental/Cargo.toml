@@ -1,26 +1,27 @@
 [package]
-name = "pecos-qsim"
+name = "pecos-experimental"
 version.workspace = true
 edition.workspace = true
+readme.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Quantum simulator traits and implementations for PECOS"
-readme = "README.md"
+description = "Experimental APIs for PECOS - unstable, may change without notice."
+publish = false
+
+[lib]
+crate-type = ["rlib"]
 
 [dependencies]
+# Can depend on any internal crate - this is the staging area
 pecos-core.workspace = true
-pecos-quantum.workspace = true
 pecos-rng.workspace = true
-num-complex.workspace = true
+pecos-qsim.workspace = true
+pecos-quantum.workspace = true
 wide.workspace = true
-
-[dev-dependencies]
-rand.workspace = true
-pecos-quest.workspace = true
 
 [lints]
 workspace = true

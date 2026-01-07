@@ -25,6 +25,7 @@ mod dag_circuit_bindings;
 mod dtypes;
 mod engine_bindings;
 mod engine_builders;
+mod experimental_bindings;
 mod graph_bindings;
 mod noise_helpers;
 mod num_bindings;
@@ -317,6 +318,9 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register types submodule containing core data types
     types_module::register_types_module(m)?;
+
+    // Register experimental submodule (symbolic HUGR execution)
+    experimental_bindings::register_experimental_module(m)?;
 
     // =========================================================================
     // Top-level numerical function exports (NumPy-like API)

@@ -25,6 +25,27 @@ use std::path::Path;
 ///
 /// This class provides WebAssembly execution capabilities using the Rust
 /// Wasmtime runtime for better performance and thread safety.
+///
+/// WebAssembly modules can be loaded from files (.wasm or .wat) or directly
+/// from binary bytes in memory. Use the explicit classmethods for clarity:
+///
+/// - `WasmForeignObject.from_file()` - Load from a file path
+/// - `WasmForeignObject.from_bytes()` - Load from binary bytes in memory
+///
+/// Example:
+///
+/// ```ignore
+/// # Load from file
+/// wasm = WasmForeignObject.from_file("math.wasm")
+/// wasm.init()
+/// result = wasm.exec("add", [5, 3])
+///
+/// # Load from bytes (e.g., downloaded or embedded)
+/// with open("math.wasm", "rb") as f:
+///     wasm_bytes = f.read()
+/// wasm = WasmForeignObject.from_bytes(wasm_bytes)
+/// wasm.init()
+/// ```
 #[pyclass(name = "WasmForeignObject")]
 pub struct PyWasmForeignObject {
     inner: WasmForeignObject,
@@ -34,10 +55,17 @@ pub struct PyWasmForeignObject {
 impl PyWasmForeignObject {
     /// Create a new WebAssembly foreign object
     ///
+    /// This constructor accepts either a file path or raw WASM bytes.
+    /// For clearer code, prefer using the explicit classmethods:
+    ///
+    /// - `WasmForeignObject.from_file(path)` - Load from a file
+    /// - `WasmForeignObject.from_bytes(data)` - Load from bytes
+    ///
     /// Args:
     ///     file: Path to WASM file (str or pathlib.Path) or WASM bytes (bytes)
     ///     timeout: Optional timeout in seconds (default: 1.0 second)
-    ///     `memory_size`: Optional maximum memory size in bytes per linear memory (default: None = unlimited)
+    ///     `memory_size`: Optional maximum memory size in bytes per linear memory
+    ///                  (default: None = unlimited)
     ///
     /// Returns:
     ///     New WebAssembly foreign object instance
@@ -45,6 +73,19 @@ impl PyWasmForeignObject {
     /// Raises:
     ///     `FileNotFoundError`: If file path doesn't exist
     ///     `RuntimeError`: If WASM compilation fails
+    ///
+    /// Example:
+    ///
+    /// ```ignore
+    /// # From file path
+    /// wasm = WasmForeignObject("math.wasm")
+    ///
+    /// # From bytes
+    /// wasm = WasmForeignObject(wasm_bytes)
+    ///
+    /// # With custom timeout (5 seconds)
+    /// wasm = WasmForeignObject("math.wasm", timeout=5.0)
+    /// ```
     #[new]
     #[pyo3(signature = (file, timeout=None, memory_size=None))]
     fn new(
@@ -103,6 +144,125 @@ impl PyWasmForeignObject {
         Err(PyException::new_err(
             "Expected str (file path), pathlib.Path, or bytes (WASM binary)",
         ))
+    }
+
+    /// Create a WebAssembly foreign object from a file
+    ///
+    /// Loads a WebAssembly module from a .wasm (binary) or .wat (text) file.
+    ///
+    /// Args:
+    ///     path: Path to the WASM file (str or pathlib.Path)
+    ///     timeout: Optional timeout in seconds for function execution (default: 1.0)
+    ///     `memory_size`: Optional maximum memory size in bytes per linear memory
+    ///                  (default: None = unlimited)
+    ///
+    /// Returns:
+    ///     New WebAssembly foreign object instance
+    ///
+    /// Raises:
+    ///     `FileNotFoundError`: If the file doesn't exist
+    ///     `RuntimeError`: If WASM compilation fails
+    ///
+    /// Example:
+    ///
+    /// ```ignore
+    /// # Basic usage
+    /// wasm = WasmForeignObject.from_file("math.wasm")
+    /// wasm.init()
+    /// result = wasm.exec("add", [5, 3])
+    ///
+    /// # With custom timeout (5 seconds) and memory limit (10 MB)
+    /// wasm = WasmForeignObject.from_file(
+    ///     "compute.wasm",
+    ///     timeout=5.0,
+    ///     memory_size=10 * 1024 * 1024
+    /// )
+    /// ```
+    #[staticmethod]
+    #[pyo3(signature = (path, timeout=None, memory_size=None))]
+    fn from_file(
+        path: &Bound<'_, PyAny>,
+        timeout: Option<f64>,
+        memory_size: Option<usize>,
+    ) -> PyResult<Self> {
+        let timeout_seconds = timeout.unwrap_or(1.0);
+
+        // Extract path string (handle both str and pathlib.Path)
+        let path_str = if let Ok(s) = path.extract::<String>() {
+            s
+        } else if path.hasattr("__fspath__")? {
+            path.call_method0("__fspath__")?.extract::<String>()?
+        } else {
+            return Err(PyException::new_err(
+                "Expected str or pathlib.Path for 'path' argument",
+            ));
+        };
+
+        let path = Path::new(&path_str);
+        if !path.exists() {
+            return Err(PyFileNotFoundError::new_err(format!(
+                "WASM file not found: {path_str}"
+            )));
+        }
+
+        let inner = WasmForeignObject::with_limits(path, timeout_seconds, memory_size)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to load WASM from file: {e}")))?;
+
+        Ok(Self { inner })
+    }
+
+    /// Create a WebAssembly foreign object from bytes
+    ///
+    /// Loads a WebAssembly module directly from binary bytes in memory.
+    /// This is useful when the WASM binary is downloaded, embedded, or
+    /// generated programmatically.
+    ///
+    /// Args:
+    ///     data: WASM binary as bytes
+    ///     timeout: Optional timeout in seconds for function execution (default: 1.0)
+    ///     `memory_size`: Optional maximum memory size in bytes per linear memory
+    ///                  (default: None = unlimited)
+    ///
+    /// Returns:
+    ///     New WebAssembly foreign object instance
+    ///
+    /// Raises:
+    ///     `RuntimeError`: If WASM compilation fails
+    ///
+    /// Example:
+    ///
+    /// ```ignore
+    /// # Load from file into bytes
+    /// with open("math.wasm", "rb") as f:
+    ///     wasm_bytes = f.read()
+    /// wasm = WasmForeignObject.from_bytes(wasm_bytes)
+    /// wasm.init()
+    ///
+    /// # From downloaded content
+    /// import requests
+    /// response = requests.get("https://example.com/module.wasm")
+    /// wasm = WasmForeignObject.from_bytes(response.content)
+    ///
+    /// # With custom timeout
+    /// wasm = WasmForeignObject.from_bytes(wasm_bytes, timeout=5.0)
+    /// ```
+    #[staticmethod]
+    #[pyo3(signature = (data, timeout=None, memory_size=None))]
+    fn from_bytes(
+        data: &Bound<'_, PyBytes>,
+        timeout: Option<f64>,
+        memory_size: Option<usize>,
+    ) -> PyResult<Self> {
+        let timeout_seconds = timeout.unwrap_or(1.0);
+        let wasm_bytes = data.as_bytes();
+
+        let inner =
+            WasmForeignObject::from_bytes_with_limits(wasm_bytes, timeout_seconds, memory_size)
+                .map_err(|e| {
+                    PyRuntimeError::new_err(format!("Failed to load WASM from bytes: {e}"))
+                })?;
+
+        Ok(Self { inner })
     }
 
     /// Initialize the WASM module

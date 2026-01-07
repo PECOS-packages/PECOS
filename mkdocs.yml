@@ -52,6 +52,7 @@ nav:
   - Getting Started: user-guide/getting-started.md
   - Command Line Interface: user-guide/cli.md
   - QASM Simulation: user-guide/qasm-simulation.md
+  - WASM Foreign Objects: user-guide/wasm-foreign-objects.md
   - HUGR & Guppy Simulation: user-guide/hugr-simulation.md
   - Simulators: user-guide/simulators.md
   - Noise Model Builders: user-guide/noise-model-builders.md

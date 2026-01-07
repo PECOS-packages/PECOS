@@ -29,6 +29,7 @@ cuda = ["pecos/cuda"]
 # Note: default-features=false avoids the "cli" feature which pulls in "which" crate,
 # which depends on "winsafe" on Windows - causing unnecessary DLL dependencies
 pecos = { workspace = true, default-features = false, features = ["runtime", "hugr", "wasm", "all-simulators", "build-tools"] }
+pecos-experimental.workspace = true
 
 pyo3 = { workspace=true, features = ["extension-module", "abi3-py310", "generate-import-lib", "num-complex"] }
 ndarray.workspace = true

@@ -1769,6 +1769,24 @@ impl PyTickCircuit {
             .collect()
     }
 
+    /// Remove all gates that use any of the specified qubits from a tick.
+    ///
+    /// Args:
+    ///     qubits: List of qubit IDs. Gates using any of these qubits will be removed.
+    ///     tick_idx: The index of the tick to modify.
+    ///
+    /// Returns:
+    ///     The number of gates removed, or None if the tick index is out of bounds.
+    ///
+    /// Example:
+    ///     >>> circuit = TickCircuit()
+    ///     >>> circuit.tick().h(0).x(1).cx(2, 3)
+    ///     >>> circuit.discard([0, 2], 0)  # Remove H on q0 and CX on q2,q3
+    ///     2
+    fn discard(&mut self, qubits: Vec<usize>, tick_idx: usize) -> Option<usize> {
+        self.inner.discard(&qubits, tick_idx)
+    }
+
     /// Convert this `TickCircuit` to a `DagCircuit`.
     ///
     /// Gates are added in tick order, with qubit wires connecting

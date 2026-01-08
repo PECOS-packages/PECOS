@@ -239,6 +239,99 @@ impl Tick {
         }
         Ok(self.add_gate(gate))
     }
+
+    /// Remove all gates that use any of the specified qubits.
+    ///
+    /// Returns the number of gates removed.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_quantum::{TickCircuit, QubitId};
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().h(&[0]).x(&[1]).cx(&[(2, 3)]);
+    ///
+    /// let tick = circuit.get_tick_mut(0).unwrap();
+    /// let removed = tick.discard(&[QubitId::from(0), QubitId::from(2)]);
+    ///
+    /// assert_eq!(removed, 2);  // H on q0 and CX on q2,q3 removed
+    /// assert_eq!(tick.len(), 1);  // Only X on q1 remains
+    /// ```
+    pub fn discard(&mut self, qubits: &[QubitId]) -> usize {
+        let qubits_set: BTreeSet<_> = qubits.iter().copied().collect();
+
+        // Find indices of gates to remove (those using any of the specified qubits)
+        let indices_to_remove: Vec<usize> = self
+            .gates
+            .iter()
+            .enumerate()
+            .filter(|(_, gate)| gate.qubits.iter().any(|q| qubits_set.contains(q)))
+            .map(|(idx, _)| idx)
+            .collect();
+
+        let removed_count = indices_to_remove.len();
+
+        if removed_count == 0 {
+            return 0;
+        }
+
+        // Remove gates in reverse order to preserve indices
+        for &idx in indices_to_remove.iter().rev() {
+            self.gates.remove(idx);
+        }
+
+        // Rebuild gate_attrs with updated indices
+        let old_attrs = std::mem::take(&mut self.gate_attrs);
+        for (old_idx, attrs) in old_attrs {
+            // Count how many removed indices are before this one
+            let shift = indices_to_remove.iter().filter(|&&i| i < old_idx).count();
+            if !indices_to_remove.contains(&old_idx) {
+                self.gate_attrs.insert(old_idx - shift, attrs);
+            }
+        }
+
+        removed_count
+    }
+
+    /// Remove a specific gate by index.
+    ///
+    /// Returns the removed gate, or `None` if the index is out of bounds.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().h(&[0]).x(&[1]).z(&[2]);
+    ///
+    /// let tick = circuit.get_tick_mut(0).unwrap();
+    /// let removed = tick.remove_gate(1);  // Remove X gate
+    ///
+    /// assert!(removed.is_some());
+    /// assert_eq!(tick.len(), 2);  // H and Z remain
+    /// ```
+    pub fn remove_gate(&mut self, idx: usize) -> Option<Gate> {
+        if idx >= self.gates.len() {
+            return None;
+        }
+
+        let gate = self.gates.remove(idx);
+
+        // Rebuild gate_attrs with updated indices
+        let old_attrs = std::mem::take(&mut self.gate_attrs);
+        for (old_idx, attrs) in old_attrs {
+            if old_idx < idx {
+                self.gate_attrs.insert(old_idx, attrs);
+            } else if old_idx > idx {
+                self.gate_attrs.insert(old_idx - 1, attrs);
+            }
+            // Skip old_idx == idx (removed gate's attrs)
+        }
+
+        Some(gate)
+    }
 }
 
 /// A quantum circuit represented as a sequence of parallel time slices (ticks).
@@ -610,6 +703,28 @@ impl TickCircuit {
             tick_idx: idx,
             last_gate_idx: None,
         }
+    }
+
+    /// Remove all gates that use any of the specified qubits from a tick.
+    ///
+    /// Returns the number of gates removed, or `None` if the tick index is out of bounds.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pecos_quantum::TickCircuit;
+    ///
+    /// let mut circuit = TickCircuit::new();
+    /// circuit.tick().h(&[0]).x(&[1]).cx(&[(2, 3)]);
+    ///
+    /// let removed = circuit.discard(&[0, 2], 0);
+    /// assert_eq!(removed, Some(2));  // H on q0 and CX on q2,q3 removed
+    /// assert_eq!(circuit.get_tick(0).unwrap().len(), 1);  // Only X remains
+    /// ```
+    pub fn discard(&mut self, qubits: &[impl Into<QubitId> + Copy], tick_idx: usize) -> Option<usize> {
+        let qubit_ids: Vec<QubitId> = qubits.iter().map(|&q| q.into()).collect();
+        self.get_tick_mut(tick_idx)
+            .map(|tick| tick.discard(&qubit_ids))
     }
 
     // =========================================================================
@@ -1940,5 +2055,107 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().h(&[0]);
         tc.insert_tick(5); // Should panic
+    }
+
+    #[test]
+    fn test_tick_discard() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]).x(&[1]).cx(&[(2, 3)]);
+
+        let tick = tc.get_tick_mut(0).unwrap();
+        assert_eq!(tick.len(), 3);
+
+        // Discard gates using qubit 0 and qubit 2
+        let removed = tick.discard(&[QubitId::from(0), QubitId::from(2)]);
+
+        assert_eq!(removed, 2); // H on q0 and CX on q2,q3
+        assert_eq!(tick.len(), 1); // Only X on q1 remains
+        assert_eq!(tick.gates()[0].gate_type, GateType::X);
+    }
+
+    #[test]
+    fn test_tick_discard_no_match() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]).x(&[1]);
+
+        let tick = tc.get_tick_mut(0).unwrap();
+        let removed = tick.discard(&[QubitId::from(5), QubitId::from(6)]);
+
+        assert_eq!(removed, 0);
+        assert_eq!(tick.len(), 2);
+    }
+
+    #[test]
+    fn test_tick_discard_preserves_attrs() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .h(&[0])
+            .meta("h_attr", Attribute::Int(1))
+            .x(&[1])
+            .meta("x_attr", Attribute::Int(2))
+            .z(&[2])
+            .meta("z_attr", Attribute::Int(3));
+
+        let tick = tc.get_tick_mut(0).unwrap();
+
+        // Remove the X gate (index 1)
+        let removed = tick.discard(&[QubitId::from(1)]);
+        assert_eq!(removed, 1);
+        assert_eq!(tick.len(), 2);
+
+        // H attr should still be at index 0
+        assert_eq!(tick.get_gate_attr(0, "h_attr"), Some(&Attribute::Int(1)));
+        // Z attr should now be at index 1 (shifted from 2)
+        assert_eq!(tick.get_gate_attr(1, "z_attr"), Some(&Attribute::Int(3)));
+        // X attr should be gone
+        assert!(tick.get_gate_attr(1, "x_attr").is_none());
+    }
+
+    #[test]
+    fn test_tick_remove_gate() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]).x(&[1]).z(&[2]);
+
+        let tick = tc.get_tick_mut(0).unwrap();
+        assert_eq!(tick.len(), 3);
+
+        let removed = tick.remove_gate(1); // Remove X
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().gate_type, GateType::X);
+        assert_eq!(tick.len(), 2);
+
+        // Check remaining gates
+        assert_eq!(tick.gates()[0].gate_type, GateType::H);
+        assert_eq!(tick.gates()[1].gate_type, GateType::Z);
+    }
+
+    #[test]
+    fn test_tick_remove_gate_out_of_bounds() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]);
+
+        let tick = tc.get_tick_mut(0).unwrap();
+        let removed = tick.remove_gate(5);
+        assert!(removed.is_none());
+        assert_eq!(tick.len(), 1);
+    }
+
+    #[test]
+    fn test_circuit_discard() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]).x(&[1]).cx(&[(2, 3)]);
+
+        let removed = tc.discard(&[0, 2], 0);
+        assert_eq!(removed, Some(2));
+        assert_eq!(tc.get_tick(0).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_circuit_discard_invalid_tick() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]);
+
+        let removed = tc.discard(&[0], 5);
+        assert_eq!(removed, None);
     }
 }

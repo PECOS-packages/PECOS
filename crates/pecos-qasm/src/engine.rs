@@ -499,6 +499,8 @@ impl QASMEngine {
             if chunk.len() == 2 {
                 match gate_type {
                     GateType::CX => self.message_builder.add_cx(&[chunk[0]], &[chunk[1]]),
+                    GateType::CY => self.message_builder.add_cy(&[chunk[0]], &[chunk[1]]),
+                    GateType::CZ => self.message_builder.add_cz(&[chunk[0]], &[chunk[1]]),
                     GateType::SZZ => self.message_builder.add_szz(&[chunk[0]], &[chunk[1]]),
                     GateType::SZZdg => self.message_builder.add_szzdg(&[chunk[0]], &[chunk[1]]),
                     _ => {
@@ -606,6 +608,13 @@ impl QASMEngine {
             | GateType::QAlloc => self.process_single_qubit_gate(gate.gate_type, &qubits),
             GateType::CX | GateType::CY | GateType::CZ | GateType::SZZ | GateType::SZZdg => {
                 self.process_two_qubit_gate(gate.gate_type, &qubits)
+            }
+            // Gates not yet supported in QASM engine
+            GateType::SX | GateType::SXdg | GateType::SWAP | GateType::CCX | GateType::CRZ => {
+                Err(PecosError::Processing(format!(
+                    "Gate type {:?} is not yet supported in the QASM engine",
+                    gate.gate_type
+                )))
             }
             GateType::RX
             | GateType::RY

@@ -77,6 +77,8 @@ pub fn hugr_op_to_gate_type(op_name: &str) -> Option<GateType> {
         "Sdg" => Some(GateType::SZdg),
         "T" => Some(GateType::T),
         "Tdg" => Some(GateType::Tdg),
+        "V" => Some(GateType::SX),
+        "Vdg" => Some(GateType::SXdg),
         "Rx" => Some(GateType::RX),
         "Ry" => Some(GateType::RY),
         "Rz" => Some(GateType::RZ),
@@ -85,6 +87,10 @@ pub fn hugr_op_to_gate_type(op_name: &str) -> Option<GateType> {
         "CY" => Some(GateType::CY),
         "CZ" => Some(GateType::CZ),
         "ZZMax" => Some(GateType::SZZ),
+        "SWAP" => Some(GateType::SWAP),
+        "CRz" => Some(GateType::CRZ),
+        // Three-qubit gates
+        "Toffoli" | "CCX" => Some(GateType::CCX),
         // Lifecycle operations
         "QAlloc" => Some(GateType::QAlloc),
         "QFree" => Some(GateType::QFree),
@@ -108,6 +114,8 @@ pub fn gate_type_to_hugr_op(gate_type: GateType) -> Option<&'static str> {
         GateType::SZdg => Some("Sdg"),
         GateType::T => Some("T"),
         GateType::Tdg => Some("Tdg"),
+        GateType::SX => Some("V"),
+        GateType::SXdg => Some("Vdg"),
         GateType::RX => Some("Rx"),
         GateType::RY => Some("Ry"),
         GateType::RZ => Some("Rz"),
@@ -116,6 +124,10 @@ pub fn gate_type_to_hugr_op(gate_type: GateType) -> Option<&'static str> {
         GateType::CY => Some("CY"),
         GateType::CZ => Some("CZ"),
         GateType::SZZ => Some("ZZMax"),
+        GateType::SWAP => Some("SWAP"),
+        GateType::CRZ => Some("CRz"),
+        // Three-qubit gates
+        GateType::CCX => Some("Toffoli"),
         // Lifecycle operations
         GateType::QAlloc => Some("QAlloc"),
         GateType::QFree => Some("QFree"),

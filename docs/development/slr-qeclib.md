@@ -36,16 +36,16 @@ SLR (Simple Logical Representation) is a programmatic way to construct quantum p
 
 ```python
 from pecos.slr import (
-    Main,       # Top-level program container
-    Block,      # Group of operations
-    QReg,       # Quantum register
-    CReg,       # Classical register (use CReg[0] for single bits)
-    Qubit,      # Single qubit reference
-    If,         # Conditional block (use .Then() method)
-    For,        # For loop with variable (use .Do() method)
-    While,      # While loop (use .Do() method)
-    Repeat,     # Simple repetition (use .block() method)
-    Parallel,   # Parallel execution block
+    Main,  # Top-level program container
+    Block,  # Group of operations
+    QReg,  # Quantum register
+    CReg,  # Classical register (use CReg[0] for single bits)
+    Qubit,  # Single qubit reference
+    If,  # Conditional block (use .Then() method)
+    For,  # For loop with variable (use .Do() method)
+    While,  # While loop (use .Do() method)
+    Repeat,  # Simple repetition (use .block() method)
+    Parallel,  # Parallel execution block
     SlrConverter,  # Convert to QASM/QIR/Guppy
 )
 from pecos.slr import qeclib  # QEC operations
@@ -61,11 +61,11 @@ from pecos.slr.qeclib import qubit as qb
 
 # Define the program
 prog = Main(
-    q := QReg("q", 2),      # 2-qubit register
-    c := CReg("c", 2),      # 2-bit classical register
-    qb.H(q[0]),             # Hadamard on qubit 0
-    qb.CX(q[0], q[1]),      # CNOT
-    qb.Measure(q) > c,      # Measure all qubits into c
+    q := QReg("q", 2),  # 2-qubit register
+    c := CReg("c", 2),  # 2-bit classical register
+    qb.H(q[0]),  # Hadamard on qubit 0
+    qb.CX(q[0], q[1]),  # CNOT
+    qb.Measure(q) > c,  # Measure all qubits into c
 )
 
 # Convert to QASM
@@ -95,7 +95,6 @@ from pecos.slr.qeclib import qubit as qb
 prog = Main(
     q := QReg("q", 4),
     c := CReg("c", 4),
-
     # Initialization block
     Block(
         qb.Prep(q[0], "Z"),
@@ -103,7 +102,6 @@ prog = Main(
         qb.Prep(q[2], "X"),
         qb.Prep(q[3], "X"),
     ),
-
     # Entanglement block
     Block(
         qb.H(q[0]),
@@ -111,7 +109,6 @@ prog = Main(
         qb.H(q[2]),
         qb.CX(q[2], q[3]),
     ),
-
     # Measurement
     qb.Measure(q) > c,
 )
@@ -128,7 +125,6 @@ from pecos.slr.qeclib import qubit as qb
 prog = Main(
     q := QReg("q", 4),
     c := CReg("c", 4),
-
     # These Hadamards can run in parallel
     Parallel(
         qb.H(q[0]),
@@ -136,7 +132,6 @@ prog = Main(
         qb.H(q[2]),
         qb.H(q[3]),
     ),
-
     qb.Measure(q) > c,
 )
 
@@ -155,15 +150,12 @@ from pecos.slr.qeclib import qubit as qb
 prog = Main(
     q := QReg("q", 2),
     c := CReg("c", 2),
-
     qb.H(q[0]),
     qb.Measure(q[0]) > c[0],
-
     # Conditional X gate (use .Then() method)
     If(c[0] == 1).Then(
         qb.X(q[1]),
     ),
-
     qb.Measure(q[1]) > c[1],
 )
 ```
@@ -179,12 +171,10 @@ from pecos.slr.qeclib import qubit as qb
 prog = Main(
     q := QReg("q", 1),
     c := CReg("c", 1),
-
     # Apply H gate 3 times
     Repeat(3).block(
         qb.H(q[0]),
     ),
-
     qb.Measure(q) > c,
 )
 ```
@@ -199,13 +189,11 @@ from pecos.slr.qeclib import qubit as qb
 prog = Main(
     q := QReg("q", 4),
     c := CReg("c", 4),
-
     # Apply H to each qubit using loop variable
     # Note: Loop variable must be a string; runtime q[i] indexing is planned
     For("i", range(4)).Do(
         qb.H(q[0]),  # Would use q[i] when supported
     ),
-
     qb.Measure(q) > c,
 )
 ```
@@ -219,7 +207,6 @@ from pecos.slr.qeclib import qubit as qb
 prog = Main(
     q := QReg("q", 1),
     c := CReg("c", 1),
-
     # While loop (use .Do() method)
     While(c[0] == 0).Do(
         qb.H(q[0]),
@@ -241,35 +228,29 @@ from pecos.slr.qeclib import qubit as qb
 prog = Main(
     q := QReg("q", 2),
     c := CReg("c", 2),
-
     # Single-qubit Paulis
     qb.X(q[0]),
     qb.Y(q[0]),
     qb.Z(q[0]),
-
     # Hadamard
     qb.H(q[0]),
-
     # Phase gates
-    qb.SZ(q[0]),      # S gate (sqrt Z)
-    qb.SZdg(q[0]),    # S dagger
-    qb.T(q[0]),       # T gate
-    qb.Tdg(q[0]),     # T dagger
-
+    qb.SZ(q[0]),  # S gate (sqrt Z)
+    qb.SZdg(q[0]),  # S dagger
+    qb.T(q[0]),  # T gate
+    qb.Tdg(q[0]),  # T dagger
     # Rotations (angle in radians)
     qb.RX(q[0], 0.5),
     qb.RY(q[0], 0.5),
     qb.RZ(q[0], 0.5),
-
     # Two-qubit gates
-    qb.CX(q[0], q[1]),   # CNOT
+    qb.CX(q[0], q[1]),  # CNOT
     qb.CY(q[0], q[1]),
     qb.CZ(q[0], q[1]),
-
     # Measurements and preparations
     qb.Measure(q[0]) > c[0],
-    qb.Prep(q[0], "Z"),   # Prepare |0>
-    qb.Prep(q[0], "X"),   # Prepare |+>
+    qb.Prep(q[0], "Z"),  # Prepare |0>
+    qb.Prep(q[0], "X"),  # Prepare |+>
 )
 ```
 
@@ -393,6 +374,7 @@ hugr = SlrConverter(prog).hugr()
 from pecos.slr import Main, Block, QReg, CReg, Parallel, SlrConverter
 from pecos.slr.qeclib import qubit as qb
 
+
 def surface_code_syndrome(d: int):
     """Build a simple syndrome extraction circuit."""
     num_data = d * d
@@ -402,10 +384,8 @@ def surface_code_syndrome(d: int):
         data := QReg("data", num_data),
         ancilla := QReg("anc", num_ancilla),
         syn := CReg("syn", num_ancilla),
-
         # Initialize data qubits
         Block(*[qb.Prep(data[i], "Z") for i in range(num_data)]),
-
         # X stabilizer measurement (simplified)
         Block(
             qb.Prep(ancilla[0], "X"),  # Prepare |+>
@@ -415,7 +395,6 @@ def surface_code_syndrome(d: int):
             qb.H(ancilla[0]),
             qb.Measure(ancilla[0]) > syn[0],
         ),
-
         # Z stabilizer measurement (simplified)
         Block(
             qb.Prep(ancilla[1], "Z"),  # Prepare |0>
@@ -423,12 +402,12 @@ def surface_code_syndrome(d: int):
             qb.CX(data[3], ancilla[1]),
             qb.Measure(ancilla[1]) > syn[1],
         ),
-
         # Final measurement
         qb.Measure(data) > CReg("final", num_data),
     )
 
     return prog
+
 
 # Generate QASM for d=3 surface code
 prog = surface_code_syndrome(3)
@@ -441,22 +420,21 @@ qasm = SlrConverter(prog).qasm()
 from pecos.slr import Main, Block, QReg, CReg
 from pecos.slr.qeclib import qubit as qb
 
+
 def ghz_state(n: int):
     """Create an n-qubit GHZ state."""
     prog = Main(
         q := QReg("q", n),
         c := CReg("c", n),
-
         # Hadamard on first qubit
         qb.H(q[0]),
-
         # CNOT chain
         Block(*[qb.CX(q[i], q[i + 1]) for i in range(n - 1)]),
-
         # Measure all
         qb.Measure(q) > c,
     )
     return prog
+
 
 # Create 5-qubit GHZ state
 prog = ghz_state(5)
@@ -471,6 +449,7 @@ For operations not in qeclib, you can extend the framework:
 
 ```python
 from pecos.slr.cops import COp
+
 
 # Custom operation (see pecos.slr.cops for details)
 class MyGate(COp):

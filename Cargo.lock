@@ -3076,6 +3076,7 @@ dependencies = [
  "rand 0.9.2",
  "selene-simple-runtime",
  "selene-soft-rz-runtime",
+ "serde_json",
  "tempfile",
 ]
 
@@ -3086,6 +3087,7 @@ dependencies = [
  "libc",
  "log",
  "pecos-qis-ffi-types",
+ "serde_json",
 ]
 
 [[package]]

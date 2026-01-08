@@ -286,6 +286,8 @@ type WaitForNeedResultFn = unsafe extern "C" fn(u64) -> u64;
 type SetMeasurementResultFn = unsafe extern "C" fn(u64, bool);
 type SignalResultReadyFn = unsafe extern "C" fn();
 type AbortExecutionFn = unsafe extern "C" fn();
+type GetNamedResultsJsonFn = unsafe extern "C" fn() -> *mut std::ffi::c_char;
+type FreeNamedResultsJsonFn = unsafe extern "C" fn(*mut std::ffi::c_char);
 
 /// Synchronization handle for main thread communication with worker thread
 ///
@@ -389,6 +391,52 @@ impl DynamicSyncHandle for HeliosSyncHandle {
         unsafe { abort_fn() };
         debug!("HeliosSyncHandle: Aborted execution");
         Ok(())
+    }
+
+    fn get_named_results(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, Vec<bool>>, InterfaceError> {
+        let lib = Self::get_lib()?;
+
+        // Get the JSON string
+        let get_fn: Symbol<GetNamedResultsJsonFn> = unsafe {
+            lib.get(b"pecos_get_named_results_json\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_get_named_results_json: {e}"
+                ))
+            })?
+        };
+
+        let ptr = unsafe { get_fn() };
+        if ptr.is_null() {
+            // No named results - return empty map
+            return Ok(std::collections::BTreeMap::new());
+        }
+
+        // Convert to Rust string
+        let c_str = unsafe { std::ffi::CStr::from_ptr(ptr) };
+        let json_str = c_str.to_str().map_err(|e| {
+            InterfaceError::ExecutionError(format!("Invalid UTF-8 in named results JSON: {e}"))
+        })?;
+
+        // Parse JSON
+        let result: std::collections::BTreeMap<String, Vec<bool>> = serde_json::from_str(json_str)
+            .map_err(|e| {
+                InterfaceError::ExecutionError(format!("Failed to parse named results JSON: {e}"))
+            })?;
+
+        // Free the JSON string
+        let free_fn: Symbol<FreeNamedResultsJsonFn> = unsafe {
+            lib.get(b"pecos_free_named_results_json\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_free_named_results_json: {e}"
+                ))
+            })?
+        };
+        unsafe { free_fn(ptr) };
+
+        debug!("HeliosSyncHandle: Got {} named results", result.len());
+        Ok(result)
     }
 }
 

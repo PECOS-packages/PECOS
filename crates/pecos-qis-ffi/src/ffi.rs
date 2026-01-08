@@ -807,32 +807,69 @@ pub unsafe extern "C" fn __quantum__qis__mz__body(qubit: i64) -> i32 {
 /// with labels like "`measurement_0`", "`measurement_1`", etc.
 ///
 /// # Arguments
-/// * `label_ptr` - Pointer to the label string
-/// * `label_len` - Length of the label string
+/// * `label_ptr` - Pointer to the label struct: `{len: u8, data: [u8; len]}`
+/// * `label_len` - Length of the label string (same as the len byte in the struct)
 /// * `value` - Boolean value to print
 ///
+/// # Note
+/// The tket2 LLVM codegen emits strings as `{u8 len, u8[] data}` structs.
+/// The `label_ptr` points to this struct, and `label_len` is the length value.
+/// We need to skip the first byte (the length) to get to the actual string data.
+///
 /// # Safety
-/// This function is safe to call from C/LLVM code. The `label_ptr` must point to a valid byte
-/// array of at least `label_len` bytes. Invalid pointers or lengths will cause undefined behavior.
+/// This function is safe to call from C/LLVM code. The `label_ptr` must point to a valid
+/// string struct with at least `label_len + 1` bytes. Invalid pointers will cause undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn print_bool(label_ptr: *const u8, label_len: i64, value: bool) {
-    // Convert the C string to a Rust string for debugging
-    let Ok(label_len) = usize::try_from(label_len) else {
+    let Ok(label_len_usize) = usize::try_from(label_len) else {
         log::error!("print_bool: invalid label length {label_len}");
         return;
     };
-    let label_slice = unsafe { std::slice::from_raw_parts(label_ptr, label_len) };
 
-    // For now, just log the print operation - this prevents segfaults
-    // while allowing the program to run
-    if let Ok(label_str) = std::str::from_utf8(label_slice) {
-        // Log the measurement for debugging
-        log::debug!("print_bool called: {label_str} = {value}");
+    // The tket2 string format is: {len: u8, data: [u8; len]}
+    // label_ptr points to the len byte, so we need to skip it to get the actual data
+    let data_ptr = unsafe { label_ptr.add(1) };
+    let label_slice = unsafe { std::slice::from_raw_parts(data_ptr, label_len_usize) };
+
+    let Ok(label) = std::str::from_utf8(label_slice) else {
+        log::error!("print_bool: invalid UTF-8 in label");
+        return;
+    };
+
+    // Log the measurement for debugging
+    log::debug!("print_bool called: {label} = {value}");
+
+    // Strip the USER:BOOL: or USER:BOOLARR: prefix if present
+    let name = if let Some(stripped) = label.strip_prefix("USER:BOOL:") {
+        stripped
+    } else if let Some(stripped) = label.strip_prefix("USER:BOOLARR:") {
+        stripped
+    } else {
+        label
+    };
+
+    // Store in the execution context's named results
+    if let Some(ctx) = crate::get_execution_context() {
+        // SAFETY: Context is valid for duration of execution
+        let ctx = unsafe { &*ctx };
+        ctx.store_named_bool(name, value);
     }
+}
 
-    // TODO: Properly integrate with measurement storage system
-    // The current QisInterface uses numeric IDs, but Guppy uses string names
-    // This mismatch needs to be resolved in a future update
+/// Dense 1D array struct matching the LLVM ABI from tket2
+///
+/// This struct is passed by pointer from LLVM-compiled code.
+/// The layout matches what `struct_1d_arr_t` in tket-qsystem creates:
+/// - x: array length (i32)
+/// - y: always 1 (i32)
+/// - data: pointer to the data array
+/// - mask: pointer to mask array (unused for dense arrays)
+#[repr(C)]
+pub struct Dense1DArrayBool {
+    pub x: i32,
+    pub y: i32,
+    pub data: *const bool,
+    pub mask: *const bool,
 }
 
 /// Print a boolean array result with a label
@@ -841,45 +878,184 @@ pub unsafe extern "C" fn print_bool(label_ptr: *const u8, label_len: i64, value:
 /// measurement results (e.g., syndrome arrays, final measurements).
 ///
 /// # Arguments
-/// * `label_ptr` - Pointer to the label string
-/// * `label_len` - Length of the label string
-/// * `arr_ptr` - Pointer to the boolean array
-/// * `arr_len` - Length of the boolean array
+/// * `label_ptr` - Pointer to the label struct: `{len: u8, data: [u8; len]}`
+/// * `label_len` - Length of the label string (same as the len byte in the struct)
+/// * `arr` - Pointer to the `Dense1DArrayBool` struct containing the array data
+///
+/// # Note
+/// The tket2 LLVM codegen emits strings as `{u8 len, u8[] data}` structs.
+/// The `label_ptr` points to this struct, and `label_len` is the length value.
+/// We need to skip the first byte (the length) to get to the actual string data.
 ///
 /// # Safety
-/// This function is safe to call from C/LLVM code. The `label_ptr` must point to a valid byte
-/// array of at least `label_len` bytes. The `arr_ptr` must point to a valid bool array of at
-/// least `arr_len` elements. Invalid pointers or lengths will cause undefined behavior.
+/// This function is safe to call from C/LLVM code. The `label_ptr` must point to a valid
+/// string struct with at least `label_len + 1` bytes. The `arr` must point to a valid
+/// `Dense1DArrayBool` struct. Invalid pointers will cause undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn print_bool_arr(
     label_ptr: *const u8,
     label_len: i64,
-    arr_ptr: *const bool,
-    arr_len: i64,
+    arr: *const Dense1DArrayBool,
 ) {
-    // Validate lengths
+    // Validate label length
     let Ok(label_len_usize) = usize::try_from(label_len) else {
         log::error!("print_bool_arr: invalid label length {label_len}");
         return;
     };
-    let Ok(arr_len_usize) = usize::try_from(arr_len) else {
-        log::error!("print_bool_arr: invalid array length {arr_len}");
+
+    // Check that arr pointer is valid
+    if arr.is_null() {
+        log::error!("print_bool_arr: null array pointer");
+        return;
+    }
+
+    // The tket2 string format is: {len: u8, data: [u8; len]}
+    // label_ptr points to the len byte, so we need to skip it to get the actual data
+    let data_ptr = unsafe { label_ptr.add(1) };
+    let label_slice = unsafe { std::slice::from_raw_parts(data_ptr, label_len_usize) };
+    let Ok(label) = std::str::from_utf8(label_slice) else {
+        log::error!("print_bool_arr: invalid UTF-8 in label");
         return;
     };
 
-    // Convert the C string to a Rust string
-    let label_slice = unsafe { std::slice::from_raw_parts(label_ptr, label_len_usize) };
-    let label_str = std::str::from_utf8(label_slice).unwrap_or("<invalid utf8>");
+    // Read the array struct
+    let arr_struct = unsafe { &*arr };
+    let Ok(arr_len) = usize::try_from(arr_struct.x) else {
+        log::error!("print_bool_arr: invalid array length {}", arr_struct.x);
+        return;
+    };
+
+    // Validate data pointer
+    if arr_struct.data.is_null() {
+        log::error!("print_bool_arr: null data pointer in array struct");
+        return;
+    }
 
     // Convert the array to a Rust slice
-    let arr_slice = unsafe { std::slice::from_raw_parts(arr_ptr, arr_len_usize) };
+    let arr_slice = unsafe { std::slice::from_raw_parts(arr_struct.data, arr_len) };
 
     // Log the array for debugging
-    log::debug!("print_bool_arr called: {label_str} = {arr_slice:?}");
+    log::debug!("print_bool_arr called: {label} = {arr_slice:?}");
 
-    // TODO: Properly integrate with measurement storage system
-    // The current QisInterface uses numeric IDs, but Guppy uses string names
-    // This mismatch needs to be resolved in a future update
+    // Strip the USER:BOOLARR: prefix if present
+    let name = if let Some(stripped) = label.strip_prefix("USER:BOOLARR:") {
+        stripped
+    } else if let Some(stripped) = label.strip_prefix("USER:BOOL:") {
+        stripped
+    } else {
+        label
+    };
+
+    // Store in the execution context's named results
+    if let Some(ctx) = crate::get_execution_context() {
+        // SAFETY: Context is valid for duration of execution
+        let ctx = unsafe { &*ctx };
+        ctx.store_named_array(name, arr_slice);
+    }
+}
+
+// =============================================================================
+// Selene-compatible print functions
+//
+// The Selene runtime uses a different string format (selene_string_t has direct
+// data pointer, not tket2's {len: u8, data: [u8]} format). These functions are
+// called from the selene_shim.c and expect direct string data.
+// =============================================================================
+
+/// Print a boolean result with a label (Selene-compatible format)
+///
+/// This function is called from the Selene shim with direct string data pointer.
+/// Unlike `print_bool`, this does NOT skip the first byte (no tket2 format).
+///
+/// # Safety
+/// This function is safe to call from C/LLVM code. The `label_ptr` must point to valid
+/// string data of at least `label_len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn print_bool_selene(label_ptr: *const u8, label_len: i64, value: bool) {
+    let Ok(label_len_usize) = usize::try_from(label_len) else {
+        log::error!("print_bool_selene: invalid label length {label_len}");
+        return;
+    };
+
+    // Direct string data - no need to skip any bytes
+    let label_slice = unsafe { std::slice::from_raw_parts(label_ptr, label_len_usize) };
+
+    let Ok(label) = std::str::from_utf8(label_slice) else {
+        log::error!("print_bool_selene: invalid UTF-8 in label");
+        return;
+    };
+
+    // Strip the USER:BOOL: or USER:BOOLARR: prefix if present
+    let name = if let Some(stripped) = label.strip_prefix("USER:BOOL:") {
+        stripped
+    } else if let Some(stripped) = label.strip_prefix("USER:BOOLARR:") {
+        stripped
+    } else {
+        label
+    };
+
+    // Store in the execution context's named results
+    if let Some(ctx) = crate::get_execution_context() {
+        let ctx = unsafe { &*ctx };
+        ctx.store_named_bool(name, value);
+    }
+}
+
+/// Print a boolean array result with a label (Selene-compatible format)
+///
+/// This function is called from the Selene shim with direct string/array pointers.
+/// Unlike `print_bool_arr`, this does NOT expect tket2 format or `Dense1DArrayBool` struct.
+///
+/// # Safety
+/// This function is safe to call from C/LLVM code. The `label_ptr` must point to valid
+/// string data of at least `label_len` bytes. The `arr_ptr` must point to valid bool
+/// data of at least `arr_len` elements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn print_bool_arr_selene(
+    label_ptr: *const u8,
+    label_len: i64,
+    arr_ptr: *const bool,
+    arr_len: u64,
+) {
+    let Ok(label_len_usize) = usize::try_from(label_len) else {
+        log::error!("print_bool_arr_selene: invalid label length {label_len}");
+        return;
+    };
+
+    let Ok(arr_len_usize) = usize::try_from(arr_len) else {
+        log::error!("print_bool_arr_selene: invalid array length {arr_len}");
+        return;
+    };
+
+    if arr_ptr.is_null() {
+        log::error!("print_bool_arr_selene: null array pointer");
+        return;
+    }
+
+    // Direct string data - no need to skip any bytes
+    let label_slice = unsafe { std::slice::from_raw_parts(label_ptr, label_len_usize) };
+    let Ok(label) = std::str::from_utf8(label_slice) else {
+        log::error!("print_bool_arr_selene: invalid UTF-8 in label");
+        return;
+    };
+
+    // Direct array data
+    let arr_slice = unsafe { std::slice::from_raw_parts(arr_ptr, arr_len_usize) };
+
+    // Strip the USER:BOOLARR: or USER:BOOL: prefix if present
+    let name = if let Some(stripped) = label.strip_prefix("USER:BOOLARR:") {
+        stripped
+    } else if let Some(stripped) = label.strip_prefix("USER:BOOL:") {
+        stripped
+    } else {
+        label
+    };
+
+    // Store in the execution context's named results
+    if let Some(ctx) = crate::get_execution_context() {
+        let ctx = unsafe { &*ctx };
+        ctx.store_named_array(name, arr_slice);
+    }
 }
 
 // =============================================================================

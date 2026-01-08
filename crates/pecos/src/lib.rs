@@ -337,7 +337,7 @@ pub mod runtime {
 /// ```
 #[cfg(feature = "sim")]
 pub mod results {
-    pub use pecos_engines::shot_results::{Data, Shot, ShotMap, ShotVec};
+    pub use pecos_engines::shot_results::{Data, DataVec, Shot, ShotMap, ShotVec};
     pub use pecos_engines::{
         BitVecDisplayFormat, ShotMapDisplay, ShotMapDisplayExt, ShotMapDisplayOptions,
     };

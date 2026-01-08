@@ -85,13 +85,15 @@ from pecos.qec.surface import SurfacePatch
 patch = SurfacePatch.create(distance=3)
 
 # Basic properties
-print(f"Distance: {patch.distance}")        # 3
-print(f"Data qubits: {patch.num_data}")     # 9
+print(f"Distance: {patch.distance}")  # 3
+print(f"Data qubits: {patch.num_data}")  # 9
 print(f"Total qubits: {patch.num_qubits}")  # 11 (9 data + 2 ancilla)
 
 # Stabilizers
 for stab in patch.x_stabilizers:
-    print(f"X stab {stab.index}: qubits={stab.data_qubits}, boundary={stab.is_boundary}")
+    print(
+        f"X stab {stab.index}: qubits={stab.data_qubits}, boundary={stab.is_boundary}"
+    )
 
 for stab in patch.z_stabilizers:
     print(f"Z stab {stab.index}: qubits={stab.data_qubits}, weight={stab.weight}")
@@ -122,8 +124,8 @@ rotated = SurfacePatch.create(distance=5)
 # Standard layout - traditional
 standard = SurfacePatch.create(distance=5, rotated=False)
 
-print(f"Rotated: {rotated.num_data} data qubits")   # 25
-print(f"Standard: {standard.num_data} data qubits") # 25
+print(f"Rotated: {rotated.num_data} data qubits")  # 25
+print(f"Standard: {standard.num_data} data qubits")  # 25
 ```
 
 ### Low-Level Layout Functions
@@ -180,7 +182,9 @@ print(f"Stabilizers: {code.num_stabilizers}")
 
 # All stabilizers
 for stab in code.stabilizers:
-    print(f"Stab {stab.index}: color={stab.color}, qubits={stab.qubits}, weight={stab.weight}")
+    print(
+        f"Stab {stab.index}: color={stab.color}, qubits={stab.qubits}, weight={stab.weight}"
+    )
 
 # Filter by color
 red_stabs = code.get_red_stabilizers()
@@ -411,6 +415,7 @@ The `pecos.qec` geometry can be used with different circuit generation approache
 ```python
 # Using geometry with Guppy (recommended)
 from pecos.guppy import make_surface_code
+
 prog = make_surface_code(distance=3, num_rounds=2, basis="Z")
 
 # Using geometry with SLR (for developers needing more control)

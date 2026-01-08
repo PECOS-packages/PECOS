@@ -768,7 +768,7 @@ impl ClassicalEngine for QisEngine {
         // Convert stored measurement results to PECOS shot format
         let mut shot = Shot::default();
 
-        // Add measurements from stored results
+        // Add measurements from stored results (numeric IDs)
         for (result_id, value) in &self.measurement_results {
             shot.data.insert(
                 format!("measurement_{result_id}"),
@@ -779,6 +779,32 @@ impl ClassicalEngine for QisEngine {
                 result_id,
                 i32::from(*value)
             );
+        }
+
+        // Add named results from print_bool/print_bool_arr calls
+        if let Some(state) = &self.dynamic_state
+            && let Some(handle) = &state.sync_handle
+        {
+            match handle.get_named_results() {
+                Ok(named_results) => {
+                    for (name, values) in named_results {
+                        // Convert Vec<bool> to Data
+                        // For single values, store as U32; for arrays, store as Vec<U32>
+                        if values.len() == 1 {
+                            shot.data.insert(name, Data::U32(u32::from(values[0])));
+                        } else {
+                            // Store as Vec of U32 values (0 or 1)
+                            let data_vec: Vec<Data> =
+                                values.iter().map(|&b| Data::U32(u32::from(b))).collect();
+                            shot.data.insert(name, Data::Vec(data_vec));
+                        }
+                    }
+                    debug!("QisEngine: Added named results to shot");
+                }
+                Err(e) => {
+                    debug!("QisEngine: Failed to get named results: {e}");
+                }
+            }
         }
 
         debug!("QisEngine: Final shot data: {:?}", shot.data);

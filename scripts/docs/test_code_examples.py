@@ -19,6 +19,7 @@ to ensure they run correctly. It supports both Python and Rust code examples.
 
 from __future__ import annotations
 
+import argparse
 import re
 import shutil
 import subprocess
@@ -56,7 +57,8 @@ def _dedent_code(code: str) -> str:
 
 
 def extract_code_blocks(
-    file_path: str | Path, language: str = "python"
+    file_path: str | Path,
+    language: str = "python",
 ) -> list[tuple[str, bool]]:
     """Extract code blocks of a specific language from a Markdown file.
 
@@ -93,7 +95,9 @@ def extract_code_blocks(
             preamble = []
             continue
 
-        should_skip = bool(marker_comment and "skip" in marker_comment.lower()) or lang_suffix in (
+        should_skip = bool(
+            marker_comment and "skip" in marker_comment.lower(),
+        ) or lang_suffix in (
             ",skip",
             ",ignore",
             ",no_run",
@@ -106,10 +110,11 @@ def extract_code_blocks(
             preamble.append(cleaned_code)
         else:
             # Visible blocks get preamble prepended
-            if preamble:
-                full_code = "\n\n".join(preamble) + "\n\n" + cleaned_code
-            else:
-                full_code = cleaned_code
+            full_code = (
+                "\n\n".join(preamble) + "\n\n" + cleaned_code
+                if preamble
+                else cleaned_code
+            )
             blocks.append((full_code, should_skip))
 
     return blocks
@@ -239,8 +244,6 @@ def test_rust_block(
 
 def main() -> None:
     """Main function to test all code examples in documentation."""
-    import argparse
-
     parser = argparse.ArgumentParser(description="Test code examples in documentation")
     parser.add_argument(
         "--skip-rust",
@@ -263,8 +266,12 @@ def main() -> None:
     skip_rust = args.skip_rust and not args.test_rust
 
     print("Testing PECOS documentation code examples...")
-    print("Skip markers: <!--skip-->, <!--pytest.mark.skip-->, ```python,skip, ```rust,ignore")
-    print("Hidden preamble: ```hidden-python``` blocks are prepended to subsequent blocks")
+    print(
+        "Skip markers: <!--skip-->, <!--pytest.mark.skip-->, ```python,skip, ```rust,ignore",
+    )
+    print(
+        "Hidden preamble: ```hidden-python``` blocks are prepended to subsequent blocks",
+    )
     if skip_rust:
         print("Note: Rust blocks skipped by default (use --test-rust to enable)")
 
@@ -311,13 +318,15 @@ def main() -> None:
         f"{python_passed / python_total * 100:.1f}%" if python_total > 0 else "N/A"
     )
     print(
-        f"Python: {python_passed}/{python_total} blocks passed, {python_skipped} skipped ({python_success_rate} success rate)",
+        f"Python: {python_passed}/{python_total} blocks passed, "
+        f"{python_skipped} skipped ({python_success_rate} success rate)",
     )
     rust_success_rate = (
         f"{rust_passed / rust_total * 100:.1f}%" if rust_total > 0 else "N/A"
     )
     print(
-        f"Rust: {rust_passed}/{rust_total} blocks passed, {rust_skipped} skipped ({rust_success_rate} success rate)",
+        f"Rust: {rust_passed}/{rust_total} blocks passed, "
+        f"{rust_skipped} skipped ({rust_success_rate} success rate)",
     )
 
     # Print failed tests

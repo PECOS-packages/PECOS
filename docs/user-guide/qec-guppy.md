@@ -45,13 +45,7 @@ prog = make_surface_code(distance=3, num_rounds=3, basis="Z")
 num_qubits = get_num_qubits(3)  # 11 qubits
 
 # Run simulation
-results = (
-    sim(prog)
-    .qubits(num_qubits)
-    .quantum(state_vector())
-    .seed(42)
-    .run(100)
-)
+results = sim(prog).qubits(num_qubits).quantum(state_vector()).seed(42).run(100)
 
 print(results.to_dict())
 ```
@@ -109,21 +103,17 @@ prog = make_color_code(distance=3, num_rounds=2, basis="Z")
 num_qubits = get_num_qubits_color(3)
 
 # Run simulation
-results = (
-    sim(prog)
-    .qubits(num_qubits)
-    .quantum(state_vector())
-    .seed(42)
-    .run(100)
-)
+results = sim(prog).qubits(num_qubits).quantum(state_vector()).seed(42).run(100)
 ```
 
 ### Comparing Surface and Color Codes
 
 ```python
 from pecos.guppy import (
-    make_surface_code, get_num_qubits,
-    make_color_code, get_num_qubits_color,
+    make_surface_code,
+    get_num_qubits,
+    make_color_code,
+    get_num_qubits_color,
 )
 
 d = 3
@@ -162,13 +152,7 @@ prog = make_css_transversal_cnot(
 num_qubits = get_transversal_num_qubits("color", 3)
 
 # Run simulation
-results = (
-    sim(prog)
-    .qubits(num_qubits)
-    .quantum(state_vector())
-    .seed(42)
-    .run(100)
-)
+results = sim(prog).qubits(num_qubits).quantum(state_vector()).seed(42).run(100)
 ```
 
 ### Transversal CNOT with Logical X
@@ -227,11 +211,14 @@ The `pecos.guppy` module generates Guppy source code with these components:
 @guppy.struct
 class SurfaceCode_3x3:
     """Surface code patch with dx=3, dz=3 (9 data qubits)."""
+
     data: array[qubit, 9]
+
 
 @guppy.struct
 class Syndrome_3x3:
     """Syndrome for dx=3, dz=3 patch."""
+
     synx: array[bool, 4]
     synz: array[bool, 4]
 ```
@@ -248,6 +235,7 @@ def measure_x_stab_0(ax: qubit, data: array[qubit, 9]) -> bool:
     cx(ax, data[1])
     h(ax)
     return measure_and_reset(ax)
+
 
 @guppy
 def measure_z_stab_0(az: qubit, data: array[qubit, 9]) -> bool:
@@ -359,6 +347,7 @@ from pecos import sim, state_vector, depolarizing_noise
 from pecos.guppy import make_surface_code, get_num_qubits
 from pecos.qec import logical_z_from_data
 
+
 def estimate_logical_error_rate(distance: int, p: float, shots: int = 1000) -> float:
     """Estimate logical error rate for a surface code."""
     prog = make_surface_code(distance=distance, num_rounds=distance, basis="Z")
@@ -384,6 +373,7 @@ def estimate_logical_error_rate(distance: int, p: float, shots: int = 1000) -> f
             errors += 1
 
     return errors / shots
+
 
 # Compare different distances
 for d in [3, 5, 7]:

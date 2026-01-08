@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -2658,6 +2658,7 @@ name = "pecos-workspace"
 version = "0.8.0.dev0"
 source = { virtual = "." }
 dependencies = [
+    { name = "guppylang" },
     { name = "stim" },
 ]
 
@@ -2694,7 +2695,10 @@ test = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "stim", specifier = ">=1.15.0" }]
+requires-dist = [
+    { name = "guppylang", specifier = ">=0.21.6" },
+    { name = "stim", specifier = ">=1.15.0" },
+]
 
 [package.metadata.requires-dev]
 dev = [

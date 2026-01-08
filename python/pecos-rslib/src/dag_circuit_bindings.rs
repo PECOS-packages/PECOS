@@ -1644,6 +1644,131 @@ impl PyTickCircuit {
             .map(|attr| attribute_to_py(py, attr))
     }
 
+    // =========================================================================
+    // Circuit manipulation
+    // =========================================================================
+
+    /// Clear the circuit and start fresh.
+    ///
+    /// This completely replaces the circuit with a new empty instance.
+    /// For performance-critical code, consider using `reset()` instead.
+    fn clear(&mut self) {
+        self.inner.clear();
+    }
+
+    /// Reset the circuit state while preserving allocated memory.
+    ///
+    /// This is faster than `clear()` when reusing the same circuit multiple times.
+    fn reset(&mut self) {
+        self.inner.reset();
+    }
+
+    /// Reserve empty ticks in advance.
+    ///
+    /// Args:
+    ///     n: The number of empty ticks to reserve.
+    fn reserve_ticks(&mut self, n: usize) {
+        self.inner.reserve_ticks(n);
+    }
+
+    /// Insert an empty tick at a specific position.
+    ///
+    /// All ticks at or after `idx` are shifted to the right.
+    /// Returns a `TickHandle` to the newly inserted tick.
+    ///
+    /// Args:
+    ///     idx: The position at which to insert the new tick.
+    ///
+    /// Raises:
+    ///     IndexError: If `idx > num_ticks()`.
+    fn insert_tick(slf: Py<Self>, py: Python<'_>, idx: usize) -> PyResult<PyTickHandle> {
+        {
+            let mut circuit = slf.borrow_mut(py);
+            let num_ticks = circuit.inner.ticks().len();
+            if idx > num_ticks {
+                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                    "insert_tick index {} out of bounds for circuit with {} ticks",
+                    idx, num_ticks
+                )));
+            }
+            // Insert the tick
+            let _ = circuit.inner.insert_tick(idx);
+        }
+        // Return a handle to the inserted tick
+        Ok(PyTickHandle {
+            circuit: slf,
+            tick_idx: idx,
+            last_gate_idx: None,
+        })
+    }
+
+    /// Get a handle to an existing tick for adding more gates.
+    ///
+    /// This allows adding gates to a tick that was previously created.
+    ///
+    /// Args:
+    ///     idx: The index of the tick to get a handle for.
+    ///
+    /// Raises:
+    ///     IndexError: If `idx >= num_ticks()`.
+    fn tick_at(slf: Py<Self>, py: Python<'_>, idx: usize) -> PyResult<PyTickHandle> {
+        {
+            let circuit = slf.borrow(py);
+            let num_ticks = circuit.inner.ticks().len();
+            if idx >= num_ticks {
+                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                    "tick_at index {} out of bounds for circuit with {} ticks",
+                    idx, num_ticks
+                )));
+            }
+        }
+        Ok(PyTickHandle {
+            circuit: slf,
+            tick_idx: idx,
+            last_gate_idx: None,
+        })
+    }
+
+    // =========================================================================
+    // Iteration helpers
+    // =========================================================================
+
+    /// Get all qubits used in the circuit.
+    ///
+    /// Returns:
+    ///     A list of qubit IDs used in the circuit.
+    fn all_qubits(&self) -> Vec<usize> {
+        self.inner
+            .all_qubits()
+            .into_iter()
+            .map(|q| usize::from(q))
+            .collect()
+    }
+
+    /// Count gates by type across the entire circuit.
+    ///
+    /// Returns:
+    ///     A dictionary mapping gate type names to counts.
+    fn gate_counts_by_type(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        let counts = self.inner.gate_counts_by_type();
+        let dict = PyDict::new(py);
+        for (gate_type, count) in counts {
+            dict.set_item(format!("{gate_type:?}"), count)?;
+        }
+        Ok(dict.into())
+    }
+
+    /// Get all gates in the circuit as a list.
+    ///
+    /// Returns:
+    ///     A list of (tick_index, gate) tuples.
+    fn gates(&self) -> Vec<(usize, PyGate)> {
+        self.inner
+            .iter_gates_with_tick()
+            .map(|(tick_idx, gate)| (tick_idx, PyGate { inner: gate.clone() }))
+            .collect()
+    }
+
     /// Convert this `TickCircuit` to a `DagCircuit`.
     ///
     /// Gates are added in tick order, with qubit wires connecting
